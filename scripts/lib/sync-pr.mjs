@@ -442,6 +442,7 @@ export const SUPERSEDE_KEEP_REASON = Object.freeze({
   PROVENANCE_MISMATCH: 'provenance-mismatch',
   NOT_OLDER: 'not-older',
   BUNDLE_ORDER_UNKNOWN: 'bundle-order-unknown',
+  SUCCESSOR_UNAVAILABLE: 'successor-unavailable',
   CHANGED_BEFORE_CLOSE: 'changed-before-close',
   CLOSE_FAILED: 'close-failed',
 });
@@ -494,6 +495,21 @@ export function parseOpenSyncPrs(text, { excludeBranch, limit = SUPERSEDE_LIST_L
 }
 
 /**
+ * `git diff --name-status --no-renames -z` → `[{status, path}]`. PURE. With
+ * renames off every record is exactly one status field then one path.
+ * @param {string} text
+ * @returns {Array<{status: string, path: string}>|null} null on a malformed (odd) record stream
+ */
+export function parseNameStatus(text) {
+  const parts = String(text ?? '').split('\0');
+  if (parts.at(-1) === '') parts.pop();
+  if (parts.length % 2 !== 0) return null;
+  const out = [];
+  for (let i = 0; i < parts.length; i += 2) out.push({ status: parts[i].charAt(0), path: parts[i + 1] });
+  return out;
+}
+
+/**
  * Gather the git evidence `decideSupersession` judges, in the consumer
  * checkout and (for bundle order) the upstream repo. Every git call goes
  * through `run`; ancestry through the injected three-valued oracle. Never
@@ -502,14 +518,14 @@ export function parseOpenSyncPrs(text, { excludeBranch, limit = SUPERSEDE_LIST_L
  * @param {Runner} run
  * @param {{repoRoot: string, record: {branch: string, headRefOid: string}, baseSha: string,
  *   ancestry: (a: string, b: string) => 'yes'|'no'|'unknown', newBundleSha: string}} input
- * @returns {{fetchedOid: string|null, commitCount: number|null, changedFiles: string[]|null,
+ * @returns {{fetchedOid: string|null, commitCount: number|null, changes: Array<{status: string, path: string}>|null,
  *   headSidecar: object|null, baseSidecar: object|null, receiptEntry: object|null,
  *   ancestry: 'yes'|'no'|'unknown'|'equal'|null, detail: string|null}}
  */
 function collectSupersedeEvidence(run, { repoRoot, record, baseSha, ancestry, newBundleSha }) {
   const git = (args) => run('git', ['-C', repoRoot, ...args]);
   const ev = {
-    fetchedOid: null, commitCount: null, changedFiles: null, headSidecar: null, baseSidecar: null, receiptEntry: null, ancestry: null, detail: null,
+    fetchedOid: null, commitCount: null, changes: null, headSidecar: null, baseSidecar: null, receiptEntry: null, ancestry: null, detail: null,
   };
   const ref = `refs/remotes/origin/${record.branch}`;
   const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${record.branch}:${ref}`]);
@@ -524,8 +540,8 @@ function collectSupersedeEvidence(run, { repoRoot, record, baseSha, ancestry, ne
   const mb = git(['merge-base', baseSha, oid]);
   const mergeBase = ok(mb) ? mb.stdout.trim() : '';
   if (FULL_OID.test(mergeBase)) {
-    const diff = git(['diff', '--name-only', '--no-renames', '-z', mergeBase, oid, '--']);
-    ev.changedFiles = ok(diff) ? diff.stdout.split('\0').filter(Boolean) : null;
+    const diff = git(['diff', '--name-status', '--no-renames', '-z', mergeBase, oid, '--']);
+    ev.changes = ok(diff) ? parseNameStatus(diff.stdout) : null;
   }
   const showJson = (rev, rel) => {
     const r = git(['show', `${rev}:${rel}`]);
@@ -560,7 +576,7 @@ export function decideSupersession(record, evidence, { baseBranch, repo }) {
   if (record.isCrossRepository || record.baseRefName !== baseBranch) {
     return keep(SUPERSEDE_KEEP_REASON.NOT_OURS, record.isCrossRepository ? 'from a fork' : `targets ${record.baseRefName}`);
   }
-  if (!evidence || evidence.fetchedOid !== record.headRefOid || evidence.commitCount === null || !Array.isArray(evidence.changedFiles)) {
+  if (!evidence || evidence.fetchedOid !== record.headRefOid || evidence.commitCount === null || !Array.isArray(evidence.changes)) {
     return keep(SUPERSEDE_KEEP_REASON.EVIDENCE_UNAVAILABLE, evidence?.detail ?? 'no git evidence gathered');
   }
   if (evidence.commitCount !== 1) {
@@ -569,11 +585,13 @@ export function decideSupersession(record, evidence, { baseBranch, repo }) {
   if (!isUsableSidecar(evidence.headSidecar)) {
     return keep(SUPERSEDE_KEEP_REASON.OWNERSHIP_UNKNOWN, `no usable ${OWNED_SIDECAR_RELATIVE_PATH} at its head`);
   }
-  // Its OWN sidecar, plus the merge-base's for a file its sync retired: the
-  // new sync's sidecar would call a file a newer bundle dropped hand-made.
-  const owned = (p) => ALWAYS_SYNC_OWNED.has(comparisonKey(p))
-    || isUpstreamOwned(evidence.headSidecar, p) || isUpstreamOwned(evidence.baseSidecar, p);
-  const foreign = evidence.changedFiles.filter((p) => !owned(p));
+  // Its OWN sidecar (the new sync's would call a file a newer bundle dropped
+  // hand-made). The merge-base's sidecar may authorise only a DELETION — the
+  // sync retiring a file it used to own — never a change to a path the PR's
+  // own sync no longer claims.
+  const owned = ({ status, path: p }) => ALWAYS_SYNC_OWNED.has(comparisonKey(p))
+    || isUpstreamOwned(evidence.headSidecar, p) || (status === 'D' && isUpstreamOwned(evidence.baseSidecar, p));
+  const foreign = evidence.changes.filter((c) => !owned(c)).map((c) => c.path);
   if (foreign.length > 0) {
     const shown = foreign.slice(0, 5).join(', ') + (foreign.length > 5 ? ` (+${foreign.length - 5} more)` : '');
     return keep(SUPERSEDE_KEEP_REASON.HAND_EDITED, `changes files the sync does not own: ${shown}`);
@@ -624,12 +642,20 @@ export function supersedeOlderSyncPrs({
     return out;
   }
   const successor = newUrl ?? `the ${newBranch} PR`;
-  const comment = `Superseded by ${successor} — a newer bundle sync built from the current ${baseBranch}, which carries everything this one did. `
-    + 'Closed by `npm run sync:pr`; the branch is kept, so this PR can be reopened.';
+  const comment = `Superseded by ${successor}, the sync of a newer upstream bundle built from the current ${baseBranch}. `
+    + 'Closed automatically by `npm run sync:pr`: synced files are upstream-owned, and two open sync PRs conflict on '
+    + `${RECEIPT_PATH}. The branch is kept, so this PR can be reopened.`;
   const keep = (pr, reason, detail) => {
     out.kept.push({ number: pr.number, url: pr.url, branch: pr.branch, reason, ...(detail ? { detail } : {}) });
     out.warnings.push(`kept older sync PR #${pr.number} (${pr.branch}) open: ${reason}${detail ? ` — ${detail}` : ''}`);
   };
+
+  /** `gh pr view <ref>` → `{state, headRefOid, baseRefName, isCrossRepository}`, or null when unreadable. */
+  const readOpenPr = (ref) => {
+    const view = gh(['pr', 'view', ref, '--json', 'state,headRefOid,baseRefName,isCrossRepository']);
+    try { return ok(view) ? JSON.parse(view.stdout) : null; } catch { return null; }
+  };
+  let successorOpen = null;
 
   for (const pr of parsed.invalid) keep(pr, SUPERSEDE_KEEP_REASON.INVALID_RECORD, 'gh returned a record that failed validation');
   for (const pr of parsed.records) {
@@ -638,13 +664,21 @@ export function supersedeOlderSyncPrs({
     const verdict = decideSupersession(pr, evidence, { baseBranch, repo });
     if (!verdict.supersede) { keep(pr, verdict.reason, verdict.detail); continue; }
 
-    // GitHub has no head-conditional close: re-read just before closing, which
-    // narrows the evidence→close window to one round trip but cannot remove it.
-    const view = gh(['pr', 'view', String(pr.number), '--json', 'state,headRefOid']);
-    let now = null;
-    try { now = ok(view) ? JSON.parse(view.stdout) : null; } catch { now = null; }
-    if (now?.state !== 'OPEN' || now?.headRefOid !== pr.headRefOid) {
-      keep(pr, SUPERSEDE_KEEP_REASON.CHANGED_BEFORE_CLOSE, now ? `now ${now.state} at ${now.headRefOid}` : `could not re-read it: ${why(view)}`);
+    // The successor must still be open: closing in favour of a PR someone
+    // already closed would leave the consumer with no open sync PR at all.
+    if (successorOpen === null) successorOpen = readOpenPr(newUrl ?? newBranch)?.state === 'OPEN';
+    if (!successorOpen) {
+      keep(pr, SUPERSEDE_KEEP_REASON.SUCCESSOR_UNAVAILABLE, `${successor} is not open`);
+      continue;
+    }
+    // GitHub has no head-conditional close: re-read just before closing and
+    // re-apply the SAME decision to the fresh base/head, which narrows the
+    // evidence→close window to one round trip but cannot remove it.
+    const now = readOpenPr(String(pr.number));
+    const fresh = now && { ...pr, baseRefName: now.baseRefName, isCrossRepository: now.isCrossRepository, headRefOid: now.headRefOid };
+    if (now?.state !== 'OPEN' || !decideSupersession(fresh, evidence, { baseBranch, repo }).supersede) {
+      keep(pr, SUPERSEDE_KEEP_REASON.CHANGED_BEFORE_CLOSE,
+        now ? `now ${now.state} at ${now.headRefOid} on ${now.baseRefName}` : 'could not re-read it');
       continue;
     }
     const closed = gh(['pr', 'close', String(pr.number), '--comment', comment]);
@@ -779,7 +813,14 @@ export function runConsumerPr({
     warnings.push(...supersede.warnings);
 
     let merged = 'skipped';
-    if (merge) {
+    // Arming auto-merge while another sync PR may still be open recreates the
+    // receipt conflict this step exists to remove — and when that PR is NEWER,
+    // it lands a stale sync over it. A person resolves the named PR(s) first.
+    const supersedeSettled = supersede.status === 'none' || supersede.status === 'complete';
+    if (merge && !supersedeSettled) {
+      merged = 'not-armed';
+      warnings.push(`auto-merge withheld: supersession is ${supersede.status}, so another sync PR may still be open and would conflict on ${RECEIPT_PATH} — resolve the PR(s) named above, then merge this one by hand`);
+    } else if (merge) {
       const mergeArgs = ['pr', 'merge', ...(url ? [url] : []), '--auto', '--squash', '--delete-branch'];
       const m = gh(mergeArgs);
       if (ok(m)) merged = 'armed';

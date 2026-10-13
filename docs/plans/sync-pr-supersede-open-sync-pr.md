@@ -177,8 +177,16 @@ arm auto-merge on B**.
   Each failed close's warning prints the exact `gh pr close <n> --comment …`
   command to run by hand.
 - **Nothing is merged and no auto-merge is armed on A.** Closing a PR disables
-  any auto-merge armed on it. B's merge behaviour is unchanged (`--no-merge`
-  still respected) — wine-cellar-app's "coordinator merges" policy is untouched.
+  any auto-merge armed on it. `--no-merge` is still respected —
+  wine-cellar-app's "coordinator merges" policy is untouched. **B's auto-merge
+  is WITHHELD** (`merged: 'not-armed'` plus a named warning) unless
+  supersession is `none` or `complete` (code audit R1 H5): arming it while
+  another sync PR may still be open recreates the receipt conflict, and when
+  that PR is NEWER it lands a stale sync over it.
+- **The successor is confirmed OPEN** (`gh pr view <B url>`) before the first
+  close (code audit R1 H2), and the pre-close re-read of each candidate
+  re-applies `decideSupersession` to its fresh base, head and fork flag
+  (code audit R1 H3).
 - **A's remote branch is LEFT in place** (`gh pr close` without
   `--delete-branch`). Reasons: (a) a closed PR whose branch still exists can be
   reopened, so the action is reversible; (b) deleting a branch is a
@@ -338,3 +346,10 @@ cleanup via `rmrfBestEffort` (rmsync-retry guard).
   round-2 finding was a concrete design defect, fixed here as the reviewer
   recommended; no third round exists, so it is escalated to the user in the
   final report and verified by the code audit against real code.
+- Code audit R1 (GPT): H5 M3. Fixed: the merge-base sidecar authorises
+  deletions only (H1, compromised to MEDIUM), the successor is confirmed open
+  (H2), the pre-close re-read re-applies the decision (H3), auto-merge is
+  withheld while supersession is unsettled (H5), and the close comment is
+  policy-based (M1, LOW). Dismissed in deliberation: byte-reproducing the
+  older sync (H4). Deferred as blocked-by: the retry path (M2, see Out of
+  Scope). M3 is an adjacency-wave coverage bound.

@@ -274,7 +274,7 @@ function makeUpstream(root) {
  * commit on origin's head carrying the synced files, the receipt and the
  * sidecar. `extra` adds hand-made changes; `commits: 2` adds a second commit.
  */
-function pushSyncBranch(fx, bundleSha, { receiptSha = bundleSha, extra = {}, commits = 1 } = {}) {
+function pushSyncBranch(fx, bundleSha, { receiptSha = bundleSha, extra = {}, commits = 1, remove = [], owned = [SKILL] } = {}) {
   const branch = branchNameFor(bundleSha);
   const { git, publisher } = fx;
   git(['switch', '-q', '-c', branch, 'origin/trunk'], publisher);
@@ -283,8 +283,9 @@ function pushSyncBranch(fx, bundleSha, { receiptSha = bundleSha, extra = {}, com
     version: 2, olderSyncsDropped: 0,
     recentSyncs: [{ syncedAt: '2026-10-11T12:00:00.000Z', source: { repo: REPO, commitSha: receiptSha } }],
   })}\n`);
-  write(publisher, SIDECAR, `${JSON.stringify(buildOwnedSidecar([SKILL]))}\n`);
+  write(publisher, SIDECAR, `${JSON.stringify(buildOwnedSidecar(owned))}\n`);
   for (const [rel, content] of Object.entries(extra)) write(publisher, rel, content);
+  for (const rel of remove) git(['rm', '-q', rel], publisher);
   git(['add', '-A'], publisher);
   git(['commit', '-q', '-m', `chore(sync): bundle sync from ${REPO} ${bundleSha.slice(0, 8)}`], publisher);
   if (commits === 2) {
@@ -307,8 +308,9 @@ const ghFor = (open) => (args) => {
     }))) };
   }
   if (args[1] === 'view') {
+    // The new PR (by URL) is open too; every open PR still targets trunk.
     const p = open.find((x) => String(x.number) === args[2]);
-    return { stdout: JSON.stringify({ state: 'OPEN', headRefOid: p.head }) };
+    return { stdout: JSON.stringify({ state: 'OPEN', headRefOid: p?.head ?? 'f'.repeat(40), baseRefName: 'trunk', isCrossRepository: false }) };
   }
   if (args[1] === 'create') return { stdout: 'https://github.com/o/r/pull/9\n' };
   return undefined;
@@ -369,6 +371,28 @@ describe('sync-pr on real git — a newer sync PR supersedes an older OPEN one',
     try {
       const twice = pushSyncBranch(fy, up.old, { commits: 2 });
       out = runNewSync(fy, up.current, [{ number: 7, ...twice }], createGitAncestry(up.dir));
+      assert.equal(out.result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.HAND_EDITED);
+      assert.deepEqual(closes(out.ghCalls), []);
+    } finally { rmrfBestEffort(fy.root); }
+  });
+
+  it('a file the older sync RETIRED is authorised by the merge-base sidecar; a change to it is not', () => {
+    // origin's own sidecar owns RETIRED; the older sync drops it from ownership.
+    const RETIRED = '.claude/skills/retired/SKILL.md';
+    fx.advanceOrigin(RETIRED, 'retired skill\n');
+    fx.advanceOrigin(SIDECAR, `${JSON.stringify(buildOwnedSidecar([SKILL, RETIRED]))}\n`);
+    fx.git(['pull', '-q', '--ff-only'], fx.consumer);
+    const deleted = pushSyncBranch(fx, up.old, { remove: [RETIRED] });
+    let out = runNewSync(fx, up.current, [{ number: 10, ...deleted }], createGitAncestry(up.dir));
+    assert.deepEqual(out.result.supersede.superseded.map((p) => p.number), [10], JSON.stringify(out.result.supersede));
+
+    const fy = makeFixture();
+    try {
+      fy.advanceOrigin(RETIRED, 'retired skill\n');
+      fy.advanceOrigin(SIDECAR, `${JSON.stringify(buildOwnedSidecar([SKILL, RETIRED]))}\n`);
+      fy.git(['pull', '-q', '--ff-only'], fy.consumer);
+      const changed = pushSyncBranch(fy, up.old, { extra: { [RETIRED]: 'hand edit to a retired file\n' } });
+      out = runNewSync(fy, up.current, [{ number: 11, ...changed }], createGitAncestry(up.dir));
       assert.equal(out.result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.HAND_EDITED);
       assert.deepEqual(closes(out.ghCalls), []);
     } finally { rmrfBestEffort(fy.root); }

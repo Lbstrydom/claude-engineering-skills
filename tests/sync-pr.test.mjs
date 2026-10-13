@@ -16,7 +16,7 @@ import path from 'node:path';
 import {
   SKIP_REASON, branchNameFor, buildPrText, planConsumerPr, runConsumerPr,
   parseGhAccounts, isRepoNotResolvable, parseSymrefHead, parseFailingTests,
-  SUPERSEDE_KEEP_REASON, SUPERSEDE_LIST_LIMIT, parseOpenSyncPrs, decideSupersession, supersedeOlderSyncPrs,
+  SUPERSEDE_KEEP_REASON, SUPERSEDE_LIST_LIMIT, parseOpenSyncPrs, parseNameStatus, decideSupersession, supersedeOlderSyncPrs,
 } from '../scripts/lib/sync-pr.mjs';
 import { parseArgs } from '../scripts/sync-pr.mjs';
 import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
@@ -413,7 +413,7 @@ const receiptOf = (commitSha, repo = REPO) => JSON.stringify({
 const sidecarOf = (paths) => JSON.stringify(buildOwnedSidecar(paths));
 const SKILL_PATH = '.claude/skills/plan/SKILL.md';
 const goodEvidence = (over = {}) => ({
-  fetchedOid: OLD_HEAD, commitCount: 1, changedFiles: [SKILL_PATH, RECEIPT_PATH],
+  fetchedOid: OLD_HEAD, commitCount: 1, changes: [{ status: 'M', path: SKILL_PATH }, { status: 'M', path: RECEIPT_PATH }],
   headSidecar: buildOwnedSidecar([SKILL_PATH]), baseSidecar: null,
   receiptEntry: { syncedAt: '2026-10-11T12:00:00.000Z', source: { repo: REPO, commitSha: OLD_SHA } },
   ancestry: 'yes', ...over,
@@ -460,6 +460,14 @@ describe('parseOpenSyncPrs — the gh list is validated, never trusted', () => {
   });
 });
 
+describe('parseNameStatus', () => {
+  it('reads -z status/path pairs; a malformed stream is null, never a short list', () => {
+    assert.deepEqual(parseNameStatus('M\0a.md\0D\0b c.md\0'), [{ status: 'M', path: 'a.md' }, { status: 'D', path: 'b c.md' }]);
+    assert.deepEqual(parseNameStatus(''), []);
+    assert.equal(parseNameStatus('M\0a.md\0D\0'), null);
+  });
+});
+
 describe('decideSupersession — decision table', () => {
   // The decision sees PARSED records (`branch`), as parseOpenSyncPrs returns them.
   const keep = (record, evidence) => decideSupersession({ ...record, branch: record.headRefName }, evidence, CTX);
@@ -473,7 +481,7 @@ describe('decideSupersession — decision table', () => {
   it('no evidence, or a head that is not the listed one, is evidence-unavailable', () => {
     assert.equal(keep(prRecord(), null).reason, SUPERSEDE_KEEP_REASON.EVIDENCE_UNAVAILABLE);
     assert.equal(keep(prRecord(), goodEvidence({ fetchedOid: 'd'.repeat(40) })).reason, SUPERSEDE_KEEP_REASON.EVIDENCE_UNAVAILABLE);
-    assert.equal(keep(prRecord(), goodEvidence({ changedFiles: null })).reason, SUPERSEDE_KEEP_REASON.EVIDENCE_UNAVAILABLE);
+    assert.equal(keep(prRecord(), goodEvidence({ changes: null })).reason, SUPERSEDE_KEEP_REASON.EVIDENCE_UNAVAILABLE);
   });
   it('a second commit is hand-edited', () => {
     const r = keep(prRecord(), goodEvidence({ commitCount: 2 }));
@@ -481,16 +489,22 @@ describe('decideSupersession — decision table', () => {
     assert.match(r.detail, /2 commits/);
   });
   it('a changed file outside the sync-owned set is hand-edited, and named', () => {
-    const r = keep(prRecord(), goodEvidence({ changedFiles: [SKILL_PATH, 'src/app.js'] }));
+    const r = keep(prRecord(), goodEvidence({ changes: [{ status: 'M', path: SKILL_PATH }, { status: 'M', path: 'src/app.js' }] }));
     assert.equal(r.reason, SUPERSEDE_KEEP_REASON.HAND_EDITED);
     assert.match(r.detail, /src\/app\.js/);
   });
-  it('a file the PR\'s own sync retired is owned via the merge-base sidecar (final-gate G1)', () => {
-    const ev = goodEvidence({ changedFiles: ['.claude/skills/old/SKILL.md', RECEIPT_PATH], baseSidecar: buildOwnedSidecar(['.claude/skills/old/SKILL.md']) });
+  it('a file the PR\'s own sync retired (a DELETION) is owned via the merge-base sidecar (final-gate G1)', () => {
+    const ev = goodEvidence({ changes: [{ status: 'D', path: '.claude/skills/old/SKILL.md' }, { status: 'M', path: RECEIPT_PATH }], baseSidecar: buildOwnedSidecar(['.claude/skills/old/SKILL.md']) });
     assert.deepEqual(keep(prRecord(), ev), { supersede: true });
   });
+  it('the merge-base sidecar never authorises a CHANGE to a path the PR\'s own sidecar dropped (audit R1 H1)', () => {
+    for (const status of ['M', 'A']) {
+      const ev = goodEvidence({ changes: [{ status, path: '.claude/skills/old/SKILL.md' }], baseSidecar: buildOwnedSidecar(['.claude/skills/old/SKILL.md']) });
+      assert.equal(keep(prRecord(), ev).reason, SUPERSEDE_KEEP_REASON.HAND_EDITED, status);
+    }
+  });
   it('the receipt and the sidecar themselves are always sync-owned, matched by comparison key', () => {
-    const ev = goodEvidence({ changedFiles: [RECEIPT_PATH.toUpperCase(), OWNED_SIDECAR_RELATIVE_PATH] });
+    const ev = goodEvidence({ changes: [{ status: 'M', path: RECEIPT_PATH.toUpperCase() }, { status: 'M', path: OWNED_SIDECAR_RELATIVE_PATH }] });
     assert.deepEqual(keep(prRecord(), ev), { supersede: true });
   });
   it('no usable sidecar at the head is ownership-unknown', () => {
@@ -520,11 +534,12 @@ const supersedeScript = (over = {}) => ({
   'git -C C:/consumer rev-parse --verify --quiet refs/remotes/origin/chore/sync-aaaa1111': { stdout: `${OLD_HEAD}\n` },
   'git -C C:/consumer rev-list --count': { stdout: '1\n' },
   'git -C C:/consumer merge-base': { stdout: `${MERGE_BASE}\n` },
-  'git -C C:/consumer diff --name-only': { stdout: `${SKILL_PATH}\0${RECEIPT_PATH}\0` },
+  'git -C C:/consumer diff --name-status': { stdout: `M\0${SKILL_PATH}\0M\0${RECEIPT_PATH}\0` },
   [`git -C C:/consumer show ${OLD_HEAD}:${OWNED_SIDECAR_RELATIVE_PATH}`]: { stdout: sidecarOf([SKILL_PATH]) },
   [`git -C C:/consumer show ${MERGE_BASE}:${OWNED_SIDECAR_RELATIVE_PATH}`]: { status: 128, stderr: 'fatal: path does not exist' },
   [`git -C C:/consumer show ${OLD_HEAD}:${RECEIPT_PATH}`]: { stdout: receiptOf(OLD_SHA) },
-  'gh pr view 5': { stdout: JSON.stringify({ state: 'OPEN', headRefOid: OLD_HEAD }) },
+  'gh pr view 5': { stdout: JSON.stringify({ state: 'OPEN', headRefOid: OLD_HEAD, baseRefName: 'main', isCrossRepository: false }) },
+  'gh pr view https://github.com/o/r/pull/7': { stdout: JSON.stringify({ state: 'OPEN', headRefOid: 'f'.repeat(40), baseRefName: 'main', isCrossRepository: false }) },
   'gh pr create': { stdout: 'https://github.com/o/r/pull/7\n' },
   ...over,
 });
@@ -538,7 +553,8 @@ describe('runConsumerPr — supersedes an older open sync PR', () => {
     assert.equal(r.supersede.status, 'complete');
     assert.deepEqual(r.supersede.superseded.map((p) => p.number), [5]);
     const gh = calls.filter((c) => c.cmd === 'gh').map((c) => c.args.slice(0, 2).join(' '));
-    assert.deepEqual(gh, ['pr create', 'pr list', 'pr view', 'pr close', 'pr merge']);
+    assert.deepEqual(gh, ['pr create', 'pr list', 'pr view', 'pr view', 'pr close', 'pr merge']);
+    assert.equal(calls.filter((c) => c.cmd === 'gh' && c.args[1] === 'view')[0].args[2], 'https://github.com/o/r/pull/7', 'the successor is confirmed open first');
     const close = calls.find((c) => c.cmd === 'gh' && c.args[1] === 'close');
     assert.equal(close.args[2], '5');
     assert.ok(!close.args.includes('--delete-branch'), 'the branch is kept, so the PR can be reopened');
@@ -563,7 +579,7 @@ describe('runConsumerPr — supersedes an older open sync PR', () => {
   });
 
   it('a head that moved between evidence and close is kept (changed-before-close)', () => {
-    const { run, calls } = fakeRunner(supersedeScript({ 'gh pr view 5': { stdout: JSON.stringify({ state: 'OPEN', headRefOid: 'e'.repeat(40) }) } }));
+    const { run, calls } = fakeRunner(supersedeScript({ 'gh pr view 5': { stdout: JSON.stringify({ state: 'OPEN', headRefOid: 'e'.repeat(40), baseRefName: 'main', isCrossRepository: false }) } }));
     const r = exec(run, { ancestry: olderAncestry });
     assert.equal(r.supersede.status, 'partial');
     assert.equal(r.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.CHANGED_BEFORE_CLOSE);
@@ -575,6 +591,39 @@ describe('runConsumerPr — supersedes an older open sync PR', () => {
     const r = exec(run, { ancestry: () => 'no' });
     assert.equal(r.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.NOT_OLDER);
     assert.ok(r.warnings.some((w) => /#5/.test(w) && /stale/.test(w)), r.warnings.join('\n'));
+  });
+
+  it('a successor that is no longer open supersedes nothing', () => {
+    const { run, calls } = fakeRunner(supersedeScript({
+      'gh pr view https://github.com/o/r/pull/7': { stdout: JSON.stringify({ state: 'CLOSED', headRefOid: 'f'.repeat(40), baseRefName: 'main', isCrossRepository: false }) },
+    }));
+    const r = exec(run, { ancestry: olderAncestry, merge: false });
+    assert.equal(r.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.SUCCESSOR_UNAVAILABLE);
+    assert.ok(!calls.some((c) => c.cmd === 'gh' && c.args[1] === 'close'));
+  });
+
+  it('a PR retargeted to another base between evidence and close is kept (the same decision, re-applied)', () => {
+    const { run, calls } = fakeRunner(supersedeScript({
+      'gh pr view 5': { stdout: JSON.stringify({ state: 'OPEN', headRefOid: OLD_HEAD, baseRefName: 'release', isCrossRepository: false }) },
+    }));
+    const r = exec(run, { ancestry: olderAncestry, merge: false });
+    assert.equal(r.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.CHANGED_BEFORE_CLOSE);
+    assert.ok(!calls.some((c) => c.cmd === 'gh' && c.args[1] === 'close'));
+  });
+
+  it('auto-merge is WITHHELD while another sync PR may still be open (audit R1 H5)', () => {
+    for (const [label, over, ancestry] of [
+      ['newer PR open', {}, () => 'no'],
+      ['close failed', { 'gh pr close 5': { status: 1, stderr: 'boom' } }, olderAncestry],
+      ['list failed', { 'gh pr list': { status: 1, stderr: 'HTTP 502' } }, olderAncestry],
+    ]) {
+      const { run, calls } = fakeRunner(supersedeScript(over));
+      const r = exec(run, { ancestry });
+      assert.equal(r.ok, true, label);
+      assert.equal(r.merged, 'not-armed', label);
+      assert.ok(!calls.some((c) => c.cmd === 'gh' && c.args[1] === 'merge'), `${label}: no merge is ever issued`);
+      assert.ok(r.warnings.some((w) => /auto-merge withheld/.test(w)), label);
+    }
   });
 
   it('a list failure is a warning — the new PR still opened, ok:true', () => {
