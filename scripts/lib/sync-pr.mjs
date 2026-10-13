@@ -45,22 +45,41 @@
  *    colliding paths named, and the remedy is to re-run the sync on a current
  *    checkout. Rebuilding the receipt or re-deciding divergence here would be
  *    a second implementation of the sync; the sync is the one that may do it.
+ * 4. **A newer sync PR SUPERSEDES an older open one** (upstream 2f933809).
+ *    Two sync PRs open at once for one consumer both prepend to the receipt,
+ *    so whichever merges second is DIRTY, and resolving it by hand either
+ *    drops an event or hand-computes the rotation. Once the new PR is open,
+ *    each older open `chore/sync-*` PR is closed with a comment naming its
+ *    successor — never merged, its branch kept so it can be reopened — but
+ *    ONLY when git evidence proves the new one replaces it: one commit over
+ *    the merge-base, every changed file sync-owned by that PR's own sidecar
+ *    (or the merge-base's, for a file it retired), and its own receipt
+ *    attesting a bundle strictly OLDER than this one. Anything else is kept
+ *    open with a named reason (`SUPERSEDE_KEEP_REASON`). Rejected: a merge
+ *    driver (GitHub's server-side merge never runs one, so the PR still reads
+ *    DIRTY), and regenerating the receipt when the base moves (no trigger
+ *    exists, and it would be the second implementation rule 3 refuses).
+ *    Plan: docs/plans/sync-pr-supersede-open-sync-pr.md.
  *
  * PURE planning (`planConsumerPr`, `branchNameFor`, `buildPrText`,
- * `parseGhAccounts`, `isRepoNotResolvable`) plus an executor
- * (`runConsumerPr`) whose every process call goes through an injected `run`,
- * so the full sequence — including the switch-back on failure — is tested
+ * `parseGhAccounts`, `isRepoNotResolvable`, `parseOpenSyncPrs`,
+ * `decideSupersession`) plus an executor (`runConsumerPr`, and the
+ * `supersedeOlderSyncPrs` step it runs) whose every process call goes through
+ * an injected `run` (bundle order through an injected `ancestry` oracle), so
+ * the full sequence — including the switch-back on failure — is tested
  * without git or gh.
  *
  * @module scripts/lib/sync-pr
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { RECEIPT_PATH } from './sync-receipt.mjs';
+import { fileURLToPath } from 'node:url';
+import { RECEIPT_PATH, readSyncReceipt, latestReceiptEntry } from './sync-receipt.mjs';
 import { OVERRIDES_PATH } from './sync-overrides.mjs';
-import { comparisonKey } from './sync-owned-sidecar.mjs';
+import { comparisonKey, isUpstreamOwned, isUsableSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './sync-owned-sidecar.mjs';
 import { pathspecsForCommit } from './sync-status.mjs';
 import { SYNC_BRANCH_PREFIX } from './sync-divergence.mjs';
+import { createGitAncestry } from './sync-rollback-guard.mjs';
 
 /** Every reason `planConsumerPr` can decline. Strings are the CLI's contract. */
 export const SKIP_REASON = Object.freeze({
@@ -75,6 +94,7 @@ export const SKIP_REASON = Object.freeze({
 });
 
 const RECEIPT_KEY = comparisonKey(RECEIPT_PATH);
+const DEFAULT_REPO = 'Lbstrydom/claude-engineering-skills';
 
 /**
  * The remote's default branch from `git ls-remote --symref origin HEAD`
@@ -159,7 +179,7 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
  *   branchExists: boolean,
  * }} input
  * @returns {{action:'skip', reason:string, detail?:string}
- *   | {action:'pr', branch:string, startPoint:string, behindCount:number, addPaths:string[],
+ *   | {action:'pr', branch:string, bundleSha:string, repo:string, startPoint:string, behindCount:number, addPaths:string[],
  *      commitPathspecs:string[], surface:string[], leftBehind:string[], title:string, message:string, body:string}}
  */
 export function planConsumerPr({
@@ -214,10 +234,13 @@ export function planConsumerPr({
     return { action: 'skip', reason: SKIP_REASON.BRANCH_EXISTS, detail: branch };
   }
   const leftBehind = classified.needsReview.map((e) => e.path).sort();
-  const text = buildPrText({ repo: manifest.repo ?? 'Lbstrydom/claude-engineering-skills', commitSha, surface, leftBehind, consumerName });
+  const repo = manifest.repo ?? DEFAULT_REPO;
+  const text = buildPrText({ repo, commitSha, surface, leftBehind, consumerName });
   return {
     action: 'pr',
     branch,
+    bundleSha: commitSha,
+    repo,
     startPoint: baseSha,
     behindCount,
     addPaths,
@@ -409,6 +432,276 @@ const ok = (r) => !r.error && r.status === 0;
 /** @param {{stdout:string, stderr:string, error?:Error, status:number|null}} r */
 const why = (r) => (r.error?.message || `${r.stderr || ''}${r.stdout || ''}`.trim() || `exit ${r.status}`);
 
+/** Why an older open sync PR was left open. Strings are the CLI's contract. */
+export const SUPERSEDE_KEEP_REASON = Object.freeze({
+  INVALID_RECORD: 'invalid-record',
+  NOT_OURS: 'not-ours',
+  EVIDENCE_UNAVAILABLE: 'evidence-unavailable',
+  HAND_EDITED: 'hand-edited',
+  OWNERSHIP_UNKNOWN: 'ownership-unknown',
+  PROVENANCE_MISMATCH: 'provenance-mismatch',
+  NOT_OLDER: 'not-older',
+  BUNDLE_ORDER_UNKNOWN: 'bundle-order-unknown',
+  SUCCESSOR_UNAVAILABLE: 'successor-unavailable',
+  CHANGED_BEFORE_CLOSE: 'changed-before-close',
+  CLOSE_FAILED: 'close-failed',
+});
+
+/** Open PRs read per consumer. A page this full may have missed some. */
+export const SUPERSEDE_LIST_LIMIT = 1000;
+const SUPERSEDE_LIST_FIELDS = 'number,url,headRefName,baseRefName,isCrossRepository,headRefOid';
+const SHORT_SHA = /^[0-9a-f]{8}$/;
+const FULL_OID = /^[0-9a-f]{40}$/;
+/** The receipt and the sidecar are written by every sync but listed in neither. */
+const ALWAYS_SYNC_OWNED = new Set([RECEIPT_KEY, comparisonKey(OWNED_SIDECAR_RELATIVE_PATH)]);
+/** `upstreamDir` default: git discovers the upstream repo from this module's own directory. */
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+/** @param {string} branch @returns {boolean} the `branchNameFor` shape */
+const isSyncBranch = (branch) => typeof branch === 'string'
+  && branch.startsWith(SYNC_BRANCH_PREFIX) && SHORT_SHA.test(branch.slice(SYNC_BRANCH_PREFIX.length));
+
+/**
+ * Validate `gh pr list --json <SUPERSEDE_LIST_FIELDS>` output. PURE.
+ * Non-sync heads are ignored; a sync-shaped head with any malformed field is
+ * `invalid` (reported and kept open — never closed on a record it cannot read).
+ *
+ * @param {string} text
+ * @param {{excludeBranch?: string, limit?: number}} [opts] — `excludeBranch`: the new PR's own branch
+ * @returns {null | {records: Array<{number:number, url:string, branch:string, baseRefName:string,
+ *   isCrossRepository:boolean, headRefOid:string}>, invalid: Array<{number:unknown, url:unknown, branch:string}>, full: boolean}}
+ *   — null when the output is not a JSON array: an unread list is not an empty one
+ */
+export function parseOpenSyncPrs(text, { excludeBranch, limit = SUPERSEDE_LIST_LIMIT } = {}) {
+  let raw;
+  try { raw = JSON.parse(String(text ?? '')); } catch { return null; }
+  if (!Array.isArray(raw)) return null;
+  const records = [];
+  const invalid = [];
+  for (const r of raw) {
+    const branch = r?.headRefName;
+    if (!isSyncBranch(branch) || branch === excludeBranch) continue;
+    const valid = Number.isSafeInteger(r.number) && r.number > 0
+      && typeof r.url === 'string' && typeof r.baseRefName === 'string'
+      && typeof r.isCrossRepository === 'boolean'
+      && typeof r.headRefOid === 'string' && FULL_OID.test(r.headRefOid);
+    if (valid) {
+      records.push({ number: r.number, url: r.url, branch, baseRefName: r.baseRefName, isCrossRepository: r.isCrossRepository, headRefOid: r.headRefOid });
+    } else {
+      invalid.push({ number: r.number ?? null, url: r.url ?? null, branch });
+    }
+  }
+  return { records, invalid, full: raw.length >= limit };
+}
+
+/**
+ * `git diff --name-status --no-renames -z` → `[{status, path}]`. PURE. With
+ * renames off every record is exactly one status field then one path.
+ * @param {string} text
+ * @returns {Array<{status: string, path: string}>|null} null on a malformed (odd) record stream
+ */
+export function parseNameStatus(text) {
+  const parts = String(text ?? '').split('\0');
+  if (parts.at(-1) === '') parts.pop();
+  if (parts.length % 2 !== 0) return null;
+  const out = [];
+  for (let i = 0; i < parts.length; i += 2) out.push({ status: parts[i].charAt(0), path: parts[i + 1] });
+  return out;
+}
+
+/**
+ * Gather the git evidence `decideSupersession` judges, in the consumer
+ * checkout and (for bundle order) the upstream repo. Every git call goes
+ * through `run`; ancestry through the injected three-valued oracle. Never
+ * throws — a missing piece is `null`, which the decision reads as "not proven".
+ *
+ * @param {Runner} run
+ * @param {{repoRoot: string, record: {branch: string, headRefOid: string}, baseSha: string,
+ *   ancestry: (a: string, b: string) => 'yes'|'no'|'unknown', newBundleSha: string}} input
+ * @returns {{fetchedOid: string|null, commitCount: number|null, changes: Array<{status: string, path: string}>|null,
+ *   headSidecar: object|null, baseSidecar: object|null, receiptEntry: object|null,
+ *   ancestry: 'yes'|'no'|'unknown'|'equal'|null, detail: string|null}}
+ */
+function collectSupersedeEvidence(run, { repoRoot, record, baseSha, ancestry, newBundleSha }) {
+  const git = (args) => run('git', ['-C', repoRoot, ...args]);
+  const ev = {
+    fetchedOid: null, commitCount: null, changes: null, headSidecar: null, baseSidecar: null, receiptEntry: null, ancestry: null, detail: null,
+  };
+  const ref = `refs/remotes/origin/${record.branch}`;
+  const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${record.branch}:${ref}`]);
+  if (!ok(fetched)) return { ...ev, detail: `fetch ${record.branch}: ${why(fetched)}` };
+  const head = git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  ev.fetchedOid = ok(head) ? head.stdout.trim() : null;
+  if (ev.fetchedOid !== record.headRefOid) return { ...ev, detail: `fetched ${ev.fetchedOid ?? 'nothing'}, listed ${record.headRefOid}` };
+  const oid = ev.fetchedOid;
+
+  const count = git(['rev-list', '--count', `${baseSha}..${oid}`]);
+  ev.commitCount = ok(count) && /^\d+$/.test(count.stdout.trim()) ? Number(count.stdout.trim()) : null;
+  const mb = git(['merge-base', baseSha, oid]);
+  const mergeBase = ok(mb) ? mb.stdout.trim() : '';
+  if (FULL_OID.test(mergeBase)) {
+    const diff = git(['diff', '--name-status', '--no-renames', '-z', mergeBase, oid, '--']);
+    ev.changes = ok(diff) ? parseNameStatus(diff.stdout) : null;
+  }
+  const showJson = (rev, rel) => {
+    const r = git(['show', `${rev}:${rel}`]);
+    if (!ok(r)) return null;
+    try { return JSON.parse(r.stdout); } catch { return null; }
+  };
+  ev.headSidecar = showJson(oid, OWNED_SIDECAR_RELATIVE_PATH);
+  if (FULL_OID.test(mergeBase)) ev.baseSidecar = showJson(mergeBase, OWNED_SIDECAR_RELATIVE_PATH);
+  const receipt = showJson(oid, RECEIPT_PATH);
+  ev.receiptEntry = receipt === null ? null : latestReceiptEntry(readSyncReceipt(receipt));
+
+  // Bundle order is asked only of a full OID the candidate's own receipt
+  // attests — never of the branch's abbreviation, which a ref could shadow.
+  const attested = ev.receiptEntry?.source?.commitSha;
+  if (typeof attested === 'string' && FULL_OID.test(attested)) {
+    ev.ancestry = attested === newBundleSha ? 'equal' : ancestry(attested, newBundleSha);
+  }
+  return ev;
+}
+
+/**
+ * Does the new sync PR replace this older open one? PURE — every keep is a
+ * named reason, and only a fully evidenced pure older sync PR is superseded.
+ *
+ * @param {{branch: string, baseRefName: string, isCrossRepository: boolean, headRefOid: string}} record
+ * @param {ReturnType<typeof collectSupersedeEvidence>|null} evidence — null when none was gathered
+ * @param {{baseBranch: string, repo: string}} ctx
+ * @returns {{supersede: true} | {supersede: false, reason: string, detail?: string}}
+ */
+export function decideSupersession(record, evidence, { baseBranch, repo }) {
+  const keep = (reason, detail) => ({ supersede: false, reason, ...(detail ? { detail } : {}) });
+  if (record.isCrossRepository || record.baseRefName !== baseBranch) {
+    return keep(SUPERSEDE_KEEP_REASON.NOT_OURS, record.isCrossRepository ? 'from a fork' : `targets ${record.baseRefName}`);
+  }
+  if (!evidence || evidence.fetchedOid !== record.headRefOid || evidence.commitCount === null || !Array.isArray(evidence.changes)) {
+    return keep(SUPERSEDE_KEEP_REASON.EVIDENCE_UNAVAILABLE, evidence?.detail ?? 'no git evidence gathered');
+  }
+  if (evidence.commitCount !== 1) {
+    return keep(SUPERSEDE_KEEP_REASON.HAND_EDITED, `${evidence.commitCount} commits over its base — sync:pr makes one`);
+  }
+  if (!isUsableSidecar(evidence.headSidecar)) {
+    return keep(SUPERSEDE_KEEP_REASON.OWNERSHIP_UNKNOWN, `no usable ${OWNED_SIDECAR_RELATIVE_PATH} at its head`);
+  }
+  // Its OWN sidecar (the new sync's would call a file a newer bundle dropped
+  // hand-made). The merge-base's sidecar may authorise only a DELETION — the
+  // sync retiring a file it used to own — never a change to a path the PR's
+  // own sync no longer claims.
+  const owned = ({ status, path: p }) => ALWAYS_SYNC_OWNED.has(comparisonKey(p))
+    || isUpstreamOwned(evidence.headSidecar, p) || (status === 'D' && isUpstreamOwned(evidence.baseSidecar, p));
+  const foreign = evidence.changes.filter((c) => !owned(c)).map((c) => c.path);
+  if (foreign.length > 0) {
+    const shown = foreign.slice(0, 5).join(', ') + (foreign.length > 5 ? ` (+${foreign.length - 5} more)` : '');
+    return keep(SUPERSEDE_KEEP_REASON.HAND_EDITED, `changes files the sync does not own: ${shown}`);
+  }
+  const source = evidence.receiptEntry?.source;
+  const short = record.branch.slice(SYNC_BRANCH_PREFIX.length);
+  if (!source || typeof source.commitSha !== 'string' || !FULL_OID.test(source.commitSha)
+    || !source.commitSha.startsWith(short) || source.repo !== repo) {
+    return keep(SUPERSEDE_KEEP_REASON.PROVENANCE_MISMATCH,
+      `its receipt attests ${source?.repo ?? '(no repo)'} ${source?.commitSha ?? '(no sha)'}, the branch names ${repo} ${short}`);
+  }
+  if (evidence.ancestry === 'equal' || evidence.ancestry === 'no') {
+    return keep(SUPERSEDE_KEEP_REASON.NOT_OLDER,
+      `its bundle ${source.commitSha.slice(0, 8)} is not older than this sync's — if it is newer, THIS PR may be the stale one`);
+  }
+  if (evidence.ancestry !== 'yes') {
+    return keep(SUPERSEDE_KEEP_REASON.BUNDLE_ORDER_UNKNOWN, `could not order bundle ${source.commitSha.slice(0, 8)} against this sync's in the upstream repo`);
+  }
+  return { supersede: true };
+}
+
+/**
+ * Close every older open sync PR the new one provably replaces (header rule
+ * 4). Runs after the new PR exists, so a consumer is never left with no open
+ * sync PR. Never fails the caller: every problem is a warning, and the status
+ * says how far it got. Exported so a retry path can run it without re-creating
+ * the new PR.
+ *
+ * @param {{
+ *   gh: (args: string[]) => ReturnType<Runner>, run: Runner,
+ *   ancestry: (a: string, b: string) => 'yes'|'no'|'unknown',
+ *   repoRoot: string, repo: string, baseBranch: string, baseSha: string,
+ *   newBranch: string, newBundleSha: string, newUrl: string|null, log?: (line: string) => void,
+ * }} input
+ * @returns {{status: 'none'|'complete'|'partial'|'incomplete-discovery'|'failed',
+ *   superseded: Array<{number:number, url:string, branch:string}>,
+ *   kept: Array<{number:unknown, url:unknown, branch:string, reason:string, detail?:string}>, warnings: string[]}}
+ */
+export function supersedeOlderSyncPrs({
+  gh, run, ancestry, repoRoot, repo, baseBranch, baseSha, newBranch, newBundleSha, newUrl, log = () => {},
+}) {
+  const out = { status: 'none', superseded: [], kept: [], warnings: [] };
+  const listed = gh(['pr', 'list', '--state', 'open', '--base', baseBranch, '--limit', String(SUPERSEDE_LIST_LIMIT), '--json', SUPERSEDE_LIST_FIELDS]);
+  const parsed = ok(listed) ? parseOpenSyncPrs(listed.stdout, { excludeBranch: newBranch }) : null;
+  if (!parsed) {
+    out.status = 'failed';
+    out.warnings.push(`could not list open PRs to supersede (${ok(listed) ? 'unparseable gh output' : why(listed)}) — an older sync PR may still be open and will conflict on ${RECEIPT_PATH}`);
+    return out;
+  }
+  const successor = newUrl ?? `the ${newBranch} PR`;
+  const comment = `Superseded by ${successor}, the sync of a newer upstream bundle built from the current ${baseBranch}. `
+    + 'Closed automatically by `npm run sync:pr`: synced files are upstream-owned, and two open sync PRs conflict on '
+    + `${RECEIPT_PATH}. The branch is kept, so this PR can be reopened.`;
+  const keep = (pr, reason, detail) => {
+    out.kept.push({ number: pr.number, url: pr.url, branch: pr.branch, reason, ...(detail ? { detail } : {}) });
+    out.warnings.push(`kept older sync PR #${pr.number} (${pr.branch}) open: ${reason}${detail ? ` — ${detail}` : ''}`);
+  };
+
+  /** `gh pr view <ref>` → `{state, headRefOid, baseRefName, isCrossRepository}`, or null when unreadable. */
+  const readOpenPr = (ref) => {
+    const view = gh(['pr', 'view', ref, '--json', 'state,headRefOid,baseRefName,isCrossRepository']);
+    try { return ok(view) ? JSON.parse(view.stdout) : null; } catch { return null; }
+  };
+  let successorOpen = null;
+
+  for (const pr of parsed.invalid) keep(pr, SUPERSEDE_KEEP_REASON.INVALID_RECORD, 'gh returned a record that failed validation');
+  for (const pr of parsed.records) {
+    const foreign = pr.isCrossRepository || pr.baseRefName !== baseBranch;
+    const evidence = foreign ? null : collectSupersedeEvidence(run, { repoRoot, record: pr, baseSha, ancestry, newBundleSha });
+    const verdict = decideSupersession(pr, evidence, { baseBranch, repo });
+    if (!verdict.supersede) { keep(pr, verdict.reason, verdict.detail); continue; }
+
+    // The successor must still be open: closing in favour of a PR someone
+    // already closed would leave the consumer with no open sync PR at all.
+    if (successorOpen === null) successorOpen = readOpenPr(newUrl ?? newBranch)?.state === 'OPEN';
+    if (!successorOpen) {
+      keep(pr, SUPERSEDE_KEEP_REASON.SUCCESSOR_UNAVAILABLE, `${successor} is not open`);
+      continue;
+    }
+    // GitHub has no head-conditional close: re-read just before closing and
+    // re-apply the SAME decision to the fresh base/head, which narrows the
+    // evidence→close window to one round trip but cannot remove it.
+    const now = readOpenPr(String(pr.number));
+    const fresh = now && { ...pr, baseRefName: now.baseRefName, isCrossRepository: now.isCrossRepository, headRefOid: now.headRefOid };
+    if (now?.state !== 'OPEN' || !decideSupersession(fresh, evidence, { baseBranch, repo }).supersede) {
+      keep(pr, SUPERSEDE_KEEP_REASON.CHANGED_BEFORE_CLOSE,
+        now ? `now ${now.state} at ${now.headRefOid} on ${now.baseRefName}` : 'could not re-read it');
+      continue;
+    }
+    const closed = gh(['pr', 'close', String(pr.number), '--comment', comment]);
+    if (!ok(closed)) {
+      keep(pr, SUPERSEDE_KEEP_REASON.CLOSE_FAILED,
+        `${why(closed)} — finish by hand: gh pr close ${pr.number} --comment "Superseded by ${successor}"`);
+      continue;
+    }
+    out.superseded.push({ number: pr.number, url: pr.url, branch: pr.branch });
+    log(`  superseded older sync PR #${pr.number} (${pr.branch}) — closed, branch kept`);
+  }
+
+  if (parsed.full) {
+    out.status = 'incomplete-discovery';
+    out.warnings.push(`discovery incomplete: gh returned ${SUPERSEDE_LIST_LIMIT} open PRs (its limit) — an older sync PR beyond it was not examined`);
+  } else if (out.kept.length > 0) {
+    out.status = 'partial';
+  } else if (out.superseded.length > 0) {
+    out.status = 'complete';
+  }
+  return out;
+}
+
 /**
  * Execute one planned PR. Every process call goes through `run`; nothing here
  * touches git or gh directly. On ANY failure after the branch was created the
@@ -426,13 +719,16 @@ const why = (r) => (r.error?.message || `${r.stderr || ''}${r.stdout || ''}`.tri
  *   repoRoot: string, baseBranch: string, currentBranch: string, merge: boolean,
  *   run: Runner, log?: (line: string) => void,
  *   consumerName?: string, pushLogDir?: string|null, — where a refused push's full output is kept
+ *   ancestry?: (a: string, b: string) => 'yes'|'no'|'unknown', — bundle order in the upstream repo (header rule 4)
  * }} input
- * @returns {{ok: true, branch: string, url: string|null, merged: 'armed'|'not-armed'|'skipped', warnings: string[]}
+ * @returns {{ok: true, branch: string, url: string|null, merged: 'armed'|'not-armed'|'skipped',
+ *     supersede: ReturnType<typeof supersedeOlderSyncPrs>, warnings: string[]}
  *   | {ok: false, branch: string, step: string, error: string, warnings: string[],
  *      pushLog?: ReturnType<typeof writePushFailureLog>}}
  */
 export function runConsumerPr({
   plan, repoRoot, baseBranch, currentBranch, merge, run, log = () => {}, consumerName = path.basename(repoRoot), pushLogDir = null,
+  ancestry = createGitAncestry(MODULE_DIR),
 }) {
   const warnings = [];
   // `--literal-pathspecs` ONLY on the two commands that take our pathspecs.
@@ -508,8 +804,23 @@ export function runConsumerPr({
     if (!ok(create)) { switchBack(); return fail('gh pr create', create); }
     const url = (String(create.stdout).match(/https?:\/\/\S+/g) || []).pop() ?? null;
 
+    // Header rule 4: only now that the successor exists, and before its
+    // auto-merge is armed (the shortest window for an older one to land).
+    const supersede = supersedeOlderSyncPrs({
+      gh, run, ancestry, repoRoot, repo: plan.repo, baseBranch, baseSha: plan.startPoint,
+      newBranch: plan.branch, newBundleSha: plan.bundleSha, newUrl: url, log,
+    });
+    warnings.push(...supersede.warnings);
+
     let merged = 'skipped';
-    if (merge) {
+    // Arming auto-merge while another sync PR may still be open recreates the
+    // receipt conflict this step exists to remove — and when that PR is NEWER,
+    // it lands a stale sync over it. A person resolves the named PR(s) first.
+    const supersedeSettled = supersede.status === 'none' || supersede.status === 'complete';
+    if (merge && !supersedeSettled) {
+      merged = 'not-armed';
+      warnings.push(`auto-merge withheld: supersession is ${supersede.status}, so another sync PR may still be open and would conflict on ${RECEIPT_PATH} — resolve the PR(s) named above, then merge this one by hand`);
+    } else if (merge) {
       const mergeArgs = ['pr', 'merge', ...(url ? [url] : []), '--auto', '--squash', '--delete-branch'];
       const m = gh(mergeArgs);
       if (ok(m)) merged = 'armed';
@@ -519,7 +830,7 @@ export function runConsumerPr({
       }
     }
     switchBack();
-    return { ok: true, branch: plan.branch, url, merged, warnings };
+    return { ok: true, branch: plan.branch, url, merged, supersede, warnings };
   } finally {
     restoreGhAccount();
   }

@@ -19,8 +19,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import {
-  SKIP_REASON, gatherConsumerFacts, planConsumerPr, runConsumerPr, branchNameFor,
+  SKIP_REASON, SUPERSEDE_KEEP_REASON, gatherConsumerFacts, planConsumerPr, runConsumerPr, branchNameFor,
 } from '../scripts/lib/sync-pr.mjs';
+import { createGitAncestry } from '../scripts/lib/sync-rollback-guard.mjs';
+import { buildOwnedSidecar } from '../scripts/lib/sync-owned-sidecar.mjs';
 import { formatFailure } from '../scripts/sync-pr.mjs';
 import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
 import { gitFixtureEnv, makeGitRunner, mkdtemp, rmrfBestEffort } from './helpers/fixtures.mjs';
@@ -29,13 +31,20 @@ const SHA = 'f3991844aa30eb2d3e87bd42f3f31bb1db850083';
 const SKILL = '.claude/skills/plan/SKILL.md';
 const MANIFEST = { repo: 'Lbstrydom/claude-engineering-skills', commitSha: SHA };
 
-/** Real git through the fixture env; `gh` stubbed — the only thing that would leave the machine. */
-function makeRunner() {
+/**
+ * Real git through the fixture env; `gh` stubbed — the only thing that would
+ * leave the machine. `gh` may script a response per call; unscripted, a create
+ * answers a URL and a list answers no open PRs.
+ */
+function makeRunner(gh = () => undefined) {
   const ghCalls = [];
   const run = (cmd, args, { cwd, input } = {}) => {
     if (cmd === 'gh') {
       ghCalls.push(args);
-      return { status: 0, stdout: args[1] === 'create' ? 'https://github.com/o/r/pull/1\n' : '', stderr: '' };
+      const scripted = gh(args);
+      if (scripted) return { status: 0, stdout: '', stderr: '', ...scripted };
+      const stdout = { create: 'https://github.com/o/r/pull/1\n', list: '[]' }[args[1]] ?? '';
+      return { status: 0, stdout, stderr: '' };
     }
     const r = spawnSync(cmd, args, { cwd, input, encoding: 'utf-8', env: gitFixtureEnv(), windowsHide: true });
     return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error };
@@ -233,5 +242,166 @@ describe('sync-pr on real git — the consumer\'s pre-push hook refuses', () => 
       assert.match(printed, /✗.* tests\/unit\/budget\.test\.js > domainBudgets > tests line/);
       assert.equal(fx.git(['rev-parse', '--abbrev-ref', 'HEAD'], fx.consumer).trim(), 'trunk');
     } finally { rmrfBestEffort(fx.root); }
+  });
+});
+
+// ── Supersession on real git (upstream 2f933809). Two sync PRs open at once
+// for one consumer, both built on the same fresh origin: the second to merge
+// conflicts on the receipt. The newer sync PR closes the older one — only when
+// git evidence (one commit, sync-owned files only, a receipt attesting an
+// OLDER bundle) proves it. gh is scripted; git, ancestry and the evidence are
+// real.
+const REPO = 'Lbstrydom/claude-engineering-skills';
+const SIDECAR = 'scripts/.sync-owned.json';
+
+/** An upstream repo with three successive bundle commits, for real ancestry. */
+function makeUpstream(root) {
+  const dir = path.join(root, 'upstream');
+  const git = makeGitRunner(() => root);
+  git(['init', '-q', '-b', 'main', dir]);
+  for (const [k, v] of [['user.email', 'test@example.com'], ['user.name', 'Test'], ['commit.gpgsign', 'false']]) git(['config', k, v], dir);
+  const shas = [];
+  for (const name of ['old', 'new', 'newer']) {
+    git(['commit', '-q', '--allow-empty', '-m', `bundle ${name}`], dir);
+    shas.push(git(['rev-parse', 'HEAD'], dir).trim());
+  }
+  const [old, current, newer] = shas;
+  return { dir, old, current, newer };
+}
+
+/**
+ * Push an OPEN sync PR's branch to origin the way sync:pr builds one: one
+ * commit on origin's head carrying the synced files, the receipt and the
+ * sidecar. `extra` adds hand-made changes; `commits: 2` adds a second commit.
+ */
+function pushSyncBranch(fx, bundleSha, { receiptSha = bundleSha, extra = {}, commits = 1, remove = [], owned = [SKILL] } = {}) {
+  const branch = branchNameFor(bundleSha);
+  const { git, publisher } = fx;
+  git(['switch', '-q', '-c', branch, 'origin/trunk'], publisher);
+  write(publisher, SKILL, `plan from ${bundleSha.slice(0, 8)}\n`);
+  write(publisher, RECEIPT_PATH, `${JSON.stringify({
+    version: 2, olderSyncsDropped: 0,
+    recentSyncs: [{ syncedAt: '2026-10-11T12:00:00.000Z', source: { repo: REPO, commitSha: receiptSha } }],
+  })}\n`);
+  write(publisher, SIDECAR, `${JSON.stringify(buildOwnedSidecar(owned))}\n`);
+  for (const [rel, content] of Object.entries(extra)) write(publisher, rel, content);
+  for (const rel of remove) git(['rm', '-q', rel], publisher);
+  git(['add', '-A'], publisher);
+  git(['commit', '-q', '-m', `chore(sync): bundle sync from ${REPO} ${bundleSha.slice(0, 8)}`], publisher);
+  if (commits === 2) {
+    write(publisher, 'src/fix.js', 'hand fix\n');
+    git(['add', '-A'], publisher);
+    git(['commit', '-q', '-m', 'fix the consumer test the sync broke'], publisher);
+  }
+  git(['push', '-q', 'origin', branch], publisher);
+  const head = git(['rev-parse', 'HEAD'], publisher).trim();
+  git(['switch', '-q', 'trunk'], publisher);
+  return { branch, head };
+}
+
+/** gh scripted from the open PRs on the fake host. */
+const ghFor = (open) => (args) => {
+  if (args[1] === 'list') {
+    return { stdout: JSON.stringify(open.map((p) => ({
+      number: p.number, url: `https://github.com/o/r/pull/${p.number}`, headRefName: p.branch,
+      baseRefName: 'trunk', isCrossRepository: false, headRefOid: p.head,
+    }))) };
+  }
+  if (args[1] === 'view') {
+    // The new PR (by URL) is open too; every open PR still targets trunk.
+    const p = open.find((x) => String(x.number) === args[2]);
+    return { stdout: JSON.stringify({ state: 'OPEN', headRefOid: p?.head ?? 'f'.repeat(40), baseRefName: 'trunk', isCrossRepository: false }) };
+  }
+  if (args[1] === 'create') return { stdout: 'https://github.com/o/r/pull/9\n' };
+  return undefined;
+};
+
+/** The newer sync of `bundleSha` runs in the consumer and opens its PR. */
+function runNewSync(fx, bundleSha, open, ancestry) {
+  fx.syncWrites();
+  const { run, ghCalls } = makeRunner(ghFor(open));
+  const facts = gatherConsumerFacts(run, fx.consumer, { commitSha: bundleSha });
+  assert.equal(facts.ok, true, facts.error);
+  const plan = planConsumerPr({ consumerName: 'fixture', classified, manifest: { repo: REPO, commitSha: bundleSha }, ...facts });
+  assert.equal(plan.action, 'pr', plan.detail);
+  const result = runConsumerPr({ plan, repoRoot: fx.consumer, baseBranch: facts.baseBranch, currentBranch: facts.currentBranch, merge: false, run, ancestry });
+  assert.equal(result.ok, true, result.error);
+  return { result, ghCalls };
+}
+const closes = (ghCalls) => ghCalls.filter((a) => a[1] === 'close');
+
+describe('sync-pr on real git — a newer sync PR supersedes an older OPEN one', () => {
+  let fx, up;
+  beforeEach(() => { fx = makeFixture(); up = makeUpstream(fx.root); });
+  afterEach(() => rmrfBestEffort(fx.root));
+
+  it('closes the older sync PR with a comment naming its successor, and keeps its branch', () => {
+    const older = pushSyncBranch(fx, up.old);
+    const { result, ghCalls } = runNewSync(fx, up.current, [{ number: 4, ...older }], createGitAncestry(up.dir));
+    assert.equal(result.supersede.status, 'complete', JSON.stringify(result.supersede));
+    assert.deepEqual(result.supersede.superseded.map((p) => p.number), [4]);
+    const [close] = closes(ghCalls);
+    assert.equal(close[2], '4');
+    assert.match(close[close.indexOf('--comment') + 1], /Superseded by https:\/\/github\.com\/o\/r\/pull\/9/);
+    assert.ok(!close.includes('--delete-branch'));
+    assert.notEqual(fx.git(['ls-remote', '--heads', 'origin', older.branch], fx.consumer).trim(), '', 'the branch stays, so the PR can be reopened');
+  });
+
+  it('nothing is superseded when no other sync PR is open', () => {
+    const { result, ghCalls } = runNewSync(fx, up.current, [], createGitAncestry(up.dir));
+    assert.equal(result.supersede.status, 'none');
+    assert.deepEqual(closes(ghCalls), []);
+  });
+
+  it('a NEWER open sync PR is kept — this sync may be the stale one', () => {
+    const newer = pushSyncBranch(fx, up.newer);
+    const { result, ghCalls } = runNewSync(fx, up.current, [{ number: 5, ...newer }], createGitAncestry(up.dir));
+    assert.equal(result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.NOT_OLDER);
+    assert.deepEqual(closes(ghCalls), []);
+  });
+
+  it('a hand-made change outside the synced surface, or a second commit, is kept', () => {
+    const edited = pushSyncBranch(fx, up.old, { extra: { 'app.js': 'hand edit\n' } });
+    let out = runNewSync(fx, up.current, [{ number: 6, ...edited }], createGitAncestry(up.dir));
+    assert.equal(out.result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.HAND_EDITED);
+    assert.match(out.result.supersede.kept[0].detail, /app\.js/);
+    assert.deepEqual(closes(out.ghCalls), []);
+
+    const fy = makeFixture();
+    try {
+      const twice = pushSyncBranch(fy, up.old, { commits: 2 });
+      out = runNewSync(fy, up.current, [{ number: 7, ...twice }], createGitAncestry(up.dir));
+      assert.equal(out.result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.HAND_EDITED);
+      assert.deepEqual(closes(out.ghCalls), []);
+    } finally { rmrfBestEffort(fy.root); }
+  });
+
+  it('a file the older sync RETIRED is authorised by the merge-base sidecar; a change to it is not', () => {
+    // origin's own sidecar owns RETIRED; the older sync drops it from ownership.
+    const RETIRED = '.claude/skills/retired/SKILL.md';
+    fx.advanceOrigin(RETIRED, 'retired skill\n');
+    fx.advanceOrigin(SIDECAR, `${JSON.stringify(buildOwnedSidecar([SKILL, RETIRED]))}\n`);
+    fx.git(['pull', '-q', '--ff-only'], fx.consumer);
+    const deleted = pushSyncBranch(fx, up.old, { remove: [RETIRED] });
+    let out = runNewSync(fx, up.current, [{ number: 10, ...deleted }], createGitAncestry(up.dir));
+    assert.deepEqual(out.result.supersede.superseded.map((p) => p.number), [10], JSON.stringify(out.result.supersede));
+
+    const fy = makeFixture();
+    try {
+      fy.advanceOrigin(RETIRED, 'retired skill\n');
+      fy.advanceOrigin(SIDECAR, `${JSON.stringify(buildOwnedSidecar([SKILL, RETIRED]))}\n`);
+      fy.git(['pull', '-q', '--ff-only'], fy.consumer);
+      const changed = pushSyncBranch(fy, up.old, { extra: { [RETIRED]: 'hand edit to a retired file\n' } });
+      out = runNewSync(fy, up.current, [{ number: 11, ...changed }], createGitAncestry(up.dir));
+      assert.equal(out.result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.HAND_EDITED);
+      assert.deepEqual(closes(out.ghCalls), []);
+    } finally { rmrfBestEffort(fy.root); }
+  });
+
+  it('an old-named branch whose receipt attests another bundle is kept (provenance-mismatch)', () => {
+    const amended = pushSyncBranch(fx, up.old, { receiptSha: up.newer });
+    const { result, ghCalls } = runNewSync(fx, up.current, [{ number: 8, ...amended }], createGitAncestry(up.dir));
+    assert.equal(result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.PROVENANCE_MISMATCH);
+    assert.deepEqual(closes(ghCalls), []);
   });
 });
