@@ -155,6 +155,12 @@ export function statusPrune(ctx, facts, observedAt, { plan = planPrune, write = 
   return { record, line: pruneStatusLine(record, ctx.cmd), warning: w.ok ? null : `prune-count cache not written (${w.reason})` };
 }
 
+/**
+ * The prune record as `status --json` shows it: without `at`, which is this status's own `observedAt` under another
+ * name. A second clock in the payload would make two runs over the same repo differ by more than `observedAt`.
+ */
+const statusPruneView = ({ at: _at, ...rest }) => rest;
+
 /** `fleet status` — strictly read-only: no lock, no registry write, no lease renewal. */
 export function cmdStatus(ctx, flags = {}) {
   const fetched = flags['--fetch'] ? fetchBase(ctx) : null;
@@ -189,7 +195,7 @@ export function cmdStatus(ctx, flags = {}) {
   const todo = renderOpenTrains(facts.trains, ctx.cmd);
   if (todo) lines.push('', todo);
   if (warnings.length) lines.push('', ...warnings.map((w) => `warning: ${w}`));
-  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete }, unregistered: { ...unregistered, archiveTags }, prune: prune.record }, checks: hook.results, warnings, text: lines.join('\n') });
+  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete }, unregistered: { ...unregistered, archiveTags }, prune: statusPruneView(prune.record) }, checks: hook.results, warnings, text: lines.join('\n') });
 }
 
 /**
