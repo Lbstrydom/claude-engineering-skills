@@ -400,6 +400,25 @@ fixture bundle-deps.json):
 
 ## Audit trail
 
+- Consolidated Gemini gate over the union diff (886f7c88..3b0ee788): APPROVE, 0
+  blocking, 0 debt (reviewer noted changed-line coverage PARTIAL for 5 files).
+- Cluster B code audit: R1 H:9 M:5. H9/M3/M4 were one real defect (npm's
+  `optionalDependencies` overrides a same-name `dependencies` entry), fixed with
+  two regression tests that fail on the old predicate. M1 was load-bearing (the new
+  summary prints just before `process.exit`, so a piped run could truncate it):
+  the normal exit now uses `finishAndExit`, and the stdout-flush baseline went from
+  212 to 211. H1–H8 and M2 cite pre-existing `scripts/sync-to-repos.mjs` code
+  that the new call neither invokes nor depends on. They are dismissed as out of
+  scope and are unverified claims for a separate session. R2: H:0 M:0 L:0.
+- Cluster A code audit: R1 M:3. M2 (receipt read outside the hash's error
+  boundary) and M3 (weak "every rule" assertion) were fixed, and a mutation turns
+  the tightened tests red. M1 was Cluster B's not-yet-written test, deferred to
+  Cluster B and settled there. R2: in-cluster H:0 M:0.
+- Red → green: gate 2B rejected the union-merged receipt before the fix (2 of 3
+  merge tests red) and accepts it after (15/15). The e2e sync printed nothing
+  about undeclared packages before the fix (red) and names every required
+  package after it (green).
+
 - Gemini plan gate R2: APPROVE (blocking 0, debt 0). Plan audit closed after 3 GPT + 2 Gemini rounds.
 - Gemini plan gate R1: CONCERNS, 1 blocking (G1: `HEAD:package.json` resolves from the repo top level, wrong for a sub-package consumer) — fixed with `HEAD:./package.json` + a nested-package fixture test.
 - audit-plan R3 (GPT): READY_TO_IMPLEMENT, H:0 M:0 L:0.
