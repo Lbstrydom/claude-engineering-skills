@@ -138,7 +138,7 @@ describe('unmeasurable is said, never a silent zero', () => {
   for (const [label, setup, reason] of [
     ['no package.json', () => {}, /no package\.json/],
     ['package.json does not parse', () => fs.writeFileSync(path.join(consumer, 'package.json'), '{ nope'), /does not parse/],
-    ['bundle-deps.json missing', () => { pkgJson({ name: 'c' }); fs.rmSync(path.join(bundle, 'lib', 'bundle-deps.json')); }, /bundle-deps\.json/],
+    ['bundle-deps.json missing', () => { pkgJson({ name: 'c' }); fs.rmSync(path.join(bundle, 'lib', 'bundle-deps.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }, /bundle-deps\.json/],
   ]) {
     it(label, () => {
       setup();
