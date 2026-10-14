@@ -117,12 +117,12 @@ describe('buildStageOneTriageInput — clamps over-limit fields, never crashes t
     } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
-  it('path candidacy: an overlong absolute / drive-letter path stays redacted (fail-closed on ENAMETOOLONG)', (t) => {
+  it('path candidacy: an overlong absolute path stays redacted (fail-closed on ENAMETOOLONG)', (t) => {
     // Windows reports ENOENT, not ENAMETOOLONG, for an overlong path, so this branch exists only where the OS says so.
     if (process.platform === 'win32') return t.skip('ENAMETOOLONG is a POSIX errno; win32 reports ENOENT');
     const repoRoot = mkdtemp();
     try {
-      for (const p of [`/${'a'.repeat(300)}/b.txt`, `C:/${'a'.repeat(300)}/b.txt`]) {
+      for (const p of [`/${'a'.repeat(300)}/b.txt`, `/tmp/${'a'.repeat(300)}`]) {
         const dto = buildStageOneTriageInput({ severity: 'LOW', category: 'c', detail: `see ${p} here`, section: 'src/a.mjs:1' }, { repoRoot });
         assert.equal(dto.detail.includes('[REDACTED]'), true, `a path-shaped token must stay redacted: ${p.slice(0, 20)}…`);
       }

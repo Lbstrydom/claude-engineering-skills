@@ -69,8 +69,14 @@ export const HeavyListSchema = z.strictObject({
   version: z.literal(1),
   maxAgeDays: z.number().int().positive(),
   heavyThresholdMs: z.number().int().positive(),
+  // This repository's own default for a push that does not ask (docs/plans/ci-full-suite-actions.md D2). Absent means the
+  // code default (`full`), so a tree without it behaves exactly as before. `branch` is only legal beside `ciVerdict`: a
+  // light local push is the default only where a CI workflow supplies the full verdict.
+  defaultTier: z.enum(['full', 'branch']).optional(),
+  ciVerdict: z.strictObject({ workflow: z.string().regex(/^\.github\/workflows\/[\w.-]+\.ya?ml$/, 'a workflow file under .github/workflows/') }).optional(),
   heavy: z.array(HeavyEntrySchema).min(1),
-}).refine((l) => new Set(l.heavy.map((h) => h.file)).size === l.heavy.length, { message: 'a file is listed twice' });
+}).refine((l) => new Set(l.heavy.map((h) => h.file)).size === l.heavy.length, { message: 'a file is listed twice' })
+  .refine((l) => l.defaultTier !== 'branch' || l.ciVerdict !== undefined, { message: 'defaultTier "branch" requires ciVerdict.workflow: a light default needs the CI that supplies the full verdict' });
 
 /** @returns {{ok: true, list: z.infer<typeof HeavyListSchema>}|{ok: false, reason: string}} */
 export function parseHeavyList(text) {
@@ -219,11 +225,18 @@ function contentEscapes({ base, changed, list, tree, asOf }) {
 export function selectTier({ tree, list, changed, head, base, baseSource = 'merge-base', asOf, requested = null, pushesDefault = false, kind = 'push', identity = {} }) {
   const ch = [...new Set(changed.map(normalise))].sort();
   const raw = requested === null || requested === undefined || requested === '' ? null : String(requested);
-  const effective = raw ?? DEFAULT_BRANCH_TIER;
+  // The request, else this repo's committed default, else the code default. Only an EMPTY request reads the list.
+  const listDefault = raw === null ? (list.defaultTier ?? null) : null;
+  const effective = raw ?? listDefault ?? DEFAULT_BRANCH_TIER;
+  const defaultSource = raw !== null ? 'request' : (listDefault !== null ? 'list' : 'code');
   const escapes = [];
   if (!TIERS.includes(effective)) escapes.push({ id: 'unknown-tier-request', detail: `AUDIT_PREPUSH_TIER=${JSON.stringify(raw)} is not one of ${TIERS.join(', ')}` });
   if (pushesDefault) escapes.push({ id: 'pushes-default', detail: 'this push updates the default branch: the bytes that land get the full suite' });
   if (raw === 'full') escapes.push({ id: 'forced-full', detail: 'AUDIT_PREPUSH_TIER=full' });
+  // A light DEFAULT is legal only where the CI that supplies the full verdict exists in this very tree.
+  if (defaultSource === 'list' && listDefault === 'branch' && !tree.files.has(list.ciVerdict?.workflow ?? '')) {
+    escapes.push({ id: 'ci-verdict-missing', detail: `the default tier is branch but ${list.ciVerdict?.workflow ?? 'its ciVerdict workflow'} is not in this tree, so nothing supplies the full verdict` });
+  }
   const content = contentEscapes({ base, changed: ch, list, tree, asOf });
   const suffixIndex = new Map();
   const heavy = list.heavy.map((entry) => {
@@ -240,7 +253,7 @@ export function selectTier({ tree, list, changed, head, base, baseSource = 'merg
   return {
     version: TEST_TIER_VERSION, kind,
     tier: branch ? 'branch' : 'full',
-    requested: effective, requestedRaw: raw,
+    requested: effective, requestedRaw: raw, defaultSource,
     head, base: base ?? null, baseSource, asOf,
     selector: identity.selector ?? null, manifest: identity.manifest ?? null,
     escapes: allEscapes, heavy, wouldSkip, skipped: branch ? wouldSkip : [],
@@ -307,9 +320,12 @@ export function validateEnvelopeAgainstList(envelope, list) {
  * runs the full suite.
  * @returns {{ok: true}|{ok: false, reason: string}}
  */
-export function envelopeMatchesRequest(envelope, { tier, pushesDefault }) {
+export function envelopeMatchesRequest(envelope, { tier, pushesDefault, list = null }) {
   if (envelope.tier !== 'branch') return { ok: true };
-  if (tier !== 'branch') return { ok: false, reason: `a branch envelope for a request of ${JSON.stringify(tier || 'the default')}` };
+  // An EMPTY request is legal for a branch envelope only when this repo's committed list makes branch its default and
+  // the envelope says that is where the tier came from. Any other mismatch runs the full suite.
+  const listDefaultsToBranch = !tier && list?.defaultTier === 'branch' && envelope.defaultSource === 'list' && envelope.requestedRaw === null;
+  if (tier !== 'branch' && !listDefaultsToBranch) return { ok: false, reason: `a branch envelope for a request of ${JSON.stringify(tier || 'the default')}` };
   if (pushesDefault) return { ok: false, reason: 'a branch envelope for a push that updates the default branch' };
   if (envelope.escapes.length) return { ok: false, reason: `a branch envelope that lists escape(s): ${envelope.escapes.map((e) => e.id).join(', ')}` };
   return { ok: true };

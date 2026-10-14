@@ -161,7 +161,7 @@ function resolveRunnerChild(root, name, opts = {}) {
 
   // A Windows-shaped root (a drive letter or a \wsl$ UNC path) is joined with Windows separators even when
   // this process runs on POSIX, where the host `path` would splice it with `/` and miss the real entry.
-  const p = /^(?:\\\\|[A-Za-z]:[\\/])/.test(canonicalRoot) ? path.win32 : path;
+  const p = /^(?:[\\/]{2}[^\\/]|[A-Za-z]:[\\/])/.test(canonicalRoot) ? path.win32 : path;
   const childPath = p.join(canonicalRoot, name);
 
   // Audit round 3, H1: the containment check below only guards against the

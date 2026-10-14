@@ -13,8 +13,13 @@
  *       The PUSH envelope `prepush-check.mjs` hands `run-tests.mjs --tier-skip`. Runs the checkout's own selector.
  *   refresh-heavy --timing <file>
  *       Report only: which listed timings drifted, which unlisted files are heavy. Writes nothing.
+ *   ci-verdict (--pr <n> | --head <rev>) [--json]
+ *       The MERGE verdict for a repo that runs its full suite in CI (docs/plans/ci-full-suite-actions.md): prints the
+ *       one-line `test-tier/v1 full <sha> ...` only when the trusted full-suite workflow succeeded on exactly this head,
+ *       for this PR, into the default branch. Pending, failed and every kind of absence print no such line.
  *
- * Exit codes: 0 ok / measured, 1 error (including a rejected --base), 2 argv, 3 unmeasured.
+ * Exit codes: 0 ok / measured / a full CI verdict, 1 error (including a rejected --base), 2 argv, 3 unmeasured /
+ * ci-verdict pending or unverified, 4 ci-verdict failed.
  *
  * @module scripts/test-tier
  */
@@ -29,6 +34,7 @@ import {
 import { blobSha, changedFiles, committerTime, readFileAt, readTreeAt, resolveSelectionBase, selectorIdentity } from './lib/test-tier-git.mjs';
 import { spawnSync } from 'node:child_process';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
+import { CI_VERDICT_EXIT, ciVerdict } from './lib/ci-verdict.mjs';
 
 const EXIT = { ok: 0, error: 1, argv: 2, unmeasured: 3 };
 /** The checkout this CLI's own code lives in: the selector's identity is judged against THESE files. */
@@ -144,14 +150,37 @@ function cmdRefresh() {
   return EXIT.ok;
 }
 
+function cmdCiVerdict() {
+  const prArg = argOption('pr');
+  const head = argOption('head');
+  if ((prArg === null || prArg === undefined) === (head === null || head === undefined)) throw new ArgvError('test-tier ci-verdict: exactly one of --pr <n> or --head <rev> is required');
+  let pr = null;
+  if (prArg !== null && prArg !== undefined) {
+    if (!/^[1-9]d{0,8}$/.test(prArg)) throw new ArgvError(`test-tier ci-verdict: --pr must be a PR number, got ${JSON.stringify(prArg)}`);
+    pr = Number(prArg);
+  } else if (!/^[0-9a-zA-Z][w./-]*$/.test(head) || head.startsWith('-')) throw new ArgvError(`test-tier ci-verdict: --head ${JSON.stringify(head)} is not a revision`);
+  const run = (cmd, args) => spawnSync(cmd, args, { cwd: repo(), encoding: 'utf8', env: cmd === 'git' ? sanitizeGitEnv(repo()) : process.env, maxBuffer: 64 * 1024 * 1024 });
+  const r = ciVerdict({ run, pr, head });
+  if (hasFlag('json')) emitJson(r);
+  else if (r.verdict === 'full') {
+    process.stdout.write(`${r.summary}
+`);
+    if (r.staleBase) process.stderr.write(`ci-verdict note: tested against ${r.staleBase.tested.slice(0, 8)}, ${r.defaultBranch} is now ${r.staleBase.current.slice(0, 8)}
+`);
+  } else process.stdout.write(`${r.version} ${r.verdict}${r.head ? ` ${r.head}` : ''}: ${r.reason}${r.url ? ` (${r.url})` : ''}
+`);
+  return r.verdict === 'full' ? CI_VERDICT_EXIT.full : r.verdict === 'failed' ? CI_VERDICT_EXIT.failed : CI_VERDICT_EXIT.notYet;
+}
+
 async function main() {
-  assertKnownFlags(process.argv, ['--head', '--base', '--as-of', '--json', '--tier', '--pushes-default', '--out', '--timing', '--selfcheck-relocation'], { cli: 'test-tier' });
+  assertKnownFlags(process.argv, ['--head', '--base', '--as-of', '--json', '--tier', '--pushes-default', '--out', '--timing', '--pr', '--selfcheck-relocation'], { cli: 'test-tier' });
   if (hasFlag('selfcheck-relocation')) { console.log('OK'); return EXIT.ok; }
   const sub = process.argv[2];
   if (sub === 'select') return cmdSelect();
   if (sub === 'plan') return cmdPlan();
   if (sub === 'refresh-heavy') return cmdRefresh();
-  throw new ArgvError('usage: test-tier select --head <rev> [--base <rev>] [--json] | plan --head <rev> --out <file> [--tier full|branch] [--pushes-default] | refresh-heavy --timing <file>');
+  if (sub === 'ci-verdict') return cmdCiVerdict();
+  throw new ArgvError('usage: test-tier select --head <rev> [--base <rev>] [--json] | plan --head <rev> --out <file> [--tier full|branch] [--pushes-default] | refresh-heavy --timing <file> | ci-verdict (--pr <n> | --head <rev>) [--json]');
 }
 
 if (isInvokedAsScript(import.meta.url)) {

@@ -1,0 +1,278 @@
+/**
+ * @fileoverview The merge-verdict reader (scripts/lib/ci-verdict.mjs, docs/plans/ci-full-suite-actions.md D6-D8, Q6).
+ *
+ * The invariant under test is one sentence: ONLY a completed success of the trusted workflow, on exactly this head, for
+ * this PR, into the default branch, is a verdict; absence of any kind is `unverified`, never green. Every row of the
+ * classifier's map is exercised, and the fixture is a run record in the shape the Actions REST API returns (the fields
+ * `path`, `event`, `head_sha`, `head_branch`, `run_attempt`, `status`, `conclusion`, `pull_requests[].base`, `html_url`
+ * are the API's own names).
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { classifyCiVerdict, ciVerdict, gatherCiEvidence } from '../scripts/lib/ci-verdict.mjs';
+import { parseSummary, parseHeavyList, selectTier } from '../scripts/lib/test-tier.mjs';
+import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const HEAD = 'a'.repeat(40);
+const DEFAULT_SHA = 'b'.repeat(40);
+const OLD_BASE = 'c'.repeat(40);
+const WF = '.github/workflows/full-suite.yml';
+const BLOB = 'd'.repeat(40);
+
+const run = (over = {}) => ({
+  id: 4242, path: WF, event: 'pull_request', head_sha: HEAD, head_branch: 'feature', run_attempt: 1,
+  status: 'completed', conclusion: 'success', created_at: '2026-10-14T10:00:00Z', html_url: 'https://github.com/o/r/actions/runs/4242',
+  pull_requests: [{ number: 7, base: { ref: 'main', sha: DEFAULT_SHA } }],
+  ...over,
+});
+const evidence = (over = {}) => ({
+  head: HEAD, pr: 7, defaultBranch: 'main', defaultSha: DEFAULT_SHA, workflowPath: WF,
+  workflowBlobHead: BLOB, workflowBlobDefault: BLOB, runs: [run()], ...over,
+});
+
+describe('classifyCiVerdict — only a completed success on ACCEPTED evidence is a verdict', () => {
+  it('a success for this head, this PR, into the default branch is `full`, and the summary parses unchanged', () => {
+    const r = classifyCiVerdict(evidence());
+    assert.equal(r.verdict, 'full');
+    const p = parseSummary(r.summary, HEAD);
+    assert.equal(p.ok, true, p.reason);
+    assert.equal(p.tier, 'full');
+    assert.equal(p.skipped, 0);
+    assert.equal(p.reason, 'ci:4242');
+    assert.equal(p.base, DEFAULT_SHA, 'the tested base is recorded');
+    assert.equal(r.staleBase, null);
+  });
+
+  it('a tested base behind the current default still verifies, and the staleness is REPORTED (accepted risk, never hidden)', () => {
+    const r = classifyCiVerdict(evidence({ runs: [run({ pull_requests: [{ number: 7, base: { ref: 'main', sha: OLD_BASE } }] })] }));
+    assert.equal(r.verdict, 'full');
+    assert.deepEqual(r.staleBase, { tested: OLD_BASE, current: DEFAULT_SHA });
+  });
+
+  for (const [what, over, verdict] of [
+    ['queued', { status: 'queued', conclusion: null }, 'pending'],
+    ['in_progress', { status: 'in_progress', conclusion: null }, 'pending'],
+    ['waiting', { status: 'waiting', conclusion: null }, 'pending'],
+    ['requested', { status: 'requested', conclusion: null }, 'pending'],
+    ['failure', { conclusion: 'failure' }, 'failed'],
+    ['timed_out', { conclusion: 'timed_out' }, 'failed'],
+    ['startup_failure', { conclusion: 'startup_failure' }, 'failed'],
+    ['cancelled', { conclusion: 'cancelled' }, 'unverified'],
+    ['skipped', { conclusion: 'skipped' }, 'unverified'],
+    ['neutral', { conclusion: 'neutral' }, 'unverified'],
+    ['stale', { conclusion: 'stale' }, 'unverified'],
+    ['action_required', { conclusion: 'action_required' }, 'unverified'],
+    ['completed with a null conclusion', { conclusion: null }, 'unverified'],
+    ['an unrecognised status', { status: 'teleporting', conclusion: null }, 'unverified'],
+  ]) {
+    it(`${what} -> ${verdict}, and prints no test-tier line`, () => {
+      const r = classifyCiVerdict(evidence({ runs: [run(over)] }));
+      assert.equal(r.verdict, verdict);
+      assert.equal(r.summary, undefined, 'only a success may carry the full-verdict line');
+    });
+  }
+
+  it('the LATEST accepted run decides: an old success does not outvote a newer failure, and a re-run that failed is `failed`', () => {
+    const older = run({ id: 1, conclusion: 'success', created_at: '2026-10-14T09:00:00Z' });
+    const newer = run({ id: 2, conclusion: 'failure', created_at: '2026-10-14T10:00:00Z' });
+    assert.equal(classifyCiVerdict(evidence({ runs: [older, newer] })).verdict, 'failed');
+    assert.equal(classifyCiVerdict(evidence({ runs: [newer, older] })).verdict, 'failed', 'order in the response must not matter');
+    const rerunFailed = run({ id: 3, run_attempt: 2, conclusion: 'failure' });
+    assert.equal(classifyCiVerdict(evidence({ runs: [rerunFailed] })).verdict, 'failed');
+  });
+
+  describe('evidence binding (R1 H1): a green run that is not THIS question\'s evidence is `unverified`', () => {
+    const cases = [
+      ['no runs at all', { runs: [] }],
+      ['runs is not an array (malformed response)', { runs: null }],
+      ['a run for a different head sha', { runs: [run({ head_sha: 'e'.repeat(40) })] }],
+      ['a run of a different workflow path', { runs: [run({ path: '.github/workflows/other.yml' })] }],
+      ['the same head, but a run from ANOTHER PR', { runs: [run({ pull_requests: [{ number: 99, base: { ref: 'main', sha: DEFAULT_SHA } }] })] }],
+      ['a PR run into a NON-default base', { runs: [run({ pull_requests: [{ number: 7, base: { ref: 'release', sha: DEFAULT_SHA } }] })] }],
+      ['a run with no PR association (e.g. a fork)', { runs: [run({ pull_requests: [] })] }],
+      ['a push event when a PR was asked about', { runs: [run({ event: 'push', head_branch: 'main' })] }],
+      ['a workflow_dispatch run', { runs: [run({ event: 'workflow_dispatch' })] }],
+    ];
+    for (const [what, over] of cases) {
+      it(what, () => {
+        const r = classifyCiVerdict(evidence(over));
+        assert.equal(r.verdict, 'unverified', r.reason);
+        assert.equal(r.summary, undefined);
+        assert.ok(r.reason.length > 10, 'the reason is named');
+      });
+    }
+    it('a path with an @ref suffix still matches its workflow', () => {
+      assert.equal(classifyCiVerdict(evidence({ runs: [run({ path: `${WF}@refs/pull/7/merge` })] })).verdict, 'full');
+    });
+  });
+
+  describe('--head mode (a landed or pinned sha, no PR)', () => {
+    it('a push to the default branch counts', () => {
+      assert.equal(classifyCiVerdict(evidence({ pr: null, runs: [run({ event: 'push', head_branch: 'main', pull_requests: [] })] })).verdict, 'full');
+    });
+    it('a push to ANOTHER branch does not', () => {
+      assert.equal(classifyCiVerdict(evidence({ pr: null, runs: [run({ event: 'push', head_branch: 'feature', pull_requests: [] })] })).verdict, 'unverified');
+    });
+    it('a PR run into the default branch counts', () => {
+      assert.equal(classifyCiVerdict(evidence({ pr: null })).verdict, 'full');
+    });
+  });
+
+  describe('a PR cannot grade itself (D8) and the trusted copy must exist', () => {
+    it('the workflow differs at the head', () => {
+      const r = classifyCiVerdict(evidence({ workflowBlobHead: 'f'.repeat(40) }));
+      assert.equal(r.verdict, 'unverified');
+      assert.match(r.reason, /changes .*full-suite\.yml/);
+    });
+    it('the workflow is absent at the head', () => {
+      assert.equal(classifyCiVerdict(evidence({ workflowBlobHead: null })).verdict, 'unverified');
+    });
+    it('the workflow does not exist on the default branch (this very plan\'s PR): there is no trusted copy', () => {
+      assert.equal(classifyCiVerdict(evidence({ workflowBlobDefault: null, workflowBlobHead: BLOB })).verdict, 'unverified');
+    });
+    it('no ciVerdict is declared on the default branch', () => {
+      assert.equal(classifyCiVerdict(evidence({ workflowPath: null })).verdict, 'unverified');
+    });
+  });
+
+  it('a malformed head or default is unverified, not a throw', () => {
+    assert.equal(classifyCiVerdict(evidence({ head: 'abc' })).verdict, 'unverified');
+    assert.equal(classifyCiVerdict(evidence({ defaultSha: null })).verdict, 'unverified');
+    assert.equal(classifyCiVerdict(undefined).verdict, 'unverified');
+  });
+});
+
+describe('gatherCiEvidence / ciVerdict — every failed step is `unverified` with its reason, never a throw, never a pass', () => {
+  const LIST = JSON.stringify({
+    version: 1, maxAgeDays: 30, heavyThresholdMs: 60000, defaultTier: 'branch', ciVerdict: { workflow: WF },
+    heavy: [{ file: 'tests/fleet-a.test.mjs', why: 'fleet family: spawns the CLI', measuredMs: 61000, measuredAt: '2026-10-13', reach: ['scripts/fleet.mjs'] }],
+  });
+  const ok = (stdout) => ({ status: 0, stdout, stderr: '' });
+  /** A scripted `gh`/`git`: matched by the leading args; anything unmatched is a loud failure so a missing case cannot read as success. */
+  const fake = (overrides = {}) => (cmd, args) => {
+    const key = `${cmd} ${args.join(' ')}`;
+    for (const [pat, res] of Object.entries({
+      'gh repo view': ok(JSON.stringify({ nameWithOwner: 'o/r', defaultBranchRef: { name: 'main' } })),
+      'git fetch': ok(''),
+      'git rev-parse FETCH_HEAD': ok(`${DEFAULT_SHA}\n`),
+      'git show': ok(LIST),
+      'gh pr view': ok(JSON.stringify({ number: 7, headRefOid: HEAD, baseRefName: 'main', state: 'OPEN' })),
+      'gh api repos/o/r/contents': ok(`${BLOB}\n`),
+      'gh api repos/o/r/actions/runs': ok(JSON.stringify({ workflow_runs: [run()] })),
+      ...overrides,
+    })) if (key.startsWith(pat)) return res;
+    return { status: 127, stdout: '', stderr: `unscripted: ${key}` };
+  };
+
+  it('the happy path reaches `full` through the real acquisition order', () => {
+    const calls = [];
+    const r = ciVerdict({ run: (c, a) => { calls.push(`${c} ${a.slice(0, 2).join(' ')}`); return fake()(c, a); }, pr: 7 });
+    assert.equal(r.verdict, 'full', r.reason);
+    assert.ok(calls.findIndex((c) => c.startsWith('git fetch')) < calls.findIndex((c) => c.startsWith('git show')), 'a fresh fetch happens BEFORE the trusted list is read');
+  });
+
+  for (const [what, over] of [
+    ['gh is missing or fails (repo view)', { 'gh repo view': { status: null, error: new Error('spawn gh ENOENT') } }],
+    ['gh is not authenticated', { 'gh repo view': { status: 4, stdout: '', stderr: 'gh auth login' } }],
+    ['gh returns non-JSON', { 'gh repo view': ok('not json') }],
+    ['git fetch of the default fails', { 'git fetch': { status: 128, stdout: '', stderr: 'could not resolve host' } }],
+    ['FETCH_HEAD does not resolve', { 'git rev-parse FETCH_HEAD': ok('garbage') }],
+    ['.test-tiers.json is unreadable on the default', { 'git show': { status: 128, stdout: '', stderr: 'path missing' } }],
+    ['.test-tiers.json on the default is invalid', { 'git show': ok('{"version":2}') }],
+    ['the PR cannot be read', { 'gh pr view': { status: 1, stdout: '', stderr: 'not found' } }],
+    ['the PR targets another base', { 'gh pr view': ok(JSON.stringify({ number: 7, headRefOid: HEAD, baseRefName: 'release', state: 'OPEN' })) }],
+    ['the Actions runs cannot be read', { 'gh api repos/o/r/actions/runs': { status: 1, stdout: '', stderr: 'HTTP 502' } }],
+    ['the Actions response is malformed JSON', { 'gh api repos/o/r/actions/runs': ok('<html>') }],
+    ['the Actions response has no workflow_runs array', { 'gh api repos/o/r/actions/runs': ok('{}') }],
+    ['the workflow blob cannot be read', { 'gh api repos/o/r/contents': { status: 1, stdout: '', stderr: 'HTTP 404' } }],
+  ]) {
+    it(`${what} -> unverified`, () => {
+      const r = ciVerdict({ run: fake(over), pr: 7 });
+      assert.equal(r.verdict, 'unverified', `${what}: ${JSON.stringify(r)}`);
+      assert.equal(r.summary, undefined);
+      assert.ok(r.reason && r.reason.length > 10);
+    });
+  }
+
+  it('a runner that THROWS is unverified, not a crash', () => {
+    const r = ciVerdict({ run: () => { throw new Error('boom'); }, pr: 7 });
+    assert.equal(r.verdict, 'unverified');
+  });
+
+  it('a ciVerdict-less list on the default branch is unverified (the repo declares no CI verdict)', () => {
+    const bare = JSON.stringify({ version: 1, maxAgeDays: 30, heavyThresholdMs: 60000, heavy: JSON.parse(LIST).heavy });
+    const r = ciVerdict({ run: fake({ 'git show': ok(bare) }), pr: 7 });
+    assert.equal(r.verdict, 'unverified');
+    assert.match(r.reason, /no ciVerdict workflow is declared/);
+  });
+
+  it('--head mode resolves the sha locally and judges push evidence', () => {
+    const r = gatherCiEvidence({ run: fake({ 'git rev-parse --verify': ok(`${HEAD}\n`) }), pr: null, head: 'HEAD' });
+    assert.equal(r.ok, true);
+    assert.equal(r.evidence.head, HEAD);
+  });
+});
+
+describe('the CLI — usage errors and absence, end to end', () => {
+  const cli = (args, env = {}) => spawnSync(process.execPath, ['scripts/test-tier.mjs', 'ci-verdict', ...args], { cwd: REPO, encoding: 'utf8', env: { ...process.env, ...env } });
+
+  it('needs exactly one of --pr / --head (exit 2)', () => {
+    assert.equal(cli([]).status, 2);
+    assert.equal(cli(['--pr', '7', '--head', 'HEAD']).status, 2);
+  });
+  it('rejects a non-numeric PR and a flag-shaped revision (exit 2)', () => {
+    assert.equal(cli(['--pr', 'seven']).status, 2);
+    assert.equal(cli(['--head', '--upload-pack=x']).status, 2);
+  });
+  it('with `gh` unreachable it is UNVERIFIED (exit 3) and prints no test-tier line — absence is never green', () => {
+    // A PATH holding only node's own directory has no `gh`, so the first acquisition step fails.
+    const nodeDir = path.dirname(process.execPath);
+    const hasGh = ['gh', 'gh.exe', 'gh.cmd'].some((n) => fs.existsSync(path.join(nodeDir, n)));
+    if (hasGh) return; // node and gh share a directory on this machine: the instrument cannot hide gh here
+    const r = cli(['--pr', '7'], { PATH: nodeDir, Path: nodeDir });
+    assert.equal(r.status, 3, `${r.stdout}${r.stderr}`);
+    assert.doesNotMatch(r.stdout, /^test-tier\/v1 /m);
+    assert.match(r.stdout, /unverified/);
+  });
+});
+
+describe('the CES default is committed data that no consumer can receive', () => {
+  it('this repo\'s .test-tiers.json declares the branch default AND the workflow that supplies the verdict, and the workflow exists', () => {
+    const list = parseHeavyList(fs.readFileSync(path.join(REPO, '.test-tiers.json'), 'utf8'));
+    assert.equal(list.ok, true, list.reason);
+    assert.equal(list.list.defaultTier, 'branch');
+    assert.equal(list.list.ciVerdict.workflow, WF);
+    assert.ok(fs.existsSync(path.join(REPO, WF)), 'the declared verdict workflow must exist in this tree');
+  });
+
+  it('the schema refuses a branch default without a ciVerdict workflow', () => {
+    const base = JSON.parse(fs.readFileSync(path.join(REPO, '.test-tiers.json'), 'utf8'));
+    delete base.ciVerdict;
+    const r = parseHeavyList(JSON.stringify(base));
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /requires ciVerdict/);
+  });
+
+  it('the consumer sync closure carries none of the tier machinery (positive control: it does carry fleet)', async () => {
+    const files = [...((await getSyncClosure()).files)].map(String);
+    assert.ok(files.some((f) => f.endsWith('fleet.mjs')), 'positive control: the closure must contain a synced CLI, or this test reads nothing');
+    for (const needle of ['.test-tiers.json', 'test-tier.mjs', 'ci-verdict.mjs', 'prepush-tier.mjs', 'prepush-check.mjs', '.githooks']) {
+      assert.deepEqual(files.filter((f) => f.includes(needle)), [], `${needle} must not reach a consumer: the CES-only default would follow it`);
+    }
+  });
+
+  it('a tree WITHOUT the field behaves exactly as before: the code default stays full', () => {
+    const base = JSON.parse(fs.readFileSync(path.join(REPO, '.test-tiers.json'), 'utf8'));
+    delete base.defaultTier; delete base.ciVerdict;
+    const list = parseHeavyList(JSON.stringify(base)).list;
+    const tree = { files: new Set(base.heavy.map((h) => h.file)), read: () => '' };
+    const e = selectTier({ tree, list, changed: ['docs/x.md'], head: HEAD, base: OLD_BASE, asOf: '2026-10-14T00:00:00Z', requested: null });
+    assert.equal(e.tier, 'full');
+    assert.equal(e.defaultSource, 'code');
+  });
+});
