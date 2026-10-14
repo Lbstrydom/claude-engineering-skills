@@ -201,3 +201,8 @@ graph LR
   - R2 H:1, accepted and fixed (the `--update-baseline` bootstrap case);
   - R3 READY_TO_IMPLEMENT H:0 M:0 L:0. Stopped: converged, acceptance 100% every round.
 - Gemini final gate, round 1/2: **APPROVE**, gate `approve` (0 blocking, 0 debt).
+- `/audit-code` 2026-10-14, GPT auditor, per cluster (`--files` pinned via `cycle-cluster-scope.mjs`):
+  - Cluster A R1 SIGNIFICANT_ISSUES H:1 M:5 L:1: 4 accepted and fixed (exact-case generated-copy exclusion, fail closed on a vanished directory, stricter symlink-skip, lower population guard), M1 deferred-declared to cluster B, M2 (smoke handler before flag validation is the repo contract) and M5 (adjacency enumeration bound) dismissed; R2 PASS H:0 M:0 L:0.
+  - Cluster B R1 PASS H:0 M:1 L:0: M1 dismissed (pre-existing handover text moved verbatim; filed as a proposal).
+- Consolidated Gemini final gate over the union diff, round 1/2: **APPROVE**, gate `approve` (0 blocking, 0 debt).
+- Delivered deviation: fleet `SKILL.md` went 14,977 → 13,635 chars, not to ≤11.5K. The remaining text is the gated worktree-preflight block, the usage grammar and Claude's own safety rules, which belong in the body. It stays baselined at its new, lower size.
