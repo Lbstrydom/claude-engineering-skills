@@ -104,3 +104,19 @@ describe('model pricing — STATIC_POOL coverage (2026-09-23)', () => {
     }
   });
 });
+
+describe('model pricing: gemini-4-argon (final-review trial, 2026-10-14)', () => {
+  it('lands on its own row, not unpriced and not the Pro tier schedule', () => {
+    assert.equal(landingKey('gemini-4-argon'), 'gemini-4-argon');
+    assert.equal(isPriced('gemini-4-argon'), true);
+    const px = priceFor('gemini-4-argon');
+    assert.equal(px.input, 2.00);
+    assert.equal(px.output, 10.00);
+  });
+
+  it('a budget read of an Argon review is priced from the row, never the fallback estimate', () => {
+    const c = costForBudget({ input_tokens: 1_000_000, output_tokens: 100_000 }, 'gemini-4-argon');
+    assert.equal(c.estimated, false, 'priced from its own row, not the conservative fallback');
+    assert.ok(Math.abs(c.totalUsd - 3.00) < 1e-9, 'expected 1M in at $2 + 100K out at $10 = $3.00, got ' + c.totalUsd);
+  });
+});

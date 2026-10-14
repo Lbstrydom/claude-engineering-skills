@@ -140,6 +140,12 @@ export const modelPricing = Object.freeze({
       { maxInputTokens: Infinity, input: 4.00, output: 18.00 },
     ],
   },
+  // Gemini 4 Argon: a separate line, not reached by `latest-pro`. It is selected by
+  // FINAL_REVIEW_MODEL=gemini-4-argon (machine-local trial from 2026-10-14). The rate
+  // is the INTRODUCTORY one, valid through 2026-11-30; from 2026-12-01 it is $4/$20.
+  // Re-check and update this row then, or every Argon cost reads at half its real
+  // rate. It has one flat rate at every prompt length (no >200K tier, unlike Pro).
+  'gemini-4-argon':    { input: 2.00, output: 10.00 },
   'gemini-flash':      { input: 0.75, output: 3.75 },
   'gemini-flash-lite': { input: 0.30, output: 2.50 },
   // Legacy key for callers still reading `gemini-3.1` — 3.1 Pro, same schedule.
