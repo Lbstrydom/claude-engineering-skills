@@ -299,3 +299,16 @@ Tier 2 (real): the measurement workflow re-run on `archive/ci-measure-3` until u
 | Gemini (`latest-pro`) | 1 | **APPROVE**, gate `approve`: blocking 0, debt 0, new 0, wrongly dismissed 0 | none needed |
 
 ## Implementation Log
+
+### 2026-10-14 — built (phases 1-4)
+- **Phase 1** (ubuntu green): 14 files fixed from the first measurement run, plus `tests/fleet-cli-tiers.test.mjs`, which the second run found: `trains.at(-1)` picked the wrong train when two were built inside one second (ids end in a random suffix), a 50% flake on a fast runner. Verified by pushing the tree to throwaway `archive/ci-measure-N` branches (archive lane, no local heavy job) with a temporary push trigger that was never committed to the branch: run 1 had 40 failing tests in 14 files, run 3 two, run 4 one (the flake), run 5 is the final tree.
+- **Phase 2**: `full-suite.yml` (one job named `full-suite`, `ubuntu-latest`, `timeout-minutes: 30`, Chromium installed for the extract test) and `tests/workflow-runner-labels.test.mjs` (23 cases, both directions).
+- **Phase 3**: `.test-tiers.json` `defaultTier: "branch"` beside `ciVerdict`; `selectTier`/`envelopeMatchesRequest` take the default only where the verdict workflow exists in the tree; `scripts/lib/ci-verdict.mjs` and `test-tier.mjs ci-verdict`; hook §1.5 also watches `full-suite.yml`.
+- **Phase 4**: rule 8 gains one clause (the `coordination.md` size ratchet leaves ~220 chars) and the rationale gets the recipe; runbook §6, slice-2 log, `AGENTS.md`.
+- **Deviations from the plan text** (all smaller than they sound):
+  1. `solo-control-audit.mjs` is **not** changed (the plan said to build clients after the refusals). It is a 2,470-line CLI at its size baseline and the change is a refactor of its dispatch; the 7 CLI cases get the file's own inert-placeholder idiom (`scrubKeys`, now the default) instead. The client-before-refusal ordering stays a finding.
+  2. `ci-verdict` exits **4** for `failed` (not 2): 1 and 2 already mean error and usage in this CLI.
+  3. The stale-base note names both commits but not a commit count (no extra API call for a number nobody acts on).
+  4. `validatePlanPath` rejects a drive-letter path only where the host does not itself treat it as absolute, so a Windows host's real absolute in-repo plan paths still work.
+  5. Audit-code R1 found two bugs of mine (heredoc quoting stripped backslashes from three regexes, so `--pr 241` was rejected) and R1/R2 hardened the verdict: it now also proves the workflow a `pull_request` run EXECUTED (the merge of the head with its tested base) is the trusted one, via the workflow blob at that base; and one shared `selectRun` picks the run that is judged and provenance-checked.
+- **Audit.** `/audit-plan`: GPT R1 H2 M5, R2 clean; Gemini approve. `/audit-code --scope diff --base origin/main`: R1 H5 M12 (12 fixed, 4 deferred as debt with independence statements, 1 coverage notice dismissed), R2 H1 M1 (fixed), R3 and R4 PASS H0 M0; Gemini final gate **APPROVE** (blocking 0, debt 0).
