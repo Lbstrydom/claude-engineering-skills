@@ -222,14 +222,15 @@ function warnTrackedIn(dir) {
 describe('debt ledger — warns when its own path is TRACKED (merge-exposed)', () => {
   it('WARNS when the ledger is committed to git', () => {
     const err = warnTrackedIn(makeRepo({ ignore: false, track: true }));
-    assert.match(err, /is tracked by git/);
+    assert.match(err, /single-file debt ledger tracked by git/);
     assert.match(err, /\.audit\/tech-debt\.json/, 'the warning names the path');
-    assert.match(err, /--fail-on-duplicates/, 'the warning carries the mitigation');
+    assert.match(err, /debt-ledger-migrate\.mjs/, 'the warning names the remedy');
+    assert.match(err, /--fail-on-duplicates/, 'and the interim mitigation');
   });
 
   it('is SILENT when the ledger is ignored and untracked (the shipped default)', () => {
     const err = warnTrackedIn(makeRepo({ ignore: true, track: false }));
-    assert.equal(err.includes('is tracked by git'), false);
+    assert.equal(err.includes('tracked by git'), false);
   });
 
   it('is SILENT when the ledger is untracked but matches no ignore pattern either (round-1 audit M1 — the third state)', () => {
@@ -237,7 +238,7 @@ describe('debt ledger — warns when its own path is TRACKED (merge-exposed)', (
     // ignored case, so warning here would be a false positive on the
     // "not ignored-and-untracked" inversion the first draft got wrong.
     const err = warnTrackedIn(makeRepo({ ignore: false, track: false }));
-    assert.equal(err.includes('is tracked by git'), false);
+    assert.equal(err.includes('tracked by git'), false);
   });
 
   it('stays silent — never a false positive — outside a git work tree', () => {
@@ -246,7 +247,17 @@ describe('debt ledger — warns when its own path is TRACKED (merge-exposed)', (
     fs.mkdirSync(path.join(dir, '.audit'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.audit', 'tech-debt.json'), '{}');
     const err = warnTrackedIn(dir);
-    assert.equal(err.includes('is tracked by git'), false);
+    assert.equal(err.includes('tracked by git'), false);
+  });
+
+  it('is SILENT for a committed PER-ENTRY ledger — merge-safe by construction (d338aa8a)', () => {
+    const dir = makeRepo({ ignore: false, track: false });
+    fs.rmSync(path.join(dir, '.audit', 'tech-debt.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.mkdirSync(path.join(dir, '.audit', 'tech-debt', 'entries'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.audit', 'tech-debt', 'entries', 'aa00.json'), '{"topicId":"aa00"}\n');
+    git(dir, ['add', '.audit']);
+    git(dir, ['commit', '-q', '-m', 'per-entry ledger']);
+    assert.equal(warnTrackedIn(dir).includes('tracked by git'), false);
   });
 
   it('warns at most once per process', () => {
@@ -260,6 +271,6 @@ describe('debt ledger — warns when its own path is TRACKED (merge-exposed)', (
       + `warnIfLedgerTracked(p);`;
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: dir, encoding: 'utf8' });
     assert.equal(r.status, 0);
-    assert.equal((r.stderr.match(/is tracked by git/g) || []).length, 1);
+    assert.equal((r.stderr.match(/tracked by git/g) || []).length, 1);
   });
 });

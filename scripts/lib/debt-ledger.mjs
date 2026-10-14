@@ -30,8 +30,17 @@
  * and says nothing about whether a cloud copy exists. For which source a given
  * run is using, read `debt-memory.mjs`.
  *
- * Mutations go through a single-writer lock (`proper-lockfile`) with atomic
- * temp-file + rename to protect against concurrent writers (fix H3).
+ * **Storage: one file per entry** (`.audit/tech-debt/entries/<topicId>.json`,
+ * docs/plans/debt-ledger-per-entry-files.md; upstream report d338aa8a). The
+ * legacy single file `.audit/tech-debt.json` is still read, and still WRITTEN
+ * while it is committed and not yet migrated; an untracked one is migrated
+ * automatically on the next write. Which form a write uses is decided under the
+ * lock (`openForWrite`); the forms themselves live in `debt-ledger-files.mjs`
+ * and the move between them in `debt-ledger-migration.mjs`. There is no
+ * `lastUpdated` in either form any more — see `writeLegacyFile`.
+ *
+ * Mutations go through ONE lock (`withLedgerLock`, the same lock name
+ * pre-upgrade tooling takes) with atomic temp-file + rename per file (fix H3).
  *
  * Persistence model:
  *  - On-disk: PersistedDebtEntry (no derived fields) via PersistedDebtEntrySchema
@@ -46,16 +55,25 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import lockfile from 'proper-lockfile';
-import { atomicWriteFileSync, normalizePath } from './file-io.mjs';
-import { PersistedDebtEntrySchema, DebtLedgerSchema, normalizeClassificationEnvelope } from './schemas.mjs';
+import { atomicWriteFileSync } from './file-io.mjs';
+import { blockingSleep } from './retry-transient-fs.mjs';
+import { PersistedDebtEntrySchema, normalizeClassificationEnvelope } from './schemas.mjs';
 import { readDebtEventsLocal, deriveMetricsFromEvents, DEFAULT_DEBT_EVENTS_PATH } from './debt-events.mjs';
 import { ignoredUntrackedPaths } from './disowned-paths.mjs';
+import {
+  resolveLedgerLocation, topicIdFilenameProblem, entryFilePath, serializeEntryForDisk,
+  serializeLedgerForDisk, canonicalEqual, assertLedgerPathSafe, readBytesOrNull, isDirectory,
+  readEntryDir, readBudgetsFile, parseLegacyBytes, withLedgerLock, legacyTrackingState,
+  TransientLedgerReadError,
+} from './debt-ledger-files.mjs';
+import { migrateLegacyLedgerLocked } from './debt-ledger-migration.mjs';
 
+/**
+ * The ledger's location, named — for backward compatibility — by its LEGACY
+ * file. Either spelling resolves to both forms (`resolveLedgerLocation`), so
+ * every existing `--ledger x.json` argument still names the same ledger.
+ */
 export const DEFAULT_DEBT_LEDGER_PATH = '.audit/tech-debt.json';
-
-const LOCK_RETRIES = 5;
-const LOCK_STALE_MS = 30_000;
 
 // Warn-once per process: a run writes the ledger many times, and the same
 // notice repeated is a notice nobody reads.
@@ -114,11 +132,18 @@ let _durabilityWarned = false;
  * distinction the Gemini gate drew when it faulted the first version —
  * declining to own the mode is right; declining to *accept* it was not.
  *
- * @param {string} absPath resolved ledger path
+ * Asked of whichever storage form holds the ledger: the legacy file while it
+ * exists, else the per-entry directory (plan §2.6 — a consumer that commits its
+ * ledger re-includes the directory, so the same question stays answerable).
+ *
+ * @param {string|{legacyFile: string, dir: string}} target resolved ledger path, or a ledger location
  * @param {boolean} [cloudMirrored] see above; omit when unknown
  */
-function assertLedgerDurability(absPath, cloudMirrored) {
+function assertLedgerDurability(target, cloudMirrored) {
   if (_durabilityWarned) return;
+  const absPath = typeof target === 'string'
+    ? target
+    : (fs.existsSync(target.legacyFile) ? target.legacyFile : target.dir);
   // A durable copy exists elsewhere — gitignored is the intended state here, so
   // there is nothing to report. Latch nothing: a later local-mode write in the
   // same process still deserves its warning.
@@ -194,9 +219,12 @@ export function isLedgerTracked(absPath, repoRoot) {
 }
 
 /**
- * Warn once when the debt ledger IS tracked by git — the actual precondition
- * for the merge-duplication failure mode `findDuplicateTopicIds` detects
- * after the fact (docs/plans/debt-ledger-merge-safety.md). By default this
+ * Warn once when a LEGACY single-file debt ledger is tracked by git — the
+ * precondition for both merge failure modes of that form: silent duplication
+ * (`findDuplicateTopicIds`, docs/plans/debt-ledger-merge-safety.md) and the
+ * routine conflicts of upstream report d338aa8a. A ledger in per-entry storage
+ * is merge-safe by construction (a topicId is a filename), so it never warns:
+ * the old "can silently duplicate" sentence would be false for it. By default this
  * repo's `.gitignore` ignores `.audit/` entirely (verified: `git ls-files
  * .audit/` is empty here and, per this module's own header, in every
  * consumer checked) — a consumer only hits this warning by deviating from
@@ -210,15 +238,18 @@ export function isLedgerTracked(absPath, repoRoot) {
  */
 export function warnIfLedgerTracked(absPath, repoRoot = process.cwd()) {
   if (_trackedWarned) return;
-  const { tracked, degraded } = isLedgerTracked(absPath, repoRoot);
+  const { legacyFile } = resolveLedgerLocation(absPath);
+  if (!fs.existsSync(legacyFile)) return; // per-entry storage (or none): nothing to warn about
+  const { tracked, degraded } = isLedgerTracked(legacyFile, repoRoot);
   if (degraded || !tracked) return;
   _trackedWarned = true;
-  const rel = path.relative(repoRoot, absPath).split(path.sep).join('/');
+  const rel = path.relative(repoRoot, legacyFile).split(path.sep).join('/');
   process.stderr.write(
-    `  [debt] ${rel} is tracked by git — a plain \`git merge\` can silently duplicate topicId entries `
-    + `across branches (git's line-based merge has no notion of topicId as a record key). Run `
-    + `\`node scripts/debt-health-check.mjs --fail-on-duplicates\` as a required check on every `
-    + `pull_request-triggered CI run to catch it at merge time.\n`,
+    `  [debt] ${rel} is a single-file debt ledger tracked by git — two branches that both record debt `
+    + `conflict on it, and a plain \`git merge\` can silently duplicate topicId entries. Move it to `
+    + `per-entry files in ONE commit on your default branch (debt-ledger-migrate.mjs; see the `
+    + `consumer-adoption runbook). Until then, run \`node scripts/debt-health-check.mjs `
+    + `--fail-on-duplicates\` on every pull_request-triggered CI run.\n`,
   );
 }
 
@@ -232,8 +263,8 @@ export function warnIfLedgerTracked(absPath, repoRoot = process.cwd()) {
  * identical class, so the two read alike in an operator's terminal.
  */
 export const LEDGER_UNAVAILABLE_REASONS = Object.freeze([
-  'clean-checkout-sandbox', // the file does not exist (gitignored; fresh clone, CI, linked worktree)
-  'ledger-unreadable',      // exists but cannot be read (EACCES/EPERM/EISDIR)
+  'clean-checkout-sandbox', // neither form exists (gitignored; fresh clone, CI, linked worktree)
+  'ledger-unreadable',      // exists but cannot be read (EACCES/EPERM/EISDIR, or a read that kept racing a mutation)
 ]);
 
 /**
@@ -267,6 +298,159 @@ export function hydrateDebtEntries(entries, events) {
   });
 }
 
+const MAX_READ_ATTEMPTS = 5;
+const UNREADABLE_CODES = new Set(['EACCES', 'EPERM', 'EISDIR', 'EBUSY']);
+
+function sameBytes(a, b) {
+  if (a === null || b === null) return a === b;
+  return a.equals(b);
+}
+
+/**
+ * The one AUTHORITATIVE view of a ledger, shared by reads and by every mutation
+ * precondition (plan §2.2/§2.4) — two definitions of "which entries exist" is how
+ * a read path and a write path drift apart.
+ *
+ *  - v2 only            → the entry files.
+ *  - legacy only        → the legacy file, exactly as before (duplicates included,
+ *                         so `findDuplicateTopicIds` still sees them).
+ *  - both, untracked    → the union (an interrupted automatic migration). An id
+ *                         whose copies DIFFER keeps its directory copy in
+ *                         `entries` — dropping it would make a recorded debt
+ *                         re-surface as new on every audit — and is listed in
+ *                         `conflicts`, which every writer refuses.
+ *  - both, tracked/unknown → the entry files ONLY. Absence from the directory
+ *                         cannot distinguish "deleted after migration" from "not
+ *                         migrated yet", so a legacy-only id is pending a
+ *                         reconcile and exists for no purpose until then.
+ *
+ * Returns null when neither form exists.
+ */
+function buildState(location, legacyBytes, dirEntries, dirBudgets) {
+  if (dirEntries === null) {
+    const legacy = parseLegacyBytes(legacyBytes, location.legacyFile);
+    return {
+      storage: 'legacy', entries: legacy.entries, budgets: legacy.budgets ?? {},
+      conflicts: [], pendingReconcile: null,
+    };
+  }
+  const dirBudgetValue = dirBudgets.present ? dirBudgets.budgets : undefined;
+  if (legacyBytes === null) {
+    return {
+      storage: 'v2', entries: dirEntries, budgets: dirBudgetValue ?? {},
+      conflicts: [], pendingReconcile: null,
+    };
+  }
+  const legacy = parseLegacyBytes(legacyBytes, location.legacyFile);
+  const inDir = new Map(dirEntries.map((e) => [e.topicId, e]));
+  const tracking = legacyTrackingState(location.legacyFile);
+  if (tracking !== 'untracked') {
+    const legacyOnly = [];
+    const differing = [];
+    for (const e of legacy.entries) {
+      const d = inDir.get(e.topicId);
+      if (d === undefined) legacyOnly.push(e.topicId);
+      else if (!canonicalEqual(d, e)) differing.push(e.topicId);
+    }
+    return {
+      storage: 'both', entries: dirEntries, budgets: dirBudgetValue ?? {},
+      conflicts: [], pendingReconcile: { tracking, legacyOnly, differing },
+    };
+  }
+  const conflicts = [];
+  const union = new Map(inDir);
+  for (const e of legacy.entries) {
+    const d = union.get(e.topicId);
+    if (d === undefined) union.set(e.topicId, e);
+    else if (!canonicalEqual(d, e) && !conflicts.some((c) => c.topicId === e.topicId)) {
+      conflicts.push({ topicId: e.topicId, reason: 'legacy-copy-differs' });
+    }
+  }
+  let budgets = dirBudgetValue ?? legacy.budgets ?? {};
+  if (dirBudgetValue !== undefined && legacy.budgets !== undefined && !canonicalEqual(dirBudgetValue, legacy.budgets)) {
+    conflicts.push({ topicId: 'budgets', reason: 'budgets-differ' });
+    budgets = dirBudgetValue;
+  }
+  return {
+    storage: 'both',
+    entries: [...union.values()].sort((a, b) => String(a.topicId).localeCompare(String(b.topicId))),
+    budgets, conflicts, pendingReconcile: null,
+  };
+}
+
+/**
+ * Read the ledger's authoritative state without a lock — reads are the hot path
+ * of every audit, `readDebtLedger` is synchronous and the lock is not.
+ *
+ * Optimistic whole read, in a fixed order (plan §2.2): (1) the legacy file's
+ * BYTES, (2) the directory, (3) the legacy bytes again.
+ *
+ * The ORDER is what makes a concurrent migration safe: migration writes the
+ * directory BEFORE it shrinks or deletes the legacy file, so anything missing
+ * from a legacy snapshot taken first was already in the directory when it is
+ * listed second. Reading the directory first is the defect — a reader that
+ * listed it before entry A arrived and read the legacy file after it shrank
+ * would return a ledger without A (pinned in tests/debt-ledger.test.mjs).
+ *
+ * The re-check (3) is the general guard: any OTHER concurrent change to the
+ * legacy bytes, and a file listed then gone, restarts the whole read. Bytes,
+ * not existence — a shrink changes no existence at all.
+ *
+ * @param {ReturnType<typeof resolveLedgerLocation>} location
+ * @param {{fs?: typeof fs, onDirectoryRead?: () => void}} [opts] - test seams
+ * @returns {ReturnType<typeof buildState>|null} null when neither form exists
+ * @throws {TransientLedgerReadError} when every attempt raced a mutation
+ */
+export function readLedgerState(location, { fs: fsImpl = fs, onDirectoryRead } = {}) {
+  assertLedgerPathSafe(location, location.legacyFile, { expect: 'file' });
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_READ_ATTEMPTS; attempt++) {
+    try {
+      const before = readBytesOrNull(location.legacyFile, fsImpl);
+      const dirExists = isDirectory(location.dir, fsImpl);
+      if (!dirExists && before === null) return null;
+      let dirEntries = null;
+      let dirBudgets = { present: false, budgets: undefined };
+      if (dirExists) {
+        dirEntries = readEntryDir(location, { fs: fsImpl });
+        dirBudgets = readBudgetsFile(location, { fs: fsImpl });
+        if (onDirectoryRead) onDirectoryRead();
+      }
+      const after = readBytesOrNull(location.legacyFile, fsImpl);
+      if (!sameBytes(before, after)) throw new TransientLedgerReadError('the legacy file changed during the read');
+      return buildState(location, before, dirEntries, dirBudgets);
+    } catch (err) {
+      if (!(err instanceof TransientLedgerReadError)) throw err;
+      lastErr = err;
+      if (attempt < MAX_READ_ATTEMPTS) blockingSleep(10 * attempt);
+    }
+  }
+  throw lastErr;
+}
+
+let _stateWarned = false;
+
+/** One stderr line per process for a state an operator must act on. */
+function warnStateOnce(state) {
+  if (_stateWarned) return;
+  if (state.conflicts.length) {
+    _stateWarned = true;
+    process.stderr.write(
+      `  [debt] ${state.conflicts.length} debt-ledger record(s) differ between the per-entry files and the legacy file `
+      + `(${state.conflicts.slice(0, 5).map((c) => c.topicId).join(', ')}${state.conflicts.length > 5 ? ', …' : ''}). `
+      + 'Writers refuse them until resolved: node <tooling>/debt-ledger-migrate.mjs --prefer dir|legacy\n',
+    );
+  } else if (state.pendingReconcile) {
+    _stateWarned = true;
+    const p = state.pendingReconcile;
+    process.stderr.write(
+      `  [debt] a committed legacy debt ledger sits beside the per-entry ledger (${p.legacyOnly.length} id(s) only in it, `
+      + `${p.differing.length} differing) — it is IGNORED until reconciled, so nothing deleted after the migration comes back. `
+      + 'Reconcile it: node <tooling>/debt-ledger-migrate.mjs --stale-ref HEAD^2 (the stale branch\'s pre-merge tip; see the consumer-adoption runbook)\n',
+    );
+  }
+}
+
 /**
  * Read the debt ledger, hydrating entries with event-derived fields.
  *
@@ -280,138 +464,206 @@ export function hydrateDebtEntries(entries, events) {
  * The shape is ADDITIVE: `entries` keeps its meaning, so an existing caller
  * that destructures only `{ entries }` behaves exactly as before. Callers that
  * report health MUST read `available` and say `unverifiable` when it is false —
- * a count is never printed without its source.
+ * a count is never printed without its source. `conflicts` / `pendingReconcile`
+ * (per-entry storage, plan §2.2) are empty/null in every ordinary state.
  *
  * Corruption still THROWS (fail-loud). Unavailable is a weaker statement than
  * corrupt and must not swallow it: a malformed ledger is a defect to fix, not a
  * measurement that could not be taken.
  *
- * Plan: docs/plans/backlog-and-drift-reduction.md §2 "availability contract".
+ * Plan: docs/plans/backlog-and-drift-reduction.md §2 "availability contract";
+ * storage forms: docs/plans/debt-ledger-per-entry-files.md.
  *
  * @param {object} [opts]
- * @param {string} [opts.ledgerPath=DEFAULT_DEBT_LEDGER_PATH]
+ * @param {string} [opts.ledgerPath=DEFAULT_DEBT_LEDGER_PATH] - either spelling (`x.json` or `x`)
  * @param {object[]|null} [opts.events=null] - Pre-fetched events; if null, reads local log
  * @param {string} [opts.eventsPath=DEFAULT_DEBT_EVENTS_PATH]
- * @returns {{ version: 1, entries: object[], available: boolean, reason: string|null, budgets: Record<string, number> }}
+ * @returns {{ version: 1, entries: object[], available: boolean, reason: string|null,
+ *   budgets: Record<string, number>, conflicts: Array<{topicId: string, reason: string}>,
+ *   pendingReconcile: object|null, storage: 'v2'|'legacy'|'both'|null }}
  */
 export function readDebtLedger({
   ledgerPath = DEFAULT_DEBT_LEDGER_PATH,
   events = null,
   eventsPath = DEFAULT_DEBT_EVENTS_PATH,
 } = {}) {
-  const absPath = path.resolve(ledgerPath);
-  if (!fs.existsSync(absPath)) {
-    return {
-      version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox', budgets: {},
-    };
-  }
-
-  let text;
+  const unavailable = (reason) => ({
+    version: 1, entries: [], available: false, reason, budgets: {}, conflicts: [], pendingReconcile: null, storage: null,
+  });
+  const location = resolveLedgerLocation(ledgerPath);
+  let state;
   try {
-    text = fs.readFileSync(absPath, 'utf-8');
+    state = readLedgerState(location);
   } catch (err) {
-    // Exists but unreadable — EACCES/EPERM/EISDIR, or a read that raced an
-    // atomic replace. Never a measurement, so never an empty ledger.
-    if (err && err.code === 'ENOENT') {
-      return {
-        version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox', budgets: {},
-      };
+    // Exists but unreadable — or every attempt raced a concurrent mutation.
+    // Never a measurement, so never an empty ledger. Content errors carry no
+    // code and still throw.
+    if (err instanceof TransientLedgerReadError || (err && UNREADABLE_CODES.has(err.code))) {
+      return unavailable('ledger-unreadable');
     }
-    return {
-      version: 1, entries: [], available: false, reason: 'ledger-unreadable', budgets: {},
-    };
+    throw err;
   }
-
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch (err) {
-    throw new Error(`Debt ledger corrupted at ${absPath}: ${err.message}`);
-  }
-
-  // Validate structure before hydration
-  if (!raw || !Array.isArray(raw.entries)) {
-    throw new Error(`Debt ledger corrupted: missing entries array at ${absPath}`);
-  }
-
-  const hydrated = hydrateDebtEntries(raw.entries, events ?? readDebtEventsLocal(eventsPath));
-
-  // `budgets` is opt-in policy stored on the raw ledger file's top level, not
-  // part of any individual entry — three call sites (debt-health-check.mjs,
-  // debt-review.mjs, debt-budget-check.mjs) each raw-read the file a second
-  // time just to reach this field. Additive: `entries` keeps its exact
-  // existing meaning, so a caller destructuring only `{entries}` is unaffected.
-  const budgets = (raw && typeof raw.budgets === 'object' && raw.budgets !== null && !Array.isArray(raw.budgets))
-    ? raw.budgets
-    : {};
-
+  if (state === null) return unavailable('clean-checkout-sandbox');
+  warnStateOnce(state);
+  const hydrated = hydrateDebtEntries(state.entries, events ?? readDebtEventsLocal(eventsPath));
   return {
-    version: 1, entries: hydrated, available: true, reason: null, budgets,
+    version: 1,
+    entries: hydrated,
+    available: true,
+    reason: null,
+    budgets: state.budgets,
+    conflicts: state.conflicts,
+    pendingReconcile: state.pendingReconcile,
+    storage: state.storage,
   };
 }
 
-// ── Serialization (shared by every writer) ──────────────────────────────────
-
 /**
- * Render a ledger object as compact, git-merge-friendly JSON: every
- * top-level field is pretty-printed normally EXCEPT `entries`, which renders
- * one COMPACT (single-line) JSON object per array element. This is the one
- * place all three ledger writers (`writeDebtEntries`, `removeDebtEntry`,
- * `markSuperseded`) produce their on-disk bytes.
+ * The PERSISTED entries — the authoritative view, without the event-derived
+ * fields `readDebtLedger` adds. For a caller that rewrites an entry: persisting
+ * a hydrated view would write recurrence metrics back into the ledger.
  *
- * **Format-only, by design — never deduplicates.** This function renders
- * EXACTLY the `entries` array it is given, in its existing order, with no
- * topicId-keyed reconciliation of any kind. If given an already
- * duplicate-laden array (e.g. a ledger already corrupted by a bad merge,
- * mid-repair), both copies round-trip unchanged. A `Map`-keyed-by-topicId
- * implementation — the idiom `mergeLedgers`/`findDuplicateTopicIds` use for
- * their own, different purposes — would silently discard one of exactly the
- * resolved/unresolved duplicate pairs this function exists to stop losing,
- * making the serializer itself a second, silent place duplicates could
- * disappear without triage. Deduplication stays where it already correctly
- * lives: `findDuplicateTopicIds` (detection) + `debt-resolve.mjs` (the only
- * sanctioned removal path).
- *
- * **Why one-record-per-line.** git's line-based 3-way merge aligns cleanly on
- * an array boundary only when each record occupies exactly one line. The
- * previous multi-line `JSON.stringify(ledger, null, 2)` let git's diff3
- * misalign on repetitive near-identical multi-line blocks — the mechanism
- * behind a real consumer incident (22 duplicated topicIds from a plain
- * `git merge`). See docs/plans/debt-ledger-merge-safety.md.
- *
- * Assembled by hand rather than `JSON.stringify(ledger, null, 2)` followed by
- * a regex collapse: regex-collapsing risks corrupting a string VALUE that
- * happens to contain literal `},\n{`-shaped text (e.g. inside a finding's
- * `detailSnapshot`). Building the array body from already-serialized,
- * already-escaped entries is the only construction that cannot do that.
- *
- * @param {{entries?: object[], [key: string]: any}} ledger
- * @returns {string} JSON text, trailing newline included
+ * @param {string} [ledgerPath=DEFAULT_DEBT_LEDGER_PATH]
+ * @returns {object[]} [] when no ledger exists
  */
-export function serializeLedgerForDisk(ledger) {
-  const parts = [];
-  for (const [key, value] of Object.entries(ledger)) {
-    if (key === 'entries') {
-      const arr = Array.isArray(value) ? value : [];
-      const body = arr.map((e) => `    ${JSON.stringify(e)}`).join(',\n');
-      parts.push(`  "entries": [\n${body ? `${body}\n` : ''}  ]`);
-    } else {
-      parts.push(`  ${JSON.stringify(key)}: ${JSON.stringify(value)}`);
-    }
-  }
-  return `{\n${parts.join(',\n')}\n}\n`;
+export function readPersistedDebtEntries(ledgerPath = DEFAULT_DEBT_LEDGER_PATH) {
+  const state = readLedgerState(resolveLedgerLocation(ledgerPath));
+  return state ? state.entries : [];
 }
 
-// ── Write (single-writer, locked) ───────────────────────────────────────────
+/**
+ * Is there a ledger, in either storage form? For the call sites that must not
+ * conflate "absent" with "present and empty" before they read.
+ *
+ * @param {string} [ledgerPath=DEFAULT_DEBT_LEDGER_PATH]
+ * @returns {boolean}
+ */
+export function debtLedgerExists(ledgerPath = DEFAULT_DEBT_LEDGER_PATH) {
+  const location = resolveLedgerLocation(ledgerPath);
+  return fs.existsSync(location.legacyFile) || isDirectory(location.dir);
+}
+
+// ── Serialization ───────────────────────────────────────────────────────────
+
+// The legacy single-file serializer now lives with the other storage primitives
+// (debt-ledger-files.mjs) so the migration module can use it without an import
+// cycle; re-exported here, where every existing caller imports it from.
+export { serializeLedgerForDisk };
+
+// ── Write (single lock, storage form chosen under it) ───────────────────────
+
+let _legacyModeWarned = false;
 
 /**
- * Write or merge entries into the debt ledger under a file lock.
+ * Decide the storage form for a mutation — UNDER the lock (plan §2.4):
+ *
+ *  1. v2 directory exists, or nothing exists → v2 (a fresh ledger is always v2).
+ *  2. Legacy only, definitively untracked → migrate it automatically, then v2.
+ *     An untracked file has no git consequences; that is the ONLY fact that
+ *     makes an unattended migration safe.
+ *  3. Legacy only, tracked or unknown → keep writing the legacy file (without
+ *     `lastUpdated`). A writer runs inside a feature branch; migrating there
+ *     would delete a committed file in N parallel branches while others still
+ *     edit it. Committed state moves in one deliberate commit (the CLI).
+ *  4. Both, untracked → fold the legacy file in, then v2. Both, tracked or
+ *     unknown → v2 only; the legacy file waits for a reconcile, untouched —
+ *     editing it would change the blob a stale-branch reconcile verifies.
+ *
+ * @returns {{kind: 'legacy'} | {kind: 'v2', state: object}}
+ */
+function openForWrite(location) {
+  const legacyExists = readBytesOrNull(location.legacyFile) !== null;
+  if (legacyExists) {
+    const tracking = legacyTrackingState(location.legacyFile);
+    if (tracking === 'untracked') {
+      migrateLegacyLedgerLocked(location, { auto: true });
+    } else if (!isDirectory(location.dir)) {
+      if (!_legacyModeWarned) {
+        _legacyModeWarned = true;
+        process.stderr.write(
+          `  [debt] ${path.basename(location.legacyFile)} is a ${tracking === 'tracked' ? 'committed' : 'possibly committed'} `
+          + 'single-file debt ledger, so it is still written in that form, and two branches that both record debt can '
+          + 'conflict on it. Move it to per-entry files in ONE commit on your default branch: '
+          + 'node <tooling>/debt-ledger-migrate.mjs (see the consumer-adoption runbook).\n',
+        );
+      }
+      return { kind: 'legacy' };
+    }
+  }
+  if (!isDirectory(location.dir)) {
+    assertLedgerPathSafe(location, location.entriesDir);
+    fs.mkdirSync(location.entriesDir, { recursive: true });
+  }
+  return { kind: 'v2', state: readLedgerState(location) };
+}
+
+/** Read + validate the legacy file under the lock (corruption throws). */
+function readLegacyForWrite(location) {
+  const bytes = readBytesOrNull(location.legacyFile);
+  if (bytes === null) return { version: 1, entries: [] };
+  try {
+    return parseLegacyBytes(bytes, location.legacyFile).raw;
+  } catch (err) {
+    throw new Error(`Debt ledger corrupted: ${err.message}`);
+  }
+}
+
+/**
+ * Rewrite the legacy file. `lastUpdated` is never written and is STRIPPED from
+ * a file that still carries one: it was volatile provenance in a committed file
+ * that every writer bumped, which made any two branches that recorded debt
+ * conflict (plan §1, conflict source 1).
+ */
+function writeLegacyFile(location, raw, entries) {
+  atomicWriteFileSync(location.legacyFile, serializeLedgerForDisk({
+    version: 1,
+    // `budgets` preserved — a write path once dropped it silently.
+    ...(raw.budgets ? { budgets: raw.budgets } : {}),
+    entries,
+  }));
+}
+
+/**
+ * Merge one validated incoming entry onto its existing record: preserve the
+ * original deferral, take the incoming mutable fields, union `contentAliases`.
+ */
+function mergeEntry(existing, incoming) {
+  if (!existing) return incoming;
+  const mergedAliases = Array.from(new Set([
+    ...(existing.contentAliases || []),
+    ...(incoming.contentAliases || []),
+  ]));
+  return {
+    ...existing,
+    ...incoming,
+    deferredAt: existing.deferredAt,       // immutable
+    deferredRun: existing.deferredRun,     // immutable
+    contentAliases: mergedAliases,
+  };
+}
+
+/** Schema-normalise + validate one incoming entry; null + reason when invalid. */
+function validateIncoming(entry) {
+  // §2 Fix A — normalized HERE, at the actual write boundary, not only in the
+  // `persistDebtEntries` facade: `debt-auto-capture.mjs` and `debt-backfill.mjs
+  // --promote` both call `writeDebtEntries` directly. Idempotent.
+  const validated = PersistedDebtEntrySchema.safeParse(normalizeClassificationEnvelope(entry));
+  if (!validated.success) return { error: validated.error.message.slice(0, 300) };
+  return { value: validated.data };
+}
+
+/**
+ * Write or merge entries into the debt ledger under the ledger lock.
  * On topicId match with an existing entry: updates mutable fields in place
  * (rationale, classification, owner, etc). Does NOT insert duplicates.
  *
  * Invalid entries are returned in `rejected[]` with a per-entry reason,
  * matching Phase B's batchWriteLedger contract. Caller decides whether to
- * proceed or surface the failures.
+ * proceed or surface the failures. Per-entry storage adds two reasons: a topicId
+ * that cannot be a filename, and one with an unresolved conflict.
+ *
+ * Per-entry storage writes N atomic files, not one atomic set: a crash mid-batch
+ * leaves the first k entries written, each valid; a retry is idempotent.
  *
  * @param {object[]} entries - PersistedDebtEntry-shaped (no derived fields)
  * @param {object} [opts]
@@ -422,153 +674,101 @@ export async function writeDebtEntries(entries, { ledgerPath = DEFAULT_DEBT_LEDG
   if (!Array.isArray(entries) || entries.length === 0) {
     return { inserted: 0, updated: 0, total: 0, rejected: [] };
   }
+  const location = resolveLedgerLocation(ledgerPath);
+  assertLedgerDurability(location, cloudMirrored);
 
-  const absPath = path.resolve(ledgerPath);
-  assertLedgerDurability(absPath, cloudMirrored);
-  fs.mkdirSync(path.dirname(absPath), { recursive: true });
-
-  // proper-lockfile requires the locked file to exist.
-  if (!fs.existsSync(absPath)) {
-    atomicWriteFileSync(absPath, JSON.stringify({ version: 1, entries: [] }, null, 2));
-  }
-
-  let release;
-  try {
-    release = await lockfile.lock(absPath, {
-      retries: { retries: LOCK_RETRIES, minTimeout: 100, maxTimeout: 1000 },
-      stale: LOCK_STALE_MS,
-    });
-  } catch (err) {
-    throw new Error(
-      `Failed to acquire debt-ledger lock at ${absPath}: ${err.message}. ` +
-      `Another audit-loop run may be mutating the ledger. ` +
-      `If stuck, inspect ${absPath}.lock and remove if clearly stale.`
-    );
-  }
-
-  try {
-    // Read current state under lock
-    let current = { version: 1, entries: [] };
-    try {
-      const raw = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
-      if (raw && Array.isArray(raw.entries)) current = raw;
-      else throw new Error('missing entries array');
-    } catch (err) {
-      throw new Error(`Debt ledger corrupted: ${err.message}`);
-    }
-
-    const byTopic = new Map(current.entries.map(e => [e.topicId, e]));
+  return withLedgerLock(location, () => {
+    const target = openForWrite(location);
     const rejected = [];
-    let inserted = 0, updated = 0;
+    let inserted = 0;
+    let updated = 0;
 
-    for (const entry of entries) {
-      // §2 Fix A — normalized HERE, at the actual write boundary, not only
-      // in the `persistDebtEntries` facade: `debt-auto-capture.mjs` and
-      // `debt-backfill.mjs --promote` both call `writeDebtEntries` directly,
-      // bypassing that facade entirely. Idempotent — a no-op for an entry
-      // that already carries classification or an explicit reason.
-      const validated = PersistedDebtEntrySchema.safeParse(normalizeClassificationEnvelope(entry));
-      if (!validated.success) {
-        rejected.push({ entry, reason: validated.error.message.slice(0, 300) });
-        continue;
+    if (target.kind === 'legacy') {
+      const current = readLegacyForWrite(location);
+      const byTopic = new Map(current.entries.map((e) => [e.topicId, e]));
+      for (const entry of entries) {
+        const v = validateIncoming(entry);
+        if (v.error) { rejected.push({ entry, reason: v.error }); continue; }
+        if (byTopic.has(v.value.topicId)) updated++; else inserted++;
+        byTopic.set(v.value.topicId, mergeEntry(byTopic.get(v.value.topicId), v.value));
       }
-      const validEntry = validated.data;
-
-      if (byTopic.has(validEntry.topicId)) {
-        // Merge: preserve original deferredAt/deferredRun, update mutable fields,
-        // union contentAliases.
-        const existing = byTopic.get(validEntry.topicId);
-        const mergedAliases = Array.from(new Set([
-          ...(existing.contentAliases || []),
-          ...(validEntry.contentAliases || []),
-        ]));
-        byTopic.set(validEntry.topicId, {
-          ...existing,
-          ...validEntry,
-          deferredAt: existing.deferredAt,       // immutable
-          deferredRun: existing.deferredRun,     // immutable
-          contentAliases: mergedAliases,
-        });
-        updated++;
-      } else {
-        byTopic.set(validEntry.topicId, validEntry);
-        inserted++;
-      }
+      // Sorted by topicId for stable diffs.
+      const sorted = [...byTopic.values()].sort((a, b) => a.topicId.localeCompare(b.topicId));
+      writeLegacyFile(location, current, sorted);
+      return { inserted, updated, total: sorted.length, rejected };
     }
 
-    // Sort by topicId for stable diffs (makes merges localized)
-    const sortedEntries = [...byTopic.values()].sort((a, b) => a.topicId.localeCompare(b.topicId));
-    const next = {
-      version: 1,
-      // `current.budgets` preserved — this write path previously dropped it
-      // silently (found while unifying serialization): any consumer with
-      // budget policy configured would lose it on the very next
-      // debt-auto-capture.mjs run.
-      ...(current.budgets ? { budgets: current.budgets } : {}),
-      entries: sortedEntries,
-      lastUpdated: new Date().toISOString(),
-    };
-    atomicWriteFileSync(absPath, serializeLedgerForDisk(next));
-
-    return {
-      inserted,
-      updated,
-      total: sortedEntries.length,
-      rejected,
-    };
-  } finally {
-    try { await release(); } catch { /* lock already released / stale */ }
-  }
+    const { state } = target;
+    const byTopic = new Map(state.entries.map((e) => [e.topicId, e]));
+    const conflicted = new Set(state.conflicts.map((c) => c.topicId));
+    const pending = new Map();
+    for (const entry of entries) {
+      const v = validateIncoming(entry);
+      if (v.error) { rejected.push({ entry, reason: v.error }); continue; }
+      const id = v.value.topicId;
+      const problem = topicIdFilenameProblem(id);
+      if (problem) { rejected.push({ entry, reason: `topicId-not-a-safe-filename: ${problem}` }); continue; }
+      if (conflicted.has(id)) { rejected.push({ entry, reason: 'topicId-unresolved-conflict' }); continue; }
+      if (byTopic.has(id)) updated++; else inserted++;
+      const merged = mergeEntry(byTopic.get(id), v.value);
+      byTopic.set(id, merged);
+      pending.set(id, merged);
+    }
+    for (const [id, merged] of pending) {
+      const file = entryFilePath(location, id);
+      assertLedgerPathSafe(location, file, { expect: 'file' });
+      const bytes = serializeEntryForDisk(merged);
+      const existing = readBytesOrNull(file);
+      if (existing !== null && existing.toString('utf-8') === bytes) continue;
+      atomicWriteFileSync(file, bytes);
+    }
+    return { inserted, updated, total: byTopic.size, rejected };
+  });
 }
 
 /**
  * Remove a debt entry (soft-delete not supported — the audit trail lives in
- * the event log). Operates under the same lock.
+ * the event log). Operates under the ledger lock.
  *
  * @param {string} topicId
  * @param {object} [opts]
  * @returns {Promise<boolean>} true if an entry was removed
+ * @throws when the entry has an unresolved per-entry/legacy conflict
  */
 export async function removeDebtEntry(topicId, { ledgerPath = DEFAULT_DEBT_LEDGER_PATH } = {}) {
-  const absPath = path.resolve(ledgerPath);
-  if (!fs.existsSync(absPath)) return false;
-
-  let release;
-  try {
-    release = await lockfile.lock(absPath, {
-      retries: { retries: LOCK_RETRIES, minTimeout: 100, maxTimeout: 1000 },
-      stale: LOCK_STALE_MS,
-    });
-  } catch (err) {
-    throw new Error(`Failed to acquire debt-ledger lock: ${err.message}`);
-  }
-
-  try {
-    const raw = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
-    if (!raw || !Array.isArray(raw.entries)) return false;
-    const before = raw.entries.length;
-    const after = raw.entries.filter(e => e.topicId !== topicId);
-    if (after.length === before) return false;
-    atomicWriteFileSync(absPath, serializeLedgerForDisk({
-      version: 1,
-      // `raw.budgets` preserved — same fix as writeDebtEntries.
-      ...(raw.budgets ? { budgets: raw.budgets } : {}),
-      entries: after,
-      lastUpdated: new Date().toISOString(),
-    }));
+  if (!debtLedgerExists(ledgerPath)) return false;
+  const location = resolveLedgerLocation(ledgerPath);
+  return withLedgerLock(location, () => {
+    const target = openForWrite(location);
+    if (target.kind === 'legacy') {
+      const raw = readLegacyForWrite(location);
+      const after = raw.entries.filter((e) => e.topicId !== topicId);
+      if (after.length === raw.entries.length) return false;
+      writeLegacyFile(location, raw, after);
+      return true;
+    }
+    if (target.state.conflicts.some((c) => c.topicId === topicId)) {
+      throw new Error(`debt entry ${topicId} has an unresolved conflict between its per-entry file and the legacy file — resolve it with debt-ledger-migrate.mjs --prefer dir|legacy first`);
+    }
+    // A topicId that cannot be a filename cannot be in the directory. (After the
+    // automatic fold in `openForWrite`, an untracked legacy remainder holds only
+    // conflicted ids, refused above; a tracked one is read-only by design.)
+    if (topicIdFilenameProblem(topicId)) return false;
+    const file = entryFilePath(location, topicId);
+    assertLedgerPathSafe(location, file, { expect: 'file' });
+    if (readBytesOrNull(file) === null) return false;
+    fs.rmSync(file, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     return true;
-  } finally {
-    try { await release(); } catch { /* ignore */ }
-  }
+  });
 }
 
 /**
  * Link `oldTopicId` to its replacement `newTopicId` by setting the old
  * entry's `supersededBy` field, under the same lock/atomic-write discipline
  * as `writeDebtEntries` (docs/plans/debt-ledger-persisted-record-contract.md
- * §2 Fix D). Verifies BOTH topicIds exist in this LOCAL ledger immediately
- * before writing (round-3 GPT audit H7) — never inferred from an earlier
- * write's outcome.
+ * §2 Fix D). Verifies BOTH topicIds exist in this LOCAL ledger's authoritative
+ * view immediately before writing (round-3 GPT audit H7) — never inferred from
+ * an earlier write's outcome.
  *
  * **Local JSON only — no embedding-cache involvement** (Gemini gate round-1
  * G2): this module has no DB pool and no `repoId`; `debt_embeddings` cleanup
@@ -589,47 +789,40 @@ export async function removeDebtEntry(topicId, { ledgerPath = DEFAULT_DEBT_LEDGE
  */
 export async function markSuperseded(oldTopicId, newTopicId, { ledgerPath = DEFAULT_DEBT_LEDGER_PATH } = {}) {
   if (oldTopicId === newTopicId) return { ok: false, error: 'self-reference' };
-  const absPath = path.resolve(ledgerPath);
-  if (!fs.existsSync(absPath)) return { ok: false, error: 'ledger-not-found' };
+  if (!debtLedgerExists(ledgerPath)) return { ok: false, error: 'ledger-not-found' };
+  const location = resolveLedgerLocation(ledgerPath);
 
-  let release;
-  try {
-    release = await lockfile.lock(absPath, {
-      retries: { retries: LOCK_RETRIES, minTimeout: 100, maxTimeout: 1000 },
-      stale: LOCK_STALE_MS,
-    });
-  } catch (err) {
-    throw new Error(`Failed to acquire debt-ledger lock: ${err.message}`);
-  }
-
-  try {
-    let raw;
-    try {
-      raw = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
-    } catch (err) {
-      throw new Error(`Debt ledger corrupted: ${err.message}`);
+  return withLedgerLock(location, () => {
+    const target = openForWrite(location);
+    if (target.kind === 'legacy') {
+      const raw = readLegacyForWrite(location);
+      const oldIdx = raw.entries.findIndex((e) => e.topicId === oldTopicId);
+      if (oldIdx === -1) return { ok: false, error: 'old-topic-not-found' };
+      if (!raw.entries.some((e) => e.topicId === newTopicId)) return { ok: false, error: 'new-topic-not-found' };
+      const validated = PersistedDebtEntrySchema.safeParse(
+        normalizeClassificationEnvelope({ ...raw.entries[oldIdx], supersededBy: newTopicId }),
+      );
+      if (!validated.success) return { ok: false, error: `schema-rejected: ${validated.error.message.slice(0, 300)}` };
+      const entries = [...raw.entries];
+      entries[oldIdx] = validated.data;
+      writeLegacyFile(location, raw, entries);
+      return { ok: true };
     }
-    if (!raw || !Array.isArray(raw.entries)) throw new Error('Debt ledger corrupted: missing entries array');
 
-    const oldIdx = raw.entries.findIndex((e) => e.topicId === oldTopicId);
-    if (oldIdx === -1) return { ok: false, error: 'old-topic-not-found' };
-    const newExists = raw.entries.some((e) => e.topicId === newTopicId);
-    if (!newExists) return { ok: false, error: 'new-topic-not-found' };
-
-    const normalized = normalizeClassificationEnvelope({ ...raw.entries[oldIdx], supersededBy: newTopicId });
-    const validated = PersistedDebtEntrySchema.safeParse(normalized);
-    if (!validated.success) {
-      return { ok: false, error: `schema-rejected: ${validated.error.message.slice(0, 300)}` };
+    const { state } = target;
+    if (state.conflicts.some((c) => c.topicId === oldTopicId || c.topicId === newTopicId)) {
+      return { ok: false, error: 'unresolved-conflict' };
     }
-    raw.entries[oldIdx] = validated.data;
-    atomicWriteFileSync(absPath, serializeLedgerForDisk({
-      ...raw,
-      lastUpdated: new Date().toISOString(),
-    }));
+    const old = state.entries.find((e) => e.topicId === oldTopicId);
+    if (!old) return { ok: false, error: 'old-topic-not-found' };
+    if (!state.entries.some((e) => e.topicId === newTopicId)) return { ok: false, error: 'new-topic-not-found' };
+    const validated = PersistedDebtEntrySchema.safeParse(normalizeClassificationEnvelope({ ...old, supersededBy: newTopicId }));
+    if (!validated.success) return { ok: false, error: `schema-rejected: ${validated.error.message.slice(0, 300)}` };
+    const file = entryFilePath(location, oldTopicId);
+    assertLedgerPathSafe(location, file, { expect: 'file' });
+    atomicWriteFileSync(file, serializeEntryForDisk(validated.data));
     return { ok: true };
-  } finally {
-    try { await release(); } catch { /* lock already released / stale */ }
-  }
+  });
 }
 
 // ── Merge (session + debt → suppression input) ─────────────────────────────
@@ -685,4 +878,5 @@ export function findDebtByAlias(candidateHash, debtEntries) {
 export const _internals = {
   assertLedgerDurability,
   _resetDurabilityWarning() { _durabilityWarned = false; },
+  _resetWarnings() { _durabilityWarned = false; _trackedWarned = false; _legacyModeWarned = false; _stateWarned = false; },
 };

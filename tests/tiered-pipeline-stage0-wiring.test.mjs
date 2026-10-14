@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { gitInit, commit, withCwd } from './helpers/fixtures.mjs';
+import { readDebtLedger } from '../scripts/lib/debt-ledger.mjs';
 import {
   collectCandidateAnchorFiles, buildStage0RelevanceContext,
   makeHeadContentAdapter, makeImpactAdapter, makeBlameAdapter,
@@ -337,7 +338,7 @@ describe('routePreExistingIndependent — decision #9 batch-reconciled debt rout
       assert.deepEqual(result.debtRoutedFiles.sort(), ['a.txt', 'b.txt']);
       assert.deepEqual(result.debtRoutingIncomplete, []);
 
-      const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+      const ledger = readDebtLedger({ ledgerPath, events: [] });
       assert.equal(ledger.entries.length, 2);
       const alpha = ledger.entries.find((e) => e.topicId === 'fp-alpha');
       assert.equal(alpha.deferredReason, 'out-of-scope');
@@ -395,7 +396,7 @@ describe('routePreExistingIndependent — decision #9 batch-reconciled debt rout
       assert.equal(result.debtRoutingIncomplete[0].fingerprint, 'fp-bad');
       assert.ok(result.debtRoutingIncomplete[0].reason.length > 0);
 
-      const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+      const ledger = readDebtLedger({ ledgerPath, events: [] });
       assert.equal(ledger.entries.length, 1);
       assert.equal(ledger.entries[0].topicId, 'fp-good');
     } finally {

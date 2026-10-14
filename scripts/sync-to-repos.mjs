@@ -84,9 +84,9 @@ import { resolveEnvValue } from './lib/env-setting.mjs';
 // that grows every time a skill writes a new output file is a treadmill, and
 // losing that race is silent.
 //
-// Contrast `.audit-loop/`, which stays PRECISE below: consumers legitimately
-// TRACK `.audit-loop/migrations/*.sql`, so a blanket dir there would be wrong.
-// The asymmetry is the point — `.audit/` has no tracked-artifact contract.
+// Contrast `.audit-loop/`, PRECISE below: consumers TRACK its migrations. And `.audit/*`, not
+// `.audit/`: git cannot re-include under an excluded dir, so a consumer committing its debt ledger
+// opts in with gitignoreExtra `!.audit/tech-debt/` (docs/plans/debt-ledger-per-entry-files.md §2.6).
 const MANAGED_IGNORE_PATTERNS = [
   // Generated ephemera our synced tooling produces in consumers (Category A;
   // never committed). Precise paths — NOT blanket dirs — because `dashboard/`
@@ -104,7 +104,7 @@ const MANAGED_IGNORE_PATTERNS = [
   '.claude/tmp/',
   'logs/mcp-*.log',
   'logs/mcp-*.log.gz',
-  '.audit/',                          // ALL audit-loop runtime output (see above)
+  '.audit/*',                         // ALL audit-loop runtime output (see above)
   // The local audit cache. THIS repo has gitignored it since the directory
   // existed (`.gitignore` line 69) and the synced tooling writes it in every
   // consumer, but it was never in the block — so a consumer that added the line
@@ -716,7 +716,7 @@ const DEBT_ENTRY = [
   'scripts/debt-budget-check.mjs',
   'scripts/debt-pr-comment.mjs',
   'scripts/debt-resolve.mjs',
-  'scripts/debt-review.mjs',
+  'scripts/debt-review.mjs', 'scripts/debt-ledger-migrate.mjs', // the latter: per-entry ledger move
 ];
 
 // ── Import-graph resolution ────────────────────────────────────────────────
