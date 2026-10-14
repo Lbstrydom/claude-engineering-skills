@@ -5,20 +5,13 @@ summary: Phase D debt ledger — persist out-of-scope valid findings so they don
 # Debt Capture (Step 3.6) + Resolution (Step 5.1)
 
 **Purpose**: Persist out-of-scope valid findings to the debt ledger
-(`.audit/tech-debt/`, one file per entry — or the legacy single file
-`.audit/tech-debt.json` until it is migrated) so future audits suppress them
-automatically. Without this step, the same pre-existing concerns get
-re-raised every audit, burning tokens and diluting signal.
+(`.audit/tech-debt/`) so future audits suppress them automatically. Without
+this step, the same pre-existing concerns get re-raised every audit, burning
+tokens and diluting signal.
 
-**Storage.** One file per entry, so two branches that record debt about
-different entries never conflict when they merge (the same field of the SAME entry changed on both
-branches still conflicts, on that one file). An untracked legacy `.audit/tech-debt.json` is
-migrated automatically on the next write. A **committed** one is not — moving
-committed state belongs in one deliberate commit on the default branch:
-`node scripts/debt-ledger-migrate.mjs` (it refuses, changing nothing, if git
-would ignore any destination, and prints the one staging command). Writers keep
-the committed single file working until then, without the `lastUpdated` line
-that used to make every two debt-recording branches conflict.
+**Storage.** One file per entry: branches recording different entries never
+conflict. A legacy ledger migrates on write; a committed one, once, via
+`node scripts/debt-ledger-migrate.mjs`.
 
 **Eligible candidates**: findings from Step 3 triage with `action = defer`
 — meaning `validity = valid` AND (`scope = out-of-scope` OR an explicit
