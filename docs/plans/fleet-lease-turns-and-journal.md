@@ -272,4 +272,8 @@ Stop decision: GPT reached its 5-round absolute cap with 100% acceptance every r
 
 ## Implementation Log
 
-_(filled during implementation)_
+### PR 1 (clusters A: phases 1-3) - 2026-10-14
+- **Red first.** `tests/fleet-lease-interleaving.test.mjs` was written and run against `c35dacc1` (no lease code changed): both tests failed. The 08:06Z replay failed on `announce must not silently record a window over a live slot` (`true !== false`); the random search failed at seed 2, step 3: `I2: main@o/c holds the slot 06:00..06:33Z while o/b's quiet window 06:00..07:57Z overlaps it, unacknowledged` (acquire by o/c, then announces by o/c and o/b). Green after D2 (same test files, no edits to the assertions).
+- **The property test found a defect the unit tests missed (seed 11).** Two wait episodes opened in the same instant shared the id `repoKey@since`, so a closed episode read as the open one. The episode id is now stored on the waiter and made unique against the journal; regression test in `tests/fleet-lease-journal.test.mjs`.
+- **Deviations from the plan text.** (1) Per-rule unit tests are in a new `tests/fleet-lease-journal.test.mjs` instead of growing `tests/fleet-lease.test.mjs` (the Adoption fit check session also touches lease tests). (2) Consecutive identical `refused` entries (same session, op, code) coalesce into one with `n`/`lastAt` - announce refusals only; acquire refusals are already absorbed by the wait episode. (3) `skills/fleet/gate-contract.json` needed no change: the contracted usage line (`lease acquire`) is unchanged. (4) The plan said SKILL.md's lease usage lines collapse; they went from four to three and SKILL.md ended 52 characters under its size baseline.
+- **Vacuous-pass guard.** The property test asserts the random search actually reached the interesting states (>=200 grants, >=50 refused-held announces, >=20 over-held announces, >=200 queued, >=20 served, >=20 cancelled, >=50 clears) across the 400 sequences.
