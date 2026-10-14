@@ -617,6 +617,74 @@ via `check-plan-status.mjs --select` — only an *active* plan
 (`Draft`/`Approved`/`In Progress`) is ever audited. A consumer that never
 re-installs keeps the old behaviour — a strict improvement, never a regression.
 
+### Tech-debt ledger: one file per entry (2026-10)
+
+The debt ledger moved from one file (`.audit/tech-debt.json`) to one file per
+entry (`.audit/tech-debt/entries/<topicId>.json`, plus an optional
+`.audit/tech-debt/budgets.json`). Two branches that each record debt about
+different entries now merge with **zero conflicts** — distinct entries are distinct
+paths. (Two branches that change the SAME field of the SAME entry still conflict on that one
+small file, by design: it is a real disagreement.) The top-level
+`lastUpdated` that every writer bumped is gone from both forms. Plan and proof:
+`docs/plans/debt-ledger-per-entry-files.md` in the source repo; upstream report
+`d338aa8a`.
+
+**If your ledger is gitignored (the default): nothing to do.** The next debt
+write migrates it automatically — an untracked file has no git consequences.
+
+**If you COMMIT your ledger** (you `git add -f`'d `.audit/tech-debt.json`), the
+writers keep using the single file — minus `lastUpdated`, so most conflicts stop
+at once — until you move it, deliberately, in **one commit on your default
+branch**. A writer never does this for you: it runs inside a feature branch, and
+deleting a committed file in N parallel branches is the conflict storm this
+change exists to end.
+
+1. **Sync.** The managed `.gitignore` rule is now `.audit/*` (was `.audit/`).
+   For a consumer that adds nothing, the two ignore exactly the same paths; the
+   difference is that a negation below it can now take effect — git cannot
+   re-include anything under an excluded *directory*.
+2. **Re-include the ledger directory**, through the sanctioned channel (never by
+   editing inside the managed fence) — in `.sync-overrides.json`:
+   ```json
+   "gitignoreExtra": [
+     { "pattern": "!.audit/tech-debt/", "reason": "debt ledger is committed here (shared across sessions)" }
+   ]
+   ```
+   then re-sync. The line is rendered inside the managed block, after `.audit/*`.
+3. **On your default branch, with every in-flight debt-recording PR landed if you
+   can** (fewer stale branches, step 5), run the move and commit it:
+   ```bash
+   node scripts/.claude-skills/debt-ledger-migrate.mjs --dry-run
+   node scripts/.claude-skills/debt-ledger-migrate.mjs
+   ```
+   It copies every entry into a staging directory, verifies it, publishes it with
+   one rename, and only then deletes the single file. It **refuses, changing
+   nothing,** if git would ignore any destination (skipped step 2), if git cannot
+   be asked, or if two copies of an entry disagree (`--prefer dir|legacy`
+   decides). It never touches the index: it prints the one staging command
+   (`git add -A -- .audit/tech-debt .audit/tech-debt.json`).
+4. **Update your own references to the old path** in the same commit — anything
+   that reads `.audit/tech-debt.json` directly (a contract test, a scope config,
+   a `.fleet.json` `hotFiles` entry) should read the directory, or go through the
+   bundle's reader. Duplicate topicIds are now unrepresentable, so a
+   no-duplicates contract test can be retired.
+5. **Stale branches** cut before the migration commit that still edit the single
+   file hit ONE modify/delete conflict on it when they merge. Keep the file
+   (`git add .audit/tech-debt.json`), commit the merge, then reconcile:
+   ```bash
+   node scripts/.claude-skills/debt-ledger-migrate.mjs --stale-ref HEAD^2
+   ```
+   `--stale-ref` is the stale branch's tip *before* the merge. Merged the stale
+   branch **into main**: its tip is the merge commit's second parent, `HEAD^2`.
+   Merged main **into the stale branch** (updating it): its tip is the first
+   parent, `HEAD^1` (also `ORIG_HEAD` straight after the merge). Pick the wrong
+   one and it is refused — that side already contains the migration commit. It
+   applies only what
+   that branch changed against its own merge-base: entries deleted on main after
+   the migration stay deleted, and an entry both sides edited is refused until
+   you pick a side with `--prefer`. Until you reconcile, readers ignore the kept
+   file (with one warning) and writers never touch it.
+
 ---
 
 ## Fresh-clone workflow

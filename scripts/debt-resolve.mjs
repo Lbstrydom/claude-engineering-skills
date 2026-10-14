@@ -38,12 +38,10 @@
 import './lib/load-env.mjs';
 import { initLearningStore, isCloudEnabled, resolveRepoForStore } from './learning-store.mjs';
 import { selectEventSource, removeDebt, appendEvents, persistDebtEntries } from './lib/debt-memory.mjs';
-import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
+import { readDebtLedger, readPersistedDebtEntries, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { DEFAULT_DEBT_EVENTS_PATH } from './lib/debt-events.mjs';
 import { generateRepoProfile } from './lib/context.mjs';
 import { hasFlag, finishAndExit } from './lib/cli-io.mjs';
-import fs from 'node:fs';
-import path from 'node:path';
 
 // Schema caps (scripts/lib/schemas.mjs DebtEntryPersistedFields): rationale 4000, approver 120.
 const MAX_RATIONALE = 4000;
@@ -129,10 +127,10 @@ async function acceptPermanent(ctx, opts, entry) {
     console.error(`Error: --rationale must be <= ${MAX_RATIONALE} chars (got ${opts.rationale.length})`);
     process.exit(1);
   }
-  // The raw row, not readDebtLedger's view: persisting a derived view would
-  // write recurrence metrics back into the ledger.
-  const raw = JSON.parse(fs.readFileSync(path.resolve(opts.ledgerPath), 'utf-8')).entries
-    .find((e) => e.topicId === entry.topicId);
+  // The persisted row, not readDebtLedger's view: persisting a derived view
+  // would write recurrence metrics back into the ledger. Through the ledger's
+  // own reader — it is per-entry files now, not one parseable file.
+  const raw = readPersistedDebtEntries(opts.ledgerPath).find((e) => e.topicId === entry.topicId);
   const updated = buildAcceptedPermanentEntry(raw, opts, new Date().toISOString());
 
   process.stderr.write(`  [debt-resolve] Accepting ${opts.topicId} as permanent (${raw.deferredReason} -> accepted-permanent): ${entry.category || 'unknown category'}\n`);

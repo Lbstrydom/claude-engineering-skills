@@ -420,8 +420,9 @@ async function main() {
   // Step 8 — Debt Review (automatic when thresholds crossed or forced)
   try {
     const debtLedgerPath = path.resolve('.audit', 'tech-debt.json');
-    if (fs.existsSync(debtLedgerPath)) {
-      const { readDebtLedger } = await import('./lib/debt-ledger.mjs');
+    const { readDebtLedger, debtLedgerExists } = await import('./lib/debt-ledger.mjs');
+    // Either storage form (single file or per-entry directory) counts.
+    if (debtLedgerExists(debtLedgerPath)) {
       const { findRecurringEntries, buildLocalClusters, findBudgetViolations } = await import('./lib/debt-review-helpers.mjs');
 
       const ledger = readDebtLedger({ ledgerPath: debtLedgerPath });

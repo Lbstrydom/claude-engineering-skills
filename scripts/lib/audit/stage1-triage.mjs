@@ -140,6 +140,11 @@ function isSensitiveViaSymlinkResolution(token, repoRoot) {
     // closed to sensitive, matching `resolveAndClassify`'s own contract for
     // genuine resolution problems, not be conflated with "just a word".
     if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return false;
+    // ENAMETOOLONG on a token that is not path-shaped: no separator, no drive letter / UNC prefix, and longer than the
+    // 255-byte NAME_MAX of any single path component. Such a token cannot name a file on any supported filesystem, so
+    // it is ordinary text (Linux reports ENAMETOOLONG where Windows reports ENOENT). A path-shaped token that cannot
+    // be resolved for the same reason stays fail-closed, exactly as before.
+    if (err && err.code === 'ENAMETOOLONG' && token.length > 255 && !/[\\/]/.test(token) && !/^[A-Za-z]:/.test(token)) return false;
     return true;
   }
   const rel = path.relative(path.resolve(repoRoot), canonical);

@@ -4,10 +4,14 @@ summary: Phase D debt ledger — persist out-of-scope valid findings so they don
 
 # Debt Capture (Step 3.6) + Resolution (Step 5.1)
 
-**Purpose**: Persist out-of-scope valid findings to `.audit/tech-debt.json`
-so future audits suppress them automatically. Without this step, the same
-pre-existing concerns get re-raised every audit, burning tokens and
-diluting signal.
+**Purpose**: Persist out-of-scope valid findings to the debt ledger
+(`.audit/tech-debt/`) so future audits suppress them automatically. Without
+this step, the same pre-existing concerns get re-raised every audit, burning
+tokens and diluting signal.
+
+**Storage.** One file per entry: branches recording different entries never
+conflict. A legacy ledger migrates on write; a committed one, once, via
+`node scripts/debt-ledger-migrate.mjs`.
 
 **Eligible candidates**: findings from Step 3 triage with `action = defer`
 — meaning `validity = valid` AND (`scope = out-of-scope` OR an explicit
@@ -176,7 +180,7 @@ node scripts/debt-resolve.mjs abc12345 --rationale "fixed in commit a1b2c3d — 
 
 Exit codes: 0 = resolved, 1 = op error, 2 = entry not found / lock contention.
 
-Removes the entry from `.audit/tech-debt.json` (and cloud mirror when
+Removes the entry from the debt ledger (and cloud mirror when
 configured); logs a `resolved` event to the event source. Audit trail
 stays in the event log.
 

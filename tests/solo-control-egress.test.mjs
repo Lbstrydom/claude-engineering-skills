@@ -28,9 +28,13 @@ function runCli(args, { policyPath } = {}) {
 /** Same, but also the REAL exit status — a pipe through `tail` reports the
  * pipe's exit, which is how a process.exit(3) reads as 0 (memory:
  * feedback_pipe_masks_git_exit_code). */
-function runCliFull(args, { policyPath, scrubKeys = false } = {}) {
+function runCliFull(args, { policyPath, scrubKeys = true } = {}) {
   const env = { ...process.env };
   if (policyPath) env.SOLO_CONTROL_RECIPIENT_POLICY_PATH = policyPath;
+  // Default ON (2026-10-14): the CLI builds its provider clients before the per-commit policy check, and a CI
+  // runner (or any clean machine) has no ANTHROPIC_API_KEY / claude CLI, so without placeholders the run dies at
+  // client construction and the refusal under test never executes. The placeholders are inert: nothing here reaches a
+  // provider. (That the client is built before the refusal is its own finding, filed separately.)
   // For tests whose PASSING path is "the guard stops us before any call": if the
   // guard ever regresses, the subprocess would reach a real provider. Preset
   // keys win over the repo's env loader (dotenv no-override — verified), so an

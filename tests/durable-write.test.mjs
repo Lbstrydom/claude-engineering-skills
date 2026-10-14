@@ -21,6 +21,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+// The checkout this file lives in, not a hardcoded main checkout: from a worktree or a CI runner the
+// subprocess must import THIS tree's module.
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 import {
   registerWriter, durableWrite, drainSpill, spillSummary,
@@ -202,7 +207,7 @@ test('a DECLINED write is `skipped` even when the queue is full', async () => {
       process.stdout.write('OUTCOME=' + r.outcome);
     `], {
       encoding: 'utf-8',
-      cwd: 'C:/GIT/claude-engineering-skills',
+      cwd: REPO_ROOT,
       env: { ...process.env, AUDIT_SPILL_MAX_FILES: '1' },
     });
     assert.match(out, /OUTCOME=skipped/,

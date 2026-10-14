@@ -48,6 +48,22 @@ with `node scripts/prepush-check.mjs --tier full --head <sha> --base <merge-base
 form). Then merge pinned to that sha. A `branch` line, or `tier NOT reported`, is not
 that verdict.
 
+**The CI verdict (repos whose `.test-tiers.json` declares `ciVerdict`).** Such a repo
+runs its full suite in GitHub Actions (CES: `full-suite.yml`, `ubuntu-latest`), and its
+local push is the light branch tier by default. The verdict is then read, not produced:
+`node scripts/test-tier.mjs ci-verdict --pr <n>` prints `test-tier/v1 full <sha> ... reason=ci:<run>`
+(Source-repo-gated: a consumer has neither the CLI nor a `ciVerdict`.) It prints the line only when the trusted workflow succeeded on exactly that PR head, for that PR, into the
+default branch. Exit 3 is "not yet": `pending` waits; `unverified` (no run, a run for
+another PR or base, a PR that edits the workflow, `gh` or the network down) is **not** a
+verdict and never reads as green. Exit 4 is `failed`. Merge pinned with
+`--match-head-commit <sha>`; if the reader printed a stale-base note, the PR was tested
+against an older base (accepted risk, plan §2.3). The CI job runs the test suite only; the
+static gates stay in the local gate, in both tiers. **Two modes:** with the required-check
+ruleset on, a local verdict cannot substitute for the check, so on `unverified` wait (only
+the user may disable the ruleset); without it, fall back to the local full tier above. A PR
+that edits the workflow needs its own green run AND a local full verdict. Consumers declare
+no `ciVerdict`, so their recipe is the push form above, unchanged.
+
 ## Rule 9 — Confirm idle, not "told"
 
 A message to a session that is mid-turn is queued; it cannot stop what that session is

@@ -188,56 +188,26 @@ describe('runJsonLinesAsyncStrict — error classification', () => {
     } finally { fs.unlinkSync(script); }
   });
 
-  it('throws KILLED_BY_SIGNAL when child receives a signal', async () => {
-    // Subprocess that runs forever; we kill it externally. Use a separate
-    // node invocation so we can grab the PID via `process.pid` printed
-    // before sleeping.
-    if (process.platform === 'win32') return; // signal semantics differ on Windows
-    const script = mkScript(`
-      process.stdout.write(JSON.stringify({pid: process.pid}) + '\\n');
-      setInterval(() => {}, 60_000);
-    `);
+  it('throws KILLED_BY_SIGNAL when the child is killed by a signal', async (t) => {
+    // POSIX only: a Windows child killed this way reports an exit code, not a signal. The child kills ITSELF, so the
+    // wrapper's own awaited promise is what is under test (no external pid hunting, nothing left running, nothing
+    // left unawaited to reject after the test has ended).
+    if (process.platform === 'win32') return t.skip('signal semantics differ on win32: no signal is reported');
+    const script = mkScript(`process.kill(process.pid, 'SIGKILL'); setInterval(() => {}, 60_000);`);
     try {
-      // Custom test: spawn directly + kill before strict wrapper finishes.
-      const { spawn } = await import('node:child_process');
-      const childPromise = runJsonLinesAsyncStrict(NODE, [script]);
-      // Give the child a moment to print the pid.
-      setTimeout(() => {
-        // Find children of THIS process and SIGKILL them.
-        // Simpler: spawn a separate pkill — but cross-platform fragile.
-        // Use the records-via-await pattern: skip if we can't kill cleanly.
-      }, 100);
-      // We can't easily extract the PID from the strict wrapper (it
-      // returns records on success / throws on failure). Simpler approach:
-      // use the non-strict wrapper for this specific test.
-      void childPromise;
-      void spawn;
-      // Test SKIPPED — signal-kill testing across platforms is fragile.
-      // The KILLED_BY_SIGNAL branch is exercised in the assertion below.
+      await assert.rejects(
+        () => runJsonLinesAsyncStrict(NODE, [script]),
+        (err) => err.code === SUBPROC_ERROR_CODES.KILLED_BY_SIGNAL && err.signal === 'SIGKILL',
+      );
     } finally { fs.unlinkSync(script); }
   });
 
-  it('classifies signal-kill via runJsonLinesAsync result shape', async () => {
-    if (process.platform === 'win32') return;
-    const script = mkScript(`setInterval(() => {}, 60_000);`);
+  it('classifies a signal-killed child in the non-strict result shape', async (t) => {
+    if (process.platform === 'win32') return t.skip('signal semantics differ on win32: no signal is reported');
+    const script = mkScript(`process.kill(process.pid, 'SIGKILL'); setInterval(() => {}, 60_000);`);
     try {
-      // Use the non-strict runner so we can inspect result before strict re-throws.
-      const { spawn } = await import('node:child_process');
-      const resultPromise = runJsonLinesAsync(NODE, [script]);
-      // Wait briefly then kill the child. Since runJsonLinesAsync doesn't
-      // expose the child handle, spawn a peer that kills children of this
-      // process via a synthetic approach: skip this assertion if we can't
-      // do it portably. Mark the path as covered by the SubprocErrorCode
-      // enum entry — its production trigger is `child.on('close')` with
-      // a `signal` argument, which Node's runtime sets when the child
-      // process is killed externally.
-      setTimeout(() => {
-        // No portable, in-process way to find+kill — leave the
-        // KILLED_BY_SIGNAL classification covered by the unit test:
-        // see the structural assertion below that the enum entry exists.
-      }, 50);
-      void resultPromise;
-      void spawn;
+      const result = await runJsonLinesAsync(NODE, [script]);
+      assert.equal(result.signal, 'SIGKILL');
       assert.equal(SUBPROC_ERROR_CODES.KILLED_BY_SIGNAL, 'KILLED_BY_SIGNAL');
     } finally { fs.unlinkSync(script); }
   });

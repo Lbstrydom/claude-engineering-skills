@@ -159,7 +159,10 @@ function resolveRunnerChild(root, name, opts = {}) {
     return { ok: false, error: { code: 'ROOT_UNRESOLVABLE', message: `cannot resolve install root ${root}: ${err.code || err.message}` } };
   }
 
-  const childPath = path.join(canonicalRoot, name);
+  // A Windows-shaped root (a drive letter or a \wsl$ UNC path) is joined with Windows separators even when
+  // this process runs on POSIX, where the host `path` would splice it with `/` and miss the real entry.
+  const p = /^(?:[\\/]{2}[^\\/]|[A-Za-z]:[\\/])/.test(canonicalRoot) ? path.win32 : path;
+  const childPath = p.join(canonicalRoot, name);
 
   // Audit round 3, H1: the containment check below only guards against the
   // TARGET escaping the root — it says nothing about a file named `.runner`
@@ -190,8 +193,8 @@ function resolveRunnerChild(root, name, opts = {}) {
     return { ok: false, error: { code: 'CHILD_UNRESOLVABLE', message: `cannot resolve ${childPath}: ${err.code || err.message}` } };
   }
 
-  const rel = path.relative(canonicalRoot, canonicalChild);
-  const escaped = rel.startsWith('..') || path.isAbsolute(rel);
+  const rel = p.relative(canonicalRoot, canonicalChild);
+  const escaped = rel.startsWith('..') || p.isAbsolute(rel);
   if (escaped) {
     return { ok: false, error: { code: 'ESCAPES_ROOT', message: `${name} under ${root} resolves outside its install root` } };
   }
