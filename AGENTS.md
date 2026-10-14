@@ -419,7 +419,10 @@ The hook runs `check` in a throwaway worktree at the **commit being pushed**
 here, so tree-checking gave false blocks (a cried-wolf gate gets `--no-verify`'d)
 and false passes (a fix in the tree but not the commit read green). Not `git
 stash` — that yanks the other session's files mid-edit. Detail + escape hatches:
-[`docs/runbooks/prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md).
+[`docs/runbooks/prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md). **A killed
+hook must fail CLOSED**: Git for Windows reads a signal-killed hook as exit 0, so
+the marked `fail-closed-on-signal` trap block stays byte-identical in both hooks
+(#225, runbook §8).
 
 #### A spend-bearing run PINS its revision — it never shares the working tree
 
