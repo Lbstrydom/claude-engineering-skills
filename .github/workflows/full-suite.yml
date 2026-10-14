@@ -23,7 +23,7 @@ name: full-suite
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, 'archive/ci-measure-*']
 
 concurrency:
   group: full-suite-${{ github.ref }}
