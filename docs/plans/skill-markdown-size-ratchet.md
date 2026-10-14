@@ -1,6 +1,6 @@
 # Plan: Skill markdown size ratchet + fleet coordination.md split
 - **Date**: 2026-10-14
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend (tooling + skill docs), stack `js-ts`
 - **Proposal**: p-20261014065320-db8d (theme skill-context-budget)
@@ -206,3 +206,10 @@ graph LR
   - Cluster B R1 PASS H:0 M:1 L:0: M1 dismissed (pre-existing handover text moved verbatim; filed as a proposal).
 - Consolidated Gemini final gate over the union diff, round 1/2: **APPROVE**, gate `approve` (0 blocking, 0 debt).
 - Delivered deviation: fleet `SKILL.md` went 14,977 → 13,635 chars, not to ≤11.5K. The remaining text is the gated worktree-preflight block, the usage grammar and Claude's own safety rules, which belong in the body. It stays baselined at its new, lower size.
+
+## Implementation Log
+
+### 2026-10-14
+- Completed: Phases 1-4 (shared core, `skills:size:gate` with contract and poison pill, coordination.md split, fleet SKILL.md trim and re-baseline); PR #245.
+- Remaining: trimming the 12 other oversized SKILL.md files and the over-limit references (one proposal each); `fleet touch --clear-waiting` since-reset (p-20261014080352-35d6).
+- Deviations: fleet SKILL.md reached 13,635 chars, not the 11,500 goal; the left-over text is the gated preflight block, the usage grammar and Claude's own safety rules. The `--update-baseline` bootstrap case was specified after plan-audit R2. A directory that vanishes mid-walk fails the gate (code-audit R1 M4) instead of being skipped; the poison pill overlays an under-limit reference instead of an understated baseline.
