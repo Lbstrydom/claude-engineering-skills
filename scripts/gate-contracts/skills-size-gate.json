@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "gate": "skills:size:gate",
+  "guards": "skill markdown over 12,000 chars may not grow, one under it may not cross, and an improvement must be locked in rather than left at the old high-water mark",
+  "gates": [
+    {
+      "id": "skills-size-ratchet-rejects-growth-past-the-baseline",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "Skill markdown may not grow",
+      "implementation": "scripts/skill-size-ratchet.mjs",
+      "tests": [
+        "tests/skill-size-ratchet.test.mjs",
+        "tests/gate-poison-pills.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/skill-size-ratchet.mjs"
+        ],
+        "overlay": {
+          "skills/fleet/references/telemetry.md": "tests/fixtures/poison/skill-markdown-oversized.md"
+        },
+        "expectExit": 1,
+        "why": "An under-limit skill reference (telemetry.md, about 3.4K chars) replaced by a 13.5K one: the tree as it would look if skill markdown crept past the limit unchallenged. Measured 2026-10-14: 13 of 17 SKILL.md files already exceed the 12,000-char target and coordination.md grew twice in one day. The pill needs no file to stay in the debt ledger, which an understated-baseline fixture would (trimming ship below the limit turns its GREW into DROPPED).",
+        "expectStderr": "skill markdown may not grow"
+      }
+    }
+  ]
+}

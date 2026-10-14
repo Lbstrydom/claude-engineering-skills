@@ -764,6 +764,10 @@
       "description": "Drift-only ratchet over files already past 1000 lines: they may not grow, and a shrink must be locked in with --update-baseline so the baseline does not stay at the historical high-water mark.",
       "category": "diagnostic"
     },
+    "skills:size:gate": {
+      "description": "Drift-only ratchet over skill markdown (skills/**/*.md and the canonical shared references): a file over 12,000 chars may not grow, one under it may not cross, and a shrink must be locked in with --update-baseline.",
+      "category": "diagnostic"
+    },
     "gitignore:policy:gate": {
       "description": "Every .gitignore rule declares its category (A derived / B committed / P private-and-load-bearing), and a P rule names where its content durably lives.",
       "category": "diagnostic"
