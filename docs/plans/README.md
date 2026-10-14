@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**17 active · 251 terminal · 38 audit summaries · 1 parked · 5 reference docs**
+**17 active · 252 terminal · 38 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -68,7 +68,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 248 completed plans</summary>
+<summary>Show all 249 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -290,6 +290,7 @@ source comments that no docs linter sees — stays valid.
 | [Four places that report success without establishing it](./silent-success-cluster.md) | `Complete` |  |
 | [Mega-Plan: Skill-Bundle Consolidation + Public Distribution](./skill-bundle-mega-plan.md) | `Complete` | parent — split into sub-phases E (skill consolidation) / F (install + update infra) / G.1… |
 | [Skill-Efficacy Census — Which of the 16 Bundled Skills Earn Their Keep](./skill-efficacy-census.md) | `Complete` | audited via `/audit-plan`… |
+| [Skill markdown size ratchet + fleet coordination.md split](./skill-markdown-size-ratchet.md) | `Complete` |  |
 | [Skill Progressive Disclosure Refactor](./skill-progressive-disclosure-refactor.md) | `Complete` | all phases A, B.1, B.2, C1–C6, D, E shipped and tested |
 | [Global skill-surface shadow detection + capture-honesty and repo-scoping fixes](./skill-shadow-and-capture-honesty.md) | `Complete` | Clusters B, C, E implemented + audited; consolidated Gemini gate APPROVE (0 findings); V1 and V2 both… |
 | [Stage 0 Evidence-Relevance Split (Tiered-Recall Audit Pipeline)](./stage0-evidence-relevance-split.md) | `Complete` | implemented 2026-07-16; all 3 clusters landed via `/cycle --autonomous`. Plan-audit: 3 GPT rounds + 2 Gemini… |

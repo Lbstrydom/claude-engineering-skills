@@ -18,7 +18,7 @@ Read call, paid only when the reference is actually needed.
 
 ```
 skills/<skill-name>/
-├── SKILL.md                    ← canonical flow; target ≤3K tokens
+├── SKILL.md                    ← canonical flow; ≤3K tokens (12,000 chars), ratcheted by skills:size:gate
 ├── references/                 ← optional — rare/edge/lookup content
 │   ├── <topic-a>.md
 │   └── <topic-b>.md
