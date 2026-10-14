@@ -1,6 +1,6 @@
 # Plan: fleet lease — announce race, transition journal, turns, gaps, sync:pr on the lease
 - **Date**: 2026-10-14
-- **Status**: Approved
+- **Status**: In Progress
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`; engineering principles apply)
 - **Target domain(s)**: `fleet`, `scripts`, `shared-lib`, `tests`
@@ -279,3 +279,4 @@ Stop decision: GPT reached its 5-round absolute cap with 100% acceptance every r
 - **Vacuous-pass guard.** The property test asserts the random search actually reached the interesting states (>=200 grants, >=50 refused-held announces, >=20 over-held announces, >=200 queued, >=20 served, >=20 cancelled, >=50 clears) across the 400 sequences.
 - **Code audit (PR 1, cluster A, base `c35dacc1`, scope pinned with `cycle-cluster-scope.mjs`, 14 files).** GPT round 1: 9 findings (H:1 M:7 L:0 + 1 enumeration bound) - M1/M2 are `deferred-declared` (`grant`/`turn` are PR 2, `sync-pr-lease` is PR 3); H1 (a wait served by an already-ended window), M3 (refusal coalescing ignored `repoKey`), M4 (journal payloads unvalidated), M5 (the property oracle's bad-request branch was vacuous), M6 (compat test did not assert preservation), M7 (announce ran without the injected probe) fixed; M8 (auditor `maxContainers` bound on a fixture) dismissed. Round 2: 3 findings (journal payload lookup hit `Object.prototype` for a kind named `constructor`; one dead test line) fixed. Round 3: PASS, 0 findings. Gemini gate: APPROVE (blocking 0, debt 0); its coverage line reads "Code: PARTIAL, changed lines unmeasured for 10 file(s)", i.e. the review saw the files but could not tie every changed line - stated here rather than rounded up.
 - **Verification.** `guards:preflight` PASS (33 steps); lease suites 87 pure + 22 CLI tests green; `skills:check`, `skills:size:gate`, `size:ratchet:gate`, `context:check`, `cli:flags:gate`, `emit:exit:gate`, `stdout:flush:gate`, `knip:gate`, `plans:lint`, `docs:check` all exit 0. The full suite runs in GitHub Actions (`full-suite`), not here.
+- **Shipped**: PR 1 as #252 (`/ship` 2026-10-15). Remaining: PR 2 (Phases 4-5, gaps and turns) and PR 3 (Phases 6-7, sync:pr and `--clear-waiting`).

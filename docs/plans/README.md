@@ -27,7 +27,7 @@ This is the list to read when asking "what is in flight?".
 | [The dashboard's debt queue treats "no local cache" as an expected absence](./dashboard-debt-sandbox-absence.md) | `In Progress` | implemented on `fix/dashboard-debt-sandbox-absence`; under /audit-code |
 | [Tech-Debt Ledger — One File Per Entry (merge conflict-free by construction)](./debt-ledger-per-entry-files.md) | `In Progress` |  |
 | [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `In Progress` | implemented on `fix/debt-readers-ask-store`; under /audit-code |
-| [fleet lease — announce race, transition journal, turns, gaps, sync:pr on the lease](./fleet-lease-turns-and-journal.md) | `Approved` |  |
+| [fleet lease — announce race, transition journal, turns, gaps, sync:pr on the lease](./fleet-lease-turns-and-journal.md) | `In Progress` |  |
 | [fleet prune evidence reaches a person (upstream 56773c7c)](./fleet-prune-surfacing.md) | `In Progress` |  |
 | [fleet — catch abandoned worktree work regularly, and remove account-switch friction](./fleet-unclaimed-work-and-switch-friction.md) | `Draft` |  |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
