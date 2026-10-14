@@ -1,6 +1,6 @@
 # Plan: fleet machine-wide lease (`fleet lease`)
 - **Date**: 2026-10-13
-- **Status**: Draft
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend (a CLI verb over one shared state file; no UI) · stack `js-ts` (`detect-stack`: `js-ts`)
 - **Target domain(s)**: `fleet`, `skills-content`
@@ -178,16 +178,10 @@ Acceptance rate across the three GPT rounds: 8 of 8 findings accepted (100%), so
 | Gemini (`gemini-pro-latest`) | 1 | CONCERNS, gate `blocked`: blocking 1 | G1 (a long branch name crashing on the 80-character limit) **challenged with evidence**: `badIdentity` runs first in every decision, so it is an argument error (exit 2); a CLI test drives it and fails if the check is removed |
 | Gemini | 2 (`--prior` round 1) | CONCERNS, gate `blocked`: blocking 2 | The reviewer accepted the challenge. G1 (an empty repo label at a filesystem root) accepted and fixed (`repoLabel`, never empty, clipped, no control characters), with unit tests. G2 (`--pid 0` reaching the schema) **challenged**: the decision functions already refuse a non-positive pid as an argument error; a CLI test now drives `attach`/`acquire` with `--pid 0` and `00`. **The cap is two Gemini rounds, so these two answers were not re-reviewed by Gemini.** |
 
-## Remaining steps (checkpoint 2026-10-13, at the /ship handoff)
+## Implementation Log
 
-State: implemented, tested and audited; **not pushed, no PR**. Branch `claude/machine-lease`, one commit `04151c75` on main `972e5077`, tree clean, `guards:preflight` PASS (not the full gate). The claim `claude/machine-lease` is held, waiting on `human:/ship` (the user types the /ship command; the coordinator grants the gate slot, since the lease is not on main yet and cannot arbitrate its own landing).
-
-1. **Rebase first.** `git fetch origin main`, then `git rebase origin/main`. If main moved under `skills/fleet/**`, `scripts/fleet.mjs`, `scripts/lib/fleet/argv.mjs` or `coordination.mjs`, resolve by hand; for the generated files (`skills.manifest.json`, `docs/plans/README.md`, `scripts/lib/bundle-deps.json`, `.claude/skills/**`) take either side and regenerate: `npm run skills:regenerate`, `npm run plans:index`, `npm run bundle:deps`. Re-run `npm run guards:preflight` and `node --test tests/fleet-lease.test.mjs tests/fleet-lease-cli.test.mjs tests/fleet-lease-state-cli.test.mjs tests/relocation-guard.test.mjs`.
-2. **The user types `/ship docs/plans/fleet-machine-lease.md`.** It writes the status.md entry (set the Backlog line from `node scripts/backlog-snapshot.mjs`), fills this plan's Implementation Log, commits with `scripts/ship-commit.mjs` (`--gate converged`: the audited tree differs from the committed one after the rebase and the status entry) and pushes. The push needs a gate slot: ask the coordinator, or take it with `fleet lease acquire --kind gate --for 30` once this verb is on main.
-3. **Expect the pre-push gate to be the first full run of the new tests.** Last session the first push of Part 3 was blocked by two whole-suite guards its new files tripped (`extension-list-drift`, `skill-command-portability`); `guards:preflight` does not cover those two, so run them by hand before the push: `node --test tests/extension-list-drift.test.mjs tests/skill-command-portability.test.mjs tests/skills-artifact-freshness-wiring.test.mjs`.
-4. **Open the PR** (`gh auth` must be the Lbstrydom account), bind it with the ccd_pr tools, and report: branch, PR, files changed, red/green evidence, Findings. Do not merge; the coordinator merges, pinned to the audited head.
-5. **After the merge**: release the claim (`fleet release --id claude/machine-lease`); confirm in each consumer's MAIN checkout that the next sync delivered `scripts/lib/fleet/lease.mjs` and `lease-cmd.mjs` (`node scripts/.claude-skills/lib/sync-isolation-verify.mjs`); the first real use is the coordinator taking the slot with `fleet lease acquire`.
-
-Decisions still open for the user: (a) whether sessions may take a free slot without asking the coordinator (the plan keeps it cooperative; rule 14 says the coordinator still orders); (b) `FLEET_MACHINE_DIR` for two OS users or WSL beside Windows.
-
-Findings to carry into the final report: `guards:preflight` omits `extension-list-drift` and `skill-command-portability`; the fleet gate contract needed an `ignoredCandidates` entry for the new SKILL.md verb row; a bash heredoc collapses `\\\\` and can write a literal NUL into a source file (write script files with the Write tool).
+### 2026-10-13 — shipped in #243 (squash 126efc14)
+- **Completed**: `fleet lease acquire | attach | release | status | announce | peak` (`scripts/lib/fleet/lease.mjs`, `lease-cmd.mjs`), one machine-wide `lease.json` under `~/.claude-fleet` (`FLEET_MACHINE_DIR` overrides); the `fleet next` FYI lines; coordination rule 14 and participant step 9 (`fleet propose`) wording in `skills/fleet`. Tests: `tests/fleet-lease.test.mjs`, `tests/fleet-lease-cli.test.mjs`, `tests/fleet-lease-state-cli.test.mjs`.
+- **Gemini answers not re-reviewed (two-round cap)**, checked against main on 2026-10-14: plan G1 (a bare renewing `acquire` rotates the token) is pinned by `tests/fleet-lease.test.mjs` "renews with the matching token (token kept), rotates without one, refuses a wrong one" and `tests/fleet-lease-cli.test.mjs` "... an acquire without a token rotates it"; code G1 (a never-empty `repoLabel`) by the `repoLabel` unit cases in `tests/fleet-lease.test.mjs`; code G2 (`--pid 0` is an argument error) by `tests/fleet-lease-state-cli.test.mjs`, which drives `attach` and `acquire` with `--pid 0` and `00`. No further action.
+- **Findings carried out**: `guards:preflight` omitted `extension-list-drift` and `skill-command-portability` (added to `GUARD_TESTS` on 2026-10-14); a bash heredoc collapses a doubled backslash and can write a literal NUL into a source file, so write script files with an editor tool.
+- **Decisions still open for the user**: (a) whether sessions may take a free slot without asking the coordinator (the plan keeps it cooperative; rule 14 says the coordinator still orders); (b) `FLEET_MACHINE_DIR` for two OS users or WSL beside Windows.
