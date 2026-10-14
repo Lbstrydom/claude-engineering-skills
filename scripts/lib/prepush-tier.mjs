@@ -76,7 +76,7 @@ export function runTieredChecks({ head, tier, pushesDefault, support, run, readT
         if (!valid.ok) failure = valid.reason;
         else if (parsed.envelope.head !== head) failure = `the envelope is for ${String(parsed.envelope.head).slice(0, 8)}, not ${head.slice(0, 8)}`;
         else {
-          const agrees = envelopeMatchesRequest(parsed.envelope, { tier, pushesDefault });
+          const agrees = envelopeMatchesRequest(parsed.envelope, { tier, pushesDefault, list: list.ok ? list.list : null });
           if (!agrees.ok) failure = agrees.reason;
           else envelope = parsed.envelope;
         }

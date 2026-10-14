@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 import {
@@ -197,7 +198,7 @@ describe('the live repo is clean and the gate is satisfiable', () => {
     // containing a `npm run x --flag` string made this flake once. Tracked-only
     // is also what the gate sees in production: the pre-push hook runs in a
     // clean checkout of the pushed commit, where nothing is untracked.
-    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, '')), '..');
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const files = execFileSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf-8', maxBuffer: 128 * 1024 * 1024 })
       .split('\n').map((l) => l.trim()).filter(Boolean);
     assert.ok(files.length > 100, 'git ls-files must return the repo, not nothing');
@@ -213,7 +214,7 @@ describe('the live repo is clean and the gate is satisfiable', () => {
   it('the tool that catches dropped flags does not drop its own', () => {
     // cli:flags:gate enforces this too, but assert it directly: a usage typo
     // must exit 2 with a diagnostic, not silently run the default (a census).
-    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, '')), '..');
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const cli = path.join(repoRoot, 'scripts/check-npm-run-args.mjs');
     let code = 0, stderr = '';
     try {

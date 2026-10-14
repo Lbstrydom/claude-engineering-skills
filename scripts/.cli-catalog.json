@@ -657,7 +657,7 @@
       "category": "test"
     },
     "test:tier": {
-      "description": "The test-tier CLI: `select --head <sha> [--base <sha>] --json` (would the branch tier skip a heavy file for that head: the query ship-trains Cluster D asks), `plan` (the push-time envelope the sandbox uses), `refresh-heavy --timing <file>` (report-only). Docs: docs/runbooks/gate-cost.md section 6.",
+      "description": "The test-tier CLI: `select --head <sha> [--base <sha>] --json` (would the branch tier skip a heavy file for that head: the query ship-trains Cluster D asks), `plan` (the push-time envelope the sandbox uses), `refresh-heavy --timing <file>` (report-only), `ci-verdict (--pr <n> | --head <sha>)` (the merge verdict read from the CI full-suite run: exit 0 full, 3 pending or unverified, 4 failed). Docs: docs/runbooks/gate-cost.md section 6.",
       "category": "test"
     },
     "test:preflight": {

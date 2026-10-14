@@ -110,6 +110,32 @@ describe('runTieredChecks', () => {
     });
   });
 
+  describe('this repo\'s committed default tier: an EMPTY request runs the branch tier (docs/plans/ci-full-suite-actions.md D3-D4)', () => {
+    const CES_LIST = { ...LIST, defaultTier: 'branch', ciVerdict: { workflow: '.github/workflows/full-suite.yml' } };
+    const defaultEnv = (over = {}) => envelope({ tier: 'branch', requested: 'branch', requestedRaw: null, defaultSource: 'list', skipped: ['tests/fleet-a.test.mjs'], ...over });
+    it('with the default in the list, no request is a tiered run and the summary is branch', () => {
+      const h = harness({ envelopeText: JSON.stringify(defaultEnv()), files: { '.test-tiers.json': JSON.stringify(CES_LIST) } });
+      const r = go(h, { tier: '' });
+      assert.ok(names(h).some((n) => n.includes('--tier-skip')), names(h).join(' | '));
+      assert.deepEqual(parseSummary(r.summary, HEAD), { ok: true, tier: 'branch', head: HEAD, skipped: 1, base: BASE, reason: null });
+    });
+    it('control: the SAME envelope with a list that has no default is the full suite (an envelope cannot invent the default)', () => {
+      const h = harness({ envelopeText: JSON.stringify(defaultEnv()) });
+      const r = go(h, { tier: '' });
+      assert.ok(!names(h).some((n) => n.includes('--tier-skip')));
+      assert.equal(parseSummary(r.summary, HEAD).tier, 'full');
+      assert.equal(parseSummary(r.summary, HEAD).reason, 'selector-failed');
+    });
+    it('an explicit full request, or a push to the default branch, is still full under the list default', () => {
+      const files = { '.test-tiers.json': JSON.stringify(CES_LIST) };
+      const forced = harness({ envelopeText: JSON.stringify(envelope({ requested: 'full', requestedRaw: 'full', escapes: [{ id: 'forced-full', detail: 'x' }] })), files });
+      assert.equal(parseSummary(go(forced, { tier: 'full' }).summary, HEAD).tier, 'full');
+      const pushed = harness({ envelopeText: JSON.stringify(defaultEnv()), files });
+      const r = go(pushed, { tier: '', pushesDefault: true });
+      assert.equal(parseSummary(r.summary, HEAD).tier, 'full', 'a branch envelope on a push to the default branch is refused');
+    });
+  });
+
   it('a push that updates the default branch is full even when branch was asked, and the summary names why', () => {
     const e = envelope({ requested: 'branch', requestedRaw: 'branch', escapes: [{ id: 'pushes-default', detail: 'x' }] });
     const h = harness({ envelopeText: JSON.stringify(e) });

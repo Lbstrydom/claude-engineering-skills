@@ -223,9 +223,9 @@ push in, or maintaining `.test-tiers.json`.
 
 | Stage | What a push does | Status |
 |---|---|---|
-| 0, shadow | runs the FULL suite and prints `test-tier/v1 shadow: would skip N of M heavy file(s)` | live: this is the default |
+| 0, shadow | runs the FULL suite and prints `test-tier/v1 shadow: would skip N of M heavy file(s)` | live: the default for any repo whose list has no `defaultTier` (all consumers); NOT this repo, see stage 2 |
 | 1, opt-in | `AUDIT_PREPUSH_TIER=branch git push` skips the unreached heavy files | live, per push, by your choice |
-| 2, default | the default flips to the branch tier for work-in-progress pushes | NOT built; needs the user's approval and stage 1's evidence |
+| 2, default | the default flips to the branch tier for work-in-progress pushes | **built for THIS repo only** (2026-10-14), by `.test-tiers.json` `defaultTier: "branch"` beside `ciVerdict`: the full suite runs in CI (`full-suite.yml`, below). Not for any other repo |
 
 ```bash
 AUDIT_PREPUSH_TIER=branch git push        # opt this push in
@@ -263,5 +263,24 @@ then merge pinned with `--match-head-commit <sha>`.
 `.test-tiers.json` by hand (report-only on purpose). **Open:** the 48-file variant has not been timed beside a full run,
 so the savings quoted in the plan are *derived*, not measured; that measurement gates stage 2.
 
-**Revert.** One line: `DEFAULT_BRANCH_TIER` in `scripts/lib/test-tier.mjs` (already `full`), or per machine
-`AUDIT_PREPUSH_TIER=full`. Nothing persisted, nothing to migrate.
+**Stage 2 for this repo: the full suite is in CI** ([plan](../plans/ci-full-suite-actions.md)). `full-suite.yml` runs
+`npm test` on `ubuntu-latest` for every PR and every push to `main` (measured 2026-10-14: 563 s, against 962 s on the
+shared machine; `windows-latest` took 1,595 s and failed more files). The static gates are NOT in CI (they need inputs a
+fresh clone lacks), so they run in every local push, in both tiers. A local push with no request is the branch tier
+(`defaultTier`), but only where the verdict workflow exists in the pushed tree (`ci-verdict-missing` is an escape);
+`AUDIT_PREPUSH_TIER=full`, a push to `main` and every selector/`package.json`/`.githooks/**` change stay full.
+
+```bash
+node scripts/test-tier.mjs ci-verdict --pr 123      # the merge verdict; exit 0 full, 3 pending|unverified, 4 failed
+node scripts/test-tier.mjs ci-verdict --head <sha>  # a landed or pinned sha
+```
+
+Absence is never green: no run, a run for another PR/base/workflow, a PR that edits `full-suite.yml`, `gh` or the network
+down: all `unverified`, no `test-tier/v1` line. Budget (standard runners, no artifacts, no cache, cancelling concurrency)
+is gated by `tests/workflow-runner-labels.test.mjs`. Proposed branch protection, the two operating modes and the rollback:
+plan §2.3 / §2.3b.
+
+**Revert.** For the default: delete `defaultTier` from `.test-tiers.json` (or set it to `full`), after disabling the required-check
+ruleset if one is applied (plan §2.3b: ruleset first, so merges never lose a valid path). For the code default:
+`DEFAULT_BRANCH_TIER` in `scripts/lib/test-tier.mjs` (already `full`), or per machine `AUDIT_PREPUSH_TIER=full`. Nothing
+persisted, nothing to migrate.

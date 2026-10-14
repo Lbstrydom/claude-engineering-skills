@@ -14,6 +14,18 @@ import { extractPlanPaths } from '../scripts/lib/plan-paths.mjs';
 
 const [ARM_A, , ARM_C] = CANONICAL_ARMS; // A = sentinel, C = oss-role
 
+// A client-factory spy: the pure cases never construct a real client (that needs OPENAI_API_KEY, which a CI runner lacks).
+function spyFactories() {
+  const calls = { openai: [], openrouter: [] };
+  return {
+    calls,
+    factories: {
+      createOpenAIClient: async (opts) => { calls.openai.push(opts); return { fake: 'openai' }; },
+      createOpenRouterClient: async (opts) => { calls.openrouter.push(opts); return { fake: 'openrouter' }; },
+    },
+  };
+}
+
 let tmpDir;
 let savedCwd;
 
@@ -30,27 +42,36 @@ afterEach(() => {
 describe('arm-generation.mjs — resolveGenerationClient (pure, per-kind)', () => {
   test('sentinel kind uses route.resolvedModel (not a fresh resolveModel re-derivation)', async () => {
     const route = { resolvedModel: resolveModel('latest-gpt') };
-    const { model } = await _internals.resolveGenerationClient(ARM_A.generation, route);
+    const { model } = await _internals.resolveGenerationClient(ARM_A.generation, route, spyFactories().factories);
     assert.equal(model, route.resolvedModel);
   });
 
   test('oss-role kind also uses route.resolvedModel — single resolution source, no second mechanism', async () => {
     const route = { resolvedModel: resolveModel('latest-oss-reasoner') };
-    const { model } = await _internals.resolveGenerationClient(ARM_C.generation, route);
+    const { model } = await _internals.resolveGenerationClient(ARM_C.generation, route, spyFactories().factories);
     assert.equal(model, route.resolvedModel);
   });
 
   test('resolved-route kind: route.deploymentId wins over route.resolvedModel when both present', async () => {
     const generation = { kind: 'resolved-route', candidateSpec: { kind: 'sentinel', value: 'latest-gpt' }, resolvedModel: 'gpt-5.4', deploymentId: 'foundry-audit-deployment' };
     const route = { resolvedModel: 'gpt-5.4', deploymentId: 'foundry-audit-deployment' };
-    const { model } = await _internals.resolveGenerationClient(generation, route);
+    const { model } = await _internals.resolveGenerationClient(generation, route, spyFactories().factories);
     assert.equal(model, 'foundry-audit-deployment');
+  });
+
+  test('each kind constructs exactly one client of the right family, through the injected factory (no credentials needed)', async () => {
+    const a = spyFactories();
+    await _internals.resolveGenerationClient(ARM_A.generation, { resolvedModel: 'm' }, a.factories);
+    assert.deepEqual([a.calls.openai.length, a.calls.openrouter.length], [1, 0]);
+    const c = spyFactories();
+    await _internals.resolveGenerationClient(ARM_C.generation, { resolvedModel: 'm' }, c.factories);
+    assert.deepEqual([c.calls.openai.length, c.calls.openrouter.length], [0, 1]);
   });
 
   test('resolved-route kind: falls back to route.resolvedModel when route.deploymentId is null', async () => {
     const generation = { kind: 'resolved-route', candidateSpec: { kind: 'sentinel', value: 'latest-gpt' }, resolvedModel: 'gpt-5.4', deploymentId: null };
     const route = { resolvedModel: 'gpt-5.4', deploymentId: null };
-    const { model } = await _internals.resolveGenerationClient(generation, route);
+    const { model } = await _internals.resolveGenerationClient(generation, route, spyFactories().factories);
     assert.equal(model, 'gpt-5.4');
   });
 });
@@ -96,16 +117,18 @@ describe('arm-generation.mjs — buildGenericPlanContent × real extractPlanPath
 describe('arm-generation.mjs — runAuditGenerationArm', () => {
   test('throws UnsupportedGenerationTransport BEFORE any client/generation work for a non-openai-compatible route', async () => {
     let called = false;
+    const spy = spyFactories();
     const fakeAudit = async () => { called = true; return {}; };
     await assert.rejects(
       () => runAuditGenerationArm({
         arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
         route: { transport: 'native-anthropic' }, runId: 'r1', role: 'auditor',
-        _runMultiPassCodeAudit: fakeAudit,
+        _runMultiPassCodeAudit: fakeAudit, _clientFactories: spy.factories,
       }),
       UnsupportedGenerationTransport,
     );
     assert.equal(called, false);
+    assert.deepEqual([spy.calls.openai.length, spy.calls.openrouter.length], [0, 0], 'a refused transport must not construct any client');
   });
 
   test('chdirs into auditInput.repoRoot for the call, restores cwd after, writes an absolute diff file, and NEVER sets repoProfile', async () => {
@@ -122,7 +145,7 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
       arm: ARM_A,
       auditInput: { diff: '--- fake diff ---', files: ['a.js', 'b.js'], repoRoot: tmpDir },
       route, runId: 'r-test-1', role: 'auditor',
-      _runMultiPassCodeAudit: fakeAudit,
+      _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
     });
 
     assert.equal(path.resolve(cwdDuringCall), path.resolve(tmpDir));
@@ -154,7 +177,7 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
     await assert.rejects(
       () => runAuditGenerationArm({
         arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
-        route, runId: 'r-test-2', role: 'auditor', _runMultiPassCodeAudit: fakeAudit,
+        route, runId: 'r-test-2', role: 'auditor', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
       }),
       /boom/,
     );
@@ -171,7 +194,7 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
     const route = { transport: 'openai-compatible', resolvedModel: 'gpt-5.4', deploymentId: 'audit-deployment', pricingModel: 'gpt-5.4', provider: 'azure' };
     await runAuditGenerationArm({
       arm: candidateArm, auditInput: { diff: 'x', files: ['a.js'], repoRoot: tmpDir },
-      route, runId: 'r-test-3', role: 'auditor', _runMultiPassCodeAudit: fakeAudit,
+      route, runId: 'r-test-3', role: 'auditor', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
     });
     assert.equal(capturedOpts.model, 'audit-deployment');
     assert.equal(capturedOpts.scopeMode, 'diff'); // same shape as the sentinel-arm test above
@@ -184,7 +207,7 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
     await assert.rejects(
       () => runAuditGenerationArm({
         arm: ARM_A, auditInput: { diff: '+++ b/.env\n+SECRET=abc123', files: ['.env'], repoRoot: tmpDir },
-        route, runId: 'r-test-4', role: 'auditor', _runMultiPassCodeAudit: fakeAudit,
+        route, runId: 'r-test-4', role: 'auditor', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
       }),
       EgressGateError,
     );
@@ -197,7 +220,7 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
     await assert.rejects(
       () => runAuditGenerationArm({
         arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
-        route, runId: 'r-test-5', role: 'auditor', _runMultiPassCodeAudit: fakeAudit,
+        route, runId: 'r-test-5', role: 'auditor', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
       }),
       /malformed result/,
     );
@@ -216,7 +239,7 @@ describe('arm-generation.mjs — controls.scope/controls.passes wiring (auditor-
     };
     await runAuditGenerationArm({
       arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
-      route, runId: 'r-scope-1', role: 'auditor', _runMultiPassCodeAudit: fakeAudit,
+      route, runId: 'r-scope-1', role: 'auditor', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
     });
     assert.equal(capturedOpts.scopeMode, 'diff');
     assert.equal(Object.hasOwn(capturedOpts, 'passFilter'), false, 'passFilter key must be absent, not null, when passes is omitted');
@@ -230,7 +253,7 @@ describe('arm-generation.mjs — controls.scope/controls.passes wiring (auditor-
     };
     await runAuditGenerationArm({
       arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
-      route, runId: 'r-scope-2', role: 'auditor', scope: 'full', _runMultiPassCodeAudit: fakeAudit,
+      route, runId: 'r-scope-2', role: 'auditor', scope: 'full', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
     });
     assert.equal(capturedOpts.scopeMode, 'full');
   });
@@ -243,7 +266,7 @@ describe('arm-generation.mjs — controls.scope/controls.passes wiring (auditor-
     };
     await runAuditGenerationArm({
       arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
-      route, runId: 'r-scope-3', role: 'auditor', passes: ['structure', 'wiring'], _runMultiPassCodeAudit: fakeAudit,
+      route, runId: 'r-scope-3', role: 'auditor', passes: ['structure', 'wiring'], _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
     });
     assert.deepEqual(capturedOpts.passFilter, ['structure', 'wiring']);
   });

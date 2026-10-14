@@ -2,6 +2,8 @@
   "version": 1,
   "maxAgeDays": 30,
   "heavyThresholdMs": 60000,
+  "defaultTier": "branch",
+  "ciVerdict": { "workflow": ".github/workflows/full-suite.yml" },
   "heavy": [
     {
       "file": "tests/fleet-abstract-overlap.test.mjs",

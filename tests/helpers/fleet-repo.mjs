@@ -119,7 +119,9 @@ export function addBranch(repo, name, files, msg = `work on ${name}`) {
 function pathKey(env) { return Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'PATH'; }
 
 const GH_NAMES = ['gh', 'gh.exe', 'gh.cmd', 'gh.bat'];
-const TOOL_NAMES = IS_WIN ? ['git.exe', 'node.exe'] : ['git', 'node'];
+// 'sh' rides along on POSIX: the handover test spawns `sh -c`, and on a runner where gh shares /usr/bin with sh the
+// scrubbed PATH would otherwise lose the shell itself (spawnSync returns status null).
+const TOOL_NAMES = IS_WIN ? ['git.exe', 'node.exe'] : ['git', 'node', 'sh'];
 const shims = new Map();
 
 /**

@@ -278,6 +278,56 @@ describe('the guards (section 2.4), each seen RED on a mutation', () => {
     assert.match(envelopeMatchesRequest({ ...branch, escapes: [{ id: 'selector-changed', detail: 'x' }] }, { tier: 'branch', pushesDefault: false }).reason, /lists escape/);
     assert.deepEqual(envelopeMatchesRequest(select(['docs/readme.md'], { requested: 'full' }), { tier: 'full', pushesDefault: false }), { ok: true }, 'a full envelope is always acceptable');
   });
+  describe('this repo\'s committed default tier (docs/plans/ci-full-suite-actions.md D2-D4)', () => {
+    const WF = '.github/workflows/full-suite.yml';
+    const CES = { ...LIST, defaultTier: 'branch', ciVerdict: { workflow: WF } };
+    const withWf = repo({ [WF]: 'name: full-suite\n' });
+    const ask = (over = {}) => selectTier({ tree: withWf, list: CES, changed: ['docs/readme.md'], head: HEAD, base: BASE, asOf: AS_OF, requested: null, ...over });
+
+    it('an EMPTY request takes the list default (branch) where the verdict workflow exists, and says where it came from', () => {
+      const e = ask();
+      assert.deepEqual([e.tier, e.defaultSource, e.requestedRaw, e.escapes], ['branch', 'list', null, []]);
+      assert.equal(e.skipped.length, 2);
+    });
+    it('the workflow missing from the tree is the FULL suite (ci-verdict-missing): a light default needs the CI that supplies the verdict', () => {
+      const e = ask({ tree: repo() });
+      assert.equal(e.tier, 'full');
+      assert.deepEqual(e.escapes.map((x) => x.id), ['ci-verdict-missing']);
+      assert.deepEqual(e.skipped, []);
+    });
+    it('every other escape still wins: an explicit full, a push to the default branch, a selector change, package.json', () => {
+      assert.deepEqual(ask({ requested: 'full' }).escapes.map((x) => x.id), ['forced-full']);
+      assert.equal(ask({ requested: 'full' }).tier, 'full');
+      assert.equal(ask({ pushesDefault: true }).tier, 'full');
+      assert.equal(ask({ changed: ['scripts/lib/test-tier.mjs'] }).tier, 'full');
+      assert.equal(ask({ changed: ['package.json'] }).tier, 'full');
+    });
+    it('an explicit branch request does not need the CI (stage 1 keeps its meaning) and records that it was a request', () => {
+      const e = ask({ requested: 'branch', tree: repo(), list: LIST });
+      assert.deepEqual([e.tier, e.defaultSource], ['branch', 'request']);
+    });
+    it('a list WITHOUT the field behaves exactly as before: the code default (full)', () => {
+      const e = ask({ list: LIST });
+      assert.deepEqual([e.tier, e.defaultSource, DEFAULT_BRANCH_TIER], ['full', 'code', 'full']);
+    });
+    it('the list can never turn a branch default on without a ciVerdict, and only branch|full are values', () => {
+      assert.equal(parseHeavyList(JSON.stringify({ ...LIST, defaultTier: 'branch' })).ok, false);
+      assert.equal(parseHeavyList(JSON.stringify({ ...CES, defaultTier: 'sometimes' })).ok, false);
+      assert.equal(parseHeavyList(JSON.stringify({ ...CES, ciVerdict: { workflow: '../outside.yml' } })).ok, false);
+      assert.equal(parseHeavyList(JSON.stringify(CES)).ok, true, 'control: the valid shape parses');
+      assert.equal(parseHeavyList(JSON.stringify({ ...LIST, defaultTier: 'full' })).ok, true, 'a full default needs no CI');
+    });
+    it('envelopeMatchesRequest accepts an empty request ONLY for a branch envelope that came from the list default', () => {
+      const e = ask();
+      assert.deepEqual(envelopeMatchesRequest(e, { tier: '', pushesDefault: false, list: CES }), { ok: true });
+      assert.match(envelopeMatchesRequest(e, { tier: '', pushesDefault: false, list: LIST }).reason, /request of "the default"/, 'no list default: still refused');
+      assert.match(envelopeMatchesRequest(e, { tier: '', pushesDefault: false }).reason, /the default/, 'no list at all: still refused');
+      assert.match(envelopeMatchesRequest(e, { tier: 'full', pushesDefault: false, list: CES }).reason, /request of "full"/);
+      assert.match(envelopeMatchesRequest(e, { tier: '', pushesDefault: true, list: CES }).reason, /updates the default branch/);
+      assert.match(envelopeMatchesRequest({ ...e, escapes: [{ id: 'selector-changed', detail: 'x' }] }, { tier: '', pushesDefault: false, list: CES }).reason, /lists escape/);
+      assert.match(envelopeMatchesRequest({ ...e, defaultSource: 'request' }, { tier: '', pushesDefault: false, list: CES }).reason, /the default/, 'an envelope that did not come from the list is not excused');
+    });
+  });
   it('known blind spots (a non-literal import() inside scripts/**) ride in the envelope, not just the reach result (audit M3)', () => {
     const tree = mkTree({ 'tests/t.test.mjs': "import '../scripts/lib/x.mjs';", 'scripts/lib/x.mjs': 'await import(name);', 'docs/a.md': '' });
     const e = selectTier({ tree, list: listOf(entry('tests/t.test.mjs')), changed: ['docs/a.md'], head: HEAD, base: BASE, asOf: AS_OF, requested: 'branch' });
