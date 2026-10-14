@@ -381,6 +381,24 @@ doing the work. On top of the participant rules:
     to the same session, skip acknowledgements that change nothing, and keep
     sends in reserve for time-critical ones (all clear, gate slot, hold). The lease (rule 14) replaces most slot
     relays: a session reads it instead of asking you.
+16. **Plan on the strong model, execute on the cheaper one.** Where the host
+    lets a coordinator set another session's model, the coordinator stays on
+    the strong model and its workers execute on a cheaper one at high effort
+    (2026-10-14 default: coordinators Opus, workers Sonnet; the user's choice).
+    A session usually cannot switch its own model, so the coordinator does it,
+    and the change applies from that session's next turn:
+    - *direct fix* and *landing or triage* routes (rule 3): switch the chip as
+      soon as it starts;
+    - *`/cycle --autonomous`* routes: the chip plans on the strong model. Its
+      launch prompt says "after `/audit-plan` converges, end your turn and tell
+      the coordinator the plan is audited". Switch it, then reply "go", so the
+      implementation starts in a fresh turn on the cheaper model.
+
+    The external auditors are unchanged, so a cheaper worker does not weaken the
+    review. In Claude Code, the "user started your suggested task" notice is the
+    trigger: find the chip with `list_sessions`, then use `set_session_model` and
+    `set_session_effort`. A switch to a cheaper model, on a chip you started,
+    needs no prompt.
 
 ### Optional: a title reminder hook (Claude Code only)
 
