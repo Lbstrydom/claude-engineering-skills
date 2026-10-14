@@ -362,7 +362,11 @@ doing the work. On top of the participant rules:
 14. **One heavy job at a time on a shared machine.** When several repos' work
     or CI share one machine, run at most one full gate or full test suite at a
     time (a "gate slot"), and no installs or disk-heavy maintenance alongside
-    another repo's announced timing or CI window. Measured 2026-10-12/13: two
+    another repo's announced timing or CI window. Heavy includes a
+    coordinator's own discovery (a recursive find or grep over a profile, a
+    disk sweep), and a window covers scheduled runs (nightlies, QA, drift) as
+    well as pushes, re-runs and dispatches: announce those too (2026-10-14: a
+    profile-wide find ran during an unannounced-in-the-lease nightly). Measured 2026-10-12/13: two
     parallel gates plus maintenance pushed another repo's CI past its time cap
     twice. The slot is recorded, not only agreed: `fleet lease acquire|attach|release|status` keeps one file for the
     whole machine (the heavy slot with its holder, repo, pid and expiry; the quiet and CI windows each repo announces
