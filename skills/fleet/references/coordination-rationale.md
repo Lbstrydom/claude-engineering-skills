@@ -44,7 +44,7 @@ path-filtered CI does not run, the local pre-push gate is the evidence.
 tier (`AUDIT_PREPUSH_TIER=branch`), merge only a sha whose output carries that line.
 Either push the candidate with `AUDIT_PREPUSH_TIER=full`, or verify it without a push
 with `node scripts/prepush-check.mjs --tier full --head <sha> --base <merge-base>`
-(source-repo-gated: that script is this repo's own gate, so a consumer uses the push
+(Source-repo-gated: that script is this repo's own gate, so a consumer uses the push
 form). Then merge pinned to that sha. A `branch` line, or `tier NOT reported`, is not
 that verdict.
 
