@@ -122,7 +122,8 @@ describe('buildStageOneTriageInput — clamps over-limit fields, never crashes t
     if (process.platform === 'win32') return t.skip('ENAMETOOLONG is a POSIX errno; win32 reports ENOENT');
     const repoRoot = mkdtemp();
     try {
-      for (const p of [`/${'a'.repeat(300)}/b.txt`, `/tmp/${'a'.repeat(300)}`]) {
+      // A backslash makes a token path-shaped too (R1 H3/M3): it must not take the ordinary-name exemption.
+      for (const p of [`/${'a'.repeat(300)}/b.txt`, `/tmp/${'a'.repeat(300)}`, `\\\\host\\${'a'.repeat(300)}`, `dir\\${'a'.repeat(300)}`]) {
         const dto = buildStageOneTriageInput({ severity: 'LOW', category: 'c', detail: `see ${p} here`, section: 'src/a.mjs:1' }, { repoRoot });
         assert.equal(dto.detail.includes('[REDACTED]'), true, `a path-shaped token must stay redacted: ${p.slice(0, 20)}…`);
       }
@@ -367,8 +368,7 @@ describe('buildStageOneTriageInput — a symlinked-to-sensitive path MENTIONED I
     } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
-  it('a real, existing, but NON-sensitive file mentioned in prose is left unredacted (only sensitive canonical targets trigger)', (t) => {
-    if (skipOnWin) return t.skip('symlink semantics: not exercised on win32');
+  it('a real, existing, but NON-sensitive file mentioned in prose is left unredacted (only sensitive canonical targets trigger)', () => {
     const repoRoot = mkdtemp();
     try {
       fs.writeFileSync(path.join(repoRoot, 'helper.mjs'), 'export const x = 1;');

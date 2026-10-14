@@ -1,6 +1,6 @@
 # Plan: pre-push gate cost, slice 2 — a cheaper branch-push test tier
 - **Date**: 2026-10-13
-- **Status**: In Progress (stages 0 and 1 built; stage 2, the default flip, awaits a separate user decision)
+- **Status**: In Progress (stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for any other repo it still awaits a separate user decision)
 - **Author**: Claude + Louis
 - **Scope**: backend (pre-push hook, test runner, one CLI; no UI) · stack `js-ts` (`detect-stack`: `js-ts`)
 - **Target domain(s)**: `scripts`, `shared-lib`

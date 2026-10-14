@@ -47,9 +47,11 @@ function matrixValues(job, key) {
 function runnerViolations(workflow, file) {
   const out = [];
   for (const [id, job] of Object.entries(workflow?.jobs ?? {})) {
-    if (job && typeof job === 'object' && 'uses' in job && !('runs-on' in job)) continue; // a reusable-workflow call has no runner of its own
     const ro = job?.['runs-on'];
     const where = `${file} job "${id}"`;
+    // A reusable-workflow call hands the work to another file this guard does not read: fail closed rather than let it
+    // delegate around the budget (R1 M2). The repo uses none today; adopting one means extending this guard first.
+    if (job && typeof job === 'object' && 'uses' in job) { out.push(`${where}: calls a reusable workflow (${job.uses}); its runners and steps are not inspected by this guard`); continue; }
     if (typeof ro !== 'string') { out.push(`${where}: runs-on is ${ro === undefined ? 'missing' : 'not a plain string'} (${JSON.stringify(ro)}); a label list or a group object is not provably standard`); continue; }
     const ref = MATRIX_REF.exec(ro.trim());
     if (ref) {
@@ -121,8 +123,10 @@ describe('runner labels — the rule fires on every way of leaving the free tier
     assert.equal(runnerViolations(dynamic, 'w.yml').length, 1, 'a matrix built from an expression cannot be proven standard');
   });
 
-  it('does not require a runner on a reusable-workflow call', () => {
-    assert.deepEqual(runnerViolations(y('on: push\njobs:\n  j:\n    uses: ./.github/workflows/x.yml\n'), 'w.yml'), []);
+  it('fires on a reusable-workflow call: delegating the work must not bypass the budget (R1 M2)', () => {
+    const v = runnerViolations(y('on: push\njobs:\n  j:\n    uses: ./.github/workflows/x.yml\n'), 'w.yml');
+    assert.equal(v.length, 1);
+    assert.match(v[0], /reusable workflow/);
   });
 });
 

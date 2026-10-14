@@ -34,7 +34,7 @@ import {
 import { blobSha, changedFiles, committerTime, readFileAt, readTreeAt, resolveSelectionBase, selectorIdentity } from './lib/test-tier-git.mjs';
 import { spawnSync } from 'node:child_process';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
-import { CI_VERDICT_EXIT, ciVerdict } from './lib/ci-verdict.mjs';
+import { CI_VERDICT_EXIT, ciVerdict, parseVerdictTarget } from './lib/ci-verdict.mjs';
 
 const EXIT = { ok: 0, error: 1, argv: 2, unmeasured: 3 };
 /** The checkout this CLI's own code lives in: the selector's identity is judged against THESE files. */
@@ -151,24 +151,16 @@ function cmdRefresh() {
 }
 
 function cmdCiVerdict() {
-  const prArg = argOption('pr');
-  const head = argOption('head');
-  if ((prArg === null || prArg === undefined) === (head === null || head === undefined)) throw new ArgvError('test-tier ci-verdict: exactly one of --pr <n> or --head <rev> is required');
-  let pr = null;
-  if (prArg !== null && prArg !== undefined) {
-    if (!/^[1-9]d{0,8}$/.test(prArg)) throw new ArgvError(`test-tier ci-verdict: --pr must be a PR number, got ${JSON.stringify(prArg)}`);
-    pr = Number(prArg);
-  } else if (!/^[0-9a-zA-Z][w./-]*$/.test(head) || head.startsWith('-')) throw new ArgvError(`test-tier ci-verdict: --head ${JSON.stringify(head)} is not a revision`);
+  let target;
+  try { target = parseVerdictTarget(argOption('pr'), argOption('head')); } catch (e) { throw new ArgvError(`test-tier ci-verdict: ${e.message}`); }
+  const { pr, head } = target;
   const run = (cmd, args) => spawnSync(cmd, args, { cwd: repo(), encoding: 'utf8', env: cmd === 'git' ? sanitizeGitEnv(repo()) : process.env, maxBuffer: 64 * 1024 * 1024 });
   const r = ciVerdict({ run, pr, head });
   if (hasFlag('json')) emitJson(r);
   else if (r.verdict === 'full') {
-    process.stdout.write(`${r.summary}
-`);
-    if (r.staleBase) process.stderr.write(`ci-verdict note: tested against ${r.staleBase.tested.slice(0, 8)}, ${r.defaultBranch} is now ${r.staleBase.current.slice(0, 8)}
-`);
-  } else process.stdout.write(`${r.version} ${r.verdict}${r.head ? ` ${r.head}` : ''}: ${r.reason}${r.url ? ` (${r.url})` : ''}
-`);
+    process.stdout.write(`${r.summary}\n`);
+    if (r.staleBase) process.stderr.write(`ci-verdict note: tested against ${r.staleBase.tested.slice(0, 8)}, ${r.defaultBranch} is now ${r.staleBase.current.slice(0, 8)}\n`);
+  } else process.stdout.write(`${r.version} ${r.verdict}${r.head ? ` ${r.head}` : ''}: ${r.reason}${r.url ? ` (${r.url})` : ''}\n`);
   return r.verdict === 'full' ? CI_VERDICT_EXIT.full : r.verdict === 'failed' ? CI_VERDICT_EXIT.failed : CI_VERDICT_EXIT.notYet;
 }
 

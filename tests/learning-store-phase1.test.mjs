@@ -73,14 +73,9 @@ describe('learning-store / Phase 1 graceful degradation (cloud off)', () => {
     assert.equal(r.ok, true);
   });
 
-  it('placeholder when cloud IS configured', async (t) => {
-    if (!await isCloudEnabled()) return t.skip('cloud not configured');
-    // Real integration tests require a clean test schema and would touch
-    // production tables — keep them out of the default unit-test run.
-    // Run via `npm test -- --test-name-pattern="phase1 integration"` once
-    // we have a dedicated test database.
-    assert.ok(true);
-  });
+  // Not a test: a reported skip, so the absence of a real write-path integration test reads as absence rather than as an
+  // `assert.ok(true)` pass. Real integration tests need a clean test schema and would touch production tables.
+  it('integration: the cloud write path against a disposable database', { skip: 'needs a dedicated test database (none is wired for this suite)' }, () => {});
 });
 
 // ── decision_key shape contract ───────────────────────────────────────────
@@ -126,7 +121,7 @@ describe('learning-store / Phase 1 per-repo filter contract (H1 fix)', () => {
 });
 
 describe('learning-store / Phase 1 decision_key shape', () => {
-  it('insertLearningDecision passes decision_key through untouched', async (t) => {
+  it('cloud off: insertLearningDecision declines without error (the decision_key write contract itself is NOT exercised here)', async (t) => {
     if (await isCloudEnabled()) return t.skip('cloud configured: the cloud-off contract is not exercised here');
     const r = await insertLearningDecision({
       decisionKey: 'audit-bound:pass_selection:r0:s0',

@@ -144,7 +144,7 @@ function isSensitiveViaSymlinkResolution(token, repoRoot) {
     // 255-byte NAME_MAX of any single path component. Such a token cannot name a file on any supported filesystem, so
     // it is ordinary text (Linux reports ENAMETOOLONG where Windows reports ENOENT). A path-shaped token that cannot
     // be resolved for the same reason stays fail-closed, exactly as before.
-    if (err && err.code === 'ENAMETOOLONG' && token.length > 255 && !/[\/]/.test(token) && !/^[A-Za-z]:/.test(token)) return false;
+    if (err && err.code === 'ENAMETOOLONG' && token.length > 255 && !/[\\/]/.test(token) && !/^[A-Za-z]:/.test(token)) return false;
     return true;
   }
   const rel = path.relative(path.resolve(repoRoot), canonical);

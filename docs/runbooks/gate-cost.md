@@ -223,7 +223,7 @@ push in, or maintaining `.test-tiers.json`.
 
 | Stage | What a push does | Status |
 |---|---|---|
-| 0, shadow | runs the FULL suite and prints `test-tier/v1 shadow: would skip N of M heavy file(s)` | live: this is the default |
+| 0, shadow | runs the FULL suite and prints `test-tier/v1 shadow: would skip N of M heavy file(s)` | live: the default for any repo whose list has no `defaultTier` (all consumers); NOT this repo, see stage 2 |
 | 1, opt-in | `AUDIT_PREPUSH_TIER=branch git push` skips the unreached heavy files | live, per push, by your choice |
 | 2, default | the default flips to the branch tier for work-in-progress pushes | **built for THIS repo only** (2026-10-14), by `.test-tiers.json` `defaultTier: "branch"` beside `ciVerdict`: the full suite runs in CI (`full-suite.yml`, below). Not for any other repo |
 

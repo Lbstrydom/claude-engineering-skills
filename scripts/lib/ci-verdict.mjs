@@ -56,11 +56,13 @@ function acceptRun(r, { head, pr, defaultBranch, workflowPath }) {
  */
 export function classifyCiVerdict(evidence) {
   const unverified = (reason) => ({ verdict: 'unverified', reason });
-  const { head, pr = null, defaultBranch, defaultSha, workflowPath, workflowBlobHead, workflowBlobDefault, runs } = evidence ?? {};
+  const { head, pr = null, defaultBranch, defaultSha, workflowPath, workflowBlobHead, workflowBlobDefault, runs, workflowBlobErrors = {}, workflowBlobAtBase = {} } = evidence ?? {};
   if (!SHA40.test(String(head ?? ''))) return unverified('the head is not a full 40-hex commit id');
   if (!defaultBranch || !SHA40.test(String(defaultSha ?? ''))) return unverified('the default branch could not be resolved to a fresh commit');
   if (!workflowPath) return unverified(`no ciVerdict workflow is declared in .test-tiers.json on ${defaultBranch}`);
-  if (!workflowBlobDefault) return unverified(`the workflow ${workflowPath} does not exist on ${defaultBranch}: there is no trusted copy to grade against`);
+  // A blob we could not READ (auth, rate limit, network) is a different fact from a blob that is confirmed ABSENT; the reason keeps the cause.
+  if (!workflowBlobDefault) return unverified(workflowBlobErrors.default ? `cannot read ${workflowPath} on ${defaultBranch}: ${workflowBlobErrors.default}` : `the workflow ${workflowPath} does not exist on ${defaultBranch}: there is no trusted copy to grade against`);
+  if (!workflowBlobHead && workflowBlobErrors.head) return unverified(`cannot read ${workflowPath} at ${head.slice(0, 8)}: ${workflowBlobErrors.head}`);
   if (!workflowBlobHead || workflowBlobHead !== workflowBlobDefault) {
     return unverified(`this head changes ${workflowPath} (or it is absent there): the run that would grade it is not the trusted workflow, so its own green proves nothing`);
   }
@@ -88,6 +90,17 @@ export function classifyCiVerdict(evidence) {
 
   const match = pr !== null ? (run.pull_requests ?? []).find((p) => p?.number === pr) : (run.pull_requests ?? [])[0];
   const testedBase = SHA40.test(String(match?.base?.sha ?? '')) ? match.base.sha : null;
+
+  // PROVENANCE of the workflow the run actually EXECUTED (audit R1 H1/H4). A pull_request run executes the workflow of the
+  // MERGE of the head with the base it was tested against, and the current default's file says nothing about that older base.
+  // The head's copy is already proven equal to the trusted one above, so the merged file is the trusted one exactly when the
+  // tested base's copy is too. A push run executes the head's own copy: already proven.
+  if (run.event === 'pull_request') {
+    if (!testedBase) return { ...unverified(`run ${run.id} does not say which base it was tested against, so the workflow revision it executed cannot be established`), ...common };
+    const atBase = workflowBlobAtBase[testedBase];
+    if (!atBase || (!atBase.blob && atBase.why)) return { ...unverified(`cannot read ${workflowPath} at the base run ${run.id} was tested against (${testedBase.slice(0, 8)})${atBase?.why ? `: ${atBase.why}` : ''}`), ...common };
+    if (atBase.blob !== workflowBlobDefault) return { ...unverified(`run ${run.id} executed the merge of this head with base ${testedBase.slice(0, 8)}, whose ${workflowPath} differs from the trusted one: the executed workflow is not the trusted workflow`), ...common };
+  }
   return {
     verdict: 'full', reason: `run ${run.id} succeeded on ${head.slice(0, 8)}`, ...common, testedBase,
     summary: summaryLine({ tier: 'full', head, skipped: 0, base: testedBase, reason: `ci:${run.id}` }),
@@ -157,24 +170,57 @@ export function gatherCiEvidence({ run, pr = null, head = null }) {
   }
   if (!SHA40.test(String(headSha ?? ''))) return { ok: false, reason: 'the head did not resolve to a full commit id' };
 
-  // The workflow's blob at each commit, from the GitHub API so no local objects are needed. Absent -> null (D8 reads that as "differs").
+  // The workflow's blob at a commit, from the GitHub API so no local objects are needed. Three outcomes, never conflated:
+  // a blob; confirmed absent (HTTP 404); or a read that FAILED (auth, rate limit, network: `why` keeps the labelled cause).
   const blobAt = (ref) => {
-    if (!workflowPath) return null;
+    if (!workflowPath) return { blob: null, why: null };
     const r = runText(run, 'gh', ['api', `repos/${nwo}/contents/${workflowPath}?ref=${ref}`, '--jq', '.sha']);
-    return r.ok && /^[0-9a-f]{40}$/.test(r.value) ? r.value : null;
+    if (r.ok) return /^[0-9a-f]{40}$/.test(r.value) ? { blob: r.value, why: null } : { blob: null, why: `unexpected answer ${JSON.stringify(r.value.slice(0, 40))}` };
+    return /HTTP 404|Not Found/i.test(r.why) ? { blob: null, why: null } : { blob: null, why: r.why };
   };
 
   const runsResp = runJson(run, 'gh', ['api', `repos/${nwo}/actions/runs?head_sha=${headSha}&per_page=100`]);
   if (!runsResp.ok) return { ok: false, reason: `cannot read the Actions runs: ${runsResp.why}` };
 
+  const runs = Array.isArray(runsResp.value?.workflow_runs) ? runsResp.value.workflow_runs : null;
+  const atHead = blobAt(headSha);
+  const atDefault = blobAt(defaultSha);
+  // The bases the PR runs were tested against (the newest few): the workflow a pull_request run executed is the merge of the
+  // head with that base, so its copy at that base is what the verdict has to check.
+  const workflowBlobAtBase = {};
+  for (const r of (runs ?? []).slice().sort((a, b) => (Date.parse(b?.created_at ?? '') || 0) - (Date.parse(a?.created_at ?? '') || 0)).slice(0, 5)) {
+    for (const p of Array.isArray(r?.pull_requests) ? r.pull_requests : []) {
+      const b = p?.base?.sha;
+      if (SHA40.test(String(b ?? '')) && !(b in workflowBlobAtBase)) workflowBlobAtBase[b] = blobAt(b);
+    }
+  }
+
   return {
     ok: true,
     evidence: {
       head: headSha, pr, defaultBranch, defaultSha, workflowPath,
-      workflowBlobHead: blobAt(headSha), workflowBlobDefault: blobAt(defaultSha),
-      runs: Array.isArray(runsResp.value?.workflow_runs) ? runsResp.value.workflow_runs : null,
+      workflowBlobHead: atHead.blob, workflowBlobDefault: atDefault.blob,
+      workflowBlobErrors: { head: atHead.why, default: atDefault.why },
+      workflowBlobAtBase,
+      runs,
     },
   };
+}
+
+/**
+ * The CLI's argument grammar, pure so it is testable as a table. Exactly one of `pr` / `head`.
+ * @returns {{pr: number|null, head: string|null}}  throws Error with a usable message otherwise
+ */
+export function parseVerdictTarget(prArg, headArg) {
+  const hasPr = prArg !== null && prArg !== undefined;
+  const hasHead = headArg !== null && headArg !== undefined;
+  if (hasPr === hasHead) throw new Error('exactly one of --pr <n> or --head <rev> is required');
+  if (hasPr) {
+    if (!/^[1-9]\d{0,8}$/.test(String(prArg))) throw new Error(`--pr must be a PR number, got ${JSON.stringify(prArg)}`);
+    return { pr: Number(prArg), head: null };
+  }
+  if (!/^[0-9a-zA-Z][\w./-]*$/.test(String(headArg))) throw new Error(`--head ${JSON.stringify(headArg)} is not a revision`);
+  return { pr: null, head: String(headArg) };
 }
 
 /** One call for the CLI: gather, classify, and say it. A gather failure is `unverified`, never an exception. */

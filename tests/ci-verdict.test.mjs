@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { classifyCiVerdict, ciVerdict, gatherCiEvidence } from '../scripts/lib/ci-verdict.mjs';
+import { classifyCiVerdict, ciVerdict, gatherCiEvidence, parseVerdictTarget } from '../scripts/lib/ci-verdict.mjs';
 import { parseSummary, parseHeavyList, selectTier } from '../scripts/lib/test-tier.mjs';
 import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
 
@@ -30,9 +30,13 @@ const run = (over = {}) => ({
   pull_requests: [{ number: 7, base: { ref: 'main', sha: DEFAULT_SHA } }],
   ...over,
 });
+// The workflow a pull_request run EXECUTED is the merge of the head with the base it was tested against, so the evidence also
+// carries the workflow blob at each tested base (the default's own sha and an older base here).
 const evidence = (over = {}) => ({
   head: HEAD, pr: 7, defaultBranch: 'main', defaultSha: DEFAULT_SHA, workflowPath: WF,
-  workflowBlobHead: BLOB, workflowBlobDefault: BLOB, runs: [run()], ...over,
+  workflowBlobHead: BLOB, workflowBlobDefault: BLOB, workflowBlobErrors: {},
+  workflowBlobAtBase: { [DEFAULT_SHA]: { blob: BLOB, why: null }, [OLD_BASE]: { blob: BLOB, why: null } },
+  runs: [run()], ...over,
 });
 
 describe('classifyCiVerdict — only a completed success on ACCEPTED evidence is a verdict', () => {
@@ -111,6 +115,36 @@ describe('classifyCiVerdict — only a completed success on ACCEPTED evidence is
     });
   });
 
+  describe('the workflow a run EXECUTED is the trusted one (R1 H1/H4): matching CURRENT files are not enough', () => {
+    const OTHER = '9'.repeat(40);
+    it('a pull_request run tested against a base whose workflow differs executed a different merged workflow: unverified', () => {
+      const r = classifyCiVerdict(evidence({ workflowBlobAtBase: { [DEFAULT_SHA]: { blob: OTHER, why: null } } }));
+      assert.equal(r.verdict, 'unverified');
+      assert.match(r.reason, /executed the merge of this head with base .* differs from the trusted one/);
+      assert.equal(r.summary, undefined);
+    });
+    it('control: the SAME evidence with the base copy equal to the trusted one verifies', () => {
+      assert.equal(classifyCiVerdict(evidence()).verdict, 'full');
+    });
+    it('the base copy could not be read (not merely absent): unverified, and the cause is kept', () => {
+      const r = classifyCiVerdict(evidence({ workflowBlobAtBase: { [DEFAULT_SHA]: { blob: null, why: 'gh api exited 1: HTTP 403' } } }));
+      assert.equal(r.verdict, 'unverified');
+      assert.match(r.reason, /HTTP 403/);
+    });
+    it('no record of the base at all, or a run that does not name its base: unverified', () => {
+      assert.equal(classifyCiVerdict(evidence({ workflowBlobAtBase: {} })).verdict, 'unverified');
+      assert.equal(classifyCiVerdict(evidence({ runs: [run({ pull_requests: [{ number: 7, base: { ref: 'main' } }] })] })).verdict, 'unverified');
+    });
+    it('a push run executed the head own copy, already proven trusted: no base lookup needed', () => {
+      const r = classifyCiVerdict(evidence({ pr: null, workflowBlobAtBase: {}, runs: [run({ event: 'push', head_branch: 'main', pull_requests: [] })] }));
+      assert.equal(r.verdict, 'full');
+    });
+    it('a FAILED or PENDING run needs no provenance: it is not a pass either way', () => {
+      assert.equal(classifyCiVerdict(evidence({ workflowBlobAtBase: {}, runs: [run({ conclusion: 'failure' })] })).verdict, 'failed');
+      assert.equal(classifyCiVerdict(evidence({ workflowBlobAtBase: {}, runs: [run({ status: 'in_progress', conclusion: null })] })).verdict, 'pending');
+    });
+  });
+
   describe('--head mode (a landed or pinned sha, no PR)', () => {
     it('a push to the default branch counts', () => {
       assert.equal(classifyCiVerdict(evidence({ pr: null, runs: [run({ event: 'push', head_branch: 'main', pull_requests: [] })] })).verdict, 'full');
@@ -132,8 +166,16 @@ describe('classifyCiVerdict — only a completed success on ACCEPTED evidence is
     it('the workflow is absent at the head', () => {
       assert.equal(classifyCiVerdict(evidence({ workflowBlobHead: null })).verdict, 'unverified');
     });
-    it('the workflow does not exist on the default branch (this very plan\'s PR): there is no trusted copy', () => {
-      assert.equal(classifyCiVerdict(evidence({ workflowBlobDefault: null, workflowBlobHead: BLOB })).verdict, 'unverified');
+    it('the workflow does not exist on the default branch (this very plan PR): there is no trusted copy', () => {
+      const r = classifyCiVerdict(evidence({ workflowBlobDefault: null, workflowBlobHead: BLOB }));
+      assert.equal(r.verdict, 'unverified');
+      assert.match(r.reason, /does not exist on main/);
+    });
+    it('a READ failure is not an absence (R1 M6): the cause survives into the reason', () => {
+      const d = classifyCiVerdict(evidence({ workflowBlobDefault: null, workflowBlobErrors: { default: 'gh api exited 1: HTTP 403 rate limit' } }));
+      assert.match(d.reason, /cannot read .* on main: .*HTTP 403 rate limit/);
+      const h = classifyCiVerdict(evidence({ workflowBlobHead: null, workflowBlobErrors: { head: 'gh api exited 1: HTTP 502' } }));
+      assert.match(h.reason, /cannot read .* at aaaaaaaa: .*HTTP 502/);
     });
     it('no ciVerdict is declared on the default branch', () => {
       assert.equal(classifyCiVerdict(evidence({ workflowPath: null })).verdict, 'unverified');
@@ -190,6 +232,7 @@ describe('gatherCiEvidence / ciVerdict — every failed step is `unverified` wit
     ['the Actions response is malformed JSON', { 'gh api repos/o/r/actions/runs': ok('<html>') }],
     ['the Actions response has no workflow_runs array', { 'gh api repos/o/r/actions/runs': ok('{}') }],
     ['the workflow blob cannot be read', { 'gh api repos/o/r/contents': { status: 1, stdout: '', stderr: 'HTTP 404' } }],
+    ['the workflow blob read fails for a non-404 reason', { 'gh api repos/o/r/contents': { status: 1, stdout: '', stderr: 'HTTP 403 rate limit exceeded' } }],
   ]) {
     it(`${what} -> unverified`, () => {
       const r = ciVerdict({ run: fake(over), pr: 7 });
@@ -211,10 +254,45 @@ describe('gatherCiEvidence / ciVerdict — every failed step is `unverified` wit
     assert.match(r.reason, /no ciVerdict workflow is declared/);
   });
 
+  it('a non-404 blob failure keeps its cause; a 404 reads as absence (R1 M6)', () => {
+    const denied = ciVerdict({ run: fake({ 'gh api repos/o/r/contents': { status: 1, stdout: '', stderr: 'gh: HTTP 403 rate limit exceeded' } }), pr: 7 });
+    assert.match(denied.reason, /cannot read .*full-suite\.yml.*403/);
+    const absent = ciVerdict({ run: fake({ 'gh api repos/o/r/contents': { status: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' } }), pr: 7 });
+    assert.match(absent.reason, /does not exist on main/);
+  });
+
+  it('the tested bases workflow copies are fetched, so a pull_request run is judged on what it executed', () => {
+    const asked = [];
+    const r = ciVerdict({ run: (c, a) => { asked.push(`${c} ${a.join(' ')}`); return fake()(c, a); }, pr: 7 });
+    assert.equal(r.verdict, 'full', r.reason);
+    assert.ok(asked.some((q) => q.includes(`contents/${WF}?ref=${DEFAULT_SHA}`)), 'the tested base copy was read');
+  });
+
   it('--head mode resolves the sha locally and judges push evidence', () => {
     const r = gatherCiEvidence({ run: fake({ 'git rev-parse --verify': ok(`${HEAD}\n`) }), pr: null, head: 'HEAD' });
     assert.equal(r.ok, true);
     assert.equal(r.evidence.head, HEAD);
+  });
+});
+
+describe('the argument grammar (R1 H2/M4): valid values pass, malformed ones are refused, through the pure parser AND the CLI', () => {
+  const ok = [['7', null], ['241', null], ['1', null], ['999999999', null], [null, 'HEAD'], [null, 'abc1234'], [null, 'origin/main'], [null, 'feature/x-1.2'], [null, 'a'.repeat(40)]];
+  for (const [pr, head] of ok) {
+    it(`accepts --pr ${pr} --head ${head}`, () => {
+      assert.deepEqual(parseVerdictTarget(pr, head), pr === null ? { pr: null, head } : { pr: Number(pr), head: null });
+    });
+  }
+  const bad = [['0', null], ['00', null], ['007', null], ['1d', null], ['1dd', null], ['seven', null], ['-5', null], ['1e3', null], ['1000000000', null], ['', null], [null, ''], [null, '-x'], [null, '--upload-pack=x'], [null, 'a b'], [null, 'a;b'], [null, '$(x)'], ['7', 'HEAD'], [null, null]];
+  for (const [pr, head] of bad) {
+    it(`refuses --pr ${JSON.stringify(pr)} --head ${JSON.stringify(head)}`, () => {
+      assert.throws(() => parseVerdictTarget(pr, head), /--pr|--head|exactly one/);
+    });
+  }
+  it('a multi-digit PR number reaches the acquisition step (it is NOT a usage error): exit 3 when gh is unreachable, never 2', (t) => {
+    const nodeDir = path.dirname(process.execPath);
+    if (['gh', 'gh.exe', 'gh.cmd'].some((n) => fs.existsSync(path.join(nodeDir, n)))) return t.skip('node and gh share a directory on this machine');
+    const r = spawnSync(process.execPath, ['scripts/test-tier.mjs', 'ci-verdict', '--pr', '241'], { cwd: REPO, encoding: 'utf8', env: { ...process.env, PATH: nodeDir, Path: nodeDir } });
+    assert.equal(r.status, 3, `${r.stdout}${r.stderr}`);
   });
 });
 
@@ -229,11 +307,11 @@ describe('the CLI — usage errors and absence, end to end', () => {
     assert.equal(cli(['--pr', 'seven']).status, 2);
     assert.equal(cli(['--head', '--upload-pack=x']).status, 2);
   });
-  it('with `gh` unreachable it is UNVERIFIED (exit 3) and prints no test-tier line — absence is never green', () => {
+  it('with `gh` unreachable it is UNVERIFIED (exit 3) and prints no test-tier line — absence is never green', (t) => {
     // A PATH holding only node's own directory has no `gh`, so the first acquisition step fails.
     const nodeDir = path.dirname(process.execPath);
     const hasGh = ['gh', 'gh.exe', 'gh.cmd'].some((n) => fs.existsSync(path.join(nodeDir, n)));
-    if (hasGh) return; // node and gh share a directory on this machine: the instrument cannot hide gh here
+    if (hasGh) return t.skip('node and gh share a directory on this machine: the instrument cannot hide gh here');
     const r = cli(['--pr', '7'], { PATH: nodeDir, Path: nodeDir });
     assert.equal(r.status, 3, `${r.stdout}${r.stderr}`);
     assert.doesNotMatch(r.stdout, /^test-tier\/v1 /m);
