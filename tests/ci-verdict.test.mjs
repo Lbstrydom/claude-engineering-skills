@@ -268,6 +268,22 @@ describe('gatherCiEvidence / ciVerdict — every failed step is `unverified` wit
     assert.ok(asked.some((q) => q.includes(`contents/${WF}?ref=${DEFAULT_SHA}`)), 'the tested base copy was read');
   });
 
+  it('the tested base of the JUDGED run is read even when many newer runs of other workflows exist (R2 H1/M1: no fixed window)', () => {
+    const noise = Array.from({ length: 12 }, (_, i) => run({ id: 100 + i, path: '.github/workflows/other.yml', created_at: `2026-10-14T1${i % 10}:30:00Z`, pull_requests: [{ number: 7, base: { ref: 'main', sha: `${i}`.repeat(40).slice(0, 40) } }] }));
+    const target = run({ id: 4242, created_at: '2026-10-14T09:00:00Z' });
+    const asked = [];
+    const runner = (c, a) => {
+      const key = `${c} ${a.join(' ')}`;
+      asked.push(key);
+      if (key.startsWith('gh api repos/o/r/actions/runs')) return { status: 0, stdout: JSON.stringify({ workflow_runs: [...noise, target] }), stderr: '' };
+      return fake()(c, a);
+    };
+    const r = ciVerdict({ run: runner, pr: 7 });
+    assert.equal(r.verdict, 'full', r.reason);
+    assert.ok(asked.some((q) => q.includes(`contents/${WF}?ref=${DEFAULT_SHA}`)), 'the judged run base was read');
+    assert.ok(!asked.some((q) => q.includes('contents/') && /ref=(\d)\1{39}/.test(q)), 'the noise runs bases were not');
+  });
+
   it('--head mode resolves the sha locally and judges push evidence', () => {
     const r = gatherCiEvidence({ run: fake({ 'git rev-parse --verify': ok(`${HEAD}\n`) }), pr: null, head: 'HEAD' });
     assert.equal(r.ok, true);

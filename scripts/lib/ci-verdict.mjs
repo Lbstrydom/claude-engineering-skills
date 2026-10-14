@@ -49,6 +49,23 @@ function acceptRun(r, { head, pr, defaultBranch, workflowPath }) {
 }
 
 /**
+ * The ONE place a run is chosen as the evidence for a question: accepted runs only, newest first (a re-run is the same run id at a
+ * higher attempt, which the API already reports as its latest). The classifier judges this run; evidence gathering reads the
+ * provenance of this same run, so the two can never look at different runs.
+ * @returns {{run: object|null, rejected: string[]}}
+ */
+export function selectRun({ runs, head, pr = null, defaultBranch, workflowPath }) {
+  const accepted = [];
+  const rejected = [];
+  for (const r of Array.isArray(runs) ? runs : []) {
+    const a = acceptRun(r, { head, pr, defaultBranch, workflowPath });
+    if (a.ok) accepted.push(r); else rejected.push(a.why);
+  }
+  const newest = [...accepted].sort((a, b) => (Date.parse(b.created_at ?? '') || 0) - (Date.parse(a.created_at ?? '') || 0) || (b.run_attempt ?? 0) - (a.run_attempt ?? 0) || (b.id ?? 0) - (a.id ?? 0))[0] ?? null;
+  return { run: newest, rejected: [...new Set(rejected)] };
+}
+
+/**
  * THE decision. `evidence`:
  *   head, pr (number|null), defaultBranch, defaultSha, workflowPath (from the TRUSTED default branch),
  *   workflowBlobHead / workflowBlobDefault (git blob ids of that workflow at each), runs (the Actions runs for head).
@@ -69,16 +86,9 @@ export function classifyCiVerdict(evidence) {
   if (!Array.isArray(runs)) return unverified('the Actions runs could not be read (malformed response)');
   if (runs.length === 0) return unverified(`no ${workflowPath} run exists for ${head.slice(0, 8)}`);
 
-  const accepted = [];
-  const rejected = [];
-  for (const r of runs) {
-    const a = acceptRun(r, { head, pr, defaultBranch, workflowPath });
-    if (a.ok) accepted.push(r); else rejected.push(a.why);
-  }
-  if (!accepted.length) return unverified(`${runs.length} run(s) exist for ${head.slice(0, 8)} but none counts as evidence: ${[...new Set(rejected)].slice(0, 3).join('; ')}`);
-
-  // The latest run for the question asked (a re-run is the same run id at a higher attempt: the API already reports its latest attempt).
-  const run = [...accepted].sort((a, b) => (Date.parse(b.created_at ?? '') || 0) - (Date.parse(a.created_at ?? '') || 0) || (b.run_attempt ?? 0) - (a.run_attempt ?? 0) || (b.id ?? 0) - (a.id ?? 0))[0];
+  const sel = selectRun({ runs, head, pr, defaultBranch, workflowPath });
+  if (!sel.run) return unverified(`${runs.length} run(s) exist for ${head.slice(0, 8)} but none counts as evidence: ${sel.rejected.slice(0, 3).join('; ')}`);
+  const run = sel.run;
   const common = { runId: run.id, url: run.html_url };
   const status = String(run.status ?? '');
   const conclusion = run.conclusion ?? null;
@@ -185,14 +195,14 @@ export function gatherCiEvidence({ run, pr = null, head = null }) {
   const runs = Array.isArray(runsResp.value?.workflow_runs) ? runsResp.value.workflow_runs : null;
   const atHead = blobAt(headSha);
   const atDefault = blobAt(defaultSha);
-  // The bases the PR runs were tested against (the newest few): the workflow a pull_request run executed is the merge of the
-  // head with that base, so its copy at that base is what the verdict has to check.
+  // The workflow a pull_request run executed is the merge of the head with the base it was tested against, so the verdict needs
+  // that base's copy. Which run? The very one the classifier will judge (selectRun is shared), so no window or cap can leave the
+  // judged run without its provenance.
   const workflowBlobAtBase = {};
-  for (const r of (runs ?? []).slice().sort((a, b) => (Date.parse(b?.created_at ?? '') || 0) - (Date.parse(a?.created_at ?? '') || 0)).slice(0, 5)) {
-    for (const p of Array.isArray(r?.pull_requests) ? r.pull_requests : []) {
-      const b = p?.base?.sha;
-      if (SHA40.test(String(b ?? '')) && !(b in workflowBlobAtBase)) workflowBlobAtBase[b] = blobAt(b);
-    }
+  const judged = selectRun({ runs, head: headSha, pr, defaultBranch, workflowPath }).run;
+  for (const p of Array.isArray(judged?.pull_requests) ? judged.pull_requests : []) {
+    const b = p?.base?.sha;
+    if (SHA40.test(String(b ?? '')) && !(b in workflowBlobAtBase)) workflowBlobAtBase[b] = blobAt(b);
   }
 
   return {
