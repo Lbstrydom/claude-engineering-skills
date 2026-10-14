@@ -119,7 +119,23 @@ const PeakSchema = z.object({ from: hhmm, to: hhmm }).passthrough();
 // ADDITIVE (plan fleet-lease-turns-and-journal D1): these keys are new top-level fields, never new `events` kinds - an older
 // checkout's `EventSchema.kind` is an enum, so a new kind there would make the shared file read as corrupt to it. A journal
 // `kind` is a free string so a still-newer checkout's kind never makes THIS one call the file corrupt either.
-const JournalSchema = z.object({ at: iso, kind: z.string().min(1).max(40), by: name, repoKey: hex(12).optional() }).passthrough();
+const obj = z.object({}).passthrough();
+const JOURNAL_PAYLOAD = {
+  acquired: z.object({ mode: z.string(), job: obj }).passthrough(),
+  released: z.object({ forced: z.boolean(), job: obj }).passthrough(),
+  announced: z.object({ window: z.object({ id: z.string(), kind: z.string(), from: iso, until: iso }).passthrough() }).passthrough(),
+  'window-cleared': z.object({ window: z.object({ id: z.string(), kind: z.string() }).passthrough(), ownRepo: z.boolean() }).passthrough(),
+  refused: z.object({ refusal: z.object({ op: z.string(), code: z.string() }).passthrough() }).passthrough(),
+  waiting: z.object({ episode: z.string(), opener: z.string() }).passthrough(),
+  'wait-ended': z.object({ episode: z.string(), reason: z.string(), refusals: z.number().int().min(0) }).passthrough(),
+};
+// A KNOWN kind must carry the payload the readers (`lease log`, `measureSlotWaits`) dereference; an unknown kind is tolerated.
+const JournalSchema = z.object({ at: iso, kind: z.string().min(1).max(40), by: name, repoKey: hex(12).optional() }).passthrough().superRefine((e, ctx) => {
+  const payload = JOURNAL_PAYLOAD[e.kind];
+  if (!payload) return;
+  const r = payload.safeParse(e);
+  if (!r.success) for (const i of r.error.issues) ctx.addIssue({ code: 'custom', path: i.path, message: `journal ${e.kind} entry: ${i.message}` });
+});
 const WaiterSchema = z.object({
   repoKey: hex(12), repo: label, by: name, since: iso, forMin: z.number().int().min(1).max(LIMITS.maxForMin),
   refusals: z.number().int().min(0), lastRefusal: iso.optional(), offeredAt: iso.optional(), note: note.optional(),
@@ -336,7 +352,7 @@ function journalRefusal(lease, req, op, code, now, extra = {}) {
   const j = lease.journal ?? [];
   const last = j[j.length - 1];
   const by = byOf(req);
-  if (last && last.kind === 'refused' && last.by === by && last.refusal?.op === op && last.refusal?.code === code) {
+  if (last && last.kind === 'refused' && last.repoKey === req.identity.repoKey && last.by === by && last.refusal?.op === op && last.refusal?.code === code) {
     return { ...lease, journal: [...j.slice(0, -1), { ...last, n: (last.n ?? 1) + 1, lastAt: now.toISOString() }] };
   }
   return appendJournal(lease, jentry(now, 'refused', req, { refusal: { op, code }, ...extra }));
@@ -517,7 +533,7 @@ export function decideAnnounce(lease, req, now, probe = defaultProbe()) {
   };
   let next = { ...pruned, windows: [...pruned.windows, win] };
   // A window that starts now is the repo's own use of the machine: its wait (if any) is served.
-  if (from.getTime() <= now.getTime()) next = endWait(next, req.identity.repoKey, 'served', now, byOf(req));
+  if (from.getTime() <= now.getTime() && now.getTime() < until.getTime()) next = endWait(next, req.identity.repoKey, 'served', now, byOf(req));
   next = appendJournal(next, jentry(now, 'announced', req, { window: { id, kind: req.kind, repo: req.repo, from: win.from, until: win.until }, ...(overHeld ? { overHeld } : {}) }));
   return { ok: true, lease: next, window: win, ...(overHeld ? { overHeld } : {}) };
 }

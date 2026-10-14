@@ -125,7 +125,11 @@ describe('the journal records every transition, with kind as the transition only
     l = ok(ann(l, B, { from: '+1m', until: '+60m', overHeld: true }, at(1)));
     l = acq(l, B2, { forMin: 10 }, at(2)).lease;
     assert.ok(l.waiters?.length, 'the refused acquire queued the repo');
-    assert.equal(LeaseSchemaV1.safeParse(l).success, true, 'an older checkout must not call the shared file corrupt');
+    const old = LeaseSchemaV1.safeParse(l);
+    assert.equal(old.success, true, 'an older checkout must not call the shared file corrupt');
+    assert.deepEqual(old.data.journal, l.journal, 'and it must carry the journal through a rewrite, not strip it');
+    assert.deepEqual(old.data.waiters, l.waiters, 'and the waiters');
+    assert.deepEqual(old.data.windows[0].overHeld, l.windows[0].overHeld, 'and a window\'s acknowledgement');
     assert.equal(LeaseSchema.safeParse(l).success, true);
     const withFuture = { ...l, journal: [...l.journal, { at: at(3).toISOString(), kind: 'a-kind-from-a-newer-checkout', by: 'x@y', anything: [1] }] };
     assert.equal(LeaseSchema.safeParse(withFuture).success, true, 'a still-newer journal kind is tolerated, never "corrupt"');
@@ -295,5 +299,46 @@ describe('regression: found by the interleaving test (seed 11)', () => {
     const second = l.waiters[0].episode;
     assert.notEqual(second, first);
     assert.equal(l.journal.filter((e) => e.episode === second && e.kind === 'wait-ended').length, 0, 'the new episode is not already ended');
+  });
+});
+
+describe('audit-code round 1 fixes', () => {
+  it('H1: an already-over window does not serve a wait; a running one does; the boundary instant is over', () => {
+    const l0 = acq(heldByA(10), B, { forMin: 20 }, at(30)).lease; // A expired at 08:10 (dead pid): B is refused? no - taken over below
+    const waiting = ok(wait(emptyLease(), B, { forMin: 20 }, at(30)));
+    const over = ok(ann(waiting, B, { from: '2026-10-14T08:00:00.000Z', until: '2026-10-14T08:20:00.000Z' }, at(30)));
+    assert.equal(over.waiters.length, 1, 'a window that ended before now serves nothing');
+    const edge = ok(ann(waiting, B, { from: '2026-10-14T08:00:00.000Z', until: '2026-10-14T08:30:00.000Z' }, at(30)));
+    assert.equal(edge.waiters.length, 1, 'until == now: the window is over');
+    const running = ok(ann(waiting, B, { until: '+10m' }, at(30)));
+    assert.equal(running.waiters.length, 0);
+    void l0;
+  });
+  it('M3: refusals coalesce per repo identity - the same display name in two repos stays two entries', () => {
+    const X = { repoKey: 'aaaaaaaaaaaa', holder: 'main' };
+    const Y = { repoKey: 'bbbbbbbbbbbb', holder: 'main' };
+    const lease = heldByA(60);
+    const refuse = (l, id) => decideAnnounce(l, { identity: id, repo: 'o/same', kind: 'ci', until: '+30m' }, NOW, probe);
+    const lx = refuse({ ...lease, heavy: { ...lease.heavy, repoKey: 'cccccccccccc' } }, X);
+    const ly = refuse(lx.lease, Y);
+    assert.equal(ly.lease.journal.filter((e) => e.kind === 'refused').length, 2, 'same by-string, different repoKey: not coalesced');
+    const lx2 = refuse(lx.lease, X);
+    assert.equal(lx2.lease.journal.filter((e) => e.kind === 'refused').length, 1);
+    assert.equal(lx2.lease.journal.at(-1).n, 2, 'the same identity IS coalesced');
+  });
+  it('M4: a known journal kind missing its payload makes the file invalid (a controlled error), an unknown kind does not', () => {
+    const e = (extra) => ({ ...emptyLease(), journal: [{ at: NOW.toISOString(), by: 'x@y', ...extra }] });
+    for (const bad of [
+      { kind: 'acquired', mode: 'granted' }, { kind: 'released', forced: false }, { kind: 'announced' }, { kind: 'window-cleared', ownRepo: true },
+      { kind: 'refused', refusal: {} }, { kind: 'waiting', opener: 'wait' }, { kind: 'wait-ended', episode: 'e', reason: 'served' },
+    ]) assert.equal(LeaseSchema.safeParse(e(bad)).success, false, `${bad.kind} without its payload`);
+    assert.equal(LeaseSchema.safeParse(e({ kind: 'from-the-future' })).success, true);
+    // and a well-formed entry of every known kind written by the code itself is accepted
+    let l = ok(acq(emptyLease(), A, { forMin: 10, pid: 1 }));
+    l = ok(ann(l, A, { kind: 'quiet' }));
+    l = acq(l, B, { forMin: 5 }).lease;
+    l = ok(wait(l, B, { cancel: true }));
+    l = ok(rel(l, A));
+    assert.equal(LeaseSchema.safeParse(l).success, true);
   });
 });

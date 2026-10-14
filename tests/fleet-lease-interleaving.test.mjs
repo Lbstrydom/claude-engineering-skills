@@ -66,7 +66,7 @@ function apply(state, op) {
     case 'announce': {
       const from = new Date(now.getTime() + op.fromMin * MIN);
       const until = new Date(from.getTime() + op.durMin * MIN);
-      d = decideAnnounce(lease, { ...common, kind: op.kind, from: from.toISOString(), until: until.toISOString(), overHeld: op.overHeld }, now);
+      d = decideAnnounce(lease, { ...common, kind: op.kind, from: from.toISOString(), until: until.toISOString(), overHeld: op.overHeld }, now, probe);
       break;
     }
     case 'clear': {
@@ -78,7 +78,6 @@ function apply(state, op) {
     case 'advance': return { lease, now: new Date(now.getTime() + op.min * MIN), result: { ok: true, noop: true } };
     default: throw new Error(`unknown op ${op.op}`);
   }
-  if (d.code === 'bad-request') return { lease, now, result: d };
   return { lease: d.ok ? d.lease : (d.lease ?? lease), now, result: d };
 }
 
@@ -138,6 +137,17 @@ function tally(op, r) {
 }
 
 describe('lease interleavings (property test, seeded)', () => {
+  it('the invariants can fail: a refusal that changed the windows, or a bad request that wrote, is reported', () => {
+    const before = { lease: { ...emptyLease(), heavy: null }, now: T0 };
+    const op = { op: 'announce', repo: REPOS[0], holder: 'main' };
+    const mutated = { lease: { ...emptyLease(), windows: [{ id: 'w-20261014060000-abcd', repoKey: REPOS[1].repoKey, repo: 'o/b', kind: 'ci', from: T0.toISOString(), until: new Date(T0.getTime() + 60 * MIN).toISOString() }] }, now: T0, result: { ok: false, code: 'held' } };
+    assert.match(violation(before, mutated, op), /I3: a refused announce \(held\) changed the windows/);
+    const wrote = { lease: emptyLease(), now: T0, result: { ok: false, code: 'bad-request' } };
+    assert.match(violation(before, wrote, op), /I3: a bad request wrote something/);
+    const noJournal = { lease: emptyLease(), now: T0, result: { ok: true } };
+    assert.match(violation(before, noJournal, { ...op, op: 'acquire' }), /I4: a successful acquire left the journal/);
+  });
+
   it('the 08:06Z race: an announce over a slot another repo acquired seconds earlier is not an unacknowledged overlap', () => {
     const ces = { repoKey: 'aaaaaaaaaaaa', holder: 'skill-size-ratchet' };
     const sto = { repoKey: 'bbbbbbbbbbbb', holder: 'coordinator' };
@@ -146,12 +156,12 @@ describe('lease interleavings (property test, seeded)', () => {
     const got = decideAcquire(lease, { identity: ces, repo: 'o/ces', forMin: 40, pid: 4242 }, at('08:06:00.000'), probe);
     assert.equal(got.ok, true);
     lease = got.lease;
-    const win = decideAnnounce(lease, { identity: sto, repo: 'o/sto', kind: 'ci', from: '2026-10-14T08:06:29.000Z', until: '2026-10-14T09:00:00.000Z' }, at('08:06:29.000'));
+    const win = decideAnnounce(lease, { identity: sto, repo: 'o/sto', kind: 'ci', from: '2026-10-14T08:06:29.000Z', until: '2026-10-14T09:00:00.000Z' }, at('08:06:29.000'), probe);
     assert.equal(win.ok, false, 'announce must not silently record a window over a live slot (it printed OK on 2026-10-14)');
     assert.equal(win.code, 'held');
     assert.match(win.reason, /08:46/);
     // The explicit acknowledgement is the only way through, and it is recorded.
-    const over = decideAnnounce(lease, { identity: sto, repo: 'o/sto', kind: 'ci', from: '2026-10-14T08:06:29.000Z', until: '2026-10-14T09:00:00.000Z', overHeld: true }, at('08:06:29.000'));
+    const over = decideAnnounce(lease, { identity: sto, repo: 'o/sto', kind: 'ci', from: '2026-10-14T08:06:29.000Z', until: '2026-10-14T09:00:00.000Z', overHeld: true }, at('08:06:29.000'), probe);
     assert.equal(over.ok, true);
     assert.equal(over.window.overHeld.repoKey, ces.repoKey);
     assert.equal(over.window.overHeld.holder, ces.holder);
