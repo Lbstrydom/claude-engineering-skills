@@ -1,6 +1,6 @@
 # Plan: CES full suite on GitHub Actions, light local pre-push
 - **Date**: 2026-10-14
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend (one workflow, the pre-push tier default, one verdict reader, one guard test, coordination text; no UI) · stack `js-ts` (`detect-stack`: `js-ts`)
 - **Target domain(s)**: `scripts`, `shared-lib`, `skills-content`
