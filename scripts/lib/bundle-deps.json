@@ -134,6 +134,7 @@
       "required": true,
       "importers": [
         "scripts/.claude-skills/lib/brainstorm/insight-store.mjs",
+        "scripts/.claude-skills/lib/doctor/operating-inputs.mjs",
         "scripts/.claude-skills/lib/friction/commands.mjs",
         "scripts/.claude-skills/lib/memory-paths.mjs",
         "scripts/.claude-skills/lib/skill-frontmatter-layout.mjs",
@@ -216,6 +217,7 @@
         "scripts/.claude-skills/lib/store/nav-audit.mjs",
         "scripts/.claude-skills/lib/store/persona-outcomes.mjs",
         "scripts/.claude-skills/lib/store/tiered-shadow.mjs",
+        "scripts/.claude-skills/lib/suite-run-record.mjs",
         "scripts/.claude-skills/lib/symbol-index-contracts.mjs",
         "scripts/.claude-skills/lib/sync-manifest.mjs",
         "scripts/.claude-skills/lib/visual/schema.mjs",

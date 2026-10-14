@@ -32,6 +32,9 @@ import { assertKnownFlags, ArgvError, emit } from './lib/cli-io.mjs';
 import { buildDoctorContext } from './lib/doctor/context.mjs';
 import { REGISTRY, validateRegistry, runProbe, probeIds } from './lib/doctor/registry.mjs';
 import { resolveCloudConfig, discoverLocalEnvPath } from './lib/shared-cloud-config.mjs';
+// Composition layer: fleet's evidence providers are handed to the shared-lib probes through ctx, so doctor's measurement
+// code never imports fleet (domain-map: scripts -> fleet, justified there).
+import { fleetEvidence } from './lib/fleet/operating-evidence.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
@@ -218,12 +221,17 @@ async function main() {
     ...doctorCtx,
     exec: (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: 'utf8', cwd: doctorCtx.subjectRoot, ...opts }),
     fs,
+    fleetEvidence,
     cloud: !!resolvedCloud.AUDIT_DB_URL?.value,
     resolvedBundleSha,
   };
 
   const results = [];
   for (const probe of REGISTRY) {
+    // `--only` narrows what RUNS for a `class:'machine'` probe, not just what prints: some machine probes make network
+    // calls (operating/*), and a probe nobody asked about must not spend them. Every `class:'repo'` probe still runs, so
+    // `--only` still never narrows the `--gate` set (§2.3).
+    if (onlyIds && probe.class === 'machine' && !onlyIds.includes(probe.id)) continue;
     results.push(await runProbe(probe, ctx)); // eslint-disable-line no-await-in-loop -- probes run sequentially; the set is small (~19) and several share the memoised sync-gate cache, so parallelising buys nothing here.
   }
 

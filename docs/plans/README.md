@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**16 active · 252 terminal · 38 audit summaries · 1 parked · 5 reference docs**
+**17 active · 252 terminal · 38 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -21,6 +21,7 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
+| [Adoption fit check — doctor measures, then recommends fleet + gate settings](./adoption-fit-check.md) | `Approved` |  |
 | [The drift report says how far the active index trails the default branch](./arch-index-freshness.md) | `In Progress` | implemented on `fix/arch-index-freshness`; under /audit-code |
 | [Triage: the eight `archive/worktree-agent-*` tags (2026-10-11)](./archive-tag-triage-2026-10-11.md) | `Draft` | findings and recommendations only; no tag was deleted and nothing was landed by this document |
 | [migrate every CLI entry guard to `isInvokedAsScript`](./cli-entry-guard-migration.md) | `In Progress` |  |
