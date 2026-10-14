@@ -86,12 +86,16 @@ function buildGenericPlanContent(files) {
  * this repo's own "resolveCandidateRoute is the sole authority" invariant
  * (route-catalog.mjs's own header comment).
  */
-async function resolveGenerationClient(generation, route) {
+async function resolveGenerationClient(generation, route, factories = {}) {
+  // Injectable seam: the production factories are the defaults, so behaviour is unchanged; a test passes a spy and
+  // never constructs a real client (which needs credentials a CI runner does not have).
+  const makeOpenAI = factories.createOpenAIClient ?? createOpenAIClient;
+  const makeOpenRouter = factories.createOpenRouterClient ?? createOpenRouterClient;
   if (generation.kind === 'sentinel') {
-    return { client: await createOpenAIClient({ purpose: 'gpt' }), model: route.resolvedModel };
+    return { client: await makeOpenAI({ purpose: 'gpt' }), model: route.resolvedModel };
   }
   if (generation.kind === 'oss-role') {
-    const client = await createOpenRouterClient();
+    const client = await makeOpenRouter();
     return { client, model: route.resolvedModel };
   }
   // resolved-route (Azure deployment candidate) — ambient azureConfig.active
@@ -101,7 +105,7 @@ async function resolveGenerationClient(generation, route) {
   // no explicit `azure` override needed. The Azure API routes by deployment
   // NAME in the model field, not by client construction — deploymentId wins
   // over resolvedModel when both are present.
-  const client = await createOpenAIClient({ purpose: 'gpt' });
+  const client = await makeOpenAI({ purpose: 'gpt' });
   return { client, model: route.deploymentId ?? route.resolvedModel };
 }
 
@@ -109,7 +113,8 @@ async function resolveGenerationClient(generation, route) {
  * @param {{arm: object, auditInput: {diff:string, files:string[], repoRoot:string},
  *   route: {transport:string, resolvedModel:string, deploymentId:string|null, pricingModel:string, provider:string},
  *   runId: string, role: string, signal?: AbortSignal, scope?: string, passes?: string[],
- *   _runMultiPassCodeAudit?: typeof runMultiPassCodeAudit}} args
+ *   _runMultiPassCodeAudit?: typeof runMultiPassCodeAudit,
+ *   _clientFactories?: {createOpenAIClient?: Function, createOpenRouterClient?: Function}}} args
  * @returns {Promise<{findings: object[], usageEvent: object, mergedResult: object}>}
  */
 export async function runAuditGenerationArm({
@@ -119,6 +124,7 @@ export async function runAuditGenerationArm({
   // fake to prove call-count parity / correct client-per-kind selection /
   // repoProfile omission without a real network-calling 5-pass audit.
   _runMultiPassCodeAudit = runMultiPassCodeAudit,
+  _clientFactories = {},
 }) {
   void signal; // accepted for API uniformity with the other model-eval
   // primitives (invokeStructured, runBlindJudgeProtocol both take signal) —
@@ -152,7 +158,7 @@ export async function runAuditGenerationArm({
     throw new EgressGateError(`runAuditGenerationArm: refusing to generate on a diff/file-list containing sensitive path mention(s): ${sensitivePaths.join(', ')}`);
   }
 
-  const { client, model } = await resolveGenerationClient(arm.generation, route);
+  const { client, model } = await resolveGenerationClient(arm.generation, route, _clientFactories);
 
   // Written BEFORE the chdir below, as ABSOLUTE paths — immune to the cwd
   // swap (buildAuditRunContext's file reads resolve relative to

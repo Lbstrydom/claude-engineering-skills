@@ -1,0 +1,65 @@
+name: full-suite
+
+# The ONE full test run per PR for this repo (docs/plans/ci-full-suite-actions.md). It replaces the full local
+# pre-push suite on the shared machine: a local CES push now takes the branch tier (static gates + light tests + the
+# heavy files the diff reaches), and this job supplies the full verdict that merge rule 8 reads
+# (`node scripts/test-tier.mjs ci-verdict --pr <n>`).
+#
+# BUDGET (hard constraints, enforced by tests/workflow-runner-labels.test.mjs):
+#   - STANDARD GitHub-hosted runners only (`ubuntu-latest`, `windows-latest`). This repo is PUBLIC, and Actions usage is
+#     free for "public repositories that use standard GitHub-hosted runners"
+#     (docs.github.com/en/billing/concepts/product-billing/github-actions). A larger runner is billed even here.
+#   - No uploaded artifacts, no actions/cache, no `cache:` on setup-node: storage billing for public repos is not clearly
+#     free, and a 563 s suite does not need either.
+#   - A superseded run is cancelled, so pushes to one PR never pile up.
+#
+# WHAT IT DOES NOT RUN: `npm run check:static`. Those gates read gitignored inputs that the local pre-push sandbox
+# provisions (measured 2026-10-14: its first gate fails on ~40 references to files a fresh clone lacks), so they stay in
+# the local gate, in both tiers.
+#
+# No secrets and no database: the DB-gated suites skip themselves exactly as in a local `npm test`; the DB seam keeps its
+# own disposable-container job in postgres-parity.yml.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: full-suite-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    name: full-suite
+    runs-on: ubuntu-latest
+    # 3x the measured job (9.6 min on 2026-10-14).
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      # Several tests build throwaway git repos and commit into them.
+      - name: Git identity for throwaway test repos
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+
+      - run: npm ci
+
+      # tests/visual-extract.test.mjs fails (by design) when Chromium is missing in CI.
+      - name: Install Chromium for the extract integration test
+        run: npx playwright install --with-deps chromium
+
+      - name: npm test
+        run: npm test

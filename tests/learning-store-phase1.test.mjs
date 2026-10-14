@@ -25,9 +25,9 @@ import {
 
 // ── No-env path: graceful fallback (does not throw) ───────────────────────
 
-describe('learning-store / Phase 1 graceful degradation (no service-role)', () => {
-  it('insertLearningDecision returns { ok: false, error } when service-role missing', async () => {
-    if (await isCloudEnabled()) return; // cloud configured → the no-cloud graceful path is moot
+describe('learning-store / Phase 1 graceful degradation (cloud off)', () => {
+  it('insertLearningDecision declines with { ok: true } when the cloud is off', async (t) => {
+    if (await isCloudEnabled()) return t.skip('cloud configured: the cloud-off contract is not exercised here');
     const r = await insertLearningDecision({
       decisionKey: 'test:no-service-role',
       decisionType: 'pass_selection',
@@ -38,40 +38,43 @@ describe('learning-store / Phase 1 graceful degradation (no service-role)', () =
       contextHash: 'a'.repeat(64),
       choice: { chose: 'all' },
     });
-    assert.equal(r.ok, false);
-    assert.ok(r.error || r.code, 'should report failure rather than crash');
+    // Cloud off is a supported mode, not a failure: the write declines and says so.
+    assert.equal(r.ok, true);
   });
 
-  it('backfillLearningOutcome returns { ok: false, error } when service-role missing', async () => {
-    if (await isCloudEnabled()) return;
+  it('backfillLearningOutcome declines with { ok: true } when the cloud is off', async (t) => {
+    if (await isCloudEnabled()) return t.skip('cloud configured: the cloud-off contract is not exercised here');
     const r = await backfillLearningOutcome({
       decisionKey: 'pass_selection:test-1',
       outcome: { totalFindings: 0 },
     });
-    assert.equal(r.ok, false);
-    assert.ok(r.error || r.code);
+    assert.equal(r.ok, true);
+    assert.equal(r.applied, false);
+    assert.equal(r.reason, 'cloud-off');
   });
 
-  it('recordDiffComplexity returns { ok: false } when service-role missing', async () => {
-    if (await isCloudEnabled()) return;
+  it('recordDiffComplexity declines with { ok: true, applied: false } when the cloud is off', async (t) => {
+    if (await isCloudEnabled()) return t.skip('cloud configured: the cloud-off contract is not exercised here');
     const r = await recordDiffComplexity('00000000-0000-0000-0000-000000000000', { fileCount: 0 });
-    assert.equal(r.ok, false);
+    assert.equal(r.ok, true);
+    assert.equal(r.applied, false);
   });
 
-  it('recordConvergenceState returns { ok: false } when service-role missing', async () => {
-    if (await isCloudEnabled()) return;
+  it('recordConvergenceState declines with { ok: true, applied: false } when the cloud is off', async (t) => {
+    if (await isCloudEnabled()) return t.skip('cloud configured: the cloud-off contract is not exercised here');
     const r = await recordConvergenceState('00000000-0000-0000-0000-000000000000', { round_converged_after: 1 });
-    assert.equal(r.ok, false);
+    assert.equal(r.ok, true);
+    assert.equal(r.applied, false);
   });
 
-  it('recordFindingResolution returns { ok: false } when service-role missing', async () => {
-    if (await isCloudEnabled()) return;
+  it('recordFindingResolution declines with { ok: true, applied: false } when the cloud is off', async (t) => {
+    if (await isCloudEnabled()) return t.skip('cloud configured: the cloud-off contract is not exercised here');
     const r = await recordFindingResolution('00000000-0000-0000-0000-000000000000', { user_action: 'deferred' });
-    assert.equal(r.ok, false);
+    assert.equal(r.ok, true);
   });
 
-  it('placeholder when cloud IS configured', async () => {
-    if (!await isCloudEnabled()) return;
+  it('placeholder when cloud IS configured', async (t) => {
+    if (!await isCloudEnabled()) return t.skip('cloud not configured');
     // Real integration tests require a clean test schema and would touch
     // production tables — keep them out of the default unit-test run.
     // Run via `npm test -- --test-name-pattern="phase1 integration"` once
@@ -123,8 +126,8 @@ describe('learning-store / Phase 1 per-repo filter contract (H1 fix)', () => {
 });
 
 describe('learning-store / Phase 1 decision_key shape', () => {
-  it('insertLearningDecision passes decision_key through untouched', async () => {
-    if (await isCloudEnabled()) return; // exercising the no-cloud graceful path
+  it('insertLearningDecision passes decision_key through untouched', async (t) => {
+    if (await isCloudEnabled()) return t.skip('cloud configured: the cloud-off contract is not exercised here');
     const r = await insertLearningDecision({
       decisionKey: 'audit-bound:pass_selection:r0:s0',
       decisionType: 'pass_selection',
@@ -135,8 +138,7 @@ describe('learning-store / Phase 1 decision_key shape', () => {
       contextHash: 'b'.repeat(64),
       choice: { chose: 'all' },
     });
-    // Without service-role, the call returns { ok: false } before touching
-    // the network — but the shape of the rejection MUST be predictable.
-    assert.equal(r.ok, false);
+    // Cloud off: the call returns { ok: true } before touching the network.
+    assert.equal(r.ok, true);
   });
 });

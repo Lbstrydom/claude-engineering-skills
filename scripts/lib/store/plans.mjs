@@ -92,6 +92,17 @@ export function validatePlanPath(rawPath, opts = {}) {
   // semantics 2026-08-12. On Windows `path.resolve` already treats `\` as a
   // separator, so this is a no-op there; this file's tooling syncs to Linux
   // consumers, which is where the two spellings diverged.
+  // A drive-letter path (`C:/Users/...`) is relative on POSIX, so `path.resolve` would file it
+  // INSIDE the repo and it would pass containment. It is never a repo-relative plan path on any
+  // platform: where the host does not recognise it as absolute, refuse it the way a Windows host
+  // refuses an out-of-repo one (found by the first CI run, 2026-10-14). On Windows it IS absolute
+  // and goes through the normal containment check below.
+  if (/^[A-Za-z]:[\\/]/.test(raw) && !path.isAbsolute(raw)) {
+    return {
+      ok: false, reason: 'escapes-repo',
+      message: `refusing a plan path outside the repo root (scratchpad or temp file?): ${raw}`,
+    };
+  }
   const normalised = raw.replace(/\\/g, '/');
   const abs = path.resolve(root, normalised);
   // The containment DECISION is the shared primitive (final-review-credit-queue

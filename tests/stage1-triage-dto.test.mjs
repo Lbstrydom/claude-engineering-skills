@@ -109,6 +109,26 @@ describe('buildStageOneTriageInput — clamps over-limit fields, never crashes t
     } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
+  it('path candidacy: a 750-char ordinary token is not redacted as a sensitive path', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const dto = buildStageOneTriageInput({ severity: 'LOW', category: 'c', detail: `see ${'x'.repeat(750)} here`, section: 'src/a.mjs:1' }, { repoRoot });
+      assert.equal(dto.detail.includes('[REDACTED]'), false, 'an ordinary overlong token must not be treated as a sensitive path');
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('path candidacy: an overlong absolute / drive-letter path stays redacted (fail-closed on ENAMETOOLONG)', (t) => {
+    // Windows reports ENOENT, not ENAMETOOLONG, for an overlong path, so this branch exists only where the OS says so.
+    if (process.platform === 'win32') return t.skip('ENAMETOOLONG is a POSIX errno; win32 reports ENOENT');
+    const repoRoot = mkdtemp();
+    try {
+      for (const p of [`/${'a'.repeat(300)}/b.txt`, `C:/${'a'.repeat(300)}/b.txt`]) {
+        const dto = buildStageOneTriageInput({ severity: 'LOW', category: 'c', detail: `see ${p} here`, section: 'src/a.mjs:1' }, { repoRoot });
+        assert.equal(dto.detail.includes('[REDACTED]'), true, `a path-shaped token must stay redacted: ${p.slice(0, 20)}…`);
+      }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
   it('also clamps an over-limit category(80) — the schema-length overflow class in general', () => {
     const repoRoot = mkdtemp();
     try {
@@ -222,8 +242,8 @@ describe('buildStageOneTriageInput — a configured-sensitive path in `section` 
 });
 
 describe('buildStageOneTriageInput — symlink resolving into a sensitive path is redacted (WS-CANON)', () => {
-  it('redacts section when its lexically-innocent name resolves (via symlink) into secrets/ INSIDE the repo', () => {
-    if (skipOnWin) return;
+  it('redacts section when its lexically-innocent name resolves (via symlink) into secrets/ INSIDE the repo', (t) => {
+    if (skipOnWin) return t.skip('symlink semantics: not exercised on win32');
     const repoRoot = mkdtemp();
     try {
       const secretsDir = path.join(repoRoot, 'secrets');
@@ -239,8 +259,8 @@ describe('buildStageOneTriageInput — symlink resolving into a sensitive path i
     } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
-  it('redacts an evidence anchor whose file is a symlink escaping the repo root', () => {
-    if (skipOnWin) return;
+  it('redacts an evidence anchor whose file is a symlink escaping the repo root', (t) => {
+    if (skipOnWin) return t.skip('symlink semantics: not exercised on win32');
     const repoRoot = mkdtemp();
     const outside = mkdtemp();
     try {
@@ -268,8 +288,8 @@ describe('buildStageOneTriageInput — a symlinked-to-sensitive path MENTIONED I
   // block covers the gap those tests did NOT reach: a path-shaped token
   // embedded in ordinary prose (category/detail/anchorQuote/causalChain),
   // which previously only got a lexical classifyPath check.
-  it('redacts a lexically-innocent path mentioned in `detail` prose that resolves via symlink into secrets/', () => {
-    if (skipOnWin) return;
+  it('redacts a lexically-innocent path mentioned in `detail` prose that resolves via symlink into secrets/', (t) => {
+    if (skipOnWin) return t.skip('symlink semantics: not exercised on win32');
     const repoRoot = mkdtemp();
     try {
       const secretsDir = path.join(repoRoot, 'secrets');
@@ -286,8 +306,8 @@ describe('buildStageOneTriageInput — a symlinked-to-sensitive path MENTIONED I
     } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
-  it('redacts a symlinked-to-sensitive path mentioned in `category` prose too (every free-text field, not just detail)', () => {
-    if (skipOnWin) return;
+  it('redacts a symlinked-to-sensitive path mentioned in `category` prose too (every free-text field, not just detail)', (t) => {
+    if (skipOnWin) return t.skip('symlink semantics: not exercised on win32');
     const repoRoot = mkdtemp();
     try {
       const secretsDir = path.join(repoRoot, 'secrets');
@@ -303,11 +323,14 @@ describe('buildStageOneTriageInput — a symlinked-to-sensitive path MENTIONED I
     } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
-  it('redacts a symlink-escaping-the-repo-root path mentioned in an anchorQuote (fail-safe)', () => {
-    if (skipOnWin) return;
+  it('redacts a symlink-escaping-the-repo-root path mentioned in an anchorQuote (fail-safe)', (t) => {
+    if (skipOnWin) return t.skip('symlink semantics: not exercised on win32');
     const repoRoot = mkdtemp();
     const outside = mkdtemp();
     try {
+      // The anchor's files must exist: an anchor naming a file that is not there is degraded to null by the
+      // structured-path check, which is correct and would hide what this case is about.
+      fs.writeFileSync(path.join(repoRoot, 'unrelated.ts'), 'export {};');
       const target = path.join(outside, 'outside-secret.txt');
       fs.writeFileSync(target, 'pretend-secret');
       fs.symlinkSync(target, path.join(repoRoot, 'escape.txt'));
@@ -344,11 +367,12 @@ describe('buildStageOneTriageInput — a symlinked-to-sensitive path MENTIONED I
     } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
-  it('a real, existing, but NON-sensitive file mentioned in prose is left unredacted (only sensitive canonical targets trigger)', () => {
-    if (skipOnWin) return;
+  it('a real, existing, but NON-sensitive file mentioned in prose is left unredacted (only sensitive canonical targets trigger)', (t) => {
+    if (skipOnWin) return t.skip('symlink semantics: not exercised on win32');
     const repoRoot = mkdtemp();
     try {
       fs.writeFileSync(path.join(repoRoot, 'helper.mjs'), 'export const x = 1;');
+      fs.writeFileSync(path.join(repoRoot, 'other.mjs'), 'export {};'); // the `section` file must exist, or the structured-path check redacts
       const finding = { category: 'c', detail: 'See helper.mjs for the utility function.', section: 'other.mjs:1', severity: 'LOW' };
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.ok(dto.detail.includes('helper.mjs'), 'a real, non-sensitive file mention must survive');
@@ -412,8 +436,8 @@ describe('buildStageOneTriageInput — source-location suffix + dotfile classifi
 });
 
 describe('isSensitiveViaSymlinkResolution — resolution-failure classification (audit-code round-2 H2)', () => {
-  it('a symlink cycle (ELOOP) fails closed to sensitive, not benign', () => {
-    if (skipOnWin) return;
+  it('a symlink cycle (ELOOP) fails closed to sensitive, not benign', (t) => {
+    if (skipOnWin) return t.skip('symlink semantics: not exercised on win32');
     const repoRoot = mkdtemp();
     try {
       const linkA = path.join(repoRoot, 'cycleA');

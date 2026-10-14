@@ -571,6 +571,7 @@ describe('claimCommand (H2/M3, R2-H1)', () => {
     const sessionsDir = path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], fx.repo), 'fleet', 'sessions');
     const records = () => (fs.existsSync(sessionsDir) ? fs.readdirSync(sessionsDir).filter((f) => f.endsWith('.json')) : []);
     const missing = run(claimCommand({ worktree: path.join(fx.root, 'gone'), branch: 'ghost' }, 'node scripts/fleet.mjs', sourceRoot));
+    assert.notEqual(missing.status, null, 'the command ran to a status (a null status means the shell itself could not be spawned)');
     assert.notEqual(missing.status, 0, 'a failed directory change must fail the command');
     assert.deepEqual(records(), [], 'no claim was written against the shell\'s original directory');
     const wt = path.join(fx.root, 'real-wt');

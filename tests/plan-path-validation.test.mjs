@@ -41,6 +41,16 @@ test('rejects the observed junk rows from the live store', () => {
   }
 });
 
+test('a drive-letter path is refused on every platform, not filed inside the repo (POSIX path.resolve treats it as relative)', () => {
+  for (const p of ['C:/Users/u/plan.md', 'D:\\a\\repo\\plan.md', 'c:/plan.md']) {
+    const r = validatePlanPath(p, { repoRoot: REPO });
+    assert.equal(r.ok, false, `expected rejection: ${p}`);
+    assert.equal(r.reason, 'escapes-repo');
+  }
+  // Negative control: a repo-relative path that merely CONTAINS a colon later is not a drive letter.
+  assert.equal(validatePlanPath('docs/plans/a-b.md', { repoRoot: REPO }).ok, true);
+});
+
 test('rejects flag-like, non-markdown, empty, and escaping paths', () => {
   assert.equal(validatePlanPath('-o', { repoRoot: REPO }).reason, 'flag-like');
   assert.equal(validatePlanPath('docs/plans/notes.txt', { repoRoot: REPO }).reason, 'not-markdown');
