@@ -142,6 +142,8 @@ describe('collectSkillSizes — what is governed', () => {
   // Symlinks: skipped, with the reason stated, where the OS refuses to create one.
   const linkOrSkip = (t, target, link, type) => {
     try { fs.symlinkSync(target, link, type); return true; } catch (err) {
+      // Only "this OS/user may not create links" skips; a fixture bug (EEXIST, ENOENT) must fail.
+      if (!['EPERM', 'EACCES', 'ENOSYS', 'ENOTSUP', 'UNKNOWN'].includes(err.code)) throw err;
       t.skip(`cannot create a symlink here (${err.code})`);
       return false;
     }
@@ -196,7 +198,9 @@ describe('the CLI against the real tree', () => {
   const files = Object.keys(current);
 
   test('vacuous-pass guard: the real tree has governed files and every one of them is measured', () => {
-    assert.ok(files.length >= 5, `expected a plausible baseline population, got ${files.length}`);
+    // The crafted-baseline tests below pick files[0] and files[1] from the real tree, so they
+    // need two governed files; if trimming ever empties the ledger, rewrite them against a tmp tree.
+    assert.ok(files.length >= 2, `expected a plausible baseline population, got ${files.length}`);
     for (const f of files) assert.ok(current[f] >= LIMIT_CHARS, f);
   });
 

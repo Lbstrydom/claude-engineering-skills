@@ -79,11 +79,10 @@ export function charCount(absPath) {
  * Every governed file's current size in characters, filtered to those at or
  * above the limit, as a sorted plain object.
  *
- * Fails closed (throws): an unreadable governed root or nested directory, or ANY
- * symbolic link met on the walk. ENOENT on a NESTED directory is the one benign
- * case (a concurrent clean can remove one mid-walk); ENOENT on a declared root is
- * not, since a missing root means the gate would report "no growth" for files it
- * never inspected.
+ * Fails closed (throws): an unreadable governed root or nested directory (a
+ * directory that vanishes between being listed and being read included: that is
+ * an incomplete scan, not evidence its markdown is under the limit), or ANY
+ * symbolic link met on the walk.
  *
  * @param {string} [repoRoot]
  * @param {{ roots?: readonly string[], limit?: number }} [opts]
@@ -92,7 +91,7 @@ export function charCount(absPath) {
 export function collectSkillSizes(repoRoot = REPO, { roots = GOVERNED_ROOTS, limit = LIMIT_CHARS } = {}) {
   // The generated copies of the shared references are derived, not authored.
   const generated = new Set(
-    findSyncTargets(repoRoot).map((p) => toRel(repoRoot, p.target).toLowerCase()),
+    findSyncTargets(repoRoot).map((p) => toRel(repoRoot, p.target)),
   );
   const out = {};
   const walk = (dir, isRoot) => {
@@ -100,10 +99,7 @@ export function collectSkillSizes(repoRoot = REPO, { roots = GOVERNED_ROOTS, lim
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch (err) {
-      if (isRoot || err.code !== 'ENOENT') {
-        throw new Error(`cannot read ${isRoot ? 'governed root' : 'directory'} ${toRel(repoRoot, dir) || dir}: ${err.message}`);
-      }
-      return;
+      throw new Error(`cannot read ${isRoot ? 'governed root' : 'directory'} ${toRel(repoRoot, dir) || dir}: ${err.message}`);
     }
     for (const e of entries) {
       const full = path.join(dir, e.name);
@@ -115,7 +111,7 @@ export function collectSkillSizes(repoRoot = REPO, { roots = GOVERNED_ROOTS, lim
       if (e.isDirectory()) { walk(full, false); continue; }
       if (!e.isFile() || !e.name.endsWith('.md')) continue;
       const rel = toRel(repoRoot, full);
-      if (generated.has(rel.toLowerCase())) continue;
+      if (generated.has(rel)) continue;
       const chars = charCount(full);
       if (chars >= limit) out[rel] = chars;
     }
