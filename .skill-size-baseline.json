@@ -1,0 +1,27 @@
+{
+  "_description": "Character counts for skill markdown already at or over the size limit. Drift-only ratchet: see scripts/skill-size-ratchet.mjs. Regenerate deliberately with --update-baseline (ratchets down only).",
+  "limitChars": 12000,
+  "toleranceChars": 200,
+  "files": {
+    "docs/audit/shared-references/browser-tool-detection.md": 19954,
+    "docs/audit/shared-references/gemini-gate.md": 18309,
+    "docs/audit/shared-references/verification-discipline.md": 27562,
+    "skills/audit-code/references/debt-capture.md": 12247,
+    "skills/audit-code/SKILL.md": 55763,
+    "skills/audit-plan/SKILL.md": 27745,
+    "skills/brainstorm/SKILL.md": 23546,
+    "skills/click-test/references/dom-scanner.md": 24844,
+    "skills/click-test/SKILL.md": 44240,
+    "skills/cycle/SKILL.md": 46673,
+    "skills/explain/SKILL.md": 16760,
+    "skills/fleet/references/coordination.md": 27875,
+    "skills/fleet/SKILL.md": 14977,
+    "skills/investigate/SKILL.md": 13548,
+    "skills/nav-audit/SKILL.md": 16368,
+    "skills/persona-test/SKILL.md": 57189,
+    "skills/plan/SKILL.md": 38170,
+    "skills/ship/references/pre-ship-gate-queries.md": 23858,
+    "skills/ship/SKILL.md": 69334,
+    "skills/ux-lock/SKILL.md": 19357
+  }
+}

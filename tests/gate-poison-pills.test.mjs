@@ -436,6 +436,8 @@ const MANDATORY = {
   // SILENT: an oversized file creeping back, a private path ignored with nowhere
   // durable to live, and a session log that shrank without anyone measuring it.
   'size:ratchet:gate': ['size-ratchet-rejects-growth-past-the-baseline'],
+  // Added 2026-10-14 (docs/plans/skill-markdown-size-ratchet.md): the same ratchet over skill markdown.
+  'skills:size:gate': ['skills-size-ratchet-rejects-growth-past-the-baseline'],
   'gitignore:policy:gate': ['gitignore-policy-rejects-undeclared-rules'],
   // Added 2026-08-12 with the emit() exit-code coupling (cross-skill-command-
   // registry §2b F4). Post-2026-07-31, so a pill is mandatory. The gate does not
