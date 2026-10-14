@@ -330,7 +330,8 @@ export function migrateLegacyLedgerLocked(location, {
     const relDir = repoRelative(wt.root, location.dir);
     report.stageCommand = `git -C ${shQuote(wt.root.split(path.sep).join('/'))} add -A -- ${shQuote(relDir)} ${shQuote(relLegacy)}`;
   }
-  if (dryRun) return { ...report, dryRun: true };
+  // A dry run answers "what would happen", including whether it would end clean: it exits like the real run.
+  if (dryRun) return { ...report, ok: plan.conflicts.length === 0, dryRun: true };
 
   // ── Apply ──
   const target = mode === 'initial'

@@ -294,3 +294,27 @@ describe('a link above the ledger directory is refused (audit-code r1 H3)', () =
     assert.deepEqual(readDebtLedger({ ledgerPath, events: [] }).entries.map((e) => e.topicId), ['topic-0001']);
   });
 });
+
+describe('a dry run reports the outcome the real run would have (audit-code r3 round 4)', () => {
+  test('an unresolved conflict is ok:false and exit 1 under --dry-run, and nothing is written', () => {
+    const plain = mkdtemp('debt-migrate-dry-');
+    try {
+      const file = path.join(plain, 'tech-debt.json');
+      fs.writeFileSync(file, serializeLedgerForDisk({ version: 1, entries: [makeEntry('topic-0001'), makeEntry('unsafe/id')] }));
+      const before = fs.readFileSync(file, 'utf-8');
+      const dry = cli(['--json', '--dry-run', '--ledger', file]);
+      assert.equal(dry.status, 1, dry.stdout);
+      assert.equal(dry.report.ok, false);
+      assert.deepEqual(dry.report.conflicts.map((c) => c.topicId), ['unsafe/id']);
+      assert.equal(fs.readFileSync(file, 'utf-8'), before, 'a dry run writes nothing');
+      assert.equal(fs.existsSync(path.join(plain, 'tech-debt')), false);
+      // vacuous-pass guard: the same ledger without the bad id is a clean dry run
+      fs.writeFileSync(file, serializeLedgerForDisk({ version: 1, entries: [makeEntry('topic-0001')] }));
+      const clean = cli(['--json', '--dry-run', '--ledger', file]);
+      assert.equal(clean.status, 0, clean.stdout);
+      assert.equal(clean.report.ok, true);
+    } finally {
+      rmrfBestEffort(plain);
+    }
+  });
+});
