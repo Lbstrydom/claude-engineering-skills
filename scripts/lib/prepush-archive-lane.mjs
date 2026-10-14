@@ -87,6 +87,7 @@ export const ARCHIVE_LANE_CHECK_CLASSIFICATION = Object.freeze({
   'stdout:flush:gate': S('drift-only ratchet'),
   'knip:gate': S('drift-only ratchet'),
   'size:ratchet:gate': S('drift-only ratchet'),
+  'skills:size:gate': S('drift-only ratchet'),
   'gitignore:policy:gate': S('.gitignore category declarations'),
   'status:integrity:gate': S('session-log conservation against a base'),
   'npm-args:gate': S('the -- separator in documented npm commands'),

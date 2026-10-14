@@ -105,6 +105,13 @@
 > re-baseline — because a baseline pinned at the historical high-water mark lets
 > a file grow back unchallenged. [Measurement](docs/reference/ratchet-gates.md).
 >
+> **Skill markdown may not grow.** `npm run skills:size:gate` ratchets every
+> `skills/**/*.md` (and the canonical shared references, never the generated copies)
+> in characters against `.skill-size-baseline.json`: a file over 12,000 chars (≈3K
+> tokens, the SKILL.md target nothing enforced) may not grow, one under it may not
+> cross, and a shrink fails until re-baselined. Move detail to `references/`.
+> [Measurement](docs/reference/ratchet-gates.md).
+>
 > **Generated-artifact policy (invariant — avoid the "messy middle").** Every
 > generated file lands in exactly ONE of two categories; never tracked-but-
 > unverified-and-volatile:

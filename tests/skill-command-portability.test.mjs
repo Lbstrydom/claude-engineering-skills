@@ -85,7 +85,7 @@ const SOURCE_REPO_ONLY = new Map([
  */
 const GATED_ONLY_IN = new Map([
   ['scripts/ship-train.mjs', ['skills/ship/SKILL.md', 'skills/ship/references/train-mode.md']],
-  ['scripts/prepush-check.mjs', ['skills/fleet/references/coordination.md']],
+  ['scripts/prepush-check.mjs', ['skills/fleet/references/coordination-rationale.md']],
 ]);
 
 describe('skill commands survive the consumer-repo relocation', () => {

@@ -38,6 +38,7 @@ import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { diffAgainstBaseline as diffSizes, updatedBaseline, readBaselineState } from './lib/size-ratchet.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DEFAULT_BASELINE = '.file-size-baseline.json';
@@ -91,88 +92,14 @@ export function collectSizes(repoRoot = REPO, dirs = SCAN_DIRS) {
 }
 
 /**
- * Pure decision logic, testable without touching disk.
- *
- * Four outcomes, and the two self-cleaning cases are deliberately distinct:
- *   - `grew`     — a baselined file gained more than the tolerance. FAIL.
- *   - `newOver`  — an unbaselined file crossed the limit. FAIL.
- *   - `shrank`   — a baselined file lost more than the tolerance and is STILL
- *                  over the limit. FAIL, asking for a ratchet-down; the
- *                  baseline is *updated*, and the file stays baselined.
- *   - `dropped`  — a baselined file fell BELOW the limit. FAIL, asking for its
- *                  removal from the baseline entirely.
- *
- * Conflating the last two is a real trap: removing a still-oversized file from
- * the baseline would make it fail immediately as an unbaselined file over the
- * limit.
+ * The decision core lives in `./lib/size-ratchet.mjs` (shared with
+ * `skill-size-ratchet.mjs`); this binds the line-count tolerance and keeps the
+ * names this script and its tests have always used.
  */
-/**
- * The baseline `--update-baseline` writes. It only ever RATCHETS DOWN: each
- * baselined file keeps `min(old mark, current)`, a file now under the limit
- * leaves, and a file newly over the limit is NOT admitted. Writing every
- * file's current count (the previous behaviour) silently raised the mark of
- * any file that had grown within the tolerance — locking in one shrink
- * re-baselined unrelated creep upward. Accepting growth, or a new oversized
- * file, is a reviewed hand edit of that one entry, never a side effect.
- * With no baseline at all, the current sizes ARE the baseline (bootstrap).
- *
- * @param {Record<string, number>} current
- * @param {Record<string, number>|null} baseline
- * @returns {Record<string, number>}
- */
-export function updatedBaseline(current, baseline) {
-  if (!baseline) return { ...current };
-  const next = {};
-  for (const [file, was] of Object.entries(baseline)) {
-    if (file in current) next[file] = Math.min(was, current[file]);
-  }
-  return Object.fromEntries(Object.entries(next).sort(([a], [b]) => a.localeCompare(b)));
-}
-
 export function diffAgainstBaseline(current, baseline, tolerance = TOLERANCE_LINES) {
-  const grew = [];
-  const newOver = [];
-  const shrank = [];
-  const dropped = [];
-
-  for (const [file, lines] of Object.entries(current)) {
-    if (!(file in baseline)) { newOver.push({ file, lines }); continue; }
-    const was = baseline[file];
-    if (lines - was > tolerance) grew.push({ file, was, now: lines });
-    else if (was - lines > tolerance) shrank.push({ file, was, now: lines });
-  }
-  for (const [file, was] of Object.entries(baseline)) {
-    if (!(file in current)) dropped.push({ file, was });
-  }
-  return { grew, newOver, shrank, dropped };
+  return diffSizes(current, baseline, tolerance);
 }
-
-/**
- * What is on disk at the baseline path, as one of THREE outcomes. `absent`
- * (ENOENT) is the only one `--update-baseline` may bootstrap from; `invalid`
- * (unreadable, unparseable, or no `files` map of numeric counts) must refuse
- * with the file untouched. Collapsing the two into `null` let a corrupt baseline
- * read as "no baseline", so the update wrote every current size over it — the
- * growth the ratchet exists to refuse, absorbed.
- *
- * @param {string} p
- * @returns {{kind: 'absent'} | {kind: 'invalid', reason: string} | {kind: 'ok', files: Record<string, number>}}
- */
-export function readBaselineState(p) {
-  let raw;
-  try {
-    raw = fs.readFileSync(p, 'utf-8');
-  } catch (err) {
-    return err?.code === 'ENOENT' ? { kind: 'absent' } : { kind: 'invalid', reason: `unreadable: ${err?.code || err?.message}` };
-  }
-  let files;
-  try { files = JSON.parse(raw)?.files; } catch (err) { return { kind: 'invalid', reason: `not valid JSON: ${err.message}` }; }
-  if (!files || typeof files !== 'object' || Array.isArray(files)
-      || !Object.values(files).every((n) => Number.isFinite(n))) {
-    return { kind: 'invalid', reason: 'no `files` map of numeric line counts' };
-  }
-  return { kind: 'ok', files };
-}
+export { updatedBaseline, readBaselineState };
 
 function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
@@ -246,7 +173,7 @@ Exit codes: 0=clean, 1=drift, 2=no baseline / bad flag
     process.stdout.write(`file-size-ratchet: baseline updated (ratchet-down only) — ${Object.keys(files).length} file(s) baselined.\n`);
     const { grew, newOver } = prior ? diffAgainstBaseline(current, files) : { grew: [], newOver: [] };
     for (const g of [...grew, ...newOver]) {
-      process.stdout.write(`  NOT absorbed: ${g.file} (${g.now ?? g.lines} lines) — split it, or hand-edit its entry in a reviewed commit.\n`);
+      process.stdout.write(`  NOT absorbed: ${g.file} (${g.now ?? g.size} lines) — split it, or hand-edit its entry in a reviewed commit.\n`);
     }
     process.exit(0);
   }
@@ -266,7 +193,7 @@ Exit codes: 0=clean, 1=drift, 2=no baseline / bad flag
   const { grew, newOver, shrank, dropped } = diffAgainstBaseline(current, baseline);
   const lines = [];
   for (const g of grew) lines.push(`  GREW      ${g.file}: ${g.was} → ${g.now} (+${g.now - g.was})`);
-  for (const n of newOver) lines.push(`  NEW>LIMIT ${n.file}: ${n.lines} lines (limit ${LIMIT_LINES})`);
+  for (const n of newOver) lines.push(`  NEW>LIMIT ${n.file}: ${n.size} lines (limit ${LIMIT_LINES})`);
   for (const s of shrank) lines.push(`  SHRANK    ${s.file}: ${s.was} → ${s.now} (−${s.was - s.now}) — lock it in`);
   for (const d of dropped) lines.push(`  DROPPED   ${d.file}: was ${d.was}, now under the limit — remove from baseline`);
 
