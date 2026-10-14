@@ -82,15 +82,12 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
 2. **Go away** — each chip registers itself, works, marks `ready`.
 3. **Status** — show the user the table: intent, state, WAITING column (human
    items first), overlaps, duplicate patches, proposed landing order. Overlap by
-   files is **three-dot** (`base...branch`, changes since the merge-base), measured
-   from the FRESHER of the local base and its upstream, so neither a base that moved
-   on nor a local base that trails `origin` makes a branch look like it touched
-   files it did not (`--fetch` refreshes it first). Uncommitted edits in live
-   sessions' worktrees count as advisory overlap evidence. Untracked branches
-   that are merged (ahead 0), landed (squash or merged PR) or idle
-   (`hideIdleAfterDays`, default 14), with no open PR and a clean or no worktree,
-   hide behind one `N hidden` line (`--all` shows them); anything not proven
-   stale stays visible.
+   files is **three-dot** (`base...branch`), measured from the FRESHER of the local
+   base and its upstream (`--fetch` refreshes it first); uncommitted edits in live
+   sessions' worktrees count as advisory evidence. Untracked branches that are merged,
+   landed or idle (`hideIdleAfterDays`, default 14), with no open PR and a clean or
+   no worktree, hide behind one `N hidden` line (`--all` shows them); anything not
+   proven stale stays visible.
 4. **Land** — `land` builds an integration worktree off the base, applies every
    ready head, runs the configured test command once (rerun once if red) and
    prints the result plus the exact approve command. It never touches the base.
@@ -138,51 +135,13 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
 - Coordinating, not participating: the chip authority block, the session-list
   cross-check, routing, the ship-ready end state, consumer sync, session
   titles, archive sweeps and push lanes are in `references/coordination.md`
-  ("Rules for a coordinator").
-- pr-mode `land --approve` refuses a draft, or a required check that failed or
-  was SKIPPED (a skipped check never ran). It prints WAIT above a merge whose
-  required checks are missing or pending; relay those lines.
-- `ready` records the current head; a head that moves later reads
-  `ready (stale)` and `land` refuses it until `ready` is re-run.
-- Interrupted `land`: `--reconcile` (direct modes, reads the remote),
-  `--confirm` (pr mode, observes each PR merged), `--resume` (continue tiers,
-  or a stopped serial run). A green train does not prove each branch green alone.
-- `land --approve <id> --serial` (pr mode, for "branch must be up to date"
-  repos) updates, waits for required checks and merges ONE PR at a time; it is
-  the same human approval. `restack` replays a branch's own commits onto the
-  base after a squash merge and never moves a checked-out branch. Detail:
-  `references/landing.md`.
+  ("Rules for a coordinator"; the why behind each rule is in
+  `references/coordination-rationale.md`).
+- pr-mode `land --approve` refuses a draft, or a required check that failed or was SKIPPED (a skipped check never ran). It prints WAIT above a merge whose required checks are missing or pending; relay those lines. `ready` records the current head; a head that moves later reads `ready (stale)` and `land` refuses it until `ready` is re-run. Interrupted `land`, `--serial` and `restack`: `references/landing.md`.
 
 ## Config — optional `.fleet.json` at the repo root
 
-Never synced; read from the checkout you run in, so commit it — an untracked copy
-in one worktree changes behaviour there only. Every key optional. `baseBranch` (a
-branch name — `origin/main` is refused; default origin/HEAD, else main),
-`mergeMethod` (`pr` default, `direct-squash`, `direct-merge`; fixed into the
-train when built), `testCommand` (a string, or ordered tiers; `post-merge` tiers
-never run in `land` and are listed as deferred), and `checks` (repo-owned
-collision scripts; `land` runs them inside the combined train tree; a failing
-`block` check makes a train non-approvable, and one listed with
-`"runIn": [..., "ready"]` (opt-in) refuses `ready` too; a timed-out hook's
-process tree is terminated, except a descendant that deliberately escapes it).
-A monorepo with a long chain:
-
-```json
-{ "mergeMethod": "pr",
-  "testCommand": { "tiers": [
-    { "name": "fast", "command": ["npm", "run", "test:unit"], "stage": "pre-land" },
-    { "name": "full", "command": ["npm", "test"], "stage": "pre-land", "timeoutMs": 3600000 },
-    { "name": "packaged", "command": ["npm", "run", "test:packaged"], "stage": "post-merge" } ] },
-  "checks": [ { "name": "semantic-collisions", "script": "scripts/<your-check>.mjs",
-                "runIn": ["status", "land"], "severity": "block" } ] }
-```
-
-`hotFiles` (claim-grammar patterns, e.g. `["**/tech-debt.json"]`) are files nearly
-every branch touches: an overlap made ONLY of them is listed apart (`[hot]`) and
-never blocks; mixed evidence still blocks. A tier or check may carry a one-line
-`"note"` (≤300 chars), printed and recorded in the manifest. Landing keys —
-`requiredChecks`, `appendOnlyGlobs`, `restackIgnore`, `serialTimeoutMs` — are in
-`references/landing.md`; `archiveIgnore` (default `node_modules/**`, `scripts/.claude-skills/**`) in `references/coordination.md`.
+Never synced; read from the checkout you run in, so commit it. Every key is optional: base branch, merge method, test command and tiers, collision `checks`, `hotFiles`, `archiveIgnore`. Keys, defaults and a monorepo example: `references/config.md`.
 
 Every verb also records one usage event (counts and outcome classes only, never
 paths or prose) for the audit store; `FLEET_TELEMETRY=off` disables it. To see
@@ -199,6 +158,10 @@ situations — read them only when the trigger applies.
 | File | Summary | Read when |
 |---|---|---|
 | `references/participant-rules.md` | The short rule block every spawned session receives, and why. | You spawn or brief a chip, or a session asks how to behave under /fleet. |
-| `references/coordination.md` | Coordinating without host messages — next, directives, release, prune, archive, handover, coordinator rules. | You coordinate several sessions, post or read a directive, retire a session, archive or prune a worktree, move to another Claude Code account, or dispatch chips as a coordinator. |
+| `references/coordination.md` | Coordinating without host messages — next, directives, unregistered work, and the numbered coordinator rules. | You coordinate several sessions, post or read a directive, or dispatch chips as a coordinator. |
+| `references/coordination-rationale.md` | Why each coordinator rule exists, with the measurements, incidents and command detail the terse rules omit. | A coordinator rule needs its why, a measurement, or exact detail (lease file, test-tier merge, proposals, model switch). |
+| `references/ending-a-session.md` | Ending a session — release, archive-check, prune, archive, and stopping branch and worktree clutter. | You retire a session, or archive-check, archive or prune a worktree or branch. |
+| `references/handover.md` | Moving to another Claude Code account — handover prepare and receive, the scheduler step, exit codes, follow-ups. | You move to another Claude Code account on this machine (`fleet handover`). |
+| `references/config.md` | The optional .fleet.json - base branch, merge method, test tiers, collision checks, hotFiles, archiveIgnore. | You read or write `.fleet.json`, or configure test tiers, collision checks or `hotFiles`. |
 | `references/landing.md` | Landing beyond one combined run — required checks that ran, serial landing, restack, append-only files. | You approve a pr-mode train, land PRs one at a time, restack after a squash merge, or configure append-only files. |
 | `references/telemetry.md` | Usage telemetry — what each verb records, the weakness findings stats derives, and how to turn it off. | You want to know how fleet is performing, why stats flags a weakness, or what fleet sends to the store. |
