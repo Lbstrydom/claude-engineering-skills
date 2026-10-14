@@ -1,0 +1,45 @@
+name: full-suite
+
+# MEASUREMENT ONLY (docs/plans/ci-full-suite-actions.md, design question 1):
+# does the full suite pass on ubuntu-latest and/or windows-latest, and how long?
+# Pushed only to archive/ci-measure-* branches; never merged in this form.
+
+on:
+  push:
+    branches: ['archive/ci-measure-*']
+
+concurrency:
+  group: full-suite-measure-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Machine
+        shell: bash
+        run: node -e "const os=require('os');console.log('cpus',os.availableParallelism(),'mem',Math.round(os.totalmem()/2**30)+'G',process.version)"
+      - name: Git identity for throwaway test repos
+        shell: bash
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+      - run: npm ci
+      - name: npm test
+        run: npm test
