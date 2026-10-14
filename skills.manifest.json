@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "3382e523e01484b7",
+  "bundleVersion": "1a6124550fc0dd39",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -268,13 +268,13 @@
         },
         {
           "relPath": "references/coordination-rationale.md",
-          "sha": "9c02ab47c8fd",
-          "size": 8531
+          "sha": "0e3b1747b66f",
+          "size": 9713
         },
         {
           "relPath": "references/coordination.md",
-          "sha": "8c1860419198",
-          "size": 11817
+          "sha": "435a81e69fb1",
+          "size": 11932
         },
         {
           "relPath": "references/ending-a-session.md",

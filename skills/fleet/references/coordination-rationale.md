@@ -122,6 +122,26 @@ variable to one shared path when two OS users, or WSL beside Windows, run the sa
 machine's work. It is cooperative like the rest of fleet: it answers "is the slot
 free", while you still decide who goes next (`hold` and directives outrank it).
 
+**Turns when several repos wait (the user's policy, 2026-10-14).** First-come is
+right only when nobody else is waiting. Measured that day: one repo's back-to-back
+CI windows held the machine for most of 05:57-10:50Z while another repo's pushes
+waited one to two hours each, and gaps were negotiated by message four times. So
+when two or more repos wait, they take turns:
+- A turn is up to about 60 minutes of heavy time. The repo batches as many of its
+  ready jobs as fit and never cuts a job mid-run.
+- The repo that has waited longest goes next. A repo's waiting clock restarts when
+  its turn ends.
+- A repo's own CI windows and scheduled runs count as its heavy time.
+- A worker acquires only when its coordinator says the turn is its repo's: a FREE
+  lease is not a turn. Until the lease records turns itself, the coordinators
+  announce the order to each other.
+- 60 minutes is a default measured on one machine. Doctor's fit check recommends a
+  value per machine.
+
+**Peak hours.** `lease peak --hours "14:00-20:00"` records the user's
+expensive-token window. During it, ship built work only (pushes, `/ship`, merges,
+CI); new planning, coding and chips wait until after.
+
 ## Rule 15 — Message budget
 
 Observed: a host paused a coordinator's outbound messages after 10 in one user turn.
