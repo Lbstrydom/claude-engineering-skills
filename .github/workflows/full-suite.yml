@@ -1,4 +1,4 @@
-name: full-suite
+name: full-suite-static-probe
 
 # MEASUREMENT ONLY (docs/plans/ci-full-suite-actions.md, design question 1):
 # does the full suite pass on ubuntu-latest and/or windows-latest, and how long?
@@ -9,7 +9,7 @@ on:
     branches: ['archive/ci-measure-*']
 
 concurrency:
-  group: full-suite-measure-${{ github.ref }}
+  group: full-suite-static-probe-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 150
     steps:
@@ -41,5 +41,5 @@ jobs:
           git config --global user.email "ci@example.invalid"
           git config --global init.defaultBranch main
       - run: npm ci
-      - name: npm test
-        run: npm test
+      - name: check:static
+        run: npm run check:static
