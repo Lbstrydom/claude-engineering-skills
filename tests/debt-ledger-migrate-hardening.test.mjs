@@ -250,6 +250,44 @@ describe('a link above the ledger directory is refused (audit-code r1 H3)', () =
     }
   });
 
+  test('a link to another checkout ROOT (which holds its own .git) is refused too — round 2', async (t) => {
+    // Walking up and stopping at the first directory with a .git stops AT such a link, unchecked.
+    const other = mkdtemp('debt-other-root-');
+    try {
+      gitInit(other);
+      fs.mkdirSync(path.join(other, 'tech-debt', 'entries'), { recursive: true });
+      fs.writeFileSync(path.join(other, 'tech-debt', 'entries', 'topic-0001.json'), `${JSON.stringify(makeEntry('topic-0001'), null, 2)}
+`);
+      if (!linkAuditTo(other)) { t.skip('cannot create a link here (no privilege) — not a pass'); return; }
+      assert.ok(fs.existsSync(path.join(dir, '.audit', '.git')), 'fixture: the link target holds a .git');
+      assert.throws(() => readDebtLedger({ ledgerPath, events: [] }), /symbolic link above the ledger directory/);
+    } finally {
+      try { fs.rmSync(path.join(dir, '.audit'), { force: true, recursive: false }); } catch { /* junction */ }
+      rmrfBestEffort(other);
+    }
+  });
+
+  test('a repository root that is itself reached through a link is allowed', (t) => {
+    const holder = mkdtemp('debt-linked-root-');
+    try {
+      fs.mkdirSync(path.join(dir, '.audit', 'tech-debt', 'entries'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.audit', 'tech-debt', 'entries', 'topic-0001.json'), `${JSON.stringify(makeEntry('topic-0001'), null, 2)}
+`);
+      const viaLink = path.join(holder, 'code');
+      try {
+        fs.symlinkSync(dir, viaLink, process.platform === 'win32' ? 'junction' : 'dir');
+      } catch (err) {
+        if (err && (err.code === 'EPERM' || err.code === 'EACCES')) { t.skip('cannot create a link here (no privilege) — not a pass'); return; }
+        throw err;
+      }
+      const linked = path.join(viaLink, '.audit', 'tech-debt.json');
+      assert.deepEqual(readDebtLedger({ ledgerPath: linked, events: [] }).entries.map((e) => e.topicId), ['topic-0001']);
+    } finally {
+      try { fs.rmSync(path.join(holder, 'code'), { force: true, recursive: false }); } catch { /* junction */ }
+      rmrfBestEffort(holder);
+    }
+  });
+
   test('vacuous-pass guard: the same ledger is readable through a real .audit directory', () => {
     fs.mkdirSync(path.join(dir, '.audit', 'tech-debt', 'entries'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.audit', 'tech-debt', 'entries', 'topic-0001.json'), `${JSON.stringify(makeEntry('topic-0001'), null, 2)}\n`);

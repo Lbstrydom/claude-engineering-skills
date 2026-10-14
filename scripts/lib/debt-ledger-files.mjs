@@ -167,38 +167,39 @@ export function canonicalEqual(a, b) {
 // ── Path boundary ───────────────────────────────────────────────────────────
 
 /**
- * Refuse a symbolic link (or Windows junction) ABOVE the ledger directory but inside the
+ * Refuse a symbolic link (or Windows junction) ABOVE the ledger directory but inside a
  * repository — `.audit` itself in the default layout. `.audit/*` ignores the children of
  * `.audit`, not the path `.audit`, so a commit can replace the directory with a tracked link to
- * another checkout's `.audit`; every component below it then lstat-s as an ordinary directory
- * while reads, writes and deletes land elsewhere (audit-code round 1, H3).
+ * another checkout (or its `.audit`); every component below it then lstat-s as an ordinary
+ * directory while reads, writes and deletes land elsewhere (audit-code round 1, H3).
  *
- * Only the span between the repository root (the nearest ancestor holding `.git`) and the ledger
- * is repository-controlled. Above the root — /var -> /private/var on macOS, a user's linked
- * home — is the machine's business, and a ledger outside any repository has no such span.
+ * A link is repository-controlled iff some STRICT ancestor of it holds `.git`. Deciding that from
+ * the link's own contents is the trap round 2 found: a link to another checkout's ROOT holds a
+ * `.git` of its own, so "stop at the first directory with .git" stops AT the link and never
+ * checks it. A repository root that is itself linked (`~/code -> /data/code`), /var ->
+ * /private/var on macOS, and a ledger outside any repository all have no `.git` above the link
+ * and stay allowed.
  *
  * @param {ReturnType<typeof resolveLedgerLocation>} location
  */
 function assertNoLinkedAncestors(location) {
-  const span = [];
-  let cur = path.dirname(location.dir);
-  for (;;) {
-    if (fs.existsSync(path.join(cur, '.git'))) break;
-    span.push(cur);
-    const up = path.dirname(cur);
-    if (up === cur) return; // no repository root found: nothing repository-controlled to check
-    cur = up;
+  const chain = [];
+  for (let cur = path.dirname(location.dir); ; cur = path.dirname(cur)) {
+    chain.push(cur);
+    if (path.dirname(cur) === cur) break;
   }
-  for (const p of span) {
+  for (let i = 0; i < chain.length; i++) {
     let st;
-    try { st = fs.lstatSync(p); } catch (err) { if (err && err.code === 'ENOENT') continue; throw err; }
-    if (st.isSymbolicLink()) {
-      throw new Error(
-        `Debt ledger path runs through a symbolic link above the ledger directory (refused): ${p}. `
-        + 'A link committed in place of .audit would redirect every read, write and delete to another location; '
-        + "point the ledger at the link's real directory instead.",
-      );
-    }
+    try { st = fs.lstatSync(chain[i]); } catch (err) { if (err && err.code === 'ENOENT') continue; throw err; }
+    if (!st.isSymbolicLink()) continue;
+    // Looked up only for a link actually found: the common case costs one lstat per ancestor.
+    const insideRepo = chain.slice(i + 1).some((anc) => fs.existsSync(path.join(anc, '.git')));
+    if (!insideRepo) continue;
+    throw new Error(
+      `Debt ledger path runs through a symbolic link above the ledger directory (refused): ${chain[i]}. `
+      + 'A link committed in place of .audit would redirect every read, write and delete to another location; '
+      + "point the ledger at the link's real directory instead.",
+    );
   }
 }
 
