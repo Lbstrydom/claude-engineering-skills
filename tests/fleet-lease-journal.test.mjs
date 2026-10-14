@@ -304,7 +304,6 @@ describe('regression: found by the interleaving test (seed 11)', () => {
 
 describe('audit-code round 1 fixes', () => {
   it('H1: an already-over window does not serve a wait; a running one does; the boundary instant is over', () => {
-    const l0 = acq(heldByA(10), B, { forMin: 20 }, at(30)).lease; // A expired at 08:10 (dead pid): B is refused? no - taken over below
     const waiting = ok(wait(emptyLease(), B, { forMin: 20 }, at(30)));
     const over = ok(ann(waiting, B, { from: '2026-10-14T08:00:00.000Z', until: '2026-10-14T08:20:00.000Z' }, at(30)));
     assert.equal(over.waiters.length, 1, 'a window that ended before now serves nothing');
@@ -312,7 +311,6 @@ describe('audit-code round 1 fixes', () => {
     assert.equal(edge.waiters.length, 1, 'until == now: the window is over');
     const running = ok(ann(waiting, B, { until: '+10m' }, at(30)));
     assert.equal(running.waiters.length, 0);
-    void l0;
   });
   it('M3: refusals coalesce per repo identity - the same display name in two repos stays two entries', () => {
     const X = { repoKey: 'aaaaaaaaaaaa', holder: 'main' };
@@ -333,6 +331,9 @@ describe('audit-code round 1 fixes', () => {
       { kind: 'refused', refusal: {} }, { kind: 'waiting', opener: 'wait' }, { kind: 'wait-ended', episode: 'e', reason: 'served' },
     ]) assert.equal(LeaseSchema.safeParse(e(bad)).success, false, `${bad.kind} without its payload`);
     assert.equal(LeaseSchema.safeParse(e({ kind: 'from-the-future' })).success, true);
+    for (const k of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+      assert.equal(LeaseSchema.safeParse(e({ kind: k })).success, true, `"${k}" is an unknown kind, never a prototype lookup`);
+    }
     // and a well-formed entry of every known kind written by the code itself is accepted
     let l = ok(acq(emptyLease(), A, { forMin: 10, pid: 1 }));
     l = ok(ann(l, A, { kind: 'quiet' }));

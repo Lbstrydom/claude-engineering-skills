@@ -120,7 +120,7 @@ const PeakSchema = z.object({ from: hhmm, to: hhmm }).passthrough();
 // checkout's `EventSchema.kind` is an enum, so a new kind there would make the shared file read as corrupt to it. A journal
 // `kind` is a free string so a still-newer checkout's kind never makes THIS one call the file corrupt either.
 const obj = z.object({}).passthrough();
-const JOURNAL_PAYLOAD = {
+const JOURNAL_PAYLOAD = new Map(Object.entries({
   acquired: z.object({ mode: z.string(), job: obj }).passthrough(),
   released: z.object({ forced: z.boolean(), job: obj }).passthrough(),
   announced: z.object({ window: z.object({ id: z.string(), kind: z.string(), from: iso, until: iso }).passthrough() }).passthrough(),
@@ -128,10 +128,10 @@ const JOURNAL_PAYLOAD = {
   refused: z.object({ refusal: z.object({ op: z.string(), code: z.string() }).passthrough() }).passthrough(),
   waiting: z.object({ episode: z.string(), opener: z.string() }).passthrough(),
   'wait-ended': z.object({ episode: z.string(), reason: z.string(), refusals: z.number().int().min(0) }).passthrough(),
-};
+}));
 // A KNOWN kind must carry the payload the readers (`lease log`, `measureSlotWaits`) dereference; an unknown kind is tolerated.
 const JournalSchema = z.object({ at: iso, kind: z.string().min(1).max(40), by: name, repoKey: hex(12).optional() }).passthrough().superRefine((e, ctx) => {
-  const payload = JOURNAL_PAYLOAD[e.kind];
+  const payload = JOURNAL_PAYLOAD.get(e.kind); // a Map: a kind named "constructor" or "toString" is an unknown kind, not a prototype hit
   if (!payload) return;
   const r = payload.safeParse(e);
   if (!r.success) for (const i of r.error.issues) ctx.addIssue({ code: 'custom', path: i.path, message: `journal ${e.kind} entry: ${i.message}` });
