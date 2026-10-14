@@ -48,6 +48,10 @@ Usage:
   /fleet propose --what "..." --where "..." --why "..." [--evidence "..."] [--theme <slug>] [--blocked-by <#PR|branch>]  # record a finding durably; it outlives the worktree
   /fleet proposal <id> --folded <session> | --queued <reason> | --declined <reason> | --done <PR>  # set its outcome; history only grows
   /fleet proposals [--all]                       # the findings queue grouped by theme; blocked-by rechecked from facts
+  /fleet lease acquire [--kind gate|test|timing|maintenance] [--for <1-180>] [--pid <n>] [--token <t>] [--note "..."]  # take the machine's one heavy slot (shared by every repo)
+  /fleet lease attach --pid <n> [--token <t>] | release [--token <t>] [--force --reason "..."] | status  # record the job's pid; give the slot back; read it
+  /fleet lease announce --kind quiet|ci --until <iso|+Nm> [--from] [--note] | --clear-window <id>  # tell other repos not to run heavy work in a window
+  /fleet lease peak --hours "09:00-12:00,14:00-17:00" | --clear  # peak-cost hours (machine-local time)
   /fleet hold on [--reason "..."] [--notify] | off [--note "..."]
   /fleet repair --quarantine <file>
   /fleet land [--select a,b] [--dry-run]         # build a train, one test run
@@ -130,6 +134,7 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
   command first; a config git cannot read refuses too.
 - Each `FYI` line in `next` or the footer (prune counts, unregistered work, pending proposals) is
   information, not a `DO`: relay it; never claim, archive or prune on it alone.
+  The machine lease line (who holds the heavy slot, announced windows, peak hours) is information too: it says whether the slot is free.
 - Coordinating, not participating: the chip authority block, the session-list
   cross-check, routing, the ship-ready end state, consumer sync, session
   titles, archive sweeps and push lanes are in `references/coordination.md`

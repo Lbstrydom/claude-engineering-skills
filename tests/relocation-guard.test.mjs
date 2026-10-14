@@ -15,6 +15,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { getAllConsumerInventories } from '../scripts/lib/sync-inventory.mjs';
 import { sourceRelToDestRel } from '../scripts/lib/sync-path-map.mjs';
 import { _internals as verifyInternals } from '../scripts/lib/sync-isolation-verify.mjs';
@@ -104,5 +105,24 @@ test('every library in LIB_IMPORT_SET resolves to an importable module exporting
     for (const sym of mustExport) {
       assert.equal(typeof mod[sym], 'function', `scripts/${rel} must export ${sym}`);
     }
+  }
+});
+
+// Tier 3(b) for the machine lease (docs/plans/fleet-machine-lease.md): the two modules behind `fleet lease` must be IN
+// the synced inventory (so the scans above cover them and a consumer receives them) and must import cleanly. fleet.mjs
+// imports lease-cmd.mjs statically, so a broken import also fails fleet.mjs's own --selfcheck-relocation smoke.
+test('the fleet lease modules ship to consumers, are scanned by the guards above, and import cleanly', async () => {
+  const shipped = new Set([...allSyncedScripts()].map((s) => s.srcRel.replace(/\\/g, '/')));
+  for (const rel of ['scripts/lib/fleet/lease.mjs', 'scripts/lib/fleet/lease-cmd.mjs']) {
+    assert.ok(shipped.has(rel), `${rel} is not in any consumer inventory: a consumer's \`fleet lease\` would die on MODULE_NOT_FOUND`);
+    const abs = path.join(REPO_ROOT, rel);
+    const r = scanFile(abs);
+    assert.deepEqual(r, { parentResolve: false, spawnHardcoded: false, execHardcoded: false }, `${rel} holds a relocation-breaking pattern`);
+    const mod = await import(pathToFileURL(abs).href);
+    assert.ok(Object.keys(mod).length > 0, `${rel} exports nothing`);
+  }
+  const lease = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/lib/fleet/lease.mjs')).href);
+  for (const fn of ['machineDir', 'readLease', 'transactLease', 'decideAcquire', 'decideRelease', 'nextLines']) {
+    assert.equal(typeof lease[fn], 'function', `lease.mjs must export ${fn}`);
   }
 });

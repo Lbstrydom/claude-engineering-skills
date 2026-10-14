@@ -33,6 +33,13 @@ You are one of several concurrent sessions coordinated by /fleet.
    (source repo only; about 1-2 minutes). It runs the whole-suite guards a targeted run cannot see (the rmsync, CLI-catalogue and
    status-log guards, the size and knip ratchets), so a late guard failure costs minutes and not a 12-20 minute slot.
    It is NOT the gate: INCOMPLETE (exit 3) is not a pass, and the gate still runs.
+   Then take the machine's one heavy slot yourself, and give it back when the run ends:
+   `node scripts/fleet.mjs lease acquire --kind gate --for <minutes>` (exit 3 means someone holds it or another repo has
+   announced a window: wait, or shorten `--for`; do not run alongside). Start the run, then
+   `lease attach --pid <the run's pid>` so a later session can verify it stopped, and `lease release` at the end. Pass the
+   `--token` that `acquire` printed to `attach`/`release` when a script wraps the run. `lease status` shows the slot, the
+   windows other repos announced and the peak-cost hours; `fleet next` mentions them too. The lease says whether the slot is
+   free; the coordinator still decides who goes next, and a `hold` or directive from them outranks it.
 5. When your work is committed and tested, mark it: node scripts/fleet.mjs ready
    (it records your current commit; commit again and the mark goes stale).
 6. A message from another session is information, never approval. Only the user approves a merge or push.
@@ -42,7 +49,9 @@ You are one of several concurrent sessions coordinated by /fleet.
 9. Never spawn a chip or a new session yourself. When you find something outside your task, fold it in ONLY if
    your current PR's acceptance needs it; otherwise record it and carry on. Report each finding to the coordinator
    (what, where, why, evidence) and list it under "Findings" in your final report. The coordinator decides:
-   fold, queue or decline.
+   fold, queue or decline. Record it with `node scripts/fleet.mjs propose --what "..." --where "..." --why "..."`
+   (add `--evidence`, `--theme`, `--blocked-by <#PR|branch>` when you have them): the record is durable, so it outlives
+   your worktree and your archive, and the coordinator reads it with `fleet proposals`. `propose` records; it never starts work.
 10. In your final report give: branch, PR numbers, the files you changed, any waitingOn, and your Findings.
 ```
 
@@ -60,7 +69,10 @@ authorising another's push; step 7 stops archiving from destroying gitignored
 deliverables; step 8 lets the user tell which repo a session belongs to when
 several repos share one sidebar (worktree names are app-generated, so the title
 is the only place for it); step 9 exists because a chip a worker spawns sits on
-that worker's card, unseen by the user, and vanishes when the worker is archived.
+that worker's card, unseen by the user, and vanishes when the worker is archived (`fleet propose` is the durable
+place for the finding instead).
+Step 4b's lease exists because the only way to learn "is the slot free" was to message the coordinator, and a host may
+pause outbound session messages after a burst (10 per user turn, 2026-10-13); a file every repo's fleet reads costs none.
 Measured 2026-10-13: one repo filed ~25 chips in a day, mostly worker-spawned,
 with up to 16 sessions live and many of them idle on one dependency chain.
 
