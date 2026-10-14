@@ -420,7 +420,7 @@ describe('doctor.mjs end to end: --only reaches the network, and never narrows -
   const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).length : 0);
 
   it('POSITIVE CONTROL: the fake gh counts a real remote probe', { skip: !fakeOk && 'cannot copy the node binary here' }, () => {
-    fs.rmSync(log, { force: true });
+    fs.rmSync(log, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const { json } = doctor('--only', 'operating/ci-location');
     assert.ok(calls() >= 1, 'the counting gh must see the call, or the zero below proves nothing');
     assert.equal(json.results.length, 1);
@@ -428,7 +428,7 @@ describe('doctor.mjs end to end: --only reaches the network, and never narrows -
     assert.match(json.results[0].detail, /unmeasured/);
   });
   it('--only operating/test-tier makes ZERO gh calls: probes nobody asked for do not run', { skip: !fakeOk && 'cannot copy the node binary here' }, () => {
-    fs.rmSync(log, { force: true });
+    fs.rmSync(log, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const { json } = doctor('--only', 'operating/test-tier');
     assert.equal(calls(), 0);
     assert.equal(json.results[0].id, 'operating/test-tier');

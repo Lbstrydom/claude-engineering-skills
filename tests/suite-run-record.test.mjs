@@ -9,7 +9,7 @@ import {
 
 const made = [];
 const tmp = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'suite-run-')); made.push(d); return d; };
-after(() => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
+after(() => { for (const d of made) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 const rec = (over = {}) => ({
   schema: SUITE_RUN_SCHEMA, kind: 'full', wallMs: 562_830, files: 949, finishedAt: '2026-10-14T10:00:00.000Z', head: 'a'.repeat(40), cores: 32, platform: 'win32', ...over,
 });
