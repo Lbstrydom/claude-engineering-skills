@@ -168,6 +168,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "2f933809-3508-4a8f-86af-3a959f84956f",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/sync-pr-git.test.mjs"
+      },
+      "recordedAt": "2026-10-13T13:39:40.612Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "36be3a03-6a8f-496f-96f6-a5da084f8fc3",
       "storeFingerprint": "c7177057dcafa55d",
       "state": "fixed",

@@ -57,6 +57,8 @@ export const GUARD_TESTS = Object.freeze([
   Object.freeze({ file: 'tests/gate-contract-ratchet.test.mjs', why: 'gate-contract ratchet' }),
   Object.freeze({ file: 'tests/file-size-ratchet.test.mjs', why: 'oversized files may not grow' }),
   Object.freeze({ file: 'tests/knip-gate.test.mjs', why: 'knip baseline ratchet' }),
+  Object.freeze({ file: 'tests/extension-list-drift.test.mjs', why: 'no hand-kept code-extension list; blocked a full gate on #243\'s first push' }),
+  Object.freeze({ file: 'tests/skill-command-portability.test.mjs', why: 'SKILL.md commands resolve in a consumer; blocked a full gate on #243\'s first push' }),
 ]);
 
 /**

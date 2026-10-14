@@ -38,7 +38,8 @@ You are one of several concurrent sessions coordinated by /fleet.
    announced a window: wait, or shorten `--for`; do not run alongside). Start the run, then
    `lease attach --pid <the run's pid>` so a later session can verify it stopped, and `lease release` at the end. Pass the
    `--token` that `acquire` printed to `attach`/`release` when a script wraps the run. `lease status` shows the slot, the
-   windows other repos announced and the peak-cost hours; `fleet next` mentions them too. The lease says whether the slot is
+   windows other repos announced and the peak-cost hours; `fleet next` mentions them too. An install counts as heavy for the
+   window check, including the one `skills:hydrate` runs in a fresh worktree: check `lease status` first. The lease says whether the slot is
    free; the coordinator still decides who goes next, and a `hold` or directive from them outranks it.
 5. When your work is committed and tested, mark it: node scripts/fleet.mjs ready
    (it records your current commit; commit again and the mark goes stale).
