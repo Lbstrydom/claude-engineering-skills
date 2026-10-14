@@ -245,7 +245,7 @@ describe('a link above the ledger directory is refused (audit-code r1 H3)', () =
       assert.equal(fs.readFileSync(victim, 'utf-8'), before, 'the linked-to ledger was neither rewritten nor deleted');
       assert.equal(fs.readdirSync(path.join(other, 'tech-debt', 'entries')).length, 1, 'and nothing was added to it');
     } finally {
-      try { fs.rmSync(path.join(dir, '.audit'), { force: true, recursive: false }); } catch { /* junction */ }
+      rmrfBestEffort(path.join(dir, '.audit')); // removes the link itself, not its target
       rmrfBestEffort(other);
     }
   });
@@ -262,7 +262,7 @@ describe('a link above the ledger directory is refused (audit-code r1 H3)', () =
       assert.ok(fs.existsSync(path.join(dir, '.audit', '.git')), 'fixture: the link target holds a .git');
       assert.throws(() => readDebtLedger({ ledgerPath, events: [] }), /symbolic link above the ledger directory/);
     } finally {
-      try { fs.rmSync(path.join(dir, '.audit'), { force: true, recursive: false }); } catch { /* junction */ }
+      rmrfBestEffort(path.join(dir, '.audit')); // removes the link itself, not its target
       rmrfBestEffort(other);
     }
   });
@@ -283,7 +283,7 @@ describe('a link above the ledger directory is refused (audit-code r1 H3)', () =
       const linked = path.join(viaLink, '.audit', 'tech-debt.json');
       assert.deepEqual(readDebtLedger({ ledgerPath: linked, events: [] }).entries.map((e) => e.topicId), ['topic-0001']);
     } finally {
-      try { fs.rmSync(path.join(holder, 'code'), { force: true, recursive: false }); } catch { /* junction */ }
+      rmrfBestEffort(path.join(holder, 'code'));
       rmrfBestEffort(holder);
     }
   });
