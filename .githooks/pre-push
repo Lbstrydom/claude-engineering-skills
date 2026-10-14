@@ -468,19 +468,23 @@ fi
 # false the moment that landed.)
 {
   if command -v gh >/dev/null 2>&1; then
-    # --limit 1 on the default branch; the JSON form avoids scraping columns.
-    LAST_CI=$(gh run list --workflow=postgres-parity.yml --branch main --limit 1 \
-                --json conclusion,status -q '.[0] | "\(.status):\(.conclusion // "")"' 2>/dev/null)
-    case "$LAST_CI" in
-      completed:failure|completed:timed_out|completed:startup_failure)
-        echo "⚠ postgres-parity on main is RED (last run: ${LAST_CI#completed:}) — the remote clean-environment gate is not passing." >&2
-        echo "  Inspect: gh run list --workflow=postgres-parity.yml --limit 5" >&2
-        ;;
-      # Any other value (success, in_progress, empty, gh unauthenticated) is
-      # deliberately silent. This block reports a KNOWN-red gate; it must never
-      # imply the gate is green, and it must never nag on a transient state.
-      *) : ;;
-    esac
+    # full-suite.yml is the full test run that merge rule 8 reads (docs/plans/ci-full-suite-actions.md); a red main there
+    # means the landed sha failed the suite that a light local push no longer runs.
+    for CI_WORKFLOW in postgres-parity.yml full-suite.yml; do
+      # --limit 1 on the default branch; the JSON form avoids scraping columns.
+      LAST_CI=$(gh run list --workflow="$CI_WORKFLOW" --branch main --limit 1 \
+                  --json conclusion,status -q '.[0] | "\(.status):\(.conclusion // "")"' 2>/dev/null)
+      case "$LAST_CI" in
+        completed:failure|completed:timed_out|completed:startup_failure)
+          echo "⚠ ${CI_WORKFLOW%.yml} on main is RED (last run: ${LAST_CI#completed:}) — the remote gate is not passing." >&2
+          echo "  Inspect: gh run list --workflow=$CI_WORKFLOW --limit 5" >&2
+          ;;
+        # Any other value (success, in_progress, empty, gh unauthenticated) is
+        # deliberately silent. This block reports a KNOWN-red gate; it must never
+        # imply the gate is green, and it must never nag on a transient state.
+        *) : ;;
+      esac
+    done
   fi
 } || true
 

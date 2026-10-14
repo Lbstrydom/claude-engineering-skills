@@ -121,8 +121,15 @@ describe('tiers', () => {
           sources: [{ id: 'feat-a', gen: sess.gen, rev: sess.rev, oid: sess.ready.oid, kind: 'branch', pr: null }],
         });
       } catch { /* the simulated kill */ }
-      return listTrains(fleetDirOf(s.fx)).trains.at(-1);
+      // The train THIS call built, found by difference. `trains.at(-1)` is wrong when two trains are built inside the same
+      // second: ids end in a random suffix, so the later one can sort first (a 50% flake on a fast runner, 2026-10-14).
+      const all = listTrains(fleetDirOf(s.fx)).trains;
+      const fresh = all.filter((t) => !seen.has(t.trainId));
+      assert.equal(fresh.length, 1, 'exactly one new train per simulated crash');
+      seen.add(fresh[0].trainId);
+      return fresh[0];
     };
+    const seen = new Set();
     const dirty = crash();
     writeFile(dirty.worktree, 'stray.txt', 'x');
     const a = s.f(['land', '--resume', dirty.trainId, '--json']);

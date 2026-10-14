@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**16 active · 252 terminal · 38 audit summaries · 1 parked · 5 reference docs**
+**17 active · 253 terminal · 38 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -25,10 +25,11 @@ This is the list to read when asking "what is in flight?".
 | [Triage: the eight `archive/worktree-agent-*` tags (2026-10-11)](./archive-tag-triage-2026-10-11.md) | `Draft` | findings and recommendations only; no tag was deleted and nothing was landed by this document |
 | [migrate every CLI entry guard to `isInvokedAsScript`](./cli-entry-guard-migration.md) | `In Progress` |  |
 | [The dashboard's debt queue treats "no local cache" as an expected absence](./dashboard-debt-sandbox-absence.md) | `In Progress` | implemented on `fix/dashboard-debt-sandbox-absence`; under /audit-code |
+| [Tech-Debt Ledger — One File Per Entry (merge conflict-free by construction)](./debt-ledger-per-entry-files.md) | `In Progress` |  |
 | [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `In Progress` | implemented on `fix/debt-readers-ask-store`; under /audit-code |
 | [fleet prune evidence reaches a person (upstream 56773c7c)](./fleet-prune-surfacing.md) | `In Progress` |  |
 | [fleet — catch abandoned worktree work regularly, and remove account-switch friction](./fleet-unclaimed-work-and-switch-friction.md) | `Draft` |  |
-| [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2, the default flip, awaits a separate user decision |
+| [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
 | [pre-push — a sanctioned lane for `archive/*` refs](./prepush-archive-lane.md) | `In Progress` |  |
 | [Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed.md) | `Approved` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
@@ -67,7 +68,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 249 completed plans</summary>
+<summary>Show all 250 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -116,6 +117,7 @@ source comments that no docs linter sees — stays valid.
 | [`/brainstorm --with-arch` — codebase architecture context for external LLMs](./brainstorm-arch-context.md) | `Complete` |  |
 | [Brainstorm-skill upgrades + Quick-fix detection (v1)](./brainstorm-quickfix-v1.md) | `Complete` | shipped — both halves: `/brainstorm` enhancements (see brainstorm-and-arch-discoverability) + quick-fix… |
 | [Campaign Arm-State and Snapshot-Identity Integrity](./campaign-arm-state-and-identity-integrity.md) | `Complete` | implemented via `/cycle --autonomous` (3 clusters, each audited to convergence), consolidated Gemini gate… |
+| [CES full suite on GitHub Actions, light local pre-push](./ci-full-suite-actions.md) | `Complete` |  |
 | [CLI contract hardening — strict boolean flags, emit ordering, replay CLI honesty](./cli-contract-hardening-flags-emit-replay.md) | `Complete` | plan audited: GPT 2 rounds NEEDS_REVISION to READY_TO_IMPLEMENT; Gemini plan gate APPROVE, round 1 |
 | [Wire the Cloud FP-Pattern Read Loop into Audit Suppression](./cloud-fp-suppression-read-loop.md) | `Complete` | implemented + audited. Plan audit: 5 GPT + 2 Gemini rounds. Code audit: 5 GPT rounds + 1 deliberation + 3… |
 | [Comparison-Tooling Consolidation](./comparison-tooling-consolidation.md) | `Complete` | all clusters (A/A′, B, C, D) implemented, individually audited to convergence, and the mandatory… |

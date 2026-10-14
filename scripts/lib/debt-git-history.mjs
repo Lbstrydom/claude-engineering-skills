@@ -4,8 +4,9 @@
  * Fallback source for `distinctRunCount` + `firstDeferredCommit` when the
  * event log is not available (e.g., CI without local .audit/local/ events).
  *
- * Uses `git log -S<topicId>` to find commits that touched each entry's topicId
- * in the ledger. Each unique commit that touched the topicId represents a run
+ * Uses `git log -S<topicId>` on the legacy single-file ledger, and the topic's own
+ * entry file once the ledger is in per-entry storage, to find commits that touched
+ * each entry. Each unique commit that touched the topicId represents a run
  * that persisted the entry (new or updated) — a lower bound on occurrences.
  *
  * This is LESS accurate than event-log-based derivation (events capture
@@ -16,16 +17,51 @@
  * @module scripts/lib/debt-git-history
  */
 
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileKey, topicIdFilenameProblem } from './debt-ledger-files.mjs';
 
 /**
- * Count distinct commits that changed the **net occurrence count** of a topicId
- * in the ledger file (via `git log -S<string>` pickaxe search).
+ * The two places a topic's history lives: the legacy single file (searched by
+ * pickaxe, as it always was) and — once the ledger is in per-entry storage —
+ * the topic's own entry file, every commit to which concerns that topic alone.
+ * Both, because a migrated ledger's earlier history is all in the legacy file:
+ * reading only the entry file would date every entry's first deferral to the
+ * migration commit (docs/plans/debt-ledger-per-entry-files.md §6).
  *
- * **IMPORTANT: this is a LOWER BOUND on real occurrences.** `git log -S` only
- * reports commits that added or removed the string — commits that merely
- * re-save the file with the string still present are NOT counted. So an entry
- * that was added once, then updated 5 times (keeping the topicId), returns 1.
+ * Paths stay as given (usually repo-relative) — git resolves pathspecs against
+ * `cwd`, which is what the caller passes.
+ */
+function historyPaths(ledgerPath, topicId) {
+  const lp = String(ledgerPath).split(path.sep).join('/');
+  const dir = /\.json$/i.test(lp) ? lp.slice(0, -'.json'.length) : lp;
+  return {
+    legacy: `${dir}.json`,
+    entry: topicIdFilenameProblem(topicId) ? null : `${dir}/entries/${fileKey(topicId)}.json`,
+  };
+}
+
+/** `git log` lines, or [] when git is unavailable / not a repo / path never existed. */
+function gitLogLines(args, { cwd, env }) {
+  try {
+    const out = execFileSync('git', ['log', ...args], {
+      cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], ...(env ? { env } : {}),
+    });
+    return out.trim().split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Count distinct commits that recorded a change to a topicId.
+ *
+ * **A LOWER BOUND on real occurrences.** In the legacy single file, `git log -S`
+ * reports only commits that added or removed the string — commits that merely
+ * re-saved the file with the string present are NOT counted, so an entry added
+ * once and updated 5 times returns 1 there. In per-entry storage every commit
+ * that touched the entry's own file counts (one file, one topic). Commits are
+ * unioned by sha across the two, so a migration never double-counts.
  *
  * This is fine for our PR-comment use case: we're signalling "this topic has
  * a persisted history" not "exact run count". The event-log-derived
@@ -35,7 +71,7 @@ import { execFileSync } from 'node:child_process';
  *
  * @param {string} topicId
  * @param {object} [opts]
- * @param {string} [opts.ledgerPath='.audit/tech-debt.json']
+ * @param {string} [opts.ledgerPath='.audit/tech-debt.json'] - either spelling
  * @param {string} [opts.cwd=process.cwd()]
  * @param {NodeJS.ProcessEnv} [opts.env] - when supplied, REPLACES the
  *   inherited `process.env` for this subprocess. Omitted (the default) →
@@ -48,31 +84,24 @@ export function countCommitsTouchingTopic(topicId, {
   env,
 } = {}) {
   if (!topicId) return 0;
-  try {
-    // git log -S<string> --oneline -- <path>
-    // outputs one commit per line; empty if no matches
-    const out = execFileSync('git', [
-      'log',
-      `-S${topicId}`,
-      '--oneline',
-      '--',
-      ledgerPath,
-    ], { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], ...(env ? { env } : {}) });
-    if (!out) return 0;
-    return out.trim().split('\n').filter(Boolean).length;
-  } catch {
-    // git unavailable, not a repo, or file not tracked
-    return 0;
-  }
+  const { legacy, entry } = historyPaths(ledgerPath, topicId);
+  const shas = new Set(gitLogLines([`-S${topicId}`, '--format=%H', '--', legacy], { cwd, env }));
+  if (entry) for (const sha of gitLogLines(['--format=%H', '--', entry], { cwd, env })) shas.add(sha);
+  return shas.size;
 }
 
 /**
  * Find the commit that first introduced a topicId to the ledger.
  * Returns `{sha, subject, url}` or null if not found.
  *
+ * Legacy file: the earliest pickaxe match (`-S` + `--reverse`). This used to
+ * pass `--diff-filter=A` as well, which restricts matches to the commit that
+ * CREATED the file — so any topic added in a later commit was never found.
+ * Entry file: the commit that added it. The earlier of the two wins.
+ *
  * @param {string} topicId
  * @param {object} [opts]
- * @param {string} [opts.ledgerPath='.audit/tech-debt.json']
+ * @param {string} [opts.ledgerPath='.audit/tech-debt.json'] - either spelling
  * @param {string} [opts.remoteUrl] - if provided, constructs a commit URL
  * @param {string} [opts.cwd=process.cwd()]
  * @param {NodeJS.ProcessEnv} [opts.env] - when supplied, REPLACES the
@@ -86,32 +115,24 @@ export function findFirstDeferCommit(topicId, {
   env,
 } = {}) {
   if (!topicId) return null;
-  try {
-    // --diff-filter=A gets the commit that ADDED the string (first deferral);
-    // --reverse walks forward so the first result is the earliest match
-    // --format=%H%x09%s gives SHA and subject separated by tab
-    const out = execFileSync('git', [
-      'log',
-      '--reverse',
-      '--diff-filter=A',
-      `-S${topicId}`,
-      '--format=%H%x09%s',
-      '--',
-      ledgerPath,
-    ], { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], ...(env ? { env } : {}) });
-    if (!out) return null;
-    const firstLine = out.trim().split('\n')[0];
-    if (!firstLine) return null;
-    const [sha, subject] = firstLine.split('\t');
-    if (!sha) return null;
-    const result = { sha: sha.trim(), subject: (subject || '').trim() };
-    if (remoteUrl) {
-      result.url = buildCommitUrl(remoteUrl, sha.trim());
-    }
-    return result;
-  } catch {
-    return null;
-  }
+  const { legacy, entry } = historyPaths(ledgerPath, topicId);
+  const FORMAT = '--format=%H%x09%ct%x09%s';
+  const candidates = [
+    gitLogLines(['--reverse', `-S${topicId}`, FORMAT, '--', legacy], { cwd, env })[0],
+    entry ? gitLogLines(['--reverse', '--diff-filter=A', FORMAT, '--', entry], { cwd, env })[0] : undefined,
+  ]
+    .filter(Boolean)
+    .map((line) => {
+      const [sha, ct, ...subject] = line.split('\t');
+      return { sha: (sha || '').trim(), ct: Number(ct), subject: subject.join('\t').trim() };
+    })
+    .filter((c) => /^[a-f0-9]{40}$/.test(c.sha))
+    .sort((a, b) => a.ct - b.ct);
+  if (!candidates.length) return null;
+  const { sha, subject } = candidates[0];
+  const result = { sha, subject };
+  if (remoteUrl) result.url = buildCommitUrl(remoteUrl, sha);
+  return result;
 }
 
 /**

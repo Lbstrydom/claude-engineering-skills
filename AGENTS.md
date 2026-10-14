@@ -431,6 +431,17 @@ hook must fail CLOSED**: Git for Windows reads a signal-killed hook as exit 0, s
 the marked `fail-closed-on-signal` trap block stays byte-identical in both hooks
 (#225, runbook §8).
 
+**THIS repo's full suite runs in GitHub Actions, not on the shared machine.** CES is
+public, so `full-suite.yml` (`ubuntu-latest`, standard runners only: free) is its one
+full run per PR, and a local CES push is the **branch tier** by default
+(`.test-tiers.json` `defaultTier` + `ciVerdict`; `AUDIT_PREPUSH_TIER=full` and every push
+to `main` stay full). The merge verdict is READ: `node scripts/test-tier.mjs ci-verdict --pr
+<n>`; no run, a pending run or `gh` down is `unverified`, never green. The Actions budget
+(standard runners, no artifacts or cache, cancel-in-progress) is gated by
+`tests/workflow-runner-labels.test.mjs`. Consumers get none of this: wine and storyline
+stay local-first. [Plan](docs/plans/ci-full-suite-actions.md) ·
+[runbook](docs/runbooks/gate-cost.md) §6.
+
 #### A spend-bearing run PINS its revision — it never shares the working tree
 
 Same tree, higher stakes: the store refuses a snapshot whose arms disagree, so two

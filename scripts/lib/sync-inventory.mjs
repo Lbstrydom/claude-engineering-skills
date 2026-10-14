@@ -248,6 +248,7 @@ const DEBT_ENTRY = [
   'scripts/debt-pr-comment.mjs',
   'scripts/debt-resolve.mjs',
   'scripts/debt-review.mjs',
+  'scripts/debt-ledger-migrate.mjs', // per-entry ledger move (the sync-to-repos.mjs copy is in lock-step)
 ];
 
 // New (Phase 1): the sync-isolation infrastructure scripts/libs themselves

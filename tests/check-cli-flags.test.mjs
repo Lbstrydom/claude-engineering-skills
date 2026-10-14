@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   runCheck, parsesFlags, rejectsUnknownFlags, BASELINE,
@@ -238,7 +239,7 @@ describe('detection reaches the shapes that hid real CLIs', () => {
   it('discovery is not depth-limited — git pathspec * crosses /', () => {
     // Two readers independently mis-read these globs as depth-2 by modelling
     // them with shell/minimatch semantics. Assert against the real function.
-    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, '')), '..');
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const files = discoverScripts(repoRoot);
     const maxDepth = Math.max(...files.map((f) => f.split('/').length - 1));
     assert.ok(maxDepth >= 3, `expected depth-3+ files to be discovered, max was ${maxDepth}`);
@@ -312,7 +313,7 @@ describe('prose about a guard is not a guard', () => {
     // missing guard, and it has since been fixed for real. Asserting on the
     // real file keeps both halves honest — the guard cannot regress, and it
     // cannot be "restored" by prose, because stripComments removes that.
-    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, '')), '..');
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const src = fs.readFileSync(path.join(repoRoot, 'scripts/sync-to-repos.mjs'), 'utf-8');
     assert.equal(parsesFlags(src), true);
     assert.equal(rejectsUnknownFlags(src), true);
@@ -408,7 +409,7 @@ describe('BASELINE is debt, not approval', () => {
   it('the live repo has ZERO net-new drift (the gate is currently satisfiable)', () => {
     // If this fails, someone shipped a flag-parsing CLI without a guard —
     // which is exactly what the gate is for.
-    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, '')), '..');
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const files = [...BASELINE].filter((f) => fs.existsSync(path.join(repoRoot, f)));
     assert.ok(files.length > 0, 'baseline paths must resolve against the real repo');
     const r = runCheck({ repoRoot, files, gating: true });

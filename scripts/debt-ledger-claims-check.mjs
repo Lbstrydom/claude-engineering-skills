@@ -50,7 +50,7 @@ import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit, safeErr
 import {
   executeCheck, readPlanDocs, DEFAULT_PLANS_DIR, mergeTopicIdEvidence,
 } from './lib/debt-ledger-claim-check.mjs';
-import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
+import { readDebtLedger, debtLedgerExists, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import {
   initLearningStore, isCloudEnabled, resolveRepoForStoreResult, readDebtEntriesCloud,
@@ -174,7 +174,8 @@ async function main() {
   // fs.existsSync checked explicitly (not inferred from an empty ledger),
   // same as debt-health-check.mjs — "ledger absent" and "ledger present with
   // 0 entries" must not be conflated: the latter is a real finding.
-  const localAvailable = fs.existsSync(path.resolve(DEFAULT_DEBT_LEDGER_PATH));
+  // Either storage form (single file or per-entry directory) counts.
+  const localAvailable = debtLedgerExists(DEFAULT_DEBT_LEDGER_PATH);
   let localTopicIds = new Set();
   if (localAvailable) {
     let ledger;

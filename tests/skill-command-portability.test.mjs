@@ -75,6 +75,9 @@ const SOURCE_REPO_ONLY = new Map([
   // Fleet coordination rule 8 names it as the no-push way to get a full verdict for a merge candidate
   // and says in its own text that it is this repo's own gate (a consumer pushes the candidate instead).
   ['scripts/prepush-check.mjs', 'source-repo-gated: this repo\'s own pre-push sandbox runner, not part of the consumer bundle'],
+  // Fleet coordination rule 8's rationale: the merge verdict for a repo that runs its full suite in CI. Only a repo whose
+  // `.test-tiers.json` declares `ciVerdict` (this one) has anything to read; the text says so and sends a consumer to the push form.
+  ['scripts/test-tier.mjs', 'source-repo-gated: this repo\'s own tier oracle and CI-verdict reader, not part of the consumer bundle'],
 ]);
 
 /**
@@ -86,6 +89,7 @@ const SOURCE_REPO_ONLY = new Map([
 const GATED_ONLY_IN = new Map([
   ['scripts/ship-train.mjs', ['skills/ship/SKILL.md', 'skills/ship/references/train-mode.md']],
   ['scripts/prepush-check.mjs', ['skills/fleet/references/coordination-rationale.md']],
+  ['scripts/test-tier.mjs', ['skills/fleet/references/coordination-rationale.md']],
 ]);
 
 describe('skill commands survive the consumer-repo relocation', () => {

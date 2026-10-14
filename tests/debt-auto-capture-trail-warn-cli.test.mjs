@@ -13,6 +13,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { makeDeferEntry, writeRoundLedger } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
+import { readDebtLedger } from '../scripts/lib/debt-ledger.mjs';
 
 let tmpDir;
 let auditDir;
@@ -53,7 +54,7 @@ describe('debt-auto-capture.mjs — capture-trail WARN', () => {
     assert.match(r.stderr, /earlier-topic/);
     assert.doesNotMatch(r.stderr, /\[this-run-topic\]/); // the entry THIS run just captured must not also be flagged
 
-    const debtLedger = JSON.parse(fs.readFileSync(path.join(auditDir, 'tech-debt.json'), 'utf-8'));
+    const debtLedger = readDebtLedger({ ledgerPath: path.join(auditDir, 'tech-debt.json'), events: [] });
     assert.deepEqual(debtLedger.entries.map((e) => e.topicId), ['this-run-topic']);
   });
 

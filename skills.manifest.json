@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "8775f0829ef0e519",
+  "bundleVersion": "3bbcad5d0fe70c5a",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -70,8 +70,8 @@
         },
         {
           "relPath": "references/debt-capture.md",
-          "sha": "dc27ba9c048e",
-          "size": 12634
+          "sha": "d0e2f885e3ed",
+          "size": 12829
         },
         {
           "relPath": "references/gemini-gate.md",
@@ -268,13 +268,13 @@
         },
         {
           "relPath": "references/coordination-rationale.md",
-          "sha": "768a3a103cf5",
-          "size": 8184
+          "sha": "e3eee6c15673",
+          "size": 9587
         },
         {
           "relPath": "references/coordination.md",
-          "sha": "aad625d4dfe5",
-          "size": 11854
+          "sha": "c4cbc4255b6b",
+          "size": 11898
         },
         {
           "relPath": "references/ending-a-session.md",

@@ -35,7 +35,7 @@ import {
   DEFAULT_AUDIT_DIR, findRoundLedgers, readDeferredEntries, collectDebtIdentities, executeCheck,
   auditDirAvailable as auditDirAvailableFn,
 } from './lib/debt-capture-trail.mjs';
-import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
+import { readDebtLedger, debtLedgerExists, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--json', '--out', '--audit-dir', '--ledger', '--help', '-h', '--selfcheck-relocation'];
@@ -153,7 +153,8 @@ async function main() {
   // "absent" and "present with 0 entries" are distinct, same discipline as
   // debt-health-check.mjs / debt-ledger-claims-check.mjs — the latter is a
   // real (if boring) finding, not the same as never having a ledger at all.
-  const debtLedgerAvailable = fs.existsSync(path.resolve(opts.ledgerPath));
+  // Either storage form (single file or per-entry directory) counts.
+  const debtLedgerAvailable = debtLedgerExists(opts.ledgerPath);
   let debtIdentities = new Set();
   if (debtLedgerAvailable) {
     let ledger;

@@ -1,4 +1,5 @@
 import { test, describe } from 'node:test';
+import { isCloudEnabled } from '../scripts/lib/store/repo.mjs';
 import assert from 'node:assert/strict';
 
 import {
@@ -94,10 +95,15 @@ describe('finalize-shadow-eval.mjs — store functions (real DB, no writes into 
   });
 
   test('appendModelEvalShadowObservation refuses (repo-scoping) when the run does not belong to the repo', async () => {
-    await assert.rejects(
-      () => appendModelEvalShadowObservation({ repoId: FAKE_REPO, runId: FAKE_RUN, observation: { findingRefs: [] }, idempotencyKey: 'k1' }),
-      ShadowObservationRepoMismatchError,
-    );
+    const call = () => appendModelEvalShadowObservation({ repoId: FAKE_REPO, runId: FAKE_RUN, observation: { findingRefs: [] }, idempotencyKey: 'k1' });
+    if (await isCloudEnabled()) {
+      await assert.rejects(call, ShadowObservationRepoMismatchError);
+    } else {
+      // The store is off (a clean checkout, CI): the function declines before it can check ownership. That is a
+      // supported mode with its own contract, asserted here rather than passed over, so this case never reads as the
+      // repo-scoping check having run.
+      assert.deepEqual(await call(), { ok: true, cloud: false, id: null });
+    }
   });
 
   test('finalizeShadowEval reports not-finalized progress when there are zero observations', async () => {
