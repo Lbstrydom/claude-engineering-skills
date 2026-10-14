@@ -284,6 +284,16 @@ This changes what every consumer's managed `.gitignore` block contains, so it is
 - **Two more tests read the file raw** and now go through `readDebtLedger`: `tests/debt-auto-capture-partial-capture-cli.test.mjs`, `tests/tiered-pipeline-stage0-wiring.test.mjs`.
 - **`scripts/sync-to-repos.mjs` is size-ratcheted** (over 1000 lines; may not grow): its rationale is a 3-line pointer here, and the migrate CLI shares a line in `DEBT_ENTRY`.
 
+### Deviations from the /audit-code code audit, round 1 (recorded 2026-10-14)
+
+- **Ancestor links (H3, GPT-sustained).** §5's boundary started at the ledger directory. `.audit/*` ignores the children of `.audit`, not the path `.audit`, so a committed link in its place redirects everything below it. `assertLedgerPathSafe` now also refuses a link in the span between the repository root (nearest ancestor holding `.git`) and the ledger directory. Above the root (`/var` on macOS) and outside any repository nothing is checked. A deployment that deliberately links `.audit` must point the ledger at the link's real directory.
+- **A tracked ledger never leaves a remainder (H9).** §2.5 step 5 shrinks the legacy file to a remainder, but for a tracked ledger the reader then shows the directory only (§2.2), so a remainder would stop suppressing. A tracked migration with any unmigratable entry (unsafe id, differing duplicate copies, a budgets conflict) now refuses before writing anything (`unmigratable-entries`); the remainder behaviour applies to untracked ledgers only, where the union read keeps it visible.
+- **Baseline duplicates (H6).** An id whose merge-base copies disagree has no baseline value; it is an unresolvable `baseline-duplicate-copies-differ` conflict, as stale-side duplicates already were.
+- **Baseline reads (H12).** `gitShowJson` returns null only when `git ls-tree` proves the path absent at the revision; any other git failure throws.
+- **One git environment, bounded (H5/H11, H2/H10).** `legacyTrackingState` uses the same sanitised `runGit` as `workTreeOf`, and every `runGit` call has a 10s timeout, well under the 30s lock lease that a blocked synchronous call would otherwise starve.
+- **Canonical bytes (H4).** `sortKeysDeep` builds with `defineProperty` so an own `__proto__` key survives.
+- **CLI (H7/H8).** One ordered pass honouring `--`, last occurrence wins, an empty value is exit 2.
+
 ### Tests
 
 - **`tests/debt-ledger-per-entry-merge.test.mjs`** (create) — the real-git proof (§9).

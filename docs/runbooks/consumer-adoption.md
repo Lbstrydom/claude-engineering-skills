@@ -621,8 +621,10 @@ re-installs keeps the old behaviour — a strict improvement, never a regression
 
 The debt ledger moved from one file (`.audit/tech-debt.json`) to one file per
 entry (`.audit/tech-debt/entries/<topicId>.json`, plus an optional
-`.audit/tech-debt/budgets.json`). Two branches that each record debt now merge
-with **zero conflicts** — new entries are different paths — and the top-level
+`.audit/tech-debt/budgets.json`). Two branches that each record debt about
+different entries now merge with **zero conflicts** — distinct entries are distinct
+paths. (Two branches that change the SAME field of the SAME entry still conflict on that one
+small file, by design: it is a real disagreement.) The top-level
 `lastUpdated` that every writer bumped is gone from both forms. Plan and proof:
 `docs/plans/debt-ledger-per-entry-files.md` in the source repo; upstream report
 `d338aa8a`.

@@ -26,25 +26,44 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--ledger', '--dry-run', '--prefer', '--stale-ref', '--json', '--help'];
 
+/**
+ * One ordered pass over the arguments before the POSIX `--` terminator. A value flag takes the
+ * next token or its `--flag=value` spelling; the LAST occurrence of either wins (the convention
+ * `argOption` documents), and a flag that is present WITHOUT a usable value — missing, empty,
+ * or the next flag — is an invocation error, never an omitted option: `--ledger="$UNSET"` must
+ * not quietly select the default ledger of a command that deletes a file.
+ */
+function valueFlags(args, names) {
+  const out = Object.fromEntries(names.map((n) => [n, null]));
+  const stop = args.indexOf('--');
+  const region = stop < 0 ? args : args.slice(0, stop);
+  for (let i = 0; i < region.length; i++) {
+    const a = region[i];
+    const eq = a.indexOf('=');
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    if (!names.includes(name)) continue;
+    let value;
+    if (eq > 0) value = a.slice(eq + 1);
+    else {
+      value = region[i + 1];
+      if (value !== undefined && !value.startsWith('--')) i++; else value = undefined;
+    }
+    if (value === undefined || value === '') throw new ArgvError(`debt-ledger-migrate: ${name} needs a non-empty value`);
+    out[name] = value;
+  }
+  return out;
+}
+
 function parseArgs(argv) {
-  const args = argv.slice(2);
-  const get = (flag) => {
-    const eq = args.find((a) => a.startsWith(`${flag}=`));
-    if (eq) return eq.slice(flag.length + 1);
-    const i = args.indexOf(flag);
-    if (i === -1) return null;
-    const v = args[i + 1];
-    if (v === undefined || v.startsWith('--')) throw new ArgvError(`debt-ledger-migrate: ${flag} needs a value`);
-    return v;
-  };
-  const prefer = get('--prefer');
+  const v = valueFlags(argv.slice(2), ['--ledger', '--prefer', '--stale-ref']);
+  const prefer = v['--prefer'];
   if (prefer !== null && prefer !== 'dir' && prefer !== 'legacy') {
     throw new ArgvError(`debt-ledger-migrate: --prefer must be "dir" or "legacy" (got "${prefer}")`);
   }
   return {
-    ledgerPath: get('--ledger') || DEFAULT_DEBT_LEDGER_PATH,
+    ledgerPath: v['--ledger'] ?? DEFAULT_DEBT_LEDGER_PATH,
     prefer,
-    staleRef: get('--stale-ref'),
+    staleRef: v['--stale-ref'],
     dryRun: hasFlag('dry-run'),
     json: hasFlag('json'),
     help: hasFlag('help', { short: 'h' }),

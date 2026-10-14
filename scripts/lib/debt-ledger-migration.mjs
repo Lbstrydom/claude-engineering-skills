@@ -65,9 +65,22 @@ function legacyDeletionCommit(root, relLegacy) {
   return r.stdout.trim() || null;
 }
 
+/**
+ * The file's text at `rev`, or null ONLY when `rev` provably has no such path.
+ * Every other failure (git cannot start, the revision does not resolve, an object
+ * cannot be read) throws: it is not "absent", and reading it as absent would let
+ * a reconcile proceed — or refuse for the wrong reason — on a baseline it never saw.
+ */
 function gitShowJson(root, rev, rel) {
+  const tree = runGit(['ls-tree', '--name-only', rev, '--', rel], root);
+  if (tree.error || tree.status !== 0) {
+    throw new Error(`git ls-tree failed for ${rev}:${rel}: ${(tree.stderr || tree.error?.message || '').trim()}`);
+  }
+  if (!tree.stdout.trim()) return null;
   const r = runGit(['show', `${rev}:${rel}`], root);
-  if (r.error || r.status !== 0) return null;
+  if (r.error || r.status !== 0) {
+    throw new Error(`git show failed for ${rev}:${rel}: ${(r.stderr || r.error?.message || '').trim()}`);
+  }
   return r.stdout;
 }
 
@@ -87,6 +100,9 @@ function groupById(entries) {
   }
   return { single, divergent };
 }
+
+/** Test seam (mirrors `_internals` in file-io.mjs / anthropic-client.mjs). */
+export const _internals = { gitShowJson };
 
 function emptyReport(extra) {
   return {
@@ -149,12 +165,18 @@ function planThreeWay(base, stale, current, currentBudgets, prefer) {
   const deletes = new Set();
   const keeps = new Set();
   const conflicts = [];
-  const B = groupById(base.entries).single;
+  const baseGroups = groupById(base.entries);
+  const B = baseGroups.single;
   const S = groupById(stale.entries);
   for (const [id] of S.divergent) conflicts.push({ topicId: id, reason: 'legacy-duplicate-copies-differ', resolvable: false });
+  // An id whose BASELINE copies disagree has no baseline value: reading it as "absent from the
+  // baseline" would let the table below write or delete it on a premise that was never true.
+  for (const [id] of baseGroups.divergent) {
+    if (!S.divergent.has(id)) conflicts.push({ topicId: id, reason: 'baseline-duplicate-copies-differ', resolvable: false });
+  }
   const ids = new Set([...B.keys(), ...S.single.keys()]);
   for (const id of ids) {
-    if (S.divergent.has(id)) continue;
+    if (S.divergent.has(id) || baseGroups.divergent.has(id)) continue;
     const b = B.get(id);
     const s = S.single.get(id);
     const d = current.get(id);
@@ -264,6 +286,13 @@ export function migrateLegacyLedgerLocked(location, {
     if (blocking.length) return refuse('conflicts: nothing applied', { mode, conflicts: plan.conflicts });
   } else {
     plan = planCopy(parseLegacyBytes(legacyBytes, location.legacyFile), current, currentBudgets, prefer);
+    // A TRACKED ledger with a pending legacy file is read from the directory alone (plan §2.2), so a
+    // remainder left in that file would silently stop suppressing the moment the directory is
+    // published. Untracked ledgers read the union and keep the remainder visible; a tracked one
+    // must be fixed (or resolved with --prefer) first, and nothing is applied until it can move whole.
+    if (tracking === 'tracked' && (plan.remainder.length || plan.remainderBudgets !== undefined)) {
+      return refuse('unmigratable-entries: nothing applied — a tracked ledger cannot leave entries behind in the legacy file', { mode, conflicts: plan.conflicts });
+    }
   }
 
   // Preservation manifest: every destination that becomes the authoritative

@@ -10,8 +10,9 @@ summary: Phase D debt ledger — persist out-of-scope valid findings so they don
 automatically. Without this step, the same pre-existing concerns get
 re-raised every audit, burning tokens and diluting signal.
 
-**Storage.** One file per entry, so two branches that both record debt never
-conflict when they merge. An untracked legacy `.audit/tech-debt.json` is
+**Storage.** One file per entry, so two branches that record debt about
+different entries never conflict when they merge (the same field of the SAME entry changed on both
+branches still conflicts, on that one file). An untracked legacy `.audit/tech-debt.json` is
 migrated automatically on the next write. A **committed** one is not — moving
 committed state belongs in one deliberate commit on the default branch:
 `node scripts/debt-ledger-migrate.mjs` (it refuses, changing nothing, if git

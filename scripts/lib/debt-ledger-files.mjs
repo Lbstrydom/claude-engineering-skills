@@ -24,11 +24,16 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import lockfile from 'proper-lockfile';
 
 const LOCK_RETRIES = 5;
 const LOCK_STALE_MS = 30_000;
+// Every synchronous git call made while the ledger lock is held is bounded well below the
+// lease: proper-lockfile renews on the event loop, which a blocked spawnSync starves. A wedged
+// git then fails the call (callers map `error` to unknown/refused) instead of letting the lock
+// go stale under a live owner.
+const GIT_CALL_TIMEOUT_MS = 10_000;
 
 /**
  * Both forms a ledger can take, derived from one path in either spelling.
@@ -129,7 +134,12 @@ export function sortKeysDeep(value) {
   if (Array.isArray(value)) return value.map(sortKeysDeep);
   if (value && typeof value === 'object') {
     const out = {};
-    for (const k of Object.keys(value).sort()) out[k] = sortKeysDeep(value[k]);
+    // defineProperty, never `out[k] = …`: a JSON key named `__proto__` is an OWN property
+    // (JSON.parse creates it) but plain assignment hits the inherited setter and drops it —
+    // silent data loss in the bytes AND in canonicalEqual, which migration verifies against.
+    for (const k of Object.keys(value).sort()) {
+      Object.defineProperty(out, k, { value: sortKeysDeep(value[k]), enumerable: true, writable: true, configurable: true });
+    }
     return out;
   }
   return value;
@@ -157,6 +167,42 @@ export function canonicalEqual(a, b) {
 // ── Path boundary ───────────────────────────────────────────────────────────
 
 /**
+ * Refuse a symbolic link (or Windows junction) ABOVE the ledger directory but inside the
+ * repository — `.audit` itself in the default layout. `.audit/*` ignores the children of
+ * `.audit`, not the path `.audit`, so a commit can replace the directory with a tracked link to
+ * another checkout's `.audit`; every component below it then lstat-s as an ordinary directory
+ * while reads, writes and deletes land elsewhere (audit-code round 1, H3).
+ *
+ * Only the span between the repository root (the nearest ancestor holding `.git`) and the ledger
+ * is repository-controlled. Above the root — /var -> /private/var on macOS, a user's linked
+ * home — is the machine's business, and a ledger outside any repository has no such span.
+ *
+ * @param {ReturnType<typeof resolveLedgerLocation>} location
+ */
+function assertNoLinkedAncestors(location) {
+  const span = [];
+  let cur = path.dirname(location.dir);
+  for (;;) {
+    if (fs.existsSync(path.join(cur, '.git'))) break;
+    span.push(cur);
+    const up = path.dirname(cur);
+    if (up === cur) return; // no repository root found: nothing repository-controlled to check
+    cur = up;
+  }
+  for (const p of span) {
+    let st;
+    try { st = fs.lstatSync(p); } catch (err) { if (err && err.code === 'ENOENT') continue; throw err; }
+    if (st.isSymbolicLink()) {
+      throw new Error(
+        `Debt ledger path runs through a symbolic link above the ledger directory (refused): ${p}. `
+        + 'A link committed in place of .audit would redirect every read, write and delete to another location; '
+        + "point the ledger at the link's real directory instead.",
+      );
+    }
+  }
+}
+
+/**
  * Refuse a ledger path that runs through a symbolic link (on Windows `lstat`
  * also reports junctions as links) or an unexpected node type, checking every
  * existing component from the ledger directory down to `absPath`.
@@ -171,6 +217,7 @@ export function canonicalEqual(a, b) {
  * @param {{expect?: 'file'|'dir'}} [opts] - what `absPath` itself must be, if it exists
  */
 export function assertLedgerPathSafe(location, absPath, { expect } = {}) {
+  assertNoLinkedAncestors(location);
   const fromDir = path.relative(location.dir, absPath);
   const insideDir = fromDir && !fromDir.startsWith('..') && !path.isAbsolute(fromDir);
   const chain = [];
@@ -382,11 +429,11 @@ export async function withLedgerLock(location, fn) {
 // ── Git facts ───────────────────────────────────────────────────────────────
 
 /** git in `cwd`, C locale (so a failure message is stable), never inheriting a hook's GIT_DIR. */
-export function runGit(args, cwd, { input } = {}) {
+export function runGit(args, cwd, { input, timeoutMs = GIT_CALL_TIMEOUT_MS } = {}) {
   const env = { ...process.env, LC_ALL: 'C', LANG: 'C' };
   for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX']) delete env[k];
   return spawnSync('git', args, {
-    cwd, encoding: 'utf-8', input, env, windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+    cwd, encoding: 'utf-8', input, env, windowsHide: true, maxBuffer: 64 * 1024 * 1024, timeout: timeoutMs,
   });
 }
 
@@ -430,14 +477,12 @@ export function legacyTrackingState(legacyFile) {
   if (wt.state !== 'repo') return 'unknown';
   const rel = repoRelative(wt.root, legacyFile);
   if (!rel || rel.startsWith('..')) return 'unknown';
-  try {
-    execFileSync('git', ['ls-files', '--error-unmatch', '--', rel], {
-      cwd: wt.root, stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true,
-    });
-    return 'tracked';
-  } catch (err) {
-    return err && err.status === 1 ? 'untracked' : 'unknown';
-  }
+  // Same sanitised environment as the work-tree query above: an inherited GIT_INDEX_FILE (a
+  // hook's temporary index) must not make two halves of one question read different repos.
+  const r = runGit(['ls-files', '--error-unmatch', '--', rel], wt.root);
+  if (r.error) return 'unknown';
+  if (r.status === 0) return 'tracked';
+  return r.status === 1 ? 'untracked' : 'unknown';
 }
 
 /**
