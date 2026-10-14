@@ -25,6 +25,7 @@ import path from 'node:path';
 import { z } from 'zod';
 
 import { GeminiFinalReviewSchema } from '../scripts/gemini-review.mjs';
+import { readDebtLedger, debtLedgerExists } from '../scripts/lib/debt-ledger.mjs';
 import {
   GeminiFinalReviewJsonSchema, OpenAiFinalReviewJsonSchema, AnthropicReviewToolSchema,
 } from '../scripts/lib/final-review/output-schemas.mjs';
@@ -156,13 +157,13 @@ describe('debt-auto-capture.mjs --final-review — non-blocking findings become 
     assert.match(r.stdout, /\[aaaa1111\]/);
     assert.doesNotMatch(r.stdout, /bbbb2222/);
     assert.match(r.stderr, /release-blocking.*G2/);
-    assert.equal(fs.existsSync(path.join(dir, '.audit', 'tech-debt.json')), false, 'dry run writes nothing');
+    assert.equal(debtLedgerExists(path.join(dir, '.audit', 'tech-debt.json')), false, 'dry run writes nothing (in either storage form)');
   });
 
   it('a real capture lands the non-blocking finding in .audit/tech-debt.json', () => {
     const r = capture(['--final-review', writeResult([nonBlocking, isBlocking]), '--run', 'sid-fr']);
     assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-    const ledger = JSON.parse(fs.readFileSync(path.join(dir, '.audit', 'tech-debt.json'), 'utf-8'));
+    const ledger = readDebtLedger({ ledgerPath: path.join(dir, '.audit', 'tech-debt.json'), events: [] });
     assert.deepEqual(ledger.entries.map((e) => e.topicId), ['aaaa1111']);
     assert.equal(ledger.entries[0].pass, 'final-review');
   });

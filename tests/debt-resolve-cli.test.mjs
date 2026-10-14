@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-import { writeDebtEntries } from '../scripts/lib/debt-ledger.mjs';
+import { writeDebtEntries, readDebtLedger } from '../scripts/lib/debt-ledger.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
 
 let tmpDir;
@@ -58,7 +58,7 @@ describe('debt-resolve CLI', () => {
     assert.equal(json.eventWritten, true);
     assert.equal(json.eventSource, 'local');
     // Verify entry removed
-    const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    const ledger = readDebtLedger({ ledgerPath, events: [] });
     assert.equal(ledger.entries.length, 1);
     assert.equal(ledger.entries[0].topicId, 'existing2');
     // Verify resolved event written
@@ -120,7 +120,7 @@ describe('debt-resolve CLI', () => {
       '--no-cloud',
       ...extra,
     ]);
-    const readLedger = () => JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    const readLedger = () => readDebtLedger({ ledgerPath, events: [] });
 
     test('upserts the entry IN PLACE to accepted-permanent — never removes it', () => {
       const r = accept(['--approver', '@owner (documented decision)']);
@@ -145,11 +145,11 @@ describe('debt-resolve CLI', () => {
     });
 
     test('exit 1 and the ledger is untouched when --approver is missing', () => {
-      const before = fs.readFileSync(ledgerPath, 'utf-8');
+      const before = JSON.stringify(readLedger());
       const r = accept();
       assert.equal(r.status, 1);
       assert.match(r.stderr, /requires --approver/);
-      assert.equal(fs.readFileSync(ledgerPath, 'utf-8'), before);
+      assert.equal(JSON.stringify(readLedger()), before);
     });
 
     test('exit 2 when the topicId is not in the ledger', () => {

@@ -231,26 +231,28 @@ describe('debt-ledger merge safety — real git-merge acceptance test', () => {
     });
   });
 
-  test('sanity: writeDebtEntries (the real production writer) also produces a merge-safe file', async () => {
-    // The two scenarios above call serializeLedgerForDisk directly to control
-    // exact entry positions; this test proves the actual production entry
-    // point (writeDebtEntries, as debt-auto-capture.mjs calls it) produces
-    // the same on-disk shape, not just the internal helper in isolation.
+  test('sanity: writeDebtEntries on a TRACKED legacy file writes no lastUpdated, so far-apart inserts merge cleanly', async () => {
+    // The production writer keeps writing a committed, not-yet-migrated legacy
+    // file (docs/plans/debt-ledger-per-entry-files.md §2.4 rule 3). It used to
+    // stamp a fresh top-level `lastUpdated` on every call, so ANY two branches
+    // that recorded debt conflicted on that one line — verified live, every
+    // time (upstream report d338aa8a, conflict source 1). With the field gone,
+    // inserts that land in different places of the sorted array merge cleanly.
+    // (Same-gap inserts still conflict in this form — that is what per-entry
+    // storage fixes; tests/debt-ledger-per-entry-merge.test.mjs pins both.)
     const dir = fs.mkdtempSync(path.join(tmpDir, 'repo-prod-'));
     const filePath = path.join(dir, 'tech-debt.json');
-    await writeDebtEntries(
-      Array.from({ length: 5 }, (_, i) => makeEntry(`topic-${i}`)),
-      { ledgerPath: filePath },
-    );
     initRepo(dir);
-    gitOk(['add', '.'], dir, 'git add base');
-    gitOk(['commit', '-q', '-m', 'base'], dir, 'commit base');
+    writeAndCommit(dir, filePath, serializeLedgerForDisk({
+      version: 1, lastUpdated: '2026-01-01T00:00:00.000Z',
+      entries: Array.from({ length: 5 }, (_, i) => makeEntry(`topic-${i}`)),
+    }), 'base');
 
-    // Sort far apart ('aaa-...' before, 'zzz-...' after all 'topic-N' base
-    // entries) so the ENTRIES array itself merges unambiguously — isolates
-    // this test to what it's actually checking.
     gitOk(['checkout', '-q', '-b', 'x'], dir, 'checkout -b x');
-    await writeDebtEntries([makeEntry('aaa-x-new')], { ledgerPath: filePath });
+    const rx = await writeDebtEntries([makeEntry('aaa-x-new')], { ledgerPath: filePath });
+    assert.deepEqual(rx.rejected, []);
+    assert.ok(!fs.existsSync(path.join(dir, 'tech-debt')), 'a tracked legacy ledger is not auto-migrated');
+    assert.ok(!fs.readFileSync(filePath, 'utf-8').includes('lastUpdated'), 'a pre-existing lastUpdated is stripped on rewrite');
     gitOk(['add', '.'], dir, 'git add x');
     gitOk(['commit', '-q', '-m', 'x adds an entry'], dir, 'commit x');
 
@@ -262,29 +264,10 @@ describe('debt-ledger merge safety — real git-merge acceptance test', () => {
 
     gitOk(['checkout', '-q', 'x'], dir, 'checkout x');
     const merge = git(['merge', '--no-edit', 'y'], dir);
-    // NOT asserted clean (verified live: this ALWAYS conflicts, deterministically,
-    // regardless of entry positioning) — writeDebtEntries stamps a fresh
-    // `lastUpdated` on every call, so two independent writes put two different
-    // values on the exact same line, which git correctly refuses to silently
-    // pick between. That's outcome (b) — a loud, correct, trivially-resolved
-    // conflict on a cosmetic field — never outcome (c). The real assertion
-    // this test makes: git's own "Auto-merging" already resolved the ENTRIES
-    // array (the thing that actually matters) before stopping on `lastUpdated`
-    // alone — read directly off the conflict markers, not by requiring a clean
-    // exit that this writer's own `lastUpdated` field makes structurally rare.
-    assert.equal(merge.status, 1, 'expected the lastUpdated-only conflict, not a clean exit or a different failure');
-    const conflicted = fs.readFileSync(filePath, 'utf-8');
-    const entriesSection = conflicted.slice(0, conflicted.indexOf('<<<<<<<'));
-    assert.ok(!entriesSection.includes('<<<<<<<') && !entriesSection.includes('======='),
-      'the entries array itself must show no conflict markers — only lastUpdated should');
-    assert.match(entriesSection, /"aaa-x-new"/, "branch X's new entry must be present, unconflicted");
-    assert.match(entriesSection, /"zzz-y-new"/, "branch Y's new entry must be present, unconflicted");
-    // entriesSection already ends with the entries array's own closing `]`
-    // (only the OUTER object is left unclosed by the conflict split) — strip
-    // the trailing comma before `lastUpdated` would have followed, then close
-    // the outer object.
-    const parsedEntries = JSON.parse(`${entriesSection.trimEnd().replace(/,\s*$/, '')}\n}`).entries;
+    assert.equal(merge.status, 0, `expected a clean merge now that no lastUpdated line exists: ${merge.stdout}${merge.stderr}`);
+    const parsedEntries = JSON.parse(fs.readFileSync(filePath, 'utf-8')).entries;
     assert.equal(parsedEntries.length, 7, 'no entry silently dropped');
+    assert.ok(parsedEntries.some((e) => e.topicId === 'aaa-x-new') && parsedEntries.some((e) => e.topicId === 'zzz-y-new'));
     assert.equal(findDuplicateTopicIds(parsedEntries).length, 0);
   });
 });

@@ -18,9 +18,20 @@ import {
   markSuperseded,
   serializeLedgerForDisk,
   isLedgerTracked,
+  readLedgerState,
+  debtLedgerExists,
 } from '../scripts/lib/debt-ledger.mjs';
+import {
+  fileKey, decodeFileKey, topicIdFilenameProblem, serializeEntryForDisk, MAX_ENTRY_BASENAME_BYTES,
+  resolveLedgerLocation, withLedgerLock,
+} from '../scripts/lib/debt-ledger-files.mjs';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import lockfile from 'proper-lockfile';
 import { findDuplicateTopicIds } from '../scripts/lib/debt-review-helpers.mjs';
-import { gitInit, commit } from './helpers/fixtures.mjs';
+import { gitInit, commit, gitFixtureEnv } from './helpers/fixtures.mjs';
+
+const LEDGER_URL = pathToFileURL(path.resolve(import.meta.dirname, '..', 'scripts', 'lib', 'debt-ledger.mjs')).href;
 
 let tmpDir;
 let ledgerPath;
@@ -69,6 +80,7 @@ describe('readDebtLedger', () => {
     const r = readDebtLedger({ ledgerPath, events: [] });
     assert.deepEqual(r, {
       version: 1, entries: [], available: false, reason: 'clean-checkout-sandbox', budgets: {},
+      conflicts: [], pendingReconcile: null, storage: null,
     });
   });
 
@@ -169,8 +181,9 @@ describe('writeDebtEntries', () => {
       makeEntry({ topicId: 'aa00' }),
       makeEntry({ topicId: 'bb00' }),
     ], { ledgerPath });
-    const raw = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
-    assert.deepEqual(raw.entries.map(e => e.topicId), ['aa00', 'bb00', 'cc00']);
+    // Per-entry storage: one file per topicId, and reads come back sorted.
+    assert.deepEqual(fs.readdirSync(path.join(tmpDir, 'tech-debt', 'entries')).sort(), ['aa00.json', 'bb00.json', 'cc00.json']);
+    assert.deepEqual(readDebtLedger({ ledgerPath, events: [] }).entries.map(e => e.topicId), ['aa00', 'bb00', 'cc00']);
   });
 
   test('mixed valid + invalid: valid persist, invalid rejected', async () => {
@@ -206,21 +219,25 @@ describe('removeDebtEntry', () => {
     assert.equal(r, false);
   });
 
-  test('preserves compact (one-line-per-entry) serialization after removal', async () => {
+  test("removes exactly that entry's file and leaves the others byte-identical", async () => {
     await writeDebtEntries([makeEntry({ topicId: 'aa00' }), makeEntry({ topicId: 'bb00' })], { ledgerPath });
-    await removeDebtEntry('aa00', { ledgerPath });
-    const raw = fs.readFileSync(ledgerPath, 'utf-8');
-    const entryLines = raw.split('\n').filter((l) => l.includes('"topicId"'));
-    assert.equal(entryLines.length, 1, 'the remaining entry must still be one line, not re-expanded to multi-line');
+    const bbFile = path.join(tmpDir, 'tech-debt', 'entries', 'bb00.json');
+    const before = fs.readFileSync(bbFile, 'utf-8');
+    assert.equal(await removeDebtEntry('aa00', { ledgerPath }), true);
+    assert.deepEqual(fs.readdirSync(path.join(tmpDir, 'tech-debt', 'entries')), ['bb00.json']);
+    assert.equal(fs.readFileSync(bbFile, 'utf-8'), before);
   });
 
-  test('preserves budgets after removal', async () => {
-    await writeDebtEntries([makeEntry({ topicId: 'aa00' }), makeEntry({ topicId: 'bb00' })], { ledgerPath });
-    const raw = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
-    fs.writeFileSync(ledgerPath, JSON.stringify({ ...raw, budgets: { 'src/**': 5 } }));
-    await removeDebtEntry('aa00', { ledgerPath });
-    const after = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
-    assert.deepEqual(after.budgets, { 'src/**': 5 });
+  test('preserves budgets through the automatic migration and a removal', async () => {
+    // An untracked legacy ledger carrying budgets is migrated on the first
+    // write; the policy must survive both the move and the removal.
+    fs.writeFileSync(ledgerPath, JSON.stringify({
+      version: 1, budgets: { 'src/**': 5 }, entries: [makeEntry({ topicId: 'aa00' }), makeEntry({ topicId: 'bb00' })],
+    }));
+    assert.equal(await removeDebtEntry('aa00', { ledgerPath }), true);
+    assert.equal(fs.existsSync(ledgerPath), false, 'the untracked legacy file was migrated away');
+    assert.deepEqual(readDebtLedger({ ledgerPath, events: [] }).budgets, { 'src/**': 5 });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(tmpDir, 'tech-debt', 'budgets.json'), 'utf-8')), { 'src/**': 5 });
   });
 });
 
@@ -359,12 +376,14 @@ describe('markSuperseded', () => {
     assert.equal(r.error, 'ledger-not-found');
   });
 
-  test('preserves compact (one-line-per-entry) serialization after superseding', async () => {
+  test("rewrites only the superseded entry's file", async () => {
     await writeDebtEntries([makeEntry({ topicId: 'old1' }), makeEntry({ topicId: 'new1' })], { ledgerPath });
-    await markSuperseded('old1', 'new1', { ledgerPath });
-    const raw = fs.readFileSync(ledgerPath, 'utf-8');
-    const entryLines = raw.split('\n').filter((l) => l.includes('"topicId"'));
-    assert.equal(entryLines.length, 2, 'both entries must still be one line each, not re-expanded to multi-line');
+    const newFile = path.join(tmpDir, 'tech-debt', 'entries', 'new1.json');
+    const before = fs.readFileSync(newFile, 'utf-8');
+    assert.equal((await markSuperseded('old1', 'new1', { ledgerPath })).ok, true);
+    assert.equal(fs.readFileSync(newFile, 'utf-8'), before);
+    const old = JSON.parse(fs.readFileSync(path.join(tmpDir, 'tech-debt', 'entries', 'old1.json'), 'utf-8'));
+    assert.equal(old.supersededBy, 'new1');
   });
 
   test('normalizes a historical entry with no classification field before writing it back (Gemini gate round-2 G4)', async () => {
@@ -465,5 +484,212 @@ describe('isLedgerTracked', () => {
     // repoDir was mkdtemp'd but never `git init`'d.
     const r = isLedgerTracked(path.join(repoDir, 'tech-debt.json'), repoDir);
     assert.equal(r.degraded, true);
+  });
+});
+
+// ── Per-entry storage (docs/plans/debt-ledger-per-entry-files.md) ───────────
+
+describe('per-entry storage — topicId ⇄ filename', () => {
+  test('fileKey is lowercase and injective; decodeFileKey inverts it exactly', () => {
+    for (const id of ['aa00', 'Abc1', 'ABC1', 'aud-2026-05-03-h11', 'x.Y_z-9']) {
+      const key = fileKey(id);
+      assert.equal(key, key.toLowerCase(), `${id} encodes to a lowercase name`);
+      assert.equal(decodeFileKey(key), id);
+    }
+    assert.notEqual(fileKey('Abc1').toLowerCase(), fileKey('abc1').toLowerCase(), 'case variants never fold together');
+    assert.equal(decodeFileKey('Abc1'), null, 'an uppercase filename was not written by fileKey');
+    assert.equal(decodeFileKey('a~1'), null, 'a dangling escape was not written by fileKey');
+  });
+
+  test('unsafe topicIds are refused, never sanitised', () => {
+    for (const id of ['../x', 'a/b', 'a\\b', '', '.hidden', 'trailing.', 'nul', 'con.txt', 'com1', 'x~y', 'a'.repeat(129)]) {
+      assert.ok(topicIdFilenameProblem(id), `${JSON.stringify(id)} must be refused`);
+    }
+    // Reserved-name checks apply to the ENCODED name: 'NUL' is written as '~n~u~l.json', a legal name.
+    assert.equal(topicIdFilenameProblem('NUL'), null);
+    assert.equal(topicIdFilenameProblem('a'.repeat(128)), null, 'the 128-char raw cap encodes to 133 bytes and passes');
+    assert.equal(topicIdFilenameProblem('A'.repeat(67)), null, '67 uppercase letters encode to 134+5=139 bytes');
+    assert.match(topicIdFilenameProblem('A'.repeat(68)), /exceeds 140 bytes/, '68 encode to 141');
+    assert.equal(MAX_ENTRY_BASENAME_BYTES, 140);
+  });
+
+  test('a writer rejects an unsafe topicId instead of writing outside the ledger', async () => {
+    const r = await writeDebtEntries([makeEntry({ topicId: '../escape' }), makeEntry({ topicId: 'ok01' })], { ledgerPath });
+    assert.equal(r.inserted, 1);
+    assert.match(r.rejected[0].reason, /topicId-not-a-safe-filename/);
+    assert.equal(fs.existsSync(path.join(tmpDir, 'escape.json')), false);
+    assert.equal(fs.existsSync(path.join(tmpDir, 'tech-debt', 'escape.json')), false);
+  });
+});
+
+describe('per-entry storage — no lastUpdated, deterministic bytes', () => {
+  test('nothing written carries lastUpdated, and key order does not change the bytes', async () => {
+    await writeDebtEntries([makeEntry({ topicId: 'aa00' })], { ledgerPath });
+    const file = path.join(tmpDir, 'tech-debt', 'entries', 'aa00.json');
+    const first = fs.readFileSync(file, 'utf-8');
+    assert.equal(first.includes('lastUpdated'), false);
+    const reordered = Object.fromEntries(Object.entries(makeEntry({ topicId: 'aa00' })).reverse());
+    assert.equal(serializeEntryForDisk(reordered), serializeEntryForDisk(makeEntry({ topicId: 'aa00' })));
+    await writeDebtEntries([reordered], { ledgerPath });
+    assert.equal(fs.readFileSync(file, 'utf-8'), first, 'a re-recorded identical entry is byte-identical');
+  });
+
+  test('an untracked legacy ledger is migrated on the first write and its lastUpdated is gone', async () => {
+    fs.writeFileSync(ledgerPath, JSON.stringify({ version: 1, lastUpdated: '2026-01-01T00:00:00.000Z', entries: [makeEntry({ topicId: 'aa00' })] }));
+    await writeDebtEntries([makeEntry({ topicId: 'bb00' })], { ledgerPath });
+    assert.equal(fs.existsSync(ledgerPath), false);
+    assert.deepEqual(readDebtLedger({ ledgerPath, events: [] }).entries.map((e) => e.topicId), ['aa00', 'bb00']);
+  });
+
+  test('an empty entries directory is an AVAILABLE, empty ledger — not an absent one', () => {
+    fs.mkdirSync(path.join(tmpDir, 'tech-debt', 'entries'), { recursive: true });
+    const r = readDebtLedger({ ledgerPath, events: [] });
+    assert.equal(r.available, true);
+    assert.deepEqual(r.entries, []);
+    assert.equal(debtLedgerExists(ledgerPath), true);
+  });
+});
+
+describe('per-entry storage — storage form chosen under the one lock', () => {
+  test('a TRACKED legacy-only ledger stays legacy: no directory, entry in the file, one warning', () => {
+    gitInit(tmpDir);
+    commit(tmpDir, 'tech-debt.json', JSON.stringify({ version: 1, entries: [makeEntry({ topicId: 'aa00' })] }), 'tracked ledger');
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `import { writeDebtEntries } from ${JSON.stringify(LEDGER_URL)};`
+      + `const e = ${JSON.stringify(makeEntry({ topicId: 'bb00' }))};`
+      + `await writeDebtEntries([e], { ledgerPath: ${JSON.stringify(ledgerPath)} });`
+      + `await writeDebtEntries([{ ...e, topicId: 'cc00' }], { ledgerPath: ${JSON.stringify(ledgerPath)} });`,
+    ], { encoding: 'utf-8', env: gitFixtureEnv() });
+    assert.equal(child.status, 0, child.stderr);
+    assert.equal(fs.existsSync(path.join(tmpDir, 'tech-debt')), false, 'a tracked ledger is never auto-migrated');
+    const raw = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    assert.deepEqual(raw.entries.map((e) => e.topicId), ['aa00', 'bb00', 'cc00']);
+    assert.equal('lastUpdated' in raw, false);
+    assert.equal((child.stderr.match(/single-file debt ledger/g) || []).length, 1, 'warned once per process');
+  });
+
+  test('locking creates nothing: the lock is <legacyFile>.lock and no directory appears', async () => {
+    const location = resolveLedgerLocation(ledgerPath);
+    await withLedgerLock(location, () => {
+      assert.ok(fs.existsSync(`${ledgerPath}.lock`), 'lock directory at the legacy name');
+      assert.equal(fs.existsSync(ledgerPath), false);
+      assert.equal(fs.existsSync(path.join(tmpDir, 'tech-debt')), false);
+    });
+  });
+
+  test('a writer waits on the lock pre-upgrade tooling holds (same lock name)', async () => {
+    fs.writeFileSync(ledgerPath, JSON.stringify({ version: 1, entries: [] }));
+    // Pre-upgrade writers lock the legacy file with proper-lockfile's DEFAULT options.
+    const release = await lockfile.lock(ledgerPath, { stale: 30_000 });
+    try {
+      await assert.rejects(
+        writeDebtEntries([makeEntry({ topicId: 'aa00' })], { ledgerPath }),
+        /Failed to acquire debt-ledger lock/,
+      );
+    } finally {
+      await release();
+    }
+    assert.equal(fs.existsSync(path.join(tmpDir, 'tech-debt')), false, 'nothing written while it was held');
+  });
+});
+
+describe('per-entry storage — reads fail closed and survive races', () => {
+  test('a directory link in the ledger path is refused by reads and writes', async (t) => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'debt-ledger-link-target-'));
+    try {
+      fs.mkdirSync(path.join(tmpDir, 'tech-debt'), { recursive: true });
+      try {
+        // A junction needs no privilege on Windows; elsewhere a plain dir symlink.
+        fs.symlinkSync(outside, path.join(tmpDir, 'tech-debt', 'entries'), process.platform === 'win32' ? 'junction' : 'dir');
+      } catch (err) {
+        if (err.code === 'EPERM') { t.skip('directory links need a privilege this host lacks'); return; }
+        throw err;
+      }
+      assert.throws(() => readDebtLedger({ ledgerPath, events: [] }), /symbolic link/);
+      await assert.rejects(writeDebtEntries([makeEntry({ topicId: 'aa00' })], { ledgerPath }), /symbolic link/);
+      assert.deepEqual(fs.readdirSync(outside), [], 'nothing written outside the ledger');
+    } finally {
+      try { fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
+    }
+  });
+
+  test('a file whose name does not match its topicId, or that is not JSON, is loud corruption', () => {
+    const entries = path.join(tmpDir, 'tech-debt', 'entries');
+    fs.mkdirSync(entries, { recursive: true });
+    fs.writeFileSync(path.join(entries, 'aa00.json'), JSON.stringify(makeEntry({ topicId: 'bb00' })));
+    assert.throws(() => readDebtLedger({ ledgerPath, events: [] }), /does not hold the entry its name declares/);
+    fs.writeFileSync(path.join(entries, 'aa00.json'), '<<<<<<< ours\n');
+    assert.throws(() => readDebtLedger({ ledgerPath, events: [] }), /aa00\.json/);
+  });
+
+  test('atomic-write temp files (dotfiles) are not entries', () => {
+    const entries = path.join(tmpDir, 'tech-debt', 'entries');
+    fs.mkdirSync(entries, { recursive: true });
+    fs.writeFileSync(path.join(entries, '.tmp-123-456'), 'partial');
+    fs.writeFileSync(path.join(entries, 'aa00.json'), JSON.stringify(makeEntry({ topicId: 'aa00' })));
+    assert.deepEqual(readDebtLedger({ ledgerPath, events: [] }).entries.map((e) => e.topicId), ['aa00']);
+  });
+
+  test('a file listed then gone restarts the read instead of failing it', async () => {
+    await writeDebtEntries([makeEntry({ topicId: 'aa00' }), makeEntry({ topicId: 'bb00' })], { ledgerPath });
+    let vanishOnce = true;
+    const racingFs = {
+      ...fs,
+      readFileSync(p, ...rest) {
+        if (vanishOnce && String(p).endsWith('aa00.json')) {
+          vanishOnce = false;
+          throw Object.assign(new Error('ENOENT: simulated concurrent removal'), { code: 'ENOENT' });
+        }
+        return fs.readFileSync(p, ...rest);
+      },
+    };
+    const state = readLedgerState(resolveLedgerLocation(ledgerPath), { fs: racingFs });
+    assert.equal(vanishOnce, false, 'the race was actually injected');
+    assert.deepEqual(state.entries.map((e) => e.topicId), ['aa00', 'bb00']);
+  });
+
+  // What protects this case is the READ ORDER — legacy bytes first, directory
+  // second (negative control 2026-10-13: reading the directory first returns a
+  // ledger without A). The bytes re-check is pinned by the next test instead:
+  // with the order right, this interleaving cannot lose A even without it.
+  test('a migration that copies an entry and shrinks the legacy file mid-read never loses the entry', () => {
+    // Untracked both-forms: the directory has R, the legacy file has A and R.
+    fs.writeFileSync(ledgerPath, serializeLedgerForDisk({ version: 1, entries: [makeEntry({ topicId: 'aa00' }), makeEntry({ topicId: 'rr00' })] }));
+    const entries = path.join(tmpDir, 'tech-debt', 'entries');
+    fs.mkdirSync(entries, { recursive: true });
+    fs.writeFileSync(path.join(entries, 'rr00.json'), serializeEntryForDisk(makeEntry({ topicId: 'rr00' })));
+    let migrated = false;
+    const state = readLedgerState(resolveLedgerLocation(ledgerPath), {
+      onDirectoryRead: () => {
+        if (migrated) return;
+        migrated = true;
+        // The migration interleaves here: A is copied into the directory AFTER
+        // the reader listed it, then the legacy file shrinks to its remainder.
+        fs.writeFileSync(path.join(entries, 'aa00.json'), serializeEntryForDisk(makeEntry({ topicId: 'aa00' })));
+        fs.writeFileSync(ledgerPath, serializeLedgerForDisk({ version: 1, entries: [makeEntry({ topicId: 'rr00' })] }));
+      },
+    });
+    assert.ok(migrated, 'the interleaving actually happened');
+    assert.deepEqual(state.entries.map((e) => e.topicId), ['aa00', 'rr00'], 'never a ledger without A');
+  });
+
+  test('every attempt racing → unavailable (ledger-unreadable), never empty and never a throw', () => {
+    fs.mkdirSync(path.join(tmpDir, 'tech-debt', 'entries'), { recursive: true });
+    let n = 0;
+    const churningFs = {
+      ...fs,
+      readFileSync(p, ...rest) {
+        if (String(p) === ledgerPath) {
+          n++;
+          return Buffer.from(serializeLedgerForDisk({ version: 1, entries: [makeEntry({ topicId: `x${n}` })] }));
+        }
+        return fs.readFileSync(p, ...rest);
+      },
+    };
+    assert.throws(
+      () => readLedgerState(resolveLedgerLocation(ledgerPath), { fs: churningFs }),
+      (err) => err.name === 'TransientLedgerReadError',
+    );
+    assert.equal(n, 10, 'five whole attempts, each bracketing the directory read');
   });
 });

@@ -14,13 +14,14 @@ import path from 'node:path';
 import os from 'node:os';
 import { makeDeferEntry, writeRoundLedger } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
+import { readDebtLedger } from '../scripts/lib/debt-ledger.mjs';
 
 let tmpDir;
 let auditDir;
 const scriptPath = path.resolve('scripts/debt-auto-capture.mjs');
 
 function readTechDebt() {
-  return JSON.parse(fs.readFileSync(path.join(auditDir, 'tech-debt.json'), 'utf-8'));
+  return readDebtLedger({ ledgerPath: path.join(auditDir, 'tech-debt.json'), events: [] });
 }
 
 const runCli = makeRunCli(scriptPath, { cwd: () => tmpDir, buildEnv: () => ({ ...process.env, AUDIT_DB_URL: '' }) });
