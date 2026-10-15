@@ -17,12 +17,12 @@ import { ArgvError } from '../cli-io.mjs';
 import { failed, ok, refused, selfId } from './commands.mjs';
 import { gitCommonDir, runGit } from './git-facts.mjs';
 import {
-  LeaseConfigError, repoLabel, decideAcquire, decideAnnounce, decideAttach, decideClearWindow, decideRelease, defaultProbe,
-  machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable, renderStatus, repoKeyOf, summarise,
+  LeaseConfigError, measureSlotWaits, repoLabel, decideAcquire, decideAnnounce, decideAttach, decideClearWindow, decideRelease, decideWait, defaultProbe,
+  machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable, renderLog, renderStatus, repoKeyOf, summarise,
   transactLease,
 } from './lease.mjs';
 
-export const SUBS = Object.freeze(['acquire', 'attach', 'release', 'status', 'announce', 'peak']);
+export const SUBS = Object.freeze(['acquire', 'attach', 'release', 'status', 'announce', 'peak', 'wait', 'log']);
 
 /** The flags each sub-command accepts (besides `--json`); anything else is an argument error, never ignored. */
 const ALLOWED = Object.freeze({
@@ -30,8 +30,10 @@ const ALLOWED = Object.freeze({
   attach: ['--pid', '--token', '--id'],
   release: ['--token', '--id', '--force', '--reason'],
   status: [],
-  announce: ['--kind', '--from', '--until', '--note', '--id', '--clear-window'],
+  announce: ['--kind', '--from', '--until', '--note', '--id', '--clear-window', '--over-held'],
   peak: ['--hours', '--clear'],
+  wait: ['--for', '--cancel', '--note', '--id'],
+  log: ['--limit'],
 });
 
 const hhmm = (d) => `${d.toISOString().slice(11, 16)}Z`;
@@ -65,9 +67,12 @@ function checkFlags(sub, flags) {
 }
 
 /** A refusal from the pure module → the fleet result. `bad-request` is the caller's argument error. */
-function fromDecision(d, sub) {
+function fromDecision(d, sub, cmd) {
   if (d.code === 'bad-request') throw new ArgvError(`fleet lease ${sub}: ${d.reason}`);
-  return refused(d.reason, { leaseCode: d.code });
+  // An acquire refusal queues this repo as a waiter (or says it could not): the caller needs to know either way.
+  const queue = d.queued === true ? ` This repo is now waiting for the slot (\`${cmd} lease wait --cancel\` withdraws it).`
+    : d.queueFull ? ' NOT queued: the waiter list is full.' : '';
+  return refused(d.reason + queue, { leaseCode: d.code, ...(d.queued !== undefined ? { queued: d.queued } : {}) });
 }
 
 const unreadableResult = (read, sub, cmd) => failed(
@@ -89,10 +94,19 @@ export function cmdLease(ctx, flags, positionals) {
   if (!repo) return failed('could not identify this repository (git did not answer); the lease needs a repo to attribute to');
   const probe = defaultProbe();
 
+  if (sub === 'log') {
+    const read = readLease(dir);
+    const s = summarise(read, ctx.now, probe);
+    if (!s.measured) return failed(`machine lease (${dir}):\n  UNMEASURED: ${s.reason}`, { sub, dir, lease: s });
+    const limit = wholeNumber(flags, '--limit') ?? 50;
+    if (limit < 1) throw new ArgvError('fleet lease log: --limit must be at least 1');
+    return ok({ sub, dir, journal: s.journal.slice(-limit), measure: measureSlotWaits(s.journal, ctx.now), text: renderLog(s.journal, { limit }).join('\n') });
+  }
+
   if (sub === 'status') {
     const read = readLease(dir);
     const s = summarise(read, ctx.now, probe);
-    const lines = renderStatus(s, { dir, now: ctx.now, repoKey: repo.repoKey });
+    const lines = renderStatus(s, { dir, now: ctx.now, repoKey: repo.repoKey, cmd: ctx.cmd });
     // An unreadable or newer-version lease was not measured: a script reading the exit code must not take that for "free".
     if (!s.measured) return failed(lines.join('\n'), { sub, dir, lease: s });
     return ok({ sub, dir, lease: s, text: lines.join('\n') });
@@ -158,8 +172,26 @@ export function cmdLease(ctx, flags, positionals) {
       }
       if (flags['--kind'] === undefined || flags['--until'] === undefined) throw new ArgvError('fleet lease announce: --kind quiet|ci and --until <iso|+Nm> are required');
       const req = { ...base, kind: String(flags['--kind']), from: text(flags['--from']), until: String(flags['--until']), note: text(flags['--note']) };
-      decide = (lease) => decideAnnounce(lease, req, ctx.now);
-      describe = (d) => ({ window: d.window, text: `OK: ${d.window.kind} window ${d.window.id} for ${d.window.repo}, ${hhmm(new Date(d.window.from))} to ${hhmm(new Date(d.window.until))}` });
+      req.overHeld = flags['--over-held'] === true;
+      decide = (lease) => decideAnnounce(lease, req, ctx.now, probe);
+      describe = (d) => ({
+        window: d.window,
+        text: [
+          `OK: ${d.window.kind} window ${d.window.id} for ${d.window.repo}, ${hhmm(new Date(d.window.from))} to ${hhmm(new Date(d.window.until))}`,
+          ...(d.overHeld ? [`WARNING: recorded OVER the slot held by ${d.overHeld.holder} (${d.overHeld.repo}) until ${hhmm(new Date(d.overHeld.until))}; --over-held acknowledged`] : []),
+        ].join('\n'),
+      });
+      break;
+    }
+    case 'wait': {
+      const req = { ...base, forMin: wholeNumber(flags, '--for'), note: text(flags['--note']), cancel: flags['--cancel'] === true };
+      if (req.cancel && (req.forMin !== undefined || req.note !== undefined)) throw new ArgvError('fleet lease wait: --cancel cannot be combined with --for or --note');
+      decide = (lease) => decideWait(lease, req, ctx.now);
+      describe = (d) => ({
+        waiter: d.waiter, cancelled: d.cancelled,
+        text: req.cancel ? (d.cancelled ? 'OK: this repo is no longer waiting for the slot' : 'OK: this repo was not waiting')
+          : `OK: ${d.opened ? 'waiting' : 'already waiting'} since ${hhmm(new Date(d.waiter.since))} (${d.waiter.refusals} refusal${d.waiter.refusals === 1 ? '' : 's'}, wants ${d.waiter.forMin}m); \`${ctx.cmd} lease wait --cancel\` withdraws it`,
+      });
       break;
     }
     case 'peak': {
@@ -190,7 +222,9 @@ export function cmdLease(ctx, flags, positionals) {
     }
     if (read.state === 'unreadable' || read.state === 'newer-version') return { value: { unreadable: read } };
     const d = decide(read.lease);
-    return d.ok ? { value: { decision: d }, write: d.lease } : { value: { decision: d } };
+    // A refusal that carries a lease (a journal entry, a waiter, a settled expiry) is persisted; a bare one writes nothing.
+    const write = d.ok ? d.lease : (d.lease && d.lease !== read.lease ? d.lease : undefined);
+    return { value: { decision: d }, ...(write ? { write } : {}) };
     });
   } catch (e) {
     return failed(`could not use the lease directory ${dir} (${e.code ?? ''} ${e.message}); nothing was changed`);
@@ -201,7 +235,7 @@ export function cmdLease(ctx, flags, positionals) {
   if (v.recovered) {
     return ok({ sub, recovered: true, copy: path.basename(v.recovered.aside), text: `OK: the unreadable lease was copied to ${path.basename(v.recovered.aside)} and replaced with a fresh one` });
   }
-  if (!v.decision.ok) return fromDecision(v.decision, sub);
+  if (!v.decision.ok) return fromDecision(v.decision, sub, ctx.cmd);
   const out = describe(v.decision);
   return ok({ sub, ...out });
 }
@@ -219,7 +253,7 @@ export function leaseForNext(ctx) {
     const probe = defaultProbe();
     return {
       lines: nextLines(read, ctx.now, { cmd: ctx.cmd, repoKey: repo?.repoKey, probe }),
-      lease: (({ events, ...rest }) => rest)(summarise(read, ctx.now, probe)),
+      lease: (({ events, journal, ...rest }) => rest)(summarise(read, ctx.now, probe)),
     };
   } catch (e) {
     const reason = e instanceof LeaseConfigError ? e.message : `could not read it (${e.message})`;

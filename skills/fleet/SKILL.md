@@ -49,9 +49,8 @@ Usage:
   /fleet proposal <id> --folded <session> | --queued <reason> | --declined <reason> | --done <PR>  # set its outcome; history only grows
   /fleet proposals [--all]                       # the findings queue grouped by theme; blocked-by rechecked from facts
   /fleet lease acquire [--kind gate|test|timing|maintenance] [--for <1-180>] [--pid <n>] [--token <t>] [--note "..."]  # take the machine's one heavy slot (shared by every repo)
-  /fleet lease attach --pid <n> [--token <t>] | release [--token <t>] [--force --reason "..."] | status  # record the job's pid; give the slot back; read it
-  /fleet lease announce --kind quiet|ci --until <iso|+Nm> [--from] [--note] | --clear-window <id>  # tell other repos not to run heavy work in a window
-  /fleet lease peak --hours "09:00-12:00,14:00-17:00" | --clear  # peak-cost hours (machine-local time)
+  /fleet lease attach --pid <n> | release [--force --reason "..."] | status | log | wait [--cancel]  # pid; give back; read; history; queue
+  /fleet lease announce --kind quiet|ci --until <iso|+Nm> [--over-held] | --clear-window <id> | peak --hours "..."  # windows; detail: references/lease.md
   /fleet hold on [--reason "..."] [--notify] | off [--note "..."]
   /fleet repair --quarantine <file>
   /fleet land [--select a,b] [--dry-run]         # build a train, one test run
@@ -131,7 +130,7 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
   command first; a config git cannot read refuses too.
 - Each `FYI` line in `next` or the footer (prune counts, unregistered work, pending proposals) is
   information, not a `DO`: relay it; never claim, archive or prune on it alone.
-  The machine lease line (who holds the heavy slot, announced windows, peak hours) is information too: it says whether the slot is free.
+  The machine lease line (slot holder, windows, peak hours) is information too.
 - Coordinating, not participating: the chip authority block, the session-list
   cross-check, routing, the ship-ready end state, consumer sync, session
   titles, archive sweeps and push lanes are in `references/coordination.md`
@@ -164,4 +163,5 @@ situations — read them only when the trigger applies.
 | `references/handover.md` | Moving to another Claude Code account — handover prepare and receive, the scheduler step, exit codes, follow-ups. | You move to another Claude Code account on this machine (`fleet handover`). |
 | `references/config.md` | The optional .fleet.json - base branch, merge method, test tiers, collision checks, hotFiles, archiveIgnore. | You read or write `.fleet.json`, or configure test tiers, collision checks or `hotFiles`. |
 | `references/landing.md` | Landing beyond one combined run — required checks that ran, serial landing, restack, append-only files. | You approve a pr-mode train, land PRs one at a time, restack after a squash merge, or configure append-only files. |
+| `references/lease.md` | The machine lease - slot, windows, waiting and the journal. | You use or change `fleet lease`. |
 | `references/telemetry.md` | Usage telemetry — what each verb records, the weakness findings stats derives, and how to turn it off. | You want to know how fleet is performing, why stats flags a weakness, or what fleet sends to the store. |
