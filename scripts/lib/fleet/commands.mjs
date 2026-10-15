@@ -107,9 +107,18 @@ function waitingFromFlags(flags, ctx) {
   return { clear: Boolean(flags['--clear-waiting']), adds };
 }
 
+/**
+ * The new waiting list. A wait that is re-added keeps the AGE (`since`) it already had, whether or not `--clear-waiting` emptied
+ * the list first: clearing one wait must not reset the age of the others it re-adds (p-35d6). Only a wait that did not exist yet
+ * starts now. The note and everything else come from the re-add.
+ */
 function applyWaiting(existing, w) {
   let list = w.clear ? [] : [...existing];
-  for (const a of w.adds) { list = list.filter((x) => !(x.kind === a.kind && x.ref === a.ref)); list.push(a); }
+  for (const a of w.adds) {
+    const prior = existing.find((x) => x.kind === a.kind && x.ref === a.ref);
+    list = list.filter((x) => !(x.kind === a.kind && x.ref === a.ref));
+    list.push(prior ? { ...a, since: prior.since } : a);
+  }
   return list;
 }
 

@@ -335,6 +335,25 @@ describe('add, ready, touch, hold, waitingOn', () => {
     assert.equal(s.f(['touch', '--id', 'w', '--waiting-on', 'nocolon']).status, 2);
   });
 
+  it('--clear-waiting with --waiting-on keeps the AGE of a wait it re-adds, drops the ones not re-added, and stamps only a new wait now (p-35d6)', () => {
+    const s = setup();
+    const t0 = '2026-10-10T08:00:00.000Z'; const t1 = '2026-10-12T09:30:00.000Z';
+    assert.equal(s.f(['claim', '--id', 'w', '--intent', 'wait', '--paths', 'w/**', '--waiting-on', 'human:account-switch', '--waiting-on', 'session:other:needs it'], { env: { FLEET_NOW: t0 } }).status, 0);
+    const before = sessionRec(s.fx, 'w').waitingOn;
+    assert.deepEqual(before.map((x) => x.since), [t0, t0]);
+    // The handover-receive recipe: clear the switch wait by clearing everything and re-adding the OTHER waits.
+    const r = s.f(['touch', '--id', 'w', '--clear-waiting', '--waiting-on', 'session:other:needs it', '--waiting-on', 'human:louis'], { env: { FLEET_NOW: t1 } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const after = sessionRec(s.fx, 'w').waitingOn;
+    assert.deepEqual(after.map((x) => `${x.kind}:${x.ref}`), ['session:other', 'human:louis'], 'the switch wait is gone');
+    assert.equal(after[0].since, t0, 'a re-added wait keeps the age it already had (it was not restarted by clearing its neighbour)');
+    assert.equal(after[0].note, 'needs it');
+    assert.equal(after[1].since, t1, 'a genuinely new wait starts now');
+    // Without --clear-waiting the re-add of an existing wait also keeps its age.
+    s.f(['touch', '--id', 'w', '--waiting-on', 'human:louis'], { env: { FLEET_NOW: '2026-10-13T00:00:00.000Z' } });
+    assert.equal(sessionRec(s.fx, 'w').waitingOn.find((x) => x.ref === 'louis').since, t1);
+  });
+
   it('a session-kind waiting ref that is done or gone renders unblocked?, and human items sort first', () => {
     const s = setup();
     s.f(['claim', '--id', 'w', '--intent', 'wait', '--paths', 'w/**', '--waiting-on', 'session:vanished']);

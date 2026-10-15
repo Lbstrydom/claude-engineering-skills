@@ -62,7 +62,15 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
   };
   const cur = base.heavy;
   const cls = classifyHeavy(cur, now, probe);
-  const mine = cur && sameIdentity(cur, req.identity);
+  // A RUN must be the only run (plan D7, audit R1 H3): two `sync:pr` runs for one consumer share the holder `sync-pr`, so a
+  // plain acquire would rotate the first's token and let both go. `exclusive` refuses a slot this identity already holds
+  // while its job may still run, and treats an expired one with a dead pid as a takeover; a direct acquire is unchanged.
+  if (req.exclusive && cur && sameIdentity(cur, req.identity)) {
+    if (cls.state === 'held') return keep(refuse('held', `this session (${cur.holder}) already holds the slot until ${cur.expiresAt}: another run is in progress`));
+    if (cls.verdict === 'pid-alive') return keep(refuse('expired-pid-alive', `this session's previous lease expired at ${cur.expiresAt}, but ${cls.reason}; it cannot be granted`));
+    if (cls.verdict === 'unverifiable') return keep(refuse('unverifiable', `this session's previous lease expired at ${cur.expiresAt} but ${cls.reason}; if a person has confirmed the job is gone: release --force --reason "<why>"`));
+  }
+  const mine = cur && sameIdentity(cur, req.identity) && !req.exclusive;
 
   // Stage 1 of the decision proper: the non-turn question (windows with their granted gaps, then the slot).
   const adm = admissionCheck(base, req.identity, forMin, now, probe);
@@ -156,9 +164,50 @@ export function decideRelease(lease, req, now, probe = defaultProbe()) {
   return { ok: true, lease: settleQueue(appendJournal(appendEvent({ ...base, ...freed }, ev), releasedEntry(true)), now, probe), released: cur, event: ev };
 }
 
+/**
+ * `release` that hands the slot to a CI window in ONE write (plan D7): the holder frees the slot and the consumer's PR CI is
+ * recorded as its window `[now, now + ciWindowMin)`, so nothing can interleave between "CI covered" and "slot freed". Token and
+ * identity rules are `decideRelease`'s. The window is announced as reality: when the repo's turn is no longer active and another
+ * repo waits it carries `overTurn` naming that repo (and, like every override, starts no turn). A full window table never
+ * blocks the release: the slot is freed and `windowRefused` says why there is no window.
+ */
+export function decideReleaseToCiWindow(lease, req, now, probe = defaultProbe()) {
+  const minutes = req.ciWindowMin;
+  const maxMin = Math.floor(LIMITS.maxWindowMs / MIN);
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > maxMin) return refuse('bad-request', `--ci-window must be a whole number of minutes from 1 to ${maxMin}`);
+  const before = settleQueue(lease, now, probe);
+  const rel = decideRelease(lease, { ...req, force: false }, now, probe);
+  if (!rel.ok || rel.already) return rel.ok ? { ...rel, window: null } : rel;
+  const pruned = pruneWindows(rel.lease, now);
+  const repoKey = req.identity.repoKey;
+  const done = (extra = {}) => ({ ok: true, released: rel.released, window: null, ...extra, lease: settleQueue(extra.lease ?? rel.lease, now, probe) });
+  if (pruned.windows.length >= LIMITS.maxWindows) return done({ windowRefused: `there are already ${LIMITS.maxWindows} windows on this machine` });
+  if (pruned.windows.filter((w) => w.repoKey === repoKey).length >= LIMITS.maxWindowsPerRepo) return done({ windowRefused: `this repo already has ${LIMITS.maxWindowsPerRepo} windows` });
+  const id = allocWindowId(pruned.windows, now, req.newId);
+  if (id === null) return done({ windowRefused: 'could not allocate a unique window id' });
+  const waiting = (before.waiters ?? []).filter((w) => w.repoKey !== repoKey).sort((a, b) => ms(a.since) - ms(b.since))[0];
+  const overTurn = waiting && !turnActive(before, repoKey, now) ? { repo: waiting.repo } : undefined;
+  const window = {
+    id, repoKey, repo: req.repo, kind: 'ci', from: now.toISOString(), until: new Date(now.getTime() + minutes * MIN).toISOString(),
+    ...(req.note !== undefined ? { note: req.note } : {}),
+  };
+  const next = appendJournal({ ...pruned, windows: [...pruned.windows, window] }, jentry(now, 'announced', req, { window: { id, kind: 'ci', repo: req.repo, from: window.from, until: window.until }, releasedJob: true, ...(overTurn ? { overTurn } : {}) }));
+  return done({ lease: next, window, ...(overTurn ? { overTurn } : {}) });
+}
+
 // ── Windows ─────────────────────────────────────────────────────────────────
 
 const stamp = (d) => d.toISOString().replace(/\D/g, '').slice(0, 14);
+
+/** A window id unused in `windows`: `w-<stamp>-<4 hex>`, `preferred` first (tests pin it). Null after 16 collisions. */
+function allocWindowId(windows, now, preferred) {
+  const taken = new Set(windows.map((x) => x.id));
+  for (let i = 0; i < 16; i += 1) {
+    const cand = `w-${stamp(now)}-${(i === 0 && preferred ? preferred : crypto.randomBytes(2).toString('hex'))}`;
+    if (!taken.has(cand)) return cand;
+  }
+  return null;
+}
 
 /** `announce`: record a quiet/CI window for THIS repo. */
 export function decideAnnounce(lease, req, now, probe = defaultProbe()) {
@@ -211,12 +260,7 @@ export function decideAnnounce(lease, req, now, probe = defaultProbe()) {
       overTurn = { repo: tr.first };
     }
   }
-  const taken = new Set(pruned.windows.map((x) => x.id));
-  let id = null;
-  for (let i = 0; i < 16 && id === null; i += 1) {
-    const cand = `w-${stamp(now)}-${(i === 0 && req.newId ? req.newId : crypto.randomBytes(2).toString('hex'))}`;
-    if (!taken.has(cand)) id = cand;
-  }
+  const id = allocWindowId(pruned.windows, now, req.newId);
   if (id === null) return refuse('limit', 'could not allocate a unique window id; retry');
   const win = {
     id,
