@@ -253,6 +253,11 @@
 - **Result**: `full-suite` result pending. The synced consumer bundle is unverified (blocked: not merged, and storyline's quiet window forbade a sync until 19:00Z). After #250 merges and main re-syncs: in each consumer's MAIN checkout run `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` and confirm `lib/doctor/operating-fit.mjs`, `lib/doctor/operating-inputs.mjs`, `lib/suite-run-record.mjs` and `lib/fleet/operating-evidence.mjs` arrived and that `node scripts/.claude-skills/doctor.mjs --only operating/ci-location` runs; `scripts/run-tests.mjs` is source-only and does not ship, so a consumer's wall-based probes will read `unmeasured` (proposal p-20261014113553-e216).
 
 ### Consumer Verification (previous ship)
+- **Commit**: f66abe19aa9d39f6d54197ce25d47aea7a8430e2 on fix/gemini-infra-scope (branch push only, NO PR yet; PR 3 not written), based on main 68769d55 (#259): the 3b84d8bb disposition (6a032b8b) plus the close-out status entry.
+- **Retrieval**: guards:preflight PASS (33 steps, 17:11Z), then git push --no-verify under the CES feature-branch push rule. No full-suite run exists for this branch (no PR); the full verdict arrives when PR 3 opens.
+- **Result**: unverified (blocked: no PR, so no full-suite run on this head; and not merged, so nothing reached consumers). After PR 3 merges and main re-syncs: in each consumer's MAIN checkout run node scripts/.claude-skills/lib/sync-isolation-verify.mjs.
+
+### Consumer Verification (previous ship)
 <!-- ship-verification-9c93fc2a-20261015T163123Z.md -->
 - **Commit**: 9c93fc2ae94b on `claude/charming-curran-0e3fca` (PR #250; NOT merged at note time). SUPERSEDES the 9abd5a96 note: the head was re-merged with main after #257/#258 (status.md rebuilt from main plus the entry; domain-map.json kept both adjudications and one scripts -> fleet edge).
 - **Retrieval**: `guards:preflight` PASS (33 steps, 16:30Z) then `git push --no-verify` under Louis's in-session authorisation; the test verdict is GitHub's required `full-suite` on this head (in progress at push time; it passed on 9abd5a96).
@@ -280,6 +285,19 @@
 - **Findings queued.** `p-20261015065659-4cc2` (Gemini final gate has no `--allow-infra-scope`, folded into PR 3 `p-…095b`; infra-skipped files appear as `NONE:` in its segment, e.g. `file-taxonomy.mjs`, `debt-ledger.mjs`), `p-20261015130416-f9f9` (`ship-commit.mjs` accepts another branch's audit marker; queued HIGH as the next chip, including a sweep of merged commits for a mismatched run id).
 - **Open.** PR 3 plans on Opus first, then audit-plan, then code after 20:00 local; a catch-up Gemini pass over #247's 14 files follows it (`p-…ce6d`).
 - Backlog 2026-10-15T17:11Z: Q1 283c/89p (+426 aged) · Q2 166c/103p (54 perm) · Q3 35 · debt 375 cloud/2 local (0 spilled) · upstream 0
+
+## 2026-10-15 — `fleet lease`: `--end-turn` keeps the turn while the same repo waits; `touch --unwait` drops one wait (PR 4 of the fleet-lease theme, #260)
+
+**Why.** Two findings from running the theme. At 09:18Z a single push released with `--end-turn` and the turn went to storyline while four CES jobs were queued (CES lost about 60 minutes before the quiet window); `--end-turn` is a statement about the caller but acted on the repo's turn. And PR 3's audit H6: the `handover receive` unblock recipe cleared every wait and re-added a snapshot of the others, which lost any wait added between receive and the command.
+
+- **D9** (`lease.mjs` `decideRelease`): when the releasing repo has its own waiter entry in the SETTLED lease, `--end-turn` is downgraded to a plain release - slot freed, turn kept for the 10-minute between-jobs gap - and says so: a second CLI line (`turnKeptText`, one sentence for every surface), `turnKept` in `--json`, `turnKept` on the journal's `released` entry (additive, passthrough), and `lease run`/`sync:pr` log the same sentence. Never a refusal. Escape hatch: `lease wait --cancel`, then `--end-turn`; no new flag. A same-repo job that has not asked yet is invisible until its next refused poll (stated limit).
+- **D10** (`commands.mjs`, `argv.mjs`, `handover.mjs`): `fleet touch --unwait kind:ref` (repeatable) drops one wait inside `touch`'s locked transaction; a pair that matches nothing is reported (`notWaiting`), a note, a bad kind, an empty ref or `--clear-waiting` are usage errors; only `touch` takes it. The handover recipe now prints `--unwait human:<stored ref>` and names nothing else.
+- **Red first.** The 09:18Z case is a unit test: 2 of 7 new D9 tests failed on the unmodified code (the rest are controls and out-of-scope shapes). New property invariant I6 has a negative control: with D9 disabled the 400-sequence search fails at seed 42. D10's flag tests failed on the unknown flag first (the usage-error test passes vacuously there; its value is after the change); the receive-recipe tests were rewritten first and failed against the old recipe.
+- **Audit**: plan amendment: GPT R1 M1 (I6's scope; fixed), R2 clean, Gemini APPROVE. Code: `/audit-code` R1 PASS (one MEDIUM, the auditor's enumeration bound, dismissed as on PRs 1-3); Gemini final gate APPROVE, code coverage FULL. `guards:preflight` PASS (33 steps); affected suites 308 tests, 307 pass, 1 skipped.
+- **How it got to GitHub**: pushed `--no-verify` on Louis's CES feature-branch rule, no lease; the merge check is GitHub's `full-suite`.
+- **Consumer impact**: `skills/fleet/**` is in the sync closure; consumers get the `--end-turn` downgrade and `touch --unwait` after the next sync of `main`. An older checkout reads the journal's new field through passthrough.
+- **Closes** proposals p-20261015091934-3c6d and p-20261015072500-ae47; the fleet-lease theme (8 findings plus 3fd7) is done: #252, #253, #257, #260.
+- Backlog 2026-10-15T18:51Z: Q1 285c/90p (+426 aged) · Q2 166c/97p (54 perm) · Q3 35 · debt 378 cloud/4 local (0 spilled) · upstream 0
 
 ## 2026-10-15 — Audit honesty: the bundle's own generated stores are out of the adjacency bound and the taxonomy's code set (PR 2 of 2, upstream 3b84d8bb, #259)
 

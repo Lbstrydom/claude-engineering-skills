@@ -408,3 +408,90 @@ describe('audit-code round 1 fixes (PR 2)', () => {
     assert.equal(acq(whole, D, { forMin: 5 }, '08:20').lease.journal.some((e) => e.reason === 'lapsed'), true);
   });
 });
+
+describe('--end-turn while the same repo still waits (D9, finding 3c6d)', () => {
+  const A2 = { repoKey: A.repoKey, holder: 'chip-2' }; // a second session of repo A
+  /** 08:00 A/main takes the slot (A's turn starts); 08:05 B queues; 08:06 A/chip-2 is refused and queues A. */
+  const world = () => {
+    let l = ok(acq(emptyLease(), A, { forMin: 30 }, '08:00'));
+    l = acq(l, B, { forMin: 20 }, '08:05').lease;
+    const second = acq(l, A2, { forMin: 20 }, '08:06');
+    assert.equal(second.code, 'held');
+    return second.lease;
+  };
+
+  it('THE 09:18Z CASE: one job of A releases --end-turn while another job of A waits - the turn stays A\'s, and the waiting job goes in-turn ahead of B', () => {
+    const l = world();
+    assert.deepEqual(l.waiters.map((w) => w.repoKey).sort(), [A.repoKey, B.repoKey].sort(), 'A and B both wait');
+    const r = rel(l, A, { endTurn: true }, '08:10');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(turnEnded(r.lease), [], 'the turn was not yielded');
+    assert.equal(r.lease.turn.repoKey, A.repoKey);
+    assert.equal(r.lease.turn.lastReleasedAt, T('08:10').toISOString(), 'the between-jobs gap runs from the release');
+    assert.equal(r.turnKept.reason, 'same-repo-waiting');
+    assert.equal(r.turnKept.since, l.waiters.find((w) => w.repoKey === A.repoKey).since);
+    const entry = [...r.lease.journal].reverse().find((e) => e.kind === 'released');
+    assert.equal(entry.endTurn, true, 'the record says what was asked');
+    assert.equal(entry.turnKept, 'same-repo-waiting', 'and what happened');
+    const b = acq(r.lease, B, { forMin: 20 }, '08:11');
+    assert.equal(b.code, 'turn', 'B waits out A\'s turn');
+    const a2 = acq(b.lease, A2, { forMin: 20 }, '08:12');
+    assert.equal(a2.ok, true, JSON.stringify(a2));
+    assert.equal(lastAcquired(a2.lease).basis, 'in-turn');
+    assert.equal(LeaseSchema.safeParse(a2.lease).success, true);
+  });
+  it('control: with no waiter entry for A, --end-turn yields as before and says nothing about a kept turn', () => {
+    let l = ok(acq(emptyLease(), A, { forMin: 30 }, '08:00'));
+    l = acq(l, B, { forMin: 20 }, '08:05').lease;
+    const r = rel(l, A, { endTurn: true }, '08:10');
+    assert.equal(r.ok, true);
+    assert.deepEqual(turnEnded(r.lease), ['yield']);
+    assert.equal(r.turnKept, undefined);
+    assert.equal([...r.lease.journal].reverse().find((e) => e.kind === 'released').turnKept, undefined);
+  });
+  it('lease wait --cancel and then --end-turn hands the turn over (the escape hatch, no new flag)', () => {
+    const l = world();
+    const c = decideWait(l, q(A2, { cancel: true }), T('08:07'), probe);
+    assert.equal(c.ok, true, JSON.stringify(c));
+    const r = rel(c.lease, A, { endTurn: true }, '08:10');
+    assert.deepEqual(turnEnded(r.lease), ['yield']);
+    assert.equal(r.turnKept, undefined);
+  });
+  it('a kept turn for a waiter that never comes ends idle after the 10-minute gap (bounded cost)', () => {
+    const r = rel(world(), A, { endTurn: true }, '08:10');
+    const b = acq(r.lease, B, { forMin: 20 }, '08:21');
+    assert.equal(b.ok, true, JSON.stringify(b));
+    assert.deepEqual(turnEnded(b.lease), ['idle']);
+  });
+  it('a plain release is untouched: no turnKept, the turn survives the gap as before', () => {
+    const r = rel(world(), A, {}, '08:10');
+    assert.equal(r.turnKept, undefined);
+    assert.deepEqual(turnEnded(r.lease), []);
+    assert.equal(r.lease.turn.repoKey, A.repoKey);
+  });
+  it('out of scope: a named-gap borrower releasing --end-turn does not touch another repo\'s turn, and records no turnKept (plan audit R1 M1)', () => {
+    // A holds window 09:00-11:00 and grants B a gap; A's turn is active; B borrows the slot and releases with --end-turn.
+    let l = ok(acq(emptyLease(), A, { forMin: 10 }, '08:00'));
+    l = acq(l, B, { forMin: 20 }, '08:01').lease; // B is now a known repo (it can be named in a gap)
+    l = ok(rel(l, A, {}, '08:05'));
+    l = ok(ann(l, A, { kind: 'quiet', from: '2026-10-14T08:06:00.000Z', until: '2026-10-14T11:00:00.000Z' }, '08:06'));
+    const id = l.windows[0].id;
+    l = ok(grant(l, A, { id, from: '2026-10-14T08:06:00.000Z', until: '2026-10-14T10:00:00.000Z', to: 'o/b' }, '08:07'));
+    l = ok(acq(l, B, { forMin: 20 }, '08:08'));
+    assert.equal(lastAcquired(l).basis, 'gap');
+    const turnBefore = l.turn;
+    const r = rel(l, B, { endTurn: true }, '08:12'); // inside A's 10-minute between-jobs gap (to 08:15)
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(turnEnded(r.lease), [], 'B\'s release did not end A\'s turn');
+    assert.deepEqual(r.lease.turn, turnBefore);
+    assert.equal(r.turnKept, undefined);
+  });
+  it('out of scope: a turn already settled away (expired) produces no yield and no turnKept', () => {
+    let l = ok(acq(emptyLease(), A, { forMin: 120 }, '08:00')); // turn to 09:00, job to 10:00
+    l = acq(l, A2, { forMin: 20 }, '08:05').lease; // A queues itself
+    const r = rel(l, A, { endTurn: true }, '09:30');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(turnEnded(r.lease), ['expiry'], 'only the expiry that already happened');
+    assert.equal(r.turnKept, undefined);
+  });
+});

@@ -21,7 +21,7 @@ import { gitCommonDir, runGit } from './git-facts.mjs';
 import {
   LIMITS, LeaseConfigError, measureSlotWaits, repoLabel, decideAcquire, decideAnnounce, decideAttach, decideClearWindow, decideGrant, decideRelease, decideTurnConfig, decideWait, defaultProbe,
   machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable, renderLog, renderStatus, repoKeyOf, summarise,
-  transactLease,
+  transactLease, turnKeptText,
 } from './lease.mjs';
 
 export const SUBS = Object.freeze(['acquire', 'attach', 'release', 'status', 'announce', 'peak', 'wait', 'log', 'grant', 'turn', 'run']);
@@ -209,8 +209,8 @@ export function cmdLease(ctx, flags, positionals) {
       if (!forced && flags['--reason'] !== undefined) throw new ArgvError('fleet lease release: --reason is only for --force');
       decide = (lease) => decideRelease(lease, req, ctx.now, probe);
       describe = (d) => ({
-        released: d.released, already: Boolean(d.already),
-        text: d.already ? 'OK: the heavy slot was already free' : `OK: heavy slot released (was ${d.released.holder} (${d.released.repo}) for ${d.released.kind})${d.event ? `\nrecorded: ${d.event.reason}` : ''}`,
+        released: d.released, already: Boolean(d.already), ...(d.turnKept ? { turnKept: d.turnKept } : {}),
+        text: d.already ? 'OK: the heavy slot was already free' : `OK: heavy slot released (was ${d.released.holder} (${d.released.repo}) for ${d.released.kind})${d.event ? `\nrecorded: ${d.event.reason}` : ''}${d.turnKept ? `\n${turnKeptText(d.turnKept, d.released.repo, ctx.cmd)}` : ''}`,
       });
       break;
     }

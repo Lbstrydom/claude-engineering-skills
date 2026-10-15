@@ -134,6 +134,9 @@ export function decideAttach(lease, req, now, probe = defaultProbe()) {
   return { ok: true, lease: { ...lease, heavy: { ...cur, pid: req.pid, scope: probe.scope } }, heavy: { ...cur, pid: req.pid, scope: probe.scope } };
 }
 
+/** The one sentence every surface (CLI, `lease run`, sync:pr) prints when `--end-turn` was downgraded (D9). */
+export const turnKeptText = (turnKept, repo, cmdName = 'fleet') => `--end-turn not applied: ${repo} has a job waiting since ${hhmmOf(new Date(turnKept.since))}, so the turn stays with ${repo} for the between-jobs gap; to hand it over anyway, run \`${cmdName} lease wait --cancel\` first`;
+
 /** `release`: the holder frees the slot; `--force --reason` frees an EXPIRED slot a person has judged gone. */
 export function decideRelease(lease, req, now, probe = defaultProbe()) {
   const badId = badIdentity(req);
@@ -146,16 +149,22 @@ export function decideRelease(lease, req, now, probe = defaultProbe()) {
   }
   if (!cur) return { ok: true, lease: base, released: null, already: true };
   const mine = sameIdentity(cur, req.identity);
-  const releasedEntry = (forced) => jentry(now, 'released', req, { forced, job: { kind: cur.kind, until: cur.expiresAt }, ...(req.endTurn ? { endTurn: true } : {}) });
+  // D9: `--end-turn` is a statement about the CALLER ("I have nothing further ready"), but it acts on the REPO's turn. When the
+  // releasing repo has its own waiter entry in the SETTLED lease, another job of the repo asked after the releaser's grant and is
+  // waiting, so the turn is kept (a plain release) and the result says so. Never a refusal: a refused release would strand the slot.
+  const ownTurn = base.turn && base.turn.repoKey === req.identity.repoKey;
+  const sameRepoWaiter = ownTurn && req.endTurn && !req.force ? (base.waiters ?? []).find((w) => w.repoKey === req.identity.repoKey) : undefined;
+  const turnKept = sameRepoWaiter ? { reason: 'same-repo-waiting', since: sameRepoWaiter.since } : undefined;
+  const releasedEntry = (forced) => jentry(now, 'released', req, { forced, job: { kind: cur.kind, until: cur.expiresAt }, ...(req.endTurn ? { endTurn: true } : {}), ...(turnKept ? { turnKept: turnKept.reason } : {}) });
   const freed = { heavy: null, slotFreedAt: now.toISOString() };
   if (mine) {
     if (req.token !== undefined && req.token !== cur.token) return keep(refuse('stale-token', 'the supplied token is not the current one for this slot (a stale fence)'));
     let next = appendJournal({ ...base, ...freed }, releasedEntry(false));
     // The repo's turn survives the release for the between-jobs gap (its batch), unless it yields the turn outright.
     if (next.turn && next.turn.repoKey === req.identity.repoKey) {
-      next = req.endTurn ? endTurn(next, 'yield', now, byOf(req)) : { ...next, turn: { ...next.turn, lastReleasedAt: now.toISOString() } };
+      next = req.endTurn && !turnKept ? endTurn(next, 'yield', now, byOf(req)) : { ...next, turn: { ...next.turn, lastReleasedAt: now.toISOString() } };
     }
-    return { ok: true, lease: settleQueue(next, now, probe), released: cur };
+    return { ok: true, lease: settleQueue(next, now, probe), released: cur, ...(turnKept ? { turnKept } : {}) };
   }
   if (!req.force) return keep(refuse('not-holder', `the slot is held by ${cur.holder} (${cur.repo}); only the holder releases it (or --force --reason once it has expired)`));
   const cls = classifyHeavy(cur, now, probe);
@@ -181,7 +190,7 @@ export function decideReleaseToCiWindow(lease, req, now, probe = defaultProbe())
   if (!rel.ok || rel.already) return rel.ok ? { ...rel, window: null } : rel;
   const pruned = pruneWindows(rel.lease, now);
   const repoKey = req.identity.repoKey;
-  const done = (extra = {}) => ({ ok: true, released: rel.released, window: null, ...extra, lease: settleQueue(extra.lease ?? rel.lease, now, probe) });
+  const done = (extra = {}) => ({ ok: true, released: rel.released, window: null, ...(rel.turnKept ? { turnKept: rel.turnKept } : {}), ...extra, lease: settleQueue(extra.lease ?? rel.lease, now, probe) });
   if (pruned.windows.length >= LIMITS.maxWindows) return done({ windowRefused: `there are already ${LIMITS.maxWindows} windows on this machine` });
   if (pruned.windows.filter((w) => w.repoKey === repoKey).length >= LIMITS.maxWindowsPerRepo) return done({ windowRefused: `this repo already has ${LIMITS.maxWindowsPerRepo} windows` });
   const id = allocWindowId(pruned.windows, now, req.newId);
