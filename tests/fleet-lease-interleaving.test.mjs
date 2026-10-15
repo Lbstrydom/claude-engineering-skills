@@ -10,6 +10,8 @@ import assert from 'node:assert/strict';
 import {
   LeaseSchema, classifyHeavy, decideAcquire, decideAnnounce, decideClearWindow, decideRelease, decideWait, emptyLease,
 } from '../scripts/lib/fleet/lease.mjs';
+import { LIMITS, admissionCheck, decideGrant, settleQueue, usesNamedGap } from '../scripts/lib/fleet/lease.mjs';
+import { turnActive } from '../scripts/lib/fleet/lease-turns.mjs';
 import { LeaseSchemaV1 } from './fixtures/fleet-lease-v1-schema.mjs';
 
 const MIN = 60_000;
@@ -39,18 +41,39 @@ const pick = (rnd, xs) => xs[Math.floor(rnd() * xs.length)];
 const int = (rnd, lo, hi) => lo + Math.floor(rnd() * (hi - lo + 1));
 
 /** One random operation (plain data, so the prefix is printable). */
-function randomOp(rnd) {
+/**
+ * One random operation. Three mixes, because a uniform mix almost never reaches the states the invariants are about
+ * (measured: 0 gap acquires and 0 lapses in 16,000 uniform steps): 'calm' leaves long idle stretches so a head can be
+ * continuously eligible and lapse; 'gappy' announces windows, grants gaps starting at once and acquires small jobs.
+ */
+function randomOp(rnd, mix = 'uniform') {
   const repo = pick(rnd, REPOS);
   const holder = pick(rnd, HOLDERS);
   const base = { repo, holder };
   const roll = rnd();
-  if (roll < 0.30) return { ...base, op: 'acquire', forMin: int(rnd, 1, 60), pid: 4242 };
-  if (roll < 0.45) return { ...base, op: 'release' };
-  if (roll < 0.70) {
-    return { ...base, op: 'announce', kind: pick(rnd, ['quiet', 'ci']), fromMin: pick(rnd, [0, 0, int(rnd, 1, 90)]), durMin: int(rnd, 5, 120), overHeld: rnd() < 0.25 };
+  if (mix === 'calm') {
+    if (roll < 0.30) return { ...base, op: 'wait', forMin: int(rnd, 1, 20), cancel: false };
+    if (roll < 0.60) return { ...base, op: 'advance', min: int(rnd, 5, 40) };
+    if (roll < 0.78) return { ...base, op: 'acquire', forMin: int(rnd, 1, 20), pid: 4242 };
+    if (roll < 0.92) return { ...base, op: 'release', endTurn: rnd() < 0.2 };
+    return { ...base, op: 'wait', forMin: int(rnd, 1, 20), cancel: true };
   }
-  if (roll < 0.78) return { ...base, op: 'clear', pick: rnd() };
-  if (roll < 0.85) return { ...base, op: 'wait', forMin: int(rnd, 1, 60), cancel: rnd() < 0.4 };
+  if (mix === 'gappy') {
+    if (roll < 0.22) return { ...base, op: 'announce', kind: 'quiet', fromMin: 0, durMin: int(rnd, 30, 120), overHeld: false, overTurn: rnd() < 0.5 };
+    if (roll < 0.52) return { ...base, op: 'grant', pick: rnd(), a: 0, b: int(rnd, 20, 90), to: pick(rnd, ['o/a', 'o/b', 'o/c']) };
+    if (roll < 0.62) return { ...base, op: 'wait', forMin: int(rnd, 1, 20), cancel: false };
+    if (roll < 0.86) return { ...base, op: 'acquire', forMin: int(rnd, 1, 10), pid: 4242 };
+    if (roll < 0.94) return { ...base, op: 'release', endTurn: false };
+    return { ...base, op: 'advance', min: int(rnd, 1, 10) };
+  }
+  if (roll < 0.28) return { ...base, op: 'acquire', forMin: int(rnd, 1, 60), pid: 4242 };
+  if (roll < 0.42) return { ...base, op: 'release', endTurn: rnd() < 0.2 };
+  if (roll < 0.60) {
+    return { ...base, op: 'announce', kind: pick(rnd, ['quiet', 'ci']), fromMin: pick(rnd, [0, 0, int(rnd, 1, 90)]), durMin: int(rnd, 5, 120), overHeld: rnd() < 0.25, overTurn: rnd() < 0.25 };
+  }
+  if (roll < 0.66) return { ...base, op: 'clear', pick: rnd() };
+  if (roll < 0.72) return { ...base, op: 'wait', forMin: int(rnd, 1, 60), cancel: rnd() < 0.4 };
+  if (roll < 0.78) return { ...base, op: 'grant', pick: rnd(), a: int(rnd, 0, 30), b: int(rnd, 5, 90), to: pick(rnd, ['o/a', 'o/b', 'o/c', 'o/zzz', undefined, undefined]) };
   return { ...base, op: 'advance', min: int(rnd, 1, 45) };
 }
 
@@ -62,19 +85,27 @@ function apply(state, op) {
   let d;
   switch (op.op) {
     case 'acquire': d = decideAcquire(lease, { ...common, forMin: op.forMin, pid: op.pid }, now, probe); break;
-    case 'release': d = decideRelease(lease, { ...common }, now, probe); break;
+    case 'release': d = decideRelease(lease, { ...common, endTurn: op.endTurn }, now, probe); break;
+    case 'grant': {
+      const mine = lease.windows.filter((x) => x.repoKey === id.repoKey);
+      const w = mine[Math.floor(op.pick * mine.length)];
+      if (!w) { d = { ok: false, code: 'no-such-window', reason: 'none' }; break; }
+      const from = new Date(Date.parse(w.from) + op.a * MIN);
+      d = decideGrant(lease, { ...common, id: w.id, from: from.toISOString(), until: new Date(from.getTime() + op.b * MIN).toISOString(), to: op.to }, now, probe);
+      break;
+    }
     case 'announce': {
       const from = new Date(now.getTime() + op.fromMin * MIN);
       const until = new Date(from.getTime() + op.durMin * MIN);
-      d = decideAnnounce(lease, { ...common, kind: op.kind, from: from.toISOString(), until: until.toISOString(), overHeld: op.overHeld }, now, probe);
+      d = decideAnnounce(lease, { ...common, kind: op.kind, from: from.toISOString(), until: until.toISOString(), overHeld: op.overHeld, overTurn: op.overTurn }, now, probe);
       break;
     }
     case 'clear': {
       const w = lease.windows[Math.floor(op.pick * lease.windows.length)];
-      d = w ? decideClearWindow(lease, { ...common, id: w.id }, now) : { ok: false, code: 'no-such-window', reason: 'none' };
+      d = w ? decideClearWindow(lease, { ...common, id: w.id }, now, probe) : { ok: false, code: 'no-such-window', reason: 'none' };
       break;
     }
-    case 'wait': d = decideWait(lease, { ...common, forMin: op.forMin, cancel: op.cancel }, now); break;
+    case 'wait': d = decideWait(lease, { ...common, forMin: op.forMin, cancel: op.cancel }, now, probe); break;
     case 'advance': return { lease, now: new Date(now.getTime() + op.min * MIN), result: { ok: true, noop: true } };
     default: throw new Error(`unknown op ${op.op}`);
   }
@@ -113,19 +144,55 @@ function violation(before, after, op) {
   // I4: every successful mutation appends the journal entry its kind requires, so the history can always answer
   // "what happened"; and a wait episode ends at most once.
   const need = { acquire: 'acquired', announce: 'announced', clear: 'window-cleared' }[op.op] ?? (op.op === 'release' && r.ok && !r.already ? 'released' : null);
-  if (r.ok && need && lease.journal?.at(-1)?.kind !== need) return `I4: a successful ${op.op} left the journal ending in ${lease.journal?.at(-1)?.kind}, not ${need}`;
+  // What THIS step added, by identity (an older entry of the same kind cannot satisfy it); housekeeping such as an offer may
+  // sit beside it, so it is "among the new entries", not "the last one".
+  const added = (lease.journal ?? []).filter((e) => !(before.lease.journal ?? []).includes(e));
+  if (r.ok && need && !added.some((e) => e.kind === need && e.repoKey === op.repo.repoKey)) return `I4: a successful ${op.op} by ${op.repo.repo} added no ${need} entry of its own (added: ${added.map((e) => e.kind).join(',') || 'none'})`;
   const ended = new Map();
   for (const e of lease.journal ?? []) if (e.kind === 'wait-ended') ended.set(e.episode, (ended.get(e.episode) ?? 0) + 1);
   for (const [ep, n] of ended) if (n > 1) return `I4: wait episode ${ep} ended ${n} times`;
   for (const w of lease.waiters ?? []) {
     if (ended.has(w.episode)) return `I4: ${w.repo} is still waiting in an episode the journal says ended`;
   }
+  return basisViolation(before, after, op);
+}
+
+/** I5: the recorded reason for a grant is true of the lease the decision saw, and no waiter lapses unless it could have gone. */
+function basisViolation(before, after, op) {
+  const { now } = after;
+  const r = after.result;
+  const sb = settleQueue(before.lease, before.now, probe);
+  for (const e of after.lease.journal ?? []) if (e.kind === 'offered' && !(before.lease.journal ?? []).includes(e)) stats.offered += 1;
+  if (op.op === 'acquire' && r.ok && r.basis && r.basis !== 'same-job') {
+    const R = op.repo.repoKey;
+    const waiters = sb.waiters ?? [];
+    const others = waiters.filter((w) => w.repoKey !== R);
+    const incumbent = sb.turn && sb.turn.repoKey !== R && turnActive(sb, sb.turn.repoKey, now) && waiters.length > 0;
+    const mine = waiters.find((w) => w.repoKey === R);
+    const mySince = mine ? Date.parse(mine.since) : now.getTime();
+    // A repo not yet waiting joins the BACK of the queue, so every waiter is ahead of it (see turnRule).
+    const longer = mine ? others.filter((w) => Date.parse(w.since) < mySince || (Date.parse(w.since) === mySince && w.repoKey < R)) : others;
+    const end = new Date(now.getTime() + (op.forMin ?? LIMITS.defaultForMin) * MIN);
+    if (r.basis === 'in-turn' && !turnActive(sb, R, now)) return 'I5: granted in-turn but the repo had no active turn';
+    if (r.basis === 'no-waiters' && (others.length > 0 || incumbent)) return 'I5: granted no-waiters while another repo waited or held the turn';
+    if (r.basis === 'head' && (longer.length > 0 || incumbent)) return 'I5: granted head while a repo that waited longer was ahead';
+    if (r.basis === 'backfill' && (!longer.length || longer.some((w) => admissionCheck(sb, { repoKey: w.repoKey, holder: '-' }, w.forMin, now, probe).ok))) return 'I5: granted backfill but a longer-waiting repo could have gone';
+    if (r.basis === 'gap' && !usesNamedGap(sb, R, now, end)) return 'I5: granted gap but no gap named for the repo covered the request';
+  }
+  if (r.ok === false && r.code === 'turn' && !(sb.waiters ?? []).length) return 'I5: refused for turn with nobody waiting';
+  for (const e of after.lease.journal ?? []) {
+    if (e.kind !== 'wait-ended' || e.reason !== 'lapsed' || (before.lease.journal ?? []).includes(e)) continue; // only entries THIS step added
+    const w = (before.lease.waiters ?? []).find((x) => x.episode === e.episode);
+    if (!w || w.offeredAt === undefined || now.getTime() - Date.parse(w.offeredAt) < LIMITS.claimMs) return `I5: ${e.episode} lapsed without 15 continuous minutes of being offered the slot (waiter ${JSON.stringify(w)} now ${now.toISOString()} op ${op.op})`;
+    stats.lapsed += 1;
+  }
   return null;
 }
 
 const T0 = new Date('2026-10-14T06:00:00.000Z');
+const mixOf = (seed) => ['uniform', 'calm', 'gappy'][seed % 3];
 /** What the random search actually exercised, so a green run cannot be a run that never reached the interesting states. */
-const stats = { granted: 0, announceRefusedHeld: 0, announceOverHeld: 0, queued: 0, served: 0, cancelled: 0, clears: 0 };
+const stats = { granted: 0, announceRefusedHeld: 0, announceOverHeld: 0, queued: 0, served: 0, cancelled: 0, clears: 0, turnRefused: 0, inTurn: 0, backfill: 0, gapGrants: 0, gapAcquires: 0, lapsed: 0, endTurn: 0, overTurn: 0, offered: 0 };
 function tally(op, r) {
   if (op.op === 'acquire' && r.ok) stats.granted += 1;
   if (op.op === 'acquire' && r.queued) stats.queued += 1;
@@ -133,6 +200,14 @@ function tally(op, r) {
   if (op.op === 'announce' && r.ok && r.window?.overHeld) stats.announceOverHeld += 1;
   if (op.op === 'wait' && r.cancelled) stats.cancelled += 1;
   if (op.op === 'clear' && r.ok) stats.clears += 1;
+  if (r.code === 'turn') stats.turnRefused += 1;
+  if (op.op === 'acquire' && r.basis === 'in-turn') stats.inTurn += 1;
+  if (op.op === 'acquire' && r.basis === 'backfill') stats.backfill += 1;
+  if (op.op === 'acquire' && r.basis === 'gap') stats.gapAcquires += 1;
+  if (op.op === 'grant' && r.ok) stats.gapGrants += 1;
+  if (op.op === 'release' && op.endTurn && r.ok) stats.endTurn += 1;
+  if (op.op === 'announce' && r.ok && r.overTurn) stats.overTurn += 1;
+
   if (r.ok && (r.lease?.journal ?? []).some((e, i, a) => i === a.length - 2 && e.kind === 'wait-ended' && e.reason === 'served')) stats.served += 1;
 }
 
@@ -145,7 +220,7 @@ describe('lease interleavings (property test, seeded)', () => {
     const wrote = { lease: emptyLease(), now: T0, result: { ok: false, code: 'bad-request' } };
     assert.match(violation(before, wrote, op), /I3: a bad request wrote something/);
     const noJournal = { lease: emptyLease(), now: T0, result: { ok: true } };
-    assert.match(violation(before, noJournal, { ...op, op: 'acquire' }), /I4: a successful acquire left the journal/);
+        assert.match(violation(before, noJournal, { ...op, op: 'acquire' }), /I4: a successful acquire by o\/a added no acquired entry of its own/);
   });
 
   it('the 08:06Z race: an announce over a slot another repo acquired seconds earlier is not an unacknowledged overlap', () => {
@@ -173,7 +248,7 @@ describe('lease interleavings (property test, seeded)', () => {
       let state = { lease: emptyLease(), now: T0 };
       const prefix = [];
       for (let i = 0; i < 40; i += 1) {
-        const op = randomOp(rnd);
+        const op = randomOp(rnd, mixOf(seed));
         prefix.push(op);
         const next = apply(state, op);
         tally(op, next.result);
@@ -185,8 +260,8 @@ describe('lease interleavings (property test, seeded)', () => {
       }
     }
     // Vacuous-pass guard: the invariants held AND the search reached the states they are about.
-    for (const [k, min] of Object.entries({ granted: 200, announceRefusedHeld: 50, announceOverHeld: 20, queued: 200, served: 20, cancelled: 20, clears: 50 })) {
-      assert.ok(stats[k] >= min, `the random search barely exercised ${k} (${stats[k]} < ${min}): a green run proves nothing about it`);
+    for (const [k, min] of Object.entries({ granted: 200, announceRefusedHeld: 50, announceOverHeld: 10, queued: 200, served: 20, cancelled: 20, clears: 50, turnRefused: 100, inTurn: 20, backfill: 5, gapGrants: 20, gapAcquires: 5, endTurn: 10, overTurn: 10, lapsed: 3 })) {
+      assert.ok(stats[k] >= min, `the random search barely exercised ${k} (${stats[k]} < ${min}): a green run proves nothing about it. Reached: ${JSON.stringify(stats)}`);
     }
   });
 });

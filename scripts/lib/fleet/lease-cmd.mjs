@@ -17,23 +17,25 @@ import { ArgvError } from '../cli-io.mjs';
 import { failed, ok, refused, selfId } from './commands.mjs';
 import { gitCommonDir, runGit } from './git-facts.mjs';
 import {
-  LeaseConfigError, measureSlotWaits, repoLabel, decideAcquire, decideAnnounce, decideAttach, decideClearWindow, decideRelease, decideWait, defaultProbe,
+  LIMITS, LeaseConfigError, measureSlotWaits, repoLabel, decideAcquire, decideAnnounce, decideAttach, decideClearWindow, decideGrant, decideRelease, decideTurnConfig, decideWait, defaultProbe,
   machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable, renderLog, renderStatus, repoKeyOf, summarise,
   transactLease,
 } from './lease.mjs';
 
-export const SUBS = Object.freeze(['acquire', 'attach', 'release', 'status', 'announce', 'peak', 'wait', 'log']);
+export const SUBS = Object.freeze(['acquire', 'attach', 'release', 'status', 'announce', 'peak', 'wait', 'log', 'grant', 'turn']);
 
 /** The flags each sub-command accepts (besides `--json`); anything else is an argument error, never ignored. */
 const ALLOWED = Object.freeze({
   acquire: ['--kind', '--for', '--pid', '--token', '--note', '--id'],
   attach: ['--pid', '--token', '--id'],
-  release: ['--token', '--id', '--force', '--reason'],
+  release: ['--token', '--id', '--force', '--reason', '--end-turn'],
   status: [],
-  announce: ['--kind', '--from', '--until', '--note', '--id', '--clear-window', '--over-held'],
+  announce: ['--kind', '--from', '--until', '--note', '--id', '--clear-window', '--over-held', '--over-turn'],
   peak: ['--hours', '--clear'],
   wait: ['--for', '--cancel', '--note', '--id'],
   log: ['--limit'],
+  grant: ['--window', '--from', '--until', '--to', '--id'],
+  turn: ['--minutes', '--clear'],
 });
 
 const hhmm = (d) => `${d.toISOString().slice(11, 16)}Z`;
@@ -153,7 +155,8 @@ export function cmdLease(ctx, flags, positionals) {
     }
     case 'release': {
       forced = flags['--force'] === true;
-      const req = { ...base, token: text(flags['--token']), force: forced, reason: text(flags['--reason']) };
+      const req = { ...base, token: text(flags['--token']), force: forced, reason: text(flags['--reason']), endTurn: flags['--end-turn'] === true };
+      if (forced && req.endTurn) throw new ArgvError('fleet lease release: --end-turn is for the holder\'s own release, not --force');
       if (!forced && flags['--reason'] !== undefined) throw new ArgvError('fleet lease release: --reason is only for --force');
       decide = (lease) => decideRelease(lease, req, ctx.now, probe);
       describe = (d) => ({
@@ -166,27 +169,47 @@ export function cmdLease(ctx, flags, positionals) {
       if (flags['--clear-window'] !== undefined) {
         for (const f of ['--kind', '--from', '--until', '--note']) if (flags[f] !== undefined) throw new ArgvError(`fleet lease announce: ${f} cannot be combined with --clear-window`);
         const req = { ...base, id: String(flags['--clear-window']) };
-        decide = (lease) => decideClearWindow(lease, req, ctx.now);
+        decide = (lease) => decideClearWindow(lease, req, ctx.now, probe);
         describe = (d) => ({ window: d.window, text: `OK: window ${d.window.id} cleared${d.event ? ' (it belonged to another repo; recorded)' : ''}` });
         break;
       }
       if (flags['--kind'] === undefined || flags['--until'] === undefined) throw new ArgvError('fleet lease announce: --kind quiet|ci and --until <iso|+Nm> are required');
       const req = { ...base, kind: String(flags['--kind']), from: text(flags['--from']), until: String(flags['--until']), note: text(flags['--note']) };
       req.overHeld = flags['--over-held'] === true;
+      req.overTurn = flags['--over-turn'] === true;
       decide = (lease) => decideAnnounce(lease, req, ctx.now, probe);
       describe = (d) => ({
         window: d.window,
         text: [
           `OK: ${d.window.kind} window ${d.window.id} for ${d.window.repo}, ${hhmm(new Date(d.window.from))} to ${hhmm(new Date(d.window.until))}`,
           ...(d.overHeld ? [`WARNING: recorded OVER the slot held by ${d.overHeld.holder} (${d.overHeld.repo}) until ${hhmm(new Date(d.overHeld.until))}; --over-held acknowledged`] : []),
+          ...(d.overTurn ? [`WARNING: recorded OVER the turn of ${d.overTurn.repo}, which is waiting; --over-turn acknowledged`] : []),
         ].join('\n'),
       });
+      break;
+    }
+    case 'grant': {
+      if (flags['--window'] === undefined || flags['--until'] === undefined) throw new ArgvError('fleet lease grant: --window <id> and --until <iso|+Nm> are required (--from defaults to now, --to to anyone)');
+      const req = { ...base, id: String(flags['--window']), from: flags['--from'] === undefined ? '+0m' : String(flags['--from']), until: String(flags['--until']), to: text(flags['--to']) };
+      decide = (lease) => decideGrant(lease, req, ctx.now, probe);
+      describe = (d) => ({
+        window: d.window, gap: d.gap,
+        text: `OK: gap ${hhmm(new Date(d.gap.from))} to ${hhmm(new Date(d.gap.until))} granted in window ${d.window.id} to ${d.gap.toRepo ?? 'anyone'}`,
+      });
+      break;
+    }
+    case 'turn': {
+      const clear = flags['--clear'] === true;
+      if (clear === (flags['--minutes'] !== undefined)) throw new ArgvError(`fleet lease turn: pass exactly one of --minutes <${LIMITS.minTurnMin}-${LIMITS.maxTurnMin}> or --clear`);
+      const req = { clear, minutes: clear ? undefined : wholeNumber(flags, '--minutes') };
+      decide = (lease) => decideTurnConfig(lease, req);
+      describe = (d) => ({ turnMin: d.lease.turnMin ?? null, text: clear ? `OK: turn length restored to the default (${LIMITS.defaultTurnMin} minutes)` : `OK: turn length for this machine is ${req.minutes} minutes` });
       break;
     }
     case 'wait': {
       const req = { ...base, forMin: wholeNumber(flags, '--for'), note: text(flags['--note']), cancel: flags['--cancel'] === true };
       if (req.cancel && (req.forMin !== undefined || req.note !== undefined)) throw new ArgvError('fleet lease wait: --cancel cannot be combined with --for or --note');
-      decide = (lease) => decideWait(lease, req, ctx.now);
+      decide = (lease) => decideWait(lease, req, ctx.now, probe);
       describe = (d) => ({
         waiter: d.waiter, cancelled: d.cancelled,
         text: req.cancel ? (d.cancelled ? 'OK: this repo is no longer waiting for the slot' : 'OK: this repo was not waiting')

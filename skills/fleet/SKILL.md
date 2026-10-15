@@ -49,8 +49,9 @@ Usage:
   /fleet proposal <id> --folded <session> | --queued <reason> | --declined <reason> | --done <PR>  # set its outcome; history only grows
   /fleet proposals [--all]                       # the findings queue grouped by theme; blocked-by rechecked from facts
   /fleet lease acquire [--kind gate|test|timing|maintenance] [--for <1-180>] [--pid <n>] [--token <t>] [--note "..."]  # take the machine's one heavy slot (shared by every repo)
-  /fleet lease attach --pid <n> | release [--force --reason "..."] | status | log | wait [--cancel]  # pid; give back; read; history; queue
-  /fleet lease announce --kind quiet|ci --until <iso|+Nm> [--over-held] | --clear-window <id> | peak --hours "..."  # windows; detail: references/lease.md
+  /fleet lease attach --pid <n> | release [--end-turn] [--force --reason "..."] | status | log | wait [--cancel] | turn --minutes <n>
+  /fleet lease announce --kind quiet|ci --until <iso|+Nm> [--over-held|--over-turn] | --clear-window <id> | peak --hours "..."
+  /fleet lease grant --window <id> --until <t> [--to <r>]  # see references/lease.md
   /fleet hold on [--reason "..."] [--notify] | off [--note "..."]
   /fleet repair --quarantine <file>
   /fleet land [--select a,b] [--dry-run]         # build a train, one test run

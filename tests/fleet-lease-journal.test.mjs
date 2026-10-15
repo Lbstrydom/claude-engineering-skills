@@ -161,7 +161,7 @@ describe('wait episodes and the waiter list (D3b, audit R1 M1 and M2)', () => {
     let l = acq(heldByA(10), B, { forMin: 20 }, at(1)).lease;
     const ep = l.journal.find((e) => e.kind === 'waiting').episode;
     l = ok(rel(l, A, {}, at(5)));
-    l = ok(acq(l, B, { forMin: 20 }, at(6)));
+    l = ok(acq(l, B, { forMin: 20 }, at(20))); // after A's between-jobs gap: the batch is over and B (the head) goes
     assert.equal(l.waiters.length, 0);
     const ended = l.journal.find((e) => e.kind === 'wait-ended');
     assert.equal(ended.reason, 'served');
@@ -198,7 +198,7 @@ describe('wait episodes and the waiter list (D3b, audit R1 M1 and M2)', () => {
     assert.equal(refused.ok, false);
     assert.equal(refused.code, 'not-holder');
     assert.equal(refused.lease.waiters.length, 0, 'the expiry rides on the refusal');
-    assert.equal(refused.lease.journal.at(-1).reason, 'expired');
+    assert.equal(refused.lease.journal.find((e) => e.kind === 'wait-ended').reason, 'expired');
   });
   it('capacity: the 21st repo is told it was NOT queued and nothing is evicted; a repo already queued is never refused for room', () => {
     const repoN = (i) => ({ repoKey: i.toString(16).padStart(12, '0'), holder: 'main' });
@@ -236,13 +236,14 @@ describe('wait episodes and the waiter list (D3b, audit R1 M1 and M2)', () => {
     assert.equal(bad.lease, undefined);
     assert.equal(wait(lease, B, { forMin: 0 }).code, 'bad-request');
   });
-  it('wait records the repo explicitly, keeps since on repeat, and does not change who may take the slot', () => {
+  it('wait records the repo explicitly and keeps since on repeat; from here the queue is binding (turns, plan D6)', () => {
     const l0 = ok(wait(emptyLease(), B, { forMin: 45 }));
     assert.equal(l0.waiters[0].forMin, 45);
     assert.equal(l0.waiters[0].refusals, 0);
     const l1 = ok(wait(l0, B2, {}, at(5)));
     assert.equal(l1.waiters[0].since, l0.waiters[0].since);
-    assert.equal(acq(l1, A, { forMin: 10 }, at(6)).ok, true, 'in this release waiters are visible, not binding');
+    const other = acq(l1, A, { forMin: 10 }, at(6));
+    assert.equal(other.code, 'turn', 'B has waited longer and the slot is free: it is B\'s turn, a free slot is not a turn');
   });
 });
 
@@ -282,7 +283,7 @@ describe('what the operator sees', () => {
     assert.match(text, /waiting: o\/b since 08:01Z \(1 refusal, wants 20m\)/);
     assert.match(text, /journal: \d+ entries since 08:00Z \(`fleet lease log`\)/);
     const log = renderLog(l.journal).join('\n');
-    assert.match(log, /main@o\/a {2}acquired the slot \(granted\) gate 40m until 08:40Z|acquired the slot \(granted\)/);
+    assert.match(log, /main@o\/a {2}acquired the slot \(granted(, no-waiters)?\)/);
     assert.match(log, /started waiting \(refusal, held, wants 20m\)/);
     assert.match(log, /announced quiet window/);
     assert.match(renderLog([]).join('\n'), /journal: empty/);
