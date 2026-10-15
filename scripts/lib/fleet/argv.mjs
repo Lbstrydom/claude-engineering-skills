@@ -26,7 +26,7 @@ export const VERBS = Object.freeze({
   'archive-check': { bool: ['--json'], value: ['--id', '--min-kb'], repeat: [], positionals: [0, 1] },
   prune: { bool: ['--json', '--apply', '--remote', '--include-fresh'], value: [], repeat: [], positionals: [0, 0] },
   archive: { bool: ['--json', '--apply', '--discard-ignored', '--include-fresh'], value: [], repeat: [], positionals: [1, 1] },
-  handover: { bool: ['--json', '--dry-run', '--allow-older', '--scheduler-checked'], value: ['--from'], repeat: ['--repo'], positionals: [1, 1] },
+  handover: { bool: ['--json', '--dry-run', '--allow-older', '--scheduler-checked'], value: ['--from', '--scheduler-snapshot'], repeat: ['--repo'], positionals: [1, 1] },
   next: { bool: ['--json'], value: ['--id'], repeat: [], positionals: [0, 0] },
   restack: { bool: ['--json', '--replace'], value: ['--onto', '--from'], repeat: [], positionals: [0, 1] },
   directive: {

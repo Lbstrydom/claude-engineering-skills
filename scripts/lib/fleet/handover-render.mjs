@@ -43,9 +43,26 @@ function coordinationStep6(m, art) {
  */
 export const receiveCommand = (fleetCommand, json, platform = process.platform) => `${fleetCommand} ${renderCommand(['handover', 'receive', '--from', json], platform)}`;
 
+/**
+ * The fixed first sequence (p-20261014064526-328a): the CI queue and the lease BEFORE any discovery, because a fresh
+ * coordinator that starts by scanning repos launches work into a machine already running someone's CI.
+ */
+const PICKUP_ORDER = [
+  'Before resuming ANY work, in this order:',
+  '  (i) the CI queue: per repo, gh run list --status in_progress and gh run list --status queued; and fleet lease status (see "Machine lease at prepare" in the handover for what was held then);',
+  '  (ii) if anything is running, fleet lease announce a CI window for it first;',
+  '  (iii) only then discovery: fleet status, the unregistered-work scan, chips.',
+];
+
+/** Session ids die with the account (p-20261014064525-9019): peers are named by title and resolved live. */
+const PEERS_LINE = 'Peers: session ids belong to the old account and are dead after the switch. Name every peer coordinator by its title ("<REPO>: Coordinator", coordination rule 6) and resolve its live id with list_sessions before messaging it; any session id written in this handover is a pre-switch id.';
+
 function coordinationPrompt(m, art) {
+  const exported = m.scheduledTasks.filter((t) => t.export).length;
   return [
     'You are taking over coordination of Claude Code work on this machine from another account.',
+    ...PICKUP_ORDER,
+    PEERS_LINE,
     '0. Put every coordinator session in the same permission mode before posting anything to it (a message to a session in another mode is held, not read).',
     `1. Read the handover: ${art.md}`,
     `2. From any repo with the skills bundle, run: ${receiveCommand(m.fleetCommand, art.json)}`,
@@ -53,6 +70,7 @@ function coordinationPrompt(m, art) {
     '   Exit 0 with a "follow-ups (not failures)" block is a successful receive: work through each follow-up, but nothing failed.',
     '3. Confirm each "memory <dir> → <path>" line receive printed is where this account reads that repo\'s memory.',
     '4. Scheduled tasks: call list_scheduled_tasks, diff its ids against "Scheduled tasks" below, skip a one-off whose fireAt has passed (spent), and recreate only what is still wanted — the CLI cannot see the scheduler.',
+    ...(exported ? [`   Each task's full SKILL.md was exported (${exported} of ${m.scheduledTasks.length}); recreate from the copy and the schedule listed beside it. receive re-hashed the copies: never recreate from one it flagged.`] : []),
     `   Then report every task whose lastRunAt is later than this handover's creation (${m.createdAt}): those fired because of the switch.`,
     '5. Review settings and MCP-server differences receive listed, by hand; they are never copied.',
     `   A claim parked with --waiting-on ${'human:account-switch'} is unblocked now: run the touch command receive printed for it.`,
@@ -66,13 +84,21 @@ function coordinationPrompt(m, art) {
  * fires every overdue one-off at once, so they are disabled or re-dated BEFORE the relaunch, here in the source
  * account. The CLI cannot read the scheduler; `--scheduler-checked` is the operator saying the step was done.
  */
+/** The memory-backup reminder: the operator's own command when FLEET_MEMORY_BACKUP_CMD was set, else a generic line. Memory is never copied into a repo. */
+export const memoryBackupLine = (m) => (m.memoryBackupCmd
+  ? `Back up harness memory to your own private store first: ${m.memoryBackupCmd}`
+  : 'Back up harness memory (every projects/*/memory under the config root) to your own private store first; never into a repo. Set FLEET_MEMORY_BACKUP_CMD to have the exact command printed here.');
+
 export function renderBeforeRelaunch(m) {
   if (!m.scheduledTasks.length) return [];
+  const noSnapshot = m.scheduledTasks.some((t) => /no --scheduler-snapshot/.test(t.scheduleUnknown ?? ''));
   return [
     `BEFORE YOU RELAUNCH (${m.scheduledTasks.length} scheduled task(s) on disk${m.schedulerChecked ? '; confirmed with --scheduler-checked' : ''}):`,
     '  1. Call list_scheduled_tasks. For every ENABLED one-off whose fireAt has passed and whose lastRunAt is absent or earlier than fireAt,',
     '     disable it (update_scheduled_task) or give it a new date: a relaunch runs every overdue one-off at once.',
     `  2. Then run prepare again with --scheduler-checked.${m.schedulerChecked ? '' : ' Until then this handover is NOT ready (exit 3).'} Pass it only after step 1 is done.`,
+    ...(noSnapshot ? ['  3. Save the list_scheduled_tasks answer (JSON) to a file and pass it as --scheduler-snapshot <file>: without it each task travels with no cron, fireAt or enabled state.'] : []),
+    `  ${noSnapshot ? 4 : 3}. ${memoryBackupLine(m)}`,
   ];
 }
 
@@ -113,11 +139,29 @@ export function renderHandoverMarkdown(m, art) {
   L.push(...renderMergedUnreleased(m));
   L.push(...renderUnregistered(m));
   L.push('## Scheduled tasks (recreate in the new account; registration is never visible to the CLI)', '');
-  L.push(...(m.scheduledTasks.length ? m.scheduledTasks.map((t) => `- \`${t.id}\` — ${t.description}`) : ['- none']));
+  L.push(...(m.scheduledTasks.length ? m.scheduledTasks.map((t) => {
+    const sch = t.schedule ? `schedule: ${['cronExpression', 'fireAt', 'enabled', 'lastRunAt'].filter((k) => t.schedule[k] !== undefined).map((k) => `${k} ${t.schedule[k]}`).join(', ') || 'no fields'}` : `schedule: ${t.scheduleUnknown ?? 'unknown'}`;
+    const exp = t.export ? `full SKILL.md: \`${t.export.path}\` (sha256 ${t.export.sha256.slice(0, 12)})` : 'full SKILL.md: not exported (a manifest written before the export)';
+    return `- \`${t.id}\` — ${t.description}\n  - ${sch}\n  - ${exp}`;
+  }) : ['- none']));
+  L.push('', '## Machine lease at prepare', '', ...renderLease(m.lease));
+  L.push('', '## Back up memory', '', `- ${memoryBackupLine(m)}`);
   L.push('', '## User settings (presence only; never copied)', '');
   for (const s of m.settings) L.push(`- ${s.name}: ${s.exists ? 'present' : 'absent'} (\`${s.path}\`)`);
   L.push('', '## Coordination prompt for the new account', '', '```text', coordinationPrompt(m, art), '```', '');
   return L.join('\n');
+}
+
+/** The lease as prepare saw it (a manifest written before the field says so). */
+function renderLease(lease) {
+  if (!lease) return ['- not recorded (a manifest written before the lease field)'];
+  if (lease.unmeasured) return [`- UNMEASURED: ${lease.unmeasured}`];
+  return [
+    `- heavy slot: ${lease.holder ? `held by ${lease.holder.holder} (${lease.holder.repo}) for ${lease.holder.kind} until ${lease.holder.expiresAt}` : 'free'}`,
+    `- waiting: ${lease.waiters.length ? lease.waiters.map((w) => `${w.repo} since ${w.since}`).join(', ') : 'none'}`,
+    `- windows: ${lease.windows.length ? lease.windows.map((w) => `${w.kind} for ${w.repo} ${w.from} to ${w.until}`).join(', ') : 'none'}`,
+    ...(lease.turn ? [`- turn: ${lease.turn.repo} until ${lease.turn.endsAt}`] : []),
+  ];
 }
 
 /**
@@ -188,6 +232,7 @@ export function renderReceiveText(h) {
   // The CLI sees task FILES only; whether the scheduler has them registered is not checked here (plan q).
   L.push(`  scheduled tasks: ${h.tasks.length - s.missingTasks} file(s) present${s.missingTasks ? `, ${s.missingTasks} missing here` : ''}; scheduler registration not checked here`);
   for (const t of h.tasks.filter((x) => x.file === 'missing')) L.push(`    missing: ${t.id} — ${t.description}`);
+  for (const t of h.tasks.filter((x) => x.exportCheck === 'missing' || x.exportCheck === 'mismatch')) L.push(`    EXPORT ${t.exportCheck.toUpperCase()}: ${t.id} (${t.export?.path ?? '?'}) — do not recreate from this copy`);
   L.push(`  sessions still live (adopt or resume from the handover prompts): ${h.liveSessions.length ? h.liveSessions.map((x) => x.id).join(', ') : 'none'}`);
   for (const x of h.mergedUnreleased ?? []) L.push(`  merged but not released (${x.note}) — release it: ${x.release}${x.repo ? ` (in ${x.repo})` : ''}`);
   const since = h.liveSessions.filter((x) => x.sincePrepare);

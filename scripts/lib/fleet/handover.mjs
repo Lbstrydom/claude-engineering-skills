@@ -35,6 +35,8 @@ import { isTerminalState } from './overlap.mjs';
 import { fleetDir, listTrains, readSessions, realWithTail } from './registry.mjs';
 import { blocksHandover, ghUnknownLine, receiveCommand, renderBeforeRelaunch, renderHandoverMarkdown, renderReceiveText } from './handover-render.mjs';
 import { renderCommand } from './shell-quote.mjs';
+import { joinTaskRecords, parseSchedulerSnapshot, stageTaskExports, verifyTaskExports } from './handover-tasks.mjs';
+import { defaultProbe, machineDir, readLease, summarise } from './lease.mjs';
 
 export { blocksHandover, ghUnknownLine, renderHandoverMarkdown };
 export { claimCommand } from './handover-render.mjs';
@@ -53,7 +55,7 @@ export function handoverId(now = new Date(), rand = crypto.randomBytes(3).toStri
 
 const FLAG_CONTRACT = {
   prepare: { required: [], forbidden: ['--from', '--dry-run', '--allow-older'] },
-  receive: { required: ['--from'], forbidden: ['--repo', '--scheduler-checked'] },
+  receive: { required: ['--from'], forbidden: ['--repo', '--scheduler-checked', '--scheduler-snapshot'] },
 };
 
 /** Validated before ANY discovery or I/O (R1-M3); a violation is an argv error (exit 2). */
@@ -440,7 +442,24 @@ export const HandoverManifestSchema = z.object({
   memory: z.array(MemoryEntry),
   memoryErrors: z.array(z.object({ dirName: z.string(), reason: z.string() }).strict()),
   anomalies: z.array(z.object({ kind: z.string(), detail: z.string() }).strict()),
-  scheduledTasks: z.array(z.object({ id: z.string(), description: z.string() }).strict()),
+  // export/schedule/scheduleUnknown are optional (PR 4): a manifest written before them still parses.
+  scheduledTasks: z.array(z.object({
+    id: z.string(), description: z.string(),
+    export: z.object({ path: z.string(), sha256: z.string().regex(/^[0-9a-f]{64}$/), bytes: z.number().int().nonnegative() }).strict().optional(),
+    schedule: z.object({ cronExpression: z.string().nullable().optional(), fireAt: z.string().nullable().optional(), enabled: z.boolean().optional(), lastRunAt: z.string().nullable().optional() }).strict().optional(),
+    scheduleUnknown: z.string().optional(),
+  }).strict()),
+  // optional (PR 4): the machine lease at prepare, or why it could not be read
+  lease: z.union([
+    z.object({ unmeasured: z.string() }).strict(),
+    z.object({
+      holder: z.object({ holder: z.string().nullable(), repo: z.string().nullable(), kind: z.string().nullable(), expiresAt: z.string().nullable() }).strict().nullable(),
+      waiters: z.array(z.object({ repo: z.string().nullable(), since: z.string().nullable() }).strict()),
+      windows: z.array(z.object({ id: z.string().nullable(), kind: z.string().nullable(), repo: z.string().nullable(), from: z.string().nullable(), until: z.string().nullable() }).strict()),
+      turn: z.object({ repo: z.string().nullable(), endsAt: z.string().nullable() }).strict().nullable(),
+    }).strict(),
+  ]).optional(),
+  memoryBackupCmd: z.string().optional(),
   // `volatile`: compared by identity, never by hash (plan o). A manifest written before it carries a `.claude.json`
   // hash, which receive ignores.
   settings: z.array(z.object({ name: z.string(), path: z.string(), exists: z.boolean(), sha256: z.string().nullable(), volatile: z.literal(true).optional() }).strict()),
@@ -469,27 +488,76 @@ function reserveArtifacts(dir, now) {
   throw new Error(`could not reserve a unique handover id under ${dir}`);
 }
 
-/** prepare: everything account-bound and coordination-live, written as JSON + markdown. Writes nothing to repos. */
-export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir() } = {}) {
+/** The machine lease as prepare saw it; an unreadable one is `{unmeasured}`, never an empty lease. */
+export function leaseState(env, now) {
+  const str = (v) => (v === undefined || v === null ? null : String(v));
+  try {
+    const s = summarise(readLease(machineDir(env)), now instanceof Date ? now : new Date(), defaultProbe());
+    if (!s.measured) return { unmeasured: s.reason ?? s.state };
+    const h = s.holder;
+    return {
+      holder: h ? { holder: str(h.holder), repo: str(h.repo), kind: str(h.kind), expiresAt: str(h.expiresAt) } : null,
+      waiters: (s.waiters ?? []).map((w) => ({ repo: str(w.repo), since: str(w.since) })),
+      windows: (s.windows ?? []).map((w) => ({ id: str(w.id), kind: str(w.kind), repo: str(w.repo), from: str(w.from), until: str(w.until) })),
+      turn: s.turn ? { repo: str(s.turn.repo), endsAt: str(s.turn.endsAt) } : null,
+    };
+  } catch (e) { return { unmeasured: e.message }; }
+}
+
+/**
+ * prepare: everything account-bound and coordination-live, written as JSON + markdown. Writes nothing to repos.
+ * Returns `{error}` (nothing published) when the scheduler snapshot is invalid or a task cannot be exported.
+ * `taskIo` and `beforeManifest` are fault-injection seams for the publication contract.
+ */
+export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir(), taskIo, beforeManifest } = {}) {
   const configDir = claudeConfigDir(ctx.env, { homedir });
+  const tasks = collectScheduledTasks(configDir);
+  let byId = null;
+  if (flags['--scheduler-snapshot'] !== undefined) {
+    let text;
+    try { text = fs.readFileSync(path.resolve(ctx.cwd, String(flags['--scheduler-snapshot'])), 'utf8'); } catch (e) { return { error: `cannot read the scheduler snapshot (${e.code ?? e.message})` }; }
+    const snap = parseSchedulerSnapshot(text, tasks.map((t) => t.id));
+    if (!snap.ok) return { error: snap.reason };
+    byId = snap.byId;
+  }
   const { memory, anomalies, errors: memoryErrors } = collectMemory(configDir);
   const scope = await resolveRepoScope(ctx.cwd, flags['--repo'] ?? []);
   const deadlineAt = Date.now() + UNREGISTERED_BUDGET.handoverMs;
   const repos = scope.repos.map((r) => repoState(r, { env: ctx.env, now: ctx.now, deadlineAt }));
   const handoverDir = path.join(ctx.dir, 'handover');
   const art = reserveArtifacts(handoverDir, ctx.now instanceof Date ? ctx.now : new Date());
+  const tasksDir = path.join(handoverDir, `handover-${art.id}-tasks`);
+  const unpublish = (withTasks) => {
+    for (const f of [art.json, art.md]) { try { fs.unlinkSync(f); } catch { /* best effort: a reserved empty file is not a ready handover */ } }
+    if (withTasks) { try { fs.rmSync(tasksDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } }
+  };
+  let exports = null;
+  if (tasks.length) {
+    const st = stageTaskExports({ configDir, ids: tasks.map((t) => t.id), destDir: tasksDir, io: taskIo });
+    if (!st.ok) { unpublish(false); return { error: `scheduled-task export failed: ${st.reason}; nothing was published` }; }
+    exports = st.exports;
+  }
   const manifest = {
     schemaVersion: HANDOVER_SCHEMA_VERSION, id: art.id, createdAt: new Date().toISOString(),
     sourceConfigDir: configDir, sourceConfigDirReal: realWithTail(configDir), invokingRepo: scope.repos[0],
     fleetCommand: ctx.cmd ?? 'node scripts/fleet.mjs',
     scope: { sourceRepo: scope.sourceRepo, repos }, memory, memoryErrors, anomalies,
-    scheduledTasks: collectScheduledTasks(configDir), settings: settingsFiles(configDir, ctx.env, homedir),
+    scheduledTasks: joinTaskRecords(tasks, exports, byId), settings: settingsFiles(configDir, ctx.env, homedir),
+    lease: leaseState(ctx.env, ctx.now),
+    ...(ctx.env.FLEET_MEMORY_BACKUP_CMD?.trim() ? { memoryBackupCmd: ctx.env.FLEET_MEMORY_BACKUP_CMD.trim() } : {}),
     identity: accountIdentity(claudeJsonPath(configDir, ctx.env, homedir)),
     schedulerChecked: Boolean(flags['--scheduler-checked']),
   };
-  HandoverManifestSchema.parse(manifest); // a manifest prepare cannot itself validate is a bug, never a file
-  atomicWriteFileSync(art.json, `${JSON.stringify(manifest, null, 2)}\n`);
-  atomicWriteFileSync(art.md, renderHandoverMarkdown(manifest, art));
+  try {
+    beforeManifest?.();
+    HandoverManifestSchema.parse(manifest); // a manifest prepare cannot itself validate is a bug, never a file
+    // The markdown first, the manifest LAST: the manifest is what makes a handover receivable.
+    atomicWriteFileSync(art.md, renderHandoverMarkdown(manifest, art));
+    atomicWriteFileSync(art.json, `${JSON.stringify(manifest, null, 2)}\n`);
+  } catch (e) {
+    unpublish(true);
+    return { error: `the handover could not be published (${e.message}); the task copies were removed` };
+  }
   return { manifest, artifacts: art };
 }
 
@@ -629,6 +697,9 @@ export function receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, w
   if (tasks.length) {
     const missing = tasks.filter((t) => t.file === 'missing').length;
     out.push({ kind: 'scheduled-tasks', detail: `${tasks.length} scheduled task(s): ${tasks.length - missing} file(s) present, ${missing} missing here — confirm each in this account's scheduler, recreate what is still wanted` });
+    for (const t of tasks.filter((x) => x.exportCheck === 'missing' || x.exportCheck === 'mismatch')) {
+      out.push({ kind: 'task-export', detail: `the exported copy of ${t.id} is ${t.exportCheck === 'missing' ? 'missing' : 'not the copy prepare hashed'} (${t.export?.path ?? '?'}): do not recreate from it, read the source account's task instead` });
+    }
   }
   for (const s of settingsReview) out.push({ kind: 'settings', detail: `${s.name} ${s.status} — review by hand` });
   const a = identity.account;
@@ -703,8 +774,10 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
   }
 
   const taskRoot = scheduledTasksDir(destConfigDir);
+  const exportCheck = new Map(verifyTaskExports(m.scheduledTasks).map((x) => [x.id, x]));
   const tasks = m.scheduledTasks.map((t) => ({
     ...t, file: fs.existsSync(path.join(taskRoot, t.id, 'SKILL.md')) ? 'present' : 'missing', registration: 'unverified',
+    exportCheck: exportCheck.get(t.id)?.export ?? 'none',
   }));
   const ownSettings = settingsFiles(destConfigDir, ctx.env, homedir);
   const settings = m.settings.map((s) => {
@@ -805,7 +878,9 @@ export async function cmdHandover(ctx, flags, positionals) {
   const sub = positionals[0];
   checkHandoverFlags(sub, flags);
   if (sub === 'prepare') {
-    const { manifest, artifacts } = await prepareHandover(ctx, flags);
+    const prep = await prepareHandover(ctx, flags);
+    if (prep.error) return failed(prep.error, { handover: { reason: 'prepare-failed', detail: prep.error } });
+    const { manifest, artifacts } = prep;
     const sessions = manifest.scope.repos.reduce((n, r) => n + r.sessions.length, 0);
     const files = manifest.memory.reduce((n, mm) => n + mm.files.length, 0);
     const ghNote = manifest.scope.repos.filter((r) => r.gh && !r.gh.queried).map((r) => `\n  ${ghUnknownLine(r)}`).join('');
