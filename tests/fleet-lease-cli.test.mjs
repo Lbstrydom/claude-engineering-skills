@@ -5,6 +5,7 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { cleanupFleetRoots, runFleetAsync } from './helpers/fleet-repo.mjs';
 import { T0_PLUS_2H, deadPid, tokenOf, world } from './helpers/fleet-lease-world.mjs';
 
@@ -208,30 +209,48 @@ describe('gaps and turns through the real CLI (plan fleet-lease-turns-and-journa
     assert.match(log, /turn started until/);
   });
 
+  /** Give each throwaway repo an explicit origin, so its display label is known and does not depend on the temp folder name. */
+  const labelled = (w, a, b) => {
+    // The fixture may already have an origin (a local bare repo): add it if absent, then point it at the label's URL.
+    for (const [repo, label] of [[w.a.repo, a], [w.b.repo, b]]) {
+      spawnSync('git', ['-C', repo, 'remote', 'add', 'origin', `https://github.com/${label}.git`]);
+      spawnSync('git', ['-C', repo, 'remote', 'set-url', 'origin', `https://github.com/${label}.git`]);
+    }
+  };
+
   it('grant lets a named repo through a window its owner announced; a longer request is still refused; only the owner grants', () => {
     const w = world();
+    labelled(w, 'o/owner', 'o/grantee');
     assert.equal(w.runA(['lease', 'announce', '--kind', 'quiet', '--until', '+60m']).status, 0);
     const refused = w.runB(['lease', 'acquire', '--for', '10']);
     assert.equal(refused.status, 3);
     assert.match(refused.stdout, /announced a quiet window/);
     const id = w.read().windows[0].id;
     assert.equal(w.runB(['lease', 'grant', '--window', id, '--until', '+30m']).status, 3, 'B does not own the window');
-    // Both throwaway repos are labelled by their folder name, so a NAME is ambiguous here (and refused, never guessed);
-    // the unit tests cover a named gap with distinct labels. An open gap needs no name.
-    const ambiguous = w.runA(['lease', 'grant', '--window', id, '--until', '+30m', '--to', w.read().waiters[0].repo]);
-    assert.equal(ambiguous.status, 3);
-    assert.match(ambiguous.stdout, /more than one repo on this machine is labelled/);
-    const g = w.runA(['lease', 'grant', '--window', id, '--until', '+30m']);
+    assert.equal(w.runA(['lease', 'grant', '--window', id, '--until', '+10m', '--to', 'nobody/known']).status, 3, 'a repo the lease has not seen cannot be named');
+    assert.equal(w.runA(['lease', 'grant', '--until', '+10m']).status, 2, '--window is required');
+    const g = w.runA(['lease', 'grant', '--window', id, '--until', '+30m', '--to', 'o/grantee']);
     assert.equal(g.status, 0, g.stdout + g.stderr);
-    assert.match(g.stdout, /granted in window/);
+    assert.match(g.stdout, /granted in window .* to o\/grantee/);
     const past = w.runB(['lease', 'acquire', '--for', '45']);
     assert.equal(past.status, 3);
     assert.match(past.stdout, /a gap is granted to you until/);
     const inside = w.runB(['lease', 'acquire', '--for', '10']);
     assert.equal(inside.status, 0, inside.stdout + inside.stderr);
-    assert.match(w.runA(['lease', 'log']).stdout, /acquired the slot \(granted, no-waiters\)/);
-    assert.equal(w.runA(['lease', 'grant', '--window', id, '--until', '+10m', '--to', 'nobody/known']).status, 3);
-    assert.equal(w.runA(['lease', 'grant', '--until', '+10m']).status, 2, '--window is required');
+    assert.match(w.runA(['lease', 'log']).stdout, /acquired the slot \(granted, gap\)/);
+  });
+
+  it('a label two checkouts share is refused as ambiguous, never guessed; an open gap needs no name', () => {
+    const w = world();
+    labelled(w, 'o/same', 'o/same');
+    assert.equal(w.runA(['lease', 'announce', '--kind', 'quiet', '--until', '+60m']).status, 0);
+    assert.equal(w.runB(['lease', 'acquire', '--for', '10']).status, 3);
+    const id = w.read().windows[0].id;
+    const ambiguous = w.runA(['lease', 'grant', '--window', id, '--until', '+30m', '--to', 'o/same']);
+    assert.equal(ambiguous.status, 3);
+    assert.match(ambiguous.stdout, /more than one repo on this machine is labelled/);
+    assert.equal(w.runA(['lease', 'grant', '--window', id, '--until', '+30m']).status, 0);
+    assert.equal(w.runB(['lease', 'acquire', '--for', '10']).status, 0);
   });
 
   it('turn sets and clears the machine turn length; release --end-turn yields the turn; bad combinations are argument errors', () => {
