@@ -28,6 +28,7 @@ import { MANIFEST_RELATIVE_PATH } from '../scripts/lib/sync-manifest.mjs';
 import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
 import { gitFixtureEnv, makeGitRunner, mkdtemp, rmrfBestEffort } from './helpers/fixtures.mjs';
 import { currentScope, decideAcquire, decideRelease, readLease, transactLease } from '../scripts/lib/fleet/lease.mjs';
+import { repoIdentity } from '../scripts/lib/fleet/lease-cmd.mjs';
 
 const SHA = 'f3991844aa30eb2d3e87bd42f3f31bb1db850083';
 const SKILL = '.claude/skills/plan/SKILL.md';
@@ -544,6 +545,30 @@ describe('sync-pr CLI on real git — a same-bundle re-run retries a failed supe
       assert.equal(refs(), before, 'no branch was created');
       assert.equal(readLease(leaseDir).lease.waiters.length, 1, 'the consumer waits its turn in the queue');
       assert.equal(readLease(leaseDir).lease.heavy.holder, 'main', 'the other repo slot is untouched');
+    });
+
+    it('D13: the lease belongs to the SOURCE repo (holder sync-pr:<target>), the CI window stays with the TARGET', async () => {
+      const src = repoIdentity(up.dir);
+      const target = repoIdentity(fx.consumer);
+      assert.notEqual(src.repoKey, target.repoKey, 'fixture: two different repos');
+      const r = await syncThenSyncPr(() => undefined, ['--ci-window', '25'], { leaseDeps: { dir: leaseDir, sourceRoot: up.dir } });
+      assert.equal(r.code, 0, r.printed);
+      const l = readLease(leaseDir).lease;
+      const acquired = l.journal.find((e) => e.kind === 'acquired');
+      assert.equal(acquired.repoKey, src.repoKey, 'it queued and was granted as the source repo');
+      assert.equal(acquired.by, `sync-pr:fixture@${src.repo}`);
+      assert.equal(l.windows[0].repoKey, target.repoKey, 'the window protects the runner of the target');
+      assert.equal(l.windows[0].repo, target.repo);
+    });
+    it('D13: a worker of the TARGET repo holding the slot no longer starves the sync by identity - it is a plain other-repo hold (refused held, queued as the source)', async () => {
+      const target = repoIdentity(fx.consumer);
+      transactLease(leaseDir, (read) => {
+        const d = decideAcquire(read.lease, { identity: { repoKey: target.repoKey, holder: 'worker' }, repo: target.repo, forMin: 30, pid: 1 }, new Date(), { scope: currentScope(), isPidAlive: () => true });
+        return { value: d.ok, write: d.lease };
+      });
+      const r = await syncThenSyncPr(() => undefined, [], { leaseDeps: { dir: leaseDir, sourceRoot: up.dir } });
+      assert.equal(r.code, 3, r.printed);
+      assert.equal(readLease(leaseDir).lease.waiters[0].repoKey, repoIdentity(up.dir).repoKey, 'queued as the SOURCE repo');
     });
 
     it('granted with --ci-window: the PR is opened, the slot is freed AND a ci window for the consumer is recorded in the same write', async () => {

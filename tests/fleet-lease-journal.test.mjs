@@ -82,14 +82,15 @@ describe('the journal records every transition, with kind as the transition only
     assert.equal(first.kind, 'acquired');
     assert.equal(first.mode, 'granted');
     assert.equal(first.job.kind, 'test', 'the heavy-job kind is nested, not overwriting the transition');
-    l = ok(acq(l, A, { token: '1111111111111111', forMin: 30 }, at(5)));
+    l = ok(acq(l, A, { token: '1111111111111111', forMin: 1 }, at(5)));
     assert.equal(l.journal.at(-1).mode, 'renewed');
-    l = ok(acq(l, A, { forMin: 30 }, at(6)));
+    // A rotation is only possible once the slot EXPIRED (D12: a token-less acquire of a live own slot is refused); pid 1 is dead here.
+    l = ok(acq(l, A, { forMin: 30 }, at(10)));
     assert.equal(l.journal.at(-1).mode, 'rotated');
-    l = ok(rel(l, A, {}, at(7)));
+    l = ok(rel(l, A, {}, at(11)));
     assert.equal(l.journal.at(-1).kind, 'released');
     assert.equal(l.journal.at(-1).forced, false);
-    l = ok(ann(l, A, { kind: 'quiet' }, at(8)));
+    l = ok(ann(l, A, { kind: 'quiet' }, at(12)));
     const a = l.journal.at(-1);
     assert.equal(a.kind, 'announced');
     assert.equal(a.window.kind, 'quiet', 'the window kind is nested, not overwriting the transition');

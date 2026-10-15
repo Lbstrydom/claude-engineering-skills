@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { cleanupFleetRoots, runFleetAsync } from './helpers/fleet-repo.mjs';
-import { T0_PLUS_2H, deadPid, tokenOf, world } from './helpers/fleet-lease-world.mjs';
+import { T0, T0_PLUS_2H, deadPid, tokenOf, world } from './helpers/fleet-lease-world.mjs';
 
 after(cleanupFleetRoots);
 
@@ -109,17 +109,34 @@ describe('expiry is not proof the process stopped (D4)', () => {
 });
 
 describe('the token fence', () => {
-  it('a stale token is refused and the current one works; an acquire without a token rotates it', () => {
+  it('a stale token is refused and the current one works; an acquire without a token is refused while the slot is live (D12, finding 8182)', () => {
     const w = world();
     const t1 = tokenOf(w.runA(['lease', 'acquire']));
     assert.match(t1, /^[0-9a-f]{16}$/);
-    const t2 = tokenOf(w.runA(['lease', 'acquire']));
-    assert.notEqual(t2, t1, 'a bare re-acquire rotates the token');
-    const stale = w.runA(['lease', 'release', '--token', t1]);
+    // Two sessions of one checkout share the derived name: the second one's bare acquire must NOT take over the first one's job.
+    const second = w.runA(['lease', 'acquire']);
+    assert.equal(second.status, 3, second.stdout);
+    assert.match(second.stdout, /already holds the slot until \d\d:\d\dZ; to extend it pass --token/);
+    assert.match(second.stdout, /its own --id/);
+    assert.doesNotMatch(second.stdout, /This repo is now waiting/, 'the same identity does not queue behind itself');
+    assert.equal(w.read().heavy.token, t1, 'no rotation');
+    const stale = w.runA(['lease', 'release', '--token', 'ffffffffffffffff']);
     assert.equal(stale.status, 3); assert.match(stale.stdout, /stale fence/);
-    assert.equal(w.runA(['lease', 'acquire', '--token', t2, '--for', '60']).status, 0, 'the matching token renews');
-    assert.equal(w.read().heavy.token, t2);
-    assert.equal(w.runA(['lease', 'release', '--token', t2]).status, 0);
+    assert.equal(w.runA(['lease', 'acquire', '--token', t1, '--for', '60']).status, 0, 'the matching token renews');
+    assert.equal(w.read().heavy.token, t1);
+    assert.equal(w.runA(['lease', 'release', '--token', t1]).status, 0);
+  });
+  it('a renewal past the turn of the repo is refused while another repo waits, saying that the lease is not extended (D11, finding 20ec)', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'turn', '--minutes', '15']).status, 0, 'a short turn, set before it starts');
+    const t1 = tokenOf(w.runA(['lease', 'acquire', '--for', '30']));
+    assert.equal(w.runB(['lease', 'acquire', '--for', '10']).status, 3, 'repo B queues');
+    const at = (min) => ({ FLEET_NOW: new Date(Date.parse(T0) + min * 60_000).toISOString() });
+    assert.equal(w.runA(['lease', 'acquire', '--token', t1, '--for', '30'], at(10)).status, 0, 'inside the 15-minute turn a renewal is granted');
+    const late = w.runA(['lease', 'acquire', '--token', t1, '--for', '30'], at(20));
+    assert.equal(late.status, 3, late.stdout);
+    assert.match(late.stdout, /this lease is not extended - finish and `lease release`/);
+    assert.equal(w.read().heavy.token, t1, 'the job is not cut');
   });
 });
 

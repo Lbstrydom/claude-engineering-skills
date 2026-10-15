@@ -100,16 +100,19 @@ describe('acquire: the slot rules (D4)', () => {
     assert.equal(rel.code, 'not-holder');
   });
 
-  it('renews with the matching token (token kept), rotates without one, refuses a wrong one', () => {
+  it('renews with the matching token (token kept), rotates an EXPIRED own slot without one, refuses a wrong one (a live own slot is not rotated: D12)', () => {
     const renewed = acq(held(A, 5), A, { token: T1, forMin: 60 });
     assert.equal(renewed.ok, true); assert.equal(renewed.renewed, true);
     assert.equal(renewed.heavy.token, T1);
     assert.equal(renewed.heavy.startedAt, at(-10).toISOString(), 'a renewal keeps the original start');
     assert.equal(renewed.heavy.expiresAt, at(60).toISOString());
 
-    const rotated = acq(held(A, 5), A);
+    const rotated = acq(held(A, 5), A, {}, at(30)); // expired at +5, no pid: unverifiable is for ANOTHER holder; the same identity takes it back
     assert.equal(rotated.ok, true); assert.equal(rotated.rotated, true);
     assert.equal(rotated.heavy.token, T2, 'an unauthenticated re-acquire must not inherit the old token (Gemini round 2)');
+    const live = acq(held(A, 5), A);
+    assert.equal(live.ok, false); assert.equal(live.code, 'held');
+    assert.match(live.reason, /--token/);
 
     const wrong = acq(held(A, 5), A, { token: 'ffffffffffffffff' });
     assert.equal(wrong.code, 'stale-token');
@@ -125,7 +128,7 @@ describe('acquire: the slot rules (D4)', () => {
     assert.equal(r.heavy.expiresAt, at(60).toISOString());
     const restated = acq(lease, A, { token: T1, forMin: 60, kind: 'gate', note: 'longer', pid: 999 });
     assert.equal(restated.heavy.kind, 'gate'); assert.equal(restated.heavy.note, 'longer'); assert.equal(restated.heavy.pid, 999);
-    assert.equal(acq(lease, A, { forMin: 60 }).heavy.pid, undefined, 'a bare re-acquire is a NEW job: it does not inherit the old pid');
+    assert.equal(acq(lease, A, { forMin: 60 }, at(30)).heavy.pid, undefined, 'a bare re-acquire of an expired own slot is a NEW job: it does not inherit the old pid');
   });
 
   it('expiry is exact: held one millisecond before expiresAt, expired at it', () => {

@@ -14,7 +14,7 @@ file), 2 argv.
 
 | Verb | What it does |
 |---|---|
-| `lease acquire [--kind] [--for 1-180] [--pid] [--token] [--note]` | Take the slot. Prints a `token`; pass it to `attach`/`release`/a renewing `acquire` so a stale caller is refused. A refusal queues your repo. |
+| `lease acquire [--kind] [--for 1-180] [--pid] [--token] [--note]` | Take the slot. Prints a `token`; pass it to `attach`/`release`/a renewing `acquire` so a stale caller is refused. A refusal queues your repo. A bare `acquire` of a slot your own name still holds LIVE is refused (it would take another session's job): extend with `--token`, and give a second session of the same checkout its own `--id`. |
 | `lease attach --pid <n>` | Record the job's pid so a later session can verify it stopped. |
 | `lease release [--token] [--end-turn] [--force --reason]` | Give the slot back. `--end-turn` says this repo has nothing further ready, so the queue moves at once - unless another job of the SAME repo is waiting: then it is downgraded to a plain release (the turn stays, the output says so, `--json` has `turnKept`); `lease wait --cancel` first to hand the turn over anyway. `--force` is for an EXPIRED slot a person has judged gone. |
 | `lease announce --kind quiet\|ci --until <iso\|+Nm> [--from] [--note] [--over-held] [--over-turn]` | Tell other repos not to run heavy work in a window. |
@@ -30,7 +30,7 @@ file), 2 argv.
 
 `lease acquire` then `release` is a protocol every caller has to get right, and two callers did not: a wrapper that ignored a
 REFUSED acquire and ran the command anyway (2026-10-14), and a `timeout` wrapper that SIGTERMed the push it was protecting
-(2026-10-15). `lease run -- <cmd>` is that protocol in one verb, and `sync:pr` uses the same code:
+(2026-10-15). `lease run -- <cmd>` is that protocol in one verb, and `sync:pr` uses the same code (it leases as the SOURCE repo, holder `sync-pr:<target>`, so it takes CES's turns; the CI window it records stays the TARGET's):
 
 - It takes the slot **exclusively** (a second run under the same session is refused, never silently rotated), recording the
   runner's own pid, then runs `<cmd>` with its argv **verbatim** (no shell; a `.cmd` on Windows needs `cmd /c`) and the child's
@@ -94,8 +94,11 @@ its time. A FREE slot is not a turn.
 - **The rule for a fresh grant.** A gap named for the repo; else its own active turn (`in-turn`); else, if another repo's
   turn is active and anyone waits, refused (`turn`: the incumbent goes first); else if nobody else waits, granted; else
   the repo goes if it is the head, or if every repo that has waited longer cannot take the slot right now (`backfill`,
-  so a head that cannot fit before a window does not block a shorter job that can). Renewing the running job is never
-  a new job and skips the rule. The journal's `acquired` entry records the `basis`.
+  so a head that cannot fit before a window does not block a shorter job that can). Renewing the running job (or taking
+  back your own EXPIRED slot) is never a new job - it starts no turn and does not restart the budget, which counts from the
+  turn's first grant - but it is judged by the same rule as if the slot were free: **once your turn is over and another repo
+  waits, a renewal is refused** (`turn`, "this lease is not extended"; the job is not cut, finish and `release`). It also
+  leaves your repo's own waiter entry alone. The journal's `acquired` entry records the `basis`.
 - **Announcing a window** that starts within the turn length answers to the same queue; `--over-turn` records a window
   that is already running, naming the repo it overrode; it starts no turn for the overrider and ends nobody's. A window
   further ahead is a commitment, not checked.

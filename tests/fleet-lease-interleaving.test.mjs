@@ -54,7 +54,8 @@ function randomOp(rnd, mix = 'uniform') {
   if (mix === 'calm') {
     if (roll < 0.30) return { ...base, op: 'wait', forMin: int(rnd, 1, 20), cancel: false };
     if (roll < 0.60) return { ...base, op: 'advance', min: int(rnd, 5, 40) };
-    if (roll < 0.78) return { ...base, op: 'acquire', forMin: int(rnd, 1, 20), pid: 4242 };
+    if (roll < 0.70) return { ...base, op: 'acquire', forMin: int(rnd, 1, 20), pid: 4242 };
+    if (roll < 0.78) return { ...base, op: 'renew', forMin: int(rnd, 5, 40) };
     if (roll < 0.92) return { ...base, op: 'release', endTurn: rnd() < 0.2 };
     return { ...base, op: 'wait', forMin: int(rnd, 1, 20), cancel: true };
   }
@@ -62,11 +63,13 @@ function randomOp(rnd, mix = 'uniform') {
     if (roll < 0.22) return { ...base, op: 'announce', kind: 'quiet', fromMin: 0, durMin: int(rnd, 30, 120), overHeld: false, overTurn: rnd() < 0.5 };
     if (roll < 0.52) return { ...base, op: 'grant', pick: rnd(), a: 0, b: int(rnd, 20, 90), to: pick(rnd, ['o/a', 'o/b', 'o/c']) };
     if (roll < 0.62) return { ...base, op: 'wait', forMin: int(rnd, 1, 20), cancel: false };
-    if (roll < 0.86) return { ...base, op: 'acquire', forMin: int(rnd, 1, 10), pid: 4242 };
+    if (roll < 0.78) return { ...base, op: 'acquire', forMin: int(rnd, 1, 10), pid: 4242 };
+    if (roll < 0.86) return { ...base, op: 'renew', forMin: int(rnd, 5, 30) };
     if (roll < 0.94) return { ...base, op: 'release', endTurn: false };
     return { ...base, op: 'advance', min: int(rnd, 1, 10) };
   }
-  if (roll < 0.28) return { ...base, op: 'acquire', forMin: int(rnd, 1, 60), pid: 4242 };
+  if (roll < 0.22) return { ...base, op: 'acquire', forMin: int(rnd, 1, 60), pid: 4242 };
+  if (roll < 0.30) return { ...base, op: 'renew', forMin: int(rnd, 5, 60) };
   if (roll < 0.42) return { ...base, op: 'release', endTurn: rnd() < 0.2 };
   if (roll < 0.60) {
     return { ...base, op: 'announce', kind: pick(rnd, ['quiet', 'ci']), fromMin: pick(rnd, [0, 0, int(rnd, 1, 90)]), durMin: int(rnd, 5, 120), overHeld: rnd() < 0.25, overTurn: rnd() < 0.25 };
@@ -86,6 +89,13 @@ function apply(state, op) {
   switch (op.op) {
     case 'acquire': d = decideAcquire(lease, { ...common, forMin: op.forMin, pid: op.pid }, now, probe); break;
     case 'release': d = decideRelease(lease, { ...common, endTurn: op.endTurn }, now, probe); break;
+    case 'renew': {
+      // Only the holder can renew: it presents the CURRENT token. Anyone else has nothing to renew (a no-op, not an acquire).
+      const h = lease.heavy;
+      if (!h || h.repoKey !== id.repoKey || h.holder !== id.holder) return { lease, now, result: { ok: true, noop: true } };
+      d = decideAcquire(lease, { ...common, forMin: op.forMin, token: h.token }, now, probe);
+      break;
+    }
     case 'grant': {
       const mine = lease.windows.filter((x) => x.repoKey === id.repoKey);
       const w = mine[Math.floor(op.pick * mine.length)];
@@ -154,7 +164,46 @@ function violation(before, after, op) {
   for (const w of lease.waiters ?? []) {
     if (ended.has(w.episode)) return `I4: ${w.repo} is still waiting in an episode the journal says ended`;
   }
-  return basisViolation(before, after, op) ?? endTurnViolation(before, after, op);
+  return basisViolation(before, after, op) ?? endTurnViolation(before, after, op) ?? continuationViolation(before, after, op);
+}
+
+/**
+ * I7 (D11) and I8 (D12). I7: a holder's renewal is granted iff a fresh grant would be on a FREE slot (the repo's turn is active, or
+ * a named gap, or nobody else waits, or it is the head, or every longer-waiting repo could not go anyway), it is always same-job
+ * (no turn started, no wait served), and a refusal for the turn means that condition was false. I8: a token-less acquire by the
+ * identity that holds a LIVE slot never succeeds.
+ */
+function continuationViolation(before, after, op) {
+  const r = after.result;
+  const sb = settleQueue(before.lease, before.now, probe);
+  const now = after.now;
+  const h = sb.heavy;
+  const R = op.repo.repoKey;
+  const mineLive = h && h.repoKey === R && h.holder === op.holder && classifyHeavy(h, now, probe).state === 'held';
+  if (op.op === 'acquire' && mineLive && r.ok) return 'I8: a token-less acquire succeeded on a live slot its own identity holds';
+  if (op.op !== 'renew' || r.noop) return null;
+  const proj = { ...sb, heavy: null };
+  const waiters = sb.waiters ?? [];
+  const others = waiters.filter((w) => w.repoKey !== R);
+  const end = new Date(now.getTime() + op.forMin * MIN);
+  const incumbent = sb.turn && sb.turn.repoKey !== R && turnActive(sb, sb.turn.repoKey, now) && waiters.length > 0;
+  const mine = waiters.find((w) => w.repoKey === R);
+  const mySince = mine ? Date.parse(mine.since) : now.getTime();
+  const longer = mine ? others.filter((w) => Date.parse(w.since) < mySince || (Date.parse(w.since) === mySince && w.repoKey < R)) : others;
+  const couldGo = (w) => admissionCheck(proj, { repoKey: w.repoKey, holder: '-' }, w.forMin, now, probe).ok;
+  const fair = usesNamedGap(sb, R, now, end) || turnActive(sb, R, now) || (!incumbent && (!others.length || !longer.length || !longer.some(couldGo)));
+  if (r.ok) {
+    stats.renewGranted += 1;
+    if (!fair) return 'I7: a renewal was granted although a fresh grant on a free slot would have been refused (another repo turn or an older waiter)';
+    if (r.basis !== 'same-job') return 'I7: a renewal was not recorded as the same job';
+    const added = (after.lease.journal ?? []).filter((e) => !(before.lease.journal ?? []).includes(e));
+    if (added.some((e) => e.kind === 'turn-started')) return 'I7: a renewal started a turn (the budget must count from the first grant)';
+    if (added.some((e) => e.kind === 'wait-ended' && e.reason === 'served' && e.repoKey === R)) return 'I7: a renewal served the repo own waiter';
+  } else if (r.code === 'turn') {
+    stats.renewRefusedTurn += 1;
+    if (fair) return 'I7: a renewal was refused for the turn although a fresh grant on a free slot would have been granted';
+  }
+  return null;
 }
 
 /**
@@ -229,7 +278,7 @@ function basisViolation(before, after, op) {
 const T0 = new Date('2026-10-14T06:00:00.000Z');
 const mixOf = (seed) => ['uniform', 'calm', 'gappy'][seed % 3];
 /** What the random search actually exercised, so a green run cannot be a run that never reached the interesting states. */
-const stats = { granted: 0, announceRefusedHeld: 0, announceOverHeld: 0, queued: 0, served: 0, cancelled: 0, clears: 0, turnRefused: 0, inTurn: 0, backfill: 0, gapGrants: 0, gapAcquires: 0, lapsed: 0, endTurn: 0, overTurn: 0, offered: 0, endTurnKept: 0, endTurnYielded: 0, endTurnOutOfScope: 0 };
+const stats = { granted: 0, announceRefusedHeld: 0, announceOverHeld: 0, queued: 0, served: 0, cancelled: 0, clears: 0, turnRefused: 0, inTurn: 0, backfill: 0, gapGrants: 0, gapAcquires: 0, lapsed: 0, endTurn: 0, overTurn: 0, offered: 0, endTurnKept: 0, endTurnYielded: 0, endTurnOutOfScope: 0, renewGranted: 0, renewRefusedTurn: 0 };
 function tally(op, r) {
   if (op.op === 'acquire' && r.ok) stats.granted += 1;
   if (op.op === 'acquire' && r.queued) stats.queued += 1;
@@ -297,7 +346,7 @@ describe('lease interleavings (property test, seeded)', () => {
       }
     }
     // Vacuous-pass guard: the invariants held AND the search reached the states they are about.
-    for (const [k, min] of Object.entries({ granted: 200, announceRefusedHeld: 50, announceOverHeld: 10, queued: 200, served: 20, cancelled: 20, clears: 50, turnRefused: 100, inTurn: 20, backfill: 5, gapGrants: 20, gapAcquires: 5, endTurn: 10, overTurn: 10, lapsed: 3, endTurnKept: 3, endTurnYielded: 3, endTurnOutOfScope: 1 })) {
+    for (const [k, min] of Object.entries({ granted: 200, announceRefusedHeld: 50, announceOverHeld: 10, queued: 200, served: 20, cancelled: 20, clears: 50, turnRefused: 100, inTurn: 20, backfill: 5, gapGrants: 20, gapAcquires: 5, endTurn: 10, overTurn: 10, lapsed: 3, endTurnKept: 3, endTurnYielded: 3, endTurnOutOfScope: 1, renewGranted: 20, renewRefusedTurn: 3 })) {
       assert.ok(stats[k] >= min, `the random search barely exercised ${k} (${stats[k]} < ${min}): a green run proves nothing about it. Reached: ${JSON.stringify(stats)}`);
     }
   });
