@@ -123,7 +123,7 @@ async function cmdRun(ctx, flags, positionals, { dir, repo }) {
   } else {
     const o = res.result;
     if (o.spawnError) { say(`could not start ${JSON.stringify(cmd)}: ${o.spawnError}`); exitCode = 127; }
-    else if (res.signalled) { say(`stopped by ${res.signalled}; the command's process tree was stopped and the slot released`); exitCode = exitCodeForSignal(res.signalled); }
+    else if (res.signalled) { say(`stopped by ${res.signalled}; the command's process tree was stopped${res.released?.ok ? ' and the slot released' : ' but the slot could NOT be released (see above)'}`); exitCode = exitCodeForSignal(res.signalled); }
     else if (o.timedOut) { say(`the command ran past --timeout ${timeoutMin} minute(s) and was stopped`); exitCode = 124; }
     else if (o.signal) exitCode = exitCodeForSignal(o.signal);
     else exitCode = o.code ?? 1;

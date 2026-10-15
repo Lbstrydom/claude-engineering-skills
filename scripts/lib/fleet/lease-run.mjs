@@ -133,15 +133,19 @@ export async function runUnderLease(opts, job) {
     const out = runDecision(transact, dir, (lease) => decideAttach(lease, { identity, pid: childPid, token }, now(), probe));
     return out.status === 'decided' && out.decision.ok === true;
   };
-  let result; let thrown = null;
-  try { result = await job({ token, attach, signal: abort.signal }); } catch (e) { thrown = e; } finally { removeSignals(); }
+  let result; let threw = false; let thrown;
+  try { result = await job({ token, attach, signal: abort.signal }); } catch (e) { threw = true; thrown = e; }
 
-  // 4. Release on every catchable exit. A failed release never changes the job's outcome; it says how to finish by hand.
-  const remote = thrown ? thrown.remoteReached : result?.remoteReached;
+  // 4. Release on every catchable exit. A failed release never changes the job's outcome; it says how to finish by hand. The
+  //    stop-signal handlers stay installed until the release has finished: a signal DURING the release must not skip it.
+  const remote = threw ? thrown?.remoteReached : result?.remoteReached;
   const toWindow = releaseToCiWindow > 0 && remote !== 'no';
-  const rel = runDecision(transact, dir, (lease) => (toWindow
-    ? decideReleaseToCiWindow(lease, { identity, repo, token, endTurn, ciWindowMin: releaseToCiWindow, note: 'PR CI after a push' }, now(), probe)
-    : decideRelease(lease, { identity, repo, token, endTurn }, now(), probe)));
+  let rel;
+  try {
+    rel = runDecision(transact, dir, (lease) => (toWindow
+      ? decideReleaseToCiWindow(lease, { identity, repo, token, endTurn, ciWindowMin: releaseToCiWindow, note: 'PR CI after a push' }, now(), probe)
+      : decideRelease(lease, { identity, repo, token, endTurn }, now(), probe)));
+  } finally { removeSignals(); }
   let released;
   if (rel.status === 'decided' && rel.decision.ok) {
     released = { ok: true, mode: toWindow && rel.decision.window ? 'ci-window' : 'plain', ...(rel.decision.window ? { window: rel.decision.window } : {}) };
@@ -151,6 +155,6 @@ export async function runUnderLease(opts, job) {
     released = { ok: false, reason };
     log(`release FAILED (${reason}); the slot stays held until its lease expires. Free it by hand: ${cmdName} lease release --token ${token}`);
   }
-  if (thrown) throw thrown;
+  if (threw) throw thrown; // the ORIGINAL rejection value, whatever its truthiness (null, 0 and '' are rejections too)
   return { ran: true, outcome: 'ran', result, token, released, ...(signalled ? { signalled } : {}), waitedMs: now().getTime() - startedAt };
 }

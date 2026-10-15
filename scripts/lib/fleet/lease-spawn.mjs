@@ -40,13 +40,20 @@ export function runChild({ cmd, args = [], signal, timeoutMs, graceMs = 10_000, 
       child = spawn(cmd, args, { stdio: 'inherit', shell: false, detached: platform !== 'win32', windowsHide: true });
     } catch (e) { resolve({ code: null, signal: null, timedOut: false, stopped: false, spawnError: e.message }); return; }
     let stopped = false; let timedOut = false; let graceTimer = null; let timeoutTimer = null; let settled = false;
-    const finish = (r) => { if (settled) return; settled = true; clearTimeout(graceTimer); clearTimeout(timeoutTimer); resolve({ timedOut, stopped, ...r }); };
-    const stopNow = () => {
-      if (stopped) return;
+    const onAbort = () => stopNow();
+    const finish = (r) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(graceTimer); clearTimeout(timeoutTimer);
+      signal?.removeEventListener('abort', onAbort); // a caller-owned controller aborted LATER must not reach a finished child
+      resolve({ timedOut, stopped, ...r });
+    };
+    function stopNow() {
+      if (stopped || settled) return;
       stopped = true;
       stop(child.pid, { force: false });
       graceTimer = setTimeout(() => stop(child.pid, { force: true }), graceMs);
-    };
+    }
     child.once('error', (e) => finish({ code: null, signal: null, spawnError: e.message }));
     child.once('spawn', () => { try { onSpawn?.(child.pid); } catch { /* attaching is best effort */ } });
     child.once('close', (code, sig) => {
@@ -55,7 +62,7 @@ export function runChild({ cmd, args = [], signal, timeoutMs, graceMs = 10_000, 
       finish({ code, signal: sig });
     });
     if (signal) {
-      if (signal.aborted) stopNow(); else signal.addEventListener('abort', stopNow, { once: true });
+      if (signal.aborted) stopNow(); else signal.addEventListener('abort', onAbort, { once: true });
     }
     if (timeoutMs > 0) timeoutTimer = setTimeout(() => { timedOut = true; stopNow(); }, timeoutMs);
   });

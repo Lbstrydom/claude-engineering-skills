@@ -97,14 +97,20 @@ describe('lease run: stopping the whole process tree', () => {
     const script = `const {spawn}=require('child_process');const g=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});require('fs').writeFileSync(${JSON.stringify(pidFile)},String(g.pid));setInterval(()=>{},1000)`;
     const runner = spawn(NODE, [FLEET_CLI, 'lease', 'run', '--for', '5', '--', NODE, '-e', script], { cwd: w.a.repo, env: w.env(), stdio: 'ignore' });
     const exited = new Promise((resolve) => runner.once('exit', (code, sig) => resolve({ code, sig })));
-    assert.equal(await until(() => fs.existsSync(pidFile)), true, 'the grandchild started');
-    const grandchild = Number(fs.readFileSync(pidFile, 'utf8'));
-    assert.equal(alive(grandchild), true);
-    runner.kill('SIGTERM');
-    const { code } = await exited;
-    assert.equal(code, 143);
-    assert.equal(await until(() => !alive(grandchild), 15_000), true, 'the grandchild was stopped with the command (the process group), not left behind');
-    assert.equal(w.read().heavy, null);
+    try {
+      assert.equal(await until(() => fs.existsSync(pidFile)), true, 'the grandchild started');
+      const grandchild = Number(fs.readFileSync(pidFile, 'utf8'));
+      assert.equal(alive(grandchild), true);
+      runner.kill('SIGTERM');
+      const { code } = await exited;
+      assert.equal(code, 143);
+      assert.equal(await until(() => !alive(grandchild), 15_000), true, 'the grandchild was stopped with the command (the process group), not left behind');
+      assert.equal(w.read().heavy, null);
+    } finally {
+      // Teardown that runs even when an assertion above fails: a leaked runner and its process group would run forever.
+      try { runner.kill('SIGKILL'); } catch { /* gone */ }
+      try { const g = Number(fs.readFileSync(pidFile, 'utf8')); if (g) process.kill(g, 'SIGKILL'); } catch { /* gone */ }
+    }
   });
 });
 
@@ -136,6 +142,14 @@ describe('runChild (the tree stop, timeout and abort, with real processes)', () 
     ac.abort();
     await done;
     assert.equal(await until(() => !alive(g), 15_000), true, 'the whole tree is gone');
+  });
+  it('a controller aborted AFTER the child finished does not reach it (audit R1 H2)', async () => {
+    const stops = [];
+    const ac = new AbortController();
+    const r = await runChild({ cmd: NODE, args: ['-e', 'process.exit(0)'], signal: ac.signal, stop: (pid, o) => stops.push([pid, o]) });
+    assert.equal(r.code, 0);
+    ac.abort();
+    assert.deepEqual(stops, [], 'no stop call for a child that is already gone (its pid could now belong to another process)');
   });
   it('reports a command that cannot start, and a normal exit code', async () => {
     const bad = await runChild({ cmd: 'definitely-not-a-command-xyz-123', args: [] });

@@ -113,6 +113,11 @@ describe('decideReleaseToCiWindow (D7: the slot becomes a CI window in ONE write
     assert.equal(d.overTurn.repo, 'o/b');
     assert.equal(d.lease.journal.filter((e) => e.kind === 'turn-started').length, 1, 'only the acquire started a turn');
   });
+  it('the handoff window obeys the announced-window contract: an over-long note is a bad request', () => {
+    const l = held();
+    assert.equal(handoff(l, { note: 'x'.repeat(L.LIMITS.noteMax + 1) }).code, 'bad-request');
+    assert.equal(handoff(l, { note: 'ok' }).ok, true);
+  });
   it('a full window table never blocks the release: the slot is freed and the missing window is reported', () => {
     let l = held();
     for (let i = 0; i < L.LIMITS.maxWindowsPerRepo; i += 1) l = ok(L.decideAnnounce(l, q(A, { kind: 'quiet', from: `+${100 + i * 30}m`, until: `+${120 + i * 30}m`, newId: `a${String(i).padStart(3, '0')}` }), T('08:10'), probe));
@@ -195,6 +200,43 @@ describe('runUnderLease', () => {
     await assert.rejects(R.runUnderLease(base(w, A), async () => { throw new Error('boom'); }), /boom/);
     assert.equal(fileLease().heavy, null);
     assert.ok(journalKinds(fileLease()).includes('released'));
+  });
+
+  it('a job that rejects with a FALSY value still rejects (null, 0 and "" are rejections), and the slot is released first', async () => {
+    for (const value of [null, 0, '', undefined, false]) {
+      const w = world();
+      let outcome = 'resolved';
+      let caught = 'unset';
+      try { await R.runUnderLease(base(w, A), async () => { throw value; }); } catch (e) { outcome = 'rejected'; caught = e; }
+      assert.equal(outcome, 'rejected', `throw ${String(value)}`);
+      assert.equal(caught, value, 'the original rejection value is preserved');
+      assert.equal(fileLease().heavy, null);
+      fs.rmSync(path.join(dir, 'lease.json'), { force: true });
+    }
+  });
+
+  it('the stop-signal handlers stay installed THROUGH the release, so a signal during it cannot skip it (audit R1 M3)', async () => {
+    const w = world();
+    const sig = fakeSignals();
+    let calls = 0; let handlerDuringRelease = null;
+    const watching = (d, fn) => { calls += 1; if (calls === 2) handlerDuringRelease = sig.handler !== null; return transactLease(d, fn); };
+    await R.runUnderLease(base(w, A, { signals: sig, transact: watching }), async () => {});
+    assert.equal(handlerDuringRelease, true);
+    assert.equal(sig.handler, null, 'and removed afterwards');
+  });
+
+  it('a full window table never blocks the release: the slot is freed, no window is made, and the log says how to record the CI by hand', async () => {
+    const w = world();
+    let l = ok(acq(emptyLease(), B, { forMin: 5 }, '07:00'));
+    l = ok(L.decideRelease(l, q(B, { endTurn: true }), T('07:01'), probe));
+    for (let i = 0; i < L.LIMITS.maxWindowsPerRepo; i += 1) l = ok(L.decideAnnounce(l, q(A, { kind: 'quiet', from: `+${200 + i * 30}m`, until: `+${220 + i * 30}m`, newId: `c${String(i).padStart(3, '0')}` }), T('07:02'), probe));
+    seed(l);
+    const logs = [];
+    const res = await R.runUnderLease(base(w, A, { releaseToCiWindow: 20, log: (m) => logs.push(m) }), async () => ({ remoteReached: 'yes' }));
+    assert.equal(res.released.ok, true);
+    assert.equal(res.released.mode, 'plain', 'no window was recorded, and the result says so');
+    assert.equal(fileLease().heavy, null);
+    assert.ok(logs.some((m) => /no CI window was recorded/.test(m) && /lease announce --kind ci/.test(m)), logs.join('|'));
   });
 
   it('attach replaces the recorded pid with the job\'s, so a child that outlives a killed runner still reads as alive', async () => {

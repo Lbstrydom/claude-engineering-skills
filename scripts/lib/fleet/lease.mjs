@@ -175,6 +175,7 @@ export function decideReleaseToCiWindow(lease, req, now, probe = defaultProbe())
   const minutes = req.ciWindowMin;
   const maxMin = Math.floor(LIMITS.maxWindowMs / MIN);
   if (!Number.isInteger(minutes) || minutes < 1 || minutes > maxMin) return refuse('bad-request', `--ci-window must be a whole number of minutes from 1 to ${maxMin}`);
+  if (!checkNote(req.note)) return refuse('bad-request', `--note must be at most ${LIMITS.noteMax} characters with no control characters`);
   const before = settleQueue(lease, now, probe);
   const rel = decideRelease(lease, { ...req, force: false }, now, probe);
   if (!rel.ok || rel.already) return rel.ok ? { ...rel, window: null } : rel;

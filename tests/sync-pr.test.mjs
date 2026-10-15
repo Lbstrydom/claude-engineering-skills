@@ -295,6 +295,48 @@ const exec = (run, over = {}) => runConsumerPr({
 });
 const gitArgs = (c) => c.args.filter((a) => a !== '--literal-pathspecs' && a !== '-C' && a !== 'C:/consumer');
 
+describe('runConsumerPr — step-wise cancellation (plan D7: a signal can only be handled BETWEEN synchronous steps)', () => {
+  /** A runner that aborts `ac` as soon as it sees `trigger`, as a caught SIGTERM would between two steps. */
+  const abortingRunner = (ac, trigger) => {
+    const { run, calls } = fakeRunner({ 'gh pr create': { stdout: 'https://github.com/o/r/pull/7\n' } });
+    const wrapped = (cmd, args, opts) => { const r = run(cmd, args, opts); if (`${cmd} ${args.join(' ')}`.includes(trigger)) ac.abort(); return r; };
+    return { run: wrapped, calls };
+  };
+  const verbs = (calls) => calls.map((c) => (c.cmd === 'git' ? gitArgs(c)[0] : `gh ${c.args[1]}`));
+
+  it('aborted before anything runs: no git or gh call at all', async () => {
+    const ac = new AbortController(); ac.abort();
+    const { run, calls } = fakeRunner();
+    const r = await exec(run, { signal: ac.signal });
+    assert.equal(r.ok, false);
+    assert.equal(r.step, 'aborted');
+    assert.equal(r.pushed, false);
+    assert.deepEqual(calls, []);
+  });
+  it('aborted after the commit: it stops BEFORE the push, switches back, and says nothing reached the remote', async () => {
+    const ac = new AbortController();
+    const { run, calls } = abortingRunner(ac, 'commit -q');
+    const r = await exec(run, { signal: ac.signal });
+    assert.equal(r.step, 'aborted');
+    assert.equal(r.pushed, false);
+    assert.ok(!verbs(calls).includes('push'), verbs(calls).join(','));
+    assert.equal(verbs(calls).at(-1), 'switch', 'the checkout is put back where it was');
+  });
+  it('aborted after the push: it stops before the PR is created and says the branch IS on the remote', async () => {
+    const ac = new AbortController();
+    const { run, calls } = abortingRunner(ac, 'push -u');
+    const r = await exec(run, { signal: ac.signal });
+    assert.equal(r.step, 'aborted');
+    assert.equal(r.pushed, true);
+    assert.ok(!verbs(calls).includes('gh create'), 'no PR after the abort');
+  });
+  it('an AbortSignal that never fires changes nothing', async () => {
+    const { run } = fakeRunner({ 'gh pr create': { stdout: 'https://github.com/o/r/pull/7\n' } });
+    const r = await exec(run, { signal: new AbortController().signal });
+    assert.equal(r.ok, true);
+  });
+});
+
 describe('runConsumerPr — command sequence', () => {
   it('switch -c <origin sha> → add → commit (scoped) → push → pr create → merge --auto → switch back', async () => {
     const { run, calls } = fakeRunner({ 'gh pr create': { stdout: 'https://github.com/o/r/pull/7\n' } });
