@@ -5,7 +5,7 @@
 - **Scope**: backend (audit CLIs + `scripts/lib/**`; no UI) · stack `js-ts`
 - **Target domain(s)**: `audit-orchestration`, `shared-lib`, `skills-content`, `tech-debt`
 - ⚠ **Cross-domain work** — the crossing is intentional: the one classification oracle (`shared-lib`) feeds the round verdict (`audit-orchestration`); `tech-debt` only re-sources a path constant (PR 2).
-- **Upstream reports**: `57bd3de9` (PR 1, ships first) · `3b84d8bb` (PR 2, after PR 1 merges). Coordinator rule 13: one plan, sequential PRs. Each report is closed only after its own PR merges.
+- **Upstream reports**: `57bd3de9` (PR 1, #258, merged) · `3b84d8bb` (PR 2, #259, merged) · fleet `p-20261015065849-095b` (PR 3, §8). Coordinator rule 13: one plan, sequential PRs. Each report is closed only after its own PR merges.
 
 Neighbourhood considered: `get-neighbourhood` returned only `review` bands (`summariseCodeCoverage`, `runAdjacencyAnalysis`, …) — nothing above this repo's noise floor. Every change below extends an existing function; no new near-duplicate.
 
@@ -153,3 +153,68 @@ Red first, each test seen to fail at `423789e4` before the fix, failure output r
 
 - **/audit-plan** (SID `audit-plan-1792040978411-43536`): R1 GPT `NEEDS_REVISION` H:0 M:3 L:0 — all three on PR 2 (ledger layout from one stem; store hunks still consumed `maxDiffBytes`; rename endpoints undefined), accepted 3/3 (100%) and folded into D4/D6 + §6. R2 GPT `READY_TO_IMPLEMENT` H:0 M:0 L:0. Stopped at the first clean round (lean route).
 - **Final gate** (Gemini, round 1 of 2): `APPROVE`, disposition `approve` — 0 new, 0 wrongly dismissed.
+
+## 8. PR 3 — the final reviewer gets the same infra scope as the audit (fleet `p-20261015065849-095b`, `p-…4cc2` folded)
+
+- **Status**: Draft (PR 1 #258 and PR 2 #259 merged; PR 3 branch `fix/gemini-infra-scope`, cut from main `68769d55`, first commit = the 3b84d8bb disposition)
+- **Depends on**: PR 1 (D3's `NONE:` segment is how a still-withheld file stays visible)
+
+### 8.1 The defect, measured
+
+`isAuditInfraFile` (`scripts/lib/audit-scope.mjs:68 (f66abe19)`) is true for ~65 listed basenames sitting directly in `scripts/` or `scripts/lib/`. It exists so a consumer's synced copy of this tool is not audited as the consumer's code. In THIS repo those files are the subject.
+
+- **GPT side:** excluded unless `--allow-infra-scope` (`scripts/openai-audit.mjs:650 (f66abe19)` → `buildChangeRecord`, `scripts/lib/audit/change-record.mjs:63-64`; plan admission `scripts/lib/audit/legacy-production-audit.mjs:364`). `/cycle` passes the flag when `scripts/cycle-cluster-scope.mjs:218` sees `infra-requires-allow-flag`; standalone `/audit-code` does not, so my own PR 1 round 1 audited 2 fewer files than it changed ("2 source file(s) excluded by policy").
+- **Gemini side:** no opt-in at all. `scripts/gemini-review.mjs:297 (f66abe19)` (reduced scopes, `isInfra: isAuditInfraFile`) and `:306` (full scope, `.filter(f => !isAuditInfraFile(f))`) withhold every such file. #247's final review covered `PARTIAL — changed lines unmeasured for 14 files` (incl. `scripts/lib/debt-ledger.mjs`) and AI-Gate still read `converged`; #258's and #259's final reviews printed `NONE: scripts/audit-loop.mjs, scripts/lib/file-taxonomy.mjs` and `NONE: scripts/lib/debt-ledger.mjs, scripts/lib/file-taxonomy.mjs`: the files those PRs were about.
+
+### 8.2 Design
+
+**D7. One oracle for "is infra admitted here".** `resolveInfraScope({ flag, repoRoot })` in `scripts/lib/audit-scope.mjs`, beside `isAuditInfraFile`: `flag` → admitted (`source: 'flag'`); else the AUDITED repo is the bundle source (`isSourceRepoRoot(repoRoot)`, `package.json` name `claude-engineering-skills`) → admitted (`'source-repo'`), because there the "infra" is the code under review, not a synced copy; else not admitted (`null`). Fails closed: an unreadable `package.json` is not the source repo. `scripts/lib/is-source-repo.mjs` gains the exported, path-taking `isSourceRepoRoot(root)`; `isSourceRepo()` delegates to it, and the dashboard's private copy (`scripts/lib/dashboard/collect-home-consumers.mjs:156`) imports it (one predicate, three readers). Keyed on the audited repo (the cwd root), not on where the script lives, because the question is about the subject.
+
+**D8. The audit's decision rides with the round; the final reviewer inherits it.** `openai-audit.mjs` takes its scope from D7 (replacing the bare `args.includes`, same line budget) and the round result gains `_infraScope: { admitted }` (written in `scripts/lib/audit/run-finalization.mjs` from the value `legacy-production-audit.mjs` already carries). `build-audit-transcript` keeps round fields as they are (`scripts/lib/audit/transcript.mjs:182`), so it reaches the reviewer unchanged. `gemini-review.mjs` resolves its own scope as: its new `--allow-infra-scope` flag, OR any transcript round with `_infraScope.admitted === true`, OR D7 for its own cwd. One function, `resolveFinalReviewInfraScope({ flag, transcript, repoRoot })` in `scripts/lib/final-review/scope.mjs`. **Why inherit and not only a flag:** `/cycle` passes the flag to GPT; a second flag every caller must also remember for Gemini is the second-spelling failure this theme keeps paying for.
+
+**D9. Selection moves out of `gemini-review.mjs`.** The code-path selection block (`scripts/gemini-review.mjs:265-310`) becomes `selectFinalReviewCodePaths({ reduced, transcript, planContent, infraAdmitted, ... })` in `scripts/lib/final-review/scope.mjs`, which applies the infra filter only when not admitted (reduced: `isInfra`; plan paths: `extractPlanPaths(…, { allowInfraFiles })`). **Full scope cannot stop at un-filtering `transcript.code_files`** (audit-plan R1-H1): that list is the round's ADMITTED files, so an infra file the audit excluded is not in it to un-filter. When admitted, full scope therefore also adds the changed infra files from `transcript.changed_files` (the declared diff set the coverage accounting already measures against, `scripts/gemini-review.mjs:316`), passed through the same `selectInScopeCodeFiles` rules as reduced scope (exists on disk, sensitive excluded, `isInfra` off), and only the infra ones: every other changed file keeps today's full-scope rule. A transcript with no `changed_files` (older tooling, or a plan review) adds nothing, and the coverage segment already reports such a run as `unknown`, never full; no current working-tree diff is substituted for it. `gemini-review.mjs` is over the size ratchet (baseline 1112), so this is a net shrink (re-baselined down). The envelope accounting records `infraScope: { admitted, source }` so a reader can see why a file was or was not rendered.
+
+**Unchanged by design:** consumers (never the source repo; flag behaviour as today); the GPT `excluded-infra` → `excludedRequired` → `warn` path; `applyCoverageGate`'s policy; the `NONE:` naming (it still names an infra file a non-source repo withholds).
+
+### 8.3 Right-sizing
+
+- **Band-aid:** add `--allow-infra-scope` to `gemini-review.mjs` and to SKILL.md Step 7, and rely on every caller passing it: the same caller-remembers contract that let GPT round 1 skip the files.
+- **Over-built:** a per-repo config surface for "what counts as infra", or rewriting `isAuditInfraFile` for consumers (§8.6).
+- **Chosen:** one oracle that answers from facts already on disk (the flag, the repo identity), one field that carries the audit's answer to the reviewer, and the existing filter applied conditionally.
+
+### 8.4 Files (PR 3)
+
+| File | Change |
+|---|---|
+| `scripts/lib/is-source-repo.mjs` | export `isSourceRepoRoot(root)`; `isSourceRepo()` delegates |
+| `scripts/lib/dashboard/collect-home-consumers.mjs` | import `isSourceRepoRoot` instead of its private copy |
+| `scripts/lib/audit-scope.mjs` | `resolveInfraScope({ flag, repoRoot })` |
+| `scripts/lib/file-io.mjs` | re-export it (the barrel `openai-audit.mjs` imports from) |
+| `scripts/openai-audit.mjs` | scope from `resolveInfraScope` (net 0 lines) |
+| `scripts/lib/audit/legacy-production-audit.mjs` | pass `allowInfraScope` into the finalization data (an existing line) |
+| `scripts/lib/audit/run-finalization.mjs` | `mergedResult._infraScope = { admitted }` |
+| `scripts/lib/final-review/scope.mjs` | `resolveFinalReviewInfraScope`, `selectFinalReviewCodePaths` |
+| `scripts/lib/final-review/review-args.mjs` | accept `--allow-infra-scope` |
+| `scripts/gemini-review.mjs` | call the two functions; record `infraScope` on the envelope accounting (net shrink) |
+| `docs/reference/file-coverage.md` | one paragraph: who admits infra files, and how the reviewer inherits it |
+| `tests/infra-scope.test.mjs` (create) | the oracle, the inheritance and the selection |
+
+No SKILL.md change: the behaviour is automatic, which is the point (the skill text stays within its size baseline).
+
+### 8.5 Tests (red first, at `f66abe19`)
+
+- **Oracle:** temp dirs with `package.json` name `claude-engineering-skills` → admitted `source-repo`; another name → not; no or unreadable `package.json` → not (fail closed); `flag: true` anywhere → admitted `flag`.
+- **Inheritance:** a transcript round with `_infraScope.admitted: true` → admitted `transcript` in a non-source repo; all rounds false or absent → falls through to the oracle; the flag wins.
+- **Selection (the behavioural red):** reduced scope, changed `scripts/lib/file-taxonomy.mjs` + `src/a.mjs`, both on disk: not admitted → infra excluded and counted (`excluded.infra === 1`); admitted → both selected. Full scope: `transcript.code_files` with an infra path kept only when admitted; **and the R1-H1 case**: a transcript built from a round that EXCLUDED `scripts/lib/file-taxonomy.mjs` (absent from `code_files`, present in `changed_files`) gets it added when admitted, not when not admitted; a sensitive or deleted changed infra path is never added; a transcript without `changed_files` adds nothing. Today's code (`isInfra: isAuditInfraFile` unconditionally) fails the admitted case.
+- **Round field:** `run-finalization` writes `_infraScope.admitted` from the data it is given (true and false).
+- **Controls:** a consumer-shaped repo (other package name, no flag, no transcript signal) behaves exactly as today; a deeper path (`scripts/lib/persona-test/schemas.mjs`) was never infra and is unaffected.
+
+### 8.6 Out of scope (recorded)
+
+- **`isAuditInfraFile` in consumers.** Consumers' tooling now lives under `scripts/.claude-skills/` (gitignored, never in a diff), so a consumer path `scripts/lib/config.mjs` that the predicate excludes is the consumer's OWN file, not a synced copy. That is a separate coverage hole in consumers (a hypothesis, not yet measured against a consumer diff); filed as a fleet proposal rather than changed here, because it alters consumer audit scope and needs its own measurement.
+- **The #247 catch-up** (`p-…ce6d`): run the final reviewer over #247's 14 files once this lands.
+
+### 8.7 Audit trail (PR 3)
+
+- **/audit-plan** (SID `audit-plan-1792087454782-43212`): R1 GPT `NEEDS_REVISION` H:1 (full scope cannot recover an infra file the audit excluded by un-filtering `code_files`; accepted, folded into D9 and §8.5); R2 GPT `READY_TO_IMPLEMENT` H:0 M:0 L:0.
+- **Final gate** (Gemini, round 1 of 2): `APPROVE`, disposition `approve`, 0 new.
