@@ -37,8 +37,8 @@ export const VERBS = Object.freeze({
   proposal: { bool: ['--json'], value: ['--folded', '--queued', '--declined', '--done', '--id'], repeat: [], positionals: [1, 1] },
   proposals: { bool: ['--json', '--all'], value: [], repeat: [], positionals: [0, 0] },
   lease: {
-    bool: ['--json', '--force', '--clear', '--cancel', '--over-held'],
-    value: ['--kind', '--for', '--pid', '--token', '--note', '--id', '--reason', '--from', '--until', '--hours', '--clear-window', '--limit'], repeat: [], positionals: [1, 1],
+    bool: ['--json', '--force', '--clear', '--cancel', '--over-held', '--over-turn', '--end-turn'],
+    value: ['--kind', '--for', '--pid', '--token', '--note', '--id', '--reason', '--from', '--until', '--hours', '--clear-window', '--limit', '--window', '--to', '--minutes'], repeat: [], positionals: [1, 1],
   },
   land: {
     bool: ['--json', '--dry-run', '--accept-rerun', '--serial'],

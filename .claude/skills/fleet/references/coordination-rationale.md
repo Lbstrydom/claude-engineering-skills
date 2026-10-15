@@ -131,11 +131,15 @@ when two or more repos wait, they take turns:
 - The repo that has waited longest goes next. A repo's waiting clock restarts when
   its turn ends.
 - A repo's own CI windows and scheduled runs count as its heavy time.
-- A worker acquires only when its coordinator says the turn is its repo's: a FREE
-  lease is not a turn. Until the lease records turns itself, the coordinators
-  announce the order to each other.
-- 60 minutes is a default measured on one machine. Doctor's fit check recommends a
-  value per machine.
+- A worker acquires when the lease says it may, and a FREE lease is not a turn: a
+  refused `acquire` queues the repo, and `acquire` refuses a repo whose turn it is not
+  (`turn`, naming who goes first). The lease records the order itself (`lease wait`,
+  the queue head, the turn, a 10-minute between-jobs gap, `release --end-turn`);
+  coordinators still decide what each repo runs. A repo grants another a slot inside
+  its own window with `lease grant`, so its window no longer refuses the grantee.
+  Detail: `references/lease.md`.
+- 60 minutes is a default measured on one machine (`lease turn --minutes`). Doctor's
+  fit check recommends a value per machine.
 
 **Peak hours.** `lease peak --hours "14:00-20:00"` records the user's
 expensive-token window. During it, ship built work only (pushes, `/ship`, merges,

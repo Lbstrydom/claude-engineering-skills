@@ -24,7 +24,7 @@ describe('announced windows', () => {
     const blocked = w.runB(['lease', 'acquire', '--for', '30']);
     assert.equal(blocked.status, 3); assert.match(blocked.stdout, /shorten --for/);
     assert.equal(w.runA(['lease', 'acquire', '--for', '30']).status, 0, 'a repo is not blocked by its own window');
-    assert.equal(w.runA(['lease', 'release']).status, 0);
+    assert.equal(w.runA(['lease', 'release', '--end-turn']).status, 0, 'A has nothing further, so it yields its turn; B was queued by the refusal');
     assert.match(w.runB(['lease', 'status']).stdout, new RegExp(`window ${id}: ci for`));
     const cleared = w.runB(['lease', 'announce', '--clear-window', id]);
     assert.equal(cleared.status, 0); assert.match(cleared.stdout, /another repo/);
