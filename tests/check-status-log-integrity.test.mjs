@@ -233,8 +233,12 @@ describe('the CLI fails closed — a vacuous pass is the bug this guard exists t
   });
 
   test('a real ancestor exits 0 on a conserved log', () => {
-    const parent = execFileSync('git', ['rev-parse', 'HEAD~1'], { cwd: REPO, encoding: 'utf8' }).trim();
-    assert.equal(run(['--base', parent]), 0);
+    // On a MERGE commit (a branch that merged main) the meaningful base is the merged-in side, the
+    // one a push range would use; HEAD~1 is the branch's own pre-merge tip, against which the merge
+    // legitimately brings in whatever main gained. Otherwise the plain parent.
+    const parents = execFileSync('git', ['rev-list', '--parents', '-n', '1', 'HEAD'], { cwd: REPO, encoding: 'utf8' })
+      .trim().split(' ').slice(1);
+    assert.equal(run(['--base', parents[parents.length - 1]]), 0);
   });
 });
 
