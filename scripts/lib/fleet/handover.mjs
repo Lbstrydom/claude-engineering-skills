@@ -509,7 +509,7 @@ export function leaseState(env, now) {
  * Returns `{error}` (nothing published) when the scheduler snapshot is invalid or a task cannot be exported.
  * `taskIo` and `beforeManifest` are fault-injection seams for the publication contract.
  */
-export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir(), taskIo, beforeManifest } = {}) {
+export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir(), taskIo, beforeManifest, removeTasks } = {}) {
   const configDir = claudeConfigDir(ctx.env, { homedir });
   const tasks = collectScheduledTasks(configDir);
   let byId = null;
@@ -527,14 +527,17 @@ export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir(),
   const handoverDir = path.join(ctx.dir, 'handover');
   const art = reserveArtifacts(handoverDir, ctx.now instanceof Date ? ctx.now : new Date());
   const tasksDir = path.join(handoverDir, `handover-${art.id}-tasks`);
+  // Returns what it could NOT remove, so a failure report never claims a rollback that did not happen.
   const unpublish = (withTasks) => {
-    for (const f of [art.json, art.md]) { try { fs.unlinkSync(f); } catch { /* best effort: a reserved empty file is not a ready handover */ } }
-    if (withTasks) { try { fs.rmSync(tasksDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } }
+    const left = [];
+    for (const f of [art.json, art.md]) { try { fs.rmSync(f, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch (e) { left.push(`${f} (${e.code ?? e.message})`); } }
+    if (withTasks) { try { (removeTasks ?? ((p) => fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })))(tasksDir); } catch (e) { left.push(`${tasksDir} (${e.code ?? e.message})`); } }
+    return left.length ? ` NOT removed, delete by hand: ${left.join(', ')}` : '';
   };
   let exports = null;
   if (tasks.length) {
     const st = stageTaskExports({ configDir, ids: tasks.map((t) => t.id), destDir: tasksDir, io: taskIo });
-    if (!st.ok) { unpublish(false); return { error: `scheduled-task export failed: ${st.reason}; nothing was published` }; }
+    if (!st.ok) return { error: `scheduled-task export failed: ${st.reason}; nothing was published.${unpublish(false)}` };
     exports = st.exports;
   }
   const manifest = {
@@ -555,8 +558,8 @@ export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir(),
     atomicWriteFileSync(art.md, renderHandoverMarkdown(manifest, art));
     atomicWriteFileSync(art.json, `${JSON.stringify(manifest, null, 2)}\n`);
   } catch (e) {
-    unpublish(true);
-    return { error: `the handover could not be published (${e.message}); the task copies were removed` };
+    const left = unpublish(true);
+    return { error: `the handover could not be published (${e.message}); ${left ? `rollback incomplete.${left}` : 'the task copies were removed'}` };
   }
   return { manifest, artifacts: art };
 }

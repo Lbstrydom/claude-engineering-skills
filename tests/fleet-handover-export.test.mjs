@@ -133,6 +133,24 @@ describe('prepare: the publication contract, end to end', () => {
     assert.deepEqual(listed(path.join(ctx.dir, 'handover')), []);
   });
 
+  it('a rollback that cannot remove the copies says so, naming what is left', async () => {
+    const fx = makeFleetRepo();
+    const ctx = ctxFor(fx, account(tmpRoot('ho-pub-left-')));
+    const r = await prepareHandover(ctx, {}, { beforeManifest: () => { throw new Error('disk full'); }, removeTasks: () => { throw Object.assign(new Error('x'), { code: 'EBUSY' }); } });
+    assert.match(r.error, /rollback incomplete\. NOT removed, delete by hand: .*-tasks \(EBUSY\)/);
+    assert.doesNotMatch(r.error, /the task copies were removed/);
+  });
+
+  it('staging: a failed cleanup is part of the reason and the leftover is named', () => {
+    const cfg = account(tmpRoot('ho-stage-left-'), ['weekly-check']);
+    const dest = path.join(tmpRoot('ho-stage-dest-'), 'handover-q-tasks');
+    const r = stageTaskExports({ configDir: cfg, ids: ['weekly-check'], destDir: dest, io: { rename: () => { throw Object.assign(new Error('x'), { code: 'EPERM' }); }, rm: () => { throw Object.assign(new Error('x'), { code: 'EBUSY' }); } } });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /could not be removed \(EBUSY\)/);
+    assert.equal(r.leftover.length, 1);
+    rm(r.leftover[0]);
+  });
+
   it('a task that cannot be read publishes nothing either', async () => {
     const fx = makeFleetRepo();
     const ctx = ctxFor(fx, account(tmpRoot('ho-pub-read-')));

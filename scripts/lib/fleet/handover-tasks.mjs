@@ -61,15 +61,17 @@ export function parseSchedulerSnapshot(text, taskIds) {
  * @param {string} a.configDir
  * @param {string[]} a.ids
  * @param {string} a.destDir `<handover dir>/handover-<id>-tasks`
- * @param {{readFile?: Function, writeFile?: Function, rename?: Function}} [a.io] injectable for fault tests
+ * @param {{readFile?: Function, writeFile?: Function, rename?: Function, rm?: Function}} [a.io] injectable for fault tests
  * @returns {{ok: true, exports: Map<string, {path: string, sha256: string, bytes: number}>} | {ok: false, reason: string}}
  */
 export function stageTaskExports({ configDir, ids, destDir, io = {} }) {
   const readFile = io.readFile ?? fs.readFileSync;
   const writeFile = io.writeFile ?? fs.writeFileSync;
   const rename = io.rename ?? fs.renameSync;
+  const rm = io.rm ?? ((p) => fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
   const staging = `${destDir}.staging-${process.pid}`;
-  const cleanup = () => { try { fs.rmSync(staging, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* reported by the caller's failure */ } };
+  // A rollback that could not remove its copies says so: "nothing was published" must never hide leftovers.
+  const cleanup = () => { try { rm(staging); return null; } catch (e) { return `the staging directory ${staging} could not be removed (${e.code ?? e.message})`; } };
   const exports = new Map();
   try {
     fs.mkdirSync(staging, { recursive: true });
@@ -88,8 +90,8 @@ export function stageTaskExports({ configDir, ids, destDir, io = {} }) {
     }
     try { rename(staging, destDir); } catch (e) { throw new Error(`cannot publish the task copies (${e.code ?? e.message})`); }
   } catch (e) {
-    cleanup();
-    return { ok: false, reason: e.message };
+    const left = cleanup();
+    return { ok: false, reason: left ? `${e.message}; ${left}` : e.message, leftover: left ? [staging] : [] };
   }
   return { ok: true, exports };
 }
