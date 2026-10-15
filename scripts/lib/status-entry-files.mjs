@@ -102,7 +102,7 @@ export function validateEntryText(name, text) {
 }
 
 /**
- * Entry record file names on disk, NEWEST FIRST (filename order is chronological by construction).
+ * Entry record file names on disk, NEWEST FIRST. Throws on any failure other than a missing directory. (filename order is chronological by construction).
  * Names that fail the grammar are still returned — a reader must show what is there, and the gate
  * is what rejects a bad name.
  * @param {string} root - repo root
@@ -110,7 +110,12 @@ export function validateEntryText(name, text) {
  */
 export function listEntryFiles(root) {
   let names;
-  try { names = fs.readdirSync(path.join(root, ENTRIES_DIR)); } catch { return []; }
+  try { names = fs.readdirSync(path.join(root, ENTRIES_DIR)); } catch (err) {
+    // A missing directory is the legacy state. Any other failure (permissions, I/O) is NOT
+    // "no entries": it propagates so the reader reports it instead of rendering an empty log.
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
   return names
     .map((n) => `${ENTRIES_DIR}/${n}`)
     .filter(isEntryRecordPath)
@@ -156,7 +161,13 @@ export function readLogHead(root, maxBytes = LOG_HEAD_BYTES) {
       if (fd !== undefined) try { fs.closeSync(fd); } catch { /* best effort */ }
     }
   };
-  for (const rel of listEntryFiles(root)) {
+  // Entry files are read only in per-entry mode: the marker, not the mere presence of a directory,
+  // decides the storage mode (an orphan file without it is the gate's `entries-without-marker`).
+  let entryFiles;
+  try { entryFiles = perEntryModeOnDisk(root) ? listEntryFiles(root) : []; } catch (err) {
+    return { text: null, absent: false, error: `cannot list ${ENTRIES_DIR} (${err.code ?? 'error'})`, capped: false };
+  }
+  for (const rel of entryFiles) {
     if (used >= maxBytes) { capped = true; break; }
     const r = take(path.join(root, rel));
     if (!r.ok) return { text: null, absent: false, error: `cannot read ${rel} (${r.code})`, capped: false };

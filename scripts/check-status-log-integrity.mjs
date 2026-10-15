@@ -36,7 +36,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, argOption, finishAndExit } from './lib/cli-io.mjs';
 import { checkConservation } from './lib/status-log-integrity.mjs';
 import { ENTRIES_DIR, MARKER_REL, isArchivePath, isEntryRecordPath, perEntryMode } from './lib/status-entry-files.mjs';
 
@@ -63,19 +63,21 @@ function showAt(rev, rel) {
 /** Every `docs/status/*.md` at a revision. */
 function archivesAt(rev) {
   const out = {};
-  let listing;
-  try { listing = git(['ls-tree', '-r', '--name-only', rev, `${ARCHIVE_DIR}/`]); } catch { return out; }
+  // An absent directory lists as empty with exit 0, so a throw is a real failure, never "no archives".
+  const listing = git(['ls-tree', '-r', '--name-only', rev, `${ARCHIVE_DIR}/`]);
   for (const rel of listing.split('\n').map((l) => l.trim()).filter((l) => l.endsWith('.md') && isArchivePath(l))) {
     const text = showAt(rev, rel);
-    if (text !== null) out[rel] = text;
+    if (text === null) throw new Error(`${rel} is listed at ${rev.slice(0, 8)} but cannot be read`);
+    out[rel] = text;
   }
   return out;
 }
 
 /** The per-entry state at a revision: the marker, the entry records, and any foreign file in the directory. */
 function entryStateAt(rev) {
-  let listing = '';
-  try { listing = git(['ls-tree', '-r', '--name-only', rev, `${ENTRIES_DIR}/`]); } catch { /* none */ }
+  // A path absent at `rev` lists as empty with exit 0, so a THROW here is a real failure (bad rev,
+  // corrupt object) and must not be read as "no entries": it would blind Laws 7 and 9.
+  const listing = git(['ls-tree', '-r', '--name-only', rev, `${ENTRIES_DIR}/`]);
   const paths = listing.split('\n').map((l) => l.trim()).filter(Boolean);
   const entries = {};
   const strays = [];
@@ -83,7 +85,8 @@ function entryStateAt(rev) {
     if (rel === MARKER_REL) continue;
     if (!isEntryRecordPath(rel)) { strays.push(rel); continue; }
     const text = showAt(rev, rel);
-    if (text !== null) entries[rel] = text;
+    if (text === null) throw new Error(`${rel} is listed at ${rev.slice(0, 8)} but cannot be read`);
+    entries[rel] = text;
   }
   return { marker: perEntryMode(paths), entries, strays };
 }
@@ -91,7 +94,9 @@ function entryStateAt(rev) {
 function entryStateOnDisk() {
   const dir = path.join(REPO, ENTRIES_DIR);
   let names = [];
-  try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { /* none */ }
+  try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch (err) {
+    if (err.code !== 'ENOENT') throw err; // a missing directory is the legacy state; anything else is a failure
+  }
   const paths = names.map((d) => `${ENTRIES_DIR}/${d.name}`);
   const entries = {};
   const strays = [];
@@ -274,7 +279,7 @@ async function main() {
     process.stdout.write('  To archive a month, use `npm run status:rotate`,\n');
     process.stdout.write('  which records each archived entry in docs/status/rotation-manifest.json.\n');
   }
-  process.exit(ok ? 0 : 1);
+  await finishAndExit(ok ? 0 : 1);
 }
 
 main().catch((err) => {

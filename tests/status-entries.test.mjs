@@ -218,9 +218,32 @@ describe('readLogHead', () => {
     } finally { rm(d); }
   });
 
+  test('the MARKER decides the mode: an orphan entry file without it is not read (the gate names it)', () => {
+    const d = tmp();
+    try {
+      write(d, 'status.md', root(old('2026-10-01')));
+      write(d, entryPath('2026-10-16-090000-orphan.md'), '## 2026-10-16 — orphan\n\nbody\n');
+      assert.equal(readLogHead(d).text, root(old('2026-10-01')), 'legacy mode: exactly the status.md head');
+      write(d, MARKER_REL, '# marker\n');
+      assert.match(readLogHead(d).text, /orphan/, 'marker present: the same file is now read');
+    } finally { rm(d); }
+  });
+
+  test('an unreadable entries directory is an ERROR, not an empty log (only ENOENT is absence)', () => {
+    const d = tmp();
+    try {
+      write(d, 'status.md', root(old('2026-10-01')));
+      // docs/status/entries is a FILE: readdir fails with ENOTDIR, which must not read as "no entries".
+      write(d, ENTRIES_DIR, 'not a directory');
+      assert.throws(() => listEntryFiles(d), (e) => e.code === 'ENOTDIR');
+      assert.deepEqual(listEntryFiles(path.join(d, 'nowhere')), [], 'a missing directory is the legacy state');
+    } finally { rm(d); }
+  });
+
   test('entries but no status.md still reads', () => {
     const d = tmp();
     try {
+      write(d, MARKER_REL, '# marker\n');
       write(d, entryPath('2026-10-16-090000-only.md'), '## 2026-10-16 — only\n\nbody\n');
       const r = readLogHead(d);
       assert.equal(r.absent, false);
@@ -232,6 +255,7 @@ describe('readLogHead', () => {
     const d = tmp();
     try {
       write(d, 'status.md', 'x'.repeat(100));
+      write(d, MARKER_REL, '# marker\n');
       write(d, entryPath('2026-10-16-090000-big.md'), `## 2026-10-16 — big\n${'y'.repeat(80)}\n`);
       assert.equal(readLogHead(d, 10_000).capped, false, 'everything fits');
       const small = readLogHead(d, 60);

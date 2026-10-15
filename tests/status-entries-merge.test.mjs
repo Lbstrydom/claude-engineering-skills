@@ -9,7 +9,7 @@
  *
  * Plan: docs/plans/fleet-chips-and-merge-friction.md §12.4.
  */
-import { test, describe, before, after } from 'node:test';
+import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -64,7 +64,8 @@ function stateOnDisk() {
 }
 
 describe('the per-entry log, through git', () => {
-  before(() => {
+  // Every test builds its OWN repository, so each can run alone and in any order.
+  beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-merge-'));
     must('init', '-q', '-b', 'main');
     must('config', 'user.email', 'test@example.invalid');
@@ -73,60 +74,67 @@ describe('the per-entry log, through git', () => {
     write('status.md', BASE_LOG);
     commit('base (legacy log)');
   });
-  after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+
+  /** Cut a branch from `from`, insert a root entry at the top of status.md (the OLD flow). */
+  const shipOld = (branch, what, from = 'main') => {
+    must('checkout', '-q', '-b', branch, from);
+    write('status.md', HEADER + entry('2026-10-15', what) + BASE_LOG.slice(HEADER.length));
+    commit(what);
+  };
+  /** Cut a branch from `from`, add an entry FILE (the NEW flow). */
+  const shipNew = (branch, name, what, from) => {
+    must('checkout', '-q', '-b', branch, from);
+    write(`${ENTRIES_DIR}/${name}`, entry('2026-10-15', what));
+    commit(what);
+  };
+  /** Commit the cutover marker on main and return its sha. */
+  const cutover = () => {
+    must('checkout', '-q', 'main');
+    write(MARKER_REL, '# marker\n');
+    commit('cutover: per-entry marker');
+    return must('rev-parse', 'HEAD');
+  };
 
   test('NEGATIVE CONTROL: two ships each inserting at the top of status.md conflict', () => {
-    for (const [br, what] of [['old-a', 'ship a'], ['old-b', 'ship b']]) {
-      must('checkout', '-q', '-b', br, 'main');
-      write('status.md', HEADER + entry('2026-10-15', what) + BASE_LOG.slice(HEADER.length));
-      commit(what);
-    }
+    shipOld('old-a', 'ship a');
+    shipOld('old-b', 'ship b');
     const r = git('merge-tree', '--write-tree', 'old-a', 'old-b');
     assert.equal(r.status, 1, `expected a conflict, got exit ${r.status}: ${r.stdout}`);
     assert.match(r.stdout, /CONFLICT.*status\.md/);
   });
 
   test('two ships each adding an entry FILE merge cleanly, and the merged tree passes the gate', () => {
-    must('checkout', '-q', 'main');
-    write(MARKER_REL, '# marker\n');
-    commit('cutover: per-entry marker');
-    const cutover = must('rev-parse', 'HEAD');
-
-    for (const [br, name, what] of [
-      ['new-a', '2026-10-15-100000-ship-a.md', 'ship a'],
-      ['new-b', '2026-10-15-100000-ship-b.md', 'ship b'],
-    ]) {
-      must('checkout', '-q', '-b', br, cutover);
-      write(`${ENTRIES_DIR}/${name}`, entry('2026-10-15', what));
-      commit(what);
-    }
+    const base = cutover();
+    shipNew('new-a', '2026-10-15-100000-ship-a.md', 'ship a', base);
+    shipNew('new-b', '2026-10-15-100000-ship-b.md', 'ship b', base);
     const r = git('merge-tree', '--write-tree', 'new-a', 'new-b');
     assert.equal(r.status, 0, `the per-entry flow must not conflict: ${r.stdout}`);
 
     must('checkout', '-q', 'new-a');
     must('merge', '-q', '--no-edit', 'new-b');
-    const verdict = checkConservation(stateAt(cutover), stateOnDisk());
-    assert.deepEqual(verdict, { ok: true, violations: [] });
+    assert.deepEqual(checkConservation(stateAt(base), stateOnDisk()), { ok: true, violations: [] });
     assert.equal(Object.keys(stateOnDisk().entries).length, 2, 'both entries survive the merge');
   });
 
-  test('a branch cut before the cutover that adds a ROOT entry trips Law 6 once merged with the marker', () => {
-    // old-a is the pre-cutover shipper: its status.md gained an entry. Merging main (which carries
-    // the marker) into it must put the gate on notice, with the recipe in the message.
+  test('a branch cut before the cutover that added a ROOT entry trips Law 6 once it carries the marker', () => {
+    shipOld('old-a', 'ship a'); // cut from main BEFORE the marker
+    const base = cutover();
     must('checkout', '-q', 'old-a');
     must('merge', '-q', '--no-edit', 'main');
-    const base = must('rev-parse', 'main');
     const r = checkConservation(stateAt(base), stateOnDisk());
     assert.deepEqual(r.violations.map((v) => v.kind), ['root-entry-added']);
     assert.match(r.violations[0].detail, /new entry files/);
   });
 
   test('2551b: a merge fixup amended into the merge reads the same as one committed after it', () => {
-    const base = must('rev-parse', 'main');
+    const base = cutover();
+    shipNew('new-a', '2026-10-15-100000-ship-a.md', 'ship a', base);
+    shipNew('new-b', '2026-10-15-100000-ship-b.md', 'ship b', base);
     const fixup = () => write(`${ENTRIES_DIR}/2026-10-15-110000-merge-fix.md`, entry('2026-10-15', 'merge fix'));
     const verdicts = [];
     for (const mode of ['amended', 'separate']) {
-      must('checkout', '-q', '-B', `fix-${mode}`, 'new-a^1'); // new-a is already a merge by now: branch from its first parent
+      must('checkout', '-q', '-B', `fix-${mode}`, 'new-a');
       must('merge', '-q', '--no-commit', '--no-ff', 'new-b');
       if (mode === 'amended') { fixup(); commit('merge with fixup'); }
       else { commit('merge'); fixup(); commit('fixup'); }
