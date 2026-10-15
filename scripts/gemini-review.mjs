@@ -717,10 +717,10 @@ export async function runReviewWithRetry(provider, client, planContent, transcri
  * to re-verify one candidate/clean-region file per subprocess call.
  * @returns {Promise<{result: object, usage: object, latencyMs: number, transcriptContent: string}>}
  */
-export async function runAdjudicatorOnlyReview(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride = null) {
+export async function runAdjudicatorOnlyReview(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride = null, options = {}) {
   setRoleAddendum(ADJUDICATOR_ONLY_ADDENDUM);
   try {
-    return await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride);
+    return await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride, options);
   } finally {
     setRoleAddendum(null);
   }
@@ -1013,7 +1013,7 @@ async function main() {
     // is runReviewWithRetry, plus the settled-items block only on --round 2.
     const roundOpts = { ...(prior ? { roundBlock: buildPriorRoundBlock(prior, round) } : {}), allowInfraScope };
     const r = role === 'adjudicator-only'
-      ? await runAdjudicatorOnlyReview(provider, client, planContent, transcriptContent, projectContext, auditMode)
+      ? await runAdjudicatorOnlyReview(provider, client, planContent, transcriptContent, projectContext, auditMode, null, roundOpts)
       : await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, null, roundOpts);
     const { result, usage, latencyMs, transcriptContent: usedTranscript } = r;
     await applyDebtSuppression(result, usedTranscript);

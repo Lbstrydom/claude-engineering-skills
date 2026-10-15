@@ -22,7 +22,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const { runFinalReview } = await import('../scripts/gemini-review.mjs');
+const { runFinalReview, runAdjudicatorOnlyReview } = await import('../scripts/gemini-review.mjs');
 const { resolveInfraScope } = await import('../scripts/lib/audit-scope.mjs');
 const { isSourceRepoRoot } = await import('../scripts/lib/is-source-repo.mjs');
 const { resolveFinalReviewInfraScope, selectFinalReviewCodePaths } = await import('../scripts/lib/final-review/scope.mjs');
@@ -123,6 +123,13 @@ describe('code-path selection', () => {
     assert.deepEqual(sel({ transcript }).codePaths, [PLAIN]);
     assert.deepEqual(sel({ transcript, infraAdmitted: true }).codePaths.sort(), [INFRA, PLAIN].sort());
   });
+  test('audit-code R1-H2/M3: the augmentation does not depend on code_files existing — absent, null and empty all add the changed infra file', () => {
+    for (const code_files of [undefined, null, []]) {
+      const transcript = { ...(code_files === undefined ? {} : { code_files }), changed_files: [PLAIN, INFRA] };
+      assert.ok(sel({ transcript, infraAdmitted: true }).codePaths.includes(INFRA), 'code_files=' + JSON.stringify(code_files));
+      assert.ok(!sel({ transcript, infraAdmitted: false }).codePaths.includes(INFRA), 'control: not admitted');
+    }
+  });
   test('admitted, but a sensitive, deleted or undeclared infra path is never added', () => {
     const transcript = { code_files: [PLAIN], changed_files: [PLAIN, INFRA] };
     assert.deepEqual(sel({ transcript, infraAdmitted: true, deps: { ...deps, exists: (p) => p !== INFRA } }).codePaths, [PLAIN], 'deleted');
@@ -168,6 +175,15 @@ describe('end to end: the REQUEST that leaves the process (the behavioural red)'
       assert.equal(envelope.infraScope.admitted, false);
     });
   }
+
+  test('audit-code R1-H1/M2: the adjudicator-only path carries --allow-infra-scope too', async () => {
+    process.chdir(consumer);
+    const off = {}; const on = {};
+    await runAdjudicatorOnlyReview('openai-compatible', fakeClient(off), 'Plan.', transcriptOf(), 'ctx', 'code');
+    await runAdjudicatorOnlyReview('openai-compatible', fakeClient(on), 'Plan.', transcriptOf(), 'ctx', 'code', null, { allowInfraScope: true });
+    assert.ok(!off.request.includes(INFRA_MARKER), 'control: a consumer without the flag keeps withholding it');
+    assert.ok(on.request.includes(INFRA_MARKER), 'the flag reaches scope selection in adjudicator-only mode');
+  });
 
   test('a consumer inherits the audit\'s explicit admission from the round (the /cycle --allow-infra-scope path)', async () => {
     process.chdir(consumer);

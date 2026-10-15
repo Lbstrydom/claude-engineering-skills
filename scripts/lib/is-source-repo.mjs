@@ -41,6 +41,7 @@ export function isSourceRepo() {
  * @param {string} root
  * @returns {boolean}
  */
+// @duplicate-justification: target=scripts/lib/shared-cloud-config.mjs:isSourceRepo reason=different question: this is the repo's IDENTITY by package name (shared with isSourceRepo and the dashboard); that one is a module-private locator probing a candidate path for a source-exclusive sentinel file
 export function isSourceRepoRoot(root) {
   try {
     return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8')).name === 'claude-engineering-skills';

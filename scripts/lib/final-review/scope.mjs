@@ -190,14 +190,13 @@ export function selectFinalReviewCodePaths({ reduced, transcript, planContent, i
     const sel = selectInScopeCodeFiles(changed, { ...deps, isInfra: infraAdmitted ? () => false : deps.isInfra });
     return { codePaths: sel.files, codeExcluded: sel.excluded };
   }
-  const plan = (extra) => extractPlanPaths(planContent, { allowInfraFiles: infraAdmitted, ...extra });
-  if (Array.isArray(transcript?.code_files)) {
-    let paths = [...new Set([...plan().found, ...transcript.code_files])].filter((f) => infraAdmitted || !deps.isInfra(f));
-    if (infraAdmitted) {
-      const added = selectInScopeCodeFiles(changed.filter((f) => typeof f === 'string' && deps.isInfra(f)), { ...deps, isInfra: () => false }).files;
-      paths = [...new Set([...paths, ...added])];
-    }
-    return { codePaths: paths, codeExcluded: null };
-  }
-  return { codePaths: plan().found, codeExcluded: null };
+  const planFound = extractPlanPaths(planContent, { allowInfraFiles: infraAdmitted }).found;
+  const base = Array.isArray(transcript?.code_files)
+    ? [...new Set([...planFound, ...transcript.code_files])].filter((f) => infraAdmitted || !deps.isInfra(f))
+    : planFound;
+  if (!infraAdmitted) return { codePaths: base, codeExcluded: null };
+  // Independent of whether `code_files` exists (audit-code R1-H2/M3): admission is about the changed set, not about which list
+  // the base paths came from.
+  const added = selectInScopeCodeFiles(changed.filter((f) => typeof f === 'string' && deps.isInfra(f)), { ...deps, isInfra: () => false }).files;
+  return { codePaths: [...new Set([...base, ...added])], codeExcluded: null };
 }
