@@ -1485,7 +1485,7 @@ async function runLegacyProductionAuditImpl(ctx) {
     frontendWillRun, frontendResult, runSustainability, sustainResult, runQuickfix, quickfixResult,
     runDuplication, duplicationResult, runAdjacency, adjacencyResult,
     archState, archResult, orphanState, orphanResult, eventWiringState, eventWiringResult,
-    isR2Plus,
+    isR2Plus, allowInfraScope,
     coverageInput: makeCoverageInput({ recorder: coverageRecorder, coverageChanged, changedFiles, fileFilter, coverageExcluded, diffMap, toolCapability, noTools }),
   };
   setChunkingObserver(null);

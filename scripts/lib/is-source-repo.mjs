@@ -29,9 +29,22 @@ import { findRepoRootFromScript } from './assert-repo-root.mjs';
 export function isSourceRepo() {
   try {
     const repoRoot = findRepoRootFromScript(import.meta.url);
-    if (!repoRoot) return false;
-    const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf-8'));
-    return pkg.name === 'claude-engineering-skills';
+    return repoRoot ? isSourceRepoRoot(repoRoot) : false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Is the repo rooted at `root` the bundle's source repo (package name `claude-engineering-skills`)? Path-taking, so the
+ * question can be asked of the AUDITED repo (the cwd) rather than of where this script happens to live. Fails closed.
+ * @param {string} root
+ * @returns {boolean}
+ */
+// @duplicate-justification: target=scripts/lib/shared-cloud-config.mjs:isSourceRepo reason=different question: this is the repo's IDENTITY by package name (shared with isSourceRepo and the dashboard); that one is a module-private locator probing a candidate path for a source-exclusive sentinel file
+export function isSourceRepoRoot(root) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8')).name === 'claude-engineering-skills';
   } catch {
     return false;
   }

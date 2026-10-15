@@ -10,7 +10,7 @@
 /** Every flag `review` accepts — gemini-review.mjs refuses anything else (assertKnownFlags). */
 export const REVIEW_FLAGS = Object.freeze([
   '--json', '--out', '--provider', '--mode', '--run-id', '--role', '--envelope-scope', '--campaign-digest',
-  '--round', '--prior',
+  '--round', '--prior', '--allow-infra-scope',
 ]);
 
 const flagValue = (args, name) => {
@@ -52,8 +52,10 @@ export function parseReviewArgs(args) {
   // cap as CODE (round-gate.mjs). Absent → legacy single-shot behaviour.
   const round = flagValue(args, '--round');
   const priorPath = flagValue(args, '--prior');
+  // --allow-infra-scope — admit the bundle's own modules to the reviewer (the audit's flag, same meaning).
+  const allowInfraScope = args.includes('--allow-infra-scope');
   return {
     planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId, role,
-    envelopeScopeCli, campaignDigest, round, priorPath,
+    envelopeScopeCli, campaignDigest, round, priorPath, allowInfraScope,
   };
 }
