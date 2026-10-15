@@ -342,10 +342,15 @@ function main() {
 
   if (check) {
     let current = null;
-    try { current = fs.readFileSync(target, 'utf8'); } catch { /* missing */ }
+    // Only an ABSENT index is "missing"; a permission error or a directory at that path is a real fault and must
+    // surface with its cause (the caller's catch reports it), not read as a stale index.
+    try { current = fs.readFileSync(target, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     if (current === rendered) {
+      // Return, do not `process.exit(0)`: a piped stdout is asynchronous on Windows, so an exit here can discard this
+      // very line (AGENTS.md: an exit that stdout can reach must drain first). `main` is synchronous, so the process
+      // simply ends when nothing is left to do.
       console.log(`${G}✓${X} plans:index — ${PLANS_DIR}/${INDEX_NAME} is up to date (${counts}).`);
-      process.exit(0);
+      return;
     }
     console.error(`\n${R}${B}✗ plans:index${X} — ${PLANS_DIR}/${INDEX_NAME} is ${current === null ? 'missing' : 'stale'}.`);
     console.error(`${D}  A plan's Status line changed (or a plan was added) without regenerating.`);

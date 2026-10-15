@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { commitAll, gitInit, sh } from './helpers/fixtures.mjs';
 
 const SCRIPT = path.resolve(import.meta.dirname, '../scripts/generate-plans-index.mjs');
 
@@ -46,21 +47,17 @@ function regenerate(repo, { oldCountsLine = false } = {}) {
   }
 }
 
-function commitAll(repo, msg) {
-  git(repo, 'add', '-A');
-  git(repo, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', msg);
-}
-
 /** Build the repo and the two diverging branches; returns the two branch tips. */
 function build({ oldCountsLine }) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-friction-'));
-  git(repo, 'init', '-q', '-b', 'main');
+  gitInit(repo);
   fs.mkdirSync(path.join(repo, 'docs/plans'), { recursive: true });
   // Several plans in BOTH buckets, so each new row has unchanged neighbours on both sides.
   for (const n of ['a', 'b', 'c']) fs.writeFileSync(path.join(repo, `docs/plans/draft-${n}.md`), plan(`Draft ${n}`, 'Draft'));
   for (const n of ['a', 'b', 'c']) fs.writeFileSync(path.join(repo, `docs/plans/done-${n}.md`), plan(`Done ${n}`, 'Complete'));
   regenerate(repo, { oldCountsLine });
   commitAll(repo, 'base');
+  sh(repo, 'branch', '-M', 'main');
 
   git(repo, 'checkout', '-q', '-b', 'adds-active');
   fs.writeFileSync(path.join(repo, 'docs/plans/draft-new.md'), plan('Draft new', 'Draft'));
@@ -82,11 +79,17 @@ test('two PRs adding an active and a terminal plan merge with no conflict in the
   try {
     const r = mergeTree(repo);
     assert.equal(r.status, 0, `the index must merge cleanly; merge-tree said:\n${r.stdout}`);
-    // And the merged result is exactly what the generator produces for the merged tree (still byte-checked, Category B).
+    // And the merged result is EXACTLY what the generator renders for the merged tree (still byte-checked, Category B):
+    // materialise the merge as a commit, check it out, and run the generator's own --check over it. A clean merge that
+    // dropped a row, duplicated a section or reordered would differ from the regeneration and fail here.
     const tree = r.stdout.split('\n')[0];
-    const merged = git(repo, 'show', `${tree}:docs/plans/README.md`).stdout;
-    assert.match(merged, /draft-new\.md/);
-    assert.match(merged, /done-new\.md/);
+    const merged = git(repo, 'commit-tree', tree, '-p', 'adds-active', '-p', 'adds-terminal', '-m', 'merge').stdout.trim();
+    sh(repo, 'checkout', '-q', '--detach', merged);
+    const text = fs.readFileSync(path.join(repo, 'docs/plans/README.md'), 'utf8');
+    assert.match(text, /draft-new\.md/);
+    assert.match(text, /done-new\.md/);
+    const check = spawnSync(process.execPath, [SCRIPT, '--check'], { cwd: repo, encoding: 'utf8' });
+    assert.equal(check.status, 0, `the merged index is not what the generator renders for the merged tree:\n${check.stderr}`);
   } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
 });
 

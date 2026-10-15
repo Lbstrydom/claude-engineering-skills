@@ -406,7 +406,10 @@ test('an artifact whose formatting we would not reproduce is REFUSED, not rewrit
  */
 const MANDATORY = {
   'skills:check': [
-    'skills-check-authenticates-manifest-content',
+    // 'skills-check-authenticates-manifest-content' was REMOVED deliberately on 2026-10-15, not lost: skills.manifest.json
+    // became Category A (untracked, built by release.yml), so `skills:check` no longer runs `build-manifest --check`
+    // and a pill for it could never go red. `--check` itself is still tested (tests/skills-artifact-freshness-wiring.test.mjs).
+    // docs/plans/fleet-chips-and-merge-friction.md section 2.1.
     'skills-check-detects-hand-edited-generated-copy',
     'skills-check-detects-shared-reference-drift',
     'skills-check-detects-over-budget-description',

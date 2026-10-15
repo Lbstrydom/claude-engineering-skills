@@ -42,24 +42,38 @@ jobs:
 
       - name: Determine tag
         id: tag
+        # The dispatch input is DATA: it reaches the shell through the environment, never by interpolating the
+        # expression into the script text (a value like `v1.0.0$(id)` would otherwise run), and it is validated before
+        # any later step reads it.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
           else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            TAG="${GITHUB_REF#refs/tags/}"
           fi
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "refusing release tag that is not vMAJOR.MINOR.PATCH[-suffix]" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Build manifest
         run: node scripts/build-manifest.mjs
 
       - name: Build checksums
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           node -e "
           import fs from 'fs';
           import crypto from 'crypto';
           import path from 'path';
 
-          const tag = '${{ steps.tag.outputs.tag }}';
+          const tag = process.env.RELEASE_TAG;
+          if (!tag) throw new Error('RELEASE_TAG is not set');
           const manifest = JSON.parse(fs.readFileSync('skills.manifest.json', 'utf-8'));
           const files = {};
 
@@ -75,11 +89,11 @@ jobs:
             'scripts/build-manifest.mjs',
             'skills.manifest.json',
           ];
+          // Every listed path is REQUIRED: readFileSync throws on a missing one, so a renamed or deleted script fails
+          // the release instead of being silently dropped from checksums.json (it was: check-skill-updates.mjs).
           for (const sp of scriptPaths) {
-            if (fs.existsSync(sp)) {
-              const content = fs.readFileSync(sp);
-              files[sp] = 'sha256-' + crypto.createHash('sha256').update(content).digest('hex');
-            }
+            const content = fs.readFileSync(sp);
+            files[sp] = 'sha256-' + crypto.createHash('sha256').update(content).digest('hex');
           }
 
           const checksums = {
