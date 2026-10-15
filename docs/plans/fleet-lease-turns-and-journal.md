@@ -348,6 +348,16 @@ Scope added before PR 3 by the user via the coordinator: `fleet lease run` (p-20
 | GPT | 2 | READY_TO_IMPLEMENT, 0 findings | - |
 | Gemini (`latest-pro`) | 1 | APPROVE, gate `approve` (blocking 0, debt 0) | - |
 
+### Amendment audit (PR 4, 2026-10-15, SID audit-plan-1792087437906-93716)
+
+Scope added after PR 3 by the coordinator: p-20261015091934-3c6d (`--end-turn` handed the repo's turn away while the same repo's jobs waited, 09:18Z) and p-20261015072500-ae47 (PR 3 code audit H6: the handover unblock recipe could lose a wait added between receive and the command). New D9, D10; Phases 9-10; Cluster D. Lean audit: stop at the first clean GPT round, then Gemini.
+
+| Reviewer | Round | Verdict | Outcome |
+|---|---|---|---|
+| GPT | 1 | NEEDS_REVISION, M:1 | accepted: property invariant I6 was stated over every holder `--end-turn` release; scoped to a settled turn owned by the releaser, with out-of-scope assertions (named-gap borrower, turn already settled away). |
+| GPT | 2 | READY_TO_IMPLEMENT, 0 findings | - |
+| Gemini (`latest-pro`) | 1 | APPROVE, gate `approve` (blocking 0, debt 0) | - |
+
 ## Implementation Log
 
 ### PR 1 (clusters A: phases 1-3) - 2026-10-14
