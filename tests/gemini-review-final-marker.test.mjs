@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { recordFinalReviewMarker } from '../scripts/gemini-review.mjs';
+import { recordFinalReviewMarker } from '../scripts/lib/final-review-marker.mjs';
 import { readFinalReviewMarker, FINAL_REVIEW_RELPATH } from '../scripts/lib/final-review-marker.mjs';
 import { GATE_EVIDENCE_RELPATH } from '../scripts/lib/audit/gate-evidence.mjs';
 import { evaluatePreauthorisedShip } from '../scripts/lib/ship-preauth.mjs';
@@ -91,4 +91,13 @@ describe('recordFinalReviewMarker (producer) feeding evaluatePreauthorisedShip (
       assert.equal(quiet(() => recordFinalReviewMarker({ auditMode: 'code', result: { verdict: 'APPROVE' }, repoRoot: d, write: () => w })), false, JSON.stringify(w));
     }
   }));
+});
+
+describe('the producer is actually wired (a marker with no caller is the failure this whole class is about)', () => {
+  it('gemini-review.mjs imports recordFinalReviewMarker and its exit status depends on the result', () => {
+    const src = fs.readFileSync(path.resolve(import.meta.dirname, '../scripts/gemini-review.mjs'), 'utf8');
+    assert.match(src, /import \{ recordFinalReviewMarker \} from '\.\/lib\/final-review-marker\.mjs'/);
+    assert.match(src, /finishAndExit\(recordFinalReviewMarker\(\{ auditMode, result, repoRoot: process\.cwd\(\) \}\) \? 1 : 0\)/,
+      'the review must call the recorder after emitting its verdict and exit non-zero when the recorder says fatal');
+  });
 });

@@ -40,7 +40,7 @@ import { getRepoContext } from './lib/repo-context.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { RUN_ID_RE } from './lib/commit-trailers.mjs';
 import { GATE_EVIDENCE_RELPATH } from './lib/audit/gate-evidence.mjs';
-import { writeFinalReviewMarker } from './lib/final-review-marker.mjs';
+import { recordFinalReviewMarker } from './lib/final-review-marker.mjs';
 import { isRefuted } from './lib/audit/finding-verification.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
 import { sumUsage } from './lib/model-pricing.mjs';
@@ -915,29 +915,6 @@ function readGateEvidenceMarker(repoRoot) {
   }
 }
 
-/**
- * Record WHAT this final review approved, beside the gate-evidence marker, so a pre-authorised ship can tell tree A's approval from
- * tree B's (`audit_runs.gemini_verdict` is one column per run with no target). Code mode only: a plan review is not a verdict on a
- * commit and must not touch the code marker. The evidence (run, audited tree, audit round) is read from `.audit/last-audit-run.json`
- * as it stands NOW, so a later audit round, which rewrites that marker, leaves this one not matching. Plan:
- * docs/plans/fleet-chips-and-merge-friction.md section 2.2b; the writer is fail-closed (lib/final-review-marker.mjs).
- *
- * @returns {boolean} true when the review lifecycle must be treated as FATAL (exit non-zero): the writer could not make an earlier
- *   approval unusable, or another review held the marker lock. Everything else (a write that failed after revoking, evidence that
- *   cannot identify the review) leaves NO approval standing, which is the safe state, and is only reported.
- */
-export function recordFinalReviewMarker({ auditMode, result, repoRoot, write = writeFinalReviewMarker, readEvidence = readGateEvidenceMarker } = {}) {
-  if (auditMode !== 'code') return false;
-  const evidence = readEvidence(repoRoot);
-  const w = write({ repoRoot, evidence, verdict: result?.verdict });
-  if (w.written) {
-    console.error(`  [final-review-marker] recorded ${result.verdict} for run ${String(evidence.runId).slice(0, 8)}, audit round ${evidence.round}, tree ${String(evidence.auditedTree).slice(0, 12)}\n`);
-    return Boolean(w.sidecarStuck);
-  }
-  console.error(`  [final-review-marker] not recorded (${w.reason}): a pre-authorised ship will read this review as unrecorded\n`);
-  return w.revoked === false;
-}
-
 async function main() {
   assertRepoRoot(import.meta.url);
   await refreshProviderModels();
@@ -1069,8 +1046,7 @@ async function main() {
     await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode }, { modelEvalOverride, envelopeScopeCli, campaignDigest, runReviewWithRetry });
     emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile, gateSummary);
     recordGeminiOutcomes(result, primaryModel);
-    const markerFatal = recordFinalReviewMarker({ auditMode, result, repoRoot: process.cwd() });
-    await finishAndExit(markerFatal ? 1 : 0); // guarantee termination — never rely on natural drain
+    await finishAndExit(recordFinalReviewMarker({ auditMode, result, repoRoot: process.cwd() }) ? 1 : 0); // never rely on natural drain; a marker that cannot be made safe is fatal
   } catch (err) {
     // Route-enriched for the Azure provider (a bare 401/404 there names neither
     // the endpoint nor the credential variable); byte-identical `err.message`

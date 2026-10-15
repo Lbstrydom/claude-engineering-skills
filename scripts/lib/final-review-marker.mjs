@@ -151,3 +151,31 @@ export function readFinalReviewMarker(repoRoot, { fsMod = fs } = {}) {
     && typeof m.ts === 'string' && !Number.isNaN(Date.parse(m.ts));
   return shaped ? { ok: true, marker: m } : { ok: false, reason: 'malformed' };
 }
+
+/** The gate-evidence marker as JSON, or null when absent or unreadable (the writer then revokes and records nothing). */
+function readGateEvidenceFile(repoRoot) {
+  try { return JSON.parse(fs.readFileSync(path.join(repoRoot, '.audit', 'last-audit-run.json'), 'utf-8')); } catch { return null; }
+}
+
+/**
+ * Record WHAT this final review approved (called by gemini-review.mjs after each review), beside the gate-evidence marker, so a pre-authorised ship can tell tree A's approval from
+ * tree B's (`audit_runs.gemini_verdict` is one column per run with no target). Code mode only: a plan review is not a verdict on a
+ * commit and must not touch the code marker. The evidence (run, audited tree, audit round) is read from `.audit/last-audit-run.json`
+ * as it stands NOW, so a later audit round, which rewrites that marker, leaves this one not matching. Plan:
+ * docs/plans/fleet-chips-and-merge-friction.md section 2.2b; the writer is fail-closed (lib/final-review-marker.mjs).
+ *
+ * @returns {boolean} true when the review lifecycle must be treated as FATAL (exit non-zero): the writer could not make an earlier
+ *   approval unusable, or another review held the marker lock. Everything else (a write that failed after revoking, evidence that
+ *   cannot identify the review) leaves NO approval standing, which is the safe state, and is only reported.
+ */
+export function recordFinalReviewMarker({ auditMode, result, repoRoot, write = writeFinalReviewMarker, readEvidence = readGateEvidenceFile } = {}) {
+  if (auditMode !== 'code') return false;
+  const evidence = readEvidence(repoRoot);
+  const w = write({ repoRoot, evidence, verdict: result?.verdict });
+  if (w.written) {
+    console.error(`  [final-review-marker] recorded ${result.verdict} for run ${String(evidence.runId).slice(0, 8)}, audit round ${evidence.round}, tree ${String(evidence.auditedTree).slice(0, 12)}\n`);
+    return Boolean(w.sidecarStuck);
+  }
+  console.error(`  [final-review-marker] not recorded (${w.reason}): a pre-authorised ship will read this review as unrecorded\n`);
+  return w.revoked === false;
+}
