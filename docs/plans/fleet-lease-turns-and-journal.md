@@ -6,7 +6,7 @@
 - **Target domain(s)**: `fleet`, `scripts`, `shared-lib`, `tests`
 - ⚠ **Cross-domain work** — `fleet` (lease) plus `scripts`/`shared-lib` (sync:pr). Intentional: sync:pr becomes a lease client.
 - **Depends on**: branch `claude/rule14-turns` (commit `ca17acde`, the user's turn policy text in rule 14 + coordination-rationale.md) — PR 2's docs extend that text; land it first or carry it.
-- **Theme**: coordinator rule 13, three sequential PRs. Findings: p-20261014082917-9eaa, p-20261014082803-0dc2, p-20261014103957-4acc, p-20261014092409-d052 (PR 1); p-20261014080650-b921, p-20261014092503-a3b9 (PR 2); p-20261014123044-9d07, p-20261015045123-3fd7, p-20261014080352-35d6 (PR 3; 3fd7, `lease run`, added 2026-10-15).
+- **Theme**: coordinator rule 13, three sequential PRs. Findings: p-20261014082917-9eaa, p-20261014082803-0dc2, p-20261014103957-4acc, p-20261014092409-d052 (PR 1); p-20261014080650-b921, p-20261014092503-a3b9 (PR 2); p-20261014123044-9d07, p-20261015045123-3fd7, p-20261014080352-35d6 (PR 3; 3fd7, `lease run`, added 2026-10-15); p-20261015091934-3c6d, p-20261015072500-ae47 (PR 4, added 2026-10-15 after the 09:18Z turn loss and PR 3's audit H6).
 
 ## 1. Context Summary
 
@@ -61,6 +61,8 @@ sequenceDiagram
 ```
 
 ### 2.1 Right-sizing (the three lines)
+
+- **PR 4 (D9, D10).** Band-aid: tell people not to pass `--end-turn` while their repo waits, and to re-run the recipe if a wait was added. Over-built: per-job waiter entries with owners, so `--end-turn` can end only the caller's own claim, plus a general wait-editing command. Chosen: one condition on an existing branch of `decideRelease` keyed on the waiter entry that already exists, and one repeatable flag on `touch` inside its existing transaction - each serves an incident that happened.
 
 - **Band-aid**: a warning line on `announce`, and coordinators keep relaying turns and gaps by message.
 - **Over-engineered**: an enforcing scheduler (a daemon or the pre-push hook consulting the lease), priority classes, per-job duration estimates, a separate append-only event store with rotation.
@@ -165,6 +167,20 @@ sequenceDiagram
 
 - **D8 — `--clear-waiting` keeps re-added waits' age (35d6) (#12).** `applyWaiting` keeps the existing `since` of any `(kind, ref)` being re-added, cleared or not; only genuinely new waits get `since: now`. The handover comment `handover.mjs:756` and `skills/fleet/references/handover.md` stop saying their `since` restarts.
 
+- **D9 — `--end-turn` never hands the turn away while the same repo still waits (3c6d) (#13, #16). Added 2026-10-15 for PR 4.** Incident: at 09:18Z a coordinator push released with `--end-turn` and handed CES's turn to storyline while four CES jobs were queued (37 refusals); CES lost about 60 minutes before the 12:00Z quiet window. `--end-turn` is a statement about the CALLER ("I have nothing further ready") but acted on the REPO's turn.
+  - **Rule.** In `decideRelease`'s holder branch, when `req.endTurn` is set, the turn belongs to the releasing repo, and the SETTLED lease (`base`, after `settleQueue`) has a waiter entry with the releasing repo's `repoKey`, the release proceeds as a plain release: the slot is freed, the turn is kept with `lastReleasedAt = now` (so the 10-minute between-jobs gap of D6 applies and the waiting job goes `in-turn`), and no `turn-ended`/`yield` entry is written. The result carries `turnKept: {reason: 'same-repo-waiting', since: <that waiter's since>}`. With no same-repo waiter entry, `--end-turn` yields exactly as today.
+  - **Why the repo's own waiter entry is the right signal, and the only one available.** Waiters are per repo (D3b), and a grant SERVES the repo's entry (`lease.mjs:113 (68769d55)`), so an entry that exists when the holder releases was opened (or re-opened) by a same-repo job refused AFTER the releaser's grant: someone of this repo asked and is waiting. Jobs are not individually visible (a waiter has no per-job list), and adding one would be a schema change for a signal the entry already gives.
+  - **Downgrade and warn, never refuse** (the coordinator's ruling, 2026-10-15): refusing a release would leave the slot held, the worst outcome for everyone waiting. The release always happens.
+  - **The record says what was asked AND what happened.** The `released` journal entry keeps `endTurn: true` and adds `turnKept: 'same-repo-waiting'` - a new optional field on an existing kind, preserved by every older reader through `.passthrough()` (D1); the frozen v1 schema does not validate `journal` at all.
+  - **Surfaces.** `lease release --end-turn` prints a second line: "`--end-turn` not applied: <repo> has a job waiting since HH:MMZ, so the turn stays with <repo> for the between-jobs gap; to hand it over anyway, `lease wait --cancel` first". `--json` carries `turnKept`. `runUnderLease` returns it as `released.turnKept` and logs the same sentence, so `lease run --end-turn` and `sync:pr` (which always releases with `endTurn`) say it too. `decideReleaseToCiWindow` calls `decideRelease` and passes `turnKept` through; a kept turn is active, so its window carries no `overTurn`.
+  - **Escape hatch, no new flag.** A person who really wants to hand the turn over while the repo waits runs `lease wait --cancel` (own repo only, already exists: it ends the repo's wait as `cancelled`) and then `release --end-turn`. A `--force-yield` flag would serve no current requirement.
+  - **Stated limits.** A same-repo job that has not asked since the releaser's grant is invisible until its next refused poll (it then joins the queue normally). A same-repo waiter that gave up without `lease wait --cancel` keeps the turn for at most the 10-minute gap, after which D6's `idle` rule ends it - the same cost as a plain release today, bounded.
+- **D10 - `fleet touch --unwait <kind:ref>` drops ONE wait atomically (ae47) (#12, #14). Added 2026-10-15 for PR 4.** PR 3's code audit H6: `handover receive` prints an unblock recipe that clears every wait and re-adds a snapshot of the others (`handover.mjs:756-759 (68769d55)`), so a wait added between receive and running the printed command is lost. D8 kept the re-added waits' age but not that race.
+  - **Rule.** `touch` gains a repeatable `--unwait <kind:ref>`. Inside the same locked transaction every `touch` already uses (`commands.mjs:491-497 (68769d55)`, `transact`), each pair removes the wait whose `kind` and `ref` equal it (the exact match `applyWaiting` already uses), then `--waiting-on` adds apply as today (keeping age, D8). One read-modify-write under the registry lock: nothing can interleave.
+  - **Validation.** `--unwait` with `--clear-waiting` is a usage error (the two contradict). A `:note` part is a usage error (a wait is identified by kind and ref). A pair that matches no wait is not an error - the command still touches - but the text says "was not waiting on <kind:ref>" so a typo is visible, and `--json` lists it under `notWaiting`.
+  - **The recipe.** `handover receive` prints `touch --id <id> --unwait human:<stored ref>` for each switch wait, using the ref exactly as stored (the switch test normalises with `normaliseWaitRef`, the removal does not, so printing the stored ref is what makes them agree). No snapshot of other waits is printed, so none can go stale.
+  - **Scope.** `touch` only - the recipe's verb. `claim` and `ready` keep `--clear-waiting`; nothing needs `--unwait` there yet.
+
 ### 2.3 Execution model (Phase 1.5)
 
 **Three stages inside one lock (audit R2 H2):** (1) **validate** the request — an argv/`bad-request` refusal writes nothing at all; (2) **settle** time-driven state with `settleQueue` — its transitions (wait expiry, turn end, offer set/clear, lapse) are facts about time, so they are **persisted even when the operation is refused**; settle touches only `waiters`, `turn` and `journal`, never `heavy` or `windows`; (3) **evaluate** the operation against the settled lease. A refusal then preserves `heavy` and `windows` relative to the disk and `turn` relative to the settled baseline, adding only its own waiter/journal change.
@@ -213,6 +229,15 @@ New flags: PR 1 — `announce --over-held`; `wait [--for <min>] [--cancel] [--no
 - `scripts/lib/fleet/commands.mjs` (modify) — `applyWaiting` keeps `since` (D8).
 - `scripts/lib/fleet/handover.mjs` (modify) — comment at `:756`.
 - `tests/fleet-cli.test.mjs` (modify) — D8 red/green.
+- `scripts/lib/fleet/lease.mjs` (modify, PR 4) — D9 in `decideRelease`'s holder branch; `turnKept` in the result and on the `released` entry.
+- `scripts/lib/fleet/lease-cmd.mjs` (modify, PR 4) — the `release` text and `--json` carry `turnKept`.
+- `scripts/lib/fleet/lease-run.mjs` (modify, PR 4) — `released.turnKept` returned and logged.
+- `scripts/sync-pr.mjs` (modify, PR 4, only if needed) — it prints the CI-window line itself (`sync-pr.mjs:252 (68769d55)`); a kept turn gets the same kind of one-line note.
+- `scripts/lib/fleet/commands.mjs`, `scripts/lib/fleet/argv.mjs` (modify, PR 4) — D10 `--unwait` on `touch`.
+- `scripts/lib/fleet/handover.mjs` (modify, PR 4) — the unblock recipe prints `--unwait`.
+- `tests/fleet-lease-turns.test.mjs`, `tests/fleet-lease-interleaving.test.mjs`, `tests/fleet-lease-cli.test.mjs`, `tests/fleet-lease-run.test.mjs` (modify, PR 4) — D9.
+- `tests/fleet-cli.test.mjs`, `tests/fleet-handover-receive.test.mjs` (modify, PR 4) — D10.
+- `skills/fleet/references/lease.md`, `skills/fleet/references/participant-rules.md`, `skills/fleet/references/handover.md`, `skills/fleet/SKILL.md` (modify, PR 4) — the `--end-turn` rule, `--unwait`; SKILL.md size-neutral.
 - `skills/fleet/references/lease.md` (create) — the lease verbs, flags, journal, turns and gaps in one place (summary frontmatter + index row).
 - `skills/fleet/SKILL.md` (modify) — lease usage lines collapsed to one line pointing at `references/lease.md`; net size must not grow (`skills:size:gate`, the file is already over 12,000 chars). `skills/fleet/gate-contract.json` (modify) if its bound usage line changes.
 - `skills/fleet/references/coordination-rationale.md`, `skills/fleet/references/coordination.md`, `skills/fleet/references/participant-rules.md`, `skills/fleet/references/handover.md` (modify) — rule 14 now names the lease's turn support; participant step for `lease wait`; handover wording (D8). coordination.md stays under 12,000 chars.
@@ -235,6 +260,10 @@ New flags: PR 1 — `announce --over-held`; `wait [--for <min>] [--cancel] [--no
 **Phase 7 — sync:pr as a caller**: D7. Files: scripts/sync-pr.mjs (modify), scripts/lib/sync-pr.mjs (modify), tests/sync-pr-lease.test.mjs (create), tests/sync-pr.test.mjs (modify)
 
 **Phase 8 — `--clear-waiting` keeps since**: D8. Files: scripts/lib/fleet/commands.mjs (modify), scripts/lib/fleet/handover.mjs (modify), tests/fleet-cli.test.mjs (modify), skills/fleet/references/handover.md (modify)
+
+**Phase 9 — `--end-turn` keeps the turn while the same repo waits**: D9 in the decision, the CLI text, `runUnderLease` and sync:pr's note; the property-test invariant I6. Files: scripts/lib/fleet/lease.mjs (modify), scripts/lib/fleet/lease-cmd.mjs (modify), scripts/lib/fleet/lease-run.mjs (modify), scripts/sync-pr.mjs (modify), tests/fleet-lease-turns.test.mjs (modify), tests/fleet-lease-interleaving.test.mjs (modify), tests/fleet-lease-cli.test.mjs (modify), tests/fleet-lease-run.test.mjs (modify), skills/fleet/references/lease.md (modify), skills/fleet/references/participant-rules.md (modify)
+
+**Phase 10 — `touch --unwait`**: D10 and the handover recipe. Files: scripts/lib/fleet/commands.mjs (modify), scripts/lib/fleet/argv.mjs (modify), scripts/lib/fleet/handover.mjs (modify), tests/fleet-cli.test.mjs (modify), tests/fleet-handover-receive.test.mjs (modify), skills/fleet/references/handover.md (modify), skills/fleet/SKILL.md (modify)
 
 **Close-out (not a phase)**: `npm run skills:regenerate && npm run skills:check`, `npm run skills:size:gate`, `npm run size:ratchet:gate`, `npm run plans:index`, `npm run guards:preflight` before each push.
 
@@ -259,6 +288,9 @@ New flags: PR 1 — `announce --over-held`; `wait [--for <min>] [--cancel] [--no
 | sync:pr defers a consumer the operator expected to update. | Deferred is printed per target with the lease reason and exit 3; the consumer is queued as a waiter so its turn comes. |
 | Draft PRs as STO asked. | Not used: storyline's PR workflow runs on drafts, so a draft would not hold CI. `--ci-window` records the CI instead; `--no-merge` keeps the merge in the target's hands. |
 | Turn timing is a guess (60 min). | Data (`turnMin`), doctor recommends per machine. |
+| D9 keeps a turn for a same-repo waiter that has already given up. | Bounded by D6's 10-minute `idle` end; `lease wait --cancel` hands over at once. Same cost as a plain release today. |
+| D9 cannot see a same-repo job that has not asked yet. | Stated limit: it queues on its next refused poll, as any job does. Per-job entries were rejected as over-built (§2.1). |
+| D10's exact ref match misses a wait typed differently. | The recipe prints the stored ref verbatim; a miss is reported ("was not waiting on"), never silent. |
 
 Deferred: enforcement in the pre-push hook; per-job duration estimates; removing another repo's waiter by force (the 15-min lapse covers ghosts).
 
@@ -271,6 +303,8 @@ Deferred: enforcement in the pre-push hook; per-job duration estimates; removing
 - **`lease run` CLI** (`tests/fleet-lease-run-cli.test.mjs`, real child processes): `-- node -e "process.exit(7)"` → exit 7 and the slot free afterwards; another repo holds the slot → exit 75, a child that would write a marker file never ran, and stderr says it did NOT run; `--wait` with the holder releasing mid-wait → the command runs; `--timeout 1`-equivalent short timeout (an injected minute length) with a sleeping child → 124 and the slot free; `--json` → 2; nothing after `--` → 2; argv after `--` reaches the child verbatim (spaces, quotes, a leading `--flag`); POSIX only: SIGTERM to the runner → the child AND a grandchild it started are gone (the group was signalled), the slot is free, exit 143; Windows only: the timeout path stops a child and its grandchild via `taskkill /T` (R1 H1); `--end-turn` yields the turn.
 - **sync:pr** (`tests/sync-pr-lease.test.mjs`, temp `FLEET_MACHINE_DIR`, fake runner, fixture git repos): held slot → target deferred, no `git push` issued, consumer queued, exit 3; `--lease-wait` with the slot freed mid-wait → it pushes; queue full → "NOT queued"; granted → the push runs inside the lease and the slot is free afterwards; with `--ci-window`: stopped before the push → plain release, no window; push failed and `ls-remote` shows no branch → plain release; push failed but `ls-remote` shows the branch, or `ls-remote` fails → released to a CI window (R1 H2); push ok then `gh pr create` fails, or a throw after the push → released to a CI window; an aborted signal between steps stops before the next remote step (`step: 'aborted'`, R1 H4); the consumer's turn is yielded after each target; ok → released to a CI window; the window and the release land in ONE write; unreadable lease → deferred.
 - **D8** (`tests/fleet-cli.test.mjs`): `touch --clear-waiting --waiting-on A` keeps A's original `since`, drops B, a new C gets `now` — red first.
+- **D9** (`tests/fleet-lease-turns.test.mjs`, test-first): the holder of repo A's turn releases with `endTurn` while A has a waiter entry -> slot freed, turn still A's with `lastReleasedAt = now`, no `turn-ended`, `released` entry has `endTurn: true, turnKept: 'same-repo-waiting'`, result `turnKept.since` = the waiter's `since`; A's waiting job then acquires `in-turn` although repo B waits longer; without an A waiter entry the turn ends `yield` as today (the control); `lease wait --cancel` then `--end-turn` hands over; a waiter that never comes ends the turn `idle` after 10 minutes; `decideReleaseToCiWindow` with a kept turn writes no `overTurn`. **Property test**: invariant **I6** - after a holder's `release --end-turn`, the turn ends iff the releasing repo had no waiter entry in the settled pre-state, and `turnKept` is recorded iff it was kept; coverage guard requires both outcomes to occur (two sessions per repo make same-repo waiters reachable). **CLI** (`tests/fleet-lease-cli.test.mjs`): the second line is printed and `--json` has `turnKept`. **`runUnderLease`** (`tests/fleet-lease-run.test.mjs`): `released.turnKept` returned and logged.
+- **D10** (`tests/fleet-cli.test.mjs`, test-first): `touch --unwait human:x` removes only that wait and keeps the others with their `since`; a wait added by another `touch` between a receive and the `--unwait` survives (the race H6 named); `--unwait` + `--clear-waiting` and `--unwait kind:ref:note` are usage errors; an absent pair is reported in text and `notWaiting`. **Recipe** (`tests/fleet-handover-receive.test.mjs`): a session waiting on the switch token and on `ci:x` gets `touch --id <id> --unwait human:<stored ref>` and no `--clear-waiting`/`--waiting-on`.
 - **Negative controls**: the property test's red run is the control for I2; for I1, a deliberately enum-widened `events` kind must fail the v1 reader (proves the fixture can fail).
 
 ## 11. Execution Clustering
@@ -281,11 +315,13 @@ Deferred: enforcement in the pre-push hook; per-job duration estimates; removing
   - Coupling: gaps and turns both change `conflictingWindows`/`decideAcquire`'s admission rule and both extend the property test's operation set; turn bypass by named gap is the seam. Ships as PR 2.
 - **Cluster C** — Phases 6-8 — fix-gate: final
   - Coupling: `lease run` and its one in-process caller share the seam that matters - `runUnderLease`'s acquire/release contract and the CI-window handoff - so they are audited together; `--clear-waiting` is the remaining small fleet wait-state fix and rides along. Ships as PR 3.
+- **Cluster D** — Phases 9-10 — fix-gate: final
+  - Coupling: both are small fixes to how a fleet participant gives something up - the lease turn (D9) and a claim's wait (D10) - found in this theme's own operation and PR 3's audit; they share no code, so they are one PR by size, not by seam. Ships as PR 4.
 - **Final gate**: each cluster ships as its own PR, so the Gemini gate runs per PR over that PR's diff (`/audit-code --scope diff` then Gemini), not once over the union.
 
 ## Out of Scope (Future)
 
-Pre-push enforcement; force-removing another repo's waiter; draft-PR CI holding (needs per-consumer workflow guards first); a lease renewal heartbeat for `lease run` (an expired lease with a live recorded pid is already treated as held); `--json` for `lease run` (the child owns stdout).
+Pre-push enforcement; force-removing another repo's waiter; per-job waiter entries (D9 keys on the per-repo entry); `--unwait` on `claim`/`ready`; draft-PR CI holding (needs per-consumer workflow guards first); a lease renewal heartbeat for `lease run` (an expired lease with a live recorded pid is already treated as held); `--json` for `lease run` (the child owns stdout).
 
 ## Audit Trail
 
