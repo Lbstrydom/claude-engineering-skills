@@ -172,10 +172,11 @@ describe('runChild (the tree stop, timeout and abort, with real processes)', () 
   it('a parent that exits GRACEFULLY on the stop still takes its stubborn worker with it (audit R2 H1/H2)', async () => {
     const dir = tmp();
     const pidFile = path.join(dir, 'w.pid');
-    const worker = 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'; // ignores the polite signal
+    // The WORKER writes the pid file, and only after its SIGTERM handler is installed: seeing the file proves the worker is
+    // already stubborn, so an early abort cannot let a default-disposition SIGTERM kill it and pass the test for the wrong reason.
+    const worker = 'process.on("SIGTERM",()=>{});require("fs").writeFileSync(' + JSON.stringify(pidFile) + ',String(process.pid));setInterval(()=>{},1000)';
     const script = `const {spawn}=require('child_process');process.on('SIGTERM',()=>process.exit(0));`
-      + `const w=spawn(process.execPath,['-e',${JSON.stringify(worker)}],{stdio:'ignore'});`
-      + `require('fs').writeFileSync(${JSON.stringify(pidFile)},String(w.pid));setInterval(()=>{},1000)`;
+      + `spawn(process.execPath,['-e',${JSON.stringify(worker)}],{stdio:'ignore'});setInterval(()=>{},1000)`;
     const ac = new AbortController();
     const done = runChild({ cmd: NODE, args: ['-e', script], signal: ac.signal, graceMs: 2000 });
     let w = 0;
