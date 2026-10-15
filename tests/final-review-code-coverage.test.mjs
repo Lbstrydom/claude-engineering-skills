@@ -19,7 +19,7 @@ import path from 'node:path';
 
 import { readFilesAsContextDetailed, readFilesAsContext, mergeCodeRenderStats } from '../scripts/lib/audit-scope.mjs';
 import { buildReviewEnvelope, codeRenderTruncation } from '../scripts/lib/final-review/envelope.mjs';
-import { summariseCodeCoverage, applyCoverageGate } from '../scripts/lib/final-review/code-coverage.mjs';
+import { summariseCodeCoverage, applyCoverageGate, formatCodeCoverageSegment } from '../scripts/lib/final-review/code-coverage.mjs';
 import { makeTieredCodeRenderer, CHANGED_FILE_MAX_PER_FILE } from '../scripts/lib/final-review/code-render.mjs';
 
 // ── Fixture ─────────────────────────────────────────────────────────────────
@@ -285,5 +285,42 @@ describe('makeTieredCodeRenderer — the diff is rendered before ambient context
 
   it('the changed-file cap is genuinely larger than the ambient one', () => {
     assert.ok(CHANGED_FILE_MAX_PER_FILE > 8000, 'a cap equal to the old one would make the fix inert');
+  });
+});
+
+describe('a multi-file group names each changed file the reviewer never received (upstream 57bd3de9)', () => {
+  const stats = (over) => ({
+    requested: 0, maxPerFile: 0, maxTotal: 0, full: [], headTruncated: [],
+    budgetOmitted: [], unreadable: [], sensitiveExcluded: [], redactionShortened: [],
+    charsRendered: 0, charsOnDisk: 0, ...over,
+  });
+  const changed = ['src/a.mjs', 'tests/eval/facts.jsonl', 'assets/logo.png'];
+
+  it('PARTIAL state, but the segment says NONE: <file> for the one never sent — and not for a png', () => {
+    const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), changed, { requested: ['src/a.mjs'] });
+    assert.equal(c.state, 'partial');
+    assert.deepEqual(c.changedNotReceived.map((x) => x.path), ['tests/eval/facts.jsonl']);
+    const seg = formatCodeCoverageSegment(c);
+    assert.match(seg, /^Code: PARTIAL/);
+    assert.match(seg, /NONE: tests\/eval\/facts\.jsonl/);
+    assert.doesNotMatch(seg, /logo\.png/);
+  });
+
+  it('a file the envelope asked for but budget dropped is named too; the cap prints (+N more)', () => {
+    const many = Array.from({ length: 8 }, (_, i) => 'src/m' + i + '.xyz');
+    const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs', ...many]);
+    const seg = formatCodeCoverageSegment(c);
+    assert.match(seg, /NONE: .*\(\+3 more\)/);
+    const b = summariseCodeCoverage(stats({ full: ['src/a.mjs'], budgetOmitted: ['src/b.mjs'] }), ['src/a.mjs', 'src/b.mjs'], { requested: ['src/a.mjs', 'src/b.mjs'] });
+    assert.deepEqual(b.changedNotReceived.map((x) => x.path), ['src/b.mjs']);
+  });
+
+  it('control: everything received → no NONE segment; the gate still does not downgrade partial', () => {
+    const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs']);
+    assert.deepEqual(c.changedNotReceived, []);
+    assert.doesNotMatch(formatCodeCoverageSegment(c), /NONE:/);
+    const partial = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), changed);
+    const r = { verdict: 'APPROVE', overall_reasoning: 'ok' };
+    assert.equal(applyCoverageGate(r, partial).downgraded, false);
   });
 });

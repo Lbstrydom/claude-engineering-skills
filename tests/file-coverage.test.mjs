@@ -301,8 +301,8 @@ describe('tool state aggregation (audit-plan R2-M3)', () => {
 
 // ── Upstream report 58f4e3a5: read windows, the hunk map, convergence (docs/plans/audit-hunk-window-coverage.md) ──
 import { buildHunkMap, makeCoverageInput } from '../scripts/lib/audit/file-coverage.mjs';
-import { evaluateConvergenceWithDetectors } from '../scripts/lib/audit/convergence.mjs';
-import { changedLinesUnreadTotal } from '../scripts/lib/coverage-format.mjs';
+import { evaluateConvergenceWithDetectors, COVERAGE_CONVERGENCE_REASONS } from '../scripts/lib/audit/convergence.mjs';
+import { changedLinesUnreadTotal, unreviewedUnrecognisedFiles } from '../scripts/lib/coverage-format.mjs';
 import { formatAuditSummaryLine } from '../scripts/lib/audit/findings-pipeline.mjs';
 
 const text400 = Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join('\n');
@@ -460,5 +460,71 @@ describe('a measured changed-line shortfall blocks convergence (D9) and is said 
     const cov = covWith(0);
     cov.files[0].read.state = 'some-future-state';
     assert.match(formatCoverageSuffix({ ...cov, counts: { required: 1, short: 1, excludedRequired: 0 } }), /PARTIAL/);
+  });
+});
+
+describe('a changed file of an unrecognised type withholds convergence (upstream 57bd3de9)', () => {
+  const counts = { high: 0, medium: 0, quickFix: 0 };
+  const clean = { blocked: false, checked: 0 };
+  const covFor = (changed, over = {}) => build({
+    changed, existsOnDisk: () => true,
+    recorder: rec({ structure: { completed: true, stats: stats({ full: changed.filter((p) => typeof p === 'string' && p.endsWith('.cs')) }) } }),
+    ...over,
+  });
+
+  it('.xyz beside an audited .cs: PASS-shaped counts, but converged:false / unrecognised-files-unreviewed', () => {
+    const cov = covFor(['a.cs', 'svc/notes.xyz']);
+    assert.equal(byPath(cov, 'svc/notes.xyz').outcome, 'not-admitted');
+    assert.deepEqual(evaluateConvergenceWithDetectors(counts, clean, cov), { converged: false, reason: 'unrecognised-files-unreviewed' });
+    assert.equal(unreviewedUnrecognisedFiles(cov).length, 1);
+  });
+
+  // The directions it must NOT fire (a check seen only failing cannot be told from an inert one).
+  it('does NOT fire for non-code, user-excluded, sensitive or deleted unrecognised files', () => {
+    const nonCode = covFor(['a.cs', 'logo.png']);
+    assert.equal(evaluateConvergenceWithDetectors(counts, clean, nonCode).converged, true, 'png is an expected exclusion');
+    const excluded = covFor(['a.cs', 'svc/notes.xyz'], { excludedUser: ['svc/notes.xyz'] });
+    assert.equal(byPath(excluded, 'svc/notes.xyz').outcome, 'excluded-user');
+    assert.equal(evaluateConvergenceWithDetectors(counts, clean, excluded).converged, true, '.auditignore is the explicit acceptance');
+    const deleted = covFor(['a.cs', { path: 'svc/notes.xyz', changeKind: 'deleted' }]);
+    assert.equal(evaluateConvergenceWithDetectors(counts, clean, deleted).converged, true);
+    const sensitive = covFor(['a.cs', '.env']);
+    assert.equal(byPath(sensitive, '.env').outcome, 'sensitive');
+    assert.equal(evaluateConvergenceWithDetectors(counts, clean, sensitive).converged, true);
+  });
+
+  it('a clean ledger and a missing ledger are unchanged', () => {
+    assert.equal(evaluateConvergenceWithDetectors(counts, clean, covFor(['a.cs'])).converged, true);
+    assert.equal(evaluateConvergenceWithDetectors(counts, clean).converged, true);
+  });
+
+  it('changed-lines-unread keeps precedence; thresholds and the detector census are still read first', () => {
+    const cov = covFor(['a.cs', 'svc/notes.xyz']);
+    const a = cov.files.find((f) => f.path === 'a.cs');
+    a.changedLinesUnread = 9;
+    a.read.state = 'windowed';
+    assert.equal(evaluateConvergenceWithDetectors(counts, clean, cov).reason, 'changed-lines-unread');
+    assert.equal(evaluateConvergenceWithDetectors({ ...counts, high: 1 }, clean, covFor(['a.cs', 'x.xyz'])).reason, 'finding-thresholds');
+  });
+
+  it('the summary line says the file was never sent, and that PASS is not convergence evidence', () => {
+    const cov = covFor(['a.cs', 'svc/notes.xyz']);
+    const line = formatAuditSummaryLine({ verdict: 'PASS', high: 0, medium: 0, low: 0, latencyMs: 1000, coverage: cov });
+    assert.match(line, /^Verdict: PASS /);
+    assert.match(line, /1 unrecognised file type\(s\) never sent to any pass: xyz ×1/);
+    assert.match(line, /not convergence evidence/);
+    const png = formatAuditSummaryLine({ verdict: 'PASS', high: 0, medium: 0, low: 0, coverage: covFor(['a.cs', 'logo.png']) });
+    assert.doesNotMatch(png, /not convergence evidence/);
+  });
+
+  it('reads the reviewer projection too (the shown records)', () => {
+    const cov = covFor(['a.cs', 'svc/notes.xyz']);
+    const proj = projectCoverageForReview(cov, { digest: 'd' });
+    assert.equal(unreviewedUnrecognisedFiles(proj).length, 1);
+    assert.deepEqual(unreviewedUnrecognisedFiles(null), []);
+  });
+
+  it('COVERAGE_CONVERGENCE_REASONS names exactly the two coverage reasons', () => {
+    assert.deepEqual([...COVERAGE_CONVERGENCE_REASONS].sort(), ['changed-lines-unread', 'unrecognised-files-unreviewed']);
   });
 });

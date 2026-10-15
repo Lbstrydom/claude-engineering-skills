@@ -25,6 +25,9 @@ const MATRIX = [
   ['x.sln', 'declarative', null],
   ['app.config', 'declarative', null],
   ['a.json', 'declarative', null],
+  ['tests/eval/fixtures/facts.jsonl', 'declarative', null],   // line-delimited JSON: upstream 57bd3de9
+  ['a.ndjson', 'declarative', null],
+  ['A.NDJSON', 'declarative', null],
   ['ci.yml', 'declarative', null],
   ['Dockerfile', 'declarative', null],
   ['.editorconfig', 'declarative', null],
@@ -151,5 +154,16 @@ describe('admission oracle agrees with the taxonomy (the storyline defect)', () 
     for (const [p, kind] of MATRIX) {
       assert.equal(resolveReferenceExtension(p) !== null, kind === 'source' || kind === 'declarative', p);
     }
+  });
+});
+
+describe('line-delimited JSON is admitted (upstream 57bd3de9)', () => {
+  it('.jsonl and .ndjson carry the json fence and are auditable extensions', () => {
+    assert.equal(fenceLanguageFor('x/facts.jsonl'), 'json');
+    assert.equal(fenceLanguageFor('x/facts.ndjson'), 'json');
+    assert.ok(AUDITABLE_EXTENSIONS.includes('.jsonl') && AUDITABLE_EXTENSIONS.includes('.ndjson'));
+  });
+  it('a lockfile-shaped name still beats the extension (control)', () => {
+    assert.equal(matchFileKind('package-lock.json').kind, 'non-code');
   });
 });
