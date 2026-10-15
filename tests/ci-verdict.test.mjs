@@ -370,3 +370,47 @@ describe('the CES default is committed data that no consumer can receive', () =>
     assert.equal(e.defaultSource, 'code');
   });
 });
+
+describe('a CONFLICTING PR is named (fleet p-20261014202756-400e)', () => {
+  it('no run + mergeable CONFLICTING: unverified with the conflicting reason and blocker', () => {
+    const r = classifyCiVerdict(evidence({ runs: [], mergeable: 'CONFLICTING' }));
+    assert.equal(r.verdict, 'unverified');
+    assert.equal(r.blocker, 'conflicting');
+    assert.match(r.reason, /^conflicting: GitHub runs no pull_request workflow on a conflicting PR; merge the base in first/);
+  });
+
+  it('runs that are not evidence + CONFLICTING: also named', () => {
+    const r = classifyCiVerdict(evidence({ runs: [run({ path: '.github/workflows/other.yml' })], mergeable: 'CONFLICTING' }));
+    assert.equal(r.blocker, 'conflicting');
+  });
+
+  it('the conflict does not mask a real verdict, and a MERGEABLE PR with no run keeps the plain reason', () => {
+    assert.equal(classifyCiVerdict(evidence({ mergeable: 'CONFLICTING' })).verdict, 'full');
+    const plain = classifyCiVerdict(evidence({ runs: [], mergeable: 'MERGEABLE' }));
+    assert.equal(plain.blocker, undefined);
+    assert.match(plain.reason, /^no .* run exists/);
+  });
+
+  it('gatherCiEvidence asks gh for mergeable and carries it', () => {
+    const calls = [];
+    const g = gatherCiEvidence({
+      pr: 7,
+      run: (cmd, args) => {
+        const k = `${cmd} ${args.join(' ')}`;
+        calls.push(k);
+        if (k.startsWith('gh repo view')) return { status: 0, stdout: JSON.stringify({ nameWithOwner: 'o/r', defaultBranchRef: { name: 'main' } }) };
+        if (k.startsWith('git fetch')) return { status: 0, stdout: '' };
+        if (k.startsWith('git rev-parse FETCH_HEAD')) return { status: 0, stdout: DEFAULT_SHA };
+        if (k.startsWith('git show')) return { status: 0, stdout: fs.readFileSync(path.join(REPO, '.test-tiers.json'), 'utf8') };
+        if (k.startsWith('gh pr view')) return { status: 0, stdout: JSON.stringify({ number: 7, headRefOid: HEAD, baseRefName: 'main', state: 'OPEN', mergeable: 'CONFLICTING' }) };
+        if (k.includes('/actions/runs?')) return { status: 0, stdout: JSON.stringify({ workflow_runs: [] }) };
+        if (k.includes('/contents/')) return { status: 0, stdout: BLOB };
+        return { status: 1, stderr: `unexpected ${k}` };
+      },
+    });
+    assert.equal(g.ok, true, g.reason);
+    assert.equal(g.evidence.mergeable, 'CONFLICTING');
+    assert.ok(calls.some((c) => c.startsWith('gh pr view') && c.includes('mergeable')));
+    assert.equal(classifyCiVerdict(g.evidence).blocker, 'conflicting');
+  });
+});
