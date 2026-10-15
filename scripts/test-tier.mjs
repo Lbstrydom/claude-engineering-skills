@@ -170,7 +170,7 @@ async function cmdCiVerdict() {
     out.write(`rerun: ${r.rerun.rerun} - ${r.rerun.detail}\n`);
     if (r.rerun.proposal) out.write(`proposal: ${r.rerun.proposal}\n`);
   }
-  return flakeExit(r.verdict, r.rerun ?? null, { ...CI_VERDICT_EXIT, error: EXIT.error }, r.attempt ?? 1);
+  return flakeExit(r.verdict, r.rerun ?? null, { ...CI_VERDICT_EXIT, error: EXIT.error }, r.attempt ?? null);
 }
 
 /**
@@ -181,9 +181,11 @@ async function flakeVerdict({ run, pr }) {
   const g = gatherCiEvidence({ run, pr });
   if (!g.ok) return { version: CI_VERDICT_VERSION, verdict: 'unverified', reason: g.reason, rerun: { rerun: 'ineligible', detail: 'no verdict could be formed', proposal: null } };
   const ev = g.evidence;
-  const v = { version: CI_VERDICT_VERSION, head: ev.head, pr, defaultBranch: ev.defaultBranch, ...classifyCiVerdict(ev) };
-  const judged = (ev.runs ?? []).find((x) => x?.id === v.runId) ?? null;
-  if (!judged) return { ...v, rerun: { rerun: 'ineligible', detail: 'no judged run', proposal: null } };
+  const verdict = { version: CI_VERDICT_VERSION, head: ev.head, pr, defaultBranch: ev.defaultBranch, ...classifyCiVerdict(ev) };
+  const judged = (ev.runs ?? []).find((x) => x?.id === verdict.runId) ?? null;
+  // `attempt` is part of every result past this point: the exit decision needs it (null = no judged run).
+  if (!judged) return { ...verdict, attempt: null, rerun: { rerun: 'ineligible', detail: 'no judged run', proposal: null } };
+  const v = { ...verdict, attempt: judged.run_attempt };
   const commonDir = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo(), encoding: 'utf8', env: sanitizeGitEnv(repo()) });
   if (commonDir.status !== 0 || !commonDir.stdout.trim()) return { ...v, rerun: { rerun: 'indeterminate', detail: 'the git common dir could not be resolved', proposal: null } };
   const stateDir = path.join(commonDir.stdout.trim(), 'fleet', 'ci-flake');
@@ -246,7 +248,7 @@ async function flakeVerdict({ run, pr }) {
   }
   // A failed attempt 2+ is the re-run's own result: say so beside whatever the reservation reports.
   if (v.verdict === 'failed' && judged.run_attempt !== 1) outcome = { ...outcome, detail: `already re-run once: attempt ${judged.run_attempt} failed too (${outcome.detail})` };
-  return { ...v, attempt: judged.run_attempt, rerun: outcome };
+  return { ...v, rerun: outcome };
 }
 
 async function main() {
