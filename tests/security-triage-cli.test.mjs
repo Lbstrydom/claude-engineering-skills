@@ -269,6 +269,51 @@ describe('canonicalization (SC1) + the bounded read', () => {
     assert.equal(res.withheld, null);
   });
 
+  // The descriptor is closed exactly ONCE. A stream built on the raw `fh.fd`
+  // number closes it on destroy() even with autoClose:false (measured on Node
+  // 22), and the later `fh.close()` then closes that NUMBER again, by which
+  // time another file may own it. That closed an unrelated test's
+  // writeFileSync descriptor (EBADF on Linux CI, 2026-10-15). The race needs a
+  // number reused inside a few microseconds, which a test cannot force, so
+  // assert the cause instead: FileHandle.close() reports EBADF exactly when
+  // something closed its raw number first.
+  test('the descriptor is closed exactly once (never behind the FileHandle)', async () => {
+    const p = writeFile(root, 'once.js', 'a\nb\nc\nd\ne');
+    // One record per opened handle, so each read mode is judged on its own
+    // handle and one mode cannot satisfy the other's guard.
+    const handles = [];
+    const open = async (...a) => {
+      const fh = await fsp.open(...a);
+      const rec = { fh, outcomes: [], pending: [] };
+      const realClose = fh.close.bind(fh);
+      fh.close = () => {
+        const pr = realClose().then(() => { rec.outcomes.push('ok'); }, (e) => { rec.outcomes.push(e.code); throw e; });
+        rec.pending.push(pr);
+        return pr;
+      };
+      handles.push(rec);
+      return fh;
+    };
+    // Completion signal, not elapsed time: a FileHandle reports fd -1 once its
+    // close has finished. Bounded so a leak fails instead of hanging.
+    const closedOf = async (rec) => {
+      const deadline = Date.now() + 5_000;
+      while (rec.fh.fd !== -1 && Date.now() < deadline) await new Promise((r) => setImmediate(r));
+      await Promise.allSettled(rec.pending);
+      return rec.fh.fd === -1;
+    };
+    for (const [label, maxLine] of [['early stop', 2], ['read to EOF', 10]]) {
+      const before = handles.length;
+      const res = await readBoundedLines(p, maxLine, 1_000_000, { open });
+      assert.equal(res.withheld, null, label);
+      assert.equal(handles.length, before + 1, `${label}: exactly one handle opened`);
+      const rec = handles[before];
+      assert.ok(await closedOf(rec), `${label}: the handle was never closed (leak)`);
+      assert.deepEqual(rec.outcomes.filter((c) => c !== 'ok'), [], `${label}: a raw-fd close beat the FileHandle (${rec.outcomes.join(',')})`);
+      assert.ok(rec.outcomes.includes('ok'), `${label}: vacuous-pass guard, its instrumented close must have completed`);
+    }
+  });
+
   /**
    * Classification and read are two claims about two possibly-different
    * objects: O_NOFOLLOW stops a symlink at the final component, but a path
