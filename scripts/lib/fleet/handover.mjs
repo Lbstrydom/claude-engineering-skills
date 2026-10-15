@@ -639,7 +639,7 @@ export function receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, w
   }
   for (const g of ghUnknown) out.push({ kind: 'gh', detail: ghUnknownLine(g) });
   for (const w of waits.filter((x) => x.onSwitch)) {
-    out.push({ kind: 'waiting-on-switch', detail: `${w.id} (${w.repo}) waits on the switch itself — unblock now: ${w.clear}${w.kept ? ` (clears every wait, then re-adds its ${w.kept} other wait(s) with a fresh since)` : ' (clears its waits)'}` });
+    out.push({ kind: 'waiting-on-switch', detail: `${w.id} (${w.repo}) waits on the switch itself — unblock now: ${w.clear}${w.kept ? ` (clears every wait, then re-adds its ${w.kept} other wait(s), which keep their age)` : ' (clears its waits)'}` });
   }
   return out;
 }
@@ -754,7 +754,7 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
         const isSwitch = (w) => w.kind === 'human' && normaliseWaitRef(w.ref) === SWITCH_TOKEN;
         const onSwitch = human.some(isSwitch);
         // `--clear-waiting` clears every wait, then `--waiting-on` re-adds: the command re-adds the session's OTHER
-        // waits in the same call, so only the switch wait goes (their `since` restarts, and the line says so).
+        // waits in the same call, so only the switch wait goes (the re-added ones keep their `since`).
         const keep = (x.waitingOn ?? []).filter((w) => !isSwitch(w));
         const clear = onSwitch ? cliCommand(cli, ['touch', '--id', x.id, '--clear-waiting', ...keep.flatMap((w) => ['--waiting-on', `${w.kind}:${w.ref}${w.note ? `:${w.note}` : ''}`])]) : null;
         waits.push({ repo: r.path, id: x.id, onSwitch, refs: human.map((w) => w.ref), ...(onSwitch ? { clear, kept: keep.length } : {}) });

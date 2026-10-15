@@ -137,7 +137,7 @@ when two or more repos wait, they take turns:
   the queue head, the turn, a 10-minute between-jobs gap, `release --end-turn`);
   coordinators still decide what each repo runs. A repo grants another a slot inside
   its own window with `lease grant`, so its window no longer refuses the grantee.
-  Detail: `references/lease.md`.
+  Detail: `references/lease.md`. Scripts take the slot with `lease run -- <cmd>`, not a hand-rolled acquire/release.
 - 60 minutes is a default measured on one machine (`lease turn --minutes`). Doctor's
   fit check recommends a value per machine.
 

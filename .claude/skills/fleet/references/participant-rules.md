@@ -36,7 +36,7 @@ You are one of several concurrent sessions coordinated by /fleet.
    Then take the machine's one heavy slot yourself, and give it back when the run ends:
    `node scripts/fleet.mjs lease acquire --kind gate --for <minutes>` (exit 3 means someone holds it, another repo has
    announced a window, or it is another repo's turn: wait, or shorten `--for`; do not run alongside; the refusal queues
-   your repo, and a FREE slot is not a turn). `lease release --end-turn` when you have nothing further ready, else the
+   your repo, and a FREE slot is not a turn). `lease run -- <cmd>` does acquire, run and release for a script in one step (it never runs the command after a refusal). `lease release --end-turn` when you have nothing further ready, else the
    next repo waits out a 10-minute gap. Start the run, then
    `lease attach --pid <the run's pid>` so a later session can verify it stopped, and `lease release` at the end. Pass the
    `--token` that `acquire` printed to `attach`/`release` when a script wraps the run. `lease status` shows the slot, the

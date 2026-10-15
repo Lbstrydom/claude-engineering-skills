@@ -114,7 +114,7 @@ async function main() {
     const cwd = process.cwd();
     const env = process.env;
     leaseMsFrom(env); // an invalid FLEET_LEASE_HOURS is a config error up front, never a silent default
-    const ctx = { cwd, env, now: resolveNow(env), dir: fleetDir(cwd), cmd: selfCommand(cwd) };
+    const ctx = { cwd, env, argv: process.argv, now: resolveNow(env), dir: fleetDir(cwd), cmd: selfCommand(cwd) };
     // Config is LOADED LAZILY: manifest-driven recovery (--reconcile/--confirm/--abandon) must work with a malformed .fleet.json.
     let cached;
     Object.defineProperty(ctx, 'config', { enumerable: true, get() { cached ??= resolveConfig(cwd, { env }); return cached; } });
@@ -139,7 +139,7 @@ async function main() {
       case 'propose': result = cmdPropose(ctx, flags); break;
       case 'proposal': result = cmdProposal(ctx, flags, positionals); break;
       case 'proposals': result = cmdProposals(ctx, flags); break;
-      case 'lease': result = cmdLease(ctx, flags, positionals); break;
+      case 'lease': result = await cmdLease(ctx, flags, positionals); break;
       default: throw new ArgvError(`fleet: unhandled verb ${verb}`);
     }
     // Checkpoint footer: a session sees its obligations (hold, merged PR, directives) at the verbs it
@@ -148,10 +148,13 @@ async function main() {
       result.next = checkpointFooter(ctx, result.id);
       result.text = [result.text, ...result.next].join('\n');
     }
-    const code = EXIT[result.code] ?? 1;
+    // `lease run` carries the CHILD'S exit code (or its own 75/70/124/127) and writes its own stderr: the child owns stdout.
+    const code = result.exitCode ?? EXIT[result.code] ?? 1;
     process.exitCode = code;
     record(verb, parsed, { result }, code, startedMs);
-    if (flags['--json']) {
+    if (result.quiet) {
+      // nothing to print: the verb already spoke on stderr
+    } else if (flags['--json']) {
       emit({ verb, ...result, ok: result.ok });
     } else {
       process.stdout.write(`${result.text}\n`);
