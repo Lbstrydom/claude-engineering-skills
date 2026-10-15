@@ -54,3 +54,35 @@ export const sessionFiles = (fx) => {
 };
 export const sessionRec = (fx, id) => readSessions(fleetDirOf(fx)).sessions.find((x) => x.id === id);
 export const land = (s, extra = []) => s.f(['land', '--json', ...extra]);
+
+/**
+ * The CLI bounds every git call it makes (15 s local, 30 s remote) and a build that fails on that bound has
+ * measured the machine, not the code: one `land` is ~18 s alone and measured 66 s with null JSON under another
+ * repo's gate. Only a failure that NAMES a timeout is retried (below); any other failure is a real one and is
+ * rethrown at once, so this cannot turn a regression green.
+ */
+const LOAD_TIMEOUT_RE = /timed out after \d+ms/;
+/**
+ * An error that carries an explicit `loadTimeout` says where it came from and is believed; only an error with none
+ * (an assertion message out of claim/ready, which has no structure to read) falls back to its text.
+ */
+export const isLoadTimeout = (e) => (typeof e?.loadTimeout === 'boolean' ? e.loadTimeout : LOAD_TIMEOUT_RE.test(String(e?.message ?? '')));
+
+/** The green train out of a `land --json` result, or an Error carrying the CLI's full output (a null envelope used to surface as a bare TypeError). */
+export function greenTrainOf(r) {
+  const t = r.json?.train;
+  if (t?.result === 'green') return t;
+  const out = r.json ? JSON.stringify(r.json).slice(0, 2000) : `${r.stdout ?? ''}${r.stderr ?? ''}`.slice(-2000);
+  // A train the CLI RETURNED is a verdict (red, conflict, ...) whatever its prose says; only a run that produced no
+  // train at all can be the CLI's own bound firing.
+  throw Object.assign(new Error(`land did not build a green train (status ${r.status}): ${out}`), { loadTimeout: !t && LOAD_TIMEOUT_RE.test(out) });
+}
+
+/** Run `build()`, rebuilding from scratch (it must create its own fixture) when it failed on a load timeout. */
+export function retryOnLoadTimeout(build, { attempts = 3 } = {}) {
+  for (let i = 1; ; i += 1) {
+    try { return build(); } catch (e) {
+      if (i >= attempts || !isLoadTimeout(e)) throw e;
+    }
+  }
+}
