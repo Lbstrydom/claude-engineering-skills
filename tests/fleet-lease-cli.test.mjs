@@ -191,14 +191,16 @@ describe('journal, waiting and the announce refusal through the real CLI (plan f
 describe('gaps and turns through the real CLI (plan fleet-lease-turns-and-journal D5, D6)', () => {
   it('a FREE slot is not a turn: the repo that waited longer is told it goes first, then gets the slot', () => {
     const w = world();
+    // The clock advances between the requests: two waiters on the SAME tick are ordered by repoKey (a hash of the checkout
+    // path), which would make this test depend on its temp directory name.
     assert.equal(w.runA(['lease', 'wait', '--for', '20']).status, 0);
-    const early = w.runB(['lease', 'acquire', '--for', '10']);
+    const early = w.runB(['lease', 'acquire', '--for', '10'], { FLEET_NOW: '2026-10-13T20:01:00.000Z' });
     assert.equal(early.status, 3, early.stdout);
     assert.match(early.stdout, /has waited since .* and goes first/);
     assert.match(early.stdout, /This repo is now waiting for the slot/);
-    const mine = w.runA(['lease', 'acquire', '--for', '10']);
+    const mine = w.runA(['lease', 'acquire', '--for', '10'], { FLEET_NOW: '2026-10-13T20:02:00.000Z' });
     assert.equal(mine.status, 0, mine.stdout + mine.stderr);
-    const status = w.runA(['lease', 'status']);
+    const status = w.runA(['lease', 'status'], { FLEET_NOW: '2026-10-13T20:02:00.000Z' });
     assert.match(status.stdout, /turn: .* until \d\d:\d\dZ/);
     assert.match(status.stdout, /waiting: /);
     const log = w.runA(['lease', 'log']).stdout;
