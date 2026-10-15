@@ -27,6 +27,7 @@ import { formatFailure, main } from '../scripts/sync-pr.mjs';
 import { MANIFEST_RELATIVE_PATH } from '../scripts/lib/sync-manifest.mjs';
 import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
 import { gitFixtureEnv, makeGitRunner, mkdtemp, rmrfBestEffort } from './helpers/fixtures.mjs';
+import { currentScope, decideAcquire, decideRelease, readLease, transactLease } from '../scripts/lib/fleet/lease.mjs';
 
 const SHA = 'f3991844aa30eb2d3e87bd42f3f31bb1db850083';
 const SKILL = '.claude/skills/plan/SKILL.md';
@@ -112,7 +113,7 @@ describe('sync-pr on real git — a consumer whose local default branch is behin
   beforeEach(() => { fx = makeFixture(); originHead = fx.advanceOrigin('app.js', 'two\n'); });
   afterEach(() => rmrfBestEffort(fx.root));
 
-  it('asks the REMOTE for its default branch and fetches it fresh (never the stale local ref)', () => {
+  it('asks the REMOTE for its default branch and fetches it fresh (never the stale local ref)', async () => {
     const staleLocal = fx.git(['rev-parse', 'HEAD'], fx.consumer).trim();
     assert.notEqual(staleLocal, originHead, 'fixture: the consumer has not seen origin move');
     const facts = gatherConsumerFacts(makeRunner().run, fx.consumer, { commitSha: SHA });
@@ -124,14 +125,14 @@ describe('sync-pr on real git — a consumer whose local default branch is behin
     assert.deepEqual(facts.upstreamChanged, ['app.js']);
   });
 
-  it('forks the sync branch from origin\'s head and carries the synced files across', () => {
+  it('forks the sync branch from origin\'s head and carries the synced files across', async () => {
     assert.notEqual(fx.git(['rev-parse', 'HEAD'], fx.consumer).trim(), originHead, 'fixture: the consumer is behind');
     fx.syncWrites();
     const { run, ghCalls } = makeRunner();
     const facts = gatherConsumerFacts(run, fx.consumer, { commitSha: SHA });
     const plan = planFor(facts);
     assert.equal(plan.action, 'pr', plan.detail);
-    const result = runConsumerPr({ plan, repoRoot: fx.consumer, baseBranch: facts.baseBranch, currentBranch: facts.currentBranch, merge: false, run });
+    const result = await runConsumerPr({ plan, repoRoot: fx.consumer, baseBranch: facts.baseBranch, currentBranch: facts.currentBranch, merge: false, run });
     assert.equal(result.ok, true, result.error);
     const branch = branchNameFor(SHA);
     const parent = fx.git(['rev-parse', `${branch}^`], fx.consumer).trim();
@@ -151,7 +152,7 @@ describe('sync-pr on real git — the incident: origin already carries a sync th
   before(() => { fx = makeFixture(); });
   after(() => rmrfBestEffort(fx.root));
 
-  it('refuses by name, before any branch exists, when origin changed a path the sync wrote (the receipt)', () => {
+  it('refuses by name, before any branch exists, when origin changed a path the sync wrote (the receipt)', async () => {
     fx.advanceOrigin(RECEIPT_PATH, '{"recentSyncs":["a","previous-sync-pr"]}\n');
     fx.syncWrites();
     const facts = gatherConsumerFacts(makeRunner().run, fx.consumer, { commitSha: SHA });
@@ -165,7 +166,7 @@ describe('sync-pr on real git — the incident: origin already carries a sync th
     assert.equal(spawnSync('git', ['-C', fx.consumer, 'rev-parse', '--verify', '--quiet', `refs/heads/${branchNameFor(SHA)}`], { env: gitFixtureEnv() }).status, 1);
   });
 
-  it('the overrides file is a collision too: the sync honoured an older declared-divergence set', () => {
+  it('the overrides file is a collision too: the sync honoured an older declared-divergence set', async () => {
     const fy = makeFixture();
     try {
       fy.advanceOrigin('.sync-overrides.json', '{"overrides":[]}\n');
@@ -178,7 +179,7 @@ describe('sync-pr on real git — the incident: origin already carries a sync th
 });
 
 describe('sync-pr on real git — an unreachable base is an error, never a fall-back', () => {
-  it('a remote that cannot be asked fails at "resolve default branch"; with --base it fails at the fetch', () => {
+  it('a remote that cannot be asked fails at "resolve default branch"; with --base it fails at the fetch', async () => {
     const fx = makeFixture();
     try {
       fx.git(['remote', 'set-url', 'origin', path.join(fx.root, 'gone.git')], fx.consumer);
@@ -195,7 +196,7 @@ describe('sync-pr on real git — an unreachable base is an error, never a fall-
 });
 
 describe('sync-pr on real git — the consumer\'s pre-push hook refuses', () => {
-  it('leaves a log of the full hook output and names the failing tests (not only the summary line)', () => {
+  it('leaves a log of the full hook output and names the failing tests (not only the summary line)', async () => {
     const fx = makeFixture();
     try {
       const hooks = path.join(fx.root, 'consumer-hooks');
@@ -219,7 +220,7 @@ describe('sync-pr on real git — the consumer\'s pre-push hook refuses', () => 
       const plan = planFor(facts);
       assert.equal(plan.action, 'pr', plan.detail);
       const logDir = path.join(fx.root, 'logs');
-      const result = runConsumerPr({
+      const result = await runConsumerPr({
         plan, repoRoot: fx.consumer, baseBranch: facts.baseBranch, currentBranch: facts.currentBranch, merge: true, run,
         consumerName: 'wine-cellar-app', pushLogDir: logDir,
       });
@@ -318,14 +319,14 @@ const ghFor = (open) => (args) => {
 };
 
 /** The newer sync of `bundleSha` runs in the consumer and opens its PR. */
-function runNewSync(fx, bundleSha, open, ancestry) {
+async function runNewSync(fx, bundleSha, open, ancestry) {
   fx.syncWrites();
   const { run, ghCalls } = makeRunner(ghFor(open));
   const facts = gatherConsumerFacts(run, fx.consumer, { commitSha: bundleSha });
   assert.equal(facts.ok, true, facts.error);
   const plan = planConsumerPr({ consumerName: 'fixture', classified, manifest: { repo: REPO, commitSha: bundleSha }, ...facts });
   assert.equal(plan.action, 'pr', plan.detail);
-  const result = runConsumerPr({ plan, repoRoot: fx.consumer, baseBranch: facts.baseBranch, currentBranch: facts.currentBranch, merge: false, run, ancestry });
+  const result = await runConsumerPr({ plan, repoRoot: fx.consumer, baseBranch: facts.baseBranch, currentBranch: facts.currentBranch, merge: false, run, ancestry });
   assert.equal(result.ok, true, result.error);
   return { result, ghCalls };
 }
@@ -336,9 +337,9 @@ describe('sync-pr on real git — a newer sync PR supersedes an older OPEN one',
   beforeEach(() => { fx = makeFixture(); up = makeUpstream(fx.root); });
   afterEach(() => rmrfBestEffort(fx.root));
 
-  it('closes the older sync PR with a comment naming its successor, and keeps its branch', () => {
+  it('closes the older sync PR with a comment naming its successor, and keeps its branch', async () => {
     const older = pushSyncBranch(fx, up.old);
-    const { result, ghCalls } = runNewSync(fx, up.current, [{ number: 4, ...older }], createGitAncestry(up.dir));
+    const { result, ghCalls } = await runNewSync(fx, up.current, [{ number: 4, ...older }], createGitAncestry(up.dir));
     assert.equal(result.supersede.status, 'complete', JSON.stringify(result.supersede));
     assert.deepEqual(result.supersede.superseded.map((p) => p.number), [4]);
     const [close] = closes(ghCalls);
@@ -348,22 +349,22 @@ describe('sync-pr on real git — a newer sync PR supersedes an older OPEN one',
     assert.notEqual(fx.git(['ls-remote', '--heads', 'origin', older.branch], fx.consumer).trim(), '', 'the branch stays, so the PR can be reopened');
   });
 
-  it('nothing is superseded when no other sync PR is open', () => {
-    const { result, ghCalls } = runNewSync(fx, up.current, [], createGitAncestry(up.dir));
+  it('nothing is superseded when no other sync PR is open', async () => {
+    const { result, ghCalls } = await runNewSync(fx, up.current, [], createGitAncestry(up.dir));
     assert.equal(result.supersede.status, 'none');
     assert.deepEqual(closes(ghCalls), []);
   });
 
-  it('a NEWER open sync PR is kept — this sync may be the stale one', () => {
+  it('a NEWER open sync PR is kept — this sync may be the stale one', async () => {
     const newer = pushSyncBranch(fx, up.newer);
-    const { result, ghCalls } = runNewSync(fx, up.current, [{ number: 5, ...newer }], createGitAncestry(up.dir));
+    const { result, ghCalls } = await runNewSync(fx, up.current, [{ number: 5, ...newer }], createGitAncestry(up.dir));
     assert.equal(result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.NOT_OLDER);
     assert.deepEqual(closes(ghCalls), []);
   });
 
-  it('a hand-made change outside the synced surface, or a second commit, is kept', () => {
+  it('a hand-made change outside the synced surface, or a second commit, is kept', async () => {
     const edited = pushSyncBranch(fx, up.old, { extra: { 'app.js': 'hand edit\n' } });
-    let out = runNewSync(fx, up.current, [{ number: 6, ...edited }], createGitAncestry(up.dir));
+    let out = await runNewSync(fx, up.current, [{ number: 6, ...edited }], createGitAncestry(up.dir));
     assert.equal(out.result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.HAND_EDITED);
     assert.match(out.result.supersede.kept[0].detail, /app\.js/);
     assert.deepEqual(closes(out.ghCalls), []);
@@ -371,20 +372,20 @@ describe('sync-pr on real git — a newer sync PR supersedes an older OPEN one',
     const fy = makeFixture();
     try {
       const twice = pushSyncBranch(fy, up.old, { commits: 2 });
-      out = runNewSync(fy, up.current, [{ number: 7, ...twice }], createGitAncestry(up.dir));
+      out = await runNewSync(fy, up.current, [{ number: 7, ...twice }], createGitAncestry(up.dir));
       assert.equal(out.result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.HAND_EDITED);
       assert.deepEqual(closes(out.ghCalls), []);
     } finally { rmrfBestEffort(fy.root); }
   });
 
-  it('a file the older sync RETIRED is authorised by the merge-base sidecar; a change to it is not', () => {
+  it('a file the older sync RETIRED is authorised by the merge-base sidecar; a change to it is not', async () => {
     // origin's own sidecar owns RETIRED; the older sync drops it from ownership.
     const RETIRED = '.claude/skills/retired/SKILL.md';
     fx.advanceOrigin(RETIRED, 'retired skill\n');
     fx.advanceOrigin(SIDECAR, `${JSON.stringify(buildOwnedSidecar([SKILL, RETIRED]))}\n`);
     fx.git(['pull', '-q', '--ff-only'], fx.consumer);
     const deleted = pushSyncBranch(fx, up.old, { remove: [RETIRED] });
-    let out = runNewSync(fx, up.current, [{ number: 10, ...deleted }], createGitAncestry(up.dir));
+    let out = await runNewSync(fx, up.current, [{ number: 10, ...deleted }], createGitAncestry(up.dir));
     assert.deepEqual(out.result.supersede.superseded.map((p) => p.number), [10], JSON.stringify(out.result.supersede));
 
     const fy = makeFixture();
@@ -393,15 +394,15 @@ describe('sync-pr on real git — a newer sync PR supersedes an older OPEN one',
       fy.advanceOrigin(SIDECAR, `${JSON.stringify(buildOwnedSidecar([SKILL, RETIRED]))}\n`);
       fy.git(['pull', '-q', '--ff-only'], fy.consumer);
       const changed = pushSyncBranch(fy, up.old, { extra: { [RETIRED]: 'hand edit to a retired file\n' } });
-      out = runNewSync(fy, up.current, [{ number: 11, ...changed }], createGitAncestry(up.dir));
+      out = await runNewSync(fy, up.current, [{ number: 11, ...changed }], createGitAncestry(up.dir));
       assert.equal(out.result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.HAND_EDITED);
       assert.deepEqual(closes(out.ghCalls), []);
     } finally { rmrfBestEffort(fy.root); }
   });
 
-  it('an old-named branch whose receipt attests another bundle is kept (provenance-mismatch)', () => {
+  it('an old-named branch whose receipt attests another bundle is kept (provenance-mismatch)', async () => {
     const amended = pushSyncBranch(fx, up.old, { receiptSha: up.newer });
-    const { result, ghCalls } = runNewSync(fx, up.current, [{ number: 8, ...amended }], createGitAncestry(up.dir));
+    const { result, ghCalls } = await runNewSync(fx, up.current, [{ number: 8, ...amended }], createGitAncestry(up.dir));
     assert.equal(result.supersede.kept[0].reason, SUPERSEDE_KEEP_REASON.PROVENANCE_MISMATCH);
     assert.deepEqual(closes(ghCalls), []);
   });
@@ -443,7 +444,7 @@ describe('sync-pr CLI on real git — a same-bundle re-run retries a failed supe
    * CLI. `resync: false` is a bare `sync:pr` re-run: no sync rewrote anything,
    * so the classification is the clean tree the first run left behind.
    */
-  async function syncThenSyncPr(gh, flags = [], { resync = true } = {}) {
+  async function syncThenSyncPr(gh, flags = [], { resync = true, leaseDeps = null } = {}) {
     if (resync) {
       fx.syncWrites();
       // A real receipt event for this bundle: the retry proves the existing PR
@@ -459,6 +460,7 @@ describe('sync-pr CLI on real git — a same-bundle re-run retries a failed supe
     const clean = { ...classified, clean: true, syncOwned: [] };
     const code = await main(['node', 'sync-pr.mjs', ...flags], { write: (s) => { printed += s; } }, {
       run, resolve: () => [{ name: 'fixture', path: fx.consumer }], classify: () => (resync ? classified : clean), ancestry: createGitAncestry(up.dir),
+      lease: leaseDeps, // null: these tests are about sync-pr's git sequence and must never touch the machine's real lease
     });
     return { code, ghCalls, printed: printed.replace(/\x1b\[\d+m/g, '') };
   }
@@ -517,5 +519,75 @@ describe('sync-pr CLI on real git — a same-bundle re-run retries a failed supe
     assert.equal(dry.code, 0, dry.printed);
     assert.deepEqual(dry.ghCalls, []);
     assert.match(dry.printed, /dry run: supersession retry not attempted/);
+  });
+
+  describe('under the machine lease (plan fleet-lease-turns-and-journal D7): every consumer push runs the consumer heavy pre-push hook', () => {
+    let leaseDir;
+    beforeEach(() => { leaseDir = mkdtemp('sync-pr-lease-'); });
+    afterEach(() => rmrfBestEffort(leaseDir));
+    const lease = () => ({ dir: leaseDir });
+    const refs = () => fx.git(['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads'], fx.consumer);
+    /** Another repo holds the slot for 30 minutes, with a pid that reads as alive. */
+    const otherRepoHolds = () => transactLease(leaseDir, (read) => {
+      const d = decideAcquire(read.lease, { identity: { repoKey: 'bbbbbbbbbbbb', holder: 'main' }, repo: 'o/other', forMin: 30, pid: 1 }, new Date(), { scope: currentScope(), isPidAlive: () => true });
+      return { value: d.ok, write: d.lease };
+    });
+
+    it('a REFUSED acquire defers the consumer: nothing is created, pushed or asked of gh, the consumer is queued, exit 3', async () => {
+      assert.equal(otherRepoHolds().value, true);
+      const before = refs();
+      const r = await syncThenSyncPr(() => undefined, [], { leaseDeps: lease() });
+      assert.equal(r.code, 3, r.printed);
+      assert.match(r.printed, /deferred/);
+      assert.match(r.printed, /the machine lease was not granted \(held\)/);
+      assert.deepEqual(r.ghCalls, [], 'the incident of 2026-10-14: a refused acquire must never reach the push');
+      assert.equal(refs(), before, 'no branch was created');
+      assert.equal(readLease(leaseDir).lease.waiters.length, 1, 'the consumer waits its turn in the queue');
+      assert.equal(readLease(leaseDir).lease.heavy.holder, 'main', 'the other repo slot is untouched');
+    });
+
+    it('granted with --ci-window: the PR is opened, the slot is freed AND a ci window for the consumer is recorded in the same write', async () => {
+      const r = await syncThenSyncPr(() => undefined, ['--ci-window', '25'], { leaseDeps: lease() });
+      assert.equal(r.code, 0, r.printed);
+      assert.match(r.printed, /PR opened/);
+      assert.match(r.printed, /lease: CI window recorded until \d\d:\d\dZ/);
+      const l = readLease(leaseDir).lease;
+      assert.equal(l.heavy, null, 'the slot was released');
+      assert.equal(l.windows.length, 1);
+      assert.equal(l.windows[0].kind, 'ci');
+      assert.equal(Date.parse(l.windows[0].until) - Date.parse(l.windows[0].from), 25 * 60_000);
+      assert.deepEqual(l.journal.map((e) => e.kind).filter((k) => ['acquired', 'released', 'announced'].includes(k)), ['acquired', 'released', 'announced']);
+      assert.equal(l.turn, undefined, 'sync-pr yields the turn: it has nothing further to batch for this consumer');
+    });
+
+    it('granted without --ci-window: a plain release and a line saying the PR\'s CI is not recorded', async () => {
+      const r = await syncThenSyncPr(() => undefined, [], { leaseDeps: lease() });
+      assert.equal(r.code, 0, r.printed);
+      assert.match(r.printed, /the PR's CI is not recorded on the lease/);
+      const l = readLease(leaseDir).lease;
+      assert.equal(l.heavy, null);
+      assert.equal(l.windows.length, 0);
+    });
+
+    it('a push the consumer\'s hook refused and that did NOT land: exit 1, a plain release, no CI window', async () => {
+      const hooks = path.join(fx.root, 'consumer-hooks');
+      fs.mkdirSync(hooks, { recursive: true });
+      fs.writeFileSync(path.join(hooks, 'pre-push'), '#!/bin/sh\necho refused\nexit 1\n');
+      fs.chmodSync(path.join(hooks, 'pre-push'), 0o755);
+      const r = await syncThenSyncPr(() => undefined, ['--ci-window', '25'], { leaseDeps: lease() });
+      assert.equal(r.code, 1, r.printed);
+      const l = readLease(leaseDir).lease;
+      assert.equal(l.heavy, null, 'released even though the push failed');
+      assert.equal(l.windows.length, 0, 'ls-remote showed the branch did not land, so no CI can be running');
+    });
+
+    it('--lease-wait waits in the queue and pushes once the holder is gone', async () => {
+      assert.equal(otherRepoHolds().value, true);
+      // The holder finishes the way a real one does - a release that yields its turn - so the queue moves at once.
+      setTimeout(() => transactLease(leaseDir, (read) => ({ value: 1, write: decideRelease(read.lease, { identity: { repoKey: 'bbbbbbbbbbbb', holder: 'main' }, repo: 'o/other', endTurn: true }, new Date(), { scope: currentScope(), isPidAlive: () => true }).lease })), 1500);
+      const r = await syncThenSyncPr(() => undefined, ['--lease-wait', '1'], { leaseDeps: { dir: leaseDir, inject: { pollMs: 300, jitter: 0 } } });
+      assert.equal(r.code, 0, r.printed);
+      assert.match(r.printed, /PR opened/);
+    });
   });
 });

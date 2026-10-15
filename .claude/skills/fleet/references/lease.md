@@ -24,6 +24,38 @@ file), 2 argv.
 | `lease turn --minutes <15-240>` / `--clear` | This machine's turn length (default 60). |
 | `lease status` / `lease log [--limit n]` | Read the slot, windows, waiters, turn, peak hours / the journal, oldest first. |
 | `lease peak --hours "09:00-12:00,14:00-17:00"` / `--clear` | Peak-cost hours (machine-local time). |
+| `lease run [--kind] [--for 1-180] [--wait 0-720] [--timeout 1-720] [--end-turn] [--note] -- <cmd> [args...]` | Take the slot (waiting in the queue up to `--wait` minutes), run the command, release on every exit, exit with ITS code. See below. |
+
+## Running a command under the lease (`lease run`)
+
+`lease acquire` then `release` is a protocol every caller has to get right, and two callers did not: a wrapper that ignored a
+REFUSED acquire and ran the command anyway (2026-10-14), and a `timeout` wrapper that SIGTERMed the push it was protecting
+(2026-10-15). `lease run -- <cmd>` is that protocol in one verb, and `sync:pr` uses the same code:
+
+- It takes the slot **exclusively** (a second run under the same session is refused, never silently rotated), recording the
+  runner's own pid, then runs `<cmd>` with its argv **verbatim** (no shell; a `.cmd` on Windows needs `cmd /c`) and the child's
+  pid attached, so a child that outlives a killed runner still reads as alive.
+- **A refused acquire never runs the command.** With `--wait <min>` it waits in the queue (it is queued like any refused
+  `acquire`) and retries every ~30 s; when the wait runs out it gives up.
+- It releases on **every catchable exit**: the command finishing, failing, timing out (`--timeout`), or the runner receiving
+  SIGINT/SIGTERM/SIGHUP/SIGBREAK. A stop kills the command's whole **process tree** (POSIX process group; Windows `taskkill /T /F`, forced in one call because descendants cannot be found once the root has exited),
+  then the slot is released. SIGKILL and power loss cannot be caught: the lease expires and the recorded pid decides takeover.
+  A command that runs past `--for` is not cut: its expired lease with a live pid still reads as held.
+- `--end-turn` yields the repo's turn on release (use it when nothing further is ready).
+- The command owns stdout, so `--json` is refused; the lease speaks on stderr, prefixed `fleet lease run:`.
+
+| Exit | Meaning |
+|---|---|
+| the command's code | it ran and exited (a signal that stopped it is 128 + the signal number) |
+| **75** | the slot was not granted (held, a window, not your turn) - **the command did NOT run**; stderr says so |
+| **70** | the lease file could not be used (unreadable, newer version, lock contention) - the command did NOT run |
+| 124 | `--timeout` stopped it |
+| 127 | the command could not be started |
+| 130 / 143 | the runner itself was interrupted / terminated |
+| 2 | argument error, before anything was acquired |
+
+A caller that must distinguish these from the command's own codes (75 and 70 are rare for a command) uses the library,
+`runUnderLease`, which returns `ran`.
 
 ## Announce and acquire refuse each other
 

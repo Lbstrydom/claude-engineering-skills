@@ -21,6 +21,7 @@ This is the list to read when asking "what is in flight?".
 |---|---|---|
 | [The drift report says how far the active index trails the default branch](./arch-index-freshness.md) | `In Progress` | implemented on `fix/arch-index-freshness`; under /audit-code |
 | [Triage: the eight `archive/worktree-agent-*` tags (2026-10-11)](./archive-tag-triage-2026-10-11.md) | `Draft` | findings and recommendations only; no tag was deleted and nothing was landed by this document |
+| [Audit honesty — unadmitted changed files, and the bundle's own generated stores](./audit-unadmitted-files.md) | `Approved` | audit-plan converged 2026-10-15; implementation pending |
 | [migrate every CLI entry guard to `isInvokedAsScript`](./cli-entry-guard-migration.md) | `In Progress` |  |
 | [The dashboard's debt queue treats "no local cache" as an expected absence](./dashboard-debt-sandbox-absence.md) | `In Progress` | implemented on `fix/dashboard-debt-sandbox-absence`; under /audit-code |
 | [Tech-Debt Ledger — One File Per Entry (merge conflict-free by construction)](./debt-ledger-per-entry-files.md) | `In Progress` |  |

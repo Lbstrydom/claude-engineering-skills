@@ -18,9 +18,13 @@
  * @module scripts/lib/final-review/code-coverage
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { normalizePath, safeReadFile } from '../file-io.mjs';
 import { unreadChangedLines } from '../hunk-window.mjs';
+import { matchFileKind } from '../file-taxonomy.mjs';
+import { classifyPath } from '../sensitive-paths.mjs';
+import { oneLine } from '../coverage-format.mjs';
 
 /**
  * Coverage states, weakest claim first. `unknown` is NOT a synonym for `full`:
@@ -39,9 +43,10 @@ export const COVERAGE_STATES = ['unknown', 'none', 'partial', 'full'];
  * @param {string[]|null} [opts.requested] - the paths the envelope asked the reader for (`codePaths`); a changed file in
  *   it but absent from the final render was dropped by the envelope budget (envelope.mjs Step 4) and is counted unread.
  * @param {Function} [opts.readText] - fallback line source, used only when the reader recorded no `lineCounts`.
+ * @param {Function} [opts.exists] - whether a changed path is still on disk; an absent one is a deletion, not an unreceived file.
  * @returns {object} the summary — see docs/plans/final-review-hunk-windows.md D4
  */
-export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = null, requested = null, readText = defaultReadText } = {}) {
+export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = null, requested = null, readText = defaultReadText, exists = defaultExists } = {}) {
   const changed = (Array.isArray(changedFiles) ? changedFiles : []).filter(
     (p) => typeof p === 'string' && p.length > 0,
   );
@@ -59,6 +64,7 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
     changedLinesUnmeasuredFiles: 0,
     changedUnread: [],
     changedUnmeasured: [],
+    changedNotReceived: [],
   };
 
   if (!stats) {
@@ -120,6 +126,15 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
     const rendered = outcome === 'full' || outcome === 'windowed' || outcome === 'head-cut';
     if (m && Number.isInteger(m.total)) base.changedLinesTotal += m.total;
     else base.changedLinesTotalUnknownFiles++;
+    // A file the reviewer was never handed, by name — so a multi-file group reads `NONE: <file>`, not an anonymous count
+    // (upstream 57bd3de9). Expected exclusions (binary / asset / lockfile / generated) and deletions (nothing on disk to
+    // receive) are not a gap. A sensitive path is never named: its NAME is what the sensitive-path policy keeps out of
+    // output (it stays counted in `changedLinesUnmeasuredFiles`). Deletion is judged by existence, NOT by readability, so
+    // a present-but-unreadable file is still named.
+    if ((outcome === 'not-requested' || outcome === 'budget-omitted')
+      && matchFileKind(p).kind !== 'non-code' && classifyPath(p) !== 'sensitive' && exists(p)) {
+      base.changedNotReceived.push({ path: p, outcome });
+    }
     if (!m) {
       base.changedLinesUnmeasuredFiles++;
       base.changedUnmeasured.push({ path: p, outcome, reason: unmeasuredReason(outcome, hunks) });
@@ -165,6 +180,12 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
   return { ...base, state: 'full', reason: `all ${changed.length} changed file(s) rendered whole` };
 }
 
+// Absent ONLY on a confirmed ENOENT/ENOTDIR. Any other failure (permissions, a transient fs error) is "cannot tell", which must not
+// read as a deletion: the file is then named, the failure direction that shows a gap instead of hiding one (audit-code R3-M1).
+function defaultExists(p) {
+  try { fs.lstatSync(path.resolve('.', p)); return true; } catch (e) { return !(e?.code === 'ENOENT' || e?.code === 'ENOTDIR'); }
+}
+
 // The reader's own boundary (repo-contained, realpath-checked, never sensitive): `changed_files` is transcript-supplied.
 function defaultReadText(p) {
   return safeReadFile(p, path.resolve('.'))?.content ?? null;
@@ -200,7 +221,12 @@ export function formatCodeCoverageSegment(cov) {
   const parts = [];
   if (cov.changedLinesUnread > 0) parts.push(`${cov.changedLinesUnread} changed line(s) never shown`);
   if (cov.changedLinesUnmeasuredFiles > 0) parts.push(`changed lines unmeasured for ${cov.changedLinesUnmeasuredFiles} file(s)`);
-  return `Code: ${cov.state.toUpperCase()}${parts.length ? `, ${parts.join(', ')}` : ''}`;
+  // `none` already lists every dropped file in its reason; a partial group needs the names (upstream 57bd3de9).
+  const notReceived = cov.state === 'none' ? [] : (cov.changedNotReceived ?? []);
+  const named = notReceived.length > 0
+    ? `; NONE: ${notReceived.slice(0, 5).map((f) => oneLine(f.path)).join(', ')}${notReceived.length > 5 ? ` (+${notReceived.length - 5} more)` : ''}`
+    : '';
+  return `Code: ${cov.state.toUpperCase()}${parts.length ? `, ${parts.join(', ')}` : ''}${named}`;
 }
 
 /**

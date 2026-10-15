@@ -856,9 +856,9 @@ export function retrySupersession({
  *   | {ok: false, branch: string, step: string, error: string, warnings: string[],
  *      pushLog?: ReturnType<typeof writePushFailureLog>}}
  */
-export function runConsumerPr({
+export async function runConsumerPr({
   plan, repoRoot, baseBranch, currentBranch, merge, run, log = () => {}, consumerName = path.basename(repoRoot), pushLogDir = null,
-  ancestry = createGitAncestry(MODULE_DIR),
+  ancestry = createGitAncestry(MODULE_DIR), signal = null,
 }) {
   const warnings = [];
   // `--literal-pathspecs` ONLY on the two commands that take our pathspecs.
@@ -875,6 +875,15 @@ export function runConsumerPr({
     if (warning) warnings.push(warning);
   };
   const fail =(step, r) => ({ ok: false, branch: plan.branch, step, error: why(r), warnings });
+  // Cancellation is STEP-WISE (plan D7): git and gh run through a synchronous runner, so a step in flight cannot be interrupted
+  // and a signal handler can only run when the event loop does. Yield before each step, and stop before the next one if aborted.
+  let pushedOk = false;
+  const cancelled = async () => {
+    await new Promise((resolve) => setImmediate(resolve));
+    return signal?.aborted === true;
+  };
+  const stopped = () => ({ ok: false, branch: plan.branch, step: 'aborted', error: 'cancelled by a signal before the next step', pushed: pushedOk, warnings });
+  if (await cancelled()) return stopped();
 
   // Header rule 3: fork from the freshly fetched origin sha, carrying the
   // synced working tree across. git refuses the carry when a dirty path
@@ -889,10 +898,13 @@ export function runConsumerPr({
   };
 
   try {
+    if (await cancelled()) { switchBack(); return stopped(); }
     const added = gitLiteral(['add', '--', ...plan.addPaths]);
     if (!ok(added)) { switchBack(); return fail('add', added); }
+    if (await cancelled()) { switchBack(); return stopped(); }
     const committed = gitLiteral(['commit', '-q', '-m', plan.message, '--', ...plan.commitPathspecs]);
     if (!ok(committed)) { switchBack(); return fail('commit', committed); }
+    if (await cancelled()) { switchBack(); return stopped(); }
     log(`  pushing ${plan.branch} (the consumer's own pre-push hook runs now — this can take a while)`);
     const pushed = git(['push', '-u', 'origin', plan.branch]);
     if (!ok(pushed)) {
@@ -911,6 +923,8 @@ export function runConsumerPr({
       return failure;
     }
 
+    pushedOk = true;
+    if (await cancelled()) { switchBack(); return stopped(); }
     const create = gh(['pr', 'create', '--base', baseBranch, '--head', plan.branch, '--title', plan.title, '--body-file', '-'], { input: plan.body });
     if (!ok(create)) { switchBack(); return fail('gh pr create', create); }
     const url = (String(create.stdout).match(/https?:\/\/\S+/g) || []).pop() ?? null;

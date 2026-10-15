@@ -15,7 +15,7 @@ import { normalizePath } from '../file-io.mjs';
 import { semanticId } from '../findings.mjs';
 import { parseAcceptV1Markers } from './deferral-classifier.mjs';
 import { globMatch } from './glob-match.mjs';
-import { formatCoverageSuffix, changedLinesUnreadTotal } from '../coverage-format.mjs';
+import { formatCoverageSuffix, changedLinesUnreadTotal, unreviewedUnrecognisedFiles } from '../coverage-format.mjs';
 
 /**
  * The CLOSED set of `[Architecture]` categories the MECHANICAL architecture
@@ -403,7 +403,8 @@ export function formatAuditSummaryLine({
     const base = `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${secs}`;
     // The verdict word counts FINDINGS; it does not say the change was read. Beside it, say when it was not
     // (upstream 58f4e3a5: a round converged on PASS with 844 changed lines unread) — the same count that blocks convergence.
-    const notEvidence = changedLinesUnreadTotal(coverage) > 0 ? ' — not convergence evidence' : '';
+    // Same for a changed file of an unrecognised type that no pass was sent (upstream 57bd3de9): the suffix names it, this says what it means.
+    const notEvidence = (changedLinesUnreadTotal(coverage) > 0 || unreviewedUnrecognisedFiles(coverage).length > 0) ? ' — not convergence evidence' : '';
     return cov ? `${base} | ${cov}${notEvidence}` : base;
   }
   const failed = failedPasses.length;

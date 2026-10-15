@@ -14,6 +14,8 @@
  */
 import path from 'node:path';
 import { ArgvError } from '../cli-io.mjs';
+import { exitCodeForSignal, runUnderLease } from './lease-run.mjs';
+import { runChild } from './lease-spawn.mjs';
 import { failed, ok, refused, selfId } from './commands.mjs';
 import { gitCommonDir, runGit } from './git-facts.mjs';
 import {
@@ -22,7 +24,7 @@ import {
   transactLease,
 } from './lease.mjs';
 
-export const SUBS = Object.freeze(['acquire', 'attach', 'release', 'status', 'announce', 'peak', 'wait', 'log', 'grant', 'turn']);
+export const SUBS = Object.freeze(['acquire', 'attach', 'release', 'status', 'announce', 'peak', 'wait', 'log', 'grant', 'turn', 'run']);
 
 /** The flags each sub-command accepts (besides `--json`); anything else is an argument error, never ignored. */
 const ALLOWED = Object.freeze({
@@ -36,6 +38,7 @@ const ALLOWED = Object.freeze({
   log: ['--limit'],
   grant: ['--window', '--from', '--until', '--to', '--id'],
   turn: ['--minutes', '--clear'],
+  run: ['--kind', '--for', '--wait', '--timeout', '--end-turn', '--note', '--id'],
 });
 
 const hhmm = (d) => `${d.toISOString().slice(11, 16)}Z`;
@@ -84,10 +87,54 @@ const unreadableResult = (read, sub, cmd) => failed(
   { leaseState: read.state },
 );
 
+/**
+ * `fleet lease run [flags] -- <cmd> [args...]` (plan D7): take the slot (waiting in the queue when allowed), run the command with
+ * its argv verbatim, release on every catchable exit, and exit with the COMMAND'S code. The lease's own outcomes use codes an
+ * ordinary command rarely does, and each says so on stderr: not granted 75 (EX_TEMPFAIL), lease unusable 70 (EX_SOFTWARE),
+ * timeout 124, command not startable 127. The command does NOT run after a refusal.
+ */
+async function cmdRun(ctx, flags, positionals, { dir, repo }) {
+  if (flags['--json']) throw new ArgvError('fleet lease run: --json is not supported (the command owns stdout)');
+  if (!(ctx.argv ?? []).includes('--')) throw new ArgvError('fleet lease run: put -- before the command: fleet lease run [flags] -- <cmd> [args...]');
+  const [, cmd, ...args] = positionals;
+  if (!cmd) throw new ArgvError('fleet lease run: nothing to run after --');
+  const forMin = wholeNumber(flags, '--for');
+  const waitMin = wholeNumber(flags, '--wait') ?? 0;
+  const timeoutMin = wholeNumber(flags, '--timeout');
+  if (waitMin > 720) throw new ArgvError('fleet lease run: --wait is at most 720 minutes');
+  if (timeoutMin !== undefined && (timeoutMin < 1 || timeoutMin > 720)) throw new ArgvError('fleet lease run: --timeout must be from 1 to 720 minutes');
+  const say = (m) => process.stderr.write(`fleet lease run: ${m}\n`);
+  // FLEET_NOW pins the clock for tests; polling and the wait deadline still need time to pass, so it advances in real time from there.
+  const t0 = ctx.now.getTime(); const r0 = Date.now();
+  const res = await runUnderLease({
+    dir, identity: { repoKey: repo.repoKey, holder: String(selfId(ctx, flags)) }, repo: repo.repo, kind: text(flags['--kind']), forMin,
+    note: text(flags['--note']), waitMin, endTurn: flags['--end-turn'] === true, cmdName: ctx.cmd, log: say,
+    pollMs: Number(ctx.env.FLEET_LEASE_POLL_MS) > 0 ? Number(ctx.env.FLEET_LEASE_POLL_MS) : undefined, // a test seam for the wait loop's interval only
+    now: () => new Date(t0 + (Date.now() - r0)),
+  }, ({ attach, signal }) => runChild({ cmd, args, signal, timeoutMs: timeoutMin ? timeoutMin * 60_000 : undefined, onSpawn: attach }));
+
+  let exitCode;
+  if (!res.ran) {
+    if (res.outcome === 'bad-request') throw new ArgvError(`fleet lease run: ${res.reason}`);
+    if (res.outcome === 'not-granted') {
+      say(`REFUSED (${res.code}): ${res.reason}${res.queued ? ` This repo is now waiting for the slot (\`${ctx.cmd} lease wait --cancel\` withdraws it).` : ''} The command did NOT run.`);
+      exitCode = 75;
+    } else { say(`${res.reason}. The command did NOT run.`); exitCode = 70; }
+  } else {
+    const o = res.result;
+    if (o.spawnError) { say(`could not start ${JSON.stringify(cmd)}: ${o.spawnError}`); exitCode = 127; }
+    else if (res.signalled) { say(`stopped by ${res.signalled}; the command's process tree was stopped${res.released?.ok ? ' and the slot released' : ' but the slot could NOT be released (see above)'}`); exitCode = exitCodeForSignal(res.signalled); }
+    else if (o.timedOut) { say(`the command ran past --timeout ${timeoutMin} minute(s) and was stopped`); exitCode = 124; }
+    else if (o.signal) exitCode = exitCodeForSignal(o.signal);
+    else exitCode = o.code ?? 1;
+  }
+  return { ok: exitCode === 0, code: exitCode === 0 ? 'ok' : 'error', exitCode, quiet: true, text: '', ...(res.ran ? { released: res.released?.ok === true } : { ran: false, outcome: res.outcome }) };
+}
+
 /** `fleet lease <sub> [flags]`. */
 export function cmdLease(ctx, flags, positionals) {
   const sub = positionals[0];
-  if (positionals.length !== 1) throw new ArgvError(`fleet lease: pass exactly one sub-command of ${SUBS.join(', ')} (got ${positionals.map((p) => JSON.stringify(p)).join(' ') || 'none'})`);
+  if (sub !== 'run' && positionals.length !== 1) throw new ArgvError(`fleet lease: pass exactly one sub-command of ${SUBS.join(', ')} (got ${positionals.map((p) => JSON.stringify(p)).join(' ') || 'none'})`);
   if (!SUBS.includes(sub)) throw new ArgvError(`fleet lease: pass one sub-command of ${SUBS.join(', ')} (got ${JSON.stringify(sub)})`);
   checkFlags(sub, flags);
   let dir;
@@ -95,6 +142,8 @@ export function cmdLease(ctx, flags, positionals) {
   const repo = repoIdentity(ctx.cwd);
   if (!repo) return failed('could not identify this repository (git did not answer); the lease needs a repo to attribute to');
   const probe = defaultProbe();
+
+  if (sub === 'run') return cmdRun(ctx, flags, positionals, { dir, repo });
 
   if (sub === 'log') {
     const read = readLease(dir);

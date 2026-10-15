@@ -448,6 +448,8 @@ const TEXT_EXT = new Set([
   // for the same reason .sarif is: comments and values alike can carry a
   // repo-relative path worth checking, and it is never an opaque binary blob.
   '.jsonc',
+  // .jsonl is line-delimited JSON (the audit-unadmitted-files fixture): text for the same reason as .jsonc/.sarif.
+  '.jsonl',
 ]);
 const BINARY_EXT = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.woff', '.woff2',

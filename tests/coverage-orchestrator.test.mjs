@@ -23,6 +23,7 @@ process.env.AUDIT_NO_PREFLIGHT = '1';
 
 const audit = await import('../scripts/openai-audit.mjs');
 const { runMultiPassCodeAudit } = audit.__testExports;
+const { formatAuditSummaryLine } = await import('../scripts/lib/audit/findings-pipeline.mjs');
 const { partitionDiffScope } = await import('../scripts/lib/diff-scope-admission.mjs');
 
 const CS = 'tests/fixtures/csharp/Sample.Legacy.cs';
@@ -85,6 +86,43 @@ describe('a C# diff through the orchestrator', () => {
     assert.equal(file(cov, 'svc/notes.xyz').outcome, 'not-admitted');
     assert.equal(file(cov, CS).outcome, 'audited');
     assert.notEqual(res.verdict, 'INCOMPLETE', 'partial coverage warns; it does not block');
+  });
+
+  it('upstream 57bd3de9: a changed .jsonl is ADMITTED, read and audited — coverage complete', async () => {
+    const JSONL = 'tests/fixtures/audit-unadmitted/facts.jsonl';
+    const res = await runMultiPassCodeAudit(
+      stub(defaultResponses()), PLAN + 'Modify `' + JSONL + '`.\n', '', false, null, '',
+      { ...OPTS, coverageChanged: [{ path: CS, changeKind: 'modified' }, { path: JSONL, changeKind: 'modified' }] },
+    );
+    const cov = res._coverage;
+    assert.equal(file(cov, JSONL).class, 'declarative');
+    assert.equal(file(cov, JSONL).outcome, 'audited', 'it was not-admitted (class uncovered) before .jsonl was in the taxonomy');
+    assert.equal(cov.status, 'complete');
+    assert.deepEqual(res._convergence, { converged: true, reason: 'converged' });
+  });
+
+  it('upstream 57bd3de9: a changed file of a still-unrecognised type leaves PASS with convergence WITHHELD, and the line says why', async () => {
+    const res = await runMultiPassCodeAudit(
+      stub(defaultResponses()), PLAN, '', false, null, '',
+      { ...OPTS, coverageChanged: [{ path: CS, changeKind: 'modified' }, { path: 'svc/notes.xyz', changeKind: 'added' }] },
+    );
+    assert.equal(res.verdict, 'PASS', 'the recognised change was measured: not INCOMPLETE');
+    assert.deepEqual(res._convergence, { converged: false, reason: 'unrecognised-files-unreviewed' });
+    const line = formatAuditSummaryLine({ verdict: res.verdict, high: 0, medium: 0, low: 0, latencyMs: 1000, coverage: res._coverage });
+    assert.match(line, /unrecognised file type\(s\) never sent to any pass: xyz ×1.*not convergence evidence/);
+  });
+
+  it('control: an expected exclusion (png) or a declared one (--exclude-paths) still converges', async () => {
+    const png = await runMultiPassCodeAudit(
+      stub(defaultResponses()), PLAN, '', false, null, '',
+      { ...OPTS, coverageChanged: [{ path: CS, changeKind: 'modified' }, { path: 'assets/logo.png', changeKind: 'added' }] },
+    );
+    assert.deepEqual(png._convergence, { converged: true, reason: 'converged' });
+    const declared = await runMultiPassCodeAudit(
+      stub(defaultResponses()), PLAN, '', false, null, '',
+      { ...OPTS, coverageChanged: [{ path: CS, changeKind: 'modified' }, { path: 'svc/notes.xyz', changeKind: 'added' }], coverageExcluded: { infra: [], user: ['svc/notes.xyz'] } },
+    );
+    assert.deepEqual(declared._convergence, { converged: true, reason: 'converged' });
   });
 
   it('EVERY changed file unrecognised: the round is INCOMPLETE with an explicit uncovered report — never a silent zero', async () => {

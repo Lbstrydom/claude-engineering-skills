@@ -71,7 +71,9 @@ export function formatCoverageSuffix(cov) {
   const unc = cov.uncoveredByExtension || {};
   const uncN = Object.values(unc).reduce((a, b) => a + b, 0);
   if (uncN > 0) {
-    parts.push(`${uncN} unrecognised file type(s): ${Object.entries(unc).map(([e, n]) => `${oneLine(e)} ×${n}`).join(', ')}`);
+    // Say it plainly when a file of such a type was changed AND nothing read it (not merely declared out of scope).
+    const never = unreviewedUnrecognisedFiles(cov).length > 0 ? ' never sent to any pass' : '';
+    parts.push(`${uncN} unrecognised file type(s)${never}: ${Object.entries(unc).map(([e, n]) => `${oneLine(e)} ×${n}`).join(', ')}`);
   }
   const recs = recordsOf(cov);
   // A reviewer projection shows at most a capped window of the short files, so per-file counts below are a FLOOR there.
@@ -82,6 +84,21 @@ export function formatCoverageSuffix(cov) {
   if (unread > 0) parts.push(`${floor}${changedLinesUnreadTotal(cov)} changed line(s) in ${unread} file(s) never rendered to any pass`);
   if ((c.excludedRequired || 0) > 0) parts.push(`${c.excludedRequired} source file(s) excluded by policy`);
   return parts.join('; ');
+}
+
+/**
+ * Changed files of an UNRECOGNISED type that no pass was ever sent: class `uncovered`, outcome `not-admitted`
+ * (upstream 57bd3de9: a changed `.jsonl` eval fixture passed two gates unread). Deliberately narrow, so it can gate:
+ * `non-code` (binary, asset, lockfile, generated) is an EXPECTED exclusion; `excluded-*` is a DECLARED one
+ * (`.auditignore` / `--exclude-paths` is the explicit acceptance); `sensitive` and `deleted` have their own outcomes.
+ * Works on the canonical ledger and the reviewer projection alike.
+ *
+ * @param {object|null|undefined} cov a `_coverage`
+ * @returns {object[]} the ledger records
+ */
+export function unreviewedUnrecognisedFiles(cov) {
+  if (!cov || typeof cov !== 'object') return [];
+  return recordsOf(cov).filter((f) => f?.class === 'uncovered' && f.outcome === 'not-admitted');
 }
 
 /**
