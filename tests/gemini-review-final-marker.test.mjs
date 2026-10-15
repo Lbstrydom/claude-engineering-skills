@@ -75,7 +75,7 @@ describe('recordFinalReviewMarker (producer) feeding evaluatePreauthorisedShip (
   it('no gate-evidence marker: nothing is recorded AND an earlier approval is revoked (absence is never an approval)', () => withRepo((d) => {
     writeEvidence(d);
     quiet(() => recordFinalReviewMarker({ auditMode: 'code', result: { verdict: 'APPROVE' }, repoRoot: d }));
-    fs.rmSync(path.join(d, GATE_EVIDENCE_RELPATH));
+    fs.rmSync(path.join(d, GATE_EVIDENCE_RELPATH), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const fatal = quiet(() => recordFinalReviewMarker({ auditMode: 'code', result: { verdict: 'APPROVE' }, repoRoot: d }));
     assert.equal(fatal, false, 'safe state, only reported');
     assert.equal(readFinalReviewMarker(d).reason, 'absent');

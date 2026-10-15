@@ -343,7 +343,7 @@ describe('final-review marker lifecycle fails closed (audit R2 H1/H3, R3 H1/H4)'
     assert.equal(stuck.sidecarStuck, true);
     assert.match(stuckLogs.join(''), /keep refusing/);
     assert.equal(readFinalReviewMarker(d).reason, 'revoked', 'fail closed until the file is deleted');
-    fs.rmSync(path.join(d, REVOKED_SIDECAR_RELPATH));
+    fs.rmSync(path.join(d, REVOKED_SIDECAR_RELPATH), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const ok = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
     assert.equal(ok.written, true);
     assert.equal(readFinalReviewMarker(d).ok, true);
