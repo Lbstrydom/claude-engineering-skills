@@ -96,7 +96,8 @@ and its final report's Findings should all be recorded.
 ## Rule 12 — Work-in-progress limits
 
 Measured 2026-10-12/13: about 4 full gates an hour fitted machine-wide, so more
-workers only added waiting.
+workers only added waiting. The 4 assumes a ~15-minute local gate; `doctor`'s `operating/wip-limit` re-derives it from
+this machine's measured suite run.
 
 ## Rule 13 — Theme sessions
 

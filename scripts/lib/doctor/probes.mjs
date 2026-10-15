@@ -14,6 +14,7 @@ import { resolveMainWorktree, planHydration, SYNCED_TOOLING_DIR } from '../../sk
 import { checkMarkerRemedies, CONSUMER_HYDRATE_NPM_SCRIPT } from '../worktree-preflight.mjs';
 import { readBundleStamp } from '../upstream/commands.mjs';
 import { reportToProbeOutcome } from './report.mjs';
+import { OPERATING_PROBES } from './operating-fit.mjs';
 import {
   loadEnv, injectResolvedDbEnv, evaluateAuditSetup, evaluateAuditSupabase,
   evaluatePersonaTest, evaluateGitHub, checkPlaywrightAvailable,
@@ -471,4 +472,6 @@ export const PROBES = [
   AUTOCRLF_PROBE,
   ...NAMED_COMMAND_PROBES,
   PROVENANCE_PROBE,
+  // Recommend-only measurements of the shipped fleet/gate constants (class:'machine', so they can never gate).
+  ...OPERATING_PROBES,
 ];

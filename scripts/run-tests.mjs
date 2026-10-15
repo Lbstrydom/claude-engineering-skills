@@ -65,6 +65,8 @@ import { GUARD_REPORT_VERSION } from './lib/test-guard-reporter.mjs';
 import { TEST_TIER_VERSION, parseHeavyList, parseTierEnvelope, validateEnvelopeAgainstList } from './lib/test-tier.mjs';
 import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-report.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { recordSuiteRun } from './lib/suite-run-record.mjs';
+import { performance } from 'node:perf_hooks';
 
 /**
  * Ambient provider-ROUTING vars scrubbed from the child env. Enumerated from
@@ -466,6 +468,27 @@ export function finishRun({ status, reportText, timingText = null, preflight = n
 }
 
 /**
+ * Adjudicate a finished run, THEN record it. The exit code is `finishRun`'s and nothing after it can move it: the
+ * suite-run record is best-effort evidence for doctor, never part of the verdict. Import-safe, with the recorder
+ * injectable, so the ordering and the isolation are tested on behaviour, not by reading this file.
+ *
+ * @param {object} input `finishRun`'s input plus `{tierSkip, userArgs, wallMs, cwd}` and an optional `record`
+ * @returns {{exitCode: number, lines: string[]}}
+ */
+export function completeRun({ tierSkip = null, userArgs = [], wallMs, cwd, record = recordSuiteRun, ...runInput }) {
+  const { exitCode, lines } = finishRun(runInput);
+  let note = null;
+  try {
+    const ran = ranFiles(runInput.timingText ?? null);
+    note = record({ preflight: Boolean(runInput.preflight), tierSkip, userArgs, exitCode, wallMs, files: ran ? ran.size : null, cwd }).note;
+  } catch (err) {
+    note = `suite-run record: not written (${err?.code ?? 'error'})`;
+  }
+  if (note) lines.push(note);
+  return { exitCode, lines };
+}
+
+/**
  * Read a `test-tier/v1` envelope file for `--tier-skip` and turn it into the skip list. Every check is a hard error
  * (the caller exits 2): an envelope that is unreadable, unparseable, of the wrong version, skips a file that is not on
  * the heavy list, skips a file the diff reaches, or would leave nothing to run, is never "skip as last time" and never
@@ -566,10 +589,12 @@ function main() {
     reportPath,
     timingEnabled: true,
   });
+  const startedMs = performance.now();   // monotonic: a wall-clock step must not corrupt the recorded duration
   const res = spawnSync(process.execPath, ['--test', ...reporterArgs, ...caller.pairs, ...args], {
     stdio: 'inherit',
     env: { ...scrubChildEnv(process.env), [TIMING_REPORT_ENV]: timingPath },
   });
+  const wallMs = performance.now() - startedMs;
 
   const readOrNull = (p) => {
     try { return fs.readFileSync(p, 'utf-8'); } catch { return null; }   // adjudicateRun fails closed on a missing guard report
@@ -585,12 +610,16 @@ function main() {
   }
   fs.rmSync(reportDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 
-  const { exitCode, lines } = finishRun({
+  const { exitCode, lines } = completeRun({
     status: res.status,
     reportText,
     timingText,
     preflight: preflight ? { skipped: selection.skipped, expected: expectedPreflightFiles() } : null,
     tier: tierSkip ? { skipped: selection.skipped, expected: expectedPreflightFiles({ skipped: selection.skipped }) } : null,
+    tierSkip,
+    userArgs,
+    wallMs,
+    cwd: process.cwd(),
   });
   if (keepNote) lines.push(keepNote);
   if (lines.length) process.stderr.write(`\n${lines.join('\n')}\n`);
