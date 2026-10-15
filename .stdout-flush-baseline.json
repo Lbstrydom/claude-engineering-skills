@@ -1,7 +1,7 @@
 {
   "_description": "Reachable `process.exit()` sites preceded by a stdout write, per scripts/check-stdout-flush.mjs. Drift-only ratchet: a net-new site fails, and so does an unrecorded shrink. Shrink this list; never grow it. Re-baseline deliberately with --update. The fix for an entry is `await finishAndExit(code)` from scripts/lib/cli-io.mjs.",
-  "total": 210,
-  "envelope": 101,
+  "total": 209,
+  "envelope": 100,
   "files": {
     "scripts/audit-full.mjs": 4,
     "scripts/audit-loop.mjs": 2,
@@ -33,7 +33,7 @@
     "scripts/check-skill-frontmatter.mjs": 2,
     "scripts/check-skill-refs.mjs": 1,
     "scripts/check-stale-skill-surface.mjs": 4,
-    "scripts/check-status-log-integrity.mjs": 4,
+    "scripts/check-status-log-integrity.mjs": 3,
     "scripts/check-sync.mjs": 5,
     "scripts/check-worktree-preflight.mjs": 2,
     "scripts/claudemd-lint.mjs": 4,
@@ -173,7 +173,6 @@
     "scripts/check-status-log-integrity.mjs::main[try>catch]::process.stdout.write->exit(2)#1",
     "scripts/check-status-log-integrity.mjs::main[if>then]::process.stdout.write->exit(2)#1",
     "scripts/check-status-log-integrity.mjs::main[if>then]::process.stdout.write->exit(2)#2",
-    "scripts/check-status-log-integrity.mjs::main::process.stdout.write->exit(dynamic)#1",
     "scripts/check-sync.mjs::checkSync[if>then]::log() → stdout->finish()->exit(dynamic)#1",
     "scripts/check-sync.mjs::checkSync[try>catch]::fail() → stdout->finish()->exit(dynamic)#1",
     "scripts/check-sync.mjs::checkSync[if>else]::fail() → stdout->finish()->exit(dynamic)#1",

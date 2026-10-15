@@ -45,6 +45,7 @@ grep -rn '^## 2026-07-04' status.md docs/status/
 
 ## Adding an entry
 
-Never here. `/ship` appends to `status.md` at the root; a month moves into this
-directory only via `npm run status:rotate`, which writes the manifest that makes
-the move provable.
+Never in a month file here. Since the per-entry cutover (marker:
+[`entries/README.md`](entries/README.md)) `/ship` writes each new entry as its own file
+under `entries/`, and `status.md` takes no new entry. A month moves into this directory
+only via `npm run status:rotate`, which writes the manifest that makes the move provable.

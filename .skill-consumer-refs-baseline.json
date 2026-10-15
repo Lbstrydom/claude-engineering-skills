@@ -1,6 +1,6 @@
 {
   "$comment": "Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.",
-  "totalSites": 218,
+  "totalSites": 221,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -156,6 +156,11 @@
       "disposition": "consumer-authored",
       "reason": "Authored IN the consumer by /security-strategy bootstrap. Its absence is the documented trigger to bootstrap, not a broken pointer.",
       "sites": 14
+    },
+    "doc docs/status/entries/README.md": {
+      "disposition": "source-repo-only",
+      "reason": "The per-entry session-log marker. /ship Step 2 branches on whether it EXISTS: a consumer has no such file by design and keeps appending to status.md, so the pointer is a conditional probe, never a required read. The directory and its gate are this repo's own.",
+      "sites": 3
     },
     "doc docs/upstream-issues/claude-engineering-skills-feedback-2026-08-07.md": {
       "disposition": "provenance",

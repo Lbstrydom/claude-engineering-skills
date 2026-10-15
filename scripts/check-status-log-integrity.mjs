@@ -36,8 +36,9 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, argOption, finishAndExit } from './lib/cli-io.mjs';
 import { checkConservation } from './lib/status-log-integrity.mjs';
+import { ENTRIES_DIR, MARKER_REL, entryStateOnDisk, isArchivePath, isEntryRecordPath, perEntryMode } from './lib/status-entry-files.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_LOG = 'status.md';
@@ -62,22 +63,51 @@ function showAt(rev, rel) {
 /** Every `docs/status/*.md` at a revision. */
 function archivesAt(rev) {
   const out = {};
-  let listing;
-  try { listing = git(['ls-tree', '-r', '--name-only', rev, `${ARCHIVE_DIR}/`]); } catch { return out; }
-  for (const rel of listing.split('\n').map((l) => l.trim()).filter((l) => l.endsWith('.md'))) {
+  // An absent directory lists as empty with exit 0, so a throw is a real failure, never "no archives".
+  const listing = git(['ls-tree', '-r', '--name-only', rev, `${ARCHIVE_DIR}/`]);
+  for (const rel of listing.split('\n').map((l) => l.trim()).filter((l) => l.endsWith('.md') && isArchivePath(l))) {
     const text = showAt(rev, rel);
-    if (text !== null) out[rel] = text;
+    if (text === null) throw new Error(`${rel} is listed at ${rev.slice(0, 8)} but cannot be read`);
+    out[rel] = text;
   }
   return out;
+}
+
+/** The per-entry state at a revision: the marker, the entry records, and any foreign file in the directory. */
+function entryStateAt(rev) {
+  // A path absent at `rev` lists as empty with exit 0, so a THROW here is a real failure (bad rev,
+  // corrupt object) and must not be read as "no entries": it would blind Laws 7 and 9.
+  // The ONE marker policy (also entryStateOnDisk's): a regular file. `ls-tree` modes 100644/100755 are
+  // regular; 120000 (a symlink) and 160000 (a submodule) are not, so they are named as strays.
+  const listing = git(['ls-tree', '-r', rev, `${ENTRIES_DIR}/`]);
+  const paths = [];
+  const strays = [];
+  for (const line of listing.split('\n').filter(Boolean)) {
+    const m = /^(\d{6}) \w+ [0-9a-f]+\t(.+)$/.exec(line);
+    if (!m) throw new Error(`unparseable ls-tree line at ${rev.slice(0, 8)}: ${line}`);
+    if (m[1] === '100644' || m[1] === '100755') paths.push(m[2]); else strays.push(m[2]);
+  }
+  const entries = {};
+  for (const rel of paths) {
+    if (rel === MARKER_REL) continue;
+    if (!isEntryRecordPath(rel)) { strays.push(rel); continue; }
+    const text = showAt(rev, rel);
+    if (text === null) throw new Error(`${rel} is listed at ${rev.slice(0, 8)} but cannot be read`);
+    entries[rel] = text;
+  }
+  return { marker: perEntryMode(paths), entries, strays };
 }
 
 function archivesOnDisk() {
   const out = {};
   const dir = path.join(REPO, ARCHIVE_DIR);
   let names;
-  try { names = fs.readdirSync(dir); } catch { return out; }
+  try { names = fs.readdirSync(dir); } catch (err) {
+    if (err.code === 'ENOENT') return out; // no archives yet; any other failure is not "none"
+    throw err;
+  }
   for (const n of names) {
-    if (!n.endsWith('.md')) continue;
+    if (!isArchivePath(`${ARCHIVE_DIR}/${n}`) || !n.endsWith('.md')) continue;
     out[`${ARCHIVE_DIR}/${n}`] = fs.readFileSync(path.join(dir, n), 'utf-8');
   }
   return out;
@@ -217,6 +247,7 @@ async function main() {
     root: prevRootText,
     archives: archivesAt(base),
     manifest: parseManifest(showAt(base, MANIFEST)),
+    ...entryStateAt(base),
   };
   const curr = {
     root: fs.existsSync(path.join(REPO, ROOT_LOG)) ? fs.readFileSync(path.join(REPO, ROOT_LOG), 'utf-8') : '',
@@ -224,6 +255,7 @@ async function main() {
     manifest: parseManifest(
       fs.existsSync(path.join(REPO, MANIFEST)) ? fs.readFileSync(path.join(REPO, MANIFEST), 'utf-8') : null,
     ),
+    ...entryStateOnDisk(REPO),
   };
 
   const { ok, violations } = checkConservation(prev, curr);
@@ -235,10 +267,11 @@ async function main() {
   } else {
     process.stdout.write(`status-log-integrity: ${violations.length} violation(s) against ${base.slice(0, 8)}\n`);
     for (const v of violations) process.stdout.write(`  ${v.kind}: ${v.detail}\n`);
-    process.stdout.write('\n  status.md is append-only. To archive a month, use `npm run status:rotate`,\n');
+    process.stdout.write('\n  status.md is append-only; once docs/status/entries/README.md exists it takes no NEW entry (add a file there).\n');
+    process.stdout.write('  To archive a month, use `npm run status:rotate`,\n');
     process.stdout.write('  which records each archived entry in docs/status/rotation-manifest.json.\n');
   }
-  process.exit(ok ? 0 : 1);
+  await finishAndExit(ok ? 0 : 1);
 }
 
 main().catch((err) => {

@@ -28,6 +28,7 @@
  */
 
 import crypto from 'node:crypto';
+import { ENTRIES_DIR, MARKER_REL, validateEntryText } from './status-entry-files.mjs';
 
 /** Heading form the rotation and the guard both key on. */
 export const ENTRY_HEADING_RE = /^## (\d{4}-\d{2}-\d{2})\b/;
@@ -259,5 +260,71 @@ export function checkConservation(prev, curr) {
     }
   }
 
+  checkEntryFiles(prev, curr, prevRoot, currRoot, V);
+
   return { ok: violations.length === 0, violations };
+}
+
+/**
+ * Laws 6-9: the log as one file per entry (plan §12). All inert until the marker exists at head, so
+ * a state with none of the optional fields (`entries`, `marker`, `strays`) behaves exactly as before.
+ *
+ *   - Law 6, the root takes no NEW entry heading once per-entry mode is on (appending to an
+ *     existing root entry stays legal under Law 1).
+ *   - Law 7, entry records are immutable and conserved: every record at the base exists at head
+ *     byte-for-byte (after CRLF canonicalisation).
+ *   - Law 8, a NEW record is well-formed (name grammar, one dated heading, a body).
+ *   - Law 9, the marker, once present, stays — deleting it would switch Laws 6-8 off.
+ *   - `entries-without-marker` / `entry-stray`: records or foreign files with no marker vouching
+ *     for the directory are named, never quietly read as "no entries".
+ *
+ * @param {{entries?: Record<string,string>, marker?: boolean}} prev
+ * @param {{entries?: Record<string,string>, marker?: boolean, strays?: string[]}} curr
+ */
+function checkEntryFiles(prev, curr, prevRoot, currRoot, V) {
+  const prevEntries = prev.entries || {};
+  const currEntries = curr.entries || {};
+  const prevMarker = Boolean(prev.marker);
+  const currMarker = Boolean(curr.marker);
+
+  if (prevMarker && !currMarker) {
+    V('marker-removed', `${MARKER_REL} existed at the base and is gone: deleting it would switch the entry laws off`);
+  }
+  if (!currMarker && Object.keys(currEntries).length > 0) {
+    V('entries-without-marker',
+      `${ENTRIES_DIR}/ holds entry files but ${MARKER_REL} is absent, so per-entry mode is NOT on and they are unguarded`);
+  }
+  for (const p of curr.strays || []) {
+    V('entry-stray', `${p} is not an entry record (<date>-<time>-<slug>.md) and not the marker`);
+  }
+  if (!currMarker) return;
+
+  // Law 6: the multiset of root headings may not gain a member.
+  const prevCounts = new Map();
+  for (const e of prevRoot.entries) prevCounts.set(e.heading, (prevCounts.get(e.heading) || 0) + 1);
+  const seen = new Map();
+  for (const e of currRoot.entries) {
+    const n = (seen.get(e.heading) || 0) + 1;
+    seen.set(e.heading, n);
+    if (n > (prevCounts.get(e.heading) || 0)) {
+      V('root-entry-added',
+        `status.md gained the entry "${e.heading}". Per-entry mode is on: put new entries in ${ENTRIES_DIR}/. `
+        + 'If your branch predates the cutover, move ONLY your added "## " block(s) into new entry files and delete exactly those '
+        + 'spans from status.md (keep any legitimate amendment to an older entry), then re-run `npm run status:integrity:gate` and read the diff.');
+    }
+  }
+
+  // Law 7: records at the base survive byte-for-byte.
+  for (const [p, text] of Object.entries(prevEntries)) {
+    if (!(p in currEntries)) V('entry-deleted', `${p} existed at the base and is gone`);
+    else if (canonicalize(currEntries[p]) !== canonicalize(text)) V('entry-edited', `${p} changed after it was written; entries are immutable`);
+  }
+
+  // Law 8: new records are well-formed.
+  for (const [p, text] of Object.entries(currEntries)) {
+    if (p in prevEntries) continue;
+    for (const problem of validateEntryText(p.slice(p.lastIndexOf('/') + 1), text)) {
+      V('entry-malformed', `${p}: ${problem}`);
+    }
+  }
 }

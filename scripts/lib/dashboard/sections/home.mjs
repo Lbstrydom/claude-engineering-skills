@@ -143,7 +143,7 @@ export default function sectionHome({ src, home }, ui) {
     const entries = list(v.entries).slice(0, SHIPPED_CAP);
     return `${entries.length ? `<ul class="home-list" data-testid="home-shipped-log">${entries.map(logEntry).join('')}</ul>` : '<p class="muted" data-testid="home-shipped-log">No dated entries in status.md.</p>'}
       ${v.skippedHeadings > 0 ? `<p class="muted" data-testid="home-shipped-unparsed">${x(Number(v.skippedHeadings))} heading(s) unparsed</p>` : ''}
-      ${v.partial ? '<p class="muted" data-testid="home-shipped-partial">partial: only the first 256 KB of status.md was read</p>' : ''}`;
+      ${v.partial ? '<p class="muted" data-testid="home-shipped-partial">partial: only the first 256 KB of the session log was read</p>' : ''}`;
   };
   const mergeList = () => {
     if (!mergeM || mergeM.status !== 'ok') return notQueried(mergeM, 'Merge log');

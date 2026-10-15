@@ -699,12 +699,11 @@ deleted at session end, taking the note with it). The notes are gitignored
 scratch state (same directory the commit-message file uses), so they survive a
 session boundary but never ship as-is.
 
-Append a new session log entry to `status.md`. If file doesn't exist,
-create with the standard header. Always append at the TOP (below the
-header) so the most recent session is first.
-
-Full template + rules + optional sections (UX Status, Persona Test Status,
-Regression Lock Status, Plan Verify Status, Consumer Verification):
+Write the session log entry. **If `docs/status/entries/README.md` exists, the
+entry is a NEW file there** (`<YYYY-MM-DD>-<HHMMSS>-<slug>.md`, UTC; `status.md`
+takes no new entry). Otherwise add it at the TOP of `status.md` (create the
+standard header if absent), newest first. Template, rules and optional sections
+(UX, Persona, Regression Lock, Plan Verify, Consumer Verification):
 `references/status-md-format.md`.
 
 ### Step 2b — Backlog snapshot line (one command, advisory)
@@ -880,7 +879,7 @@ Stage relevant files by name (be specific):
 
 ```bash
 git add scripts/lib/*.mjs tests/*.test.mjs   # your changed source files
-git add status.md
+git add status.md                    # or the new docs/status/entries/<file>.md
 git add CLAUDE.md AGENTS.md          # only if modified
 git add docs/plans/*.md              # only if plan was updated
 # NOTE: do NOT `git add scripts/.sync-manifest.json` in the source repo — it's

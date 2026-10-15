@@ -7,7 +7,7 @@
 - **Target domain(s)**: `fleet`, `install`, `scripts`, `shared-lib`, `ship`, `skills-content`
 - ⚠ **Cross-domain work** — intentional: one coordinator theme (rule 13) that touches the generated-artifact writers (`install`), the ship commit helper (`ship`), the CI verdict reader (`scripts`/`shared-lib`) and the fleet skill (`fleet`, `skills-content`). Each PR stays inside one or two of them.
 - **Depends on**: docs/plans/fleet-lease-turns-and-journal.md — PRs 2-4 edit `skills/fleet/**` and PR 4 reads the lease turns; start each only after that theme's PR 3 has merged (coordinator, 2026-10-15). PR 1 does not depend on it.
-- **Theme**: coordinator rule 13, four sequential PRs. Findings: p-20261015045120-caf4 (PR 1); p-20261015045116-5b9d, p-20261015045132-5ee1, p-20261015045126-5696 (PR 2); p-20261015045129-6c44, p-20261014202756-400e (PR 3); p-20261014064525-f69b, p-20261014064525-9019, p-20261014064526-328a (PR 4).
+- **Theme**: coordinator rule 13, five sequential PRs (PR 2b, section 12, was added 2026-10-15). Findings: p-20261015045120-caf4 (PR 1); p-20261015045116-5b9d, p-20261015045132-5ee1, p-20261015045126-5696 (PR 2); p-20261015045129-6c44, p-20261014202756-400e (PR 3); p-20261014064525-f69b, p-20261014064525-9019, p-20261014064526-328a (PR 4).
 - **Out of scope**: `fleet lease run` (the "CES: Fleet lease theme" chip's PR 3). PR 4 touches `scripts/lib/fleet/argv.mjs`, which that theme also edits: coordinate before starting it.
 
 ## 1. Context Summary
@@ -251,6 +251,10 @@ rule.)
      has exactly one `failed-files` marker in its log (`gh run view <id> --attempt 1 --log-failed`), every marker is a
      parsed array with ≥1 file, and no failed job lacks one (a job that failed before tests, e.g. `npm ci`, has none →
      ineligible);
+   - **every failed STEP is explained by that marker**: the jobs response also lists each job's steps and their
+     conclusions. The only failed step allowed is the test step that printed the marker (`npm test`); a job that also
+     failed a lint, security, cleanup or always-run step is ineligible, because the marker explains the tests and
+     nothing else;
    - **the changed-file set is complete**: `git diff --name-only --no-renames <testedBase>...<head>` on fetched
      commits (no paginated API list), where `testedBase` is the run's own tested base;
    - no changed file is a shared input — `SHARED_ENVIRONMENT`, `SELECTOR_DEPENDENCIES` or `SELECTOR_IDENTITY_FILES`
@@ -258,6 +262,12 @@ rule.)
      or the CI workflow;
    - no failing file is in the changed set, and none is reached by it through `computeReach` + `entryReached`, the
      same reach the branch tier uses; a reach with `computed > 0` or unresolved imports counts as reached.
+   - **the evidence describes the tested snapshot, not the coordinator's checkout**: the PR head and tested base come
+     from the run itself (`head_sha`, `pull_requests[].base.sha`, the same fields `classifyCiVerdict` already
+     judges), and the reach graph is built from the tree AT THAT HEAD (`readTreeAt`/`git ls-tree` + `git show` in
+     `scripts/lib/test-tier-git.mjs`, never the working tree). A head or base that cannot be fetched, or a run whose
+     `head_sha` is not the PR's current head, is ineligible. Tests: base movement after the run, and a coordinator
+     checkout that differs from the tested PR.
    Anything unknown is ineligible, with its reason.
 3. **`ci-verdict --pr <n> --rerun-unrelated-flake`** (opt-in flag; the bare verdict stays a pure reader). Two
    external mutations, each with its own outcome:
@@ -279,11 +289,15 @@ rule.)
      `reserved` → `dispatching` → `accepted` | `rejected` | `indeterminate`, plus `proposalId` once recorded.
      Any invocation holding the lock may take a `reserved` record forward (a creator that crashed before
      dispatching strands nothing): it re-reads `run_attempt === 1`, persists `dispatching` atomically, and only then
-     calls GitHub. `dispatching` means "possibly submitted": it is never dispatched again, only reconciled by reading
-     the run (attempt 2 → `accepted`; still attempt 1 and finished → `rejected`, after which the run is red). A failed
-     state write before the call aborts with no dispatch; a failed write after it leaves `dispatching`, which
-     reconciles the same way. `indeterminate` and an unreadable record are reported with the operator action
-     (`gh run view <id>`, then delete the record to retry once). The proposal is filed only while holding the lock and only when the record has
+     calls GitHub. `dispatching` means "possibly submitted": it is never dispatched again by this tool. Reconciliation is
+     READ-ONLY: attempt 2 visible → `accepted`. A `gh` exit that definitively refuses the request (HTTP 4xx from the
+     rerun endpoint, the call's own error, recorded when it happens) → `rejected`. Anything else, including a timeout,
+     a process death or "still attempt 1 on the first read", stays `dispatching` (reported as indeterminate): a request
+     can be accepted and not yet visible, so a negative counter read never authorises a second submission. The tool has
+     NO retry path; the operator checks `gh run view <id>` and decides, and removing the record is their manual act, not a
+     documented recipe. A failed state write before the call aborts with no dispatch; a failed write after it leaves
+     `dispatching`. Tests: acceptance becoming visible after a timeout, process death between the call and the state
+     write, and a first reconciliation read that still shows attempt 1. The proposal is filed only while holding the lock and only when the record has
      no `proposalId`; the id is written before the lock is released, so recovery after a crash between accept and
      record files it exactly once. Scope: one coordinator machine, which is where rule 8 runs merges; a second
      machine is out of scope and named as such in the rationale.
@@ -319,6 +333,15 @@ GitHub already records.
 5. **Memory-backup reminder.** The BEFORE YOU RELAUNCH block reminds the operator to back up memory to their own
    private store. The command comes from `FLEET_MEMORY_BACKUP_CMD` when set (printed verbatim into the private
    handover); otherwise a generic line. No path is committed, and memory is never copied into a repo.
+
+6. **Publication contract for the task export.** `prepare` already reserves its artifacts and writes the manifest last; the export
+   joins that order: validate the supplied `--scheduler-snapshot` (a JSON array of objects with a string `id`; a malformed
+   file, a duplicate id or an id with no task on disk is an error, never a silent skip), stage every task's `SKILL.md`,
+   hash the bytes actually WRITTEN (not the bytes read), and only then publish the manifest and markdown. A task body that
+   cannot be read or copied fails `prepare` with a non-zero exit and no ready handover (the staged copies are removed); the
+   handover is never published listing an export that is not there. `receive` re-hashes the copies against the manifest.
+   Tests: fault injection on a task read, on a copy, and between the copies and the manifest write; the duplicate-id and
+   missing-id cases.
 
 All new manifest fields are optional, so `HANDOVER_SCHEMA_VERSION` is unchanged and older manifests still load.
 
@@ -405,6 +428,14 @@ All new manifest fields are optional, so `HANDOVER_SCHEMA_VERSION` is unchanged 
 
 ## 8. Risk & Trade-off Register
 
+- **The final-review marker binds agreement between labels, not the review request itself** (plan audit R1 H1, 2026-10-15). It copies
+  run, tree and round from the gate-evidence marker as it stands when the review finishes; it does not capture the identity of the
+  input the reviewer was actually sent. A review built from a different checkout than the audit would still publish an approval
+  for the audit's tree. Accepted for now: both run in one session from one worktree, the transcript the reviewer sees is built from
+  that audit's own result files, and the ship also requires the audit's convergence in the store and an unchanged branch. The
+  fix is to stamp the target identity into the review envelope and refuse to dispatch on a mismatch (gemini-review envelope work);
+  recorded under Out of Scope (Future).
+
 - **Someone outside reads raw `main/skills.manifest.json`** (an old installer copy). Searched: no reader in this repo
   or the synced bundle; the install path is retired. Risk accepted; the release asset still carries the manifest.
 - **Pre-authorised ship widens what a chip can do alone.** Bounded by code (2.2b), by the trailer (auditable after the
@@ -467,6 +498,122 @@ Each cluster ships as its own PR (rule 13), with its own `/audit-code --scope di
   - Coupling: one module pair (handover + its renderer) and its reference.
 - **Final gate**: a Gemini review per PR over that PR's diff (the clusters ship separately, so there is no union diff).
 
+## 12. Addendum — PR 2b: the session log as one file per entry (p-20261015060430-76b2, p-20261015160944-2551)
+
+Added 2026-10-15 at the coordinator's request, ahead of PRs 3 and 4: `status.md` conflicted four times in one day after PR 1
+removed the other two conflict files, and each conflict cost a re-merge, a re-push and a gate slot. This is the structural fix
+§2.1(3) deferred with a revisit trigger (≥3 conflicts in 20 PRs): it fired in a day.
+
+### 12.1 Context
+
+- **Why it conflicts** (`measured`, §1.1 replay + the 2026-10-15 re-merges): every `/ship` inserts its entry at the TOP of one
+  file, below the header. Two PRs inserting at the same place always collide, however different the entries. The log is also the
+  most-churned path (401 of 90 days' commits, `docs/status/README.md`).
+- **Why a merge driver cannot help**: the same reason as §1.1. GitHub ignores `.gitattributes` drivers, and a CONFLICTING PR gets no
+  `full-suite` run.
+- **What reads the log (Code Trace, pinned `68769d55`)**: `scripts/check-status-log-integrity.mjs:164-229` (the gate: reads
+  `status.md` at the base via `git show`, the working tree at head, the archives under `docs/status/*.md` and
+  `docs/status/rotation-manifest.json`) → `scripts/lib/status-log-integrity.mjs` `checkConservation` (Laws 1-5, entries keyed by
+  `## ` headings and full-span digests); `scripts/rotate-status-log.mjs` (moves whole months from `status.md` into
+  `docs/status/<month>.md`); the dashboard head readers `scripts/lib/dashboard/collect-home-shipped.mjs:readStatusHead` (256 KB of
+  `status.md`) and `collect-home-queues.mjs` (the newest `Backlog …` line, for the trend); `/ship` Step 2 and the pending-note drain
+  (`scripts/lib/worktree-preflight.mjs` `pending-note`), which PREPEND to `status.md`; `scripts/check-docs-refs.mjs:524` and
+  `scripts/check-npm-run-args.mjs:95` treat `status.md` and `docs/status/` as historical records.
+- **p-20261015160944-2551**: two further merge hazards in the same file. (a) a pending-note block sits ABOVE the first `## ` heading and the
+  gate's Law 2b (`preamble-lost`) fires when a merge drops a line of it; (b) the gate reads the working tree against the push
+  base, so a merge-fixup committed separately from the merge reads differently from one amended into it.
+
+### 12.2 Design
+
+**Right-sizing.** *Band-aid:* ask sessions to rebase before shipping, or serialise status pushes through the coordinator (rule 8's
+status lane, which is exactly what costs the re-pushes). *Over-built:* render `status.md` from entry files and gitignore it, so
+every reader, hook, consumer sync and human path changes. *Chosen:* new entries are new FILES, and the old log is left where it
+is. A new path never conflicts, nothing is rendered, and no reader needs a generated artifact.
+
+1. **One entry, one file**: `docs/status/entries/<YYYY-MM-DD>-<HHMMSS>-<slug>.md` (UTC time of the ship, lowercase kebab slug, `.md`).
+   The file's FIRST line is the entry's own heading, `## YYYY-MM-DD — summary`, in exactly the grammar the log already uses, so
+   `grep -rn '^## 2026-10-15' status.md docs/status/` keeps finding entries. The filename's date must equal the heading's. A file holds exactly
+   ONE `## ` heading (a second would be an entry hidden inside another). Sub-sections (`###`) and the drained
+   `### Consumer Verification (previous ship)` note live inside the entry, under that heading.
+2. **`status.md` stops growing.** It stays a tracked file holding history; after the cutover it takes no new entry (Law 6 below). It is
+   not rendered and not gitignored, so no generated-artifact category question arises (entries are source records, like
+   `docs/plans/*.md`). Rotation of old months (`status:rotate`) is unchanged.
+3. **Cutover** is declared by ONE tracked marker, `docs/status/entries/README.md`, and ONE resolver,
+   `perEntryMode(rev)` in `scripts/lib/status-entries.mjs`, used by the readers, the writer instructions' helper and the
+   gate alike (the writer's rule is "marker present", not "directory present"). A directory with files but no marker is NOT
+   per-entry mode and the gate says so loudly (`entries-without-marker`). The marker is a control file: it is excluded from
+   entry-content validation (Law 8) and itself conserved once activated (Law 9: if the marker exists at the base it must exist at
+   head, so deleting it cannot switch enforcement off). Tests: marker creation, removal, a marker-only directory, a directory
+   without the marker, and a legacy consumer with no directory.
+4. **The gate (Laws 6-8, added to `checkConservation`; Laws 1-5 unchanged):**
+   - **Law 6, root takes no new entry** (per-entry mode): the multiset of `## ` headings in `status.md` may not gain a member against
+     the base. Appending to an EXISTING entry stays legal (Law 1), so old PRs that only touch an old entry still pass.
+   - **Law 7, entries are immutable and conserved**: the shared enumerator (`listEntryFiles`) returns ENTRY RECORDS only, never the
+     control marker `README.md`; every entry record at the base exists at head byte-for-byte (after CRLF canonicalisation).
+     Deleting or editing one fails. The marker is governed by Law 9 alone (it must keep existing) and its documentation may change
+     freely. Tests: the marker's text changes and the gate stays green; deleting the marker fails Law 9; editing an existing entry
+     fails Law 7.
+   - **Law 8, new entries are well-formed**: name matches the grammar; first line is a `## YYYY-MM-DD — ` heading whose date equals the
+     name's; exactly one `## ` heading; non-empty body.
+   - Each violation message carries the recipe for the in-flight PR that trips Law 6, and it is SPAN-AWARE, not a whole-file
+     restore: move ONLY your added `## ` block(s) into new entry files and delete exactly those spans from `status.md`,
+     keeping any legitimate amendment to an older entry, preamble change or rotation in the same file; then re-run
+     `npm run status:integrity:gate` and read the diff. A test combines a new root entry with a legal amendment to an older
+     one and shows the recipe's result passes.
+   - **Preamble blocks (2551a)**: with the root frozen, no new PR edits the content above the first heading, so `preamble-lost` cannot
+     arise from a merge of PRs after the cutover; the Law-2b check stays for legacy branches.
+   - **Merge-fixup (2551b)**: the gate must give the same verdict whether a fixup is a separate commit or amended into the merge.
+     It already reads head from the working tree and the base from `git show`, not from `HEAD~1`; PR 2b adds a test pinning that, and fixes the
+     discrepancy if the test finds one.
+5. **Readers.** New `scripts/lib/status-entries.mjs`: `listEntryFiles(root)` (newest first by filename), `readLogHead(root, maxBytes)`
+   (entry files newest-first, then the head of `status.md`, with the same 256 KB cap and an honest `capped` flag),
+   `parseEntryName`, `validateEntryText`. The dashboard shipped-log and the Backlog trend read through `readLogHead`; before the
+   cutover (no entries dir) it returns exactly today's `status.md` head, so the existing tests stand.
+6. **Writers.** `/ship` Step 2 (and `references/status-md-format.md`): "if `docs/status/entries/` exists, write a NEW entry file; else
+   append to `status.md`". The skill is synced to consumers, who have no such directory and so keep today's flow. The pending-note
+   drain prepends its subsection to the NEW entry. `/ship --train` (`references/train-mode.md`) writes its one entry the same way.
+7. **Tools stay quiet**: `check-docs-refs` (`docs/status/` prefix) and `check-npm-run-args` already exempt the directory.
+
+**Alternatives rejected:** a per-branch pending file folded into `status.md` after merge (needs a post-merge push to a protected branch);
+splitting the current `status.md` into entry files (a 5,600-line migration with a conservation proof, for no conflict benefit, since
+frozen history does not conflict); a union merge driver (GitHub ignores it).
+
+### 12.3 File-Level Plan (PR 2b)
+
+- `scripts/lib/status-entries.mjs` (create) — name grammar, `validateEntryText`, `listEntryFiles`, `readLogHead`.
+- `scripts/lib/status-log-integrity.mjs` (modify) — Laws 6-8 over `prev.entries` / `curr.entries`.
+- `scripts/check-status-log-integrity.mjs` (modify) — read the entries dir at base and head; per-entry mode; the recipe text.
+- `scripts/lib/dashboard/collect-home-shipped.mjs` (modify), `scripts/lib/dashboard/collect-home.mjs` (modify) — read through `readLogHead`.
+- `docs/status/entries/README.md` (create) — the contract and the cutover marker; `docs/status/README.md` (modify) — "Adding an entry".
+- `skills/ship/SKILL.md` (modify), `skills/ship/references/status-md-format.md` (modify), `skills/ship/references/train-mode.md` (modify), `skills/ship/gate-contract.json` (modify if a stated line moves).
+- `scripts/lib/worktree-preflight.mjs` (modify) — only the text that says where the drained note goes.
+- `skills/fleet/references/coordination-rationale.md` (modify) — rule 8: the status lane no longer exists for conflict reasons.
+- `tests/status-entries.test.mjs` (create), `tests/check-status-log-integrity.test.mjs` (modify), `tests/dashboard-home-status-entries.test.mjs` (modify), `tests/status-entries-merge.test.mjs` (create).
+
+### 12.4 Testing
+
+- **Red first, through git**: `tests/status-entries-merge.test.mjs` builds two branches that each ship an entry. Old flow (both insert at the top of one log): `git merge-tree`
+  conflicts in `status.md`. New flow (each adds an entry file): merges cleanly, and the merged tree passes the gate. Negative control = the old flow.
+- **Gate table**: each of Laws 6-8 fails ALONE with its own `kind`; the legal cases pass (a new well-formed entry; an append to an old root entry;
+  a pre-cutover base). Vacuous-pass guards: an empty entries dir at both ends is `conserved` only because per-entry mode is detected, and a base with no
+  `status.md` still fails closed (unchanged).
+- **Merge-fixup (2551b)**: the verdict is identical for a fixup amended into the merge and one committed after it.
+- **Readers**: `readLogHead` returns entries newest-first then the root head; the cap and `capped` flag are honest across both; with no entries dir the output is
+  byte-identical to today's `readStatusHead`.
+- **Names**: the grammar table (good and bad: uppercase slug, missing time, date mismatch, two headings, a `.txt`).
+
+### 12.5 Risks
+
+- **In-flight PRs** (several are open at the cutover) hit Law 6 on their next push. The recipe is in the message, and the coordinator announces it. One-time cost, replacing a recurring one.
+- **Many small files**: ~30 a week. `docs/status/entries/` is listed by filename sort; a rotation of entries into month files is deferred until the count matters (revisit at 500 files; `status:rotate` would need a second source).
+- **A consumer sync of `ship`** must not break consumers: they have no `docs/status/entries/`, so Step 2's condition keeps today's flow. A test pins the SKILL.md wording.
+- **Race on the filename**: two ships in the same UTC second with the same slug would collide on one path; the second `git add` conflicts like any same-path add. Slugs name the work, so this needs the same slug in the same second.
+
+## Out of Scope (Future)
+
+- Stamp the target identity (run, tree, round) into the final-review request envelope and refuse to dispatch when it disagrees with
+  the gate-evidence marker (plan audit R1 H1). Independence: the pre-authorised check's other conditions, and PR 2b, do not depend on it.
+
 ## Audit Trail
 
 - `/audit-plan` (SID `audit-plan-1792043195105-94952`, 2026-10-15): GPT R1 H:5 M:3 (8/8 accepted), R2 H:1
@@ -476,6 +623,13 @@ Each cluster ships as its own PR (rule 13), with its own `/audit-code --scope di
   section's `<summary>` also carries a count) folded into §2.1(2).
 
 ## Implementation Log
+
+### 2026-10-15 — PR 2b (section 12): the session log as one file per entry
+- Completed: section 12 as designed, with one rename: the new lib is `scripts/lib/status-entry-files.mjs` (the dashboard already owns a `status-entries.mjs`; two similarly named modules would have been a trap). Marker `docs/status/entries/README.md`, `perEntryMode`, Laws 6-9 in `status-log-integrity.mjs`, `entryStateOnDisk`/`readLogHead`, the dashboard reader, `/ship` Step 2 and its format reference, train-mode T3, the pending-note drain wording, coordination rule 8 (and its rationale). The marker's consumer-ref disposition is declared (source-repo-only, conditional probe).
+- Evidence: `tests/status-entries.test.mjs` and the git-level `tests/status-entries-merge.test.mjs` (negative control: the old flow conflicts under `git merge-tree`); seven tests seen red against a mutated lib; /audit-code 6 rounds (R5, R6 PASS), Gemini APPROVE; guards:preflight PASS.
+- Deviations from the plan: (1) `docs/status/README.md` was read as a frozen month archive by the gate (its `##` headings), so any edit to it failed; excluded from archives (it is the index). (2) The audit widened the fail-closed work: a failed `ls-tree` or an unreadable directory or marker is a gate failure, not "no entries", and the marker is a regular file by one policy (lstat on disk, ls-tree mode in a snapshot). (3) `finishAndExit` replaces the final `process.exit` in the gate CLI (stdout-flush baseline 210 to 209).
+- Deferred: loading every entry's content at both ends of the gate (blob-OID comparison rejected for now; revisit at 500 files, section 12.5).
+- Remaining: PR 3 (CI flakes), PR 4 (handover). In-flight branches that added a root entry trip `root-entry-added` once (the message carries the recipe).
 
 ### 2026-10-15 — PR 2 (Cluster B): chip preamble, pre-authorised ship in code, upstream count
 - Completed: Phases 3-5. skills/fleet/references/chip-preamble.md (rules 1 and 4 cite it; /ship is typed only when idle); `ship-commit.mjs --preauthorised` / `--check-preauthorised` over a pure decision (lib/ship-preauth.mjs): effective gate, the store's convergence for THIS branch, a final-review marker bound to the audited tree and round, and the branch's changed paths (sensitive, migrations, repository policy); the `AI-Ship-Authority: launch-prompt` trailer; `fleet status`/`next` show open, un-acked upstream issues beside proposals (unmeasured is never zero).

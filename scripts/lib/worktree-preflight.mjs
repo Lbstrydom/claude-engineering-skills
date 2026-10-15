@@ -549,7 +549,7 @@ async function pendingNoteMain(argv) {
     }
     const out = res.notes.map((n) => `<!-- ${n.name} -->\n${n.text.trimEnd()}`).join('\n\n');
     process.stdout.write(res.notes.length
-      ? `${out}\n\n<!-- ${res.notes.length} note(s). After prepending them to status.md, delete exactly these: `
+      ? `${out}\n\n<!-- ${res.notes.length} note(s). After prepending them to the new entry, delete exactly these: `
         + `pending-note clear --notes ${res.notes.map((n) => n.name).join(',')} -->\n`
       : '<!-- no pending consumer-verification notes -->\n');
     return finishAndExit(0);

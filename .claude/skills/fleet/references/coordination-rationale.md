@@ -50,8 +50,12 @@ to archive a session when its PR closes, it is the automatic complement.
 
 ## Rule 8 — Push lanes
 
-Every `/ship` appends to the shared status log, which is why pushes that touch it
-need one slot at a time. Do not use `gh pr merge --auto` on a repo with no required
+In a repo that still keeps ONE status log file, every `/ship` inserts at its top, so
+pushes that touch it need one slot at a time (the status lane). Where
+`docs/status/entries/README.md` exists (this repo, since the per-entry cutover) each
+entry is its own file, two ships never touch the same path, and the lane has no
+reason to exist; the integrity gate refuses a new entry in `status.md` instead.
+Do not use `gh pr merge --auto` on a repo with no required
 checks: it merges at once, before CI finishes (observed 2026-10, #202). When
 path-filtered CI does not run, the local pre-push gate is the evidence.
 

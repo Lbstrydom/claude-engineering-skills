@@ -218,3 +218,19 @@ describe('readStatusHead / shippedLog', () => {
     assert.equal(m.status, 'unexpected-error');
   });
 });
+
+describe('readStatusHead with the per-entry log (plan §12)', () => {
+  test('entry files are listed newest-first ahead of status.md, and the shipped card parses them', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'home-entries-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'docs', 'status', 'entries'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'status.md'), '# Log\n\n## 2026-10-01 — root work\n\nbody\n');
+      fs.writeFileSync(path.join(dir, 'docs', 'status', 'entries', 'README.md'), '# marker\n');
+      fs.writeFileSync(path.join(dir, 'docs', 'status', 'entries', '2026-10-15-100000-a.md'), '## 2026-10-15 — older entry file\n\nbody\n');
+      fs.writeFileSync(path.join(dir, 'docs', 'status', 'entries', '2026-10-16-100000-b.md'), '## 2026-10-16 — newer entry file\n\nbody\n');
+      const log = shippedLog(readStatusHead(dir), new Date('2026-10-16T12:00:00Z'));
+      assert.equal(log.status, 'ok');
+      assert.deepEqual(log.value.entries.map((e) => e.date), ['2026-10-16', '2026-10-15', '2026-10-01']);
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+});
