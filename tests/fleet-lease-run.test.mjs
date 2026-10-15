@@ -211,7 +211,7 @@ describe('runUnderLease', () => {
       assert.equal(outcome, 'rejected', `throw ${String(value)}`);
       assert.equal(caught, value, 'the original rejection value is preserved');
       assert.equal(fileLease().heavy, null);
-      fs.rmSync(path.join(dir, 'lease.json'), { force: true });
+      fs.rmSync(path.join(dir, 'lease.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -304,7 +304,7 @@ describe('runUnderLease', () => {
         assert.equal(l.heavy, null);
         assert.equal(l.windows.length, 1);
         assert.equal(l.windows[0].kind, 'ci');
-        fs.rmSync(path.join(dir, 'lease.json'), { force: true });
+        fs.rmSync(path.join(dir, 'lease.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     });
     it('no: a plain release, no window', async () => {
