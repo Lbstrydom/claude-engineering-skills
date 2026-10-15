@@ -125,7 +125,11 @@ async function withDeadline(promise, ms, what) {
   const deadline = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} exceeded ${ms}ms`)), ms); });
   try { return await Promise.race([promise, deadline]); } finally { clearTimeout(timer); }
 }
-async function waitForPid(fx, ms = 15_000) {
+// Waiting for the held hook to PUBLISH its pid is waiting on process start-up (git, then bash), not on what the test
+// proves: it returns the moment the pid appears, so a wide bound costs nothing when healthy. 15 s expired in a gate
+// that shared the box (27.7 s test, "hook never published its pid"); the hook's own 15 s HOLD starts only after the pid
+// is written, so this bound cannot make a stuck hook look signalled.
+async function waitForPid(fx, ms = 90_000) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
     try {

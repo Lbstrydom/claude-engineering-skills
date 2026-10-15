@@ -256,32 +256,65 @@ describe('hook latency', () => {
     return { best, exit: lastExit };
   };
 
+  /**
+   * The machine's process-start cost right now: one `bash` and the same sort of short pipeline (tr | sed | head)
+   * the hook's own intent detection forks, doing no work of its own.
+   */
+  const bareSpawnMs = () => {
+    const start = Date.now();
+    try { execFileSync('bash', ['-c', "printf '%s' abc | tr a-z A-Z | sed -E 's/^[[:space:]]+//' | head -c 3"], { stdio: 'ignore' }); } catch { /* cost only; the hook runs assert exits */ }
+    return Date.now() - start;
+  };
+
   it('neither path acquires real work — the two stay within a startup-cost band', () => {
-    const fire = bestOf(3, ['--prompt', 'add a function for X', '--dry-run']);
-    const nonFire = bestOf(3, ['--prompt', 'what does this function do?']);
-    assert.equal(fire.exit, 0);
-    assert.equal(nonFire.exit, 0);
+    // The two paths are sampled INTERLEAVED, round by round, with a bare spawn pipeline alongside them. Sampled in
+    // two back-to-back blocks (fire x3 then non-fire x3), a load burst that landed on only one block read as that
+    // path "acquiring work": non-fire 1767ms vs firing 223ms, on a hook whose non-fire path is a single early
+    // exit. Interleaved, a burst raises every path's samples together, and the minimum of each still finds a quiet
+    // moment. The bare spawn is the machine's current process-start cost, measured in the same window; it widens
+    // the band by what the machine currently charges for starting those processes, and nothing else.
+    const ROUNDS = 5;
+    const fireArgs = ['--prompt', 'add a function for X', '--dry-run'];
+    const nonFireArgs = ['--prompt', 'what does this function do?'];
+    let fire = Infinity; let nonFire = Infinity; let spawnCost = Infinity;
+    for (let i = 0; i < ROUNDS; i++) {
+      const f = runHook(fireArgs);
+      const n = runHook(nonFireArgs);
+      const b = bareSpawnMs();
+      // Per round, BEFORE the sample can enter a minimum: a hook that failed fast must not supply the winning time.
+      assert.equal(f.exit, 0, `round ${i + 1}: the firing hook exited ${f.exit}`);
+      assert.equal(n.exit, 0, `round ${i + 1}: the non-firing hook exited ${n.exit}`);
+      fire = Math.min(fire, f.latencyMs); nonFire = Math.min(nonFire, n.latencyMs); spawnCost = Math.min(spawnCost, b);
+    }
 
     // Ratio, not a difference: both are ~entirely process startup, so their
     // absolute gap is small and noisy while the ratio is stable. 2x is a wide
     // band deliberately — it cannot be tripped by scheduling, only by one path
     // acquiring real work. Measured margin at time of writing: 325 vs 296ms.
     assert.ok(
-      nonFire.best < fire.best * 2 + 100,
-      `non-fire (${nonFire.best}ms) is far outside the firing path's startup band `
-      + `(${fire.best}ms). Both should be ~process-startup cost; a blowout means one `
+      nonFire < fire * 2 + 100 + spawnCost,
+      `non-fire (${nonFire}ms) is far outside the firing path's startup band `
+      + `(${fire}ms, plus ${spawnCost}ms for this machine's bare process-start cost). Both should be ~process-startup cost; a blowout means one `
       + 'path started doing real work (network call? embed? missing early return?).',
     );
   });
 
   it('does not regress catastrophically (backstop, not a benchmark)', () => {
-    const { best, exit } = bestOf(3, ['--prompt', 'add a function for X', '--dry-run']);
-    assert.equal(exit, 0);
-    // Sized for a loaded machine. This is NOT a performance target — it exists
-    // to catch "someone made the hook do network I/O on every prompt", which is
-    // seconds, not milliseconds. Tightening it re-introduces the flake.
-    assert.ok(best < 5000, `dry-run best-of-3 took ${best}ms (backstop 5000ms — `
-      + 'bash + node startup, no network. This should only trip on a real regression.)');
+    // Sized for a loaded machine, and scaled by it: a fixed 5000ms read 6479ms in a gate that was sharing the box
+    // (best of three, with the minimum still dominated by process start-up), so the allowance is 5000ms PLUS what
+    // this machine currently charges for starting the hook's processes, sampled interleaved with the hook. It still
+    // exists only to catch "someone made the hook do network I/O on every prompt", which is seconds ON TOP of
+    // start-up, not milliseconds; it is NOT a performance target and tightening it re-introduces the flake.
+    const ALLOWANCE_MS = 5000;
+    let best = Infinity; let spawnCost = Infinity;
+    for (let i = 0; i < 5; i++) {
+      const r = runHook(['--prompt', 'add a function for X', '--dry-run']);
+      const b = bareSpawnMs();
+      assert.equal(r.exit, 0, `round ${i + 1}: the hook exited ${r.exit}`);
+      best = Math.min(best, r.latencyMs); spawnCost = Math.min(spawnCost, b);
+    }
+    assert.ok(best < ALLOWANCE_MS + 3 * spawnCost, `dry-run best-of-5 took ${best}ms (backstop ${ALLOWANCE_MS}ms + 3x the ${spawnCost}ms bare process-start cost `
+      + 'measured alongside it — bash + node startup, no network. This should only trip on a real regression.)');
   });
 });
 

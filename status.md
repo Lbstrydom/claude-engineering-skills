@@ -256,6 +256,16 @@
 - **Open**: gate-slot wait is still reported `unmeasured`; #252 has since landed a lease journal and an exported `measureSlotWaits(journal)`, so wiring it into `operating/turn-length` is now possible (proposal `p-20261014103957-4acc`, fleet-lease theme). Whole-gate timing for the WIP and turn checks (`p-20261014103958-81f8`, blocked on the CI chip) and a rule-14 "default; see doctor's fit check" pointer (`p-20261014103958-fd60`) are queued.
 - Backlog 2026-10-15T04:37Z: Q1 274c/79p (+426 aged) · Q2 165c/103p (54 perm) · Q3 35 · debt 372 cloud/2 local (0 spilled) · upstream 1
 
+## 2026-10-15 — security-triage: `readBoundedLines` closes its descriptor exactly once (#254)
+
+**Why.** PR #252's first required `full-suite` run failed on an unrelated test, `tests/security-triage-cli.test.mjs:265`, with `EBADF` on `writeFileSync`'s close. The load-tolerant-tests chip traced it to a real defect rather than a flake (proposal p-20261015053954-1f62). `readBoundedLines` (`scripts/security-triage.mjs`) built its read stream on the raw `fh.fd` number with `autoClose: false`. Measured on Node 22: `stream.destroy()` closes that number anyway, and the later `fh.close()` closes the same number a second time. If another file has reused the number by then, the second close closes THAT file.
+
+- **Fix**: `createReadStream(null, { fd: fh, ... })`, the FileHandle and not its number, so the handle owns the only close. The byte bound, line bound, identity check, `O_NOFOLLOW` and withheld reasons are unchanged.
+- **Red first**: `the descriptor is closed exactly once (never behind the FileHandle)` instruments `FileHandle.close()` per opened handle, judges the early-stop and read-to-EOF modes separately, waits for the handle's own completion signal (`fd === -1`, bounded at 5 s), and fails on any EBADF. With the fix reverted it fails with `early stop: a raw-fd close beat the FileHandle (EBADF)`; restored, it passes. A first version that tried to reproduce the fd-reuse race directly passed on unfixed code (the race does not trigger on Windows) and was replaced rather than kept.
+- **Audit**: `/audit-code --scope diff`, R1 PASS with M:2, both on the test (a fixed 20 ms sleep, and one guard shared by both read modes), both fixed in 4583ad18. R2 and R3 (over the whole branch diff) PASS with H:0 M:0 L:0 and coverage complete. Final review on Gemini 4 Argon: APPROVE, 0 blocking, 0 debt, code FULL. security-triage tests 179/179.
+- **Coordinator note**: fixed in the CES: Coordinator session at Louis's request, not in a chip.
+- Backlog 2026-10-15T08:37Z: Q1 282c/89p (+426 aged) · Q2 165c/103p (54 perm) · Q3 35 · debt unmeasured · upstream 0
+
 ## 2026-10-15 — `fleet lease`: granted gaps and turns when several repos wait (PR 2 of the fleet-lease theme, #253)
 
 **Why.** Two 2026-10-14 findings. Workers took a FREE slot out of turn twice (storyline's back-to-back CI windows held the machine ~05:57-10:50Z while another repo's pushes waited one to two hours each), and STO granted WCA a gap inside its own window, then had to clear the whole window because the window refused the repo it had granted. Until now both were enforced only by message between coordinators.

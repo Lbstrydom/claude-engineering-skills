@@ -20,11 +20,18 @@ const js = (code) => ['-e', code];
 
 describe('ghBatch', () => {
   test('returns spawnSync-shaped results per job, in order, each independent of the others', () => {
-    const r = ghBatch(process.cwd(), [
-      js('process.stdout.write("ok-1")'),
-      js('process.stderr.write("HTTP 401: bad credentials"); process.exit(4)'),
-      js('setTimeout(() => {}, 60000)'),
-    ], { ghBin: node, timeoutMs: 1500 });
+    // The hung job times out at ANY timeoutMs, but the two quick jobs only prove "independent" if they finished
+    // before it: a loaded box can take longer than 1500 ms just to start node, which times THEM out too. So a run
+    // whose quick jobs timed out never established the premise and is retried wider, never read as the regression.
+    let r;
+    for (const timeoutMs of [1500, 6000, 20_000]) {
+      r = ghBatch(process.cwd(), [
+        js('process.stdout.write("ok-1")'),
+        js('process.stderr.write("HTTP 401: bad credentials"); process.exit(4)'),
+        js('setTimeout(() => {}, 60000)'),
+      ], { ghBin: node, timeoutMs });
+      if (r[0].error?.code !== 'ETIMEDOUT' && r[1].error?.code !== 'ETIMEDOUT') break;
+    }
     assert.equal(r.length, 3);
     assert.deepEqual([r[0].status, r[0].stdout, r[0].error], [0, 'ok-1', undefined]);
     assert.deepEqual([r[1].status, r[1].stderr], [4, 'HTTP 401: bad credentials']);
@@ -48,11 +55,27 @@ describe('ghBatch', () => {
   });
 
   test('a timed-out child is gone when its job settles, even one that ignores SIGTERM (R1-H5)', () => {
-    const r = ghBatch(process.cwd(), [js('process.on("SIGTERM", () => {}); process.stdout.write(String(process.pid)); setInterval(() => {}, 1000)')], { ghBin: node, timeoutMs: 800 });
-    assert.equal(r[0].error?.code, 'ETIMEDOUT');
-    const pid = Number(r[0].stdout);
-    assert.ok(pid > 0, 'the child reported its pid before timing out');
-    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }, 'no gh process outlives its resolved job');
+    // The premise is a child that has INSTALLED its SIGTERM handler (it reports its pid only after) when the timeout
+    // fires; a child still starting up is simply killed by the SIGTERM and proves nothing. Node start-up under a
+    // loaded box can outlast any fixed short timeout (800 ms read back an empty stdout), so a run that never
+    // established the premise is retried with a wider timeout instead of failing as the regression: the verdict
+    // below is only ever read from a run whose child really ignored SIGTERM.
+    const ignoresSigterm = js('process.on("SIGTERM", () => {}); process.stdout.write(String(process.pid)); setInterval(() => {}, 1000)');
+    let r;
+    let pid = 0;
+    for (const timeoutMs of [800, 4000, 15_000]) {
+      r = ghBatch(process.cwd(), [ignoresSigterm], { ghBin: node, timeoutMs });
+      assert.equal(r[0].error?.code, 'ETIMEDOUT');
+      pid = Number(r[0].stdout);
+      if (pid > 0) break;
+    }
+    try {
+      assert.ok(pid > 0, 'the child reported its pid before timing out, even at the widest timeout');
+      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }, 'no gh process outlives its resolved job');
+    } finally {
+      // The fixture ignores SIGTERM and loops forever: if ghBatch regressed and left it, do not leak it past the test.
+      if (pid > 0) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone: the expected case */ } }
+    }
   });
 
   test('the jobs really run concurrently', () => {
