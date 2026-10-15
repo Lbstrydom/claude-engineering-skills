@@ -34,6 +34,7 @@ import {
 import { blobSha, changedFiles, committerTime, readFileAt, readTreeAt, resolveSelectionBase, selectorIdentity } from './lib/test-tier-git.mjs';
 import { spawnSync } from 'node:child_process';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
+import { gitCommonDir } from './lib/suite-run-record.mjs';
 import { CI_VERDICT_EXIT, CI_VERDICT_VERSION, ciVerdict, classifyCiVerdict, gatherCiEvidence, parseVerdictTarget, runText } from './lib/ci-verdict.mjs';
 import { classifyFlakeRerun, flakeExit, gatherFlakeEvidence, rerunUnrelatedFlake, reservationFile } from './lib/ci-flake-rerun.mjs';
 
@@ -186,9 +187,10 @@ async function flakeVerdict({ run, pr }) {
   // `attempt` is part of every result past this point: the exit decision needs it (null = no judged run).
   if (!judged) return { ...verdict, attempt: null, rerun: { rerun: 'ineligible', detail: 'no judged run', proposal: null } };
   const v = { ...verdict, attempt: judged.run_attempt };
-  const commonDir = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo(), encoding: 'utf8', env: sanitizeGitEnv(repo()) });
-  if (commonDir.status !== 0 || !commonDir.stdout.trim()) return { ...v, rerun: { rerun: 'indeterminate', detail: 'the git common dir could not be resolved', proposal: null } };
-  const stateDir = path.join(commonDir.stdout.trim(), 'fleet', 'ci-flake');
+  // The git COMMON DIRECTORY (the reservation lives inside it, shared by every linked worktree), from the one shared-lib reader.
+  const commonDir = gitCommonDir(repo());
+  if (!commonDir) return { ...v, rerun: { rerun: 'indeterminate', detail: 'the git common dir could not be resolved', proposal: null } };
+  const stateDir = path.join(commonDir, 'fleet', 'ci-flake');
   // Only a FAILED verdict is acted on. Past it (the re-run is running, or has passed) the only work left is a record this
   // tool wrote and has not finished (a proposal not yet filed); with no record there is nothing to do and no line to print.
   if (v.verdict !== 'failed' && !fs.existsSync(reservationFile(stateDir, ev.nwo, judged.id))) return v;
