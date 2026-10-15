@@ -279,22 +279,39 @@ describe('canonicalization (SC1) + the bounded read', () => {
   // something closed its raw number first.
   test('the descriptor is closed exactly once (never behind the FileHandle)', async () => {
     const p = writeFile(root, 'once.js', 'a\nb\nc\nd\ne');
-    const closes = [];
+    // One record per opened handle, so each read mode is judged on its own
+    // handle and one mode cannot satisfy the other's guard.
+    const handles = [];
     const open = async (...a) => {
       const fh = await fsp.open(...a);
+      const rec = { fh, outcomes: [], pending: [] };
       const realClose = fh.close.bind(fh);
-      fh.close = async () => {
-        try { await realClose(); closes.push('ok'); } catch (e) { closes.push(e.code); throw e; }
+      fh.close = () => {
+        const pr = realClose().then(() => { rec.outcomes.push('ok'); }, (e) => { rec.outcomes.push(e.code); throw e; });
+        rec.pending.push(pr);
+        return pr;
       };
+      handles.push(rec);
       return fh;
     };
-    for (const maxLine of [2, 10]) { // stops early, and reads to EOF
+    // Completion signal, not elapsed time: a FileHandle reports fd -1 once its
+    // close has finished. Bounded so a leak fails instead of hanging.
+    const closedOf = async (rec) => {
+      const deadline = Date.now() + 5_000;
+      while (rec.fh.fd !== -1 && Date.now() < deadline) await new Promise((r) => setImmediate(r));
+      await Promise.allSettled(rec.pending);
+      return rec.fh.fd === -1;
+    };
+    for (const [label, maxLine] of [['early stop', 2], ['read to EOF', 10]]) {
+      const before = handles.length;
       const res = await readBoundedLines(p, maxLine, 1_000_000, { open });
-      assert.equal(res.withheld, null);
-      await new Promise((r) => setTimeout(r, 20)); // let finish()'s un-awaited closes settle
+      assert.equal(res.withheld, null, label);
+      assert.equal(handles.length, before + 1, `${label}: exactly one handle opened`);
+      const rec = handles[before];
+      assert.ok(await closedOf(rec), `${label}: the handle was never closed (leak)`);
+      assert.deepEqual(rec.outcomes.filter((c) => c !== 'ok'), [], `${label}: a raw-fd close beat the FileHandle (${rec.outcomes.join(',')})`);
+      assert.ok(rec.outcomes.includes('ok'), `${label}: vacuous-pass guard, its instrumented close must have completed`);
     }
-    assert.ok(closes.length > 0, 'vacuous-pass guard: the instrumented close must have run');
-    assert.deepEqual(closes.filter((c) => c !== 'ok'), [], `a raw-fd close beat the FileHandle: ${closes.join(',')}`);
   });
 
   /**
