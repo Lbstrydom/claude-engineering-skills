@@ -33,13 +33,16 @@ const ENTRY = '.audit/tech-debt/entries/topic-1.json';
 describe('the registry', () => {
   it('recognises every form the ledger and the receipt take, in either slash style and any case', () => {
     for (const p of [ENTRY, '.audit/tech-debt.json', '.audit/tech-debt/budgets.json', '.sync-receipt.json',
-      '.audit\\tech-debt\\entries\\x.json', './.audit/tech-debt/entries/x.json', '.AUDIT/Tech-Debt.JSON']) {
+      '.audit\\tech-debt\\entries\\x.json', './.audit/tech-debt/entries/x.json', '.AUDIT/Tech-Debt.JSON', '.audit/tech-debt/ENTRIES/X.JSON']) {
       assert.equal(isBundleGeneratedStore(p), true, p);
     }
   });
   it('control: near-misses are NOT stores (anchored at the repo root, exact names)', () => {
     for (const p of ['.audit/tech-debt-notes.md', 'src/.audit/tech-debt.json', '.audit/other/entries/x.json',
-      'docs/.sync-receipt.json', '.audit/tech-debt.json.bak', 'tech-debt.json', '']) {
+      'docs/.sync-receipt.json', '.audit/tech-debt.json.bak', 'tech-debt.json', '',
+      // audit-code R1-H1: only the writers' real layout is owned, never the directory around it
+      '.audit/tech-debt/migrate.mjs', '.audit/tech-debt/notes.md', '.audit/tech-debt/entries/helper.mjs',
+      '.audit/tech-debt/entries/sub/x.json', '.audit/tech-debt/other.json', '.audit/tech-debt/entries/']) {
       assert.equal(isBundleGeneratedStore(p), false, p);
     }
   });
@@ -88,8 +91,9 @@ const write = (dir, rel, text) => {
   fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
   fs.writeFileSync(path.join(dir, rel), text);
 };
-const commitAll = (dir, msg) => { git(dir, ['add', '-A']); git(dir, ['commit', '-q', '-m', msg]); return git(dir, ['rev-parse', 'HEAD']); };
 const EXCLUDE = ['.', ...bundleStorePathspecs({ exclude: true })];
+// A source with a conditional container, so "analysed" is observable: runAdjacencyAnalysis reports containersEnumerated.
+const WITH_BRANCH = (n) => [`export function f${n}(x) {`, '  if (x) {', '    const a = 1;', '    const b = 2;', '    return a + b;', '  }', '  return 0;', '}', ''].join('\n');
 
 describe('vcs pathspecs', () => {
   it('no `pathspecs` ⇒ the unchanged command: a store file is counted like any other', (t) => {
@@ -110,12 +114,28 @@ describe('vcs pathspecs', () => {
     const ud = gitUnifiedDiffWithWorkingTree(dir, base, { pathspecs: EXCLUDE });
     assert.ok(ud.diffText.includes('a.mjs') && !ud.diffText.includes('tech-debt'), 'the patch never carried the store');
   });
+  it('audit-code R1-H1 negative control: a script or note under .audit/tech-debt/ stays visible in numstat and the patch', (t) => {
+    const dir = repo(t);
+    const base = git(dir, ['rev-parse', 'HEAD']);
+    write(dir, ENTRY, '{}\n');
+    write(dir, '.audit/tech-debt/migrate.mjs', 'export const m = 1;\n');
+    write(dir, '.audit/tech-debt/notes.md', 'hand-written\n');
+    write(dir, '.audit/tech-debt/entries/helper.mjs', 'export const h = 1;\n');
+    write(dir, '.audit/tech-debt/entries/sub/x.json', '{}\n');
+    git(dir, ['add', '-A']);
+    const ns = gitNumstatWithWorkingTree(dir, base, { pathspecs: EXCLUDE });
+    assert.deepEqual(ns.files.map((f) => f.path).sort(), [
+      '.audit/tech-debt/entries/helper.mjs', '.audit/tech-debt/entries/sub/x.json', '.audit/tech-debt/migrate.mjs', '.audit/tech-debt/notes.md']);
+    const ud = gitUnifiedDiffWithWorkingTree(dir, base, { pathspecs: EXCLUDE });
+    assert.ok(ud.diffText.includes('migrate.mjs') && !ud.diffText.includes('entries/topic-1'));
+  });
   it('rename endpoints: git sees only visible paths', (t) => {
     const dir = repo(t);
     write(dir, 'src/moved-in.mjs', 'export const moveIn = "unique content line one\\nline two\\nline three\\nline four";\n');
     write(dir, '.audit/tech-debt/entries/was-here.json', '{"unique":"content line one\\nline two\\nline three\\nline four"}\n');
     write(dir, 'src/visible-a.mjs', 'export const keep = "a rename candidate\\nwith several\\nlines of text\\nto match";\n');
-    const base = commitAll(dir, 'base');
+    git(dir, ['add', '-A']); git(dir, ['commit', '-q', '-m', 'base']);
+    const base = git(dir, ['rev-parse', 'HEAD']);
     git(dir, ['mv', 'src/visible-a.mjs', 'src/visible-b.mjs']);                     // visible -> visible
     git(dir, ['mv', 'src/moved-in.mjs', '.audit/tech-debt/entries/moved-out.json']); // visible -> store
     git(dir, ['mv', '.audit/tech-debt/entries/was-here.json', 'src/came-out.mjs']);  // store -> visible
@@ -137,10 +157,12 @@ describe('the adjacency bound counts only what it bounds', () => {
     const dir = repo(t);
     const base = git(dir, ['rev-parse', 'HEAD']);
     for (let i = 0; i < 70; i++) write(dir, `.audit/tech-debt/entries/t${i}.json`, `{"i":${i}}\n`);
-    for (let i = 0; i < 3; i++) write(dir, `src/s${i}.mjs`, `export const s${i} = ${i};\n`);
+    for (let i = 0; i < 3; i++) write(dir, `src/s${i}.mjs`, WITH_BRANCH(i));
+    write(dir, '.audit/tech-debt/migrate.mjs', WITH_BRANCH(9));   // audit-code R1-H1: a real script in the ledger dir is analysed too
     git(dir, ['add', '-A']);
     const r = await runAdjacencyAnalysis({ repoRoot: dir, auditBaseCommit: base, bounds });
     assert.deepEqual(inputBound(r), [], JSON.stringify(r.incompleteness));
+    assert.ok(r.coverage.containersEnumerated >= 4, `the 4 visible sources were enumerated, got ${r.coverage.containersEnumerated}`);
   });
 
   it('control (negative): 6 source files still trip it, naming that no stores were counted away', async (t) => {
@@ -172,11 +194,12 @@ describe('the adjacency bound counts only what it bounds', () => {
     const dir = repo(t);
     const base = git(dir, ['rev-parse', 'HEAD']);
     write(dir, ENTRY, `{"blob":"${'x'.repeat(20000)}"}\n`);
-    write(dir, 'src/small.mjs', 'export const small = 1;\n');
+    write(dir, 'src/small.mjs', WITH_BRANCH(1));
     git(dir, ['add', '-A']);
     const tight = { ...bounds, maxChangedFiles: 60, maxDiffBytes: 4096 };
     const ok = await runAdjacencyAnalysis({ repoRoot: dir, auditBaseCommit: base, bounds: tight });
     assert.deepEqual(inputBound(ok), [], JSON.stringify(ok.incompleteness));
+    assert.ok(ok.coverage.containersEnumerated >= 1, 'the small source was enumerated although the store patch alone exceeds maxDiffBytes');
     write(dir, 'src/huge.mjs', `export const huge = "${'y'.repeat(20000)}";\n`);
     git(dir, ['add', '-A']);
     const over = await runAdjacencyAnalysis({ repoRoot: dir, auditBaseCommit: base, bounds: tight });

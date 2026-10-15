@@ -25,10 +25,17 @@ export const DEBT_LEDGER_STEM = '.audit/tech-debt';
 /** Where the sync receipt lives, relative to the consumer root. */
 export const SYNC_RECEIPT_PATH = '.sync-receipt.json';
 
-/** @type {ReadonlyArray<Readonly<{path: string, kind: 'file'|'tree', writer: string}>>} */
+/**
+ * The writers' ACTUAL output layouts, not the directories they happen to live in: owning all of `.audit/tech-debt/` would
+ * also swallow a script or note someone puts there (audit-code R1-H1). `file` = one exact path; `json-in-dir` = `*.json`
+ * directly inside `dir` (one level, no subdirectories) — the per-entry files `resolveLedgerLocation` names as `entriesDir`.
+ *
+ * @type {ReadonlyArray<Readonly<{path: string, kind: 'file'|'json-in-dir', writer: string}>>}
+ */
 export const BUNDLE_GENERATED_STORES = Object.freeze([
   Object.freeze({ path: `${DEBT_LEDGER_STEM}.json`, kind: 'file', writer: 'scripts/lib/debt-ledger.mjs' }),
-  Object.freeze({ path: `${DEBT_LEDGER_STEM}/`, kind: 'tree', writer: 'scripts/lib/debt-ledger.mjs' }),
+  Object.freeze({ path: `${DEBT_LEDGER_STEM}/budgets.json`, kind: 'file', writer: 'scripts/lib/debt-ledger.mjs' }),
+  Object.freeze({ path: `${DEBT_LEDGER_STEM}/entries/`, kind: 'json-in-dir', writer: 'scripts/lib/debt-ledger.mjs' }),
   Object.freeze({ path: SYNC_RECEIPT_PATH, kind: 'file', writer: 'scripts/lib/sync-receipt.mjs' }),
 ]);
 
@@ -47,7 +54,9 @@ export function isBundleGeneratedStore(relPath) {
   if (!p) return false;
   return BUNDLE_GENERATED_STORES.some((s) => {
     const sp = s.path.toLowerCase();
-    return s.kind === 'tree' ? p.startsWith(sp) : p === sp;
+    if (s.kind === 'file') return p === sp;
+    const rest = p.startsWith(sp) ? p.slice(sp.length) : null;
+    return rest !== null && rest.length > 0 && !rest.includes('/') && rest.endsWith('.json');
   });
 }
 
@@ -60,7 +69,7 @@ export function isBundleGeneratedStore(relPath) {
  */
 export function bundleStorePathspecs({ exclude = true } = {}) {
   const ex = exclude ? ',exclude' : '';
-  return BUNDLE_GENERATED_STORES.map((s) => (s.kind === 'tree'
-    ? `:(top,icase,glob${ex})${s.path}**`
+  return BUNDLE_GENERATED_STORES.map((s) => (s.kind === 'json-in-dir'
+    ? `:(top,icase,glob${ex})${s.path}*.json`
     : `:(top,icase${ex})${s.path}`));
 }
