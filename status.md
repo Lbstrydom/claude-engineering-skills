@@ -263,6 +263,27 @@
 - **Retrieval**: `guards:preflight` PASS (33 steps, 16:30Z) then `git push --no-verify` under Louis's in-session authorisation; the test verdict is GitHub's required `full-suite` on this head (in progress at push time; it passed on 9abd5a96).
 - **Result**: pending `full-suite`. Consumer-bundle check after merge and re-sync: as in the 9abd5a96 note.
 
+### Consumer Verification (previous ship)
+
+<!-- ship-verification-b678a5a3-20261015T194514Z.md -->
+- **Commit**: b678a5a343d6 on fix/ship-commit-marker-branch (PR #262, open; NOT merged), based on main 83ea25a0 (#261); feature commits 0ab16281..9f2585d9 plus the ship commit b678a5a3 (AI-Gate not-run: the audit marker predates the rebase and the new rule refuses it).
+- **Retrieval**: guards:preflight PASS (33 steps, 19:44Z), then git push --no-verify under the CES feature-branch push rule. The test verdict is GitHub's required full-suite on this head (in progress at push time).
+- **Result**: pending full-suite. The synced consumer bundle is unverified (blocked: not merged). After #262 merges and main re-syncs: in each consumer's MAIN checkout run node scripts/.claude-skills/lib/sync-isolation-verify.mjs; commit-trailers.mjs and ship-commit.mjs are in the sync closure.
+
+## 2026-10-15 — fleet chips theme PR 2: the chip preamble, a pre-authorised ship checked in code, and open upstream issues in `fleet status`/`next` (#263)
+
+**Why.** Every chip prompt re-wrote ~40 lines of authority, route, turn and stop point, and the one that omitted the turn rule let a worker take another repo's turn (2026-10-14). The pre-authorised ship (a chip shipping itself when its launch prompt allows) lived as prose the chip read about itself, the weakest place for a check on the actor it constrains. And consumer reports never reached `fleet proposals`, so upstream 57bd3de9 sat untriaged overnight.
+
+- **Chip preamble**: `skills/fleet/references/chip-preamble.md` is the standard launch block; coordination rules 1 and 4 cite it, and rule 4 now says `/ship` is typed only when the chip is idle (mid-turn the host refuses it). `participant-rules.md` is untouched on purpose: its block is embedded verbatim in chip prompts.
+- **Pre-authorised ship**: `ship-commit.mjs --preauthorised` (and the read-only `--check-preauthorised`) over a pure decision in `scripts/lib/ship-preauth.mjs`. It refuses, naming every refused condition, unless the effective gate is passed/converged (never with `--no-tests`), the store's audit converged for THIS branch (both branch names known), the final review approved this audited tree and round, and the branch changes no sensitive path, no `migrations/` directory and no policy file (`.github/`, `CODEOWNERS`, `.test-tiers.json`). Unknown facts refuse; the default branch is resolved fully qualified and never swapped. A passing commit carries `AI-Ship-Authority: launch-prompt`. `--preauthorised` was parsed but never stored until a CLI test failed on it.
+- **Final-review marker** (`scripts/lib/final-review-marker.mjs`, written by `gemini-review.mjs` after each code-mode review): what was approved, bound to the gate-evidence marker's run, tree and audit round. Revocation fails closed: delete, else tombstone, else a shadowing `.revoked` file, all inside one repo-scoped critical section. The store's `gemini_verdict` is deliberately not a second condition (no target identity).
+- **Upstream count**: `fleet status`/`fleet next` show open, un-acked upstream issues beside proposals, source repo only. The reader's envelope is validated without coercion (an unreported counter is never a measured zero) and a partial answer is a floor that keeps the last complete measurement as history.
+- **Audit**: `/audit-code`, 6 rounds, every finding adjudicated. 15 findings against `runs-findings.mjs` were dismissed once the `gemini_verdict` clause that pulled the file into the diff was removed; R2-R5 were real (the marker lifecycle, the base ref) and fixed red-first. Round 6 left one HIGH, deferred with a full rationale (a pending-attempt invalidation at review start; debt captured, fleet proposal p-20261015193106-0ace). Gemini APPROVE, 0 blocking, 0 debt.
+- **Evidence**: 2,097-test fleet/ship/sync batch green; `guards:preflight` and `gates:poison` PASS before the first push.
+- **Not self-shipped**: the first use of the new final-review condition, and the audit did not strictly converge (R6 H:1 deferred), so `AI-Gate` is `waived` (declared, unverified) and Louis typed `/ship`.
+- **Also this session** (PR 2b, not in this PR): the theme plan gained section 12, the session log as one file per entry (p-20261015060430-76b2, p-20261015160944-2551), audited (GPT 2 rounds, Gemini APPROVE) on `claude/status-per-entry`.
+- Backlog 2026-10-15T19:59Z: Q1 293c/93p (+426 aged) · Q2 166c/97p (54 perm) · Q3 35 · debt 378 cloud/4 local (1 spilled) · upstream 0
+
 ## 2026-10-15 — ship-commit no longer takes another branch's audit marker as evidence (fleet p-20261015130416-f9f9; #262), and the #247 catch-up review
 
 **Why.** Shipping this theme's PR 1, `ship-commit.mjs` stamped `AI-Gate: converged` and the `AI-Run-ID` of ANOTHER branch's audit onto a commit: `.audit/last-audit-run.json` named `auditedBranch: fix/audit-generated-stores`, the commit was on `fix/audit-unadmitted-files`, and the worktree guard only compared HEAD with the caller's own `--expect-*` flags (which matched). Nothing asked the marker whether it described the commit being made. Caught only by reading the trailer back; redone before anything was pushed.
