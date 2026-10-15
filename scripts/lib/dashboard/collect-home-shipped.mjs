@@ -36,11 +36,11 @@ export function readStatusHead(root) {
  * @param {Date} now
  */
 export function shippedLog(read, now = new Date()) {
-  const base = { id: 'shipped-log', label: 'Shipped (status log)', card: 'shipped', asOf: now.toISOString(), source: 'status.md (head, 256 KB)' };
+  const base = { id: 'shipped-log', label: 'Shipped (status log)', card: 'shipped', asOf: now.toISOString(), source: 'session log (docs/status/entries/ then status.md head, 256 KB)' };
   if (read.absent) return makeMeasurement({ ...base, status: 'missing-optional', detail: 'No status.md — nothing to list' });
   if (read.error) return makeMeasurement({ ...base, status: 'unexpected-error', detail: read.error });
   const { entries, skippedHeadings, capped } = parseStatusEntries(read.text, SHIPPED_LIMIT, { capped: read.capped });
-  const notes = [skippedHeadings > 0 ? `${skippedHeadings} heading(s) unparsed` : '', capped ? 'partial: only the first 256 KB of status.md was read' : ''].filter(Boolean);
+  const notes = [skippedHeadings > 0 ? `${skippedHeadings} heading(s) unparsed` : '', capped ? 'partial: only the first 256 KB of the session log was read' : ''].filter(Boolean);
   return makeMeasurement({
     ...base, status: 'ok',
     value: { entries: entries.map((e) => ({ date: e.date, title: clip(e.title), planPath: e.planPath })), skippedHeadings, partial: capped },

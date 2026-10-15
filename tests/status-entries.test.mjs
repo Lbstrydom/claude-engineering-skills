@@ -14,7 +14,7 @@ import path from 'node:path';
 
 import {
   ENTRIES_DIR, MARKER_REL, parseEntryName, validateEntryText, perEntryMode, isEntryRecordPath,
-  listEntryFiles, readLogHead,
+  listEntryFiles, readLogHead, entryStateOnDisk, perEntryModeOnDisk,
 } from '../scripts/lib/status-entry-files.mjs';
 import { checkConservation } from '../scripts/lib/status-log-integrity.mjs';
 
@@ -276,5 +276,49 @@ describe('the writer instructions name the marker (a consumer without it keeps t
     }
     assert.match(read('skills/ship/references/status-md-format.md'), /Marker absent[^]*append to\s+`status\.md`/,
       'the marker-absent flow stays the documented default for a consumer');
+  });
+});
+
+describe('entryStateOnDisk (the gate\'s head-side reader)', () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'status-state-'));
+  const rm = (d) => fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  const put = (dir, rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  };
+
+  test('a marker FILE enables the mode; records are read; foreign files are strays', () => {
+    const d = tmp();
+    try {
+      put(d, MARKER_REL, '# marker\n');
+      put(d, entryPath(GOOD_NAME), GOOD_TEXT);
+      put(d, `${ENTRIES_DIR}/notes.txt`, 'x');
+      const s = entryStateOnDisk(d);
+      assert.equal(s.marker, true);
+      assert.deepEqual(Object.keys(s.entries), [entryPath(GOOD_NAME)]);
+      assert.deepEqual(s.strays, [`${ENTRIES_DIR}/notes.txt`]);
+    } finally { rm(d); }
+  });
+
+  test('README.md as a DIRECTORY is not the marker: mode off for the gate AND the reader, and it is named', () => {
+    const d = tmp();
+    try {
+      fs.mkdirSync(path.join(d, MARKER_REL), { recursive: true });
+      put(d, entryPath(GOOD_NAME), GOOD_TEXT);
+      const s = entryStateOnDisk(d);
+      assert.equal(s.marker, false);
+      assert.deepEqual(s.strays, [MARKER_REL]);
+      assert.equal(perEntryModeOnDisk(d), false, 'the reader and the gate must agree');
+      assert.deepEqual(kinds(checkConservation(state(), { ...state(), ...s })), ['entries-without-marker', 'entry-stray']);
+    } finally { rm(d); }
+  });
+
+  test('no directory at all is the legacy state; an unreadable one throws', () => {
+    const d = tmp();
+    try {
+      assert.deepEqual(entryStateOnDisk(d), { marker: false, entries: {}, strays: [] });
+      put(d, ENTRIES_DIR, 'a file where the directory should be');
+      assert.throws(() => entryStateOnDisk(d), (e) => e.code === 'ENOTDIR');
+    } finally { rm(d); }
   });
 });

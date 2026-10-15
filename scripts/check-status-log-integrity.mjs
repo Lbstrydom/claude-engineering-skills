@@ -38,7 +38,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, argOption, finishAndExit } from './lib/cli-io.mjs';
 import { checkConservation } from './lib/status-log-integrity.mjs';
-import { ENTRIES_DIR, MARKER_REL, isArchivePath, isEntryRecordPath, perEntryMode } from './lib/status-entry-files.mjs';
+import { ENTRIES_DIR, MARKER_REL, entryStateOnDisk, isArchivePath, isEntryRecordPath, perEntryMode } from './lib/status-entry-files.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_LOG = 'status.md';
@@ -91,29 +91,14 @@ function entryStateAt(rev) {
   return { marker: perEntryMode(paths), entries, strays };
 }
 
-function entryStateOnDisk() {
-  const dir = path.join(REPO, ENTRIES_DIR);
-  let names = [];
-  try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch (err) {
-    if (err.code !== 'ENOENT') throw err; // a missing directory is the legacy state; anything else is a failure
-  }
-  const paths = names.map((d) => `${ENTRIES_DIR}/${d.name}`);
-  const entries = {};
-  const strays = [];
-  for (const d of names) {
-    const rel = `${ENTRIES_DIR}/${d.name}`;
-    if (rel === MARKER_REL) continue;
-    if (d.isDirectory() || !isEntryRecordPath(rel)) { strays.push(rel); continue; }
-    entries[rel] = fs.readFileSync(path.join(dir, d.name), 'utf-8');
-  }
-  return { marker: perEntryMode(paths), entries, strays };
-}
-
 function archivesOnDisk() {
   const out = {};
   const dir = path.join(REPO, ARCHIVE_DIR);
   let names;
-  try { names = fs.readdirSync(dir); } catch { return out; }
+  try { names = fs.readdirSync(dir); } catch (err) {
+    if (err.code === 'ENOENT') return out; // no archives yet; any other failure is not "none"
+    throw err;
+  }
   for (const n of names) {
     if (!isArchivePath(`${ARCHIVE_DIR}/${n}`) || !n.endsWith('.md')) continue;
     out[`${ARCHIVE_DIR}/${n}`] = fs.readFileSync(path.join(dir, n), 'utf-8');
@@ -263,7 +248,7 @@ async function main() {
     manifest: parseManifest(
       fs.existsSync(path.join(REPO, MANIFEST)) ? fs.readFileSync(path.join(REPO, MANIFEST), 'utf-8') : null,
     ),
-    ...entryStateOnDisk(),
+    ...entryStateOnDisk(REPO),
   };
 
   const { ok, violations } = checkConservation(prev, curr);

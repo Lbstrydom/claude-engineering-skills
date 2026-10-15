@@ -123,9 +123,40 @@ export function listEntryFiles(root) {
     .reverse();
 }
 
-/** Whether per-entry mode is on in the working tree at `root`. */
+/** Whether per-entry mode is on in the working tree at `root`. The marker must be a regular FILE. */
 export function perEntryModeOnDisk(root) {
-  return perEntryMode(fs.existsSync(path.join(root, MARKER_REL)) ? [MARKER_REL] : []);
+  let isFile = false;
+  try { isFile = fs.statSync(path.join(root, MARKER_REL)).isFile(); } catch { /* absent */ }
+  return perEntryMode(isFile ? [MARKER_REL] : []);
+}
+
+/**
+ * The per-entry state of the working tree, read the way the gate reads a revision: the marker, the
+ * entry records (path -> text) and any foreign file or directory in the entries directory. A missing
+ * directory is the legacy state; every other read failure throws. The marker counts only as a regular
+ * file, so a DIRECTORY named README.md neither enables the mode nor hides as an entry.
+ * @param {string} root
+ * @returns {{marker: boolean, entries: Record<string,string>, strays: string[]}}
+ */
+export function entryStateOnDisk(root) {
+  const dir = path.join(root, ENTRIES_DIR);
+  let dirents = [];
+  try { dirents = fs.readdirSync(dir, { withFileTypes: true }); } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  const entries = {};
+  const strays = [];
+  let marker = false;
+  for (const d of dirents) {
+    const rel = `${ENTRIES_DIR}/${d.name}`;
+    if (rel === MARKER_REL) {
+      if (d.isFile()) marker = true; else strays.push(rel);
+      continue;
+    }
+    if (!d.isFile() || !isEntryRecordPath(rel)) { strays.push(rel); continue; }
+    entries[rel] = fs.readFileSync(path.join(dir, d.name), 'utf-8');
+  }
+  return { marker, entries, strays };
 }
 
 /**
