@@ -18,10 +18,13 @@
  * @module scripts/lib/final-review/code-coverage
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { normalizePath, safeReadFile } from '../file-io.mjs';
 import { unreadChangedLines } from '../hunk-window.mjs';
 import { matchFileKind } from '../file-taxonomy.mjs';
+import { classifyPath } from '../sensitive-paths.mjs';
+import { oneLine } from '../coverage-format.mjs';
 
 /**
  * Coverage states, weakest claim first. `unknown` is NOT a synonym for `full`:
@@ -40,9 +43,10 @@ export const COVERAGE_STATES = ['unknown', 'none', 'partial', 'full'];
  * @param {string[]|null} [opts.requested] - the paths the envelope asked the reader for (`codePaths`); a changed file in
  *   it but absent from the final render was dropped by the envelope budget (envelope.mjs Step 4) and is counted unread.
  * @param {Function} [opts.readText] - fallback line source, used only when the reader recorded no `lineCounts`.
+ * @param {Function} [opts.exists] - whether a changed path is still on disk; an absent one is a deletion, not an unreceived file.
  * @returns {object} the summary — see docs/plans/final-review-hunk-windows.md D4
  */
-export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = null, requested = null, readText = defaultReadText } = {}) {
+export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = null, requested = null, readText = defaultReadText, exists = defaultExists } = {}) {
   const changed = (Array.isArray(changedFiles) ? changedFiles : []).filter(
     (p) => typeof p === 'string' && p.length > 0,
   );
@@ -123,10 +127,12 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
     if (m && Number.isInteger(m.total)) base.changedLinesTotal += m.total;
     else base.changedLinesTotalUnknownFiles++;
     // A file the reviewer was never handed, by name — so a multi-file group reads `NONE: <file>`, not an anonymous count
-    // (upstream 57bd3de9). Expected exclusions (binary / asset / lockfile / generated) and files with nothing left to read
-    // (deleted) are not a gap; `sensitive` is a deliberate egress exclusion, `unreadable` has its own reason.
+    // (upstream 57bd3de9). Expected exclusions (binary / asset / lockfile / generated) and deletions (nothing on disk to
+    // receive) are not a gap. A sensitive path is never named: its NAME is what the sensitive-path policy keeps out of
+    // output (it stays counted in `changedLinesUnmeasuredFiles`). Deletion is judged by existence, NOT by readability, so
+    // a present-but-unreadable file is still named.
     if ((outcome === 'not-requested' || outcome === 'budget-omitted')
-      && matchFileKind(p).kind !== 'non-code' && typeof readText(p) === 'string') {
+      && matchFileKind(p).kind !== 'non-code' && classifyPath(p) !== 'sensitive' && exists(p)) {
       base.changedNotReceived.push({ path: p, outcome });
     }
     if (!m) {
@@ -174,6 +180,10 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
   return { ...base, state: 'full', reason: `all ${changed.length} changed file(s) rendered whole` };
 }
 
+function defaultExists(p) {
+  try { return fs.existsSync(path.resolve('.', p)); } catch { return false; }
+}
+
 // The reader's own boundary (repo-contained, realpath-checked, never sensitive): `changed_files` is transcript-supplied.
 function defaultReadText(p) {
   return safeReadFile(p, path.resolve('.'))?.content ?? null;
@@ -212,7 +222,7 @@ export function formatCodeCoverageSegment(cov) {
   // `none` already lists every dropped file in its reason; a partial group needs the names (upstream 57bd3de9).
   const notReceived = cov.state === 'none' ? [] : (cov.changedNotReceived ?? []);
   const named = notReceived.length > 0
-    ? `; NONE: ${notReceived.slice(0, 5).map((f) => f.path).join(', ')}${notReceived.length > 5 ? ` (+${notReceived.length - 5} more)` : ''}`
+    ? `; NONE: ${notReceived.slice(0, 5).map((f) => oneLine(f.path)).join(', ')}${notReceived.length > 5 ? ` (+${notReceived.length - 5} more)` : ''}`
     : '';
   return `Code: ${cov.state.toUpperCase()}${parts.length ? `, ${parts.join(', ')}` : ''}${named}`;
 }
