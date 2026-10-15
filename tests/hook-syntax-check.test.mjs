@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { copyLibClosure } from './helpers/lib-closure.mjs';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(TEST_DIR, '..');
@@ -158,8 +159,6 @@ describe('syntax-check hook', () => {
   // hardcodes `scripts/lib/` and is therefore silently inert under the
   // consumer layout — these two cases are why this hook resolves candidates.
   describe('tooling-layout resolution', () => {
-    const LIB_SRC = path.join(REPO_ROOT, 'scripts', 'lib', 'sensitive-paths.mjs');
-
     /** Build a throwaway repo with the hook at its canonical path. */
     function scaffold(libRelDir) {
       const root = fs.mkdtempSync(path.join(FIXTURE_DIR, 'layout-'));
@@ -168,9 +167,9 @@ describe('syntax-check hook', () => {
       if (libRelDir) {
         const libDir = path.join(root, ...libRelDir);
         fs.mkdirSync(libDir, { recursive: true });
-        fs.copyFileSync(LIB_SRC, path.join(libDir, 'sensitive-paths.mjs'));
-        // sensitive-paths imports the taxonomy for its code-extension carve-out
-        fs.copyFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'file-taxonomy.mjs'), path.join(libDir, 'file-taxonomy.mjs'));
+        // The classifier's whole import closure, DERIVED (not a hand-kept list): a hook that cannot load a module of its
+        // library is silently inert, and the list went stale when file-taxonomy gained an import (upstream 3b84d8bb).
+        copyLibClosure('scripts/lib/sensitive-paths.mjs', libDir);
       }
       const target = path.join(root, 'broken.mjs');
       fs.writeFileSync(target, BROKEN_MJS);

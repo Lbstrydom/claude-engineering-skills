@@ -12,6 +12,7 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { copyLibClosure } from './helpers/lib-closure.mjs';
 
 // Audit R1-M17: resolve hook path relative to THIS test file, not cwd.
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -192,14 +193,8 @@ describe('quickfix-hook integration', () => {
 // found nothing would pass the consumer assertion for the wrong reason -- the
 // hook exits 0 both when it finds no patterns and when it finds no library.
 
-/** Transitive import closure of quickfix-patterns.mjs (all siblings, no deeper). */
-const PATTERN_LIB_CLOSURE = [
-  'quickfix-patterns.mjs',
-  'secret-patterns.mjs',
-  'sensitive-paths.mjs',
-  'file-taxonomy.mjs', // sensitive-paths derives its code-extension carve-out from the taxonomy
-  'quickfix-policy.mjs',
-];
+// The pattern library the hook needs is its import closure, derived by `copyLibClosure` (tests/helpers/lib-closure.mjs),
+// never listed by hand: a hand-kept list went stale when file-taxonomy gained an import (upstream 3b84d8bb).
 
 /**
  * Build a throwaway repo containing the hook at its canonical path and the
@@ -214,9 +209,7 @@ function scaffoldLayout(libRelDir) {
   if (libRelDir) {
     const libDir = path.join(root, ...libRelDir.split('/'));
     fs.mkdirSync(libDir, { recursive: true });
-    for (const f of PATTERN_LIB_CLOSURE) {
-      fs.copyFileSync(path.resolve(TEST_DIR, '..', 'scripts', 'lib', f), path.join(libDir, f));
-    }
+    copyLibClosure('scripts/lib/quickfix-patterns.mjs', libDir);
   }
   return { root, hook };
 }

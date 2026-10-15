@@ -511,6 +511,7 @@ export function gitDiffWithWorkingTree(cwd, sinceCommit, opts = {}) {
  *            totalChangedLines:number} | {ok:false, error:VcsError}}
  */
 export function gitNumstatWithWorkingTree(cwd, sinceCommit, opts = {}) {
+  // `opts.pathspecs`: optional git pathspecs (appended after `--`). Absent ⇒ the byte-identical command every other caller runs.
   if (!isSafeGitRevision(sinceCommit)) {
     return {
       ok: false,
@@ -519,7 +520,7 @@ export function gitNumstatWithWorkingTree(cwd, sinceCommit, opts = {}) {
   }
   let res;
   try {
-    res = spawnSync('git', ['diff', '--numstat', sinceCommit], {
+    res = spawnSync('git', ['diff', '--numstat', sinceCommit, ...pathspecArgs(opts.pathspecs)], {
       cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...(opts.env ? { env: opts.env } : {}),
     });
   } catch (err) {
@@ -564,7 +565,7 @@ export function gitNumstatWithWorkingTree(cwd, sinceCommit, opts = {}) {
  *   replaces the inherited `process.env` when supplied.
  * @returns {{ok:true, diffText:string, truncated:false} | {ok:false, error:VcsError}}
  */
-export function gitUnifiedDiffWithWorkingTree(cwd, sinceCommit, { maxBytes = null, env = null } = {}) {
+export function gitUnifiedDiffWithWorkingTree(cwd, sinceCommit, { maxBytes = null, env = null, pathspecs = null } = {}) {
   if (!isSafeGitRevision(sinceCommit)) {
     return {
       ok: false,
@@ -573,7 +574,7 @@ export function gitUnifiedDiffWithWorkingTree(cwd, sinceCommit, { maxBytes = nul
   }
   let res;
   try {
-    res = spawnSync('git', ['diff', '--unified=0', sinceCommit], {
+    res = spawnSync('git', ['diff', '--unified=0', sinceCommit, ...pathspecArgs(pathspecs)], {
       cwd,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -761,3 +762,8 @@ function canonicalizeForOccurrenceMatch(s) {
  * @internal
  */
 export const _internals = Object.freeze({ classifyChildError, parseNameStatusZ, parseUntrackedPathsZ });
+
+/** `['--', ...specs]` when there are pathspecs, else nothing, so a caller that passes none runs the unchanged command. */
+function pathspecArgs(pathspecs) {
+  return Array.isArray(pathspecs) && pathspecs.length > 0 ? ['--', ...pathspecs] : [];
+}

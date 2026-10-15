@@ -67,13 +67,14 @@ import {
   TransientLedgerReadError,
 } from './debt-ledger-files.mjs';
 import { migrateLegacyLedgerLocked } from './debt-ledger-migration.mjs';
+import { DEBT_LEDGER_STEM } from './bundle-generated-stores.mjs';
 
 /**
  * The ledger's location, named — for backward compatibility — by its LEGACY
  * file. Either spelling resolves to both forms (`resolveLedgerLocation`), so
  * every existing `--ledger x.json` argument still names the same ledger.
  */
-export const DEFAULT_DEBT_LEDGER_PATH = '.audit/tech-debt.json';
+export const DEFAULT_DEBT_LEDGER_PATH = `${DEBT_LEDGER_STEM}.json`;
 
 // Warn-once per process: a run writes the ledger many times, and the same
 // notice repeated is a notice nobody reads.

@@ -106,7 +106,7 @@ PR 1 and PR 2 are independent in code (PR 2 touches `matchFileKind` at a differe
 
 **Phase 3 — Gemini per-file NONE (PR 1)**: D3. Files: `scripts/lib/final-review/code-coverage.mjs` (modify).
 
-**Phase 4 — Generated-store registry + adjacency (PR 2)**: D4–D6, with its own red tests first. Files: `scripts/lib/bundle-generated-stores.mjs` (create), `scripts/lib/file-taxonomy.mjs` (modify), `scripts/lib/debt-ledger.mjs` (modify), `scripts/lib/sync-receipt.mjs` (modify), `scripts/lib/vcs.mjs` (modify), `scripts/lib/audit/adjacency-detector.mjs` (modify), `tests/vcs.test.mjs` (modify), `tests/bundle-generated-stores.test.mjs` (create), `tests/adjacency-detector.test.mjs` (modify).
+**Phase 4 — Generated-store registry + adjacency (PR 2)**: D4–D6, with its own red tests first. Files: `scripts/lib/bundle-generated-stores.mjs` (create), `scripts/lib/file-taxonomy.mjs` (modify), `scripts/lib/debt-ledger.mjs` (modify), `scripts/lib/sync-receipt.mjs` (modify), `scripts/lib/vcs.mjs` (modify), `scripts/lib/audit/adjacency-detector.mjs` (modify), `tests/bundle-generated-stores.test.mjs` also carries the `vcs.mjs` pathspec and real-git adjacency tests (one file, one fixture helper; no `tests/vcs.test.mjs` / `tests/adjacency-detector.test.mjs` edit), `tests/bundle-generated-stores.test.mjs` (create), `tests/adjacency-detector.test.mjs` (modify).
 
 **Close-out (not a phase)**: `npm run skills:regenerate`; `npm run skills:size:gate` (the SKILL.md row is generalised in place — net ≤ 0 chars; a shrink is re-baselined DOWN, never up); `npm run guards:preflight`; `node scripts/check-plan-status.mjs`.
 

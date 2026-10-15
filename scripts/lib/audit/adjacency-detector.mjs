@@ -46,6 +46,7 @@ import { parseAllDiffSections, parseHunkHeader } from './evidence-triage.mjs';
 import { resolveAndClassify } from '../sensitive-paths.mjs';
 import { scanEgressPayload } from '../sensitive-egress-gate.mjs';
 import { INCOMPLETENESS_KINDS, incompleteness } from './adjacency-state.mjs';
+import { bundleStorePathspecs } from '../bundle-generated-stores.mjs';
 
 // @babel/traverse ships CJS; under ESM the callable lands on .default (and on
 // .default.default via some interop paths). Normalise once, loudly.
@@ -59,6 +60,26 @@ export function isAdjacencyTarget(p) {
   return SOURCE_EXT_RE.test(p);
 }
 
+
+/**
+ * The change the analysis is bounded over: everything git reports EXCEPT the files this bundle writes into the repo itself
+ * (the tech-debt ledger's per-entry files, the sync receipt). Partitioned by git, not by path text, so rename detection only
+ * pairs visible paths and the counts, the line total and the patch cannot disagree (upstream 3b84d8bb).
+ */
+const ANALYSED_CHANGE_PATHSPECS = Object.freeze(['.', ...bundleStorePathspecs({ exclude: true })]);
+
+/**
+ * " (M further changed file(s) are bundle-generated stores and were not counted)" — so a reader can tell "big diff" from
+ * "generated churn". Asked only when a bound has ALREADY fired. Empty when there were none; an unanswerable question says
+ * so rather than reading as zero.
+ */
+function generatedStoreNote(a, repoRoot, base) {
+  const stores = a.numstat(repoRoot, base, { pathspecs: bundleStorePathspecs({ exclude: false }) });
+  if (!stores?.ok) return ' (bundle-generated store count unavailable)';
+  const n = stores.files.length;
+  return n > 0 ? ` (${n} further changed file(s) are bundle-generated stores and were not counted)` : '';
+}
+
 function log(msg) { process.stderr.write(`  [adjacency] ${msg}\n`); }
 
 // incompleteness(kind, scope, detail) now imported from adjacency-state.mjs —
@@ -69,7 +90,7 @@ function log(msg) { process.stderr.write(`  [adjacency] ${msg}\n`); }
  *  one piece without re-wiring the whole set — the duplication wave's shape. */
 function defaultAdapters() {
   return {
-    numstat: (cwd, rev) => gitNumstatWithWorkingTree(cwd, rev),
+    numstat: (cwd, rev, opts) => gitNumstatWithWorkingTree(cwd, rev, opts),
     unifiedDiff: (cwd, rev, opts) => gitUnifiedDiffWithWorkingTree(cwd, rev, opts),
     readFile: (p) => fs.readFileSync(p, 'utf-8'),
     statSize: (p) => fs.statSync(p).size,
@@ -570,7 +591,7 @@ export async function runAdjacencyAnalysis({ repoRoot, auditBaseCommit, bounds, 
 
     // ── Preflight BEFORE materialising the diff (a bound applied after the
     //    cost is incurred is not a bound). ──
-    const ns = a.numstat(repoRoot, auditBaseCommit);
+    const ns = a.numstat(repoRoot, auditBaseCommit, { pathspecs: ANALYSED_CHANGE_PATHSPECS });
     if (!ns.ok) {
       inc.push(incompleteness(INCOMPLETENESS_KINDS.INPUT_BOUND, 'diff', `numstat failed: ${ns.error.code}`));
       return done();
@@ -581,20 +602,20 @@ export async function runAdjacencyAnalysis({ repoRoot, auditBaseCommit, bounds, 
       // edited — it isn't (this is a literal `git diff --numstat`, see
       // `a.numstat` above) — but the message gave them nothing to check that
       // against. `git diff --stat <auditBaseCommit>` reproduces this exact
-      // count; without the ref, that command can't be formed.
+      // count (less any bundle-generated stores, named in the note); without the ref, that command can't be formed.
       inc.push(incompleteness(INCOMPLETENESS_KINDS.INPUT_BOUND, 'diff',
         `${ns.files.length} changed files exceeds maxChangedFiles=${bounds.maxChangedFiles} since ` +
-        `${auditBaseCommit} — adjacency not enumerated (run \`git diff --stat ${auditBaseCommit}\` to see them)`));
+        `${auditBaseCommit}${generatedStoreNote(a, repoRoot, auditBaseCommit)} — adjacency not enumerated (run \`git diff --stat ${auditBaseCommit}\` to see them)`));
       return done();
     }
     if (ns.totalChangedLines > bounds.maxChangedLines) {
       inc.push(incompleteness(INCOMPLETENESS_KINDS.INPUT_BOUND, 'diff',
         `${ns.totalChangedLines} changed lines exceeds maxChangedLines=${bounds.maxChangedLines} since ` +
-        `${auditBaseCommit} — adjacency not enumerated (run \`git diff --stat ${auditBaseCommit}\` to see them)`));
+        `${auditBaseCommit}${generatedStoreNote(a, repoRoot, auditBaseCommit)} — adjacency not enumerated (run \`git diff --stat ${auditBaseCommit}\` to see them)`));
       return done();
     }
 
-    const ud = a.unifiedDiff(repoRoot, auditBaseCommit, { maxBytes: bounds.maxDiffBytes });
+    const ud = a.unifiedDiff(repoRoot, auditBaseCommit, { maxBytes: bounds.maxDiffBytes, pathspecs: ANALYSED_CHANGE_PATHSPECS });
     if (!ud.ok) {
       inc.push(incompleteness(INCOMPLETENESS_KINDS.INPUT_BOUND, 'diff', `unified diff failed: ${ud.error.code}`));
       return done();

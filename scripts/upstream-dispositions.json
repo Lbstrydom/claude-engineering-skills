@@ -289,6 +289,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "57bd3de9-e9ac-49f9-b23f-b802a72aa15f",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/coverage-orchestrator.test.mjs"
+      },
+      "recordedAt": "2026-10-15T16:19:50.004Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "58f4e3a5-b5e1-44f0-afdf-5bf295dde3bc",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",

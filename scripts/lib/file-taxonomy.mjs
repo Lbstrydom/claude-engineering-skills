@@ -20,6 +20,7 @@
  * concern, which runs later and independently). Ordered precedence, first
  * match wins:
  *
+ *   0. bundle-generated store — the tech-debt ledger's files, the sync receipt → `non-code` (bundle-generated-stores.mjs)
  *   1. exact filename        — lockfiles → `non-code`; build files → `declarative`
  *   2. compound suffix       — generated (`.g.cs`, `.min.js`) → `non-code`; `.html.template`
  *   3. last extension        — language → `source`; else declarative / non-code
@@ -37,6 +38,8 @@
  *
  * @module scripts/lib/file-taxonomy
  */
+
+import { isBundleGeneratedStore } from './bundle-generated-stores.mjs';
 
 /**
  * Programming languages, by id. `extensions` carry the leading dot.
@@ -194,6 +197,13 @@ function baseName(filePath) {
 export function matchFileKind(filePath) {
   const base = baseName(filePath);
   const lower = base.toLowerCase();
+
+  // 0. a file this bundle itself writes and commits (the tech-debt ledger's per-entry files, the sync receipt): data the
+  //    tooling owns, not code under review — an EXPECTED exclusion, never `uncovered` (upstream 3b84d8bb).
+  if (isBundleGeneratedStore(filePath)) {
+    const d = lower.lastIndexOf('.');
+    return { kind: 'non-code', language: null, extension: d > 0 ? lower.slice(d + 1) : lower, rule: 'generated-store' };
+  }
 
   // 1. exact filename
   const exact = EXACT_NAMES.get(base);
