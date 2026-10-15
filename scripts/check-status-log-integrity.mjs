@@ -38,6 +38,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, argOption } from './lib/cli-io.mjs';
 import { checkConservation } from './lib/status-log-integrity.mjs';
+import { ENTRIES_DIR, MARKER_REL, isArchivePath, isEntryRecordPath, perEntryMode } from './lib/status-entry-files.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_LOG = 'status.md';
@@ -64,11 +65,43 @@ function archivesAt(rev) {
   const out = {};
   let listing;
   try { listing = git(['ls-tree', '-r', '--name-only', rev, `${ARCHIVE_DIR}/`]); } catch { return out; }
-  for (const rel of listing.split('\n').map((l) => l.trim()).filter((l) => l.endsWith('.md'))) {
+  for (const rel of listing.split('\n').map((l) => l.trim()).filter((l) => l.endsWith('.md') && isArchivePath(l))) {
     const text = showAt(rev, rel);
     if (text !== null) out[rel] = text;
   }
   return out;
+}
+
+/** The per-entry state at a revision: the marker, the entry records, and any foreign file in the directory. */
+function entryStateAt(rev) {
+  let listing = '';
+  try { listing = git(['ls-tree', '-r', '--name-only', rev, `${ENTRIES_DIR}/`]); } catch { /* none */ }
+  const paths = listing.split('\n').map((l) => l.trim()).filter(Boolean);
+  const entries = {};
+  const strays = [];
+  for (const rel of paths) {
+    if (rel === MARKER_REL) continue;
+    if (!isEntryRecordPath(rel)) { strays.push(rel); continue; }
+    const text = showAt(rev, rel);
+    if (text !== null) entries[rel] = text;
+  }
+  return { marker: perEntryMode(paths), entries, strays };
+}
+
+function entryStateOnDisk() {
+  const dir = path.join(REPO, ENTRIES_DIR);
+  let names = [];
+  try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { /* none */ }
+  const paths = names.map((d) => `${ENTRIES_DIR}/${d.name}`);
+  const entries = {};
+  const strays = [];
+  for (const d of names) {
+    const rel = `${ENTRIES_DIR}/${d.name}`;
+    if (rel === MARKER_REL) continue;
+    if (d.isDirectory() || !isEntryRecordPath(rel)) { strays.push(rel); continue; }
+    entries[rel] = fs.readFileSync(path.join(dir, d.name), 'utf-8');
+  }
+  return { marker: perEntryMode(paths), entries, strays };
 }
 
 function archivesOnDisk() {
@@ -77,7 +110,7 @@ function archivesOnDisk() {
   let names;
   try { names = fs.readdirSync(dir); } catch { return out; }
   for (const n of names) {
-    if (!n.endsWith('.md')) continue;
+    if (!isArchivePath(`${ARCHIVE_DIR}/${n}`) || !n.endsWith('.md')) continue;
     out[`${ARCHIVE_DIR}/${n}`] = fs.readFileSync(path.join(dir, n), 'utf-8');
   }
   return out;
@@ -217,6 +250,7 @@ async function main() {
     root: prevRootText,
     archives: archivesAt(base),
     manifest: parseManifest(showAt(base, MANIFEST)),
+    ...entryStateAt(base),
   };
   const curr = {
     root: fs.existsSync(path.join(REPO, ROOT_LOG)) ? fs.readFileSync(path.join(REPO, ROOT_LOG), 'utf-8') : '',
@@ -224,6 +258,7 @@ async function main() {
     manifest: parseManifest(
       fs.existsSync(path.join(REPO, MANIFEST)) ? fs.readFileSync(path.join(REPO, MANIFEST), 'utf-8') : null,
     ),
+    ...entryStateOnDisk(),
   };
 
   const { ok, violations } = checkConservation(prev, curr);
@@ -235,7 +270,8 @@ async function main() {
   } else {
     process.stdout.write(`status-log-integrity: ${violations.length} violation(s) against ${base.slice(0, 8)}\n`);
     for (const v of violations) process.stdout.write(`  ${v.kind}: ${v.detail}\n`);
-    process.stdout.write('\n  status.md is append-only. To archive a month, use `npm run status:rotate`,\n');
+    process.stdout.write('\n  status.md is append-only; once docs/status/entries/README.md exists it takes no NEW entry (add a file there).\n');
+    process.stdout.write('  To archive a month, use `npm run status:rotate`,\n');
     process.stdout.write('  which records each archived entry in docs/status/rotation-manifest.json.\n');
   }
   process.exit(ok ? 0 : 1);

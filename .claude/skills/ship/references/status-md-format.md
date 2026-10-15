@@ -7,7 +7,22 @@ summary: status.md session-log template + update rules + persona / UX status sec
 `status.md` is the project's append-only session log. Newest entries go
 at the top. Every `/ship` run appends a new entry.
 
-**Appending never changes: always to `status.md` at the repo root, newest first.**
+**Where a new entry goes depends on ONE tracked marker, `docs/status/entries/README.md`:**
+
+- **Marker present** (this source repo since the per-entry cutover): the entry is a NEW
+  FILE `docs/status/entries/<YYYY-MM-DD>-<HHMMSS>-<kebab-slug>.md` (UTC time of the
+  ship; the slug names the work). Its first line is the entry's own `## YYYY-MM-DD — summary`
+  heading, it holds exactly ONE `## ` heading, and the heading date equals the file
+  name's. `status.md` takes no new entry (the integrity gate fails it), and an entry
+  file is never edited after it is written. Two ships never touch the same path, which
+  is the point: the single log file used to conflict on every concurrent ship.
+- **Marker absent** (a consumer, or any repo without the directory): append to
+  `status.md` at the repo root, newest first, exactly as below. Nothing here changes for
+  those repos.
+
+Everything below describes the entry's CONTENT, which is identical either way. The
+drained `### Consumer Verification (previous ship)` subsection goes inside the new entry,
+under its heading.
 
 > **Source-repo-only note (does not apply to a consumer repo).** In the
 > claude-engineering-skills repo the root log holds the CURRENT MONTH only;

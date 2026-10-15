@@ -11,8 +11,7 @@
  *
  * @module scripts/lib/dashboard/collect-home-shipped
  */
-import fs from 'node:fs';
-import path from 'node:path';
+import { readLogHead } from '../status-entry-files.mjs';
 import { resolveMeasurementBase, runGit } from '../fleet/git-facts.mjs';
 import { parseStatusEntries, STATUS_HEAD_BYTES } from './status-entries.mjs';
 import { makeMeasurement, clip } from './home-model.mjs';
@@ -21,24 +20,14 @@ export const SHIPPED_LIMIT = 10;
 const GIT_TIMEOUT_MS = 10_000;
 
 /**
- * Read at most {@link STATUS_HEAD_BYTES} bytes from the head of `status.md`.
+ * Read at most {@link STATUS_HEAD_BYTES} bytes of the session log: the per-entry files
+ * (`docs/status/entries/`, newest first), then the head of `status.md`. With no entries directory
+ * this is exactly the old `status.md` head.
  * @param {string} root
  * @returns {{text: string|null, absent: boolean, error: string|null, capped: boolean}} `capped`: the file is larger than the window (decided from fstat, not from the string length)
  */
 export function readStatusHead(root) {
-  const file = path.join(root, 'status.md');
-  let fd;
-  try {
-    fd = fs.openSync(file, 'r');
-    const buf = Buffer.alloc(STATUS_HEAD_BYTES);
-    const n = fs.readSync(fd, buf, 0, STATUS_HEAD_BYTES, 0);
-    const capped = fs.fstatSync(fd).size > STATUS_HEAD_BYTES;
-    return { text: buf.subarray(0, n).toString('utf8'), absent: false, error: null, capped };
-  } catch (err) {
-    return err.code === 'ENOENT' ? { text: null, absent: true, error: null, capped: false } : { text: null, absent: false, error: `cannot read status.md (${err.code})`, capped: false };
-  } finally {
-    if (fd !== undefined) try { fs.closeSync(fd); } catch { /* best effort */ }
-  }
+  return readLogHead(root, STATUS_HEAD_BYTES);
 }
 
 /**
