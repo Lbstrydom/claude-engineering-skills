@@ -104,11 +104,14 @@ const HeavySchema = z.object({
   holder: label, repoKey: hex(12), repo: label, kind: z.enum(KINDS), note: note.optional(),
   scope: name, pid: z.number().int().positive().optional(), token: hex(16), startedAt: iso, expiresAt: iso,
 }).passthrough().refine((h) => Date.parse(h.startedAt) <= Date.parse(h.expiresAt), { message: 'startedAt is after expiresAt' });
-const GapSchema = z.object({ from: iso, until: iso, toRepoKey: hex(12).optional(), toRepo: label.optional(), grantedAt: iso, by: name }).passthrough();
+const GapSchema = z.object({ from: iso, until: iso, toRepoKey: hex(12).optional(), toRepo: label.optional(), grantedAt: iso, by: name }).passthrough()
+  .refine((g) => Date.parse(g.from) < Date.parse(g.until), { message: 'gap from is not before until' })
+  .refine((g) => (g.toRepoKey === undefined) === (g.toRepo === undefined), { message: 'a gap names its recipient by BOTH toRepoKey and toRepo, or neither' });
 const WindowSchema = z.object({
   id: z.string().regex(/^w-\d{14}-[0-9a-f]{4}$/), repoKey: hex(12), repo: label, kind: z.enum(WINDOW_KINDS),
   from: iso, until: iso, note: note.optional(), gaps: z.array(GapSchema).optional(),
-}).passthrough().refine((w) => Date.parse(w.from) < Date.parse(w.until), { message: 'from is not before until' });
+}).passthrough().refine((w) => Date.parse(w.from) < Date.parse(w.until), { message: 'from is not before until' })
+  .refine((w) => (w.gaps ?? []).every((g) => Date.parse(g.from) >= Date.parse(w.from) && Date.parse(g.until) <= Date.parse(w.until)), { message: 'a gap lies outside its window' });
 const PeakSchema = z.object({ from: hhmm, to: hhmm }).passthrough();
 // ADDITIVE (plan fleet-lease-turns-and-journal D1): these keys are new top-level fields, never new `events` kinds - an older
 // checkout's `EventSchema.kind` is an enum, so a new kind there would make the shared file read as corrupt to it. A journal
@@ -384,7 +387,12 @@ export function resolveRepoLabel(lease, label0) {
   if (lease.heavy) add(lease.heavy.repoKey, lease.heavy.repo);
   for (const w of lease.windows) add(w.repoKey, w.repo);
   for (const w of lease.waiters ?? []) add(w.repoKey, w.repo);
-  for (const e of lease.journal ?? []) { if (e.window?.repo) add(e.repoKey, e.window.repo); }
+  // A journal entry's repoKey is the ACTOR. It names the window's repo only when actor and owner are the same repo: an
+  // announce, a grant, or a clear of the actor's OWN window - never another repo's window that the actor cleared.
+  for (const e of lease.journal ?? []) {
+    const own = e.kind === 'announced' || e.kind === 'gap-granted' || (e.kind === 'window-cleared' && e.ownRepo === true);
+    if (own && e.window?.repo) add(e.repoKey, e.window.repo);
+  }
   if (seen.size === 0) return { error: 'none' };
   if (seen.size > 1) return { error: 'ambiguous' };
   const [[key, repo]] = [...seen];

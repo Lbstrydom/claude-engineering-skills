@@ -13,18 +13,35 @@
  * @module scripts/lib/fleet/lease-turns
  */
 import {
-  LIMITS, admissionCheck, appendJournal, defaultProbe, hhmmOf, ms, uniqueEpisode, waitEndedEntry,
+  LIMITS, admissionCheck, appendJournal, classifyHeavy, conflictingWindows, defaultProbe, hhmmOf, ms, uniqueEpisode, waitEndedEntry,
 } from './lease-model.mjs';
 
 export const turnMinOf = (lease) => lease.turnMin ?? LIMITS.defaultTurnMin;
 
-/** Is `repoKey`'s turn active at `now`? Between jobs it stays active for `batchGapMs`, and it never outlives `endsAt`. */
+/**
+ * When did the turn's repo last stop using the machine, and is it using it now? A release, and the end of any of the
+ * repo's OWN windows (a CI run or a scheduled run counts as its heavy time), both restart the between-jobs clock; a
+ * window still running means it is busy. `null` `lastBusy` means nothing has ended yet.
+ */
+function busyOf(lease, turn, now) {
+  let lastBusy = turn.lastReleasedAt ? ms(turn.lastReleasedAt) : null;
+  let busy = false;
+  for (const w of lease.windows) {
+    if (w.repoKey !== turn.repoKey || ms(w.from) > now.getTime()) continue;
+    if (now.getTime() < ms(w.until)) busy = true;
+    else lastBusy = Math.max(lastBusy ?? 0, ms(w.until));
+  }
+  return { busy, lastBusy };
+}
+
+/** Is `repoKey`'s turn active at `now`? It never outlives `endsAt`; between jobs it holds for `batchGapMs`, and never while the repo's own window runs. */
 export function turnActive(lease, repoKey, now) {
   const t = lease.turn;
   if (!t || t.repoKey !== repoKey) return false;
   if (now.getTime() >= ms(t.endsAt)) return false;
-  if (t.lastReleasedAt && now.getTime() - ms(t.lastReleasedAt) > LIMITS.batchGapMs) return false;
-  return true;
+  const { busy, lastBusy } = busyOf(lease, t, now);
+  if (busy) return true;
+  return lastBusy === null || now.getTime() - lastBusy <= LIMITS.batchGapMs;
 }
 
 const bySince = (a, b) => ms(a.since) - ms(b.since) || (a.repoKey < b.repoKey ? -1 : 1);
@@ -45,72 +62,77 @@ export function startTurn(lease, req, now) {
   return appendJournal({ ...next, turn }, { ...turnEntry('turn-started', turn, now), by: `${req.identity.holder}@${req.repo}` });
 }
 
-/** The head of the queue: the repo that has waited longest (ties by repoKey, so the order is total). */
-export const queueHead = (lease) => [...(lease.waiters ?? [])].sort(bySince)[0];
-
 const wouldFit = (lease, w, now, probe) => admissionCheck(lease, { repoKey: w.repoKey, holder: '-' }, w.forMin, now, probe).ok;
 
-function settleTurn(lease, now) {
+function settleTurn(lease, now, probe) {
   const t = lease.turn;
   if (!t) return lease;
   let cur = lease;
   let turn = t;
-  // The turn's repo has no live job and nobody recorded a release (a crashed or forced job): the job ended when its
-  // lease did, so the between-jobs clock starts there. Deterministic, and needs no pid probe.
+  // The turn's repo has no running job and nobody recorded a release (a crashed or forced job): start the between-jobs
+  // clock. An EXPIRED lease is not proof the job stopped (#243 D4), so the slot's own classification decides: only a
+  // dead recorded pid, or a slot nobody holds, counts. Expired-but-alive or unverifiable means the job may still run.
   if (!turn.lastReleasedAt) {
     const h = cur.heavy;
-    const live = h && h.repoKey === turn.repoKey && now.getTime() < ms(h.expiresAt);
-    if (!live) {
-      const at = h && h.repoKey === turn.repoKey ? h.expiresAt : (cur.slotFreedAt && ms(cur.slotFreedAt) >= ms(turn.startedAt) ? cur.slotFreedAt : turn.startedAt);
+    let at = null;
+    if (!h || h.repoKey !== turn.repoKey) at = cur.slotFreedAt && ms(cur.slotFreedAt) >= ms(turn.startedAt) ? cur.slotFreedAt : turn.startedAt;
+    else if (classifyHeavy(h, now, probe).verdict === 'pid-dead') at = h.expiresAt;
+    if (at !== null) {
       turn = { ...turn, lastReleasedAt: at };
       cur = { ...cur, turn };
     }
   }
   if (now.getTime() >= ms(turn.endsAt)) return endTurn(cur, 'expiry', now);
-  if (turn.lastReleasedAt && now.getTime() - ms(turn.lastReleasedAt) > LIMITS.batchGapMs) return endTurn(cur, 'idle', now);
+  const { busy, lastBusy } = busyOf(cur, turn, now);
+  if (!busy && lastBusy !== null && now.getTime() - lastBusy > LIMITS.batchGapMs) return endTurn(cur, 'idle', now);
   return cur;
 }
 
-/** Offer the head the slot (or take the offer back), and lapse a head that has been continuously able and has not come. */
+/**
+ * Offer the slot to the first waiter that could take it NOW (the effective head: an older waiter blocked by a window does
+ * not hold the queue), take every other offer back, and lapse an offered waiter that has been continuously able to go
+ * and has not come. Eligibility is `admissionCheck`, and the history of it is `conflictingWindows` over the offer
+ * interval - one scheduling policy asked about two intervals, not two policies.
+ */
 function settleOffers(lease, now, probe, depth = 0) {
-  const head = queueHead(lease);
-  if (!head) return lease;
+  const waiters = lease.waiters ?? [];
+  if (!waiters.length) return lease;
   const stamp0 = now.toISOString();
-  const incumbent = lease.turn && lease.turn.repoKey !== head.repoKey && turnActive(lease, lease.turn.repoKey, now);
-  const eligible = !incumbent && wouldFit(lease, head, now, probe);
-  const set = (w) => ({ ...lease, waiters: lease.waiters.map((x) => (x.repoKey === head.repoKey ? w : x)) });
-  if (!eligible) {
-    if (head.offeredAt === undefined) return lease;
-    const { offeredAt, ...w } = head;
-    return set(w);
+  const incumbent = (w) => lease.turn && lease.turn.repoKey !== w.repoKey && turnActive(lease, lease.turn.repoKey, now);
+  const first = [...waiters].sort(bySince).find((w) => !incumbent(w) && wouldFit(lease, w, now, probe));
+  let next = lease;
+  const withdrawn = waiters.filter((w) => w !== first && w.offeredAt !== undefined);
+  if (withdrawn.length) {
+    next = { ...next, waiters: next.waiters.map((w) => { if (!withdrawn.includes(w)) return w; const { offeredAt, ...rest } = w; return rest; }) };
   }
-  if (head.offeredAt === undefined) {
-    const next = appendJournal(set({ ...head, offeredAt: stamp0 }), { at: stamp0, kind: 'offered', by: 'settle', repoKey: head.repoKey, episode: head.episode ?? `${head.repoKey}@${head.since}` });
-    return next;
+  if (!first) return next;
+  const set = (w) => ({ ...next, waiters: next.waiters.map((x) => (x.repoKey === first.repoKey ? w : x)) });
+  if (first.offeredAt === undefined) {
+    return appendJournal(set({ ...first, offeredAt: stamp0 }), { at: stamp0, kind: 'offered', by: 'settle', repoKey: first.repoKey, episode: first.episode ?? `${first.repoKey}@${first.since}` });
   }
-  // Continuity: the offer holds only if the slot was not used and freed since, and no other repo's window (outside the
-  // gaps granted to it) overlapped the time since - otherwise the head could not have gone, and the clock restarts.
-  const offered = ms(head.offeredAt);
+  // Continuity: the offer holds only if the slot was not used and freed since, and no other repo's window (outside the gaps
+  // granted to it) blocked it at any point since - otherwise it could not have gone, and the clock restarts.
+  const offered = ms(first.offeredAt);
   const slotUsed = lease.slotFreedAt && ms(lease.slotFreedAt) > offered;
-  const blocked = lease.windows.some((w) => w.repoKey !== head.repoKey && ms(w.from) < now.getTime() && ms(w.until) > offered
-    && !(w.gaps ?? []).some((g) => (!g.toRepoKey || g.toRepoKey === head.repoKey) && ms(g.from) <= offered && ms(g.until) >= now.getTime()));
-  if (slotUsed || blocked) return set({ ...head, offeredAt: stamp0 });
-  if (now.getTime() - offered < LIMITS.claimMs || depth > 0) return lease;
+  const blocked = conflictingWindows(lease, first.repoKey, new Date(offered), now).length > 0;
+  if (slotUsed || blocked) return set({ ...first, offeredAt: stamp0 });
+  if (now.getTime() - offered < LIMITS.claimMs || depth > 0) return next;
   // Lapse: to the back, with a fresh waiting clock and a NEW episode.
-  const episode = uniqueEpisode(lease, head.repoKey, stamp0);
-  const back = { ...head, since: stamp0, episode, refusals: 0, forMin: head.forMin };
+  const episode = uniqueEpisode(lease, first.repoKey, stamp0);
+  const back = { ...first, since: stamp0, episode, refusals: 0 };
   delete back.offeredAt; delete back.lastRefusal;
-  let next = appendJournal(set(back), waitEndedEntry(head, 'lapsed', now, 'settle'));
-  next = appendJournal(next, { at: stamp0, kind: 'waiting', by: head.by, repoKey: head.repoKey, episode, opener: 'lapse', job: { forMin: head.forMin } });
-  return settleOffers(next, now, probe, depth + 1);
+  let lapsed = appendJournal(set(back), waitEndedEntry(first, 'lapsed', now, 'settle'));
+  lapsed = appendJournal(lapsed, { at: stamp0, kind: 'waiting', by: first.by, repoKey: first.repoKey, episode, opener: 'lapse', job: { forMin: first.forMin } });
+  return settleOffers(lapsed, now, probe, depth + 1);
 }
 
 /**
  * The time-driven transitions, applied FIRST in every mutating decision (after the request validates, before it is
  * evaluated) and persisted even when the operation is then refused, because they are facts about time:
- * a waiter older than `maxWaitMs` expires; the turn ends on expiry or after `batchGapMs` between jobs; the head is
- * offered the slot or, after `claimMs` of continuous ability to take it, lapses to the back. Touches `waiters`, `turn`
- * and `journal` only - never the slot or the windows - and returns the SAME object when nothing changed.
+ * a waiter older than `maxWaitMs` expires; the turn ends on expiry or after `batchGapMs` between jobs; the first
+ * waiter able to go is offered the slot or, after `claimMs` of continuous ability and not coming, lapses to the back.
+ * Touches `waiters`, `turn` and `journal` only - never the slot or the windows - and returns the SAME object when
+ * nothing changed.
  */
 export function settleQueue(lease, now, probe = defaultProbe()) {
   let next = lease;
@@ -119,7 +141,7 @@ export function settleQueue(lease, now, probe = defaultProbe()) {
     next = { ...next, waiters: next.waiters.filter((w) => !stale.includes(w)) };
     for (const w of stale) next = appendJournal(next, waitEndedEntry(w, 'expired', now, 'settle'));
   }
-  next = settleTurn(next, now);
+  next = settleTurn(next, now, probe);
   next = settleOffers(next, now, probe);
   return next;
 }
@@ -138,7 +160,8 @@ export function turnRule(lease, req, now, probe, { namedGap = false } = {}) {
   if (turnActive(lease, repoKey, now)) return { ok: true, basis: 'in-turn' };
   const t = lease.turn;
   if (t && t.repoKey !== repoKey && waiters.length > 0 && turnActive(lease, t.repoKey, now)) {
-    const between = t.lastReleasedAt ? ` (between jobs since ${hhmmOf(new Date(t.lastReleasedAt))}; it keeps the slot for a ${Math.round(LIMITS.batchGapMs / 60_000)}-minute gap, then the queue moves)` : '';
+    const { busy, lastBusy } = busyOf(lease, t, now);
+    const between = !busy && lastBusy !== null ? ` (between jobs since ${hhmmOf(new Date(lastBusy))}; it keeps the slot for a ${Math.round(LIMITS.batchGapMs / 60_000)}-minute gap, then the queue moves)` : '';
     return { ok: false, first: t.repo, reason: `it is ${t.repo}'s turn until ${hhmmOf(new Date(t.endsAt))}${between}` };
   }
   const others = waiters.filter((w) => w.repoKey !== repoKey);

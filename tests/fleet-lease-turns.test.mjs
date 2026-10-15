@@ -294,3 +294,107 @@ describe('turns when several repos wait (D6, finding a3b9)', () => {
     assert.match(nextLines({ state: 'ok', lease: l }, T('08:11'), { probe }).join(' '), /turn: o\/a/);
   });
 });
+
+describe('audit-code round 1 fixes (PR 2)', () => {
+  const aliveProbe = { scope: SCOPE, isPidAlive: () => true };
+
+  it('H1/M6: a label is never read from ANOTHER repo clearing a window (the journal entry key is the actor)', () => {
+    let l = ok(ann(emptyLease(), A, { kind: 'quiet', until: '+30m' }, '08:00'));
+    const aWindow = l.windows[0].id;
+    l = ok(L.decideClearWindow(l, q(B, { id: aWindow }), T('08:01'), probe)); // B clears o/a's window: entry key = B, window.repo = o/a
+    l = ok(ann(l, D, { kind: 'quiet', until: '+60m', newId: 'dddd' }, '08:02'));
+    const g = grant(l, D, { id: l.windows[0].id, from: '+0m', until: '+10m', to: 'o/a' }, '08:03');
+    // o/a announced its own window, so the name is known - and it must resolve to o/a's key only. Reading the cleared-by-B
+    // entry as "B's key is called o/a" made it two keys, i.e. ambiguous.
+    assert.equal(g.ok, true, JSON.stringify(g));
+    assert.equal(g.gap.toRepoKey, A.repoKey);
+    // And with no announce of its own, the owner of a cleared window is not a known repo at all.
+    let only = ok(ann(emptyLease(), A, { kind: 'quiet', until: '+30m' }, '08:00'));
+    only = ok(L.decideClearWindow({ ...only, journal: only.journal.filter((e) => e.kind !== 'announced') }, q(B, { id: only.windows[0].id }), T('08:01'), probe));
+    only = ok(ann(only, D, { kind: 'quiet', until: '+60m', newId: 'dddd' }, '08:02'));
+    assert.equal(grant(only, D, { id: only.windows[0].id, from: '+0m', until: '+10m', to: 'o/a' }, '08:03').code, 'no-such-repo');
+  });
+
+  it('H2: an older waiter blocked by a window does not hold the queue - the first one that could go is offered, and lapses if it never comes', () => {
+    let l = ok(ann(emptyLease(), C, { kind: 'quiet', from: '2026-10-14T08:30:00.000Z', until: '2026-10-14T09:30:00.000Z' }, '08:00'));
+    l = ok(wait(l, A, { forMin: 60 }, '08:01')); // oldest, but its 60 minutes cannot fit before 08:30
+    l = ok(wait(l, B, { forMin: 10 }, '08:02')); // could go now, and is a ghost
+    const early = acq(l, D, { forMin: 10 }, '08:03');
+    assert.equal(early.code, 'turn');
+    assert.match(early.reason, /o\/b/, 'D is told B goes first, not the blocked A');
+    assert.ok(early.lease.waiters.find((w) => w.repo === 'o/b').offeredAt, 'B is the one offered');
+    assert.equal(early.lease.waiters.find((w) => w.repo === 'o/a').offeredAt, undefined);
+    const late = acq(early.lease, D, { forMin: 10 }, '08:20');
+    assert.equal(late.ok, true, JSON.stringify(late));
+    assert.ok(late.lease.journal.some((e) => e.kind === 'wait-ended' && e.reason === 'lapsed'), 'the ghost lapsed instead of blocking D for 12 hours');
+  });
+
+  it('H3: while a repo\'s OWN window runs it is busy and keeps its turn; the between-jobs clock restarts when the window ends', () => {
+    let l = ok(L.decideTurnConfig(emptyLease(), { minutes: 120 }, T('07:59')));
+    l = ok(acq(l, A, { forMin: 10 }, '08:00'));
+    l = ok(ann(l, A, { kind: 'ci', until: '2026-10-14T08:50:00.000Z' }, '08:01'));
+    l = ok(wait(l, B, { forMin: 20 }, '08:02'));
+    l = ok(rel(l, A, {}, '08:10'));
+    assert.ok(settleQueue(l, T('08:30'), probe).turn, 'released at 08:10 but its CI window runs to 08:50: still its time');
+    assert.ok(settleQueue(l, T('08:55'), probe).turn, 'inside the 10-minute gap after the window ended');
+    const ended = settleQueue(l, T('09:02'), probe);
+    assert.equal(ended.turn, undefined);
+    assert.deepEqual(turnEnded(ended), ['idle']);
+  });
+
+  it('M2/M9: an EXPIRED slot is not proof the job stopped - only a dead recorded pid starts the between-jobs clock', () => {
+    const l = ok(acq(emptyLease(), A, { forMin: 10 }, '08:00')); // lease expires 08:10, pid 1 recorded, never released
+    assert.ok(settleQueue(l, T('08:40'), aliveProbe).turn, 'pid alive: the job may still run, the turn is not idle-ended');
+    const dead = settleQueue(l, T('08:40'), probe);
+    assert.equal(dead.turn, undefined);
+    assert.deepEqual(turnEnded(dead), ['idle']);
+  });
+
+  it('M3: persisted gaps keep the invariants decideGrant enforces: ordered, inside the window, recipient named completely', () => {
+    const l0 = ok(ann(emptyLease(), A, { kind: 'quiet', until: '+60m' }, '08:00'));
+    const w = l0.windows[0];
+    const withGap = (gap) => ({ ...l0, windows: [{ ...w, gaps: [{ grantedAt: T('08:00').toISOString(), by: 'x@y', ...gap }] }] });
+    const good = { from: T('08:10').toISOString(), until: T('08:20').toISOString() };
+    assert.equal(LeaseSchema.safeParse(withGap(good)).success, true);
+    assert.equal(LeaseSchema.safeParse(withGap({ from: good.until, until: good.from })).success, false, 'reversed');
+    assert.equal(LeaseSchema.safeParse(withGap({ from: T('07:00').toISOString(), until: good.until })).success, false, 'starts before the window');
+    assert.equal(LeaseSchema.safeParse(withGap({ from: good.from, until: T('10:00').toISOString() })).success, false, 'ends after the window');
+    assert.equal(LeaseSchema.safeParse(withGap({ ...good, toRepoKey: 'bbbbbbbbbbbb' })).success, false, 'key without label');
+    assert.equal(LeaseSchema.safeParse(withGap({ ...good, toRepo: 'o/b' })).success, false, 'label without key');
+    assert.equal(LeaseSchema.safeParse(withGap({ ...good, toRepoKey: 'bbbbbbbbbbbb', toRepo: 'o/b' })).success, true);
+  });
+
+  it('M5: a grant refused AFTER a time-driven transition came due still persists that transition', () => {
+    const l = ok(wait(emptyLease(), A, {}, '08:00'));
+    const g = L.decideGrant(l, q(B, { id: 'w-nope', from: '+0m', until: '+10m' }), new Date('2026-10-14T21:00:00.000Z'), probe);
+    assert.equal(g.code, 'no-such-window');
+    assert.equal(g.lease.waiters.length, 0, 'the 12-hour expiry rides on the refusal, as in acquire, release and clear');
+  });
+
+  it('M4: the offer is judged by the SAME window policy over the whole offer interval', () => {
+    /** C's window 08:20-08:30 was announced before anyone waited; A (a 5-minute job) waits at 07:55 and is offered at once. */
+    const base = (gap) => {
+      let l = ok(ann(emptyLease(), C, { kind: 'quiet', from: '2026-10-14T08:20:00.000Z', until: '2026-10-14T08:30:00.000Z' }, '07:50'));
+      l = ok(wait(l, A, { forMin: 5 }, '07:55'));
+      assert.equal(l.waiters[0].offeredAt, T('07:55').toISOString());
+      if (gap) l = ok(grant(l, C, { id: l.windows[0].id, from: gap[0], until: gap[1] }, '07:56'));
+      return l;
+    };
+    // Nobody observed the head between 08:20 and 08:30, yet a window blocked it then: not continuously able to go, so the
+    // clock restarts at the next observation instead of lapsing.
+    const plain = acq(base(), D, { forMin: 5 }, '08:31');
+    assert.equal(plain.code, 'turn');
+    assert.equal(plain.lease.journal.some((e) => e.reason === 'lapsed'), false);
+    assert.equal(plain.lease.waiters.find((w) => w.repo === 'o/a').offeredAt, T('08:31').toISOString());
+    // A gap covering only PART of the offer interval is still a block.
+    const partial = acq(base(['2026-10-14T08:20:00.000Z', '2026-10-14T08:25:00.000Z']), D, { forMin: 5 }, '08:31');
+    assert.equal(partial.lease.journal.some((e) => e.reason === 'lapsed'), false);
+    // A gap covering the whole interval since the offer means it could have gone all along: it lapses.
+    let whole = ok(ann(emptyLease(), C, { kind: 'quiet', from: '2026-10-14T07:50:00.000Z', until: '2026-10-14T09:00:00.000Z' }, '07:50'));
+    whole = ok(wait(whole, A, { forMin: 5 }, '07:55'));
+    assert.equal(whole.waiters[0].offeredAt, undefined, 'blocked by the window: not offered yet');
+    whole = ok(grant(whole, C, { id: whole.windows[0].id, from: '2026-10-14T07:50:00.000Z', until: '2026-10-14T09:00:00.000Z' }, '07:56'));
+    assert.equal(whole.waiters[0].offeredAt, T('07:56').toISOString());
+    assert.equal(acq(whole, D, { forMin: 5 }, '08:20').lease.journal.some((e) => e.reason === 'lapsed'), true);
+  });
+});

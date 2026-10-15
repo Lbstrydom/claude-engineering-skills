@@ -17,7 +17,7 @@ import { ArgvError } from '../cli-io.mjs';
 import { failed, ok, refused, selfId } from './commands.mjs';
 import { gitCommonDir, runGit } from './git-facts.mjs';
 import {
-  LeaseConfigError, measureSlotWaits, repoLabel, decideAcquire, decideAnnounce, decideAttach, decideClearWindow, decideGrant, decideRelease, decideTurnConfig, decideWait, defaultProbe,
+  LIMITS, LeaseConfigError, measureSlotWaits, repoLabel, decideAcquire, decideAnnounce, decideAttach, decideClearWindow, decideGrant, decideRelease, decideTurnConfig, decideWait, defaultProbe,
   machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable, renderLog, renderStatus, repoKeyOf, summarise,
   transactLease,
 } from './lease.mjs';
@@ -200,10 +200,10 @@ export function cmdLease(ctx, flags, positionals) {
     }
     case 'turn': {
       const clear = flags['--clear'] === true;
-      if (clear === (flags['--minutes'] !== undefined)) throw new ArgvError('fleet lease turn: pass exactly one of --minutes <15-240> or --clear');
+      if (clear === (flags['--minutes'] !== undefined)) throw new ArgvError(`fleet lease turn: pass exactly one of --minutes <${LIMITS.minTurnMin}-${LIMITS.maxTurnMin}> or --clear`);
       const req = { clear, minutes: clear ? undefined : wholeNumber(flags, '--minutes') };
       decide = (lease) => decideTurnConfig(lease, req);
-      describe = (d) => ({ turnMin: d.lease.turnMin ?? null, text: clear ? 'OK: turn length restored to the default (60 minutes)' : `OK: turn length for this machine is ${req.minutes} minutes` });
+      describe = (d) => ({ turnMin: d.lease.turnMin ?? null, text: clear ? `OK: turn length restored to the default (${LIMITS.defaultTurnMin} minutes)` : `OK: turn length for this machine is ${req.minutes} minutes` });
       break;
     }
     case 'wait': {

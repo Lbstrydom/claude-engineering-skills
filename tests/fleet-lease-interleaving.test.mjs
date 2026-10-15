@@ -144,8 +144,10 @@ function violation(before, after, op) {
   // I4: every successful mutation appends the journal entry its kind requires, so the history can always answer
   // "what happened"; and a wait episode ends at most once.
   const need = { acquire: 'acquired', announce: 'announced', clear: 'window-cleared' }[op.op] ?? (op.op === 'release' && r.ok && !r.already ? 'released' : null);
-  // Housekeeping (an offer to the head, a turn ending) may follow the entry, so look at the tail rather than the very last.
-  if (r.ok && need && !(lease.journal ?? []).slice(-6).some((e) => e.kind === need)) return `I4: a successful ${op.op} appended no ${need} entry (tail: ${(lease.journal ?? []).slice(-6).map((e) => e.kind).join(',')})`;
+  // What THIS step added, by identity (an older entry of the same kind cannot satisfy it); housekeeping such as an offer may
+  // sit beside it, so it is "among the new entries", not "the last one".
+  const added = (lease.journal ?? []).filter((e) => !(before.lease.journal ?? []).includes(e));
+  if (r.ok && need && !added.some((e) => e.kind === need && e.repoKey === op.repo.repoKey)) return `I4: a successful ${op.op} by ${op.repo.repo} added no ${need} entry of its own (added: ${added.map((e) => e.kind).join(',') || 'none'})`;
   const ended = new Map();
   for (const e of lease.journal ?? []) if (e.kind === 'wait-ended') ended.set(e.episode, (ended.get(e.episode) ?? 0) + 1);
   for (const [ep, n] of ended) if (n > 1) return `I4: wait episode ${ep} ended ${n} times`;
@@ -218,7 +220,7 @@ describe('lease interleavings (property test, seeded)', () => {
     const wrote = { lease: emptyLease(), now: T0, result: { ok: false, code: 'bad-request' } };
     assert.match(violation(before, wrote, op), /I3: a bad request wrote something/);
     const noJournal = { lease: emptyLease(), now: T0, result: { ok: true } };
-    assert.match(violation(before, noJournal, { ...op, op: 'acquire' }), /I4: a successful acquire appended no acquired entry/);
+        assert.match(violation(before, noJournal, { ...op, op: 'acquire' }), /I4: a successful acquire by o\/a added no acquired entry of its own/);
   });
 
   it('the 08:06Z race: an announce over a slot another repo acquired seconds earlier is not an unacknowledged overlap', () => {

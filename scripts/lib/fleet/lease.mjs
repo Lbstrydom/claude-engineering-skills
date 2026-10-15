@@ -296,16 +296,17 @@ export function decideGrant(lease, req, now, probe = defaultProbe()) {
   if (from.getTime() >= until.getTime()) return refuse('bad-request', '--from must be before --until');
   if (req.to !== undefined && !(typeof req.to === 'string' && req.to.length >= 1 && req.to.length <= 80)) return refuse('bad-request', '--to must be a repo label of 1 to 80 characters');
   const base = settleQueue(lease, now, probe);
+  const keep = (r) => (base === lease ? r : { ...r, lease: base });
   const w = base.windows.find((x) => x.id === req.id);
-  if (!w) return refuse('no-such-window', `no window ${JSON.stringify(req.id)}`);
-  if (w.repoKey !== req.identity.repoKey) return refuse('not-owner', `window ${w.id} belongs to ${w.repo}; only its owner grants a gap in it (any session may still clear it)`);
-  if (from.getTime() < ms(w.from) || until.getTime() > ms(w.until)) return refuse('outside-window', `a gap must lie inside its window (${w.from} to ${w.until})`);
-  if ((w.gaps ?? []).length >= LIMITS.maxGapsPerWindow) return refuse('limit', `window ${w.id} already has ${LIMITS.maxGapsPerWindow} gaps`);
+  if (!w) return keep(refuse('no-such-window', `no window ${JSON.stringify(req.id)}`));
+  if (w.repoKey !== req.identity.repoKey) return keep(refuse('not-owner', `window ${w.id} belongs to ${w.repo}; only its owner grants a gap in it (any session may still clear it)`));
+  if (from.getTime() < ms(w.from) || until.getTime() > ms(w.until)) return keep(refuse('outside-window', `a gap must lie inside its window (${w.from} to ${w.until})`));
+  if ((w.gaps ?? []).length >= LIMITS.maxGapsPerWindow) return keep(refuse('limit', `window ${w.id} already has ${LIMITS.maxGapsPerWindow} gaps`));
   let target;
   if (req.to !== undefined) {
     const r = resolveRepoLabel(base, req.to);
-    if (r.error === 'none') return refuse('no-such-repo', `${JSON.stringify(req.to)} has not used the lease on this machine, so it cannot be named; it can \`lease wait\` first, or grant an open gap (no --to)`);
-    if (r.error === 'ambiguous') return refuse('ambiguous-repo', `more than one repo on this machine is labelled ${JSON.stringify(req.to)}; a label is display-only, so grant an open gap or ask the other repo to \`lease wait\` under a distinct checkout name`);
+    if (r.error === 'none') return keep(refuse('no-such-repo', `${JSON.stringify(req.to)} has not used the lease on this machine, so it cannot be named; it can \`lease wait\` first, or grant an open gap (no --to)`));
+    if (r.error === 'ambiguous') return keep(refuse('ambiguous-repo', `more than one repo on this machine is labelled ${JSON.stringify(req.to)}; a label is display-only, so grant an open gap or ask the other repo to \`lease wait\` under a distinct checkout name`));
     target = r;
   }
   const gap = { from: from.toISOString(), until: until.toISOString(), ...(target ? { toRepoKey: target.key, toRepo: target.repo } : {}), grantedAt: now.toISOString(), by: byOf(req) };
