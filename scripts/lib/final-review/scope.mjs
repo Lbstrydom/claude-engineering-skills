@@ -157,3 +157,47 @@ export function selectInScopeCodeFiles(changedFiles, {
 
   return { files, excluded };
 }
+
+/**
+ * Does the final reviewer admit the bundle's own modules (`isAuditInfraFile`)? Precedence: the review's own flag, then the audit's
+ * recorded decision (any transcript round with `_infraScope.admitted === true`), then the oracle for this repo. The audit's
+ * decision is inherited so the two reviewers can never disagree about which files are the subject (fleet p-…095b).
+ *
+ * @param {{flag?: boolean, transcript?: object|null, repoRoot: string, oracle: (i:{flag:boolean, repoRoot:string})=>{admitted:boolean, source:string|null}}} input
+ * @returns {{admitted: boolean, source: 'flag'|'transcript'|'source-repo'|null}}
+ */
+export function resolveFinalReviewInfraScope({ flag = false, transcript = null, repoRoot, oracle }) {
+  if (flag) return { admitted: true, source: 'flag' };
+  const rounds = Array.isArray(transcript?.rounds) ? transcript.rounds : [];
+  if (rounds.some((r) => r?._infraScope?.admitted === true)) return { admitted: true, source: 'transcript' };
+  return oracle({ flag: false, repoRoot });
+}
+
+/**
+ * Which files go in the final reviewer's Code Files block. `deps` are `selectInScopeCodeFiles`'s (exists, the two sensitivity
+ * oracles, `isInfra`); `extractPlanPaths` is injected so this stays pure.
+ *
+ * Infra files are withheld only when NOT admitted. When admitted, FULL scope also adds the changed infra files from
+ * `transcript.changed_files`: `code_files` is the audit's ADMITTED set, so an infra file the audit excluded is not in it to
+ * un-filter (audit-plan R1-H1). Only infra files are added, through the same existence and sensitivity rules; no `changed_files`
+ * adds nothing.
+ *
+ * @returns {{codePaths: string[], codeExcluded: object|null}}
+ */
+export function selectFinalReviewCodePaths({ reduced, transcript, planContent, infraAdmitted, deps, extractPlanPaths }) {
+  const changed = Array.isArray(transcript?.changed_files) ? transcript.changed_files : [];
+  if (reduced) {
+    const sel = selectInScopeCodeFiles(changed, { ...deps, isInfra: infraAdmitted ? () => false : deps.isInfra });
+    return { codePaths: sel.files, codeExcluded: sel.excluded };
+  }
+  const plan = (extra) => extractPlanPaths(planContent, { allowInfraFiles: infraAdmitted, ...extra });
+  if (Array.isArray(transcript?.code_files)) {
+    let paths = [...new Set([...plan().found, ...transcript.code_files])].filter((f) => infraAdmitted || !deps.isInfra(f));
+    if (infraAdmitted) {
+      const added = selectInScopeCodeFiles(changed.filter((f) => typeof f === 'string' && deps.isInfra(f)), { ...deps, isInfra: () => false }).files;
+      paths = [...new Set([...paths, ...added])];
+    }
+    return { codePaths: paths, codeExcluded: null };
+  }
+  return { codePaths: plan().found, codeExcluded: null };
+}

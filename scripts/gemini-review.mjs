@@ -28,7 +28,7 @@ import { once } from 'node:events';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
-import { readFileOrDie, extractPlanPaths, writeOutput, isAuditInfraFile, atomicWriteFileSync } from './lib/file-io.mjs';
+import { readFileOrDie, extractPlanPaths, writeOutput, isAuditInfraFile, resolveInfraScope, atomicWriteFileSync } from './lib/file-io.mjs';
 import { formatFindings } from './lib/findings.mjs';
 import { readProjectContext, initAuditBrief } from './lib/context.mjs';
 import { azureConfig, finalReviewConfig, auditShadowConfig } from './lib/config.mjs';
@@ -46,7 +46,7 @@ import { sumUsage } from './lib/model-pricing.mjs';
 import { resolveAndClassify, classifyPath } from './lib/sensitive-paths.mjs';
 import { redactSecretsWithCount } from './lib/sensitive-egress-gate.mjs';
 import {
-  isReducedScope, isNonBlindScope, selectInScopeCodeFiles,
+  isReducedScope, isNonBlindScope, selectInScopeCodeFiles, resolveFinalReviewInfraScope, selectFinalReviewCodePaths,
 } from './lib/final-review/scope.mjs';
 import { buildReviewEnvelope } from './lib/final-review/envelope.mjs';
 import { serializePrimaryForGap } from './lib/final-review/gap-projection.mjs';
@@ -250,7 +250,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // byte-identical to the pre-extraction behaviour (plan KD-1: threaded as a
   // parameter, NOT as a second module-global — `_roleAddendum` already has a
   // documented non-reentrancy caveat and adding a consumer would compound it).
-  const { envelopeScope = 'full', primaryResult = null, roundBlock = '' } = options;
+  const { envelopeScope = 'full', primaryResult = null, roundBlock = '', allowInfraScope = false } = options;
   const reduced = isReducedScope(envelopeScope);
 
   // Parse transcript to extract code file paths for direct code inclusion
@@ -262,52 +262,22 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     transcript = { raw: transcriptContent };
   }
 
-  // Resolve the code-file set. `full` keeps the historical set verbatim;
-  // reduced scopes narrow to the in-scope diff, which is the set the review
-  // prompt's own rule 8 already restricts findings to — so the wider set was
-  // paying for tokens the scope filter then discards.
-  let codePaths = [];
-  let codeExcluded = null;
-  if (reduced) {
-    const sel = selectInScopeCodeFiles(
-      Array.isArray(transcript.changed_files) ? transcript.changed_files : [],
-      {
-        exists: (p) => { try { return statSync(p).isFile(); } catch { return false; } },
-        // resolveAndClassify, NOT classifyPath. `changed_files` is
-        // transcript-supplied, and this selector's output is read into a prompt
-        // that egresses to a third party — so a path named innocently but
-        // resolving through a symlink into (say) ~/.ssh must be caught. The
-        // lexical classifier matches the visible string only and would pass it
-        // (INC-001's class). This variant realpaths, re-classifies the canonical
-        // target, and fails CLOSED: a repo-escaping or unresolvable path throws
-        // or classifies sensitive, and either way we exclude it.
-        isSensitive: (p) => {
-          try {
-            return resolveAndClassify(p, { repoRoot: process.cwd() }).category === 'sensitive';
-          } catch {
-            return true; // unresolvable ⇒ sensitive. Never "couldn't classify, so allow".
-          }
-        },
-        // Cheap, name-only, never touches the filesystem — safe to call on a
-        // path that does not exist (an ordinary deletion), where the
-        // canonicalising check above would throw on realpath's ENOENT and
-        // fail-closed to "sensitive" for every deletion. See selectInScopeCodeFiles's
-        // docstring for why this split exists.
-        isSensitiveLexical: (p) => classifyPath(p) === 'sensitive',
-        isInfra: isAuditInfraFile,
-      },
-    );
-    codePaths = sel.files;
-    codeExcluded = sel.excluded;
-  } else if (transcript.code_files && Array.isArray(transcript.code_files)) {
-    const { found } = extractPlanPaths(planContent);
-    // Filter out audit-loop infrastructure files — they bleed into scope when
-    // consumer repos have synced copies of scripts/ and cause false findings.
-    codePaths = [...new Set([...found, ...transcript.code_files])].filter(f => !isAuditInfraFile(f));
-  } else {
-    // Fall back to extracting from plan (already filtered by extractPlanPaths)
-    codePaths = extractPlanPaths(planContent).found;
-  }
+  // Resolve the code-file set (final-review/scope.mjs owns the rules): `full` keeps the historical set, reduced scopes narrow to
+  // the in-scope diff. The bundle's own modules (`isAuditInfraFile`) are withheld only when the audit did not admit them: the
+  // reviewer inherits the audit's decision, so it never silently skips a file the audit was about (fleet p-…095b).
+  const infraScope = resolveFinalReviewInfraScope({ flag: allowInfraScope, transcript, repoRoot: process.cwd(), oracle: resolveInfraScope });
+  const { codePaths, codeExcluded } = selectFinalReviewCodePaths({
+    reduced, transcript, planContent, infraAdmitted: infraScope.admitted, extractPlanPaths,
+    deps: {
+      exists: (p) => { try { return statSync(p).isFile(); } catch { return false; } },
+      // resolveAndClassify, NOT classifyPath: `changed_files` is transcript-supplied and read into a prompt that egresses, so a
+      // path resolving through a symlink into ~/.ssh must be caught (INC-001). It realpaths and fails CLOSED.
+      isSensitive: (p) => { try { return resolveAndClassify(p, { repoRoot: process.cwd() }).category === 'sensitive'; } catch { return true; } },
+      // Name-only, never touches the filesystem: safe on a deleted path, where the canonicalising check would throw.
+      isSensitiveLexical: (p) => classifyPath(p) === 'sensitive',
+      isInfra: isAuditInfraFile,
+    },
+  });
   // The declared diff set drives the render's PRIORITY, not just its selection:
   // changed files are rendered whole before any budget is spent on ambient
   // context (code-render.mjs). Returns `{text, stats}` — the stats are what
@@ -417,6 +387,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     hunkEvidence: { base: hunks.base, evidence: hunks.evidence, reason: hunks.reason },
     redactions: scanned.redacted,
     codeExcluded,
+    infraScope,
     gapFindings: gapProjection
       ? { included: gapProjection.included, omitted: gapProjection.omitted }
       : null,
@@ -954,7 +925,7 @@ async function main() {
 
   // A typo'd flag must refuse, not run: `--rond 3` silently dropped is an UNCAPPED review.
   try { assertKnownFlags(args, REVIEW_FLAGS, { cli: 'gemini-review', from: 1 }); } catch (err) { console.error(`Error: ${err.message}`); process.exit(2); }
-  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role, envelopeScopeCli, campaignDigest, round: roundArg, priorPath } = parseReviewArgs(args);
+  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role, envelopeScopeCli, campaignDigest, round: roundArg, priorPath, allowInfraScope } = parseReviewArgs(args);
   // The 2-round cap is CODE: --round 3+ is refused before any provider is built.
   const roundCheck = validateRoundArgs({ round: roundArg, priorPath });
   const priorCheck = roundCheck.ok && priorPath ? parsePriorResult(readFileOrDie(priorPath)) : { ok: true, prior: null };
@@ -1040,7 +1011,7 @@ async function main() {
     // `--role adjudicator-only` routes through the sibling wrapper that
     // injects the role-specific system-prompt addendum; default (no --role)
     // is runReviewWithRetry, plus the settled-items block only on --round 2.
-    const roundOpts = prior ? { roundBlock: buildPriorRoundBlock(prior, round) } : {};
+    const roundOpts = { ...(prior ? { roundBlock: buildPriorRoundBlock(prior, round) } : {}), allowInfraScope };
     const r = role === 'adjudicator-only'
       ? await runAdjudicatorOnlyReview(provider, client, planContent, transcriptContent, projectContext, auditMode)
       : await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, null, roundOpts);

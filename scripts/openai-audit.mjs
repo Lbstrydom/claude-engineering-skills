@@ -43,7 +43,7 @@ import { FindingSchema, ProducerFindingSchema, WiringIssueSchema } from './lib/s
 import {
   safeInt, readFileOrDie, readFilesAsContext, readFilesAsAnnotatedContext,
   writeOutput, normalizePath, parseDiffFile, extractPlanPaths, classifyFiles,
-  isAuditInfraFile, auditSubjectFileGuard, resolveEffectiveScope
+  isAuditInfraFile, auditSubjectFileGuard, resolveEffectiveScope, resolveInfraScope
 } from './lib/file-io.mjs';
 import {
   generateTopicId, populateFindingMetadata, jaccardSimilarity,
@@ -647,7 +647,7 @@ async function main() {
   // IS a change to this audit tool's own infrastructure (schemas.mjs,
   // ledger.mjs, openai-audit.mjs, …). Default false — ordinary (consumer-code)
   // audits keep the isAuditInfraFile exclusion unchanged. See plan-paths.mjs.
-  const allowInfraScope = args.includes('--allow-infra-scope');
+  const allowInfraScope = resolveInfraScope({ flag: args.includes('--allow-infra-scope'), repoRoot: process.cwd() }).admitted;
 
   // --diff <file>: unified diff file — hunk windows in every round; R2+ also annotates changed lines
   const diffIdx = args.indexOf('--diff');
