@@ -354,6 +354,43 @@ describe('add, ready, touch, hold, waitingOn', () => {
     assert.equal(sessionRec(s.fx, 'w').waitingOn.find((x) => x.ref === 'louis').since, t1);
   });
 
+  it('touch --unwait drops exactly ONE wait inside the registry transaction, keeps the others\' age, and a wait added in between survives (D10, p-ae47)', () => {
+    const s = setup();
+    const t0 = '2026-10-10T08:00:00.000Z'; const t1 = '2026-10-12T09:30:00.000Z';
+    assert.equal(s.f(['claim', '--id', 'w', '--intent', 'wait', '--paths', 'w/**', '--waiting-on', 'human:account-switch', '--waiting-on', 'session:other:needs it'], { env: { FLEET_NOW: t0 } }).status, 0);
+    // Another command adds a wait AFTER a `handover receive` snapshot would have been taken ...
+    assert.equal(s.f(['touch', '--id', 'w', '--waiting-on', 'ci:run-9'], { env: { FLEET_NOW: t1 } }).status, 0);
+    // ... and the printed recipe then removes only the switch wait: nothing else is re-listed, so nothing can be lost.
+    const r = s.f(['touch', '--id', 'w', '--unwait', 'human:account-switch'], { env: { FLEET_NOW: '2026-10-13T00:00:00.000Z' } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const after = sessionRec(s.fx, 'w').waitingOn;
+    assert.deepEqual(after.map((x) => `${x.kind}:${x.ref}`), ['session:other', 'ci:run-9']);
+    assert.deepEqual(after.map((x) => x.since), [t0, t1], 'both kept their age');
+    assert.equal(after[0].note, 'needs it');
+  });
+  it('touch --unwait: a pair that matches nothing is reported, not an error; --json lists it under notWaiting', () => {
+    const s = setup();
+    s.f(['claim', '--id', 'w', '--intent', 'wait', '--paths', 'w/**', '--waiting-on', 'human:louis']);
+    const r = s.f(['touch', '--id', 'w', '--unwait', 'human:nobody', '--unwait', 'human:louis', '--json']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.deepEqual(r.json.notWaiting, ['human:nobody']);
+    assert.deepEqual(sessionRec(s.fx, 'w').waitingOn, []);
+    const text = s.f(['touch', '--id', 'w', '--unwait', 'human:gone']);
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /was not waiting on human:gone/);
+  });
+  it('touch --unwait: usage errors - with --clear-waiting, with a note, with a bad kind or an empty ref, and on commands that do not take it', () => {
+    const s = setup();
+    s.f(['claim', '--id', 'w', '--intent', 'wait', '--paths', 'w/**', '--waiting-on', 'human:louis']);
+    assert.equal(s.f(['touch', '--id', 'w', '--unwait', 'human:louis', '--clear-waiting']).status, 2);
+    assert.equal(s.f(['touch', '--id', 'w', '--unwait', 'human:louis:a note']).status, 2, 'a wait is identified by kind and ref');
+    assert.equal(s.f(['touch', '--id', 'w', '--unwait', 'bogus:x']).status, 2);
+    assert.equal(s.f(['touch', '--id', 'w', '--unwait', 'human:']).status, 2);
+    assert.equal(s.f(['touch', '--id', 'w', '--unwait', 'nocolon']).status, 2);
+    assert.equal(s.f(['ready', '--id', 'w', '--unwait', 'human:louis']).status, 2, 'only touch takes --unwait');
+    assert.deepEqual(sessionRec(s.fx, 'w').waitingOn.map((x) => x.ref), ['louis'], 'a usage error changes nothing');
+  });
+
   it('a session-kind waiting ref that is done or gone renders unblocked?, and human items sort first', () => {
     const s = setup();
     s.f(['claim', '--id', 'w', '--intent', 'wait', '--paths', 'w/**', '--waiting-on', 'session:vanished']);

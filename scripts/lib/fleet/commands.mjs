@@ -96,7 +96,7 @@ export function selfId(ctx, flags) {
 export const leaseIso = (ctx) => new Date(ctx.now.getTime() + leaseMsFrom(ctx.env)).toISOString();
 export const nowIso = (ctx) => ctx.now.toISOString();
 
-/** Validate `--waiting-on` / `--clear-waiting` into `{clear, adds}`. */
+/** Validate `--waiting-on` / `--clear-waiting` (and, for touch, `--unwait`) into `{clear, adds, removes}`. */
 function waitingFromFlags(flags, ctx) {
   const adds = (flags['--waiting-on'] ?? []).map((spec) => {
     const { kind, ref, note } = parseWaitingOn(spec);
@@ -104,7 +104,16 @@ function waitingFromFlags(flags, ctx) {
     if (!r.success) throw new ArgvError(`--waiting-on ${JSON.stringify(spec)}: ${r.error.issues.map((i) => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}`);
     return r.data;
   });
-  return { clear: Boolean(flags['--clear-waiting']), adds };
+  // --unwait kind:ref (D10): a wait is identified by kind and ref alone, so a note is a usage error, and so is combining it with --clear-waiting.
+  const removes = (flags['--unwait'] ?? []).map((spec) => {
+    const { kind, ref, note } = parseWaitingOn(spec);
+    if (note !== null) throw new ArgvError(`--unwait ${JSON.stringify(spec)}: a wait is identified by kind:ref - leave the note out`);
+    const r = WaitingOnSchema.safeParse({ kind, ref, since: nowIso(ctx) });
+    if (!r.success) throw new ArgvError(`--unwait ${JSON.stringify(spec)}: ${r.error.issues.map((i) => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}`);
+    return { kind, ref };
+  });
+  if (removes.length && flags['--clear-waiting']) throw new ArgvError('--unwait cannot be combined with --clear-waiting (the first drops named waits, the second drops all of them)');
+  return { clear: Boolean(flags['--clear-waiting']), adds, removes };
 }
 
 /**
@@ -114,6 +123,7 @@ function waitingFromFlags(flags, ctx) {
  */
 function applyWaiting(existing, w) {
   let list = w.clear ? [] : [...existing];
+  for (const r of w.removes ?? []) list = list.filter((x) => !(x.kind === r.kind && x.ref === r.ref));
   for (const a of w.adds) {
     const prior = existing.find((x) => x.kind === a.kind && x.ref === a.ref);
     list = list.filter((x) => !(x.kind === a.kind && x.ref === a.ref));
@@ -493,11 +503,17 @@ export function cmdTouch(ctx, flags) {
   const tx = transact(ctx.dir, (t) => {
     const cur = t.sessions.find((s) => s.id === id);
     if (!cur || isTerminalState(cur.state)) return { gone: true };
-    return { record: t.writeSession({ ...cur, rev: cur.rev + 1, waitingOn: applyWaiting(cur.waitingOn, waiting), leaseExpiresAt: leaseIso(ctx), updatedAt: nowIso(ctx) }) };
+    // Decided against the record read INSIDE the transaction, so a wait another command added a moment ago is still there to keep.
+    const notWaiting = waiting.removes.filter((r) => !cur.waitingOn.some((x) => x.kind === r.kind && x.ref === r.ref)).map((r) => `${r.kind}:${r.ref}`);
+    return { record: t.writeSession({ ...cur, rev: cur.rev + 1, waitingOn: applyWaiting(cur.waitingOn, waiting), leaseExpiresAt: leaseIso(ctx), updatedAt: nowIso(ctx) }), notWaiting };
   });
   if (!tx.ok) return lockFailed();
   if (tx.value.gone) return refused(`no live session ${id} — run \`${ctx.cmd} claim\` first`);
-  return ok({ id, record: tx.value.record, text: `touched: ${id} (lease until ${tx.value.record.leaseExpiresAt})` });
+  const { notWaiting } = tx.value;
+  return ok({
+    id, record: tx.value.record, ...(waiting.removes.length ? { notWaiting } : {}),
+    text: `touched: ${id} (lease until ${tx.value.record.leaseExpiresAt})${notWaiting.map((n) => `\nwas not waiting on ${n}`).join('')}`,
+  });
 }
 
 // ── hold / repair ───────────────────────────────────────────────────────────

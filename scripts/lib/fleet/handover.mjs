@@ -639,7 +639,7 @@ export function receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, w
   }
   for (const g of ghUnknown) out.push({ kind: 'gh', detail: ghUnknownLine(g) });
   for (const w of waits.filter((x) => x.onSwitch)) {
-    out.push({ kind: 'waiting-on-switch', detail: `${w.id} (${w.repo}) waits on the switch itself — unblock now: ${w.clear}${w.kept ? ` (clears every wait, then re-adds its ${w.kept} other wait(s), which keep their age)` : ' (clears its waits)'}` });
+    out.push({ kind: 'waiting-on-switch', detail: `${w.id} (${w.repo}) waits on the switch itself — unblock now: ${w.clear} (drops only that wait; every other wait is left as it is, with its age)` });
   }
   return out;
 }
@@ -753,11 +753,12 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
         if (!human.length) continue;
         const isSwitch = (w) => w.kind === 'human' && normaliseWaitRef(w.ref) === SWITCH_TOKEN;
         const onSwitch = human.some(isSwitch);
-        // `--clear-waiting` clears every wait, then `--waiting-on` re-adds: the command re-adds the session's OTHER
-        // waits in the same call, so only the switch wait goes (the re-added ones keep their `since`).
-        const keep = (x.waitingOn ?? []).filter((w) => !isSwitch(w));
-        const clear = onSwitch ? cliCommand(cli, ['touch', '--id', x.id, '--clear-waiting', ...keep.flatMap((w) => ['--waiting-on', `${w.kind}:${w.ref}${w.note ? `:${w.note}` : ''}`])]) : null;
-        waits.push({ repo: r.path, id: x.id, onSwitch, refs: human.map((w) => w.ref), ...(onSwitch ? { clear, kept: keep.length } : {}) });
+        // `touch --unwait kind:ref` drops exactly the switch wait(s), inside the registry transaction (plan D10). The recipe used to
+        // clear every wait and re-add a SNAPSHOT of the others, which lost any wait added between receive and the command. The
+        // ref is printed as STORED (the switch test folds case/spaces/`_`; the removal matches exactly, so these must agree).
+        const drop = (x.waitingOn ?? []).filter(isSwitch);
+        const clear = onSwitch ? cliCommand(cli, ['touch', '--id', x.id, ...drop.flatMap((w) => ['--unwait', `${w.kind}:${w.ref}`])]) : null;
+        waits.push({ repo: r.path, id: x.id, onSwitch, refs: human.map((w) => w.ref), ...(onSwitch ? { clear } : {}) });
       }
       for (const x of g.mergedUnreleased) mergedUnreleased.push({ repo: r.path, ...mergedUnreleasedEntry(x, cli) });
     } else if (dir && !fs.existsSync(dir) && r.sessions.length) liveUnknown.push({ repo: r.path, reason: 'fleet registry missing, but prepare recorded live sessions' });
