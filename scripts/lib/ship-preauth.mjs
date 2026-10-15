@@ -137,8 +137,9 @@ export function gatherChangedPaths(run, tree) {
   // Discovery and resolution are separate: once origin/HEAD NAMES the default branch, that branch's merge base is the only
   // acceptable base. Failing to resolve it is a failure, never a reason to try a different branch; the conventional
   // `origin/main` is consulted only when origin/HEAD itself is unavailable.
-  const authoritative = defaultRef ? defaultRef.replace(/^refs\/remotes\//, '') : null;
-  const base = out(['merge-base', 'HEAD', authoritative ?? 'origin/main']);
+  // FULLY QUALIFIED, never shortened: `origin/develop` can resolve to a LOCAL branch of that name (refs/heads/origin/develop is
+  // searched before refs/remotes/), whose merge base with HEAD is HEAD itself and would hide every change.
+  const base = out(['merge-base', 'HEAD', defaultRef || 'refs/remotes/origin/main']);
   if (!base || !tree) return null;
   const r = run(['diff', '--name-only', '--no-renames', '-z', base, tree]);
   if (!r || r.status !== 0) return null;

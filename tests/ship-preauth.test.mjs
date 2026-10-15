@@ -11,11 +11,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   evaluatePreauthorisedShip, isMigrationPath, isPolicyPath, isSensitivePath, gatherChangedPaths, renderPreauthConditions,
 } from '../scripts/lib/ship-preauth.mjs';
 import {
-  buildFinalReviewMarker, writeFinalReviewMarker, readFinalReviewMarker, FINAL_REVIEW_RELPATH,
+  buildFinalReviewMarker, writeFinalReviewMarker, readFinalReviewMarker, revokePreviousMarker, REVOKED_MARKER_TEXT, FINAL_REVIEW_RELPATH,
 } from '../scripts/lib/final-review-marker.mjs';
 import { formatTrailerBlock, composeFinalMessage, findReservedTrailers } from '../scripts/lib/commit-trailers.mjs';
 
@@ -173,12 +174,12 @@ describe('gatherChangedPaths', () => {
     const calls = [];
     const run = (args) => { calls.push(args.join(' ')); return { status: 1, stdout: '' }; };
     assert.equal(gatherChangedPaths(run, 'tree'), null);
-    assert.ok(calls.some((c) => c === 'merge-base HEAD origin/main'));
+    assert.ok(calls.some((c) => c === 'merge-base HEAD refs/remotes/origin/main'));
     assert.equal(calls.some((c) => c === 'merge-base HEAD main'), false, "a local main can differ from the remote's: an unverified base is a refusal, not a substitute");
     // ...and a local main that WOULD resolve is not consulted when the remote refs are unavailable:
     const onlyLocal = (args) => (args.join(' ') === 'merge-base HEAD main' ? { status: 0, stdout: 'deadbeef' } : { status: 1, stdout: '' });
     assert.equal(gatherChangedPaths(onlyLocal, 'tree'), null);
-    assert.equal(gatherChangedPaths(runner([['symbolic-ref', { status: 1 }], ['merge-base HEAD origin/main', { status: 0, stdout: 'b\n' }], ['diff', { status: 1 }]]), 'tree'), null, 'a failed diff is null, never []');
+    assert.equal(gatherChangedPaths(runner([['symbolic-ref', { status: 1 }], ['merge-base HEAD refs/remotes/origin/main', { status: 0, stdout: 'b\n' }], ['diff', { status: 1 }]]), 'tree'), null, 'a failed diff is null, never []');
     assert.equal(gatherChangedPaths(runner([['merge-base', { status: 0, stdout: 'b\n' }]]), null), null, 'no tree is null');
   });
 });
@@ -271,9 +272,11 @@ describe('AI-Ship-Authority trailer', () => {
   });
 });
 
-describe('final-review marker lifecycle fails closed (audit R2 H1/H3)', () => {
+describe('final-review marker lifecycle fails closed (audit R2 H1/H3, R3 H1/H4)', () => {
   const EV = { runId: RUN, auditedTree: TREE, round: 4 };
   const withDir = (fn) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'final-review-lc-')); try { return fn(d); } finally { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } };
+  const eperm = () => { throw Object.assign(new Error('locked'), { code: 'EPERM' }); };
+  const denied = (d) => evaluatePreauthorisedShip({ ...GOOD(), finalReview: readFinalReviewMarker(d) });
 
   it('APPROVE then REJECT for the same identity: the file now says REJECT and the ship check refuses', () => withDir((d) => {
     writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
@@ -288,7 +291,7 @@ describe('final-review marker lifecycle fails closed (audit R2 H1/H3)', () => {
     const w = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'CONCERNS', log: () => {}, adapters: { atomicWriteFileSync: () => { throw Object.assign(new Error('x'), { code: 'ENOSPC' }); } } });
     assert.deepEqual([w.written, w.reason], [false, 'write-failed']);
     assert.deepEqual(readFinalReviewMarker(d), { ok: false, reason: 'absent' });
-    assert.equal(evaluatePreauthorisedShip({ ...GOOD(), finalReview: readFinalReviewMarker(d) }).ok, false);
+    assert.equal(denied(d).ok, false);
   }));
 
   it('APPROVE then a review whose evidence cannot identify it: the old approval is removed too', () => withDir((d) => {
@@ -298,31 +301,84 @@ describe('final-review marker lifecycle fails closed (audit R2 H1/H3)', () => {
     assert.equal(readFinalReviewMarker(d).reason, 'absent');
   }));
 
-  it('a previous marker that cannot be removed is reported, not hidden', () => withDir((d) => {
+  it('END TO END: unlink fails with EPERM, so the old approval is overwritten with a tombstone and the replacement fails too: shipping is denied', () => withDir((d) => {
     writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
-    const w = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'REJECT', log: () => {}, adapters: { unlinkSync: () => { throw Object.assign(new Error('x'), { code: 'EPERM' }); } } });
-    assert.deepEqual([w.written, w.reason], [false, 'stale-marker-not-removable']);
+    assert.equal(denied(d).ok, true, 'precondition: the approval authorises');
+    const w = writeFinalReviewMarker({
+      repoRoot: d, evidence: EV, verdict: 'REJECT', log: () => {},
+      adapters: { unlinkSync: eperm, atomicWriteFileSync: () => { throw Object.assign(new Error('x'), { code: 'ENOSPC' }); } },
+    });
+    assert.deepEqual([w.written, w.reason], [false, 'write-failed']);
+    assert.deepEqual(readFinalReviewMarker(d), { ok: false, reason: 'malformed' }, 'the tombstone reads as a marker no consumer accepts');
+    assert.equal(denied(d).ok, false, 'a previous APPROVE can no longer authorise');
+  }));
+
+  it('unlink fails but the review CAN be recorded: the new verdict replaces the tombstone', () => withDir((d) => {
+    writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
+    const w = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'REJECT', log: () => {}, adapters: { unlinkSync: eperm } });
+    assert.equal(w.written, true);
+    assert.equal(readFinalReviewMarker(d).marker.verdict, 'REJECT');
+  }));
+
+  it('when the old marker can be neither deleted nor overwritten, the writer says so loudly and revoked is false (the caller must fail)', () => withDir((d) => {
+    writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
+    const logged = [];
+    const w = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'REJECT', log: (m) => logged.push(m), adapters: { unlinkSync: eperm, overwriteFileSync: eperm } });
+    assert.deepEqual([w.written, w.reason, w.revoked], [false, 'stale-marker-not-removable', false]);
+    assert.match(logged.join(''), /FATAL/);
+  }));
+
+  it('revokePreviousMarker: absent is fine, a transient EPERM is retried, a tombstone is what an in-place overwrite writes', () => withDir((d) => {
+    const f = path.join(d, 'm.json');
+    assert.deepEqual(revokePreviousMarker(f), { ok: true, how: 'absent' });
+    fs.writeFileSync(f, '{"x":1}');
+    let n = 0;
+    const flaky = (p) => { if (n++ < 1) throw Object.assign(new Error('busy'), { code: 'EBUSY' }); fs.unlinkSync(p); };
+    assert.deepEqual(revokePreviousMarker(f, { unlink: flaky }), { ok: true, how: 'removed' });
+    fs.writeFileSync(f, '{"x":1}');
+    assert.deepEqual(revokePreviousMarker(f, { unlink: eperm }), { ok: true, how: 'tombstoned' });
+    assert.equal(fs.readFileSync(f, 'utf8'), REVOKED_MARKER_TEXT);
   }));
 });
 
-describe('gatherChangedPaths: the authoritative default branch is never swapped for another (audit R2 H2/H4)', () => {
+describe('gatherChangedPaths: the authoritative default branch is never swapped for another (audit R2 H2/H4, R3 H2/H3)', () => {
   const seq = (table) => { const calls = []; const run = (args) => { calls.push(args.join(' ')); for (const [k, v] of table) if (args.join(' ').startsWith(k)) return v; return { status: 1, stdout: '' }; }; return { run, calls }; };
 
   it('origin/HEAD names develop but its merge base fails: null, and origin/main is NOT tried', () => {
-    const { run, calls } = seq([['symbolic-ref', { status: 0, stdout: 'refs/remotes/origin/develop\n' }], ['merge-base HEAD origin/develop', { status: 1, stdout: '' }], ['merge-base HEAD origin/main', { status: 0, stdout: 'abc\n' }], ['diff', { status: 0, stdout: 'a.mjs\0' }]]);
+    const { run, calls } = seq([['symbolic-ref', { status: 0, stdout: 'refs/remotes/origin/develop\n' }], ['merge-base HEAD refs/remotes/origin/develop', { status: 1, stdout: '' }], ['merge-base HEAD refs/remotes/origin/main', { status: 0, stdout: 'abc\n' }], ['diff', { status: 0, stdout: 'a.mjs\0' }]]);
     assert.equal(gatherChangedPaths(run, 'tree'), null);
-    assert.equal(calls.some((c) => c === 'merge-base HEAD origin/main'), false);
+    assert.equal(calls.some((c) => c.includes('origin/main')), false);
   });
 
-  it('origin/HEAD names develop and resolves: develop is the base', () => {
-    const { run, calls } = seq([['symbolic-ref', { status: 0, stdout: 'refs/remotes/origin/develop\n' }], ['merge-base HEAD origin/develop', { status: 0, stdout: 'dev1\n' }], ['diff', { status: 0, stdout: 'a.mjs\0' }]]);
+  it('origin/HEAD names develop and resolves: the FULLY QUALIFIED ref is the base', () => {
+    const { run, calls } = seq([['symbolic-ref', { status: 0, stdout: 'refs/remotes/origin/develop\n' }], ['merge-base HEAD refs/remotes/origin/develop', { status: 0, stdout: 'dev1\n' }], ['diff', { status: 0, stdout: 'a.mjs\0' }]]);
     assert.deepEqual(gatherChangedPaths(run, 'tree'), ['a.mjs']);
     assert.ok(calls.includes('diff --name-only --no-renames -z dev1 tree'));
   });
 
-  it('origin/HEAD unavailable: origin/main is the only fallback', () => {
-    const { run, calls } = seq([['merge-base HEAD origin/main', { status: 0, stdout: 'm1\n' }], ['diff', { status: 0, stdout: 'a.mjs\0' }]]);
+  it('origin/HEAD unavailable: the fully qualified origin/main is the only fallback', () => {
+    const { run, calls } = seq([['merge-base HEAD refs/remotes/origin/main', { status: 0, stdout: 'm1\n' }], ['diff', { status: 0, stdout: 'a.mjs\0' }]]);
     assert.deepEqual(gatherChangedPaths(run, 'tree'), ['a.mjs']);
-    assert.ok(calls.includes('merge-base HEAD origin/main'));
+    assert.ok(calls.includes('merge-base HEAD refs/remotes/origin/main'));
+  });
+
+  it('REAL REPO: a LOCAL branch named origin/develop does not hide the PR (the shortened name would resolve to it)', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'preauth-refs-'));
+    try {
+      const git = (...args) => { const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' }); assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+      git('init', '-q', '-b', 'main');
+      git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('config', 'commit.gpgsign', 'false');
+      fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); git('add', '-A'); git('commit', '-q', '-m', 'base');
+      const base = git('rev-parse', 'HEAD');
+      git('update-ref', 'refs/remotes/origin/develop', base);                       // the remote's default branch
+      git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/develop');
+      git('checkout', '-q', '-b', 'feature');
+      fs.writeFileSync(path.join(repo, 'CODEOWNERS'), '* @x\n'); git('add', '-A'); git('commit', '-q', '-m', 'policy change');
+      git('branch', 'origin/develop', 'HEAD');                                       // the collision: local refs/heads/origin/develop AT HEAD
+      const run = (args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+      // The instrument is real: the shortened name DOES resolve to the local branch, so its merge base is HEAD (empty diff).
+      assert.equal(git('merge-base', 'HEAD', 'origin/develop'), git('rev-parse', 'HEAD'), 'the collision must exist, or this test proves nothing');
+      assert.deepEqual(gatherChangedPaths(run, 'HEAD'), ['CODEOWNERS']);
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
