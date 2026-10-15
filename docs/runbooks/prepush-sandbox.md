@@ -64,7 +64,10 @@ Only a caller that *promised* the evidence gets the strict reading.
 
 The first thing the sandbox caught was `skills.manifest.json` breaking its own
 Category-B contract (a committed artifact must be a byte-identical function of
-committed source — see the generated-artifact policy in AGENTS.md).
+committed source — see the generated-artifact policy in AGENTS.md). The manifest
+is Category A and untracked since 2026-10-15; the lesson below is unchanged, and
+still governs every artifact that hashes files (`bundleVersion` is built the same
+way at release time).
 
 16 skill files carried CRLF in the local working tree while `.gitattributes`
 pins `eol=lf`. Git reports such files as **CLEAN**, so nothing locally looked

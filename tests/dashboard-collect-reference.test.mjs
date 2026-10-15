@@ -45,9 +45,9 @@ describe('collectReference — skills source (consumer path)', () => {
     );
     assert.ok(ref.skills.length > 0, 'skills list must be non-empty');
 
-    // Sentinel authority: skills.manifest.json, the committed inventory, itself
-    // freshness-gated by `npm run skills:check` — so this cannot go stale without
-    // an existing gate failing first.
+    // Sentinel authority: skills/ship/SKILL.md, the committed source the skills index
+    // reads — `ship` is one of the skills this repo cannot lose without every other
+    // gate (skills:check, the roster docs) failing first.
     assert.ok(
       ref.skills.some((s) => s.name === 'ship'),
       `sentinel skill "ship" missing from: ${ref.skills.map((s) => s.name).join(', ')}`,
