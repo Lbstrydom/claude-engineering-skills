@@ -4,6 +4,7 @@
  */
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { cleanupFleetRoots, runFleetAsync } from './helpers/fleet-repo.mjs';
 import { T0_PLUS_2H, deadPid, tokenOf, world } from './helpers/fleet-lease-world.mjs';
 
@@ -114,3 +115,68 @@ describe('the token fence', () => {
   });
 });
 
+
+describe('journal, waiting and the announce refusal through the real CLI (plan fleet-lease-turns-and-journal)', () => {
+  it('a refused acquire is persisted: exit 3, the repo is queued, and `lease log` shows the episode in words', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'acquire', '--for', '30']).status, 0);
+    const refused = w.runB(['lease', 'acquire', '--for', '10']);
+    assert.equal(refused.status, 3, refused.stdout);
+    assert.match(refused.stdout, /This repo is now waiting for the slot/);
+    const file = w.read();
+    assert.equal(file.waiters.length, 1);
+    assert.equal(file.waiters[0].refusals, 1);
+    w.runB(['lease', 'acquire', '--for', '10']);
+    assert.equal(w.read().waiters[0].refusals, 2, 'a repeat refusal bumps the count');
+    assert.equal(w.read().journal.filter((e) => e.kind === 'waiting').length, 1, 'and adds no journal entry');
+    const log = w.runB(['lease', 'log']);
+    assert.equal(log.status, 0, log.stdout + log.stderr);
+    assert.match(log.stdout, /acquired the slot \(granted\)/);
+    assert.match(log.stdout, /started waiting \(refusal, held/);
+    const status = w.runB(['lease', 'status']);
+    assert.match(status.stdout, /waiting: .* \(2 refusals, wants 10m\)/);
+    assert.equal(w.runB(['lease', 'wait', '--cancel']).status, 0);
+    assert.equal(w.read().waiters.length, 0);
+    assert.match(w.runB(['lease', 'log']).stdout, /stopped waiting: cancelled/);
+  });
+
+  it('announce refuses a window over another repo\'s held slot (exit 3, names holder and expiry); --over-held records it acknowledged', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'acquire', '--for', '40']).status, 0);
+    const refused = w.runB(['lease', 'announce', '--kind', 'ci', '--until', '+30m']);
+    assert.equal(refused.status, 3, refused.stdout);
+    assert.match(refused.stdout, /held by main \(.*\) for gate until 20:40Z/);
+    assert.equal(w.read().windows.length, 0, 'nothing was announced');
+    assert.equal(w.read().journal.at(-1).kind, 'refused');
+    const over = w.runB(['lease', 'announce', '--kind', 'ci', '--until', '+30m', '--over-held']);
+    assert.equal(over.status, 0, over.stdout + over.stderr);
+    assert.match(over.stdout, /recorded OVER the slot held by main/);
+    assert.equal(w.read().windows[0].overHeld.holder, 'main');
+  });
+
+  it('wait queues the repo; log reports an empty journal honestly; flags that do not belong are refused', () => {
+    const w = world();
+    assert.match(w.runA(['lease', 'log']).stdout, /journal: empty/);
+    const wt = w.runB(['lease', 'wait', '--for', '45', '--note', 'full suite']);
+    assert.equal(wt.status, 0, wt.stdout + wt.stderr);
+    assert.match(wt.stdout, /waiting since/);
+    assert.equal(w.read().waiters[0].forMin, 45);
+    assert.equal(w.runB(['lease', 'wait', '--kind', 'gate']).status, 2);
+    assert.equal(w.runB(['lease', 'log', '--limit', '0']).status, 2);
+    assert.equal(w.runB(['lease', 'wait', '--cancel', '--for', '5']).status, 2);
+    const json = JSON.parse(w.runB(['lease', 'log', '--json']).stdout);
+    assert.equal(json.measure.measured, true);
+    assert.equal(json.measure.waits[0].open, true);
+  });
+
+  it('an older checkout\'s lease (no journal, no waiters) is read and extended without complaint', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'acquire']).status, 0);
+    const f = w.read();
+    delete f.journal; delete f.waiters;
+    fs.writeFileSync(w.leaseFile, JSON.stringify(f, null, 2));
+    assert.equal(w.runB(['lease', 'status']).status, 0);
+    assert.equal(w.runA(['lease', 'release']).status, 0);
+    assert.equal(w.read().journal.at(-1).kind, 'released');
+  });
+});
