@@ -170,7 +170,7 @@ async function cmdCiVerdict() {
     out.write(`rerun: ${r.rerun.rerun} - ${r.rerun.detail}\n`);
     if (r.rerun.proposal) out.write(`proposal: ${r.rerun.proposal}\n`);
   }
-  return flakeExit(r.verdict, r.rerun ?? null, { ...CI_VERDICT_EXIT, error: EXIT.error });
+  return flakeExit(r.verdict, r.rerun ?? null, { ...CI_VERDICT_EXIT, error: EXIT.error }, r.attempt ?? 1);
 }
 
 /**
@@ -244,7 +244,9 @@ async function flakeVerdict({ run, pr }) {
   } catch (err) {
     outcome = { rerun: 'indeterminate', detail: `the reservation could not be processed (${err.message}); nothing further was sent`, proposal: null };
   }
-  return { ...v, rerun: outcome };
+  // A failed attempt 2+ is the re-run's own result: say so beside whatever the reservation reports.
+  if (v.verdict === 'failed' && judged.run_attempt !== 1) outcome = { ...outcome, detail: `already re-run once: attempt ${judged.run_attempt} failed too (${outcome.detail})` };
+  return { ...v, attempt: judged.run_attempt, rerun: outcome };
 }
 
 async function main() {

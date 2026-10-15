@@ -192,17 +192,19 @@ export function gatherFlakeEvidence({ run, nwo, judged, pr, readTree, readHeavy 
 // ── Reservation + mutation ──────────────────────────────────────────────────
 
 /**
- * The CLI's exit code, pure. Only a FAILED verdict takes its exit from the re-run outcome (accepted: wait, 3; refused or
- * ineligible: the failure stands, 4; indeterminate: 1, a human decides). Any other verdict keeps its own exit, so a run
- * that passed after a re-run is green (0) whatever the reservation still has to report.
+ * The CLI's exit code, pure. Only a FAILED verdict on ATTEMPT 1 takes its exit from the re-run outcome (accepted: wait,
+ * 3; refused or ineligible: the failure stands, 4; indeterminate: 1, a human decides). A failed attempt 2 or later is the
+ * re-run's own terminal result: it stays failed (4) whatever the reservation reports, never pending. Any other verdict
+ * keeps its own exit, so a run that passed after a re-run is green (0).
  * @param {string} verdict
  * @param {{rerun: string}|null} outcome
  * @param {{full: number, notYet: number, failed: number, error: number}} exits
+ * @param {number|null} [attempt] the judged run's attempt
  */
-export function flakeExit(verdict, outcome, exits) {
+export function flakeExit(verdict, outcome, exits, attempt = 1) {
   if (verdict === 'full') return exits.full;
   if (verdict !== 'failed') return exits.notYet;
-  if (!outcome) return exits.failed;
+  if (!outcome || attempt !== 1) return exits.failed;
   return { accepted: exits.notYet, indeterminate: exits.error }[outcome.rerun] ?? exits.failed;
 }
 

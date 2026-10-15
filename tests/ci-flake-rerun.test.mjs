@@ -361,6 +361,8 @@ describe('audit round 1 regressions', () => {
     assert.equal(flakeExit('failed', { rerun: 'rejected' }, X), 4);
     assert.equal(flakeExit('failed', { rerun: 'ineligible' }, X), 4);
     assert.equal(flakeExit('failed', { rerun: 'indeterminate' }, X), 1);
+    assert.equal(flakeExit('failed', { rerun: 'accepted' }, X, 2), 4, 'a failed RE-RUN is terminal: failed, never pending');
+    assert.equal(flakeExit('failed', { rerun: 'indeterminate' }, X, 2), 4);
   });
 
   test('the real transition: "dispatching" is on disk BEFORE the GitHub call, and a crash during it never re-sends', async () => {
