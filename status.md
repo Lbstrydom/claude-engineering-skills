@@ -223,6 +223,13 @@
 - **Retrieval**: the pre-push hook ran the full `check` in a clean-checkout sandbox of exactly this sha on a plain push: 20,110 tests, 20,064 pass, 0 fail, 46 skipped; `test-tier/v1 full 344fa6a0ac9f1d0de862a91987998b2bab08ba3f skipped=0 base=4f88483e7d3b3d51e242d1bb1372ea06a3f75ed3 reason=default`; status-log-integrity conserved against 4f88483e.
 - **Result**: pushed commit verified by the gate; supersedes the e14ed8e8 note for this PR. Synced consumer bundle unverified (blocked: not merged): after the merge and a re-sync, check `lib/fleet/lease.mjs` and `lease-cmd.mjs` arrive (sync-isolation-verify in each consumer's MAIN checkout).
 
+### Consumer Verification (previous ship)
+
+<!-- ship-verification-513108cf-20261015T114620Z.md -->
+- **Commit**: 513108cf39a004bcb546b589a51036bc70eb473b on fix/read-bounded-lines-double-close (PR #254), merged as f15b2294 after the GitHub full-suite check passed (10m48s, run 38728290598).
+- **Retrieval**: pushed with guards:preflight (33 steps PASS) then --no-verify under Louis's 2026-10-15 CES push rule; the test verdict is the required GitHub full-suite on the PR head, not a local run.
+- **Result**: pushed commit verified by CI. The synced consumer bundle is unverified (blocked: storyline's quiet window 12:00Z-19:00Z+ forbids the sync). After 'quiet over': npm run sync, then in each consumer's MAIN checkout run node scripts/.claude-skills/lib/sync-isolation-verify.mjs and confirm security-triage.mjs carries fd: fh.
+
 ## 2026-10-15 — `fleet lease run`: one protocol for acquire / wait / attach / release; `sync:pr` runs under it; `touch --clear-waiting` keeps waits' age (PR 3 of the fleet-lease theme, #257)
 
 **Why.** Two incidents had one cause, a caller getting the lease protocol wrong: a wrapper that ignored a REFUSED acquire and ran the command anyway (2026-10-14 12:30Z), and a `timeout` wrapper that SIGTERMed the push it was protecting (2026-10-15 00:13Z). `sync:pr` also ran each consumer's pre-push hook without holding the machine slot at all.
@@ -237,6 +244,20 @@
 - **Consumer impact**: `skills/fleet/**` and `scripts/sync-pr.mjs` / `scripts/lib/sync-pr*.mjs` are in the sync closure; consumers get `lease run` and a leased `sync:pr` after the next sync of `main`. An older checkout reads the shared lease file unchanged.
 - **Open**: PR 4 (p-20261015091934-3c6d: `lease release --end-turn` must not hand the repo's turn away while same-repo jobs wait; downgrade-and-warn, not refuse) after 20:00 local.
 - Backlog 2026-10-15T12:49Z: Q1 283c/89p (+426 aged) · Q2 166c/103p (54 perm) · Q3 35 · debt 375 cloud/4 local (0 spilled) · upstream 0
+
+## 2026-10-15 — merge friction: stop committing `skills.manifest.json`, drop the plans-index counts, harden `release.yml` (PR 1 of the fleet-chips theme, #256)
+
+**Why.** GitHub computes mergeability itself and ignores `.gitattributes` merge drivers, and a CONFLICTING PR gets no `pull_request` workflow run, so no `full-suite` verdict (#250). Replaying every merge of main into the PR branches of #236-#253 with `git merge-tree` (measured 2026-10-15): 13 of 16 conflicted. `skills.manifest.json` conflicted 9 times, every one on the `bundleVersion` line; `docs/plans/README.md` 8 times, every one on the summary counts line; `status.md` twice. The fix has to remove the conflict at the source, not resolve it.
+
+- **Manifest**: `skills.manifest.json` is no longer committed. Nothing reads a committed copy (the installer that did is retired; `release.yml` runs `build-manifest.mjs` itself before it reads `bundleVersion`). It is ignored under `Category: A`, `skills:regenerate`/`skills:check` no longer carry it, and `build-manifest.mjs --check` still verifies whichever file it is pointed at (requirement REQ-correctness-5dc3ed1e pins it). The `skills-check-authenticates-manifest-content` poison pill went with it, and the pinned list in `tests/gate-poison-pills.test.mjs` says so.
+- **Plans index**: `docs/plans/README.md` carries no count of any kind (the top line and every `Show all N ...` summary). `plans:index` prints the counts on stdout (`countsSummary`). `--check` returns instead of `process.exit(0)` and treats only ENOENT as a missing index; the stdout-flush baseline ratchets down one site (211 to 210).
+- **`release.yml`** (folded in, finding p-20261015060428-86c5): the tarball and checksum steps named `scripts/check-skill-updates.mjs`, deleted long ago, and the checksum step skipped any missing script silently. Now every input is required, the dispatch tag is passed as data and validated as a whole value (a multi-line input containing one valid tag line used to pass `grep -E`), and the tag reaches the script through the environment.
+- **Policy**: `AGENTS.md` and `docs/reference/gitignore-policy.md` record the manifest as Category A (a build output whose committed copy has no reader), and say the plans index stays B with no counts.
+- **Red first**: `tests/merge-friction.test.mjs` builds two branches (one adds an active plan, the other a terminal one, so the counts diverge) and replays the merge: red against the old generator, green now, with a negative control that re-injects the counts line, and the merged index byte-checked by the generator's own `--check`. `tests/release-pack-dry-run.test.mjs` runs the workflow's own tag, checksum and `tar` steps from the YAML in a scratch checkout: 4 of 7 red against the original `release.yml`, and the multi-line tag case red against the `grep` form.
+- **Audit**: `/audit-code --scope diff`, 4 rounds. R1 H:6 M:6 L:1 (9 fixed, 3 release-design deferrals, 1 dismissed as a later cluster's file); R2 H:1 M:2 (a real bypass of my own tag check, fixed); R3 and R4 (over the whole PR diff) PASS with H:0 M:0 L:0. Gemini APPROVE, 0 blocking, 0 debt. `/audit-plan` before it: 3 GPT rounds (10 of 10 accepted) and Gemini APPROVE.
+- **Deferred**: `workflow_dispatch` checks out the selected ref rather than the typed tag, and the tarball is neither checksummed nor signed (release-design decisions): debt-captured in the store and proposal p-20261015063612-896b. `status.md` per-entry files: proposal p-20261015060430-76b2, to plan if `status.md` conflicts in 3 or more of the next 20 CES PRs.
+- **Not self-shipped**: the PR edits `.github/workflows/release.yml`, which the plan treats as repo policy, so Louis typed `/ship` (the launch prompt pre-authorised a self-ship only when no GitHub settings change). `guards:preflight` PASS at e6e97901; `full-suite` SUCCESS on that head before this entry; the push of this entry follows storyline's quiet window.
+- Backlog 2026-10-15T12:49Z: Q1 283c/89p (+426 aged) · Q2 166c/103p (54 perm) · Q3 35 · debt 375 cloud/3 local (0 spilled) · upstream 0
 
 ## 2026-10-15 — security-triage: `readBoundedLines` closes its descriptor exactly once (#254)
 

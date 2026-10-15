@@ -42,24 +42,41 @@ jobs:
 
       - name: Determine tag
         id: tag
+        # The dispatch input is DATA: it reaches the shell through the environment, never by interpolating the
+        # expression into the script text (a value like `v1.0.0$(id)` would otherwise run), and it is validated before
+        # any later step reads it.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
           else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            TAG="${GITHUB_REF#refs/tags/}"
           fi
+          # The WHOLE value must match: `[[ =~ ]]` anchors on the string, where `grep -E` anchors on each LINE and would
+          # accept `v1.2.3<newline>tag=v9.9.9` because one of its lines is a valid tag.
+          TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$'
+          if ! [[ "$TAG" =~ $TAG_RE ]]; then
+            echo "refusing release tag that is not vMAJOR.MINOR.PATCH[-suffix]" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Build manifest
         run: node scripts/build-manifest.mjs
 
       - name: Build checksums
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           node -e "
           import fs from 'fs';
           import crypto from 'crypto';
           import path from 'path';
 
-          const tag = '${{ steps.tag.outputs.tag }}';
+          const tag = process.env.RELEASE_TAG;
+          if (!tag) throw new Error('RELEASE_TAG is not set');
           const manifest = JSON.parse(fs.readFileSync('skills.manifest.json', 'utf-8'));
           const files = {};
 
@@ -72,15 +89,14 @@ jobs:
           // Hash key scripts
           const scriptPaths = [
             'scripts/install-skills.mjs',
-            'scripts/check-skill-updates.mjs',
             'scripts/build-manifest.mjs',
             'skills.manifest.json',
           ];
+          // Every listed path is REQUIRED: readFileSync throws on a missing one, so a renamed or deleted script fails
+          // the release instead of being silently dropped from checksums.json (it was: check-skill-updates.mjs).
           for (const sp of scriptPaths) {
-            if (fs.existsSync(sp)) {
-              const content = fs.readFileSync(sp);
-              files[sp] = 'sha256-' + crypto.createHash('sha256').update(content).digest('hex');
-            }
+            const content = fs.readFileSync(sp);
+            files[sp] = 'sha256-' + crypto.createHash('sha256').update(content).digest('hex');
           }
 
           const checksums = {
@@ -95,7 +111,7 @@ jobs:
           " --input-type=module
 
       - name: Create skills bundle tarball
-        run: tar -czf skills-bundle.tar.gz skills/ scripts/install-skills.mjs scripts/check-skill-updates.mjs skills.manifest.json
+        run: tar -czf skills-bundle.tar.gz skills/ scripts/install-skills.mjs skills.manifest.json
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2

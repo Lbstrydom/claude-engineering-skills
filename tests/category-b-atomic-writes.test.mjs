@@ -9,7 +9,8 @@
  * then fails on a file the repo itself corrupted. `atomicWriteFileSync`
  * (temp + rename in the same directory) makes the replacement all-or-nothing.
  *
- * An audit flagged ONE of these (`skills.manifest.json`). Censusing the class
+ * An audit flagged ONE of these (`skills.manifest.json`, since moved to Category A: untracked, see
+ * docs/plans/fleet-chips-and-merge-friction.md; its writer stays atomic and is checked below). Censusing the class
  * found FOUR non-atomic writers against a fifth (`requirements.mjs`) that had
  * always been correct — which is the whole reason this test exists: the fix was
  * never "add a temp file to build-manifest", it was "make the rule uniform and
@@ -36,7 +37,6 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '..');
  * Adding a generator for a new committed artifact means adding it here.
  */
 const CATEGORY_B_WRITERS = [
-  ['scripts/build-manifest.mjs', 'skills.manifest.json'],
   ['scripts/generate-plans-index.mjs', 'docs/plans/README.md'],
   ['scripts/regenerate-skill-copies.mjs', '.claude/skills/**'],
   ['scripts/postgres-parity/generate-expected-schema.mjs', 'tests/fixtures/expected-schema.json'],
@@ -61,6 +61,11 @@ for (const [writer, artifact] of CATEGORY_B_WRITERS) {
     );
   });
 }
+
+test('scripts/build-manifest.mjs still writes its (Category-A) manifest atomically', () => {
+  const code = fs.readFileSync(path.join(REPO_ROOT, 'scripts/build-manifest.mjs'), 'utf-8').replace(/^\s*(\/\/|\*|\/\*).*$/gm, '');
+  assert.ok(/atomicWriteFileSync\s*\(/.test(code), 'a torn write of the local manifest would break the next --check and the release build');
+});
 
 test('atomicWriteFileSync actually replaces content in place', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-atomic-'));

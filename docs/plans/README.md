@@ -10,8 +10,6 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**18 active · 253 terminal · 38 audit summaries · 1 parked · 5 reference docs**
-
 ---
 
 ## Active
@@ -27,6 +25,7 @@ This is the list to read when asking "what is in flight?".
 | [The dashboard's debt queue treats "no local cache" as an expected absence](./dashboard-debt-sandbox-absence.md) | `In Progress` | implemented on `fix/dashboard-debt-sandbox-absence`; under /audit-code |
 | [Tech-Debt Ledger — One File Per Entry (merge conflict-free by construction)](./debt-ledger-per-entry-files.md) | `In Progress` |  |
 | [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `In Progress` | implemented on `fix/debt-readers-ask-store`; under /audit-code |
+| [Fleet chips & merge friction — conflict-free generated files, a standard chip preamble with a coded ship check, one recorded CI-flake re-run, and a harder handover](./fleet-chips-and-merge-friction.md) | `In Progress` |  |
 | [fleet lease — announce race, transition journal, turns, gaps, sync:pr on the lease](./fleet-lease-turns-and-journal.md) | `In Progress` |  |
 | [fleet prune evidence reaches a person (upstream 56773c7c)](./fleet-prune-surfacing.md) | `In Progress` |  |
 | [fleet — catch abandoned worktree work regularly, and remove account-switch friction](./fleet-unclaimed-work-and-switch-friction.md) | `Draft` |  |
@@ -69,7 +68,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 250 completed plans</summary>
+<summary>Show all completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -332,7 +331,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 38 audit summaries</summary>
+<summary>Show all audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
@@ -383,7 +382,7 @@ Files in `docs/plans/` with no `Status:` line — contract matrices,
 inventories, and notes rather than plans.
 
 <details>
-<summary>Show all 5 reference documents</summary>
+<summary>Show all reference documents</summary>
 
 | Plan | Notes |
 |---|---|
