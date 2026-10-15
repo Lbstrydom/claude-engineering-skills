@@ -26,6 +26,13 @@ import { RUN_ID_RE, TREE_ID_RE } from './commit-trailers.mjs';
 /** Relative location of the final-review marker — one constant for the writer and every reader. */
 export const FINAL_REVIEW_RELPATH = path.join('.audit', 'last-final-review.json');
 
+/**
+ * The revocation sidecar. CREATING a new file succeeds in cases where deleting or overwriting an existing one does not (a scanner
+ * or another process holds THAT file), so when the marker itself cannot be revoked the writer drops this beside it, and the reader
+ * refuses while it exists. A successful write of a new marker removes it again.
+ */
+export const REVOKED_SIDECAR_RELPATH = path.join('.audit', 'last-final-review.revoked');
+
 const FINAL_REVIEW_VERDICTS = new Set(['APPROVE', 'CONCERNS', 'CONCERNS_REMAINING', 'REJECT']);
 
 /**
@@ -52,15 +59,19 @@ export const REVOKED_MARKER_TEXT = '{"revoked":true}\n';
  * it cannot be deleted, overwrite it IN PLACE with a tombstone. In-place writes succeed in cases where unlink and rename do not.
  * Only when both fail is the previous marker left standing, and then the caller is told.
  *
- * @returns {{ok: true, how: 'absent'|'removed'|'tombstoned'} | {ok: false, code: string}}
+ * @returns {{ok: true, how: 'absent'|'removed'|'tombstoned'|'sidecar'} | {ok: false, code: string}}
  */
-export function revokePreviousMarker(filePath, { unlink = fs.unlinkSync, overwrite = fs.writeFileSync } = {}) {
+export function revokePreviousMarker(filePath, { unlink = fs.unlinkSync, overwrite = fs.writeFileSync, sidecarPath = null, create = fs.writeFileSync } = {}) {
   try { retrySync(() => unlink(filePath)); return { ok: true, how: 'removed' }; } catch (e) {
     if (e && e.code === 'ENOENT') return { ok: true, how: 'absent' };
   }
-  try { retrySync(() => overwrite(filePath, REVOKED_MARKER_TEXT)); return { ok: true, how: 'tombstoned' }; } catch (e) {
-    return { ok: false, code: e?.code || e?.name || 'Error' };
+  let code;
+  try { retrySync(() => overwrite(filePath, REVOKED_MARKER_TEXT)); return { ok: true, how: 'tombstoned' }; } catch (e) { code = e?.code || e?.name || 'Error'; }
+  // Last resort: a NEW file beside it, which the reader treats as a standing revocation.
+  if (sidecarPath) {
+    try { retrySync(() => create(sidecarPath, `${JSON.stringify({ revokedAt: new Date().toISOString() })}\n`)); return { ok: true, how: 'sidecar' }; } catch { /* fall through */ }
   }
+  return { ok: false, code };
 }
 
 /**
@@ -76,19 +87,25 @@ export function writeFinalReviewMarker({ repoRoot, evidence, verdict, log = (m) 
   // FAIL CLOSED: a review that is about to be recorded (or that cannot be) supersedes whatever was recorded before, so the old
   // marker is revoked FIRST. Otherwise a failed replacement leaves a previous APPROVE readable beside a newer CONCERNS/REJECT that
   // never got written, and a pre-authorised ship would read that stale approval for the same run, tree and round.
-  const revoked = revokePreviousMarker(filePath, { unlink, overwrite: adapters.overwriteFileSync || fs.writeFileSync });
+  const sidecarPath = path.join(repoRoot, REVOKED_SIDECAR_RELPATH);
+  const revoked = revokePreviousMarker(filePath, { unlink, overwrite: adapters.overwriteFileSync || fs.writeFileSync, sidecarPath, create: adapters.createFileSync || fs.writeFileSync });
   if (!revoked.ok) {
     // Neither deleting nor overwriting worked (a lock another process holds). The previous approval may still read as current.
     // The CALLER must treat this as FATAL to the review lifecycle (exit non-zero, tell the user): there is nothing left here to
     // make the ship check refuse, and pretending otherwise would be the fail-open this function exists to prevent.
-    log(`  [final-review-marker] FATAL: the previous marker could be neither removed nor revoked (${revoked.code}) — an earlier approval may still be readable; do not ship pre-authorised\n`);
+    log(`  [final-review-marker] FATAL: the previous marker could be removed, overwritten or shadowed by a revocation file by none of the three (${revoked.code}) — an earlier approval may still be readable; do not ship pre-authorised\n`);
     return { written: false, reason: 'stale-marker-not-removable', revoked: false, filePath };
   }
   const payload = buildFinalReviewMarker({ evidence, verdict, nowIso });
   if (!payload) return { written: false, reason: 'evidence-cannot-identify-the-review' };
   try {
     write(filePath, JSON.stringify(payload, null, 2));
-    return { written: true, payload, filePath };
+    // A standing revocation belongs to the marker it shadowed; the new one supersedes it. If it cannot be removed the reader keeps
+    // refusing (fail closed), and the result says so.
+    let sidecarStuck = false;
+    try { retrySync(() => unlink(sidecarPath)); } catch (e) { if (e && e.code !== 'ENOENT') sidecarStuck = true; }
+    if (sidecarStuck) log('  [final-review-marker] the revocation file from an earlier failure could not be removed: the ship check will keep refusing until it is deleted\n');
+    return { written: true, payload, filePath, ...(sidecarStuck ? { sidecarStuck: true } : {}) };
   } catch (err) {
     log(`  [final-review-marker] write failed (${err?.code || err?.name || 'Error'}) — a pre-authorised ship will read the review as unrecorded\n`);
     return { written: false, reason: 'write-failed', payload, filePath };
@@ -101,6 +118,10 @@ export function writeFinalReviewMarker({ repoRoot, evidence, verdict, log = (m) 
  * @returns {{ok: true, marker: {runId: string, auditedTree: string, round: number, verdict: string, ts: string}} | {ok: false, reason: 'absent'|'unreadable'|'malformed'}}
  */
 export function readFinalReviewMarker(repoRoot, { fsMod = fs } = {}) {
+  // A standing revocation outranks any marker beside it.
+  try { fsMod.readFileSync(path.join(repoRoot, REVOKED_SIDECAR_RELPATH), 'utf-8'); return { ok: false, reason: 'revoked' }; } catch (e) {
+    if (!(e && e.code === 'ENOENT')) return { ok: false, reason: 'unreadable' };
+  }
   let raw;
   try {
     raw = fsMod.readFileSync(path.join(repoRoot, FINAL_REVIEW_RELPATH), 'utf-8');

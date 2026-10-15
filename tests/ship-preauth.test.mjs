@@ -16,7 +16,7 @@ import {
   evaluatePreauthorisedShip, isMigrationPath, isPolicyPath, isSensitivePath, gatherChangedPaths, renderPreauthConditions,
 } from '../scripts/lib/ship-preauth.mjs';
 import {
-  buildFinalReviewMarker, writeFinalReviewMarker, readFinalReviewMarker, revokePreviousMarker, REVOKED_MARKER_TEXT, FINAL_REVIEW_RELPATH,
+  buildFinalReviewMarker, writeFinalReviewMarker, readFinalReviewMarker, revokePreviousMarker, REVOKED_MARKER_TEXT, REVOKED_SIDECAR_RELPATH, FINAL_REVIEW_RELPATH,
 } from '../scripts/lib/final-review-marker.mjs';
 import { formatTrailerBlock, composeFinalMessage, findReservedTrailers } from '../scripts/lib/commit-trailers.mjs';
 
@@ -320,10 +320,39 @@ describe('final-review marker lifecycle fails closed (audit R2 H1/H3, R3 H1/H4)'
     assert.equal(readFinalReviewMarker(d).marker.verdict, 'REJECT');
   }));
 
-  it('when the old marker can be neither deleted nor overwritten, the writer says so loudly and revoked is false (the caller must fail)', () => withDir((d) => {
+  it('R3 H1 DOUBLE FAILURE with the replacement failing too: the revocation file stays and the reader refuses with reason revoked', () => withDir((d) => {
+    writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
+    const guarded = (real) => (p, ...rest) => { if (String(p).endsWith('last-final-review.json')) throw Object.assign(new Error('locked'), { code: 'EPERM' }); return real(p, ...rest); };
+    const w = writeFinalReviewMarker({
+      repoRoot: d, evidence: EV, verdict: 'REJECT', log: () => {},
+      adapters: { unlinkSync: guarded(fs.unlinkSync), overwriteFileSync: eperm, atomicWriteFileSync: () => { throw Object.assign(new Error('x'), { code: 'ENOSPC' }); } },
+    });
+    assert.equal(w.reason, 'write-failed');
+    assert.ok(fs.existsSync(path.join(d, REVOKED_SIDECAR_RELPATH)), 'the shadowing file exists');
+    assert.ok(fs.existsSync(path.join(d, FINAL_REVIEW_RELPATH)), 'and the OLD approval is physically still there (that is the scenario)');
+    assert.deepEqual(readFinalReviewMarker(d), { ok: false, reason: 'revoked' });
+    assert.equal(denied(d).ok, false, 'shipping is denied although the old APPROVE could not be touched');
+  }));
+
+  it('a later successful review removes the revocation file; a revocation file that cannot be removed keeps refusing and says so', () => withDir((d) => {
+    fs.mkdirSync(path.join(d, '.audit'), { recursive: true });
+    fs.writeFileSync(path.join(d, REVOKED_SIDECAR_RELPATH), '{}');
+    const stuckLogs = [];
+    const stuck = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE', log: (m) => stuckLogs.push(m), adapters: { unlinkSync: (p) => { if (String(p).endsWith('.revoked')) throw Object.assign(new Error('locked'), { code: 'EPERM' }); return fs.unlinkSync(p); } } });
+    assert.equal(stuck.written, true);
+    assert.equal(stuck.sidecarStuck, true);
+    assert.match(stuckLogs.join(''), /keep refusing/);
+    assert.equal(readFinalReviewMarker(d).reason, 'revoked', 'fail closed until the file is deleted');
+    fs.rmSync(path.join(d, REVOKED_SIDECAR_RELPATH));
+    const ok = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
+    assert.equal(ok.written, true);
+    assert.equal(readFinalReviewMarker(d).ok, true);
+  }));
+
+  it('when the marker can be neither deleted, overwritten nor shadowed, the writer says so loudly and revoked is false (the caller must fail)', () => withDir((d) => {
     writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
     const logged = [];
-    const w = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'REJECT', log: (m) => logged.push(m), adapters: { unlinkSync: eperm, overwriteFileSync: eperm } });
+    const w = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'REJECT', log: (m) => logged.push(m), adapters: { unlinkSync: eperm, overwriteFileSync: eperm, createFileSync: eperm } });
     assert.deepEqual([w.written, w.reason, w.revoked], [false, 'stale-marker-not-removable', false]);
     assert.match(logged.join(''), /FATAL/);
   }));
