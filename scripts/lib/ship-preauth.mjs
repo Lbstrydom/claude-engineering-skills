@@ -55,7 +55,8 @@ const row = (id, ok, reason) => ({ id, ok, reason });
  * @param {string|null} f.gate the EFFECTIVE gate value (after every cap ship-commit applies)
  * @param {boolean} [f.noTests] --no-tests was passed (it caps the gate downward and is refused outright here)
  * @param {boolean} [f.gateDeferred] the preflight has no `--gate` to judge: the gate row then reads "checked at commit"
- * @param {{roundConvergedAfter: number|null, geminiVerdict?: string|null}|null} f.convergence the store row for the evidence run, or null when unreadable
+ * @param {{roundConvergedAfter: number|null}|null} f.convergence the store row for the evidence run, or null when unreadable
+ * @param {string} [f.convergenceWhy] why the row is null (cloud off, the query failed, no row): named in the refusal, never folded into one
  * @param {{runId: string, auditedTree: string, round: number|null, auditedBranch?: string|null}|null} f.evidence the gate-evidence marker
  * @param {string|null} [f.currentBranch] the branch being shipped (null = detached or unresolved)
  * @param {{ok: boolean, reason?: string, marker?: {runId: string, auditedTree: string, round: number, verdict: string}}|null} f.finalReview readFinalReviewMarker's result
@@ -74,12 +75,16 @@ export function evaluatePreauthorisedShip(f = {}) {
 
   // 2. the audit converged — the store's own record for the evidence run, never a local claim.
   const conv = f.convergence;
-  if (!conv) c.push(row('audit-converged', false, 'the store has no readable audit_runs row for the evidence run (cloud off, unreachable, or run not found)'));
+  if (!conv) c.push(row('audit-converged', false, `no audit_runs row could be read for the evidence run (${f.convergenceWhy ?? 'cloud off, unreachable, or run not found'})`));
   else if (!Number.isInteger(conv.roundConvergedAfter)) c.push(row('audit-converged', false, 'audit_runs.round_converged_after is null: the audit did not converge'));
-  else if (f.evidence && f.evidence.auditedBranch !== f.currentBranch) {
+  else if (!f.evidence || typeof f.evidence.auditedBranch !== 'string' || !f.evidence.auditedBranch || typeof f.currentBranch !== 'string' || !f.currentBranch) {
+    // Two unknowns are not equal: both null (a detached audit shipped from a detached head, or an unresolved branch) must
+    // not satisfy the binding by coincidence.
+    c.push(row('audit-converged', false, `the branch identity is unknown (audit evidence: ${JSON.stringify(f.evidence?.auditedBranch ?? null)}, shipping: ${JSON.stringify(f.currentBranch ?? null)}); both must be known branch names`));
+  } else if (f.evidence.auditedBranch !== f.currentBranch) {
     // The marker is a local file, so a stale one from ANOTHER branch's audit can sit in .audit/ and read fresh.
     // (Not the audited commit's ancestry: a rebase after the audit legitimately rewrites it.)
-    c.push(row('audit-converged', false, `the audit evidence is for branch ${JSON.stringify(f.evidence.auditedBranch ?? null)}, not ${JSON.stringify(f.currentBranch ?? null)}`));
+    c.push(row('audit-converged', false, `the audit evidence is for branch ${JSON.stringify(f.evidence.auditedBranch)}, not ${JSON.stringify(f.currentBranch)}`));
   } else c.push(row('audit-converged', true, `converged after round ${conv.roundConvergedAfter}`));
 
   // 3. the final review approved THIS audited tree and round, not merely this run (the column has no target identity).
@@ -92,7 +97,6 @@ export function evaluatePreauthorisedShip(f = {}) {
   else if (fr.marker.runId !== ev.runId) c.push(row('final-review', false, `the approval is for run ${fr.marker.runId.slice(0, 8)}, the audit evidence is run ${ev.runId.slice(0, 8)}`));
   else if (fr.marker.auditedTree !== ev.auditedTree) c.push(row('final-review', false, 'the approval is for a different audited tree than the audit evidence names'));
   else if (fr.marker.round !== ev.round) c.push(row('final-review', false, `the approval is for round ${fr.marker.round}, the audit evidence is round ${ev.round}`));
-  else if (conv?.geminiVerdict !== 'APPROVE') c.push(row('final-review', false, `the store records gemini_verdict ${JSON.stringify(conv?.geminiVerdict ?? null)}, not APPROVE`));
   else c.push(row('final-review', true, `APPROVE on run ${ev.runId.slice(0, 8)}, round ${ev.round}, the audited tree`));
 
   // 4-6. paths. An unresolvable change set fails all three rather than passing them vacuously.
@@ -128,7 +132,9 @@ export function renderPreauthConditions(verdict) {
 export function gatherChangedPaths(run, tree) {
   const out = (args) => { const r = run(args); return r && r.status === 0 ? String(r.stdout ?? '').trim() : null; };
   const defaultRef = out(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
-  const candidates = [defaultRef && defaultRef.replace(/^refs\/remotes\//, ''), 'origin/main', 'main'].filter(Boolean);
+  // origin/HEAD is the authoritative default branch; `origin/main` is the conventional remote-tracking name when HEAD is unset.
+  // A LOCAL `main` is never substituted: it can differ from the remote's, and an unverified base can hide what the PR changes.
+  const candidates = [defaultRef && defaultRef.replace(/^refs\/remotes\//, ''), 'origin/main'].filter(Boolean);
   let base = null;
   for (const ref of candidates) { base = out(['merge-base', 'HEAD', ref]); if (base) break; }
   if (!base || !tree) return null;

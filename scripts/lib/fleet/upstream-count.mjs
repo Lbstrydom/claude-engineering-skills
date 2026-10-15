@@ -61,9 +61,14 @@ export function upstreamScript(fleetDir) {
  */
 export function interpretQueues(env) {
   if (!env || typeof env !== 'object') return { state: 'unmeasured', reason: 'the reader printed no envelope' };
-  const q = Number(env.storesQueried), u = Number(env.storesUnqueried), open = Number(env.totalOpen);
-  if (![q, u, open].every(Number.isFinite)) return { state: 'unmeasured', reason: 'the reader\'s envelope was malformed' };
-  const unresolved = Array.isArray(env.unresolved) ? env.unresolved.length : 0;
+  // NO coercion: Number(null), Number(''), Number(false) and Number([]) are all 0, so a counter the reader did not report would
+  // read as a measured zero. Each counter must already BE a non-negative safe integer, and `unresolved` the array the reader emits.
+  const isCount = (v) => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+  const { storesQueried: q, storesUnqueried: u, totalOpen: open } = env;
+  if (!isCount(q) || !isCount(u) || !isCount(open) || !Array.isArray(env.unresolved)) {
+    return { state: 'unmeasured', reason: 'the reader\'s envelope was malformed (a counter was missing or not a whole number)' };
+  }
+  const unresolved = env.unresolved.length;
   if (q === 0) return { state: 'unmeasured', reason: 'no store answered (NOTHING WAS CHECKED)', storesQueried: 0, storesUnqueried: u + unresolved };
   const missing = u + unresolved;
   return { state: missing > 0 ? 'partial' : 'measured', totalOpen: open, storesQueried: q, storesUnqueried: missing, reason: missing > 0 ? `${missing} store(s) could not be queried` : null };
@@ -119,7 +124,8 @@ export function nextRecord(measurement, previous, now) {
     reason: measurement.reason ?? null,
     measuredAt: ok ? at : (previous?.measuredAt ?? null),
     attemptedAt: at,
-    lastMeasured: ok ? null : (prevHistory ?? null),
+    // A complete measurement replaces the history. A PARTIAL one is a floor, not a replacement: the last complete one stays beside it.
+    lastMeasured: measurement.state === 'measured' ? null : (prevHistory ?? null),
   };
 }
 

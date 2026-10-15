@@ -189,3 +189,49 @@ describe('upstreamScript and the cache round trip', () => {
     } finally { rm(d); }
   });
 });
+
+describe('interpretQueues: no coercion, an unreported counter is never a measured zero (audit R1 H6/M10/H12)', () => {
+  const GOOD = { storesQueried: 2, storesUnqueried: 0, totalOpen: 0, unresolved: [] };
+
+  it('a legitimate zero IS measured (the probe can still see a genuine zero)', () => {
+    assert.deepEqual(interpretQueues(GOOD), { state: 'measured', totalOpen: 0, storesQueried: 2, storesUnqueried: 0, reason: null });
+  });
+
+  it('null, empty string, boolean, array, fractional, negative, unsafe and missing counters are unmeasured, field by field', () => {
+    for (const field of ['storesQueried', 'storesUnqueried', 'totalOpen']) {
+      for (const bad of [null, undefined, '', '0', false, true, [], [0], 1.5, -1, Number.MAX_SAFE_INTEGER + 2, NaN, Infinity]) {
+        const env = { ...GOOD, [field]: bad };
+        if (bad === undefined) delete env[field];
+        const m = interpretQueues(env);
+        assert.equal(m.state, 'unmeasured', `${field}=${String(bad)} must not be measured`);
+        assert.match(m.reason, /malformed/);
+        assert.equal(m.totalOpen, undefined, 'and carries no count');
+      }
+    }
+  });
+
+  it('a missing or non-array `unresolved` is unmeasured, not an empty list', () => {
+    for (const bad of [undefined, null, 0, '', {}]) {
+      const env = { ...GOOD, unresolved: bad };
+      if (bad === undefined) delete env.unresolved;
+      assert.equal(interpretQueues(env).state, 'unmeasured', String(bad));
+    }
+  });
+
+  it('the reported example: queried 2, unqueried null, totalOpen null is NOT a complete zero', () => {
+    assert.equal(interpretQueues({ storesQueried: 2, storesUnqueried: null, totalOpen: null, unresolved: [] }).state, 'unmeasured');
+  });
+});
+
+describe('nextRecord: a partial refresh keeps the last COMPLETE measurement (audit R1 M11)', () => {
+  it('complete, then partial, then failed: the complete one is still the history', () => {
+    const complete = nextRecord({ state: 'measured', totalOpen: 3, storesQueried: 2, storesUnqueried: 0, reason: null }, null, NOW);
+    const partial = nextRecord({ state: 'partial', totalOpen: 1, storesQueried: 1, storesUnqueried: 1, reason: 'x' }, complete, new Date(NOW.getTime() + 1000));
+    assert.equal(partial.state, 'partial');
+    assert.deepEqual(partial.lastMeasured, { totalOpen: 3, measuredAt: complete.measuredAt }, 'a floor does not erase the last complete count');
+    const failed = nextRecord({ state: 'unmeasured', reason: 'down' }, partial, new Date(NOW.getTime() + 2000));
+    assert.deepEqual(failed.lastMeasured, { totalOpen: 3, measuredAt: complete.measuredAt });
+    const again = nextRecord({ state: 'measured', totalOpen: 0, storesQueried: 2, storesUnqueried: 0, reason: null }, failed, new Date(NOW.getTime() + 3000));
+    assert.equal(again.lastMeasured, null, 'a new complete measurement replaces the history');
+  });
+});

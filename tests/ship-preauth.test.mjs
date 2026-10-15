@@ -26,7 +26,7 @@ const OTHER_TREE = '4ca9f5a05945f5495eae1f6b4128406a3af46ab9';
 
 const evidence = (extra = {}) => ({ runId: RUN, auditedTree: TREE, round: 4, auditedBranch: 'claude/x', ...extra });
 const finalReview = (extra = {}) => ({ ok: true, marker: { runId: RUN, auditedTree: TREE, round: 4, verdict: 'APPROVE', ts: '2026-10-15T07:00:00.000Z', ...extra } });
-const convergence = (extra = {}) => ({ roundConvergedAfter: 4, geminiVerdict: 'APPROVE', ...extra });
+const convergence = (extra = {}) => ({ roundConvergedAfter: 4, ...extra });
 
 /** Facts under which every condition holds. */
 const GOOD = () => ({
@@ -57,10 +57,14 @@ describe('evaluatePreauthorisedShip: each condition fails ALONE with its own rea
     ['gate', { gate: 'not-run' }, /not-run/],
     ['gate', { gate: null }, /null/],
     ['gate', { noTests: true }, /--no-tests/],
-    ['audit-converged', { convergence: null }, /no readable audit_runs row/],
+    ['audit-converged', { convergence: null }, /no audit_runs row could be read/],
+    ['audit-converged', { convergence: null, convergenceWhy: 'the store query failed (ECONNREFUSED)' }, /ECONNREFUSED/],
     ['audit-converged', { convergence: convergence({ roundConvergedAfter: null }) }, /did not converge/],
     ['audit-converged', { evidence: evidence({ auditedBranch: 'claude/other' }) }, /branch "claude\/other"/],
-    ['audit-converged', { evidence: evidence({ auditedBranch: null }) }, /branch null/],
+    ['audit-converged', { evidence: evidence({ auditedBranch: null }) }, /branch identity is unknown/],
+    ['audit-converged', { currentBranch: null }, /branch identity is unknown/],
+    ['audit-converged', { currentBranch: '' }, /branch identity is unknown/],
+    ['audit-converged', { evidence: evidence({ auditedBranch: null }), currentBranch: null }, /branch identity is unknown/],
     ['final-review', { evidence: null }, /no gate-evidence marker/],
     ['final-review', { finalReview: { ok: false, reason: 'absent' } }, /absent/],
     ['final-review', { finalReview: null }, /not read/],
@@ -69,8 +73,6 @@ describe('evaluatePreauthorisedShip: each condition fails ALONE with its own rea
     ['final-review', { finalReview: finalReview({ auditedTree: OTHER_TREE }) }, /different audited tree/],
     ['final-review', { finalReview: finalReview({ round: 3 }) }, /round 3, the audit evidence is round 4/],
     ['final-review', { evidence: evidence({ round: null }) }, /no round/],
-    ['final-review', { convergence: convergence({ geminiVerdict: 'CONCERNS' }) }, /gemini_verdict "CONCERNS"/],
-    ['final-review', { convergence: convergence({ geminiVerdict: null }) }, /gemini_verdict null/],
     ['sensitive-path', { changedPaths: ['scripts/a.mjs', '.env'] }, /sensitive.*\.env/],
     ['migration', { changedPaths: ['supabase/migrations/20261015_x.sql'] }, /migration/],
     ['migration', { changedPaths: ['scripts/migrations/001.sql'] }, /migration/],
@@ -167,11 +169,15 @@ describe('gatherChangedPaths', () => {
     assert.ok(failing(v).includes('repo-policy'));
   });
 
-  it('falls back from origin/HEAD to origin/main to main, and returns null when no merge base resolves', () => {
+  it('falls back from origin/HEAD to origin/main ONLY, never to a local main, and returns null when no merge base resolves', () => {
     const calls = [];
     const run = (args) => { calls.push(args.join(' ')); return { status: 1, stdout: '' }; };
     assert.equal(gatherChangedPaths(run, 'tree'), null);
-    assert.ok(calls.some((c) => c === 'merge-base HEAD origin/main') && calls.some((c) => c === 'merge-base HEAD main'));
+    assert.ok(calls.some((c) => c === 'merge-base HEAD origin/main'));
+    assert.equal(calls.some((c) => c === 'merge-base HEAD main'), false, "a local main can differ from the remote's: an unverified base is a refusal, not a substitute");
+    // ...and a local main that WOULD resolve is not consulted when the remote refs are unavailable:
+    const onlyLocal = (args) => (args.join(' ') === 'merge-base HEAD main' ? { status: 0, stdout: 'deadbeef' } : { status: 1, stdout: '' });
+    assert.equal(gatherChangedPaths(onlyLocal, 'tree'), null);
     assert.equal(gatherChangedPaths(runner([['symbolic-ref', { status: 1 }], ['merge-base HEAD origin/main', { status: 0, stdout: 'b\n' }], ['diff', { status: 1 }]]), 'tree'), null, 'a failed diff is null, never []');
     assert.equal(gatherChangedPaths(runner([['merge-base', { status: 0, stdout: 'b\n' }]]), null), null, 'no tree is null');
   });

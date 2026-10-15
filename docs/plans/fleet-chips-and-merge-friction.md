@@ -112,7 +112,7 @@ graph LR
   end
   subgraph PR2["PR 2 chip workflow"]
     SC["ship-commit.mjs --preauthorised"] --> SP["lib/ship-preauth.mjs"]
-    SP --> RF["store: convergence + gemini_verdict"]
+    SP --> RF["store: convergence; local marker: final review"]
     FS["fleet status"] --> UC["upstream count cache"]
     UC --> FN["fleet next"]
   end
@@ -191,7 +191,7 @@ condition holds:
 |---|---|---|
 | the **effective** gate is `passed` or `converged` (never `waived`/`not-run`) | the gate value after every cap ship-commit applies (`--no-tests` caps it to `waived`/`not-run`, REQ-behavioural-19096e7a), then the existing `evaluateGateVerification` against the store's convergence row and the audited tree. `--preauthorised` with `--no-tests` is refused outright at argument validation, before any git mutation | `gate` |
 | the audit converged | `audit_runs.round_converged_after` not null for the evidence run (same row as above) | `audit-converged` |
-| the final review approved **this** audited tree | the final-review marker `.audit/last-final-review.json` (below) has `verdict: 'APPROVE'` and its `runId`, `auditedTree` and `round` equal the gate-evidence marker's; and the store's `audit_runs.gemini_verdict` for that run is `'APPROVE'` (corroboration — the marker alone is local) | `final-review` |
+| the final review approved **this** audited tree | the final-review marker `.audit/last-final-review.json` (below) has `verdict: 'APPROVE'` and its `runId`, `auditedTree` and `round` equal the gate-evidence marker's. (PR 2 audit R1, 2026-10-15: the store's `gemini_verdict` is NOT also required. It has no target identity, its write semantics are under audit-honesty findings, and the tool-written marker binds what the column cannot.) | `final-review` |
 | no sensitive path | every path changed between `merge-base(HEAD, origin/<default>)` and the commit's tree (`git diff --name-only --no-renames`, so both ends of a rename are checked), through `classifyPath` (`scripts/lib/sensitive-paths.mjs`) | `sensitive-path` |
 | no migration | no changed path with a `migrations/` segment (`supabase/migrations/**`, `scripts/migrations/**`, any other) | `migration` |
 | no repository policy | no changed path in the explicit policy list `PREAUTH_POLICY_PATHS`: `.github/**`, `CODEOWNERS` at the root, `docs/CODEOWNERS`, and `.test-tiers.json` (it names the workflow that grades a merge). Matched on normalised repo-relative paths. GitHub settings changed through the API are already outside a chip's authority (launch prompt) | `repo-policy` |
@@ -327,8 +327,8 @@ All new manifest fields are optional, so `HANDOVER_SCHEMA_VERSION` is unchanged 
 - **Assumption: the manifest stays reader-less.** If an installer ever reads it again, it should read the release
   asset (signed, `release.yml`), not raw `main`. The test added in PR 1 asserts the file is untracked, so a
   re-commit is a visible, deliberate change.
-- **Assumption: `gemini_verdict` stays on `audit_runs`.** The preauth check reads it through one accessor; if the
-  final review moves, one function changes.
+- **The final review is read from the tool-written marker, not the `gemini_verdict` column**, so a change to where the
+  verdict is stored does not touch the ship check.
 - **The preamble is the extension point** for future chip rules: a new rule adds a section there, not text in every
   chip prompt.
 - **The flake predicate is data-driven by GitHub's own attempt counter**; the only local state is the per-run
@@ -361,7 +361,6 @@ All new manifest fields are optional, so `HANDOVER_SCHEMA_VERSION` is unchanged 
 - `skills/fleet/references/participant-rules.md` (modify) — the stop-at-ship-ready step names the variant.
 - `scripts/lib/ship-preauth.mjs` (create) — `evaluatePreauthorisedShip`, `PREAUTH_EXCLUDED_PATH_RULES`.
 - `scripts/ship-commit.mjs` (modify) — `--preauthorised`, `--check-preauthorised`.
-- `scripts/lib/store/runs-findings.mjs` (modify) — `getAuditRunConvergence` also returns `geminiVerdict` (read only).
 - `scripts/gemini-review.mjs` (modify) — code mode writes `.audit/last-final-review.json` after persisting the verdict.
 - `scripts/lib/audit/gate-evidence.mjs` (modify) — the final-review marker's writer/reader beside the gate-evidence marker's (one module owns both markers).
 - `scripts/lib/commit-trailers.mjs` (modify) — `AI-Ship-Authority` render + parse.
@@ -410,8 +409,8 @@ All new manifest fields are optional, so `HANDOVER_SCHEMA_VERSION` is unchanged 
   or the synced bundle; the install path is retired. Risk accepted; the release asset still carries the manifest.
 - **Pre-authorised ship widens what a chip can do alone.** Bounded by code (2.2b), by the trailer (auditable after the
   fact), and by the exclusions (sensitive, migrations, repository policy files). Merge stays the coordinator's.
-- **`gemini_verdict` missing for a run whose review did not persist** (no run id). The check refuses (`final-review`),
-  the chip falls back to "type `/ship`": safe direction.
+- **No final-review marker** (the review did not run, or `gemini-review.mjs` does not write it yet). The check refuses
+  (`final-review`) and the chip falls back to "type `/ship`": safe direction.
 - **A real failure in a file the PR did not touch gets one wasted re-run.** The reach check removes most of them; the
   cost is one CI run, bounded by `run_attempt === 1`.
 - **`--rerun-unrelated-flake` mutates GitHub state** (a re-run). Opt-in flag, never the default reader.

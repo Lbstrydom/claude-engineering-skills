@@ -1952,7 +1952,7 @@ export async function getAuditRunConvergence(runId) {
   if (!runId || !await isCloudEnabled()) return null;
   try {
     const row = await one(
-      `SELECT round_converged_after, rigor_pressure_round, rounds, gemini_verdict
+      `SELECT round_converged_after, rigor_pressure_round, rounds
          FROM audit_runs WHERE id = $1 LIMIT 1`,
       [runId]
     );
@@ -1961,8 +1961,6 @@ export async function getAuditRunConvergence(runId) {
       roundConvergedAfter: row.round_converged_after,
       rigorPressureRound:  row.rigor_pressure_round,
       rounds:              row.rounds,
-      // Read by the pre-authorised ship check (lib/ship-preauth.mjs) as corroboration of the local final-review marker.
-      geminiVerdict:       row.gemini_verdict ?? null,
     };
   } catch {
     return null;

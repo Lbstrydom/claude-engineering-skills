@@ -126,16 +126,67 @@ function resolveSkillNames(repoRoot) {
 }
 
 /**
- * The store's convergence row for an evidence run, or null when it cannot be read (cloud off, unreachable, no row). One
- * reader for the verified-gate branch and the pre-authorised preflight, so they cannot disagree about what "converged" means.
+ * The store's convergence row for an evidence run, with WHY when there is none: `{convergence, why}`. One reader for the
+ * verified-gate branch and the pre-authorised preflight, so they cannot disagree about what "converged" means, and a store that
+ * failed is told apart from a cloud that is off and from a run with no row (the decision is the same, the cause is not).
  */
 async function readConvergence(runId) {
+  let isCloudEnabled;
+  let getAuditRunConvergence;
   try {
-    const { isCloudEnabled } = await import('./lib/store/repo.mjs');
-    if (!await isCloudEnabled()) return null;
-    const { getAuditRunConvergence } = await import('./lib/store/runs-findings.mjs');
-    return await getAuditRunConvergence(runId);
-  } catch { return null; }
+    ({ isCloudEnabled } = await import('./lib/store/repo.mjs'));
+    ({ getAuditRunConvergence } = await import('./lib/store/runs-findings.mjs'));
+  } catch (e) { return { convergence: null, why: `the store modules could not be loaded (${e?.code || e?.message || 'error'})` }; }
+  let enabled;
+  try { enabled = await isCloudEnabled(); } catch (e) { return { convergence: null, why: `the store configuration could not be read (${e?.code || e?.message || 'error'})` }; }
+  if (!enabled) return { convergence: null, why: 'cloud store is off' };
+  let row;
+  try { row = await getAuditRunConvergence(runId); } catch (e) { return { convergence: null, why: `the store query failed (${e?.code || e?.message || 'error'})` }; }
+  // getAuditRunConvergence returns null for BOTH "no such run" and a query error it swallowed; the honest cause is "either".
+  return row ? { convergence: row, why: null } : { convergence: null, why: 'no audit_runs row for that run id, or the query failed' };
+}
+
+/**
+ * `--check-preauthorised`: the read-only preflight for the pre-authorised ship. Prints one line per condition against HEAD and
+ * exits 0 (all clear) or 2 (refused). Same mutual-exclusivity contract as --check-migrations. Advisory-early only: the commit path
+ * re-evaluates against the tree it is about to commit, so a chip stops BEFORE the doc work, not instead of the gate.
+ */
+async function checkPreauthorised() {
+  const others = process.argv.slice(2).filter((a) => a !== '--check-preauthorised');
+  if (others.length > 0) {
+    err(
+      'AGENT FIX: --check-preauthorised: a standalone read-only preflight that commits nothing; '
+      + `it cannot be combined with commit arguments (also given: ${others.join(' ')}). `
+      + 'Run it alone.',
+    );
+    process.exit(2);
+  }
+  const top = git(['rev-parse', '--show-toplevel'], process.cwd());
+  if (top.error) { err('ship-commit: git spawn failed'); process.exit(1); }
+  if (top.status !== 0) { err(`ship-commit: git: ${(top.stderr || '').trim()}`); process.exit(1); }
+  const root = top.stdout.trim();
+  const ts = git(['log', '-1', '--format=%ct'], root);
+  const evidence = resolveEvidence({
+    auditRunPath: path.join(root, '.audit', 'last-audit-run.json'),
+    headCommitTs: ts.status === 0 ? Number(ts.stdout.trim()) || 0 : 0,
+    noRunId: false,
+  });
+  const verifiable = isContentVerifiable(evidence);
+  const { convergence, why } = verifiable ? await readConvergence(evidence.runId) : { convergence: null, why: 'there is no usable gate-evidence marker' };
+  const branch = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], root);
+  const verdict = evaluatePreauthorisedShip({
+    gateDeferred: true,
+    currentBranch: branch.status === 0 ? branch.stdout.trim() : null,
+    convergence,
+    convergenceWhy: why ?? undefined,
+    evidence: verifiable ? evidence : null,
+    finalReview: readFinalReviewMarker(root),
+    changedPaths: gatherChangedPaths((a) => git(a, root), 'HEAD'),
+  });
+  const out = [...renderPreauthConditions(verdict), `ship-commit: pre-authorised ship ${verdict.ok ? 'ALLOWED' : 'REFUSED'} (against HEAD; the commit path re-checks the commit tree)`];
+  process.stdout.write(`${out.join('\n')}\n`);
+  // Drain stdout before exiting: a piped stdout is asynchronous on Windows, and this report is the whole output.
+  await finishAndExit(verdict.ok ? 0 : 2);
 }
 
 async function main() {
@@ -195,45 +246,7 @@ async function main() {
     process.exit(0);
   }
 
-  // Read-only preflight for the pre-authorised ship: prints one line per condition against HEAD and exits 0 (all clear)
-  // or 2 (refused). Same mutual-exclusivity contract as --check-migrations. Advisory-early only: the commit path
-  // re-evaluates against the tree it is about to commit, so a chip stops BEFORE the doc work, not instead of the gate.
-  if (process.argv.includes('--check-preauthorised')) {
-    const others = process.argv.slice(2).filter((a) => a !== '--check-preauthorised');
-    if (others.length > 0) {
-      err(
-        'AGENT FIX: --check-preauthorised: a standalone read-only preflight that commits nothing; '
-        + `it cannot be combined with commit arguments (also given: ${others.join(' ')}). `
-        + 'Run it alone.',
-      );
-      process.exit(2);
-    }
-    const top = git(['rev-parse', '--show-toplevel'], process.cwd());
-    if (top.error) { err('ship-commit: git spawn failed'); process.exit(1); }
-    if (top.status !== 0) { err(`ship-commit: git: ${(top.stderr || '').trim()}`); process.exit(1); }
-    const root = top.stdout.trim();
-    const ts = git(['log', '-1', '--format=%ct'], root);
-    const evidence = resolveEvidence({
-      auditRunPath: path.join(root, '.audit', 'last-audit-run.json'),
-      headCommitTs: ts.status === 0 ? Number(ts.stdout.trim()) || 0 : 0,
-      noRunId: false,
-    });
-    const convergence = isContentVerifiable(evidence) ? await readConvergence(evidence.runId) : null;
-    const verdict = evaluatePreauthorisedShip({
-      gateDeferred: true,
-      currentBranch: (() => { const b = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], root); return b.status === 0 ? b.stdout.trim() : null; })(),
-      convergence,
-      evidence: isContentVerifiable(evidence) ? evidence : null,
-      finalReview: readFinalReviewMarker(root),
-      changedPaths: gatherChangedPaths((a) => git(a, root), 'HEAD'),
-    });
-    for (const line of renderPreauthConditions(verdict)) process.stdout.write(`${line}
-`);
-    process.stdout.write(`ship-commit: pre-authorised ship ${verdict.ok ? 'ALLOWED' : 'REFUSED'} (against HEAD; the commit path re-checks the commit tree)
-`);
-    // Drain stdout before exiting: a piped stdout is asynchronous on Windows, and this report is the whole output.
-    await finishAndExit(verdict.ok ? 0 : 2);
-  }
+  if (process.argv.includes('--check-preauthorised')) return checkPreauthorised();
 
   // ---- arg parse (unknown flag = taxonomy row 1) -------------------------
   const argv = process.argv.slice(2);
