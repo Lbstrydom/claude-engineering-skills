@@ -105,7 +105,7 @@ test('the checksum script FAILS CLOSED: a required input that is missing produce
   const dir = scratchDir();
   try {
     stageCheckout(dir);
-    fs.rmSync(path.join(dir, 'scripts/install-skills.mjs'));
+    fs.rmSync(path.join(dir, 'scripts/install-skills.mjs'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const ran = runChecksums(dir);
     assert.notEqual(ran.status, 0, 'a missing required input must fail the step, not be skipped silently');
     assert.ok(!fs.existsSync(path.join(dir, 'checksums.json')), 'and no publishable checksum file may be left behind');
