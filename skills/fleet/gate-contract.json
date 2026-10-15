@@ -33,7 +33,7 @@
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
     {
-      "line": "**When you spawn chips, put the participant block in EVERY chip prompt**,",
+      "line": "**Spawn chips from `references/chip-preamble.md`** and put the participant block",
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
     {
@@ -42,6 +42,10 @@
     },
     {
       "line": "who may run `repair --quarantine <file>`. Never delete registry files.",
+      "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
+    },
+    {
+      "line": "| `references/chip-preamble.md` | The standard launch block for a chip prompt: authority, route, turn rule, claim, stop point, pre-authorised ship. | You write or paste a chip's launch prompt, or a chip asks what it may do alone. |",
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
     {
@@ -77,15 +81,11 @@
       "reason": "Describes the hooks-path guard on `fleet archive` and `fleet prune --apply` (refuse while another worktree's core.hooksPath resolves inside the worktree being removed; an unreadable config refuses), enforced in scripts/lib/fleet/hooks-path-guard.mjs (called from archive.mjs and prune.mjs, at plan time and again under the registry lock) and pinned by tests/fleet-hooks-path-guard.test.mjs; an oracle needs a throwaway multi-worktree git repo with per-worktree config, which the closed oracle registry has no recipe to build."
     },
     {
-      "line": "command first; a config git cannot read refuses too.",
-      "reason": "Describes the hooks-path guard on `fleet archive` and `fleet prune --apply` (refuse while another worktree's core.hooksPath resolves inside the worktree being removed; an unreadable config refuses), enforced in scripts/lib/fleet/hooks-path-guard.mjs (called from archive.mjs and prune.mjs, at plan time and again under the registry lock) and pinned by tests/fleet-hooks-path-guard.test.mjs; an oracle needs a throwaway multi-worktree git repo with per-worktree config, which the closed oracle registry has no recipe to build."
-    },
-    {
       "line": "/fleet lease acquire [--kind gate|test|timing|maintenance] [--for <1-180>] [--pid <n>] [--token <t>] [--note \"...\"]  # take the machine's one heavy slot (shared by every repo)",
       "reason": "A verb-table row for `fleet lease`: it describes the CLI's behaviour, which is pinned by tests/fleet-lease.test.mjs (the policy), tests/fleet-lease-cli.test.mjs and tests/fleet-lease-state-cli.test.mjs (the real binary across two repos). The lease is cooperative and enforces nothing on a session; the closed oracle registry has no recipe that builds a two-repo machine, so no gate can be derived from this line."
     },
     {
-      "line": "- pr-mode `land --approve` refuses a draft, or a required check that failed or was SKIPPED (a skipped check never ran). It prints WAIT above a merge whose required checks are missing or pending; relay those lines. `ready` records the current head; a head that moves later reads `ready (stale)` and `land` refuses it until `ready` is re-run. Interrupted `land`, `--serial` and `restack`: `references/landing.md`.",
+      "line": "- pr-mode `land --approve` refuses a draft, or a required check that failed or was SKIPPED (a skipped check never ran), and prints WAIT above a merge whose required checks are missing or pending: relay those lines. A head that moved since `ready` reads `ready (stale)`: re-run `ready`. Interrupted `land`, `--serial`, `restack`: `references/landing.md`.",
       "reason": "Describes pr-mode approval's refusals, enforced by verifyPrsForPlan in scripts/lib/fleet/train-approve.mjs over required-checks.mjs and pinned by tests/fleet-required-checks.test.mjs (\"pr-mode approve — the gate on a real train\"); an oracle needs a throwaway multi-session git repo (and, for pr mode, a scripted gh), which the closed oracle registry has no recipe to build. (Line reworded 2026-10-14 by skill-markdown-size-ratchet: same claims, detail moved to references/landing.md.)"
     },
     {
