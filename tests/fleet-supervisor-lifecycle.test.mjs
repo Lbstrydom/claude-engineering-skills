@@ -45,16 +45,21 @@ describe('a hook that exits leaving an ESCAPED helper on its pipes', () => {
       process.stdout.write(${JSON.stringify(FINDINGS)});
     `);
     const t0 = Date.now();
-    // 15s check timeout: the OUTER spawnSync bound is timeout + 15s (30s), which is where pre-fix POSIX ended.
-    // A 5s bound flaked once in a full parallel win32 run (node start-up + the ~2s CIM reap under load).
-    const r = spawnExec([process.execPath, hook], { cwd: dir, input: '{}', timeoutMs: 15000 });
+    // The OUTER spawnSync bound is timeoutMs + 15s, which is where pre-fix POSIX ended: it reported a finished
+    // check as "timed out" (r.error ETIMEDOUT). THAT is what this test proves absent, and `r.error === undefined`
+    // below is the assertion that breaks, at any speed. The wall clock is only a coarse backstop under the outer
+    // bound: a 15s absolute bound flaked at 15.8s on a loaded box (node start-ups + the ~2s CIM reap), measuring
+    // the machine rather than the supervisor. The check's own deadline is wide so load cannot trip IT either.
+    const TIMEOUT_MS = 30000;
+    const OUTER_MS = TIMEOUT_MS + 15000;
+    const r = spawnExec([process.execPath, hook], { cwd: dir, input: '{}', timeoutMs: TIMEOUT_MS });
     const took = Date.now() - t0;
     const pid = await waitFor(pidFile);
     try {
       assert.equal(r.error, undefined, `no error (pre-fix POSIX: the outer timeout fired) — got ${r.error?.code}`);
       assert.equal(r.status, 0);
       assert.equal(r.stdout, FINDINGS);
-      assert.ok(took < 15000, `returned inside the check's own timeout, far from the outer one (${took}ms)`);
+      assert.ok(took < OUTER_MS, `returned before the outer bound that pre-fix POSIX ended on (${took}ms of ${OUTER_MS}ms)`);
       assert.ok(pid > 0, 'the helper really started');
       if (IS_WIN || process.platform === 'linux') assert.equal(await settle(pid), false, 'the escaped helper holding the pipes is terminated');
     } finally { if (pid) killQuietly(pid); }
@@ -174,14 +179,20 @@ describe('R1 fixes', () => {
     // Load-robust timing: the hook starts the helper FIRST (node start-ups are what load stretches), then exits at
     // a fixed point MARGIN before the EARLIEST possible deadline — the supervisor's clock starts after t0 — and it
     // reports when it started and exited, so a run where load made it late fails as such, never as the regression.
-    const DEADLINE = 5000, MARGIN = 500;
-    const dir = tmpRoot('fleet-near-deadline-');
-    const pidFile = path.join(dir, 'pid');
-    const timesFile = path.join(dir, 'times');
-    const hook = path.join(dir, 'hook.cjs');
-    const helper = 'setTimeout(() => {}, 60000)';
-    const intermediate = `const g = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(helper)}], { stdio: ['ignore', 'inherit', 'inherit'], detached: true }); g.unref(); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(g.pid));`;
-    fs.writeFileSync(hook, `
+    // A run whose PRECONDITIONS did not hold (load made the hook exit after the deadline, or cleanup did not outlast
+    // it) proves nothing about the regression either way, so it is retried with a wider deadline - which gives a
+    // slow node start-up room - instead of failing the gate. Only a run whose preconditions held may assert on the
+    // result, and one that never reaches that fails as unproven, naming why.
+    const MARGIN = 500;
+    let unproven = null;
+    for (const DEADLINE of [5000, 10_000, 20_000]) {
+      const dir = tmpRoot('fleet-near-deadline-');
+      const pidFile = path.join(dir, 'pid');
+      const timesFile = path.join(dir, 'times');
+      const hook = path.join(dir, 'hook.cjs');
+      const helper = 'setTimeout(() => {}, 60000)';
+      const intermediate = `const g = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(helper)}], { stdio: ['ignore', 'inherit', 'inherit'], detached: true }); g.unref(); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(g.pid));`;
+      fs.writeFileSync(hook, `
       const t0 = Number(process.argv[2]);
       require('node:child_process').spawnSync(process.execPath, ['-e', ${JSON.stringify(intermediate)}], { stdio: ['ignore', 'inherit', 'inherit'] });
       setTimeout(() => {
@@ -189,18 +200,25 @@ describe('R1 fixes', () => {
         process.stdout.write(${JSON.stringify(FINDINGS)});
       }, Math.max(0, t0 + ${DEADLINE - MARGIN} - Date.now()));
     `);
-    const t0 = Date.now();
-    const r = spawnExec([process.execPath, hook, String(t0)], { cwd: dir, input: '{}', timeoutMs: DEADLINE });
-    const returnedAt = Date.now();
-    const pid = await waitFor(pidFile);
-    try {
-      assert.ok(pid > 0, 'the helper really started');
-      const { startedAt, exitAt } = JSON.parse(fs.readFileSync(timesFile, 'utf8'));
-      assert.ok(exitAt < t0 + DEADLINE, `precondition: the hook exits before the deadline — under load it was ${exitAt - t0 - DEADLINE}ms late; not the regression`);
-      assert.ok(returnedAt > startedAt + DEADLINE, `precondition: cleanup outlasts the LATEST possible deadline, else this run proves nothing (returned ${returnedAt - startedAt - DEADLINE}ms after it)`);
-      assert.equal(r.error, undefined, `got ${r.error?.code} — the hook had already exited`);
-      assert.equal(r.status, 0);
-      assert.equal(r.stdout, FINDINGS);
-    } finally { if (pid) killQuietly(pid); }
+      const t0 = Date.now();
+      const r = spawnExec([process.execPath, hook, String(t0)], { cwd: dir, input: '{}', timeoutMs: DEADLINE });
+      const returnedAt = Date.now();
+      const pid = await waitFor(pidFile);
+      try {
+        assert.ok(pid > 0, 'the helper really started');
+        let times = null;
+        try { times = JSON.parse(fs.readFileSync(timesFile, 'utf8')); } catch { /* the hook never reached its exit point */ }
+        if (!times) { unproven = `the hook never reached its exit point within ${DEADLINE}ms (load)`; continue; }
+        const { startedAt, exitAt } = times;
+        if (!(exitAt < t0 + DEADLINE)) { unproven = `the hook exited ${exitAt - t0 - DEADLINE}ms after the ${DEADLINE}ms deadline (load); not the regression`; continue; }
+        if (!(returnedAt > startedAt + DEADLINE)) { unproven = `cleanup did not outlast the LATEST possible deadline (returned ${returnedAt - startedAt - DEADLINE}ms after it), so the run proves nothing`; continue; }
+        unproven = null;
+        assert.equal(r.error, undefined, `got ${r.error?.code} — the hook had already exited`);
+        assert.equal(r.status, 0);
+        assert.equal(r.stdout, FINDINGS);
+        break;
+      } finally { if (pid) killQuietly(pid); }
+    }
+    assert.equal(unproven, null, `no attempt established the preconditions: ${unproven}`);
   });
 });
