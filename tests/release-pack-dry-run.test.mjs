@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const REPO = path.resolve(import.meta.dirname, '..');
 const WORKFLOW = fs.readFileSync(path.join(REPO, '.github/workflows/release.yml'), 'utf8');
@@ -79,9 +80,16 @@ test('dry run: the workflow\'s checksum script and tar command succeed in a scra
     assert.equal(ran.status, 0, `the workflow's checksum script failed: ${ran.stderr}`);
     const sums = JSON.parse(fs.readFileSync(path.join(dir, 'checksums.json'), 'utf8'));
     assert.equal(sums.version, 'v0.0.0-dry-run', 'the tag arrives through the environment');
-    for (const name of ['scripts/install-skills.mjs', 'scripts/build-manifest.mjs', 'skills.manifest.json']) {
-      assert.ok(sums.files[name], `checksums.json lacks ${name}`);
-    }
+    // The whole path-to-digest map, computed independently: presence alone would pass a constant or a wrong-content hash.
+    const sha = (rel) => 'sha256-' + createHash('sha256').update(fs.readFileSync(path.join(dir, rel))).digest('hex');
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'skills.manifest.json'), 'utf8'));
+    const expected = {};
+    for (const meta of Object.values(manifest.skills)) expected[meta.path] = sha(meta.path);
+    for (const rel of ['scripts/install-skills.mjs', 'scripts/build-manifest.mjs', 'skills.manifest.json']) expected[rel] = sha(rel);
+    assert.ok(Object.keys(manifest.skills).length >= 10, 'the manifest must list the skills, or this comparison is vacuous');
+    assert.equal(Object.keys(expected).length, Object.keys(manifest.skills).length + 3, 'one entry per skill plus the three required files');
+    assert.deepEqual(sums.files, expected, 'checksums.json must equal the independently computed digests of every required input');
+    assert.equal(sums.bundleVersion, manifest.bundleVersion);
 
     const [tar, ...args] = tarCommand(WORKFLOW);
     const packed = spawnSync(tar, args, { cwd: dir, encoding: 'utf8' });
@@ -132,6 +140,13 @@ test('the tag step treats a dispatch input as DATA: a command substitution never
   assert.notEqual(evil.status, 0, 'a tag that is not vMAJOR.MINOR.PATCH must be refused');
   assert.equal(evil.tag, null);
   assert.equal(evil.sideEffect, false, 'the substitution in the input must not have executed');
+
+  // The whole value must be a tag: a valid tag LINE inside a multi-line value is not enough (grep -E anchors per line).
+  for (const bad of ['v1.2.3\ntag=v9.9.9', 'tag=v9.9.9\nv1.2.3', 'v1.2.3\r', 'v1.2.3\n', 'v1.2.3 ', '']) {
+    const r = runTagStep({ EVENT_NAME: 'workflow_dispatch', INPUT_TAG: bad });
+    assert.notEqual(r.status, 0, `${JSON.stringify(bad)} must be refused`);
+    assert.equal(r.tag, null, `${JSON.stringify(bad)} must write nothing to GITHUB_OUTPUT`);
+  }
 
   const good = runTagStep({ EVENT_NAME: 'workflow_dispatch', INPUT_TAG: 'v1.2.3' });
   assert.equal(good.status, 0, good.stderr);

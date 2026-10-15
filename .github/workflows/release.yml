@@ -54,7 +54,10 @@ jobs:
           else
             TAG="${GITHUB_REF#refs/tags/}"
           fi
-          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$'; then
+          # The WHOLE value must match: `[[ =~ ]]` anchors on the string, where `grep -E` anchors on each LINE and would
+          # accept `v1.2.3<newline>tag=v9.9.9` because one of its lines is a valid tag.
+          TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$'
+          if ! [[ "$TAG" =~ $TAG_RE ]]; then
             echo "refusing release tag that is not vMAJOR.MINOR.PATCH[-suffix]" >&2
             exit 1
           fi
