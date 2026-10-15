@@ -23,6 +23,7 @@ import { buildAuditTranscript, readRoundResult } from './lib/audit/transcript.mj
 import { isClaudeAvailable } from './lib/anthropic-client.mjs';
 import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib/audit/transcript-archive.mjs';
 import { formatCoverageSuffix, coverageMissingNote } from './lib/coverage-format.mjs';
+import { COVERAGE_CONVERGENCE_REASONS } from './lib/audit/convergence.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
@@ -91,12 +92,16 @@ function countFindings(results) {
   // The round's own coverage verdict, carried so the banner can say what was NOT audited. It never changes
   // `failed`: a coverage gate `fail` already makes the verdict INCOMPLETE upstream (finding-assembly).
   const coverage = results._coverage ?? null;
-  return { high, medium, low, total: findings.length, failed, coverage };
+  // The round's own convergence verdict withheld for a COVERAGE reason (changed lines unread, or a changed file of an
+  // unrecognised type nobody read): the counts are clean but the change was not. Without this `isConverged` read H/M only.
+  const coverageBlocked = results._convergence?.converged === false && COVERAGE_CONVERGENCE_REASONS.has(results._convergence.reason);
+  return { high, medium, low, total: findings.length, failed, coverage, coverageBlocked };
 }
 
 function isConverged(counts) {
   // A failed/crashed audit round must never look converged
   if (counts.failed) return false;
+  if (counts.coverageBlocked) return false;
   return counts.high === 0 && counts.medium <= 2;
 }
 

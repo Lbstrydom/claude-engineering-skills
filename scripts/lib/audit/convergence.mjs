@@ -11,7 +11,7 @@
  * @module scripts/lib/audit/convergence
  */
 
-import { changedLinesUnreadTotal } from '../coverage-format.mjs';
+import { changedLinesUnreadTotal, unreviewedUnrecognisedFiles } from '../coverage-format.mjs';
 
 /** The quality threshold /audit-code gates on — SKILL.md's stated rule. */
 export const CONVERGENCE_THRESHOLDS = Object.freeze({ high: 0, medium: 2, quickFix: 0 });
@@ -63,6 +63,13 @@ export function evaluateConvergence({ high, medium, quickFix }) {
  * @param {object|null} [coverage] the round's `_coverage`
  * @returns {{converged: boolean, reason: string}}
  */
+/**
+ * The `_convergence.reason` values that mean "the round's code is clean on its counts, but the change was not (fully) read".
+ * One list for every reader (audit-loop's driver; the summary line asks the ledger directly) so a third coverage reason
+ * is added in one place.
+ */
+export const COVERAGE_CONVERGENCE_REASONS = Object.freeze(new Set(['changed-lines-unread', 'unrecognised-files-unreviewed']));
+
 export function evaluateConvergenceWithDetectors(counts, detectorResult, coverage = null) {
   if (!evaluateConvergence(counts)) {
     return { converged: false, reason: 'finding-thresholds' };
@@ -86,6 +93,12 @@ export function evaluateConvergenceWithDetectors(counts, detectorResult, coverag
   }
   if (changedLinesUnreadTotal(coverage) > 0) {
     return { converged: false, reason: 'changed-lines-unread' };
+  }
+  // A changed file of an unrecognised type was never sent to any pass (upstream 57bd3de9). The verdict stays PASS — the
+  // recognised change WAS measured, so this is not INCOMPLETE (exit 3 is "nothing measured") — but a clean H/M/L over a
+  // file nobody read is not convergence. `.auditignore` / `--exclude-paths` is the explicit acceptance that clears it.
+  if (unreviewedUnrecognisedFiles(coverage).length > 0) {
+    return { converged: false, reason: 'unrecognised-files-unreviewed' };
   }
   return { converged: true, reason: 'converged' };
 }

@@ -423,7 +423,7 @@ Stability uses `_hash` for exact cross-round matching:
 | Threshold NOT met | Fix → re-audit |
 | Threshold met, new architectural | Fix → re-audit (stability resets) |
 | Threshold met, mechanical only | Fix → re-audit (stability NOT reset) |
-| Summary line says `N changed line(s) … never rendered to any pass — not convergence evidence` | **Not stable, whatever H/M/L say** — the round did not read the change (the code withholds convergence: `changed-lines-unread`). Re-run on the short files with `--files` (a window grows into the pass's whole budget); if one file's changed text is too big even alone, report it as not converged |
+| Summary line ends `— not convergence evidence` (changed lines, or an unrecognised file type, never sent to any pass) | **Not stable, whatever H/M/L say** — the change was not read (`changed-lines-unread` / `unrecognised-files-unreviewed`). Re-run short files with `--files`; too big alone → report not converged. Unrecognised type: `.auditignore` it (explicit acceptance) or report upstream |
 | Threshold met, 0 new, 2/2 stable | **CONVERGED** → Step 6, then REQUIRED Step 7 |
 | Round 6, not stable | Present to user, then REQUIRED Step 7 |
 

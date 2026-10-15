@@ -295,9 +295,10 @@ describe('a multi-file group names each changed file the reviewer never received
     charsRendered: 0, charsOnDisk: 0, ...over,
   });
   const changed = ['src/a.mjs', 'tests/eval/facts.jsonl', 'assets/logo.png'];
+  const present = () => 'x\n'; // every path exists on disk (the default reader would look in the real tree)
 
   it('PARTIAL state, but the segment says NONE: <file> for the one never sent — and not for a png', () => {
-    const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), changed, { requested: ['src/a.mjs'] });
+    const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), changed, { requested: ['src/a.mjs'], readText: present });
     assert.equal(c.state, 'partial');
     assert.deepEqual(c.changedNotReceived.map((x) => x.path), ['tests/eval/facts.jsonl']);
     const seg = formatCodeCoverageSegment(c);
@@ -308,11 +309,16 @@ describe('a multi-file group names each changed file the reviewer never received
 
   it('a file the envelope asked for but budget dropped is named too; the cap prints (+N more)', () => {
     const many = Array.from({ length: 8 }, (_, i) => 'src/m' + i + '.xyz');
-    const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs', ...many]);
+    const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs', ...many], { readText: present });
     const seg = formatCodeCoverageSegment(c);
     assert.match(seg, /NONE: .*\(\+3 more\)/);
-    const b = summariseCodeCoverage(stats({ full: ['src/a.mjs'], budgetOmitted: ['src/b.mjs'] }), ['src/a.mjs', 'src/b.mjs'], { requested: ['src/a.mjs', 'src/b.mjs'] });
+    const b = summariseCodeCoverage(stats({ full: ['src/a.mjs'], budgetOmitted: ['src/b.mjs'] }), ['src/a.mjs', 'src/b.mjs'], { requested: ['src/a.mjs', 'src/b.mjs'], readText: present });
     assert.deepEqual(b.changedNotReceived.map((x) => x.path), ['src/b.mjs']);
+  });
+
+  it('control: a deleted file (nothing on disk to read) is not named as a gap', () => {
+    const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs', 'tests/eval/gone.jsonl'], { readText: () => null });
+    assert.deepEqual(c.changedNotReceived, []);
   });
 
   it('control: everything received → no NONE segment; the gate still does not downgrade partial', () => {

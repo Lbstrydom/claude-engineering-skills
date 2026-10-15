@@ -21,6 +21,7 @@
 import path from 'node:path';
 import { normalizePath, safeReadFile } from '../file-io.mjs';
 import { unreadChangedLines } from '../hunk-window.mjs';
+import { matchFileKind } from '../file-taxonomy.mjs';
 
 /**
  * Coverage states, weakest claim first. `unknown` is NOT a synonym for `full`:
@@ -59,6 +60,7 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
     changedLinesUnmeasuredFiles: 0,
     changedUnread: [],
     changedUnmeasured: [],
+    changedNotReceived: [],
   };
 
   if (!stats) {
@@ -120,6 +122,13 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
     const rendered = outcome === 'full' || outcome === 'windowed' || outcome === 'head-cut';
     if (m && Number.isInteger(m.total)) base.changedLinesTotal += m.total;
     else base.changedLinesTotalUnknownFiles++;
+    // A file the reviewer was never handed, by name — so a multi-file group reads `NONE: <file>`, not an anonymous count
+    // (upstream 57bd3de9). Expected exclusions (binary / asset / lockfile / generated) and files with nothing left to read
+    // (deleted) are not a gap; `sensitive` is a deliberate egress exclusion, `unreadable` has its own reason.
+    if ((outcome === 'not-requested' || outcome === 'budget-omitted')
+      && matchFileKind(p).kind !== 'non-code' && typeof readText(p) === 'string') {
+      base.changedNotReceived.push({ path: p, outcome });
+    }
     if (!m) {
       base.changedLinesUnmeasuredFiles++;
       base.changedUnmeasured.push({ path: p, outcome, reason: unmeasuredReason(outcome, hunks) });
@@ -200,7 +209,12 @@ export function formatCodeCoverageSegment(cov) {
   const parts = [];
   if (cov.changedLinesUnread > 0) parts.push(`${cov.changedLinesUnread} changed line(s) never shown`);
   if (cov.changedLinesUnmeasuredFiles > 0) parts.push(`changed lines unmeasured for ${cov.changedLinesUnmeasuredFiles} file(s)`);
-  return `Code: ${cov.state.toUpperCase()}${parts.length ? `, ${parts.join(', ')}` : ''}`;
+  // `none` already lists every dropped file in its reason; a partial group needs the names (upstream 57bd3de9).
+  const notReceived = cov.state === 'none' ? [] : (cov.changedNotReceived ?? []);
+  const named = notReceived.length > 0
+    ? `; NONE: ${notReceived.slice(0, 5).map((f) => f.path).join(', ')}${notReceived.length > 5 ? ` (+${notReceived.length - 5} more)` : ''}`
+    : '';
+  return `Code: ${cov.state.toUpperCase()}${parts.length ? `, ${parts.join(', ')}` : ''}${named}`;
 }
 
 /**

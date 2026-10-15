@@ -519,7 +519,7 @@ describe('a changed file of an unrecognised type withholds convergence (upstream
 
   it('reads the reviewer projection too (the shown records)', () => {
     const cov = covFor(['a.cs', 'svc/notes.xyz']);
-    const proj = projectCoverageForReview(cov, { digest: 'd' });
+    const proj = projectCoverageForReview(cov, { digest: () => 'd' });
     assert.equal(unreviewedUnrecognisedFiles(proj).length, 1);
     assert.deepEqual(unreviewedUnrecognisedFiles(null), []);
   });
