@@ -13,7 +13,7 @@
  *       The PUSH envelope `prepush-check.mjs` hands `run-tests.mjs --tier-skip`. Runs the checkout's own selector.
  *   refresh-heavy --timing <file>
  *       Report only: which listed timings drifted, which unlisted files are heavy. Writes nothing.
- *   ci-verdict (--pr <n> | --head <rev>) [--json]
+ *   ci-verdict (--pr <n> | --head <rev>) [--json] [--rerun-unrelated-flake]  (the flag needs --pr; see lib/ci-flake-rerun.mjs)
  *       The MERGE verdict for a repo that runs its full suite in CI (docs/plans/ci-full-suite-actions.md): prints the
  *       one-line `test-tier/v1 full <sha> ...` only when the trusted full-suite workflow succeeded on exactly this head,
  *       for this PR, into the default branch. Pending, failed and every kind of absence print no such line.
@@ -34,7 +34,8 @@ import {
 import { blobSha, changedFiles, committerTime, readFileAt, readTreeAt, resolveSelectionBase, selectorIdentity } from './lib/test-tier-git.mjs';
 import { spawnSync } from 'node:child_process';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
-import { CI_VERDICT_EXIT, ciVerdict, parseVerdictTarget } from './lib/ci-verdict.mjs';
+import { CI_VERDICT_EXIT, CI_VERDICT_VERSION, ciVerdict, classifyCiVerdict, gatherCiEvidence, parseVerdictTarget, runText } from './lib/ci-verdict.mjs';
+import { classifyFlakeRerun, gatherFlakeEvidence, rerunUnrelatedFlake } from './lib/ci-flake-rerun.mjs';
 
 const EXIT = { ok: 0, error: 1, argv: 2, unmeasured: 3 };
 /** The checkout this CLI's own code lives in: the selector's identity is judged against THESE files. */
@@ -150,12 +151,24 @@ function cmdRefresh() {
   return EXIT.ok;
 }
 
-function cmdCiVerdict() {
+async function cmdCiVerdict() {
   let target;
   try { target = parseVerdictTarget(argOption('pr'), argOption('head')); } catch (e) { throw new ArgvError(`test-tier ci-verdict: ${e.message}`); }
   const { pr, head } = target;
-  const run = (cmd, args) => spawnSync(cmd, args, { cwd: repo(), encoding: 'utf8', env: cmd === 'git' ? sanitizeGitEnv(repo()) : process.env, maxBuffer: 64 * 1024 * 1024 });
-  const r = ciVerdict({ run, pr, head });
+  const rerun = hasFlag('rerun-unrelated-flake');
+  if (rerun && pr === null) throw new ArgvError('test-tier ci-verdict: --rerun-unrelated-flake needs --pr <n>');
+  const run = (cmd, args) => spawnSync(cmd, args, { cwd: repo(), encoding: 'utf8', env: cmd === 'git' ? sanitizeGitEnv(repo()) : process.env, maxBuffer: 64 * 1024 * 1024, timeout: 120_000 });
+  const r = rerun ? await flakeVerdict({ run, pr }) : ciVerdict({ run, pr, head });
+  if (r.rerun) {
+    if (hasFlag('json')) emitJson(r);
+    else {
+      process.stdout.write(`${r.version} ${r.verdict}${r.head ? ` ${r.head}` : ''}: ${r.reason}${r.url ? ` (${r.url})` : ''}\n`);
+      process.stdout.write(`rerun: ${r.rerun.rerun} - ${r.rerun.detail}\n`);
+      if (r.rerun.proposal) process.stdout.write(`proposal: ${r.rerun.proposal}\n`);
+    }
+    return { accepted: CI_VERDICT_EXIT.notYet, rejected: CI_VERDICT_EXIT.failed, indeterminate: EXIT.error }[r.rerun.rerun]
+      ?? (r.verdict === 'full' ? CI_VERDICT_EXIT.full : r.verdict === 'failed' ? CI_VERDICT_EXIT.failed : CI_VERDICT_EXIT.notYet);
+  }
   if (hasFlag('json')) emitJson(r);
   else if (r.verdict === 'full') {
     process.stdout.write(`${r.summary}\n`);
@@ -164,15 +177,73 @@ function cmdCiVerdict() {
   return r.verdict === 'full' ? CI_VERDICT_EXIT.full : r.verdict === 'failed' ? CI_VERDICT_EXIT.failed : CI_VERDICT_EXIT.notYet;
 }
 
+/**
+ * `ci-verdict --pr <n> --rerun-unrelated-flake`: the verdict, then (only when it is `failed`) the flake classification
+ * and at most one recorded re-run. The bare verdict stays a pure reader; this path is the only one that mutates.
+ */
+async function flakeVerdict({ run, pr }) {
+  const g = gatherCiEvidence({ run, pr });
+  if (!g.ok) return { version: CI_VERDICT_VERSION, verdict: 'unverified', reason: g.reason, rerun: { rerun: 'ineligible', detail: 'no verdict could be formed', proposal: null } };
+  const ev = g.evidence;
+  const v = { version: CI_VERDICT_VERSION, head: ev.head, pr, defaultBranch: ev.defaultBranch, ...classifyCiVerdict(ev) };
+  const judged = (ev.runs ?? []).find((x) => x?.id === v.runId) ?? null;
+  if (!judged) return { ...v, rerun: { rerun: 'ineligible', detail: 'no judged run', proposal: null } };
+  // Attempt 1 is classified; a run already past it can only be taken forward from a record this tool wrote.
+  let classification = null;
+  if (judged.run_attempt === 1) {
+    const fe = gatherFlakeEvidence({
+      run, nwo: ev.nwo, judged, pr,
+      readTree: (h) => readTreeAt(repo(), h),
+      readHeavy: (h) => { const l = parseHeavyList(readFileAt(repo(), h, '.test-tiers.json') ?? ''); return l.ok ? l.list.heavy : []; },
+    });
+    classification = classifyFlakeRerun({ verdict: v, pr, run: judged, prHead: ev.head, ...fe, workflowPath: ev.workflowPath });
+    if (!classification.eligible && fe.notes.length) classification = { ...classification, reason: `${classification.reason} (${fe.notes.slice(0, 2).join('; ')})` };
+  }
+  const commonDir = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo(), encoding: 'utf8', env: sanitizeGitEnv(repo()) });
+  if (commonDir.status !== 0 || !commonDir.stdout.trim()) return { ...v, rerun: { rerun: 'indeterminate', detail: 'the git common dir could not be resolved', proposal: null } };
+  const fleet = (args) => spawnSync(process.execPath, [path.join(SELF, 'scripts', 'fleet.mjs'), ...args], { cwd: repo(), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const outcome = await rerunUnrelatedFlake({
+    stateDir: path.join(commonDir.stdout.trim(), 'fleet', 'ci-flake'),
+    nwo: ev.nwo, runId: judged.id, classification, url: judged.html_url ?? '',
+    readAttempt: () => {
+      const a = runText(run, 'gh', ['api', `repos/${ev.nwo}/actions/runs/${judged.id}`, '--jq', '.run_attempt']);
+      return a.ok && /^\d+$/.test(a.value) ? { ok: true, attempt: Number(a.value) } : { ok: false, why: a.ok ? `unexpected answer ${a.value.slice(0, 20)}` : a.why };
+    },
+    dispatch: () => {
+      let d;
+      try { d = run('gh', ['run', 'rerun', String(judged.id), '--failed', '--repo', ev.nwo]); } catch (err) { return { ok: false, rejected: false, why: err.message }; }
+      if (d && !d.error && d.status === 0) return { ok: true };
+      const why = d?.error?.message ?? String(d?.stderr ?? '').trim().split('\n')[0].slice(0, 200);
+      // Only a definitive HTTP 4xx refusal is "rejected"; a timeout or anything else may have been accepted.
+      return { ok: false, rejected: !d?.error && /HTTP 4\d\d/.test(String(d?.stderr ?? '')), why };
+    },
+    findProposal: (key) => {
+      const r = fleet(['proposals', '--json', '--all']);
+      let j;
+      try { j = JSON.parse(r.stdout); } catch { return { ok: false, why: 'fleet proposals did not return JSON' }; }
+      if (!j?.proposals?.complete || !Array.isArray(j.proposals.records)) return { ok: false, why: 'the proposals read is incomplete' };
+      return { ok: true, id: j.proposals.records.find((p) => String(p.evidence ?? '').includes(key))?.id ?? null };
+    },
+    propose: ({ what, where, why, evidence }) => {
+      const r = fleet(['propose', '--json', '--theme', 'ci-flakes', '--what', what, '--where', where, '--why', why, '--evidence', evidence]);
+      let j;
+      try { j = JSON.parse(r.stdout); } catch { return { ok: false, why: `fleet propose exited ${r.status} without JSON` }; }
+      const id = j?.id ?? j?.proposal?.id;
+      return j?.ok && id ? { ok: true, id } : { ok: false, why: j?.text ?? j?.error ?? `fleet propose exited ${r.status}` };
+    },
+  });
+  return { ...v, rerun: outcome };
+}
+
 async function main() {
-  assertKnownFlags(process.argv, ['--head', '--base', '--as-of', '--json', '--tier', '--pushes-default', '--out', '--timing', '--pr', '--selfcheck-relocation'], { cli: 'test-tier' });
+  assertKnownFlags(process.argv, ['--head', '--base', '--as-of', '--json', '--tier', '--pushes-default', '--out', '--timing', '--pr', '--rerun-unrelated-flake', '--selfcheck-relocation'], { cli: 'test-tier' });
   if (hasFlag('selfcheck-relocation')) { console.log('OK'); return EXIT.ok; }
   const sub = process.argv[2];
   if (sub === 'select') return cmdSelect();
   if (sub === 'plan') return cmdPlan();
   if (sub === 'refresh-heavy') return cmdRefresh();
-  if (sub === 'ci-verdict') return cmdCiVerdict();
-  throw new ArgvError('usage: test-tier select --head <rev> [--base <rev>] [--json] | plan --head <rev> --out <file> [--tier full|branch] [--pushes-default] | refresh-heavy --timing <file> | ci-verdict (--pr <n> | --head <rev>) [--json]');
+  if (sub === 'ci-verdict') return await cmdCiVerdict();
+  throw new ArgvError('usage: test-tier select --head <rev> [--base <rev>] [--json] | plan --head <rev> --out <file> [--tier full|branch] [--pushes-default] | refresh-heavy --timing <file> | ci-verdict (--pr <n> | --head <rev>) [--json] [--rerun-unrelated-flake]');
 }
 
 if (isInvokedAsScript(import.meta.url)) {

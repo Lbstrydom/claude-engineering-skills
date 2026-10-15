@@ -58,7 +58,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { argOption, assertKnownFlags, hasFlag, toShellExitCode } from './lib/cli-io.mjs';
 import { GUARD_REPORT_VERSION } from './lib/test-guard-reporter.mjs';
@@ -66,6 +66,7 @@ import { TEST_TIER_VERSION, parseHeavyList, parseTierEnvelope, validateEnvelopeA
 import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-report.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { recordSuiteRun } from './lib/suite-run-record.mjs';
+import { FAILED_FILES_MARKER } from './lib/ci-flake-rerun.mjs';
 import { performance } from 'node:perf_hooks';
 
 /**
@@ -423,7 +424,40 @@ export function adjudicateRun({ status, reportText }) {
  *          tier?: {skipped: Array<{file: string, why: string}>, expected: Set<string>}|null}} input
  * @returns {{exitCode: number, lines: string[]}}
  */
-export function finishRun({ status, reportText, timingText = null, preflight = null, tier = null }) {
+export function finishRun({ status, reportText, timingText = null, preflight = null, tier = null, root = process.cwd() }) {
+  const out = finishRunVerdict({ status, reportText, timingText, preflight, tier });
+  // On any failing run, ONE machine line naming the failing test files, read by the CI flake classifier
+  // (`test-tier.mjs ci-verdict --rerun-unrelated-flake`). It never moves the exit code.
+  if (out.exitCode !== 0) out.lines.push(failedFilesLine(reportText, root));
+  return out;
+}
+
+/**
+ * `run-tests/v1 failed-files: <JSON array of repo-relative test files>`, from the same guard report the verdict is
+ * read from (it records every non-todo `test:fail` with its file). Anything that cannot name the files exactly (no or
+ * unparseable report, a failure without a file, a file outside `root`, a failing run whose report lists no failure)
+ * is `unknown`, never `[]`: an empty list would read as "nothing failed that could be related".
+ * @param {string|null} reportText
+ * @param {string} root the repo root the paths are made relative to
+ * @returns {string}
+ */
+export function failedFilesLine(reportText, root) {
+  const unknown = `${FAILED_FILES_MARKER} unknown`;
+  let report;
+  try { report = JSON.parse(reportText); } catch { return unknown; }
+  if (report?.version !== GUARD_REPORT_VERSION || !Array.isArray(report.failures) || report.failures.length === 0) return unknown;
+  const files = new Set();
+  for (const f of report.failures) {
+    if (typeof f?.file !== 'string' || !f.file) return unknown;
+    const abs = f.file.startsWith('file:') ? fileURLToPath(f.file) : f.file;
+    const rel = path.relative(root, abs).split(path.sep).join('/');
+    if (!rel || rel.startsWith('../') || rel === '..' || path.isAbsolute(rel)) return unknown;
+    files.add(rel);
+  }
+  return `${FAILED_FILES_MARKER} ${JSON.stringify([...files].sort())}`;
+}
+
+function finishRunVerdict({ status, reportText, timingText, preflight, tier }) {
   const verdict = adjudicateRun({ status, reportText });
   const lines = [];
   if (verdict.message) lines.push(verdict.message);
@@ -476,7 +510,7 @@ export function finishRun({ status, reportText, timingText = null, preflight = n
  * @returns {{exitCode: number, lines: string[]}}
  */
 export function completeRun({ tierSkip = null, userArgs = [], wallMs, cwd, record = recordSuiteRun, ...runInput }) {
-  const { exitCode, lines } = finishRun(runInput);
+  const { exitCode, lines } = finishRun({ root: cwd ?? process.cwd(), ...runInput });
   let note = null;
   try {
     const ran = ranFiles(runInput.timingText ?? null);
