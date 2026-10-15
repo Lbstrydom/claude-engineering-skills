@@ -122,7 +122,9 @@
 >   (rebuilt by `npm run dashboard`), `scripts/.sync-manifest.json` (timestamp +
 >   HEAD sha ⇒ per-push churn), `docs/architecture-map.md` (timestamp + commit
 >   sha + LLM-written summaries, rendered from the CLOUD symbol_index;
->   regenerate with `npm run arch:render`).
+>   regenerate with `npm run arch:render`), `skills.manifest.json` (a build output
+>   nothing reads from git; `release.yml` builds it where it is used — 9 of 16 PR
+>   main-merges conflicted on its `bundleVersion` line).
 > - **B — a pure, deterministic function of committed source → committed AND
 >   freshness-verified in the pre-push `check`.** Regeneration must be byte-
 >   identical (no clocks/shas/network). Example: `.claude/skills/**` (regen by

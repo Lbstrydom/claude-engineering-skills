@@ -10,8 +10,6 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**19 active · 253 terminal · 38 audit summaries · 1 parked · 5 reference docs**
-
 ---
 
 ## Active
@@ -70,7 +68,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 250 completed plans</summary>
+<summary>Show all completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -333,7 +331,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 38 audit summaries</summary>
+<summary>Show all audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
@@ -384,7 +382,7 @@ Files in `docs/plans/` with no `Status:` line — contract matrices,
 inventories, and notes rather than plans.
 
 <details>
-<summary>Show all 5 reference documents</summary>
+<summary>Show all reference documents</summary>
 
 | Plan | Notes |
 |---|---|

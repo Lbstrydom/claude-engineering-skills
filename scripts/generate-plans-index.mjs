@@ -27,6 +27,13 @@
  *   freshness-verified in the pre-push `check`. It therefore contains **no
  *   clock, no git sha, no machine-specific path** — two regenerations on the
  *   same commit are byte-identical.
+ * - It also contains **no count**. Every PR that adds a plan or moves a Status
+ *   changes a count, and a count is one line, so two such PRs always conflict on
+ *   it even when their rows do not: 8 of 16 main-merges into PR branches
+ *   conflicted on exactly this line (measured 2026-10-15,
+ *   docs/plans/fleet-chips-and-merge-friction.md §1.1), and GitHub then shows the
+ *   PR CONFLICTING and runs no CI on it. The counts are printed on stdout instead
+ *   (`countsSummary`), where they cost nothing to read and nothing to merge.
  *
  * Usage:
  *   node scripts/generate-plans-index.mjs           # write docs/plans/README.md
@@ -230,6 +237,16 @@ function table(rows, { showStatus = true } = {}) {
   ).join('\n') + '\n';
 }
 
+/** The bucket counts, for stdout. Deliberately NOT part of the rendered file (see the contract above). */
+export function countsSummary(rows) {
+  const n = (b) => rows.filter(r => r.bucket === b).length;
+  const parts = [`${n('active')} active`, `${n('terminal')} terminal`, `${n('audit-summary')} audit summaries`];
+  if (n('parked')) parts.push(`${n('parked')} parked`);
+  if (n('unstatused')) parts.push(`${n('unstatused')} reference docs`);
+  if (n('malformed')) parts.push(`${n('malformed')} malformed`);
+  return parts.join(' · ');
+}
+
 export function renderIndex(rows) {
   const active = rows.filter(r => r.bucket === 'active');
   const terminal = rows.filter(r => r.bucket === 'terminal');
@@ -251,11 +268,6 @@ export function renderIndex(rows) {
   out += 'archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate.md)\n';
   out += 'Cluster C). A path is an identity; status is a fact that changes. This index is\n';
   out += 'the derived view that makes status navigable without touching identity.\n\n';
-  out += `**${active.length} active · ${terminal.length} terminal · ${summaries.length} audit summaries`;
-  out += `${parked.length ? ` · ${parked.length} parked` : ''}`;
-  out += `${unstatused.length ? ` · ${unstatused.length} reference docs` : ''}`;
-  out += `${malformed.length ? ` · ${malformed.length} malformed` : ''}**\n\n`;
-
   out += '---\n\n## Active\n\n';
   out += 'Work that is not finished — `Draft`, `Approved`, or `In Progress`.\n';
   out += 'This is the list to read when asking "what is in flight?".\n\n';
@@ -291,7 +303,7 @@ export function renderIndex(rows) {
   out += '\n## Complete\n\n';
   out += 'Shipped. Kept in place so every inbound reference — including the ones in\n';
   out += 'source comments that no docs linter sees — stays valid.\n\n';
-  out += '<details>\n<summary>Show all ' + complete.length + ' completed plans</summary>\n\n';
+  out += '<details>\n<summary>Show all completed plans</summary>\n\n';
   out += table(complete);
   out += '\n</details>\n';
 
@@ -299,7 +311,7 @@ export function renderIndex(rows) {
     out += '\n## Audit summaries\n\n';
     out += 'Companion `*-audit-summary.md` records. Exempt from the status vocabulary\n';
     out += '(they carry a free-text convergence sentence by convention).\n\n';
-    out += '<details>\n<summary>Show all ' + summaries.length + ' audit summaries</summary>\n\n';
+    out += '<details>\n<summary>Show all audit summaries</summary>\n\n';
     out += table(summaries, { showStatus: false });
     out += '\n</details>\n';
   }
@@ -308,7 +320,7 @@ export function renderIndex(rows) {
     out += '\n## Reference documents\n\n';
     out += 'Files in `docs/plans/` with no `Status:` line — contract matrices,\n';
     out += 'inventories, and notes rather than plans.\n\n';
-    out += '<details>\n<summary>Show all ' + unstatused.length + ' reference documents</summary>\n\n';
+    out += '<details>\n<summary>Show all reference documents</summary>\n\n';
     out += table(unstatused, { showStatus: false });
     out += '\n</details>\n';
   }
@@ -323,14 +335,16 @@ function main() {
 
   const dir = path.resolve(PLANS_DIR);
   const target = path.join(dir, INDEX_NAME);
-  const rendered = renderIndex(collectPlans(dir));
+  const rows = collectPlans(dir);
+  const rendered = renderIndex(rows);
+  const counts = countsSummary(rows);
   const check = process.argv.includes('--check');
 
   if (check) {
     let current = null;
     try { current = fs.readFileSync(target, 'utf8'); } catch { /* missing */ }
     if (current === rendered) {
-      console.log(`${G}✓${X} plans:index — ${PLANS_DIR}/${INDEX_NAME} is up to date.`);
+      console.log(`${G}✓${X} plans:index — ${PLANS_DIR}/${INDEX_NAME} is up to date (${counts}).`);
       process.exit(0);
     }
     console.error(`\n${R}${B}✗ plans:index${X} — ${PLANS_DIR}/${INDEX_NAME} is ${current === null ? 'missing' : 'stale'}.`);
@@ -340,7 +354,7 @@ function main() {
   }
 
   atomicWriteFileSync(target, rendered);
-  console.log(`${G}✓${X} plans:index — wrote ${PLANS_DIR}/${INDEX_NAME}`);
+  console.log(`${G}✓${X} plans:index — wrote ${PLANS_DIR}/${INDEX_NAME} (${counts})`);
 }
 
 const isMain = isInvokedAsScript(import.meta.url);
