@@ -195,7 +195,10 @@ export function resolveEvidence({ auditRunPath, headCommitTs, noRunId = false, f
   const auditedTree = TREE_ID_RE.test(parsed?.auditedTree ?? '') ? parsed.auditedTree : null;
   const auditedSha = TREE_ID_RE.test(parsed?.auditedSha ?? '') ? parsed.auditedSha : null;
   const fresh = evidenceMs > headCommitTs * 1000;
-  const result = { state: fresh ? 'fresh' : 'stale', runId, ts, auditedTree, auditedSha };
+  // `round` is surfaced for the pre-authorised ship check, which binds the final review to the round it approved
+  // (lib/ship-preauth.mjs). Never required: a marker without it is still valid evidence that an audit ran.
+  const round = Number.isInteger(parsed?.round) ? parsed.round : null;
+  const result = { state: fresh ? 'fresh' : 'stale', runId, ts, auditedTree, auditedSha, round };
   // `auditedBranch` is forwarded by PRESENCE, and the property is only DEFINED
   // on the result when the marker carried it. That distinction is the contract:
   // an explicit `null` means "detached at capture" — a COMPLETE identity bundle —
@@ -508,6 +511,11 @@ export function formatTrailerBlock(v) {
   if (v.gate === 'passed' && TREE_ID_RE.test(v.auditedTree ?? '')) {
     lines.push(`AI-Audited-Tree: ${v.auditedTree}`);
   }
+  // A pre-authorised ship (the user pre-approved it in the chip's launch prompt rather than typing /ship). Set ONLY by
+  // ship-commit's `--preauthorised` path, after every condition in lib/ship-preauth.mjs held; the single literal value
+  // keeps it queryable (`git log --grep` / trailers) and impossible to spell differently by hand (the AI-* namespace is
+  // reserved, so a hand-typed one is rejected as `reserved-trailer`).
+  if (v.shipAuthority === 'launch-prompt') lines.push('AI-Ship-Authority: launch-prompt');
   return lines;
 }
 
