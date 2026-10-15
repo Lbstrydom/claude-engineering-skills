@@ -269,6 +269,34 @@ describe('canonicalization (SC1) + the bounded read', () => {
     assert.equal(res.withheld, null);
   });
 
+  // The descriptor is closed exactly ONCE. A stream built on the raw `fh.fd`
+  // number closes it on destroy() even with autoClose:false (measured on Node
+  // 22), and the later `fh.close()` then closes that NUMBER again, by which
+  // time another file may own it. That closed an unrelated test's
+  // writeFileSync descriptor (EBADF on Linux CI, 2026-10-15). The race needs a
+  // number reused inside a few microseconds, which a test cannot force, so
+  // assert the cause instead: FileHandle.close() reports EBADF exactly when
+  // something closed its raw number first.
+  test('the descriptor is closed exactly once (never behind the FileHandle)', async () => {
+    const p = writeFile(root, 'once.js', 'a\nb\nc\nd\ne');
+    const closes = [];
+    const open = async (...a) => {
+      const fh = await fsp.open(...a);
+      const realClose = fh.close.bind(fh);
+      fh.close = async () => {
+        try { await realClose(); closes.push('ok'); } catch (e) { closes.push(e.code); throw e; }
+      };
+      return fh;
+    };
+    for (const maxLine of [2, 10]) { // stops early, and reads to EOF
+      const res = await readBoundedLines(p, maxLine, 1_000_000, { open });
+      assert.equal(res.withheld, null);
+      await new Promise((r) => setTimeout(r, 20)); // let finish()'s un-awaited closes settle
+    }
+    assert.ok(closes.length > 0, 'vacuous-pass guard: the instrumented close must have run');
+    assert.deepEqual(closes.filter((c) => c !== 'ok'), [], `a raw-fd close beat the FileHandle: ${closes.join(',')}`);
+  });
+
   /**
    * Classification and read are two claims about two possibly-different
    * objects: O_NOFOLLOW stops a symlink at the final component, but a path
