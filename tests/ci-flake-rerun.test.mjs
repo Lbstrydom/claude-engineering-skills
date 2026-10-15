@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-  FAILED_FILES_MARKER, TEST_STEP_NAME, classifyFlakeRerun, flakeKey, gatherFlakeEvidence, parseFailedFilesMarkers, rerunUnrelatedFlake,
+  FAILED_FILES_MARKER, TEST_STEP_NAME, classifyFlakeRerun, flakeExit, flakeKey, gatherFlakeEvidence, parseFailedFilesMarkers, rerunUnrelatedFlake, reservationFile,
 } from '../scripts/lib/ci-flake-rerun.mjs';
 import { failedFilesLine, finishRun } from '../scripts/run-tests.mjs';
 import { GUARD_REPORT_VERSION } from '../scripts/lib/test-guard-reporter.mjs';
@@ -37,7 +37,7 @@ const markers = (files = ['tests/flaky.test.mjs'], name = 'full-suite') => new M
 const evidence = (over = {}) => ({
   verdict: { verdict: 'failed' }, pr: 7,
   run: { id: 99, run_attempt: 1, conclusion: 'failure', head_sha: HEAD },
-  prHead: HEAD, jobs: [job()], markers: markers(), changed: ['scripts/lib/y.mjs'], tree, workflowPath: WF, ...over,
+  prHead: HEAD, jobs: [job()], markers: markers(), changed: ['scripts/lib/y.mjs'], tree, workflowPath: WF, heavy: [], ...over,
 });
 
 describe('classifyFlakeRerun', () => {
@@ -66,6 +66,7 @@ describe('classifyFlakeRerun', () => {
     ['a failing file the diff reaches', { changed: ['scripts/lib/x.mjs'] }, /reaches it/],
     ['a failing file absent from the tested tree', { markers: markers(['tests/gone.test.mjs']) }, /not in the tested tree/],
     ['an unreadable tree', { tree: null }, /tree at the tested head/],
+    ['an unreadable heavy list (an empty one would hide a declared reach)', { heavy: null }, /heavy list/],
   ]) {
     test(`ineligible: ${why}`, () => {
       const r = classifyFlakeRerun(evidence(over));
@@ -143,7 +144,7 @@ describe('gatherFlakeEvidence', () => {
         ['git fetch', ok('')],
         [`git diff --name-only --no-renames -z --no-ext-diff --no-textconv ${BASE}...${HEAD}`, ok('scripts/lib/y.mjs\0')],
       ]),
-      nwo: NWO, judged, pr: 7, readTree: (h) => { seen.push(h); return { ok: true, tree }; },
+      nwo: NWO, judged, pr: 7, readTree: (h) => { seen.push(h); return { ok: true, tree }; }, readHeavy: () => ({ ok: true, heavy: [] }),
     });
     assert.deepEqual(ev.changed, ['scripts/lib/y.mjs']);
     assert.deepEqual(seen, [HEAD], 'the tree is read at the run\'s head, never the working tree');
@@ -157,7 +158,7 @@ describe('gatherFlakeEvidence', () => {
         ['gh run view', { status: 1, stderr: 'HTTP 404' }],
         ['git fetch', { status: 128, stderr: 'fatal: no such ref' }],
       ]),
-      nwo: NWO, judged, pr: 7, readTree: () => assert.fail('no tree read after a failed fetch'),
+      nwo: NWO, judged, pr: 7, readTree: () => assert.fail('no tree read after a failed fetch'), readHeavy: () => assert.fail('no list read either'),
     });
     assert.equal(ev.jobs, null);
     assert.equal(ev.markers, null);
@@ -322,5 +323,63 @@ describe('rerunUnrelatedFlake: the reservation', () => {
       assert.equal(g.dispatches, 1);
       assert.equal(g.proposals.length, 1);
     } finally { rm(d); }
+  });
+});
+
+describe('audit round 1 regressions', () => {
+  test('an unreadable heavy list is null with a note, never an empty list', () => {
+    const judged = { id: 99, head_sha: HEAD, pull_requests: [{ number: 7, base: { sha: BASE } }] };
+    const run = (cmd, args) => {
+      const k = `${cmd} ${args.join(' ')}`;
+      if (k.startsWith('gh api')) return { status: 0, stdout: JSON.stringify({ total_count: 1, jobs: [job()] }) };
+      if (k.startsWith('gh run view')) return { status: 0, stdout: `full-suite\tnpm test\tt ${FAILED_FILES_MARKER} ["tests/flaky.test.mjs"]\n` };
+      if (k.startsWith('git fetch')) return { status: 0, stdout: '' };
+      if (k.startsWith('git diff')) return { status: 0, stdout: 'scripts/lib/y.mjs\0' };
+      return { status: 1, stderr: k };
+    };
+    const ev = gatherFlakeEvidence({ run, nwo: NWO, judged, pr: 7, readTree: () => ({ ok: true, tree }), readHeavy: () => ({ ok: false, why: 'no readable .test-tiers.json' }) });
+    assert.equal(ev.heavy, null);
+    assert.ok(ev.notes.some((n) => /heavy list: no readable/.test(n)));
+    assert.match(classifyFlakeRerun(evidence({ ...ev })).reason, /heavy list/);
+    const thrown = gatherFlakeEvidence({ run, nwo: NWO, judged, pr: 7, readTree: () => ({ ok: true, tree }), readHeavy: () => { throw new Error('EIO'); } });
+    assert.equal(thrown.heavy, null);
+  });
+
+  test('a file URL that cannot be decoded is unknown, not a crash', () => {
+    const report = JSON.stringify({ version: GUARD_REPORT_VERSION, failures: [{ file: 'file:///tmp/%ZZ.test.mjs' }] });
+    assert.equal(failedFilesLine(report, path.resolve('/repo')), `${FAILED_FILES_MARKER} unknown`);
+  });
+
+  test('flakeExit: a passing verdict stays green whatever the reservation reports; only a failed verdict maps the outcome', () => {
+    const X = { full: 0, notYet: 3, failed: 4, error: 1 };
+    assert.equal(flakeExit('full', { rerun: 'accepted' }, X), 0, 'the re-run passed: green, not "pending"');
+    assert.equal(flakeExit('pending', { rerun: 'accepted' }, X), 3);
+    assert.equal(flakeExit('unverified', null, X), 3);
+    assert.equal(flakeExit('failed', null, X), 4);
+    assert.equal(flakeExit('failed', { rerun: 'accepted' }, X), 3);
+    assert.equal(flakeExit('failed', { rerun: 'rejected' }, X), 4);
+    assert.equal(flakeExit('failed', { rerun: 'ineligible' }, X), 4);
+    assert.equal(flakeExit('failed', { rerun: 'indeterminate' }, X), 1);
+  });
+
+  test('the real transition: "dispatching" is on disk BEFORE the GitHub call, and a crash during it never re-sends', async () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-flake-'));
+    try {
+      const file = reservationFile(d, NWO, 99);
+      let attempt = 1;
+      let sends = 0;
+      const base = { stateDir: d, nwo: NWO, runId: 99, classification: { eligible: true, failingFiles: ['tests/flaky.test.mjs'] }, readAttempt: () => ({ ok: true, attempt }), findProposal: () => ({ ok: true, id: null }), propose: () => ({ ok: true, id: 'p-1' }) };
+      const crashing = () => {
+        sends += 1;
+        assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).state, 'dispatching', 'persisted before the side effect');
+        attempt = 2; // GitHub accepted it ...
+        throw new Error('process died'); // ... and the process died before writing the outcome
+      };
+      await assert.rejects(rerunUnrelatedFlake({ ...base, dispatch: crashing }), /process died/);
+      assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).state, 'dispatching', 'the crash left the honest state');
+      const r = await rerunUnrelatedFlake({ ...base, dispatch: () => { sends += 1; return { ok: true }; } });
+      assert.equal(r.rerun, 'accepted');
+      assert.equal(sends, 1, 'the restart reconciled by reading, never by sending again');
+    } finally { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });

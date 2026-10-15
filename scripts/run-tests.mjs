@@ -66,7 +66,7 @@ import { TEST_TIER_VERSION, parseHeavyList, parseTierEnvelope, validateEnvelopeA
 import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-report.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { recordSuiteRun } from './lib/suite-run-record.mjs';
-import { FAILED_FILES_MARKER } from './lib/ci-flake-rerun.mjs';
+import { FAILED_FILES_MARKER } from './lib/failed-files-marker.mjs';
 import { performance } from 'node:perf_hooks';
 
 /**
@@ -449,7 +449,8 @@ export function failedFilesLine(reportText, root) {
   const files = new Set();
   for (const f of report.failures) {
     if (typeof f?.file !== 'string' || !f.file) return unknown;
-    const abs = f.file.startsWith('file:') ? fileURLToPath(f.file) : f.file;
+    let abs;
+    try { abs = f.file.startsWith('file:') ? fileURLToPath(f.file) : f.file; } catch { return unknown; }
     const rel = path.relative(root, abs).split(path.sep).join('/');
     if (!rel || rel.startsWith('../') || rel === '..' || path.isAbsolute(rel)) return unknown;
     files.add(rel);

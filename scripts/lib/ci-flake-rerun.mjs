@@ -29,11 +29,11 @@ import path from 'node:path';
 import { runJson, runText } from './ci-verdict.mjs';
 import { atomicWriteFileSync } from './file-io.mjs';
 import { withFileLock } from './file-lock.mjs';
+import { FAILED_FILES_MARKER } from './failed-files-marker.mjs';
 import { globMatch } from './glob-match.mjs';
 import { SELECTOR_DEPENDENCIES, SELECTOR_IDENTITY_FILES, SHARED_ENVIRONMENT, computeReach, entryReached } from './test-tier.mjs';
 
-/** The line `run-tests.mjs` prints on a failing run; parsed back out of the CI log here. */
-export const FAILED_FILES_MARKER = 'run-tests/v1 failed-files:';
+export { FAILED_FILES_MARKER };
 /** The workflow step that runs the suite and prints the marker; the only failed step a flake may have. */
 export const TEST_STEP_NAME = 'npm test';
 const SHA40 = /^[0-9a-f]{40}$/;
@@ -86,12 +86,12 @@ function sharedInput(file, workflowPath) {
  * @param {string[]|null} e.changed the complete changed set, tested base...head
  * @param {{files: Set<string>, read: Function}|null} e.tree the tree AT the tested head
  * @param {string} e.workflowPath
- * @param {Array<{file: string, reach: string[]}>} [e.heavy] the heavy list's declared reaches, when known
+ * @param {Array<{file: string, reach: string[]}>|null} e.heavy the heavy list's declared reaches at the tested head; null = unreadable
  * @returns {{eligible: true, failingFiles: string[]} | {eligible: false, reason: string}}
  */
 export function classifyFlakeRerun(e) {
   const no = (reason) => ({ eligible: false, reason });
-  const { verdict, pr, run, prHead, jobs, markers, changed, tree, workflowPath, heavy = [] } = e ?? {};
+  const { verdict, pr, run, prHead, jobs, markers, changed, tree, workflowPath, heavy } = e ?? {};
   if (pr === null || pr === undefined) return no('a flake re-run is decided for a PR, not a bare head');
   if (verdict?.verdict !== 'failed') return no(`the verdict is ${verdict?.verdict ?? 'unknown'}, not failed`);
   if (!run) return no('no judged run');
@@ -121,6 +121,8 @@ export function classifyFlakeRerun(e) {
   const shared = changed.filter((f) => sharedInput(f, workflowPath));
   if (shared.length) return no(`the diff changes a shared input: ${shared.slice(0, 3).join(', ')}`);
   if (!tree) return no('the tree at the tested head could not be read');
+  // The declared reaches are evidence too: an unreadable list is not an empty one (a declared reach could relate the failure).
+  if (!Array.isArray(heavy)) return no('the heavy list (declared reaches) at the tested head could not be read');
   const suffixIndex = new Map();
   for (const file of [...failing].sort()) {
     if (changed.includes(file)) return no(`${file} failed and the diff changes it`);
@@ -148,10 +150,10 @@ export function classifyFlakeRerun(e) {
  * @param {object} a.judged the run record `selectRun` chose
  * @param {number} a.pr
  * @param {(head: string) => {ok: boolean, tree?: object, error?: string}} a.readTree the tree at a commit
- * @param {(head: string) => Array<{file: string, reach: string[]}>} [a.readHeavy] the heavy list at a commit
- * @returns {{jobs: Array|null, markers: Map|null, changed: string[]|null, tree: object|null, heavy: Array, notes: string[]}}
+ * @param {(head: string) => {ok: true, heavy: Array<{file: string, reach: string[]}>}|{ok: false, why: string}} a.readHeavy the heavy list at a commit
+ * @returns {{jobs: Array|null, markers: Map|null, changed: string[]|null, tree: object|null, heavy: Array|null, notes: string[]}}
  */
-export function gatherFlakeEvidence({ run, nwo, judged, pr, readTree, readHeavy = () => [] }) {
+export function gatherFlakeEvidence({ run, nwo, judged, pr, readTree, readHeavy }) {
   const notes = [];
   let jobs = null;
   const jr = runJson(run, 'gh', ['api', `repos/${nwo}/actions/runs/${judged.id}/attempts/1/jobs?per_page=100`]);
@@ -167,7 +169,7 @@ export function gatherFlakeEvidence({ run, nwo, judged, pr, readTree, readHeavy 
   const base = (judged.pull_requests ?? []).find((p) => p?.number === pr)?.base?.sha;
   let changed = null;
   let tree = null;
-  let heavy = [];
+  let heavy = null;
   if (!SHA40.test(String(head ?? '')) || !SHA40.test(String(base ?? ''))) notes.push('the run does not name its tested head and base');
   else {
     const f = runText(run, 'git', ['fetch', '--quiet', 'origin', head, base]);
@@ -179,7 +181,9 @@ export function gatherFlakeEvidence({ run, nwo, judged, pr, readTree, readHeavy 
       else changed = String(d.stdout ?? '').split('\0').filter(Boolean);
       const t = readTree(head);
       if (t.ok) tree = t.tree; else notes.push(`tree: ${t.error}`);
-      try { heavy = readHeavy(head) ?? []; } catch { heavy = []; }
+      let h;
+      try { h = readHeavy(head); } catch (err) { h = { ok: false, why: err.message }; }
+      if (h?.ok && Array.isArray(h.heavy)) heavy = h.heavy; else notes.push(`heavy list: ${h?.why ?? 'unreadable'}`);
     }
   }
   return { jobs, markers, changed, tree, heavy, notes };
@@ -187,8 +191,26 @@ export function gatherFlakeEvidence({ run, nwo, judged, pr, readTree, readHeavy 
 
 // ── Reservation + mutation ──────────────────────────────────────────────────
 
+/**
+ * The CLI's exit code, pure. Only a FAILED verdict takes its exit from the re-run outcome (accepted: wait, 3; refused or
+ * ineligible: the failure stands, 4; indeterminate: 1, a human decides). Any other verdict keeps its own exit, so a run
+ * that passed after a re-run is green (0) whatever the reservation still has to report.
+ * @param {string} verdict
+ * @param {{rerun: string}|null} outcome
+ * @param {{full: number, notYet: number, failed: number, error: number}} exits
+ */
+export function flakeExit(verdict, outcome, exits) {
+  if (verdict === 'full') return exits.full;
+  if (verdict !== 'failed') return exits.notYet;
+  if (!outcome) return exits.failed;
+  return { accepted: exits.notYet, indeterminate: exits.error }[outcome.rerun] ?? exits.failed;
+}
+
 const RECORD_VERSION = 'ci-flake/v1';
 const STATES = new Set(['reserved', 'dispatching', 'accepted', 'rejected']);
+
+/** Where the reservation for one run lives. */
+export const reservationFile = (stateDir, nwo, runId) => path.join(stateDir, `${nwo.replace('/', '__')}__${runId}.json`);
 
 function readRecord(file) {
   let text;
@@ -223,7 +245,7 @@ function readRecord(file) {
  */
 export async function rerunUnrelatedFlake({ stateDir, nwo, runId, classification, readAttempt, dispatch, findProposal, propose, url = '', now = () => new Date().toISOString() }) {
   fs.mkdirSync(stateDir, { recursive: true });
-  const file = path.join(stateDir, `${nwo.replace('/', '__')}__${runId}.json`);
+  const file = reservationFile(stateDir, nwo, runId);
   const key = flakeKey(nwo, runId);
   const save = (rec) => atomicWriteFileSync(file, `${JSON.stringify({ ...rec, updatedAt: now() }, null, 2)}\n`);
   return withFileLock(`${file}.lock`, { maxWaitMs: 15_000 }, async () => {

@@ -35,7 +35,7 @@ import { blobSha, changedFiles, committerTime, readFileAt, readTreeAt, resolveSe
 import { spawnSync } from 'node:child_process';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { CI_VERDICT_EXIT, CI_VERDICT_VERSION, ciVerdict, classifyCiVerdict, gatherCiEvidence, parseVerdictTarget, runText } from './lib/ci-verdict.mjs';
-import { classifyFlakeRerun, gatherFlakeEvidence, rerunUnrelatedFlake } from './lib/ci-flake-rerun.mjs';
+import { classifyFlakeRerun, flakeExit, gatherFlakeEvidence, rerunUnrelatedFlake, reservationFile } from './lib/ci-flake-rerun.mjs';
 
 const EXIT = { ok: 0, error: 1, argv: 2, unmeasured: 3 };
 /** The checkout this CLI's own code lives in: the selector's identity is judged against THESE files. */
@@ -159,22 +159,18 @@ async function cmdCiVerdict() {
   if (rerun && pr === null) throw new ArgvError('test-tier ci-verdict: --rerun-unrelated-flake needs --pr <n>');
   const run = (cmd, args) => spawnSync(cmd, args, { cwd: repo(), encoding: 'utf8', env: cmd === 'git' ? sanitizeGitEnv(repo()) : process.env, maxBuffer: 64 * 1024 * 1024, timeout: 120_000 });
   const r = rerun ? await flakeVerdict({ run, pr }) : ciVerdict({ run, pr, head });
-  if (r.rerun) {
-    if (hasFlag('json')) emitJson(r);
-    else {
-      process.stdout.write(`${r.version} ${r.verdict}${r.head ? ` ${r.head}` : ''}: ${r.reason}${r.url ? ` (${r.url})` : ''}\n`);
-      process.stdout.write(`rerun: ${r.rerun.rerun} - ${r.rerun.detail}\n`);
-      if (r.rerun.proposal) process.stdout.write(`proposal: ${r.rerun.proposal}\n`);
-    }
-    return { accepted: CI_VERDICT_EXIT.notYet, rejected: CI_VERDICT_EXIT.failed, indeterminate: EXIT.error }[r.rerun.rerun]
-      ?? (r.verdict === 'full' ? CI_VERDICT_EXIT.full : r.verdict === 'failed' ? CI_VERDICT_EXIT.failed : CI_VERDICT_EXIT.notYet);
-  }
   if (hasFlag('json')) emitJson(r);
   else if (r.verdict === 'full') {
     process.stdout.write(`${r.summary}\n`);
     if (r.staleBase) process.stderr.write(`ci-verdict note: tested against ${r.staleBase.tested.slice(0, 8)}, ${r.defaultBranch} is now ${r.staleBase.current.slice(0, 8)}\n`);
   } else process.stdout.write(`${r.version} ${r.verdict}${r.head ? ` ${r.head}` : ''}: ${r.reason}${r.url ? ` (${r.url})` : ''}\n`);
-  return r.verdict === 'full' ? CI_VERDICT_EXIT.full : r.verdict === 'failed' ? CI_VERDICT_EXIT.failed : CI_VERDICT_EXIT.notYet;
+  if (r.rerun && !hasFlag('json')) {
+    // Beside a non-failed verdict the re-run lines are a report (stderr), so the one line rule 8 reads stays alone.
+    const out = r.verdict === 'failed' ? process.stdout : process.stderr;
+    out.write(`rerun: ${r.rerun.rerun} - ${r.rerun.detail}\n`);
+    if (r.rerun.proposal) out.write(`proposal: ${r.rerun.proposal}\n`);
+  }
+  return flakeExit(r.verdict, r.rerun ?? null, { ...CI_VERDICT_EXIT, error: EXIT.error });
 }
 
 /**
@@ -188,22 +184,31 @@ async function flakeVerdict({ run, pr }) {
   const v = { version: CI_VERDICT_VERSION, head: ev.head, pr, defaultBranch: ev.defaultBranch, ...classifyCiVerdict(ev) };
   const judged = (ev.runs ?? []).find((x) => x?.id === v.runId) ?? null;
   if (!judged) return { ...v, rerun: { rerun: 'ineligible', detail: 'no judged run', proposal: null } };
+  const commonDir = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo(), encoding: 'utf8', env: sanitizeGitEnv(repo()) });
+  if (commonDir.status !== 0 || !commonDir.stdout.trim()) return { ...v, rerun: { rerun: 'indeterminate', detail: 'the git common dir could not be resolved', proposal: null } };
+  const stateDir = path.join(commonDir.stdout.trim(), 'fleet', 'ci-flake');
+  // Only a FAILED verdict is acted on. Past it (the re-run is running, or has passed) the only work left is a record this
+  // tool wrote and has not finished (a proposal not yet filed); with no record there is nothing to do and no line to print.
+  if (v.verdict !== 'failed' && !fs.existsSync(reservationFile(stateDir, ev.nwo, judged.id))) return v;
   // Attempt 1 is classified; a run already past it can only be taken forward from a record this tool wrote.
   let classification = null;
   if (judged.run_attempt === 1) {
     const fe = gatherFlakeEvidence({
       run, nwo: ev.nwo, judged, pr,
       readTree: (h) => readTreeAt(repo(), h),
-      readHeavy: (h) => { const l = parseHeavyList(readFileAt(repo(), h, '.test-tiers.json') ?? ''); return l.ok ? l.list.heavy : []; },
+      readHeavy: (h) => {
+        const text = readFileAt(repo(), h, '.test-tiers.json');
+        if (text === null) return { ok: false, why: `no readable .test-tiers.json at ${h.slice(0, 8)}` };
+        const l = parseHeavyList(text);
+        return l.ok ? { ok: true, heavy: l.list.heavy } : { ok: false, why: l.reason };
+      },
     });
     classification = classifyFlakeRerun({ verdict: v, pr, run: judged, prHead: ev.head, ...fe, workflowPath: ev.workflowPath });
     if (!classification.eligible && fe.notes.length) classification = { ...classification, reason: `${classification.reason} (${fe.notes.slice(0, 2).join('; ')})` };
   }
-  const commonDir = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo(), encoding: 'utf8', env: sanitizeGitEnv(repo()) });
-  if (commonDir.status !== 0 || !commonDir.stdout.trim()) return { ...v, rerun: { rerun: 'indeterminate', detail: 'the git common dir could not be resolved', proposal: null } };
   const fleet = (args) => spawnSync(process.execPath, [path.join(SELF, 'scripts', 'fleet.mjs'), ...args], { cwd: repo(), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   const outcome = await rerunUnrelatedFlake({
-    stateDir: path.join(commonDir.stdout.trim(), 'fleet', 'ci-flake'),
+    stateDir,
     nwo: ev.nwo, runId: judged.id, classification, url: judged.html_url ?? '',
     readAttempt: () => {
       const a = runText(run, 'gh', ['api', `repos/${ev.nwo}/actions/runs/${judged.id}`, '--jq', '.run_attempt']);
