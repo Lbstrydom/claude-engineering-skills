@@ -216,8 +216,15 @@ export async function readBoundedLines(absPath, maxLine, maxBytes, deps = {}, ex
       // Node treats `end` as INCLUSIVE, so this reads at most maxBytes+1 bytes
       // — deliberately one over, so a file of EXACTLY maxBytes still reads
       // cleanly while maxBytes+1 is detectable as over-bound below.
+      //
+      // `fd: fh` (the FileHandle), never `fh.fd` (its raw number): a stream on
+      // the raw number closes it on destroy() even with autoClose:false
+      // (measured, Node 22), and the later `fh.close()` then closes that NUMBER
+      // a second time, by which point another file can own it. That closed an
+      // unrelated descriptor (EBADF on Linux CI, 2026-10-15). With the handle,
+      // only the FileHandle ever closes the descriptor.
       stream = createReadStream(null, {
-        fd: fh.fd,
+        fd: fh,
         encoding: 'utf8',
         start: 0,
         end: maxBytes,
