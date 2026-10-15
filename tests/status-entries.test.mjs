@@ -313,6 +313,17 @@ describe('entryStateOnDisk (the gate\'s head-side reader)', () => {
     } finally { rm(d); }
   });
 
+  test('a symlink named README.md is NOT the marker, for the gate and the reader alike', (t) => {
+    const d = tmp();
+    try {
+      put(d, 'target.md', '# elsewhere\n');
+      fs.mkdirSync(path.join(d, ENTRIES_DIR), { recursive: true });
+      try { fs.symlinkSync(path.join(d, 'target.md'), path.join(d, MARKER_REL)); } catch { t.skip('cannot create symlinks on this host'); return; }
+      assert.equal(entryStateOnDisk(d).marker, false);
+      assert.equal(perEntryModeOnDisk(d), false, 'one policy: the reader agrees with the gate');
+    } finally { rm(d); }
+  });
+
   test('no directory at all is the legacy state; an unreadable one throws', () => {
     const d = tmp();
     try {

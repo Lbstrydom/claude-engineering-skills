@@ -77,10 +77,17 @@ function archivesAt(rev) {
 function entryStateAt(rev) {
   // A path absent at `rev` lists as empty with exit 0, so a THROW here is a real failure (bad rev,
   // corrupt object) and must not be read as "no entries": it would blind Laws 7 and 9.
-  const listing = git(['ls-tree', '-r', '--name-only', rev, `${ENTRIES_DIR}/`]);
-  const paths = listing.split('\n').map((l) => l.trim()).filter(Boolean);
-  const entries = {};
+  // The ONE marker policy (also entryStateOnDisk's): a regular file. `ls-tree` modes 100644/100755 are
+  // regular; 120000 (a symlink) and 160000 (a submodule) are not, so they are named as strays.
+  const listing = git(['ls-tree', '-r', rev, `${ENTRIES_DIR}/`]);
+  const paths = [];
   const strays = [];
+  for (const line of listing.split('\n').filter(Boolean)) {
+    const m = /^(\d{6}) \w+ [0-9a-f]+\t(.+)$/.exec(line);
+    if (!m) throw new Error(`unparseable ls-tree line at ${rev.slice(0, 8)}: ${line}`);
+    if (m[1] === '100644' || m[1] === '100755') paths.push(m[2]); else strays.push(m[2]);
+  }
+  const entries = {};
   for (const rel of paths) {
     if (rel === MARKER_REL) continue;
     if (!isEntryRecordPath(rel)) { strays.push(rel); continue; }
