@@ -1,6 +1,6 @@
 # Plan: Adoption fit check — doctor measures, then recommends fleet + gate settings
 - **Date**: 2026-10-14
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend (doctor probes, one local record writer, one rule-text pointer; no UI) · stack `js-ts` (`detect-stack`: `js-ts`)
 - **Target domain(s)**: `scripts`, `shared-lib`, `skills-content`
@@ -238,4 +238,11 @@ Constants live at the top of `operating-fit.mjs`, each with its citation: `TIER_
 - **Cluster B** (doctor probes): R1 H:2 M:11 — 12 fixed, 1 dismissed (informational: the adjacency pass hit its own enumeration bound). Real defects found: a fractional `timeout` that `execFileSync` rejects with `ERR_OUT_OF_RANGE`; a `shared-lib -> fleet` layering violation (fixed by moving the fleet reads into `scripts/lib/fleet/operating-evidence.mjs`, injected through `ctx`, with one justified `scripts -> fleet` edge in `.audit-loop/domain-map.json`); the capacity formula (`floor(60 / (g*h))`, not `floor(60*h/g)`); reusable-workflow calls hiding test jobs from the census. R2: **PASS, H:0 M:2**, both fixed (quote/comment-aware command splitting; unresolved repo identity reads unmeasured).
 - **Consolidated Gemini gate** over the union diff: **APPROVE**, 0 blocking, 0 debt (reviewer note: changed-line coverage PARTIAL for 11 files).
 - **Negative controls run** (each seen to fail against a deliberately broken tree): runner exit code isolated from the recorder; `--only` skips non-selected machine probes (counting fake `gh`); integer timeout at the real `execFileSync` boundary.
-- **Not run here**: the full `npm test` (it is the pre-push gate and needs the machine heavy slot in CES's turn). `npm run check:static` and `npm run guards:preflight` pass.
+- **Full suite**: not run during implementation (it is the pre-push gate and needs the machine heavy slot in CES's turn); it ran at push time and passed on `e9b6f016` (after one failure that exposed the `prepush-worktree-anchor` declaration, fixed in `fddf7c30`). GitHub's `full-suite` check was green on the same head. `npm run check:static` and `npm run guards:preflight` pass.
+
+## Implementation Log
+
+### 2026-10-15
+- Completed: everything in sections 7 and 7b. Cluster A (suite-run record, runner `completeRun`), Cluster B (`operating-inputs.mjs`, `operating-fit.mjs`, probe registration, `doctor --only` skipping, rule-12 pointer), plus `scripts/lib/fleet/operating-evidence.mjs` and its tests. PR #250.
+- Remaining: gate-slot wait is still `unmeasured`; #252's lease journal and `measureSlotWaits` make it measurable (proposal `p-20261014103957-4acc`). Whole-gate timing (`p-20261014103958-81f8`), a rule-14 pointer (`p-20261014103958-fd60`) and a suite-run writer for consumers (`p-20261014113553-e216`) are queued.
+- Deviations: (1) `scripts/lib/fleet/operating-evidence.mjs` is new, not in the file-level plan: the audit found a real shared-lib -> fleet layering violation, so the fleet reads moved there and reach shared-lib through `ctx`, with one `scripts -> fleet` edge declared in `.audit-loop/domain-map.json` (section 7 listed neither). (2) `scripts/doctor.mjs` is modified (the `--only` skip and the provider wiring). (3) `localHeavyWall` is the full record when present, the branch record only as a fallback (section 2.2 said "newer of"). (4) Reusable-workflow calls are opaque and make the census incomplete; `runsTests` is command-aware. (5) `tests/prepush-worktree-anchor.test.mjs` declares `suite-run-record.mjs` (found by the full gate, after the audits).

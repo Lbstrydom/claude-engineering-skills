@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**19 active · 253 terminal · 38 audit summaries · 1 parked · 5 reference docs**
+**18 active · 254 terminal · 38 audit summaries · 1 parked · 5 reference docs**
 
 ---
 
@@ -21,7 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Adoption fit check — doctor measures, then recommends fleet + gate settings](./adoption-fit-check.md) | `Approved` |  |
 | [The drift report says how far the active index trails the default branch](./arch-index-freshness.md) | `In Progress` | implemented on `fix/arch-index-freshness`; under /audit-code |
 | [Triage: the eight `archive/worktree-agent-*` tags (2026-10-11)](./archive-tag-triage-2026-10-11.md) | `Draft` | findings and recommendations only; no tag was deleted and nothing was landed by this document |
 | [migrate every CLI entry guard to `isInvokedAsScript`](./cli-entry-guard-migration.md) | `In Progress` |  |
@@ -70,7 +69,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 250 completed plans</summary>
+<summary>Show all 251 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -81,6 +80,7 @@ source comments that no docs linter sees — stays valid.
 | [Adaptive Learning — Phase 3 (Replay Framework + Remaining Telemetry)](./adaptive-learning-phase-3-replay.md) | `Complete` | shipped as commit `e40a40e` on 2026-05-08 |
 | [Adaptive Learning Expansion v1](./adaptive-learning-v1.md) | `Complete` | (v1) — all 3 phases shipped (commits 0bde3ab, cf9a89b, e40a40e), schema migration applied to Supabase… |
 | [Containment-Adjacency Check — a mechanical wave that asks "what else is in this branch?"](./adjacency-check-containment.md) | `Complete` | all three clusters implemented, tested and gated (`/cycle --autonomous`, 2026-07-17). The §11 prerequisite… |
+| [Adoption fit check — doctor measures, then recommends fleet + gate settings](./adoption-fit-check.md) | `Complete` |  |
 | [The five aged-out acceptances that are real, still live, and no longer surfaced](./aged-out-acceptance-remainder.md) | `Complete` | §3 (`b091a8ab`) and §4 (`e3da8d42`) shipped 2026-09-14, each had a concrete fix shape already and went… |
 | [AI Context Sync — Reconcile Drift, Detect Drift, Copilot Slash-Command Parity](./ai-context-sync.md) | `Complete` | all 6 phases shipped 2026-04-26 / 2026-04-27 |
 | [allowTiered — per-call execution gate for tiered pipeline / shadow](./allow-tiered-callsite-gate.md) | `Complete` | audited (`/audit-code`, 1 GPT round + Gemini APPROVE, 0 new findings), shipped, verified via direct repro +… |
