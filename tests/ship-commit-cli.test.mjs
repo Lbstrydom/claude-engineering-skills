@@ -44,6 +44,11 @@ const runCli = makeRunCli(CLI, {
   buildEnv: (cwd) => ({ ...gitFixtureEnv(), AUDIT_DB_URL: '', HOME: cwd, USERPROFILE: cwd }),
 });
 
+/** Everything a refused ship must leave untouched: HEAD, the index, the working tree. A commit COUNT alone misses staging. */
+function repoSnapshot() {
+  return [String(git(['rev-parse', 'HEAD'])), String(git(['status', '--porcelain=v1', '--untracked-files=all'])), String(git(['diff', '--cached', '--name-only']))].join('|');
+}
+
 function commitCount() {
   const r = spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: repo, encoding: 'utf-8', env: gitFixtureEnv() });
   return r.status === 0 ? Number(r.stdout.trim()) : 0;
@@ -485,6 +490,63 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     const r = runCli(['--check-migrations', ...BASE_ARGS(mf)]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX: --check-migrations:.*cannot be combined/);
+    assert.equal(commitCount(), before);
+  });
+
+  // --preauthorised: a chip whose launch prompt pre-approved the ship may commit only while lib/ship-preauth.mjs holds
+  // (docs/plans/fleet-chips-and-merge-friction.md section 2.2b). Every refusal is exit 2 with NO commit attempted.
+  it('--preauthorised with --no-tests → exit 2 at argument validation, no commit (the gate would be capped)', () => {
+    const mf = arrange();
+    const before = commitCount();
+    const snap = repoSnapshot();
+    const r = runCli([...BASE_ARGS(mf), '--preauthorised', '--no-tests']);
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /AGENT FIX: --preauthorised:.*cannot be combined with --no-tests/);
+    assert.equal(commitCount(), before, 'nothing may be committed');
+    assert.equal(repoSnapshot(), snap, 'and HEAD, the index and the working tree are exactly as found (no staging, no intent-to-add)');
+  });
+
+  it('--preauthorised on a not-run gate → refused, every refused condition named, no commit', () => {
+    const mf = arrange();
+    const before = commitCount();
+    const snap = repoSnapshot();
+    const r = runCli([...BASE_ARGS(mf), '--preauthorised']);   // BASE_ARGS carries --gate not-run
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /REFUSED gate +effective gate is "not-run"/);
+    assert.match(r.stderr, /REFUSED audit-converged/);
+    assert.match(r.stderr, /REFUSED final-review/);
+    assert.match(r.stderr, /AGENT FIX: --preauthorised: this ship is not pre-authorised/);
+    assert.equal(commitCount(), before);
+    assert.equal(repoSnapshot(), snap, 'a refusal leaves HEAD, the index and the working tree as found');
+  });
+
+  it('a plain ship (no --preauthorised) carries no AI-Ship-Authority trailer', () => {
+    const mf = arrange();
+    const r = runCli(BASE_ARGS(mf));
+    assert.equal(r.status, 0, r.stderr);
+    const body = String(git(['log', '-1', '--format=%B']));
+    assert.doesNotMatch(body, /AI-Ship-Authority/);
+  });
+
+  it('--check-preauthorised, nothing to ship → exit 2 with one line per condition, no git side effects', () => {
+    const before = commitCount();
+    const snap = repoSnapshot();
+    const r = runCli(['--check-preauthorised']);
+    assert.equal(r.status, 2, r.stderr);
+    for (const id of ['gate', 'audit-converged', 'final-review', 'sensitive-path', 'migration', 'repo-policy']) {
+      assert.match(r.stdout, new RegExp(id), `the preflight must report ${id}`);
+    }
+    assert.match(r.stdout, /pre-authorised ship REFUSED/);
+    assert.equal(commitCount(), before);
+    assert.equal(repoSnapshot(), snap);
+  });
+
+  it('--check-preauthorised combined with commit args → AGENT FIX, exit 2, no git side effects', () => {
+    const mf = arrange();
+    const before = commitCount();
+    const r = runCli(['--check-preauthorised', ...BASE_ARGS(mf)]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /AGENT FIX: --check-preauthorised:.*cannot be combined/);
     assert.equal(commitCount(), before);
   });
 });

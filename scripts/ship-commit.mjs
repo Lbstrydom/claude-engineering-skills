@@ -72,6 +72,13 @@ import {
 // ask it, and discovered the block only after a converged run had already lost its
 // gate evidence. Same measurement, two callers, per-caller prose.
 import { checkMigrationRealization } from './lib/db/schema-realization.mjs';
+// The pre-authorised ship: a chip whose launch prompt pre-approved the ship steps may commit only while every condition in
+// this ONE module holds (docs/plans/fleet-chips-and-merge-friction.md section 2.2b). Pure decision; this file only gathers.
+import {
+  evaluatePreauthorisedShip, renderPreauthConditions, gatherChangedPaths,
+} from './lib/ship-preauth.mjs';
+import { readFinalReviewMarker } from './lib/final-review-marker.mjs';
+import { finishAndExit } from './lib/cli-io.mjs';
 
 const KNOWN_FLAGS = new Set([
   '--message-file', '--skill', '--models', '--gate', '--path',
@@ -79,7 +86,7 @@ const KNOWN_FLAGS = new Set([
 ]);
 const KNOWN_BOOLEAN_FLAGS = new Set([
   '--no-run-id', '--no-tests', '--selfcheck-relocation', '--expect-detached',
-  '--check-migrations',
+  '--check-migrations', '--preauthorised', '--check-preauthorised',
 ]);
 
 function err(line) { process.stderr.write(`${line}\n`); }
@@ -117,6 +124,70 @@ function resolveSkillNames(repoRoot) {
     process.exit(1);
   }
   return names;
+}
+
+/**
+ * The store's convergence row for an evidence run, with WHY when there is none: `{convergence, why}`. One reader for the
+ * verified-gate branch and the pre-authorised preflight, so they cannot disagree about what "converged" means, and a store that
+ * failed is told apart from a cloud that is off and from a run with no row (the decision is the same, the cause is not).
+ */
+async function readConvergence(runId) {
+  let isCloudEnabled;
+  let getAuditRunConvergence;
+  try {
+    ({ isCloudEnabled } = await import('./lib/store/repo.mjs'));
+    ({ getAuditRunConvergence } = await import('./lib/store/runs-findings.mjs'));
+  } catch (e) { return { convergence: null, why: `the store modules could not be loaded (${e?.code || e?.message || 'error'})` }; }
+  let enabled;
+  try { enabled = await isCloudEnabled(); } catch (e) { return { convergence: null, why: `the store configuration could not be read (${e?.code || e?.message || 'error'})` }; }
+  if (!enabled) return { convergence: null, why: 'cloud store is off' };
+  let row;
+  try { row = await getAuditRunConvergence(runId); } catch (e) { return { convergence: null, why: `the store query failed (${e?.code || e?.message || 'error'})` }; }
+  // getAuditRunConvergence returns null for BOTH "no such run" and a query error it swallowed; the honest cause is "either".
+  return row ? { convergence: row, why: null } : { convergence: null, why: 'no audit_runs row for that run id, or the query failed' };
+}
+
+/**
+ * `--check-preauthorised`: the read-only preflight for the pre-authorised ship. Prints one line per condition against HEAD and
+ * exits 0 (all clear) or 2 (refused). Same mutual-exclusivity contract as --check-migrations. Advisory-early only: the commit path
+ * re-evaluates against the tree it is about to commit, so a chip stops BEFORE the doc work, not instead of the gate.
+ */
+async function checkPreauthorised() {
+  const others = process.argv.slice(2).filter((a) => a !== '--check-preauthorised');
+  if (others.length > 0) {
+    err(
+      'AGENT FIX: --check-preauthorised: a standalone read-only preflight that commits nothing; '
+      + `it cannot be combined with commit arguments (also given: ${others.join(' ')}). `
+      + 'Run it alone.',
+    );
+    process.exit(2);
+  }
+  const top = git(['rev-parse', '--show-toplevel'], process.cwd());
+  if (top.error) { err('ship-commit: git spawn failed'); process.exit(1); }
+  if (top.status !== 0) { err(`ship-commit: git: ${(top.stderr || '').trim()}`); process.exit(1); }
+  const root = top.stdout.trim();
+  const ts = git(['log', '-1', '--format=%ct'], root);
+  const evidence = resolveEvidence({
+    auditRunPath: path.join(root, '.audit', 'last-audit-run.json'),
+    headCommitTs: ts.status === 0 ? Number(ts.stdout.trim()) || 0 : 0,
+    noRunId: false,
+  });
+  const verifiable = isContentVerifiable(evidence);
+  const { convergence, why } = verifiable ? await readConvergence(evidence.runId) : { convergence: null, why: 'there is no usable gate-evidence marker' };
+  const branch = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], root);
+  const verdict = evaluatePreauthorisedShip({
+    gateDeferred: true,
+    currentBranch: branch.status === 0 ? branch.stdout.trim() : null,
+    convergence,
+    convergenceWhy: why ?? undefined,
+    evidence: verifiable ? evidence : null,
+    finalReview: readFinalReviewMarker(root),
+    changedPaths: gatherChangedPaths((a) => git(a, root), 'HEAD'),
+  });
+  const out = [...renderPreauthConditions(verdict), `ship-commit: pre-authorised ship ${verdict.ok ? 'ALLOWED' : 'REFUSED'} (against HEAD; the commit path re-checks the commit tree)`];
+  process.stdout.write(`${out.join('\n')}\n`);
+  // Drain stdout before exiting: a piped stdout is asynchronous on Windows, and this report is the whole output.
+  await finishAndExit(verdict.ok ? 0 : 2);
 }
 
 async function main() {
@@ -176,6 +247,8 @@ async function main() {
     process.exit(0);
   }
 
+  if (process.argv.includes('--check-preauthorised')) return checkPreauthorised();
+
   // ---- arg parse (unknown flag = taxonomy row 1) -------------------------
   const argv = process.argv.slice(2);
   const opts = { noRunId: false, noTests: false, expectDetached: false, paths: [] };
@@ -185,6 +258,8 @@ async function main() {
     if (a === '--no-run-id') { opts.noRunId = true; continue; }
     if (a === '--no-tests') { opts.noTests = true; continue; }
     if (a === '--expect-detached') { opts.expectDetached = true; continue; }
+    // A boolean flag that is ACCEPTED but never stored is silently inert: the commit would proceed unchecked. Stored here.
+    if (a === '--preauthorised') { opts.preauthorised = true; continue; }
     if (KNOWN_FLAGS.has(a)) {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) {
@@ -203,9 +278,19 @@ async function main() {
     if (!KNOWN_BOOLEAN_FLAGS.has(a)) {
       inputErrors.push({
         field: a,
-        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--path|--expect-head|--expect-branch|--expect-detached|--no-run-id|--no-tests. Example: --gate converged`,
+        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--path|--expect-head|--expect-branch|--expect-detached|--no-run-id|--no-tests|--preauthorised. Example: --gate converged`,
       });
     }
+  }
+
+  // --preauthorised may not be combined with --no-tests: that flag skips the hooks and caps AI-Gate at waived/not-run
+  // (REQ-behavioural-19096e7a), so the effective gate could never be the verified one a pre-authorised ship needs. Refused
+  // here, at argument validation, so nothing has been touched.
+  if (opts.preauthorised && opts.noTests) {
+    inputErrors.push({
+      field: '--preauthorised',
+      custom: 'AGENT FIX: --preauthorised: cannot be combined with --no-tests (it skips the hooks and caps AI-Gate at waived/not-run). Drop --no-tests, or stop and ask the user to type /ship. Example: --preauthorised --gate converged',
+    });
   }
 
   // ---- repo resolution (row 12) ------------------------------------------
@@ -444,6 +529,7 @@ async function main() {
   // second branch would be a second oracle deciding gate legality — the failure
   // class this repo names for `classifySelector` and `sensitive-paths.mjs`.
   // Plan: docs/plans/gate-taxonomy-remediated-ships.md §2.
+  let preauthFacts = null;   // set only when the verified-gate branch below ran and ACCEPTED
   if ((values.gate === 'passed' || values.gate === 'converged') && isContentVerifiable(evidence)) {
     let cloudEnabled = false;
     let convergence = null;
@@ -549,6 +635,7 @@ async function main() {
       for (const line of renderAgentFixLines([ver])) err(line);
       process.exit(2);
     }
+    preauthFacts = { convergence, committedTree };
     // Verification ACCEPTED. Persist the value that was actually compared, so
     // the claim is re-checkable from the commit alone. Deliberately assigned
     // only here — after the refusal branch — so the trailer cannot appear on a
@@ -565,6 +652,32 @@ async function main() {
     // belt to its braces — two guards because the failure is silent.
     // Plan: docs/plans/gate-taxonomy-remediated-ships.md §2.3.
     if (values.gate === 'passed') values.auditedTree = committedTree;
+  }
+
+  // ---- pre-authorised ship (docs/plans/fleet-chips-and-merge-friction.md section 2.2b) -----------------------------------
+  // Runs AFTER the gate verification above, so the "gate" condition is judged on the EFFECTIVE, store-verified gate, and
+  // BEFORE any index or git mutation. A refusal is exit 2 with every refused condition named; there is no override.
+  if (opts.preauthorised) {
+    const branch = verifiedIdentity && verifiedIdentity.ref.kind === 'attached' ? verifiedIdentity.ref.name : null;
+    const verdict = evaluatePreauthorisedShip({
+      gate: values.gate,
+      noTests: opts.noTests,
+      convergence: preauthFacts ? preauthFacts.convergence : null,
+      evidence: preauthFacts && isContentVerifiable(evidence) ? evidence : null,
+      currentBranch: branch,
+      finalReview: readFinalReviewMarker(repoRoot),
+      changedPaths: preauthFacts && preauthFacts.committedTree ? gatherChangedPaths(gitRun, preauthFacts.committedTree) : null,
+    });
+    if (!verdict.ok) {
+      for (const line of renderPreauthConditions(verdict)) err(line);
+      err(
+        'AGENT FIX: --preauthorised: this ship is not pre-authorised: ' + verdict.refusals.map((r) => r.split(':')[0]).join(', ')
+        + '. Stop and tell the user to type /ship <plan> in this session once it is idle; do not hand-write evidence or re-run to find a pass.',
+      );
+      process.exit(2);
+    }
+    values.shipAuthority = 'launch-prompt';
+    err('  [preauthorised] all conditions held — the commit will carry AI-Ship-Authority: launch-prompt');
   }
 
   // ---- scope check (row 11) -----------------------------------------------

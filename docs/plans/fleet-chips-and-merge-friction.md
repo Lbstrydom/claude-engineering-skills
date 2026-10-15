@@ -112,7 +112,7 @@ graph LR
   end
   subgraph PR2["PR 2 chip workflow"]
     SC["ship-commit.mjs --preauthorised"] --> SP["lib/ship-preauth.mjs"]
-    SP --> RF["store: convergence + gemini_verdict"]
+    SP --> RF["store: convergence; local marker: final review"]
     FS["fleet status"] --> UC["upstream count cache"]
     UC --> FN["fleet next"]
   end
@@ -191,7 +191,7 @@ condition holds:
 |---|---|---|
 | the **effective** gate is `passed` or `converged` (never `waived`/`not-run`) | the gate value after every cap ship-commit applies (`--no-tests` caps it to `waived`/`not-run`, REQ-behavioural-19096e7a), then the existing `evaluateGateVerification` against the store's convergence row and the audited tree. `--preauthorised` with `--no-tests` is refused outright at argument validation, before any git mutation | `gate` |
 | the audit converged | `audit_runs.round_converged_after` not null for the evidence run (same row as above) | `audit-converged` |
-| the final review approved **this** audited tree | the final-review marker `.audit/last-final-review.json` (below) has `verdict: 'APPROVE'` and its `runId`, `auditedTree` and `round` equal the gate-evidence marker's; and the store's `audit_runs.gemini_verdict` for that run is `'APPROVE'` (corroboration — the marker alone is local) | `final-review` |
+| the final review approved **this** audited tree | the final-review marker `.audit/last-final-review.json` (below) has `verdict: 'APPROVE'` and its `runId`, `auditedTree` and `round` equal the gate-evidence marker's. (PR 2 audit R1, 2026-10-15: the store's `gemini_verdict` is NOT also required. It has no target identity, its write semantics are under audit-honesty findings, and the tool-written marker binds what the column cannot.) | `final-review` |
 | no sensitive path | every path changed between `merge-base(HEAD, origin/<default>)` and the commit's tree (`git diff --name-only --no-renames`, so both ends of a rename are checked), through `classifyPath` (`scripts/lib/sensitive-paths.mjs`) | `sensitive-path` |
 | no migration | no changed path with a `migrations/` segment (`supabase/migrations/**`, `scripts/migrations/**`, any other) | `migration` |
 | no repository policy | no changed path in the explicit policy list `PREAUTH_POLICY_PATHS`: `.github/**`, `CODEOWNERS` at the root, `docs/CODEOWNERS`, and `.test-tiers.json` (it names the workflow that grades a merge). Matched on normalised repo-relative paths. GitHub settings changed through the API are already outside a chip's authority (launch prompt) | `repo-policy` |
@@ -350,8 +350,8 @@ All new manifest fields are optional, so `HANDOVER_SCHEMA_VERSION` is unchanged 
 - **Assumption: the manifest stays reader-less.** If an installer ever reads it again, it should read the release
   asset (signed, `release.yml`), not raw `main`. The test added in PR 1 asserts the file is untracked, so a
   re-commit is a visible, deliberate change.
-- **Assumption: `gemini_verdict` stays on `audit_runs`.** The preauth check reads it through one accessor; if the
-  final review moves, one function changes.
+- **The final review is read from the tool-written marker, not the `gemini_verdict` column**, so a change to where the
+  verdict is stored does not touch the ship check.
 - **The preamble is the extension point** for future chip rules: a new rule adds a section there, not text in every
   chip prompt.
 - **The flake predicate is data-driven by GitHub's own attempt counter**; the only local state is the per-run
@@ -384,7 +384,6 @@ All new manifest fields are optional, so `HANDOVER_SCHEMA_VERSION` is unchanged 
 - `skills/fleet/references/participant-rules.md` (modify) — the stop-at-ship-ready step names the variant.
 - `scripts/lib/ship-preauth.mjs` (create) — `evaluatePreauthorisedShip`, `PREAUTH_EXCLUDED_PATH_RULES`.
 - `scripts/ship-commit.mjs` (modify) — `--preauthorised`, `--check-preauthorised`.
-- `scripts/lib/store/runs-findings.mjs` (modify) — `getAuditRunConvergence` also returns `geminiVerdict` (read only).
 - `scripts/gemini-review.mjs` (modify) — code mode writes `.audit/last-final-review.json` after persisting the verdict.
 - `scripts/lib/audit/gate-evidence.mjs` (modify) — the final-review marker's writer/reader beside the gate-evidence marker's (one module owns both markers).
 - `scripts/lib/commit-trailers.mjs` (modify) — `AI-Ship-Authority` render + parse.
@@ -441,8 +440,8 @@ All new manifest fields are optional, so `HANDOVER_SCHEMA_VERSION` is unchanged 
   or the synced bundle; the install path is retired. Risk accepted; the release asset still carries the manifest.
 - **Pre-authorised ship widens what a chip can do alone.** Bounded by code (2.2b), by the trailer (auditable after the
   fact), and by the exclusions (sensitive, migrations, repository policy files). Merge stays the coordinator's.
-- **`gemini_verdict` missing for a run whose review did not persist** (no run id). The check refuses (`final-review`),
-  the chip falls back to "type `/ship`": safe direction.
+- **No final-review marker** (the review did not run, or `gemini-review.mjs` does not write it yet). The check refuses
+  (`final-review`) and the chip falls back to "type `/ship`": safe direction.
 - **A real failure in a file the PR did not touch gets one wasted re-run.** The reach check removes most of them; the
   cost is one CI run, bounded by `run_attempt === 1`.
 - **`--rerun-unrelated-flake` mutates GitHub state** (a re-run). Opt-in flag, never the default reader.
@@ -624,6 +623,13 @@ frozen history does not conflict); a union merge driver (GitHub ignores it).
   section's `<summary>` also carries a count) folded into §2.1(2).
 
 ## Implementation Log
+
+### 2026-10-15 — PR 2 (Cluster B): chip preamble, pre-authorised ship in code, upstream count
+- Completed: Phases 3-5. skills/fleet/references/chip-preamble.md (rules 1 and 4 cite it; /ship is typed only when idle); `ship-commit.mjs --preauthorised` / `--check-preauthorised` over a pure decision (lib/ship-preauth.mjs): effective gate, the store's convergence for THIS branch, a final-review marker bound to the audited tree and round, and the branch's changed paths (sensitive, migrations, repository policy); the `AI-Ship-Authority: launch-prompt` trailer; `fleet status`/`next` show open, un-acked upstream issues beside proposals (unmeasured is never zero).
+- Evidence: red-first tests for the strict upstream envelope, the authoritative-base resolution (a REAL repo with a colliding local branch), the marker lifecycle (approve-then-reject, injected unlink/overwrite/create failures, an interleaving) and the inert-flag bug (`--preauthorised` was parsed but never stored until a CLI test failed on it). /audit-code: 6 rounds, 27 + 4 + 4 + 4 + 1 + 1 findings, every one adjudicated; the 15 against runs-findings.mjs were dismissed as no longer in the diff. Gemini APPROVE (0 blocking, 0 debt). guards:preflight PASS; 2,097-test fleet/ship/sync batch green.
+- Deviations from the plan: (1) the final-review marker lives in its own shared-lib module (lib/final-review-marker.mjs), not in gate-evidence.mjs, because the ship domain may not import the audit orchestration. (2) The store's `gemini_verdict` is NOT a second condition (the column has no target identity, and reading it pulled all of runs-findings.mjs into the audit). (3) `gemini-review.mjs` writes the marker in this PR (the audit-honesty PR it was waiting for, #261, merged first). (4) Hardening the audit found beyond the plan: revocation falls back to a tombstone and then to a shadowing file, the lifecycle is one repo-scoped critical section, the default branch is resolved fully qualified and never swapped, branch identity must be known on both sides. (5) `participant-rules.md` is untouched: it has no stop-at-ship-ready step, and its block is embedded verbatim in chip prompts.
+- Deferred: a pending-attempt invalidation registered at review START, so a second review refused the marker lock still supersedes the first's APPROVE (audit R6 H1; debt captured, fleet proposal p-20261015193106-0ace). The marker now has a caller, but the residual needs two concurrent reviews in one worktree.
+- Remaining: PR 2b (status.md per-entry files, p-20261015060430-76b2 and p-20261015160944-2551), then PR 3 (CI flakes) and PR 4 (handover).
 
 ### 2026-10-15 — PR 1 (Cluster A): merge friction, #256
 - Completed: Phases 1-2 plus the release.yml dry-run folded in (p-20261015060428-86c5). skills.manifest.json is untracked and ignored (Category A); the plans index carries no counts; build-manifest --check kept as an explicit verifier; the manifest gate pill and its pinned-list entry removed; release.yml tag is data, every checksum input required; plans:index --check drains stdout (stdout-flush baseline 211 to 210).
