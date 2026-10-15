@@ -389,6 +389,16 @@ Scope added after PR 3 by the coordinator: p-20261015091934-3c6d (`--end-turn` h
 | GPT | 2 | READY_TO_IMPLEMENT, 0 findings | - |
 | Gemini (`latest-pro`) | 1 | APPROVE, gate `approve` (blocking 0, debt 0) | - |
 
+### Amendment audit (PR 5, 2026-10-15, SID audit-plan-1792098144782-716)
+
+Scope added by the coordinator after the evening of 2026-10-15: p-20261015205549-20ec (turn starvation by re-acquiring), p-20261015185008-8182 (same-name sessions rotating a live slot), p-20261015201935-99ea (sync:pr identity). New D11-D13; Phases 11-12; Cluster E. p-20261015185010-4732 (CI-idle hold) deferred to its own PR. Lean audit: stop at the first clean GPT round, then Gemini.
+
+| Reviewer | Round | Verdict | Outcome |
+|---|---|---|---|
+| GPT | 1 | NEEDS_REVISION, H:2 M:1 | 3/3 accepted: a renewal routed through turnRule unchanged is granted forever by backfill (every competing waiter fails admission on the slot being renewed) - judged now on a free-slot projection (H1); a CES-owned CI window would exempt every CES job, so the next target's sync could stack on the previous target's CI - the window stays the target's via `windowRepo` (H2); acceptance criteria normalised to D11/D12 (M1). |
+| GPT | 2 | READY_TO_IMPLEMENT, 0 findings | - |
+| Gemini (`latest-pro`) | 1 | APPROVE, gate `approve` (blocking 0, debt 0) | - |
+
 ## Implementation Log
 
 ### PR 1 (clusters A: phases 1-3) - 2026-10-14
