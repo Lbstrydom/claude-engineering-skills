@@ -1,13 +1,17 @@
 /**
  * @fileoverview The regenerate/check PAIR must cover the same artifacts.
  *
- * `skills.manifest.json` is a Category-B artifact (a pure function of
- * `skills/**` — its `bundleVersion` is a content hash over every file's sha, so
- * the policy's "committed AND freshness-verified" rule applies). A freshness
- * gate for it already existed — `build-manifest.mjs --check` — and was correct.
- * Nothing ever called it.
+ * HISTORY (read this before re-adding the manifest to either script). `skills.manifest.json` was a Category-B
+ * artifact: committed, and freshness-verified by `build-manifest.mjs --check`. It is Category A since 2026-10-15
+ * (untracked, .gitignore; docs/plans/fleet-chips-and-merge-friction.md): nothing reads a committed copy — the only
+ * consumer is .github/workflows/release.yml, which builds it itself — and committing it made 9 of 16 main-merges into
+ * PR branches conflict on its `bundleVersion` line. So `skills:regenerate` and `skills:check` no longer carry it, and
+ * this file asserts that, plus the properties of the generator that remain true (determinism, `--check` content
+ * comparison, CRLF-proof hashing) against a SCRATCH copy.
  *
- * The result: both sides of the pair omitted the manifest. `skills:regenerate`
+ * The pair invariant below is the lesson of the original incident, and it still holds for what remains.
+ *
+ * The original incident: both sides of the pair omitted the manifest. `skills:regenerate`
  * refreshed `.claude/skills/**` but not the manifest, so a developer who edited
  * a SKILL.md and ran the documented fix-it command produced a stale manifest —
  * and `skills:check` confirmed everything was fine. It stayed stale from
@@ -58,9 +62,27 @@ describe('skills:regenerate and skills:check cover the same artifacts', () => {
     );
   });
 
-  it('the manifest is rebuilt AND verified — the case that actually rotted', () => {
-    assert.match(regenerate, /build-manifest\.mjs/, 'skills:regenerate must rebuild the manifest');
-    assert.match(check, /build-manifest\.mjs --check/, 'skills:check must verify the manifest');
+  it('the manifest is in NEITHER script: it is Category A, built where it is used', () => {
+    // Pairing it in only one would re-create the stale-manifest incident above; in both would re-commit a file
+    // nothing reads. It is untracked and ignored, so a freshness gate on it would measure a local file.
+    assert.doesNotMatch(regenerate, /build-manifest\.mjs/, 'skills:regenerate must not rebuild a Category-A manifest');
+    assert.doesNotMatch(check, /build-manifest\.mjs/, 'skills:check must not gate a Category-A manifest');
+  });
+
+  it('skills.manifest.json is untracked and ignored (the change that removes the merge conflicts)', () => {
+    const tracked = execFileSync('git', ['ls-files', '--', 'skills.manifest.json'], { cwd: process.cwd(), encoding: 'utf-8' });
+    assert.equal(tracked.trim(), '', 'a tracked manifest changes its bundleVersion line in every PR that edits a skill');
+    const ignored = spawnSync('git', ['check-ignore', '-q', '--no-index', 'skills.manifest.json'], { cwd: process.cwd() });
+    assert.equal(ignored.status, 0, 'skills.manifest.json must be ignored (.gitignore, Category A)');
+  });
+
+  it('the release workflow builds the manifest itself, before it reads it', () => {
+    // The one consumer. If this fails the manifest has a reader that no longer has a producer.
+    const wf = fs.readFileSync(path.join(process.cwd(), '.github/workflows/release.yml'), 'utf-8');
+    const built = wf.indexOf('node scripts/build-manifest.mjs');
+    const read = wf.indexOf("readFileSync('skills.manifest.json'");
+    assert.ok(built > 0 && read > 0, 'release.yml must build and read the manifest');
+    assert.ok(built < read, 'release.yml must build the manifest BEFORE the step that reads it');
   });
 
   it('the pre-push chain actually runs skills:check', () => {
@@ -74,9 +96,8 @@ describe('build-manifest is deterministic — a true Category-B artifact', () =>
   it('a from-scratch regeneration is BYTE-IDENTICAL (no volatile provenance)', () => {
     // The policy's literal test (AGENTS.md generated-artifact invariant): "would
     // two regenerations on the same commit be byte-identical?" Until the volatile
-    // `updatedAt` was removed, the answer was NO — the manifest sat in the
-    // forbidden "messy middle" (committed AND freshness-checked, yet not a pure
-    // function of source).
+    // `updatedAt` was removed, the answer was NO. Still worth pinning: release.yml's
+    // checksums are only reproducible if the build is deterministic.
     //
     // `buildManifest()` is exported and PURE, so the property is asserted
     // directly on it. An earlier version of this test deleted the real
@@ -93,26 +114,26 @@ describe('build-manifest is deterministic — a true Category-B artifact', () =>
   });
 
   it('rebuilding an already-fresh manifest does not rewrite the file', () => {
-    // Skip-if-identical is now pure UX (report "unchanged" rather than silently
-    // re-touching); with no volatile field a rewrite would be byte-identical
-    // anyway. Kept because a needless touch still reads as activity.
-    //
-    // Safe to run here: skills:check keeps the committed manifest fresh, so the
-    // no-write path is the one under test. If it were stale this fails loudly —
-    // which is itself correct, and exactly what the gate now blocks on.
-    const manifestPath = path.join(process.cwd(), 'skills.manifest.json');
-    const before = fs.readFileSync(manifestPath, 'utf-8');
+    // Skip-if-identical is pure UX (report "unchanged" rather than silently re-touching). Runs against a scratch path:
+    // the repo's own (ignored) manifest may be absent in a fresh clone, and a test must not depend on a local file.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-fresh-'));
+    const scratch = path.join(tmpDir, 'skills.manifest.json');
+    try {
+      const run = () => spawnSync(process.execPath, ['scripts/build-manifest.mjs', '--manifest', scratch], {
+        cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000,
+      });
+      const first = run();
+      assert.equal(first.status, 0, `build must succeed: ${first.stderr}`);
+      assert.match(first.stdout, /updated/, 'the first build writes');
+      const before = fs.readFileSync(scratch, 'utf-8');
 
-    const r = spawnSync(process.execPath, ['scripts/build-manifest.mjs'], {
-      cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000,
-    });
-
-    assert.equal(r.status, 0, `build must succeed: ${r.stderr}`);
-    assert.equal(
-      fs.readFileSync(manifestPath, 'utf-8'), before,
-      'a fresh manifest must be left byte-identical — otherwise every regenerate dirties the tree',
-    );
-    assert.match(r.stdout, /unchanged/, 'and it must say so, rather than claiming it wrote');
+      const second = run();
+      assert.equal(second.status, 0, `rebuild must succeed: ${second.stderr}`);
+      assert.equal(fs.readFileSync(scratch, 'utf-8'), before, 'a fresh manifest must be left byte-identical');
+      assert.match(second.stdout, /unchanged/, 'and it must say so, rather than claiming it wrote');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
   });
 
   it('still REPAIRS a tampered manifest — idempotency must not break the remedy', () => {
@@ -129,7 +150,7 @@ describe('build-manifest is deterministic — a true Category-B artifact', () =>
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-manifest-'));
     const scratch = path.join(tmpDir, 'skills.manifest.json');
     try {
-      const pristine = fs.readFileSync(path.join(process.cwd(), 'skills.manifest.json'), 'utf-8');
+      const pristine = JSON.stringify(buildManifest(), null, 2) + '\n';
       const tampered = JSON.parse(pristine);
       const firstSkill = Object.keys(tampered.skills)[0];
       tampered.skills[firstSkill].sha = 'deadbeefcafe'; // bundleVersion untouched
@@ -150,11 +171,8 @@ describe('build-manifest is deterministic — a true Category-B artifact', () =>
       assert.deepEqual(after, expected, 'and restore the rest of the manifest exactly');
       assert.doesNotMatch(r.stdout, /unchanged/, 'a tampered manifest is NOT unchanged');
 
-      // The committed file must be untouched by this test, by construction.
-      assert.equal(
-        fs.readFileSync(path.join(process.cwd(), 'skills.manifest.json'), 'utf-8'), pristine,
-        'the tracked manifest must never be written by a test',
-      );
+      // This test wrote only to the scratch path, so no temp file may linger beside the artifact.
+      assert.deepEqual(fs.readdirSync(tmpDir), ['skills.manifest.json'], 'no temp file left beside the artifact');
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
@@ -192,7 +210,7 @@ describe('the manifest hashes committed source, not working-tree bytes', () => {
     // The real contract, asserted against git's own copy rather than the
     // working tree — so this holds regardless of local line endings and fails
     // if anyone reverts the normalisation.
-    const manifest = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'skills.manifest.json'), 'utf-8'));
+    const manifest = buildManifest();
     for (const [name, skill] of Object.entries(manifest.skills)) {
       for (const f of skill.files) {
         const committed = execFileSync(
@@ -219,7 +237,7 @@ describe('build-manifest --check compares CONTENT, not just versions', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-check-'));
     const scratch = path.join(tmpDir, 'skills.manifest.json');
     try {
-      const pristine = fs.readFileSync(path.join(process.cwd(), 'skills.manifest.json'), 'utf-8');
+      const pristine = JSON.stringify(buildManifest(), null, 2) + '\n';
       const tampered = JSON.parse(pristine);
       tampered.skills[Object.keys(tampered.skills)[0]].sha = 'deadbeefcafe';
       fs.writeFileSync(scratch, JSON.stringify(tampered, null, 2) + '\n');
@@ -235,11 +253,31 @@ describe('build-manifest --check compares CONTENT, not just versions', () => {
     }
   });
 
-  it('passes --check on the real, fresh manifest', () => {
-    const r = spawnSync(process.execPath, ['scripts/build-manifest.mjs', '--check'], {
-      cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000,
-    });
-    assert.equal(r.status, 0, `the committed manifest must be fresh: ${r.stderr}`);
+  it('passes --check on a freshly built manifest', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-checkok-'));
+    const scratch = path.join(tmpDir, 'skills.manifest.json');
+    try {
+      fs.writeFileSync(scratch, JSON.stringify(buildManifest(), null, 2) + '\n');
+      const r = spawnSync(process.execPath, ['scripts/build-manifest.mjs', '--check', '--manifest', scratch], {
+        cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000,
+      });
+      assert.equal(r.status, 0, `a freshly built manifest must pass --check: ${r.stderr}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('FAILS --check on a missing manifest (absence is never fresh)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-checkmissing-'));
+    try {
+      const r = spawnSync(process.execPath, ['scripts/build-manifest.mjs', '--check', '--manifest', path.join(tmpDir, 'absent.json')], {
+        cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000,
+      });
+      assert.equal(r.status, 1, 'a missing manifest must fail --check');
+      assert.match(r.stderr, /does not exist/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
   });
 });
 

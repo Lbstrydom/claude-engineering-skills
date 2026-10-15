@@ -127,6 +127,18 @@ carries a timestamp + commit sha + refresh_id, the body carries 33 LLM-written
 domain summaries, and it renders from the CLOUD symbol_index — three independent
 reasons two renders of one commit differ; regenerate with `npm run arch:render`).
 
+A also covers **a build output whose committed copy has no reader — it is generated where it is
+used.** `skills.manifest.json` (reclassified B → A 2026-10-15) is a pure function of `skills/**`, but
+nothing reads a committed copy: the installer that did is retired, and the one consumer,
+`.github/workflows/release.yml`, runs `build-manifest.mjs` itself before it reads `bundleVersion`.
+Committing it made every PR that edited any skill file change its `bundleVersion` line, so 9 of 16
+main-merges into PR branches conflicted on it (measured 2026-10-15 by replaying each merge with
+`git merge-tree`; [fleet-chips-and-merge-friction.md](../plans/fleet-chips-and-merge-friction.md) §1.1),
+and a CONFLICTING PR gets no CI. B's freshness check was verifying an artifact nobody consumed, which
+the policy calls churn. `npm run skills:manifest` builds a local copy; `build-manifest.mjs --check`
+still verifies whichever file it is pointed at. The plans index (`docs/plans/README.md`) stays B but
+carries no counts, for the same reason: a count is one line that every plan-adding PR changes.
+
 **B — a pure, deterministic function of committed source → committed AND
 freshness-verified in the pre-push `check`.** Regeneration must be byte-identical
 (no clocks/shas/network). Examples: `.claude/skills/**` (regen by
