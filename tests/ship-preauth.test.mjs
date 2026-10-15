@@ -349,6 +349,29 @@ describe('final-review marker lifecycle fails closed (audit R2 H1/H3, R3 H1/H4)'
     assert.equal(readFinalReviewMarker(d).ok, true);
   }));
 
+  it('R4 H1 INTERLEAVING: a second writer cannot run inside the first one\'s critical section, so it cannot have its revocation deleted by the first\'s cleanup', () => withDir((d) => {
+    writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
+    // Writer A (an older APPROVE) pauses AFTER writing and BEFORE its sidecar cleanup. Inside that window writer B (a newer
+    // REJECT whose own deletes are refused) starts: it must not get to create a revocation that A's cleanup then removes.
+    let b = null;
+    const a = writeFinalReviewMarker({
+      repoRoot: d, evidence: EV, verdict: 'APPROVE', log: () => {},
+      adapters: {
+        afterWrite: () => {
+          b = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'REJECT', log: () => {}, adapters: { lockAttempts: 2, unlinkSync: eperm, overwriteFileSync: eperm } });
+        },
+      },
+    });
+    assert.equal(a.written, true);
+    assert.deepEqual([b.written, b.reason, b.revoked], [false, 'lock-contention', false], 'B is refused the lock, and says it recorded nothing');
+    assert.equal(fs.existsSync(path.join(d, REVOKED_SIDECAR_RELPATH)), false, 'B created no revocation for A to delete');
+    assert.equal(fs.existsSync(path.join(d, '.audit', 'last-final-review.lock')), false, 'and the lock is released afterwards');
+    // After A finishes, B can run normally and its REJECT is what stands.
+    const b2 = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'REJECT' });
+    assert.equal(b2.written, true);
+    assert.equal(readFinalReviewMarker(d).marker.verdict, 'REJECT');
+  }));
+
   it('when the marker can be neither deleted, overwritten nor shadowed, the writer says so loudly and revoked is false (the caller must fail)', () => withDir((d) => {
     writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
     const logged = [];

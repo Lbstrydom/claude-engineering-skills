@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync } from './file-io.mjs';
 import { retrySync } from './retry-transient-fs.mjs';
+import { withFileLockSync } from './file-lock.mjs';
 import { RUN_ID_RE, TREE_ID_RE } from './commit-trailers.mjs';
 
 // ── The final-review marker ─────────────────────────────────────────────────────────────────────────────────────────
@@ -80,7 +81,20 @@ export function revokePreviousMarker(filePath, { unlink = fs.unlinkSync, overwri
  *
  * @returns {{written: boolean, reason?: string, payload?: object, filePath?: string}}
  */
-export function writeFinalReviewMarker({ repoRoot, evidence, verdict, log = (m) => process.stderr.write(m), adapters = {}, nowIso } = {}) {
+export function writeFinalReviewMarker(args = {}) {
+  const { repoRoot, log = (m) => process.stderr.write(m), adapters = {} } = args;
+  // The whole revoke / build / write / cleanup lifecycle is ONE critical section, shared by every writer in this repo: without it an
+  // older writer's cleanup can delete a revocation a newer writer created, resurrecting the approval the newer one revoked.
+  // Contention FAILS CLOSED: this writer does not touch the marker at all and says so, and its caller must treat that as fatal.
+  const lockPath = path.join(repoRoot, '.audit', 'last-final-review.lock');
+  try { fs.mkdirSync(path.dirname(lockPath), { recursive: true }); } catch { /* the lock attempt below reports it */ }
+  const lock = withFileLockSync(lockPath, { attempts: adapters.lockAttempts ?? 25 }, () => writeFinalReviewMarkerLocked(args));
+  if (lock.ok) return lock.value;
+  log('  [final-review-marker] FATAL: another review is writing the marker (lock contention) — this one recorded nothing; do not ship pre-authorised until it is re-run\n');
+  return { written: false, reason: 'lock-contention', revoked: false, filePath: path.join(repoRoot, FINAL_REVIEW_RELPATH) };
+}
+
+function writeFinalReviewMarkerLocked({ repoRoot, evidence, verdict, log = (m) => process.stderr.write(m), adapters = {}, nowIso } = {}) {
   const write = adapters.atomicWriteFileSync || atomicWriteFileSync;
   const unlink = adapters.unlinkSync || fs.unlinkSync;
   const filePath = path.join(repoRoot, FINAL_REVIEW_RELPATH);
@@ -100,6 +114,7 @@ export function writeFinalReviewMarker({ repoRoot, evidence, verdict, log = (m) 
   if (!payload) return { written: false, reason: 'evidence-cannot-identify-the-review' };
   try {
     write(filePath, JSON.stringify(payload, null, 2));
+    if (adapters.afterWrite) adapters.afterWrite();   // test seam: a deterministic point inside the critical section
     // A standing revocation belongs to the marker it shadowed; the new one supersedes it. If it cannot be removed the reader keeps
     // refusing (fail closed), and the result says so.
     let sidecarStuck = false;
