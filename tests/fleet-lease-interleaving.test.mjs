@@ -154,7 +154,44 @@ function violation(before, after, op) {
   for (const w of lease.waiters ?? []) {
     if (ended.has(w.episode)) return `I4: ${w.repo} is still waiting in an episode the journal says ended`;
   }
-  return basisViolation(before, after, op);
+  return basisViolation(before, after, op) ?? endTurnViolation(before, after, op);
+}
+
+/**
+ * I6 (D9, plan audit R1 M1): a holder's `release --end-turn`. In scope: the SETTLED pre-state has a turn owned by the releasing repo.
+ * There the turn ends (`yield`) iff the repo had no waiter entry of its own, and `turnKept` is recorded iff it was kept. Out of
+ * scope (another repo's turn, e.g. a named-gap borrower, or no turn left after settlement) the release changes no turn and records
+ * neither `yield` nor `turnKept`.
+ */
+function endTurnViolation(before, after, op) {
+  const r = after.result;
+  if (op.op !== 'release' || !op.endTurn || !r.ok || r.already) return null;
+  const sb = settleQueue(before.lease, before.now, probe);
+  const h = sb.heavy;
+  if (!h || h.repoKey !== op.repo.repoKey || h.holder !== op.holder) return null; // not the holder's own release
+  const R = op.repo.repoKey;
+  const added = (after.lease.journal ?? []).filter((e) => !(before.lease.journal ?? []).includes(e));
+  const yielded = added.some((e) => e.kind === 'turn-ended' && e.reason === 'yield');
+  const keptEntry = added.find((e) => e.kind === 'released' && e.turnKept !== undefined);
+  if (sb.turn && sb.turn.repoKey === R) {
+    const own = (sb.waiters ?? []).find((w) => w.repoKey === R);
+    if (own) {
+      stats.endTurnKept += 1;
+      if (yielded) return 'I6: --end-turn yielded the turn although the releasing repo had a waiter of its own';
+      if (!r.turnKept || r.turnKept.since !== own.since) return 'I6: the turn was kept but the result does not say so (or names the wrong wait)';
+      if (!keptEntry) return 'I6: the turn was kept but the released journal entry does not record turnKept';
+      if (!after.lease.turn || after.lease.turn.repoKey !== R) return 'I6: the turn was kept but the lease no longer has it';
+    } else {
+      stats.endTurnYielded += 1;
+      if (!yielded) return 'I6: --end-turn did not yield although the releasing repo had no waiter of its own';
+      if (r.turnKept || keptEntry) return 'I6: the turn was yielded but turnKept was recorded';
+    }
+  } else {
+    stats.endTurnOutOfScope += 1;
+    if (yielded || r.turnKept || keptEntry) return 'I6: a release outside the releaser own turn yielded or kept a turn';
+    if (JSON.stringify(after.lease.turn) !== JSON.stringify(sb.turn)) return 'I6: a release outside the releaser own turn changed the turn';
+  }
+  return null;
 }
 
 /** I5: the recorded reason for a grant is true of the lease the decision saw, and no waiter lapses unless it could have gone. */
@@ -192,7 +229,7 @@ function basisViolation(before, after, op) {
 const T0 = new Date('2026-10-14T06:00:00.000Z');
 const mixOf = (seed) => ['uniform', 'calm', 'gappy'][seed % 3];
 /** What the random search actually exercised, so a green run cannot be a run that never reached the interesting states. */
-const stats = { granted: 0, announceRefusedHeld: 0, announceOverHeld: 0, queued: 0, served: 0, cancelled: 0, clears: 0, turnRefused: 0, inTurn: 0, backfill: 0, gapGrants: 0, gapAcquires: 0, lapsed: 0, endTurn: 0, overTurn: 0, offered: 0 };
+const stats = { granted: 0, announceRefusedHeld: 0, announceOverHeld: 0, queued: 0, served: 0, cancelled: 0, clears: 0, turnRefused: 0, inTurn: 0, backfill: 0, gapGrants: 0, gapAcquires: 0, lapsed: 0, endTurn: 0, overTurn: 0, offered: 0, endTurnKept: 0, endTurnYielded: 0, endTurnOutOfScope: 0 };
 function tally(op, r) {
   if (op.op === 'acquire' && r.ok) stats.granted += 1;
   if (op.op === 'acquire' && r.queued) stats.queued += 1;
@@ -260,7 +297,7 @@ describe('lease interleavings (property test, seeded)', () => {
       }
     }
     // Vacuous-pass guard: the invariants held AND the search reached the states they are about.
-    for (const [k, min] of Object.entries({ granted: 200, announceRefusedHeld: 50, announceOverHeld: 10, queued: 200, served: 20, cancelled: 20, clears: 50, turnRefused: 100, inTurn: 20, backfill: 5, gapGrants: 20, gapAcquires: 5, endTurn: 10, overTurn: 10, lapsed: 3 })) {
+    for (const [k, min] of Object.entries({ granted: 200, announceRefusedHeld: 50, announceOverHeld: 10, queued: 200, served: 20, cancelled: 20, clears: 50, turnRefused: 100, inTurn: 20, backfill: 5, gapGrants: 20, gapAcquires: 5, endTurn: 10, overTurn: 10, lapsed: 3, endTurnKept: 3, endTurnYielded: 3, endTurnOutOfScope: 1 })) {
       assert.ok(stats[k] >= min, `the random search barely exercised ${k} (${stats[k]} < ${min}): a green run proves nothing about it. Reached: ${JSON.stringify(stats)}`);
     }
   });

@@ -20,7 +20,7 @@
  * @module scripts/lib/fleet/lease-run
  */
 import {
-  decideAcquire, decideAttach, decideRelease, decideReleaseToCiWindow, defaultProbe, transactLease,
+  decideAcquire, decideAttach, decideRelease, decideReleaseToCiWindow, defaultProbe, transactLease, turnKeptText,
 } from './lease.mjs';
 
 /** Signals that mean "stop": a terminal interrupt, a termination request, a hangup, and Ctrl+Break on Windows. */
@@ -90,7 +90,7 @@ export function runDecision(transact, dir, decide) {
  * @param {(line: string) => void} [opts.log]
  * @param {(ctx: {token: string, attach: (pid: number) => Promise<boolean>, signal: AbortSignal}) => Promise<any>} job
  * @returns {Promise<{ran: boolean, outcome: 'ran'|'not-granted'|'lease-error'|'bad-request', code?: string, reason?: string, queued?: boolean,
- *   result?: any, token?: string, signalled?: string, released?: {ok: boolean, mode?: 'plain'|'ci-window', window?: object, reason?: string}, waitedMs?: number}>}
+ *   result?: any, token?: string, signalled?: string, released?: {ok: boolean, mode?: 'plain'|'ci-window', window?: object, turnKept?: {reason: string, since: string}, reason?: string}, waitedMs?: number}>}
  */
 export async function runUnderLease(opts, job) {
   const {
@@ -148,7 +148,8 @@ export async function runUnderLease(opts, job) {
   } finally { removeSignals(); }
   let released;
   if (rel.status === 'decided' && rel.decision.ok) {
-    released = { ok: true, mode: toWindow && rel.decision.window ? 'ci-window' : 'plain', ...(rel.decision.window ? { window: rel.decision.window } : {}) };
+    released = { ok: true, mode: toWindow && rel.decision.window ? 'ci-window' : 'plain', ...(rel.decision.window ? { window: rel.decision.window } : {}), ...(rel.decision.turnKept ? { turnKept: rel.decision.turnKept } : {}) };
+    if (rel.decision.turnKept) log(turnKeptText(rel.decision.turnKept, repo, cmdName));
     if (rel.decision.windowRefused) log(`the slot was released but no CI window was recorded (${rel.decision.windowRefused}); announce it by hand: ${cmdName} lease announce --kind ci --until +${releaseToCiWindow}m`);
   } else {
     const reason = rel.status === 'error' ? rel.reason : rel.decision.reason;

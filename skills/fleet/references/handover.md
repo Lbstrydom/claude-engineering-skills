@@ -76,9 +76,9 @@ to it: a host holds a message between sessions whose modes differ.
   because of the switch.
 - **Claims waiting on the switch.** A session parked for the switch uses exactly
   `--waiting-on human:account-switch` (case, spaces, `_` and `-` are folded).
-  Receive lists each such claim with a `fleet touch --id <id> --clear-waiting`
-  command that re-adds the session's other waits in the same call, so only the
-  switch wait goes (the re-added ones keep their `since`); any other `human`
+  Receive lists each such claim with a `fleet touch --id <id> --unwait human:<ref>`
+  command that drops exactly the switch wait inside the registry transaction (no
+  snapshot of the others, so a wait added since cannot be lost); any other `human`
   wait gets a one-line note, so a differently worded one is still shown.
 - Unregistered work is RE-PROBED at receive, so claiming or pushing it since
   prepare clears it. Commit WIP in sessions you own before preparing; prepare

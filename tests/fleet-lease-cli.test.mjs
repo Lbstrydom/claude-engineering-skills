@@ -274,3 +274,36 @@ describe('gaps and turns through the real CLI (plan fleet-lease-turns-and-journa
     assert.equal(w.read().turnMin, undefined);
   });
 });
+
+describe('--end-turn while the same repo still waits (D9, finding 3c6d)', () => {
+  it('prints why the turn was kept, carries turnKept in --json, and a waiting job of the same repo then goes next', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'acquire', '--for', '30']).status, 0);
+    assert.equal(w.runB(['lease', 'acquire', '--for', '10']).status, 3, 'repo B queues');
+    const sibling = w.runA(['lease', 'acquire', '--for', '10', '--id', 'chip-2']);
+    assert.equal(sibling.status, 3, 'a second job of repo A is refused and queues A');
+    const rel = w.runA(['lease', 'release', '--end-turn', '--json']);
+    assert.equal(rel.status, 0, rel.stderr + rel.stdout);
+    assert.equal(rel.json.turnKept.reason, 'same-repo-waiting');
+    const text = w.runA(['lease', 'status']).stdout;
+    assert.match(text, /turn: .* until/, 'the turn is still A\'s');
+    // The sibling now acquires in-turn (B is refused for the turn).
+    assert.equal(w.runB(['lease', 'acquire', '--for', '10']).status, 3);
+    assert.equal(w.runA(['lease', 'acquire', '--for', '10', '--id', 'chip-2']).status, 0);
+  });
+  it('the text form names the repo, the waiting time and the escape hatch', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'acquire', '--for', '30']).status, 0);
+    assert.equal(w.runA(['lease', 'acquire', '--for', '10', '--id', 'chip-2']).status, 3);
+    const rel = w.runA(['lease', 'release', '--end-turn']);
+    assert.equal(rel.status, 0, rel.stderr);
+    assert.match(rel.stdout, /--end-turn not applied: .* has a job waiting since \d\d:\d\dZ, so the turn stays with .* for the between-jobs gap; to hand it over anyway, run `.*lease wait --cancel` first/);
+  });
+  it('with no sibling waiting, --end-turn yields and prints nothing about a kept turn', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'acquire', '--for', '30']).status, 0);
+    const rel = w.runA(['lease', 'release', '--end-turn', '--json']);
+    assert.equal(rel.status, 0);
+    assert.equal(rel.json.turnKept, undefined);
+  });
+});

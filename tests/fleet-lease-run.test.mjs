@@ -291,6 +291,32 @@ describe('runUnderLease', () => {
     assert.equal(fileLease().turn, undefined);
   });
 
+  it('endTurn while the same repo has a job waiting (D9): the turn is kept, released.turnKept is returned and the reason is logged', async () => {
+    const w = world();
+    const logs = [];
+    const sibling = { repoKey: A.repoKey, holder: 'chip-2' };
+    const res = await R.runUnderLease(base(w, A, { endTurn: true, log: (m) => logs.push(m) }), async () => {
+      // while the job runs, another job of the SAME repo asks for the slot and queues the repo
+      transactLease(dir, (r) => ({ value: 1, write: decideAcquire(r.lease, q(sibling, { forMin: 20 }), w.t, probe).lease }));
+    });
+    assert.equal(res.released.ok, true);
+    assert.equal(res.released.turnKept.reason, 'same-repo-waiting');
+    assert.ok(logs.some((m) => /--end-turn not applied: o\/a has a job waiting since \d\d:\d\dZ/.test(m) && /lease wait --cancel/.test(m)), logs.join('|'));
+    assert.equal(fileLease().turn.repoKey, A.repoKey, 'the turn stays with the repo');
+    assert.ok(!fileLease().journal.some((e) => e.kind === 'turn-ended' && e.reason === 'yield'));
+  });
+  it('endTurn with the release going to a CI window also keeps the turn and returns turnKept', async () => {
+    const w = world();
+    const sibling = { repoKey: A.repoKey, holder: 'chip-2' };
+    const res = await R.runUnderLease(base(w, A, { endTurn: true, releaseToCiWindow: 20 }), async () => {
+      transactLease(dir, (r) => ({ value: 1, write: decideAcquire(r.lease, q(sibling, { forMin: 20 }), w.t, probe).lease }));
+      return { remoteReached: 'yes' };
+    });
+    assert.equal(res.released.mode, 'ci-window');
+    assert.equal(res.released.turnKept.reason, 'same-repo-waiting');
+    assert.equal(fileLease().turn.repoKey, A.repoKey);
+  });
+
   describe('releaseToCiWindow (R1 H2: what reached the remote decides)', () => {
     const run = async (remoteReached, extra = {}) => {
       const w = world();
