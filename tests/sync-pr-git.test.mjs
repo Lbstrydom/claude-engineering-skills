@@ -560,6 +560,12 @@ describe('sync-pr CLI on real git — a same-bundle re-run retries a failed supe
       assert.equal(l.windows[0].repoKey, target.repoKey, 'the window protects the runner of the target');
       assert.equal(l.windows[0].repo, target.repo);
     });
+    it('D13: without a sourceRoot seam the source repo is the checkout the script lives in (the production default has its own test)', async () => {
+      const here = repoIdentity(path.resolve(import.meta.dirname, '..'));
+      const r = await syncThenSyncPr(() => undefined, [], { leaseDeps: { dir: leaseDir } });
+      assert.equal(r.code, 0, r.printed);
+      assert.equal(readLease(leaseDir).lease.journal.find((e) => e.kind === 'acquired').repoKey, here.repoKey);
+    });
     it('D13: a worker of the TARGET repo holding the slot no longer starves the sync by identity - it is a plain other-repo hold (refused held, queued as the source)', async () => {
       const target = repoIdentity(fx.consumer);
       transactLease(leaseDir, (read) => {
