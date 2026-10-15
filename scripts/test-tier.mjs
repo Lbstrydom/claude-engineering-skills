@@ -207,36 +207,43 @@ async function flakeVerdict({ run, pr }) {
     if (!classification.eligible && fe.notes.length) classification = { ...classification, reason: `${classification.reason} (${fe.notes.slice(0, 2).join('; ')})` };
   }
   const fleet = (args) => spawnSync(process.execPath, [path.join(SELF, 'scripts', 'fleet.mjs'), ...args], { cwd: repo(), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  const outcome = await rerunUnrelatedFlake({
-    stateDir,
-    nwo: ev.nwo, runId: judged.id, classification, url: judged.html_url ?? '',
-    readAttempt: () => {
-      const a = runText(run, 'gh', ['api', `repos/${ev.nwo}/actions/runs/${judged.id}`, '--jq', '.run_attempt']);
-      return a.ok && /^\d+$/.test(a.value) ? { ok: true, attempt: Number(a.value) } : { ok: false, why: a.ok ? `unexpected answer ${a.value.slice(0, 20)}` : a.why };
-    },
-    dispatch: () => {
-      let d;
-      try { d = run('gh', ['run', 'rerun', String(judged.id), '--failed', '--repo', ev.nwo]); } catch (err) { return { ok: false, rejected: false, why: err.message }; }
-      if (d && !d.error && d.status === 0) return { ok: true };
-      const why = d?.error?.message ?? String(d?.stderr ?? '').trim().split('\n')[0].slice(0, 200);
-      // Only a definitive HTTP 4xx refusal is "rejected"; a timeout or anything else may have been accepted.
-      return { ok: false, rejected: !d?.error && /HTTP 4\d\d/.test(String(d?.stderr ?? '')), why };
-    },
-    findProposal: (key) => {
-      const r = fleet(['proposals', '--json', '--all']);
-      let j;
-      try { j = JSON.parse(r.stdout); } catch { return { ok: false, why: 'fleet proposals did not return JSON' }; }
-      if (!j?.proposals?.complete || !Array.isArray(j.proposals.records)) return { ok: false, why: 'the proposals read is incomplete' };
-      return { ok: true, id: j.proposals.records.find((p) => String(p.evidence ?? '').includes(key))?.id ?? null };
-    },
-    propose: ({ what, where, why, evidence }) => {
-      const r = fleet(['propose', '--json', '--theme', 'ci-flakes', '--what', what, '--where', where, '--why', why, '--evidence', evidence]);
-      let j;
-      try { j = JSON.parse(r.stdout); } catch { return { ok: false, why: `fleet propose exited ${r.status} without JSON` }; }
-      const id = j?.id ?? j?.proposal?.id;
-      return j?.ok && id ? { ok: true, id } : { ok: false, why: j?.text ?? j?.error ?? `fleet propose exited ${r.status}` };
-    },
-  });
+  // Isolated: a reservation that cannot be taken forward (lock timeout, unwritable directory) never costs the verdict its
+  // own output; beside a failed verdict it is indeterminate (exit 1), beside a passing one it is only a reported line.
+  let outcome;
+  try {
+    outcome = await rerunUnrelatedFlake({
+      stateDir,
+      nwo: ev.nwo, runId: judged.id, classification, url: judged.html_url ?? '',
+      readAttempt: () => {
+        const a = runText(run, 'gh', ['api', `repos/${ev.nwo}/actions/runs/${judged.id}`, '--jq', '.run_attempt']);
+        return a.ok && /^\d+$/.test(a.value) ? { ok: true, attempt: Number(a.value) } : { ok: false, why: a.ok ? `unexpected answer ${a.value.slice(0, 20)}` : a.why };
+      },
+      dispatch: () => {
+        let d;
+        try { d = run('gh', ['run', 'rerun', String(judged.id), '--failed', '--repo', ev.nwo]); } catch (err) { return { ok: false, rejected: false, why: err.message }; }
+        if (d && !d.error && d.status === 0) return { ok: true };
+        const why = d?.error?.message ?? String(d?.stderr ?? '').trim().split('\n')[0].slice(0, 200);
+        // Only a definitive HTTP 4xx refusal is "rejected"; a timeout or anything else may have been accepted.
+        return { ok: false, rejected: !d?.error && /HTTP 4\d\d/.test(String(d?.stderr ?? '')), why };
+      },
+      findProposal: (key) => {
+        const r = fleet(['proposals', '--json', '--all']);
+        let j;
+        try { j = JSON.parse(r.stdout); } catch { return { ok: false, why: 'fleet proposals did not return JSON' }; }
+        if (!j?.proposals?.complete || !Array.isArray(j.proposals.records)) return { ok: false, why: 'the proposals read is incomplete' };
+        return { ok: true, id: j.proposals.records.find((p) => String(p.evidence ?? '').includes(key))?.id ?? null };
+      },
+      propose: ({ what, where, why, evidence }) => {
+        const r = fleet(['propose', '--json', '--theme', 'ci-flakes', '--what', what, '--where', where, '--why', why, '--evidence', evidence]);
+        let j;
+        try { j = JSON.parse(r.stdout); } catch { return { ok: false, why: `fleet propose exited ${r.status} without JSON` }; }
+        const id = j?.id ?? j?.proposal?.id;
+        return j?.ok && id ? { ok: true, id } : { ok: false, why: j?.text ?? j?.error ?? `fleet propose exited ${r.status}` };
+      },
+    });
+  } catch (err) {
+    outcome = { rerun: 'indeterminate', detail: `the reservation could not be processed (${err.message}); nothing further was sent`, proposal: null };
+  }
   return { ...v, rerun: outcome };
 }
 

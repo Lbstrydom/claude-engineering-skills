@@ -353,6 +353,7 @@ describe('audit round 1 regressions', () => {
   test('flakeExit: a passing verdict stays green whatever the reservation reports; only a failed verdict maps the outcome', () => {
     const X = { full: 0, notYet: 3, failed: 4, error: 1 };
     assert.equal(flakeExit('full', { rerun: 'accepted' }, X), 0, 'the re-run passed: green, not "pending"');
+    assert.equal(flakeExit('full', { rerun: 'indeterminate' }, X), 0, 'a reservation that could not be processed never costs a green verdict');
     assert.equal(flakeExit('pending', { rerun: 'accepted' }, X), 3);
     assert.equal(flakeExit('unverified', null, X), 3);
     assert.equal(flakeExit('failed', null, X), 4);
