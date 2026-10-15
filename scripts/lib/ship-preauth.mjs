@@ -134,9 +134,11 @@ export function gatherChangedPaths(run, tree) {
   const defaultRef = out(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
   // origin/HEAD is the authoritative default branch; `origin/main` is the conventional remote-tracking name when HEAD is unset.
   // A LOCAL `main` is never substituted: it can differ from the remote's, and an unverified base can hide what the PR changes.
-  const candidates = [defaultRef && defaultRef.replace(/^refs\/remotes\//, ''), 'origin/main'].filter(Boolean);
-  let base = null;
-  for (const ref of candidates) { base = out(['merge-base', 'HEAD', ref]); if (base) break; }
+  // Discovery and resolution are separate: once origin/HEAD NAMES the default branch, that branch's merge base is the only
+  // acceptable base. Failing to resolve it is a failure, never a reason to try a different branch; the conventional
+  // `origin/main` is consulted only when origin/HEAD itself is unavailable.
+  const authoritative = defaultRef ? defaultRef.replace(/^refs\/remotes\//, '') : null;
+  const base = out(['merge-base', 'HEAD', authoritative ?? 'origin/main']);
   if (!base || !tree) return null;
   const r = run(['diff', '--name-only', '--no-renames', '-z', base, tree]);
   if (!r || r.status !== 0) return null;

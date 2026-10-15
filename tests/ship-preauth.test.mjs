@@ -270,3 +270,59 @@ describe('AI-Ship-Authority trailer', () => {
     assert.equal(findReservedTrailers(typed).length, 1);
   });
 });
+
+describe('final-review marker lifecycle fails closed (audit R2 H1/H3)', () => {
+  const EV = { runId: RUN, auditedTree: TREE, round: 4 };
+  const withDir = (fn) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'final-review-lc-')); try { return fn(d); } finally { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } };
+
+  it('APPROVE then REJECT for the same identity: the file now says REJECT and the ship check refuses', () => withDir((d) => {
+    writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
+    writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'REJECT' });
+    const r = readFinalReviewMarker(d);
+    assert.equal(r.marker.verdict, 'REJECT');
+    assert.match(only(evaluatePreauthorisedShip({ ...GOOD(), finalReview: r }), 'final-review').reason, /REJECT, not APPROVE/);
+  }));
+
+  it('APPROVE then a FAILED replacement: the approval is gone (absent), never left readable', () => withDir((d) => {
+    writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
+    const w = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'CONCERNS', log: () => {}, adapters: { atomicWriteFileSync: () => { throw Object.assign(new Error('x'), { code: 'ENOSPC' }); } } });
+    assert.deepEqual([w.written, w.reason], [false, 'write-failed']);
+    assert.deepEqual(readFinalReviewMarker(d), { ok: false, reason: 'absent' });
+    assert.equal(evaluatePreauthorisedShip({ ...GOOD(), finalReview: readFinalReviewMarker(d) }).ok, false);
+  }));
+
+  it('APPROVE then a review whose evidence cannot identify it: the old approval is removed too', () => withDir((d) => {
+    writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
+    const w = writeFinalReviewMarker({ repoRoot: d, evidence: { ...EV, round: null }, verdict: 'APPROVE', log: () => {} });
+    assert.equal(w.reason, 'evidence-cannot-identify-the-review');
+    assert.equal(readFinalReviewMarker(d).reason, 'absent');
+  }));
+
+  it('a previous marker that cannot be removed is reported, not hidden', () => withDir((d) => {
+    writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'APPROVE' });
+    const w = writeFinalReviewMarker({ repoRoot: d, evidence: EV, verdict: 'REJECT', log: () => {}, adapters: { unlinkSync: () => { throw Object.assign(new Error('x'), { code: 'EPERM' }); } } });
+    assert.deepEqual([w.written, w.reason], [false, 'stale-marker-not-removable']);
+  }));
+});
+
+describe('gatherChangedPaths: the authoritative default branch is never swapped for another (audit R2 H2/H4)', () => {
+  const seq = (table) => { const calls = []; const run = (args) => { calls.push(args.join(' ')); for (const [k, v] of table) if (args.join(' ').startsWith(k)) return v; return { status: 1, stdout: '' }; }; return { run, calls }; };
+
+  it('origin/HEAD names develop but its merge base fails: null, and origin/main is NOT tried', () => {
+    const { run, calls } = seq([['symbolic-ref', { status: 0, stdout: 'refs/remotes/origin/develop\n' }], ['merge-base HEAD origin/develop', { status: 1, stdout: '' }], ['merge-base HEAD origin/main', { status: 0, stdout: 'abc\n' }], ['diff', { status: 0, stdout: 'a.mjs\0' }]]);
+    assert.equal(gatherChangedPaths(run, 'tree'), null);
+    assert.equal(calls.some((c) => c === 'merge-base HEAD origin/main'), false);
+  });
+
+  it('origin/HEAD names develop and resolves: develop is the base', () => {
+    const { run, calls } = seq([['symbolic-ref', { status: 0, stdout: 'refs/remotes/origin/develop\n' }], ['merge-base HEAD origin/develop', { status: 0, stdout: 'dev1\n' }], ['diff', { status: 0, stdout: 'a.mjs\0' }]]);
+    assert.deepEqual(gatherChangedPaths(run, 'tree'), ['a.mjs']);
+    assert.ok(calls.includes('diff --name-only --no-renames -z dev1 tree'));
+  });
+
+  it('origin/HEAD unavailable: origin/main is the only fallback', () => {
+    const { run, calls } = seq([['merge-base HEAD origin/main', { status: 0, stdout: 'm1\n' }], ['diff', { status: 0, stdout: 'a.mjs\0' }]]);
+    assert.deepEqual(gatherChangedPaths(run, 'tree'), ['a.mjs']);
+    assert.ok(calls.includes('merge-base HEAD origin/main'));
+  });
+});

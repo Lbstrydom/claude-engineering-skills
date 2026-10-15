@@ -51,9 +51,19 @@ export function buildFinalReviewMarker({ evidence, verdict, nowIso } = {}) {
  */
 export function writeFinalReviewMarker({ repoRoot, evidence, verdict, log = (m) => process.stderr.write(m), adapters = {}, nowIso } = {}) {
   const write = adapters.atomicWriteFileSync || atomicWriteFileSync;
+  const unlink = adapters.unlinkSync || fs.unlinkSync;
+  const filePath = path.join(repoRoot, FINAL_REVIEW_RELPATH);
+  // FAIL CLOSED: a review that is about to be recorded (or that cannot be) supersedes whatever was recorded before, so the old
+  // marker goes FIRST. Otherwise a failed replacement leaves a previous APPROVE readable beside a newer CONCERNS/REJECT that
+  // never got written, and a pre-authorised ship would read that stale approval for the same run, tree and round.
+  try { unlink(filePath); } catch (err) {
+    if (err && err.code !== 'ENOENT') {
+      log(`  [final-review-marker] could not remove the previous marker (${err.code || err.name || 'Error'}) — it may still read as the last review\n`);
+      return { written: false, reason: 'stale-marker-not-removable', filePath };
+    }
+  }
   const payload = buildFinalReviewMarker({ evidence, verdict, nowIso });
   if (!payload) return { written: false, reason: 'evidence-cannot-identify-the-review' };
-  const filePath = path.join(repoRoot, FINAL_REVIEW_RELPATH);
   try {
     write(filePath, JSON.stringify(payload, null, 2));
     return { written: true, payload, filePath };
