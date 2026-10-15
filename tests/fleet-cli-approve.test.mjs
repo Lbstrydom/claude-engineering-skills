@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots, commitFile, writeFile } from './helpers/fleet-repo.mjs';
-import { OK_TIER, fleetDirOf, land, readyBranch, sessionRec, setup } from './helpers/fleet-cli-harness.mjs';
+import { OK_TIER, fleetDirOf, greenTrainOf, land, readyBranch, retryOnLoadTimeout, sessionRec, setup } from './helpers/fleet-cli-harness.mjs';
 import { readTrain } from '../scripts/lib/fleet/registry.mjs';
 import { approveTrain } from '../scripts/lib/fleet/train-approve.mjs';
 import { defaultDeps, withTrainLock } from '../scripts/lib/fleet/train.mjs';
@@ -20,12 +20,12 @@ after(cleanupFleetRoots);
 // ───────────────────────────────────────────────────────────────────────────
 describe('approve: re-verification and refusals', () => {
   const cfg = { mergeMethod: 'direct-squash', testCommand: { tiers: [OK_TIER] } };
-  function built(over = {}) {
+  const built = (over = {}) => retryOnLoadTimeout(() => buildOnce(over));
+  function buildOnce(over) {
     const s = setup({ fleetConfig: cfg, ...over });
     readyBranch(s, 'feat-a', { 'a.txt': 'A\n' });
     readyBranch(s, 'feat-b', { 'b.txt': 'B\n' });
-    const t = land(s).json.train;
-    assert.equal(t.result, 'green');
+    const t = greenTrainOf(land(s));
     return { s, t, approve: (x = []) => s.f(['land', '--approve', t.trainId, '--json', ...x]), originMain: () => git(['--git-dir', s.fx.origin, 'rev-parse', 'main'], s.fx.root) };
   }
 
@@ -144,10 +144,11 @@ describe('approve: re-verification and refusals', () => {
 // ───────────────────────────────────────────────────────────────────────────
 describe('crash between push-pending and landed -> reconcile from the remote\'s truth', () => {
   const cfg = { mergeMethod: 'direct-squash', testCommand: { tiers: [OK_TIER] } };
-  function built() {
+  const built = () => retryOnLoadTimeout(buildOnce);
+  function buildOnce() {
     const s = setup({ fleetConfig: cfg });
     readyBranch(s, 'feat-a', { 'a.txt': 'A\n' });
-    const t = land(s).json.train;
+    const t = greenTrainOf(land(s));
     const crashApprove = (hooks, git2) => {
       const real = defaultDeps({ log: () => {} });
       try { approveTrain({ cwd: s.fx.repo, trainId: t.trainId, deps: { ...real, hooks, ...(git2 ? { git: git2(real) } : {}) } }); } catch (e) { assert.match(e.message, /simulated crash/); }
