@@ -33,6 +33,7 @@ This is the list to read when asking "what is in flight?".
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
 | [pre-push — a sanctioned lane for `archive/*` refs](./prepush-archive-lane.md) | `In Progress` |  |
 | [Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed.md) | `Approved` |  |
+| [ship-commit refuses an audit marker that describes another branch's code](./ship-commit-marker-provenance.md) | `In Progress` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Ship trains — batched, impact-based `/ship --train`](./ship-trains.md) | `Approved` |  |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
