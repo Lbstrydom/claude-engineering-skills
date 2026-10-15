@@ -73,8 +73,10 @@
  * @module scripts/lib/sync-receipt
  */
 
+import { SYNC_RECEIPT_PATH } from './bundle-generated-stores.mjs';
+
 /** Where the receipt lives, relative to the consumer root. */
-export const RECEIPT_PATH = '.sync-receipt.json';
+export const RECEIPT_PATH = SYNC_RECEIPT_PATH;
 
 /** Bump when a field's MEANING changes, so a reader can refuse a shape it cannot judge. */
 export const RECEIPT_VERSION = 2;
