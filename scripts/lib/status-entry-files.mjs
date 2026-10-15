@@ -123,10 +123,12 @@ export function listEntryFiles(root) {
     .reverse();
 }
 
-/** Whether per-entry mode is on in the working tree at `root`. The marker must be a regular FILE. */
+/** Whether per-entry mode is on in the working tree at `root`. The marker must be a regular FILE; throws on any failure other than ENOENT. */
 export function perEntryModeOnDisk(root) {
   let isFile = false;
-  try { isFile = fs.statSync(path.join(root, MARKER_REL)).isFile(); } catch { /* absent */ }
+  try { isFile = fs.statSync(path.join(root, MARKER_REL)).isFile(); } catch (err) {
+    if (err.code !== 'ENOENT') throw err; // only a missing marker is "mode off"; an unreadable one is a failure
+  }
   return perEntryMode(isFile ? [MARKER_REL] : []);
 }
 
