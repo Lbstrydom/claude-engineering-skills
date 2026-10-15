@@ -190,6 +190,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "3b84d8bb-2ebc-4f30-92fb-8574e557e292",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/bundle-generated-stores.test.mjs"
+      },
+      "recordedAt": "2026-10-15T17:09:41.222Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "3e2c17f5-8a88-48df-b566-6661058dc2e1",
       "storeFingerprint": "c7177057dcafa55d",
       "state": "fixed",
