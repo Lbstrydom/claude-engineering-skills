@@ -73,12 +73,14 @@ describe('stageTaskExports: all or nothing', () => {
     assert.equal(e.path, path.join(dest, 'weekly-check', 'SKILL.md'));
   });
 
-  it('a short write is caught: the hash is of what landed, not of what was read', () => {
+  it('a short write is REFUSED: nothing is staged or published', () => {
     const cfg = account(tmpRoot('ho-short-'), ['weekly-check']);
-    const dest = path.join(tmpRoot('ho-dest-'), 'handover-y-tasks');
+    const parent = tmpRoot('ho-dest-');
+    const dest = path.join(parent, 'handover-y-tasks');
     const r = stageTaskExports({ configDir: cfg, ids: ['weekly-check'], destDir: dest, io: { writeFile: (p, b) => fs.writeFileSync(p, b.subarray(0, 5)) } });
-    const read = fs.readFileSync(path.join(cfg, 'scheduled-tasks', 'weekly-check', 'SKILL.md'));
-    assert.notEqual(r.exports.get('weekly-check').sha256, sha(read));
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /does not match its source \(5 of \d+ bytes\)/);
+    assert.deepEqual(fs.readdirSync(parent), []);
   });
 
   for (const [why, io, re] of [

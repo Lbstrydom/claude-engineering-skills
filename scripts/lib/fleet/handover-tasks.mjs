@@ -80,8 +80,10 @@ export function stageTaskExports({ configDir, ids, destDir, io = {} }) {
       const out = path.join(staging, id, 'SKILL.md');
       fs.mkdirSync(path.dirname(out), { recursive: true });
       try { writeFile(out, body); } catch (e) { throw new Error(`cannot copy task ${id} (${e.code ?? e.message})`); }
-      // The hash is of the bytes that are now ON DISK, read back, not of what was read: a short write is caught here.
+      // Read back what is ON DISK and compare it with the source: a short or corrupted write is a copy failure, never
+      // an export whose hash would certify the damage. The recorded hash is of the verified bytes.
       const written = fs.readFileSync(out);
+      if (sha256(written) !== sha256(body)) throw new Error(`the copy of task ${id} does not match its source (${written.length} of ${body.length} bytes)`);
       exports.set(id, { path: path.join(destDir, id, 'SKILL.md'), sha256: sha256(written), bytes: written.length });
     }
     try { rename(staging, destDir); } catch (e) { throw new Error(`cannot publish the task copies (${e.code ?? e.message})`); }
