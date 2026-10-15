@@ -180,8 +180,10 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
   return { ...base, state: 'full', reason: `all ${changed.length} changed file(s) rendered whole` };
 }
 
+// Absent ONLY on a confirmed ENOENT/ENOTDIR. Any other failure (permissions, a transient fs error) is "cannot tell", which must not
+// read as a deletion: the file is then named, the failure direction that shows a gap instead of hiding one (audit-code R3-M1).
 function defaultExists(p) {
-  try { return fs.existsSync(path.resolve('.', p)); } catch { return false; }
+  try { fs.lstatSync(path.resolve('.', p)); return true; } catch (e) { return !(e?.code === 'ENOENT' || e?.code === 'ENOTDIR'); }
 }
 
 // The reader's own boundary (repo-contained, realpath-checked, never sensitive): `changed_files` is transcript-supplied.

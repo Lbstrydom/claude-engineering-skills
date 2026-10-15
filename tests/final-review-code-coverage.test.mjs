@@ -327,6 +327,11 @@ describe('a multi-file group names each changed file the reviewer never received
     assert.deepEqual(c.changedNotReceived.map((x) => x.path), ['tests/eval/locked.jsonl']);
   });
 
+  it('audit-code R3-M1: the default existence check names a real file and drops only a confirmed-absent one', () => {
+    const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs', 'package.json', 'no/such/dir/gone.xyz']);
+    assert.deepEqual(c.changedNotReceived.map((x) => x.path), ['package.json']);
+  });
+
   it('a sensitive path is never named in the segment (the sensitive-path policy keeps names out of output)', () => {
     const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs', '.env', 'config/secrets.yaml'], { readText: present, exists });
     assert.deepEqual(c.changedNotReceived, []);
