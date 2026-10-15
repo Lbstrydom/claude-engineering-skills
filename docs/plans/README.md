@@ -25,7 +25,7 @@ This is the list to read when asking "what is in flight?".
 | [The dashboard's debt queue treats "no local cache" as an expected absence](./dashboard-debt-sandbox-absence.md) | `In Progress` | implemented on `fix/dashboard-debt-sandbox-absence`; under /audit-code |
 | [Tech-Debt Ledger — One File Per Entry (merge conflict-free by construction)](./debt-ledger-per-entry-files.md) | `In Progress` |  |
 | [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `In Progress` | implemented on `fix/debt-readers-ask-store`; under /audit-code |
-| [Fleet chips & merge friction — conflict-free generated files, a standard chip preamble with a coded ship check, one recorded CI-flake re-run, and a harder handover](./fleet-chips-and-merge-friction.md) | `Approved` |  |
+| [Fleet chips & merge friction — conflict-free generated files, a standard chip preamble with a coded ship check, one recorded CI-flake re-run, and a harder handover](./fleet-chips-and-merge-friction.md) | `In Progress` |  |
 | [fleet lease — announce race, transition journal, turns, gaps, sync:pr on the lease](./fleet-lease-turns-and-journal.md) | `In Progress` |  |
 | [fleet prune evidence reaches a person (upstream 56773c7c)](./fleet-prune-surfacing.md) | `In Progress` |  |
 | [fleet — catch abandoned worktree work regularly, and remove account-switch friction](./fleet-unclaimed-work-and-switch-friction.md) | `Draft` |  |

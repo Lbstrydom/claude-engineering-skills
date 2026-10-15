@@ -1,7 +1,7 @@
 # Plan: Fleet chips & merge friction — conflict-free generated files, a standard chip preamble with a coded ship check, one recorded CI-flake re-run, and a harder handover
 
 - **Date**: 2026-10-15
-- **Status**: Approved
+- **Status**: In Progress
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`; engineering principles apply; no UI)
 - **Target domain(s)**: `fleet`, `install`, `scripts`, `shared-lib`, `ship`, `skills-content`
@@ -478,4 +478,8 @@ Each cluster ships as its own PR (rule 13), with its own `/audit-code --scope di
 
 ## Implementation Log
 
-_(empty — filled per PR)_
+### 2026-10-15 — PR 1 (Cluster A): merge friction, #256
+- Completed: Phases 1-2 plus the release.yml dry-run folded in (p-20261015060428-86c5). skills.manifest.json is untracked and ignored (Category A); the plans index carries no counts; build-manifest --check kept as an explicit verifier; the manifest gate pill and its pinned-list entry removed; release.yml tag is data, every checksum input required; plans:index --check drains stdout (stdout-flush baseline 211 to 210).
+- Evidence: tests/merge-friction.test.mjs and tests/release-pack-dry-run.test.mjs seen red against the old generator and workflow; /audit-code 4 rounds (R3, R4 PASS), Gemini APPROVE; guards:preflight PASS; full-suite SUCCESS on e6e97901.
+- Deviations from the plan: release.yml was also hardened (tag as data, fail-closed checksums) because the audit found the same seam; three release-design findings (checkout ref vs typed tag, tarball not signed) deferred as debt and proposal p-20261015063612-896b. The plan said build-manifest keeps both modes unchanged: it does. The gate-poison-pills pinned list needed the manifest id removed, not in the plan.
+- Remaining: PR 2 (chip workflow), PR 3 (CI flakes), PR 4 (handover), each after fleet-lease PR 3 merges for the skills/fleet files. status.md per-entry files: p-20261015060430-76b2.
