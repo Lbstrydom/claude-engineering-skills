@@ -267,9 +267,8 @@ back-dated, and hand-writing it is forgery the store cross-check exists to catch
 A chip's launch prompt may pre-authorise its own ship (`skills/fleet/references/chip-preamble.md`). It is then not a typed `/ship`, and
 the commit says so. The decision is code (`evaluatePreauthorisedShip`), so a chip cannot talk itself past the list; the commit path
 refuses (exit 2, each refused condition named) otherwise, and `--check-preauthorised` prints the same verdict early without committing.
-The final-review condition reads `.audit/last-final-review.json` (writer `writeFinalReviewMarker`, from the gate-evidence marker the review ran
-against; **`gemini-review.mjs` does not call it yet** — a follow-up after the audit-honesty chip's PR, so until then this condition refuses and
-the ship falls back to a typed `/ship`): `audit_runs.gemini_verdict` is one column per run with no target identity, so on its own it cannot tell an approval of tree A
+The final-review condition reads `.audit/last-final-review.json` (written by `gemini-review.mjs` after each code-mode review, from the gate-evidence marker it ran
+against; the previous marker is revoked first, so a failed replacement never leaves an old approval readable): `audit_runs.gemini_verdict` is one column per run with no target identity, so on its own it cannot tell an approval of tree A
 from one of tree B. Query: `git log --oneline --grep='^AI-Ship-Authority: launch-prompt'`.
 
 ## Adoption boundary

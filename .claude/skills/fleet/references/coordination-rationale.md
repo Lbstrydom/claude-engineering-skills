@@ -19,8 +19,8 @@ mid-turn the host refuses it as a programmatic call and Louis had to type it aga
 refused condition named) unless: the effective gate is `passed`/`converged` (`--no-tests` is refused outright, it caps the gate);
 the store's audit run converged and its evidence is for THIS branch; the final review APPROVED this audited tree and round
 (`.audit/last-final-review.json`: `gemini_verdict` is one column per run with no target, so it cannot tell tree A's approval from
-tree B's). `gemini-review.mjs` does not write that marker yet (its file is under another chip's PR); until the follow-up lands this
-condition always refuses and a pre-authorised ship hands back to `/ship`; and the branch (merge base to the commit's tree, `--no-renames`) touches no sensitive path,
+tree B's). `gemini-review.mjs` writes it after each code-mode review, from the gate-evidence marker it ran against; a later audit round
+rewrites that marker, so an old approval stops matching. The writer revokes the previous marker first and fails closed; and the branch (merge base to the commit's tree, `--no-renames`) touches no sensitive path,
 no `migrations/` directory and no policy file (`.github/`, `CODEOWNERS`, `docs/CODEOWNERS`, `.test-tiers.json`). Unknown facts refuse; an
 empty change set refuses. The commit carries `AI-Ship-Authority: launch-prompt`. `--check-preauthorised` is the read-only early look.
 
