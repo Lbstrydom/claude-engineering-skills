@@ -13,6 +13,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -137,6 +138,37 @@ describe('ship-commit CLI: the incident, replayed', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /not an ancestor/);
     assert.doesNotMatch(git(['log', '-1', '--format=%B']), /AI-Run-ID/);
+  });
+
+  describe('unborn HEAD (audit-code R1-H1): the first commit of a fresh repo is judged too', () => {
+    function fresh(markerExtra) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-prov-fresh-'));
+      const g = (args) => spawnSync('git', args, { cwd: dir, encoding: 'utf-8', env: gitFixtureEnv() });
+      g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@e.c']); g(['config', 'user.name', 'T']); g(['config', 'commit.gpgsign', 'false']);
+      fs.mkdirSync(path.join(dir, 'skills', 'ship'), { recursive: true });
+      fs.mkdirSync(path.join(dir, '.claude', 'tmp'), { recursive: true });
+      fs.mkdirSync(path.join(dir, '.audit'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.claude', 'tmp', 'msg.txt'), ['feat: first commit', '', 'body', ''].join('\n'));
+      fs.writeFileSync(path.join(dir, '.audit', 'last-audit-run.json'), JSON.stringify({ runId: RUN_ID, ts: new Date(Date.now() + 60_000).toISOString(), ...markerExtra }));
+      fs.writeFileSync(path.join(dir, 'work.txt'), 'x');
+      g(['add', 'work.txt']);
+      const r = runCli(['--message-file', path.join('.claude', 'tmp', 'msg.txt'), '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', '--path', 'work.txt'], dir);
+      const body = g(['log', '-1', '--format=%B']).stdout;
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      return { r, body };
+    }
+    it('a marker naming ANOTHER branch is ignored on the first commit', () => {
+      const { r, body } = fresh({ auditedBranch: 'fix/somewhere-else' });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, /audit evidence IGNORED \(branch-mismatch\)/);
+      assert.doesNotMatch(body, /AI-Run-ID/);
+    });
+    it('a marker with an audited sha is ignored: it cannot be an ancestor of a history that does not exist', () => {
+      const { r, body } = fresh({ auditedBranch: 'main', auditedSha: 'd'.repeat(40) });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, /not an ancestor/);
+      assert.doesNotMatch(body, /AI-Run-ID/);
+    });
   });
 
   it('control: the marker of THIS branch, audited sha an ancestor of HEAD, is still evidence (waived keeps its AI-Run-ID)', () => {

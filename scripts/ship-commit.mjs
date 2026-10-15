@@ -380,11 +380,13 @@ async function main() {
   // Guard B checked the worktree against the CALLER's expectation; nothing compared the audit marker to the commit being made.
   // A marker from another branch (or an audited sha outside this history) is not evidence for this commit: it is treated as
   // ABSENT, so no foreign AI-Run-ID is stamped and no verified gate can be claimed from it. Said loudly, never silent.
-  if (headExists.status === 0 && (evidence.state === 'fresh' || evidence.state === 'stale')) {
-    const actual = readActualIdentity({ run: gitRun });
-    const committingBranch = actual.ok && actual.identity.ref.kind === 'attached' ? actual.identity.ref.name : null;
+  if (evidence.state === 'fresh' || evidence.state === 'stale') {
+    // Also on an UNBORN HEAD (audit-code R1-H1): there the branch is still named by HEAD's symbolic ref, and no audited sha can be
+    // an ancestor of a history that does not exist yet, so a marker that names one is not evidence for this first commit.
+    const ref = gitRun(['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    const committingBranch = ref.status === 0 ? (ref.stdout || '').trim() || null : null;
     // exit 0 = ancestor; 1 = not; anything else (unknown object, git failure) cannot be proven, so it is not an ancestor.
-    const isAncestor = (sha) => gitRun(['merge-base', '--is-ancestor', sha, 'HEAD']).status === 0;
+    const isAncestor = (sha) => headExists.status === 0 && gitRun(['merge-base', '--is-ancestor', sha, 'HEAD']).status === 0;
     const provenance = checkEvidenceProvenance({ evidence, committingBranch, isAncestor });
     if (!provenance.ok) {
       err(`ship-commit: audit evidence IGNORED (${provenance.reason}): ${provenance.detail}. Treated as absent: no AI-Run-ID, and --gate passed|converged|waived cannot be claimed from it (run /audit-code on this branch for evidence that counts).`);
