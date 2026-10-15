@@ -148,7 +148,11 @@ describe('overflow — what does not fit is counted unread', () => {
     assert.equal(cov.state, 'partial');
     assert.equal(cov.changedLinesUnread, r.stats.budgetOmitted.length * 2, 'every omitted file’s 2 changed lines are unread');
     assert.ok(cov.changedUnread.every((u) => u.outcome === 'budget-omitted'));
-    assert.match(formatCodeCoverageSegment(cov), /^Code: PARTIAL, \d+ changed line\(s\) never shown$/);
+    // Upstream 57bd3de9: the segment now also NAMES the files the reviewer never received (first five, then a count).
+    const seg = formatCodeCoverageSegment(cov);
+    assert.match(seg, /^Code: PARTIAL, \d+ changed line\(s\) never shown; NONE: f\d+\.mjs/);
+    assert.equal(cov.changedNotReceived.length, r.stats.budgetOmitted.length, 'every budget-omitted file is named');
+    assert.ok(seg.endsWith(`(+${cov.changedNotReceived.length - 5} more)`));
   });
 
   test('changed text larger than the budget in ONE file: its own unread lines are counted', (t) => {

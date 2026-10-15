@@ -42,8 +42,13 @@ and the tool/wave states. Counts are **recomputed from `files[]`**; a violated i
 | `none` | changed source existed and **nothing** was audited | `fail` → the round is `INCOMPLETE` (exit 3), never converged |
 | `incomplete` | the ledger contradicts itself | `fail` |
 
-A `warn` never blocks convergence — it changes the **wording**: the summary line and the `CONVERGED` banner carry a suffix
+A `warn` never makes a round `INCOMPLETE` — it changes the **wording**: the summary line and the `CONVERGED` banner carry a suffix
 naming the files ("`coverage: PARTIAL — 3 of 12 changed source file(s) not fully audited; 2 unrecognised file type(s): xyz ×2`").
+Two shortfalls **also withhold convergence** (`_convergence.converged: false`, so `AI-Gate` refuses and the verdict line ends
+`— not convergence evidence`, verdict word still `PASS`): changed lines no pass rendered (`changed-lines-unread`), and a changed file of an
+unrecognised type that no pass was sent (`unrecognised-files-unreviewed`, upstream 57bd3de9 — the suffix then reads "unrecognised file
+type(s) never sent to any pass"). Not INCOMPLETE, because the recognised change *was* measured. `non-code` files, `.auditignore` /
+`--exclude-paths` entries, sensitive and deleted files never trigger it; listing the file in `.auditignore` is the explicit acceptance that clears it.
 The suffix is copied, not paraphrased. The final reviewer receives an **Audit Coverage** note (a projection of the ledger,
 with a digest of the full one) and is told to treat every listed file as unreviewed.
 

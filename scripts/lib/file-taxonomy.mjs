@@ -79,6 +79,9 @@ const LANGUAGE_DEFS = [
 /** Reviewable config / markup / build definitions, by extension → fence. */
 const DECLARATIVE_DEFS = [
   ['.json', 'json'], ['.jsonc', 'json'], ['.json5', 'json'],
+  // Line-delimited JSON: reviewable data as `.json` is (eval fixtures, event logs). Missing until upstream 57bd3de9, which left a
+  // changed `.jsonl` `uncovered` -> `not-admitted` and a load-bearing eval fixture unread by both gates.
+  ['.jsonl', 'json'], ['.ndjson', 'json'],
   ['.yml', 'yaml'], ['.yaml', 'yaml'], ['.toml', 'toml'],
   ['.sql', 'sql'], ['.md', 'markdown'], ['.markdown', 'markdown'],
   ['.html', 'html'], ['.htm', 'html'],
