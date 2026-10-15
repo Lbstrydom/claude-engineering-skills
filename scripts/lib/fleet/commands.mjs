@@ -39,6 +39,7 @@ import { newDirectiveId, readDirectives, readHosts, writeDirective, writeHost } 
 import { planPrune } from './prune.mjs';
 import { PRUNE_STATUS_BUDGET_MS, invalidatePruneCache, pruneStatusLine, summarisePrune, writePruneCache } from './prune-summary.mjs';
 import { proposalsLine, readProposalsSummary } from './proposals.mjs';
+import { refreshUpstreamCache, renderUpstreamLine } from './upstream-count.mjs';
 
 
 /**
@@ -211,13 +212,18 @@ export function cmdStatus(ctx, flags = {}) {
   if (prune.warning) warnings.push(prune.warning);
   // The findings queue: read-only like the rest of status, no cache (a bounded directory read), unmeasured is never zero.
   const proposals = readProposalsSummary(ctx.dir, ctx.now ?? new Date()).summary;
-  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now, all: Boolean(flags['--all']), unregistered }), prune.line, proposalsLine(proposals, ctx.cmd)];
+  // The OTHER queue: open, un-acked upstream issues (consumer reports never reach `proposals`). Source repo only, so the
+  // line is absent elsewhere; `status` is the one verb that runs the reader and writes the cache `next` reads.
+  const upstream = refreshUpstreamCache({ fleetDir: unregisteredCacheDir(ctx.cwd), now: ctx.now ?? new Date() });
+  if (upstream.warning) warnings.push(upstream.warning);
+  const upstreamLine = upstream.applicable ? renderUpstreamLine({ state: 'ok', record: upstream.record }, ctx.now ?? new Date(), ctx.cmd) : null;
+  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now, all: Boolean(flags['--all']), unregistered }), prune.line, proposalsLine(proposals, ctx.cmd), ...(upstreamLine ? [upstreamLine] : [])];
   lines.push('', ...renderUnregistered(unregistered, { groups: groupUnregistered(unregistered.items), all: Boolean(flags['--all']), tags: archiveTags }));
   if (general.length) lines.push('', 'checks:', ...general.map((f) => `  ${f.level}: ${f.message}`));
   const todo = renderOpenTrains(facts.trains, ctx.cmd);
   if (todo) lines.push('', todo);
   if (warnings.length) lines.push('', ...warnings.map((w) => `warning: ${w}`));
-  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete }, unregistered: { ...unregistered, archiveTags }, prune: statusPruneView(prune.record), proposals }, checks: hook.results, warnings, text: lines.join('\n') });
+  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete }, unregistered: { ...unregistered, archiveTags }, prune: statusPruneView(prune.record), proposals, ...(upstream.applicable ? { upstream: upstream.record } : {}) }, checks: hook.results, warnings, text: lines.join('\n') });
 }
 
 /**

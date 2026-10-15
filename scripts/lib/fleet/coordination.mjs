@@ -26,6 +26,7 @@ import { deriveObligations, renderObligations } from './obligations.mjs';
 import { readUnregisteredCache, unregisteredCacheDir } from './unregistered.mjs';
 import { pruneCountText, pruneIsEmpty, readPruneCache } from './prune-summary.mjs';
 import { proposalsLine, proposalsQuiet, readProposalsSummary } from './proposals.mjs';
+import { readUpstreamCache, renderUpstreamLine, upstreamQuiet, upstreamScript } from './upstream-count.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
 import { leaseForNext } from './lease-cmd.mjs';
 
@@ -166,11 +167,16 @@ export function cmdNext(ctx, flags) {
   // The findings queue (information for the coordinator, never an action for this session); silent only when measured, complete and empty.
   const proposals = readProposalsSummary(ctx.dir, ctx.now).summary;
   const proposalLines = proposalsQuiet(proposals) ? [] : [`FYI for the user/coordinator, not an action for this session: ${proposalsLine(proposals, ctx.cmd)}`];
+  // The other findings queue: open, un-acked upstream issues. Reads the cache `status` writes (never runs the reader); absent
+  // outside the source repo, loud when unmeasured or stale, silent only when measured, fresh and empty.
+  const upApplicable = Boolean(upstreamScript(dir));
+  const upRead = upApplicable ? readUpstreamCache(dir) : null;
+  const upstreamLines = upApplicable && !upstreamQuiet(upRead, ctx.now ?? new Date()) ? [`FYI for the user/coordinator, not an action for this session: ${renderUpstreamLine(upRead, ctx.now ?? new Date(), ctx.cmd)}`] : [];
   // The machine-wide lease (information for the user/coordinator: who holds the heavy slot, announced windows, peak hours).
   const lease = leaseForNext(ctx);
-  const fyi = [...prune.lines, ...unregistered, ...proposalLines, ...lease.lines];
+  const fyi = [...prune.lines, ...unregistered, ...proposalLines, ...upstreamLines, ...lease.lines];
   return ok({
-    id, ...r.result, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals, lease: lease.lease,
+    id, ...r.result, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals, ...(upApplicable ? { upstream: upRead } : {}), lease: lease.lease,
     text: [`next for ${id}:`, ...renderObligations(r.result, { cmd: ctx.cmd }).map((l) => `  ${l}`), ...fyi].join('\n'),
   });
 }

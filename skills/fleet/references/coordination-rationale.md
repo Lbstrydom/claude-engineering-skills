@@ -9,6 +9,21 @@ actions. This file keeps each rule's number and adds what did not fit a line: wh
 exists, what was measured, and the exact commands. Rules 1–5 are fully stated in the
 list and carry nothing further.
 
+## Rules 1 and 4 — the chip prompt and where a chip stops
+
+Chip prompts each re-wrote ~40 lines of authority, route, turn and stop point; the one that omitted the turn rule let a worker take
+another repo's turn (2026-10-14). `references/chip-preamble.md` is that block once. `/ship` is typed only when the chip is idle:
+mid-turn the host refuses it as a programmatic call and Louis had to type it again (#250).
+
+**A pre-authorised ship is a coded check, not a chip's reading of a list.** `ship-commit.mjs --preauthorised` refuses (exit 2, every
+refused condition named) unless: the effective gate is `passed`/`converged` (`--no-tests` is refused outright, it caps the gate);
+the store's audit run converged and its evidence is for THIS branch; the final review APPROVED this audited tree and round
+(`.audit/last-final-review.json`: `gemini_verdict` is one column per run with no target, so it cannot tell tree A's approval from
+tree B's). `gemini-review.mjs` writes it after each code-mode review, from the gate-evidence marker it ran against; a later audit round
+rewrites that marker, so an old approval stops matching. The writer revokes the previous marker first and fails closed; and the branch (merge base to the commit's tree, `--no-renames`) touches no sensitive path,
+no `migrations/` directory and no policy file (`.github/`, `CODEOWNERS`, `docs/CODEOWNERS`, `.test-tiers.json`). Unknown facts refuse; an
+empty change set refuses. The commit carries `AI-Ship-Authority: launch-prompt`. `--check-preauthorised` is the read-only early look.
+
 ## Rule 6 — Repo-prefixed session titles
 
 With several repos' sessions in one sidebar, unprefixed titles made it impossible to

@@ -36,6 +36,7 @@ AI-Audited-Tree: 64e894a145de26eed3c3e006c434a345015257bf
 | `AI-Gate` | `passed` \| `converged` \| `waived` \| `not-run` | **evidence- and verdict-bound**: `passed`/`waived` require `.audit/last-audit-run.json` fresher than `HEAD` (an audit ran this cycle); `not-run` requires its absence. `passed` additionally requires (a) the **audited-target identity** to match — the marker's `auditedTree` must equal the tree being committed (see below), checked first and locally — and (b) the run's **convergence verdict verified against the cloud store** (`audit_runs` row via `getAuditRunConvergence`) — cloud off, run not found, run not converged, or a tree mismatch all refuse `passed`, fail-closed. Scope of the verified claim: **GPT-loop convergence only** — the Gemini final-review disposition is not yet store-verifiable per run; binding it is part of the V2 ship-evidence receipt. `waived` is the declared, unverified disposition (gate override OR verification unavailable); the accompanying `AI-Run-ID` keeps it forensically resolvable |
 | `AI-Audited-Tree` | 40-hex git oid, conditional — **`passed` only** | the tree object `ship-commit` actually compared when granting `passed`, i.e. the index tree at ship time, which at that moment equals the marker's `auditedTree`. Written only on the accept branch of `evaluateGateVerification`, and the renderer independently refuses to emit it on any other gate or for a malformed oid. **Added 2026-08-04 to make `passed` re-checkable from the commit alone** — see "Verifying a historical `passed`" below |
 | `AI-Run-ID` | `[A-Za-z0-9-]{8,64}`, conditional | injected by the helper from `.audit/last-audit-run.json` when fresh — never typed by an agent. Since E1 this is **more than a correlation hint on a `passed` commit**: `passed` additionally requires the marker's `auditedTree` to equal the tree being committed, so the id names a run whose *subject* was verified. On `waived` it remains a best-effort hint. `--no-run-id` omits it (declares the audit unrelated) and forces `--gate not-run` |
+| `AI-Ship-Authority` | the single literal `launch-prompt`, conditional | the ship was **pre-authorised by the user's launch prompt** rather than typed as `/ship`. Written only by `ship-commit.mjs --preauthorised`, after every condition in `scripts/lib/ship-preauth.mjs` held (effective gate `passed`/`converged`, the store's audit converged for this branch, the final review APPROVED this audited tree and round, and no sensitive path, migration or repository-policy file in the branch). A user-typed `/ship` writes none. Since 2026-10-15; see "Pre-authorised ships" below |
 
 ### The audited-target identity (E1)
 
@@ -260,6 +261,15 @@ Three fixes, in the order they now fire:
 The evidence still cannot be reconstructed after the fact — a marker cannot be
 back-dated, and hand-writing it is forgery the store cross-check exists to catch.
 **Re-running the audit after `--migrate` is the only repair.**
+
+### Pre-authorised ships (`AI-Ship-Authority`, from 2026-10-15)
+
+A chip's launch prompt may pre-authorise its own ship (`skills/fleet/references/chip-preamble.md`). It is then not a typed `/ship`, and
+the commit says so. The decision is code (`evaluatePreauthorisedShip`), so a chip cannot talk itself past the list; the commit path
+refuses (exit 2, each refused condition named) otherwise, and `--check-preauthorised` prints the same verdict early without committing.
+The final-review condition reads `.audit/last-final-review.json` (written by `gemini-review.mjs` after each code-mode review, from the gate-evidence marker it ran
+against; the previous marker is revoked first, so a failed replacement never leaves an old approval readable): `audit_runs.gemini_verdict` is one column per run with no target identity, so on its own it cannot tell an approval of tree A
+from one of tree B. Query: `git log --oneline --grep='^AI-Ship-Authority: launch-prompt'`.
 
 ## Adoption boundary
 

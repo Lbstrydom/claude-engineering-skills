@@ -4,12 +4,10 @@ summary: Coordinating without host messages — next, directives, unregistered w
 
 # Coordinating sessions without host messages
 
-Host messages between sessions fail two ways. A host holds a message when the
-two sessions' permission modes differ, and a delivered peer message is
-untrusted data to the receiving model, so the session second-guesses it. Both
-are correct behaviour; fleet does not work around them. It moves coordination
-into the shared registry, and moves authority into the user's own launch
-prompt.
+Host messages between sessions fail two ways: a host holds one when the two
+sessions' permission modes differ, and a delivered peer message is untrusted data
+to the receiver. Both are correct; fleet moves coordination into the shared
+registry and authority into the user's own launch prompt.
 
 ## `fleet next` — what should this session do now?
 
@@ -75,15 +73,12 @@ resolves an adopted session's worktree, so a dirty one never reads CLEAN, and
 
 ## Addressing a session
 
-`fleet claim --host-session <id>` records the host's own id for the session (for
-the desktop app, the `local_…` id, not the display name). `status` prints it as
-`host: <id>`, so a coordinator who does send a host message addresses one that
-is delivered.
+`fleet claim --host-session <id>` records the host's own id for the session (the desktop app's `local_…` id, not the display name); `status` prints it as `host: <id>`, so a host message reaches the right session.
 
-Other verbs live in their own references: ending a session (release, archive-check,
-prune, archive) in `references/ending-a-session.md`; moving to another Claude Code
-account (`fleet handover`) in `references/handover.md`; the why behind each
-coordinator rule in `references/coordination-rationale.md`.
+Other verbs: ending a session (release, archive-check, prune, archive) in
+`references/ending-a-session.md`; moving to another Claude Code account
+(`fleet handover`) in `references/handover.md`; the why behind each coordinator
+rule in `references/coordination-rationale.md`.
 
 ## Rules for a coordinator
 
@@ -93,13 +88,13 @@ repos' coordinators and the participant rules cite them. Each rule's why, its
 measurements and its fine print are under the same number in
 `references/coordination-rationale.md`.
 
-1. **Write the authority into the chip.** Every chip prompt carries a visible block, for example "Pre-authorised at launch by the user: push the branch, open a PR. NOT authorised: merge, override, delete." The user's click on the chip is the approval; a message you relay later never is.
+1. **Write the authority into the chip.** Every chip prompt carries a visible block (pre-authorised / NOT authorised, route, turn rule, stop point): start from `references/chip-preamble.md`. The user's click on the chip is the approval; a message you relay later never is.
 2. **Cross-check the session list.** Compare the desktop session list (each session's cwd and branch) with `fleet status`, and ask any working session with no claim to register. Unclaimed work is invisible to every gate.
 3. **Write the route into the launch prompt**, so the chip does not choose it:
    - *direct fix* (about one or two files, no new behaviour or symbol, no plan): `/audit-code --scope diff`, then stop at ship-ready;
    - *`/cycle --autonomous`* (new behaviour, several files, or a plan exists or is warranted): `/plan` → `/audit-plan` → `/cycle`, then stop at the `/ship` handoff;
    - *landing or triage* (branches or commits that already exist): cherry-pick, audit, then stop at ship-ready.
-4. **A chip ends at ship-ready**: audited, with its PR open or its branch pushed, and it says so. `/ship` runs only when the user types it in that session; no chip and no relay can run it. Keep the user's list of "type `/ship <plan>` in chip X", and merge only after `/ship` ran.
+4. **A chip ends at ship-ready**: audited, with its PR open or its branch pushed, and it says so. `/ship` runs only when the user types it in that session while it is idle (mid-turn the host refuses it); no chip and no relay can run it. Exception: a launch prompt that pre-authorises the ship lets the chip ship itself, only through `ship-commit.mjs --preauthorised`, which refuses unless every condition in the preamble holds (a refusal means "type `/ship <plan>`"). Keep the user's list of "type `/ship <plan>` in chip X", and merge only after the ship ran.
 5. **Sync consumers after a GitHub merge.** The pre-push consumer sync fires only on a local push of the default branch. After a PR merges on GitHub, run the source repo's consumer sync and its sync-PR step for the affected consumers, or remind the user to.
 6. **Repo-prefixed session titles.** Title every session and chip `<REPO>: <short task>` (plus a PR number where one exists), one short prefix per repo, e.g. `CES`. Put it in every `spawn_task` title, rename an unprefixed session with `set_session_title`, and ask each other repo's coordinator to follow.
 7. **Archive sweep on every coordination pass.** Archive a desktop session (the host's reversible archive) when ALL hold: it is idle, its PR is merged or closed (or its question is answered), its worktree is gone or `archive-check` exits 0, and it is not pinned. Removing a worktree stays the user's decision.
@@ -113,12 +108,10 @@ measurements and its fine print are under the same number in
 15. **Mind the message budget.** A host may pause a coordinator's outbound session messages after a burst (observed: 10 per user turn). Batch messages to one session, skip acknowledgements that change nothing, and keep sends for time-critical ones (all clear, gate slot, hold). The lease (rule 14) replaces most slot relays.
 16. **Plan on the strong model, execute on the cheaper one.** Where the host lets a coordinator set another session's model, the coordinator stays on the strong model and its workers run on a cheaper one at high effort (2026-10-14 default: coordinators Opus, workers Sonnet; the user's choice). Direct-fix and landing or triage chips (rule 3): switch as soon as they start. `/cycle --autonomous` chips plan on the strong model, end their turn when `/audit-plan` converges and say so; switch them, then reply "go". Steps and tools: the rationale.
 
-Optional, Claude Code only: a `SessionStart` hook that reminds new sessions to
-title themselves (rule 6); its recipe is in the rationale.
+Optional, Claude Code only: a `SessionStart` hook that reminds new sessions to title themselves (rule 6): recipe in the rationale.
 
 ## Permission prompts
 
 Add a project allow rule for fleet's own CLI so sessions do not stall on it:
 `Bash(node scripts/.claude-skills/fleet.mjs:*)` (a consumer path; in the source
-repo, `scripts/fleet.mjs`). It names no personal folder, so it is safe to commit.
-Message delivery across differing permission modes stays host behaviour.
+repo, `scripts/fleet.mjs`); it names no personal folder, so it is safe to commit.
