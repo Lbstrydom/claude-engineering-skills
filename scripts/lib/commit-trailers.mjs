@@ -223,6 +223,41 @@ export function resolveEvidence({ auditRunPath, headCommitTs, noRunId = false, f
 }
 
 /**
+ * Is this audit marker evidence for THIS branch's history? (fleet p-20261015130416-f9f9)
+ *
+ * `resolveEvidence` answers "when" (and what the marker records); nothing compared what it RECORDS to the commit being made.
+ * On 2026-10-15 a marker written by the audit of branch A was stamped, as `AI-Gate: converged` plus A's `AI-Run-ID`, onto a
+ * commit on branch B: the caller's own `--expect-*` flags matched the worktree, and the marker was never asked. A marker
+ * that names a different branch, or an audited sha that is not an ancestor of HEAD, describes some OTHER code.
+ *
+ * Narrow on purpose: a legacy marker with no `auditedBranch`/`auditedSha` is not judged (it can only support not-run/waived,
+ * never `passed`), and `auditedBranch: null` (captured detached) is not a mismatch. Absent/opted-out/malformed evidence is
+ * handled elsewhere. A rebase moves the audited sha out of HEAD's history, so a rebased branch's marker is refused too: the
+ * conservative direction (the ship then records `not-run`, which is true of the rebased tree).
+ *
+ * @param {{evidence: object, committingBranch: string|null, isAncestor: (sha: string) => boolean}} input
+ * @returns {{ok: true} | {ok: false, reason: 'branch-mismatch'|'sha-not-ancestor', detail: string}}
+ */
+export function checkEvidenceProvenance({ evidence, committingBranch, isAncestor }) {
+  if (!evidence || (evidence.state !== 'fresh' && evidence.state !== 'stale')) return { ok: true };
+  if (typeof evidence.auditedBranch === 'string' && evidence.auditedBranch !== committingBranch) {
+    return {
+      ok: false,
+      reason: 'branch-mismatch',
+      detail: `the marker was written by an audit of branch ${evidence.auditedBranch}, but this commit is on ${committingBranch ?? '(detached HEAD)'}`,
+    };
+  }
+  if (evidence.auditedSha && !isAncestor(evidence.auditedSha)) {
+    return {
+      ok: false,
+      reason: 'sha-not-ancestor',
+      detail: `the audited commit ${evidence.auditedSha.slice(0, 12)} is not an ancestor of HEAD, so the audit did not run on this history`,
+    };
+  }
+  return { ok: true };
+}
+
+/**
  * Message-file safety (Gemini G1): must resolve inside repoRoot and must not
  * classify as sensitive. Delegates to the canonical classifier (fail-closed).
  *
