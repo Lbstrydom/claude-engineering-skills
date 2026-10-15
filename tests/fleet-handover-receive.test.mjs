@@ -271,11 +271,11 @@ describe('claims waiting on the switch (s)', () => {
     const r = receive(fx, A, p.json.handover.json);
     const onSwitch = r.json.handover.followUps.filter((x) => x.kind === 'waiting-on-switch');
     assert.deepEqual(onSwitch.map((x) => x.detail.split(' ')[0]).sort(), ['w-dash', 'w-mixed', 'w-space']);
-    assert.ok(onSwitch.every((x) => /touch --id \S+ --clear-waiting/.test(x.detail)));
+    assert.ok(onSwitch.every((x) => /touch --id \S+ --unwait /.test(x.detail) && !/--clear-waiting|--waiting-on/.test(x.detail)), 'the recipe names only the wait to drop (D10): no snapshot of the others to go stale');
     assert.match(r.json.text, /note: w-ci \(.*\) waits on human:ci — not the human:account-switch token/);
     assert.ok(!onSwitch.some((x) => x.detail.startsWith('w-ci')));
   });
-  it('a claim waiting on the switch AND something else: the command clears only the switch wait (it re-adds the rest)', () => {
+  it('a claim waiting on the switch AND something else: the command drops only the switch wait, naming nothing else (D10)', () => {
     const fx = makeFleetRepo();
     const A = account(tmpRoot('rcv-s2-'), { task: null });
     const env = envFor(A);
@@ -284,10 +284,10 @@ describe('claims waiting on the switch (s)', () => {
     assert.equal(runFleet(['claim', '--intent', 'b', '--paths', 'b.txt', '--waiting-on', 'human:account-switch', '--waiting-on', 'ci:build-7:nightly'], { cwd: wt, env }).status, 0);
     const p = prepare(fx, A, []);
     const f = receive(fx, A, p.json.handover.json).json.handover.followUps.find((x) => x.kind === 'waiting-on-switch');
-    assert.match(f.detail, /touch --id w-both --clear-waiting --waiting-on ci:build-7:nightly/);
-    assert.match(f.detail, /re-adds its 1 other wait/);
+    assert.match(f.detail, /touch --id w-both --unwait human:account-switch(\s|$)/);
+    assert.doesNotMatch(f.detail, /--clear-waiting|--waiting-on|ci:build-7/, 'the other waits are not re-listed, so none can be lost to a race');
     // running exactly those arguments leaves only the other wait
-    assert.equal(runFleet(['touch', '--id', 'w-both', '--clear-waiting', '--waiting-on', 'ci:build-7:nightly'], { cwd: wt, env }).status, 0);
+    assert.equal(runFleet(['touch', '--id', 'w-both', '--unwait', 'human:account-switch'], { cwd: wt, env }).status, 0);
     const st = runFleet(['status', '--json'], { cwd: fx.repo, env }).json;
     const s = (st.items ?? st.status?.items ?? []).find((i) => i.id === 'w-both');
     assert.deepEqual((s?.waitingOn ?? []).map((w) => `${w.kind}:${w.ref}`), ['ci:build-7']);

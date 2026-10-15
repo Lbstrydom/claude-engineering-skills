@@ -28,10 +28,10 @@ import { z } from 'zod';
 import { RECEIPT_PATH, readSyncReceipt, latestReceiptEntry, detectSourceRollback } from '../sync-receipt.mjs';
 import { headOf, isAncestor, runGit } from '../fleet/git-facts.mjs';
 import { makeMeasurement, isConsumerName } from './home-model.mjs';
+import { isSourceRepoRoot } from '../is-source-repo.mjs';
 
 export const MAX_CONSUMERS = 20;
 export const MAX_RECEIPT_BYTES = 1024 * 1024;
-const SOURCE_REPO_NAME = 'claude-engineering-skills';
 
 const Sha = z.string().regex(/^[0-9a-f]{7,64}$/, 'not a hex commit id');
 const isoDate = z.string().refine((s) => !Number.isNaN(Date.parse(s)), 'not a date');
@@ -150,11 +150,6 @@ function judge(root, head, r) {
     ? detectSourceRollback({ ...prior, source: { ...prior.source, commitSha: priorOid } }, res.oid, ancestryOracle(root))
     : null;
   return { ...base, ...result, rolledBack: Boolean(rolled), detail: rolled ? `${result.detail}; the last sync rolled it back from ${String(rolled.recordedSha).slice(0, 7)}` : result.detail };
-}
-
-/** Is `root` the source repo (vs a consumer)? By package name, the stable identity. */
-function isSourceRepoRoot(root) {
-  try { return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).name === SOURCE_REPO_NAME; } catch { return false; }
 }
 
 async function defaultConsumers() {

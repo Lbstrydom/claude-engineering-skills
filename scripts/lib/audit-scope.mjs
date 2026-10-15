@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { classifyPath } from './sensitive-paths.mjs';
+import { isSourceRepoRoot } from './is-source-repo.mjs';
 import { scanEgressPayload, redactSecrets } from './sensitive-egress-gate.mjs';
 import { fenceLanguageFor, commentPrefixFor } from './file-taxonomy.mjs';
 import {
@@ -82,6 +83,21 @@ export function isAuditInfraFile(relPath) {
   const directlyUnderScripts = parts.length === 2 && parts[0] === 'scripts';
   const directlyUnderScriptsLib = parts.length === 3 && parts[0] === 'scripts' && parts[1] === 'lib';
   return directlyUnderScripts || directlyUnderScriptsLib;
+}
+
+/**
+ * Are the bundle's own modules (`isAuditInfraFile`) admitted to the audit here? The exclusion exists so a CONSUMER's synced copy
+ * of this tool is not audited as the consumer's code; in the bundle's own repo those files are the code under review.
+ * The ONE answer, shared by the audit (`openai-audit.mjs`) and the final reviewer (`gemini-review.mjs`): the explicit flag, or
+ * the AUDITED repo being the source repo. Fails closed (an unreadable package.json is not the source repo).
+ *
+ * @param {{flag?: boolean, repoRoot?: string}} [input]
+ * @returns {{admitted: boolean, source: 'flag'|'source-repo'|null}}
+ */
+export function resolveInfraScope({ flag = false, repoRoot = process.cwd() } = {}) {
+  if (flag) return { admitted: true, source: 'flag' };
+  if (isSourceRepoRoot(repoRoot)) return { admitted: true, source: 'source-repo' };
+  return { admitted: false, source: null };
 }
 
 // ── Context Assembly ──────────────────────────────────────────────────────

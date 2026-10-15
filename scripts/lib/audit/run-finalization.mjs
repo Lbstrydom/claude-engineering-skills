@@ -133,6 +133,9 @@ export async function finalizeRun(data, writeOutcomes) {
   // "2 stable rounds" judgement can read it instead of re-deriving it from H/M/L (a PASS can carry
   // `changed-lines-unread`: docs/plans/audit-hunk-window-coverage.md D9).
   if (assembled.convergence) mergedResult._convergence = assembled.convergence;
+  // Whether this audit admitted the bundle's own modules (`isAuditInfraFile`). The final reviewer inherits it, so a file the
+  // audit read is never silently withheld from the reviewer (fleet p-20261015065849-095b).
+  mergedResult._infraScope = { admitted: data.allowInfraScope === true };
 
   // 4d then 4c, in that fixed order — preserves the ORIGINAL source order.
   // A 4d failure is best-effort/swallowed internally and never propagates

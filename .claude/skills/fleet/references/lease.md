@@ -16,7 +16,7 @@ file), 2 argv.
 |---|---|
 | `lease acquire [--kind] [--for 1-180] [--pid] [--token] [--note]` | Take the slot. Prints a `token`; pass it to `attach`/`release`/a renewing `acquire` so a stale caller is refused. A refusal queues your repo. |
 | `lease attach --pid <n>` | Record the job's pid so a later session can verify it stopped. |
-| `lease release [--token] [--end-turn] [--force --reason]` | Give the slot back. `--end-turn` says this repo has nothing further ready, so the queue moves at once. `--force` is for an EXPIRED slot a person has judged gone. |
+| `lease release [--token] [--end-turn] [--force --reason]` | Give the slot back. `--end-turn` says this repo has nothing further ready, so the queue moves at once - unless another job of the SAME repo is waiting: then it is downgraded to a plain release (the turn stays, the output says so, `--json` has `turnKept`); `lease wait --cancel` first to hand the turn over anyway. `--force` is for an EXPIRED slot a person has judged gone. |
 | `lease announce --kind quiet\|ci --until <iso\|+Nm> [--from] [--note] [--over-held] [--over-turn]` | Tell other repos not to run heavy work in a window. |
 | `lease announce --clear-window <id>` | Clear a window. Any session may; a clear of another repo's window is recorded. |
 | `lease grant --window <id> --until <iso\|+Nm> [--from] [--to <repo>]` | The window's owner lets a repo (or anyone) take the slot inside it. |
@@ -41,7 +41,7 @@ REFUSED acquire and ran the command anyway (2026-10-14), and a `timeout` wrapper
   SIGINT/SIGTERM/SIGHUP/SIGBREAK. A stop kills the command's whole **process tree** (POSIX process group; Windows `taskkill /T /F`, forced in one call because descendants cannot be found once the root has exited),
   then the slot is released. SIGKILL and power loss cannot be caught: the lease expires and the recorded pid decides takeover.
   A command that runs past `--for` is not cut: its expired lease with a live pid still reads as held.
-- `--end-turn` yields the repo's turn on release (use it when nothing further is ready).
+- `--end-turn` yields the repo's turn on release (use it when nothing further is ready); with another job of the same repo waiting it keeps the turn and logs why.
 - The command owns stdout, so `--json` is refused; the lease speaks on stderr, prefixed `fleet lease run:`.
 
 | Exit | Meaning |
@@ -88,7 +88,9 @@ its time. A FREE slot is not a turn.
   or announces a window starting now (`served`), on `wait --cancel`, after 12 hours, or when it lapses (below).
 - **A turn** starts when a repo is granted the slot and lasts until its length runs out. A job running past the end is
   never cut; its next release hands over. After a release the repo keeps the turn for **10 minutes** so it can start its
-  next batched job; **pass `--end-turn` when nothing further is ready**, or the next repo waits out the gap.
+  next batched job; **pass `--end-turn` when nothing further is ready**, or the next repo waits out the gap. If another job
+  of your own repo is already waiting, `--end-turn` is downgraded to a plain release (the turn stays with your repo and the
+  output says so); `lease wait --cancel` first if you really mean to hand it over.
 - **The rule for a fresh grant.** A gap named for the repo; else its own active turn (`in-turn`); else, if another repo's
   turn is active and anyone waits, refused (`turn`: the incumbent goes first); else if nobody else waits, granted; else
   the repo goes if it is the head, or if every repo that has waited longer cannot take the slot right now (`backfill`,

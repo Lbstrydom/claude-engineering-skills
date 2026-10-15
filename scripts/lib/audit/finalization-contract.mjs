@@ -120,6 +120,9 @@ export const FinalizationDataSchema = z.object({
   // File-coverage ledger inputs (see file-coverage.mjs). Optional: a caller with no coverage record leaves it
   // off and the round carries no `_coverage` — absence means "not measured", never "clean".
   coverageInput: z.unknown().nullable().optional(),
+  // Whether this audit admitted the bundle's own modules (`isAuditInfraFile`); written to the round as `_infraScope` so the
+  // final reviewer inherits it (fleet p-20261015065849-095b). Optional: a caller that predates it reads as "not admitted".
+  allowInfraScope: z.boolean().optional(),
 
   // R2+ flag — spine-computed, read by 4c/4d (isR2Plus does not itself
   // compute anything; it is already final by the time the coordinator runs).

@@ -18,7 +18,7 @@ export const VERBS = Object.freeze({
   add: { bool: ['--json', '--all'], value: ['--id'], repeat: [], positionals: [0, 1] },
   claim: { bool: ['--json', '--override', '--clear-waiting'], value: ['--id', '--intent', '--paths', '--host-session', '--worktree'], repeat: ['--waiting-on'], positionals: [0, 0] },
   ready: { bool: ['--json', '--clear-waiting'], value: ['--id'], repeat: ['--waiting-on'], positionals: [0, 0] },
-  touch: { bool: ['--json', '--clear-waiting'], value: ['--id'], repeat: ['--waiting-on'], positionals: [0, 0] },
+  touch: { bool: ['--json', '--clear-waiting'], value: ['--id'], repeat: ['--waiting-on', '--unwait'], positionals: [0, 0] },
   hold: { bool: ['--json', '--notify'], value: ['--reason', '--note', '--id'], repeat: [], positionals: [1, 1] },
   start: { bool: ['--json'], value: [], repeat: ['--task', '--paths'], positionals: [0, 0] },
   repair: { bool: ['--json'], value: ['--quarantine'], repeat: [], positionals: [0, 0] },
