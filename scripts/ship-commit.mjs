@@ -57,6 +57,7 @@ import {
   validateTrailerInput,
   renderAgentFixLines,
   resolveEvidence,
+  checkEvidenceProvenance,
   checkMessageFileSafety,
   messageFileError,
   composeFinalMessage,
@@ -297,7 +298,7 @@ async function main() {
   }
   const auditRunPath = path.join(repoRoot, '.audit', 'last-audit-run.json');
   const gitRun = makeGitRunner(repoRoot);
-  const evidence = resolveEvidence({ auditRunPath, headCommitTs, noRunId: opts.noRunId });
+  let evidence = resolveEvidence({ auditRunPath, headCommitTs, noRunId: opts.noRunId });
   if (evidence.state === 'malformed') {
     // Row 10: environment state we must not guess about. --no-run-id opts out.
     err(`ship-commit: audit evidence unparseable: ${auditRunPath} (fix or pass --no-run-id)`);
@@ -373,6 +374,22 @@ async function main() {
     );
   } else {
     err('  [worktree] identity check skipped — unborn HEAD (no commit to bind to)');
+  }
+
+  // ---- the marker must describe THIS branch's history (fleet p-20261015130416-f9f9) ----------------
+  // Guard B checked the worktree against the CALLER's expectation; nothing compared the audit marker to the commit being made.
+  // A marker from another branch (or an audited sha outside this history) is not evidence for this commit: it is treated as
+  // ABSENT, so no foreign AI-Run-ID is stamped and no verified gate can be claimed from it. Said loudly, never silent.
+  if (headExists.status === 0 && (evidence.state === 'fresh' || evidence.state === 'stale')) {
+    const actual = readActualIdentity({ run: gitRun });
+    const committingBranch = actual.ok && actual.identity.ref.kind === 'attached' ? actual.identity.ref.name : null;
+    // exit 0 = ancestor; 1 = not; anything else (unknown object, git failure) cannot be proven, so it is not an ancestor.
+    const isAncestor = (sha) => gitRun(['merge-base', '--is-ancestor', sha, 'HEAD']).status === 0;
+    const provenance = checkEvidenceProvenance({ evidence, committingBranch, isAncestor });
+    if (!provenance.ok) {
+      err(`ship-commit: audit evidence IGNORED (${provenance.reason}): ${provenance.detail}. Treated as absent: no AI-Run-ID, and --gate passed|converged|waived cannot be claimed from it (run /audit-code on this branch for evidence that counts).`);
+      evidence = { state: 'absent', runId: null, ts: null };
+    }
   }
 
   // ---- --no-tests: the sanctioned override (feedback 2026-07-19 item 5) ---
