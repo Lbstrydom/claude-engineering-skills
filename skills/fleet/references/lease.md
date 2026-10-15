@@ -63,7 +63,8 @@ its time. A FREE slot is not a turn.
   so a head that cannot fit before a window does not block a shorter job that can). Renewing the running job is never
   a new job and skips the rule. The journal's `acquired` entry records the `basis`.
 - **Announcing a window** that starts within the turn length answers to the same queue; `--over-turn` records a window
-  that is already running, naming the repo it overrode. A window further ahead is a commitment, not checked.
+  that is already running, naming the repo it overrode; it starts no turn for the overrider and ends nobody's. A window
+  further ahead is a commitment, not checked.
 - **A waiter cannot block the machine.** The head is offered the slot when it could take it. After 15 minutes of
   continuously being able to and not coming, it goes to the back with a new episode (`lapsed`). An offer is withdrawn the
   moment a window or a job makes the head unable to go.

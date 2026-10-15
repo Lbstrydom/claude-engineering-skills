@@ -225,7 +225,9 @@ export function decideAnnounce(lease, req, now, probe = defaultProbe()) {
     ...(overHeld ? { overHeld } : {}),
   };
   let next = { ...pruned, windows: [...pruned.windows, win] };
-  if (withinTurn && !turnActive(pruned, req.identity.repoKey, now)) next = startTurn(next, req, now);
+  // --over-turn records a window that is ALREADY running; it is an acknowledged overrun, not a new entitlement, so it neither
+  // starts the overrider's turn nor ends the incumbent's (Gemini G1).
+  if (withinTurn && !overTurn && !turnActive(pruned, req.identity.repoKey, now)) next = startTurn(next, req, now);
   // A window that starts now is the repo's own use of the machine: its wait (if any) is served.
   if (from.getTime() <= now.getTime() && now.getTime() < until.getTime()) next = endWait(next, req.identity.repoKey, 'served', now, byOf(req));
   next = appendJournal(next, jentry(now, 'announced', req, { window: { id, kind: req.kind, repo: req.repo, from: win.from, until: win.until }, ...(overHeld ? { overHeld } : {}), ...(overTurn ? { overTurn } : {}) }));

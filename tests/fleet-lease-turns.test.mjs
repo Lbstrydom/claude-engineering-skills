@@ -253,6 +253,16 @@ describe('turns when several repos wait (D6, finding a3b9)', () => {
       const e = forced.lease.journal.find((x) => x.kind === 'announced');
       assert.equal(e.overTurn.repo, 'o/a');
     });
+    it('--over-turn records the running window but starts no turn for the overrider and does not end the incumbent\'s (Gemini G1)', () => {
+      let l = ok(acq(emptyLease(), A, { forMin: 10 }, '08:00'));
+      l = ok(rel(l, A, {}, '08:10')); // A's turn is active, between jobs
+      l = ok(wait(l, C, { forMin: 20 }, '08:11'));
+      const forced = ann(l, B, { kind: 'ci', until: '+30m', overTurn: true }, '08:12');
+      assert.equal(forced.ok, true, JSON.stringify(forced));
+      assert.equal(forced.lease.turn.repoKey, A.repoKey, "A's turn is untouched");
+      assert.equal(turnEnded(forced.lease).length, 0);
+      assert.equal(forced.lease.journal.filter((e) => e.kind === 'turn-started' && e.repoKey === B.repoKey).length, 0);
+    });
     it('a window starting further ahead than the turn length is a commitment, not turn-checked; nobody waiting means no check', () => {
       const l = ok(wait(emptyLease(), A, { forMin: 30 }, '08:00'));
       assert.equal(ann(l, B, { kind: 'ci', from: '+90m', until: '+120m' }, '08:05').ok, true);
