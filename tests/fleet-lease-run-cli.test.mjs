@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { cleanupFleetRoots, runFleetAsync, FLEET_CLI } from './helpers/fleet-repo.mjs';
 import { world } from './helpers/fleet-lease-world.mjs';
-import { runChild } from '../scripts/lib/fleet/lease-spawn.mjs';
+import { runChild, stopTree } from '../scripts/lib/fleet/lease-spawn.mjs';
 
 after(cleanupFleetRoots);
 
@@ -114,6 +114,32 @@ describe('lease run: stopping the whole process tree', () => {
   });
 });
 
+describe('stopTree (the platform branches, with fakes)', () => {
+  it('POSIX signals the whole GROUP (negative pid): SIGTERM, then SIGKILL when forced; a group that cannot be signalled falls back to the pid', () => {
+    const sent = [];
+    stopTree(4242, { platform: 'linux', kill: (p, s) => sent.push([p, s]) });
+    stopTree(4242, { platform: 'linux', force: true, kill: (p, s) => sent.push([p, s]) });
+    assert.deepEqual(sent, [[-4242, 'SIGTERM'], [-4242, 'SIGKILL']]);
+    const fallback = [];
+    stopTree(7, { platform: 'linux', kill: (p, s) => { fallback.push([p, s]); if (p < 0) throw new Error('ESRCH'); } });
+    assert.deepEqual(fallback, [[-7, 'SIGTERM'], [7, 'SIGTERM']]);
+  });
+  it('Windows forces the whole TREE in ONE call, whether or not "force" was asked (audit R2 H1/H2: once the root exits, its descendants cannot be found by pid)', () => {
+    for (const force of [false, true]) {
+      const calls = [];
+      stopTree(99, { platform: 'win32', force, spawnSync: (cmd, args) => calls.push([cmd, ...args]) });
+      assert.deepEqual(calls, [['taskkill', '/PID', '99', '/T', '/F']], `force=${force}`);
+    }
+  });
+  it('a pid that is not a positive integer signals nothing, and a process that is already gone is not an error', () => {
+    const calls = [];
+    for (const bad of [0, -1, NaN, undefined, '12']) stopTree(bad, { platform: 'linux', kill: (...a) => calls.push(a) });
+    assert.deepEqual(calls, []);
+    assert.doesNotThrow(() => stopTree(5, { platform: 'linux', kill: () => { throw new Error('ESRCH'); } }));
+    assert.doesNotThrow(() => stopTree(5, { platform: 'win32', spawnSync: () => { throw new Error('gone'); } }));
+  });
+});
+
 describe('runChild (the tree stop, timeout and abort, with real processes)', () => {
   const sleeper = ['-e', 'setInterval(()=>{},1000)'];
   it('stops a command that runs past its timeout: timedOut, stopped, and it returns promptly', async () => {
@@ -142,6 +168,28 @@ describe('runChild (the tree stop, timeout and abort, with real processes)', () 
     ac.abort();
     await done;
     assert.equal(await until(() => !alive(g), 15_000), true, 'the whole tree is gone');
+  });
+  it('a parent that exits GRACEFULLY on the stop still takes its stubborn worker with it (audit R2 H1/H2)', async () => {
+    const dir = tmp();
+    const pidFile = path.join(dir, 'w.pid');
+    const worker = 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'; // ignores the polite signal
+    const script = `const {spawn}=require('child_process');process.on('SIGTERM',()=>process.exit(0));`
+      + `const w=spawn(process.execPath,['-e',${JSON.stringify(worker)}],{stdio:'ignore'});`
+      + `require('fs').writeFileSync(${JSON.stringify(pidFile)},String(w.pid));setInterval(()=>{},1000)`;
+    const ac = new AbortController();
+    const done = runChild({ cmd: NODE, args: ['-e', script], signal: ac.signal, graceMs: 2000 });
+    let w = 0;
+    try {
+      assert.equal(await until(() => fs.existsSync(pidFile)), true);
+      w = Number(fs.readFileSync(pidFile, 'utf8'));
+      assert.equal(alive(w), true);
+      ac.abort();
+      const r = await done;
+      assert.equal(r.stopped, true);
+      assert.equal(await until(() => !alive(w), 15_000), true, 'the worker did not outlive the parent that exited on the stop');
+    } finally {
+      if (w) { try { process.kill(w, 'SIGKILL'); } catch { /* gone */ } }
+    }
   });
   it('a controller aborted AFTER the child finished does not reach it (audit R1 H2)', async () => {
     const stops = [];

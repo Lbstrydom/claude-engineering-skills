@@ -5,7 +5,10 @@
  * so a stop that only signals the first pid would release the lease while heavy work continues.
  *
  *  - POSIX: the child is spawned `detached` (its own process group) and every stop signals the GROUP (`kill(-pid, ...)`).
- *  - Windows: a stop runs `taskkill /PID <pid> /T` (the tree), then `/F` after the grace.
+ *  - Windows: a stop runs `taskkill /PID <pid> /T /F` at once. There is no graceful stop for a console tree (a plain `taskkill` only
+ *    asks windows to close, and `child.kill()` is TerminateProcess anyway), and it matters that the tree dies WHILE THE ROOT IS
+ *    ALIVE: `/T` finds descendants through their parent pid, so once the root has exited they are orphans no later call can reach
+ *    (audit R2 H1/H2). So the tree is forced in one call, never "asked, then forced after the grace".
  *
  * Stated limits: a descendant that leaves the group on purpose (`setsid`, a daemon) is not stopped; a root that exits normally
  * while descendants keep running is a command that said it was done.
@@ -20,7 +23,8 @@ import cp from 'node:child_process';
 export function stopTree(pid, { force = false, platform = process.platform, kill = process.kill.bind(process), spawnSync = cp.spawnSync } = {}) {
   if (!Number.isInteger(pid) || pid <= 0) return;
   if (platform === 'win32') {
-    try { spawnSync('taskkill', ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])], { stdio: 'ignore', windowsHide: true }); } catch { /* gone */ }
+    // `force` is irrelevant here by design: the first call already forces the whole tree (see the header).
+    try { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch { /* gone */ }
     return;
   }
   const sig = force ? 'SIGKILL' : 'SIGTERM';
@@ -57,8 +61,9 @@ export function runChild({ cmd, args = [], signal, timeoutMs, graceMs = 10_000, 
     child.once('error', (e) => finish({ code: null, signal: null, spawnError: e.message }));
     child.once('spawn', () => { try { onSpawn?.(child.pid); } catch { /* attaching is best effort */ } });
     child.once('close', (code, sig) => {
-      // After a deliberate stop, sweep the group once more so a descendant that ignored SIGTERM cannot outlive the release.
-      if (stopped && Number.isInteger(child.pid)) stop(child.pid, { force: true });
+      // After a deliberate stop on POSIX, sweep the group once more so a descendant that ignored SIGTERM cannot outlive the release
+      // (the group outlives its leader). On Windows the tree is already gone or unreachable: the root's pid no longer names it.
+      if (stopped && platform !== 'win32' && Number.isInteger(child.pid)) stop(child.pid, { force: true });
       finish({ code, signal: sig });
     });
     if (signal) {

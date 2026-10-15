@@ -38,7 +38,7 @@ REFUSED acquire and ran the command anyway (2026-10-14), and a `timeout` wrapper
 - **A refused acquire never runs the command.** With `--wait <min>` it waits in the queue (it is queued like any refused
   `acquire`) and retries every ~30 s; when the wait runs out it gives up.
 - It releases on **every catchable exit**: the command finishing, failing, timing out (`--timeout`), or the runner receiving
-  SIGINT/SIGTERM/SIGHUP/SIGBREAK. A stop kills the command's whole **process tree** (POSIX process group; Windows `taskkill /T`),
+  SIGINT/SIGTERM/SIGHUP/SIGBREAK. A stop kills the command's whole **process tree** (POSIX process group; Windows `taskkill /T /F`, forced in one call because descendants cannot be found once the root has exited),
   then the slot is released. SIGKILL and power loss cannot be caught: the lease expires and the recorded pid decides takeover.
   A command that runs past `--for` is not cut: its expired lease with a live pid still reads as held.
 - `--end-turn` yields the repo's turn on release (use it when nothing further is ready).
