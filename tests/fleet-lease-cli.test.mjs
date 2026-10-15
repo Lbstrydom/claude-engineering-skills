@@ -25,7 +25,14 @@ describe('the slot is shared between repos', () => {
     assert.doesNotMatch(stat.stdout, /\[this repo\]/, 'repo B is not the holder');
     assert.match(w.runA(['lease', 'status']).stdout, /\[this repo\]/);
     assert.equal(w.runB(['lease', 'release']).status, 3, 'repo B named main too, but it is not the holder');
+    // B is now waiting and A's turn survives a plain release for a short between-jobs gap (A may have a next job): B is
+    // told it is A's turn; a holder with nothing further to run yields it.
     assert.equal(w.runA(['lease', 'release']).status, 0);
+    const wait = w.runB(['lease', 'acquire', '--for', '10']);
+    assert.equal(wait.status, 3, wait.stdout);
+    assert.match(wait.stdout, /it is .* turn until/);
+    assert.equal(w.runA(['lease', 'acquire', '--for', '10']).status, 0, 'A continues its batch');
+    assert.equal(w.runA(['lease', 'release', '--end-turn']).status, 0);
     assert.equal(w.runB(['lease', 'acquire', '--for', '10']).status, 0);
   });
 
@@ -131,7 +138,7 @@ describe('journal, waiting and the announce refusal through the real CLI (plan f
     assert.equal(w.read().journal.filter((e) => e.kind === 'waiting').length, 1, 'and adds no journal entry');
     const log = w.runB(['lease', 'log']);
     assert.equal(log.status, 0, log.stdout + log.stderr);
-    assert.match(log.stdout, /acquired the slot \(granted\)/);
+    assert.match(log.stdout, /acquired the slot \(granted(, no-waiters)?\)/);
     assert.match(log.stdout, /started waiting \(refusal, held/);
     const status = w.runB(['lease', 'status']);
     assert.match(status.stdout, /waiting: .* \(2 refusals, wants 10m\)/);
@@ -178,5 +185,71 @@ describe('journal, waiting and the announce refusal through the real CLI (plan f
     assert.equal(w.runB(['lease', 'status']).status, 0);
     assert.equal(w.runA(['lease', 'release']).status, 0);
     assert.equal(w.read().journal.at(-1).kind, 'released');
+  });
+});
+
+describe('gaps and turns through the real CLI (plan fleet-lease-turns-and-journal D5, D6)', () => {
+  it('a FREE slot is not a turn: the repo that waited longer is told it goes first, then gets the slot', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'wait', '--for', '20']).status, 0);
+    const early = w.runB(['lease', 'acquire', '--for', '10']);
+    assert.equal(early.status, 3, early.stdout);
+    assert.match(early.stdout, /has waited since .* and goes first/);
+    assert.match(early.stdout, /This repo is now waiting for the slot/);
+    const mine = w.runA(['lease', 'acquire', '--for', '10']);
+    assert.equal(mine.status, 0, mine.stdout + mine.stderr);
+    const status = w.runA(['lease', 'status']);
+    assert.match(status.stdout, /turn: .* until \d\d:\d\dZ/);
+    assert.match(status.stdout, /waiting: /);
+    const log = w.runA(['lease', 'log']).stdout;
+    assert.match(log, /acquired the slot \(granted, head\)/);
+    assert.match(log, /turn started until/);
+  });
+
+  it('grant lets a named repo through a window its owner announced; a longer request is still refused; only the owner grants', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'announce', '--kind', 'quiet', '--until', '+60m']).status, 0);
+    const refused = w.runB(['lease', 'acquire', '--for', '10']);
+    assert.equal(refused.status, 3);
+    assert.match(refused.stdout, /announced a quiet window/);
+    const id = w.read().windows[0].id;
+    assert.equal(w.runB(['lease', 'grant', '--window', id, '--until', '+30m']).status, 3, 'B does not own the window');
+    // Both throwaway repos are labelled by their folder name, so a NAME is ambiguous here (and refused, never guessed);
+    // the unit tests cover a named gap with distinct labels. An open gap needs no name.
+    const ambiguous = w.runA(['lease', 'grant', '--window', id, '--until', '+30m', '--to', w.read().waiters[0].repo]);
+    assert.equal(ambiguous.status, 3);
+    assert.match(ambiguous.stdout, /more than one repo on this machine is labelled/);
+    const g = w.runA(['lease', 'grant', '--window', id, '--until', '+30m']);
+    assert.equal(g.status, 0, g.stdout + g.stderr);
+    assert.match(g.stdout, /granted in window/);
+    const past = w.runB(['lease', 'acquire', '--for', '45']);
+    assert.equal(past.status, 3);
+    assert.match(past.stdout, /a gap is granted to you until/);
+    const inside = w.runB(['lease', 'acquire', '--for', '10']);
+    assert.equal(inside.status, 0, inside.stdout + inside.stderr);
+    assert.match(w.runA(['lease', 'log']).stdout, /acquired the slot \(granted, no-waiters\)/);
+    assert.equal(w.runA(['lease', 'grant', '--window', id, '--until', '+10m', '--to', 'nobody/known']).status, 3);
+    assert.equal(w.runA(['lease', 'grant', '--until', '+10m']).status, 2, '--window is required');
+  });
+
+  it('turn sets and clears the machine turn length; release --end-turn yields the turn; bad combinations are argument errors', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'turn', '--minutes', '5']).status, 2);
+    assert.equal(w.runA(['lease', 'turn']).status, 2);
+    assert.equal(w.runA(['lease', 'turn', '--minutes', '90', '--clear']).status, 2);
+    const set = w.runA(['lease', 'turn', '--minutes', '90']);
+    assert.equal(set.status, 0, set.stdout + set.stderr);
+    assert.equal(w.read().turnMin, 90);
+    assert.match(w.runB(['lease', 'status']).stdout, /turn length: 90m/);
+    assert.equal(w.runA(['lease', 'acquire', '--for', '10']).status, 0);
+    assert.equal(w.read().turn.endsAt, '2026-10-13T21:30:00.000Z');
+    assert.equal(w.runB(['lease', 'acquire', '--for', '10']).status, 3, 'B waits');
+    assert.equal(w.runA(['lease', 'release', '--force', '--reason', 'x', '--end-turn'], {}).status, 2);
+    assert.equal(w.runA(['lease', 'release', '--end-turn']).status, 0);
+    assert.equal(w.read().turn, undefined, 'the turn was yielded');
+    assert.match(w.runB(['lease', 'log']).stdout, /turn of .* ended \(yield\)/);
+    assert.equal(w.runB(['lease', 'acquire', '--for', '10']).status, 0, 'and B goes next');
+    assert.equal(w.runA(['lease', 'turn', '--clear']).status, 0);
+    assert.equal(w.read().turnMin, undefined);
   });
 });

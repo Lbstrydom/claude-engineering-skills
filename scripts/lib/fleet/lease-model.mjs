@@ -34,6 +34,12 @@ export const LIMITS = Object.freeze({
   maxJournal: 200,
   /** One waiter per repo, at most this many repos; a waiter older than `maxWaitMs` is dropped as expired. */
   maxWaiters: 20, maxWaitMs: 12 * HOUR, defaultWaitMin: 30,
+  /** Granted gaps: at most this many per window. */
+  maxGapsPerWindow: 5,
+  /** Turns: the default length is per machine (`turnMin`, 15 to 240); a repo between jobs keeps its turn this long. */
+  defaultTurnMin: 60, minTurnMin: 15, maxTurnMin: 240, batchGapMs: 10 * MIN,
+  /** A head that has been continuously able to take the slot this long, and has not, goes to the back of the queue. */
+  claimMs: 15 * MIN,
   /** `fleet next` mentions a window that is active or starts within this long. */
   nextHorizonMs: 4 * HOUR,
 });
@@ -98,9 +104,10 @@ const HeavySchema = z.object({
   holder: label, repoKey: hex(12), repo: label, kind: z.enum(KINDS), note: note.optional(),
   scope: name, pid: z.number().int().positive().optional(), token: hex(16), startedAt: iso, expiresAt: iso,
 }).passthrough().refine((h) => Date.parse(h.startedAt) <= Date.parse(h.expiresAt), { message: 'startedAt is after expiresAt' });
+const GapSchema = z.object({ from: iso, until: iso, toRepoKey: hex(12).optional(), toRepo: label.optional(), grantedAt: iso, by: name }).passthrough();
 const WindowSchema = z.object({
   id: z.string().regex(/^w-\d{14}-[0-9a-f]{4}$/), repoKey: hex(12), repo: label, kind: z.enum(WINDOW_KINDS),
-  from: iso, until: iso, note: note.optional(),
+  from: iso, until: iso, note: note.optional(), gaps: z.array(GapSchema).optional(),
 }).passthrough().refine((w) => Date.parse(w.from) < Date.parse(w.until), { message: 'from is not before until' });
 const PeakSchema = z.object({ from: hhmm, to: hhmm }).passthrough();
 // ADDITIVE (plan fleet-lease-turns-and-journal D1): these keys are new top-level fields, never new `events` kinds - an older
@@ -115,6 +122,10 @@ const JOURNAL_PAYLOAD = new Map(Object.entries({
   refused: z.object({ refusal: z.object({ op: z.string(), code: z.string() }).passthrough() }).passthrough(),
   waiting: z.object({ episode: z.string(), opener: z.string() }).passthrough(),
   'wait-ended': z.object({ episode: z.string(), reason: z.string(), refusals: z.number().int().min(0) }).passthrough(),
+  offered: z.object({ episode: z.string() }).passthrough(),
+  'gap-granted': z.object({ window: z.object({ id: z.string() }).passthrough(), gap: obj }).passthrough(),
+  'turn-started': z.object({ turn: obj }).passthrough(),
+  'turn-ended': z.object({ turn: obj, reason: z.string() }).passthrough(),
 }));
 // A KNOWN kind must carry the payload the readers (`lease log`, `measureSlotWaits`) dereference; an unknown kind is tolerated.
 const JournalSchema = z.object({ at: iso, kind: z.string().min(1).max(40), by: name, repoKey: hex(12).optional() }).passthrough().superRefine((e, ctx) => {
@@ -128,11 +139,13 @@ const WaiterSchema = z.object({
   refusals: z.number().int().min(0), lastRefusal: iso.optional(), offeredAt: iso.optional(), note: note.optional(),
   episode: z.string().max(80).optional(),
 }).passthrough();
+const TurnSchema = z.object({ repoKey: hex(12), repo: label, startedAt: iso, endsAt: iso, lastReleasedAt: iso.optional() }).passthrough();
 const EventSchema = z.object({ at: iso, kind: z.enum(EVENT_KINDS), by: name, reason: note }).passthrough();
 export const LeaseSchema = z.object({
   schemaVersion: z.literal(LEASE_SCHEMA_VERSION),
   heavy: HeavySchema.nullable(), windows: z.array(WindowSchema), peakHours: z.array(PeakSchema), events: z.array(EventSchema),
   journal: z.array(JournalSchema).optional(), waiters: z.array(WaiterSchema).optional(),
+  turn: TurnSchema.optional(), slotFreedAt: iso.optional(), turnMin: z.number().int().min(LIMITS.minTurnMin).max(LIMITS.maxTurnMin).optional(),
 }).passthrough();
 
 export const emptyLease = () => ({ schemaVersion: LEASE_SCHEMA_VERSION, heavy: null, windows: [], peakHours: [], events: [] });
@@ -279,7 +292,7 @@ export const byOf = (req) => `${req.identity.holder}@${req.repo}`;
 export const jentry = (now, kind, req, extra = {}) => ({ at: now.toISOString(), kind, by: byOf(req), repoKey: req.identity.repoKey, ...extra });
 /** The id of a wait episode: stored on the waiter (unique even for two episodes opened in the same instant). */
 export const episodeOf = (w) => w.episode ?? `${w.repoKey}@${w.since}`;
-const waitEndedEntry = (w, reason, now, by) => ({
+export const waitEndedEntry = (w, reason, now, by) => ({
   at: now.toISOString(), kind: 'wait-ended', by, repoKey: w.repoKey, episode: episodeOf(w), reason, refusals: w.refusals,
   ...(w.lastRefusal ? { lastRefusal: w.lastRefusal } : {}),
 });
@@ -291,17 +304,11 @@ export function endWait(lease, repoKey, reason, now, by) {
   return appendJournal({ ...lease, waiters: lease.waiters.filter((x) => x !== w) }, waitEndedEntry(w, reason, now, by));
 }
 
-/**
- * The time-driven transitions, applied FIRST in every mutating decision (after the request validates, before it is
- * evaluated): a waiter older than `maxWaitMs` expires. Persisted even when the operation is then refused, because
- * they are facts about time. Touches `waiters` and `journal` only; returns the SAME object when nothing changed.
- */
-export function settleQueue(lease, now) {
-  const stale = (lease.waiters ?? []).filter((w) => now.getTime() - ms(w.since) > LIMITS.maxWaitMs);
-  if (!stale.length) return lease;
-  let next = { ...lease, waiters: lease.waiters.filter((w) => !stale.includes(w)) };
-  for (const w of stale) next = appendJournal(next, waitEndedEntry(w, 'expired', now, 'settle'));
-  return next;
+/** A fresh episode id for `repoKey` at `stamp0`, distinct from every id the journal already holds. */
+export function uniqueEpisode(lease, repoKey, stamp0) {
+  let episode = `${repoKey}@${stamp0}`;
+  for (let n = 2; (lease.journal ?? []).some((e) => e.episode === episode); n += 1) episode = `${repoKey}@${stamp0}#${n}`;
+  return episode;
 }
 
 /**
@@ -320,8 +327,7 @@ export function openWait(lease, req, { forMin, opener, refusal, now }) {
   if (waiters.length >= LIMITS.maxWaiters) return { lease, queued: false, full: true };
   // Unique per episode: a clock that has not advanced (a pinned test clock, two calls in one millisecond) must not give a new
   // episode the id of one the journal already closed - found by the interleaving test, seed 11.
-  let episode = `${req.identity.repoKey}@${stamp0}`;
-  for (let n = 2; (lease.journal ?? []).some((e) => e.episode === episode); n += 1) episode = `${req.identity.repoKey}@${stamp0}#${n}`;
+  const episode = uniqueEpisode(lease, req.identity.repoKey, stamp0);
   const w = {
     repoKey: req.identity.repoKey, repo: req.repo, by: byOf(req), since: stamp0, forMin, episode,
     refusals: opener === 'refusal' ? 1 : 0, ...(opener === 'refusal' ? { lastRefusal: stamp0 } : {}),
@@ -348,7 +354,65 @@ export function journalRefusal(lease, req, op, code, now, extra = {}) {
 /** Drop windows that ended more than `pruneAfterMs` ago. */
 export const pruneWindows = (lease, now) => ({ ...lease, windows: lease.windows.filter((w) => now.getTime() - ms(w.until) <= LIMITS.pruneAfterMs) });
 
-/** The announced windows of OTHER repos that overlap `[now, end)`. */
+/** Gaps of `w` that apply to `repoKey`: open ones (no `toRepoKey`) and ones named for it. */
+const gapsFor = (w, repoKey) => (w.gaps ?? []).filter((g) => !g.toRepoKey || g.toRepoKey === repoKey);
+
+/**
+ * The announced windows of OTHER repos that overlap `[now, end)` and are NOT covered by a granted gap: a gap that
+ * applies to `repoKey` (open, or named for it) and contains the whole request lets it through.
+ */
 export function conflictingWindows(lease, repoKey, now, end) {
-  return lease.windows.filter((w) => w.repoKey !== repoKey && ms(w.from) < end.getTime() && ms(w.until) > now.getTime());
+  return lease.windows.filter((w) => w.repoKey !== repoKey && ms(w.from) < end.getTime() && ms(w.until) > now.getTime()
+    && !gapsFor(w, repoKey).some((g) => ms(g.from) <= now.getTime() && ms(g.until) >= end.getTime()));
+}
+
+/** True when `[now, end)` overlaps another repo's window ONLY because a gap NAMED for `repoKey` lets it through. */
+export function usesNamedGap(lease, repoKey, now, end) {
+  const covered = lease.windows.filter((w) => w.repoKey !== repoKey && ms(w.from) < end.getTime() && ms(w.until) > now.getTime()
+    && gapsFor(w, repoKey).some((g) => ms(g.from) <= now.getTime() && ms(g.until) >= end.getTime()));
+  return covered.some((w) => gapsFor(w, repoKey).some((g) => g.toRepoKey === repoKey && ms(g.from) <= now.getTime() && ms(g.until) >= end.getTime()));
+}
+
+/**
+ * The repoKey a display label names, among repos this lease has seen (the slot, windows, waiters and journal windows).
+ * A label is display-only, so more than one key for a label is ambiguous and none is unknown - never a guess.
+ * @returns {{key: string, repo: string}|{error: 'none'|'ambiguous'}}
+ */
+export function resolveRepoLabel(lease, label0) {
+  const seen = new Map();
+  const add = (key, repo) => { if (key && repo === label0) seen.set(key, repo); };
+  if (lease.heavy) add(lease.heavy.repoKey, lease.heavy.repo);
+  for (const w of lease.windows) add(w.repoKey, w.repo);
+  for (const w of lease.waiters ?? []) add(w.repoKey, w.repo);
+  for (const e of lease.journal ?? []) { if (e.window?.repo) add(e.repoKey, e.window.repo); }
+  if (seen.size === 0) return { error: 'none' };
+  if (seen.size > 1) return { error: 'ambiguous' };
+  const [[key, repo]] = [...seen];
+  return { key, repo };
+}
+
+/**
+ * Could `id` take the slot for `forMin` minutes right now, ignoring the turn rule? SIDE-EFFECT FREE by construction:
+ * it reads windows (gaps counted) and the slot and returns a verdict; it never settles, queues or journals. Offer, lapse
+ * and admission all ask THIS, so there is one admission policy and no cycle between settling and deciding.
+ * @returns {{ok: true} | {ok: false, code: 'window'|'held'|'expired-pid-alive'|'unverifiable', reason: string}}
+ */
+export function admissionCheck(lease, id, forMin, now, probe) {
+  const end = new Date(now.getTime() + forMin * MIN);
+  const blocking = conflictingWindows(lease, id.repoKey, now, end);
+  if (blocking.length) {
+    const w = blocking[0];
+    const usable = lease.windows.flatMap((x) => (x.repoKey === id.repoKey ? [] : gapsFor(x, id.repoKey)))
+      .filter((g) => ms(g.from) <= now.getTime() && ms(g.until) > now.getTime()).map((g) => ms(g.until));
+    const gap = usable.length ? `; a gap is granted to you until ${hhmmOf(new Date(Math.max(...usable)))} - shorten --for to end by then` : '';
+    return { ok: false, code: 'window', reason: `another repo announced a ${w.kind} window (${w.repo}, ${w.from} to ${w.until}${w.note ? `: ${w.note}` : ''}) that overlaps the requested ${forMin} minutes; shorten --for to end before ${w.from}, or wait${gap}` };
+  }
+  const cur = lease.heavy;
+  if (cur && !sameIdentity(cur, id)) {
+    const cls = classifyHeavy(cur, now, probe);
+    if (cls.state === 'held') return { ok: false, code: 'held', reason: `held by ${cur.holder} (${cur.repo}) for ${cur.kind} until ${cur.expiresAt}` };
+    if (cls.verdict === 'pid-alive') return { ok: false, code: 'expired-pid-alive', reason: `the lease of ${cur.holder} (${cur.repo}) expired at ${cur.expiresAt}, but ${cls.reason}; it cannot be granted` };
+    if (cls.verdict === 'unverifiable') return { ok: false, code: 'unverifiable', reason: `the lease of ${cur.holder} (${cur.repo}) expired at ${cur.expiresAt} but ${cls.reason}; if a person has confirmed the job is gone: release --force --reason "<why>"` };
+  }
+  return { ok: true };
 }
