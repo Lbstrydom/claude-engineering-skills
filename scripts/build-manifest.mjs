@@ -12,9 +12,21 @@
  * uses a proper YAML frontmatter parse path instead of the fragile regex
  * that required a newline after `description:`.
  *
+ * **Category A since 2026-10-15** (AGENTS.md generated-artifact policy; .gitignore). The manifest is
+ * a pure function of `skills/**`, but nothing reads a COMMITTED copy: the only consumer is
+ * `.github/workflows/release.yml`, which runs this script itself at tag time before it reads
+ * `bundleVersion` and packs the tarball. Committing it made every PR that edited any skill file
+ * change its `bundleVersion` line, and 9 of 16 main-merges into PR branches conflicted on it
+ * (docs/plans/fleet-chips-and-merge-friction.md §1.1). So the default path is an ignored local file,
+ * and `skills:check` no longer runs `--check` on it: a freshness check on an untracked file says
+ * nothing about the commit. `--check` stays a verifier for whichever file it is pointed at
+ * (it fails on a missing file and on any byte difference from a fresh regeneration, even when the version
+ * fields match).
+ *
  * Usage:
- *   node scripts/build-manifest.mjs           # rebuild manifest
- *   node scripts/build-manifest.mjs --check    # verify manifest is fresh (CI guard)
+ *   node scripts/build-manifest.mjs                          # build the local manifest (ignored)
+ *   node scripts/build-manifest.mjs --check                  # verify the local manifest is current
+ *   node scripts/build-manifest.mjs --manifest <path> [--check]   # build / verify another path
  *
  * @module scripts/build-manifest
  */
@@ -30,7 +42,7 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
  * Every flag this CLI accepts. None take a value.
  *
  * `--check` is a SAFE mode over a MUTATING default (the bare invocation
- * rewrites the committed `skills.manifest.json`), so a silently-dropped
+ * rewrites the local `skills.manifest.json`), so a silently-dropped
  * `--chek` would rewrite the artifact while the operator believed they were
  * only verifying it.
  */
@@ -42,7 +54,7 @@ const SKILLS_DIR = path.resolve('skills');
  *
  * `--manifest <path>` exists so a test can exercise the tamper-and-repair path
  * against a THROWAWAY copy. Without it the only way to test that path was to
- * mutate the repo's own committed `skills.manifest.json` and restore it in a
+ * mutate the repo's own `skills.manifest.json` and restore it in a
  * `finally` — and `node --test` runs files in parallel, so a killed runner or a
  * concurrent reader inside that window sees (or leaves) a mangled TRACKED file.
  * This file's own comments already warned "never mutate a tracked file to test a

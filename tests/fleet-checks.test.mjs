@@ -212,12 +212,18 @@ describe('supervisor: bounded output, exact decoding, leaked descendants', () =>
         process.stdout.write('{"schemaVersion":1,"findings":[{"level":"info","message":"done"}]}');
       }, 20);
     `, 'chk.cjs');
+    // What this proves is that the check's RESULT does not wait on the leaked grandchild. The pre-fix failure
+    // was the OUTER spawnSync bound (timeoutMs + 15s) firing on a finished check, which `classifyRun` turns into
+    // check-failed "timed out" - so `status === 'findings'` below is the assertion that breaks, at any speed. The
+    // wall-clock bound is therefore only a coarse backstop below the check's own deadline: a 12s absolute bound
+    // measured the machine (17.8s under another repo's gate), not the supervisor.
+    const TIMEOUT_MS = 30_000;
     const t0 = Date.now();
-    const r = run(dir, CHECK({ script: 'chk.cjs', severity: 'warn', timeoutMs: 30_000 }));
+    const r = run(dir, CHECK({ script: 'chk.cjs', severity: 'warn', timeoutMs: TIMEOUT_MS }));
     const took = Date.now() - t0;
     assert.equal(r.status, 'findings', r.reason);
     assert.equal(r.findings[0].message, 'done');
-    assert.ok(took < 12_000, `returned well within the 30s timeout (${took}ms)`);
+    assert.ok(took < TIMEOUT_MS, `returned inside the check's own ${TIMEOUT_MS}ms timeout, never via the outer one (${took}ms)`);
     const pid = Number(fs.readFileSync(pidFile, 'utf8'));
     assert.ok(pid > 0);
     for (let i = 0; i < 80 && alive(pid); i += 1) await sleep(100);
