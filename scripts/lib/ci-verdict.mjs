@@ -68,12 +68,17 @@ export function selectRun({ runs, head, pr = null, defaultBranch, workflowPath }
 /**
  * THE decision. `evidence`:
  *   head, pr (number|null), defaultBranch, defaultSha, workflowPath (from the TRUSTED default branch),
- *   workflowBlobHead / workflowBlobDefault (git blob ids of that workflow at each), runs (the Actions runs for head).
+ *   workflowBlobHead / workflowBlobDefault (git blob ids of that workflow at each), runs (the Actions runs for head),
+ *   mergeable (the PR's GitHub mergeable state, or null).
  * @returns {{verdict: 'full'|'failed'|'pending'|'unverified', reason: string, runId?: number, url?: string, testedBase?: string|null, summary?: string, staleBase?: {tested: string, current: string}|null}}
  */
 export function classifyCiVerdict(evidence) {
   const unverified = (reason) => ({ verdict: 'unverified', reason });
-  const { head, pr = null, defaultBranch, defaultSha, workflowPath, workflowBlobHead, workflowBlobDefault, runs, workflowBlobErrors = {}, workflowBlobAtBase = {} } = evidence ?? {};
+  const { head, pr = null, defaultBranch, defaultSha, workflowPath, workflowBlobHead, workflowBlobDefault, runs, workflowBlobErrors = {}, workflowBlobAtBase = {}, mergeable = null } = evidence ?? {};
+  // GitHub runs no pull_request workflow on a CONFLICTING PR, so "no run" there has a cause the reader must name (400e).
+  const noRun = (reason) => (pr !== null && mergeable === 'CONFLICTING'
+    ? { ...unverified(`conflicting: GitHub runs no pull_request workflow on a conflicting PR; merge the base in first (${reason})`), blocker: 'conflicting' }
+    : unverified(reason));
   if (!SHA40.test(String(head ?? ''))) return unverified('the head is not a full 40-hex commit id');
   if (!defaultBranch || !SHA40.test(String(defaultSha ?? ''))) return unverified('the default branch could not be resolved to a fresh commit');
   if (!workflowPath) return unverified(`no ciVerdict workflow is declared in .test-tiers.json on ${defaultBranch}`);
@@ -84,10 +89,10 @@ export function classifyCiVerdict(evidence) {
     return unverified(`this head changes ${workflowPath} (or it is absent there): the run that would grade it is not the trusted workflow, so its own green proves nothing`);
   }
   if (!Array.isArray(runs)) return unverified('the Actions runs could not be read (malformed response)');
-  if (runs.length === 0) return unverified(`no ${workflowPath} run exists for ${head.slice(0, 8)}`);
+  if (runs.length === 0) return noRun(`no ${workflowPath} run exists for ${head.slice(0, 8)}`);
 
   const sel = selectRun({ runs, head, pr, defaultBranch, workflowPath });
-  if (!sel.run) return unverified(`${runs.length} run(s) exist for ${head.slice(0, 8)} but none counts as evidence: ${sel.rejected.slice(0, 3).join('; ')}`);
+  if (!sel.run) return noRun(`${runs.length} run(s) exist for ${head.slice(0, 8)} but none counts as evidence: ${sel.rejected.slice(0, 3).join('; ')}`);
   const run = sel.run;
   const common = { runId: run.id, url: run.html_url };
   const status = String(run.status ?? '');
@@ -120,14 +125,15 @@ export function classifyCiVerdict(evidence) {
 }
 
 /** Run a command through the injected runner and parse JSON stdout. Never throws: a failure is a labelled string. */
-function runJson(run, cmd, args) {
+export function runJson(run, cmd, args) {
   let r;
   try { r = run(cmd, args); } catch (e) { return { ok: false, why: `${cmd} could not be run (${e.message})` }; }
   if (!r || r.error) return { ok: false, why: `${cmd} could not be run (${r?.error?.message ?? 'no result'})` };
   if (r.status !== 0) return { ok: false, why: `${cmd} ${args.slice(0, 2).join(' ')} exited ${r.status}: ${String(r.stderr ?? '').trim().split('\n')[0].slice(0, 160)}` };
   try { return { ok: true, value: JSON.parse(r.stdout) }; } catch { return { ok: false, why: `${cmd} ${args.slice(0, 2).join(' ')} did not return JSON` }; }
 }
-function runText(run, cmd, args) {
+/** As runJson, for text stdout (trimmed). */
+export function runText(run, cmd, args) {
   let r;
   try { r = run(cmd, args); } catch (e) { return { ok: false, why: `${cmd} could not be run (${e.message})` }; }
   if (!r || r.error) return { ok: false, why: `${cmd} could not be run (${r?.error?.message ?? 'no result'})` };
@@ -168,11 +174,13 @@ export function gatherCiEvidence({ run, pr = null, head = null }) {
   const workflowPath = list.list.ciVerdict?.workflow ?? null;
 
   let headSha = head;
+  let mergeable = null;
   if (pr !== null) {
-    const view = runJson(run, 'gh', ['pr', 'view', String(pr), '--json', 'number,headRefOid,baseRefName,state']);
+    const view = runJson(run, 'gh', ['pr', 'view', String(pr), '--json', 'number,headRefOid,baseRefName,state,mergeable']);
     if (!view.ok) return { ok: false, reason: `cannot read PR #${pr}: ${view.why}` };
     if (view.value?.baseRefName !== defaultBranch) return { ok: false, reason: `PR #${pr} targets ${view.value?.baseRefName}, not ${defaultBranch}: no verdict applies` };
     headSha = view.value?.headRefOid;
+    mergeable = typeof view.value?.mergeable === 'string' ? view.value.mergeable : null;
   } else {
     const r = runText(run, 'git', ['rev-parse', '--verify', `${head}^{commit}`]);
     if (!r.ok) return { ok: false, reason: `cannot resolve ${head} to a commit: ${r.why}` };
@@ -213,6 +221,8 @@ export function gatherCiEvidence({ run, pr = null, head = null }) {
       workflowBlobErrors: { head: atHead.why, default: atDefault.why },
       workflowBlobAtBase,
       runs,
+      mergeable,
+      nwo,
     },
   };
 }

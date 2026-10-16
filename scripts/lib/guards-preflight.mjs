@@ -60,6 +60,7 @@ export const GUARD_TESTS = Object.freeze([
   Object.freeze({ file: 'tests/knip-gate.test.mjs', why: 'knip baseline ratchet' }),
   Object.freeze({ file: 'tests/extension-list-drift.test.mjs', why: 'no hand-kept code-extension list; blocked a full gate on #243\'s first push' }),
   Object.freeze({ file: 'tests/skill-command-portability.test.mjs', why: 'SKILL.md commands resolve in a consumer; blocked a full gate on #243\'s first push' }),
+  Object.freeze({ file: 'tests/prepush-worktree-anchor.test.mjs', why: 'scans scripts/ for an undeclared main-checkout / common-dir derivation; failed #266 full-suite after a green preflight (2026-10-16)' }),
 ]);
 
 /**

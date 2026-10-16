@@ -27,6 +27,20 @@ it on draft-time checks), and on a green, CLEAN, auto-merge-armed PR still
 unmerged after 15 minutes (re-arm it). Limit: checks are matched by name; `gh`
 does not say which app produced an observed check.
 
+## A failed CI run the diff cannot have caused (rule 8)
+
+Source-repo-gated: this repo only, where `full-suite` runs in GitHub Actions. Run
+`node scripts/test-tier.mjs ci-verdict --pr <n> --rerun-unrelated-flake`;
+never `gh run rerun` by hand, never twice. It re-runs attempt 1 only when every
+failed job names its failing test files (`run-tests/v1 failed-files:`), the only
+failed step is `npm test`, no changed file is a shared input (package files, the
+selector, the workflow) and no failing file is changed or reached by the diff.
+It files a `ci-flakes` proposal with the run as evidence. Exit 3: re-run
+accepted, wait for it. Exit 4: ineligible or refused, fix the failure. Exit 1:
+indeterminate, check `gh run view <id>` and decide; the tool never sends a
+second request. A `conflicting` reason means GitHub ran nothing: merge the base
+in first. The reservation lives on one coordinator machine.
+
 ## `land --approve <train> --serial`
 
 For repos whose rules demand each branch be up to date (each merge leaves the

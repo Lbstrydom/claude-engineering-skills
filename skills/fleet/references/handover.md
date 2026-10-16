@@ -47,6 +47,23 @@ to it: a host holds a message between sessions whose modes differ.
   ("not ready: scheduler step unconfirmed"), artefacts written. The CLI cannot
   read the scheduler, so the flag is the operator saying the step was done:
   **passing `--scheduler-checked` without having done it is a violation.**
+- **Tasks travel in full.** Prepare copies each task's `SKILL.md` into
+  `<git-common-dir>/fleet/handover/handover-<id>-tasks/` with the sha256 of the
+  bytes written, and receive re-hashes the copies. The cron, `fireAt`, `enabled`
+  and `lastRunAt` are not on disk: save the `list_scheduled_tasks` answer (JSON)
+  to a file and pass `--scheduler-snapshot <file>`. A malformed snapshot, a
+  duplicate id, or an id with no task on disk fails prepare, and so does a task
+  that cannot be copied; nothing is published. Without the snapshot each task
+  says `schedule: unknown (no --scheduler-snapshot)`.
+- **Recorded at prepare:** the machine lease (holder, waiters, windows, turn, or
+  why it could not be read), and a memory-backup reminder: your own command when
+  `FLEET_MEMORY_BACKUP_CMD` is set, else a generic line. Memory is never copied
+  into a repo.
+- **New account, first:** the prompt opens with a fixed order: the CI queue
+  (`gh run list` in progress and queued, `fleet lease status`), then a lease
+  window for anything running, and only then discovery. Session ids die with the
+  account, so peers are named by title (`<REPO>: Coordinator`) and resolved with
+  `list_sessions`.
 - **New account:** paste the coordination prompt into ONE session, in any repo.
   It resumes that repo's sessions directly, and starts one coordinator chip per
   OTHER repo with work, inside that repo (spawn_task `cwd`). Each chip gets its
