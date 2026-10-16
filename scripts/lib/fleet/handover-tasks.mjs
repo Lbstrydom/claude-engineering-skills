@@ -117,3 +117,32 @@ export function verifyTaskExports(tasks) {
     return { id: t.id, export: sha256(buf) === t.export.sha256 ? 'ok' : 'mismatch' };
   });
 }
+
+/** The daily task that makes each account's scheduler match `registry.json` beside it, and adopts new tasks into it. */
+export const RECONCILE_ID = 'schedule-reconcile';
+
+/**
+ * receive: is the registry flow installed under this config root? `null` when no `schedule-reconcile/SKILL.md` exists
+ * (the per-task flow applies). Otherwise the paths, the reconcile cron from the registry, and the ids the registry
+ * covers. A registry that cannot be read, holds an entry with no string id, or has no `schedule-reconcile` entry with a
+ * string cron is reported as `registryError`: it can neither bootstrap the reconcile task nor claim coverage, so it is
+ * never read as "covers nothing" or as a usable schedule.
+ * @param {string} configDir
+ * @returns {null | {skill: string, registry: string, cron: string|null, covered: string[]|null, registryError: string|null}}
+ */
+export function readScheduleReconcile(configDir, { readFile = fs.readFileSync } = {}) {
+  const root = scheduledTasksDir(configDir);
+  const skill = path.join(root, RECONCILE_ID, 'SKILL.md');
+  if (!fs.existsSync(skill)) return null;
+  const registry = path.join(root, 'registry.json');
+  const bad = (registryError) => ({ skill, registry, cron: null, covered: null, registryError });
+  let list;
+  try { list = JSON.parse(readFile(registry, 'utf8'))?.tasks; } catch (e) { return bad(e.code ?? e.message); }
+  if (!Array.isArray(list)) return bad('no "tasks" array');
+  const noId = list.findIndex((t) => typeof t?.id !== 'string' || !t.id);
+  if (noId !== -1) return bad(`entry ${noId} has no string "id"`);
+  const own = list.find((t) => t.id === RECONCILE_ID);
+  if (!own) return bad(`no "${RECONCILE_ID}" entry`);
+  if (typeof own.cronExpression !== 'string' || !own.cronExpression.trim()) return bad(`the "${RECONCILE_ID}" entry has no string "cronExpression"`);
+  return { skill, registry, registryError: null, cron: own.cronExpression, covered: list.map((t) => t.id) };
+}

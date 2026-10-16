@@ -35,7 +35,7 @@ import { isTerminalState } from './overlap.mjs';
 import { fleetDir, listTrains, readSessions, realWithTail } from './registry.mjs';
 import { blocksHandover, ghUnknownLine, receiveCommand, renderBeforeRelaunch, renderHandoverMarkdown, renderReceiveText } from './handover-render.mjs';
 import { renderCommand } from './shell-quote.mjs';
-import { joinTaskRecords, parseSchedulerSnapshot, stageTaskExports, verifyTaskExports } from './handover-tasks.mjs';
+import { RECONCILE_ID, joinTaskRecords, parseSchedulerSnapshot, readScheduleReconcile, stageTaskExports, verifyTaskExports } from './handover-tasks.mjs';
 import { defaultProbe, machineDir, readLease, summarise } from './lease.mjs';
 
 export { blocksHandover, ghUnknownLine, renderHandoverMarkdown };
@@ -690,16 +690,29 @@ function sweepStaging(stagingRoot) {
   return { swept, kept };
 }
 
+/** The registry-flow step receive prints first when `schedule-reconcile` is installed under the config root. */
+export function reconcileStep(r, tasks = []) {
+  if (r.registryError) return `${RECONCILE_ID} is installed but its registry ${r.registry} is not usable (${r.registryError}): fix the registry, then run ${RECONCILE_ID}; do not recreate tasks by hand meanwhile`;
+  const covered = tasks.filter((t) => r.covered.includes(t.id)).length;
+  return `first: if list_scheduled_tasks has no ${RECONCILE_ID}, create it from ${r.skill} (taskId ${RECONCILE_ID}, cron "${r.cron}"); then run it (run_scheduled_task ${RECONCILE_ID}) and read its one-line report. Never hand-recreate a task the registry covers (${covered} of ${tasks.length} in this handover).`;
+}
+
 /**
  * What a receive leaves for a human that is NOT a failure (plan p): scheduled tasks to confirm or recreate, settings
  * or MCP differences, a repo whose PR state cannot be read, an account change (or an unknown one), and claims waiting
  * on the switch itself. Each is `{kind, detail}`.
  */
-export function receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, waits }) {
+export function receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, waits, reconcile = null }) {
   const out = [];
+  // The registry flow comes FIRST, ahead of every per-task line: with it installed, a hand-recreated task is a duplicate.
+  if (reconcile) out.push({ kind: 'schedule-reconcile', detail: reconcileStep(reconcile, tasks) });
   if (tasks.length) {
     const missing = tasks.filter((t) => t.file === 'missing').length;
-    out.push({ kind: 'scheduled-tasks', detail: `${tasks.length} scheduled task(s): ${tasks.length - missing} file(s) present, ${missing} missing here — confirm each in this account's scheduler, recreate what is still wanted` });
+    const uncovered = reconcile?.covered ? tasks.filter((t) => !reconcile.covered.includes(t.id)).map((t) => t.id) : null;
+    const todo = !reconcile ? "confirm each in this account's scheduler, recreate what is still wanted"
+      : uncovered ? (uncovered.length ? `not in the registry, so confirm by hand: ${uncovered.join(', ')}` : 'all in the registry: schedule-reconcile restores them, never recreate by hand')
+        : 'the registry could not be read: fix it before recreating anything';
+    out.push({ kind: 'scheduled-tasks', detail: `${tasks.length} scheduled task(s): ${tasks.length - missing} file(s) present, ${missing} missing here — ${todo}` });
     for (const t of tasks.filter((x) => x.exportCheck === 'missing' || x.exportCheck === 'mismatch')) {
       out.push({ kind: 'task-export', detail: `the exported copy of ${t.id} is ${t.exportCheck === 'missing' ? 'missing' : 'not the copy prepare hashed'} (${t.export?.path ?? '?'}): do not recreate from it, read the source account's task instead` });
     }
@@ -782,6 +795,7 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
     ...t, file: fs.existsSync(path.join(taskRoot, t.id, 'SKILL.md')) ? 'present' : 'missing', registration: 'unverified',
     exportCheck: exportCheck.get(t.id)?.export ?? 'none',
   }));
+  const reconcile = readScheduleReconcile(destConfigDir);
   const ownSettings = settingsFiles(destConfigDir, ctx.env, homedir);
   const settings = m.settings.map((s) => {
     // `.claude.json` is compared by identity, never by hash: an older manifest's hash is ignored (plan o).
@@ -849,10 +863,10 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
   const conflicts = files.filter((f) => f.outcome === 'conflict');
   const missingTasks = tasks.filter((t) => t.file === 'missing');
   const settingsReview = settings.filter((x) => x.review);
-  const followUps = receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, waits });
+  const followUps = receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, waits, reconcile });
   const handover = {
     id: m.id, mode: sameRoot ? 'same-config-root' : 'copy', dryRun, destConfigDir, sourceConfigDir: m.sourceConfigDir, createdAt: m.createdAt,
-    files, sweep, lockContention, tasks, settings, identity, memoryDest, liveSessions, waits, mergedUnreleased, ghUnknown, liveUnknown, unregistered,
+    files, sweep, lockContention, tasks, reconcile, settings, identity, memoryDest, liveSessions, waits, mergedUnreleased, ghUnknown, liveUnknown, unregistered,
     anomalies: m.anomalies, memoryErrors: m.memoryErrors, followUps,
     summary: {
       verified: count('verified'), copied: count('copied') + count('copied-source-changed'), present: count('present') + count('present-source-changed'),

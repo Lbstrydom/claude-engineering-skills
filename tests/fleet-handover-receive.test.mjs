@@ -293,3 +293,85 @@ describe('claims waiting on the switch (s)', () => {
     assert.deepEqual((s?.waitingOn ?? []).map((w) => `${w.kind}:${w.ref}`), ['ci:build-7']);
   });
 });
+
+describe('the schedule-reconcile registry flow', () => {
+  /** A config root with the registry flow installed: reconcile + a covered task + one the registry has never seen. */
+  const withRegistry = (root, registry) => {
+    for (const id of ['schedule-reconcile', 'adhoc']) {
+      fs.mkdirSync(path.join(root, 'scheduled-tasks', id), { recursive: true });
+      fs.writeFileSync(path.join(root, 'scheduled-tasks', id, 'SKILL.md'), `---\nname: ${id}\ndescription: ${id} task\n---\nbody\n`);
+    }
+    fs.writeFileSync(path.join(root, 'scheduled-tasks', 'registry.json'), registry ?? JSON.stringify({
+      version: 1, tasks: [{ id: 'weekly-check', cronExpression: '0 9 * * 1', enabled: true }, { id: 'schedule-reconcile', cronExpression: '10 8 * * *', enabled: true }],
+    }));
+    return root;
+  };
+
+  it('receive puts the reconcile step FIRST, ahead of every per-task line, and names only the uncovered ids for hand work', () => {
+    const fx = makeFleetRepo();
+    const A = withRegistry(account(tmpRoot('rcv-reg-')));
+    const p = prepare(fx, A);
+    assert.equal(p.status, 0, p.stdout);
+    fs.rmSync(path.join(path.dirname(p.json.handover.json), `handover-${p.json.handover.id}-tasks`, 'adhoc'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    const r = receive(fx, A, p.json.handover.json);
+    assert.equal(r.status, 0, r.stdout);
+    const f = r.json.handover.followUps;
+    assert.equal(f[0].kind, 'schedule-reconcile', 'first follow-up');
+    assert.match(f[0].detail, /if list_scheduled_tasks has no schedule-reconcile, create it from .*schedule-reconcile[\\/]SKILL\.md \(taskId schedule-reconcile, cron "10 8 \* \* \*"\)/);
+    assert.match(f[0].detail, /run_scheduled_task schedule-reconcile\) and read its one-line report\. Never hand-recreate a task the registry covers \(2 of 3/);
+    assert.ok(f.some((x) => x.kind === 'task-export'), 'a per-task line exists to be ordered against');
+    assert.match(f.find((x) => x.kind === 'scheduled-tasks').detail, /not in the registry, so confirm by hand: adhoc$/);
+    const lines = r.json.text.split('\n');
+    const at = (re) => lines.findIndex((l) => re.test(l));
+    assert.ok(at(/^ {4}- first: if list_scheduled_tasks/) === at(/follow-ups \(not failures\)/) + 1, 'the first line of the follow-ups block');
+    assert.ok(at(/schedule-reconcile installed: run it before recreating anything/) < at(/EXPORT MISSING: adhoc/), 'ahead of the per-task lines in the task section too');
+  });
+
+  it('prepare names the adopt-now step; the prompt defers the choice to receive, which reads the destination root', () => {
+    const p = prepare(makeFleetRepo(), withRegistry(account(tmpRoot('rcv-reg-prep-'))));
+    assert.match(p.json.text, /adopted into registry\.json on its next daily run; to adopt them now, run_scheduled_task schedule-reconcile/);
+    const md = fs.readFileSync(p.json.handover.md, 'utf8');
+    assert.match(md, /if receive's FIRST follow-up is the schedule-reconcile step, do that step .*never hand-recreate a task the registry covers/);
+    assert.match(md, /Otherwise call list_scheduled_tasks/, 'the per-task flow stays for a destination without the registry flow');
+  });
+
+  it('an unreadable registry is named, never read as "covers nothing"', () => {
+    const fx = makeFleetRepo();
+    const A = withRegistry(account(tmpRoot('rcv-reg-bad-')), '{not json');
+    const r = receive(fx, A, prepare(fx, A).json.handover.json);
+    const f = r.json.handover.followUps;
+    assert.equal(f[0].kind, 'schedule-reconcile');
+    assert.match(f[0].detail, /its registry .*registry\.json is not usable .*do not recreate tasks by hand/);
+    assert.match(f.find((x) => x.kind === 'scheduled-tasks').detail, /the registry could not be read/);
+  });
+
+  it('a registry that cannot bootstrap reconcile, or names an entry with no id, is unusable — never a schedule or coverage', () => {
+    const cases = [
+      ['no reconcile entry', { tasks: [{ id: 'weekly-check', cronExpression: '0 9 * * 1' }] }, /no "schedule-reconcile" entry/],
+      ['reconcile with no cron', { tasks: [{ id: 'schedule-reconcile', fireAt: '2026-10-20T08:00:00.000Z' }] }, /"schedule-reconcile" entry has no string "cronExpression"/],
+      ['an entry with no id', { tasks: [{ id: 'schedule-reconcile', cronExpression: '10 8 * * *' }, { title: 'orphan' }] }, /entry 1 has no string "id"/],
+    ];
+    for (const [name, reg, want] of cases) {
+      const fx = makeFleetRepo();
+      const A = withRegistry(account(tmpRoot('rcv-reg-inv-')), JSON.stringify(reg));
+      const f = receive(fx, A, prepare(fx, A).json.handover.json).json.handover.followUps;
+      assert.equal(f[0].kind, 'schedule-reconcile', name);
+      assert.match(f[0].detail, want, name);
+      assert.doesNotMatch(f[0].detail, /create it from/, `${name}: no bootstrap instruction from a registry that cannot supply it`);
+      assert.match(f.find((x) => x.kind === 'scheduled-tasks').detail, /the registry could not be read/, name);
+    }
+  });
+
+  it('control: no schedule-reconcile task file → no reconcile step, the per-task flow as before', () => {
+    const fx = makeFleetRepo();
+    const A = account(tmpRoot('rcv-reg-none-'));
+    fs.writeFileSync(path.join(A, 'scheduled-tasks', 'registry.json'), '{"tasks":[]}'); // a registry alone is not the flow
+    const p = prepare(fx, A);
+    assert.doesNotMatch(p.json.text, /schedule-reconcile/);
+    assert.match(fs.readFileSync(p.json.handover.md, 'utf8'), /recreate only what is still wanted/);
+    const r = receive(fx, A, p.json.handover.json);
+    assert.ok(!r.json.handover.followUps.some((x) => x.kind === 'schedule-reconcile'));
+    assert.match(r.json.handover.followUps.find((x) => x.kind === 'scheduled-tasks').detail, /recreate what is still wanted$/);
+    assert.doesNotMatch(r.json.text, /schedule-reconcile installed/);
+  });
+});
