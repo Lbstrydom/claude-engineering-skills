@@ -79,6 +79,7 @@ export function runDecision(transact, dir, decide) {
  * @param {number} [opts.jitter=0.2] - +/- fraction applied to each poll
  * @param {boolean} [opts.endTurn=false] - yield the repo's turn on release
  * @param {number} [opts.releaseToCiWindow=0] - minutes; hand the slot to a CI window when the job may have reached a remote
+ * @param {{repoKey: string, repo: string}} [opts.windowRepo] - who OWNS that window when it is not the releasing repo (sync:pr: the target)
  * @param {string} [opts.cmdName='fleet'] - how this CLI is spelled in a by-hand recovery message
  * @param {() => Date} [opts.now]
  * @param {(ms: number) => Promise<void>} [opts.sleep]
@@ -95,7 +96,7 @@ export function runDecision(transact, dir, decide) {
 export async function runUnderLease(opts, job) {
   const {
     dir, identity, repo, kind = 'gate', forMin = 30, note, pid = process.pid, waitMin = 0, pollMs = 30_000, jitter = 0.2,
-    endTurn = false, releaseToCiWindow = 0, cmdName = 'fleet', now = () => new Date(), random = Math.random,
+    endTurn = false, releaseToCiWindow = 0, windowRepo, cmdName = 'fleet', now = () => new Date(), random = Math.random,
     probe = defaultProbe(), signals = processSignals, transact = transactLease, log = () => {},
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)), forceExit = (code) => process.exit(code),
   } = opts;
@@ -143,7 +144,7 @@ export async function runUnderLease(opts, job) {
   let rel;
   try {
     rel = runDecision(transact, dir, (lease) => (toWindow
-      ? decideReleaseToCiWindow(lease, { identity, repo, token, endTurn, ciWindowMin: releaseToCiWindow, note: 'PR CI after a push' }, now(), probe)
+      ? decideReleaseToCiWindow(lease, { identity, repo, token, endTurn, ciWindowMin: releaseToCiWindow, note: 'PR CI after a push', ...(windowRepo ? { windowRepo } : {}) }, now(), probe)
       : decideRelease(lease, { identity, repo, token, endTurn }, now(), probe)));
   } finally { removeSignals(); }
   let released;

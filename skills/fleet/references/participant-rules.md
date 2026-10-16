@@ -39,7 +39,9 @@ You are one of several concurrent sessions coordinated by /fleet.
    your repo, and a FREE slot is not a turn). `lease run -- <cmd>` does acquire, run and release for a script in one step (it never runs the command after a refusal). `lease release --end-turn` when you have nothing further ready (a sibling job of your repo that is waiting keeps the turn; the output says so), else the
    next repo waits out a 10-minute gap. Start the run, then
    `lease attach --pid <the run's pid>` so a later session can verify it stopped, and `lease release` at the end. Pass the
-   `--token` that `acquire` printed to `attach`/`release` when a script wraps the run. `lease status` shows the slot, the
+   `--token` that `acquire` printed to `attach`/`release` when a script wraps the run. Extend a running job with
+   `acquire --token`, never a bare re-acquire (refused while your name holds the slot; a second session of one checkout needs
+   its own `--id`); once your repo's turn is over and another repo waits, a renewal is refused too. `lease status` shows the slot, the
    windows other repos announced and the peak-cost hours; `fleet next` mentions them too. An install counts as heavy for the
    window check, including the one `skills:hydrate` runs in a fresh worktree: check `lease status` first. The lease says whether the slot is
    free; the coordinator still decides who goes next, and a `hold` or directive from them outranks it.

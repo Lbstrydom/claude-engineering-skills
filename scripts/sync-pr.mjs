@@ -42,6 +42,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { resolveTargets, consumerAliases } from './lib/consumer-repos.mjs';
@@ -56,6 +57,8 @@ import { remoteReachedOf } from './lib/sync-pr-lease.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--target', '--dry-run', '--no-merge', '--base', '--lease-for', '--lease-wait', '--ci-window'];
+/** The checkout this script lives in: the SOURCE repo whose turn a sync run takes (any worktree of it shares one repoKey). */
+const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
 
 /** @type {import('./lib/sync-pr.mjs').Runner} */
@@ -157,17 +160,21 @@ export function parseArgs(argv) {
  * disables it; production passes nothing and gets the real lease. A consumer whose repo cannot be identified, or whose lease
  * cannot be used, is DEFERRED - never run unleased.
  */
-async function runLeased({ lease, repoRoot, job, opts, out }) {
+async function runLeased({ lease, repoRoot, name, job, opts, out }) {
   if (lease === null) return { ran: true, result: await job({ signal: undefined }) };
   let dir;
   try { dir = lease.dir ?? machineDir(process.env); } catch (e) {
     if (e instanceof LeaseConfigError) return { ran: false, outcome: 'lease-error', reason: e.message };
     throw e;
   }
-  const id = repoIdentity(repoRoot);
-  if (!id) return { ran: false, outcome: 'lease-error', reason: 'could not identify the consumer repository for the lease' };
+  // D13: the work belongs to the SOURCE repo (CES started it and schedules it), so it queues and takes turns as that repo; the holder
+  // names the target, so two runs for one target are still refused by `exclusive`. The CI window it records stays the TARGET's.
+  const target = repoIdentity(repoRoot);
+  if (!target) return { ran: false, outcome: 'lease-error', reason: 'could not identify the consumer repository for the lease' };
+  const source = repoIdentity(lease.sourceRoot ?? SOURCE_ROOT);
+  if (!source) return { ran: false, outcome: 'lease-error', reason: 'could not identify the source repository for the lease' };
   return runUnderLease({
-    dir, identity: { repoKey: id.repoKey, holder: 'sync-pr' }, repo: id.repo, kind: 'gate', forMin: opts.leaseFor, waitMin: opts.leaseWait,
+    dir, identity: { repoKey: source.repoKey, holder: `sync-pr:${name}` }, repo: source.repo, windowRepo: { repoKey: target.repoKey, repo: target.repo }, kind: 'gate', forMin: opts.leaseFor, waitMin: opts.leaseWait,
     endTurn: true, releaseToCiWindow: opts.ciWindow, cmdName: 'node scripts/fleet.mjs', log: (m) => out.write(`  ${D}lease: ${m}${X}\n`), ...(lease.inject ?? {}),
   }, job);
 }
@@ -242,7 +249,7 @@ export async function main(argv = process.argv, out = process.stdout, deps = {})
       });
       return { ...r, remoteReached: remoteReachedOf(r, { run, repoRoot }) };
     };
-    const leased = await runLeased({ lease, repoRoot, job, opts: { leaseFor, leaseWait, ciWindow }, out });
+    const leased = await runLeased({ lease, repoRoot, name: t.name, job, opts: { leaseFor, leaseWait, ciWindow }, out });
     if (!leased.ran) {
       deferred++;
       out.write(`  ${Y}deferred${X} the machine lease was not granted (${leased.code ?? leased.outcome}): ${leased.reason}${leased.queued ? ` ${D}— queued; run again when it is this repo's turn${X}` : ''}\n`);

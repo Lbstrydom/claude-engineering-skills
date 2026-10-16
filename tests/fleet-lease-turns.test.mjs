@@ -173,16 +173,18 @@ describe('turns when several repos wait (D6, finding a3b9)', () => {
     assert.equal(lastAcquired(got.lease).basis, 'no-waiters');
   });
 
-  it('a holder renewing past its turn end keeps its job and does not start a new turn', () => {
+  it('a holder renewing past its turn end while another repo waits is refused (D11): its job is not cut, not extended, and no new turn starts', () => {
     let l = ok(decideAnnounce(emptyLease(), q(A, { kind: 'quiet', until: '+1m' }), T('07:00'), probe));
     l = ok(L.decideTurnConfig(l, { minutes: 15 }, T('07:00')));
     l = ok(acq(l, A, { forMin: 30 }, '08:00')); // turn 08:00-08:15
     const tok = l.heavy.token;
     l = acq(l, B, { forMin: 10 }, '08:05').lease;
     const renewed = acq(l, A, { forMin: 30, token: tok }, '08:20');
-    assert.equal(renewed.ok, true, JSON.stringify(renewed));
-    assert.equal(renewed.renewed, true);
-    assert.equal(renewed.lease.turn, undefined, 'renewal is the same job, not a new turn');
+    assert.equal(renewed.ok, false);
+    assert.equal(renewed.code, 'turn');
+    assert.equal(renewed.lease.heavy.expiresAt, l.heavy.expiresAt, 'the job is neither cut nor extended');
+    assert.equal(renewed.lease.heavy.token, tok);
+    assert.equal(renewed.lease.turn, undefined, 'and a refused renewal starts no turn');
   });
 
   it('a named gap lets the grantee in WITHOUT touching the incumbent turn', () => {
@@ -493,5 +495,128 @@ describe('--end-turn while the same repo still waits (D9, finding 3c6d)', () => 
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.deepEqual(turnEnded(r.lease), ['expiry'], 'only the expiry that already happened');
     assert.equal(r.turnKept, undefined);
+  });
+});
+
+describe('renewals and rotations obey the turn (D11, finding 20ec)', () => {
+  const TOKEN = '1111111111111111';
+  const renew = (lease, id, when, extra = {}) => acq(lease, id, { token: TOKEN, forMin: 15, ...extra }, when);
+  const turnOf = (l) => l.turn && { startedAt: l.turn.startedAt, endsAt: l.turn.endsAt };
+
+  /** THE 20:23Z CASE with token-bearing renewals: A's turn starts at its first grant; B queues right after. */
+  const loopWorld = () => {
+    let l = ok(acq(emptyLease(), A, { forMin: 120 }, '19:23:27')); // a long job: its lease outlives the turn
+    l = acq(l, B, { forMin: 20 }, '19:24:16').lease;
+    return l;
+  };
+
+  it('within the turn every renewal is granted same-job and the turn budget never moves (it counts from the FIRST grant)', () => {
+    let l = loopWorld();
+    const first = turnOf(l);
+    for (let m = 1.5; m < 59; m += 1.5) { // every 90 s until 20:22
+      const t = new Date(T('19:23:27').getTime() + m * 60_000);
+      const hm = `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}:${String(t.getUTCSeconds()).padStart(2, '0')}`;
+      const r = renew(l, A, hm);
+      assert.equal(r.ok, true, `${hm}: ${JSON.stringify({ code: r.code, reason: r.reason })}`);
+      assert.equal(r.basis, 'same-job');
+      l = r.lease;
+      assert.deepEqual(turnOf(l), first, `${hm}: renewing must not restart the turn clock`);
+    }
+    assert.equal(first.endsAt, '2026-10-14T20:23:27.000Z');
+  });
+
+  it('after the budget a renewal is refused for the turn although the repo still holds a LIVE slot, and the repo is queued behind B', () => {
+    let l = loopWorld();
+    l = ok(renew(l, A, '20:22:00', { forMin: 15 })); // lease now runs to 20:37
+    const r = renew(l, A, '20:24:00');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'turn');
+    assert.match(r.reason, /o\/b has waited since 19:24Z and goes first/);
+    assert.match(r.reason, /this lease is not extended/);
+    assert.match(r.reason, /lease release/);
+    assert.equal(r.queued, true);
+    assert.ok(r.lease.waiters.some((w) => w.repoKey === A.repoKey), 'A is queued');
+    assert.equal(r.lease.heavy.expiresAt, l.heavy.expiresAt, 'the running job is not cut and not extended');
+    assert.equal(r.lease.heavy.token, TOKEN);
+  });
+
+  it('the refusal hands the slot to B when A\'s lease expires with a dead pid (B is the head once the turn is over)', () => {
+    let l = loopWorld();
+    l = ok(renew(l, A, '20:22:00', { forMin: 15 }));
+    l = renew(l, A, '20:24:00').lease;
+    const b = acq(l, B, { forMin: 20 }, '20:40:00'); // A's lease ended 20:37; the probe says the pid is dead
+    assert.equal(b.ok, true, JSON.stringify(b));
+  });
+
+  it('a rotation of an EXPIRED own slot gets the same answers: granted inside the turn, refused for the turn after it while B waits', () => {
+    let l = ok(acq(emptyLease(), A, { forMin: 10, pid: 1 }, '19:23:27')); // expires 19:33:27
+    l = acq(l, B, { forMin: 20 }, '19:24:00').lease;
+    const inTurn = acq(l, A, { forMin: 10 }, '19:40:00'); // expired, pid dead, no token
+    assert.equal(inTurn.ok, true, JSON.stringify(inTurn));
+    assert.equal(inTurn.basis, 'same-job');
+    // the same, but after the budget
+    let l2 = ok(acq(emptyLease(), A, { forMin: 10, pid: 1 }, '19:23:27'));
+    l2 = acq(l2, B, { forMin: 20 }, '19:24:00').lease;
+    const late = acq(l2, A, { forMin: 10 }, '20:30:00');
+    assert.equal(late.code, 'turn');
+  });
+
+  it('a same-job grant serves nobody: a sibling job of the SAME repo that was refused keeps its wait', () => {
+    let l = loopWorld();
+    const A2 = { repoKey: A.repoKey, holder: 'chip-2' };
+    l = acq(l, A2, { forMin: 10 }, '19:30:00').lease; // refused held: repo A queued
+    assert.ok(l.waiters.some((w) => w.repoKey === A.repoKey));
+    const r = renew(l, A, '19:31:30');
+    assert.equal(r.ok, true);
+    assert.ok(r.lease.waiters.some((w) => w.repoKey === A.repoKey), 'the renewal did not close the sibling\'s wait');
+    assert.equal(r.lease.journal.filter((e) => e.kind === 'wait-ended' && e.reason === 'served' && e.repoKey === A.repoKey).length, 0);
+  });
+
+  it('with nobody else waiting a renewal after the budget is granted (nothing to be fair to)', () => {
+    let l = ok(acq(emptyLease(), A, { forMin: 120 }, '19:23:27'));
+    const r = renew(l, A, '20:30:00', { forMin: 30 });
+    assert.equal(r.ok, true, JSON.stringify(r));
+  });
+
+  it('D9 cannot keep a turn past its budget: after the turn ended a same-repo waiter holds nothing (turnActive is false)', () => {
+    let l = loopWorld();
+    const A2 = { repoKey: A.repoKey, holder: 'chip-2' };
+    l = acq(l, A2, { forMin: 10 }, '19:30:00').lease;
+    const r = rel(l, A, { endTurn: true }, '20:30:00'); // 20:23:27 has passed
+    assert.equal(r.ok, true);
+    assert.equal(r.turnKept, undefined, 'there is no turn left to keep');
+    assert.equal(r.lease.turn, undefined);
+  });
+});
+
+describe('a token-less acquire never takes over a LIVE slot its own identity holds (D12, finding 8182)', () => {
+  it('THE 18:45Z CASE: a second session named like the holder is refused, not queued, and the slot and its token are untouched', () => {
+    const l = ok(acq(emptyLease(), A, { forMin: 50, pid: 100 }, '18:21'));
+    const r = acq(l, A, { forMin: 30, pid: 200 }, '18:45');
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'held');
+    assert.equal(r.queued, undefined, 'the same identity does not queue behind itself');
+    assert.match(r.reason, /already holds the slot until 19:11Z/);
+    assert.match(r.reason, /--token/);
+    assert.match(r.reason, /--id/);
+    assert.equal((r.lease ?? l).heavy.token, l.heavy.token, 'no rotation');
+    assert.equal((r.lease ?? l).heavy.pid, 100);
+  });
+  it('with the matching token it renews; with a wrong token it is stale (unchanged)', () => {
+    const l = ok(acq(emptyLease(), A, { forMin: 50 }, '18:21'));
+    assert.equal(acq(l, A, { token: l.heavy.token, forMin: 30 }, '18:45').ok, true);
+    assert.equal(acq(l, A, { token: 'ffffffffffffffff', forMin: 30 }, '18:45').code, 'stale-token');
+  });
+  it('after the slot expired (pid dead) the same identity takes it back without a token (rotation, as in #243)', () => {
+    const l = ok(acq(emptyLease(), A, { forMin: 10, pid: 1 }, '18:21'));
+    const r = acq(l, A, { forMin: 10, pid: 2 }, '18:40');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.rotated, true);
+  });
+  it('a DIFFERENT holder of the same repo is still refused held and queues the repo (unchanged)', () => {
+    const l = ok(acq(emptyLease(), A, { forMin: 50 }, '18:21'));
+    const r = acq(l, { repoKey: A.repoKey, holder: 'chip-2' }, { forMin: 10 }, '18:30');
+    assert.equal(r.code, 'held');
+    assert.equal(r.queued, true);
   });
 });

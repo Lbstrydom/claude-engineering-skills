@@ -71,6 +71,13 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
     if (cls.verdict === 'unverifiable') return keep(refuse('unverifiable', `this session's previous lease expired at ${cur.expiresAt} but ${cls.reason}; if a person has confirmed the job is gone: release --force --reason "<why>"`));
   }
   const mine = cur && sameIdentity(cur, req.identity) && !req.exclusive;
+  // D12 (finding 8182): identity is (repo, holder), so two sessions of one checkout that share the derived name are the SAME identity.
+  // A token-less acquire of a LIVE slot the identity holds would "rotate" the first session's token and hand it the other's job
+  // (storyline 2026-10-15 18:45Z: a worker's acquire replaced the coordinator's CI hold; its release then freed the slot mid-CI).
+  // Extending a live lease needs its token; an EXPIRED own slot can still be taken back without one (#243's rotation).
+  if (mine && req.token === undefined && cls.state === 'held') {
+    return keep(refuse('held', `this holder (${cur.holder}) already holds the slot until ${hhmmOf(new Date(cur.expiresAt))}; to extend it pass --token (the one acquire printed); if another session uses the same name, give it its own --id`));
+  }
 
   // Stage 1 of the decision proper: the non-turn question (windows with their granted gaps, then the slot).
   const adm = admissionCheck(base, req.identity, forMin, now, probe);
@@ -89,6 +96,16 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
     const tr = turnRule(base, req, now, probe, { namedGap: usesNamedGap(base, req.identity.repoKey, now, end) });
     if (!tr.ok) return waitRefusal('turn', tr.reason);
     basis = tr.basis;
+  } else {
+    // D11 (finding 20ec): a renewal or rotation is the same running job, so it never starts a turn (the budget counts from the
+    // turn's FIRST grant) - but it must not outlive the repo's turn while another repo waits. It is judged by the same rule as a fresh
+    // grant, on a projection of the settled lease in which only THIS job's own occupancy is removed: on the real lease every
+    // competing waiter fails admission on the very slot being renewed, so backfill would grant the renewal forever.
+    const tr = turnRule({ ...base, heavy: null }, req, now, probe, { namedGap: usesNamedGap(base, req.identity.repoKey, now, end) });
+    if (!tr.ok) {
+      const stays = cls.state === 'held' ? ` (the slot stays yours until ${hhmmOf(new Date(cur.expiresAt))})` : '';
+      return waitRefusal('turn', `${tr.reason}; this lease is not extended - finish and \`lease release\`${stays}`);
+    }
   }
   const renewed = Boolean(cur && mine && req.token !== undefined);
   const rotated = Boolean(cur && mine && req.token === undefined);
@@ -111,7 +128,8 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
   let next = pruneWindows({ ...base, heavy }, now);
   if (event) next = appendEvent(next, event);
   const served = (base.waiters ?? []).find((w) => w.repoKey === req.identity.repoKey);
-  if (served) next = endWait(next, served.repoKey, 'served', now, byOf(req));
+  // Only a FRESH grant serves the repo's wait: a renewal or rotation grants nothing new, so a sibling job's wait stays open (D11).
+  if (served && basis !== 'same-job') next = endWait(next, served.repoKey, 'served', now, byOf(req));
   if (basis !== 'same-job' && basis !== 'gap') {
     if (turnActive(base, req.identity.repoKey, now)) { const { lastReleasedAt, ...t } = next.turn; next = { ...next, turn: t }; } else next = startTurn(next, req, now);
   }
@@ -185,6 +203,12 @@ export function decideReleaseToCiWindow(lease, req, now, probe = defaultProbe())
   const maxMin = Math.floor(LIMITS.maxWindowMs / MIN);
   if (!Number.isInteger(minutes) || minutes < 1 || minutes > maxMin) return refuse('bad-request', `--ci-window must be a whole number of minutes from 1 to ${maxMin}`);
   if (!checkNote(req.note)) return refuse('bad-request', `--note must be at most ${LIMITS.noteMax} characters with no control characters`);
+  // D13: the window may belong to another repo than the one releasing (sync:pr leases as the SOURCE repo, but the CI it starts runs
+  // on the TARGET's runner). The owner is explicit; by default it is the releasing repo, as before.
+  const owner = req.windowRepo ?? { repoKey: req.identity.repoKey, repo: req.repo };
+  if (req.windowRepo !== undefined && !(typeof owner.repoKey === 'string' && /^[0-9a-f]{12}$/.test(owner.repoKey) && typeof owner.repo === 'string' && owner.repo.length >= 1 && owner.repo.length <= 80)) {
+    return refuse('bad-request', 'windowRepo must be {repoKey: 12 lowercase hex characters, repo: a label of 1 to 80 characters}');
+  }
   const before = settleQueue(lease, now, probe);
   const rel = decideRelease(lease, { ...req, force: false }, now, probe);
   if (!rel.ok || rel.already) return rel.ok ? { ...rel, window: null } : rel;
@@ -192,16 +216,16 @@ export function decideReleaseToCiWindow(lease, req, now, probe = defaultProbe())
   const repoKey = req.identity.repoKey;
   const done = (extra = {}) => ({ ok: true, released: rel.released, window: null, ...(rel.turnKept ? { turnKept: rel.turnKept } : {}), ...extra, lease: settleQueue(extra.lease ?? rel.lease, now, probe) });
   if (pruned.windows.length >= LIMITS.maxWindows) return done({ windowRefused: `there are already ${LIMITS.maxWindows} windows on this machine` });
-  if (pruned.windows.filter((w) => w.repoKey === repoKey).length >= LIMITS.maxWindowsPerRepo) return done({ windowRefused: `this repo already has ${LIMITS.maxWindowsPerRepo} windows` });
+  if (pruned.windows.filter((w) => w.repoKey === owner.repoKey).length >= LIMITS.maxWindowsPerRepo) return done({ windowRefused: `this repo already has ${LIMITS.maxWindowsPerRepo} windows` });
   const id = allocWindowId(pruned.windows, now, req.newId);
   if (id === null) return done({ windowRefused: 'could not allocate a unique window id' });
   const waiting = (before.waiters ?? []).filter((w) => w.repoKey !== repoKey).sort((a, b) => ms(a.since) - ms(b.since))[0];
   const overTurn = waiting && !turnActive(before, repoKey, now) ? { repo: waiting.repo } : undefined;
   const window = {
-    id, repoKey, repo: req.repo, kind: 'ci', from: now.toISOString(), until: new Date(now.getTime() + minutes * MIN).toISOString(),
+    id, repoKey: owner.repoKey, repo: owner.repo, kind: 'ci', from: now.toISOString(), until: new Date(now.getTime() + minutes * MIN).toISOString(),
     ...(req.note !== undefined ? { note: req.note } : {}),
   };
-  const next = appendJournal({ ...pruned, windows: [...pruned.windows, window] }, jentry(now, 'announced', req, { window: { id, kind: 'ci', repo: req.repo, from: window.from, until: window.until }, releasedJob: true, ...(overTurn ? { overTurn } : {}) }));
+  const next = appendJournal({ ...pruned, windows: [...pruned.windows, window] }, jentry(now, 'announced', req, { window: { id, kind: 'ci', repo: owner.repo, from: window.from, until: window.until }, releasedJob: true, ...(overTurn ? { overTurn } : {}) }));
   return done({ lease: next, window, ...(overTurn ? { overTurn } : {}) });
 }
 

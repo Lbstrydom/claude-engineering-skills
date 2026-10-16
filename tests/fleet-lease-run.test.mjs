@@ -59,8 +59,11 @@ describe('exclusive acquire (D7, audit R1 H3)', () => {
     assert.match(second.reason, /already holds the slot/);
     assert.equal(second.queued, undefined, 'the same repo does not queue behind itself');
     const plain = decideAcquire(l0, q(A, { forMin: 30 }), T('08:05'), probe);
-    assert.equal(plain.ok, true, 'a direct acquire keeps its renewal / rotation behaviour');
-    assert.equal(plain.rotated, true);
+    assert.equal(plain.ok, false, 'a direct token-less acquire of a LIVE own slot is refused too since D12 (it would rotate the token of another session)');
+    assert.equal(plain.code, 'held');
+    const renewed = decideAcquire(l0, q(A, { forMin: 30, token: l0.heavy.token }), T('08:05'), probe);
+    assert.equal(renewed.ok, true, 'with its token it renews');
+    assert.equal(renewed.renewed, true);
   });
   it('after the first run\'s lease expired: refused while its pid is alive or unverifiable, granted (a takeover) when the pid is dead', () => {
     const l0 = ok(acq(emptyLease(), A, { forMin: 10 }, '08:00')); // expires 08:10, pid 1
@@ -89,6 +92,26 @@ describe('decideReleaseToCiWindow (D7: the slot becomes a CI window in ONE write
     assert.equal(d.window.until, T('08:50').toISOString());
     assert.deepEqual(journalKinds(d.lease).filter((k) => k === 'released' || k === 'announced'), ['released', 'announced']);
     assert.equal(LeaseSchema.safeParse(d.lease).success, true);
+  });
+  it('windowRepo (D13): the lease holder and the window owner can differ - the window belongs to the TARGET, and it blocks the holder own repo but not the target', () => {
+    const l = held(); // A (the source repo) holds the slot
+    const d = handoff(l, { windowRepo: { repoKey: B.repoKey, repo: 'o/b' } });
+    assert.equal(d.ok, true, JSON.stringify(d));
+    assert.equal(d.window.repoKey, B.repoKey, 'the window belongs to the target');
+    assert.equal(d.window.repo, 'o/b');
+    assert.equal(d.lease.heavy, null);
+    // another job of the SOURCE repo (a different holder) must not stack load on the CI of the target ...
+    const sibling = decideAcquire(d.lease, q({ repoKey: A.repoKey, holder: 'worker' }, { forMin: 10 }), T('08:35'), probe);
+    assert.equal(sibling.code, 'window');
+    // ... while the target's own work is not blocked by its own window (unchanged from before PR 5)
+    assert.equal(decideAcquire(d.lease, q(B, { forMin: 10 }), T('08:35'), probe).ok, true);
+    assert.equal(L.LeaseSchema.safeParse(d.lease).success, true);
+  });
+  it('windowRepo is validated; without it the window belongs to the releasing repo (unchanged)', () => {
+    const l = held();
+    assert.equal(handoff(l, { windowRepo: { repoKey: 'nothex', repo: 'o/b' } }).code, 'bad-request');
+    assert.equal(handoff(l, { windowRepo: { repoKey: B.repoKey, repo: '' } }).code, 'bad-request');
+    assert.equal(handoff(held()).window.repoKey, A.repoKey);
   });
   it('refuses a stale token and a non-holder, changing nothing', () => {
     const l = held();
@@ -315,6 +338,14 @@ describe('runUnderLease', () => {
     assert.equal(res.released.mode, 'ci-window');
     assert.equal(res.released.turnKept.reason, 'same-repo-waiting');
     assert.equal(fileLease().turn.repoKey, A.repoKey);
+  });
+
+  it('windowRepo is passed through: the CI window the run records belongs to the target while the lease was the source (D13)', async () => {
+    const w = world();
+    const res = await R.runUnderLease(base(w, A, { releaseToCiWindow: 20, windowRepo: { repoKey: B.repoKey, repo: 'o/b' } }), async () => ({ remoteReached: 'yes' }));
+    assert.equal(res.released.mode, 'ci-window');
+    assert.equal(fileLease().windows[0].repoKey, B.repoKey);
+    assert.equal(fileLease().journal.find((e) => e.kind === 'acquired').repoKey, A.repoKey);
   });
 
   describe('releaseToCiWindow (R1 H2: what reached the remote decides)', () => {
