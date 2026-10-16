@@ -117,3 +117,29 @@ export function verifyTaskExports(tasks) {
     return { id: t.id, export: sha256(buf) === t.export.sha256 ? 'ok' : 'mismatch' };
   });
 }
+
+/** The daily task that makes each account's scheduler match `registry.json` beside it, and adopts new tasks into it. */
+export const RECONCILE_ID = 'schedule-reconcile';
+
+/**
+ * receive: is the registry flow installed under this config root? `null` when no `schedule-reconcile/SKILL.md` exists
+ * (the per-task flow applies). Otherwise the paths, the reconcile cron from the registry, and the ids the registry
+ * covers; a registry that cannot be read is reported as `registryError`, never as "covers nothing".
+ * @param {string} configDir
+ * @returns {null | {skill: string, registry: string, cron: string|null, covered: string[]|null, registryError: string|null}}
+ */
+export function readScheduleReconcile(configDir, { readFile = fs.readFileSync } = {}) {
+  const root = scheduledTasksDir(configDir);
+  const skill = path.join(root, RECONCILE_ID, 'SKILL.md');
+  if (!fs.existsSync(skill)) return null;
+  const registry = path.join(root, 'registry.json');
+  let list;
+  try { list = JSON.parse(readFile(registry, 'utf8'))?.tasks; } catch (e) { return { skill, registry, cron: null, covered: null, registryError: e.code ?? e.message }; }
+  if (!Array.isArray(list)) return { skill, registry, cron: null, covered: null, registryError: 'no "tasks" array' };
+  const own = list.find((t) => t?.id === RECONCILE_ID);
+  return {
+    skill, registry, registryError: null,
+    cron: typeof own?.cronExpression === 'string' ? own.cronExpression : null,
+    covered: list.map((t) => t?.id).filter((id) => typeof id === 'string' && id),
+  };
+}

@@ -8,6 +8,7 @@
 import path from 'node:path';
 import { renderChipPrompt } from './render-train.mjs';
 import { quoteArg, renderCommand } from './shell-quote.mjs';
+import { RECONCILE_ID } from './handover-tasks.mjs';
 import { RISK_KINDS } from './unregistered.mjs';
 
 /** Does an unregistered item block a handover? A manifest item written before verdicts existed always does. */
@@ -54,6 +55,9 @@ const PICKUP_ORDER = [
   '  (iii) only then discovery: fleet status, the unregistered-work scan, chips.',
 ];
 
+/** The registry flow: prepare saw a `schedule-reconcile` task on disk (receive re-checks its own config root). */
+const hasReconcile = (m) => m.scheduledTasks.some((t) => t.id === RECONCILE_ID);
+
 /** Session ids die with the account (p-20261014064525-9019): peers are named by title and resolved live. */
 const PEERS_LINE = 'Peers: session ids belong to the old account and are dead after the switch. Name every peer coordinator by its title ("<REPO>: Coordinator", coordination rule 6) and resolve its live id with list_sessions before messaging it; any session id written in this handover is a pre-switch id.';
 
@@ -69,8 +73,11 @@ function coordinationPrompt(m, art) {
     '   (in a consumer repo the CLI is node scripts/.claude-skills/fleet.mjs). Exit 1 = a memory file failed; exit 3 = a blocking step remains (conflicts, blocking unregistered work, unmeasured state); resolve those first.',
     '   Exit 0 with a "follow-ups (not failures)" block is a successful receive: work through each follow-up, but nothing failed.',
     '3. Confirm each "memory <dir> → <path>" line receive printed is where this account reads that repo\'s memory.',
-    '4. Scheduled tasks: call list_scheduled_tasks, diff its ids against "Scheduled tasks" below, skip a one-off whose fireAt has passed (spent), and recreate only what is still wanted — the CLI cannot see the scheduler.',
-    ...(exported ? [`   Each task's full SKILL.md was exported (${exported} of ${m.scheduledTasks.length}); recreate from the copy and the schedule listed beside it. receive re-hashed the copies: never recreate from one it flagged.`] : []),
+    ...(hasReconcile(m) ? [
+      `4. Scheduled tasks: the registry flow is installed. Do receive's ${RECONCILE_ID} follow-up FIRST: if list_scheduled_tasks has no ${RECONCILE_ID}, create it from its SKILL.md (same taskId, the cron in registry.json beside it), run it, and read its one-line report.`,
+      `   Never hand-recreate a task the registry covers; confirm by hand only the ids receive names as not in the registry${exported ? ', from the exported copy and the schedule listed beside each' : ''}.`,
+    ] : ['4. Scheduled tasks: call list_scheduled_tasks, diff its ids against "Scheduled tasks" below, skip a one-off whose fireAt has passed (spent), and recreate only what is still wanted — the CLI cannot see the scheduler.']),
+    ...(exported && !hasReconcile(m) ? [`   Each task's full SKILL.md was exported (${exported} of ${m.scheduledTasks.length}); recreate from the copy and the schedule listed beside it. receive re-hashed the copies: never recreate from one it flagged.`] : []),
     `   Then report every task whose lastRunAt is later than this handover's creation (${m.createdAt}): those fired because of the switch.`,
     '5. Review settings and MCP-server differences receive listed, by hand; they are never copied.',
     `   A claim parked with --waiting-on ${'human:account-switch'} is unblocked now: run the touch command receive printed for it.`,
@@ -98,7 +105,8 @@ export function renderBeforeRelaunch(m) {
     '     disable it (update_scheduled_task) or give it a new date: a relaunch runs every overdue one-off at once.',
     `  2. Then run prepare again with --scheduler-checked.${m.schedulerChecked ? '' : ' Until then this handover is NOT ready (exit 3).'} Pass it only after step 1 is done.`,
     ...(noSnapshot ? ['  3. Save the list_scheduled_tasks answer (JSON) to a file and pass it as --scheduler-snapshot <file>: without it each task travels with no cron, fireAt or enabled state.'] : []),
-    `  ${noSnapshot ? 4 : 3}. ${memoryBackupLine(m)}`,
+    ...(hasReconcile(m) ? [`  ${noSnapshot ? 4 : 3}. Tasks created by hand since the last ${RECONCILE_ID} run are adopted into registry.json on its next daily run; to adopt them now, run_scheduled_task ${RECONCILE_ID} and read its one-line report.`] : []),
+    `  ${(noSnapshot ? 4 : 3) + (hasReconcile(m) ? 1 : 0)}. ${memoryBackupLine(m)}`,
   ];
 }
 
@@ -231,6 +239,8 @@ export function renderReceiveText(h) {
   if (a) L.push(`  account: ${a.status === 'same' ? 'same account' : a.status === 'different' ? `source ${a.source ?? '?'} → this ${a.mine ?? '?'} (different account)` : `unknown (${a.reason})`}`);
   // The CLI sees task FILES only; whether the scheduler has them registered is not checked here (plan q).
   L.push(`  scheduled tasks: ${h.tasks.length - s.missingTasks} file(s) present${s.missingTasks ? `, ${s.missingTasks} missing here` : ''}; scheduler registration not checked here`);
+  // The registry step comes before any per-task line: with it installed, recreating a task by hand duplicates it.
+  if (h.reconcile) L.push(`    ${RECONCILE_ID} installed: run it before recreating anything (see the first follow-up)`);
   for (const t of h.tasks.filter((x) => x.file === 'missing')) L.push(`    missing: ${t.id} — ${t.description}`);
   for (const t of h.tasks.filter((x) => x.exportCheck === 'missing' || x.exportCheck === 'mismatch')) L.push(`    EXPORT ${t.exportCheck.toUpperCase()}: ${t.id} (${t.export?.path ?? '?'}) — do not recreate from this copy`);
   L.push(`  sessions still live (adopt or resume from the handover prompts): ${h.liveSessions.length ? h.liveSessions.map((x) => x.id).join(', ') : 'none'}`);

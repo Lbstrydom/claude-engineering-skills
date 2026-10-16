@@ -47,6 +47,10 @@ to it: a host holds a message between sessions whose modes differ.
   ("not ready: scheduler step unconfirmed"), artefacts written. The CLI cannot
   read the scheduler, so the flag is the operator saying the step was done:
   **passing `--scheduler-checked` without having done it is a violation.**
+  When the registry flow is installed (below), tasks created by hand since the
+  last `schedule-reconcile` run are adopted into `registry.json` on its next
+  daily run; prepare says so, and `run_scheduled_task schedule-reconcile` adopts
+  them now. Read its one-line report before relaunching.
 - **Tasks travel in full.** Prepare copies each task's `SKILL.md` into
   `<git-common-dir>/fleet/handover/handover-<id>-tasks/` with the sha256 of the
   bytes written, and receive re-hashes the copies. The cron, `fireAt`, `enabled`
@@ -85,12 +89,26 @@ to it: a host holds a message between sessions whose modes differ.
   confirm or recreate, settings or MCP-server differences, a repo whose PR state
   cannot be read, an account change, and claims waiting on the switch. They are
   work to do, not failures; `--dry-run` classifies the same way.
-- **Scheduled tasks after the switch.** Receive sees task FILES only ("files
-  present; scheduler registration not checked here"). Call `list_scheduled_tasks`,
-  diff its ids against the handover's list, skip a one-off whose `fireAt` has
-  passed (spent), and recreate only what is still wanted. Then report every task
-  whose `lastRunAt` is later than the handover's creation time: those fired
-  because of the switch.
+- **Scheduled tasks after the switch.** Schedules belong to the ACCOUNT; task
+  prompts (`<config root>/scheduled-tasks/<id>/SKILL.md`) are on disk and shared.
+  Receive sees task FILES only ("files present; scheduler registration not
+  checked here").
+  - **Registry flow** (`scheduled-tasks/schedule-reconcile/SKILL.md` exists):
+    `scheduled-tasks/registry.json` is the source of truth, and the daily
+    `schedule-reconcile` task makes each account match it. Receive prints this
+    step as its FIRST follow-up, ahead of every per-task line: if
+    `list_scheduled_tasks` has no `schedule-reconcile`, create it from its
+    `SKILL.md` (same taskId, the cron in `registry.json`), then run it and read
+    its one-line report. **Never hand-recreate a task the registry covers**; the
+    `scheduled-tasks` follow-up names the ids it does not cover, and only those
+    are confirmed by hand. An unreadable registry is named as such: fix it
+    before recreating anything.
+  - **No registry flow:** call `list_scheduled_tasks`, diff its ids against the
+    handover's list, skip a one-off whose `fireAt` has passed (spent), and
+    recreate only what is still wanted.
+
+  Either way, report every task whose `lastRunAt` is later than the handover's
+  creation time: those fired because of the switch.
 - **Claims waiting on the switch.** A session parked for the switch uses exactly
   `--waiting-on human:account-switch` (case, spaces, `_` and `-` are folded).
   Receive lists each such claim with a `fleet touch --id <id> --unwait human:<ref>`
