@@ -55,7 +55,7 @@ const PICKUP_ORDER = [
   '  (iii) only then discovery: fleet status, the unregistered-work scan, chips.',
 ];
 
-/** The registry flow: prepare saw a `schedule-reconcile` task on disk (receive re-checks its own config root). */
+/** BEFORE YOU RELAUNCH runs in the SOURCE account, so the source root decides there; receive decides for the destination. */
 const hasReconcile = (m) => m.scheduledTasks.some((t) => t.id === RECONCILE_ID);
 
 /** Session ids die with the account (p-20261014064525-9019): peers are named by title and resolved live. */
@@ -73,11 +73,10 @@ function coordinationPrompt(m, art) {
     '   (in a consumer repo the CLI is node scripts/.claude-skills/fleet.mjs). Exit 1 = a memory file failed; exit 3 = a blocking step remains (conflicts, blocking unregistered work, unmeasured state); resolve those first.',
     '   Exit 0 with a "follow-ups (not failures)" block is a successful receive: work through each follow-up, but nothing failed.',
     '3. Confirm each "memory <dir> → <path>" line receive printed is where this account reads that repo\'s memory.',
-    ...(hasReconcile(m) ? [
-      `4. Scheduled tasks: the registry flow is installed. Do receive's ${RECONCILE_ID} follow-up FIRST: if list_scheduled_tasks has no ${RECONCILE_ID}, create it from its SKILL.md (same taskId, the cron in registry.json beside it), run it, and read its one-line report.`,
-      `   Never hand-recreate a task the registry covers; confirm by hand only the ids receive names as not in the registry${exported ? ', from the exported copy and the schedule listed beside each' : ''}.`,
-    ] : ['4. Scheduled tasks: call list_scheduled_tasks, diff its ids against "Scheduled tasks" below, skip a one-off whose fireAt has passed (spent), and recreate only what is still wanted — the CLI cannot see the scheduler.']),
-    ...(exported && !hasReconcile(m) ? [`   Each task's full SKILL.md was exported (${exported} of ${m.scheduledTasks.length}); recreate from the copy and the schedule listed beside it. receive re-hashed the copies: never recreate from one it flagged.`] : []),
+    // Receive is the one authority on the registry flow: it reads the DESTINATION root, which this prompt cannot see.
+    `4. Scheduled tasks: if receive's FIRST follow-up is the ${RECONCILE_ID} step, do that step (create ${RECONCILE_ID} from its SKILL.md if list_scheduled_tasks lacks it, same taskId and the cron in registry.json; run it; read its one-line report), never hand-recreate a task the registry covers, and confirm by hand only the ids receive names as not in the registry.`,
+    '   Otherwise call list_scheduled_tasks, diff its ids against "Scheduled tasks" below, skip a one-off whose fireAt has passed (spent), and recreate only what is still wanted — the CLI cannot see the scheduler.',
+    ...(exported ? [`   Each task's full SKILL.md was exported (${exported} of ${m.scheduledTasks.length}); recreate from the copy and the schedule listed beside it. receive re-hashed the copies: never recreate from one it flagged.`] : []),
     `   Then report every task whose lastRunAt is later than this handover's creation (${m.createdAt}): those fired because of the switch.`,
     '5. Review settings and MCP-server differences receive listed, by hand; they are never copied.',
     `   A claim parked with --waiting-on ${'human:account-switch'} is unblocked now: run the touch command receive printed for it.`,

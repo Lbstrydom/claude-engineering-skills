@@ -54,7 +54,8 @@ to it: a host holds a message between sessions whose modes differ.
 - **Tasks travel in full.** Prepare copies each task's `SKILL.md` into
   `<git-common-dir>/fleet/handover/handover-<id>-tasks/` with the sha256 of the
   bytes written, and receive re-hashes the copies. The cron, `fireAt`, `enabled`
-  and `lastRunAt` are not on disk: save the `list_scheduled_tasks` answer (JSON)
+  and `lastRunAt` are not on disk (under the registry flow below, `registry.json`
+  holds the intended cron, never `lastRunAt`): save the `list_scheduled_tasks` answer (JSON)
   to a file and pass `--scheduler-snapshot <file>`. A malformed snapshot, a
   duplicate id, or an id with no task on disk fails prepare, and so does a task
   that cannot be copied; nothing is published. Without the snapshot each task

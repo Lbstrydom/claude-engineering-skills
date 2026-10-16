@@ -692,9 +692,9 @@ function sweepStaging(stagingRoot) {
 
 /** The registry-flow step receive prints first when `schedule-reconcile` is installed under the config root. */
 export function reconcileStep(r, tasks = []) {
-  if (r.registryError) return `${RECONCILE_ID} is installed but its registry ${r.registry} cannot be read (${r.registryError}): fix the registry, then run ${RECONCILE_ID}; do not recreate tasks by hand meanwhile`;
+  if (r.registryError) return `${RECONCILE_ID} is installed but its registry ${r.registry} is not usable (${r.registryError}): fix the registry, then run ${RECONCILE_ID}; do not recreate tasks by hand meanwhile`;
   const covered = tasks.filter((t) => r.covered.includes(t.id)).length;
-  return `first: if list_scheduled_tasks has no ${RECONCILE_ID}, create it from ${r.skill} (taskId ${RECONCILE_ID}, cron ${r.cron ? `"${r.cron}"` : `as in ${r.registry}`}); then run it (run_scheduled_task ${RECONCILE_ID}) and read its one-line report. Never hand-recreate a task the registry covers (${covered} of ${tasks.length} in this handover).`;
+  return `first: if list_scheduled_tasks has no ${RECONCILE_ID}, create it from ${r.skill} (taskId ${RECONCILE_ID}, cron "${r.cron}"); then run it (run_scheduled_task ${RECONCILE_ID}) and read its one-line report. Never hand-recreate a task the registry covers (${covered} of ${tasks.length} in this handover).`;
 }
 
 /**
