@@ -10,6 +10,7 @@ import { renderChipPrompt } from './render-train.mjs';
 import { quoteArg, renderCommand } from './shell-quote.mjs';
 import { RECONCILE_ID } from './handover-tasks.mjs';
 import { RISK_KINDS } from './unregistered.mjs';
+import { renderDeltaLines } from './handover-delta.mjs';
 
 /** Does an unregistered item block a handover? A manifest item written before verdicts existed always does. */
 export const blocksHandover = (u) => Boolean(u.unknown) || u.blocks !== false;
@@ -221,6 +222,36 @@ function renderUnregistered(m) {
   return L;
 }
 
+/** Live-claim worktrees named in the sweep's exception list; the rest are counted (fleet status lists them). */
+const SWEEP_CLAIMS_LISTED = 10;
+
+/**
+ * The stale-session sweep (proposal p-20261017123120-103f): receive cannot call list_sessions or archive_session, so the
+ * follow-up is the instruction. Bounded below because list_sessions caps at 100 per call and the long tail spans many
+ * older stints; archive_session can be refused by the host permission classifier, so it must end by listing what was NOT archived.
+ */
+export function sweepStep({ createdAt, lowerBound, boundReason = null, claimed = [], claimsUnknown = [], scopeRepos = [] }) {
+  const bound = lowerBound
+    ? `and not earlier than ${lowerBound} (the start of this account's previous stint; anything older than that bound and left is reported, not chased)`
+    : `${boundReason ? `could not list the handover manifests to bound it (${boundReason})` : 'no earlier handover manifest beside this one to bound it'}: page through all of them, but if there are more than 300 report the count and ask the user before archiving past 300`;
+  // A repo whose claims could not be read is NOT a repo without claims: its worktrees may be bound, so none is archived blind.
+  const unknownNote = claimsUnknown.length ? ` Live claims in ${claimsUnknown.join(', ')} could NOT be read, so archive no session whose worktree is in those repos until fleet status there succeeds.` : '';
+  // Claims were read only for the handover's repos; a session in any other repo may still be bound to a claim.
+  const scopeNote = `Claims were read only in ${scopeRepos.length ? scopeRepos.join(', ') : 'the handover repos'}: leave open any session whose worktree is in another repo until that repo's fleet status shows no claim on it.`;
+  const held = claimed.length
+    ? `live claims, never archive their sessions: ${claimed.slice(0, SWEEP_CLAIMS_LISTED).map((c) => `${c.id} (${c.worktree ?? 'no worktree'})`).join(', ')}${claimed.length > SWEEP_CLAIMS_LISTED ? `, and ${claimed.length - SWEEP_CLAIMS_LISTED} more (fleet status)` : ''}`
+    : 'no live claims were found, but run fleet status before archiving';
+  return [
+    `stale-session sweep: call list_sessions (at most 100 per call: page until you pass the bound) and archive every session last active before ${createdAt}, ${bound}.`,
+    `EXCEPT a session whose worktree is bound to a live fleet claim (${held}) and any session holding uncommitted work no claim covers (git status in its worktree): leave those open and list those for the user.`,
+    scopeNote,
+    ...(unknownNote ? [unknownNote.trim()] : []),
+    'Never resume a pre-handover session: its context predates the work done on the other account.',
+    'archive_session removes the worktree by default, so never archive sessions on the DEPARTING account.',
+    'archive_session can be refused by the host permission classifier: finish by saying how many were archived and list what could not be archived (and how many are older than that bound and left), never implying all were.',
+  ].join(' ');
+}
+
 export function renderReceiveText(h) {
   const s = h.summary;
   const L = [`fleet handover receive ${h.id} — ${h.mode}${h.dryRun ? ' (dry run: nothing written)' : ''}`,
@@ -256,6 +287,7 @@ export function renderReceiveText(h) {
   }
   for (const e of h.memoryErrors ?? []) L.push(`  memory dir NOT measured at prepare: ${e.dirName} (${e.reason})`);
   for (const an of h.anomalies) L.push(`  folder anomaly: ${an.kind} ${an.detail}`);
+  for (const d of h.delta ?? []) L.push(...renderDeltaLines(d));
   if (h.followUps?.length) {
     L.push('  follow-ups (not failures):');
     for (const f of h.followUps) L.push(`    - ${f.detail}`);

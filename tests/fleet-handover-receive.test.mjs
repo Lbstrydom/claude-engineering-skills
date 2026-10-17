@@ -98,7 +98,7 @@ describe('receive outcome classes (p): failed > refused > ok with follow-ups', (
       assert.equal(r.status, 0, `${extra}: ${r.stdout}`);
       assert.equal(r.json.ok, true);
       const kinds = r.json.handover.followUps.map((x) => x.kind).sort();
-      assert.deepEqual(kinds, ['account', 'gh', 'mcp', 'scheduled-tasks', 'settings']);
+      assert.deepEqual(kinds, ['account', 'delta', 'gh', 'mcp', 'scheduled-tasks', 'session-sweep', 'settings']);
       assert.match(r.json.text, /follow-ups \(not failures\):/);
     }
   });
@@ -108,7 +108,7 @@ describe('receive outcome classes (p): failed > refused > ok with follow-ups', (
     fs.writeFileSync(memFile(B, 'a.md'), 'mine\n');
     const r = receive(fx, B, json);
     assert.equal(r.status, 3, r.stdout);
-    assert.match(r.json.reason, /1 memory conflict\(s\) \(plus 5 follow-up\(s\)\)/);
+    assert.match(r.json.reason, /1 memory conflict\(s\) \(plus 7 follow-up\(s\)\)/);
   });
   it('the same plus a conflict AND an unsafe destination: failed, exit 1, outranking both', () => {
     const { fx, B, json } = followUpOnly();
