@@ -33,7 +33,8 @@ import { RISK_KINDS, UNREGISTERED_BUDGET, VERDICTS, coveredBy, liveSessionsOf, u
 export { liveSessionsOf };
 import { isTerminalState } from './overlap.mjs';
 import { fleetDir, listTrains, readSessions, realWithTail } from './registry.mjs';
-import { blocksHandover, ghUnknownLine, receiveCommand, renderBeforeRelaunch, renderHandoverMarkdown, renderReceiveText } from './handover-render.mjs';
+import { blocksHandover, ghUnknownLine, receiveCommand, renderBeforeRelaunch, renderHandoverMarkdown, renderReceiveText, sweepStep } from './handover-render.mjs';
+import { deltaFollowUp, measureRepoDelta, previousStintStart, unmeasuredDelta } from './handover-delta.mjs';
 import { renderCommand } from './shell-quote.mjs';
 import { RECONCILE_ID, joinTaskRecords, parseSchedulerSnapshot, readScheduleReconcile, stageTaskExports, verifyTaskExports } from './handover-tasks.mjs';
 import { defaultProbe, machineDir, readLease, summarise } from './lease.mjs';
@@ -702,7 +703,7 @@ export function reconcileStep(r, tasks = []) {
  * or MCP differences, a repo whose PR state cannot be read, an account change (or an unknown one), and claims waiting
  * on the switch itself. Each is `{kind, detail}`.
  */
-export function receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, waits, reconcile = null }) {
+export function receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, waits, reconcile = null, delta = [], sweep = null }) {
   const out = [];
   // The registry flow comes FIRST, ahead of every per-task line: with it installed, a hand-recreated task is a duplicate.
   if (reconcile) out.push({ kind: 'schedule-reconcile', detail: reconcileStep(reconcile, tasks) });
@@ -728,6 +729,10 @@ export function receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, w
   for (const w of waits.filter((x) => x.onSwitch)) {
     out.push({ kind: 'waiting-on-switch', detail: `${w.id} (${w.repo}) waits on the switch itself — unblock now: ${w.clear} (drops only that wait; every other wait is left as it is, with its age)` });
   }
+  const late = deltaFollowUp(delta);
+  if (late) out.push(late);
+  // The same account has no stale stint of its own to sweep: only a different (or unknown) account is arriving.
+  if (sweep && a.status !== 'same') out.push({ kind: 'session-sweep', detail: sweepStep(sweep) });
   return out;
 }
 
@@ -816,9 +821,13 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
   const ghUnknown = [];
   const unregistered = [];
   const waits = [];
+  const claimBound = [];
+  const missingRepos = [];
+  const deltaRepos = [];
+  const delta = [];
   const deadlineAt = Date.now() + UNREGISTERED_BUDGET.handoverMs;
   for (const r of m.scope.repos) {
-    if (!fs.existsSync(r.path)) { unregistered.push({ repo: r.path, unknown: 'repo path no longer exists' }); continue; }
+    if (!fs.existsSync(r.path)) { unregistered.push({ repo: r.path, unknown: 'repo path no longer exists' }); delta.push(unmeasuredDelta(r.path, m.createdAt, 'repo path no longer exists')); missingRepos.push(r.path); continue; }
     let claimed = { worktrees: [], branches: [] };
     let dir = null; let g = null; let config = null;
     try { dir = fleetDir(r.path); } catch (e) { liveUnknown.push({ repo: r.path, reason: e.message }); }
@@ -836,6 +845,7 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
       claimed = coveredBy([...g.live, ...g.mergedUnreleased]);
       const atPrepare = new Set(r.sessions.map((x) => x.id));
       const cli = r.fleetCli ?? fleetCliFor(r.path);
+      for (const x of [...g.live, ...g.mergedUnreleased]) claimBound.push({ repo: r.path, id: x.id, worktree: x.worktree ?? null });
       for (const x of g.live) {
         liveSessions.push({ repo: r.path, id: x.id, ...(atPrepare.has(x.id) ? {} : { sincePrepare: true }) });
         // A claim parked on a human wait: the switch token unblocks now; any other human wait gets a note (plan s).
@@ -852,21 +862,28 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
       }
       for (const x of g.mergedUnreleased) mergedUnreleased.push({ repo: r.path, ...mergedUnreleasedEntry(x, cli) });
     } else if (dir && !fs.existsSync(dir) && r.sessions.length) liveUnknown.push({ repo: r.path, reason: 'fleet registry missing, but prepare recorded live sessions' });
+    deltaRepos.push(r.path);
     // Unregistered work is MEASURED NOW — the prepare snapshot never decides what counts.
     const u = unregisteredFields(r.path, { cwd: r.path, config, env: ctx.env, now: ctx.now }, claimed, { facts: g?.facts ?? null, deadlineAt });
     if (u.unregisteredUnknown) unregistered.push({ repo: r.path, unknown: u.unregisteredUnknown });
     for (const item of u.unregistered) unregistered.push({ repo: r.path, ...item });
   }
 
+  // Work done after prepare, MEASURED NOW (fetch first unless --dry-run); a field that cannot be read is UNMEASURED, never empty.
+  // After the loop on purpose: fetch/gh latency must not eat the unregistered-work deadline above.
+  for (const p of deltaRepos) delta.push(measureRepoDelta(p, m.createdAt, { fetch: !dryRun }));
+
   const count = (o) => files.filter((f) => f.outcome === o).length;
   const errors = files.filter((f) => f.human && f.outcome !== 'conflict');
   const conflicts = files.filter((f) => f.outcome === 'conflict');
   const missingTasks = tasks.filter((t) => t.file === 'missing');
   const settingsReview = settings.filter((x) => x.review);
-  const followUps = receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, waits, reconcile });
+  const bound = previousStintStart(path.dirname(fromFile), m.id, { readdir });
+  const staleSweep = { createdAt: m.createdAt, lowerBound: bound.ok ? bound.at : null, boundReason: bound.ok ? null : bound.reason, claimed: claimBound, claimsUnknown: [...new Set([...liveUnknown.map((u) => u.repo), ...missingRepos])], scopeRepos: m.scope.repos.map((r) => r.path) };
+  const followUps = receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, waits, reconcile, delta, sweep: staleSweep });
   const handover = {
     id: m.id, mode: sameRoot ? 'same-config-root' : 'copy', dryRun, destConfigDir, sourceConfigDir: m.sourceConfigDir, createdAt: m.createdAt,
-    files, sweep, lockContention, tasks, reconcile, settings, identity, memoryDest, liveSessions, waits, mergedUnreleased, ghUnknown, liveUnknown, unregistered,
+    files, sweep, lockContention, tasks, reconcile, settings, identity, memoryDest, liveSessions, waits, mergedUnreleased, ghUnknown, liveUnknown, unregistered, delta,
     anomalies: m.anomalies, memoryErrors: m.memoryErrors, followUps,
     summary: {
       verified: count('verified'), copied: count('copied') + count('copied-source-changed'), present: count('present') + count('present-source-changed'),

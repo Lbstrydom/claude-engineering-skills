@@ -88,7 +88,8 @@ to it: a host holds a message between sessions whose modes differ.
   state unknown, the lock held). `0`: received. **Exit 0 may carry
   `followUps`**, printed as "follow-ups (not failures)": scheduled tasks to
   confirm or recreate, settings or MCP-server differences, a repo whose PR state
-  cannot be read, an account change, and claims waiting on the switch. They are
+  cannot be read, an account change, claims waiting on the switch, work done after
+  prepare (`delta`) and the stale-session sweep (`session-sweep`). They are
   work to do, not failures; `--dry-run` classifies the same way.
 - **Scheduled tasks after the switch.** Schedules belong to the ACCOUNT; task
   prompts (`<config root>/scheduled-tasks/<id>/SKILL.md`) are on disk and shared.
@@ -116,6 +117,31 @@ to it: a host holds a message between sessions whose modes differ.
   command that drops exactly the switch wait inside the registry transaction (no
   snapshot of the others, so a wait added since cannot be lost); any other `human`
   wait gets a one-line note, so a differently worded one is still shown.
+- **Work done AFTER prepare (the delta).** Prepare is often run at the last few
+  percent of credits, and the old account keeps working. Receive therefore reports,
+  per repo, everything newer than the manifest's `createdAt`: commits
+  (`git log --all --since-as-filter`, which unlike `--since` does not stop at an older-dated commit), PRs updated (`gh pr list --state all --search
+  updated:>=`), live claims touched and proposals created. It runs `git fetch
+  --all` first; under `--dry-run` (which writes nothing) or when the fetch fails
+  the text says the log is **as of the last fetch**. **Every field is measured or
+  UNMEASURED**: a `gh` that cannot read the repo (a remote needing a different gh
+  account answers "Could not resolve to a Repository") prints `PRs: UNMEASURED
+  (reason)`, never "none". A `delta` follow-up summarises it; fold the listed
+  work into the resume prompts before acting on them.
+- **Stale-session sweep.** Receive's `session-sweep` follow-up (a different or
+  unknown account only; the same account has no stale stint) tells the arriving
+  account to call `list_sessions` and archive every session last active before the
+  handover's `createdAt`, EXCEPT sessions whose worktree is bound to a live fleet
+  claim (named in the follow-up) or holds uncommitted work no claim covers (leave
+  open, list for the user). Never resume a pre-handover session. `archive_session`
+  removes the worktree by default, so **never archive sessions on the DEPARTING
+  account**. Two limits shape the instruction: `list_sessions` returns at most
+  100 per call and the tail spans many older stints, so the sweep is bounded below
+  by the start of this account's previous stint (the second-newest older manifest
+  beside this one; none found means page through all, and ask the user before archiving past 300),
+  and claims are read only in the handover's repos (a session elsewhere stays open until that repo is checked). `archive_session` can be refused by the host's permission classifier, so the
+  sweep ends by listing **what could not be archived** and what was left older than
+  the bound, never implying all were.
 - Unregistered work is RE-PROBED at receive, so claiming or pushing it since
   prepare clears it. Commit WIP in sessions you own before preparing; prepare
   flags uncommitted work, it never commits it.
