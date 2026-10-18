@@ -62,14 +62,14 @@ does not run, the local pre-push gate is the evidence.
 tier (`AUDIT_PREPUSH_TIER=branch`), merge only a sha whose output carries that line.
 Either push the candidate with `AUDIT_PREPUSH_TIER=full`, or verify it without a push
 with `node scripts/prepush-check.mjs --tier full --head <sha> --base <merge-base>`
-(source repo only: a consumer uses the push form). Then merge pinned to that sha. A `branch` line, or `tier NOT reported`, is not
+(Source-repo-gated: a consumer uses the push form). Then merge pinned to that sha. A `branch` line, or `tier NOT reported`, is not
 that verdict.
 
 **The CI verdict (repos whose `.test-tiers.json` declares `ciVerdict`).** Such a repo
 runs its full suite in GitHub Actions (CES: `full-suite.yml`, `ubuntu-latest`), and its
 local push is the light branch tier by default. The verdict is then read, not produced:
 `node scripts/test-tier.mjs ci-verdict --pr <n>` prints `test-tier/v1 full <sha> ... reason=ci:<run>`
-(Source repo only: a consumer has neither.) It prints the line only when the trusted workflow succeeded on exactly that PR head, for that PR, into the
+(Source-repo-gated: a consumer has neither.) It prints the line only when the trusted workflow succeeded on exactly that PR head, for that PR, into the
 default branch. Exit 3 is "not yet": `pending` waits; `unverified` (no run, a run for
 another PR or base, a PR that edits the workflow, `gh` or the network down) is **not** a
 verdict and never reads as green. Exit 4 is `failed`. Merge pinned with
