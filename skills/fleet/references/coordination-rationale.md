@@ -4,7 +4,7 @@ summary: Why each coordinator rule exists, with the measurements, incidents and 
 
 # Coordinator rules — rationale and detail
 
-`references/coordination.md` ("Rules for a coordinator") lists rules 1–16 as terse
+`references/coordination.md` ("Rules for a coordinator") lists rules 1–17 as terse
 actions. This file keeps each rule's number and adds what did not fit a line: why it
 exists, what was measured, and the exact commands. Rules 1–5 are fully stated in the
 list and carry nothing further.
@@ -26,58 +26,56 @@ empty change set refuses. The commit carries `AI-Ship-Authority: launch-prompt`.
 
 ## Rule 6 — Repo-prefixed session titles
 
-With several repos' sessions in one sidebar, unprefixed titles made it impossible to
-tell which repo a session belonged to. The app generates worktree directory names, so
-the title is the only place the prefix can go.
+With several repos' sessions in one sidebar, unprefixed titles hid which repo a session
+belonged to. The app generates worktree directory names, so the title is the only
+place for the prefix.
 
 **Optional: a title reminder hook (Claude Code only).** A repo can remind new
 sessions to title themselves with a project-level `SessionStart` hook in its
 committed `.claude/settings.json`, matcher `startup|clear`. The hook prints JSON whose
 `hookSpecificOutput.additionalContext` says "this session's title must start with
 `<PREFIX>: `; set it with `set_session_title`". Make it fail-open: on any error it
-prints nothing and exits 0. It is opt-in per repo, and it is Claude-Code-only
-acceleration, not cross-agent enforcement; other hosts rely on rule 6 and the
-participant block. Do not install it machine-wide in `~/.claude`: skills install
-repo-scoped, and one prefix cannot be right for every repo on the machine.
+prints nothing and exits 0. It is opt-in per repo and Claude-Code-only; other hosts
+rely on rule 6 and the participant block. Do not install it machine-wide in
+`~/.claude`: one prefix cannot be right for every repo on the machine.
 
 ## Rule 7 — Archive sweep on every coordination pass
 
 This is not removing a worktree, which stays the user's decision (see `fleet archive`
 in `references/ending-a-session.md`). Measured 2026-10-12: the first sweep found 16
 sessions idle since August whose worktrees were already gone; nothing had swept them,
-because sessions were archived only when a PR merged. Where the host offers a setting
-to archive a session when its PR closes, it is the automatic complement.
+because sessions were archived only when a PR merged. A host setting that archives a
+session when its PR closes is the automatic complement.
 
 ## Rule 8 — Push lanes
 
-In a repo that still keeps ONE status log file, every `/ship` inserts at its top, so
-pushes that touch it need one slot at a time (the status lane). Where
+In a repo with ONE status log file, every `/ship` inserts at its top, so
+pushes touching it go one at a time (the status lane). Where
 `docs/status/entries/README.md` exists (this repo, since the per-entry cutover) each
 entry is its own file, two ships never touch the same path, and the lane has no
 reason to exist; the integrity gate refuses a new entry in `status.md` instead.
 Do not use `gh pr merge --auto` on a repo with no required
-checks: it merges at once, before CI finishes (observed 2026-10, #202). When
-path-filtered CI does not run, the local pre-push gate is the evidence.
+checks: it merges before CI finishes (observed 2026-10, #202). When path-filtered CI
+does not run, the local pre-push gate is the evidence.
 
 **Getting a `test-tier/v1 full <sha>` line.** Once any push may take the branch test
 tier (`AUDIT_PREPUSH_TIER=branch`), merge only a sha whose output carries that line.
 Either push the candidate with `AUDIT_PREPUSH_TIER=full`, or verify it without a push
 with `node scripts/prepush-check.mjs --tier full --head <sha> --base <merge-base>`
-(Source-repo-gated: that script is this repo's own gate, so a consumer uses the push
-form). Then merge pinned to that sha. A `branch` line, or `tier NOT reported`, is not
+(source repo only: a consumer uses the push form). Then merge pinned to that sha. A `branch` line, or `tier NOT reported`, is not
 that verdict.
 
 **The CI verdict (repos whose `.test-tiers.json` declares `ciVerdict`).** Such a repo
 runs its full suite in GitHub Actions (CES: `full-suite.yml`, `ubuntu-latest`), and its
 local push is the light branch tier by default. The verdict is then read, not produced:
 `node scripts/test-tier.mjs ci-verdict --pr <n>` prints `test-tier/v1 full <sha> ... reason=ci:<run>`
-(Source-repo-gated: a consumer has neither the CLI nor a `ciVerdict`.) It prints the line only when the trusted workflow succeeded on exactly that PR head, for that PR, into the
+(Source repo only: a consumer has neither.) It prints the line only when the trusted workflow succeeded on exactly that PR head, for that PR, into the
 default branch. Exit 3 is "not yet": `pending` waits; `unverified` (no run, a run for
 another PR or base, a PR that edits the workflow, `gh` or the network down) is **not** a
 verdict and never reads as green. Exit 4 is `failed`. Merge pinned with
-`--match-head-commit <sha>`; if the reader printed a stale-base note, the PR was tested
-against an older base (accepted risk, plan §2.3). The CI job runs the test suite only; the
-static gates stay in the local gate, in both tiers. **Two modes:** with the required-check
+`--match-head-commit <sha>`; a stale-base note means the PR was tested
+against an older base (accepted risk, plan §2.3). CI runs the test suite only; the static
+gates stay local, in both tiers. **Two modes:** with the required-check
 ruleset on, a local verdict cannot substitute for the check, so on `unverified` wait (only
 the user may disable the ruleset); without it, fall back to the local full tier above. A PR
 that edits the workflow needs its own green run AND a local full verdict. Consumers declare
@@ -85,14 +83,14 @@ no `ciVerdict`, so their recipe is the push form above, unchanged.
 
 ## Rule 9 — Confirm idle, not "told"
 
-A message to a session that is mid-turn is queued; it cannot stop what that session is
-doing. Before a quiet window (for example handing the machine to another repo's
-coordinator), stop handing out turns early and confirm each session reports not
-running. A sent hold message is not compliance.
+A message to a mid-turn session is queued; it cannot stop what that session is doing.
+Before a quiet window (e.g. handing the machine to another repo's coordinator), stop
+handing out turns early and confirm each session reports not running. A sent hold
+message is not compliance.
 
 ## Rule 10 — Queue findings, not sessions
 
-A chip is admission for ready work, not a record of every finding. A worker may record
+A chip is admission for ready work, not a record of every finding; a worker records
 its own adjacent finding the same way. The record lives in the git common dir, so it
 outlives the session, its worktree and its archive; it replaces any private list a
 coordinator kept in memory. The history only grows, and each outcome needs a reason or
@@ -184,5 +182,11 @@ change applies from that session's next turn:
 
 The external auditors are unchanged, so a cheaper worker does not weaken the review.
 In Claude Code, the "user started your suggested task" notice is the trigger: find the
-chip with `list_sessions`, then use `set_session_model` and `set_session_effort`. A
-switch to a cheaper model, on a chip you started, needs no prompt.
+chip with `list_sessions`, then `set_session_model` and `set_session_effort`. A switch
+to a cheaper model on a chip you started needs no prompt.
+
+## Rule 17 — Status words carry their artifact
+
+On 2026-10-17/18 a coordinator relayed many "converged" and "green" chip claims and
+checked one (PR 269) against its source. A relay without the artifact is a rumour
+the user cannot tell from a fact; the final-report rule never reached mid-task notes.

@@ -520,28 +520,26 @@ separately as `**Close-out (not a phase)**: <commands>`, excluded from the
 > it requires **at least one `/`**, so a bare basename is invisible to it
 > *anywhere in the plan*, including in `Files:` lines and prose.
 >
-> The failure is silent and actively misleading, which is why it earns a callout.
+> The failure is silent and misleading, hence this callout.
 > Too few resolvable paths and `/audit-code --scope diff` finds an empty
 > diff∩plan intersection and **aborts** ("0 implementation files reached the
 > prompt") — correct, but it pushes you to `--scope plan`, where **fuzzy keyword
 > discovery** fills the scope from plan *words* instead.
 >
 > **The threshold is exact: fewer than 5 resolvable paths and fuzzy fires**
-> (`plan-paths.mjs` — `FUZZY_DISCOVERY_THRESHOLD`). Measured 2026-07-19 across this
-> repo's plans: `debt-burndown` 31 → clean, `egress-secret-coverage-gap` 6 →
-> clean, `migration-bootstrap-coupling` **4 → fuzzy fired**, adding **21 unrelated
-> files** matched on words like "findings" and "provenance". The audit returned 17
-> findings, **16 citing files the change never touched** — an audit that looked
-> thorough and reviewed the wrong code.
+> (`plan-paths.mjs` — `FUZZY_DISCOVERY_THRESHOLD`). Measured 2026-07-19:
+> `migration-bootstrap-coupling` had **4 → fuzzy fired**, adding **21 unrelated
+> files** matched on words like "findings"; **16 of its 17 findings cited files the
+> change never touched** — an audit that looked thorough and reviewed the wrong code.
 >
-> A small plan can legitimately sit under 5. That is fine — the point is to know
-> it, not to pad the list. **Never invent file references to clear the
-> threshold**; a fabricated path is worse than fuzzy noise. Qualify the paths you
+> A small plan can sit under 5; the point is to know it, not to pad the list.
+> **Never invent file references to clear the threshold**; a fabricated path is
+> worse than fuzzy noise. Qualify the paths you
 > genuinely touch, then read the audit's scope line before trusting its findings.
 >
-> Cheap self-check before persisting — it prints the REGEX-resolvable count (the
-> number the threshold actually tests), what fuzzy added, and how many paths
-> don't resolve. A large `missing` means your paths are basenames:
+> Cheap self-check before persisting — it prints the REGEX-resolvable count (what the
+> threshold tests), what fuzzy added, and how many paths don't resolve. A large
+> `missing` means your paths are basenames:
 > ```bash
 > node scripts/lib/plan-paths.mjs "$PLAN"   # $PLAN = the plan file you are about to persist
 > ```
@@ -558,6 +556,7 @@ separately as `**Close-out (not a phase)**: <commands>`, excluded from the
 - What gets unit tested
 - What gets integration tested
 - Key edge cases
+- **Proof plan** (every scope): per behaviour change, the oracle (red test, source check or repeatable calculation), pass condition and report evidence: `references/proof-oracle.md`
 - (Frontend) Visual/manual checklist + a11y testing + responsive breakpoints
 
 ### If scope ⊇ frontend
@@ -748,4 +747,5 @@ in Phase 0 tells you which ones).
 | `references/python-backend-profile.md` | Python backend profile — framework-tagged principle checks + stack commands + anti-patterns. | Phase 0 detect-stack returned `python` (or mixed with Python backend files) AND scope ⊇ backend. |
 | `references/python-frontend-profile.md` | Python frontend profile — Jinja/Django/Flask template patterns + HTMX + anti-patterns. | Phase 0 detect-stack returned `python` (or mixed with Python frontend files) AND scope ⊇ frontend. |
 | `examples/mermaid-blocks.md` | Mermaid diagram templates — sequenceDiagram, graph, erDiagram, stateDiagram-v2 — one per scope. | Phase 6 §2/§5 — emitting an architecture or state diagram; need the exact fence syntax. |
+| `references/proof-oracle.md` | Proof oracle for any plan - what proves the change right, its pass condition, and the evidence the report shows. | Phase 6 §9 - writing the Proof plan (any scope). |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Phase 6 §1 — writing the Code Trace, or any `file:line` citation, into the plan document. |

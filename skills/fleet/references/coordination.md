@@ -5,15 +5,14 @@ summary: Coordinating without host messages — next, directives, unregistered w
 # Coordinating sessions without host messages
 
 Host messages between sessions fail two ways: a host holds one when the two
-sessions' permission modes differ, and a delivered peer message is untrusted data
-to the receiver. Both are correct; fleet moves coordination into the shared
-registry and authority into the user's own launch prompt.
+sessions' permission modes differ, and a delivered one is untrusted data to the
+receiver. Both are correct; fleet moves coordination into the shared registry and
+authority into the user's own launch prompt.
 
 ## `fleet next` — what should this session do now?
 
-`next` derives a short list from facts the session can re-check itself, and the
-same top three lines are appended to `claim`, `touch` and `ready`, so a session
-sees them at checkpoints it already hits:
+`next` derives a short list from facts the session can re-check itself; its top
+three lines are appended to `claim`, `touch` and `ready`:
 
 | Line | From |
 |---|---|
@@ -59,8 +58,8 @@ live claim covers and that holds work, each with one verdict (`unlanded`,
 `none`) and how long it has been idle. `status` also writes a small cache, and the
 `claim`/`touch`/`ready` footer reads only that cache (it never scans), so the
 footer can print:
-- an `FYI` line with the count of local-only items: **information, not a `DO`**.
-  Relay it; claiming, archiving or pruning any of it is the user's call;
+- an `FYI` count of local-only items: **information, not a `DO`**. Relay it;
+  claiming, archiving or pruning any of it is the user's call;
 - a refresh request when the cache is missing, older than 24 hours or corrupt;
 - a coverage notice when the last scan stopped at its deadline (`partial`).
 
@@ -73,19 +72,17 @@ resolves an adopted session's worktree, so a dirty one never reads CLEAN, and
 
 ## Addressing a session
 
-`fleet claim --host-session <id>` records the host's own id for the session (the desktop app's `local_…` id, not the display name); `status` prints it as `host: <id>`, so a host message reaches the right session.
+`fleet claim --host-session <id>` records the host's own `local_…` id (not the display name); `status` prints it as `host: <id>`.
 
-Other verbs: ending a session (release, archive-check, prune, archive) in
-`references/ending-a-session.md`; moving to another Claude Code account
-(`fleet handover`) in `references/handover.md`; the why behind each coordinator
-rule in `references/coordination-rationale.md`.
+Other verbs: ending a session in `references/ending-a-session.md`; moving to another
+account (`fleet handover`) in `references/handover.md`; each coordinator rule's why in
+`references/coordination-rationale.md`.
 
 ## Rules for a coordinator
 
-A coordinator is a session that dispatches and supervises others rather than
-doing the work. On top of the participant rules. The numbers are stable: other
-repos' coordinators and the participant rules cite them. Each rule's why, its
-measurements and its fine print are under the same number in
+A coordinator dispatches and supervises others rather than doing the work; these
+come on top of the participant rules. The numbers are stable (other repos cite them).
+Each rule's why, measurements and fine print: the same number in
 `references/coordination-rationale.md`.
 
 1. **Write the authority into the chip.** Every chip prompt carries a visible block (pre-authorised / NOT authorised, route, turn rule, stop point): start from `references/chip-preamble.md`. The user's click on the chip is the approval; a message you relay later never is.
@@ -98,20 +95,21 @@ measurements and its fine print are under the same number in
 5. **Sync consumers after a GitHub merge.** The pre-push consumer sync fires only on a local push of the default branch. After a PR merges on GitHub, run the source repo's consumer sync and its sync-PR step for the affected consumers, or remind the user to.
 6. **Repo-prefixed session titles.** Title every session and chip `<REPO>: <short task>` (plus a PR number where one exists), one short prefix per repo, e.g. `CES`. Put it in every `spawn_task` title, rename an unprefixed session with `set_session_title`, and ask each other repo's coordinator to follow.
 7. **Archive sweep on every coordination pass.** Archive a desktop session (the host's reversible archive) when ALL hold: it is idle, its PR is merged or closed (or its question is answered), its worktree is gone or `archive-check` exits 0, and it is not pinned. Removing a worktree stays the user's decision.
-8. **Push lanes.** A status-log entry is its own file under `docs/status/entries/` and needs no slot; where its `README.md` marker is absent, entry pushes go one at a time (the status lane, "your turn"). Test-, docs- and config-only PRs use a separate ride-along lane. A work-in-progress push with no status-log entry needs no slot (participant step 2), unless the launch prompt holds it. A branch already on the remote merges the base in (a rebase needs a force-push the status-integrity gate refuses); a never-pushed branch may rebase. Merge as soon as CI is green, pinned with `--match-head-commit <head>` (`references/landing.md`); never `gh pr merge --auto` on a repo with no required checks. Once any push may take the branch test tier, merge only a sha with a `test-tier/v1 full <sha>` line (how to get one, incl. the CI verdict `ci-verdict --pr <n>`: the rationale).
+8. **Push lanes.** A status-log entry is its own file under `docs/status/entries/` and needs no slot; where its `README.md` marker is absent, entry pushes go one at a time (the status lane, "your turn"). Test-, docs- and config-only PRs use a separate ride-along lane. A work-in-progress push with no status-log entry needs no slot (participant step 2), unless the launch prompt holds it. A branch already on the remote merges the base in (a rebase needs a force-push the status-integrity gate refuses); a never-pushed branch may rebase. Merge as soon as CI is green, pinned with `--match-head-commit <head>` (`references/landing.md`); never `gh pr merge --auto` on a repo with no required checks. Once any push may take the branch test tier, merge only a sha with a `test-tier/v1 full <sha>` line (how to get one: the rationale).
 9. **Confirm idle, not "told".** A message to a mid-turn session is queued and cannot stop it. Before a quiet window, stop handing out turns early and confirm each session shows `isRunning: false` in the session list.
 10. **Queue findings, not sessions.** Workers never spawn chips (participant step 9). Record each finding at once with `fleet propose --what --where --why [--evidence] [--theme] [--blocked-by]`, then give it exactly one outcome with `fleet proposal <id> --folded <session> | --queued <reason> | --declined <reason> | --done <PR>`. Show `fleet proposals` to the user at every check-in.
 11. **Triage continuously, with an expedite lane.** Decide new findings on every coordination pass, not in batches; order the queue by impact, then by whether its dependencies are ready. Expedite straight to a chip or a fold only a broken default branch, data loss, a security exposure, or something blocking a running session. Everything else waits in the queue.
-12. **Work-in-progress limits, not volume caps.** At most **4 worker sessions machine-wide and 2 per repo** (default; see doctor's fit check); coordinators do not count, and nothing caps how much work flows through. Blocked work holds no session: it stays queued with what it waits on, and gets a chip only when that lands.
+12. **Work-in-progress limits, not volume caps.** At most **4 worker sessions machine-wide and 2 per repo** (default; see doctor's fit check); coordinators do not count, and nothing caps how much work flows through. Blocked work holds no session: it stays queued, and gets a chip when its blocker lands.
 13. **Theme sessions ship sequential PRs.** Batch related queued items into one theme chip that ships consecutive PRs, so setup, planning and the plan audit are paid once. A running theme absorbs a ready in-theme finding as its next PR. About 3 PRs or one working day: extend while the theme is one coherent outcome, close early if it drifts. Release the claim between PRs.
-14. **One heavy job at a time on a shared machine.** When several repos' work or CI share one machine, run at most one full gate or full test suite at a time (a "gate slot"), and no installs or disk-heavy maintenance beside another repo's announced timing or CI window. Heavy includes a coordinator's own discovery (a recursive find or grep over a profile, a disk sweep); a window covers scheduled runs (nightlies, QA, drift) as well as pushes, re-runs and dispatches: announce those too. The slot is recorded, not only agreed: `fleet lease acquire|attach|release|status`; windows with `lease announce`, peak hours with `lease peak`; `fleet next` shows it. It is cooperative: `hold` and directives outrank it. When several repos wait, they take turns (default ~60 min, batched; longest-waiting next; see doctor's fit check); the lease records it: `lease wait|turn|grant`.
+14. **One heavy job at a time on a shared machine.** When several repos' work or CI share one machine, run at most one full gate or full test suite at a time (a "gate slot"), and no installs or disk-heavy maintenance beside another repo's announced timing or CI window. Heavy includes a coordinator's own discovery (a recursive find or grep over a profile, a disk sweep); a window covers scheduled runs as well as pushes, re-runs and dispatches. The slot is recorded, not only agreed: `fleet lease acquire|attach|release|status`; windows with `lease announce`, peak hours with `lease peak`; `fleet next` shows it. It is cooperative: `hold` and directives outrank it. When several repos wait, they take turns (default ~60 min, batched; longest-waiting next; see doctor's fit check); the lease records it: `lease wait|turn|grant`.
 15. **Mind the message budget.** A host may pause a coordinator's outbound session messages after a burst (observed: 10 per user turn). Batch messages to one session, skip acknowledgements that change nothing, and keep sends for time-critical ones (all clear, gate slot, hold). The lease (rule 14) replaces most slot relays.
 16. **Plan on the strong model, execute on the cheaper one.** Where the host lets a coordinator set another session's model, the coordinator stays on the strong model and its workers run on a cheaper one at high effort (2026-10-14 default: coordinators Opus, workers Sonnet; the user's choice). Direct-fix and landing or triage chips (rule 3): switch as soon as they start. `/cycle --autonomous` chips plan on the strong model, end their turn when `/audit-plan` converges and say so; switch them, then reply "go". Steps and tools: the rationale.
+17. **Status words carry their artifact.** Merged, green, fixed, done, converged: in any status note or report, only with the evidence beside it (commit sha, PR number, CI run id or URL, test count). A coordinator relays the artifact with the claim, or labels it "claimed by <session>, unverified", and re-reads "merged" or "green" from the source (`gh pr view`, `ci-verdict --pr <n>`) before telling the user.
 
-Optional, Claude Code only: a `SessionStart` hook that reminds new sessions to title themselves (rule 6): recipe in the rationale.
+Optional (Claude Code): a `SessionStart` hook reminding new sessions to title themselves (rule 6): see the rationale.
 
 ## Permission prompts
 
-Add a project allow rule for fleet's own CLI so sessions do not stall on it:
+Allow fleet's own CLI so sessions do not stall on prompts:
 `Bash(node scripts/.claude-skills/fleet.mjs:*)` (a consumer path; in the source
 repo, `scripts/fleet.mjs`); it names no personal folder, so it is safe to commit.
