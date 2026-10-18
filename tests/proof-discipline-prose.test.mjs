@@ -34,7 +34,10 @@ describe('proof-discipline prose contracts', () => {
     const t = read('skills/plan/SKILL.md');
     assert.match(t, /\*\*Proof plan\*\* \(every scope\)/);
     assert.ok(t.includes('references/proof-oracle.md'));
-    assert.ok(fs.existsSync(path.join(ROOT, 'skills/plan/references/proof-oracle.md')));
+    const ref = read('skills/plan/references/proof-oracle.md');
+    for (const must of ['red test', 'check against the source', 'repeatable calculation', 'Pass condition', 'Evidence', 'must be able to fail', 'negative control']) {
+      assert.ok(ref.includes(must), must);
+    }
   });
 
   it('/audit-code pivots after 3 recurring rounds without moving the cap or stability test', () => {
@@ -45,5 +48,18 @@ describe('proof-discipline prose contracts', () => {
     assert.match(t, /Threshold met, 0 new, 2\/2 stable \| \*\*CONVERGED\*\*/, 'convergence unchanged');
     const ref = read('skills/audit-code/references/pivot-rule.md');
     for (const must of ['2026-10-18', 'B3c', 'baseline-permissions']) assert.ok(ref.includes(must), must);
+    const section = (md, h) => md.split(/^## /m).find((b) => b.startsWith(h)) || '';
+    const trigger = section(ref, 'Trigger (mechanical)');
+    assert.ok(trigger, 'Trigger section present');
+    assert.match(trigger, /N-2, N-1 and N/);
+    assert.match(trigger, /accepted/);
+    assert.match(trigger, /sameConcernAs/);
+    const action = section(ref, 'Action');
+    assert.ok(action, 'Action section present');
+    assert.match(action, /Do not start round N\+1/);
+    assert.match(action, /different\s+designs/);
+    assert.match(action, /new audit run/);
+    assert.match(action, /same ledger file/);
+    assert.match(action, /6-round cap/);
   });
 });

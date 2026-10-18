@@ -32,8 +32,11 @@ A dismissed false positive does not count: that is churn the ledger already supp
    design that adds a guard on top of the same shape is the loop again.
 4. Present the note to the user (under `/cycle --autonomous`, end the turn with
    "pivot proposed" and the note). The user chooses: rework, or continue to the cap.
-5. After a rework, the changed area is a new design: restart the round count at 1 for
-   it. The ledger rulings stay.
+5. A rework is a **new audit run**: fresh session id, round 1, its own 6-round cap and
+   its own pivot counter (rounds are counted per run; the cap never carries over). Pass
+   the same ledger file, so earlier dismissals and deferrals keep suppressing re-raises.
+   If the user instead continues the current run, the counters are unchanged and the
+   6-round cap still applies.
 
 Step 7 (Gemini final review) still follows the last round that ran.
 
