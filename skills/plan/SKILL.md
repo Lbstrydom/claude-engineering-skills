@@ -558,7 +558,7 @@ separately as `**Close-out (not a phase)**: <commands>`, excluded from the
 - What gets unit tested
 - What gets integration tested
 - Key edge cases
-- **Proof plan** (every scope): per behaviour change, the oracle (red test, source check or repeatable calculation), pass condition and report evidence: `references/proof-oracle.md`
+- **Proof plan** (every scope): per behaviour change, the oracle (red test, source check or repeatable calculation), pass condition, report evidence: `references/proof-oracle.md`
 - (Frontend) Visual/manual checklist + a11y testing + responsive breakpoints
 
 ### If scope ⊇ frontend
@@ -677,8 +677,9 @@ hand-reconciled via a rebase + manual code transplant):
 
 One line per dependency. `node scripts/check-plan-status.mjs --check-deps
 <this-plan>` reads it back against the referenced plan's own `Status:` line
-(`/cycle` Step 0.5 runs this automatically) — a nudge, not a gate: an unmet
-dependency is reported, never blocked on; only the operator knows if it is safe.
+(`/cycle` Step 0.5 runs this automatically) — it is a nudge, not a gate:
+an unmet dependency is reported, never blocked on, since only the operator
+knows whether it is still safe to proceed.
 
 Register in the cross-skill store so audit-plan/audit-code + ux-lock can link:
 
@@ -745,5 +746,5 @@ in Phase 0 tells you which ones).
 | `references/python-backend-profile.md` | Python backend profile — framework-tagged principle checks + stack commands + anti-patterns. | Phase 0 detect-stack returned `python` (or mixed with Python backend files) AND scope ⊇ backend. |
 | `references/python-frontend-profile.md` | Python frontend profile — Jinja/Django/Flask template patterns + HTMX + anti-patterns. | Phase 0 detect-stack returned `python` (or mixed with Python frontend files) AND scope ⊇ frontend. |
 | `examples/mermaid-blocks.md` | Mermaid diagram templates — sequenceDiagram, graph, erDiagram, stateDiagram-v2 — one per scope. | Phase 6 §2/§5 — emitting an architecture or state diagram; need the exact fence syntax. |
-| `references/proof-oracle.md` | Proof oracle for any plan - what proves the change right, its pass condition, and the evidence the report shows. | Phase 6 §9 - writing the Proof plan (any scope). |
+| `references/proof-oracle.md` | Proof oracle for any plan - what proves the change right, its pass condition, and the evidence the report shows. | Phase 6 §9 Proof plan. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Phase 6 §1 — writing the Code Trace, or any `file:line` citation, into the plan document. |
