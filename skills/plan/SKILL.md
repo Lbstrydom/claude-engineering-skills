@@ -527,19 +527,21 @@ separately as `**Close-out (not a phase)**: <commands>`, excluded from the
 > discovery** fills the scope from plan *words* instead.
 >
 > **The threshold is exact: fewer than 5 resolvable paths and fuzzy fires**
-> (`plan-paths.mjs` — `FUZZY_DISCOVERY_THRESHOLD`). Measured 2026-07-19:
-> `migration-bootstrap-coupling` had **4 → fuzzy fired**, adding **21 unrelated
-> files** matched on words like "findings"; **16 of its 17 findings cited files the
-> change never touched** — an audit that looked thorough and reviewed the wrong code.
+> (`plan-paths.mjs` — `FUZZY_DISCOVERY_THRESHOLD`). Measured 2026-07-19 across this
+> repo's plans: `debt-burndown` 31 → clean, `egress-secret-coverage-gap` 6 →
+> clean, `migration-bootstrap-coupling` **4 → fuzzy fired**, adding **21 unrelated
+> files** matched on words like "findings" and "provenance". The audit returned 17
+> findings, **16 citing files the change never touched** — an audit that looked
+> thorough and reviewed the wrong code.
 >
-> A small plan can sit under 5; the point is to know it, not to pad the list.
-> **Never invent file references to clear the threshold**; a fabricated path is
-> worse than fuzzy noise. Qualify the paths you
+> A small plan can legitimately sit under 5. That is fine — the point is to know
+> it, not to pad the list. **Never invent file references to clear the
+> threshold**; a fabricated path is worse than fuzzy noise. Qualify the paths you
 > genuinely touch, then read the audit's scope line before trusting its findings.
 >
-> Cheap self-check before persisting — it prints the REGEX-resolvable count (what the
-> threshold tests), what fuzzy added, and how many paths don't resolve. A large
-> `missing` means your paths are basenames:
+> Cheap self-check before persisting — it prints the REGEX-resolvable count (the
+> number the threshold actually tests), what fuzzy added, and how many paths
+> don't resolve. A large `missing` means your paths are basenames:
 > ```bash
 > node scripts/lib/plan-paths.mjs "$PLAN"   # $PLAN = the plan file you are about to persist
 > ```
@@ -665,10 +667,9 @@ needed. Metadata header:
 ```
 
 **If this plan must not ship before another plan lands**, say so as a
-structured line, not only in prose — a free "wait for Cluster F to land
-first" note is invisible to every other session (upstream report
-`f5ac366f`: exactly that happened, and the loser hand-reconciled via a
-rebase + manual code transplant):
+structured line, not only in prose — a free "wait for Cluster F" note is
+invisible to every other session (upstream report `f5ac366f`: the loser
+hand-reconciled via a rebase + manual code transplant):
 
 ```markdown
 - **Depends on**: docs/plans/<other-plan>.md — <why, e.g. "wait for Cluster F to land first">
@@ -676,9 +677,8 @@ rebase + manual code transplant):
 
 One line per dependency. `node scripts/check-plan-status.mjs --check-deps
 <this-plan>` reads it back against the referenced plan's own `Status:` line
-(`/cycle` Step 0.5 runs this automatically) — it is a nudge, not a gate:
-an unmet dependency is reported, never blocked on, since only the operator
-knows whether it is still safe to proceed.
+(`/cycle` Step 0.5 runs this automatically) — a nudge, not a gate: an unmet
+dependency is reported, never blocked on; only the operator knows if it is safe.
 
 Register in the cross-skill store so audit-plan/audit-code + ux-lock can link:
 
@@ -709,13 +709,11 @@ Update status as implementation progresses.
 
 ### Phase 7.5 — Arm-eval capture (AUTOMATIC — no action)
 
-Capture is now fired by `upsert-plan` itself: when the payload carries
-`taskText` and the per-repo `arm-eval-toggle` is on, it dispatches a detached,
-blinded A/B/C arm-eval session for that task in the background
-(`scripts/lib/arm-eval/capture-trigger.mjs`). You do NOT run a separate
-`arm-eval-maybe-capture` command — doing so would double-capture. Toggle off →
-byte-identical no-op. The plan YOU wrote is unaffected (the capture generates
-its own arm outputs; nothing replaces your plan).
+`upsert-plan` fires capture itself: when the payload carries `taskText` and the
+per-repo `arm-eval-toggle` is on, it dispatches a detached, blinded A/B/C
+arm-eval session in the background (`scripts/lib/arm-eval/capture-trigger.mjs`).
+You do NOT run a separate `arm-eval-maybe-capture` command — doing so would
+double-capture. Toggle off → byte-identical no-op. Your plan is unaffected.
 
 ---
 

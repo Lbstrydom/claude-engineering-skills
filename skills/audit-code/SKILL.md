@@ -257,8 +257,7 @@ not the Postgres snapshot — so it's unaffected by a stale `arch:refresh`.
 (`.js .jsx .mjs .cjs .ts .tsx`, ts-morph's parser) — a changed file in
 another language isn't scanned and doesn't produce a "clean" verdict for
 that file specifically; it's simply outside this wave's coverage today
-(round-1 code-audit M8: an earlier draft of this section overclaimed
-full multi-language scanning).
+(round-1 code-audit M8: an earlier draft overclaimed multi-language scanning).
 
 If the duplication is intentional (e.g. a CLI script deliberately staying
 self-contained rather than taking a cross-module dependency), suppress it
@@ -282,10 +281,9 @@ A pragma whose `target` doesn't actually match the detected near-duplicate
 surfaces its own `[Duplication] Orphaned suppression pragma` finding
 rather than being silently honoured or ignored.
 
-Opt out for a single run with `--passes <csv>` omitting `duplication`
-(same mechanism as any other pass). No `.env` var needed; it degrades to a
-silent, non-blocking `unavailable` state when the architectural-memory
-store isn't configured for this repo.
+Opt out for a single run with `--passes <csv>` omitting `duplication`. No `.env`
+var needed; it degrades to a silent, non-blocking `unavailable` state when the
+architectural-memory store isn't configured for this repo.
 
 Plan: `docs/plans/audit-code-duplication-wave.md`.
 
@@ -755,10 +753,10 @@ Identifiers are the real ones — `structure`/`wiring`/`backend`/`frontend`/
 `adjacency` (`scripts/lib/audit-shadow.mjs`'s `MECHANICAL_WAVES`) — not
 invented labels. Every non-`completed` row carries a concrete reason in parentheses.
 
-**The `file coverage` row is rendered from the round's `_coverage` (`node -p` the result JSON: `status`, `gate` and the
-one-line suffix the summary printed).** `complete` → `completed`; `partial` → `uncovered` with the suffix as its
-reason; `none`/`incomplete` → the round is already `INCOMPLETE` (exit 3), never converged.
-Copy the suffix; it names the files.
+**The `file coverage` row is rendered from the round's `_coverage` (`node -p` the result JSON; its `status`, `gate` and the
+one-line suffix the summary already printed).** `complete` → `completed`; `partial` → `uncovered` with the suffix as its
+reason; `none`/`incomplete` → the round is already `INCOMPLETE` (exit 3) and must not be reported as converged at all.
+Copy the suffix, never paraphrase it: it names the files.
 
 **A round with any non-`completed` row cannot print a bare `CONVERGED`.**
 The suffix names **every kind present, with its own count** — never
