@@ -520,7 +520,7 @@ separately as `**Close-out (not a phase)**: <commands>`, excluded from the
 > it requires **at least one `/`**, so a bare basename is invisible to it
 > *anywhere in the plan*, including in `Files:` lines and prose.
 >
-> The failure is silent and actively misleading, which is why it earns a callout.
+> The failure is silent and misleading, hence this callout.
 > Too few resolvable paths and `/audit-code --scope diff` finds an empty
 > diff∩plan intersection and **aborts** ("0 implementation files reached the
 > prompt") — correct, but it pushes you to `--scope plan`, where **fuzzy keyword
@@ -558,6 +558,7 @@ separately as `**Close-out (not a phase)**: <commands>`, excluded from the
 - What gets unit tested
 - What gets integration tested
 - Key edge cases
+- **Proof plan** (every scope): per behaviour change, the oracle (red test, source check or repeatable calculation), pass condition, report evidence: `references/proof-oracle.md`
 - (Frontend) Visual/manual checklist + a11y testing + responsive breakpoints
 
 ### If scope ⊇ frontend
@@ -666,10 +667,9 @@ needed. Metadata header:
 ```
 
 **If this plan must not ship before another plan lands**, say so as a
-structured line, not only in prose — a free "wait for Cluster F to land
-first" note is invisible to every other session (upstream report
-`f5ac366f`: exactly that happened, and the loser hand-reconciled via a
-rebase + manual code transplant):
+structured line, not only in prose — a free "wait for Cluster F" note is
+invisible to every other session (upstream report `f5ac366f`: the loser
+hand-reconciled via a rebase + manual code transplant):
 
 ```markdown
 - **Depends on**: docs/plans/<other-plan>.md — <why, e.g. "wait for Cluster F to land first">
@@ -710,13 +710,11 @@ Update status as implementation progresses.
 
 ### Phase 7.5 — Arm-eval capture (AUTOMATIC — no action)
 
-Capture is now fired by `upsert-plan` itself: when the payload carries
-`taskText` and the per-repo `arm-eval-toggle` is on, it dispatches a detached,
-blinded A/B/C arm-eval session for that task in the background
-(`scripts/lib/arm-eval/capture-trigger.mjs`). You do NOT run a separate
-`arm-eval-maybe-capture` command — doing so would double-capture. Toggle off →
-byte-identical no-op. The plan YOU wrote is unaffected (the capture generates
-its own arm outputs; nothing replaces your plan).
+`upsert-plan` fires capture itself: when the payload carries `taskText` and the
+per-repo `arm-eval-toggle` is on, it dispatches a detached, blinded A/B/C
+arm-eval session in the background (`scripts/lib/arm-eval/capture-trigger.mjs`).
+You do NOT run a separate `arm-eval-maybe-capture` command — doing so would
+double-capture. Toggle off → byte-identical no-op. Your plan is unaffected.
 
 ---
 
@@ -748,4 +746,5 @@ in Phase 0 tells you which ones).
 | `references/python-backend-profile.md` | Python backend profile — framework-tagged principle checks + stack commands + anti-patterns. | Phase 0 detect-stack returned `python` (or mixed with Python backend files) AND scope ⊇ backend. |
 | `references/python-frontend-profile.md` | Python frontend profile — Jinja/Django/Flask template patterns + HTMX + anti-patterns. | Phase 0 detect-stack returned `python` (or mixed with Python frontend files) AND scope ⊇ frontend. |
 | `examples/mermaid-blocks.md` | Mermaid diagram templates — sequenceDiagram, graph, erDiagram, stateDiagram-v2 — one per scope. | Phase 6 §2/§5 — emitting an architecture or state diagram; need the exact fence syntax. |
+| `references/proof-oracle.md` | Proof oracle for any plan - what proves the change right, its pass condition, and the evidence the report shows. | Phase 6 §9 Proof plan. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Phase 6 §1 — writing the Code Trace, or any `file:line` citation, into the plan document. |

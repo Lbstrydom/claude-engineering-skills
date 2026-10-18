@@ -257,8 +257,7 @@ not the Postgres snapshot — so it's unaffected by a stale `arch:refresh`.
 (`.js .jsx .mjs .cjs .ts .tsx`, ts-morph's parser) — a changed file in
 another language isn't scanned and doesn't produce a "clean" verdict for
 that file specifically; it's simply outside this wave's coverage today
-(round-1 code-audit M8: an earlier draft of this section overclaimed
-full multi-language scanning).
+(round-1 code-audit M8: an earlier draft overclaimed multi-language scanning).
 
 If the duplication is intentional (e.g. a CLI script deliberately staying
 self-contained rather than taking a cross-module dependency), suppress it
@@ -282,10 +281,9 @@ A pragma whose `target` doesn't actually match the detected near-duplicate
 surfaces its own `[Duplication] Orphaned suppression pragma` finding
 rather than being silently honoured or ignored.
 
-Opt out for a single run with `--passes <csv>` omitting `duplication`
-(same mechanism as any other pass). No `.env` var needed; it degrades to a
-silent, non-blocking `unavailable` state when the architectural-memory
-store isn't configured for this repo.
+Opt out for a single run with `--passes <csv>` omitting `duplication`. No `.env`
+var needed; it degrades to a silent, non-blocking `unavailable` state when the
+architectural-memory store isn't configured for this repo.
 
 Plan: `docs/plans/audit-code-duplication-wave.md`.
 
@@ -425,6 +423,7 @@ Stability uses `_hash` for exact cross-round matching:
 | Threshold met, mechanical only | Fix → re-audit (stability NOT reset) |
 | Summary line ends `— not convergence evidence` (changed lines, or an unrecognised file type, never sent to any pass) | **Not stable, whatever H/M/L say** — the change was not read (`changed-lines-unread` / `unrecognised-files-unreviewed`). Re-run short files with `--files`; too big alone → report not converged. Unrecognised type: `.auditignore` it (explicit acceptance) or report upstream |
 | Threshold met, 0 new, 2/2 stable | **CONVERGED** → Step 6, then REQUIRED Step 7 |
+| Same file/concern recurs 3 rounds running | **Pivot**: stop, propose a new design (`references/pivot-rule.md`) |
 | Round 6, not stable | Present to user, then REQUIRED Step 7 |
 
 **Max 6 rounds for code audits.**
@@ -752,8 +751,7 @@ appears, it signals an aborted run (killed process, hard timeout).
 Identifiers are the real ones — `structure`/`wiring`/`backend`/`frontend`/
 `sustainability` (`scripts/lib/prompt-seeds.mjs`), `quickfix`/`duplication`/
 `adjacency` (`scripts/lib/audit-shadow.mjs`'s `MECHANICAL_WAVES`) — not
-invented labels. Every non-`completed` row carries a mandatory concrete
-reason in parentheses.
+invented labels. Every non-`completed` row carries a concrete reason in parentheses.
 
 **The `file coverage` row is rendered from the round's `_coverage` (`node -p` the result JSON; its `status`, `gate` and the
 one-line suffix the summary already printed).** `complete` → `completed`; `partial` → `uncovered` with the suffix as its
@@ -981,11 +979,9 @@ and category-error handling: `references/gemini-gate.md`.
 6. **Deliberation is final** — no infinite debate
 7. **Graceful degradation, reported, not silent** — a failed pass or a missing
    key for an optional capability degrades the run without crashing it, and
-   Step 6's census now names which pass/wave `errored` or was `unavailable`
+   Step 6's census names which pass/wave `errored` or was `unavailable`
    rather than folding it into a clean-looking skip. A missing ledger is a
-   different mechanism (R2+ rulings-injection and suppression), not a
-   pass/wave execution outcome, and is out of the census's scope by
-   definition.
+   different mechanism (R2+ suppression), outside the census's scope.
 8. **No self-review** — Step 7 final gate reviews Claude-GPT transcript
 9. **Adaptive learning** — outcomes logged, FP patterns tracked, prompts improve
 
@@ -1004,5 +1000,6 @@ situations — read them only when the trigger applies.
 | `references/debt-capture.md` | Phase D debt ledger — persist out-of-scope valid findings so they don't re-surface. | Step 3.6 — candidate deferrals present, OR Step 5.1 — debt resolution prompt firing, OR periodically to cluster/resolve the accumulated backlog (see its "Periodic Debt Health" section). |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 7 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
 | `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — a prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
+| `references/pivot-rule.md` | Pivot rule - findings recurring in one file or concern for 3 consecutive rounds mean rethink the design, not loop. | Step 3 - same file or concern accepted in 3 consecutive rounds. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. ALSO Step 6 — about to emit the convergence report's pass/wave census, to apply §7's named-state rule. |
 | `examples/contract-test-scaffold.md` | Contract-test scaffold — subject probe, negative control, vacuous-pass guard, disposition, retirement. | Step 4.5 — promoting a one-off check into a permanent contract test. |

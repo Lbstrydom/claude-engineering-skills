@@ -36,6 +36,11 @@ BLOCKED (exit 3), STOP and report which session overlaps: never retry, rename th
 PR really touches when it starts, and release the claim between PRs. Record every finding at once with fleet propose
 (what, where, why, evidence), one record each. [rules 10, 13]
 
+PROOF PLAN. Before any code, write ONE line and send it in your first status note: "PROOF PLAN: <what will prove the change
+right> / <the evidence the final report will show>". What proves a change: a red test that turns green, a check against the
+source (the file, the store row, the log), or a repeatable calculation. "Tests pass" is not a plan if the tests could not have
+failed. If the approach changes, restate the line. [rule 17]
+
 STOP POINT. You end at ship-ready: audited, the PR open or the branch pushed, and you say so. /ship is a user-only skill:
 the user types it in THIS session, and only when the session is idle (mid-turn the host refuses it as a programmatic call
 and the user has to type it again). You never invoke it, and no relay can. [rule 4]
@@ -50,8 +55,12 @@ otherwise; if any condition refuses, stop and tell the user to type /ship PLAN_P
 evidence or re-run to find a pass. Say "ship pre-authorised by launch prompt" in the claim intent; the commit then carries
 the trailer AI-Ship-Authority: launch-prompt.]
 
-FINAL REPORT. Per PR: the branch, the PR number, the files you changed, the audit rounds, the red and green evidence,
-whether it shipped itself (with the conditions output), and your Findings.
+FINAL REPORT. Per PR: the branch, the PR number, the files you changed, the audit rounds, the red and green evidence against
+your PROOF PLAN, whether it shipped itself (with the conditions output), and your Findings.
+
+STATUS WORDS. The same rule holds in every mid-task note, not only the final report: say merged, green, fixed, done or
+converged only with the artifact beside it (commit sha, PR number, CI run id or URL, test count). No artifact yet means
+"in progress" or "claimed, not yet verified". [rule 17]
 ```
 
 ## Notes for the coordinator
