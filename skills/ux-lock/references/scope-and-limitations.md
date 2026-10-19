@@ -161,3 +161,22 @@ machine-local. (This bundle's own source repo runs an MCP-parity gate that
 compares `command` exactly between the two config files, so a committed
 Windows-only override there needs a declared exception; your repo has no such
 constraint.)
+
+## Running the Playwright CLI from a linked worktree (PowerShell)
+
+Playwright takes `playwright.config.*`, the test tree and the `@playwright/test` it loads from where it is **started**. A
+Windows consumer (2026-10-18, Playwright 1.63.0) launched one checkout's Playwright executable while the shell was in another
+checkout, then saw `Playwright Test did not expect test.use() to be called here` during discovery. Mixed installs from two checkouts
+are the likely cause (the same run succeeded from the matching checkout), but it was not reproduced upstream, so treat it as a
+pitfall to rule out, not a diagnosis. Enter the checkout you mean, pass its config explicitly, and use ITS binary:
+
+```powershell
+Set-Location C:\work\app-feature-x
+node .\node_modules\@playwright\test\cli.js --version
+node .\node_modules\@playwright\test\cli.js test --config .\playwright.config.js --list
+node .\node_modules\@playwright\test\cli.js install chromium
+```
+
+A `--list` that names exactly the specs of this checkout is the check that matters; `node -e "console.log(process.cwd(), require.resolve('@playwright/test'))"`
+only shows which package a plain Node process resolves from here, not what the config loads. Under `fleet lease run` the child
+inherits the cwd, so `Set-Location` first.

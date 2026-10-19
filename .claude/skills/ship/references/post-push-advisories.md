@@ -1,5 +1,5 @@
 ---
-summary: Steps 6.5-6.8's post-push advisories — the incident history behind each rule, kept out of the routine flow.
+summary: Steps 6.5-6.8's post-push advisories and the Step 7 close-out - incident history, kept out of the routine flow.
 ---
 
 # Post-push advisories — incident history and design rationale
@@ -110,3 +110,37 @@ means a second commit and a second push, which re-triggers the same
 pre-push readiness suite Step 6.8 exists to verify — doubling the
 workflow's cost for one status line. A consumer hit exactly this 2026-08-14
 and reported it as friction.
+
+## Close-out — where the shipped work is, and what else is dirty
+
+A clean ship from a linked worktree can leave the user's EDITOR on another checkout (often the main one, on an older branch) with
+hundreds of changes. The Changes badge then reads as "the shipment is unfinished" (reported by a Windows/VS Code consumer
+2026-10-19: 232 changes, 176 of them test artefacts, in a checkout the ship rightly never touched). Step 7 ends with one
+READ-ONLY block that says which tree was shipped and what the others look like. It never changes another checkout.
+
+1. **Shipped**: the worktree path, its branch, the pushed sha, and whether `origin/main` contains it. Make a claim about remote
+   main only after `git fetch origin main` succeeded. Then `git merge-base --is-ancestor SHA origin/main`: exit 0 = contained;
+   exit 1 = not on main yet (say why: PR open, unmerged); any other exit = the probe failed (bad ref, missing object, repository
+   error): report "unknown" with the diagnostic and do not claim either result.
+2. **Other checkouts**: for each other entry of `git worktree list --porcelain` (the main checkout first), run
+   `git -C PATH status --porcelain=v1 --untracked-files=normal`. Report tracked edits and deletions, untracked files, and untracked
+   DIRECTORIES separately; a directory holding its own `.git` is an embedded repository and is named as one. Say when a count
+   could not be measured; never print 0 for a probe that failed.
+3. **Next action**: how to open the shipped tree (`code PATH`), and, if another checkout is dirty, one sentence: that checkout is
+   what the editor is showing, the ship did not touch it, and cleaning it is a separate task the user starts.
+
+Never run `git reset`, `git clean`, `git checkout -- .`, `git stash`, or delete ignored files in another checkout from this step.
+
+**Cleanup, only after the user asks for it and approves the plan** (preservation first):
+
+- Probe twice, and compare content as well as status: the same ` M path` lines prove nothing if a file changed underneath. Take a
+  snapshot of everything the cleanup would move, twice: `git -C PATH diff HEAD | git hash-object --stdin` (staged and unstaged
+  tracked changes) plus `git -C PATH ls-files --others --exclude-standard -z | xargs -0 git -C PATH hash-object` (every untracked file
+  by content; an embedded repository is hashed from its own `git rev-parse HEAD` and `git status --porcelain`). Any difference means stop: something is writing there.
+  Even identical probes are only evidence, not proof of idleness: ask the user to confirm that no editor, agent or test run is
+  using that checkout before anything moves.
+- Copy the whole tree, embedded repositories included, to a dated folder OUTSIDE the repository, byte for byte, and verify it with a
+  hash manifest compared in both directions. A plain `git stash -u` is not a backup: it does not carry embedded repositories.
+- Tracked edits go into a NAMED stash (`git stash push -m "cleanup-DATE"`); note its sha from `git stash list --format=%H%x20%gs`
+  and restore with `apply`, never `pop`. Untracked folders are moved (not stashed) into the verified backup.
+- Real source edits are never hidden: list them for the user before anything moves.
