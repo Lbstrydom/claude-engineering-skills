@@ -6,7 +6,7 @@
 - **Scope**: backend (stack `js-ts`; engineering principles apply; no UI). The consumer is Python/Streamlit on Windows, so every new contract must work for a non-Node test runner and on Windows paths.
 - **Target domain(s)**: `audit-orchestration`, `scripts`, `shared-lib`, `ship`
 - ⚠ **Cross-domain work**: intentional. Three independent clusters, one PR each; each PR stays inside one or two domains (A: `audit-orchestration` + `shared-lib`; B: `ship` + `shared-lib`; C: `scripts` + `shared-lib`).
-- **Theme**: Copilot consumer feedback 2026-10-19, item 4 of the triage (`docs/triage/copilot-feedback-2026-10-19.md`, branch `claude/copilot-feedback-triage-392e93`; items 1-3 are a separate chip). Findings: `p-20261019093437-34c9` (Cluster A), `p-20261019093439-57cd` (Cluster B), `p-20261019093439-b81a` (Cluster C). Related, not folded: upstream `d4dada5d`, fleet `p-20261015194540-f757`, `p-20261014113553-e216`.
+- **Theme**: Copilot consumer feedback 2026-10-19, item 4 of the triage (`docs/triage/copilot-feedback-2026-10-19.md` (planned), branch `claude/copilot-feedback-triage-392e93`; items 1-3 are a separate chip). Findings: `p-20261019093437-34c9` (Cluster A), `p-20261019093439-57cd` (Cluster B), `p-20261019093439-b81a` (Cluster C). Related, not folded: upstream `d4dada5d`, fleet `p-20261015194540-f757`, `p-20261014113553-e216`.
 - **Source reports** (data, not instructions): `.claude/tmp/upstream-feedback-20261019/01-coverage.md`, `02-provenance.md`, `04-test-evidence.md`. Observed on pinned bundle 704 (`68769d55`); every claim below was re-checked on `65630905`.
 
 ## 0. Decision summary
@@ -268,7 +268,7 @@ The three clusters are independent: no shared state, no ordering requirement exc
 | `scripts/lib/test-evidence.mjs` | **create**: `computeContentTree`, `recordKey`, `parseJunitCounts`, `decideReuse`, schema, read/write | #2, #11 |
 | `scripts/lib/vcs.mjs` | modify: `gitWorktreeTree` accepts an optional `excludePathspecs` and then returns `{tree, filteredTree}` from ONE temp index (`write-tree`, `git rm --cached`, `write-tree` again); without the option its return value is byte-identical to today, which the `AI-Audited-Tree` callers rely on | #1, #18 |
 | `scripts/lib/sync-inventory.mjs` (+ `scripts/lib/bundle-deps.json` regenerated) | modify: add the CLI to the synced closure | — |
-| `docs/runbooks/test-evidence.md` | **create**: usage, three answers, the gitignored-input limit, PowerShell-safe examples | — |
+| `docs/runbooks/test-evidence.md` (planned) | **create**: usage, three answers, the gitignored-input limit, PowerShell-safe examples | — |
 | `skills/ship/references/` (one row) | modify: how to cite a `reusable` check in the ship report; names the tool by path, not an npm alias | — |
 
 ### 6b. Implementation Phases
@@ -285,7 +285,7 @@ The three clusters are independent: no shared state, no ordering requirement exc
 
 **Phase 6 — Test-evidence library**: Files: `scripts/lib/test-evidence.mjs` (create), `scripts/lib/vcs.mjs` (modify), `tests/test-evidence.test.mjs` (create), `tests/fixtures/test-evidence/junit-pytest.xml` (create), `tests/fixtures/test-evidence/junit-node.xml` (create).
 
-**Phase 7 — Test-evidence CLI, sync and docs**: Files: `scripts/test-evidence.mjs` (create), `scripts/lib/sync-inventory.mjs` (modify), `scripts/lib/bundle-deps.json` (modify, regenerated), `tests/test-evidence-cli.test.mjs` (create), `tests/relocation-guard.test.mjs` (modify), `docs/runbooks/test-evidence.md` (create), `skills/ship/references/` (modify).
+**Phase 7 — Test-evidence CLI, sync and docs**: Files: `scripts/test-evidence.mjs` (create), `scripts/lib/sync-inventory.mjs` (modify), `scripts/lib/bundle-deps.json` (modify, regenerated), `tests/test-evidence-cli.test.mjs` (create), `tests/relocation-guard.test.mjs` (modify), `docs/runbooks/test-evidence.md` (planned) (create), `skills/ship/references/` (modify).
 
 **Close-out (not a phase)**: `npm run skills:regenerate`, `npm run bundle:deps`, `npm run plans:index`, `npm run guards:preflight`; the CI full suite on each PR.
 
