@@ -828,7 +828,7 @@ async function runLegacyProductionAuditImpl(ctx) {
   const shouldRunPass = (name) => {
     if (passFilter && !passFilter.includes(name)) return false;
     if (repoProfile?.passRelevance && repoProfile.passRelevance[name] === false) {
-      process.stderr.write(`  ${name} SKIPPED (repo profile: not relevant)\n`);
+      process.stderr.write(`  ${name} SKIPPED (repo profile: not relevant${repoProfile.passSkips?.[name] ? ` — ${repoProfile.passSkips[name]}` : ''})\n`);
       return false;
     }
     return true;

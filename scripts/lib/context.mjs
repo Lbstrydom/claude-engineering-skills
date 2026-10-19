@@ -13,6 +13,7 @@ import { semanticId, setRepoProfileCache } from './findings.mjs';
 import { briefConfig } from './config.mjs';
 import { SOURCE_CODE_EXTENSIONS } from './file-taxonomy.mjs';
 import { readClassifiedFile } from './path-validation.mjs';
+import { detectPythonUi, isPythonTestPath, PYTHON_UI_FRAMEWORKS } from './python-ui-detect.mjs';
 
 // ── Module-Level Caches ─────────────────────────────────────────────────────
 
@@ -494,9 +495,19 @@ export function generateRepoProfile() {
 
   // 2. Classify files
   const fileBreakdown = { backend: 0, frontend: 0, config: 0, test: 0, total: allFiles.length };
+  // A Python file that imports a UI framework (Streamlit and kin) draws the page itself, so it is frontend AND backend: it still
+  // runs server-side, and the wiring pass needs both counts non-zero. Test files are recognised by directory and file-name
+  // convention here (not by the substring rule below, which would drop `special_app.py` or `contest/app.py` as tests).
+  const pythonUi = detectPythonUi(allFiles.filter((f) => f.endsWith('.py') && !isPythonTestPath(f)));
+  const ownsUi = new Set(pythonUi.files);
+  const frontendPath = (f) => /public\/|frontend\/|client\/|\.css$|\.html$/i.test(f);
   for (const f of allFiles) {
-    if (/test|spec|__test__|fixture|benchmark/i.test(f)) fileBreakdown.test++;
-    else if (/public\/|frontend\/|client\/|\.css$|\.html$/i.test(f)) fileBreakdown.frontend++;
+    if (ownsUi.has(f)) {
+      fileBreakdown.frontend++;
+      if (!frontendPath(f)) fileBreakdown.backend++; // a path-classified frontend file was never a backend one
+    }
+    else if (/test|spec|__test__|fixture|benchmark/i.test(f)) fileBreakdown.test++;
+    else if (frontendPath(f)) fileBreakdown.frontend++;
     else if (/config\/|\.config\.|\.env\.|settings/i.test(f)) fileBreakdown.config++;
     else fileBreakdown.backend++;
   }
@@ -536,15 +547,30 @@ export function generateRepoProfile() {
       stack.backend.typescript = true;
     }
   } catch { /* no package.json */ }
+  if (pythonUi.frameworks.length > 0) {
+    stack.frontend = { ...stack.frontend, framework: stack.frontend.framework ?? pythonUi.frameworks[0], language: 'python' };
+  }
 
   // 4. Pass relevance
+  // An INCOMPLETE Python UI scan that found nothing is "unknown", never "absent": the frontend and wiring passes stay on rather
+  // than being switched off by a conclusion drawn from files the scan did not read.
+  const uiUnknown = fileBreakdown.frontend === 0 && !pythonUi.complete;
   const passRelevance = {
     structure: true, // always useful
-    wiring: fileBreakdown.frontend > 0 && fileBreakdown.backend > 0, // only if both exist
+    wiring: (fileBreakdown.frontend > 0 || uiUnknown) && fileBreakdown.backend > 0, // only if both exist
     backend: fileBreakdown.backend > 0,
-    frontend: fileBreakdown.frontend > 0,
+    frontend: fileBreakdown.frontend > 0 || uiUnknown,
     sustainability: true // always useful
   };
+
+  // Why a pass is off, so the skip is a stated limit and not silence. The recognised-framework list is in the reason: a UI in
+  // anything else is invisible here, and the reader needs to know that to judge "no frontend checks ran".
+  const passSkips = {};
+  if (!passRelevance.frontend) {
+    passSkips.frontend = `no frontend files detected (path rules, or a Python file importing one of: ${PYTHON_UI_FRAMEWORKS.join(', ')}); UI code in any other framework was NOT checked by a frontend pass`;
+  }
+  if (!passRelevance.wiring) passSkips.wiring = 'needs both frontend and backend files; no frontend/backend wiring was checked';
+  if (!passRelevance.backend) passSkips.backend = 'no backend source files detected';
 
   // 5. Focus areas from audit brief (if available)
   const brief = _auditBriefCache || '';
@@ -575,6 +601,7 @@ export function generateRepoProfile() {
     stack,
     fileBreakdown,
     passRelevance,
+    passSkips,
     focusAreas: focusAreas.slice(0, 10), // cap at 10
     codeFiles: allFiles
   };
@@ -584,6 +611,9 @@ export function generateRepoProfile() {
 
   process.stderr.write(`  [repo-profile] ${allFiles.length} files (${fileBreakdown.backend} BE, ${fileBreakdown.frontend} FE, ${fileBreakdown.test} test)\n`);
   process.stderr.write(`  [repo-profile] Stack: ${JSON.stringify(stack.backend)} | Passes: ${Object.entries(passRelevance).filter(([,v]) => v).map(([k]) => k).join(', ')}\n`);
+  if (pythonUi.files.length > 0) process.stderr.write(`  [repo-profile] Python UI: ${pythonUi.frameworks.join(', ')} (${pythonUi.files.length} file(s) own UI)\n`);
+  if (!pythonUi.complete) process.stderr.write(`  [repo-profile] Python UI scan INCOMPLETE (${pythonUi.incomplete.join('; ')}); ${uiUnknown ? 'frontend and wiring passes kept ON because absence is unproven' : 'UI files beyond the scan may exist'}\n`);
+  if (Object.keys(passSkips).length > 0) process.stderr.write(`  [repo-profile] Passes NOT run (not relevant): ${Object.entries(passSkips).map(([k, v]) => `${k} — ${v}`).join('; ')}\n`);
   if (focusAreas.length > 0) process.stderr.write(`  [repo-profile] Focus: ${focusAreas.length} priority rules\n`);
 
   return _repoProfileCache;
