@@ -23,14 +23,13 @@ Multi-pass code audit with GPT + Gemini final review. Iterates until
 findings stabilise or max 6 rounds.
 
 **Input**: `$ARGUMENTS` — plan file path (the spec the code is being audited
-against). Optional flags: `--scope diff|plan|full`.
+against). Optional flags: `--scope diff|plan|full`, `--require <paths>` (must-read files; any not FULL withholds convergence).
 
 <!-- host-contract: input-acquisition; grammar=path+flags; empty=ask-and-stop -->
 
 **Where `$ARGUMENTS` comes from** — orchestrator-supplied input first, else
 the host's verbatim invocation suffix, else the span of the user's **current**
-message naming this skill or its subject. Never inferred from surrounding
-conversation. This site is `path+flags`; on empty input, ask which plan to audit and stop — never guess a plan, and never start an audit that would bill a provider against the wrong spec.
+message naming this skill or its subject; never inferred from the conversation. This site is `path+flags`; on empty input, ask which plan to audit and stop — never guess a plan.
 Full contract: `references/input-acquisition.md`.
 
 
@@ -190,7 +189,7 @@ git diff --no-textconv --output=.audit/$SID-diff.patch "$BASE" -- .
 them (UTF-16 on 5.1, CRLF on 7.x); the parser now tolerates both, but git's own
 bytes are what the annotations were built for.
 
-**Include UNTRACKED new files** — `git diff` omits them, so without this a brand-new file reaches the auditor with NO `[CHANGED]` annotation (it's still read in full via `--files`, but loses the diff focus markers). Append each as a new-file diff against `/dev/null`. **POSIX shell only** (Git Bash on Windows) — `xargs` and `/dev/null` have no native PowerShell equivalent; run this step in a bash-capable shell even on a Windows/Copilot host:
+**Include UNTRACKED new files** — `git diff` omits them, so a brand-new file would reach the auditor with NO `[CHANGED]` annotation (still read in full via `--files`, without diff focus markers). Append each as a new-file diff against `/dev/null`. **POSIX shell only** (Git Bash on Windows; `xargs` and `/dev/null` have no PowerShell equivalent), even on a Windows/Copilot host:
 
 ```bash
 git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> .audit/$SID-diff.patch 2>.audit/$SID-untracked-diff-stderr.log || true
@@ -421,7 +420,7 @@ Stability uses `_hash` for exact cross-round matching:
 | Threshold NOT met | Fix → re-audit |
 | Threshold met, new architectural | Fix → re-audit (stability resets) |
 | Threshold met, mechanical only | Fix → re-audit (stability NOT reset) |
-| Summary line ends `— not convergence evidence` (changed lines, or an unrecognised file type, never sent to any pass) | **Not stable, whatever H/M/L say** — the change was not read (`changed-lines-unread` / `unrecognised-files-unreviewed`). Re-run short files with `--files`; too big alone → report not converged. Unrecognised type: `.auditignore` it (explicit acceptance) or report upstream |
+| Summary line ends `— not convergence evidence` (changed lines, an unrecognised file type, or a `--require` subject not read in full) | **Not stable, whatever H/M/L say** — the change was not read (`changed-lines-unread` / `unrecognised-files-unreviewed` / `required-subjects-not-full`). Re-run short files with `--files`; too big alone → report not converged. Unrecognised type: `.auditignore` it or report upstream. Required subject: fix the read, never `.auditignore` it |
 | Threshold met, 0 new, 2/2 stable | **CONVERGED** → Step 6, then REQUIRED Step 7 |
 | Same file/concern recurs 3 rounds running | **Pivot**: stop, propose a new design (`references/pivot-rule.md`) |
 | Round 6, not stable | Present to user, then REQUIRED Step 7 |

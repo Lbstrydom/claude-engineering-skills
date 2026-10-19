@@ -127,6 +127,8 @@ export function computeGateDisposition(result) {
   if (verdict === 'REJECT') reasons.push('verdict REJECT');
   if (!['APPROVE', 'CONCERNS', 'CONCERNS_REMAINING', 'REJECT'].includes(verdict)) reasons.push(`unrecognised verdict "${verdict}"`);
   if (result?._coverageGate?.downgraded) reasons.push('coverage gate: the reviewer received none of the changed code');
+  const unreceived = result?._requiredSubjectsGate?.notReceived;
+  if (Array.isArray(unreceived) && unreceived.length > 0) reasons.push(`required subject(s) not received in full: ${unreceived.map((r) => `${r.path} (${r.state}${r.reason ? `: ${r.reason}` : ''})`).join(', ')}`);
   if (blockingIds.length > 0) reasons.push(`${blockingIds.length} release-blocking new finding(s): ${blockingIds.join(', ')}`);
   if (pairViolations.length > 0) reasons.push(`${pairViolations.length} finding(s) with an invalid release_blocking/blocking_basis pair (counted as blocking)`);
   if (highDismissed.length > 0) reasons.push(`${highDismissed.length} HIGH wrongly_dismissed: ${highDismissed.map((d) => d.original_finding_id).join(', ')}`);

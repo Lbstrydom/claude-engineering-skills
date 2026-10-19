@@ -50,6 +50,7 @@ import {
 } from '../file-io.mjs';
 import { readFilesAsAnnotatedContextDetailed } from '../diff-annotation.mjs';
 import { startCoverage, makeCoverageInput } from './file-coverage.mjs';
+import { admittedRequiredPaths, widenScopeWithRequired } from './required-subjects.mjs';
 import {
   generateTopicId, populateFindingMetadata, jaccardSimilarity,
   suppressReRaises, buildRulingsBlock, R2_ROUND_MODIFIER, buildR2SystemPrompt,
@@ -285,10 +286,9 @@ async function runLegacyProductionAuditImpl(ctx) {
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
     sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
     outFile = null, providers = {}, noCloudRecording = false,
-    coverageChanged = null, coverageExcluded = null,
-    // Present in ctx since buildAuditRunContext, but never destructured until
-    // 2026-08-13 — which is why the orphan wave could not tell a dirty tree
-    // from a clean one and hard-coded its range. See resolveOrphanScopeRefs.
+    coverageChanged = null, coverageExcluded = null, requiredSubjects = null,
+    // In ctx since buildAuditRunContext but not destructured until 2026-08-13 (the orphan wave could not tell a dirty
+    // tree from a clean one and hard-coded its range): see resolveOrphanScopeRefs.
     workingTreeDirty = false,
   } = ctx;
   const { openai } = providers;
@@ -362,9 +362,11 @@ async function runLegacyProductionAuditImpl(ctx) {
   // and `--scope diff` were filters only, so a changed file absent from the
   // plan was intersected away and read by no pass — see mergeScopeFiles.
   const { found: planFound, missing, allPaths } = extractPlanPaths(planContent, { allowInfraFiles: allowInfraScope });
+  const requiredPaths = admittedRequiredPaths(requiredSubjects); // --require: admitted whatever the class (required-subjects.mjs)
   const { files: found, addedFromScope, rejected: scopeRejected } = mergeScopeFiles(
-    planFound, fileFilter, { allowInfraFiles: allowInfraScope },
+    planFound, widenScopeWithRequired(fileFilter, requiredPaths), { allowInfraFiles: allowInfraScope, requiredPaths },
   );
+  if (fileFilter) fileFilter = widenScopeWithRequired(fileFilter, requiredPaths);
   if (addedFromScope.length > 0) {
     process.stderr.write(
       `  [scope] +${addedFromScope.length} changed file(s) not referenced by the plan, now in scope: `
@@ -1486,7 +1488,7 @@ async function runLegacyProductionAuditImpl(ctx) {
     runDuplication, duplicationResult, runAdjacency, adjacencyResult,
     archState, archResult, orphanState, orphanResult, eventWiringState, eventWiringResult,
     isR2Plus, allowInfraScope,
-    coverageInput: makeCoverageInput({ recorder: coverageRecorder, coverageChanged, changedFiles, fileFilter, coverageExcluded, diffMap, toolCapability, noTools }),
+    coverageInput: makeCoverageInput({ recorder: coverageRecorder, coverageChanged, changedFiles, fileFilter, coverageExcluded, diffMap, toolCapability, noTools, requiredSubjects }),
   };
   setChunkingObserver(null);
   const { mergedResult } = await finalizeRun(finalizationData, writeOutcomes);
@@ -1536,7 +1538,7 @@ export async function buildAuditRunContext(cliArgs) {
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
     sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
     outFile = null, model = null, allowTiered = false, __runDuplicationAnalysis = null, __runAdjacencyAnalysis = null,
-    coverageChanged = null, coverageExcluded = null,
+    coverageChanged = null, coverageExcluded = null, requiredSubjects = null,
     // docs/plans/stage0-evidence-relevance-split.md decision #5: the tiered
     // pipeline's Stage 0 blame/impact adapters need the current HEAD sha
     // (import-graph freshness validation) and dirty-tree status (both
@@ -1671,7 +1673,7 @@ export async function buildAuditRunContext(cliArgs) {
     passFilter, fileFilter, round, ledgerFile, diffFile, diffText, changedFiles, auditBaseCommit, __runDuplicationAnalysis, __runAdjacencyAnalysis, repoProfile, bandit, fpTracker,
     noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath,
     escalateRecurring, scopeMode, planFile, runId, allowInfraScope,
-    outFile, model, sessionCacheHit, allowTiered, commitSha, workingTreeDirty, coverageChanged, coverageExcluded,
+    outFile, model, sessionCacheHit, allowTiered, commitSha, workingTreeDirty, coverageChanged, coverageExcluded, requiredSubjects,
     generatorOutcomes: [],
     // `anthropicReadiness` travels WITH the client so a downstream consumer can
     // tell a routine keyless skip from a real construction defect, instead of

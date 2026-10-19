@@ -51,7 +51,7 @@ import {
 } from './lib/final-review/scope.mjs';
 import { buildReviewEnvelope } from './lib/final-review/envelope.mjs';
 import { serializePrimaryForGap } from './lib/final-review/gap-projection.mjs';
-import { summariseCodeCoverage, applyCoverageGate, formatCodeCoverageSegment } from './lib/final-review/code-coverage.mjs';
+import { summariseCodeCoverage, applyCoverageGate, formatCodeCoverageSegment, summariseRequiredReceived, applyRequiredSubjectsGate } from './lib/final-review/code-coverage.mjs';
 import { makeTieredCodeRenderer } from './lib/final-review/code-render.mjs';
 import { resolveFinalReviewHunks } from './lib/audit/final-review-hunks.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
@@ -382,9 +382,12 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // How much of the DIFF actually reached the model. Distinct from
   // `truncated`, which counts drops without knowing which of them mattered.
   const codeCoverage = summariseCodeCoverage(built.accounting.codeRender, changedFilesDeclared, { hunksFor: hunks.hunksFor, requested: codePaths });
+  // Per --require subject: received or not (the audit wrote the list to the transcript; the key is absent when none was declared).
+  const requiredReceived = summariseRequiredReceived(built.accounting.codeRender, transcript.required_subjects, { hunksFor: hunks.hunksFor, changedFiles: changedFilesDeclared });
   const envelopeAccounting = {
     ...built.accounting,
     codeCoverage,
+    ...(requiredReceived.length > 0 ? { requiredSubjects: requiredReceived } : {}),
     hunkEvidence: { base: hunks.base, evidence: hunks.evidence, reason: hunks.reason },
     redactions: scanned.redacted,
     codeExcluded,
@@ -518,6 +521,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // matter what the model said. Applied BEFORE the result is stamped and
   // returned, so every downstream consumer sees the gated verdict.
   const coverageGate = applyCoverageGate(call.result, codeCoverage);
+  applyRequiredSubjectsGate(call.result, envelopeAccounting.requiredSubjects);
   if (coverageGate.downgraded) {
     process.stderr.write(
       `  [final-review] COVERAGE GATE: verdict ${coverageGate.from} → ${coverageGate.to} `

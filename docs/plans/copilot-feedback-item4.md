@@ -1,7 +1,7 @@
 # Plan: Copilot consumer feedback, item 4: required-subject coverage, a final-review provenance fact, and hash-bound test evidence
 
 - **Date**: 2026-10-19
-- **Status**: Approved (audit-plan converged 2026-10-19; Gemini APPROVE; implementation pending, one PR per cluster)
+- **Status**: Approved (audit-plan converged 2026-10-19; Gemini APPROVE; one PR per cluster). Cluster A implemented 2026-10-19 (required-subject coverage); Clusters B and C pending
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`; engineering principles apply; no UI). The consumer is Python/Streamlit on Windows, so every new contract must work for a non-Node test runner and on Windows paths.
 - **Target domain(s)**: `audit-orchestration`, `scripts`, `shared-lib`, `ship`
@@ -350,10 +350,12 @@ Tier 1 (test-first) for every pure module here: `required-subjects.mjs`, the cov
 
 ## 10. Decisions that are Louis's
 
-1. **B: emit `AI-Final-Review` automatically on every ship that has a bound marker** (recommended), or only behind an opt-in flag. Automatic changes the trailer block of every CES and consumer `/ship` commit from its release on.
-2. **B: promote this slice although the V2 receipt's recorded trigger is unmet.** The consumer case is a reviewed disposition flattened into `waived`, which is the "what remains in `waived`" the V2 table told us to revisit (`provenance-trailers-and-gate-honesty.md:1002`), not the receipt's own trigger. Recommended: yes, the slice only.
-3. **A: force-admit a required non-code file into the GPT passes** (recommended; the operator pays the tokens they asked for) versus reporting it `UNREAD` without reading it.
-4. **C: sync the new CLI to every consumer now** (recommended; the requester is a consumer) versus CES-only until it has been exercised.
+**All four accepted 2026-10-19** (Louis, in the coordinator's chat: *"Accept the item-4 plan's four recommendations: emit AI-Final-Review automatically; build only the narrow B slice; send required non-code files like lockfiles to reviewers; ship the test-evidence tool to consumers now. Start cluster A when ready."*). Each stays below as the question it answered; the recommended option is the accepted one.
+
+1. **B: emit `AI-Final-Review` automatically on every ship that has a bound marker** (recommended), or only behind an opt-in flag. Automatic changes the trailer block of every CES and consumer `/ship` commit from its release on. **Accepted: automatic.**
+2. **B: promote this slice although the V2 receipt's recorded trigger is unmet.** The consumer case is a reviewed disposition flattened into `waived`, which is the "what remains in `waived`" the V2 table told us to revisit (`provenance-trailers-and-gate-honesty.md:1002`), not the receipt's own trigger. Recommended: yes, the slice only. **Accepted: build only the narrow B slice.**
+3. **A: force-admit a required non-code file into the GPT passes** (recommended; the operator pays the tokens they asked for) versus reporting it `UNREAD` without reading it. **Accepted: send it to the reviewers and count it.** Implemented in Cluster A (`tests/required-subjects-egress.test.mjs`): a required lockfile is read by the passes and handed to the final reviewer; only a SENSITIVE one is withheld.
+4. **C: sync the new CLI to every consumer now** (recommended; the requester is a consumer) versus CES-only until it has been exercised. **Accepted: sync now.**
 
 ## 11. Execution Clustering
 

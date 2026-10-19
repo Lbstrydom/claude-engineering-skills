@@ -84,6 +84,40 @@ deadline, killed as a **process tree** on timeout.
 - Not built: a namespace-to-file import graph (C# resolves by namespace, not path; `buildDependencyGraph` has no production
   caller), Roslyn analysis, C# ports of the four JS-only waves.
 
+## Required subjects — `--require`
+
+The ledger's "required" means *a changed file of a reviewable class*. It cannot say "the files **I** named were read", so an
+operator whose final gate lists twelve subjects could see eleven read and a round that still read as complete (Copilot consumer
+report, 2026-10-19). `--require` is the operator's own list:
+
+```powershell
+node scripts/openai-audit.mjs code docs/plans/copilot-feedback-item4.md --require package-lock.json,src/app.py
+node scripts/openai-audit.mjs code docs/plans/copilot-feedback-item4.md --require @required-files.txt   # one path per line, # comments
+```
+
+| Status | Meaning | Blocks convergence and the final-review gate? |
+|---|---|---|
+| `FULL` | read whole, or a changed file windowed with every changed line shown | no |
+| `PARTIAL` | read in part (a head cut; an unchanged file not shown in full) | **yes** |
+| `UNREAD` | not admitted, unreadable, over budget, or not on disk | **yes** |
+| `SENSITIVE` | a sensitive path, or a name that resolves to one: reported, **never sent** | **yes** |
+| `N/A` | deleted in the diff (git-verified, never inferred from absence) | no (named) |
+
+- A required non-code file (a lockfile) is **admitted and sent** to the passes and to the final reviewer, through the ordinary
+  readers, so it is redacted like any other file. A required file that is not in the diff joins the ledger as a context subject.
+- Every path is repo-contained and symlink-resolved (`resolveAndClassify`, INC-001) **before** any read. A path that resolves
+  outside the repository, a path both required and excluded (`.auditignore` / `--exclude-paths`), a directory, and a flag with
+  no value all refuse the run (exit 2). `--require` with a plan or rebuttal audit, or with the tiered pipeline, also refuses:
+  a declaration is never silently ignored.
+- The summary line names every non-FULL subject: `required: 11/12 FULL — package-lock.json UNREAD (not-admitted) — not
+  convergence evidence`. `_coverage.requiredSubjects` carries the same, and `_convergence.reason` is
+  `required-subjects-not-full` (the verdict word stays PASS: the change was measured, a declared subject was not read).
+- The audit writes the list to the transcript (`required_subjects`). The final reviewer is handed every non-sensitive subject,
+  reports per subject whether it **received** it, and `gateDisposition` is `blocked` while any is `partial` or
+  `not-received` (`result._requiredSubjectsGate`; the model's verdict is left alone).
+- A big lockfile will usually be `PARTIAL`: the passes read 6,000-8,000 chars per file. That is the honest answer. Require a
+  lockfile when it changed (hunk windows can then make the changed lines `FULL`).
+
 ## Reading a result
 
 ```bash

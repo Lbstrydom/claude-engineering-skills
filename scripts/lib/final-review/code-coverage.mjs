@@ -272,3 +272,66 @@ export function applyCoverageGate(result, coverage) {
   result.overall_reasoning = (notice + (result.overall_reasoning ?? '')).slice(0, 3000);
   return { downgraded: true, from, to: result.verdict };
 }
+
+// ── Required subjects (docs/plans/copilot-feedback-item4.md Cluster A, A5) ───────────────────────────────────────────
+
+/**
+ * Per `--require` subject: did the final reviewer RECEIVE it? The audit's own verdict on the subject rides in
+ * (`transcript.required_subjects`), so the two gates agree: a git-verified deletion (`N/A`) is `n-a` here too, and a subject
+ * the audit refused as sensitive is `not-received` whatever the render says.
+ *
+ * - `full`          rendered whole, or windowed with every changed line of a CHANGED subject shown
+ * - `partial`       rendered in part (a head cut, or a window that misses a changed line, or an unchanged subject cut short:
+ *                   zero unread changed lines is vacuous for a file with no change)
+ * - `not-received`  absent from the render (dropped by a budget, unreadable, never requested, sensitive)
+ * - `n-a`           deleted in the diff and still absent: nothing on disk to receive
+ *
+ * Pure. No render record at all is `not-received`, never an assumed `full`.
+ *
+ * @param {object|null} stats `readFilesAsContextDetailed().stats`
+ * @param {Array<{path: string, status: string}>} required transcript.required_subjects
+ * @param {{hunksFor?: Function|null, changedFiles?: string[], readText?: Function}} [opts]
+ * @returns {Array<{path: string, state: 'full'|'partial'|'not-received'|'n-a', reason: string|null}>}
+ */
+export function summariseRequiredReceived(stats, required, { hunksFor = null, changedFiles = [], readText = defaultReadText, exists = defaultExists } = {}) {
+  const key = (p) => normalizePath(p);
+  const fullSet = new Set((stats?.full ?? []).map(key));
+  const cutMap = new Map((stats?.headTruncated ?? []).map((t) => [key(t.path), t]));
+  const changedSet = new Set((Array.isArray(changedFiles) ? changedFiles : []).map(key));
+  const lineCounts = new Map(Object.entries(stats?.lineCounts ?? {}).map(([p, n]) => [key(p), n]));
+  return (Array.isArray(required) ? required : []).map(({ path: p, status }) => {
+    const k = key(p);
+    // N/A (a git-verified deletion) holds only while the file is still absent: a file back on disk is judged on what was received.
+    if (status === 'N/A' && !exists(p)) return { path: p, state: 'n-a', reason: 'deleted in the diff' };
+    if (status === 'SENSITIVE') return { path: p, state: 'not-received', reason: 'sensitive path, never sent' };
+    if (fullSet.has(k)) return { path: p, state: 'full', reason: null };
+    const cut = cutMap.get(k);
+    if (!cut) return { path: p, state: 'not-received', reason: stats ? 'not in the code the reviewer received' : 'renderer reported no coverage record' };
+    const hunks = typeof hunksFor === 'function' ? hunksFor(p) : null;
+    // A recreated N/A subject has no trustworthy change evidence (the audit saw a deletion): whole render or nothing.
+    const covered = status !== 'N/A' && changedSet.has(k) && Array.isArray(cut.ranges) && Array.isArray(hunks);
+    if (covered) {
+      const n = lineCounts.get(k) ?? (() => { const t = readText(p); return typeof t === 'string' ? t.split('\n').length : null; })();
+      const m = n ? unreadChangedLines({ lineCount: n, hunks, ranges: cut.ranges }) : null;
+      if (m && m.unread === 0) return { path: p, state: 'full', reason: null };
+      if (m) return { path: p, state: 'partial', reason: `${cut.windowed ? 'windowed' : 'head-cut'}, ${m.unread} changed line(s) never shown` };
+    }
+    return { path: p, state: 'partial', reason: `${cut.windowed ? 'windowed' : 'head-cut'}${changedSet.has(k) ? ', changed lines could not be measured' : ', unchanged file not shown in full'}` };
+  });
+}
+
+/**
+ * Stamp `result._requiredSubjectsGate` when any required subject was not received in full. The VERDICT is left alone (it is the
+ * model's own word); `computeGateDisposition` reads the stamp and turns it into a blocking reason. Mutates and returns whether it
+ * fired. `n-a` never fires.
+ *
+ * @param {object} result a final-review result
+ * @param {Array<{path: string, state: string, reason: string|null}>|null} received `summariseRequiredReceived` output
+ * @returns {boolean}
+ */
+export function applyRequiredSubjectsGate(result, received) {
+  const short = (Array.isArray(received) ? received : []).filter((r) => r.state === 'partial' || r.state === 'not-received');
+  if (!result || short.length === 0) return false;
+  result._requiredSubjectsGate = { notReceived: short.map(({ path: p, state, reason }) => ({ path: p, state, reason })) };
+  return true;
+}

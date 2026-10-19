@@ -11,8 +11,8 @@ const { countFindings, isConverged } = await import('../scripts/audit-loop.mjs')
 const round = (convergence, over = {}) => ({ verdict: 'PASS', findings: [], _convergence: convergence, ...over });
 
 describe("audit-loop honours the round's coverage convergence reasons", () => {
-  it('both coverage reasons refuse convergence', () => {
-    for (const reason of ['unrecognised-files-unreviewed', 'changed-lines-unread']) {
+  it('every coverage reason refuses convergence', () => {
+    for (const reason of ['unrecognised-files-unreviewed', 'changed-lines-unread', 'required-subjects-not-full']) {
       const counts = countFindings(round({ converged: false, reason }));
       assert.equal(counts.coverageBlocked, true, reason);
       assert.equal(isConverged(counts), false, reason);

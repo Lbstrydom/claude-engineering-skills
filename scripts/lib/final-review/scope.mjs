@@ -184,7 +184,28 @@ export function resolveFinalReviewInfraScope({ flag = false, transcript = null, 
  *
  * @returns {{codePaths: string[], codeExcluded: object|null}}
  */
-export function selectFinalReviewCodePaths({ reduced, transcript, planContent, infraAdmitted, deps, extractPlanPaths }) {
+export function selectFinalReviewCodePaths(args) {
+  const sel = selectBaseCodePaths(args);
+  const required = selectRequiredSubjectPaths(args);
+  return required.length === 0 ? sel : { ...sel, codePaths: [...new Set([...sel.codePaths, ...required])] };
+}
+
+/**
+ * The operator's `--require` subjects (transcript.required_subjects, written by the audit) that the reviewer must be handed,
+ * WHATEVER their class: a lockfile is non-code and would otherwise never reach the Code Files block. They go through the same
+ * existence and sensitivity rules as every other file (the caller's `isSensitive` is `resolveAndClassify`, INC-001); a SENSITIVE
+ * subject is never requested. An `N/A` one (a git-verified deletion) is requested like any other: if it is still absent the
+ * existence rule drops it, and if it is BACK on disk a stale deletion must not excuse it.
+ *
+ * @returns {string[]}
+ */
+function selectRequiredSubjectPaths({ transcript, infraAdmitted, deps }) {
+  const subjects = Array.isArray(transcript?.required_subjects) ? transcript.required_subjects : [];
+  const wanted = subjects.filter((r) => r && typeof r.path === 'string' && r.status !== 'SENSITIVE').map((r) => r.path);
+  return selectInScopeCodeFiles(wanted, { ...deps, isInfra: infraAdmitted ? () => false : deps.isInfra }).files;
+}
+
+function selectBaseCodePaths({ reduced, transcript, planContent, infraAdmitted, deps, extractPlanPaths }) {
   const changed = Array.isArray(transcript?.changed_files) ? transcript.changed_files : [];
   if (reduced) {
     const sel = selectInScopeCodeFiles(changed, { ...deps, isInfra: infraAdmitted ? () => false : deps.isInfra });
