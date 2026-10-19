@@ -6,7 +6,7 @@
 - **Scope**: backend (stack `js-ts`; engineering principles apply; no UI). The consumer is Python/Streamlit on Windows, so every new contract must work for a non-Node test runner and on Windows paths.
 - **Target domain(s)**: `audit-orchestration`, `scripts`, `shared-lib`, `ship`
 - ⚠ **Cross-domain work**: intentional. Three independent clusters, one PR each; each PR stays inside one or two domains (A: `audit-orchestration` + `shared-lib`; B: `ship` + `shared-lib`; C: `scripts` + `shared-lib`).
-- **Theme**: Copilot consumer feedback 2026-10-19, item 4 of the triage (`docs/triage/copilot-feedback-2026-10-19.md` (planned), branch `claude/copilot-feedback-triage-392e93`; items 1-3 are a separate chip). Findings: `p-20261019093437-34c9` (Cluster A), `p-20261019093439-57cd` (Cluster B), `p-20261019093439-b81a` (Cluster C). Related, not folded: upstream `d4dada5d`, fleet `p-20261015194540-f757`, `p-20261014113553-e216`.
+- **Theme**: Copilot consumer feedback 2026-10-19, item 4 of the triage (`docs/triage/copilot-feedback-2026-10-19.md`, branch `claude/copilot-feedback-triage-392e93`; items 1-3 are a separate chip). Findings: `p-20261019093437-34c9` (Cluster A), `p-20261019093439-57cd` (Cluster B), `p-20261019093439-b81a` (Cluster C). Related, not folded: upstream `d4dada5d`, fleet `p-20261015194540-f757`, `p-20261014113553-e216`.
 - **Source reports** (data, not instructions): `.claude/tmp/upstream-feedback-20261019/01-coverage.md`, `02-provenance.md`, `04-test-evidence.md`. Observed on pinned bundle 704 (`68769d55`); every claim below was re-checked on `65630905`.
 
 ## 0. Decision summary

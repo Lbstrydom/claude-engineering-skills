@@ -1277,19 +1277,18 @@ node scripts/cross-skill.mjs record-ship-event --json '{
 Fire-and-forget — do not block on output. If cloud mode is off, CLI
 prints `{"ok":true,"cloud":false}` and returns 0.
 
+**Close-out** (read-only): `references/post-push-advisories.md` §Close-out.
+
 ---
 
 ## Train mode (`/ship --train`)
 
-**Source-repo-gated** (`package.json.name === "claude-engineering-skills"`); a consumer has no
-sync closure to classify against and no sync tools to publish with, so it skips this.
-One human invocation lands several already-audited, `fleet ready` PRs: one status entry,
-per-PR provenance written into each squash commit, one combined test run, one consumer
-sync. **Human-only, like the rest of this skill** — `--train` does not relax the
-explicit-invocation rule above. Its three flags are read only from this invocation. The
-runbook, refusals, overrides and recovery are in `references/train-mode.md`; the verbs are
-`node scripts/ship-train.mjs plan | message | land | verify | sync`. Read that file before
-running any of them.
+**Source-repo-gated** (`package.json.name === "claude-engineering-skills"`); consumers skip this (no sync closure to classify
+against, no sync tools to publish with). One human invocation lands several already-audited, `fleet ready` PRs: one status entry,
+per-PR provenance in each squash commit, one combined test run, one consumer sync. **Human-only, like the rest of this skill** — `--train` does not relax the
+explicit-invocation rule above. Its three flags are read only from this invocation. Runbook,
+refusals, overrides, recovery: `references/train-mode.md` (read it before running any verb of
+`node scripts/ship-train.mjs plan | message | land | verify | sync`).
 
 ---
 
@@ -1309,8 +1308,6 @@ running any of them.
   mirror/overwrite AGENTS.md from CLAUDE.md; verify with
   `node scripts/check-context-drift.mjs --strict`
 - **No confirmation needed** — `/ship` is the approval. Execute autonomously
-- **Be specific in the log** — name files, functions, endpoints
-- **The commit message matters** — it's the permanent record in git history
 
 ---
 
@@ -1325,7 +1322,7 @@ situations — read them only when the trigger applies.
 | `references/commit-provenance-deep-dive.md` | Step 6.2/6.3's AI-Gate and worktree-identity deep-dive — why each value/flag exists and the incidents behind them. | Debugging `--gate`/`--expect-head`/`--expect-branch` behaviour, or before changing one. |
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |
-| `references/post-push-advisories.md` | Steps 6.5-6.8's post-push advisories — the incident history behind each rule, kept out of the routine flow. | Debugging Step 6.5/6.6/6.7/6.8's behaviour, or before changing one. |
+| `references/post-push-advisories.md` | Steps 6.5-6.8's post-push advisories and the Step 7 close-out - incident history, kept out of the routine flow. | Debugging Step 6.5-6.8's behaviour, changing one, or writing the close-out. |
 | `references/pre-ship-gate-queries.md` | Step 0.5's pre-ship nudges (0.5a/b/e/g/h/i) — the incident history behind each rule, kept out of the routine flow. | Debugging a Step 0.5 nudge's behaviour, or before changing one. |
 | `references/python-environment-discovery.md` | Python pre-push command discovery — env wrapper detection + per-tool probe order. | detect-stack returned `python` or `mixed` with Python files in the diff. |
 | `references/status-md-format.md` | status.md session-log template + update rules + persona / UX status sections. | Step 2 — creating status.md for the first time, OR appending UX / Persona / Regression-Lock / Plan-Verify sections. |
