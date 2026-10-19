@@ -18,10 +18,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DebtEventSchema } from './schemas.mjs';
+import { compactRunKey } from './run-key.mjs';
 
 export const DEFAULT_DEBT_EVENTS_PATH = '.audit/local/debt-events.jsonl';
 
 // ── Local JSONL append ──────────────────────────────────────────────────────
+
+/** Compact the run-id fields the schema caps at 40 chars (run-key.mjs); anything else is left for the schema to judge. */
+function compactEventRunIds(evt) {
+  if (evt === null || typeof evt !== 'object') return evt;
+  const out = { ...evt };
+  for (const k of ['runId', 'resolvedBy']) {
+    if (typeof out[k] === 'string' && out[k]) out[k] = compactRunKey(out[k]);
+  }
+  return out;
+}
 
 /**
  * Append events to the local JSONL log. Line-oriented, atomic per-line via O_APPEND.
@@ -39,7 +50,7 @@ export function appendDebtEventsLocal(events, eventsPath = DEFAULT_DEBT_EVENTS_P
   let written = 0;
   const lines = [];
   for (const evt of events) {
-    const validated = DebtEventSchema.safeParse(evt);
+    const validated = DebtEventSchema.safeParse(compactEventRunIds(evt));
     if (!validated.success) {
       process.stderr.write(`  [debt-events] skipping invalid event: ${validated.error.message.slice(0, 120)}\n`);
       continue;

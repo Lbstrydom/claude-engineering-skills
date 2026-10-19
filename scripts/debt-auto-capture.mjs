@@ -66,6 +66,7 @@ import {
 import { resolveRepoForStore, initLearningStore, isCloudEnabled } from './learning-store.mjs';
 import { generateRepoProfile } from './lib/context.mjs';
 import { finishAndExit } from './lib/cli-io.mjs';
+import { compactRunKey } from './lib/run-key.mjs';
 import { finalReviewToLedgerEntries } from './lib/final-review/round-gate.mjs';
 // Side-effecting import — populates the process-local writer registry
 // (`debt.entries` among others) the same way the orchestrator does. Without
@@ -512,7 +513,7 @@ function printSummary({ built, skipped, result, reason, sid, cloudSync, trail, s
     `  Sensitive (redacted): ${sensitive}${redactionSuffix}`,
     `  Total ledger: ${result.total} entries`,
     `  Cloud sync: ${cloudSyncLabel(cloudSync)}`,
-    `  Run SID: ${sid}`,
+    `  Run SID: ${sid}${compactRunKey(sid) === sid ? '' : ` (recorded as ${compactRunKey(sid)})`}`,
     '═══════════════════════════════════════',
   ].join('\n'));
 

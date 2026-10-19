@@ -15,7 +15,7 @@
 import path from 'node:path';
 import { ArgvError } from '../cli-io.mjs';
 import { exitCodeForSignal, runUnderLease } from './lease-run.mjs';
-import { runChild } from './lease-spawn.mjs';
+import { runChild, describeSpawnFailure } from './lease-spawn.mjs';
 import { failed, ok, refused, selfId } from './commands.mjs';
 import { gitCommonDir, runGit } from './git-facts.mjs';
 import {
@@ -122,7 +122,7 @@ async function cmdRun(ctx, flags, positionals, { dir, repo }) {
     } else { say(`${res.reason}. The command did NOT run.`); exitCode = 70; }
   } else {
     const o = res.result;
-    if (o.spawnError) { say(`could not start ${JSON.stringify(cmd)}: ${o.spawnError}`); exitCode = 127; }
+    if (o.spawnError) { say(describeSpawnFailure({ cmd, spawnError: o.spawnError, target: o.target, cwd: process.cwd() })); exitCode = 127; }
     else if (res.signalled) { say(`stopped by ${res.signalled}; the command's process tree was stopped${res.released?.ok ? ' and the slot released' : ' but the slot could NOT be released (see above)'}`); exitCode = exitCodeForSignal(res.signalled); }
     else if (o.timedOut) { say(`the command ran past --timeout ${timeoutMin} minute(s) and was stopped`); exitCode = 124; }
     else if (o.signal) exitCode = exitCodeForSignal(o.signal);

@@ -20,6 +20,7 @@ import path from 'node:path';
 import { isSensitiveFile } from './file-io.mjs';
 import { scanForSecrets, redactFields, redactSecrets } from './secret-patterns.mjs';
 import { resolveOwner } from './owner-resolver.mjs';
+import { compactRunKey } from './run-key.mjs';
 
 /**
  * Check whether a finding should be marked sensitive.
@@ -139,7 +140,8 @@ export function buildDebtEntry(finding, captureArgs) {
     classification: finding.classification || null,
     deferredReason,
     deferredAt: new Date().toISOString(),
-    deferredRun,
+    // An id past the schema's 40-char cap is compacted deterministically (run-key.mjs), never sliced or rejected late.
+    deferredRun: typeof deferredRun === 'string' && deferredRun ? compactRunKey(deferredRun) : deferredRun,
     deferredRationale: cleanRationale,
     contentAliases: [],
     sensitive,

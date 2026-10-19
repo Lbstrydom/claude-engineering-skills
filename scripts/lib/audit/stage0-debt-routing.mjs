@@ -53,7 +53,7 @@ export function buildPreExistingDebtEntry(envelope, runId) {
   const { entry } = buildDebtEntry(finding, {
     deferredReason: 'out-of-scope',
     deferredRationale: PRE_EXISTING_DEBT_RATIONALE,
-    deferredRun: String(runId || 'tiered').slice(0, 40),
+    deferredRun: String(runId || 'tiered'), // buildDebtEntry compacts an over-long id; slicing here merged ids sharing a prefix
   });
   return entry;
 }
