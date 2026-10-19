@@ -350,6 +350,8 @@ Tier 1 (test-first) for every pure module here: `required-subjects.mjs`, the cov
 
 ## 10. Decisions that are Louis's
 
+> **Decided 2026-10-20 (Louis): all four as recommended.** (1) `AI-Final-Review` is emitted automatically, no flag. (2) The B slice is promoted; the full V2 receipt stays deferred. (3) A required non-code file is force-admitted into the GPT passes. (4) `scripts/test-evidence.mjs` (planned) syncs to every consumer from its first release. The options below are kept as the record of what was weighed.
+
 1. **B: emit `AI-Final-Review` automatically on every ship that has a bound marker** (recommended), or only behind an opt-in flag. Automatic changes the trailer block of every CES and consumer `/ship` commit from its release on.
 2. **B: promote this slice although the V2 receipt's recorded trigger is unmet.** The consumer case is a reviewed disposition flattened into `waived`, which is the "what remains in `waived`" the V2 table told us to revisit (`provenance-trailers-and-gate-honesty.md:1002`), not the receipt's own trigger. Recommended: yes, the slice only.
 3. **A: force-admit a required non-code file into the GPT passes** (recommended; the operator pays the tokens they asked for) versus reporting it `UNREAD` without reading it.
