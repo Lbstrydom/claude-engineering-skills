@@ -43,6 +43,7 @@ REFUSED acquire and ran the command anyway (2026-10-14), and a `timeout` wrapper
   A command that runs past `--for` is not cut: its expired lease with a live pid still reads as held.
 - `--end-turn` yields the repo's turn on release (use it when nothing further is ready); with another job of the same repo waiting it keeps the turn and logs why.
 - The command owns stdout, so `--json` is refused; the lease speaks on stderr, prefixed `fleet lease run:`.
+- The argv is spawned verbatim with `shell: false`. On Windows `npm`/`npx` are `.cmd` shims that cannot be spawned that way, so a bare `npm`/`npx` is run as `node <node dir>/node_modules/npm/bin/npm-cli.js` (or `npx-cli.js`); other shims (`pnpm`, `yarn`) need `node <entry-point>.js` spelled out. A start failure prints the resolved argv and cwd (never the environment).
 
 | Exit | Meaning |
 |---|---|
