@@ -23,6 +23,7 @@ This is the list to read when asking "what is in flight?".
 | [Triage: the eight `archive/worktree-agent-*` tags (2026-10-11)](./archive-tag-triage-2026-10-11.md) | `Draft` | findings and recommendations only; no tag was deleted and nothing was landed by this document |
 | [Audit honesty — unadmitted changed files, and the bundle's own generated stores](./audit-unadmitted-files.md) | `Approved` | audit-plan converged 2026-10-15; implementation pending |
 | [migrate every CLI entry guard to `isInvokedAsScript`](./cli-entry-guard-migration.md) | `In Progress` |  |
+| [Copilot consumer feedback, item 4: required-subject coverage, a final-review provenance fact, and hash-bound test evidence](./copilot-feedback-item4.md) | `Approved` | audit-plan converged 2026-10-19; Gemini APPROVE; implementation pending, one PR per cluster |
 | [The dashboard's debt queue treats "no local cache" as an expected absence](./dashboard-debt-sandbox-absence.md) | `In Progress` | implemented on `fix/dashboard-debt-sandbox-absence`; under /audit-code |
 | [Tech-Debt Ledger — One File Per Entry (merge conflict-free by construction)](./debt-ledger-per-entry-files.md) | `In Progress` |  |
 | [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `In Progress` | implemented on `fix/debt-readers-ask-store`; under /audit-code |

@@ -1,7 +1,7 @@
 # Plan: Copilot consumer feedback, item 4: required-subject coverage, a final-review provenance fact, and hash-bound test evidence
 
 - **Date**: 2026-10-19
-- **Status**: Draft
+- **Status**: Approved (audit-plan converged 2026-10-19; Gemini APPROVE; implementation pending, one PR per cluster)
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`; engineering principles apply; no UI). The consumer is Python/Streamlit on Windows, so every new contract must work for a non-Node test runner and on Windows paths.
 - **Target domain(s)**: `audit-orchestration`, `scripts`, `shared-lib`, `ship`
@@ -368,6 +368,8 @@ Tier 1 (test-first) for every pure module here: `required-subjects.mjs`, the cov
   - author-tier: standard
 - **Final gate**: each cluster's PR gets its own consolidated Gemini final review over its diff; there is no cross-cluster union diff because the clusters ship as separate PRs.
 
-## Audit trail
+## Audit trail (2026-10-19, SID `audit-plan-1792403302303-89952`, run `e86dc79a`)
 
-_(filled by /audit-plan)_
+- **GPT rounds (3, the default cap)**: R1 NEEDS_REVISION H5/M3, all 8 accepted and fixed: pre-authorised ship must enforce the disposition, not only the verdict (B2b); test identity captured before AND after the run (C2a); cwd + platform/arch in the invocation key (C2); a git-verified path for deleted required subjects through both gates (A1, A3, A5); an explicit `record` outcome schema and exit policy (C2b); JUnit leaf-suite aggregation (C2c); the unfiltered tree kept for ignored-change reporting (C2, C3); content identity stated as git-normalised, with line-ending settings bound and clean/smudge filters answering `unknown`. R2 H2/M0, both accepted: stability decided on the reuse identity only; the filter check run over the snapshot's own path universe (untracked inputs included). Both were propagation from R1's fixes. R3 H0/M2, both accepted: one validated counts schema with cross-field consistency; the JUnit report bound to this invocation.
+- **Acceptance rate**: 100% every round (12/12; no dismissals, deferrals or rebuttals). HIGH fell 5 → 2 → 0. Stopped at the 3-round default: R3's findings were narrow input-validation detail inside C2c, the kind the code audit checks against real code.
+- **Final gate**: Gemini (`gemini-4-argon`), plan mode, round 1/2: **APPROVE**, disposition `approve`, blocking 0, debt 0, new findings 0, wrongly dismissed 0. No second round needed.
