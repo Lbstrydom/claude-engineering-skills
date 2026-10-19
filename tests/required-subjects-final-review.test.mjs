@@ -229,7 +229,7 @@ describe('A5 — through runFinalReview: the required list in the transcript rea
       assert.ok(sent.includes('required-subjects-fixture'), 'positive control: the non-sensitive required file IS in the same request');
       assert.equal(sent.includes('zzz-1f2e3d'), false, 'the sensitive body never reached the final reviewer');
       assert.equal(result.gateDisposition, 'blocked', 'and it was not received, so the gate blocks');
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
   it('a git-verified deletion (N/A) is satisfied in both gates', async () => {
     const { result } = await review([{ path: 'gone/deleted.json', status: 'N/A' }]);
