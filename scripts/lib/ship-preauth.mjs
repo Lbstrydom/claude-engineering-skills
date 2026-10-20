@@ -17,6 +17,7 @@
  * @module scripts/lib/ship-preauth
  */
 import { classifyPath, normalisePath } from './sensitive-paths.mjs';
+import { matchFinalReviewMarker } from './final-review-marker.mjs';
 
 /** The conditions, in the order they are reported. The ids are the refusal names the plan fixes. */
 export const PREAUTH_CONDITIONS = Object.freeze([
@@ -59,7 +60,7 @@ const row = (id, ok, reason) => ({ id, ok, reason });
  * @param {string} [f.convergenceWhy] why the row is null (cloud off, the query failed, no row): named in the refusal, never folded into one
  * @param {{runId: string, auditedTree: string, round: number|null, auditedBranch?: string|null}|null} f.evidence the gate-evidence marker
  * @param {string|null} [f.currentBranch] the branch being shipped (null = detached or unresolved)
- * @param {{ok: boolean, reason?: string, marker?: {runId: string, auditedTree: string, round: number, verdict: string}}|null} f.finalReview readFinalReviewMarker's result
+ * @param {{ok: boolean, reason?: string, marker?: {runId: string, auditedTree: string, round: number, verdict: string, disposition: string|null}}|null} f.finalReview readFinalReviewMarker's result
  * @param {string[]|null} f.changedPaths every path the branch changes against the default branch, or null when it could not be resolved
  * @returns {{ok: boolean, conditions: Array<{id: string, ok: boolean, reason: string}>, refusals: string[]}}
  */
@@ -87,17 +88,18 @@ export function evaluatePreauthorisedShip(f = {}) {
     c.push(row('audit-converged', false, `the audit evidence is for branch ${JSON.stringify(f.evidence.auditedBranch)}, not ${JSON.stringify(f.currentBranch)}`));
   } else c.push(row('audit-converged', true, `converged after round ${conv.roundConvergedAfter}`));
 
-  // 3. the final review approved THIS audited tree and round, not merely this run (the column has no target identity).
+  // 3. the final review approved THIS audited tree and round, not merely this run (the column has no target identity). The binding
+  //    is the shared predicate; the policy below it is this caller's: the verdict word AND the review's result must both approve.
+  //    The result is the stronger fact (an APPROVE can be `blocked`: a release-blocking finding, a coverage downgrade, a required
+  //    subject not received in full), and the one place that ships without a human must not leave a recorded block unenforced.
   const ev = f.evidence;
   const fr = f.finalReview;
-  if (!ev) c.push(row('final-review', false, 'there is no gate-evidence marker to bind the final review to'));
-  else if (!fr || !fr.ok) c.push(row('final-review', false, `no final-review marker (${fr?.reason ?? 'not read'}): gemini-review has not recorded what it approved`));
+  const bound = matchFinalReviewMarker(ev, fr);
+  if (!bound.ok) c.push(row('final-review', false, bound.reason));
   else if (fr.marker.verdict !== 'APPROVE') c.push(row('final-review', false, `the recorded final review is ${fr.marker.verdict}, not APPROVE`));
-  else if (!Number.isInteger(ev.round)) c.push(row('final-review', false, 'the gate-evidence marker carries no round, so the approval cannot be bound to one'));
-  else if (fr.marker.runId !== ev.runId) c.push(row('final-review', false, `the approval is for run ${fr.marker.runId.slice(0, 8)}, the audit evidence is run ${ev.runId.slice(0, 8)}`));
-  else if (fr.marker.auditedTree !== ev.auditedTree) c.push(row('final-review', false, 'the approval is for a different audited tree than the audit evidence names'));
-  else if (fr.marker.round !== ev.round) c.push(row('final-review', false, `the approval is for round ${fr.marker.round}, the audit evidence is round ${ev.round}`));
-  else c.push(row('final-review', true, `APPROVE on run ${ev.runId.slice(0, 8)}, round ${ev.round}, the audited tree`));
+  else if (fr.marker.disposition == null) c.push(row('final-review', false, 'the final-review marker predates dispositions: re-run the final review'));
+  else if (fr.marker.disposition !== 'approve') c.push(row('final-review', false, `the recorded final-review result is ${fr.marker.disposition}, not approve`));
+  else c.push(row('final-review', true, `APPROVE (result approve) on run ${ev.runId.slice(0, 8)}, round ${ev.round}, the audited tree`));
 
   // 4-6. paths. An unresolvable change set fails all three rather than passing them vacuously.
   const paths = Array.isArray(f.changedPaths) ? f.changedPaths : null;

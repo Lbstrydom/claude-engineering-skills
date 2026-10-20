@@ -77,7 +77,7 @@ import { checkMigrationRealization } from './lib/db/schema-realization.mjs';
 import {
   evaluatePreauthorisedShip, renderPreauthConditions, gatherChangedPaths,
 } from './lib/ship-preauth.mjs';
-import { readFinalReviewMarker } from './lib/final-review-marker.mjs';
+import { readFinalReviewMarker, boundFinalReviewDisposition } from './lib/final-review-marker.mjs';
 import { finishAndExit } from './lib/cli-io.mjs';
 
 const KNOWN_FLAGS = new Set([
@@ -657,6 +657,9 @@ async function main() {
   // ---- pre-authorised ship (docs/plans/fleet-chips-and-merge-friction.md section 2.2b) -----------------------------------
   // Runs AFTER the gate verification above, so the "gate" condition is judged on the EFFECTIVE, store-verified gate, and
   // BEFORE any index or git mutation. A refusal is exit 2 with every refused condition named; there is no override.
+  // AI-Final-Review: the result of the final review BOUND to the evidence AI-Run-ID comes from, read from its marker, never an input.
+  const finalReviewRead = readFinalReviewMarker(repoRoot);
+  if (values.runId) values.finalReview = boundFinalReviewDisposition(evidence, finalReviewRead);
   if (opts.preauthorised) {
     const branch = verifiedIdentity && verifiedIdentity.ref.kind === 'attached' ? verifiedIdentity.ref.name : null;
     const verdict = evaluatePreauthorisedShip({
@@ -665,7 +668,7 @@ async function main() {
       convergence: preauthFacts ? preauthFacts.convergence : null,
       evidence: preauthFacts && isContentVerifiable(evidence) ? evidence : null,
       currentBranch: branch,
-      finalReview: readFinalReviewMarker(repoRoot),
+      finalReview: finalReviewRead,
       changedPaths: preauthFacts && preauthFacts.committedTree ? gatherChangedPaths(gitRun, preauthFacts.committedTree) : null,
     });
     if (!verdict.ok) {
@@ -956,7 +959,7 @@ async function main() {
         exitCode = 1;
       } else {
         const subject = finalMessage.split('\n', 1)[0];
-        const trailerSummary = [`AI-Skill: ${values.skill}`, `AI-Gate: ${values.gate}`, values.runId ? `AI-Run-ID: ${values.runId}` : null, values.auditedTree ? `AI-Audited-Tree: ${values.auditedTree.slice(0, 12)}` : null].filter(Boolean).join(' · ');
+        const trailerSummary = [`AI-Skill: ${values.skill}`, `AI-Gate: ${values.gate}`, values.runId ? `AI-Run-ID: ${values.runId}` : null, values.auditedTree ? `AI-Audited-Tree: ${values.auditedTree.slice(0, 12)}` : null, ...expected.filter((l) => l.startsWith('AI-Final-Review: '))].filter(Boolean).join(' · ');
         process.stdout.write(`ship-commit: committed "${subject}" (${trailerSummary})\n`);
       }
     }

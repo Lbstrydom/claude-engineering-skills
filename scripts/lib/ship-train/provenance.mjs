@@ -221,6 +221,8 @@ export function composeSquashMessage({ number, title, commitSubjects, decision, 
     gate: decision.gate,
     runId: decision.runId,
     auditedTree: decision.gate === 'passed' ? decision.auditedTree : null,
+    // No `finalReview`, deliberately: no final-review marker is bound to a PR's run in the checkout a train lands from, so a
+    // train squash carries no AI-Final-Review (absence: no bound record), and verify.mjs refuses one (copilot-feedback-item4 B4).
   });
   const cut = message.indexOf('\n\n');
   return { subject, body: message.slice(cut + 2), message };

@@ -40,7 +40,7 @@ import { getRepoContext } from './lib/repo-context.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { RUN_ID_RE } from './lib/commit-trailers.mjs';
 import { GATE_EVIDENCE_RELPATH } from './lib/audit/gate-evidence.mjs';
-import { recordFinalReviewMarker } from './lib/final-review-marker.mjs';
+import { recordFinalReviewMarker, readGateEvidenceSnapshot } from './lib/final-review-marker.mjs';
 import { isRefuted } from './lib/audit/finding-verification.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
 import { sumUsage } from './lib/model-pricing.mjs';
@@ -1008,6 +1008,7 @@ async function main() {
   const provider = selectProvider(providerOverride || resolveProviderSetting());
   const planContent = readFileOrDie(planFile);
   const transcriptContent = readFileOrDie(transcriptFile);
+  const reviewedEvidence = readGateEvidenceSnapshot(process.cwd()); // what this review is OF; the marker refuses evidence that moved meanwhile
   await initAuditBrief();
   const projectContext = readProjectContext();
   const client = await buildClient(provider);
@@ -1050,7 +1051,7 @@ async function main() {
     await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode }, { modelEvalOverride, envelopeScopeCli, campaignDigest, runReviewWithRetry });
     emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile, gateSummary);
     recordGeminiOutcomes(result, primaryModel);
-    await finishAndExit(recordFinalReviewMarker({ auditMode, result, repoRoot: process.cwd() }) ? 1 : 0); // never rely on natural drain; a marker that cannot be made safe is fatal
+    await finishAndExit(recordFinalReviewMarker({ auditMode, result, repoRoot: process.cwd(), reviewedEvidence }) ? 1 : 0); // never rely on natural drain; a marker that cannot be made safe is fatal
   } catch (err) {
     // Route-enriched for the Azure provider (a bare 401/404 there names neither
     // the endpoint nor the credential variable); byte-identical `err.message`

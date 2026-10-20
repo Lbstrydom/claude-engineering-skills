@@ -49,7 +49,7 @@ and the user has to type it again). You never invoke it, and no relay can. [rule
 plan's Implementation Log, scripts/ship-commit.mjs --preauthorised, the push. First run
 node scripts/ship-commit.mjs --check-preauthorised. Ship ONLY if every condition holds: the effective gate is passed or
 converged (never waived or not-run, never --no-tests); the audit converged per the store; the final review APPROVED the
-audited tree and round; the PR changes no sensitive path (scripts/lib/sensitive-paths.mjs), no database migration and no
+audited tree and round with result approve (not approve-with-debt, not blocked); the PR changes no sensitive path (scripts/lib/sensitive-paths.mjs), no database migration and no
 repository-policy file (.github/, CODEOWNERS, .test-tiers.json). The commit path re-checks all of it and refuses (exit 2)
 otherwise; if any condition refuses, stop and tell the user to type /ship PLAN_PATH in this session. Never hand-write gate
 evidence or re-run to find a pass. Say "ship pre-authorised by launch prompt" in the claim intent; the commit then carries

@@ -170,3 +170,32 @@ describe('verifyTrain + publicationClearance', () => {
     assert.equal(v.finalMergeOid, oid('5'));
   });
 });
+
+// AI-Final-Review on the train path (docs/plans/copilot-feedback-item4.md section 2.2 B4, proof row P-B5). The final-review
+// marker is a LOCAL record in the worktree that ran the review; a train lands other sessions' PRs from the coordinator's
+// checkout, where no such record is bound to the PR's run. So the train never writes the key, and a squash that carries one
+// did not get it from the train's writer.
+describe('AI-Final-Review on a train squash', () => {
+  const withFr = (value, key = 'AI-Final-Review') => msg({ gate: 'converged', runId: RUN, auditedTree: null }).replace(/\n$/, `\n${key}: ${value}\n`);
+
+  test('composeSquashMessage never emits it, even when a decision object carries a disposition', () => {
+    const m = composeSquashMessage({ number: 7, title: 'x', commitSubjects: ['c'], decision: { gate: 'converged', runId: RUN, auditedTree: null, finalReview: 'approve' }, models: ['claude'] }).message;
+    assert.doesNotMatch(m, /AI-Final-Review/);
+  });
+
+  test('the key is canonicalised: a lowercase spelling is flagged and read under the canonical key, not passed through as unknown', () => {
+    const r = readAiTrailers(withFr('approve', 'ai-final-review'));
+    assert.deepEqual(r.nonCanonical, ['ai-final-review']);
+    assert.equal(r.trailers['AI-Final-Review'], 'approve');
+  });
+
+  test('a squash carrying it is a false claim: the train is its writer and never writes it', () => {
+    const t = checkClaimTruth({ message: withFr('approve'), tree: oid('b'), prCommits: PR_COMMITS, run: run() });
+    assert.equal(t.true, false);
+    assert.match(t.problems.join('|'), /AI-Final-Review .*train does not write/);
+  });
+
+  test('without it, the same squash is true (negative control)', () => {
+    assert.equal(checkClaimTruth({ message: msg({ gate: 'converged', runId: RUN, auditedTree: null }), tree: oid('b'), prCommits: PR_COMMITS, run: run() }).true, true);
+  });
+});

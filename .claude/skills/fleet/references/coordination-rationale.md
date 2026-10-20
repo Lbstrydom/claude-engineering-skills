@@ -17,9 +17,8 @@ mid-turn the host refuses it as a programmatic call and Louis had to type it aga
 
 **A pre-authorised ship is a coded check, not a chip's reading of a list.** `ship-commit.mjs --preauthorised` refuses (exit 2, every
 refused condition named) unless: the effective gate is `passed`/`converged` (`--no-tests` is refused outright, it caps the gate);
-the store's audit run converged and its evidence is for THIS branch; the final review APPROVED this audited tree and round
-(`.audit/last-final-review.json`: `gemini_verdict` is one column per run with no target, so it cannot tell tree A's approval from
-tree B's). `gemini-review.mjs` writes it after each code-mode review, from the gate-evidence marker it ran against; a later audit round
+the store's audit run converged and its evidence is for THIS branch; the final review APPROVED this audited tree and round with
+result `approve` (`.audit/last-final-review.json`; `gemini_verdict` is one column per run with no target). `gemini-review.mjs` writes it after each code-mode review, from the gate-evidence marker it ran against; a later audit round
 rewrites that marker, so an old approval stops matching. The writer revokes the previous marker first and fails closed; and the branch (merge base to the commit's tree, `--no-renames`) touches no sensitive path,
 no `migrations/` directory and no policy file (`.github/`, `CODEOWNERS`, `docs/CODEOWNERS`, `.test-tiers.json`). Unknown facts refuse; an
 empty change set refuses. The commit carries `AI-Ship-Authority: launch-prompt`. `--check-preauthorised` is the read-only early look.

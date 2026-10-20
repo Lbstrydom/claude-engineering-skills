@@ -612,6 +612,106 @@ describe('ship-commit CLI — E1 audited-target identity', () => {
     assert.match(git(['log', '-1', '--format=%B']), /AI-Gate: waived/);
   });
 
+// ── AI-Final-Review: derived from the bound final-review marker, never typed ─
+// docs/plans/copilot-feedback-item4.md section 2.2 B3, proof rows P-B1 / P-B2 / P-B3.
+describe('ship-commit CLI — AI-Final-Review', () => {
+  const RUN_ID = 'ecae388d-c176-4182-9d27-0210b919b844';
+  const ROUND = 3;
+  const gateEvidence = () => {
+    fs.mkdirSync(path.join(repo, '.audit'), { recursive: true });
+    const auditedTree = git(['write-tree']).trim();
+    fs.writeFileSync(path.join(repo, '.audit', 'last-audit-run.json'), JSON.stringify({
+      runId: RUN_ID, ts: new Date(Date.now() + 60_000).toISOString(), auditedTree, round: ROUND,
+    }));
+    return auditedTree;
+  };
+  const finalReviewMarker = (auditedTree, extra = {}) => fs.writeFileSync(path.join(repo, '.audit', 'last-final-review.json'), JSON.stringify({
+    runId: RUN_ID, auditedTree, round: ROUND, verdict: 'CONCERNS', disposition: 'approve_with_debt', ts: new Date().toISOString(), ...extra,
+  }));
+  const waivedShip = (mf) => runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'waived', ...identityArgs(), ...scopeArgs()]);
+  const finalReviewTrailers = () => String(git(['log', '-1', '--format=%(trailers:key=AI-Final-Review,valueonly)'])).trim();
+
+  it('a marker bound to the run, tree and round the gate evidence names: the commit carries AI-Final-Review beside AI-Gate: waived (the consumer case)', () => {
+    const mf = arrange();
+    finalReviewMarker(gateEvidence());
+    const r = waivedShip(mf);
+    assert.equal(r.status, 0, r.stderr);
+    const body = String(git(['log', '-1', '--format=%B']));
+    assert.match(body, /AI-Gate: waived\nAI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844\nAI-Final-Review: approve-with-debt\n/);
+    assert.equal(finalReviewTrailers(), 'approve-with-debt');
+  });
+
+  it('blocked is recorded as blocked: a bound result is reported whatever it says', () => {
+    const mf = arrange();
+    finalReviewMarker(gateEvidence(), { verdict: 'APPROVE', disposition: 'blocked' });
+    assert.equal(waivedShip(mf).status, 0);
+    assert.equal(finalReviewTrailers(), 'blocked');
+  });
+
+  for (const [what, extra, drop] of [
+    ['another run', { runId: '11111111-2222-4333-8444-555555555555' }],
+    ['another round', { round: ROUND + 1 }],
+    ['another audited tree', { auditedTree: 'b'.repeat(40) }],
+    ['a marker that predates dispositions', {}, 'disposition'],
+    ['a malformed marker (contradictory pair)', { verdict: 'REJECT', disposition: 'approve' }],
+  ]) {
+    it(`no trailer for ${what}: absence means "no final-review record bound to this run's evidence"`, () => {
+      const mf = arrange();
+      const tree = gateEvidence();
+      finalReviewMarker(tree, extra);
+      if (drop) {
+        const p = path.join(repo, '.audit', 'last-final-review.json');
+        const m = JSON.parse(fs.readFileSync(p, 'utf8'));
+        delete m[drop];
+        fs.writeFileSync(p, JSON.stringify(m));
+      }
+      const r = waivedShip(mf);
+      assert.equal(r.status, 0, r.stderr);
+      assert.doesNotMatch(String(git(['log', '-1', '--format=%B'])), /AI-Final-Review/);
+    });
+  }
+
+  it('no trailer when there is no marker, and none when the evidence is ignored (--no-run-id: no run to bind to)', () => {
+    let mf = arrange();
+    gateEvidence();
+    assert.equal(waivedShip(mf).status, 0);
+    assert.doesNotMatch(String(git(['log', '-1', '--format=%B'])), /AI-Final-Review/);
+    mf = arrange();
+    finalReviewMarker(gateEvidence());
+    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', '--no-run-id', ...identityArgs(), ...scopeArgs()]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(String(git(['log', '-1', '--format=%B'])), /AI-Final-Review|AI-Run-ID/);
+  });
+
+  it('P-B2: it cannot manufacture convergence — the verified-gate refusal is byte-identical with and without an approving marker', () => {
+    const attempt = (withMarker) => {
+      repo = newRepo('ship-cli-fr-');
+      const mf = arrange();
+      const tree = gateEvidence();
+      if (withMarker) finalReviewMarker(tree, { verdict: 'APPROVE', disposition: 'approve' });
+      const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
+      const out = { status: r.status, stderr: r.stderr.replaceAll(repo, '<repo>'), commits: commitCount() };
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      return out;
+    };
+    const without = attempt(false);
+    const withM = attempt(true);
+    repo = newRepo('ship-cli-');   // afterEach removes `repo`
+    assert.equal(without.status, 2, without.stderr);
+    assert.match(without.stderr, /AUDIT_DB_URL unset/, 'the refusal under test is the store verdict, which the marker must not satisfy');
+    assert.deepEqual(withM, without);
+  });
+
+  it('P-B3: a hand-typed AI-Final-Review in the message file is refused as a reserved trailer, no commit', () => {
+    const mf = arrange({ message: 'feat: x\n\nbody\n\nAI-Final-Review: approve\n' });
+    const before = commitCount();
+    const r = runCli(BASE_ARGS(mf));
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /AGENT FIX: reserved-trailer:.*AI-Final-Review/);
+    assert.equal(commitCount(), before);
+  });
+});
+
 // ── `--message-file -` reads the commit message from stdin ──────────────────
 //
 // Upstream 575256de asked for this via `/dev/stdin`, which cannot work: on

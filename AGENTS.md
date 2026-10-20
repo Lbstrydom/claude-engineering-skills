@@ -1299,7 +1299,9 @@ byte-checked in `npm run check`. **Edit the canonical, never a copy.**
 git trailers written ONLY by two helpers sharing ONE renderer and ONE gate
 evaluator: `scripts/ship-commit.mjs` (`/ship` Step 6.3) and, for the squash
 messages of a `/ship --train`, `scripts/ship-train.mjs` — never hand-typed; the
-`AI-*` namespace is reserved. `AI-Gate` has **four**
+`AI-*` namespace is reserved. `AI-Final-Review` (`approve|approve-with-debt|blocked`)
+is DERIVED from the final-review marker bound to the run's evidence — no flag, never
+on a train squash, and it never moves `AI-Gate`. `AI-Gate` has **four**
 values, two verified against the store's `audit_runs` row and two declared:
 `passed` (converged AND the committed tree IS the audited tree) · **`converged`**
 (converged AND the tree is **not asserted equal** — it differs, the audited-then-**remediated** ship, or equality is unprovable on an unpinned squash) ·
