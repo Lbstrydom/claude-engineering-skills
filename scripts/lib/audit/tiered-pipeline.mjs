@@ -115,6 +115,9 @@ export function readDiscoveryCode(ctx, { read = readFilesAsContextDetailed, pars
 }
 
 export async function runTieredAuditPipeline(ctx) {
+  // --require is wired into the legacy pipeline only. Refusing is the honest answer: running on would drop the operator's
+  // declaration and report a round that never checked the files they named (docs/plans/copilot-feedback-item4.md §8).
+  if (ctx.requiredSubjects?.length) throw new Error('--require is not supported by the tiered pipeline yet: unset AUDIT_TIERED_PIPELINE_ENABLED for this run');
   const stageStart = { discovery: Date.now() };
   const { providers = {} } = ctx;
 

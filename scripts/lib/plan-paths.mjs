@@ -123,7 +123,9 @@ export function resolveReferenceExtension(filePath) {
  *
  * @param {string[]} planFound - `extractPlanPaths(...).found`
  * @param {string[]|null|undefined} scopeFiles - the effective file filter
- * @param {{allowInfraFiles?: boolean}} [opts]
+ * @param {{allowInfraFiles?: boolean, requiredPaths?: string[]}} [opts] `requiredPaths`: the operator's `--require` subjects (already
+ *   validated and sensitivity-checked upstream). The declaration admits them whatever their extension: a lockfile is non-code,
+ *   and the operator asked for it to be read. Every OTHER guard (URL/vendored, infra, on disk) still applies.
  * @returns {{files: string[], addedFromScope: string[], rejected: string[],
  *   rejectedDetail: Array<{path: string, reason: 'url-or-vendored'|'infra'|'extension'|'not-on-disk'}>}}
  */
@@ -135,7 +137,7 @@ export function isUrlOrVendored(p) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(p) || /(^|[\\/])node_modules([\\/]|$)/.test(p);
 }
 
-export function mergeScopeFiles(planFound, scopeFiles, { allowInfraFiles = false } = {}) {
+export function mergeScopeFiles(planFound, scopeFiles, { allowInfraFiles = false, requiredPaths = [] } = {}) {
   const base = Array.isArray(planFound) ? planFound : [];
   if (!Array.isArray(scopeFiles) || scopeFiles.length === 0) {
     return { files: [...base], addedFromScope: [], rejected: [], rejectedDetail: [] };
@@ -147,6 +149,7 @@ export function mergeScopeFiles(planFound, scopeFiles, { allowInfraFiles = false
   const rejectedDetail = [];
   const reject = (p, reason) => { rejected.push(p); rejectedDetail.push({ path: p, reason }); };
   const seen = new Set();
+  const required = new Set(requiredPaths.map((p) => normalizePath(p)));
 
   for (const raw of scopeFiles) {
     if (typeof raw !== 'string' || raw === '') continue;
@@ -156,7 +159,7 @@ export function mergeScopeFiles(planFound, scopeFiles, { allowInfraFiles = false
     seen.add(key);
     if (isUrlOrVendored(p)) { reject(p, 'url-or-vendored'); continue; }
     if (!allowInfraFiles && isAuditInfraFile(p)) { reject(p, 'infra'); continue; }
-    if (resolveReferenceExtension(p) === null) { reject(p, 'extension'); continue; }
+    if (resolveReferenceExtension(p) === null && !required.has(key)) { reject(p, 'extension'); continue; }
     if (!fs.existsSync(path.resolve(p))) { reject(p, 'not-on-disk'); continue; }
     addedFromScope.push(p);
   }

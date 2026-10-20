@@ -11,7 +11,7 @@
  * @module scripts/lib/audit/convergence
  */
 
-import { changedLinesUnreadTotal, unreviewedUnrecognisedFiles } from '../coverage-format.mjs';
+import { changedLinesUnreadTotal, requiredSubjectsNotFull, unreviewedUnrecognisedFiles } from '../coverage-format.mjs';
 
 /** The quality threshold /audit-code gates on — SKILL.md's stated rule. */
 export const CONVERGENCE_THRESHOLDS = Object.freeze({ high: 0, medium: 2, quickFix: 0 });
@@ -68,7 +68,7 @@ export function evaluateConvergence({ high, medium, quickFix }) {
  * One list for every reader (audit-loop's driver; the summary line asks the ledger directly) so a third coverage reason
  * is added in one place.
  */
-export const COVERAGE_CONVERGENCE_REASONS = Object.freeze(new Set(['changed-lines-unread', 'unrecognised-files-unreviewed']));
+export const COVERAGE_CONVERGENCE_REASONS = Object.freeze(new Set(['changed-lines-unread', 'unrecognised-files-unreviewed', 'required-subjects-not-full']));
 
 export function evaluateConvergenceWithDetectors(counts, detectorResult, coverage = null) {
   if (!evaluateConvergence(counts)) {
@@ -99,6 +99,11 @@ export function evaluateConvergenceWithDetectors(counts, detectorResult, coverag
   // file nobody read is not convergence. `.auditignore` / `--exclude-paths` is the explicit acceptance that clears it.
   if (unreviewedUnrecognisedFiles(coverage).length > 0) {
     return { converged: false, reason: 'unrecognised-files-unreviewed' };
+  }
+  // A subject the OPERATOR named was not read in full (PARTIAL / UNREAD / SENSITIVE). The change itself was measured, so the
+  // verdict stays PASS (not INCOMPLETE); but a clean H/M/L over a file the operator required and nobody read is not convergence.
+  if (requiredSubjectsNotFull(coverage).length > 0) {
+    return { converged: false, reason: 'required-subjects-not-full' };
   }
   return { converged: true, reason: 'converged' };
 }

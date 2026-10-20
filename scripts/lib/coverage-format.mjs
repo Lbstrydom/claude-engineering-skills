@@ -83,7 +83,32 @@ export function formatCoverageSuffix(cov) {
   const unread = recs.filter((f) => UNREAD_OUTCOMES.has(f.outcome) && (f.changedLinesUnread ?? 0) > 0).length;
   if (unread > 0) parts.push(`${floor}${changedLinesUnreadTotal(cov)} changed line(s) in ${unread} file(s) never rendered to any pass`);
   if ((c.excludedRequired || 0) > 0) parts.push(`${c.excludedRequired} source file(s) excluded by policy`);
+  const req = requiredSubjectsLine(cov);
+  if (req) parts.push(req);
   return parts.join('; ');
+}
+
+/**
+ * The subjects the operator declared with `--require` that were NOT read in full (status PARTIAL / UNREAD / SENSITIVE; an
+ * `N/A` deleted subject is satisfied). Works on the canonical ledger and the reviewer projection alike: the block rides both.
+ *
+ * @param {object|null|undefined} cov a `_coverage`
+ * @returns {Array<{path: string, status: string, reason: string|null}>}
+ */
+export function requiredSubjectsNotFull(cov) {
+  const nf = cov?.requiredSubjects?.notFull;
+  return Array.isArray(nf) ? nf : [];
+}
+
+/** `required: 11/12 FULL — package-lock.json UNREAD (not-admitted)`: every non-FULL subject NAMED with its reason, never a bare count. */
+function requiredSubjectsLine(cov) {
+  const rs = cov?.requiredSubjects;
+  if (!rs || !(rs.declared > 0)) return '';
+  const notFull = requiredSubjectsNotFull(cov);
+  const na = rs.notApplicable > 0 ? ` (+${rs.notApplicable} N/A)` : '';
+  const shown = notFull.slice(0, 20).map((s) => `${oneLine(s.path)} ${s.status}${s.reason ? ` (${oneLine(s.reason)})` : ''}`);
+  const more = notFull.length > 20 ? `, +${notFull.length - 20} more` : '';
+  return `required: ${rs.full}/${rs.declared} FULL${na}${shown.length ? ` — ${shown.join(', ')}${more}` : ''}`;
 }
 
 /**

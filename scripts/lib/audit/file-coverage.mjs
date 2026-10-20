@@ -50,6 +50,7 @@ import { buildHunkMap } from './hunk-evidence.mjs';
 export { buildHunkMap };
 import { classifyFileCoverage } from '../language-profiles.mjs';
 import { classifyPath } from '../sensitive-paths.mjs';
+import { summariseRequiredSubjects } from './required-subjects.mjs';
 import { formatCoverageSuffix, shortCoverageFiles } from '../coverage-format.mjs';
 import { toolRunConfig } from '../tool-run-config.mjs';
 import { TOOL_STATE_PRECEDENCE, TOOL_STATES, worstToolState } from '../tool-states.mjs';
@@ -106,6 +107,14 @@ export const FileRecordSchema = z.object({
     chunking: enumOf(CAP_STATES).nullable(),
     tools: z.array(z.object({ id: z.string(), status: enumOf(TOOL_STATES) }).strict()),
   }).strict(),
+  // Present ONLY on a record the operator declared with --require (an absent key = byte-identical to a run without it).
+  // `requiredContext`: the file is not in the change set: a subject to be read, not a change to be reviewed.
+  required: z.boolean().optional(),
+  requiredContext: z.boolean().optional(),
+}).strict();
+
+const RequiredSubjectSchema = z.object({
+  path: z.string(), status: z.enum(['FULL', 'PARTIAL', 'UNREAD', 'SENSITIVE', 'N/A']), reason: z.string().nullable(),
 }).strict();
 
 const ToolProjectSchema = z.object({
@@ -151,6 +160,14 @@ export const CoverageSchema = z.object({
     reason: z.string().nullable(),
   }).strict()),
   invariantViolations: z.array(z.string()),
+  // Only when --require was given (docs/plans/copilot-feedback-item4.md Cluster A).
+  requiredSubjects: z.object({
+    declared: z.number().int().nonnegative(),
+    full: z.number().int().nonnegative(),
+    notApplicable: z.number().int().nonnegative(),
+    notFull: z.array(RequiredSubjectSchema),
+    subjects: z.array(RequiredSubjectSchema),
+  }).strict().optional(),
 }).strict();
 
 // ── The recorder: what the passes measure while they run ────────────────────
@@ -238,7 +255,7 @@ export function startCoverage({ getDiffMap, plain, annotated, setChunkingObserve
 }
 
 /** The ledger's inputs as `finding-assembly` takes them (`data.coverageInput`). `changed`: VCS record, else the explicit list. */
-export function makeCoverageInput({ recorder, coverageChanged, changedFiles, fileFilter, coverageExcluded, diffMap, toolCapability, noTools }) {
+export function makeCoverageInput({ recorder, coverageChanged, changedFiles, fileFilter, coverageExcluded, diffMap, toolCapability, noTools, requiredSubjects = null }) {
   // The SAME map the readers rendered against when the recorder carries one (D7); built fresh otherwise.
   const hunkMap = recorder?.getHunkMap?.() ?? buildRoundHunkMap({ diffMap, coverageChanged, changedFiles, fileFilter });
   return {
@@ -246,6 +263,7 @@ export function makeCoverageInput({ recorder, coverageChanged, changedFiles, fil
     changed: changedListOf({ coverageChanged, changedFiles, fileFilter }),
     excludedInfra: coverageExcluded?.infra ?? [],
     excludedUser: coverageExcluded?.user ?? [],
+    required: requiredSubjects ?? [],
     hunks: hunkMap.applicable ? hunkMap.hunksFor : null,
     hunksExpected: hunkMap.applicable,
     tools: toolCapability.coverageTools ?? [],
@@ -355,13 +373,15 @@ function measureUnread(path, fileHunks, changeKind, ev, readText) {
  * @param {Map<string, Array<{startLine:number, lineCount:number}>>|null} [input.hunks] new-side hunks by path
  * @param {(p: string) => boolean} [input.existsOnDisk]
  * @param {(p: string) => string|null} [input.readText] for measuring unread changed lines
+ * @param {Array<{path: string, sensitive?: boolean}>} [input.required] the operator's --require subjects: joined to the universe
+ *   even when unchanged, admitted whatever their class, and summarised as `requiredSubjects`. A `sensitive` one is never admitted
  * @param {boolean} [input.hunksExpected] the round declared a diff (buildHunkMap evidence `expected`): an unmeasurable partial read is then an invariant violation
  * @returns {object} a CoverageSchema-valid `_coverage`
  */
 export function buildCoverageReport(input) {
   const {
     changed = [], excludedInfra = [], excludedUser = [], recorder = null, tools = [], waves = [],
-    toolPolicy = null, hunks = null, hunksExpected = false,
+    toolPolicy = null, hunks = null, hunksExpected = false, required: declaredRequired = [],
     existsOnDisk = (p) => fs.existsSync(p),
     readText = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } },
   } = input || {};
@@ -381,19 +401,30 @@ export function buildCoverageReport(input) {
     if (seen.has(key)) { violations.push(`duplicate changed path (identity ${key})`); continue; }
     seen.set(key, rec);
   }
+  // A required subject is part of the universe whether or not the diff touches it (an unchanged lockfile the operator wants
+  // read). One absent from the change record is a context subject: nothing to review, something to read.
+  const reqByKey = new Map();
+  for (const r of declaredRequired) {
+    if (!r || typeof r.path !== 'string' || r.path === '') continue;
+    const key = normalizePath(r.path);
+    reqByKey.set(key, r);
+    if (!seen.has(key)) seen.set(key, { path: r.path, changeKind: 'modified', requiredContext: true });
+  }
 
   const files = [];
   for (const [key, rec] of seen) {
     const cls = classifyFileCoverage(rec.path);
     const changeKind = CHANGE_KINDS.includes(rec.changeKind) ? rec.changeKind : 'modified';
     const ev = readEvidence(key, passes);
+    const req = reqByKey.get(key);
     let outcome;
     let reason = null;
     if (changeKind === 'deleted') outcome = 'deleted';
     else if (infra.has(key)) outcome = 'excluded-infra';
     else if (user.has(key)) outcome = 'excluded-user';
-    else if (classifyPath(rec.path) === 'sensitive') outcome = 'sensitive';
-    else if (cls.class === 'non-code' || cls.class === 'uncovered') outcome = 'not-admitted';
+    else if (req?.sensitive || classifyPath(rec.path) === 'sensitive') outcome = 'sensitive';
+    // The operator's declaration admits a required non-code file (the mirror of .auditignore as the opt-out).
+    else if ((cls.class === 'non-code' || cls.class === 'uncovered') && !req) outcome = 'not-admitted';
     else if (!existsOnDisk(rec.path)) { outcome = 'unreadable'; reason = 'not on disk'; }
     else if (ev.state === 'full' || ev.state === 'windowed' || ev.state === 'head-cut') outcome = 'audited';
     // No render evidence at all is NOT "audited": nothing here can vouch that a pass ever saw the file.
@@ -427,6 +458,7 @@ export function buildCoverageReport(input) {
     }
 
     files.push({
+      ...(req ? { required: true, ...(rec.requiredContext ? { requiredContext: true } : {}) } : {}),
       path: rec.path.replace(/\\/g, '/'),
       class: cls.class,
       language: cls.language,
@@ -464,10 +496,12 @@ export function buildCoverageReport(input) {
     // impossible cells
     const excluded = f.outcome === 'excluded-infra' || f.outcome === 'excluded-user';
     if (f.outcome === 'audited' && f.read.state === 'none') violations.push(`${f.path}: audited with nothing read`);
-    if ((f.class === 'non-code' || f.class === 'uncovered') && f.outcome === 'audited') violations.push(`${f.path}: ${f.class} file recorded as audited`);
+    if ((f.class === 'non-code' || f.class === 'uncovered') && f.outcome === 'audited' && !f.required) violations.push(`${f.path}: ${f.class} file recorded as audited`);
     if (reviewable.has(f.class) && f.outcome === 'not-admitted') violations.push(`${f.path}: ${f.class} file recorded as not-admitted`);
-    if (f.class === 'uncovered' && !['not-admitted', 'deleted', 'sensitive'].includes(f.outcome) && !excluded) violations.push(`${f.path}: uncovered file with outcome ${f.outcome}`);
+    if (f.class === 'uncovered' && !['not-admitted', 'deleted', 'sensitive'].includes(f.outcome) && !excluded && !f.required) violations.push(`${f.path}: uncovered file with outcome ${f.outcome}`);
 
+    // A context subject is read, not reviewed: it has no change to cover, so it stays out of the changed-source denominators.
+    if (f.requiredContext) continue;
     if (reviewable.has(f.class)) {
       if (excluded) { excludedRequired++; continue; }
       if (f.outcome === 'sensitive') { required++; presentRequired++; continue; }
@@ -525,6 +559,7 @@ export function buildCoverageReport(input) {
       id: w.id, state: w.state, eligible: w.eligible ?? null, changed: w.changed ?? null, reason: w.reason ?? null,
     })),
     invariantViolations: violations,
+    ...(reqByKey.size > 0 ? { requiredSubjects: summariseRequiredSubjects(files) } : {}),
   };
   return report;
 }

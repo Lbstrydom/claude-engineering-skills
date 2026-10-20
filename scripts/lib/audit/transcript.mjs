@@ -143,6 +143,15 @@ export function ledgerResolutions(ledger) {
   return out;
 }
 
+/** `{path, status}` per declared subject, from the LAST round that declared any: that round's ledger is the audit's final word. */
+function requiredSubjectsOfRounds(rounds) {
+  for (let i = rounds.length - 1; i >= 0; i--) {
+    const subjects = rounds[i]?._coverage?.requiredSubjects?.subjects;
+    if (Array.isArray(subjects) && subjects.length > 0) return subjects.map(({ path, status }) => ({ path, status }));
+  }
+  return [];
+}
+
 /**
  * Build the transcript object.
  *
@@ -192,5 +201,8 @@ export function buildAuditTranscript({
   const resolutions = ledgerResolutions(ledger);
   if (resolutions.length > 0) transcript.claude_resolutions = resolutions;
   if (summary) transcript.summary = summary;
+  // The operator's --require list, as the audit ended it (the single source the final review reads; docs/plans/copilot-feedback-item4.md A5).
+  const required = isPlan ? [] : requiredSubjectsOfRounds(rounds);
+  if (required.length > 0) transcript.required_subjects = required;
   return transcript;
 }

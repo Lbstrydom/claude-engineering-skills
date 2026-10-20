@@ -524,7 +524,7 @@ describe('a changed file of an unrecognised type withholds convergence (upstream
     assert.deepEqual(unreviewedUnrecognisedFiles(null), []);
   });
 
-  it('COVERAGE_CONVERGENCE_REASONS names exactly the two coverage reasons', () => {
-    assert.deepEqual([...COVERAGE_CONVERGENCE_REASONS].sort(), ['changed-lines-unread', 'unrecognised-files-unreviewed']);
+  it('COVERAGE_CONVERGENCE_REASONS names exactly the three coverage reasons', () => {
+    assert.deepEqual([...COVERAGE_CONVERGENCE_REASONS].sort(), ['changed-lines-unread', 'required-subjects-not-full', 'unrecognised-files-unreviewed']);
   });
 });

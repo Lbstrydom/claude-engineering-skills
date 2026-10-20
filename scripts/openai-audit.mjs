@@ -160,6 +160,7 @@ import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './
 import { filterMatches } from './lib/glob.mjs';
 import { incrementRunCounter } from './lib/llm-auditor.mjs';
 import { assertStoreSchemaRealized } from './lib/audit/schema-precondition.mjs';
+import { resolveRequireFlag } from './lib/audit/required-subjects.mjs';
 
 // ── Exclude patterns (.auditignore + --exclude-paths) ──────────────────────
 
@@ -685,6 +686,9 @@ async function main() {
   const excludeIdx = args.indexOf('--exclude-paths');
   const excludeArg = excludeIdx !== -1 && args[excludeIdx + 1] ? args[excludeIdx + 1].split(',').map(s => s.trim()) : [];
   const excludePatterns = loadExcludePatterns(excludeArg);
+  // --require <list>: subjects the operator needs READ (docs/plans/copilot-feedback-item4.md Cluster A). Refused before any spend.
+  const required = resolveRequireFlag({ args, mode, repoRoot: process.cwd(), isExcluded: (p) => applyExclusions([p], excludePatterns).length === 0 });
+  if (required.error) { console.error(required.error); process.exit(2); }
 
   // Phase C — tool pre-pass flags
   // --no-tools: skip static analysis tools entirely (opt-out for untrusted repos)
@@ -938,7 +942,7 @@ async function main() {
       openaiConfig.reasoning === 'high' ? codeContextChars * 4 : 0);
     // allowTiered: true — main() is the ONE production CLI entrypoint allowed
     // to execute the tiered pipeline / shadow (see buildAuditRunContext).
-    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, coverageChanged, coverageExcluded, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty });
+    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, coverageChanged, coverageExcluded, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty, requiredSubjects: required.subjects });
     // An INCOMPLETE run measured less than the change, and exiting 0 made that
     // indistinguishable from a pass to anything checking `$?` (2026-09-04
     // consumer report). 3, not 1: 1 already means "the CLI itself errored" on
