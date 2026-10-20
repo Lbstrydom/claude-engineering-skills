@@ -450,6 +450,10 @@ const TEXT_EXT = new Set([
   '.jsonc',
   // .jsonl is line-delimited JSON (the audit-unadmitted-files fixture): text for the same reason as .jsonc/.sarif.
   '.jsonl',
+  // .xml is text for the same reason: the test-evidence JUnit fixtures are real runner output, and a report that drifts to
+  // name a deleted path should fail loudly rather than be skipped. (This is THIS gate's scan policy only, not the audit
+  // taxonomy in lib/file-taxonomy.mjs, so no audit admission changes.)
+  '.xml',
 ]);
 const BINARY_EXT = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.woff', '.woff2',

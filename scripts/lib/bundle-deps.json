@@ -221,6 +221,7 @@
         "scripts/.claude-skills/lib/suite-run-record.mjs",
         "scripts/.claude-skills/lib/symbol-index-contracts.mjs",
         "scripts/.claude-skills/lib/sync-manifest.mjs",
+        "scripts/.claude-skills/lib/test-evidence.mjs",
         "scripts/.claude-skills/lib/visual/schema.mjs",
         "scripts/.claude-skills/openai-audit.mjs"
       ]

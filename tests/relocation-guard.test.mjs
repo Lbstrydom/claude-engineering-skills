@@ -126,3 +126,19 @@ test('the fleet lease modules ship to consumers, are scanned by the guards above
     assert.equal(typeof lease[fn], 'function', `lease.mjs must export ${fn}`);
   }
 });
+
+// Tier 3(b) for test-evidence (docs/plans/copilot-feedback-item4.md Cluster C): the CLI, its library and the shared
+// spawn resolver must be IN the synced inventory (so the scans above cover them and a consumer receives
+// them) and must import cleanly. The CLI is also in CLI_SMOKE_SET, whose relocated --selfcheck-relocation smoke runs it.
+test('the test-evidence CLI and library ship to consumers, are scanned by the guards above, and import cleanly', async () => {
+  const shipped = new Set([...allSyncedScripts()].map((s) => s.srcRel.replace(/\\/g, '/')));
+  const need = {'scripts/test-evidence.mjs': ['run', 'parseArgs'], 'scripts/lib/test-evidence.mjs': ['recordRun', 'checkRun', 'decideReuse', 'recordKey', 'parseJunitCounts'], 'scripts/lib/spawn-target.mjs': ['resolveSpawnTarget', 'describeSpawnFailure'] };
+  for (const [rel, symbols] of Object.entries(need)) {
+    assert.ok(shipped.has(rel), `${rel} is not in any consumer inventory: a consumer's test-evidence would die on MODULE_NOT_FOUND`);
+    const abs = path.join(REPO_ROOT, rel);
+    assert.deepEqual(scanFile(abs), { parentResolve: false, spawnHardcoded: false, execHardcoded: false }, `${rel} holds a relocation-breaking pattern`);
+    const mod = await import(pathToFileURL(abs).href);
+    for (const sym of symbols) assert.equal(typeof mod[sym], 'function', `${rel} must export ${sym}`);
+  }
+  assert.ok(verifyInternals.CLI_SMOKE_SET.includes('test-evidence.mjs'), 'test-evidence.mjs must be in CLI_SMOKE_SET');
+});

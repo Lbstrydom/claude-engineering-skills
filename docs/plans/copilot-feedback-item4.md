@@ -268,7 +268,7 @@ The three clusters are independent: no shared state, no ordering requirement exc
 | `scripts/lib/test-evidence.mjs` | **create**: `computeContentTree`, `recordKey`, `parseJunitCounts`, `decideReuse`, schema, read/write | #2, #11 |
 | `scripts/lib/vcs.mjs` | modify: `gitWorktreeTree` accepts an optional `excludePathspecs` and then returns `{tree, filteredTree}` from ONE temp index (`write-tree`, `git rm --cached`, `write-tree` again); without the option its return value is byte-identical to today, which the `AI-Audited-Tree` callers rely on | #1, #18 |
 | `scripts/lib/sync-inventory.mjs` (+ `scripts/lib/bundle-deps.json` regenerated) | modify: add the CLI to the synced closure | — |
-| `docs/runbooks/test-evidence.md` (planned) | **create**: usage, three answers, the gitignored-input limit, PowerShell-safe examples | — |
+| `docs/runbooks/test-evidence.md` | **create**: usage, three answers, the gitignored-input limit, PowerShell-safe examples | — |
 | `skills/ship/references/` (one row) | modify: how to cite a `reusable` check in the ship report; names the tool by path, not an npm alias | — |
 
 ### 6b. Implementation Phases
@@ -285,7 +285,7 @@ The three clusters are independent: no shared state, no ordering requirement exc
 
 **Phase 6 — Test-evidence library**: Files: `scripts/lib/test-evidence.mjs` (create), `scripts/lib/vcs.mjs` (modify), `tests/test-evidence.test.mjs` (create), `tests/fixtures/test-evidence/junit-pytest.xml` (create), `tests/fixtures/test-evidence/junit-node.xml` (create).
 
-**Phase 7 — Test-evidence CLI, sync and docs**: Files: `scripts/test-evidence.mjs` (create), `scripts/lib/sync-inventory.mjs` (modify), `scripts/lib/bundle-deps.json` (modify, regenerated), `tests/test-evidence-cli.test.mjs` (create), `tests/relocation-guard.test.mjs` (modify), `docs/runbooks/test-evidence.md` (planned) (create), `skills/ship/references/` (modify).
+**Phase 7 — Test-evidence CLI, sync and docs**: Files: `scripts/test-evidence.mjs` (create), `scripts/lib/sync-inventory.mjs` (modify), `scripts/lib/bundle-deps.json` (modify, regenerated), `tests/test-evidence-cli.test.mjs` (create), `tests/relocation-guard.test.mjs` (modify), `docs/runbooks/test-evidence.md` (create), `skills/ship/references/` (modify).
 
 **Close-out (not a phase)**: `npm run skills:regenerate`, `npm run bundle:deps`, `npm run plans:index`, `npm run guards:preflight`; the CI full suite on each PR.
 
