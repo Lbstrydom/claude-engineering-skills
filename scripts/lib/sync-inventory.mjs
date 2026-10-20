@@ -82,6 +82,8 @@ const CORE_ENTRY = [
   // Authoritative list is sync-to-repos.mjs; keep sync-inventory.mjs in lock-step.
   'scripts/workflow-cadence-doctor.mjs',
   'scripts/reconcile-repo-identity.mjs',
+  // Test-evidence record/check CLI (Cluster C). Authoritative list is sync-to-repos.mjs; keep in lock-step.
+  'scripts/test-evidence.mjs',
   'scripts/tiered-shadow-report.mjs',
   '.claude/hooks/quickfix-scan.mjs',
   // Session-start advisory: a retired skill surface on the machine can shadow

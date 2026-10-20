@@ -83,12 +83,12 @@ const CLI_SMOKE_SET = [
                                  // sync-to-repos.mjs (verified before adding —
                                  // see the trap this comment block warns about);
                                  // handler added 2026-08-16 (Gemini final review)
-
   'doctor.mjs', // consumer-friction doctor — the single door; must survive the scripts/.claude-skills relocation, declared in sync-to-repos.mjs
   'setup-postgres.mjs', // layout-aware repo-root resolution — must survive the scripts/.claude-skills relocation
   'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
   'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
+  'test-evidence.mjs', // hash-bound test-evidence record/check; declared in sync-to-repos.mjs
   'ensure-branch-protection.mjs', // strengthen-only main-branch ruleset tool — declared in sync-to-repos.mjs entries; a cloned consumer self-applies
   'maintenance-checks.mjs', // local weekly-maintenance replica — spawns sibling checks, must survive relocation
   'remediation-reconcile.mjs', // remediation-state verification reconciler — spawned by maintenance-checks.mjs AND /ship Step 0.5e (the call lives in skills/ship/SKILL.md, NOT in lib/cross-skill/commands/ship.mjs; a consumer grepped the .mjs, found nothing, and reported the cadence as dropped); declared in sync-to-repos.mjs CORE_ENTRY

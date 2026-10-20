@@ -710,11 +710,11 @@
     },
     "mutation": {
       "description": "Mutation testing (Stryker) over a declared registry of seams. --list shows which modules have had their tests PROVEN to detect defects; --target <name> runs one. Floors are a ratchet (fail on a DROP), not an aspiration. Deliberately not in the pre-push check: slow, and scores drift with unrelated refactors.",
-      "category": "testing"
+      "category": "test"
     },
     "mutation:all": {
       "description": "Run every mutation-guarded seam in sequence. Exit 1 when any score falls below its recorded floor — i.e. a test was weakened.",
-      "category": "testing"
+      "category": "test"
     },
     "mcp:parity:gate": {
       "description": "Asserts .mcp.json (Claude Code, root `mcpServers`) and .vscode/mcp.json (VS Code/Copilot, root `servers`) stay semantically equivalent across their two deliberately-different schemas. Validates strictly rather than projecting: an unknown field or a non-stdio descriptor is a hard failure, so servers added later are covered too. Origin: .vscode/mcp.json omitted `-y` from @playwright/mcp, so on a cold machine npx prompted for install and the MCP server never started — and both consumer repos were already shipping the broken form.",
@@ -861,6 +861,10 @@
     "scripts/write-code-outcomes.mjs": {
       "description": "Record a final audit round's triage outcomes to the learning store.",
       "category": "learning"
+    },
+    "scripts/test-evidence.mjs": {
+      "description": "Record a test run against a git-normalised content hash, then answer reusable / invalidated / unknown (never skips a test).",
+      "category": "test"
     },
     "scripts/write-ledger-entries.mjs": {
       "description": "Write adjudication-ledger entries for a triaged audit round (drives R2+ suppression).",

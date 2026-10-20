@@ -73,3 +73,21 @@ titles (differ from JS/TS defaults):
     types:     mypy (via poetry)             ✓
     format:    ruff format (via poetry)      ✓
 ```
+
+## Citing an earlier test run (optional, never a skip)
+
+A long suite that already passed on exactly this content need not be rerun to be
+cited, but only a hash-bound record may say so, never recollection. Record the
+run once, then ask before rerunning:
+
+```bash
+node scripts/test-evidence.mjs record --junit report.xml -- pytest -q --junitxml=report.xml
+node scripts/test-evidence.mjs check -- pytest -q --junitxml=report.xml
+```
+
+`check` answers `reusable` (exit 0), `invalidated` (1) or `unknown` (3). Only
+`reusable` may be cited in the ship report, with its recorded counts and wall
+time; `invalidated` and `unknown` mean the tests run again. `--no-tests` is
+unchanged and nothing here consults the tool automatically. A gitignored input
+(a venv, `.env`) is invisible to the hash: bind it with
+`--toolchain "pip freeze"`. Flags and exit codes: the header of `scripts/test-evidence.mjs`.

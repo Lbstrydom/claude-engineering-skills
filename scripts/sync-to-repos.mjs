@@ -400,6 +400,8 @@ const CORE_ENTRY = [
   // /ship SKILL.md shells it, nothing imports it. Walker pulls in
   // lib/commit-trailers.mjs (+ its sensitive-paths closure). Also in CLI_SMOKE_SET.
   'scripts/ship-commit.mjs',
+  // Test-evidence record/check CLI (Cluster C); nothing imports it, so declared here. In CLI_SMOKE_SET.
+  'scripts/test-evidence.mjs',
   '.claude/hooks/quickfix-scan.mjs',
   // Session-start advisory: a retired skill surface on the machine can shadow
   // the repo-scoped copy. Registered in the SYNCED .claude/settings.json, so it

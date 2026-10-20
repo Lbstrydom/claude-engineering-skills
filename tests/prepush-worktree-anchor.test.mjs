@@ -354,6 +354,10 @@ describe('main-checkout derivation population', () => {
       'Needs the git COMMON DIRECTORY itself — the suite-run record is filed inside it so the pre-push sandbox\'s '
       + 'throwaway worktree and every linked worktree write the one place doctor reads — not the main checkout root. '
       + 'It is shared-lib, and reusing fleet/git-facts.mjs would add a shared-lib -> fleet import (an undeclared layering edge).'],
+    ['scripts/lib/test-evidence.mjs',
+      'Needs the git COMMON DIRECTORY itself (records live in <common-dir>/test-evidence/, shared by every linked worktree), '
+      + 'with an injectable env that the gitCommonDir in suite-run-record.mjs lacks, resolved in the same rev-parse pass as the '
+      + 'repo-relative cwd. Not the main checkout root, so resolveMainRoot is the wrong answer.'],
     ['scripts/skills-hydrate.mjs',
       'Bootstraps the tooling tree; it runs where scripts/lib may not be hydrated yet, so it '
       + 'cannot depend on a lib module to find the checkout it is about to populate.'],

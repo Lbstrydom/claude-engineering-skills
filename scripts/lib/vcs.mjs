@@ -12,7 +12,7 @@
  * @module scripts/lib/vcs
  */
 
-import { execSync, spawnSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -227,11 +227,13 @@ export function gitCommitSha(cwd, opts = {}) {
  * are excluded — matching what an audit reads and keeping the hash stable.
  *
  * @param {string} cwd
- * @param {{env?: NodeJS.ProcessEnv}} [opts] - `env`, when supplied, is the
- *   base environment instead of `process.env` (still overridden with
- *   `GIT_INDEX_FILE` either way). Omitted (the default) → identical to
- *   today's intentional-inherit behaviour — see the comment below.
- * @returns {{ok: true, tree: string} | {ok: false, error: VcsError}}
+ * @param {{env?: NodeJS.ProcessEnv, excludePathspecs?: string[], checkFilterAttrs?: boolean}} [opts] - `env`, when
+ *   supplied, is the base environment instead of `process.env` (still overridden with `GIT_INDEX_FILE` either way);
+ *   omitted → identical to today's intentional-inherit behaviour, see the comment below. The other two are
+ *   additive (test-evidence):`excludePathspecs` also returns `filteredTree` (the tree after `git rm --cached` of
+ *   those pathspecs, from the SAME index) and `checkFilterAttrs` returns `filterAttrPaths`. Without either the
+ *   return value is exactly `{ok, tree}`, which the `AI-Audited-Tree` callers rely on.
+ * @returns {{ok: true, tree: string, filteredTree?: string, filterAttrPaths?: string[]} | {ok: false, error: VcsError}}
  */
 export function gitWorktreeTree(cwd, opts = {}) {
   let tmpIndex;
@@ -270,12 +272,49 @@ export function gitWorktreeTree(cwd, opts = {}) {
     if (!GIT_TREE_ID_RE.test(tree)) {
       return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: `git write-tree returned an unexpected object id: ${tree.slice(0, 60)}` } };
     }
-    return { ok: true, tree };
+    if (!opts.excludePathspecs && !opts.checkFilterAttrs) return { ok: true, tree };
+    // test-evidence's identity (docs/plans/copilot-feedback-item4.md C2): both extras read the SAME throwaway index,
+    // so the filtered tree and the filter-attribute census see exactly the path universe `tree` hashed.
+    const result = { ok: true, tree };
+    if (opts.checkFilterAttrs) result.filterAttrPaths = filterAttrPathsInIndex(cwd, env);
+    if (opts.excludePathspecs?.length) {
+      execFileSync('git', ['rm', '--cached', '-r', '-q', '--ignore-unmatch', '--', ...opts.excludePathspecs], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const filtered = execSync('git write-tree', { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
+      if (!GIT_TREE_ID_RE.test(filtered)) {
+        return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: `git write-tree returned an unexpected object id: ${filtered.slice(0, 60)}` } };
+      }
+      result.filteredTree = filtered;
+    }
+    return result;
   } catch (err) {
     return { ok: false, error: classifyChildError(err) };
   } finally {
     try { fs.rmSync(tmpIndex, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp cleanup is best-effort */ }
   }
+}
+
+/**
+ * Paths in the index `env.GIT_INDEX_FILE` names that carry a `filter` attribute (a clean/smudge driver, e.g. LFS): for
+ * those the tree hash is the filter's OUTPUT, not the bytes on disk. `--cached` reads `.gitattributes` from that same
+ * index, so an untracked path matched by a tracked rule is seen, which a real-index check would miss.
+ *
+ * @param {string} cwd
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string[]} sorted
+ */
+function filterAttrPathsInIndex(cwd, env) {
+  const files = execFileSync('git', ['ls-files', '-z'], { cwd, env, maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (files.length === 0) return [];
+  const out = execFileSync('git', ['check-attr', '--cached', '--stdin', '-z', 'filter'], {
+    cwd, env, input: files, maxBuffer: 256 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
+  }).toString('utf8').split('\0');
+  const hits = [];
+  // `-z` output: <path> NUL <attr> NUL <value> NUL, repeated.
+  for (let i = 0; i + 2 < out.length + 1; i += 3) {
+    const [p, , value] = [out[i], out[i + 1], out[i + 2]];
+    if (p && value !== undefined && value !== 'unspecified' && value !== 'unset') hits.push(p);
+  }
+  return hits.sort();
 }
 
 /**
