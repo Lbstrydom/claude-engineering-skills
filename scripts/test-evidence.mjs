@@ -20,7 +20,9 @@ import { ArgvError, assertKnownFlags, emit, finishAndExit } from './lib/cli-io.m
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { checkRun, recordRun } from './lib/test-evidence.mjs';
 
-if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
+// Only OUR flags (before the POSIX "--") count: a child command that itself takes --selfcheck-relocation must still run.
+const ownArgs = process.argv.includes('--') ? process.argv.slice(0, process.argv.indexOf('--')) : process.argv;
+if (ownArgs.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
 
 const KNOWN_FLAGS = ['--ignore', '--toolchain', '--junit', '--selfcheck-relocation'];
 const REPEATABLE = new Set(['--ignore', '--toolchain']);

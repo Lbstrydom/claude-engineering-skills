@@ -173,6 +173,13 @@ describe('a real node --test run with a real JUnit report (P-C5)', () => {
 });
 
 describe('--selfcheck-relocation (P-C4)', () => {
+  it('a --selfcheck-relocation AFTER the "--" belongs to the child command: the wrapper must still run it', () => {
+    const dir = makeRepo();
+    const r = cli(dir, ['record', '--', NODE, '-e', "console.log('child ran', process.argv.slice(1).join(' '))", '--', '--selfcheck-relocation']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /child ran --selfcheck-relocation/);
+    assert.equal(envelopeOf(r).verb, 'record');
+  });
   it('prints OK and exits 0 without needing a repo, flags or a command', () => {
     const plain = fs.mkdtempSync(path.join(SCRATCH, 'plain-'));
     const r = cli(plain, ['--selfcheck-relocation']);

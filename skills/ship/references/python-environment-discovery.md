@@ -81,13 +81,13 @@ cited, but only a hash-bound record may say so, never recollection. Record the
 run once, then ask before rerunning:
 
 ```bash
-node scripts/test-evidence.mjs record --junit report.xml -- pytest -q --junitxml=report.xml
-node scripts/test-evidence.mjs check -- pytest -q --junitxml=report.xml
+node scripts/test-evidence.mjs record --ignore report.xml --junit report.xml -- pytest -q --junitxml=report.xml
+node scripts/test-evidence.mjs check --ignore report.xml -- pytest -q --junitxml=report.xml
 ```
 
 `check` answers `reusable` (exit 0), `invalidated` (1) or `unknown` (3). Only
 `reusable` may be cited in the ship report, with its recorded counts and wall
 time; `invalidated` and `unknown` mean the tests run again. `--no-tests` is
 unchanged and nothing here consults the tool automatically. A gitignored input
-(a venv, `.env`) is invisible to the hash: bind it with
-`--toolchain "pip freeze"`. Flags and exit codes: the header of `scripts/test-evidence.mjs`.
+(a venv, `.env`) is invisible to the hash: `--toolchain "pip freeze"` binds the
+installed packages (through the interpreter the tests use), never `.env`. Flags and exit codes: the header of `scripts/test-evidence.mjs`.

@@ -212,6 +212,17 @@ describe('captureIdentity: git-normalised content of the whole worktree', () => 
     assert.deepEqual(a.filterPaths, ['blob.dat']);
   });
 
+  it('a submodule (gitlink) is reported: its worktree content is not in the tree hash', () => {
+    const dir = makeRepo({ dirty: false });
+    git(dir, 'update-index', '--add', '--cacheinfo', `160000,${git(dir, 'rev-parse', 'HEAD')},vendor/lib`);
+    git(dir, 'commit', '-q', '-m', 'gitlink');
+    fs.mkdirSync(path.join(dir, 'vendor', 'lib'), { recursive: true });
+    const a = captureIdentity(opts(dir));
+    assert.equal(a.ok, true, a.reason);
+    assert.deepEqual(a.submodulePaths, ['vendor/lib']);
+    assert.deepEqual(captureIdentity(opts(makeRepo())).submodulePaths, []);
+  });
+
   it('no filter attribute anywhere => filterPaths is empty', () => {
     assert.deepEqual(captureIdentity(opts(makeRepo())).filterPaths, []);
   });
@@ -251,6 +262,12 @@ describe('parseJunitCounts: counts come from the report, validated, never invent
     const r = parseJunitCounts(xml);
     assert.equal(r.counts, null);
     assert.match(r.diagnostic, /1 <testcase> element\(s\) sit outside/);
+  });
+  it('a parent suite owning testcases BESIDE nested suites is uncountable (a leaf sum would drop its own cases)', () => {
+    const xml = '<testsuites><testsuite name="parent" tests="3"><testcase name="own"/><testsuite name="child" tests="2" failures="0" errors="0" skipped="0"/></testsuite></testsuites>';
+    const r = parseJunitCounts(xml);
+    assert.equal(r.counts, null);
+    assert.match(r.diagnostic, /parent.*1 testcase\(s\) of its own beside nested suites/);
   });
   it('testcases INSIDE their suite (the normal shape) are not orphans', () => {
     const xml = '<testsuites><testsuite name="s" tests="1" failures="0" errors="0" skipped="0"><testcase name="a"><skipped/></testcase></testsuite></testsuites>';
@@ -312,7 +329,7 @@ describe('decideReuse: the three answers', () => {
   });
   const record = (o = {}) => ({
     schema: TEST_EVIDENCE_SCHEMA, outcome: { kind: 'exited', code: 0 }, stable: true, unstableReason: null,
-    identity: identity(), wallMs: 1234, finishedAt: '2026-10-20T05:00:00.000Z', counts: { tests: 3, failures: 0, errors: 0, skipped: 0, passed: 3 }, ...o,
+    identity: identity(), filterPaths: [], submodulePaths: [], countsDiagnostic: null, wallMs: 1234, finishedAt: '2026-10-20T05:00:00.000Z', counts: { tests: 3, failures: 0, errors: 0, skipped: 0, passed: 3 }, ...o,
   });
   const current = (o = {}) => ({ ok: true, identity: identity(), filterPaths: [], empty: false, ...o });
   const helpers = { changedPaths: (a, b) => (a === b ? [] : ['src/x.mjs']) };
@@ -367,6 +384,10 @@ describe('decideReuse: the three answers', () => {
       'an unstable recorded run': [record({ stable: false, unstableReason: 'input-changed-during-run' }), current()],
       'an EMPTY tested content (vacuous)': [record(), current({ empty: true })],
       'a recorded run that executed ZERO tests (vacuous)': [record({ counts: { tests: 0, failures: 0, errors: 0, skipped: 0, passed: 0 } }), current()],
+      'a recorded run where EVERY test was skipped (nothing passed)': [record({ counts: { tests: 5, failures: 0, errors: 0, skipped: 5, passed: 0 } }), current()],
+      'a record made over a filtered path (marker since removed from the tree)': [record({ filterPaths: ['blob.dat'] }), current()],
+      'a record made over a submodule': [record({ submodulePaths: ['vendor/lib'] }), current()],
+      'a submodule present now': [record(), current({ submodulePaths: ['vendor/lib'] })],
       'a recorded exit 0 whose report shows failures': [record({ counts: { tests: 3, failures: 1, errors: 0, skipped: 0, passed: 2 } }), current()],
       'a recorded exit 0 whose report shows errors': [record({ counts: { tests: 3, failures: 0, errors: 1, skipped: 0, passed: 2 } }), current()],
     };
@@ -503,6 +524,16 @@ describe('record / check end to end on a dirty temp repo (P-C1)', () => {
     const body = JSON.parse(fs.readFileSync(rec.envelope.recordPath, 'utf8'));
     fs.writeFileSync(rec.envelope.recordPath, JSON.stringify({ ...body, reusable: true }));
     assert.equal((await checkRun({ argv: OK_CHILD, ...opts(dir) })).envelope.answer, 'unknown');
+  });
+
+  it('a record with internally impossible counts is not trusted (the persisted shape enforces the parser\'s relation)', async () => {
+    const dir = makeRepo();
+    const rec = await recordRun({ argv: OK_CHILD, ...opts(dir) }, deps());
+    const body = JSON.parse(fs.readFileSync(rec.envelope.recordPath, 'utf8'));
+    fs.writeFileSync(rec.envelope.recordPath, JSON.stringify({ ...body, counts: { tests: 2, failures: 0, errors: 0, skipped: 0, passed: 9 } }));
+    const r = await checkRun({ argv: OK_CHILD, ...opts(dir) });
+    assert.equal(r.envelope.answer, 'unknown');
+    assert.match(r.envelope.reasons.join(' '), /malformed/);
   });
 
   it('a record whose stored key disagrees with its file name is not trusted', async () => {
@@ -646,6 +677,30 @@ describe('counts are bound to THIS invocation (P-C3)', () => {
     const rec = await recordRun({ argv: writeReport(report, XML), ...opts(dir, { junit: report }) }, deps());
     assert.deepEqual(rec.envelope.counts, { tests: 4, failures: 0, errors: 0, skipped: 1, passed: 3 });
     assert.equal(rec.envelope.countsDiagnostic, null);
+  });
+
+  it('a --junit report written INSIDE the tested content (not ignored) makes the run unstable, and the message says how to fix it', async () => {
+    const dir = makeRepo();
+    const report = path.join(dir, 'inside.xml'); // not in .gitignore: it is part of the tested content
+    const rec = await recordRun({ argv: writeReport(report, XML), ...opts(dir, { junit: report }) }, deps());
+    assert.equal(rec.envelope.stable, false);
+    assert.match(rec.envelope.message, /inside\.xml is inside the tested content.*--ignore inside\.xml/);
+    // and the documented remedy works
+    const fixed = path.join(dir, 'fixed.xml');
+    const o = opts(dir, { junit: fixed, ignore: ['fixed.xml'] });
+    const ok = await recordRun({ argv: writeReport(fixed, XML), ...o }, deps());
+    assert.equal(ok.envelope.stable, true);
+    assert.equal((await checkRun({ argv: writeReport(fixed, XML), ...opts(dir, { ignore: ['fixed.xml'] }) })).envelope.answer, 'reusable');
+  });
+
+  it('check surfaces WHY counts are unmeasured when --junit was requested but produced nothing', async () => {
+    const dir = makeRepo();
+    const report = path.join(dir, 'report.xml');
+    fs.writeFileSync(report, XML);
+    await recordRun({ argv: OK_CHILD, ...opts(dir, { junit: report }) }, deps());
+    const c = await checkRun({ argv: OK_CHILD, ...opts(dir) });
+    assert.equal(c.envelope.answer, 'reusable');
+    assert.match(c.envelope.summary, /counts unmeasured \(report not produced by this run\)/);
   });
 
   it('a pre-existing VALID report + a green command that writes none => counts null, "report not produced by this run"', async () => {

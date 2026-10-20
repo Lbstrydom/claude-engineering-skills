@@ -231,9 +231,9 @@ export function gitCommitSha(cwd, opts = {}) {
  *   supplied, is the base environment instead of `process.env` (still overridden with `GIT_INDEX_FILE` either way);
  *   omitted → identical to today's intentional-inherit behaviour, see the comment below. The other two are
  *   additive (test-evidence):`excludePathspecs` also returns `filteredTree` (the tree after `git rm --cached` of
- *   those pathspecs, from the SAME index) and `checkFilterAttrs` returns `filterAttrPaths`. Without either the
+ *   those pathspecs, from the SAME index) and `checkFilterAttrs` returns `filterAttrPaths` and `gitlinkPaths`. Without either the
  *   return value is exactly `{ok, tree}`, which the `AI-Audited-Tree` callers rely on.
- * @returns {{ok: true, tree: string, filteredTree?: string, filterAttrPaths?: string[]} | {ok: false, error: VcsError}}
+ * @returns {{ok: true, tree: string, filteredTree?: string, filterAttrPaths?: string[], gitlinkPaths?: string[]} | {ok: false, error: VcsError}}
  */
 export function gitWorktreeTree(cwd, opts = {}) {
   let tmpIndex;
@@ -276,7 +276,10 @@ export function gitWorktreeTree(cwd, opts = {}) {
     // test-evidence's identity (docs/plans/copilot-feedback-item4.md C2): both extras read the SAME throwaway index,
     // so the filtered tree and the filter-attribute census see exactly the path universe `tree` hashed.
     const result = { ok: true, tree };
-    if (opts.checkFilterAttrs) result.filterAttrPaths = filterAttrPathsInIndex(cwd, env);
+    if (opts.checkFilterAttrs) {
+      result.filterAttrPaths = filterAttrPathsInIndex(cwd, env);
+      result.gitlinkPaths = gitlinkPathsInIndex(cwd, env);
+    }
     if (opts.excludePathspecs?.length) {
       execFileSync('git', ['rm', '--cached', '-r', '-q', '--ignore-unmatch', '--', ...opts.excludePathspecs], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
       const filtered = execSync('git write-tree', { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
@@ -315,6 +318,22 @@ function filterAttrPathsInIndex(cwd, env) {
     if (p && value !== undefined && value !== 'unspecified' && value !== 'unset') hits.push(p);
   }
   return hits.sort();
+}
+
+/**
+ * Paths recorded as a gitlink (mode 160000, a submodule) in the index `env.GIT_INDEX_FILE` names. A gitlink hashes as
+ * the submodule's COMMIT id, so an edit inside the submodule's worktree does not move the tree hash: the content
+ * identity does not bind it.
+ *
+ * @param {string} cwd
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string[]} sorted
+ */
+function gitlinkPathsInIndex(cwd, env) {
+  const out = execFileSync('git', ['ls-files', '-s', '-z'], { cwd, env, maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
+    .toString('utf8').split('\0');
+  // `-s -z` entry: <mode> SP <object> SP <stage> TAB <path>
+  return out.filter((e) => e.startsWith('160000 ')).map((e) => e.slice(e.indexOf('\t') + 1)).sort();
 }
 
 /**

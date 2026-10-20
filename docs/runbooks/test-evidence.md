@@ -14,9 +14,13 @@ needs to cite an earlier green run honestly. Plan:
 ## Use
 
 ```powershell
-node scripts/test-evidence.mjs record --junit report.xml -- python -m pytest -q --junitxml=report.xml
-node scripts/test-evidence.mjs check -- python -m pytest -q --junitxml=report.xml
+node scripts/test-evidence.mjs record --ignore report.xml --junit report.xml -- python -m pytest -q --junitxml=report.xml
+node scripts/test-evidence.mjs check --ignore report.xml -- python -m pytest -q --junitxml=report.xml
 ```
+
+The report is an OUTPUT of the run: written inside the tested content (not gitignored) it moves the
+identity itself and the record is `unstable`. Gitignore it or pass `--ignore report.xml` to both verbs (the
+example above).
 
 `record` runs the command (no shell, so quote arguments for the command itself,
 not for a shell) and writes the record. The child's stdout and stderr go to
@@ -39,7 +43,7 @@ live in `<git-common-dir>/test-evidence/`, shared by every linked worktree.
 |---|---|---|
 | `reusable` | The recorded run exited 0, was stable, executed tests, and the tested content is unchanged. Cite it with its counts and wall time. | Only files under an `--ignore` glob changed (they are named). |
 | `invalidated` | A recorded green run exists but the content moved. The changed paths are listed. | A tracked file edited; an untracked file appeared; a `--toolchain` probe output moved; `core.autocrlf` changed. |
-| `unknown` | There is nothing sound to reuse. Rerun. | No record; unreadable or wrong-version record; the recorded run failed, was killed or never started; the recorded run was **unstable** (the tree changed while it ran); zero tests ran; the tested content is empty; a clean/smudge filter (for example LFS) is configured. |
+| `unknown` | There is nothing sound to reuse. Rerun. | No record; unreadable or wrong-version record; the recorded run failed, was killed or never started; the recorded run was **unstable** (the tree changed while it ran); no test passed (zero tests, or every test skipped); the tested content is empty; a clean/smudge filter (for example LFS) or a submodule is present, now or when the record was made. |
 
 A failed or unstable recorded run is `unknown`, not `invalidated`: there was no
 valid green to invalidate.
@@ -56,8 +60,10 @@ what is irrelevant with `--ignore 'docs/**'` (a glob, relative to the repo root)
 
 **Known limit: gitignored inputs are invisible.** `.env`, a virtualenv, generated
 config: a change to one does not move the hash, and `check` will still say
-`reusable`. Bind what matters with a probe, whose stdout is hashed and never
-stored:
+`reusable`. A probe binds only what its stdout shows: `pip freeze` fingerprints the
+installed packages (run it through the same interpreter the tests use), but NOT the
+contents of `.env`; there is no probe for a secret file and none is wanted. Probe
+stdout is hashed and never stored:
 
 ```powershell
 node scripts/test-evidence.mjs record --toolchain "python --version" --toolchain "pip freeze" -- python -m pytest -q
@@ -75,7 +81,7 @@ this run`. Supported: a root `<testsuites>` carrying all four totals (used as
 is), otherwise the sum over leaf `<testsuite>` elements. Everything else, a
 negative or inconsistent total, an unreadable file, or **`node --test` top-level
 tests (bare `<testcase>`, wrap them in `describe()`)**, is `counts: null` with a
-named diagnostic. Without `--junit` the output says `counts unmeasured`, never `0`.
+named diagnostic (a parent suite that holds testcases beside nested suites is also uncountable). Without `--junit` the output says `counts unmeasured`, never `0`.
 
 ## Honest edges
 

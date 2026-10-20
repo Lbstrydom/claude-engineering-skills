@@ -41,7 +41,10 @@ export const KNOWN_LIMIT = 'limit: gitignored inputs (.env, a venv, generated co
 
 const Sha = z.string().regex(/^[0-9a-f]{40}$|^[0-9a-f]{64}$/);
 const Count = z.number().int().nonnegative().max(SAFE);
-const CountsSchema = z.strictObject({ tests: Count, failures: Count, errors: Count, skipped: Count, passed: Count });
+// The persisted shape enforces the SAME cross-field relation the JUnit parser does (finishCounts), so a hand-edited or
+// corrupt record cannot carry counts the read side would have refused.
+const CountsSchema = z.strictObject({ tests: Count, failures: Count, errors: Count, skipped: Count, passed: Count })
+  .refine((c) => c.failures + c.errors + c.skipped + c.passed === c.tests, 'counts must satisfy failures + errors + skipped + passed = tests');
 const OutcomeSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('exited'), code: z.number().int() }),
   z.strictObject({ kind: z.literal('signal'), signal: z.string().min(1) }),
@@ -63,6 +66,10 @@ export const RecordSchema = z.strictObject({
   ignore: z.array(z.string()),
   toolchainProbes: z.array(z.string()),
   identity: IdentitySchema,
+  // Paths whose content the identity did NOT bind when this record was made (a clean/smudge filter, a submodule). A record
+  // made over such content is never reusable, even if the marker is later removed from the tree.
+  filterPaths: z.array(z.string()),
+  submodulePaths: z.array(z.string()),
   outcome: OutcomeSchema,
   stable: z.boolean(),
   unstableReason: z.string().nullable(),
@@ -179,6 +186,7 @@ export function captureIdentity({ cwd, ignore = [], toolchain = [], env = proces
       lineEndings: { autocrlf: gitConfigValue(repoRoot, env, 'core.autocrlf'), eol: gitConfigValue(repoRoot, env, 'core.eol') },
     },
     filterPaths: tree.filterAttrPaths ?? [],
+    submodulePaths: tree.gitlinkPaths ?? [],
     empty: filteredTree === emptyTree,
     cwdRel,
     repoRoot,
@@ -263,15 +271,21 @@ export function parseJunitCounts(xml) {
       const top = stack.pop();
       if (!top || top.name !== name) return { counts: null, diagnostic: `malformed report: unbalanced </${name}>` };
       if (name === 'testsuite' && !top.hasChild) leaves.push(top.attrs);
+      // A parent that owns testcases AND nested suites: its own cases are in no leaf, so a leaf sum would drop them.
+      if (name === 'testsuite' && top.hasChild && top.directCases > 0) {
+        return { counts: null, diagnostic: `<testsuite name="${top.attrs.name ?? ''}"> holds ${top.directCases} testcase(s) of its own beside nested suites, so a leaf sum would drop them` };
+      }
       continue;
     }
     if (name === 'testcase') {
+      const parent = stack[stack.length - 1];
+      if (parent?.name === 'testsuite') parent.directCases += 1;
       if (!stack.some((n) => n.name === 'testsuite')) orphanCases += 1;
-      if (!selfClosing) stack.push({ name, attrs: {}, hasChild: false });
+      if (!selfClosing) stack.push({ name, attrs: {}, hasChild: false, directCases: 0 });
       continue;
     }
     sawSuite = true;
-    const node = { name, attrs: attrsOf(rest), hasChild: false };
+    const node = { name, attrs: attrsOf(rest), hasChild: false, directCases: 0 };
     if (name === 'testsuites' && stack.length === 0 && !root) root = node;
     if (name === 'testsuite' && stack.length) stack[stack.length - 1].hasChild = true;
     if (selfClosing) {
@@ -330,8 +344,14 @@ export function decideReuse(record, current, helpers = {}, absentReason = 'no re
     const shown = current.filterPaths.slice(0, 5).join(', ');
     return unknown(`clean/smudge filter configured: content identity is not byte-bound (${shown}${current.filterPaths.length > 5 ? ', …' : ''})`);
   }
+  if (current.submodulePaths?.length) {
+    return unknown(`submodule present: its worktree content is not in the tree hash, so the identity is not bound (${current.submodulePaths.slice(0, 5).join(', ')})`);
+  }
   if (current.empty) return unknown('the tested content is empty (every file is ignored or there are none): nothing was bound');
   if (!record) return unknown(absentReason);
+  if (record.filterPaths.length || record.submodulePaths.length) {
+    return unknown('the recorded run was made over content the identity could not bind (a clean/smudge filter or a submodule)');
+  }
   const { outcome } = record;
   if (outcome.kind !== 'exited' || outcome.code !== 0) {
     const what = outcome.kind === 'exited' ? `exited ${outcome.code}` : outcome.kind === 'signal' ? `was killed by ${outcome.signal}` : `could not start (${outcome.code ?? 'spawn error'})`;
@@ -339,10 +359,15 @@ export function decideReuse(record, current, helpers = {}, absentReason = 'no re
   }
   if (!record.stable) return unknown(`the recorded run is unstable (${record.unstableReason ?? 'input-changed-during-run'}): the tested bytes are not the recorded bytes`);
   const { counts } = record;
-  if (counts && counts.tests === 0) return unknown('the recorded run executed zero tests (a vacuous pass is not evidence)');
+  // Nothing PASSED: zero tests, or every test skipped. Either is a vacuous exit 0, not evidence.
+  if (counts && counts.passed === 0 && counts.failures + counts.errors === 0) {
+    return unknown(counts.tests === 0
+      ? 'the recorded run executed zero tests (a vacuous pass is not evidence)'
+      : `the recorded run passed no test (${counts.skipped} of ${counts.tests} skipped): a vacuous pass is not evidence`);
+  }
   if (counts && counts.failures + counts.errors > 0) return unknown(`the recorded run exited 0 but its report shows ${counts.failures} failed and ${counts.errors} errored tests`);
 
-  const recorded = { finishedAt: record.finishedAt, wallMs: record.wallMs, counts, outcome };
+  const recorded = { finishedAt: record.finishedAt, wallMs: record.wallMs, counts, countsDiagnostic: record.countsDiagnostic, outcome };
   const changedPaths = helpers.changedPaths ?? (() => null);
   const a = record.identity; const b = current.identity;
   const moved = [];
@@ -488,7 +513,7 @@ export async function recordRun(opts, deps = {}) {
   const record = {
     schema: TEST_EVIDENCE_SCHEMA, key, command: argv, cwd: before.cwdRel, platform, arch,
     ignore: [...ignore].sort(), toolchainProbes: [...toolchain].sort(),
-    identity: before.identity, outcome, stable, unstableReason, unstablePaths, wallMs,
+    identity: before.identity, filterPaths: before.filterPaths, submodulePaths: before.submodulePaths, outcome, stable, unstableReason, unstablePaths, wallMs,
     finishedAt: (deps.now?.() ?? new Date()).toISOString(), counts, countsDiagnostic,
   };
   let recordPath = recordPathFor(before.commonDir, key);
@@ -502,6 +527,11 @@ export async function recordRun(opts, deps = {}) {
   if (run.message) messages.push(run.message);
   if (writeError) messages.push(`ran ${childCode === 0 ? 'green' : ran}, recorded nothing (${writeError})`);
   if (!stable) messages.push(`unstable: ${unstableReason}${unstablePaths.length ? ` (${unstablePaths.slice(0, 5).join(', ')})` : ''}; check will answer unknown`);
+  // The --junit report is an OUTPUT of the run; written inside the tested content (not gitignored) it moves the identity itself.
+  const reportRel = report ? path.relative(before.repoRoot, report).replace(/\\/g, '/') : null;
+  if (reportRel && unstablePaths.includes(reportRel)) {
+    messages.push(`the --junit report ${reportRel} is inside the tested content: gitignore it or pass --ignore ${reportRel} to both record and check`);
+  }
   if (countsDiagnostic) messages.push(`counts: ${countsDiagnostic}`);
   const summary = `test-evidence: ${ran} in ${fmtMs(wallMs)}; ${describeCounts(counts)}; ${stable ? 'stable' : 'UNSTABLE'}${writeError ? '; NOT recorded' : ''}`;
   return {
@@ -539,7 +569,7 @@ export async function checkRun(opts, deps = {}) {
   const { answer } = decision;
   const rec = decision.recorded;
   const lead = {
-    reusable: `reusable — the recorded green run still applies (rerun would cost ~${rec ? fmtMs(rec.wallMs) : '?'}); ${describeCounts(rec?.counts ?? null)}`,
+    reusable: `reusable — the recorded green run still applies (rerun would cost ~${rec ? fmtMs(rec.wallMs) : '?'}); ${describeCounts(rec?.counts ?? null)}${rec && !rec.counts && rec.countsDiagnostic ? ` (${rec.countsDiagnostic})` : ''}`,
     invalidated: `invalidated — ${decision.reasons[0]}; rerun`,
     unknown: `unknown — ${decision.reasons[0]}; rerun`,
   }[answer];
