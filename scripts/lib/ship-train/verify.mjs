@@ -22,7 +22,7 @@
  * @module scripts/lib/ship-train/verify
  */
 
-import { parseMessageTrailers } from '../commit-trailers.mjs';
+import { parseMessageTrailers, AI_TRAILER_KEYS } from '../commit-trailers.mjs';
 
 /** A merged head is a bounded number of serial updates from its pinned oid. */
 export const MAX_UPDATE_LINKS = 5;
@@ -56,7 +56,7 @@ export function readAiTrailers(message) {
 }
 
 /** The reserved keys as their one writer emits them (commit-trailers.mjs formatTrailerBlock). */
-const CANONICAL_KEYS = new Map(['AI-Skill', 'AI-Models', 'AI-Gate', 'AI-Run-ID', 'AI-Audited-Tree'].map((k) => [k.toLowerCase(), k]));
+const CANONICAL_KEYS = new Map(AI_TRAILER_KEYS.map((k) => [k.toLowerCase(), k]));
 
 /**
  * Judge source identity from a first-parent walk the caller gathered.
@@ -120,6 +120,9 @@ export function checkClaimTruth({ message, tree, prCommits, run }) {
   };
 
   if (claimedTree !== undefined && gate !== 'passed') problems.push(`AI-Audited-Tree on a ${gate} gate`);
+  // The train is the squash's writer and never writes this key: the final-review marker it derives from is a local record in the
+  // worktree that ran the review, and none is bound to a PR's run in the checkout a train lands from (copilot-feedback-item4 B4).
+  if (trailers['AI-Final-Review'] !== undefined) problems.push(`AI-Final-Review ${trailers['AI-Final-Review']} on a squash commit: the train does not write it, so the trailer helper did not either`);
   switch (gate) {
     case 'passed':
       if (claimedTree !== tree) problems.push(`AI-Audited-Tree ${String(claimedTree).slice(0, 12)} is not the commit's tree ${String(tree).slice(0, 12)}`);

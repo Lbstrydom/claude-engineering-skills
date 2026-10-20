@@ -27,16 +27,18 @@ AI-Models: claude,gemini,gpt
 AI-Gate: passed
 AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844
 AI-Audited-Tree: 64e894a145de26eed3c3e006c434a345015257bf
+AI-Final-Review: approve
 ```
 
 | Key | Value grammar | Semantics |
 |---|---|---|
 | `AI-Skill` | lowercase kebab-case, must name a `skills/` (or consumer `.claude/skills/`) directory | which skill workflow produced the commit |
 | `AI-Models` | comma-separated tokens `^[a-z][a-z0-9.-]*$`, deduplicated, sorted alphabetically | **declared** lineup of models that participated. Grammar-validated but not evidence-bound (same honesty tier as a `Co-authored-by` line) — receipt-derived binding is a v2 item |
-| `AI-Gate` | `passed` \| `converged` \| `waived` \| `not-run` | **evidence- and verdict-bound**: `passed`/`waived` require `.audit/last-audit-run.json` fresher than `HEAD` (an audit ran this cycle); `not-run` requires its absence. `passed` additionally requires (a) the **audited-target identity** to match — the marker's `auditedTree` must equal the tree being committed (see below), checked first and locally — and (b) the run's **convergence verdict verified against the cloud store** (`audit_runs` row via `getAuditRunConvergence`) — cloud off, run not found, run not converged, or a tree mismatch all refuse `passed`, fail-closed. Scope of the verified claim: **GPT-loop convergence only** — the Gemini final-review disposition is not yet store-verifiable per run; binding it is part of the V2 ship-evidence receipt. `waived` is the declared, unverified disposition (gate override OR verification unavailable); the accompanying `AI-Run-ID` keeps it forensically resolvable |
+| `AI-Gate` | `passed` \| `converged` \| `waived` \| `not-run` | **evidence- and verdict-bound**: `passed`/`waived` require `.audit/last-audit-run.json` fresher than `HEAD` (an audit ran this cycle); `not-run` requires its absence. `passed` additionally requires (a) the **audited-target identity** to match — the marker's `auditedTree` must equal the tree being committed (see below), checked first and locally — and (b) the run's **convergence verdict verified against the cloud store** (`audit_runs` row via `getAuditRunConvergence`) — cloud off, run not found, run not converged, or a tree mismatch all refuse `passed`, fail-closed. Scope of the verified claim: **GPT-loop convergence only**. The final review's result is a separate fact in `AI-Final-Review` (bound to the run's local evidence, not store-verified; the durable store binding is part of the V2 ship-evidence receipt), and it never changes this value. `waived` is the declared, unverified disposition (gate override OR verification unavailable); the accompanying `AI-Run-ID` keeps it forensically resolvable |
 | `AI-Audited-Tree` | 40-hex git oid, conditional — **`passed` only** | the tree object `ship-commit` actually compared when granting `passed`, i.e. the index tree at ship time, which at that moment equals the marker's `auditedTree`. Written only on the accept branch of `evaluateGateVerification`, and the renderer independently refuses to emit it on any other gate or for a malformed oid. **Added 2026-08-04 to make `passed` re-checkable from the commit alone** — see "Verifying a historical `passed`" below |
 | `AI-Run-ID` | `[A-Za-z0-9-]{8,64}`, conditional | injected by the helper from `.audit/last-audit-run.json` when fresh — never typed by an agent. Since E1 this is **more than a correlation hint on a `passed` commit**: `passed` additionally requires the marker's `auditedTree` to equal the tree being committed, so the id names a run whose *subject* was verified. On `waived` it remains a best-effort hint. `--no-run-id` omits it (declares the audit unrelated) and forces `--gate not-run` |
-| `AI-Ship-Authority` | the single literal `launch-prompt`, conditional | the ship was **pre-authorised by the user's launch prompt** rather than typed as `/ship`. Written only by `ship-commit.mjs --preauthorised`, after every condition in `scripts/lib/ship-preauth.mjs` held (effective gate `passed`/`converged`, the store's audit converged for this branch, the final review APPROVED this audited tree and round, and no sensitive path, migration or repository-policy file in the branch). A user-typed `/ship` writes none. Since 2026-10-15; see "Pre-authorised ships" below |
+| `AI-Final-Review` | `approve` \| `approve-with-debt` \| `blocked`, conditional | the **result** of the final review of the run `AI-Run-ID` names (the round gate's disposition, not the reviewer's verdict word: an `APPROVE` can be `blocked`). **Derived, never an input**: read from `.audit/last-final-review.json` and emitted only when that marker is bound to the same gate evidence `AI-Run-ID` comes from (run, audited tree and round all equal) and records a disposition. There is no flag, and a hand-typed one is refused as a reserved trailer. Absent ⇒ *no final-review record was bound to this run's evidence*, never "approved". Written by `ship-commit.mjs` only; a train squash never carries it. Since 2026-10-20; see "The final-review result" below |
+| `AI-Ship-Authority` | the single literal `launch-prompt`, conditional | the ship was **pre-authorised by the user's launch prompt** rather than typed as `/ship`. Written only by `ship-commit.mjs --preauthorised`, after every condition in `scripts/lib/ship-preauth.mjs` held (effective gate `passed`/`converged`, the store's audit converged for this branch, the final review APPROVED this audited tree and round with result `approve`, and no sensitive path, migration or repository-policy file in the branch). A user-typed `/ship` writes none. Since 2026-10-15; see "Pre-authorised ships" below |
 
 ### The audited-target identity (E1)
 
@@ -271,6 +273,57 @@ The final-review condition reads `.audit/last-final-review.json` (written by `ge
 against; the previous marker is revoked first, so a failed replacement never leaves an old approval readable): `audit_runs.gemini_verdict` is one column per run with no target identity, so on its own it cannot tell an approval of tree A
 from one of tree B. Query: `git log --oneline --grep='^AI-Ship-Authority: launch-prompt'`.
 
+Since 2026-10-20 that condition requires the review's **result** (`disposition`) to be `approve`, not only the verdict word to be
+`APPROVE`: an APPROVE whose result is `blocked` (a release-blocking finding, a coverage downgrade, a required subject not received in
+full) is refused, naming the result; `approve_with_debt` is refused too; a marker written before dispositions were recorded is
+refused with its own reason, `predates dispositions: re-run the final review`, distinct from `malformed`.
+
+### The final-review result (`AI-Final-Review`, from 2026-10-20)
+
+A reviewed decision to ship with debt and a gate bypass used to look identical in git: both read `AI-Gate: waived`. The final
+review's result is now its own trailer, so a consumer's
+
+```text
+AI-Gate: waived
+AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844
+AI-Final-Review: approve-with-debt
+```
+
+reads as what it was: the GPT loop did not converge (honest `waived`), the store row for the run says how many rounds it took, and
+the final review of that same run, tree and round accepted the remaining findings as debt. Plan:
+[`copilot-feedback-item4.md`](../plans/copilot-feedback-item4.md) §2.2.
+
+- **Derived from a record that already existed.** `gemini-review.mjs` writes `.audit/last-final-review.json` after each code-mode
+  review; it now records the round gate's `disposition` beside the `verdict`. Only legal pairs are written or read: `approve` needs
+  `APPROVE`, `approve_with_debt` needs `CONCERNS`/`CONCERNS_REMAINING`, `blocked` follows any verdict. A contradictory pair is
+  `malformed`. A review with no disposition writes no marker (after revoking the old one, as before).
+- **One binding predicate.** `matchFinalReviewMarker` (`scripts/lib/final-review-marker.mjs`) answers "is this review about this
+  audit evidence?" for both callers, the trailer and the pre-authorised check. What a bound review must *say* stays each caller's
+  policy: the trailer reports any of the three; the pre-authorised check requires `approve`.
+- **Independent of `AI-Gate`.** `evaluateGateVerification` never reads the final-review marker, and a test pins that its refusal is
+  byte-identical with and without an approving marker present. `waived` beside `approve-with-debt` is two facts about one run from
+  two records; neither qualifies the other, so there is no illegal pair to police.
+- **Absence.** After this date a commit with `AI-Run-ID` and no `AI-Final-Review` means only that no final-review marker was bound
+  to that run's evidence at commit time (none ran, it reviewed another round or tree, it was revoked, or it predates dispositions).
+  It never means approved. No `AI-Run-ID` ⇒ never an `AI-Final-Review`: a result needs a run to be a result of.
+- **Limit: a local fact.** The marker is a gitignored file in the worktree that ran the review, so the trailer is only as durable
+  as the commit that carries it, and the store has no per-run, target-bound copy of the result (`audit_runs.gemini_verdict` is the
+  verdict word, one per run, no target). A marker lost before the commit means no trailer, never a false one. A durable record is
+  the V2 receipt's job.
+- **Train squashes never carry it.** A train lands other sessions' PRs from the coordinator's checkout, where no marker is bound
+  to a PR's run, so `composeSquashMessage` never writes the key and `ship-train verify` reports one on a squash as a false claim.
+  On a squash-merged repository the trailer therefore lives on the PR's own commits, not on the commit that lands on the default
+  branch.
+
+**What is reachable from a commit, and what is not** (the other facts the consumer asked for, decided in the plan, not built):
+
+| Fact | How to reach it from the trailers |
+|---|---|
+| Formal CODE result and budget | `AI-Run-ID` is the `audit_runs.id`: `rounds`, `round_converged_after` (null = did not converge), `rigor_pressure_round`, `total_cost_estimate`, `gemini_verdict` — `SELECT rounds, round_converged_after, rigor_pressure_round, total_cost_estimate, gemini_verdict FROM audit_runs WHERE id = 'ecae388d-c176-4182-9d27-0210b919b844';` |
+| Final-review result | `AI-Final-Review` itself |
+| Accepted debt | **Not joinable from `AI-Run-ID` today.** Debt entries are stamped `deferred_run` = the audit's **session id** (the `--run` value of `debt-auto-capture.mjs`, compacted past 40 chars by `scripts/lib/run-key.mjs`), not the `audit_runs.id`, and `audit_runs` stores no session id. The SID is in the transient gate-evidence marker (`sid`) and in the audit's own output; from a commit alone the debt is found by plan and time (`audit_runs.plan_file`, `created_at`), not by key. Measured 2026-10-20 against the migrations and `scripts/lib/store/runs-findings.mjs`. |
+| Result digest, human ship authority | Dropped: a digest of a gitignored, overwritten file verifies nothing later, and an agent-written "the user approved" is a declaration. The commit author and the PR merge are the authority record. |
+
 ## Adoption boundary
 
 The convention applies **from the annotated tag `provenance-v1` forward**
@@ -306,6 +359,12 @@ git log --oneline --grep='^AI-Gate: converged'
 
 # Both verified gates together (everything behind a store-verified verdict)
 git log --oneline --grep='^AI-Gate: \(passed\|converged\)'
+
+# A reviewed ship-with-debt, told apart from a plain bypass (both are AI-Gate: waived)
+git log --oneline --grep='^AI-Gate: waived' --grep='^AI-Final-Review: approve-with-debt' --all-match
+
+# Final-review result per commit (empty = no review bound to the run, or pre-2026-10-20)
+git log --format='%h %(trailers:key=AI-Gate,valueonly,separator=%x2C) %(trailers:key=AI-Final-Review,valueonly,separator=%x2C) %s' -20
 ```
 
 ## Failure contract (what agents see)

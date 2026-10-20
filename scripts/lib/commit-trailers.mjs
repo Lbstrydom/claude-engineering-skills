@@ -6,7 +6,8 @@
  * (scripts/ship-commit.mjs) owns process concerns (git, exit codes).
  *
  * Trailer schema (v1): AI-Skill, AI-Models, AI-Gate, conditional AI-Run-ID and
- * AI-Audited-Tree (the latter only on a verified `passed`).
+ * AI-Audited-Tree (the latter only on a verified `passed`), plus the derived,
+ * conditional AI-Final-Review and AI-Ship-Authority.
  * The AI-* namespace is RESERVED: agent-supplied AI-* trailers in a commit
  * message are rejected, never merged — the helper is the only writer.
  *
@@ -19,6 +20,22 @@ import { resolveAndClassify } from './sensitive-paths.mjs';
 import { GIT_OBJECT_ID_RE } from './worktree-identity.mjs';
 
 export const GATE_VALUES = Object.freeze(['passed', 'converged', 'waived', 'not-run']);
+
+/**
+ * Every reserved key `formatTrailerBlock` can emit, canonically spelled, in block order. The ONE list readers canonicalise
+ * against (ship-train verify), so adding a key here is the only edit a reader needs; a test pins the renderer to it.
+ */
+export const AI_TRAILER_KEYS = Object.freeze([
+  'AI-Skill', 'AI-Models', 'AI-Gate', 'AI-Run-ID', 'AI-Audited-Tree', 'AI-Final-Review', 'AI-Ship-Authority',
+]);
+
+/**
+ * `AI-Final-Review` values, keyed by the final-review disposition they render (the round gate's own spelling uses `_`; git
+ * trailer values here use `-`, like `not-run`). A null-prototype map, so `Object.hasOwn` is the only way in.
+ */
+export const FINAL_REVIEW_TRAILER_VALUES = Object.freeze(Object.assign(Object.create(null), {
+  approve: 'approve', approve_with_debt: 'approve-with-debt', blocked: 'blocked',
+}));
 
 /**
  * The gates whose claim is VERIFIED rather than declared: both require
@@ -516,7 +533,8 @@ export function messageFileError(kind, suppliedPath) {
  *
  *   git rev-parse <sha>^{tree}  ==  git log -1 --format='%(trailers:key=AI-Audited-Tree,valueonly)' <sha>
  *
- * @param {{skill: string, models: string[], gate: string, runId?: string|null, auditedTree?: string|null}} v
+ * @param {{skill: string, models: string[], gate: string, runId?: string|null, auditedTree?: string|null,
+ *   finalReview?: 'approve'|'approve_with_debt'|'blocked'|null, shipAuthority?: string}} v
  * @returns {string[]}
  */
 export function formatTrailerBlock(v) {
@@ -545,6 +563,13 @@ export function formatTrailerBlock(v) {
   // Plan: docs/plans/gate-taxonomy-remediated-ships.md §2.3.
   if (v.gate === 'passed' && TREE_ID_RE.test(v.auditedTree ?? '')) {
     lines.push(`AI-Audited-Tree: ${v.auditedTree}`);
+  }
+  // The final review's RESULT for the run AI-Run-ID names (docs/plans/copilot-feedback-item4.md section 2.2 B3). The caller
+  // passes the disposition of a final-review marker BOUND to that run's gate evidence (final-review-marker.mjs
+  // `boundFinalReviewDisposition`), never a flag, so there is nothing to declare. It needs a run to be a result OF, and an
+  // unknown value emits nothing. It qualifies no other trailer: AI-Gate is decided without it.
+  if (v.runId && Object.hasOwn(FINAL_REVIEW_TRAILER_VALUES, v.finalReview ?? '')) {
+    lines.push(`AI-Final-Review: ${FINAL_REVIEW_TRAILER_VALUES[v.finalReview]}`);
   }
   // A pre-authorised ship (the user pre-approved it in the chip's launch prompt rather than typing /ship). Set ONLY by
   // ship-commit's `--preauthorised` path, after every condition in lib/ship-preauth.mjs held; the single literal value

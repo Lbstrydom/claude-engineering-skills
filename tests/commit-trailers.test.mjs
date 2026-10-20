@@ -22,6 +22,7 @@ import {
   messageFileError,
   formatTrailerBlock,
   composeFinalMessage,
+  AI_TRAILER_KEYS,
 } from '../scripts/lib/commit-trailers.mjs';
 
 const SKILLS = ['ship', 'audit-code', 'plan'];
@@ -517,4 +518,48 @@ test('compose: never mutates its input (pure — Gemini G2 is enforced at the CL
   const copy = `${input}`;
   composeFinalMessage(input, VALUES);
   assert.equal(input, copy);
+});
+
+// ---------------------------------------------------------------- AI-Final-Review (docs/plans/copilot-feedback-item4.md section 2.2 B3)
+
+test('formatTrailerBlock: AI-Final-Review renders each disposition with its trailer spelling, after AI-Audited-Tree and before AI-Ship-Authority', () => {
+  const base = { skill: 'ship', models: ['claude'], gate: 'passed', runId: 'ecae388d-c176-4182-9d27-0210b919b844', auditedTree: AUDITED_TREE, shipAuthority: 'launch-prompt' };
+  assert.deepEqual(formatTrailerBlock({ ...base, finalReview: 'approve_with_debt' }), [
+    'AI-Skill: ship',
+    'AI-Models: claude',
+    'AI-Gate: passed',
+    'AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844',
+    `AI-Audited-Tree: ${AUDITED_TREE}`,
+    'AI-Final-Review: approve-with-debt',
+    'AI-Ship-Authority: launch-prompt',
+  ]);
+  assert.ok(formatTrailerBlock({ ...base, finalReview: 'approve' }).includes('AI-Final-Review: approve'));
+  assert.ok(formatTrailerBlock({ ...base, finalReview: 'blocked' }).includes('AI-Final-Review: blocked'));
+});
+
+test('formatTrailerBlock: AI-Final-Review is absent without a disposition, for an unknown value, and without a run id', () => {
+  const base = { skill: 'ship', models: ['claude'], gate: 'waived', runId: 'ecae388d-c176-4182-9d27-0210b919b844' };
+  const has = (v) => formatTrailerBlock(v).some((l) => l.startsWith('AI-Final-Review'));
+  assert.equal(has(base), false);
+  for (const bad of [null, '', 'approve-with-debt', 'APPROVE', 'approved', true, 'toString', '__proto__']) {
+    assert.equal(has({ ...base, finalReview: bad }), false, String(bad));
+  }
+  // A final-review result binds to a run; with no run named there is nothing it is a result OF.
+  assert.equal(has({ ...base, gate: 'not-run', runId: null, finalReview: 'approve' }), false);
+});
+
+test('composeFinalMessage: AI-Final-Review lands in the parseable trailer block', () => {
+  const msg = composeFinalMessage('feat: x\n\nbody\n', { skill: 'ship', models: ['claude'], gate: 'waived', runId: 'ecae388d-c176-4182-9d27-0210b919b844', finalReview: 'approve_with_debt' });
+  const { isTrailerBlock, trailers } = parseMessageTrailers(msg);
+  assert.equal(isTrailerBlock, true);
+  assert.deepEqual(trailers.filter((t) => t.key === 'AI-Final-Review').map((t) => t.value), ['approve-with-debt']);
+});
+
+test('AI_TRAILER_KEYS is exactly what the renderer emits, in block order (the one list readers canonicalise against)', () => {
+  const full = formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'passed', runId: 'ecae388d-c176-4182-9d27-0210b919b844', auditedTree: AUDITED_TREE, finalReview: 'approve', shipAuthority: 'launch-prompt' });
+  assert.deepEqual(full.map((l) => l.split(': ')[0]), [...AI_TRAILER_KEYS]);
+});
+
+test('a hand-typed AI-Final-Review in the message is a reserved trailer: it cannot be declared (P-B3)', () => {
+  assert.deepEqual(findReservedTrailers('feat: x\n\nbody\n\nAI-Final-Review: approve\n').map((t) => t.key), ['AI-Final-Review']);
 });
