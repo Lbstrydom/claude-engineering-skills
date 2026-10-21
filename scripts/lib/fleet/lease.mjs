@@ -461,16 +461,20 @@ function parseDays(text) {
   return [...set].sort((x, y) => x - y);
 }
 
-/** The day set as parse accepts it back: a run of consecutive days is `mon-fri`, otherwise `mon+wed`; all seven is `daily`. */
+/**
+ * The day set as parse accepts it back: a run of consecutive days is `mon-fri`, otherwise `mon+wed`; all seven is `daily`.
+ * The week reads Monday first (`sat+sun`, never `sun+sat`), so a run never wraps the week end.
+ */
 export function formatPeakDays(days) {
-  const ds = [...new Set(days)].sort((x, y) => x - y);
+  const pos = (d) => (d + 6) % 7; // Monday = 0 ... Sunday = 6
+  const ds = [...new Set(days)].sort((x, y) => pos(x) - pos(y));
   if (ds.length === 7) return 'daily';
   const runs = [];
   for (const d of ds) {
     const last = runs[runs.length - 1];
-    if (last && d === last[1] + 1) last[1] = d; else runs.push([d, d]);
+    if (last && pos(d) === pos(last[1]) + 1) last[1] = d; else runs.push([d, d]);
   }
-  return runs.map(([a, b]) => (a === b ? DAY_NAMES[a] : b === a + 1 ? `${DAY_NAMES[a]}+${DAY_NAMES[b]}` : `${DAY_NAMES[a]}-${DAY_NAMES[b]}`)).join('+');
+  return runs.map(([a, b]) => (a === b ? DAY_NAMES[a] : pos(b) === pos(a) + 1 ? `${DAY_NAMES[a]}+${DAY_NAMES[b]}` : `${DAY_NAMES[a]}-${DAY_NAMES[b]}`)).join('+');
 }
 
 /** One range as `HH:MM-HH:MM@days`, the `lease peak --hours` spelling. */

@@ -369,6 +369,8 @@ describe('peak hours (D7)', () => {
       assert.deepEqual(parsePeakHours(formatPeakRange(r)).peakHours[0], r, spec);
     }
     assert.equal(formatPeakRange({ from: '14:00', to: '20:00' }), '14:00-20:00@mon-fri');
+    assert.equal(formatPeakRange({ from: '10:00', to: '12:00', days: [0, 6] }), '10:00-12:00@sat+sun', 'Monday-first: never sun+sat');
+    assert.equal(formatPeakRange({ from: '10:00', to: '12:00', days: [0, 1, 5, 6] }), '10:00-12:00@mon+fri-sun');
     for (const bad of ['10:00-12:00@', '10:00-12:00@xyz', '10:00-12:00@mon-xyz', '10:00-12:00@mon,fri', '10:00-12:00@mon++fri']) assert.equal(parsePeakHours(bad).ok, false, bad);
   });
   it('a range across midnight belongs to the day it starts on', () => {

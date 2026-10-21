@@ -44,8 +44,9 @@ describe('announced windows', () => {
 describe('peak hours', () => {
   it('stores machine-local ranges, warns on a gate during peak without refusing, and clears', () => {
     const w = world();
-    assert.equal(w.runA(['lease', 'peak', '--hours', '00:00-23:59']).status, 0);
-    assert.match(w.runA(['lease', 'status']).stdout, /peak hours \(machine-local\): 00:00-23:59 — PEAK NOW/);
+    // @daily: the run must not depend on the weekday it executes on (a bare range is Mon-Fri, so it would flip at weekends).
+    assert.equal(w.runA(['lease', 'peak', '--hours', '00:00-23:59@daily']).status, 0);
+    assert.match(w.runA(['lease', 'status']).stdout, /peak hours \(machine-local\): 00:00-23:59@daily — PEAK NOW/);
     const g = w.runA(['lease', 'acquire']);
     assert.equal(g.status, 0); assert.match(g.stdout, /WARNING: this is a peak-cost hour/);
     assert.match(w.runB(['next']).stdout, /peak-cost hours now/);
@@ -53,6 +54,17 @@ describe('peak hours', () => {
     assert.match(w.runA(['lease', 'status']).stdout, /peak hours: none set/);
     assert.equal(w.runA(['lease', 'peak']).status, 2, 'neither --hours nor --clear');
     assert.equal(w.runA(['lease', 'peak', '--hours', '9-12']).status, 2);
+    assert.equal(w.runA(['lease', 'peak', '--hours', '09:00-12:00@someday']).status, 2, 'unknown day name');
+  });
+  it('a bare range is stored without days and printed as Mon-Fri; named days print back as given', () => {
+    const w = world();
+    const bare = w.runA(['lease', 'peak', '--hours', '14:00-20:00']);
+    assert.equal(bare.status, 0, bare.stderr + bare.stdout);
+    assert.match(bare.stdout, /14:00-20:00@mon-fri/);
+    assert.deepEqual(w.read().peakHours, [{ from: '14:00', to: '20:00' }]);
+    const wk = w.runA(['lease', 'peak', '--hours', '10:00-12:00@sat+sun', '--json']);
+    assert.deepEqual(wk.json.peakHours, [{ from: '10:00', to: '12:00', days: [0, 6] }]);
+    assert.match(w.runA(['lease', 'status']).stdout, /10:00-12:00@sat\+sun/);
   });
 });
 
