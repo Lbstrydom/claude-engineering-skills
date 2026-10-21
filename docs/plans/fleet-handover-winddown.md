@@ -5,7 +5,7 @@
 - **Scope**: backend (CLI + skill prose; no UI) · stack `js-ts`
 - **Target domain(s)**: `fleet`, `skills-content`
 - ⚠ **Cross-domain work**: the verbs are `fleet`; the operator prose is `skills-content` (`skills/fleet/references/`). Intentional: every behaviour change here is also an instruction change.
-- **Proposals folded**: `p-20261021043238-844d` (wind-down stage), `p-20261021043414-0e8f` (gitignored-only state), `p-20261021043847-55ee` (coordinator context), `p-20261021050935-66b7` (remote tag holds commits), `p-20261021064951-f17b` (`--unwait` on an older consumer bundle), `p-20261021065456-93b1` (a worktree shared with a live session is never safe to archive; folded in by the coordinator after the first draft).
+- **Proposals folded**: `p-20261021043238-844d` (wind-down stage), `p-20261021043414-0e8f` (gitignored-only state), `p-20261021043847-55ee` (coordinator context), `p-20261021050935-66b7` (remote tag holds commits), `p-20261021064951-f17b` (`--unwait` on an older consumer bundle), `p-20261021065456-93b1` (a worktree shared with a live session is never safe to archive; folded in by the coordinator after the first draft). Folded in later, with Louis's approval: `p-20261021074258-3ca0` (the PR probe uses each repo's own gh account), `p-20261021074259-7970` (winddown requires consumer bundles to be current), `p-20261021074301-e6bb` (winddown lists spent one-off tasks), `p-20261021074303-bfc0` (the sweep re-checks `git worktree list` after an archive).
 - **Decided, not open**: the wind-down is a `fleet handover winddown` STAGE inside `/fleet`, not a new skill (Louis, 2026-10-21: "keep it simple").
 
 ## 1. Context Summary
@@ -74,6 +74,8 @@ It prints, per scoped repo:
 
 Exit 0 when every repo's overall verdict is READY, 3 when not, with the same envelope shape as prepare. Run it repeatedly: it doubles as the wind-down progress check. A READY here means prepare will not refuse for any repo-state reason. The scheduler step and memory measurement are prepare's own and are named as "still to do at prepare".
 
+Two more sections print after the verdict: **consumer bundles** (§2.8, a prerequisite) and **spent one-off scheduled tasks** (§2.9, informational). `winddown` accepts `--scheduler-snapshot <file>` for the latter, in the format prepare already takes.
+
 **Why a printed directive, not a directive RECORD.** Fleet's directive store has a closed vocabulary (`pause|resume|rebase|release|rerun-ready`, `directives.mjs`), and the recipients here are coordinator CHAT sessions, which act on messages, not on checkpoint reads. A new `winddown` kind would be collected as `unsupported` by every consumer on an older bundle. A record would add nothing the message does not already carry (#12 right-sizing; see §6).
 
 ### 2.2 Readiness: measured, not reported — proposal 844d (2) + 55ee
@@ -82,11 +84,13 @@ Exit 0 when every repo's overall verdict is READY, 3 when not, with the same env
 
 A repo **requires** wind-down when it is the invoking repo (its coordinator holds the cross-repo context) or it needs coordination (live sessions, unregistered work, or unmeasured state: the existing `reposNeedingCoordination` predicate, which moves to an exported helper). Other scoped repos are reported as `not required` and never block. A context file that exists anyway is still embedded.
 
-It returns ONE readiness object per repo, `{required, prerequisites: {r1, r2}, blockers: [...], ready}`.
+It returns ONE readiness object per repo, `{required, prerequisites: {r1, r2, r3}, blockers: [...], ready}`.
 
 The wind-down **prerequisites** (only for a required repo):
 - **R1 context**: the context file is complete for THIS switch (§2.3): it exists, every required section has a substantive body, no placeholder is left, and it is not stale (not byte-identical to a context already handed over and received).
 - **R2 parked**: every live claim waits on `human:account-switch` (the existing `normaliseWaitRef` fold). Merged-unreleased records are exempt: they are listed for `release`, not resumed. R2 is evaluated only when the live state was MEASURED. A repo with `fleet: 'error'` or an incomplete registry has R2 = `unknown`, which is not ready. It never passes vacuously over an empty list.
+
+- **R3 bundle current** (7970; only for a registered consumer, §2.8): the consumer's synced bundle carries no change to the synced surface since its recorded source commit. `unknown` (manifest or source unreadable) is not ready.
 
 The **blockers** are the existing repo-state refusals, read from the same `repoState` and never re-probed: blocking unregistered work, `unregisteredUnknown`, `fleet: 'error'`. They apply to every scoped repo, required or not, exactly as prepare applies them today. `ready` = (not required, or both prerequisites pass) AND no blockers.
 
@@ -143,6 +147,8 @@ New module `scripts/lib/fleet/handover-context.mjs`:
 - **held remotely, unlanded**: clean (as above), with its commits held by a pushed branch or a verified pushed tag (§2.6). Removable without loss, but the work is not on base. It is listed apart, "confirm with the user", never mixed into `safe`.
 - everything else is omitted. The verdicts already in `status` and prepare cover it.
 
+A **nested worktree** makes its parent unsafe (bfc0). `archive_session` on 2026-10-21 left `ecstatic-mclaren-96c8cc` on disk because a worktree nested inside it (`.claude/tmp/n1a-push`) blocked the removal, so a worktree is not `safe` while `git worktree list` has any other entry whose path is inside it. It is listed as `nested worktree: <path> — remove it first`. This is measured, not prose.
+
 The CLI cannot map a worktree to a host session id (`list_sessions` is host-side). So the list is worktree paths plus branch, and the instruction is: "archive a session only if its cwd is on this list".
 
 **A worktree is not a session** (93b1). The desktop app places NEW sessions in OLD sessions' worktrees: the new STO coordinator sits in the old "Matched-input test" worktree, and this chip in the old CES coordinator's. `archive_session` removes the worktree and cascades to the session's finished side sessions. A worktree that is safe by every git measure can still be the live cwd of another session. The CLI cannot see that, so the safe list's instruction carries a mandatory host-side check, in this order, before each `archive_session`:
@@ -150,6 +156,8 @@ The CLI cannot map a worktree to a host session id (`list_sessions` is host-side
 2. Also collect each of the candidate's side sessions, because the cascade reaches them, together with any non-archived session sharing THEIR worktree paths.
 3. If any session other than the candidate is live in one of those worktrees, or a side session is not finished, do NOT archive. List it for the user as `shared worktree: <path> (live: <title>)`.
 4. The cascade is the unit of safety (R2-H6). Every DISTINCT worktree the cascade reaches must itself be on the safe list: the candidate's, each side session's, and their side sessions' in turn, while the host reports more. A side-session worktree that is absent from the list, outside the scoped repos, or unmeasured blocks the archive. It is listed as `cascade reaches unchecked worktree: <path> (<session title>)`. Archiving a parent therefore never deletes a worktree that `safeToArchive` did not measure as safe.
+
+**Archived is not removed** (bfc0). After EACH `archive_session`, re-run `git worktree list` in the repo (and check the path on disk): a worktree still listed or still present was NOT removed, whatever the host reported. It is reported as `archived but worktree survives: <path>` and never counted as cleaned up. The same line closes the sweep's final report.
 
 The same three steps are added to `sweepStep`'s exception list (the arriving account's sweep). The arriving coordinator itself runs in a reused worktree, so the sweep can otherwise archive its own checkout. The check is prose a model follows, and it is pinned by a string test (§9). A stronger guard needs host data the CLI does not have; see §8. The `sweepStep` line "never archive sessions on the DEPARTING account" becomes "never archive on the departing account EXCEPT a session whose worktree `fleet handover winddown` lists as safe". Decision D2 below asks Louis to confirm that exception.
 
@@ -170,6 +178,12 @@ The same three steps are added to `sweepStep`'s exception list (the arriving acc
 - The two default entries are the ones a tool does know: npm owns `node_modules`, and the sync owns `scripts/.claude-skills`.
 
 A second derived list would be a second source of truth for the same question (#5). So this plan adds no list; it makes the surfaces that skipped `archiveIgnore` use it.
+
+**Build amendments (Cluster A, found by running the new probe against real worktrees, 2026-10-21):**
+- **The main checkout is skipped** by the ignored probe. It is never removed, and holds its own `.env` and caches.
+- **The default list gains ONE file, `.claude/settings.local.json`.** The harness writes it into every worktree it creates (here via the git template), so without it every worktree on this machine read as holding work nobody can recreate. It is the single file the harness owns; the first draft named `.claude/**`, which audit round 3 (H1) rightly rejected, because a repo's own scratch beside it (a journal in `.claude/tmp/`) is not the harness's to declare regenerable.
+- **A wholly-ignored directory is judged as ONE entry and is never looked into.** Git collapses a directory with no tracked content into one entry (`.claude/`). A first build listed such a directory's contents so a named file could be excused while its neighbours still counted. Code-audit rounds 2 to 5 then found four different ways a listing cannot prove itself complete (pathspec characters, an unspent budget, an unreadable directory exiting 0, a partly unreadable one), which is the pivot rule: the design, not the instance, was wrong, and it was removed. The rule is the original one: a collapsed entry is covered only by a `<prefix>/**` pattern that covers everything under it, otherwise it stays and blocks (fail closed). This costs nothing in a real consumer, which tracks content under `.claude/` (skills, settings) so git lists `settings.local.json` as that one file, which the default excuses. `isIgnoredByConfig` also treats a collapsed directory BELOW a `<prefix>/**` pattern as covered, since declaring `P/**` declares everything under `P`; a directory above the prefix is still not.
+- **This repo's `.fleet.json` declares its own regenerable outputs** (`.claude/tmp/**`, `.audit/**`, `.audit-loop/**`, `.brainstorm/**`, `dashboard/**`, `test-results/**`, `scripts/.sync-manifest.json`; each is gitignored policy-A output). Measured on this machine (`scripts` probe over the real worktrees): 3 linked worktrees were listed as blocking on ignored paths alone before these declarations, none after.
 
 ### 2.5 Consumer capability probe — proposal f17b
 
@@ -197,10 +211,40 @@ For each such item, it counts `rev-list --count --stdin <tip> --not --remotes`, 
 
 `--not` does NOT carry over to stdin lines, so every stdin line must carry its own `^`. Phase 1's real-git test pins exactly this. When the count is 0, the item is re-classified with `committed: 'pushed'` and `heldBy: 'tag'`, plus `heldByTags`: the tag names whose oid equals the tip, at most 3, and a count otherwise. `classifyUnregistered` uses `heldBy` only for the reason text: "commits a pushed tag holds (verified by ls-remote now), not on base". The rows, `blocks` and `preserved: 'remote'` stay as they are for `pushed`.
 
+- **Opt-in for the handover path** (`tagCredit`, like `ignoredProbe`): `fleet status` shares the scanner and stays local, with no network call. The tag names recorded as evidence come from the same relationship as the credit: tags AT the commit first, else tags on a descendant, found by ancestry among tags that exist here (bounded).
 - An `ls-remote` failure or a passed deadline changes nothing. The item keeps today's blocking verdict and gains an `unverified` note (fail closed).
 - Every tag counts, not only `archive/*`: any tag on origin holds a commit as durably as a branch. That is the proposal's wording.
 - `UnregisteredEntry` gets optional `heldBy`/`heldByTags` fields, and its `risks` object an optional `ignored` count (§2.4). `RISK_KINDS` keeps its four required keys, so a manifest written before this change still parses under the strict schema.
 - `archive-check` is NOT changed. It reports risk for one target and does not feed the handover verdicts. Its unpushed line stays literally true: no remote-tracking ref holds the commit.
+
+### 2.8 Consumer bundles must be current — proposal 7970
+
+On 2026-10-21 wine and storyline were one bundle behind and ai-organiser's predated `touch --unwait`, so receive printed commands the consumer could not run, and the syncs cost a slot round trip after the switch.
+
+**Winddown does not run the sync.** A sync writes into a consumer's working tree, `sync:pr` opens a PR whose push runs the consumer's heavy pre-push hook, and standing rules say each consumer's coordinator gets a slot first and merges its own PR. A stage that did that silently would break all three. It MEASURES and refuses (the proposal's second branch), and prints the exact commands.
+
+- **Oracle: the sync's own dry run, not a re-derivation.** Which source changes reach a consumer is decided by the sync's file selection: skill packaging (`enumerateSkillFiles` excludes `gate-contract.json` and anything outside the allowed set), script lists, rewrites, holds and deletions. A diff over directory roots over-reports (round 3, H2: a change to a skill's `gate-contract.json` is in the roots and syncs nothing), and re-deriving the selection a second time is a second source of truth. So R3 runs `node scripts/sync-to-repos.mjs --dry-run --no-prompt --target <name>` from the source repo's MAIN checkout and reads the one summary line it prints (`Would create: N  update: N  unchanged: N`). Behind iff N(create) + N(update) > 0. The dry run writes nothing.
+- **The summary line is a prose contract**, so it is pinned the way prose↔code seams are (AGENTS.md): the parser is tested against output captured from the real tool, and an unmatched line is `unknown`, never `current`. Any change to that line's wording fails the test, not the gate.
+- **Unknown is not current.** A non-zero exit, a missing summary line, a dry run that reports it would ABORT (an unowned collision), or a timeout (120 s) is `unknown`: R3 fails with the reason. A consumer the source registry does not name is skipped.
+- **Output.** `consumer bundle behind: <repo> (synced from <sha8>, N file(s) of the synced surface changed since)`, then `npm run sync -- --target <name>` and `npm run sync:pr -- --target <name> --no-merge`, run from the source repo's MAIN checkout (and the dry run is run there too). A stale linked worktree's sync can roll a consumer back (memory: sync from a stale worktree reads as pending and writes a rollback), so the instruction names the main checkout and winddown itself reads only refs.
+- **Right-sizing.** *Band-aid*: print "remember to sync". *Over-built*: winddown drives sync, leases and PRs for every consumer. *Chosen*: one pure comparison over data the sync already writes, and a refusal with the command.
+
+### 2.9 Spent one-off scheduled tasks — proposal e6bb
+
+On 2026-10-21 receive asked a human to confirm 12 task files; all were expired one-offs. The task FILES persist on disk, and the schedule (`fireAt`, `enabled`, `lastRunAt`) is host-side, so the CLI knows nothing about expiry without a snapshot.
+
+- With `--scheduler-snapshot <file>` (the `list_scheduled_tasks` answer, parsed by prepare's own `parseSchedulerSnapshot`), `winddown` lists every task that is a one-off with `fireAt` passed and either `lastRunAt` at or after `fireAt` or `enabled: false`, as `spent one-off: <id> (fireAt <t>, ran <t>)`, with the host calls to retire it (`delete_scheduled_task`, or `update_scheduled_task` to disable). A one-off with `fireAt` passed that has NOT run is a different line: it will fire at relaunch, and the existing BEFORE YOU RELAUNCH step covers it.
+- Without a snapshot it prints `scheduled tasks not read: pass --scheduler-snapshot to list spent one-offs`, never "none".
+- **It prunes nothing.** The CLI cannot delete host-side schedules, and deleting task files while a schedule still references them would orphan it. "Offers to prune" is the printed host calls. This is informational, not a prerequisite: the scheduler is the authority and the CLI cannot verify a deletion.
+
+### 2.10 Each repo's own gh account — proposal 3ca0
+
+Prepare's PR probe asks `gh` as whichever account is signed in. Storyline's repo needs `louis-strydom_wartsila`, so its PR state printed UNMEASURED on 2026-10-21.
+
+- **Declared per repo**: a `ghAccount` key (a gh login name) in that repo's `.fleet.json`, validated with the rest of the config. `gh` already knows which accounts exist (`gh auth token --user <name>` prints that account's token), so nothing about credentials is stored: the config holds a NAME, never a token.
+- **Used only for handover reads.** For a repo that declares one, the PR probe (`listPullRequests`, the merged-PR evidence, `ghReachability`) runs with `GH_TOKEN` set from `gh auth token --user <ghAccount>` in that child's environment only. The token is never printed, written to the manifest, put in argv, or passed to any other process, and the lookup is memoised per run.
+- **Fails closed and names itself.** An account that is not signed in, or a token lookup that fails, leaves that repo's PR state UNMEASURED, and `ghUnknownLine` names the account to sign in as, instead of the generic "an account that can read this repo".
+- **Derived or declared?** Which account can read a repo is only knowable by trying each; the smallest honest design declares the one that does. Auto-trying every signed-in account would spend API calls and could read as another identity than intended. The key is optional: a repo without it behaves exactly as today.
 
 ### 2.7 Execution model
 
@@ -228,13 +272,18 @@ Every operation here is a read, except three writes, each an exclusive create (`
 | `scripts/lib/fleet/unregistered.mjs` | modify | `remoteTagOids` extracted from `scanArchiveTags` (shared); tag re-classification post-pass; handover-only ignored probe (`deps.scanIgnoredFor` flag); `heldBy` in `classifyUnregistered` reason |
 | `scripts/lib/fleet/fleet-capability.mjs` | create | `fleetSupports(repo, verb, flag?)`, memoised, spawn-bounded |
 | `scripts/lib/fleet/handover-context.mjs` | create | `contextPath`, `CONTEXT_SECTIONS`, `contextSkeleton`, `readContext` (section-body states), `contextStale`, `writeReceivedMarker`, `renderContextSection` |
-| `scripts/lib/fleet/handover-winddown.mjs` | create | `winddownReadiness` (one object: prerequisites + blockers), `safeToArchive`, `renderDirective`, `cmdWinddown` body |
+| `scripts/lib/fleet/handover-winddown.mjs` | create | `winddownReadiness` (one object: prerequisites R1–R3 + blockers), `safeToArchive` (incl. nested-worktree check), `renderDirective`, spent-one-off listing, `cmdWinddown` body |
+| `scripts/lib/fleet/consumer-bundle.mjs` | create | `consumerBundleState(sourceRepo, consumerRepo)` (7970): manifest `commitSha` vs the synced-surface roots, `current \| behind \| unknown` |
+| `scripts/lib/fleet/gh-account.mjs` | create | `ghEnvFor(repo, config, env)` (3ca0): `GH_TOKEN` from `gh auth token --user <ghAccount>`, memoised, never logged |
 | `scripts/lib/fleet/handover.mjs` | modify | subcommand dispatch + flag contract (`winddown`, `--winddown-waived`); manifest fields; prepare readiness reason; receive context-first, received marker, capability-aware waits recipe; handover-path scan flag |
 | `scripts/lib/fleet/handover-render.mjs` | modify | context sections in the `.md`; receive text prints context first; `sweepStep` uses `archive-check`, the departing-account exception and the shared-worktree check; prompt lines; export `reposNeedingCoordination` |
-| `scripts/lib/fleet/argv.mjs` | modify | `handover` verb: `--winddown-waived` value flag |
+| `scripts/lib/fleet/argv.mjs` | modify | `handover` verb: `--winddown-waived` value flag (`--scheduler-snapshot` already exists) |
+| `scripts/lib/fleet/config.mjs` | modify | optional `ghAccount` string in the fleet config schema (3ca0) |
+| `scripts/lib/fleet/gh-facts.mjs` | modify | `ghUnknownLine` support: the declared account named in the unmeasured reason (3ca0) |
 | `scripts/fleet.mjs` | modify | usage lines for `handover winddown` |
 | `skills/fleet/references/handover-winddown.md` | create | the stage, the directive, readiness, the context file, the safe list |
-| `skills/fleet/references/handover.md` | modify | pointers; the sweep's `archive-check` and departing-account wording; receive prints context first; `--unwait` fallback |
+| `skills/fleet/references/handover.md` | modify | pointers; archiving on the departing account IS allowed (D2: the measured safe list + the shared-worktree and cascade check + the post-archive `git worktree list` re-check); the sweep's `archive-check` wording; receive prints context first; `--unwait` fallback |
+| `skills/fleet/references/config.md` | modify | `ghAccount` (3ca0) |
 | `skills/fleet/SKILL.md` | modify | usage line + reference row (net zero growth) |
 | `tests/fleet-unregistered.test.mjs` | modify | tag-held and ignored-only cases (real git) |
 | `tests/fleet-capability.test.mjs` | create | probe against fixture argv modules |
@@ -242,6 +291,8 @@ Every operation here is a read, except three writes, each an exclusive create (`
 | `tests/fleet-handover-winddown.test.mjs` | create | the verb end-to-end in a temp repo, the safe list, the prepare gate |
 | `tests/fleet-handover-receive.test.mjs` | modify | context printed first; `--unwait` fallback branches |
 | `tests/fleet-handover-sweep-delta.test.mjs` | modify | sweep wording |
+| `tests/fleet-consumer-bundle.test.mjs` | create | current / behind / unknown over real source + consumer repos; the roots pinned to `sync-path-map` |
+| `tests/fleet-gh-account.test.mjs` | create | token lookup, memo, never in output; unmeasured reason names the account |
 
 ### 7b. Implementation Phases
 
@@ -253,9 +304,11 @@ Every operation here is a read, except three writes, each an exclusive create (`
 
 **Phase 4 — Coordinator context (55ee)**: module (section-body states, staleness), manifest field, `.md` embed, receive prints first and writes the received marker, prompt lines. Files: `scripts/lib/fleet/handover-context.mjs` (create), `scripts/lib/fleet/handover.mjs` (modify), `scripts/lib/fleet/handover-render.mjs` (modify), `tests/fleet-handover-context.test.mjs` (create), `tests/fleet-handover-receive.test.mjs` (modify).
 
-**Phase 5 — Wind-down stage (844d)**: `winddown` subcommand, readiness R1/R2, prepare gate + `--winddown-waived`, safe-to-archive list, directive text, skeleton write. Files: `scripts/lib/fleet/handover-winddown.mjs` (create), `scripts/lib/fleet/handover.mjs` (modify), `scripts/lib/fleet/argv.mjs` (modify), `scripts/fleet.mjs` (modify), `tests/fleet-handover-winddown.test.mjs` (create).
+**Phase 5 — Wind-down stage (844d, 7970, e6bb, bfc0 measure)**: `winddown` subcommand, readiness R1/R2/R3, prepare gate + `--winddown-waived`, safe-to-archive list with the nested-worktree check, spent one-off listing, directive text, skeleton write. Files: `scripts/lib/fleet/handover-winddown.mjs` (create), `scripts/lib/fleet/consumer-bundle.mjs` (create), `scripts/lib/fleet/handover.mjs` (modify), `scripts/lib/fleet/argv.mjs` (modify), `scripts/fleet.mjs` (modify), `tests/fleet-handover-winddown.test.mjs` (create), `tests/fleet-consumer-bundle.test.mjs` (create).
 
-**Phase 6 — Operator prose and the sweep wording (844d, 0e8f sweep part, 93b1)**: Files: `scripts/lib/fleet/handover-render.mjs` (modify), `skills/fleet/references/handover-winddown.md` (create), `skills/fleet/references/handover.md` (modify), `skills/fleet/SKILL.md` (modify), `tests/fleet-handover-sweep-delta.test.mjs` (modify).
+**Phase 6 — Operator prose and the sweep wording (844d, 0e8f sweep part, 93b1, bfc0 prose, D2)**: Files: `scripts/lib/fleet/handover-render.mjs` (modify), `skills/fleet/references/handover-winddown.md` (create), `skills/fleet/references/handover.md` (modify), `skills/fleet/SKILL.md` (modify), `tests/fleet-handover-sweep-delta.test.mjs` (modify).
+
+**Phase 7 — Each repo's own gh account (3ca0)**: `ghAccount` config key, `ghEnvFor`, the handover PR probe and merged-PR evidence run with the declared account's token, the unmeasured line names it. Files: `scripts/lib/fleet/gh-account.mjs` (create), `scripts/lib/fleet/config.mjs` (modify), `scripts/lib/fleet/handover.mjs` (modify), `scripts/lib/fleet/handover-render.mjs` (modify), `skills/fleet/references/config.md` (modify), `tests/fleet-gh-account.test.mjs` (create).
 
 **Close-out (not a phase)**: `npm run skills:regenerate`, `npm run skills:check`, `npm run skills:size:gate`, `npm run size:ratchet:gate`, `node scripts/lib/plan-paths.mjs docs/plans/fleet-handover-winddown.md`, then the branch-tier pre-push (`npm run guards:preflight`).
 
@@ -298,6 +351,12 @@ Tier 1 (deterministic, test-first) throughout. Every git-facing case runs agains
 | Prepare gate | temp repo, no context file | exit 3, reason names the repo; with `--winddown-waived x` exit 0 and `winddown.waived === 'x'` | test |
 | Safe list | landed+clean / landed+ignored file / unlanded+pushed / claimed | safe / omitted / "held remotely" / omitted | test |
 | Skeleton never overwrites | existing context file | bytes unchanged after `winddown` | test |
+| The summary line parses (7970) | output captured from the real `sync-to-repos --dry-run`: with changes, with none, an ABORT run, truncated output | `behind` / `current` / `unknown` / `unknown` | test (fixture is the tool's real output) |
+| A change the sync would not publish is not 'behind' (7970, round 3 H2) | build-time spot check against the real tool: edit a skill's `gate-contract.json`, dry run, restore | `Would create: 0  update: 0` | recorded in the PR, not a committed test (it edits the working tree) |
+| Spent one-offs (e6bb) | snapshot fixtures: one-off ran / one-off disabled / one-off past `fireAt` and never ran / recurring / no snapshot | spent listed / spent listed / NOT listed as spent (relaunch line) / NOT listed / `not read`, never "none" | test |
+| Nested worktree blocks the safe list (bfc0) | real-git: a clean landed worktree with a second worktree added inside it | omitted, `nested worktree: <path>`; without the nested one it is safe (control) | test |
+| Post-archive re-check (bfc0) | `sweepStep` and the safe-list text | both tell the reader to re-run `git worktree list` after each archive and report a survivor | string test |
+| Per-repo gh account (3ca0) | fixture gh answering `auth token --user`; a config with and without `ghAccount` | the declared repo's probe sees that token, another repo's does not; the token appears in no output, manifest or argv; a failed lookup is UNMEASURED naming the account | test |
 | Scan cost | `prepare` wall time on this machine, before vs after Phase 2 | recorded, `measured`, with the command; no threshold (a refusal is the failure mode, not a slowdown) | PR body |
 
 The sweep wording has a string-level test only. It is prose a model follows, so the oracle is that `sweepStep` names `archive-check` and the departing-account exception.
@@ -307,19 +366,23 @@ The sweep wording has a string-level test only. It is prose a model follows, so 
 - **Cluster A** — Phases 1–3 — fix-gate: yes
   - Coupling: three probe-correctness fixes on the unregistered-work and receive paths that the 2026-10-21 switch hit. They are independent of B and C, small, and ship as their own PR (the quickest value; nothing waits on the stage).
   - author-tier: standard
-- **Cluster B** — Phases 4–6 — fix-gate: final
-  - Coupling: the wind-down's readiness R1 IS the context file's completeness test, and prepare's gate, the `.md` embed and receive's context-first output all read one `readContext` result. Splitting them would leave a gate checking a file no surface shows, or a section no gate requires. The prose phase documents exactly these verbs. One PR, after Cluster A merges (not stacked).
+- **Cluster B** — Phases 4–6 — fix-gate: yes
+  - Coupling: the wind-down's readiness R1 IS the context file's completeness test, and prepare's gate, the `.md` embed and receive's context-first output all read one `readContext` result. R3 (consumer bundles), the nested-worktree check and the spent-task listing are further parts of the same readiness object and directive. Splitting them would leave a gate checking a file no surface shows, or a section no gate requires. The prose phase documents exactly these verbs. One PR, after Cluster A merges (not stacked).
+  - author-tier: standard
+- **Cluster C** — Phase 7 — fix-gate: final
+  - Coupling: one seam, the environment the handover's `gh` calls run in; it touches the config schema and the PR probe, and reads nothing from B. It follows B only because `handover.mjs` is edited by both, which is a merge-order matter, not a design dependency. Its own PR.
   - author-tier: standard
 - **Final gate**: the consolidated Gemini final review over each PR's union diff.
 
-## Decisions for Louis
+## Decisions (settled)
 
-- **D1 — prepare refuses (exit 3) until wind-down readiness holds**, overridable with a recorded `--winddown-waived "<reason>"`. The alternative is a warning only. Recommendation: refuse. The 10-21 failures were all steps that were skipped silently.
-- **D2 — pre-switch archiving on the departing account** is allowed for worktrees on the winddown safe list, after the shared-worktree check (93b1) passes. Today `handover.md` says never archive on the departing account, yet 10-21 did archive merged-and-clean sessions by hand. Recommendation: allow, limited to the measured list plus the host-side check.
+- **D1 — prepare refuses (exit 3) until wind-down readiness holds**, overridable with a recorded `--winddown-waived "<reason>"`. Louis, 2026-10-21: "D1: refuse, with the --winddown-waived \"<reason>\" override recorded in the handover."
+- **D2 — pre-switch archiving on the departing account is ALLOWED**, limited to the measured safe list plus the shared-worktree and cascade check (and the post-archive `git worktree list` re-check). Louis, 2026-10-21: "D2 yes, and we can record archiving is allowed." `skills/fleet/references/handover.md` records it (Phase 6); today it says never archive on the departing account.
 
 ## Audit trail
 
 - `/audit-plan` 2026-10-21, session `audit-plan-1792565861089-64300`.
+  - GPT R3 (on the delta: 3ca0, 7970, e6bb, bfc0, D1/D2): H2, both accepted and fixed. The `.claude/**` default became the one harness file plus a look inside collapsed directories (code, Cluster A). The consumer-bundle oracle became the sync's own dry run, since a root diff over-reports.
   - GPT R1: H4 M2, 6 of 6 accepted and fixed: probe ordering, context lifecycle, the clear-all race, the absent-verb verdict, section bodies, overall readiness.
   - Proposal 93b1 folded in between rounds.
   - GPT R2: H1, accepted and fixed (the cascade is the unit of safety).

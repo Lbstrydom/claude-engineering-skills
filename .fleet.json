@@ -7,5 +7,17 @@
     ".knip-baseline.json",
     ".skill-consumer-refs-baseline.json",
     "scripts/lib/bundle-deps.json"
+  ],
+  "archiveIgnore": [
+    "node_modules/**",
+    "scripts/.claude-skills/**",
+    ".claude/settings.local.json",
+    ".claude/tmp/**",
+    ".audit/**",
+    ".audit-loop/**",
+    ".brainstorm/**",
+    "dashboard/**",
+    "test-results/**",
+    "scripts/.sync-manifest.json"
   ]
 }

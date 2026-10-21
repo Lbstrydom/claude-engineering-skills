@@ -40,6 +40,19 @@ function coordinationStep6(m, art) {
 }
 
 /**
+ * The command that drops a claim's switch wait, for the repo whose fleet will run it. `support` is `fleetSupports(repo, cli, 'touch',
+ * '--unwait')`: `true` prints the targeted drop; `false` (the bundle predates `--unwait`) says to sync first and never offers
+ * `--clear-waiting`, which would delete a wait added between this print and the run; `'unknown'` prints the drop with the same
+ * fallback, since a refused flag changes nothing.
+ */
+export function switchWaitRecipe(unwait, support, repoPath) {
+  const sync = `sync this repo's fleet first (from the source repo: npm run sync -- --target ${quoteArg(path.basename(repoPath))})`;
+  if (support === true) return unwait;
+  if (support === false) return `its fleet predates --unwait: ${sync}, then run ${unwait}`;
+  return `${unwait} (if it refuses --unwait, the fleet in ${repoPath} predates it: ${sync}, then rerun)`;
+}
+
+/**
  * The receive command as a pasteable line. `fleetCommand` is ALREADY shell-rendered (`selfCommand`), so it is used as
  * a prefix, never re-split; only the arguments added here go through the one shell quoter.
  */

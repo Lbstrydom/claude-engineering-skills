@@ -91,7 +91,10 @@ function templateFor(files) {
  * A repo on `main` with a bare `origin` (already pushed). The integration
  * worktree root is `<root>/wt` (outside both the repo and `.git`).
  */
-export function makeFleetRepo({ files = { 'a.txt': 'a\n', 'b.txt': 'b\n', 'c.txt': 'c\n' }, fleetConfig = null } = {}) {
+// `.claude/.gitkeep`: a real consumer tracks content under `.claude/` (skills, settings), so git lists an ignored
+// `.claude/settings.local.json` as that one FILE. Without a tracked sibling a machine whose git template writes the
+// harness file into new worktrees would see `.claude/` collapse into one directory entry and every handover test block.
+export function makeFleetRepo({ files = { 'a.txt': 'a\n', 'b.txt': 'b\n', 'c.txt': 'c\n', '.claude/.gitkeep': '' }, fleetConfig = null } = {}) {
   const tpl = templateFor(files);
   const root = tmpRoot();
   const origin = path.join(root, 'origin.git');

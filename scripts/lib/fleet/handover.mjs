@@ -33,7 +33,8 @@ import { RISK_KINDS, UNREGISTERED_BUDGET, VERDICTS, coveredBy, liveSessionsOf, u
 export { liveSessionsOf };
 import { isTerminalState } from './overlap.mjs';
 import { fleetDir, listTrains, readSessions, realWithTail } from './registry.mjs';
-import { blocksHandover, ghUnknownLine, receiveCommand, renderBeforeRelaunch, renderHandoverMarkdown, renderReceiveText, sweepStep } from './handover-render.mjs';
+import { blocksHandover, ghUnknownLine, receiveCommand, renderBeforeRelaunch, renderHandoverMarkdown, renderReceiveText, sweepStep, switchWaitRecipe } from './handover-render.mjs';
+import { fleetSupports } from './fleet-capability.mjs';
 import { deltaFollowUp, measureRepoDelta, previousStintStart, unmeasuredDelta } from './handover-delta.mjs';
 import { renderCommand } from './shell-quote.mjs';
 import { RECONCILE_ID, joinTaskRecords, parseSchedulerSnapshot, readScheduleReconcile, stageTaskExports, verifyTaskExports } from './handover-tasks.mjs';
@@ -323,7 +324,8 @@ function gatherLive(repo, { config, env, now, deadlineAt = null }) {
  * MEASURED (fail closed): its items are kept, and `unregisteredUnknown` says what was left out.
  */
 function unregisteredFields(repo, ctx, claimed, deps) {
-  const u = unregisteredWork(repo, ctx, claimed, deps);
+  // A handover is the moment before deletion, so gitignored files outside archiveIgnore count as work here (ignoredProbe), and a commit a pushed tag holds is remote-held (tagCredit, one ls-remote).
+  const u = unregisteredWork(repo, ctx, claimed, { ignoredProbe: true, tagCredit: true, ...deps });
   if (!u.queried) return { unregistered: [], unregisteredUnknown: u.reason };
   const gaps = [u.notProbed ? `scan deadline reached: ${u.notProbed} worktree(s)/branch(es) not probed` : null, u.branchesUnknown ?? null].filter(Boolean);
   return { unregistered: u.items, ...(gaps.length ? { unregisteredUnknown: gaps.join('; ') } : {}) };
@@ -409,7 +411,7 @@ const MemoryEntry = z.object({
 // its items blocks, `blocksHandover`). A branch-only candidate has no worktree.
 const UnregisteredEntry = z.object({
   worktree: z.string().nullable(), branch: z.string().nullable(), detached: z.boolean(), locked: z.boolean(),
-  risks: z.object(Object.fromEntries(RISK_KINDS.map((k) => [k, z.number().int().nonnegative()]))).strict(),
+  risks: z.object({ ...Object.fromEntries(RISK_KINDS.map((k) => [k, z.number().int().nonnegative()])), ignored: z.number().int().nonnegative().optional() }).strict(),
   unverified: z.array(z.string()).optional(),
   kind: z.enum(['worktree', 'branch']).optional(), head: z.string().nullable().optional(), ahead: z.number().int().nonnegative().nullable().optional(),
   committed: z.enum(['none', 'pushed', 'unpushed', 'unknown']).optional(), evidence: z.enum(['landed', 'duplicate', 'none', 'incomplete']).optional(),
@@ -417,6 +419,8 @@ const UnregisteredEntry = z.object({
   preserved: z.string().optional(), reason: z.string().optional(), via: z.enum(['landed', 'duplicate']).optional(), syncOwnedDirty: z.literal(true).optional(),
   idleDays: z.number().int().nonnegative().nullable().optional(), stale: z.boolean().optional(), lastActivity: z.string().nullable().optional(),
   mtimeNotStatted: z.number().int().positive().optional(),
+  // optional: the commits are held by a pushed tag, verified against the remote (docs/plans/fleet-handover-winddown.md §2.6)
+  heldBy: z.literal('tag').optional(), heldByTags: z.array(z.string()).optional(),
 }).strict();
 const MergedUnreleasedEntry = z.object({ id: z.string(), branch: z.string().nullable(), note: z.string(), release: z.string() }).strict();
 export const HandoverManifestSchema = z.object({
@@ -857,8 +861,10 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
         // clear every wait and re-add a SNAPSHOT of the others, which lost any wait added between receive and the command. The
         // ref is printed as STORED (the switch test folds case/spaces/`_`; the removal matches exactly, so these must agree).
         const drop = (x.waitingOn ?? []).filter(isSwitch);
-        const clear = onSwitch ? cliCommand(cli, ['touch', '--id', x.id, ...drop.flatMap((w) => ['--unwait', `${w.kind}:${w.ref}`])]) : null;
-        waits.push({ repo: r.path, id: x.id, onSwitch, refs: human.map((w) => w.ref), ...(onSwitch ? { clear } : {}) });
+        // The target's OWN flag table decides whether it accepts `--unwait`; a bundle that predates it refuses the flag (never a clear-all: that is the race D10 removed).
+        const unwait = onSwitch ? cliCommand(cli, ['touch', '--id', x.id, ...drop.flatMap((w) => ['--unwait', `${w.kind}:${w.ref}`])]) : null;
+        const support = onSwitch ? fleetSupports(r.path, cli, 'touch', '--unwait') : null;
+        waits.push({ repo: r.path, id: x.id, onSwitch, refs: human.map((w) => w.ref), ...(onSwitch ? { clear: switchWaitRecipe(unwait, support, r.path), support } : {}) });
       }
       for (const x of g.mergedUnreleased) mergedUnreleased.push({ repo: r.path, ...mergedUnreleasedEntry(x, cli) });
     } else if (dir && !fs.existsSync(dir) && r.sessions.length) liveUnknown.push({ repo: r.path, reason: 'fleet registry missing, but prepare recorded live sessions' });

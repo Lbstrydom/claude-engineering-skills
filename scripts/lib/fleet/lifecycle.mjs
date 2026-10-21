@@ -128,7 +128,26 @@ export function isIgnoredByConfig(p, patterns) {
   const isDir = /\/$/.test(String(p));
   const bare = String(p).replace(/\/+$/, '');
   if (!isDir) return isMatch(bare, patterns, { dot: true });
-  return patterns.some((pat) => pat.endsWith('/**') && isMatch(bare, pat.slice(0, -3), { dot: true }));
+  // A directory at OR BELOW the prefix is covered in full (`.claude/**` covers `.claude/` and `.claude/tmp/`); a directory
+  // ABOVE it (`a/` for `a/b/**`) is not, since git collapsed it over files the pattern does not name.
+  return patterns.some((pat) => pat.endsWith('/**') && (isMatch(bare, pat.slice(0, -3), { dot: true }) || isMatch(bare, pat, { dot: true })));
+}
+
+/**
+ * The gitignored paths in `worktree` that `patterns` (archiveIgnore) do not cover: the ONE ignored-files probe behind
+ * `archive-check` and the unregistered-work scan on the handover path, so the two cannot count differently. A call
+ * that failed is `{ok:false}`, never an empty list.
+ * @param {(args: string[], cwd: string, opts?: object) => {ok: boolean, stdout: string, reason?: string}} git
+ * @returns {{ok: true, ignored: string[]} | {ok: false, reason: string}}
+ */
+export function listIgnored(git, worktree, patterns, timeoutMs) {
+  const r = git(IGNORED_STATUS_ARGS, worktree, { timeoutMs });
+  if (!r.ok) return { ok: false, reason: r.reason ?? 'git status --ignored failed' };
+  // A wholly-ignored directory arrives as ONE collapsed entry and is judged as one: covered only by a `<prefix>/**` pattern
+  // that covers everything under it (see `isIgnoredByConfig`). It is deliberately NOT looked into: a listing of its contents
+  // cannot prove it is complete (an unreadable subdirectory is a warning on exit 0), so the safe answer for an entry no pattern
+  // fully covers is to keep it, and a repo that treats such a directory as regenerable declares it.
+  return { ok: true, ignored: classifyEntries(parsePorcelainZ(r.stdout)).ignored.filter((p) => !isIgnoredByConfig(p, patterns)) };
 }
 
 /**
@@ -173,9 +192,9 @@ export function archiveReport(ctx, { session = null, branch = session?.source?.b
     // Ignored entries come from a SECOND call that collapses ignored directories (node_modules/ is one
     // line, not 100k), so the probe stays bounded.
     if (scanIgnored) {
-      const ign = git(IGNORED_STATUS_ARGS, worktree, { timeoutMs: probeTimeoutMs });
+      const ign = listIgnored(git, worktree, ignore, probeTimeoutMs);
       if (!ign.ok) unverified.push(`git status --ignored failed: ${ign.reason}`);
-      else risks.ignored = classifyEntries(parsePorcelainZ(ign.stdout)).ignored.filter((p) => !isIgnoredByConfig(p, ignore));
+      else risks.ignored = ign.ignored;
     }
     // Index flags hide edits from `git status`: skip-worktree (S) and assume-unchanged (lowercase tag).
     const lsv = git(['ls-files', '-v', '-z'], worktree, { timeoutMs: probeTimeoutMs });

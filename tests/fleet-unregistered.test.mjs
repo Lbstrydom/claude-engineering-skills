@@ -17,6 +17,7 @@ import {
   readUnregisteredCache, unregisteredWork, writeUnregisteredCache, cacheRecord,
 } from '../scripts/lib/fleet/unregistered.mjs';
 import { archiveReport } from '../scripts/lib/fleet/lifecycle.mjs';
+import { DEFAULT_ARCHIVE_IGNORE } from '../scripts/lib/fleet/config.mjs';
 import { gatherMerged } from '../scripts/lib/fleet/facts.mjs';
 import { hideReason, landedReason } from '../scripts/lib/fleet/overlap.mjs';
 import { CLEAN_PROBE, probeWorktrees } from '../scripts/lib/fleet/worktree-status.mjs';
@@ -251,11 +252,13 @@ describe('branch-only candidates (u, round 6)', () => {
     const scan = (g) => unregisteredWork('R', ctx, {}, { facts: factsFor({ branches }), list: wtList(), stat: statNone, patchIdOf: () => null, refFilesOf: () => [], git: g }).items;
     const g1 = placementGit({ localOnly: ['b'.repeat(40)], counts: { ['b'.repeat(40)]: 2 } });
     assert.deepEqual(scan(g1).map((i) => [i.branch, i.committed, i.risks.unpushed]), [['a', 'pushed', 0], ['b', 'unpushed', 2], ['c', 'pushed', 0]]);
-    assert.equal(g1.calls.length, 2, 'one listing + one count');
-    assert.ok(branches.every((b) => g1.calls[0].includes(b.oid)) && !g1.calls[0].includes('--branches'), 'the listing is of the CAPTURED tips, not the current branches');
+    // Tag credit (ls-remote) is a separate stage with its own tests; placement is what is counted here.
+    const placement = (g) => g.calls.filter((c) => !c.startsWith('ls-remote'));
+    assert.equal(placement(g1).length, 2, 'one listing + one count');
+    assert.ok(branches.every((b) => placement(g1)[0].includes(b.oid)) && !placement(g1)[0].includes('--branches'), 'the listing is of the CAPTURED tips, not the current branches');
     const g2 = placementGit({ listFails: true, counts: { ['b'.repeat(40)]: 2 } });
     assert.deepEqual(scan(g2).map((i) => i.committed), ['pushed', 'unpushed', 'pushed'], 'the fallback reaches the same answer');
-    assert.equal(g2.calls.length, 4, 'one failed listing + one count per branch');
+    assert.equal(placement(g2).length, 4, 'one failed listing + one count per branch');
   });
   it('a branch checked out in a listed worktree is that worktree\'s candidate, never a second branch-only one', () => {
     const items = unregisteredWork('R', ctx, {}, {
@@ -501,5 +504,168 @@ describe('merged evidence stops at the caller deadline', () => {
     assert.deepEqual([late.evidence.b2.known, late.evidence.b2.reason], [false, 'merged evidence not computed: deadline reached']);
     const full = gatherMerged({ cwd: repo, base: 'main', baseRev: base, names: ['b1', 'b2'], branches, patchIds: {}, env: scrubbedEnv() });
     assert.notEqual(full.evidence.b2.reason, 'merged evidence not computed: deadline reached');
+  });
+});
+
+// ── tag credit and gitignored-only state (docs/plans/fleet-handover-winddown.md §2.4, §2.6) ──────────────────
+
+describe('a pushed tag holds commits; gitignored-only state is work — real git', () => {
+  const NOW_ = new Date();
+  /** The scan the handover makes, over a real repo. */
+  const scan = (fx, over = {}) => {
+    const env = scrubbedEnv();
+    return unregisteredWork(fx.repo, { cwd: fx.repo, config: { baseBranch: 'main', staleWorktreeDays: 3, archiveIgnore: [...DEFAULT_ARCHIVE_IGNORE], ...over.config }, now: NOW_, env }, {}, { ignoredProbe: true, tagCredit: true, ...over.deps });
+  };
+  const detachedAt = (fx, name, rel = 't.txt') => {
+    const wt = path.join(tmpRoot('unreg-tag-'), name);
+    git(['worktree', 'add', '-q', '-b', name, wt, 'main'], fx.repo);
+    const oid = commitFile(wt, rel, `${name}\n`);
+    git(['checkout', '-q', '--detach'], wt);
+    git(['branch', '-q', '-D', name], fx.repo);
+    return { wt, oid };
+  };
+  const find = (r, wt) => r.items.find((i) => i.worktree && path.resolve(i.worktree) === path.resolve(wt));
+
+  it('a detached worktree whose commit only a PUSHED tag holds is remote-held; the same tag NOT pushed still blocks (control)', () => {
+    const fx = makeFleetRepo();
+    const { wt } = detachedAt(fx, 'tagged');
+    git(['tag', 'archive/tagged-2026-10-21'], wt);
+    const local = find(scan(fx), wt);
+    assert.deepEqual([local.verdict, local.blocks, local.heldBy], ['unverified', true, undefined], 'a tag that exists only here protects nothing');
+    git(['push', '-q', 'origin', 'archive/tagged-2026-10-21'], wt);
+    const held = find(scan(fx), wt);
+    assert.deepEqual([held.blocks, held.preserved, held.heldBy, held.heldByTags], [false, 'remote', 'tag', ['archive/tagged-2026-10-21']]);
+    assert.match(held.reason, /pushed tag/);
+  });
+
+  it('a tag on an ANCESTOR does not hold the later commit (control: the tag on the tip does)', () => {
+    const fx = makeFleetRepo();
+    const wt = path.join(tmpRoot('unreg-anc-'), 'anc');
+    git(['worktree', 'add', '-q', '-b', 'anc', wt, 'main'], fx.repo);
+    commitFile(wt, 'one.txt', '1\n'); git(['tag', 'early'], wt); git(['push', '-q', 'origin', 'early'], wt);
+    commitFile(wt, 'two.txt', '2\n'); git(['checkout', '-q', '--detach'], wt); git(['branch', '-q', '-D', 'anc'], fx.repo);
+    assert.equal(find(scan(fx), wt).blocks, true, 'the second commit is on no remote ref');
+    git(['tag', 'late'], wt); git(['push', '-q', 'origin', 'late'], wt);
+    assert.equal(find(scan(fx), wt).blocks, false);
+  });
+
+  it('M5: a pushed tag on a DESCENDANT of the commit credits it AND is the recorded evidence', () => {
+    const fx = makeFleetRepo();
+    const wt = path.join(tmpRoot('unreg-desc-'), 'desc');
+    git(['worktree', 'add', '-q', '-b', 'desc', wt, 'main'], fx.repo);
+    const tip = commitFile(wt, 'one.txt', '1\n');
+    git(['checkout', '-q', '--detach'], wt); git(['branch', '-q', '-D', 'desc'], fx.repo);
+    assert.equal(find(scan(fx), wt).blocks, true, 'control: nothing holds it yet');
+    const second = path.join(tmpRoot('unreg-desc2-'), 'later');
+    git(['worktree', 'add', '-q', '--detach', second, tip], fx.repo);
+    commitFile(second, 'two.txt', '2\n');
+    git(['tag', 'archive/later'], second); git(['push', '-q', 'origin', 'archive/later'], second);
+    const item = find(scan(fx), wt);
+    assert.deepEqual([item.blocks, item.heldBy, item.heldByTags], [false, 'tag', ['archive/later']]);
+  });
+
+  it('M4: without tagCredit no network call is made (fleet status stays local); with it, one ls-remote (control)', () => {
+    const fx = makeFleetRepo();
+    const { wt } = detachedAt(fx, 'lazy');
+    const calls = [];
+    const spy = (args, cwd, opts) => { calls.push(args[0]); return archiveReportGit(args, cwd, opts); };
+    const quiet = find(scan(fx, { deps: { git: spy, tagCredit: false, ignoredProbe: false } }), wt);
+    assert.equal(quiet.blocks, true);
+    assert.ok(!calls.includes('ls-remote'), calls.join(','));
+    scan(fx, { deps: { git: spy } });
+    assert.equal(calls.filter((c) => c === 'ls-remote').length, 1);
+  });
+
+  it('an annotated tag is peeled to its commit', () => {
+    const fx = makeFleetRepo();
+    const { wt } = detachedAt(fx, 'annot');
+    git(['tag', '-a', '-m', 'archive', 'archive/annot'], wt); git(['push', '-q', 'origin', 'archive/annot'], wt);
+    assert.equal(find(scan(fx), wt).heldBy, 'tag');
+  });
+
+  it('a failed ls-remote changes no verdict and says so (fail closed)', () => {
+    const fx = makeFleetRepo();
+    const { wt } = detachedAt(fx, 'offline');
+    git(['tag', 'archive/offline'], wt); git(['push', '-q', 'origin', 'archive/offline'], wt);
+    git(['remote', 'set-url', 'origin', path.join(fx.root, 'gone.git')], fx.repo);
+    const item = find(scan(fx), wt);
+    assert.equal(item.blocks, true);
+    assert.match((item.unverified ?? []).join(' '), /tag credit not measured/);
+  });
+
+  it('H1: tag credit cannot bypass the ignored probe — a tag-held commit PLUS an ignored file still blocks', () => {
+    const fx = makeFleetRepo();
+    fs.writeFileSync(path.join(fx.repo, '.gitignore'), 'journal.local\n');
+    git(['add', '.gitignore'], fx.repo); git(['commit', '-q', '-m', 'ignore'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+    const { wt } = detachedAt(fx, 'both');
+    git(['tag', 'archive/both'], wt); git(['push', '-q', 'origin', 'archive/both'], wt);
+    assert.equal(find(scan(fx), wt).blocks, false, 'control: tag-held and clean is non-blocking');
+    fs.writeFileSync(path.join(wt, 'journal.local'), 'the only copy\n');
+    const item = find(scan(fx), wt);
+    assert.deepEqual([item.verdict, item.row, item.blocks, item.risks.ignored], ['unlanded', '2', true, 1]);
+    assert.match(item.reason, /1 gitignored file\(s\) outside archiveIgnore/);
+  });
+
+  it('0e8f: a landed worktree whose ONLY state is an ignored file blocks; with the file under archiveIgnore, or without the probe, it does not (controls)', () => {
+    const fx = makeFleetRepo();
+    fs.writeFileSync(path.join(fx.repo, '.gitignore'), 'journal.local\nnode_modules/\n');
+    git(['add', '.gitignore'], fx.repo); git(['commit', '-q', '-m', 'ignore'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+    const wt = path.join(tmpRoot('unreg-ign-'), 'ign');
+    git(['worktree', 'add', '-q', '-b', 'ign', wt, 'main'], fx.repo);
+    assert.equal(find(scan(fx), wt), undefined, 'clean: not listed');
+    fs.writeFileSync(path.join(wt, 'journal.local'), 'labelling journal\n');
+    assert.equal(find(scan(fx, { deps: { ignoredProbe: false } }), wt), undefined, 'the light scan (status) never looks at ignored files');
+    const item = find(scan(fx), wt);
+    assert.deepEqual([item.verdict, item.blocks, item.committed], ['unlanded', true, 'none']);
+    fs.rmSync(path.join(wt, 'journal.local'));
+    fs.mkdirSync(path.join(wt, 'node_modules')); fs.writeFileSync(path.join(wt, 'node_modules', 'x.js'), 'x\n');
+    assert.equal(find(scan(fx), wt), undefined, 'a path archiveIgnore covers is regenerable, not work');
+  });
+
+  it('the main checkout is never a candidate for the ignored probe (control: a linked worktree with the same file is)', () => {
+    const fx = makeFleetRepo();
+    fs.writeFileSync(path.join(fx.repo, '.gitignore'), '.env\n');
+    git(['add', '.gitignore'], fx.repo); git(['commit', '-q', '-m', 'ignore'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+    fs.writeFileSync(path.join(fx.repo, '.env'), 'K=1\n');
+    assert.deepEqual(scan(fx).items, []);
+    const wt = path.join(tmpRoot('unreg-env-'), 'env');
+    git(['worktree', 'add', '-q', '-b', 'env', wt, 'main'], fx.repo);
+    fs.writeFileSync(path.join(wt, '.env'), 'K=2\n');
+    assert.equal(find(scan(fx), wt).blocks, true);
+  });
+
+  it('the DEFAULT archiveIgnore excuses ONLY the harness settings file: a journal in .claude/tmp blocks, a declared pattern excuses it, a wholly-ignored .claude fails closed', () => {
+    const fx = makeFleetRepo({ files: { 'a.txt': 'a\n', '.claude/keep.md': 'tracked\n' } });
+    fs.writeFileSync(path.join(fx.repo, '.gitignore'), '.claude/settings.local.json\n.claude/tmp/\n');
+    git(['add', '.gitignore'], fx.repo); git(['commit', '-q', '-m', 'ignore'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+    const wt = path.join(tmpRoot('unreg-claude-'), 'cl');
+    git(['worktree', 'add', '-q', '-b', 'cl', wt, 'main'], fx.repo);
+    fs.writeFileSync(path.join(wt, '.claude', 'settings.local.json'), '{}\n');
+    assert.equal(find(scan(fx), wt), undefined, 'the harness file alone is not work');
+    fs.mkdirSync(path.join(wt, '.claude', 'tmp'), { recursive: true });
+    fs.writeFileSync(path.join(wt, '.claude', 'tmp', 'labelling-journal.json'), 'the only copy\n');
+    assert.equal(find(scan(fx), wt).blocks, true, 'a journal beside it is not the harness to declare regenerable');
+    assert.equal(find(scan(fx, { config: { archiveIgnore: [...DEFAULT_ARCHIVE_IGNORE, '.claude/tmp/**'] } }), wt), undefined, 'a repo that declares its scratch excuses it');
+  });
+  it('a worktree whose .claude is wholly ignored (nothing tracked in it) is one collapsed entry and FAILS CLOSED, whatever file the default names', () => {
+    const fx = makeFleetRepo({ files: { 'a.txt': 'a\n' } });
+    fs.writeFileSync(path.join(fx.repo, '.gitignore'), '.claude/\n');
+    git(['add', '.gitignore'], fx.repo); git(['commit', '-q', '-m', 'ignore'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+    const wt = path.join(tmpRoot('unreg-wholly-'), 'w');
+    git(['worktree', 'add', '-q', '-b', 'w', wt, 'main'], fx.repo);
+    fs.mkdirSync(path.join(wt, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(wt, '.claude', 'settings.local.json'), '{}\n');
+    assert.equal(find(scan(fx), wt).blocks, true);
+    assert.equal(find(scan(fx, { config: { archiveIgnore: [...DEFAULT_ARCHIVE_IGNORE, '.claude/**'] } }), wt), undefined, 'declaring .claude/** is the repo\'s call');
+  });
+  it('an ignored probe that cannot run is UNVERIFIED and blocks, never a clean read', () => {
+    const fx = makeFleetRepo();
+    const wt = path.join(tmpRoot('unreg-fail-'), 'fail');
+    git(['worktree', 'add', '-q', '-b', 'fail', wt, 'main'], fx.repo);
+    const real = archiveReportGit;
+    const failing = (args, cwd, opts) => (args.includes('--ignored=traditional') ? { ok: false, stdout: '', reason: 'boom' } : real(args, cwd, opts));
+    const item = find(scan(fx, { deps: { git: failing } }), wt);
+    assert.deepEqual([item.verdict, item.blocks], ['unverified', true]);
+    assert.match(item.reason, /ignored files not measured: boom/);
   });
 });

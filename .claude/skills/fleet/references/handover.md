@@ -21,7 +21,9 @@ to it: a host holds a message between sessions whose modes differ.
   - every live claim (worktree, branch, uncommitted files, ready, waiting-on)
     with a resume prompt; a claim whose work already landed is listed under
     "merged but not released" with its `release` command instead;
-  - **unregistered work**, with the same verdicts `status` prints. Blocking items
+  - **unregistered work**, with the same verdicts `status` prints, plus two handover-only measures: gitignored files
+    outside `archiveIgnore` count as work (a worktree whose only copy of a journal is ignored is not clean; the main checkout
+    is skipped), and a commit a pushed TAG holds (`ls-remote`, verified now) is remote-held. Blocking items
     hold work that exists nowhere else, or could not be measured: claim each from
     INSIDE its worktree, push it, or settle it with the user. Prepare exits 3
     while any remain;
@@ -115,7 +117,7 @@ to it: a host holds a message between sessions whose modes differ.
   `--waiting-on human:account-switch` (case, spaces, `_` and `-` are folded).
   Receive lists each such claim with a `fleet touch --id <id> --unwait human:<ref>`
   command that drops exactly the switch wait inside the registry transaction (no
-  snapshot of the others, so a wait added since cannot be lost); any other `human`
+  snapshot of the others, so a wait added since cannot be lost). It asks the target repo's OWN flag table first: a fleet that predates `--unwait` is told to sync, never handed `--clear-waiting`; any other `human`
   wait gets a one-line note, so a differently worded one is still shown.
 - **Work done AFTER prepare (the delta).** Prepare is often run at the last few
   percent of credits, and the old account keeps working. Receive therefore reports,
