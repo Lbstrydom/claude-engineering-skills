@@ -165,14 +165,21 @@ export function decideRelease(lease, req, now, probe = defaultProbe()) {
   if (req.force && (typeof req.reason !== 'string' || req.reason.trim() === '' || !checkNote(req.reason))) {
     return refuse('bad-request', `--force needs --reason (at most ${LIMITS.noteMax} characters, no control characters)`);
   }
-  if (!cur) return { ok: true, lease: base, released: null, already: true };
-  const mine = sameIdentity(cur, req.identity);
   // D9: `--end-turn` is a statement about the CALLER ("I have nothing further ready"), but it acts on the REPO's turn. When the
   // releasing repo has its own waiter entry in the SETTLED lease, another job of the repo asked after the releaser's grant and is
   // waiting, so the turn is kept (a plain release) and the result says so. Never a refusal: a refused release would strand the slot.
   const ownTurn = base.turn && base.turn.repoKey === req.identity.repoKey;
   const sameRepoWaiter = ownTurn && req.endTurn && !req.force ? (base.waiters ?? []).find((w) => w.repoKey === req.identity.repoKey) : undefined;
   const turnKept = sameRepoWaiter ? { reason: 'same-repo-waiting', since: sameRepoWaiter.since } : undefined;
+  if (!cur) {
+    // A FREE slot does not make `--end-turn` a no-op: the repo's turn is between jobs, and yielding it is the only way a waiting
+    // repo gets in before the turn times out (2026-10-19: a free slot kept another repo refused for ~55 minutes).
+    if (req.endTurn && !req.force && ownTurn && !turnKept) {
+      return { ok: true, lease: settleQueue(endTurn(base, 'yield', now, byOf(req)), now, probe), released: null, already: true, turnYielded: true };
+    }
+    return { ok: true, lease: base, released: null, already: true, ...(turnKept ? { turnKept } : {}) };
+  }
+  const mine = sameIdentity(cur, req.identity);
   const releasedEntry = (forced) => jentry(now, 'released', req, { forced, job: { kind: cur.kind, until: cur.expiresAt }, ...(req.endTurn ? { endTurn: true } : {}), ...(turnKept ? { turnKept: turnKept.reason } : {}) });
   const freed = { heavy: null, slotFreedAt: now.toISOString() };
   if (mine) {
@@ -434,30 +441,86 @@ export function measureSlotWaits(journal, now) {
 
 // ── Peak hours ──────────────────────────────────────────────────────────────
 
-/** `"09:00-12:00,14:00-17:00"` → `[{from,to}]`; `from > to` means across midnight. Errors name the bad part. */
+const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+/** A range with no `days` is a WEEKDAY range: the user's expensive-token window does not run at weekends. */
+export const DEFAULT_PEAK_DAYS = Object.freeze([1, 2, 3, 4, 5]);
+const daysOf = (r) => (Array.isArray(r.days) && r.days.length ? r.days : DEFAULT_PEAK_DAYS);
+
+/** `"mon-fri"`, `"sat+sun"`, `"mon-wed+fri"`, `"daily"` → sorted day numbers (0 = Sunday), or null when a token is not a day. */
+function parseDays(text) {
+  if (text === 'daily') return [0, 1, 2, 3, 4, 5, 6];
+  const set = new Set();
+  for (const tok of text.split('+')) {
+    const m = /^([a-z]{3})(?:-([a-z]{3}))?$/.exec(tok);
+    if (!m) return null;
+    const a = DAY_NAMES.indexOf(m[1]);
+    const b = m[2] === undefined ? a : DAY_NAMES.indexOf(m[2]);
+    if (a < 0 || b < 0) return null;
+    for (let d = a; ; d = (d + 1) % 7) { set.add(d); if (d === b) break; } // a range may wrap the week: fri-mon
+  }
+  return [...set].sort((x, y) => x - y);
+}
+
+/** The day set as parse accepts it back: a run of consecutive days is `mon-fri`, otherwise `mon+wed`; all seven is `daily`. */
+export function formatPeakDays(days) {
+  const ds = [...new Set(days)].sort((x, y) => x - y);
+  if (ds.length === 7) return 'daily';
+  const runs = [];
+  for (const d of ds) {
+    const last = runs[runs.length - 1];
+    if (last && d === last[1] + 1) last[1] = d; else runs.push([d, d]);
+  }
+  return runs.map(([a, b]) => (a === b ? DAY_NAMES[a] : b === a + 1 ? `${DAY_NAMES[a]}+${DAY_NAMES[b]}` : `${DAY_NAMES[a]}-${DAY_NAMES[b]}`)).join('+');
+}
+
+/** One range as `HH:MM-HH:MM@days`, the `lease peak --hours` spelling. */
+export const formatPeakRange = (r) => `${r.from}-${r.to}@${formatPeakDays(daysOf(r))}`;
+
+/**
+ * `"09:00-12:00,14:00-17:00@mon-fri"` → `[{from,to,days?}]`; `from > to` means across midnight. `@days` is optional and the
+ * range then runs Monday to Friday (`days` is left off the record, so a range stored before days existed reads the same way).
+ * A range that crosses midnight belongs to the day it STARTS on. Errors name the bad part.
+ */
 export function parsePeakHours(text) {
   const parts = String(text ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   if (!parts.length) return { ok: false, reason: '--hours needs at least one HH:MM-HH:MM range' };
   if (parts.length > LIMITS.maxPeak) return { ok: false, reason: `at most ${LIMITS.maxPeak} peak ranges` };
   const out = [];
   for (const p of parts) {
-    const m = /^(\d{2}:\d{2})-(\d{2}:\d{2})$/.exec(p);
-    if (!m || !hhmm.safeParse(m[1]).success || !hhmm.safeParse(m[2]).success || m[1] === m[2]) return { ok: false, reason: `${JSON.stringify(p)} is not a range of two different HH:MM times` };
-    out.push({ from: m[1], to: m[2] });
+    const m = /^(\d{2}:\d{2})-(\d{2}:\d{2})(?:@(.+))?$/.exec(p);
+    if (!m || !hhmm.safeParse(m[1]).success || !hhmm.safeParse(m[2]).success || m[1] === m[2]) return { ok: false, reason: `${JSON.stringify(p)} is not a range of two different HH:MM times (optionally @mon-fri, @sat+sun or @daily)` };
+    const days = m[3] === undefined ? undefined : parseDays(m[3].toLowerCase());
+    if (m[3] !== undefined && !days) return { ok: false, reason: `${JSON.stringify(p)} has days ${JSON.stringify(m[3])}: use three-letter day names like mon-fri, sat+sun, mon+wed+fri, or daily` };
+    out.push({ from: m[1], to: m[2], ...(days && formatPeakDays(days) !== formatPeakDays(DEFAULT_PEAK_DAYS) ? { days } : {}) });
   }
   return { ok: true, peakHours: out };
 }
 
 const minutesOf = (hm) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3));
 
-/** Is `now` (machine-local time) inside a peak range, and when is the next one? */
+/** Is `now` (machine-local time) inside a peak range on one of its days, and which range starts next? */
 export function peakState(peakHours, now) {
   const cur = now.getHours() * 60 + now.getMinutes();
-  const inRange = (r) => { const a = minutesOf(r.from); const b = minutesOf(r.to); return a < b ? cur >= a && cur < b : cur >= a || cur < b; };
+  const today = now.getDay();
+  const inRange = (r) => {
+    const a = minutesOf(r.from); const b = minutesOf(r.to); const days = daysOf(r);
+    if (a < b) return cur >= a && cur < b && days.includes(today);
+    if (cur >= a) return days.includes(today); // the evening part: the range's own day
+    return cur < b && days.includes((today + 6) % 7); // the part after midnight: it started yesterday
+  };
   const active = peakHours.find(inRange);
   if (active) return { now: true, range: active };
-  const upcoming = [...peakHours].sort((x, y) => ((minutesOf(x.from) - cur + 1440) % 1440) - ((minutesOf(y.from) - cur + 1440) % 1440))[0];
-  return { now: false, ...(upcoming ? { next: upcoming } : {}) };
+  // Minutes until a range next starts: today's start if still ahead, else the nearest of the next 7 days it runs on.
+  const untilStart = (r) => {
+    const a = minutesOf(r.from); const days = daysOf(r);
+    for (let k = 0; k <= 7; k++) {
+      const wait = k * 1440 + a - cur;
+      if (wait > 0 && days.includes((today + k) % 7)) return wait;
+    }
+    return Infinity;
+  };
+  const upcoming = [...peakHours].sort((x, y) => untilStart(x) - untilStart(y))[0];
+  return { now: false, ...(upcoming && untilStart(upcoming) !== Infinity ? { next: upcoming } : {}) };
 }
 
 // ── Recovery of an unreadable file ──────────────────────────────────────────
@@ -542,7 +605,7 @@ export function renderStatus(s, { dir, now, repoKey, cmd = 'fleet' }) {
   if (s.turnMin) lines.push(`  turn length: ${s.turnMin}m (set for this machine)`);
   for (const w of s.waiters) lines.push(`  waiting: ${w.repo} since ${hhmmOf(new Date(w.since))} (${w.refusals} refusal${w.refusals === 1 ? '' : 's'}, wants ${w.forMin}m)`);
   if (s.peakHours.length) {
-    const r = (x) => `${x.from}-${x.to}`;
+    const r = formatPeakRange;
     lines.push(`  peak hours (machine-local): ${s.peakHours.map(r).join(', ')} — ${s.peak.now ? `PEAK NOW (${r(s.peak.range)})` : s.peak.next ? `next ${r(s.peak.next)}` : 'none upcoming'}`);
   } else lines.push('  peak hours: none set');
   if (s.journal.length) lines.push(`  journal: ${s.journal.length} entries since ${hhmmOf(new Date(s.journal[0].at))} (\`${cmd} lease log\`)`);

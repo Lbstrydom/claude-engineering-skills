@@ -159,8 +159,8 @@ when two or more repos wait, they take turns:
   fit check recommends a value per machine.
 
 **Peak hours.** `lease peak --hours "14:00-20:00"` records the user's
-expensive-token window. During it, ship built work only (pushes, `/ship`, merges,
-CI); new planning, coding and chips wait until after.
+expensive-token window, Mon-Fri unless a range names days (`@sat+sun`). During it, ship
+built work only (pushes, `/ship`, merges, CI); new coding and chips wait.
 
 ## Rule 15 — Message budget
 

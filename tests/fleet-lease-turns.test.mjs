@@ -488,6 +488,29 @@ describe('--end-turn while the same repo still waits (D9, finding 3c6d)', () => 
     assert.deepEqual(r.lease.turn, turnBefore);
     assert.equal(r.turnKept, undefined);
   });
+  it('a FREE slot: --end-turn yields the releasing repo\'s turn (f30b), is a no-op for another repo, and keeps the turn while its own job waits', () => {
+    let l = ok(acq(emptyLease(), A, { forMin: 30 }, '08:00'));
+    l = acq(l, B, { forMin: 20 }, '08:05').lease; // B queues behind A's turn
+    l = ok(rel(l, A, {}, '08:10')); // plain release: the slot is FREE, the turn is still A's
+    assert.equal(l.heavy, null);
+    assert.equal(acq(l, B, { forMin: 20 }, '08:11').ok, false, 'B is refused although the slot is free');
+    const other = rel(l, B, { endTurn: true }, '08:12');
+    assert.equal(other.ok, true);
+    assert.deepEqual(turnEnded(other.lease), [], 'another repo\'s --end-turn leaves A\'s turn alone');
+    const r = rel(l, A, { endTurn: true }, '08:12');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.already, true);
+    assert.equal(r.turnYielded, true);
+    assert.deepEqual(turnEnded(r.lease), ['yield']);
+    assert.equal(LeaseSchema.safeParse(r.lease).success, true);
+    assert.equal(acq(r.lease, B, { forMin: 20 }, '08:13').ok, true, 'B goes next');
+    // A second job of A is waiting: the turn is kept, and the result says so.
+    const withSibling = { ...l, waiters: [...(l.waiters ?? []), { repoKey: A.repoKey, repo: 'o/a', since: T('08:11').toISOString(), refusals: 1, forMin: 10 }] };
+    const kept = rel(withSibling, A, { endTurn: true }, '08:12');
+    assert.equal(kept.turnYielded, undefined);
+    assert.equal(kept.turnKept.reason, 'same-repo-waiting');
+    assert.deepEqual(turnEnded(kept.lease), []);
+  });
   it('out of scope: a turn already settled away (expired) produces no yield and no turnKept', () => {
     let l = ok(acq(emptyLease(), A, { forMin: 120 }, '08:00')); // turn to 09:00, job to 10:00
     l = acq(l, A2, { forMin: 20 }, '08:05').lease; // A queues itself

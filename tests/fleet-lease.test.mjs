@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   LIMITS, LeaseConfigError, appendEvent, classifyHeavy, decideAcquire, decideAnnounce, decideAttach, decideClearWindow,
-  decideRelease, emptyLease, leasePaths, machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable,
+  decideRelease, emptyLease, formatPeakRange, leasePaths, machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable,
   renderStatus, repoKeyOf, repoLabel, summarise, transactLease, writeLease, LeaseSchema,
 } from '../scripts/lib/fleet/lease.mjs';
 
@@ -344,6 +344,44 @@ describe('peak hours (D7)', () => {
     assert.equal(peakState(ranges, local(1, 0)).now, true, 'after midnight');
     assert.deepEqual(peakState(ranges, local(15, 0)).next, { from: '22:00', to: '02:00' });
     assert.deepEqual(peakState([], local(15, 0)), { now: false });
+  });
+  it('a range with no days is Monday to Friday: weekends are not peak (a318)', () => {
+    const peak = parsePeakHours('14:00-20:00').peakHours;
+    assert.deepEqual(peak, [{ from: '14:00', to: '20:00' }], 'the default adds nothing to the record');
+    const at = (d, h) => new Date(2026, 9, d, h, 0); // 2026-10-16 Fri, 17 Sat, 18 Sun, 19 Mon
+    assert.equal(peakState(peak, at(16, 15)).now, true, 'Friday');
+    assert.equal(peakState(peak, at(17, 15)).now, false, 'Saturday');
+    assert.equal(peakState(peak, at(18, 15)).now, false, 'Sunday');
+    assert.equal(peakState(peak, at(19, 15)).now, true, 'Monday');
+    assert.deepEqual(peakState(peak, at(17, 15)).next, peak[0], 'the next range is Monday\'s, not tomorrow\'s');
+    assert.deepEqual(peakState(peak, at(16, 21)).next, peak[0], 'Friday evening: next is Monday');
+  });
+  it('an explicit day set: sat+sun, daily, wrapped and listed days; the spelling round-trips', () => {
+    const wk = parsePeakHours('10:00-12:00@sat+sun').peakHours;
+    assert.deepEqual(wk, [{ from: '10:00', to: '12:00', days: [0, 6] }]);
+    assert.equal(peakState(wk, new Date(2026, 9, 17, 11, 0)).now, true);
+    assert.equal(peakState(wk, new Date(2026, 9, 16, 11, 0)).now, false);
+    assert.equal(peakState(parsePeakHours('10:00-12:00@daily').peakHours, new Date(2026, 9, 18, 11, 0)).now, true);
+    assert.deepEqual(parsePeakHours('10:00-12:00@fri-mon').peakHours[0].days, [0, 1, 5, 6]);
+    assert.deepEqual(parsePeakHours('10:00-12:00@MON+wed+fri').peakHours[0].days, [1, 3, 5]);
+    for (const spec of ['10:00-12:00@mon-fri', '10:00-12:00@sat+sun', '10:00-12:00@mon+wed+fri', '10:00-12:00@daily', '10:00-12:00@sun-mon+fri-sat']) {
+      const r = parsePeakHours(spec).peakHours[0];
+      assert.deepEqual(parsePeakHours(formatPeakRange(r)).peakHours[0], r, spec);
+    }
+    assert.equal(formatPeakRange({ from: '14:00', to: '20:00' }), '14:00-20:00@mon-fri');
+    for (const bad of ['10:00-12:00@', '10:00-12:00@xyz', '10:00-12:00@mon-xyz', '10:00-12:00@mon,fri', '10:00-12:00@mon++fri']) assert.equal(parsePeakHours(bad).ok, false, bad);
+  });
+  it('a range across midnight belongs to the day it starts on', () => {
+    const night = parsePeakHours('22:00-02:00@fri').peakHours; // Friday 22:00 to Saturday 02:00
+    assert.equal(peakState(night, new Date(2026, 9, 16, 23, 0)).now, true, 'Friday evening');
+    assert.equal(peakState(night, new Date(2026, 9, 17, 1, 0)).now, true, 'Saturday small hours');
+    assert.equal(peakState(night, new Date(2026, 9, 16, 1, 0)).now, false, 'Friday small hours belong to Thursday');
+    assert.equal(peakState(night, new Date(2026, 9, 17, 23, 0)).now, false, 'Saturday evening');
+  });
+  it('a peak range stored before days existed (no days key) reads as Monday to Friday', () => {
+    const stored = [{ from: '14:00', to: '20:00' }];
+    assert.equal(peakState(stored, new Date(2026, 9, 18, 15, 0)).now, false);
+    assert.match(nextLines({ state: 'ok', lease: { ...emptyLease(), peakHours: stored } }, new Date(2026, 9, 17, 15, 0), { probe }).join(''), /^$/, 'no peak note on a Saturday');
   });
 });
 

@@ -20,7 +20,7 @@ import { failed, ok, refused, selfId } from './commands.mjs';
 import { gitCommonDir, runGit } from './git-facts.mjs';
 import {
   LIMITS, LeaseConfigError, measureSlotWaits, repoLabel, decideAcquire, decideAnnounce, decideAttach, decideClearWindow, decideGrant, decideRelease, decideTurnConfig, decideWait, defaultProbe,
-  machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable, renderLog, renderStatus, repoKeyOf, summarise,
+  formatPeakRange, machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable, renderLog, renderStatus, repoKeyOf, summarise,
   transactLease, turnKeptText,
 } from './lease.mjs';
 
@@ -209,8 +209,8 @@ export function cmdLease(ctx, flags, positionals) {
       if (!forced && flags['--reason'] !== undefined) throw new ArgvError('fleet lease release: --reason is only for --force');
       decide = (lease) => decideRelease(lease, req, ctx.now, probe);
       describe = (d) => ({
-        released: d.released, already: Boolean(d.already), ...(d.turnKept ? { turnKept: d.turnKept } : {}),
-        text: d.already ? 'OK: the heavy slot was already free' : `OK: heavy slot released (was ${d.released.holder} (${d.released.repo}) for ${d.released.kind})${d.event ? `\nrecorded: ${d.event.reason}` : ''}${d.turnKept ? `\n${turnKeptText(d.turnKept, d.released.repo, ctx.cmd)}` : ''}`,
+        released: d.released, already: Boolean(d.already), ...(d.turnKept ? { turnKept: d.turnKept } : {}), ...(d.turnYielded ? { turnYielded: true } : {}),
+        text: d.already ? `OK: the heavy slot was already free${d.turnYielded ? '; this repo\'s turn was yielded' : ''}${d.turnKept ? `\n${turnKeptText(d.turnKept, repo.repo, ctx.cmd)}` : ''}` : `OK: heavy slot released (was ${d.released.holder} (${d.released.repo}) for ${d.released.kind})${d.event ? `\nrecorded: ${d.event.reason}` : ''}${d.turnKept ? `\n${turnKeptText(d.turnKept, d.released.repo, ctx.cmd)}` : ''}`,
       });
       break;
     }
@@ -268,7 +268,7 @@ export function cmdLease(ctx, flags, positionals) {
     }
     case 'peak': {
       const clear = flags['--clear'] === true;
-      if (clear === (flags['--hours'] !== undefined)) throw new ArgvError('fleet lease peak: pass exactly one of --hours "HH:MM-HH:MM,..." or --clear');
+      if (clear === (flags['--hours'] !== undefined)) throw new ArgvError('fleet lease peak: pass exactly one of --hours "HH:MM-HH:MM[@days],..." (days default to mon-fri) or --clear');
       let peakHours = [];
       if (!clear) {
         const p = parsePeakHours(flags['--hours']);
@@ -276,7 +276,7 @@ export function cmdLease(ctx, flags, positionals) {
         peakHours = p.peakHours;
       }
       decide = (lease) => ({ ok: true, lease: { ...lease, peakHours }, peakHours });
-      describe = (d) => ({ peakHours: d.peakHours, text: d.peakHours.length ? `OK: peak hours (machine-local): ${d.peakHours.map((r) => `${r.from}-${r.to}`).join(', ')}` : 'OK: peak hours cleared' });
+      describe = (d) => ({ peakHours: d.peakHours, text: d.peakHours.length ? `OK: peak hours (machine-local): ${d.peakHours.map(formatPeakRange).join(', ')}` : 'OK: peak hours cleared' });
       break;
     }
     default: throw new ArgvError(`fleet lease: unhandled sub-command ${sub}`);

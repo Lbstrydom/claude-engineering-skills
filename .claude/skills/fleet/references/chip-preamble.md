@@ -28,8 +28,9 @@ ROUTE. ROUTE_CHOICE. [rule 3]
 the coordinator: "plan audited, ready to implement: PLAN_PATH". Implement only after the coordinator says "go". [rule 16]]
 
 TURN. A FREE lease is not a turn. Take the heavy slot (fleet lease acquire, or lease run) and push only when the coordinator
-says it is your turn; a refused acquire queues you. Mind the cost window: no new coding during the hours
-`node scripts/fleet.mjs lease peak` shows (shipping is fine). [rule 14]
+says it is your turn; a refused acquire queues you. The slot is for LOCAL CPU/IO-heavy work only (full test suite, pre-push
+gate, install): API-bound rounds (/audit-code, /audit-plan, the Gemini review) never take it. Mind the cost window: no new
+coding during the hours `node scripts/fleet.mjs lease peak` shows (weekdays unless a range names days; shipping is fine). [rule 14]
 
 CLAIM. Run fleet claim --id CHIP_ID --intent "ONE LINE" --paths "GLOBS" from INSIDE your worktree before editing. If it is
 BLOCKED (exit 3), STOP and report which session overlaps: never retry, rename the id or use --override. Claim the paths each

@@ -10,6 +10,10 @@ peak-cost hours, a journal of what happened, which repos are waiting, and whose 
 enforces it, and `hold` and directives outrank it. Exit codes: 0 ok, 3 refused, 1 error (lock contention, unreadable
 file), 2 argv.
 
+**The slot is for local CPU/IO-heavy work only**: a full `npm test`, the pre-push gate, an install, a disk sweep. An
+API-bound job (`/audit-code`, `/audit-plan`, the Gemini final review) uses the machine for nothing but waiting on a
+provider, so it NEVER takes the slot (a chip holding it for "audit-code r1" kept two other lanes waiting, 2026-10-19).
+
 ## Verbs
 
 | Verb | What it does |
@@ -23,7 +27,7 @@ file), 2 argv.
 | `lease wait [--for <min>] [--note]` / `--cancel` | Say this repo wants the slot (a refused `acquire` says it too). |
 | `lease turn --minutes <15-240>` / `--clear` | This machine's turn length (default 60). |
 | `lease status` / `lease log [--limit n]` | Read the slot, windows, waiters, turn, peak hours / the journal, oldest first. |
-| `lease peak --hours "09:00-12:00,14:00-17:00"` / `--clear` | Peak-cost hours (machine-local time). |
+| `lease peak --hours "14:00-20:00[@days],..."` / `--clear` | Peak-cost hours (machine-local). A range runs Mon-Fri unless it names days: `@sat+sun`, `@mon+wed`, `@daily`. One crossing midnight belongs to its start day. |
 | `lease run [--kind] [--for 1-180] [--wait 0-720] [--timeout 1-720] [--end-turn] [--note] -- <cmd> [args...]` | Take the slot (waiting in the queue up to `--wait` minutes), run the command, release on every exit, exit with ITS code. See below. |
 
 ## Running a command under the lease (`lease run`)
@@ -89,7 +93,7 @@ its time. A FREE slot is not a turn.
   or announces a window starting now (`served`), on `wait --cancel`, after 12 hours, or when it lapses (below).
 - **A turn** starts when a repo is granted the slot and lasts until its length runs out. A job running past the end is
   never cut; its next release hands over. After a release the repo keeps the turn for **10 minutes** so it can start its
-  next batched job; **pass `--end-turn` when nothing further is ready**, or the next repo waits out the gap. If another job
+  next batched job; **pass `--end-turn` when nothing further is ready**, or the next repo waits out the gap. It works on a FREE slot too (`lease release --end-turn` between jobs yields the turn). If another job
   of your own repo is already waiting, `--end-turn` is downgraded to a plain release (the turn stays with your repo and the
   output says so); `lease wait --cancel` first if you really mean to hand it over.
 - **The rule for a fresh grant.** A gap named for the repo; else its own active turn (`in-turn`); else, if another repo's
