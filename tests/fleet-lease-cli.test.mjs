@@ -316,6 +316,29 @@ describe('--end-turn while the same repo still waits (D9, finding 3c6d)', () => 
     assert.equal(rel.status, 0, rel.stderr);
     assert.match(rel.stdout, /--end-turn not applied: .* has a job waiting since \d\d:\d\dZ, so the turn stays with .* for the between-jobs gap; to hand it over anyway, run `.*lease wait --cancel` first/);
   });
+  it('on a FREE slot (between jobs), --end-turn yields the repo\'s turn so a waiting repo goes next (finding f30b)', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'acquire', '--for', '30']).status, 0);
+    assert.equal(w.runB(['lease', 'acquire', '--for', '10']).status, 3, 'B queues behind the turn');
+    assert.equal(w.runA(['lease', 'release']).status, 0, 'a plain release keeps the turn for the between-jobs gap');
+    assert.equal(w.runB(['lease', 'acquire', '--for', '10']).status, 3, 'the slot is FREE but B is still refused: the turn is A\'s');
+    const rel = w.runA(['lease', 'release', '--end-turn', '--json']);
+    assert.equal(rel.status, 0, rel.stderr + rel.stdout);
+    assert.equal(rel.json.already, true);
+    assert.equal(rel.json.turnYielded, true);
+    assert.equal(w.read().turn, undefined, 'the turn was yielded');
+    assert.match(w.runB(['lease', 'log']).stdout, /turn of .* ended \(yield\)/);
+    assert.equal(w.runB(['lease', 'acquire', '--for', '10']).status, 0, 'and B goes next');
+  });
+  it('on a free slot --end-turn leaves another repo\'s turn alone', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'acquire', '--for', '30']).status, 0);
+    assert.equal(w.runA(['lease', 'release']).status, 0);
+    const other = w.runB(['lease', 'release', '--end-turn', '--json']);
+    assert.equal(other.status, 0);
+    assert.equal(other.json.turnYielded, undefined, 'the turn is A\'s, not B\'s');
+    assert.ok(w.read().turn, 'A keeps its turn');
+  });
   it('with no sibling waiting, --end-turn yields and prints nothing about a kept turn', () => {
     const w = world();
     assert.equal(w.runA(['lease', 'acquire', '--for', '30']).status, 0);

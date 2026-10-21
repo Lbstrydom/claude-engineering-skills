@@ -33,7 +33,8 @@ You are one of several concurrent sessions coordinated by /fleet.
    (source repo only; about 1-2 minutes). It runs the whole-suite guards a targeted run cannot see (the rmsync, CLI-catalogue and
    status-log guards, the size and knip ratchets), so a late guard failure costs minutes and not a 12-20 minute slot.
    It is NOT the gate: INCOMPLETE (exit 3) is not a pass, and the gate still runs.
-   Then take the machine's one heavy slot yourself, and give it back when the run ends:
+   Then take the machine's one heavy slot yourself, and give it back when the run ends (local CPU/IO-heavy runs only: an
+   API-bound `/audit-code`, `/audit-plan` or Gemini review round never takes the slot):
    `node scripts/fleet.mjs lease acquire --kind gate --for <minutes>` (exit 3 means someone holds it, another repo has
    announced a window, or it is another repo's turn: wait, or shorten `--for`; do not run alongside; the refusal queues
    your repo, and a FREE slot is not a turn). `lease run -- <cmd>` does acquire, run and release for a script in one step (it never runs the command after a refusal). `lease release --end-turn` when you have nothing further ready (a sibling job of your repo that is waiting keeps the turn; the output says so), else the
