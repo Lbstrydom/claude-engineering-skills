@@ -617,7 +617,7 @@ describe('a pushed tag holds commits; gitignored-only state is work — real git
     assert.equal(find(scan(fx, { deps: { ignoredProbe: false } }), wt), undefined, 'the light scan (status) never looks at ignored files');
     const item = find(scan(fx), wt);
     assert.deepEqual([item.verdict, item.blocks, item.committed], ['unlanded', true, 'none']);
-    fs.rmSync(path.join(wt, 'journal.local'));
+    fs.rmSync(path.join(wt, 'journal.local'), { force: true, maxRetries: 3, retryDelay: 50 });
     fs.mkdirSync(path.join(wt, 'node_modules')); fs.writeFileSync(path.join(wt, 'node_modules', 'x.js'), 'x\n');
     assert.equal(find(scan(fx), wt), undefined, 'a path archiveIgnore covers is regenerable, not work');
   });

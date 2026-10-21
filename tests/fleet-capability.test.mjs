@@ -73,7 +73,7 @@ describe('fleetSupports', () => {
     _resetCapabilityCache();
     const repo = consumer(table(['--unwait']));
     assert.equal(fleetSupports(repo, CONSUMER_CLI, 'touch', '--unwait'), true);
-    fs.rmSync(path.join(repo, 'scripts'), { recursive: true });
+    fs.rmSync(path.join(repo, 'scripts'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     assert.equal(fleetSupports(repo, CONSUMER_CLI, 'touch', '--unwait'), true, 'served from the memo');
   });
 });
