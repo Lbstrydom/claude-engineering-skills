@@ -34,7 +34,7 @@ function account(root, { task = 'weekly-check', settings = '{"permissions":{}}\n
 }
 const who = (email, uuid, mcp = {}) => ({ oauthAccount: { accountUuid: uuid, emailAddress: email, organizationUuid: 'org-1' }, mcpServers: mcp });
 const run = (fx, cfg, args) => runFleet([...args, '--json'], { cwd: fx.repo, env: envFor(cfg) });
-const prepare = (fx, cfg, extra = ['--scheduler-checked']) => run(fx, cfg, ['handover', 'prepare', ...extra]);
+const prepare = (fx, cfg, extra = ['--scheduler-checked']) => run(fx, cfg, ['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', ...extra]);
 const receive = (fx, cfg, json, extra = []) => run(fx, cfg, ['handover', 'receive', '--from', json, ...extra]);
 
 describe('pre-switch gate (r)', () => {

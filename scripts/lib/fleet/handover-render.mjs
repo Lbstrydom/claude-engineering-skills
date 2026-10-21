@@ -20,8 +20,9 @@ export const ghUnknownLine = (r) => `PR state unknown in ${r.path ?? r.repo} (${
 
 // ── rendering ───────────────────────────────────────────────────────────────
 
-/** Repos that need a coordinator: live sessions or unregistered work. */
-const reposNeedingCoordination = (m) => m.scope.repos.filter((r) => r.fleet === 'error' || r.sessions.length || r.unregistered?.length || r.unregisteredUnknown);
+/** Does this repo need a coordinator: live sessions, unregistered work, or state that was not measured? */
+export const repoNeedsCoordination = (r) => r.fleet === 'error' || r.sessions.length > 0 || (r.unregistered?.length ?? 0) > 0 || Boolean(r.unregisteredUnknown);
+const reposNeedingCoordination = (m) => m.scope.repos.filter(repoNeedsCoordination);
 
 /**
  * Step 6: ONE coordinator chip per repo with work, each started IN its repo (spawn_task `cwd`) and handed only
@@ -34,7 +35,7 @@ function coordinationStep6(m, art) {
   const L = ['6. Resume the work — spin out ONE coordinator chip per repo below with spawn_task, using the cwd given (whatever repo you are in):'];
   for (const r of repos) {
     const unmeasured = r.fleet === 'error' || r.unregisteredUnknown ? ' Its state was NOT fully measured at prepare (see the handover): run fleet status first and report what it shows.' : '';
-    L.push(`   - cwd "${r.path}", prompt: "You coordinate ${path.basename(r.path)} after an account handover. Read the ${r.path} sections of ${art.md} (Sessions to resume, Unregistered work). Run ${r.fleetCli ?? 'node scripts/.claude-skills/fleet.mjs'} status, spin out one chip per session with its resume prompt, and ask the user about each unregistered worktree before touching it.${unmeasured}"`);
+    L.push(`   - cwd "${r.path}", prompt: "You coordinate ${path.basename(r.path)} after an account handover. Read the ${r.path} sections of ${art.md} (Coordinator context, Sessions to resume, Unregistered work); the coordinator context lists what was already decided, so never re-ask it. Run ${r.fleetCli ?? 'node scripts/.claude-skills/fleet.mjs'} status, spin out one chip per session with its resume prompt, and ask the user about each unregistered worktree before touching it.${unmeasured}"`);
   }
   return L;
 }
@@ -82,7 +83,7 @@ function coordinationPrompt(m, art) {
     ...PICKUP_ORDER,
     PEERS_LINE,
     '0. Put every coordinator session in the same permission mode before posting anything to it (a message to a session in another mode is held, not read).',
-    `1. Read the handover: ${art.md}`,
+    `1. Read the handover: ${art.md}. Receive (step 2) prints the departing coordinator's context FIRST: read it before anything else, and never re-ask what it lists as decided.`,
     `2. From any repo with the skills bundle, run: ${receiveCommand(m.fleetCommand, art.json)}`,
     '   (in a consumer repo the CLI is node scripts/.claude-skills/fleet.mjs). Exit 1 = a memory file failed; exit 3 = a blocking step remains (conflicts, blocking unregistered work, unmeasured state); resolve those first.',
     '   Exit 0 with a "follow-ups (not failures)" block is a successful receive: work through each follow-up, but nothing failed.',
@@ -145,6 +146,7 @@ export function renderHandoverMarkdown(m, art) {
   if (!m.memory.length) L.push('- (no memory dirs under this config root)');
   L.push('', '### Folder anomalies', '');
   L.push(...(m.anomalies.length ? m.anomalies.map((a) => `- ${a.kind}: \`${a.detail}\` — review; never auto-merged`) : ['- none']));
+  L.push(...renderWinddown(m));
   L.push('', '## Sessions to resume', '');
   const sessions = m.scope.repos.flatMap((r) => r.sessions.map((s) => ({ ...s, repo: r.path, cmd: r.fleetCli ?? m.fleetCommand })));
   if (!sessions.length) L.push('- none live');
@@ -171,6 +173,25 @@ export function renderHandoverMarkdown(m, art) {
   for (const s of m.settings) L.push(`- ${s.name}: ${s.exists ? 'present' : 'absent'} (\`${s.path}\`)`);
   L.push('', '## Coordination prompt for the new account', '', '```text', coordinationPrompt(m, art), '```', '');
   return L.join('\n');
+}
+
+/** Per repo: the wind-down verdict at prepare, and the coordinator context the departing coordinator wrote (embedded). */
+function renderWinddown(m) {
+  const L = [];
+  if (m.winddown) {
+    L.push('', '## Wind-down at prepare', '',
+      m.winddown.waived ? `- **WAIVED**: ${m.winddown.waived}` : `- ${m.winddown.ready ? 'ready' : 'NOT ready'}`,
+      ...m.winddown.repos.map((r) => `- \`${r.path}\`: ${r.ready ? 'ready' : `NOT ready: ${r.reasons.join('; ')}`}${r.required ? '' : ' (no coordinator needed)'}`));
+  }
+  for (const r of m.scope.repos) {
+    const c = r.context;
+    if (!c) continue;
+    L.push('', `## Coordinator context: ${r.path}`, '');
+    if (c.state !== 'ok') L.push(`- NONE: the context file is ${c.state}${c.reason ? ` (${c.reason})` : ''}. Chat-only context from the departing coordinator did not travel.`);
+    // The embedded text's own headings are demoted so they cannot break this document's outline.
+    else L.push(`Written by the departing coordinator (\`${c.path}\`, sha256 ${c.sha256.slice(0, 12)}). It lists what was already decided: do not re-ask it.`, '', ...c.text.split(/\r?\n/).map((l) => (/^#{1,2}\s/.test(l) ? `##${l}` : l)));
+  }
+  return L;
 }
 
 /** The lease as prepare saw it (a manifest written before the field says so). */
@@ -235,6 +256,16 @@ function renderUnregistered(m) {
   return L;
 }
 
+/** The ordered host-side check that must precede every `archive_session`; the CLI cannot see host sessions. */
+export const ARCHIVE_GUARD = [
+  'Before EACH archive_session, in this order (the CLI cannot see host sessions, so this is yours to do):',
+  '  1. get_session on the candidate, then list_sessions (paged): collect every NON-archived session whose worktreePath equals the candidate\'s (compare case-insensitively on win32, after resolving separators). The desktop app places new sessions in old sessions\' worktrees.',
+  '  2. Also collect the candidate\'s side sessions (the archive cascades to them) and any non-archived session sharing THEIR worktree paths.',
+  '  3. If any session other than the candidate is live in one of those worktrees, or a side session is not finished, do NOT archive: list it as "shared worktree: <path> (live: <title>)".',
+  '  4. The cascade is the unit of safety: every distinct worktree it reaches must itself be archivable by the rule that applies (on the winddown safe list; in the arriving account\'s sweep, unclaimed and fleet archive-check CLEAN). One that is not, is outside the scoped repos or unmeasured blocks the archive: list it as "cascade reaches unchecked worktree: <path> (<title>)".',
+  'After EACH archive_session, run git worktree list in the repo and check the path on disk: a worktree still listed or still present was NOT removed, whatever the host reported. Report it as "archived but worktree survives: <path>", never as cleaned up.',
+];
+
 /** Live-claim worktrees named in the sweep's exception list; the rest are counted (fleet status lists them). */
 const SWEEP_CLAIMS_LISTED = 10;
 
@@ -256,18 +287,30 @@ export function sweepStep({ createdAt, lowerBound, boundReason = null, claimed =
     : 'no live claims were found, but run fleet status before archiving';
   return [
     `stale-session sweep: call list_sessions (at most 100 per call: page until you pass the bound) and archive every session last active before ${createdAt}, ${bound}.`,
-    `EXCEPT a session whose worktree is bound to a live fleet claim (${held}) and any session holding uncommitted work no claim covers (git status in its worktree): leave those open and list those for the user.`,
+    `EXCEPT a session whose worktree is bound to a live fleet claim (${held}) and any session holding work no claim covers (run fleet archive-check <worktree>: it must say CLEAN, since it counts gitignored files outside archiveIgnore that git status does not show): leave those open and list those for the user.`,
     scopeNote,
     ...(unknownNote ? [unknownNote.trim()] : []),
     'Never resume a pre-handover session: its context predates the work done on the other account.',
-    'archive_session removes the worktree by default, so never archive sessions on the DEPARTING account.',
+    'archive_session removes the worktree by default. On the DEPARTING account it is allowed ONLY for a worktree that fleet handover winddown lists as safe, and only after the checks below; never archive one that list does not name.',
+    ...ARCHIVE_GUARD,
     'archive_session can be refused by the host permission classifier: finish by saying how many were archived and list what could not be archived (and how many are older than that bound and left), never implying all were.',
   ].join(' ');
+}
+
+/** The departing coordinator's context, printed before everything else, so nothing already decided is re-asked. */
+export function renderContextFirst(contexts = []) {
+  const L = [];
+  for (const c of contexts) {
+    L.push(`  COORDINATOR CONTEXT (${c.repo}): ${c.state === 'ok' ? 'read this before anything else; it lists what was already decided' : `NONE (${c.state}${c.reason ? `: ${c.reason}` : ''}); chat-only context did not travel`}`);
+    if (c.state === 'ok') L.push(...c.text.split(/\r?\n/).map((l) => `    | ${l}`));
+  }
+  return L;
 }
 
 export function renderReceiveText(h) {
   const s = h.summary;
   const L = [`fleet handover receive ${h.id} — ${h.mode}${h.dryRun ? ' (dry run: nothing written)' : ''}`,
+    ...renderContextFirst(h.contexts),
     `  destination config root: ${h.destConfigDir}`,
     h.mode === 'same-config-root'
       ? `  memory: same config root — ${s.verified} verified, ${s.changedSincePrepare} changed since prepare, ${s.missingSincePrepare} missing since prepare`

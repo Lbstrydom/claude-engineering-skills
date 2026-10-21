@@ -184,6 +184,8 @@
         "scripts/.claude-skills/lib/fleet/config.mjs",
         "scripts/.claude-skills/lib/fleet/contracts.mjs",
         "scripts/.claude-skills/lib/fleet/directives.mjs",
+        "scripts/.claude-skills/lib/fleet/handover-context.mjs",
+        "scripts/.claude-skills/lib/fleet/handover-winddown.mjs",
         "scripts/.claude-skills/lib/fleet/handover.mjs",
         "scripts/.claude-skills/lib/fleet/lease-model.mjs",
         "scripts/.claude-skills/lib/fleet/proposals.mjs",

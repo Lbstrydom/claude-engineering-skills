@@ -36,17 +36,29 @@ describe('stale-session sweep follow-up (103f)', () => {
     assert.match(d, /archive every session last active before 2026-10-17T12:00:00\.000Z/);
     assert.match(d, /not earlier than 2026-10-14T08:00:00\.000Z/);
   });
-  it('lists the exceptions: live-claim worktrees and uncommitted work no claim covers', () => {
+  it('lists the exceptions: live-claim worktrees and work no claim covers (archive-check, which counts ignored files)', () => {
     const d = sweepOf({ claimed: [{ repo: 'R', id: 'claude/x', worktree: 'C:/wt/x' }] }).detail;
     assert.match(d, /claude\/x \(C:\/wt\/x\)/);
-    assert.match(d, /uncommitted work no claim covers/);
+    assert.match(d, /work no claim covers/);
+    assert.match(d, /fleet archive-check <worktree>: it must say CLEAN/);
+    assert.match(d, /gitignored files outside archiveIgnore that git status does not show/);
     assert.match(d, /list those for the user/);
   });
-  it('never resume a pre-handover session; never archive on the DEPARTING account (archive_session removes the worktree)', () => {
+  it('never resume a pre-handover session; archiving on the DEPARTING account is allowed ONLY from the winddown safe list, after the guard (D2, 93b1, bfc0)', () => {
     const d = sweepOf().detail;
     assert.match(d, /never resume a pre-handover session/i);
     assert.match(d, /archive_session removes the worktree by default/);
-    assert.match(d, /never archive sessions on the departing account/i);
+    assert.match(d, /On the DEPARTING account it is allowed ONLY for a worktree that fleet handover winddown lists as safe/);
+    assert.match(d, /Before EACH archive_session/);
+    // 93b1: the host-side shared-worktree check comes first, and the cascade is the unit of safety
+    assert.ok(d.indexOf('get_session on the candidate') < d.indexOf('The cascade is the unit of safety'));
+    assert.match(d, /worktreePath equals the candidate/);
+    assert.match(d, /every distinct worktree it reaches must itself be archivable by the rule that applies/);
+    // M5: the guard names the rule for each caller (the winddown safe list, or this sweep's unclaimed + CLEAN rule)
+    assert.match(d, /in the arriving account's sweep, unclaimed and fleet archive-check CLEAN/);
+    // bfc0: archived is not removed
+    assert.match(d, /run git worktree list in the repo/);
+    assert.match(d, /archived but worktree survives/);
   });
   it('lesson (a): the sweep ends by listing what could NOT be archived (a classifier refusal), never implying all were', () => {
     assert.match(sweepOf().detail, /permission classifier/);
@@ -189,7 +201,7 @@ describe('audit R1 fixes', () => {
     fs.mkdirSync(path.join(cfg, 'projects', 'c--GIT-demo', 'memory'), { recursive: true });
     fs.writeFileSync(path.join(cfg, 'projects', 'c--GIT-demo', 'memory', 'MEMORY.md'), '- i\n');
     const env = scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: cfg, CLAUDE_AUDIT_LOOP_DIR: '' });
-    const p = runFleet(['handover', 'prepare', '--repo', fx2.repo, '--json'], { cwd: fx.repo, env });
+    const p = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--repo', fx2.repo, '--json'], { cwd: fx.repo, env });
     assert.equal(p.status, 0, p.stdout);
     fs.rmSync(fx2.repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const r = runFleet(['handover', 'receive', '--from', p.json.handover.json, '--json'], { cwd: fx.repo, env });
@@ -245,7 +257,7 @@ describe('receive end to end', () => {
     commitFile(fx.repo, 'before.txt', 'x\n', 'before-prepare commit');
     git(['push', '-q', 'origin', 'main'], fx.repo); // prepare refuses unpushed work
     sleep(1100);
-    const p = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(cfg) });
+    const p = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(cfg) });
     assert.equal(p.status, 0, p.stdout);
     sleep(1100);
     commitFile(fx.repo, 'after.txt', 'y\n', 'after-prepare commit');
@@ -263,7 +275,7 @@ describe('receive end to end', () => {
   it('a claim and a proposal made after prepare are listed', () => {
     const fx = makeFleetRepo();
     const cfg = cfgRoot();
-    const p = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(cfg) });
+    const p = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(cfg) });
     assert.equal(p.status, 0, p.stdout);
     sleep(50);
     assert.equal(runFleet(['claim', '--id', 'claude/late', '--intent', 'late work', '--paths', 'x/**'], { cwd: fx.repo, env: envFor(cfg) }).status, 0);
@@ -277,7 +289,7 @@ describe('receive end to end', () => {
   it('--dry-run does not fetch: a commit pushed to origin meanwhile stays unseen and the text says as-of-last-fetch', () => {
     const fx = makeFleetRepo();
     const cfg = cfgRoot();
-    const p = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(cfg) });
+    const p = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(cfg) });
     sleep(1100);
     const other = path.join(fx.root, 'other');
     git(['clone', '-q', fx.origin, other], fx.root);
@@ -294,7 +306,7 @@ describe('receive end to end', () => {
     const A = cfgRoot(); const B = cfgRoot();
     fs.writeFileSync(path.join(A, '.claude.json'), JSON.stringify({ oauthAccount: { accountUuid: 'a', emailAddress: 'a@x.test', organizationUuid: 'o' } }));
     fs.writeFileSync(path.join(B, '.claude.json'), JSON.stringify({ oauthAccount: { accountUuid: 'b', emailAddress: 'b@x.test', organizationUuid: 'o' } }));
-    const p = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    const p = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(A) });
     const r = runFleet(['handover', 'receive', '--from', p.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(B) });
     const sw = r.json.handover.followUps.find((f) => f.kind === 'session-sweep');
     assert.ok(sw, r.stdout);

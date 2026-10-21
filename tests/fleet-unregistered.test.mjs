@@ -419,7 +419,7 @@ describe('unregistered work in a handover — real repos', () => {
   };
   const prepare = (fx) => {
     const A = tmpRoot('unreg-acct-');
-    const r = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    const r = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(A) });
     return { r, entry: JSON.parse(fs.readFileSync(r.json.handover.json, 'utf8')).scope.repos[0] };
   };
 
@@ -464,11 +464,11 @@ describe('unregistered work in a handover — real repos', () => {
     const A = tmpRoot('unreg-acct-reg-');
     const env = envFor(A);
     assert.equal(runFleet(['claim', '--id', 'live-one', '--intent', 'x', '--paths', 'a.txt'], { cwd: fx.repo, env }).status, 0);
-    const ok = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env });
+    const ok = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env });
     assert.equal(ok.status, 0, ok.stdout);
     const sessions = path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], fx.repo), 'fleet', 'sessions');
     fs.writeFileSync(path.join(sessions, 'corrupt.json'), '{ not json');
-    const r = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env });
+    const r = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env });
     assert.equal(r.status, 3, r.stdout);
     const entry = JSON.parse(fs.readFileSync(r.json.handover.json, 'utf8')).scope.repos[0];
     assert.deepEqual([entry.fleet, entry.error, entry.sessions.map((s) => s.id)], ['error', 'registry incomplete (unreadable session records)', ['live-one']]);

@@ -178,7 +178,7 @@ describe('the CLI: snapshot, receive re-hash, prompt and markdown', () => {
     const cfg = account(tmpRoot('ho-cli-'));
     const snap = path.join(tmpRoot('ho-snap-'), 'snap.json');
     fs.writeFileSync(snap, JSON.stringify([{ id: 'weekly-check', cronExpression: '0 9 * * 1', enabled: true }, { id: 'nightly-sync', fireAt: '2026-10-16T02:00:00Z', enabled: false }]));
-    const r = run(fx, cfg, ['handover', 'prepare', '--scheduler-checked', '--scheduler-snapshot', snap]);
+    const r = run(fx, cfg, ['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--scheduler-checked', '--scheduler-snapshot', snap]);
     assert.equal(r.status, 0, r.stdout);
     const md = fs.readFileSync(r.json.handover.md, 'utf8');
     assert.match(md, /schedule: cronExpression 0 9 \* \* 1, enabled true/);
@@ -192,7 +192,7 @@ describe('the CLI: snapshot, receive re-hash, prompt and markdown', () => {
     const cfg = account(tmpRoot('ho-cli-bad-'));
     const snap = path.join(tmpRoot('ho-snap-bad-'), 'snap.json');
     fs.writeFileSync(snap, JSON.stringify([{ id: 'ghost' }]));
-    const r = run(fx, cfg, ['handover', 'prepare', '--scheduler-checked', '--scheduler-snapshot', snap]);
+    const r = run(fx, cfg, ['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--scheduler-checked', '--scheduler-snapshot', snap]);
     assert.notEqual(r.status, 0);
     assert.match(r.stdout, /no SKILL\.md/);
     const dir = path.join(fx.repo, '.git', 'fleet', 'handover');
@@ -201,14 +201,14 @@ describe('the CLI: snapshot, receive re-hash, prompt and markdown', () => {
 
   it('without a snapshot: each task says why its schedule is unknown, and BEFORE YOU RELAUNCH asks for one', () => {
     const fx = makeFleetRepo();
-    const r = run(fx, account(tmpRoot('ho-cli-nosnap-')), ['handover', 'prepare']);
+    const r = run(fx, account(tmpRoot('ho-cli-nosnap-')), ['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write']);
     assert.match(r.json.text, /--scheduler-snapshot <file>/);
     assert.match(fs.readFileSync(r.json.handover.md, 'utf8'), /schedule: unknown \(no --scheduler-snapshot\)/);
   });
 
   it('the coordination prompt opens with the pickup order and names peers by title', () => {
     const fx = makeFleetRepo();
-    const r = run(fx, account(tmpRoot('ho-cli-prompt-')), ['handover', 'prepare', '--scheduler-checked']);
+    const r = run(fx, account(tmpRoot('ho-cli-prompt-')), ['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--scheduler-checked']);
     const prompt = fs.readFileSync(r.json.handover.md, 'utf8').split('## Coordination prompt for the new account')[1];
     const ci = prompt.indexOf('(i) the CI queue');
     const disc = prompt.indexOf('(iii) only then discovery');
@@ -221,7 +221,7 @@ describe('the CLI: snapshot, receive re-hash, prompt and markdown', () => {
   it('receive re-hashes the copies: a tampered copy is a named follow-up; the untouched control is not', () => {
     const fx = makeFleetRepo();
     const A = account(tmpRoot('ho-rcv-A-'));
-    const p = run(fx, A, ['handover', 'prepare', '--scheduler-checked']);
+    const p = run(fx, A, ['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--scheduler-checked']);
     assert.equal(p.status, 0, p.stdout);
     const B = account(tmpRoot('ho-rcv-B-'));
     const clean = run(fx, B, ['handover', 'receive', '--from', p.json.handover.json, '--dry-run']);
