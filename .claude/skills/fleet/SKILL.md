@@ -82,7 +82,7 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
    per task; `--paths` binds to the `--task` before it.
 2. **Go away** — each chip registers itself, works, marks `ready`.
 3. **Status** — show the user the table: intent, state, WAITING (human items
-   first), overlaps, duplicate patches, proposed landing order. How overlap is measured: `references/landing.md`. Untracked branches that are merged, landed or idle with
+   first), overlaps, duplicate patches, proposed landing order. Overlap is three-dot (`references/landing.md`). Untracked branches that are merged, landed or idle with
    no open PR and a clean or no worktree hide behind one `N hidden` line (`--all` shows them).
 4. **Land** — `land` builds an integration worktree off the base, applies every
    ready head, runs the configured test command once (rerun once if red) and
