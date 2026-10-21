@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './helpers/git.mjs';
-import { archiveReport, isIgnoredByConfig, measureSize, sizeBudget } from '../scripts/lib/fleet/lifecycle.mjs';
+import { archiveReport, isIgnoredByConfig, listIgnored, measureSize, sizeBudget } from '../scripts/lib/fleet/lifecycle.mjs';
 import { classifyEntries, parsePorcelainZ, probeWorktrees } from '../scripts/lib/fleet/worktree-status.mjs';
 import { decideClaim, isBlockingConflict } from '../scripts/lib/fleet/overlap.mjs';
 import { fetchBase } from '../scripts/lib/fleet/commands.mjs';
@@ -139,6 +139,19 @@ describe('fleet archive-check — fails closed', () => {
     assert.equal(isIgnoredByConfig('reports/', ['reports/_']), false, 'a pattern matching an imagined child does not cover the dir');
     assert.equal(isIgnoredByConfig('reports/', ['reports/*.tmp']), false);
     assert.equal(isIgnoredByConfig('a.log', ['*.log']), true);
+  });
+  it('listIgnored keeps a collapsed directory no pattern fully covers: it is never looked into, since a listing cannot prove itself complete', () => {
+    const calls = [];
+    const fake = (args) => { calls.push(args[0]); return { ok: true, stdout: '!! .claude/\0!! dist/\0!! .audit/\0' }; };
+    const r = listIgnored(fake, '/wt', ['.claude/settings.local.json', '.audit/**'], 1000);
+    assert.deepEqual(r.ignored, ['.claude/', 'dist/'], 'a pattern naming one file inside does not excuse the directory; one covering everything under it does');
+    assert.deepEqual(calls, ['status'], 'one status call, no look inside');
+  });
+  it('a collapsed directory BELOW a `<prefix>/**` pattern is covered; one ABOVE it is not (control)', () => {
+    assert.equal(isIgnoredByConfig('.claude/tmp/', ['.claude/**']), true);
+    assert.equal(isIgnoredByConfig('.claude/', ['.claude/**']), true);
+    assert.equal(isIgnoredByConfig('.claude/', ['.claude/tmp/**']), false, 'git collapsed it over files the pattern does not name');
+    assert.equal(isIgnoredByConfig('.claudex/tmp/', ['.claude/**']), false);
   });
   it('a DETACHED worktree with a commit no remote holds is AT RISK (C1-H5)', () => {
     const s = setup();

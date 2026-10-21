@@ -53,7 +53,10 @@ export class ConfigError extends Error {
 const timeout = () => z.number().int().positive().max(MAX_TIMER_MS, `must be at most ${MAX_TIMER_MS} ms (Node's timer limit)`);
 export const MAX_HOT_FILES = 200;
 /** `archive-check` ignores these gitignored trees by default: regenerable, never a deliverable. */
-export const DEFAULT_ARCHIVE_IGNORE = Object.freeze(['node_modules/**', 'scripts/.claude-skills/**']);
+// `.claude/settings.local.json`: the harness writes it into every worktree it creates, so without it every worktree would read as
+// holding work nobody can recreate. It is the ONE file named, not `.claude/**`: a repo's own scratch beside it (a journal in
+// `.claude/tmp/`) is not the harness's to declare regenerable, and a repo that wants it excused says so in its own config.
+export const DEFAULT_ARCHIVE_IGNORE = Object.freeze(['node_modules/**', 'scripts/.claude-skills/**', '.claude/settings.local.json']);
 /** `land --serial`: how long one PR may wait for its required checks. */
 export const DEFAULT_SERIAL_TIMEOUT_MS = 60 * 60 * 1000;
 const patternList = (what) => z.array(z.string(), { error: `must be an array of ${what}` }).max(MAX_HOT_FILES).optional();

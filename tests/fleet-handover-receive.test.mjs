@@ -294,6 +294,36 @@ describe('claims waiting on the switch (s)', () => {
   });
 });
 
+describe('receive asks the target repo\'s own flag table before printing --unwait (f17b)', () => {
+  /** A repo whose synced fleet carries `repeat` as touch's repeatable flags; one claim waits on the switch. */
+  function waitingRepo(repeat) {
+    const fx = makeFleetRepo();
+    const A = account(tmpRoot('rcv-u-'), { task: null });
+    const env = envFor(A);
+    const wt = path.join(tmpRoot('rcv-u-wt-'), 'w-old');
+    git(['worktree', 'add', '-q', '-b', 'w-old', wt, 'main'], fx.repo);
+    assert.equal(runFleet(['claim', '--intent', 'o', '--paths', 'a.txt', '--waiting-on', 'human:account-switch'], { cwd: wt, env }).status, 0);
+    // The synced tree is untracked in a consumer: excluded the way the managed gitignore block does.
+    fs.mkdirSync(path.join(fx.repo, '.git', 'info'), { recursive: true });
+    fs.appendFileSync(path.join(fx.repo, '.git', 'info', 'exclude'), 'scripts/.claude-skills/\n');
+    const dir = path.join(fx.repo, 'scripts', '.claude-skills', 'lib', 'fleet');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'argv.mjs'), `export const VERBS = { touch: { bool: ['--json'], value: ['--id'], repeat: ${JSON.stringify(repeat)}, positionals: [0, 0] } };\n`);
+    const p = prepare(fx, A, []);
+    return receive(fx, A, p.json.handover.json).json.handover.followUps.find((x) => x.kind === 'waiting-on-switch');
+  }
+  it('a fleet that lists --unwait gets the plain targeted command', () => {
+    const f = waitingRepo(['--waiting-on', '--unwait']);
+    assert.match(f.detail, /touch --id w-old --unwait human:account-switch/);
+    assert.doesNotMatch(f.detail, /predates|if it refuses|--clear-waiting/);
+  });
+  it('a fleet that predates --unwait is told to sync first, and is never handed --clear-waiting', () => {
+    const f = waitingRepo(['--waiting-on']);
+    assert.match(f.detail, /its fleet predates --unwait: sync this repo's fleet first \(from the source repo: npm run sync -- --target repo\), then run .*touch --id w-old --unwait human:account-switch/);
+    assert.doesNotMatch(f.detail, /--clear-waiting|--waiting-on/);
+  });
+});
+
 describe('the schedule-reconcile registry flow', () => {
   /** A config root with the registry flow installed: reconcile + a covered task + one the registry has never seen. */
   const withRegistry = (root, registry) => {

@@ -10,7 +10,8 @@
  * A failed probe or an unknown count is never read as "nothing here": it is `unverified` (row 1a).
  *
  * Callers pass the facts they already gathered, so evidence costs no extra git or gh call here. The probe is
- * the light `archiveReport` (no ignored scan, no size walk — the measured cost, plan M2), and the whole scan
+ * the light `archiveReport` (no ignored scan, no size walk — the measured cost, plan M2; the HANDOVER path alone adds
+ * one collapsed ignored-files call per otherwise-clean worktree, `ignoredProbe`, and a pushed-tag credit), and the whole scan
  * runs inside ONE absolute deadline: every subprocess is clipped to it, and what it never reached is
  * DISCLOSED (`partial`, `notProbed`), never silently dropped. There is no fairness guarantee across runs.
  *
@@ -24,7 +25,7 @@ import { atomicWriteFileSync } from '../file-io.mjs';
 import { samePath } from '../harness-paths.mjs';
 import { RECEIPT_PATH } from '../sync-receipt.mjs';
 import { cacheDirFor, listWorktrees, patchId as gitPatchId, runGit } from './git-facts.mjs';
-import { archiveReport } from './lifecycle.mjs';
+import { archiveReport, listIgnored } from './lifecycle.mjs';
 import { squashPatchIds } from './merged-facts.mjs';
 import { DEFAULT_STALE_WORKTREE_DAYS, isIdleTip, isTerminalState, landedReason, toMs } from './overlap.mjs';
 
@@ -37,6 +38,8 @@ export { DEFAULT_STALE_WORKTREE_DAYS };
 export const UNREGISTERED_BUDGET = Object.freeze({ statusMs: 60_000, handoverMs: 120_000, probeTimeoutMs: 30_000 });
 /** Captured tips per placement `rev-list` (200 × 41 chars ≈ 8 KB of argv, far under the Windows 32 KB limit). */
 export const PLACEMENT_CHUNK = 200;
+/** Ancestry checks spent naming the descendant tags that hold a credited commit (the credit itself is one count). */
+const TAG_EVIDENCE_PROBES = 25;
 /** The closed verdict set. */
 export const VERDICTS = Object.freeze(['unlanded', 'superseded', 'unverified', 'sync-owned']);
 
@@ -67,27 +70,32 @@ function defaultTmpDirs() {
 
 /**
  * The ordered verdict contract; the first matching row wins. Pure.
- * @param {{probed: boolean, local?: string[], syncOwned?: string[], committed: 'none'|'pushed'|'unpushed'|'unknown',
- *   evidence: 'landed'|'duplicate'|'none'|'incomplete', unverified?: string[], duplicateOf?: string|null}} f
+ * @param {{probed: boolean, local?: string[], ignored?: string[], syncOwned?: string[], committed: 'none'|'pushed'|'unpushed'|'unknown',
+ *   evidence: 'landed'|'duplicate'|'none'|'incomplete', unverified?: string[], duplicateOf?: string|null, heldBy?: 'tag'|null}} f
+ *   `ignored` = gitignored paths outside archiveIgnore, measured on the handover path only: like `local`, the only copy may be here.
+ *   `heldBy: 'tag'` = the commits are held by a pushed tag verified against the remote now (`committed` is then 'pushed').
  * @returns {null|{verdict: string, row: string, blocks: boolean, preserved: string, reason: string, via?: string, syncOwnedDirty?: true}}
  *   null = nothing local and nothing off base: not listed.
  */
-export function classifyUnregistered({ probed, local = [], syncOwned = [], committed, evidence, unverified = [], duplicateOf = null }) {
+export function classifyUnregistered({ probed, local = [], ignored = [], syncOwned = [], committed, evidence, unverified = [], duplicateOf = null, heldBy = null }) {
   const extra = syncOwned.length ? { syncOwnedDirty: true } : {};
   const commits = committed === 'pushed' || committed === 'unpushed';
+  const holder = heldBy === 'tag' ? 'a pushed tag (verified against the remote now)' : 'a remote-tracking ref (as of the last fetch)';
+  const unlandedWork = local.length > 0 || ignored.length > 0;
   // 1a: a failed probe proves nothing, so nothing is assumed safe.
   if (!probed) return { verdict: 'unverified', row: '1a', blocks: true, preserved: 'unknown', reason: `not measured: ${unverified[0] ?? 'probe failed'}`, ...extra };
   if (committed === 'unknown') return { verdict: 'unverified', row: '1a', blocks: true, preserved: 'unknown', reason: 'commits off base could not be counted', ...extra };
-  if (!local.length && evidence === 'incomplete' && committed === 'unpushed') {
+  if (!unlandedWork && evidence === 'incomplete' && committed === 'unpushed') {
     return { verdict: 'unverified', row: '1b', blocks: true, preserved: 'none', reason: 'commits no remote-tracking ref holds; whether they landed is unknown (merged evidence incomplete)', ...extra };
   }
-  if (!local.length && evidence === 'incomplete' && committed === 'pushed') {
-    return { verdict: 'unverified', row: '1c', blocks: false, preserved: 'remote', reason: 'a remote-tracking ref (as of the last fetch) holds the commits; whether they landed is unknown (merged evidence incomplete)', ...extra };
+  if (!unlandedWork && evidence === 'incomplete' && committed === 'pushed') {
+    return { verdict: 'unverified', row: '1c', blocks: false, preserved: 'remote', reason: `${holder} holds the commits; whether they landed is unknown (merged evidence incomplete)`, ...extra };
   }
-  if (local.length) {
+  if (unlandedWork) {
     const landedPart = !commits ? '' : evidence === 'landed' ? '; the committed part is already landed'
       : evidence === 'duplicate' ? `; the committed part is the same patch as ${duplicateOf ?? 'a live claim'}, not landed` : '';
-    return { verdict: 'unlanded', row: '2', blocks: true, preserved: 'none', reason: `${local.length} uncommitted file(s)${landedPart}`, ...extra };
+    const what = [local.length ? `${local.length} uncommitted file(s)` : null, ignored.length ? `${ignored.length} gitignored file(s) outside archiveIgnore — the only copy may be here` : null].filter(Boolean).join('; ');
+    return { verdict: 'unlanded', row: '2', blocks: true, preserved: 'none', reason: `${what}${landedPart}`, ...extra };
   }
   if (commits && evidence === 'landed') return { verdict: 'superseded', row: '3', blocks: false, via: 'landed', preserved: 'base', reason: 'its commits are on base', ...extra };
   if (commits && evidence === 'duplicate') {
@@ -95,7 +103,7 @@ export function classifyUnregistered({ probed, local = [], syncOwned = [], commi
   }
   if (commits) {
     return committed === 'pushed'
-      ? { verdict: 'unlanded', row: '4', blocks: false, preserved: 'remote', reason: 'commits a remote-tracking ref (as of the last fetch) holds, not on base', ...extra }
+      ? { verdict: 'unlanded', row: '4', blocks: false, preserved: 'remote', reason: `commits ${holder} holds, not on base`, ...extra }
       : { verdict: 'unlanded', row: '4', blocks: true, preserved: 'none', reason: 'commits no remote-tracking ref holds', ...extra };
   }
   if (syncOwned.length) return { verdict: 'sync-owned', row: '5', blocks: false, preserved: 'n/a', reason: `only the sync receipt is dirty (${syncOwned.join(', ')})` };
@@ -268,16 +276,101 @@ export function unregisteredWork(repo, ctx, { worktrees: claimedWorktrees = [], 
   // Oldest tip first: a heuristic that front-loads the likeliest abandoned work. Unknown tip times go first.
   candidates.sort((x, y) => (toMs(x.tipTime) ?? -Infinity) - (toMs(y.tipTime) ?? -Infinity));
 
-  const items = [];
+  // The scan is staged, and the ORDER is the contract (docs/plans/fleet-handover-winddown.md §2.4, H1):
+  //   1 light probes (a candidate = {base, facts}, not yet classified), 2 tag credit, 3 ignored probe, 4 classification.
+  // Credit comes before the ignored probe so a commit a verified tag holds cannot make an item look non-blocking
+  // after the one measurement that would have blocked it was skipped; no later stage clears an outstanding measurement.
+  const pending = [];
   let notProbed = 0;
   let localOnly; // undefined = not asked yet; null = the listing failed
   const nowMs = toMs(ctx.now) ?? clock();
   for (const c of candidates) {
     if (deadlineAt !== null && clock() >= deadlineAt) { notProbed += 1; continue; }
-    const item = c.kind === 'worktree' ? probeWorktree(c.w) : probeBranch(c.b);
-    if (item) items.push(item);
+    pending.push(c.kind === 'worktree' ? probeWorktree(c.w) : probeBranch(c.b));
   }
+  // Both stages are opt-in for the handover path: `fleet status` stays local and fast, with no network call.
+  if (deps.tagCredit) creditPushedTags(pending);
+  if (deps.ignoredProbe) probeIgnored(pending);
+  const items = pending.map((p) => finish(p.base, p.facts)).filter(Boolean);
   return { queried: true, items, tooling, candidates: candidates.length, partial: notProbed > 0 || Boolean(branchesUnknown), notProbed, staleDays, ...(branchesUnknown ? { branchesUnknown } : {}) };
+
+  /**
+   * Stage 2: a commit a PUSHED TAG holds is remote-held. ONE bounded `ls-remote --tags` for the whole scan, only when an
+   * item has commits no remote-tracking ref holds; the tag oids that exist locally are negated on stdin (`--not` does not
+   * carry over to stdin lines, so each carries its own `^`). A failed lookup changes no verdict, it adds a note.
+   */
+  function creditPushedTags(list) {
+    const targets = list.filter((p) => p.facts.probed && p.facts.committed === 'unpushed' && p.base.head);
+    if (!targets.length) return;
+    const note = (reason) => { for (const p of targets) p.base.unverified = [...(p.base.unverified ?? []), `tag credit not measured: ${reason}`]; };
+    const tags = lsRemoteTags(g, repo, 'refs/tags/*');
+    if (!tags.ok) return note(tags.reason);
+    const oids = [...new Set(tags.tags.values())];
+    if (!oids.length) return;
+    const have = g(['cat-file', '--batch-check'], repo, { input: `${oids.join('\n')}\n` });
+    if (!have.ok) return note(`cannot tell which tags exist here (${have.reason})`);
+    const local = new Set(String(have.stdout).split('\n').map((l) => l.trim().split(/\s+/)).filter((p) => p[1] === 'commit').map((p) => p[0]));
+    if (!local.size) return;
+    const stdin = `${[...local].map((o) => `^${o}`).join('\n')}\n`;
+    for (const p of targets) {
+      const n = countOf(g(['rev-list', '--count', '--stdin', p.base.head, '--not', '--remotes'], repo, { input: stdin }));
+      if (n !== 0) continue;
+      const names = tagsHolding(p.base.head, tags.tags, local);
+      Object.assign(p.facts, { committed: 'pushed', heldBy: 'tag' });
+      Object.assign(p.base, { committed: 'pushed', heldBy: 'tag', heldByTags: names });
+    }
+  }
+
+  /**
+   * The tags that hold `head`, for the evidence: those AT it first, then (if none is) tags on a descendant, found by
+   * ancestry among the tags that exist here, bounded. Credit and its evidence come from the same relationship.
+   */
+  function tagsHolding(head, tags, localOids) {
+    const at = [...tags].filter(([, oid]) => oid === head).map(([name]) => name);
+    if (at.length) return at.slice(0, 3);
+    const names = [];
+    let checked = 0;
+    for (const [name, oid] of tags) {
+      if (!localOids.has(oid)) continue;
+      if (checked++ >= TAG_EVIDENCE_PROBES) break;
+      if (g(['merge-base', '--is-ancestor', head, oid], repo).ok) names.push(name);
+      if (names.length === 3) break;
+    }
+    return names;
+  }
+
+  /**
+   * Stage 3 (handover path only): gitignored files outside `archiveIgnore` are work. One collapsed `git status --ignored`
+   * (no size walk) for every worktree that would otherwise read non-blocking or unlisted. The main checkout is not a
+   * candidate for removal and holds its own `.env` and caches, so it is skipped. A probe that did not run is
+   * UNVERIFIED, which blocks: a measurement the scan never made is not a clean one.
+   */
+  function probeIgnored(list) {
+    const first = wt.worktrees[0];
+    const mainPath = first && !first.bare ? first.path : null;
+    let patterns = [];
+    let patternNote = null;
+    try { patterns = ctx.config?.archiveIgnore ?? []; } catch (e) { patternNote = `archiveIgnore not read (${e.message}); every ignored file is listed`; }
+    for (const p of list) {
+      if (p.base.kind !== 'worktree' || (mainPath && samePath(p.base.worktree, mainPath))) continue;
+      const tentative = classifyUnregistered(p.facts);
+      if (tentative?.blocks) continue;
+      const r = listIgnored(g, p.base.worktree, patterns, cap);
+      if (!r.ok) {
+        const why = `ignored files not measured: ${r.reason}`;
+        p.facts.unverified = [...p.facts.unverified, why];
+        p.facts.probed = false;
+        p.base.unverified = [...(p.base.unverified ?? []), why];
+        continue;
+      }
+      p.facts.ignored = r.ignored;
+      p.base.risks = { ...p.base.risks, ignored: r.ignored.length };
+      if (r.ignored.length && patternNote) p.base.unverified = [...(p.base.unverified ?? []), patternNote];
+    }
+  }
+
+  /** A probed candidate, not yet classified: later stages may still change its facts. */
+  function pend(base_, facts_) { return { base: base_, facts: facts_ }; }
 
   function finish(base_, facts_) {
     const verdict = classifyUnregistered(facts_);
@@ -313,7 +406,7 @@ export function unregisteredWork(repo, ctx, { worktrees: claimedWorktrees = [], 
     }
     // The base's own unpushed commits are not a branch that could have landed: evidence 'none' (row 4).
     const ev = (committed === 'pushed' || committed === 'unpushed') && w.branch !== base ? evidenceFor(w.branch ?? null, w.head) : { evidence: 'none' };
-    return finish(
+    return pend(
       { kind: 'worktree', worktree: path.resolve(w.path), branch: w.branch ?? null, detached: Boolean(w.detached), locked: Boolean(w.locked), head: w.head ?? null,
         ahead: Number.isInteger(ahead) ? ahead : null, committed, evidence: ev.evidence, ...(ev.duplicateOf ? { duplicateOf: ev.duplicateOf } : {}),
         risks: Object.fromEntries(RISK_KINDS.map((k) => [k, (r.risks[k] ?? []).length])), ...(unverified.length ? { unverified } : {}),
@@ -351,7 +444,7 @@ export function unregisteredWork(repo, ctx, { worktrees: claimedWorktrees = [], 
       else { unpushed = n; committed = n > 0 ? 'unpushed' : 'pushed'; }
     }
     const ev = committed === 'unknown' ? { evidence: 'incomplete' } : evidenceFor(b.name, b.oid);
-    return finish(
+    return pend(
       { kind: 'branch', worktree: null, branch: b.name, detached: false, locked: false, head: b.oid, ahead: Number.isInteger(b.ahead) ? b.ahead : null,
         committed, evidence: ev.evidence, ...(ev.duplicateOf ? { duplicateOf: ev.duplicateOf } : {}),
         risks: { staged: 0, unstaged: 0, untracked: 0, unpushed }, ...(unverified.length ? { unverified } : {}), tipTime: b.tipTime ?? null, dirty: [] },
@@ -388,6 +481,27 @@ export const ARCHIVE_TAG_LIMIT = 50;
 const LS_REMOTE_TIMEOUT_MS = 15_000;
 
 /**
+ * The remote's tags matching `pattern` as name -> commit oid: ONE bounded `ls-remote`, which asks the REMOTE (a
+ * remote-tracking ref survives a remote deletion; this does not). Shared by the archive-tag scan and the tag credit of
+ * the unregistered-work scan, so the two cannot disagree about what the remote holds.
+ * @param {(args: string[], cwd: string, opts?: object) => {ok: boolean, stdout: string, reason?: string}} g a (clipped) git runner
+ * @returns {{ok: true, tags: Map<string, string>} | {ok: false, reason: string}}
+ */
+export function lsRemoteTags(g, repo, pattern) {
+  const ls = g(['ls-remote', '--tags', 'origin', pattern], repo, { timeoutMs: LS_REMOTE_TIMEOUT_MS });
+  if (!ls.ok) return { ok: false, reason: ls.reason ?? 'ls-remote failed' };
+  const tags = new Map();
+  for (const line of String(ls.stdout).split('\n')) {
+    const [oid, ref] = line.split('\t');
+    if (!ref || !oid) continue;
+    // A peeled `^{}` line names the commit an annotated tag points at: it is the oid that counts.
+    const name = ref.replace(/^refs\/tags\//, '').replace(/\^\{\}$/, '');
+    if (ref.endsWith('^{}') || !tags.has(name)) tags.set(name, oid.trim());
+  }
+  return { ok: true, tags };
+}
+
+/**
  * `archive/*` tags whose commits are not contained in base, each judged `superseded` (its whole diff against its
  * merge-base with base is empty, or its patch-id is in the squash window) or `unlanded`, and each with where it
  * is preserved — the strength of the evidence kept apart:
@@ -414,17 +528,8 @@ export function scanArchiveTags(repo, { baseRev, deadlineAt = null, clock = Date
   // One bounded network read for the whole set; its failure is `unknown`, never "local-only".
   let remoteTags = null;
   if (judged.length && !(deadlineAt !== null && clock() >= deadlineAt)) {
-    const ls = g(['ls-remote', '--tags', 'origin', 'refs/tags/archive/*'], repo, { timeoutMs: LS_REMOTE_TIMEOUT_MS });
-    if (ls.ok) {
-      remoteTags = new Map();
-      for (const line of String(ls.stdout).split('\n')) {
-        const [oid, ref] = line.split('\t');
-        if (!ref || !oid) continue;
-        // A peeled `^{}` line names the commit an annotated tag points at: it is the oid that counts.
-        const name = ref.replace(/^refs\/tags\//, '').replace(/\^\{\}$/, '');
-        if (ref.endsWith('^{}') || !remoteTags.has(name)) remoteTags.set(name, oid.trim());
-      }
-    }
+    const ls = lsRemoteTags(g, repo, 'refs/tags/archive/*');
+    if (ls.ok) remoteTags = ls.tags;
   }
   const tags = [];
   for (const t of judged) {

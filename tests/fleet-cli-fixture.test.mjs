@@ -73,7 +73,7 @@ describe('makeFleetRepo: template copies are isolated', () => {
     assert.equal(fs.existsSync(path.join(plain.repo, '.fleet.json')), false);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(cfg.repo, '.fleet.json'), 'utf8')), { mergeMethod: 'pr' });
     assert.equal(git(['ls-files'], custom.repo), 'only.txt');
-    assert.equal(git(['ls-files'], plain.repo), 'a.txt\nb.txt\nc.txt');
+    assert.equal(git(['ls-files'], plain.repo), '.claude/.gitkeep\na.txt\nb.txt\nc.txt', 'the default fixture tracks content under .claude/, as a real consumer does');
   });
 
   it('negative control: the same probes DO see a leak when two fixtures share an origin', () => {
