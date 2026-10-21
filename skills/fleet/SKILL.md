@@ -118,7 +118,9 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
   show the dry run and apply only on the user's go-ahead in chat. Before removing
   ANY worktree (`archive --apply`, or a command `prune` printed), check the
   desktop session list, pinned and dormant sessions included, for a session whose
-  cwd is that worktree; if one exists, do not remove it. Both verbs also refuse while a hooksPath points inside it (`references/ending-a-session.md`).
+  cwd is that worktree; if one exists, do not remove it. Both verbs also refuse
+  while another worktree's `core.hooksPath` points inside the one being removed
+  (git would then run no hooks there): run the printed re-point command first.
 - Each `FYI` line in `next` or the footer (prune counts, unregistered work, pending proposals, open upstream issues) is
   information, not a `DO`: relay it; never claim, archive or prune on it alone.
   The machine lease line (slot holder, windows, peak hours) is information too.
@@ -130,7 +132,9 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
 
 Never synced; read from the checkout you run in, so commit it. Every key is optional: base branch, merge method, test command and tiers, collision `checks`, `hotFiles`, `archiveIgnore`. Keys, defaults and a monorepo example: `references/config.md`.
 
-Every verb records one usage event (counts only, never paths or prose); `FLEET_TELEMETRY=off` disables it. Detail: `references/telemetry.md`.
+Every verb also records one usage event (counts and outcome classes only, never
+paths or prose) for the audit store; `FLEET_TELEMETRY=off` disables it. Performance and failures: `node scripts/cross-skill.mjs
+fleet-telemetry stats --format worksheet`; detail in `references/telemetry.md`.
 
 ---
 
