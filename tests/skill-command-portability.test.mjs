@@ -78,6 +78,10 @@ const SOURCE_REPO_ONLY = new Map([
   // Fleet coordination rule 8's rationale: the merge verdict for a repo that runs its full suite in CI. Only a repo whose
   // `.test-tiers.json` declares `ciVerdict` (this one) has anything to read; the text says so and sends a consumer to the push form.
   ['scripts/test-tier.mjs', 'source-repo-gated: this repo\'s own tier oracle and CI-verdict reader, not part of the consumer bundle'],
+  // references/handover-winddown.md names the sync that brings a consumer's bundle current, and says "both run in the source repo":
+  // the consumer is the thing being synced, so it has no bundle to sync FROM and nothing to run these against.
+  ['scripts/sync-to-repos.mjs', 'source-repo-only: it writes the bundle INTO consumers, so a consumer has nothing to run it against'],
+  ['scripts/sync-pr.mjs', 'source-repo-only: it opens the sync PR for each registered consumer, from the source repo'],
 ]);
 
 /**

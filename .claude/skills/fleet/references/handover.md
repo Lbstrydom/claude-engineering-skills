@@ -15,6 +15,11 @@ Session transcripts, cross-session messages and task chips cannot move at all.
 Put every coordinator session in the same permission mode before posting anything
 to it: a host holds a message between sessions whose modes differ.
 
+- **Old account, first:** `fleet handover winddown` (`references/handover-winddown.md`):
+  the standard directive per coordinator, measured readiness, the context file, the
+  safe-to-archive list. Prepare refuses (exit 3) until the context is complete and
+  every claim is parked; `--winddown-waived "<reason>"` overrides it, recorded in
+  the handover.
 - **Old account:** `fleet handover prepare` is read-only towards every repo, and
   runs from ANY repo with the bundle. It records:
   - a hash manifest of all memory;
@@ -71,7 +76,9 @@ to it: a host holds a message between sessions whose modes differ.
   window for anything running, and only then discovery. Session ids die with the
   account, so peers are named by title (`<REPO>: Coordinator`) and resolved with
   `list_sessions`.
-- **New account:** paste the coordination prompt into ONE session, in any repo.
+- **New account:** receive prints the departing coordinator's context FIRST; read it
+  before anything else and never re-ask what it lists as decided. Paste the
+  coordination prompt into ONE session, in any repo.
   It resumes that repo's sessions directly, and starts one coordinator chip per
   OTHER repo with work, inside that repo (spawn_task `cwd`). Each chip gets its
   own repo's section of the handover. Then run
@@ -134,10 +141,13 @@ to it: a host holds a message between sessions whose modes differ.
   unknown account only; the same account has no stale stint) tells the arriving
   account to call `list_sessions` and archive every session last active before the
   handover's `createdAt`, EXCEPT sessions whose worktree is bound to a live fleet
-  claim (named in the follow-up) or holds uncommitted work no claim covers (leave
-  open, list for the user). Never resume a pre-handover session. `archive_session`
-  removes the worktree by default, so **never archive sessions on the DEPARTING
-  account**. Two limits shape the instruction: `list_sessions` returns at most
+  claim (named in the follow-up) or holds work no claim covers (`fleet archive-check`
+  must say CLEAN: it counts gitignored files; leave open, list for the user). Never
+  resume a pre-handover session. `archive_session` removes the worktree by default.
+  **Archiving on the DEPARTING account IS allowed (D2), only for a worktree the winddown
+  safe list names, after the shared-worktree and cascade check and with a
+  `git worktree list` re-check after each archive**
+  (`references/handover-winddown.md`). Two limits shape the instruction: `list_sessions` returns at most
   100 per call and the tail spans many older stints, so the sweep is bounded below
   by the start of this account's previous stint (the second-newest older manifest
   beside this one; none found means page through all, and ask the user before archiving past 300),

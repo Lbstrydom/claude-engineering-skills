@@ -42,7 +42,8 @@ Usage:
   /fleet archive-check [<id|branch|path>]        # what removing a worktree would lose
   /fleet prune [--apply [--remote] [--include-fresh]]  # branches/worktrees removable with nothing lost; --apply runs exactly that list
   /fleet archive <worktree|branch|id> [--apply] [--discard-ignored] [--include-fresh]  # snapshot to a local archive/* tag, then remove
-  /fleet handover prepare [--repo <path>]... [--scheduler-checked]  # moving to another Claude Code account on this machine
+  /fleet handover winddown [--repo <path>]... [--scheduler-snapshot <file>]  # BEFORE prepare
+  /fleet handover prepare [--repo <path>]... [--scheduler-checked] [--winddown-waived "<why>"]  # moving to another Claude Code account
   /fleet handover receive --from <json> [--dry-run] [--allow-older]  # in the NEW account: verify/copy memory, list follow-ups
   /fleet directive --to <id|all> --kind <k> --reason <r> [--ref] [--note] | --list | --ack <id> --outcome done|declined
   /fleet propose --what "..." --where "..." --why "..." [--evidence "..."] [--theme <slug>] [--blocked-by <#PR|branch>]  # record a finding durably; it outlives the worktree
@@ -81,13 +82,8 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
    per task; `--paths` binds to the `--task` before it.
 2. **Go away** — each chip registers itself, works, marks `ready`.
 3. **Status** — show the user the table: intent, state, WAITING (human items
-   first), overlaps, duplicate patches, proposed landing order. File overlap is
-   **three-dot** (`base...branch`) from the FRESHER of the local base and its
-   upstream (`--fetch` refreshes it); uncommitted edits in live sessions' worktrees
-   count as advisory evidence. Untracked branches that are merged,
-   landed or idle (`hideIdleAfterDays`, default 14), with no open PR and a clean or
-   no worktree, hide behind one `N hidden` line (`--all` shows them); anything not
-   proven stale stays visible.
+   first), overlaps, duplicate patches, proposed landing order. Overlap is three-dot (`references/landing.md`). Untracked branches that are merged, landed or idle with
+   no open PR and a clean or no worktree hide behind one `N hidden` line (`--all` shows them).
 4. **Land** — `land` builds an integration worktree off the base, applies every
    ready head, runs the configured test command once (rerun once if red) and
    prints the result plus the exact approve command. It never touches the base.
@@ -154,6 +150,7 @@ situations — read them only when the trigger applies.
 | `references/coordination.md` | Coordinating without host messages — next, directives, unregistered work, and the numbered coordinator rules. | You coordinate several sessions, post or read a directive, or dispatch chips as a coordinator. |
 | `references/coordination-rationale.md` | Why each coordinator rule exists, with the measurements, incidents and command detail the terse rules omit. | A coordinator rule needs its why, a measurement, or exact detail (lease file, test-tier merge, proposals, model switch). |
 | `references/ending-a-session.md` | Ending a session — release, archive-check, prune, archive, and stopping branch and worktree clutter. | You retire a session, or archive-check, archive or prune a worktree or branch. |
+| `references/handover-winddown.md` | Wind-down before handover prepare — the directive, measured readiness, context file and safe-to-archive list. | You wind down before an account switch, or archive on the departing account. |
 | `references/handover.md` | Moving to another Claude Code account — handover prepare and receive, the scheduler step, exit codes, follow-ups. | You move to another Claude Code account on this machine (`fleet handover`). |
 | `references/config.md` | The optional .fleet.json - base branch, merge method, test tiers, collision checks, hotFiles, archiveIgnore. | You read or write `.fleet.json`, or configure test tiers, collision checks or `hotFiles`. |
 | `references/landing.md` | Landing beyond one combined run — required checks that ran, serial landing, restack, append-only files. | You approve a pr-mode train, land PRs one at a time, restack after a squash merge, or configure append-only files. |

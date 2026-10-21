@@ -135,7 +135,7 @@ describe('fleet handover — end to end through the CLI', () => {
     const envFor = (cfg) => scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: cfg, CLAUDE_AUDIT_LOOP_DIR: '' });
     const f = (args, cfg) => runFleet([...args, '--json'], { cwd: fx.repo, env: envFor(cfg) });
     // The fixture lists a scheduled task, so the pre-switch gate applies: these cases are not about it.
-    const prep = f(['handover', 'prepare', '--scheduler-checked'], A);
+    const prep = f(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--scheduler-checked'], A);
     assert.equal(prep.status, 0, prep.stderr);
     return { fx, A, f, json: prep.json.handover.json, prep };
   };
@@ -265,7 +265,7 @@ describe('fleet handover — end to end through the CLI', () => {
     const A = seedConfig(tmpRoot('handover-acct-i-'));
     const env = scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: A, CLAUDE_AUDIT_LOOP_DIR: '' });
     assert.equal(runFleet(['claim', '--id', 'live-one', '--intent', 'live work', '--paths', 'src/**'], { cwd: fx.repo, env }).status, 0);
-    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env });
     assert.equal(prep.json.handover.sessions, 1, 'the claim is in the manifest');
     const sessions = path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], fx.repo), 'fleet', 'sessions');
     fs.writeFileSync(path.join(sessions, 'corrupt.json'), '{ not json');
@@ -297,7 +297,7 @@ describe('fleet handover — end to end through the CLI', () => {
     const other = tmpRoot('handover-nofleet-');
     git(['init', '-q', other]);
     const A = seedConfig(tmpRoot('handover-acct-h-'), { task: null });
-    const r = runFleet(['handover', 'prepare', '--repo', other, '--json'], { cwd: fx.repo, env: scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: A, CLAUDE_AUDIT_LOOP_DIR: '' }) });
+    const r = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--repo', other, '--json'], { cwd: fx.repo, env: scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: A, CLAUDE_AUDIT_LOOP_DIR: '' }) });
     assert.equal(r.status, 0, r.stderr);
     const manifest = JSON.parse(fs.readFileSync(r.json.handover.json, 'utf8'));
     const entry = manifest.scope.repos.find((x) => path.resolve(x.path) === path.resolve(other));
@@ -321,7 +321,7 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
     const dirty = addWorktree(fx, 'coordinator-wip');
     fs.writeFileSync(path.join(dirty, 'notes.md'), 'in flight\n');
     addWorktree(fx, 'clean-side');
-    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(A) });
     assert.equal(prep.status, 3, prep.stdout);
     assert.equal(prep.json.handover.unregistered, 1);
     const [entry] = manifestOf(prep).scope.repos;
@@ -339,7 +339,7 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
     fs.writeFileSync(path.join(wt, 'x.txt'), 'x\n');
     git(['add', 'x.txt'], wt);
     git(['commit', '-q', '-m', 'local only'], wt);
-    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(A) });
     assert.equal(prep.status, 3, prep.stdout);
     assert.equal(manifestOf(prep).scope.repos[0].unregistered[0].risks.unpushed, 1);
   });
@@ -350,7 +350,7 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
     const wt = addWorktree(fx, 'claimed-wip');
     fs.writeFileSync(path.join(wt, 'notes.md'), 'in flight\n');
     assert.equal(runFleet(['claim', '--id', 'claimed-wip', '--intent', 'wip', '--paths', 'notes.md'], { cwd: wt, env: envFor(A) }).status, 0);
-    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(A) });
     assert.equal(prep.status, 0, prep.stdout);
     assert.deepEqual(manifestOf(prep).scope.repos[0].unregistered, []);
   });
@@ -363,7 +363,7 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
     git(['add', 'y.txt'], wt);
     git(['commit', '-q', '-m', 'adopted work'], wt);
     assert.equal(runFleet(['add', 'adopted'], { cwd: fx.repo, env: envFor(A) }).status, 0);
-    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(A) });
     assert.equal(prep.status, 0, prep.stdout);
     const [entry] = manifestOf(prep).scope.repos;
     assert.deepEqual(entry.unregistered, []);
@@ -375,7 +375,7 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
     const A = seedConfig(tmpRoot('handover-acct-u5-'), { task: null });
     const wt = addWorktree(fx, 'late-claim');
     fs.writeFileSync(path.join(wt, 'notes.md'), 'in flight\n');
-    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(A) });
     assert.equal(prep.status, 3);
     const recv = () => runFleet(['handover', 'receive', '--from', prep.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(A) });
     const r1 = recv();
@@ -390,7 +390,7 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
   it('receive measures NOW: work that appeared after a clean prepare blocks (M1/H3)', () => {
     const fx = makeFleetRepo();
     const A = seedConfig(tmpRoot('handover-acct-u7-'), { task: null });
-    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(A) });
     assert.equal(prep.status, 0, prep.stdout);
     const wt = addWorktree(fx, 'after-prepare');
     fs.writeFileSync(path.join(wt, 'late.md'), 'new\n');
@@ -402,7 +402,7 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
   it('a claim made after a clean prepare is a live session at receive, not invisible (R3-H1)', () => {
     const fx = makeFleetRepo();
     const A = seedConfig(tmpRoot('handover-acct-u9-'), { task: null });
-    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(A) });
     assert.equal(prep.status, 0, prep.stdout);
     const wt = addWorktree(fx, 'claimed-later');
     fs.writeFileSync(path.join(wt, 'n.md'), 'n\n');
@@ -417,7 +417,7 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
     const fx = makeFleetRepo();
     const A = seedConfig(tmpRoot('handover-acct-u8-'), { task: null });
     const notRepo = tmpRoot('handover-notrepo-');
-    const prep = runFleet(['handover', 'prepare', '--repo', notRepo, '--json'], { cwd: fx.repo, env: envFor(A) });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--repo', notRepo, '--json'], { cwd: fx.repo, env: envFor(A) });
     assert.equal(prep.status, 3, prep.stdout);
     assert.match(prep.json.text, /NOT MEASURED in/);
     const md = fs.readFileSync(prep.json.handover.md, 'utf8');
@@ -430,7 +430,7 @@ describe('unregistered work — worktrees holding work no claim covers', () => {
     const A = seedConfig(tmpRoot('handover-acct-u6-'), { task: null });
     assert.equal(runFleet(['claim', '--id', 'home-work', '--intent', 'here', '--paths', 'a.txt'], { cwd: fx.repo, env: envFor(A) }).status, 0);
     assert.equal(runFleet(['claim', '--id', 'other-work', '--intent', 'there', '--paths', 'b.txt'], { cwd: other.repo, env: envFor(A) }).status, 0);
-    const prep = runFleet(['handover', 'prepare', '--repo', other.repo, '--json'], { cwd: fx.repo, env: envFor(A) });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--repo', other.repo, '--json'], { cwd: fx.repo, env: envFor(A) });
     assert.equal(prep.status, 0, prep.stdout);
     const md = fs.readFileSync(prep.json.handover.md, 'utf8');
     const prompt = md.slice(md.indexOf('## Coordination prompt'));
@@ -460,7 +460,7 @@ describe('defect h — a claim whose work landed is not a live session in a hand
     // control: the status view already derives it done — the handover must agree with it
     const st = runFleet(['status', '--json'], { cwd: fx.repo, env }).json.status.items.find((i) => i.id === 'landed');
     assert.equal(st.state, 'done');
-    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env });
     assert.equal(prep.status, 0, prep.stdout);
     const [entry] = JSON.parse(fs.readFileSync(prep.json.handover.json, 'utf8')).scope.repos;
     assert.deepEqual(entry.sessions.map((s) => s.id), [], 'a landed claim is never a session to resume');
@@ -481,7 +481,7 @@ describe('defect h — a claim whose work landed is not a live session in a hand
     const dirty = landedClaim(fx, env, 'merged-dirty');
     git(['merge', '--squash', 'merged-dirty'], fx.repo); git(['commit', '-q', '-m', 'merged-dirty (#6)'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
     fs.writeFileSync(path.join(dirty, 'scratch.md'), 'not committed\n');
-    const prep = runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env });
+    const prep = runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env });
     const [entry] = JSON.parse(fs.readFileSync(prep.json.handover.json, 'utf8')).scope.repos;
     assert.deepEqual(entry.sessions.map((s) => s.id).sort(), ['merged-dirty', 'unmerged']);
     assert.deepEqual(entry.mergedUnreleased, []);
@@ -492,7 +492,7 @@ describe('defect h — a claim whose work landed is not a live session in a hand
 
 describe('handover hardening (cluster C: e, l)', () => {
   const envFor = (cfg) => scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: cfg, CLAUDE_AUDIT_LOOP_DIR: '' });
-  const prepareIn = (fx, A) => runFleet(['handover', 'prepare', '--json'], { cwd: fx.repo, env: envFor(A) });
+  const prepareIn = (fx, A) => runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--json'], { cwd: fx.repo, env: envFor(A) });
 
   it('a NEWER manifest beside the given one refuses (exit 3); --allow-older receives it deliberately (control)', () => {
     const fx = makeFleetRepo();
@@ -508,7 +508,7 @@ describe('handover hardening (cluster C: e, l)', () => {
     assert.equal(deliberate.status, 0, deliberate.stdout);
     const newest = runFleet(['handover', 'receive', '--from', second.json.handover.json, '--json'], { cwd: fx.repo, env: envFor(A) });
     assert.equal(newest.status, 0, 'the newest receives without the flag');
-    assert.equal(runFleet(['handover', 'prepare', '--allow-older'], { cwd: fx.repo, env: envFor(A) }).status, 2, '--allow-older is receive-only');
+    assert.equal(runFleet(['handover', 'prepare', '--winddown-waived', 'fixture: no coordinator context to write', '--allow-older'], { cwd: fx.repo, env: envFor(A) }).status, 2, '--allow-older is receive-only');
   });
 
   it('a repo whose PR state cannot be read says so and names the account needed; a manifest without the field still receives', () => {

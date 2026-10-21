@@ -17,7 +17,8 @@
  *   archive-check [<id|branch|path>] what removing a worktree would lose (read-only)
  *   prune [--apply [--remote] [--include-fresh]]  branches/worktrees removable with nothing lost: the commands (read-only), or run them
  *   archive <worktree|branch|id> [--apply] [--discard-ignored] [--include-fresh]  snapshot to a local archive/* tag, verify, remove
- *   handover prepare [--repo …] [--scheduler-checked]   record account-bound + live state before an account switch
+ *   handover winddown [--repo …] [--scheduler-snapshot <file>]  the stage BEFORE prepare: the directive, measured readiness, the safe-to-archive list
+ *   handover prepare [--repo …] [--scheduler-checked] [--winddown-waived "<reason>"]  record account-bound + live state before an account switch
  *   handover receive --from <json> [--dry-run] [--allow-older]  verify/copy it in the new account (exit 0 + followUps = done)
  *   next [--id]                     what this session should do now (read-only)
  *   propose --what --where --why [--evidence --theme --blocked-by <#PR|branch>]  record a finding durably (outlives the worktree)

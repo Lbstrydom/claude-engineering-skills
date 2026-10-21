@@ -85,3 +85,5 @@ user's decision; the coordinator rules that govern when to bring it to them are 
   General, "Automatically delete head branches" (remote branches go on merge), and
   `git config fetch.prune true` (each fetch drops the stale `origin/*` refs). Then
   `fleet prune --apply` clears the LOCAL branches and worktrees those two do not.
+
+- **hooksPath guard.** `archive --apply` and `prune` also refuse while another worktree's `core.hooksPath` points inside the one being removed (git would then run no hooks there): run the printed re-point command first.

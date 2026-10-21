@@ -37,6 +37,8 @@ import { blocksHandover, ghUnknownLine, receiveCommand, renderBeforeRelaunch, re
 import { fleetSupports } from './fleet-capability.mjs';
 import { deltaFollowUp, measureRepoDelta, previousStintStart, unmeasuredDelta } from './handover-delta.mjs';
 import { renderCommand } from './shell-quote.mjs';
+import { ContextEntrySchema, contextHandedOver, handoverDirsOf, readContext, writeReceivedMarker } from './handover-context.mjs';
+import { WinddownSchema, toManifestWinddown, winddownReadiness, winddownRefusal } from './handover-winddown.mjs';
 import { RECONCILE_ID, joinTaskRecords, parseSchedulerSnapshot, readScheduleReconcile, stageTaskExports, verifyTaskExports } from './handover-tasks.mjs';
 import { defaultProbe, machineDir, readLease, summarise } from './lease.mjs';
 
@@ -57,14 +59,16 @@ export function handoverId(now = new Date(), rand = crypto.randomBytes(3).toStri
 
 const FLAG_CONTRACT = {
   prepare: { required: [], forbidden: ['--from', '--dry-run', '--allow-older'] },
-  receive: { required: ['--from'], forbidden: ['--repo', '--scheduler-checked', '--scheduler-snapshot'] },
+  receive: { required: ['--from'], forbidden: ['--repo', '--scheduler-checked', '--scheduler-snapshot', '--winddown-waived'] },
+  winddown: { required: [], forbidden: ['--from', '--dry-run', '--allow-older', '--scheduler-checked', '--winddown-waived'] },
 };
 
 /** Validated before ANY discovery or I/O (R1-M3); a violation is an argv error (exit 2). */
 export function checkHandoverFlags(sub, flags) {
-  if (!Object.hasOwn(FLAG_CONTRACT, sub)) throw new ArgvError(`fleet handover: unknown subcommand ${JSON.stringify(sub)} (expected prepare or receive)`);
+  if (!Object.hasOwn(FLAG_CONTRACT, sub)) throw new ArgvError(`fleet handover: unknown subcommand ${JSON.stringify(sub)} (expected winddown, prepare or receive)`);
   const c = FLAG_CONTRACT[sub];
   for (const f of c.forbidden) if (flags[f] !== undefined) throw new ArgvError(`fleet handover ${sub}: ${f} is not valid here`);
+  if (flags['--winddown-waived'] !== undefined && !String(flags['--winddown-waived']).trim()) throw new ArgvError('fleet handover prepare: --winddown-waived needs the reason it is waived');
   for (const f of c.required) if (flags[f] === undefined) throw new ArgvError(`fleet handover ${sub}: ${f} is required`);
 }
 
@@ -252,6 +256,8 @@ export function compareIdentity(src, mine) {
 /** The documented wait token for "blocked on the account switch itself" (plan s): case, spaces, `_` and `-` folded. */
 export const SWITCH_TOKEN = 'account-switch';
 export const normaliseWaitRef = (ref) => String(ref ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '-');
+/** A human wait on the switch itself, in any spelling. */
+export const isSwitchWait = (w) => w?.kind === 'human' && normaliseWaitRef(w.ref) === SWITCH_TOKEN;
 
 /**
  * A repo's identity is its MAIN checkout (the parent of the git common dir), whichever worktree runs
@@ -265,22 +271,23 @@ export function mainCheckout(cwd) {
 }
 
 /** The repos whose fleet state is in scope: invoking repo + registered consumers (when the source resolves) + --repo. */
-async function resolveRepoScope(cwd, extra = []) {
+export async function resolveRepoScope(cwd, extra = []) {
   const invoking = mainCheckout(cwd);
   const src = resolveSourceRepo({ cwd: invoking });
   const sourceRepo = src.type === 'resolved' ? { type: 'resolved', path: src.path } : { type: src.type, reason: src.reason ?? src.value ?? src.type };
   const paths = [invoking];
+  const consumers = []; // registered consumers: the wind-down asks the sync about each (docs/plans/fleet-handover-winddown.md §2.8)
   if (src.type === 'resolved') {
     paths.push(src.path);
     try {
       const mod = await import(pathToFileURL(path.join(src.path, 'scripts', 'lib', 'consumer-repos.mjs')).href);
-      for (const r of mod.CONSUMER_REPOS ?? []) if (r.path) paths.push(path.resolve(src.path, r.path));
+      for (const r of mod.CONSUMER_REPOS ?? []) if (r.path) { paths.push(path.resolve(src.path, r.path)); consumers.push({ name: r.name ?? r.alias, path: path.resolve(src.path, r.path) }); }
     } catch (e) { sourceRepo.registryError = e.message; }
   }
   for (const r of extra) paths.push(path.resolve(r));
   const seen = []; const repos = [];
   for (const p of paths) if (!seen.some((s) => samePath(s, p))) { seen.push(p); repos.push(p); }
-  return { sourceRepo, repos };
+  return { sourceRepo, repos, consumers };
 }
 
 /** The fleet CLI as THAT repo invokes it: the source repo runs it in place, a consumer from its synced tree. */
@@ -354,7 +361,7 @@ export function ghReachability(repo, facts, { git = runGit } = {}) {
 }
 
 /** Live coordination state for one repo; a repo without fleet state is reported, never an error. */
-function repoState(repo, { env, now, deadlineAt }) {
+export function repoState(repo, { env, now, deadlineAt }, keep = null) {
   const fleetCli = fleetCliFor(repo);
   let dir;
   try { dir = fleetDir(repo); } catch (e) { return { path: repo, fleetCli, fleet: 'error', error: e.message, sessions: [], unregistered: [], unregisteredUnknown: `not a git repo: ${e.message}` }; }
@@ -391,11 +398,13 @@ function repoState(repo, { env, now, deadlineAt }) {
   // A registry that could not be read completely is NOT MEASURED here exactly as it is at receive: the sessions
   // that were readable are kept, and the repo is marked so prepare refuses rather than reading "these are all".
   const incomplete = facts.registry?.complete === false ? { fleet: 'error', error: 'registry incomplete (unreadable session records)' } : { fleet: 'present' };
+  // A merged-unreleased record is still non-terminal, so it still covers its worktree until it is released.
+  const claimed = coveredBy([...live, ...mergedUnreleased]);
+  keep?.set(repo, { worktrees: wtList.worktrees ?? [], claimedWorktrees: claimed.worktrees }); // for the wind-down's safe list; never in the manifest
   return {
     path: repo, fleetCli, ...incomplete, sessions, mergedUnreleased: mergedUnreleased.map((i) => mergedUnreleasedEntry(i, fleetCli)), ...gh,
     directives: directives.active.length, trains: trains.trains.filter((t) => !['landed', 'abandoned'].includes(t.phase)).length,
-    // A merged-unreleased record is still non-terminal, so it still covers its worktree until it is released.
-    ...unregisteredFor(coveredBy([...live, ...mergedUnreleased])),
+    ...unregisteredFor(claimed),
   };
 }
 
@@ -442,6 +451,8 @@ export const HandoverManifestSchema = z.object({
       unregistered: z.array(UnregisteredEntry).optional(), unregisteredUnknown: z.string().optional(),
       // optional: a manifest written before defect h's fix lists merged-unreleased claims as sessions instead
       mergedUnreleased: z.array(MergedUnreleasedEntry).optional(),
+      // optional: the coordinator context the departing coordinator wrote (docs/plans/fleet-handover-winddown.md §2.3)
+      context: ContextEntrySchema.optional(),
     }).strict()),
   }).strict(),
   memory: z.array(MemoryEntry),
@@ -475,6 +486,7 @@ export const HandoverManifestSchema = z.object({
     mcp: z.object({ global: z.array(z.string()), projects: z.array(z.object({ path: z.string(), names: z.array(z.string()) }).strict()) }).strict().nullable(),
   }).strict().optional(),
   schedulerChecked: z.boolean().optional(),
+  winddown: WinddownSchema.optional(), // the wind-down verdict at prepare, and the recorded waiver when it was overridden
 }).strict();
 
 /** Reserve `<dir>/handover-<id>.<ext>` exclusively; retry with a fresh suffix on EEXIST (R1-H3). */
@@ -529,6 +541,11 @@ export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir(),
   const scope = await resolveRepoScope(ctx.cwd, flags['--repo'] ?? []);
   const deadlineAt = Date.now() + UNREGISTERED_BUDGET.handoverMs;
   const repos = scope.repos.map((r) => repoState(r, { env: ctx.env, now: ctx.now, deadlineAt }));
+  // The coordinator context travels in the manifest, and the wind-down verdict is computed from the SAME repo states (never a second derivation).
+  const contexts = new Map(repos.map((r) => [r.path, readContext(r.path)]));
+  for (const r of repos) r.context = contexts.get(r.path);
+  const dirs = handoverDirsOf(repos.map((r) => r.path));
+  const readiness = winddownReadiness(repos, { contexts, isSwitchWait, handedOver: (repo, sha) => contextHandedOver(repo, sha, dirs) });
   const handoverDir = path.join(ctx.dir, 'handover');
   const art = reserveArtifacts(handoverDir, ctx.now instanceof Date ? ctx.now : new Date());
   const tasksDir = path.join(handoverDir, `handover-${art.id}-tasks`);
@@ -555,6 +572,7 @@ export async function prepareHandover(ctx, flags = {}, { homedir = os.homedir(),
     ...(ctx.env.FLEET_MEMORY_BACKUP_CMD?.trim() ? { memoryBackupCmd: ctx.env.FLEET_MEMORY_BACKUP_CMD.trim() } : {}),
     identity: accountIdentity(claudeJsonPath(configDir, ctx.env, homedir)),
     schedulerChecked: Boolean(flags['--scheduler-checked']),
+    winddown: toManifestWinddown(readiness, String(flags['--winddown-waived'] ?? '').trim() || null),
   };
   try {
     beforeManifest?.();
@@ -887,8 +905,11 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
   const bound = previousStintStart(path.dirname(fromFile), m.id, { readdir });
   const staleSweep = { createdAt: m.createdAt, lowerBound: bound.ok ? bound.at : null, boundReason: bound.ok ? null : bound.reason, claimed: claimBound, claimsUnknown: [...new Set([...liveUnknown.map((u) => u.repo), ...missingRepos])], scopeRepos: m.scope.repos.map((r) => r.path) };
   const followUps = receiveFollowUps({ tasks, settingsReview, identity, ghUnknown, waits, reconcile, delta, sweep: staleSweep });
+  // The departing coordinator's context, as RECORDED at prepare (the invoking repo first); printed before everything else.
+  const contexts = m.scope.repos.filter((r) => r.context).map((r) => ({ repo: r.path, ...r.context })).sort((a, b) => Number(samePath(b.repo, m.invokingRepo)) - Number(samePath(a.repo, m.invokingRepo)));
+  if (!dryRun) { const err = writeReceivedMarker(path.dirname(fromFile), m.id, { destConfigDir }); if (err) process.stderr.write(`warning: could not record that this handover was received (${err}); the next switch cannot tell its coordinator context was already handed over\n`); }
   const handover = {
-    id: m.id, mode: sameRoot ? 'same-config-root' : 'copy', dryRun, destConfigDir, sourceConfigDir: m.sourceConfigDir, createdAt: m.createdAt,
+    id: m.id, contexts, mode: sameRoot ? 'same-config-root' : 'copy', dryRun, destConfigDir, sourceConfigDir: m.sourceConfigDir, createdAt: m.createdAt,
     files, sweep, lockContention, tasks, reconcile, settings, identity, memoryDest, liveSessions, waits, mergedUnreleased, ghUnknown, liveUnknown, unregistered, delta,
     anomalies: m.anomalies, memoryErrors: m.memoryErrors, followUps,
     summary: {
@@ -938,6 +959,7 @@ export async function cmdHandover(ctx, flags, positionals) {
       manifest.memoryErrors.length ? 'memory dir(s) could not be read at prepare' : null,
       unreg ? 'worktrees hold unregistered work' : unregUnknown.length ? 'repo state could not be measured' : null,
       schedulerUnconfirmed ? 'not ready: scheduler step unconfirmed' : null,
+      winddownRefusal(manifest.winddown),
     ].filter(Boolean);
     const relaunch = renderBeforeRelaunch(manifest);
     const head = relaunch.length ? `${relaunch.join('\n')}\n` : '';
@@ -947,5 +969,6 @@ export async function cmdHandover(ctx, flags, positionals) {
     };
     return reasons.length ? refused(reasons.join('; '), payload) : ok(payload);
   }
+  if (sub === 'winddown') return (await import('./handover-winddown-cmd.mjs')).cmdWinddown(ctx, flags);
   return receiveHandover(ctx, flags);
 }
