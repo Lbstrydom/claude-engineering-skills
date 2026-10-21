@@ -94,6 +94,9 @@ const FleetFileSchema = z.strictObject({
   appendOnlyGlobs: patternList('path patterns'),
   restackIgnore: patternList('path patterns'),
   archiveIgnore: patternList('path patterns'),
+  // A gh LOGIN NAME (never a token): the signed-in account whose credential the handover's PR probe uses for this repo.
+  ghAccount: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/, 'must be a gh login name (letters, digits, - and _)')
+    .refine((v) => !/^(gh[pousr]_|github_pat_)/i.test(v), 'looks like a token: ghAccount is a login NAME, never a credential').optional(),
   serialTimeoutMs: timeout().optional(),
 });
 
@@ -190,6 +193,7 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
       ...(cfg.requiredChecks ? { requiredChecks: cfg.requiredChecks } : {}),
       appendOnlyGlobs: cfg.appendOnlyGlobs ?? [], restackIgnore: cfg.restackIgnore ?? [],
       archiveIgnore: cfg.archiveIgnore ?? [...DEFAULT_ARCHIVE_IGNORE], serialTimeoutMs: cfg.serialTimeoutMs ?? DEFAULT_SERIAL_TIMEOUT_MS,
+      ghAccount: cfg.ghAccount ?? null,
     },
   };
 }
@@ -281,7 +285,7 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
     baseBranch: base.baseBranch, testCommand: v.testCommand, mergeMethod: v.mergeMethod, checks: v.checks, worktreeRoot,
     hotFiles: v.hotFiles, hideIdleAfterDays: v.hideIdleAfterDays, staleWorktreeDays: v.staleWorktreeDays,
     ...(v.requiredChecks ? { requiredChecks: v.requiredChecks } : {}),
-    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs,
+    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs, ghAccount: v.ghAccount,
     sources: {
       baseBranch: base.source, testCommand: v.testCommandSource, mergeMethod: v.mergeMethodSource,
       checks: file.value?.checks ? 'config' : 'default', worktreeRoot: fromEnv ? 'env' : 'default',

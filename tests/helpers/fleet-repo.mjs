@@ -200,6 +200,16 @@ if (/^gh(\\.exe)?$/i.test(path.basename(process.execPath))) {
   const recorded = JSON.parse(fs.readFileSync(process.env.FAKE_GH_FIELDS, 'utf8'));
   const fields = args[0] === 'pr' && args[1] === 'checks' ? recorded.checks : recorded.view;
   if (process.env.FAKE_GH_LOG) fs.appendFileSync(process.env.FAKE_GH_LOG, JSON.stringify(args) + '\\n');
+  // Which credential each call ran with: the token in GH_TOKEN, per call (a test asserts the declared account's reached the probe).
+  if (process.env.FAKE_GH_TOKEN_LOG) fs.appendFileSync(process.env.FAKE_GH_TOKEN_LOG, args.slice(0, 2).join(' ') + ' ' + (process.env.GH_TOKEN || '') + '\\n');
+  // Like real gh: \`auth token --user X\` prints that signed-in account's token, or fails when gh holds none.
+  if (args[0] === 'auth' && args[1] === 'token') {
+    const who = args[args.indexOf('--user') + 1];
+    const t = (state.accounts ?? {})[who];
+    if (!t) fail('no oauth token found for ' + who);
+    out(t + '\\n');
+  }
+  if (process.env.GH_TOKEN === 'fleet-declared-gh-account-unavailable') fail('HTTP 401: Bad credentials');
   const ji = args.indexOf('--json');
   const req = ji < 0 ? [] : String(args[ji + 1]).split(',');
   for (const f of req) if (!fields.includes(f)) fail('Unknown JSON field: "' + f + '"');

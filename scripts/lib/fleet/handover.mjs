@@ -35,6 +35,7 @@ import { isTerminalState } from './overlap.mjs';
 import { fleetDir, listTrains, readSessions, realWithTail } from './registry.mjs';
 import { blocksHandover, ghUnknownLine, receiveCommand, renderBeforeRelaunch, renderHandoverMarkdown, renderReceiveText, sweepStep, switchWaitRecipe } from './handover-render.mjs';
 import { fleetSupports } from './fleet-capability.mjs';
+import { ghEnvFor } from './gh-account.mjs';
 import { deltaFollowUp, measureRepoDelta, previousStintStart, unmeasuredDelta } from './handover-delta.mjs';
 import { renderCommand } from './shell-quote.mjs';
 import { ContextEntrySchema, contextHandedOver, handoverDirsOf, readContext, writeReceivedMarker } from './handover-context.mjs';
@@ -353,11 +354,11 @@ function mergedUnreleasedEntry(i, fleetCli) {
  * Could this repo's PR state be read (plan e)? `facts.merged.prs` verbatim — the merged-PR query a handover already
  * makes, so no extra gh call — plus `owner/repo` from `origin`, to name the account that is needed.
  */
-export function ghReachability(repo, facts, { git = runGit } = {}) {
-  const prs = facts?.merged?.prs ?? { queried: false, reason: 'not measured' };
+export function ghReachability(repo, facts, { git = runGit, ghAccount = null, ghError = null } = {}) {
+  const prs = ghError ? { queried: false, reason: ghError } : (facts?.merged?.prs ?? { queried: false, reason: 'not measured' });
   const url = git(['remote', 'get-url', 'origin'], repo);
   const parsed = url.ok ? parseOriginRepo(url.stdout) : null;
-  return { gh: { queried: Boolean(prs.queried), ...(prs.queried ? {} : { reason: String(prs.reason ?? 'not queried') }) }, ghRepo: parsed?.slug ?? null };
+  return { gh: { queried: Boolean(prs.queried), ...(prs.queried ? {} : { reason: String(prs.reason ?? 'not queried') }) }, ghRepo: parsed?.slug ?? null, ...(ghAccount ? { ghAccount } : {}) };
 }
 
 /** Live coordination state for one repo; a repo without fleet state is reported, never an error. */
@@ -372,9 +373,12 @@ export function repoState(repo, { env, now, deadlineAt }, keep = null) {
     // and with no base nothing can be counted off it, so every candidate fails closed as `unverified`).
     return { path: repo, fleetCli, fleet: 'error', error: `config: ${e.message}`, sessions: [], ...unregisteredFields(repo, { cwd: repo, env, now }, {}, { list: () => wtList, deadlineAt }) };
   }
+  // This repo's PR reads run as the account it declares (`ghAccount`); a repo without one is unchanged. The token lives only in this env.
+  const acct = ghEnvFor(config, env);
+  env = acct.env;
   // A repo with no fleet registry can still hold unregistered work in its worktrees: always look.
   const { facts, live, mergedUnreleased } = gatherLive(repo, { config, env, now, deadlineAt });
-  const gh = ghReachability(repo, facts);
+  const gh = ghReachability(repo, facts, { ghAccount: acct.account, ghError: acct.error ? `gh account ${acct.account} is not available: ${acct.error}` : null });
   const unregisteredFor = (claimed) => unregisteredFields(repo, { cwd: repo, config, env, now }, claimed, { facts, list: () => wtList, deadlineAt });
   if (!fs.existsSync(dir)) return { path: repo, fleetCli, fleet: 'absent', sessions: [], ...gh, ...unregisteredFor({}) };
   const ctx = { cwd: repo, config, env, now };
@@ -447,6 +451,7 @@ export const HandoverManifestSchema = z.object({
       directives: z.number().optional(), trains: z.number().optional(), sessions: z.array(z.object({ id: z.string() }).passthrough()),
       // optional: whether this repo's PR state could be read (plan e); absent in a manifest written before it
       gh: z.object({ queried: z.boolean(), reason: z.string().optional() }).strict().optional(), ghRepo: z.string().nullable().optional(),
+      ghAccount: z.string().optional(), // the declared gh account NAME (never a token), so receive and the prose can name it
       // optional: a manifest written before unregistered-work detection still parses (it just reports none)
       unregistered: z.array(UnregisteredEntry).optional(), unregisteredUnknown: z.string().optional(),
       // optional: a manifest written before defect h's fix lists merged-unreleased claims as sessions instead
@@ -851,17 +856,18 @@ export function receiveHandover(ctx, flags, { homedir = os.homedir(), platform =
   for (const r of m.scope.repos) {
     if (!fs.existsSync(r.path)) { unregistered.push({ repo: r.path, unknown: 'repo path no longer exists' }); delta.push(unmeasuredDelta(r.path, m.createdAt, 'repo path no longer exists')); missingRepos.push(r.path); continue; }
     let claimed = { worktrees: [], branches: [] };
-    let dir = null; let g = null; let config = null;
+    let dir = null; let g = null; let config = null; let acct = { env: ctx.env, account: null };
     try { dir = fleetDir(r.path); } catch (e) { liveUnknown.push({ repo: r.path, reason: e.message }); }
     if (dir) {
       try {
         // The same derivation prepare used (`gatherLive`): a claim whose work landed is not live here either.
         config = resolveConfig(r.path, { env: ctx.env });
-        g = gatherLive(r.path, { config, env: ctx.env, now: ctx.now, deadlineAt });
+        acct = ghEnvFor(config, ctx.env);
+        g = gatherLive(r.path, { config, env: acct.env, now: ctx.now, deadlineAt });
       } catch (e) { liveUnknown.push({ repo: r.path, reason: e.message }); }
     }
     // gh reachability is re-measured here too: the new account may read what the old one could not (or not).
-    if (g) { const reach = ghReachability(r.path, g.facts); if (!reach.gh.queried) ghUnknown.push({ repo: r.path, ...reach }); }
+    if (g) { const reach = ghReachability(r.path, g.facts, { ghAccount: acct.account, ghError: acct.error ? `gh account ${acct.account} is not available: ${acct.error}` : null }); if (!reach.gh.queried) ghUnknown.push({ repo: r.path, ...reach }); }
     if (g && fs.existsSync(dir)) {
       if (!g.facts.registry.complete) liveUnknown.push({ repo: r.path, reason: 'registry incomplete (unreadable session records)' });
       claimed = coveredBy([...g.live, ...g.mergedUnreleased]);

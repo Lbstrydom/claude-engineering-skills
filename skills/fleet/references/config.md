@@ -31,4 +31,4 @@ every branch touches: an overlap made ONLY of them is listed apart (`[hot]`) and
 never blocks; mixed evidence still blocks. A tier or check may carry a one-line
 `"note"` (≤300 chars), printed and recorded in the manifest. Landing keys —
 `requiredChecks`, `appendOnlyGlobs`, `restackIgnore`, `serialTimeoutMs` — are in
-`references/landing.md`; `archiveIgnore` (default `node_modules/**`, `scripts/.claude-skills/**`, `.claude/settings.local.json`: gitignored paths that `archive-check` and `prune` treat as disposable) is used by the verbs in `references/ending-a-session.md`.
+`references/landing.md`; `ghAccount` (a gh login name; the handover's PR probe reads that repo as it, using `gh auth token --user`; never a token), `archiveIgnore` (default `node_modules/**`, `scripts/.claude-skills/**`, `.claude/settings.local.json`: gitignored paths that `archive-check` and `prune` treat as disposable) is used by the verbs in `references/ending-a-session.md`.

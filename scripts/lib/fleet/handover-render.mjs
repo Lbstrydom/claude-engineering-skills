@@ -16,7 +16,7 @@ import { renderDeltaLines } from './handover-delta.mjs';
 export const blocksHandover = (u) => Boolean(u.unknown) || u.blocks !== false;
 
 /** The line a repo whose PR state is unknown gets: what is needed, never a silent "no PRs". */
-export const ghUnknownLine = (r) => `PR state unknown in ${r.path ?? r.repo} (${r.gh?.reason ?? 'not queried'}) — sign in to gh with an account that can read ${r.ghRepo ?? "this repo's origin"}`;
+export const ghUnknownLine = (r) => `PR state unknown in ${r.path ?? r.repo} (${r.gh?.reason ?? 'not queried'}) — sign in to gh ${r.ghAccount ? `as ${r.ghAccount} (this repo's declared ghAccount)` : `with an account that can read ${r.ghRepo ?? "this repo's origin"}`}`;
 
 // ── rendering ───────────────────────────────────────────────────────────────
 
