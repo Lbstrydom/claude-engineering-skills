@@ -104,3 +104,5 @@ exists only on one train branch is found there. The script must be COMMITTED
 so the check fails to run, which blocks a `block`-severity check, loudly. A
 check that imports the synced tooling (`scripts/.claude-skills/`, gitignored)
 will not find it there either.
+
+- **File overlap** is three-dot (`base...branch`), taken from the FRESHER of the local base and its upstream (`--fetch` refreshes it); uncommitted edits in live sessions' worktrees count as advisory evidence.
