@@ -89,6 +89,16 @@ describe('model pricing — STATIC_POOL coverage (2026-09-23)', () => {
     assert.deepEqual(priceFor('claude-sonnet-5'), { input: 2, output: 10 });
   });
 
+  it('Sonnet 5.5 cache read is the published 0.05x ($0.10/MTok on $2), not the 0.10x multiplier (2026-10-20)', () => {
+    // platform.claude.com pricing, footnote 2: cache hits on Opus 5.5 and
+    // Sonnet 5.5 are 0.05x base input. The row once omitted `cachedInput`, so
+    // costFromUsage fell back to CACHE_MULTIPLIER.read and over-counted 2x.
+    const hit = costFromUsage({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 }, 'claude-sonnet-5-5');
+    assert.equal(hit.inputUsd, 0.10, '$0.10/MTok cache read (0.05 x $2), not $0.20 (0.10 x $2)');
+    const hit5 = costFromUsage({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 }, 'claude-sonnet-5');
+    assert.equal(hit5.inputUsd, 0.20, 'Sonnet 5 keeps the standard 0.10x multiplier');
+  });
+
   it('the family fallbacks err HIGH for the current generation, never low', () => {
     // A fallback that under-prices is the one shape the spend cap exists to
     // prevent; the family row must sit at or above every current row's rate.
