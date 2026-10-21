@@ -94,13 +94,14 @@ export const modelPricing = Object.freeze({
   'gpt-4-mini':    { input: 0.15, output: 0.6 },
 
   // Anthropic — per model. Cache write 1.25x / read 0.10x of base come from
-  // CACHE_MULTIPLIER (model-pricing.mjs); Opus 5.5's read is 0.05x, carried
-  // as a real `cachedInput` rate so costFromUsage uses it over the multiplier.
+  // CACHE_MULTIPLIER (model-pricing.mjs); Opus 5.5's and Sonnet 5.5's read is
+  // 0.05x (pricing page footnote 2, measured 2026-10-20), carried as a real
+  // `cachedInput` rate so costFromUsage uses it over the multiplier.
   'claude-opus-5-5':   { input: 4, output: 20, cachedInput: 0.20 },
   'claude-opus-5':     { input: 5, output: 25 },
   'claude-opus-4-8':   { input: 5, output: 25 },
   'claude-opus-4-7':   { input: 5, output: 25 },
-  'claude-sonnet-5-5': { input: 2, output: 10 }, // cache read $0.20 = the standard 0.10x multiplier
+  'claude-sonnet-5-5': { input: 2, output: 10, cachedInput: 0.10 }, // cache read 0.05x = $0.10 (platform.claude.com pricing, 2026-10-20), not the 0.10x multiplier
   'claude-sonnet-5':   { input: 2, output: 10 }, // launch $2/$10 made permanent (the 2026-09-01 rise to $3/$15 was cancelled)
   'claude-sonnet-4-6': { input: 3, output: 15 },
   // Haiku 5.5 is priced by PROMPT LENGTH: this row is the <=100K-token rate
