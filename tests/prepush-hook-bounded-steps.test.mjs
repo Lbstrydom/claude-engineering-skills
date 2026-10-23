@@ -459,7 +459,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     const ws = tmpDir('hook-no-runner-');
     try {
       const source = makeSourceRepo(ws);
-      fs.rmSync(path.join(source, 'scripts', 'prepush-step.mjs'));
+      fs.rmSync(path.join(source, 'scripts', 'prepush-step.mjs'), { recursive: true, maxRetries: 3, retryDelay: 50 });
       const c = buildConsumer(ws);
       c.put('src/own.txt', 'x\n');
       const head = c.commit('own');
