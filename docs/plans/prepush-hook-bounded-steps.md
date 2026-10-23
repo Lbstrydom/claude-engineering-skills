@@ -12,7 +12,7 @@ bypassed. Fleet proposal `p-20261022124230-a709`, upstream report `07bcc90f`.
 
 **Measured on the fourth hang** (a push of a MERGE commit, main merged into the branch), replayed from the storyline worktree:
 
-1. `base..head` (remote tip .. merge) holds the whole of main's delta, including `docs/plans/template-led-visual-upgrade.md`
+1. `base..head` (remote tip .. merge) holds the whole of main's delta, including storyline's `template-led-visual-upgrade` plan (a file of that repo, not this one)
    (149 KB). `check-plan-status.mjs --select` read it as "the plan this push changed" and selected it.
 2. The audit ran `openai-audit.mjs code <plan> --scope diff` with no `--base`: the default is `HEAD~1`, and on a merge commit
    `HEAD~1..HEAD` is main's delta again. It audited code the branch never wrote.
