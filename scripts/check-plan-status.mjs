@@ -25,7 +25,7 @@ import { spawnSync } from 'node:child_process';
 import {
   parsePlanStatus, selectAuditPlan, isAuditSummary, checkPlanDependencies,
 } from './lib/plan-status.mjs';
-import { resolvePushRange } from './lib/push-range.mjs';
+import { resolvePushRange, branchOwnedChangedFiles } from './lib/push-range.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const PLANS_DIR = 'docs/plans';
@@ -45,7 +45,8 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
 function changedFilesForPush() {
   const rev = (args) => {
     const r = spawnSync('git', args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
-    return r.status === 0 ? r.stdout.trim() : null;
+    // A NUL-delimited (-z) listing is data: trimming would eat leading whitespace of its first path.
+    return r.status === 0 ? (args.includes('-z') ? r.stdout : r.stdout.trim()) : null;
   };
   // The range comes from the shared push-range contract, which prefers what the
   // pre-push hook was told by git over anything inferred here. The old inline
@@ -53,9 +54,14 @@ function changedFilesForPush() {
   // to HEAD~1 unconditionally in a detached checkout. See lib/push-range.mjs.
   const range = resolvePushRange({ run: rev });
   if (!range.ok) return null;
-  const out = rev(['diff', '--name-only', `${range.base}..${range.head}`]);
-  if (out === null) return null;
-  return out.split('\n').map(s => s.trim()).filter(Boolean);
+  // A merge of the default branch into the pushed branch brings the whole of main's delta into base..head. Plan selection and the
+  // drift gate answer "which plans did THIS PUSH change", so they see the branch's own commits only (push-range.mjs).
+  const owned = branchOwnedChangedFiles(range, { run: rev });
+  if (owned === null) return null;
+  if (owned.scoped) {
+    process.stderr.write(`  [plan-status] merge push: ${owned.excluded} file(s) that arrived from the default branch are not this push's changes\n`);
+  }
+  return owned.files;
 }
 
 function selectMode(dir) {

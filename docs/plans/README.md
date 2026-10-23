@@ -34,6 +34,7 @@ This is the list to read when asking "what is in flight?".
 | [fleet — catch abandoned worktree work regularly, and remove account-switch friction](./fleet-unclaimed-work-and-switch-friction.md) | `Draft` |  |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
 | [pre-push — a sanctioned lane for `archive/*` refs](./prepush-archive-lane.md) | `In Progress` |  |
+| [Consumer pre-push hook: bounded, visible, fail-closed steps (hook v11)](./prepush-hook-bounded-steps.md) | `In Progress` |  |
 | [Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed.md) | `Approved` |  |
 | [ship-commit refuses an audit marker that describes another branch's code](./ship-commit-marker-provenance.md) | `In Progress` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |

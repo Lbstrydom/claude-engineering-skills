@@ -30,6 +30,15 @@
       "domain": "fleet"
     },
     {
+      "pattern": "scripts/lib/prepush-step.mjs",
+      "domain": "fleet",
+      "_why": "The hook step runner reads the machine lease (to name its holder in a timeout refusal) and reuses fleet's tree-killing child runner; shared-lib may not import fleet, fleet may import shared-lib."
+    },
+    {
+      "pattern": "scripts/prepush-step.mjs",
+      "domain": "fleet"
+    },
+    {
       "pattern": "scripts/lib/install/**",
       "domain": "install"
     },

@@ -50,10 +50,12 @@ const TRUSTED_SOURCES = new Set(['explicit']);
 
 function defaultRun(args) {
   try {
-    return execFileSync('git', args, {
+    const out = execFileSync('git', args, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim() || null;
+    });
+    // A NUL-delimited listing is data, not text: trimming it would eat leading whitespace of the first path.
+    return (args.includes('-z') ? out : out.trim()) || null;
   } catch {
     return null;
   }
@@ -141,6 +143,60 @@ export function resolvePushRange(opts = {}) {
   // whether that means "gate on everything" or "gate on nothing" — this
   // module will not pick a default that could read as clean.
   return { ok: false, reason: 'no-base', message: 'no base revision available (root commit, or not a git repository)' };
+}
+
+/**
+ * Files the pushed BRANCH itself changed, as opposed to files that merely arrived in the range through a merge of the default
+ * branch. `base..head` is what the remote receives, so for a merge-commit push it also holds everything main gained since the
+ * remote tip: measured live (storyline, 2026-10-23), a 149 KB plan that main had landed was selected as "the plan this push
+ * changed" and audited, for 15 minutes. The branch's own work is (a) the NON-merge commits of the range that the default branch
+ * does not already contain, plus (b) what each merge commit AUTHORED itself - a conflict resolution or an "evil merge" change, i.e.
+ * the paths its combined diff (`--cc`) shows against ALL parents.
+ *
+ * This takes the range RESOLVED by `resolvePushRange` and infers nothing about it: `defaultRef` only EXCLUDES commits, it is
+ * never a base. Scoping is conservative in one direction only: when it cannot tell (no merge in the range, the default ref does
+ * not resolve, any git call fails) it returns the whole diff with `scoped:false`, never a narrower list that could read as
+ * "nothing changed". Paths are read NUL-delimited (`-z`): git C-quotes a non-ASCII or special-character path otherwise, and the
+ * quoted spelling is not a file.
+ *
+ * @param {{base: string, head: string}} range
+ * @param {{defaultRef?: string, run?: (args: string[]) => string|null}} [opts]
+ * @returns {{files: string[], scoped: boolean, excluded: number, reason?: string} | null} `null` when git cannot say
+ */
+export function branchOwnedChangedFiles(range, opts = {}) {
+  const { defaultRef = 'origin/main', run = defaultRun } = opts;
+  const span = `${range.base}..${range.head}`;
+  const paths = (out) => (out ?? '').split('\0').filter(Boolean);
+  // Only the `--format=%x01%H` header token of the merge listing is metadata; a path is never filtered on a byte it merely starts with.
+  const MERGE_HEADER = /^\x01[0-9a-f]{40,64}$/;
+  const all = run(['diff', '--name-only', '-z', span]);
+  if (all === null) return null;
+  const everything = paths(all);
+  const unscoped = (reason) => ({ files: everything, scoped: false, excluded: 0, reason });
+  const merges = run(['rev-list', '--merges', '--count', span]);
+  if (merges === null) return unscoped('merge-count-unavailable');
+  if (Number(merges) === 0) return unscoped('no-merge-in-range');
+  if (!isSafeGitRevision(defaultRef) || !run(['rev-parse', '--verify', '--quiet', `${defaultRef}^{commit}`])) {
+    return unscoped('default-ref-unresolvable');
+  }
+  // `run` reads empty output as null, the same value as a failure. "The branch has no commits of its own" is the exact case this
+  // function exists for (a pure merge of main), so COUNT first: a count is never empty, and 0 is a real answer.
+  const ownCount = run(['rev-list', '--count', '--no-merges', span, '--not', defaultRef]);
+  if (ownCount === null) return unscoped('own-count-unavailable');
+  const ownSet = new Set();
+  if (Number(ownCount) > 0) {
+    const own = run(['log', '--no-merges', '--name-only', '-z', '--format=', span, '--not', defaultRef]);
+    // Own commits that changed no file (empty commits) also print nothing: undecidable from here, so keep the whole diff.
+    if (own === null) return unscoped('own-log-unavailable');
+    for (const f of paths(own)) ownSet.add(f);
+  }
+  // What the merges themselves wrote. The \x01<sha> marker makes every merge print a line, so a clean merge (no authored file) is
+  // not mistaken for a failed command.
+  const authored = run(['log', '--merges', '--cc', '--name-only', '-z', '--format=%x01%H', span]);
+  if (authored === null) return unscoped('merge-authored-unavailable');
+  for (const f of paths(authored)) if (!MERGE_HEADER.test(f)) ownSet.add(f);
+  const files = everything.filter((f) => ownSet.has(f)); // a path the branch touched and then restored is not in `everything`
+  return { files, scoped: true, excluded: everything.length - files.length };
 }
 
 /**

@@ -36,6 +36,7 @@ import { spawnSync } from 'node:child_process';
 
 import { _internals } from '../scripts/install-prepush-hook.mjs';
 import { hasBash, git } from './lib/hook-test-helpers.mjs';
+import { writeStepRunnerStub } from './lib/prepush-step-stub.mjs';
 
 const { HOOK_BODY } = _internals;
 const HAS_BASH = hasBash();
@@ -74,6 +75,7 @@ function makeFixture() {
     const source = path.join(base, 'source-repo');
     fs.mkdirSync(path.join(source, 'scripts'), { recursive: true });
     fs.writeFileSync(path.join(source, 'scripts', 'sync-to-repos.mjs'), '// discovery sentinel\n');
+    writeStepRunnerStub(path.join(source, 'scripts'));
     fs.writeFileSync(path.join(source, 'scripts', 'openai-audit.mjs'), 'process.exit(0);\n');
     fs.writeFileSync(path.join(source, 'scripts', 'check-plan-status.mjs'), [
       "if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }",
