@@ -50,10 +50,12 @@ const TRUSTED_SOURCES = new Set(['explicit']);
 
 function defaultRun(args) {
   try {
-    return execFileSync('git', args, {
+    const out = execFileSync('git', args, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim() || null;
+    });
+    // A NUL-delimited listing is data, not text: trimming it would eat leading whitespace of the first path.
+    return (args.includes('-z') ? out : out.trim()) || null;
   } catch {
     return null;
   }
@@ -164,7 +166,9 @@ export function resolvePushRange(opts = {}) {
 export function branchOwnedChangedFiles(range, opts = {}) {
   const { defaultRef = 'origin/main', run = defaultRun } = opts;
   const span = `${range.base}..${range.head}`;
-  const paths = (out) => (out ?? '').split('\0').filter((p) => p && !p.startsWith('\x01'));
+  const paths = (out) => (out ?? '').split('\0').filter(Boolean);
+  // Only the `--format=%x01%H` header token of the merge listing is metadata; a path is never filtered on a byte it merely starts with.
+  const MERGE_HEADER = /^\x01[0-9a-f]{40,64}$/;
   const all = run(['diff', '--name-only', '-z', span]);
   if (all === null) return null;
   const everything = paths(all);
@@ -190,7 +194,7 @@ export function branchOwnedChangedFiles(range, opts = {}) {
   // not mistaken for a failed command.
   const authored = run(['log', '--merges', '--cc', '--name-only', '-z', '--format=%x01%H', span]);
   if (authored === null) return unscoped('merge-authored-unavailable');
-  for (const f of paths(authored)) ownSet.add(f);
+  for (const f of paths(authored)) if (!MERGE_HEADER.test(f)) ownSet.add(f);
   const files = everything.filter((f) => ownSet.has(f)); // a path the branch touched and then restored is not in `everything`
   return { files, scoped: true, excluded: everything.length - files.length };
 }

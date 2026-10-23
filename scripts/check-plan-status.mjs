@@ -45,7 +45,8 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
 function changedFilesForPush() {
   const rev = (args) => {
     const r = spawnSync('git', args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
-    return r.status === 0 ? r.stdout.trim() : null;
+    // A NUL-delimited (-z) listing is data: trimming would eat leading whitespace of its first path.
+    return r.status === 0 ? (args.includes('-z') ? r.stdout : r.stdout.trim()) : null;
   };
   // The range comes from the shared push-range contract, which prefers what the
   // pre-push hook was told by git over anything inferred here. The old inline

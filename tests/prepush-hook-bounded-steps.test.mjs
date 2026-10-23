@@ -121,15 +121,15 @@ describe('branchOwnedChangedFiles - against REAL git output (the fakes above enc
       git(['checkout', '-q', 'feature'], c.local);
       git(['merge', '-q', '--no-edit', '--no-commit', 'origin/main'], c.local);
       c.put('src/evil-two café.txt', 'two\n');
+      c.put(' lead.txt', 'a path with leading whitespace\n');
       c.commit('merge 2 authors a file');
       const head = git(['rev-parse', 'HEAD'], c.local);
-      const run = (args) => {
-        const r = spawnSync('git', args, { cwd: c.local, encoding: 'utf-8' });
-        return r.status === 0 ? (r.stdout.trim() || null) : null;
-      };
-      const r = branchOwnedChangedFiles({ base: remoteTip, head }, { run });
+      // The SHIPPED runner (push-range's defaultRun), which reads the current directory - not a re-spelling of it.
+      const cwd = process.cwd();
+      let r;
+      try { process.chdir(c.local); r = branchOwnedChangedFiles({ base: remoteTip, head }); } finally { process.chdir(cwd); }
       assert.equal(r.scoped, true, r.reason);
-      assert.deepEqual(r.files, ['src/evil-one.txt', 'src/evil-two café.txt']);
+      assert.deepEqual(r.files, [' lead.txt', 'src/evil-one.txt', 'src/evil-two café.txt'], 'leading whitespace of a path is part of the path');
       assert.ok(r.files.every((f) => !/[\x00-\x1f]/.test(f)), 'no control byte may leak into a path');
       assert.ok(!r.files.some((f) => /from-main/.test(f)));
     } finally { rmrf(ws); }
