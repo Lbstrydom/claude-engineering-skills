@@ -28,7 +28,8 @@ import { runStep, describeLeaseHolder, timeoutRefusal, STEP_TIMEOUT_EXIT } from 
 import { ownFilesLine } from '../scripts/prepush-step.mjs';
 import { emptyLease, writeLease } from '../scripts/lib/fleet/lease-model.mjs';
 import { decideAcquire } from '../scripts/lib/fleet/lease.mjs';
-import { hasBash, git, writeStepRunnerStub } from './lib/hook-test-helpers.mjs';
+import { hasBash, git } from './lib/hook-test-helpers.mjs';
+import { writeStepRunnerStub } from './lib/prepush-step-stub.mjs';
 
 const { HOOK_BODY } = _internals;
 const HAS_BASH = hasBash();

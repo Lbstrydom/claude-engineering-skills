@@ -32,7 +32,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { _internals } from '../scripts/install-prepush-hook.mjs';
-import { hasBash, git, writeStepRunnerStub } from './lib/hook-test-helpers.mjs';
+import { hasBash, git } from './lib/hook-test-helpers.mjs';
+import { writeStepRunnerStub } from './lib/prepush-step-stub.mjs';
 
 const { HOOK_BODY } = _internals;
 const HAS_BASH = hasBash();
