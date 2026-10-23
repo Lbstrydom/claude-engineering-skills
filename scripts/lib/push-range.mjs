@@ -144,6 +144,48 @@ export function resolvePushRange(opts = {}) {
 }
 
 /**
+ * Files the pushed BRANCH itself changed, as opposed to files that merely arrived in the range through a merge of the default
+ * branch. `base..head` is what the remote receives, so for a merge-commit push it also holds everything main gained since the
+ * remote tip: measured live (storyline, 2026-10-23), a 149 KB plan that main had landed was selected as "the plan this push
+ * changed" and audited, for 15 minutes. The branch's own work is the NON-merge commits of the range that the default branch
+ * does not already contain.
+ *
+ * This takes the range RESOLVED by `resolvePushRange` and infers nothing about it: `defaultRef` only EXCLUDES commits, it is
+ * never a base. Scoping is conservative in one direction only: when it cannot tell (no merge in the range, or the default ref
+ * does not resolve) it returns the whole diff with `scoped:false`, never a narrower list that could read as "nothing changed".
+ * Stated limit: a path changed ONLY by a merge's conflict resolution is not branch-owned here.
+ *
+ * @param {{base: string, head: string}} range
+ * @param {{defaultRef?: string, run?: (args: string[]) => string|null}} [opts]
+ * @returns {{files: string[], scoped: boolean, excluded: number, reason?: string} | null} `null` when git cannot say
+ */
+export function branchOwnedChangedFiles(range, opts = {}) {
+  const { defaultRef = 'origin/main', run = defaultRun } = opts;
+  const span = `${range.base}..${range.head}`;
+  const lines = (out) => (out ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
+  const all = run(['diff', '--name-only', span]);
+  if (all === null) return null;
+  const everything = lines(all);
+  const merges = run(['rev-list', '--merges', '--count', span]);
+  if (merges === null) return { files: everything, scoped: false, excluded: 0, reason: 'merge-count-unavailable' };
+  if (Number(merges) === 0) return { files: everything, scoped: false, excluded: 0, reason: 'no-merge-in-range' };
+  if (!isSafeGitRevision(defaultRef) || !run(['rev-parse', '--verify', '--quiet', `${defaultRef}^{commit}`])) {
+    return { files: everything, scoped: false, excluded: 0, reason: 'default-ref-unresolvable' };
+  }
+  // `run` reads empty output as null, the same value as a failure. "The branch has no commits of its own" is the exact case this
+  // function exists for (a pure merge of main), so COUNT first: a count is never empty, and 0 is a real answer.
+  const ownCount = run(['rev-list', '--count', '--no-merges', span, '--not', defaultRef]);
+  if (ownCount === null) return { files: everything, scoped: false, excluded: 0, reason: 'own-count-unavailable' };
+  if (Number(ownCount) === 0) return { files: [], scoped: true, excluded: everything.length };
+  const own = run(['log', '--no-merges', '--name-only', '--format=', span, '--not', defaultRef]);
+  // Own commits that changed no file (empty commits) also print nothing: undecidable from here, so keep the whole diff.
+  if (own === null) return { files: everything, scoped: false, excluded: 0, reason: 'own-log-unavailable' };
+  const ownSet = new Set(lines(own));
+  const files = everything.filter((f) => ownSet.has(f)); // a path the branch touched and then restored is not in `everything`
+  return { files, scoped: true, excluded: everything.length - files.length };
+}
+
+/**
  * Human-readable one-liner for a resolved range, for gate summary lines.
  * Always names the source so an under-scoped run is visible in the log.
  *

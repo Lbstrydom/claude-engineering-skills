@@ -131,7 +131,14 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // terminating signal and exits 1 — the same marked block as this repo's
 // .githooks/pre-push, kept byte-identical by
 // tests/prepush-hook-fail-closed-on-signal.test.mjs. Re-install to pick it up.
-const HOOK_VERSION    = 10;
+// v11 (2026-10-23): no step can hang silently. A consumer's hook ran a draft-plan audit for 15 minutes on a MERGE-commit push,
+// printing nothing (its output went to a temp file) and writing no log; workers bypassed it with AUDIT_PREPUSH_DISABLE=1 on most
+// pushes, so the gate was effectively off. Every node step now runs through scripts/prepush-step.mjs: a wall-clock budget, one
+// progress line per step plus a 30s heartbeat, and on expiry a REFUSAL (exit 1) naming the step, the elapsed time and the machine
+// lease holder - never a skip. And a merge push no longer audits what main brought in: plan selection and the audit's --files scope
+// are the branch's own non-merge commits (push-range.mjs branchOwnedChangedFiles). Re-install to pick it up:
+// `npm run hooks:install -- --target <name>`.
+const HOOK_VERSION    = 11;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -401,6 +408,29 @@ if [ -z "$AUDIT_LOOP_DIR" ] || [ ! -f "$AUDIT_SCRIPT" ]; then
   finish
 fi
 
+# ── Bounded steps (v11) ──────────────────────────────────────────────────────
+# Every node step below runs through prepush-step.mjs: a wall-clock budget, a heartbeat on stderr, and exit 124 when the budget is
+# exceeded - which this hook turns into a REFUSAL, never a skip. The runner lives beside the audit script, so it is present whenever
+# the audit is; if it is missing the steps cannot be bounded, and a hook that might hang silently is the defect this exists to end.
+# AUDIT_PREPUSH_STEP_BUDGET_SEC (default 60) bounds the quick steps, AUDIT_PREPUSH_AUDIT_BUDGET_SEC (default 600) the audit.
+STEP_CLI="$AUDIT_LOOP_DIR/scripts/prepush-step.mjs"
+STEP_BUDGET="\${AUDIT_PREPUSH_STEP_BUDGET_SEC:-60}"
+AUDIT_BUDGET="\${AUDIT_PREPUSH_AUDIT_BUDGET_SEC:-600}"
+PROGRESS_SEC="\${AUDIT_PREPUSH_PROGRESS_SEC:-30}"   # heartbeat interval: a slow step says so instead of going quiet
+if [ "$(node "$STEP_CLI" --selfcheck-relocation 2>/dev/null)" != "OK" ]; then
+  echo "" >&2
+  echo "❌ [prepush-hook] step runner CANNOT RUN: $STEP_CLI" >&2
+  echo "   Update the claude-engineering-skills checkout at $AUDIT_LOOP_DIR (it predates hook v11)," >&2
+  echo "   or bypass with git push --no-verify. Refusing rather than running steps that could hang silently." >&2
+  echo "" >&2
+  exit 1
+fi
+# prepush_bounded <step> <budget-sec> <cmd...>: the command's own status, 124 on timeout (the runner has already said why).
+prepush_bounded() {
+  prepush_step_name="$1"; prepush_step_budget="$2"; shift 2
+  node "$STEP_CLI" run --step "$prepush_step_name" --budget-sec "$prepush_step_budget" --progress-sec "$PROGRESS_SEC" -- "$@"
+}
+
 # Select the ONE in-flight plan to audit via the Status-aware CLI — NOT
 # \`ls -t | head -1\`, which selected any newest .md regardless of its Status
 # and would re-audit a Complete plan. The CLI writes ONLY the chosen path to
@@ -429,7 +459,13 @@ if [ "$PLAN_STATUS_DISABLE" != "1" ]; then
   # which retires the gate without anyone deciding to.
   # \`--selfcheck-relocation\` prints OK and exits 0 before the CLI parses
   # anything, so it answers exactly the runnability question and nothing else.
-  PLAN_STATUS_PROBE="$(node "$STATUS_CLI" --selfcheck-relocation 2>&1)"
+  echo "[prepush-hook] ▸ plan-status gate (budget \${STEP_BUDGET}s)" >&2
+  PLAN_STATUS_PROBE="$(prepush_bounded plan-status-probe "$STEP_BUDGET" node "$STATUS_CLI" --selfcheck-relocation 2>&1)"
+  PLAN_STATUS_PROBE_RC=$?
+  if [ "$PLAN_STATUS_PROBE_RC" -eq 124 ]; then
+    printf '%s\\n' "$PLAN_STATUS_PROBE" >&2
+    exit 1
+  fi
   if [ "$PLAN_STATUS_PROBE" != "OK" ]; then
     # Node's stack puts the useful line ("Error: Cannot find module '…'") several
     # lines in, under a loader frame and a bare \`throw err;\` — so quote the
@@ -449,13 +485,23 @@ if [ "$PLAN_STATUS_DISABLE" != "1" ]; then
     echo "" >&2
     exit 1
   fi
-  if ! node "$STATUS_CLI" --drift >&2; then
+  prepush_bounded plan-status-drift "$STEP_BUDGET" node "$STATUS_CLI" --drift >&2
+  PLAN_STATUS_DRIFT_RC=$?
+  if [ "$PLAN_STATUS_DRIFT_RC" -eq 124 ]; then exit 1; fi
+  if [ "$PLAN_STATUS_DRIFT_RC" -ne 0 ]; then
     echo "[prepush-hook] plan-status gate FAILED — the checker ran and a plan changed in this push has a non-conforming Status (listed above) — fix it or set PLAN_STATUS_DISABLE=1" >&2
     exit 1
   fi
 fi
 
-PLAN_FILE=$(node "$STATUS_CLI" --select "$PLANS_DIR" 2>/dev/null || true)
+echo "[prepush-hook] ▸ plan selection (budget \${STEP_BUDGET}s)" >&2
+PLAN_FILE=$(prepush_bounded plan-select "$STEP_BUDGET" node "$STATUS_CLI" --select "$PLANS_DIR")
+PLAN_SELECT_RC=$?
+# stderr stays visible (the selector's reasons, and the runner's refusal). 124 = the budget ran out and the runner has already said
+# which step, how long and who holds the lease. Any other non-zero stays a non-event: a malformed Status must never abort a push
+# (R3-H5) - but a hang must.
+[ "$PLAN_SELECT_RC" -eq 124 ] && exit 1
+[ "$PLAN_SELECT_RC" -ne 0 ] && PLAN_FILE=""
 [ -z "$PLAN_FILE" ] && finish
 
 # ── Sync-bookkeeping-only short-circuit (v7) ────────────────────────────────
@@ -484,13 +530,41 @@ if [ -n "$PUSH_BASE" ] && [ -n "$PUSH_HEAD" ]; then
   fi
 fi
 
-echo "[prepush-hook] auditing $PLAN_FILE via $AUDIT_LOOP_DIR (--scope diff)..." >&2
-# AUDIT_ALLOW_FOREIGN_CWD=1: this runs the SOURCE repo's openai-audit.mjs against
-# THIS (consumer) repo's cwd on purpose — the audit reads its diff from cwd, so
-# the script-repo != cwd is correct here. Without it, assertRepoRoot would exit 1
-# every push and the audit would never actually run.
-AUDIT_ALLOW_FOREIGN_CWD=1 node "$AUDIT_SCRIPT" code "$PLAN_FILE" --scope diff > /tmp/prepush-audit-$$.json 2>&1
+# ── What the audit reads (v11) ──────────────────────────────────────────────
+# A MERGE push (main merged into the branch) carries the whole of main's delta in base..head, and the audit's default scope on a
+# merge commit is HEAD~1..HEAD - the same delta. A plan main had landed was audited as if this push had written it. So when the range
+# holds a merge, the audit reads only the branch's own files (--files); a merge push whose branch owns nothing has nothing to audit.
+OWN_SCOPE="$(node "$STEP_CLI" own-files 2>/dev/null)"
+case "$OWN_SCOPE" in
+  "scoped:")
+    echo "[prepush-hook] merge push: the branch owns no files in this range (all of it arrived from the default branch) - code audit skipped" >&2
+    finish
+    ;;
+  scoped:*) AUDIT_OWN_FILES="\${OWN_SCOPE#scoped:}" ;;
+  *) AUDIT_OWN_FILES="" ;;
+esac
+# A function so \`set --\` stays local to it: this hook's own positional parameters ($1 remote, $2 url) are not clobbered.
+prepush_audit() {
+  if [ -n "$AUDIT_OWN_FILES" ]; then
+    set -- code "$PLAN_FILE" --files "$AUDIT_OWN_FILES"
+  else
+    set -- code "$PLAN_FILE" --scope diff
+  fi
+  # AUDIT_ALLOW_FOREIGN_CWD=1: this runs the SOURCE repo's openai-audit.mjs against
+  # THIS (consumer) repo's cwd on purpose — the audit reads its diff from cwd, so
+  # the script-repo != cwd is correct here. Without it, assertRepoRoot would exit 1
+  # every push and the audit would never actually run.
+  AUDIT_ALLOW_FOREIGN_CWD=1 node "$STEP_CLI" run --step code-audit --budget-sec "$AUDIT_BUDGET" --progress-sec "$PROGRESS_SEC" --out "$AUDIT_OUT_ARG" -- node "$AUDIT_SCRIPT" "$@"
+}
+AUDIT_OUT="$(mktemp 2>/dev/null || echo /tmp/prepush-audit-$$.json)"
+AUDIT_OUT_ARG="$AUDIT_OUT"
+if command -v cygpath >/dev/null 2>&1; then AUDIT_OUT_ARG="$(cygpath -w "$AUDIT_OUT")"; fi
+echo "[prepush-hook] ▸ auditing $PLAN_FILE via $AUDIT_LOOP_DIR (budget \${AUDIT_BUDGET}s, \${AUDIT_OWN_FILES:+branch-own files only, }output: $AUDIT_OUT)" >&2
+prepush_audit
 EXIT=$?
+# 124: the budget ran out. The runner has said which step, how long and who holds the lease; unlike every other audit failure this
+# one REFUSES the push - a gate that cannot finish is not a pass - whatever AUDIT_PREPUSH_BLOCK says.
+if [ "$EXIT" = "124" ]; then rm -f "$AUDIT_OUT"; exit 1; fi
 
 if [ "$EXIT" != "0" ]; then
   # Surface WHY (signal vs noise) — a non-zero audit exit is usually a config/env
@@ -498,11 +572,11 @@ if [ "$EXIT" != "0" ]; then
   # findings, and a blind "proceeding anyway" hides which it is. Print the tail of
   # the captured output so the operator can tell.
   echo "[prepush-hook] audit exited $EXIT (non-blocking) — reason (last lines of output):" >&2
-  tail -n 6 /tmp/prepush-audit-$$.json >&2 2>/dev/null || true
+  tail -n 6 "$AUDIT_OUT" >&2 2>/dev/null || true
   echo "[prepush-hook] ↑ config/key error → noise (fix env or ignore); real findings → address, or set AUDIT_PREPUSH_BLOCK=1 to gate." >&2
-  if [ "$AUDIT_PREPUSH_BLOCK" = "1" ]; then rm -f /tmp/prepush-audit-$$.json; exit "$EXIT"; fi
+  if [ "$AUDIT_PREPUSH_BLOCK" = "1" ]; then rm -f "$AUDIT_OUT"; exit "$EXIT"; fi
 fi
-rm -f /tmp/prepush-audit-$$.json
+rm -f "$AUDIT_OUT"
 
 # ── Surfaces-manifest drift (persona-test consistency mode) ─────────────────
 # When the synced builder + a .persona-test/ dir are present, verify the
@@ -514,7 +588,11 @@ rm -f /tmp/prepush-audit-$$.json
 # \`git push --no-verify\`.
 SURFACES_BUILDER="scripts/.claude-skills/build-surfaces-manifest.mjs"
 if [ "$SURFACES_DRIFT_DISABLE" != "1" ] && [ -f "$SURFACES_BUILDER" ] && [ -d ".persona-test" ]; then
-  if ! node "$SURFACES_BUILDER" --verify >&2; then
+  echo "[prepush-hook] ▸ surfaces manifest check (budget \${STEP_BUDGET}s)" >&2
+  prepush_bounded surfaces-verify "$STEP_BUDGET" node "$SURFACES_BUILDER" --verify >&2
+  SURFACES_RC=$?
+  if [ "$SURFACES_RC" -eq 124 ]; then exit 1; fi
+  if [ "$SURFACES_RC" -ne 0 ]; then
     echo "[prepush-hook] surfaces.json drift — run \\\`npm run surfaces:build\\\` and stage it (bypass: SURFACES_DRIFT_DISABLE=1)" >&2
     exit 1
   fi

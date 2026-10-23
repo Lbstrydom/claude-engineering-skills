@@ -92,7 +92,12 @@ function planStatusFragment() {
   assert.ok(start >= 0, 'plan-status gate not found in HOOK_BODY');
   const end = lines.indexOf('fi', start);
   assert.ok(end > start, 'plan-status gate has no terminator');
-  return ['STATUS_CLI="$1"', lines.slice(start, end + 1).join('\n'), 'echo "REACHED_END"', ''].join('\n');
+  // v11: every node step goes through the bounded runner, so the fragment needs its three definitions too (lifted, not re-spelled).
+  const fnStart = lines.findIndex(l => l.startsWith('prepush_bounded() {'));
+  assert.ok(fnStart >= 0, 'prepush_bounded not found in HOOK_BODY');
+  const fn = lines.slice(fnStart, lines.indexOf('}', fnStart) + 1).join('\n');
+  const stepCli = path.join(import.meta.dirname, '..', 'scripts', 'prepush-step.mjs').replace(/\\/g, '/');
+  return [`STEP_CLI="${stepCli}"`, 'STEP_BUDGET=60', 'PROGRESS_SEC=30', fn, 'STATUS_CLI="$1"', lines.slice(start, end + 1).join('\n'), 'echo "REACHED_END"', ''].join('\n');
 }
 
 function runGate(cliPath, tmp) {

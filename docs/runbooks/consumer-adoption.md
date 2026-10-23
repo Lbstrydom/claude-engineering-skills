@@ -1616,3 +1616,14 @@ line, because only intent can say whether an unreachable pointer is a defect:
 an undeclared kind, a declared kind growing a new site, and a declaration
 matching nothing all fail. Each entry in `.skill-consumer-refs-baseline.json`
 carries a disposition and a written reason.
+
+## Consumer pre-push hook: bounded steps (hook v11)
+
+A hook that hangs gets bypassed (storyline, 2026-10: four hangs, then `AUDIT_PREPUSH_DISABLE=1` on most pushes). Since v11 every node step runs through `scripts/prepush-step.mjs` in the claude-engineering-skills checkout the hook discovers:
+
+- **Budgets** — `AUDIT_PREPUSH_STEP_BUDGET_SEC` (default 60: plan-status probe, drift, selection, surfaces check) and `AUDIT_PREPUSH_AUDIT_BUDGET_SEC` (default 600: the code audit). One `[prepush-hook] ▸ <step>` line per step, and a `still running (Ns of Ms)` heartbeat every `AUDIT_PREPUSH_PROGRESS_SEC` (30).
+- **Fail closed** — an overrun kills the step's whole process tree and REFUSES the push (exit 1) naming the step, the time spent and the machine-lease holder, whatever `AUDIT_PREPUSH_BLOCK` says. Other audit failures stay non-blocking as before. A missing step runner also refuses: update the claude-engineering-skills checkout.
+- **Merge pushes** — plan selection, the plan-status drift gate and the audit's `--files` scope use the branch's own non-merge commits that the default branch lacks (`branchOwnedChangedFiles`, `lib/push-range.mjs`), so what main brought in through a merge is not audited as this push's work. A merge push whose branch owns nothing skips the audit, with a line saying so.
+- **The lease** — the hook acquires no machine lease, so there is nothing to wait on or re-enter; a held lease (anyone's) never delays it. The holder is only NAMED in a timeout refusal.
+
+After the sync, each consumer must re-install the hook: `npm run hooks:install -- --target <name>` (from this repo).

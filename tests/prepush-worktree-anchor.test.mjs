@@ -33,7 +33,7 @@ import { spawnSync } from 'node:child_process';
 import { _internals } from '../scripts/install-prepush-hook.mjs';
 import { resolveSourceRepo } from '../scripts/lib/shared-cloud-config.mjs';
 import { resolveMainRoot } from '../scripts/lib/pinned-worktree/paths.mjs';
-import { hasBash } from './lib/hook-test-helpers.mjs';
+import { hasBash, writeStepRunnerStub } from './lib/hook-test-helpers.mjs';
 
 const { HOOK_BODY } = _internals;
 
@@ -42,6 +42,7 @@ function makeSourceRepo(parent, name = 'source-repo') {
   const root = path.join(parent, name);
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
   fs.writeFileSync(path.join(root, 'scripts', 'sync-to-repos.mjs'), '// fixture\n');
+  writeStepRunnerStub(path.join(root, 'scripts'));
   return root;
 }
 

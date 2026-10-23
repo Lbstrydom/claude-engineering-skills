@@ -37,7 +37,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { _internals } from '../scripts/install-prepush-hook.mjs';
-import { hasBash } from './lib/hook-test-helpers.mjs';
+import { hasBash, writeStepRunnerStub } from './lib/hook-test-helpers.mjs';
 
 const { HOOK_BODY } = _internals;
 const HAS_BASH = hasBash();
@@ -82,6 +82,7 @@ function makeSourceRepo(workspace, { statusCli = 'ok' } = {}) {
   const scripts = path.join(root, 'scripts');
   fs.mkdirSync(scripts, { recursive: true });
   fs.writeFileSync(path.join(scripts, 'sync-to-repos.mjs'), '// fixture\n');
+  writeStepRunnerStub(scripts);
   fs.writeFileSync(path.join(scripts, 'openai-audit.mjs'), 'process.exit(0);\n');
   if (statusCli === 'ok') {
     fs.writeFileSync(path.join(scripts, 'check-plan-status.mjs'), [

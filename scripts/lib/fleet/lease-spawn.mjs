@@ -42,12 +42,12 @@ export function stopTree(pid, { force = false, platform = process.platform, kill
  * Run `cmd args...` to completion, stopping its whole tree when `signal` aborts or `timeoutMs` passes.
  * @returns {Promise<{code: number|null, signal: string|null, timedOut: boolean, stopped: boolean, spawnError?: string}>}
  */
-export function runChild({ cmd, args = [], signal, timeoutMs, graceMs = 10_000, onSpawn, spawn = cp.spawn, stop = stopTree, platform = process.platform, execPath, exists }) {
+export function runChild({ cmd, args = [], signal, timeoutMs, graceMs = 10_000, onSpawn, spawn = cp.spawn, stop = stopTree, platform = process.platform, execPath, exists, stdio = 'inherit' }) {
   return new Promise((resolve) => {
     let child;
     const target = resolveSpawnTarget({ cmd, args, platform, ...(execPath ? { execPath } : {}), ...(exists ? { exists } : {}) });
     try {
-      child = spawn(target.cmd, target.args, { stdio: 'inherit', shell: false, detached: platform !== 'win32', windowsHide: true });
+      child = spawn(target.cmd, target.args, { stdio, shell: false, detached: platform !== 'win32', windowsHide: true });
     } catch (e) { resolve({ code: null, signal: null, timedOut: false, stopped: false, spawnError: e.message, target }); return; }
     let stopped = false; let timedOut = false; let graceTimer = null; let timeoutTimer = null; let settled = false;
     const onAbort = () => stopNow();
