@@ -248,16 +248,24 @@ function makeSourceRepo(ws) {
     "if (i >= 0) { if (fs.existsSync('docs/plans/active.md')) process.stdout.write('docs/plans/active.md\\n'); process.exit(0); }",
     'process.exit(0);', '',
   ].join('\n'));
-  // AUDIT_STUB=hang: never returns (with a child, as the real audit has). Otherwise records its argv and exits 0.
+  // AUDIT_STUB=hang: never returns (with a child, as the real audit has). Otherwise records its argv and behaves like the real
+  // audit's exit contract: exit 0 with a result envelope in --out for ANY completed run (findings never change the exit code),
+  // `exit3` = INCOMPLETE, `crash` = an uncaught error (exit 1, no envelope), `noenvelope` = exit 0 having written nothing.
   fs.writeFileSync(path.join(scripts, 'openai-audit.mjs'), [
     "import fs from 'node:fs';",
     "import { spawn } from 'node:child_process';",
     "fs.writeFileSync('AUDIT_ARGV', JSON.stringify(process.argv.slice(2)));",
-    "if (process.env.AUDIT_STUB === 'hang') {",
+    "const mode = process.env.AUDIT_STUB || 'pass';",
+    "const envelope = (verdict, findings) => { const i = process.argv.indexOf('--out'); if (i >= 0) fs.writeFileSync(process.argv[i + 1], JSON.stringify({ verdict, findings })); };",
+    "if (mode === 'hang') {",
     "  const c = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });",
     "  fs.writeFileSync('AUDIT_CHILD_PID', String(c.pid));",
     "  setInterval(() => {}, 1000);",
-    '} else process.exit(0);', '',
+    "} else if (mode === 'crash') { console.error('Error: audit aborted - boom'); process.exit(1); }",
+    "else if (mode === 'exit3') { envelope('INCOMPLETE', []); process.exit(3); }",
+    "else if (mode === 'noenvelope') process.exit(0);",
+    "else if (mode === 'findings') { envelope('SIGNIFICANT_ISSUES', [{ severity: 'HIGH' }, { severity: 'MEDIUM' }]); process.exit(0); }",
+    "else { envelope('PASS', []); process.exit(0); }", '',
   ].join('\n'));
   return root;
 }
@@ -451,7 +459,9 @@ describe('the real hook - bounded, visible, fail-closed', () => {
       const base = git(['rev-parse', 'HEAD~1'], c.local);
       const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${base}\n`);
       assert.equal(got.status, 0, got.stderr);
-      assert.deepEqual(argvOf(c.local), ['code', 'docs/plans/active.md', '--scope', 'diff', '--base', base]);
+      const argv = argvOf(c.local);
+      assert.equal(argv[argv.length - 2], '--out', 'the hook reads the audit\'s verdict from its own envelope');
+      assert.deepEqual(argv.slice(0, -2), ['code', 'docs/plans/active.md', '--scope', 'diff', '--base', base]);
     } finally { rmrf(ws); }
   });
 
@@ -523,6 +533,165 @@ describe('check-plan-status --select on a real merge push (the incident, at the 
       const head = git(['rev-parse', 'HEAD'], c.local);
       const r = select(c.local, remoteTip, head);
       assert.equal(r.stdout.trim(), 'docs/plans/other.md', r.stderr);
+    } finally { rmrf(ws); }
+  });
+});
+
+// ── E. the real hook: an audit that did not run must not pass; an audit that already covered this tree is not redone ─────────────
+// lib/prepush-audit-gate.mjs holds the logic (tests/prepush-audit-gate.test.mjs); these pin that the HOOK wires it: the audit's
+// exit contract and envelope decide, the override is the one named variable, and the reuse branch really skips the audit.
+function pushOf(c) {
+  c.put('src/own.txt', 'x\n');
+  const head = c.commit('own');
+  return { head, base: git(['rev-parse', 'HEAD~1'], c.local) };
+}
+const stdinOf = (p) => `refs/heads/main ${p.head} refs/heads/main ${p.base}\n`;
+
+describe('the real hook - an audit that did not run is UNMEASURED and refuses the push', () => {
+  const clear = { AUDIT_PREPUSH_ALLOW_UNMEASURED: '', AUDIT_PREPUSH_BLOCK: '' };
+  function scenario(stub, env = {}) {
+    const ws = tmpDir('hook-outcome-');
+    try {
+      const source = makeSourceRepo(ws);
+      const c = buildConsumer(ws);
+      const p = pushOf(c);
+      return runHook(c.local, source, stdinOf(p), { AUDIT_STUB: stub, ...clear, ...env });
+    } finally { rmrf(ws); }
+  }
+
+  it('a crash (exit 1, no envelope) REFUSES, names the cause and the override - it is not "noise"', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const got = scenario('crash');
+    assert.equal(got.status, 1, got.stderr);
+    assert.match(got.stderr, /UNMEASURED: the code audit did NOT run to a verdict - the audit CLI errored before producing a verdict \(exit 1\)/);
+    assert.match(got.stderr, /AUDIT_PREPUSH_ALLOW_UNMEASURED=1/);
+    assert.match(got.stderr, /\| Error: audit aborted - boom/, 'the operator sees why');
+    assert.doesNotMatch(got.stderr, /noise/i);
+  });
+  it('INCOMPLETE (exit 3) REFUSES, and AUDIT_PREPUSH_BLOCK=1 changes nothing about that', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    for (const env of [{}, { AUDIT_PREPUSH_BLOCK: '1' }]) {
+      const got = scenario('exit3', env);
+      assert.equal(got.status, 1, got.stderr);
+      assert.match(got.stderr, /INCOMPLETE \(exit 3\)/);
+    }
+  });
+  it('exit 0 with no result envelope REFUSES: nothing the audit concluded can be read', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const got = scenario('noenvelope');
+    assert.equal(got.status, 1, got.stderr);
+    assert.match(got.stderr, /no result envelope/);
+  });
+  it('the one named override lets an unmeasured push through, and the output records that it did', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    for (const stub of ['crash', 'exit3', 'noenvelope']) {
+      const got = scenario(stub, { AUDIT_PREPUSH_ALLOW_UNMEASURED: '1' });
+      assert.equal(got.status, 0, `${stub}: ${got.stderr}`);
+      assert.match(got.stderr, /push ALLOWED UNMEASURED because AUDIT_PREPUSH_ALLOW_UNMEASURED=1/);
+      assert.match(got.stderr, /UNMEASURED: the code audit did NOT run/);
+    }
+  });
+  it('RAN WITH FINDINGS stays advisory, and blocks only under AUDIT_PREPUSH_BLOCK=1', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const advisory = scenario('findings');
+    assert.equal(advisory.status, 0, advisory.stderr);
+    assert.match(advisory.stderr, /SIGNIFICANT_ISSUES \(H:1 M:1 L:0\) - the audit RAN and found things to address/);
+    const blocked = scenario('findings', { AUDIT_PREPUSH_BLOCK: '1' });
+    assert.equal(blocked.status, 1, blocked.stderr);
+    assert.match(blocked.stderr, /push BLOCKED: AUDIT_PREPUSH_BLOCK=1/);
+  });
+  it('RAN CLEAN passes, and says it ran', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const got = scenario('pass');
+    assert.equal(got.status, 0, got.stderr);
+    assert.match(got.stderr, /code audit: PASS \(H:0 M:0 L:0\) - ran clean/);
+  });
+  it('refuses (fail closed) when the source checkout\'s step runner predates the v12 subcommands', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const ws = tmpDir('hook-old-runner-');
+    try {
+      const source = makeSourceRepo(ws);
+      // A v11 runner: the selfcheck answers OK, but it has no `capabilities` and so cannot classify an audit.
+      fs.writeFileSync(path.join(source, 'scripts', 'prepush-step.mjs'), [
+        "if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }",
+        "process.stderr.write('prepush-step.mjs: expected `run` or `own-files`\\n'); process.exit(2);", '',
+      ].join('\n'));
+      const c = buildConsumer(ws);
+      const p = pushOf(c);
+      const got = runHook(c.local, source, stdinOf(p), { ...clear });
+      assert.equal(got.status, 1, got.stderr);
+      assert.match(got.stderr, /step runner CANNOT RUN/);
+      assert.match(got.stderr, /predates hook v12/);
+      assert.equal(got.audited, false, 'the audit must not run when its outcome could not be classified');
+    } finally { rmrf(ws); }
+  });
+});
+
+describe('the real hook - reuse of an audit that already covered this tree, and a budget scaled to the diff', () => {
+  /** Wraps the real runner so a test can declare what `audit-reuse` answers (the store itself is covered in prepush-audit-gate.test.mjs). */
+  function stubReuse(source, line) {
+    const scripts = path.join(source, 'scripts');
+    const real = path.join(scripts, 'prepush-step.real.mjs');
+    fs.renameSync(path.join(scripts, 'prepush-step.mjs'), real);
+    fs.writeFileSync(path.join(scripts, 'prepush-step.mjs'), [
+      "import { spawnSync } from 'node:child_process';",
+      `const real = ${JSON.stringify(real)};`,
+      `if (process.argv[2] === 'audit-reuse') { process.stdout.write(${JSON.stringify(`${line}\n`)}); process.exit(0); }`,
+      "const r = spawnSync(process.execPath, [real, ...process.argv.slice(2)], { stdio: 'inherit' });",
+      'process.exit(r.status ?? 1);', '',
+    ].join('\n'));
+  }
+  const base = { AUDIT_PREPUSH_ALLOW_UNMEASURED: '', AUDIT_PREPUSH_BLOCK: '', AUDIT_PREPUSH_AUDIT_BUDGET_SEC: '' };
+
+  it('a reusable run SKIPS the audit, names the run, and the push goes on', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const ws = tmpDir('hook-reuse-');
+    try {
+      const source = makeSourceRepo(ws);
+      stubReuse(source, 'reuse audit-run-0003 2 abcdef012345');
+      const c = buildConsumer(ws);
+      const got = runHook(c.local, source, stdinOf(pushOf(c)), { ...base, AUDIT_STUB: 'crash' });
+      assert.equal(got.status, 0, got.stderr);
+      assert.equal(got.audited, false, 'the audit must not run when its run is reused');
+      assert.match(got.stderr, /reusing audit run audit-run-0003 2 abcdef012345/);
+    } finally { rmrf(ws); }
+  });
+  it('no reusable run -> the audit runs, and the reason is printed', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const ws = tmpDir('hook-noreuse-');
+    try {
+      const source = makeSourceRepo(ws);
+      stubReuse(source, 'none the last audited tree (aaaaaaaaaaaa) is not the pushed tree (bbbbbbbbbbbb)');
+      const c = buildConsumer(ws);
+      const got = runHook(c.local, source, stdinOf(pushOf(c)), { ...base });
+      assert.equal(got.status, 0, got.stderr);
+      assert.equal(got.audited, true);
+      assert.match(got.stderr, /no audit run to reuse: the last audited tree \(aaaaaaaaaaaa\) is not the pushed tree \(bbbbbbbbbbbb\)/);
+    } finally { rmrf(ws); }
+  });
+  it('the real runner with no marker re-runs (nothing to reuse is the common case, and never a skip)', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const ws = tmpDir('hook-nomarker-');
+    try {
+      const source = makeSourceRepo(ws);
+      const c = buildConsumer(ws);
+      const got = runHook(c.local, source, stdinOf(pushOf(c)), { ...base });
+      assert.equal(got.status, 0, got.stderr);
+      assert.equal(got.audited, true);
+      assert.match(got.stderr, /no audit run to reuse: no recorded audit run/);
+    } finally { rmrf(ws); }
+  });
+  it('the budget is scaled to the pushed diff and says what it was scaled to; AUDIT_PREPUSH_AUDIT_BUDGET_SEC pins it', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const ws = tmpDir('hook-budget-');
+    try {
+      const source = makeSourceRepo(ws);
+      const c = buildConsumer(ws);
+      const p = pushOf(c);
+      const scaled = runHook(c.local, source, stdinOf(p), { ...base });
+      assert.match(scaled.stderr, /budget 600s, scaled to 1 file\(s\), 1 changed line\(s\)/);
+      const pinned = runHook(c.local, source, stdinOf(p), { ...base, AUDIT_PREPUSH_AUDIT_BUDGET_SEC: '777' });
+      assert.match(pinned.stderr, /budget 777s, pinned by AUDIT_PREPUSH_AUDIT_BUDGET_SEC/);
     } finally { rmrf(ws); }
   });
 });
