@@ -356,7 +356,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
         assert.equal(got.status, 0, `holder ${holder}: ${got.stderr}`);
         assert.equal(got.audited, true);
         assert.ok(got.ms < 30_000, `holder ${holder}: the hook waited ${got.ms}ms`);
-        fs.rmSync(path.join(c.local, 'AUDIT_ARGV'));
+        fs.rmSync(path.join(c.local, 'AUDIT_ARGV'), { recursive: true, maxRetries: 3, retryDelay: 50 });
       }
     } finally { rmrf(ws); rmrf(lease); }
   });
