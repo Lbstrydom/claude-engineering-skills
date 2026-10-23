@@ -600,6 +600,13 @@ describe('the real hook - an audit that did not run is UNMEASURED and refuses th
     assert.equal(blocked.status, 1, blocked.stderr);
     assert.match(blocked.stderr, /push BLOCKED: AUDIT_PREPUSH_BLOCK=1/);
   });
+  it('no private temp file (mktemp fails) -> refuses before auditing: there is no predictable-path fallback to read a verdict from', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const got = scenario('pass', { TMPDIR: path.join(os.tmpdir(), 'does-not-exist-prepush-v12'), TMP: path.join(os.tmpdir(), 'does-not-exist-prepush-v12'), TEMP: path.join(os.tmpdir(), 'does-not-exist-prepush-v12') });
+    assert.equal(got.status, 1, got.stderr);
+    assert.match(got.stderr, /cannot create private temp files/);
+    assert.equal(got.audited, false);
+  });
   it('RAN CLEAN passes, and says it ran', (t) => {
     if (!HAS_BASH) return t.skip('bash is required');
     const got = scenario('pass');

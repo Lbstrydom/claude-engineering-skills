@@ -593,7 +593,11 @@ prepush_audit() {
 # evidence, and redoing a ~25-minute audit of it is what timed a 60-file push out at a flat 600s. Anything the check cannot establish
 # (no marker, a different tree, a store it cannot read) is "none": the audit runs. The reason is printed either way.
 AUDIT_REUSED=""
-AUDIT_REUSE="$(node "$STEP_CLI" audit-reuse 2>/dev/null)" || AUDIT_REUSE="none the reuse check could not run"
+# Bounded like every other step: a helper that stalls refuses the push (124), it does not hang it.
+AUDIT_REUSE="$(prepush_bounded audit-reuse "$STEP_BUDGET" node "$STEP_CLI" audit-reuse 2>/dev/null)"
+AUDIT_REUSE_RC=$?
+[ "$AUDIT_REUSE_RC" -eq 124 ] && exit 1
+[ "$AUDIT_REUSE_RC" -ne 0 ] && AUDIT_REUSE="none the reuse check could not run"
 case "$AUDIT_REUSE" in
   "reuse "*)
     AUDIT_REUSED=1
@@ -608,13 +612,19 @@ if [ "$AUDIT_REUSED" != "1" ]; then
   if [ -n "$AUDIT_PREPUSH_AUDIT_BUDGET_SEC" ]; then
     AUDIT_BUDGET="$AUDIT_PREPUSH_AUDIT_BUDGET_SEC"; AUDIT_BUDGET_BASIS="pinned by AUDIT_PREPUSH_AUDIT_BUDGET_SEC"
   else
-    if [ -n "$AUDIT_OWN_FILES" ]; then AUDIT_BUDGET_LINE="$(node "$STEP_CLI" audit-budget --files "$AUDIT_OWN_FILES" 2>/dev/null)"; else AUDIT_BUDGET_LINE="$(node "$STEP_CLI" audit-budget 2>/dev/null)"; fi
+    if [ -n "$AUDIT_OWN_FILES" ]; then AUDIT_BUDGET_LINE="$(prepush_bounded audit-budget "$STEP_BUDGET" node "$STEP_CLI" audit-budget --files "$AUDIT_OWN_FILES" 2>/dev/null)"; else AUDIT_BUDGET_LINE="$(prepush_bounded audit-budget "$STEP_BUDGET" node "$STEP_CLI" audit-budget 2>/dev/null)"; fi
+    [ "$?" -eq 124 ] && exit 1
     AUDIT_BUDGET="\${AUDIT_BUDGET_LINE%% *}"; AUDIT_BUDGET_BASIS="scaled to \${AUDIT_BUDGET_LINE#* }"
     case "$AUDIT_BUDGET" in ''|*[!0-9]*) AUDIT_BUDGET=600; AUDIT_BUDGET_BASIS="default (the diff size could not be read)" ;; esac
   fi
-  AUDIT_OUT="$(mktemp 2>/dev/null || echo /tmp/prepush-audit-$$.json)"
+  # mktemp creates each file exclusively. There is NO predictable-path fallback: the report file is what the outcome is read from, so
+  # a pre-existing file at a guessable path could stand in for the audit's verdict. No private temp file, no audit, no push.
+  AUDIT_OUT="$(mktemp 2>/dev/null)" && AUDIT_REPORT="$(mktemp 2>/dev/null)" || {
+    rm -f "$AUDIT_OUT" "$AUDIT_REPORT"
+    echo "✗  [prepush-hook] cannot create private temp files (mktemp failed) - the audit's result could not be read safely - push BLOCKED." >&2
+    exit 1
+  }
   AUDIT_OUT_ARG="$AUDIT_OUT"
-  AUDIT_REPORT="$(mktemp 2>/dev/null || echo /tmp/prepush-report-$$.json)"
   AUDIT_REPORT_ARG="$AUDIT_REPORT"
   if command -v cygpath >/dev/null 2>&1; then AUDIT_OUT_ARG="$(cygpath -w "$AUDIT_OUT")"; AUDIT_REPORT_ARG="$(cygpath -w "$AUDIT_REPORT")"; fi
   echo "[prepush-hook] ▸ auditing $PLAN_FILE via $AUDIT_LOOP_DIR (budget \${AUDIT_BUDGET}s, $AUDIT_BUDGET_BASIS; \${AUDIT_OWN_FILES:+branch-own files only, }output: $AUDIT_OUT)" >&2
@@ -626,7 +636,7 @@ if [ "$AUDIT_REUSED" != "1" ]; then
   # Did the audit MEASURE anything? Read from its exit contract and its envelope, never its prose (lib/prepush-audit-gate.mjs):
   # DID NOT RUN (crash, auth/config, INCOMPLETE exit 3, no envelope) refuses unless AUDIT_PREPUSH_ALLOW_UNMEASURED=1; RAN WITH
   # FINDINGS is advisory unless AUDIT_PREPUSH_BLOCK=1; RAN CLEAN passes. If the classifier itself fails, that is a refusal too.
-  node "$STEP_CLI" audit-outcome --exit "$EXIT" --report "$AUDIT_REPORT_ARG" --out "$AUDIT_OUT_ARG" >&2
+  prepush_bounded audit-outcome "$STEP_BUDGET" node "$STEP_CLI" audit-outcome --exit "$EXIT" --report "$AUDIT_REPORT_ARG" --out "$AUDIT_OUT_ARG" >&2
   OUTCOME_RC=$?
   rm -f "$AUDIT_OUT" "$AUDIT_REPORT"
   [ "$OUTCOME_RC" -eq 0 ] || exit 1

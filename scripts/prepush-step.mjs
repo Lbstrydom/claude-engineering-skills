@@ -66,8 +66,16 @@ const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', st
 const runIn = (cwd, gitFn) => (args) => { try { return gitFn(cwd, args).trim() || null; } catch { return null; } };
 
 /** Last `n` non-empty lines of a captured output file, for a human to read. Display only - nothing is decided from it. */
-function tailOf(file, n = 6) {
-  try { return fs.readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => l.trim() !== '').slice(-n); } catch { return []; }
+function tailOf(file, n = 6, maxBytes = 64 * 1024) {
+  let fd = null;
+  try {
+    fd = fs.openSync(file, 'r');
+    const { size } = fs.fstatSync(fd);
+    const len = Math.min(size, maxBytes);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    return buf.toString('utf8').split(/\r?\n/).filter((l) => l.trim() !== '').slice(-n).map((l) => (l.length > 400 ? `${l.slice(0, 400)}...` : l));
+  } catch { return []; } finally { if (fd !== null) { try { fs.closeSync(fd); } catch { /* best effort */ } } }
 }
 
 /**

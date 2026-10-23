@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   classifyAuditOutcome, decideAuditGate, decideAuditReuse, auditBudgetSec, parseNumstatZ, BUDGET, UNMEASURED_OVERRIDE_ENV,
@@ -66,15 +66,31 @@ describe('classifyAuditOutcome - did the audit MEASURE anything?', () => {
     assert.match(causes.get(137), /killed by a signal/);
     assert.match(causes.get(null), /no exit status/);
   });
+  it('malformed evidence is never counted as zero findings: a missing/non-array findings list or an unrecognised severity is unmeasured', () => {
+    for (const findings of [null, undefined, 'x', {}, [{ severity: 'CRITICAL' }], [{}], [null], [{ severity: 'HIGH' }, { severity: 7 }]]) {
+      const r = classifyAuditOutcome({ exitCode: 0, report: { verdict: 'PASS', findings } });
+      assert.equal(r.kind, 'unmeasured', JSON.stringify(findings));
+      assert.match(r.cause, /no readable findings list/);
+    }
+    assert.equal(classifyAuditOutcome({ exitCode: 0, report: { verdict: 'PASS', findings: [{ severity: 'low' }] } }).kind, 'clean', 'severity is case-insensitive');
+  });
+  it('LOW-only is clean BY POLICY and never gates, even under AUDIT_PREPUSH_BLOCK=1; one MEDIUM does', () => {
+    const low = classifyAuditOutcome({ exitCode: 0, report: { verdict: 'PASS', findings: [{ severity: 'LOW' }, { severity: 'LOW' }] } });
+    assert.equal(low.kind, 'clean');
+    assert.deepEqual(low.counts, { high: 0, medium: 0, low: 2 });
+    assert.equal(decideAuditGate({ outcome: low, env: { AUDIT_PREPUSH_BLOCK: '1' } }).allow, true);
+    const med = classifyAuditOutcome({ exitCode: 0, report: { verdict: 'PASS', findings: [{ severity: 'MEDIUM' }] } });
+    assert.equal(decideAuditGate({ outcome: med, env: { AUDIT_PREPUSH_BLOCK: '1' } }).allow, false);
+  });
   it('exit 0 is a measurement only when the envelope carries a RECOGNISED verdict', () => {
-    for (const report of [null, undefined, 'x', {}, { verdict: 'MAYBE' }, { verdict: 'INCOMPLETE', findings: [] }]) {
+    for (const report of [null, undefined, 'x', {}, { verdict: 'MAYBE', findings: [] }, { verdict: 'INCOMPLETE', findings: [] }]) {
       const r = classifyAuditOutcome({ exitCode: 0, report });
       assert.equal(r.kind, 'unmeasured', JSON.stringify(report));
       assert.ok(r.cause);
     }
     assert.match(classifyAuditOutcome({ exitCode: 0, report: null }).cause, /no result envelope/);
-    assert.match(classifyAuditOutcome({ exitCode: 0, report: { verdict: 'INCOMPLETE' } }).cause, /INCOMPLETE/);
-    assert.match(classifyAuditOutcome({ exitCode: 0, report: { verdict: 'MAYBE' } }).cause, /unrecognised verdict "MAYBE"/);
+    assert.match(classifyAuditOutcome({ exitCode: 0, report: { verdict: 'INCOMPLETE', findings: [] } }).cause, /INCOMPLETE/);
+    assert.match(classifyAuditOutcome({ exitCode: 0, report: { verdict: 'MAYBE', findings: [] } }).cause, /unrecognised verdict "MAYBE"/);
   });
 });
 
@@ -342,7 +358,7 @@ describe('the real openai-audit.mjs with no provider credentials (the reproducti
     try {
       fs.writeFileSync(path.join(home, '.audit-loop.env'), 'OPENAI_API_KEY=sk-test-not-a-real-key\n');
       const probe = "import(process.argv[1]).then(() => process.stdout.write(process.env.OPENAI_API_KEY ? 'loaded' : 'absent'))";
-      const configUrl = new URL(`file:///${path.join(ROOT, 'scripts', 'lib', 'config.mjs').replace(/\\/g, '/')}`).href;
+      const configUrl = pathToFileURL(path.join(ROOT, 'scripts', 'lib', 'config.mjs')).href;
       const withShared = spawnSync(process.execPath, ['-e', probe, configUrl], { cwd: dir, encoding: 'utf-8', env: hermeticEnv(home), timeout: 60_000 });
       assert.equal(withShared.stdout, 'loaded', withShared.stderr);
       const emptyHome = tmpDir('audit-emptyhome-');

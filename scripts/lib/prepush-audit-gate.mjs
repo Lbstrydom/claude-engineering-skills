@@ -29,11 +29,17 @@ const FINDING_VERDICTS = Object.freeze(['NEEDS_FIXES', 'SIGNIFICANT_ISSUES']);
 /** A git tree/commit object id (sha-1 or sha-256), the same shape the evidence marker's reader accepts. */
 const OBJECT_ID_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
+/**
+ * Count findings by severity, or null when the collection is not readable evidence: a missing/non-array `findings`, or an entry whose
+ * severity is not one of the three the audit emits. Substituting zero for an unreadable envelope would read as a clean run.
+ */
 const countBySeverity = (findings) => {
+  if (!Array.isArray(findings)) return null;
   const c = { high: 0, medium: 0, low: 0 };
-  for (const f of Array.isArray(findings) ? findings : []) {
-    const s = String(f?.severity ?? '').toUpperCase();
-    if (s === 'HIGH') c.high += 1; else if (s === 'MEDIUM') c.medium += 1; else if (s === 'LOW') c.low += 1;
+  for (const f of findings) {
+    const sev = typeof f?.severity === 'string' ? f.severity.toUpperCase() : '';
+    if (sev === 'HIGH') c.high += 1; else if (sev === 'MEDIUM') c.medium += 1; else if (sev === 'LOW') c.low += 1;
+    else return null;
   }
   return c;
 };
@@ -65,11 +71,16 @@ export function classifyAuditOutcome({ exitCode, report } = {}) {
   }
   const verdict = typeof report.verdict === 'string' ? report.verdict : null;
   const counts = countBySeverity(report.findings);
+  if (counts === null) {
+    return { kind: 'unmeasured', cause: `the audit's envelope (verdict ${verdict ?? 'none'}) has no readable findings list, so the hook cannot tell what it found`, verdict, counts: none };
+  }
   if (verdict === 'INCOMPLETE') {
     return { kind: 'unmeasured', cause: 'the audit reported verdict INCOMPLETE: it measured less than the change, so it is not evidence about it', verdict, counts };
   }
   if (CLEAN_VERDICTS.includes(verdict)) {
-    // PASS can still carry LOW/MEDIUM findings (NEEDS_FIXES starts above two MEDIUMs): those are findings, not a clean run.
+    // POLICY: "clean" means the audit's own PASS with nothing at HIGH or MEDIUM. PASS tolerates up to two MEDIUMs (NEEDS_FIXES starts
+    // above that), which are still findings to surface; LOW-only is below the audit's own convergence bar, so it neither gates under
+    // AUDIT_PREPUSH_BLOCK=1 nor reads as findings - the counts are printed either way.
     return counts.high + counts.medium > 0
       ? { kind: 'findings', cause: null, verdict, counts }
       : { kind: 'clean', cause: null, verdict, counts };
