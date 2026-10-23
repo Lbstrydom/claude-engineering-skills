@@ -9,10 +9,11 @@
  * `scripts/sync-to-repos.mjs`'s `REPOS` constant (so adding a new
  * consumer repo there auto-extends here too).
  *
- * The installed hook is OPTIONAL by default — it warns about audit
- * findings rather than blocking the push.  Operators who want
- * blocking behaviour can `git push --no-verify` to bypass, OR we
- * can flip the hook to exit 1 on findings via env (`AUDIT_PREPUSH_BLOCK=1`).
+ * The installed hook warns about audit FINDINGS rather than blocking the
+ * push (flip it to exit 1 on findings via `AUDIT_PREPUSH_BLOCK=1`), but an
+ * audit that DID NOT RUN (crash, auth/config failure, INCOMPLETE) refuses the
+ * push (v12) unless `AUDIT_PREPUSH_ALLOW_UNMEASURED=1` is set. Either way
+ * `git push --no-verify` bypasses every step.
  *
  * Plan: docs/plans/dogfooding-ergonomics-v1.md §C
  *
@@ -138,7 +139,18 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // lease holder - never a skip. And a merge push no longer audits what main brought in: plan selection and the audit's --files scope
 // are the branch's own non-merge commits (push-range.mjs branchOwnedChangedFiles). Re-install to pick it up:
 // `npm run hooks:install -- --target <name>`.
-const HOOK_VERSION    = 11;
+// v12 (2026-10-23): an audit that did not run no longer passes, and a big audit is not redone. (1) The hook read every non-zero audit
+// exit other than 124 as "config/key error -> noise" and let the push through (storyline #427): a crash, a missing credential and
+// an INCOMPLETE exit-3 run were indistinguishable from advisory findings. The audit's own contract decides now - it exits 0 for ANY
+// completed run (findings live in its --out envelope's verdict, never in the exit code), 3 for INCOMPLETE, 1/2 for "the CLI itself
+// errored" - so DID NOT RUN (crash, auth/config, exit 3, no envelope) REFUSES the push naming the cause, unless the one named
+// override AUDIT_PREPUSH_ALLOW_UNMEASURED=1 is set (and then the output says so); RAN WITH FINDINGS stays advisory unless
+// AUDIT_PREPUSH_BLOCK=1; RAN CLEAN passes. (2) A ~60-file storyline push timed out at the flat 600s although 3 GPT rounds + Gemini had
+// already passed that very tree. A CONVERGED run recorded for exactly the pushed commit's TREE (.audit/last-audit-run.json + the
+// store row) is reused and the audit skipped, saying which run; a tree that differs by one byte re-runs. Otherwise the budget scales
+// with the diff (files + lines, floor 600s, capped) unless AUDIT_PREPUSH_AUDIT_BUDGET_SEC pins it. Logic: lib/prepush-audit-gate.mjs.
+// Re-install to pick it up: `npm run hooks:install -- --target <name>` (after the consumer's sync).
+const HOOK_VERSION    = 12;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -155,8 +167,10 @@ ${HOOK_MARKER}
 ${HOOK_VERSION_MARKER}
 #
 # Auto-runs /audit-code on any draft plan in docs/plans/ before the push.
-# Non-blocking by default: prints findings to stderr, never aborts the
-# push.  To block on HIGH findings, set AUDIT_PREPUSH_BLOCK=1.
+# Findings are advisory: printed to stderr, the push goes on.  To block on
+# them, set AUDIT_PREPUSH_BLOCK=1.  An audit that DID NOT RUN (crash, missing
+# credentials, INCOMPLETE) is UNMEASURED and refuses the push; push it anyway
+# on purpose with AUDIT_PREPUSH_ALLOW_UNMEASURED=1.
 #
 # Bypass per-push: \`git push --no-verify\`.
 # Disable session: \`AUDIT_PREPUSH_DISABLE=1 git push\`.
@@ -412,15 +426,22 @@ fi
 # Every node step below runs through prepush-step.mjs: a wall-clock budget, a heartbeat on stderr, and exit 124 when the budget is
 # exceeded - which this hook turns into a REFUSAL, never a skip. The runner lives beside the audit script, so it is present whenever
 # the audit is; if it is missing the steps cannot be bounded, and a hook that might hang silently is the defect this exists to end.
-# AUDIT_PREPUSH_STEP_BUDGET_SEC (default 60) bounds the quick steps, AUDIT_PREPUSH_AUDIT_BUDGET_SEC (default 600) the audit.
+# AUDIT_PREPUSH_STEP_BUDGET_SEC (default 60) bounds the quick steps. The audit's budget scales with the diff (v12, below) unless
+# AUDIT_PREPUSH_AUDIT_BUDGET_SEC pins it.
 STEP_CLI="$AUDIT_LOOP_DIR/scripts/prepush-step.mjs"
 STEP_BUDGET="\${AUDIT_PREPUSH_STEP_BUDGET_SEC:-60}"
-AUDIT_BUDGET="\${AUDIT_PREPUSH_AUDIT_BUDGET_SEC:-600}"
 PROGRESS_SEC="\${AUDIT_PREPUSH_PROGRESS_SEC:-30}"   # heartbeat interval: a slow step says so instead of going quiet
-if [ "$(node "$STEP_CLI" --selfcheck-relocation 2>/dev/null)" != "OK" ]; then
+# v12 relies on the runner's audit-outcome / audit-reuse / audit-budget subcommands: an older source checkout lacks them, and
+# running the audit without them would mean deciding its outcome by hand - the defect this version exists to end.
+STEP_CAPS=" $(node "$STEP_CLI" capabilities 2>/dev/null) "
+STEP_CLI_OK=1
+for cap in audit-outcome audit-reuse audit-budget; do
+  case "$STEP_CAPS" in *" $cap "*) ;; *) STEP_CLI_OK="" ;; esac
+done
+if [ "$(node "$STEP_CLI" --selfcheck-relocation 2>/dev/null)" != "OK" ] || [ -z "$STEP_CLI_OK" ]; then
   echo "" >&2
   echo "❌ [prepush-hook] step runner CANNOT RUN: $STEP_CLI" >&2
-  echo "   Update the claude-engineering-skills checkout at $AUDIT_LOOP_DIR (it predates hook v11)," >&2
+  echo "   Update the claude-engineering-skills checkout at $AUDIT_LOOP_DIR (it predates hook v12)," >&2
   echo "   or bypass with git push --no-verify. Refusing rather than running steps that could hang silently." >&2
   echo "" >&2
   exit 1
@@ -562,29 +583,67 @@ prepush_audit() {
   # THIS (consumer) repo's cwd on purpose — the audit reads its diff from cwd, so
   # the script-repo != cwd is correct here. Without it, assertRepoRoot would exit 1
   # every push and the audit would never actually run.
-  AUDIT_ALLOW_FOREIGN_CWD=1 node "$STEP_CLI" run --step code-audit --budget-sec "$AUDIT_BUDGET" --progress-sec "$PROGRESS_SEC" --out "$AUDIT_OUT_ARG" -- node "$AUDIT_SCRIPT" "$@"
+  # --out: the audit's own result envelope (its verdict and findings) - the one thing the outcome is read from. The step's stdout and
+  # stderr go to a separate capture file, which is only ever shown to a human.
+  AUDIT_ALLOW_FOREIGN_CWD=1 node "$STEP_CLI" run --step code-audit --budget-sec "$AUDIT_BUDGET" --progress-sec "$PROGRESS_SEC" --out "$AUDIT_OUT_ARG" -- node "$AUDIT_SCRIPT" "$@" --out "$AUDIT_REPORT_ARG"
 }
-AUDIT_OUT="$(mktemp 2>/dev/null || echo /tmp/prepush-audit-$$.json)"
-AUDIT_OUT_ARG="$AUDIT_OUT"
-if command -v cygpath >/dev/null 2>&1; then AUDIT_OUT_ARG="$(cygpath -w "$AUDIT_OUT")"; fi
-echo "[prepush-hook] ▸ auditing $PLAN_FILE via $AUDIT_LOOP_DIR (budget \${AUDIT_BUDGET}s, \${AUDIT_OWN_FILES:+branch-own files only, }output: $AUDIT_OUT)" >&2
-prepush_audit
-EXIT=$?
-# 124: the budget ran out. The runner has said which step, how long and who holds the lease; unlike every other audit failure this
-# one REFUSES the push - a gate that cannot finish is not a pass - whatever AUDIT_PREPUSH_BLOCK says.
-if [ "$EXIT" = "124" ]; then rm -f "$AUDIT_OUT"; exit 1; fi
 
-if [ "$EXIT" != "0" ]; then
-  # Surface WHY (signal vs noise) — a non-zero audit exit is usually a config/env
-  # issue (e.g. OPENAI_API_KEY absent in the push environment) rather than real
-  # findings, and a blind "proceeding anyway" hides which it is. Print the tail of
-  # the captured output so the operator can tell.
-  echo "[prepush-hook] audit exited $EXIT (non-blocking) — reason (last lines of output):" >&2
-  tail -n 6 "$AUDIT_OUT" >&2 2>/dev/null || true
-  echo "[prepush-hook] ↑ config/key error → noise (fix env or ignore); real findings → address, or set AUDIT_PREPUSH_BLOCK=1 to gate." >&2
-  if [ "$AUDIT_PREPUSH_BLOCK" = "1" ]; then rm -f "$AUDIT_OUT"; exit "$EXIT"; fi
+# ── Reuse an audit that already covered this exact tree (v12) ────────────────
+# Keyed on TREE identity only (never the branch name, never recency): a CONVERGED run recorded for the pushed commit's tree is the
+# evidence, and redoing a ~25-minute audit of it is what timed a 60-file push out at a flat 600s. Anything the check cannot establish
+# (no marker, a different tree, a store it cannot read) is "none": the audit runs. The reason is printed either way.
+AUDIT_REUSED=""
+# Bounded like every other step: a helper that stalls refuses the push (124), it does not hang it. stderr stays visible so the
+# runner's timeout refusal (and any helper error) is never swallowed; only stdout is captured.
+# A reused run is a CONVERGED one - the audit-code loop already adjudicated what it found - so it is not re-judged against
+# AUDIT_PREPUSH_BLOCK, which gates the findings of an audit THIS push ran.
+AUDIT_REUSE="$(prepush_bounded audit-reuse "$STEP_BUDGET" node "$STEP_CLI" audit-reuse)"
+AUDIT_REUSE_RC=$?
+[ "$AUDIT_REUSE_RC" -eq 124 ] && exit 1
+[ "$AUDIT_REUSE_RC" -ne 0 ] && AUDIT_REUSE="none the reuse check could not run"
+case "$AUDIT_REUSE" in
+  "reuse "*)
+    AUDIT_REUSED=1
+    echo "[prepush-hook] ▸ reusing audit run \${AUDIT_REUSE#reuse } (converged round / audited tree): the pushed tree is exactly the tree it audited - code audit skipped" >&2
+    ;;
+  *) echo "[prepush-hook] ▸ no audit run to reuse: \${AUDIT_REUSE#none }" >&2 ;;
+esac
+
+if [ "$AUDIT_REUSED" != "1" ]; then
+  # The budget scales with the diff (files + lines, floor 600s, capped) unless AUDIT_PREPUSH_AUDIT_BUDGET_SEC pins it. An unreadable
+  # size keeps the floor: a budget is only ever too small or exact here, and too small is a refusal that names itself, not a skip.
+  if [ -n "$AUDIT_PREPUSH_AUDIT_BUDGET_SEC" ]; then
+    AUDIT_BUDGET="$AUDIT_PREPUSH_AUDIT_BUDGET_SEC"; AUDIT_BUDGET_BASIS="pinned by AUDIT_PREPUSH_AUDIT_BUDGET_SEC"
+  else
+    if [ -n "$AUDIT_OWN_FILES" ]; then AUDIT_BUDGET_LINE="$(prepush_bounded audit-budget "$STEP_BUDGET" node "$STEP_CLI" audit-budget --files "$AUDIT_OWN_FILES")"; else AUDIT_BUDGET_LINE="$(prepush_bounded audit-budget "$STEP_BUDGET" node "$STEP_CLI" audit-budget)"; fi
+    [ "$?" -eq 124 ] && exit 1
+    AUDIT_BUDGET="\${AUDIT_BUDGET_LINE%% *}"; AUDIT_BUDGET_BASIS="scaled to \${AUDIT_BUDGET_LINE#* }"
+    case "$AUDIT_BUDGET" in ''|*[!0-9]*) AUDIT_BUDGET=600; AUDIT_BUDGET_BASIS="default (the diff size could not be read)" ;; esac
+  fi
+  # mktemp creates each file exclusively. There is NO predictable-path fallback: the report file is what the outcome is read from, so
+  # a pre-existing file at a guessable path could stand in for the audit's verdict. No private temp file, no audit, no push.
+  AUDIT_OUT="$(mktemp 2>/dev/null)" && AUDIT_REPORT="$(mktemp 2>/dev/null)" || {
+    rm -f "$AUDIT_OUT" "$AUDIT_REPORT"
+    echo "✗  [prepush-hook] cannot create private temp files (mktemp failed) - the audit's result could not be read safely - push BLOCKED." >&2
+    exit 1
+  }
+  AUDIT_OUT_ARG="$AUDIT_OUT"
+  AUDIT_REPORT_ARG="$AUDIT_REPORT"
+  if command -v cygpath >/dev/null 2>&1; then AUDIT_OUT_ARG="$(cygpath -w "$AUDIT_OUT")"; AUDIT_REPORT_ARG="$(cygpath -w "$AUDIT_REPORT")"; fi
+  echo "[prepush-hook] ▸ auditing $PLAN_FILE via $AUDIT_LOOP_DIR (budget \${AUDIT_BUDGET}s, $AUDIT_BUDGET_BASIS; \${AUDIT_OWN_FILES:+branch-own files only, }output: $AUDIT_OUT)" >&2
+  prepush_audit
+  EXIT=$?
+  # 124: the budget ran out. The runner has said which step, how long and who holds the lease; this REFUSES the push - a gate that
+  # cannot finish is not a pass - whatever AUDIT_PREPUSH_BLOCK says.
+  if [ "$EXIT" = "124" ]; then rm -f "$AUDIT_OUT" "$AUDIT_REPORT"; exit 1; fi
+  # Did the audit MEASURE anything? Read from its exit contract and its envelope, never its prose (lib/prepush-audit-gate.mjs):
+  # DID NOT RUN (crash, auth/config, INCOMPLETE exit 3, no envelope) refuses unless AUDIT_PREPUSH_ALLOW_UNMEASURED=1; RAN WITH
+  # FINDINGS is advisory unless AUDIT_PREPUSH_BLOCK=1; RAN CLEAN passes. If the classifier itself fails, that is a refusal too.
+  prepush_bounded audit-outcome "$STEP_BUDGET" node "$STEP_CLI" audit-outcome --exit "$EXIT" --report "$AUDIT_REPORT_ARG" --out "$AUDIT_OUT_ARG" >&2
+  OUTCOME_RC=$?
+  rm -f "$AUDIT_OUT" "$AUDIT_REPORT"
+  [ "$OUTCOME_RC" -eq 0 ] || exit 1
 fi
-rm -f "$AUDIT_OUT"
 
 # ── Surfaces-manifest drift (persona-test consistency mode) ─────────────────
 # When the synced builder + a .persona-test/ dir are present, verify the
