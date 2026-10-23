@@ -106,6 +106,36 @@ describe('branchOwnedChangedFiles - what the branch itself changed', () => {
   });
 });
 
+describe('branchOwnedChangedFiles - against REAL git output (the fakes above encode what we expect git to print)', () => {
+  it('two merges in one range, each authoring a file: both authored paths are found, no header byte leaks into a path', (t) => {
+    const ws = tmpDir('real-two-merges-');
+    try {
+      const c = buildConsumer(ws);
+      const { remoteTip } = mergePush(c, { ownCommitAfterRemote: false });
+      c.put('src/evil-one.txt', 'one\n');
+      git(['commit', '-q', '--amend', '--no-edit'], c.local); // merge 1 authors a file
+      git(['checkout', '-q', 'main'], c.local);
+      c.put('src/from-main-2.txt', 'm2\n');
+      c.commit('M2');
+      git(['push', '-q', 'origin', 'main'], c.local);
+      git(['checkout', '-q', 'feature'], c.local);
+      git(['merge', '-q', '--no-edit', '--no-commit', 'origin/main'], c.local);
+      c.put('src/evil-two café.txt', 'two\n');
+      c.commit('merge 2 authors a file');
+      const head = git(['rev-parse', 'HEAD'], c.local);
+      const run = (args) => {
+        const r = spawnSync('git', args, { cwd: c.local, encoding: 'utf-8' });
+        return r.status === 0 ? (r.stdout.trim() || null) : null;
+      };
+      const r = branchOwnedChangedFiles({ base: remoteTip, head }, { run });
+      assert.equal(r.scoped, true, r.reason);
+      assert.deepEqual(r.files, ['src/evil-one.txt', 'src/evil-two café.txt']);
+      assert.ok(r.files.every((f) => !/[\x00-\x1f]/.test(f)), 'no control byte may leak into a path');
+      assert.ok(!r.files.some((f) => /from-main/.test(f)));
+    } finally { rmrf(ws); }
+  });
+});
+
 // ── B. runStep ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 describe('runStep - a budget overrun refuses, with the facts', () => {
   const clockOf = (...ts) => { let i = 0; return () => ts[Math.min(i++, ts.length - 1)]; };
