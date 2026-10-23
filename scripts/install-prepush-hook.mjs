@@ -460,7 +460,8 @@ if [ "$PLAN_STATUS_DISABLE" != "1" ]; then
   # \`--selfcheck-relocation\` prints OK and exits 0 before the CLI parses
   # anything, so it answers exactly the runnability question and nothing else.
   echo "[prepush-hook] ▸ plan-status gate (budget \${STEP_BUDGET}s)" >&2
-  PLAN_STATUS_PROBE="$(prepush_bounded plan-status-probe "$STEP_BUDGET" node "$STATUS_CLI" --selfcheck-relocation 2>&1)"
+  # --progress-sec 0: the probe's combined output is compared with the exact protocol value, so no heartbeat may land in it.
+  PLAN_STATUS_PROBE="$(node "$STEP_CLI" run --step plan-status-probe --budget-sec "$STEP_BUDGET" --progress-sec 0 -- node "$STATUS_CLI" --selfcheck-relocation 2>&1)"
   PLAN_STATUS_PROBE_RC=$?
   if [ "$PLAN_STATUS_PROBE_RC" -eq 124 ]; then
     printf '%s\\n' "$PLAN_STATUS_PROBE" >&2
@@ -534,7 +535,12 @@ fi
 # A MERGE push (main merged into the branch) carries the whole of main's delta in base..head, and the audit's default scope on a
 # merge commit is HEAD~1..HEAD - the same delta. A plan main had landed was audited as if this push had written it. So when the range
 # holds a merge, the audit reads only the branch's own files (--files); a merge push whose branch owns nothing has nothing to audit.
-OWN_SCOPE="$(node "$STEP_CLI" own-files 2>/dev/null)"
+echo "[prepush-hook] ▸ audit scope (budget \${STEP_BUDGET}s)" >&2
+OWN_SCOPE="$(prepush_bounded audit-scope "$STEP_BUDGET" node "$STEP_CLI" own-files)"
+OWN_SCOPE_RC=$?
+# 124: the runner has said why. Any other failure leaves the scope unknown, which is the WHOLE push range below, never a narrower one.
+[ "$OWN_SCOPE_RC" -eq 124 ] && exit 1
+[ "$OWN_SCOPE_RC" -ne 0 ] && OWN_SCOPE="unscoped"
 case "$OWN_SCOPE" in
   "scoped:")
     echo "[prepush-hook] merge push: the branch owns no files in this range (all of it arrived from the default branch) - code audit skipped" >&2
@@ -548,7 +554,9 @@ prepush_audit() {
   if [ -n "$AUDIT_OWN_FILES" ]; then
     set -- code "$PLAN_FILE" --files "$AUDIT_OWN_FILES"
   else
-    set -- code "$PLAN_FILE" --scope diff
+    # Without --base the audit reads HEAD~1..HEAD: the tip commit of a multi-commit push, or main's whole delta on a merge commit.
+    # Pass the range git handed this hook; when there is none (a tty, a manual run) the audit keeps its own dirty-aware default.
+    if [ -n "$PUSH_BASE" ]; then set -- code "$PLAN_FILE" --scope diff --base "$PUSH_BASE"; else set -- code "$PLAN_FILE" --scope diff; fi
   fi
   # AUDIT_ALLOW_FOREIGN_CWD=1: this runs the SOURCE repo's openai-audit.mjs against
   # THIS (consumer) repo's cwd on purpose — the audit reads its diff from cwd, so

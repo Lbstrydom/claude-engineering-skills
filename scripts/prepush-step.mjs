@@ -18,6 +18,8 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { resolvePushRange, branchOwnedChangedFiles } from './lib/push-range.mjs';
 import { runStep } from './lib/prepush-step.mjs';
 
+/** Signals that mean "stop": a terminal interrupt, a termination request, a hangup, and Ctrl+Break on Windows. */
+const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'];
 const KNOWN_FLAGS = ['--step', '--budget-sec', '--progress-sec', '--out', '--default-ref', '--selfcheck-relocation'];
 
 const flagValue = (argv, name) => {
@@ -28,10 +30,11 @@ const flagValue = (argv, name) => {
 /** @returns {string} the single protocol line `own-files` prints */
 export function ownFilesLine({ env = process.env, defaultRef, resolve = resolvePushRange, owned = branchOwnedChangedFiles } = {}) {
   const range = resolve({ env });
-  if (!range.ok) return 'unscoped';
+  // Only a range git itself handed the hook (source 'explicit') may narrow what is audited: an inferred one may already be too small.
+  if (!range.ok || !range.trusted) return 'unscoped';
   const r = owned(range, defaultRef ? { defaultRef } : {});
-  // A path with a comma cannot ride a comma-separated list: say "unscoped" (the whole diff) rather than split it.
-  if (!r || !r.scoped || r.files.some((f) => f.includes(','))) return 'unscoped';
+  // A path with a comma or a newline cannot ride a one-line comma-separated list: say "unscoped" (the whole diff) rather than split it.
+  if (!r || !r.scoped || r.files.some((f) => /[,\r\n]/.test(f))) return 'unscoped';
   return `scoped:${r.files.join(',')}`;
 }
 
@@ -62,13 +65,20 @@ async function main() {
   const outFile = flagValue(head, '--out');
   const fd = outFile ? fs.openSync(outFile, 'w') : null;
   const [cmd, ...args] = cmdv;
+  // A stop request (the hook was interrupted) must reach the step's process tree, or the machine keeps burning after the push died.
+  const abort = new AbortController();
+  const stop = () => abort.abort();
+  const wired = STOP_SIGNALS.filter((sig) => { try { process.on(sig, stop); return true; } catch { return false; } });
   let r;
   try {
     r = await runStep({
-      step, cmd: cmd === 'node' ? process.execPath : cmd, args, budgetMs: budgetSec * 1000, progressMs: progressSec * 1000,
+      signal: abort.signal, step, cmd: cmd === 'node' ? process.execPath : cmd, args, budgetMs: budgetSec * 1000, progressMs: progressSec * 1000,
       stdio: fd === null ? 'inherit' : ['ignore', fd, fd], log: (line) => process.stderr.write(`${line}\n`),
     });
-  } finally { if (fd !== null) fs.closeSync(fd); }
+  } finally {
+    for (const sig of wired) process.off(sig, stop);
+    if (fd !== null) fs.closeSync(fd);
+  }
   await finishAndExit(toShellExitCode(r.code)); // git reads a hook's status as `code & 0xff`: a step failing with 256 must not read as 0
 }
 

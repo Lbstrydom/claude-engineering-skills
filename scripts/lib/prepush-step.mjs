@@ -19,6 +19,9 @@ import { summarise } from './fleet/lease.mjs';
 /** The exit status of a step that outlived its budget. The hook reads exactly this value as "refuse the push". */
 export const STEP_TIMEOUT_EXIT = 124;
 
+/** The exit of a step stopped from outside (SIGINT's conventional 128 + 2). */
+export const INTERRUPTED_EXIT = 130;
+const SIGNUM = Object.freeze({ SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGKILL: 9, SIGTERM: 15 });
 const hhmm = (iso) => new Date(iso).toTimeString().slice(0, 5);
 const secs = (ms) => Math.round(ms / 1000);
 
@@ -62,16 +65,17 @@ export function timeoutRefusal({ step, elapsedMs, budgetMs, lease }) {
  * @param {number} o.budgetMs
  * @param {number} [o.progressMs=30000] - heartbeat interval; 0 disables it
  * @param {any} [o.stdio='inherit'] - e.g. ['ignore', fd, fd] to send the step's output to a file
+ * @param {AbortSignal} [o.signal] - a stop request: the step's tree is stopped and the result is `interrupted`
  * @param {(line: string) => void} [o.log]
  * @param {() => number} [o.clock]
  * @param {typeof runChild} [o.run]
  * @param {typeof setInterval} [o.every]
  * @param {typeof clearInterval} [o.stopEvery]
  * @param {() => string} [o.leaseText]
- * @returns {Promise<{code: number, timedOut: boolean, elapsedMs: number}>}
+ * @returns {Promise<{code: number, timedOut: boolean, elapsedMs: number, interrupted?: boolean, signal?: string}>}
  */
 export async function runStep({
-  step, cmd, args = [], budgetMs, progressMs = 30_000, stdio = 'inherit', log = () => {}, clock = Date.now, run = runChild,
+  step, cmd, args = [], budgetMs, progressMs = 30_000, stdio = 'inherit', signal, log = () => {}, clock = Date.now, run = runChild,
   every = setInterval, stopEvery = clearInterval, leaseText = describeLeaseHolder,
 }) {
   const t0 = clock();
@@ -80,17 +84,23 @@ export async function runStep({
     : null;
   beat?.unref?.();
   let r;
-  try { r = await run({ cmd, args, timeoutMs: budgetMs, stdio }); } finally { if (beat) stopEvery(beat); }
+  try { r = await run({ cmd, args, timeoutMs: budgetMs, stdio, ...(signal ? { signal } : {}) }); } finally { if (beat) stopEvery(beat); }
   const elapsedMs = clock() - t0;
   if (r.timedOut) {
     log(timeoutRefusal({ step, elapsedMs, budgetMs, lease: leaseText() }));
     return { code: STEP_TIMEOUT_EXIT, timedOut: true, elapsedMs };
   }
+  if (r.stopped && !r.timedOut) {
+    log(`✗  [prepush-hook] step '${step}' was interrupted after ${secs(elapsedMs)}s - push BLOCKED.`);
+    return { code: INTERRUPTED_EXIT, timedOut: false, interrupted: true, elapsedMs };
+  }
   if (r.spawnError) {
     log(`✗  [prepush-hook] step '${step}' could not start: ${r.spawnError} - push BLOCKED.`);
     return { code: 1, timedOut: false, elapsedMs };
   }
-  // A signal death has no exit code: it is a failure, never a pass (see toShellExitCode).
-  const code = r.code === null || r.code === undefined ? 1 : r.code;
-  return { code, timedOut: false, elapsedMs };
+  // A signal death has no exit code: it is a failure, never a pass (see toShellExitCode) - and it keeps WHICH signal, as 128 + its number.
+  if (r.code === null || r.code === undefined) {
+    return { code: r.signal ? 128 + (SIGNUM[r.signal] ?? 15) : 1, timedOut: false, elapsedMs, ...(r.signal ? { signal: r.signal } : {}) };
+  }
+  return { code: r.code, timedOut: false, elapsedMs };
 }

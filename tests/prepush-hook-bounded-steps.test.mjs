@@ -47,42 +47,60 @@ function fakeGit(map) {
 
 describe('branchOwnedChangedFiles - what the branch itself changed', () => {
   const range = { base: 'aaa', head: 'bbb' };
-  it('a merge range keeps only files the non-merge commits (not on the default branch) touched', () => {
+  const nul = (...names) => names.map((n) => n + '\0').join('');
+  const MARK = '\x01abc123\0';
+  const base = { 'rev-list --merges --count': '1', 'rev-parse --verify --quiet origin/main^{commit}': 'deadbeef' };
+  it('a merge range keeps the branch non-merge files AND what the merge itself authored - not what came from main', () => {
     const run = fakeGit({
-      'diff --name-only aaa..bbb': 'docs/plans/p.md\nsrc/mine.ts\nsrc/from-main.ts',
-      'rev-list --merges --count': '1',
-      'rev-parse --verify --quiet origin/main^{commit}': 'deadbeef',
+      ...base,
+      'diff --name-only -z aaa..bbb': nul('docs/plans/p.md', 'src/mine.ts', 'src/from-main.ts', 'src/resolved.ts', 'src/café.ts'),
       'rev-list --count --no-merges': '2',
-      'log --no-merges --name-only --format= aaa..bbb --not origin/main': 'src/mine.ts\n\nsrc/mine.ts',
+      'log --no-merges --name-only -z --format= aaa..bbb --not origin/main': nul('src/mine.ts', 'src/mine.ts', 'src/café.ts'),
+      'log --merges --cc --name-only -z': MARK + '\0' + nul('src/resolved.ts'),
     });
     const r = branchOwnedChangedFiles(range, { run });
-    assert.deepEqual(r, { files: ['src/mine.ts'], scoped: true, excluded: 2 });
+    assert.deepEqual(r, { files: ['src/mine.ts', 'src/resolved.ts', 'src/café.ts'], scoped: true, excluded: 2 });
   });
-  it('a pure merge of main (the branch owns no commits in the range) is scoped to NOTHING, not mistaken for a git failure', () => {
+  it('a pure CLEAN merge of main (no own commits, nothing authored) is scoped to NOTHING, not mistaken for a git failure', () => {
     const run = fakeGit({
-      'diff --name-only aaa..bbb': 'docs/plans/p.md\nsrc/from-main.ts',
-      'rev-list --merges --count': '1',
-      'rev-parse --verify --quiet origin/main^{commit}': 'deadbeef',
+      ...base,
+      'diff --name-only -z aaa..bbb': nul('docs/plans/p.md', 'src/from-main.ts'),
       'rev-list --count --no-merges': '0',
+      'log --merges --cc --name-only -z': MARK,
     });
     assert.deepEqual(branchOwnedChangedFiles(range, { run }), { files: [], scoped: true, excluded: 2 });
   });
-  it('NEVER narrows when it cannot tell: no merge, unresolvable default ref, git failure', () => {
-    const whole = 'a.md\nb.ts';
-    const base = { 'diff --name-only aaa..bbb': whole };
-    assert.equal(branchOwnedChangedFiles(range, { run: fakeGit({ ...base, 'rev-list --merges --count': '0' }) }).scoped, false);
-    const noRef = branchOwnedChangedFiles(range, { run: fakeGit({ ...base, 'rev-list --merges --count': '2' }) });
+  it('a merge that AUTHORED a file (conflict resolution, evil merge) is never scoped to nothing', () => {
+    const run = fakeGit({
+      ...base,
+      'diff --name-only -z aaa..bbb': nul('a.ts', 'from-main.ts'),
+      'rev-list --count --no-merges': '0',
+      'log --merges --cc --name-only -z': MARK + '\0' + nul('a.ts'),
+    });
+    assert.deepEqual(branchOwnedChangedFiles(range, { run }).files, ['a.ts']);
+  });
+  it('NEVER narrows when it cannot tell: no merge, unresolvable default ref, any failing git call', () => {
+    const whole = nul('a.md', 'b.ts');
+    const diff = { 'diff --name-only -z aaa..bbb': whole };
+    assert.equal(branchOwnedChangedFiles(range, { run: fakeGit({ ...diff, 'rev-list --merges --count': '0' }) }).scoped, false);
+    const noRef = branchOwnedChangedFiles(range, { run: fakeGit({ ...diff, 'rev-list --merges --count': '2' }) });
     assert.deepEqual([noRef.scoped, noRef.reason, noRef.files], [false, 'default-ref-unresolvable', ['a.md', 'b.ts']]);
-    const noCount = branchOwnedChangedFiles(range, { run: fakeGit({ ...base, 'rev-list --merges --count': '1', 'rev-parse --verify': 'x' }) });
-    assert.deepEqual([noCount.scoped, noCount.reason, noCount.files.length], [false, 'own-count-unavailable', 2]);
-    const noLog = branchOwnedChangedFiles(range, { run: fakeGit({ ...base, 'rev-list --merges --count': '1', 'rev-parse --verify': 'x', 'rev-list --count --no-merges': '3' }) });
-    assert.deepEqual([noLog.scoped, noLog.reason, noLog.files.length], [false, 'own-log-unavailable', 2]);
+    const withRef = { ...diff, ...base };
+    const cases = [
+      [{ ...withRef }, 'own-count-unavailable'],
+      [{ ...withRef, 'rev-list --count --no-merges': '3' }, 'own-log-unavailable'],
+      [{ ...withRef, 'rev-list --count --no-merges': '0' }, 'merge-authored-unavailable'],
+    ];
+    for (const [map, reason] of cases) {
+      const r = branchOwnedChangedFiles(range, { run: fakeGit(map) });
+      assert.deepEqual([r.scoped, r.reason, r.files.length], [false, reason, 2]);
+    }
     assert.equal(branchOwnedChangedFiles(range, { run: fakeGit({}) }), null, 'a failing diff is "no signal", not "nothing changed"');
   });
   it('refuses an option-shaped default ref instead of handing it to git', () => {
     const r = branchOwnedChangedFiles(range, {
       defaultRef: '--upload-pack=x',
-      run: fakeGit({ 'diff --name-only aaa..bbb': 'a', 'rev-list --merges --count': '1' }),
+      run: fakeGit({ 'diff --name-only -z aaa..bbb': nul('a'), 'rev-list --merges --count': '1' }),
     });
     assert.equal(r.scoped, false);
   });
@@ -115,10 +133,24 @@ describe('runStep - a budget overrun refuses, with the facts', () => {
   it('a signal death (null code) and a spawn error are failures, never a pass', async () => {
     const lines = [];
     const sig = await runStep({ step: 's', cmd: 'x', budgetMs: 1000, progressMs: 0, run: async () => ({ code: null, signal: 'SIGKILL', timedOut: false }) });
-    assert.equal(sig.code, 1);
+    assert.deepEqual([sig.code, sig.signal], [137, 'SIGKILL'], 'a signal death keeps WHICH signal: 128 + its number');
+    const bare = await runStep({ step: 's', cmd: 'x', budgetMs: 1000, progressMs: 0, run: async () => ({ code: null, signal: null, timedOut: false }) });
+    assert.equal(bare.code, 1);
     const spawnErr = await runStep({ step: 's', cmd: 'x', budgetMs: 1000, progressMs: 0, log: (l) => lines.push(l), run: async () => ({ code: null, spawnError: 'ENOENT', timedOut: false }) });
     assert.equal(spawnErr.code, 1);
     assert.match(lines.join(''), /could not start: ENOENT - push BLOCKED/);
+  });
+  it('a step stopped from outside is INTERRUPTED (130), never a pass and never a timeout', async () => {
+    const lines = [];
+    const r = await runStep({ step: 'code-audit', cmd: 'x', budgetMs: 1000, progressMs: 0, log: (l) => lines.push(l), run: async () => ({ code: null, signal: 'SIGTERM', timedOut: false, stopped: true }) });
+    assert.deepEqual([r.code, r.interrupted, r.timedOut], [130, true, false]);
+    assert.match(lines.join(''), /was interrupted after .*push BLOCKED/);
+  });
+  it('forwards the stop request to the child runner', async () => {
+    const ac = new AbortController();
+    let seen;
+    await runStep({ step: 's', cmd: 'x', budgetMs: 1000, progressMs: 0, signal: ac.signal, run: async (o) => { seen = o.signal; return { code: 0, timedOut: false }; } });
+    assert.equal(seen, ac.signal);
   });
   it('emits a heartbeat while the step runs, and stops it afterwards', async () => {
     const lines = []; let tick; let cleared = false;
@@ -177,7 +209,10 @@ function makeSourceRepo(ws) {
   fs.writeFileSync(path.join(scripts, 'check-plan-status.mjs'), [
     "import fs from 'node:fs';",
     "const a = process.argv.slice(2);",
-    "if (a.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }",
+    "if (a.includes('--selfcheck-relocation')) {",
+    "  if (process.env.STUB_PROBE_SLEEP_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.STUB_PROBE_SLEEP_MS));",
+    "  console.log('OK'); process.exit(0);",
+    '}',
     "const i = a.indexOf('--select');",
     "if (i >= 0) { if (fs.existsSync('docs/plans/active.md')) process.stdout.write('docs/plans/active.md\\n'); process.exit(0); }",
     'process.exit(0);', '',
@@ -328,6 +363,38 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     } finally { rmrf(ws); }
   });
 
+  it('a file the MERGE itself authored (conflict resolution / evil merge) is audited, and a non-ASCII path survives the hand-off intact', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const ws = tmpDir('hook-merge-authored-');
+    try {
+      const source = makeSourceRepo(ws);
+      const c = buildConsumer(ws);
+      const { remoteTip } = mergePush(c, { ownCommitAfterRemote: true });
+      c.put('src/evil café.txt', 'written by the merge\n');
+      git(['commit', '-q', '--amend', '--no-edit'], c.local);
+      const head = git(['rev-parse', 'HEAD'], c.local);
+      const got = runHook(c.local, source, `refs/heads/feature ${head} refs/heads/feature ${remoteTip}\n`);
+      assert.equal(got.status, 0, got.stderr);
+      assert.equal(argvOf(c.local)[3], 'src/evil café.txt,src/f2.txt', 'the merge-authored file is in scope, main\'s files are not');
+    } finally { rmrf(ws); }
+  });
+
+  it('a slow runner probe (heartbeat due) does not turn a healthy checker into "CANNOT RUN"', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const ws = tmpDir('hook-slow-probe-');
+    try {
+      const source = makeSourceRepo(ws);
+      const c = buildConsumer(ws);
+      c.put('src/own.txt', 'x\n');
+      const head = c.commit('own');
+      const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${git(['rev-parse', 'HEAD~1'], c.local)}\n`, {
+        STUB_PROBE_SLEEP_MS: '2500', AUDIT_PREPUSH_PROGRESS_SEC: '1',
+      });
+      assert.equal(got.status, 0, got.stderr);
+      assert.doesNotMatch(got.stderr, /CANNOT RUN/);
+    } finally { rmrf(ws); }
+  });
+
   it('a merge push whose branch owns nothing in the range skips the audit - loudly, not silently', (t) => {
     if (!HAS_BASH) return t.skip('bash is required');
     const ws = tmpDir('hook-merge-none-');
@@ -342,7 +409,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     } finally { rmrf(ws); }
   });
 
-  it('a NON-merge push keeps the old audit scope (--scope diff): the fix does not change ordinary pushes', (t) => {
+  it('a NON-merge push audits the WHOLE range git handed the hook (--base), not the audit HEAD~1 default', (t) => {
     if (!HAS_BASH) return t.skip('bash is required');
     const ws = tmpDir('hook-nonmerge-');
     try {
@@ -350,9 +417,10 @@ describe('the real hook - bounded, visible, fail-closed', () => {
       const c = buildConsumer(ws);
       c.put('src/own.txt', 'x\n');
       const head = c.commit('own');
-      const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${git(['rev-parse', 'HEAD~1'], c.local)}\n`);
+      const base = git(['rev-parse', 'HEAD~1'], c.local);
+      const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${base}\n`);
       assert.equal(got.status, 0, got.stderr);
-      assert.deepEqual(argvOf(c.local), ['code', 'docs/plans/active.md', '--scope', 'diff']);
+      assert.deepEqual(argvOf(c.local), ['code', 'docs/plans/active.md', '--scope', 'diff', '--base', base]);
     } finally { rmrf(ws); }
   });
 
@@ -374,16 +442,20 @@ describe('the real hook - bounded, visible, fail-closed', () => {
 });
 
 describe('ownFilesLine - the protocol line the hook reads', () => {
-  const ok = { ok: true, base: 'a', head: 'b' };
+  const ok = { ok: true, base: 'a', head: 'b', source: 'explicit', trusted: true };
   it('unscoped when the range cannot be resolved or the branch could not be isolated', () => {
     assert.equal(ownFilesLine({ resolve: () => ({ ok: false }), owned: () => assert.fail('must not ask') }), 'unscoped');
     assert.equal(ownFilesLine({ resolve: () => ok, owned: () => ({ files: ['a'], scoped: false }) }), 'unscoped');
     assert.equal(ownFilesLine({ resolve: () => ok, owned: () => null }), 'unscoped');
+    // An INFERRED range may already be too small to narrow from.
+    const inferred = { ...ok, source: 'fork-point', trusted: false };
+    assert.equal(ownFilesLine({ resolve: () => inferred, owned: () => assert.fail('must not narrow an inferred range') }), 'unscoped');
   });
   it('scoped carries the list - empty when the branch owns nothing - and refuses to split a path containing a comma', () => {
     assert.equal(ownFilesLine({ resolve: () => ok, owned: () => ({ files: ['a.ts', 'b.ts'], scoped: true }) }), 'scoped:a.ts,b.ts');
     assert.equal(ownFilesLine({ resolve: () => ok, owned: () => ({ files: [], scoped: true }) }), 'scoped:');
     assert.equal(ownFilesLine({ resolve: () => ok, owned: () => ({ files: ['a,b.ts'], scoped: true }) }), 'unscoped');
+    assert.equal(ownFilesLine({ resolve: () => ok, owned: () => ({ files: ['a\nb.ts'], scoped: true }) }), 'unscoped');
   });
 });
 
