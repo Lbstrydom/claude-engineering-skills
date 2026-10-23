@@ -643,7 +643,7 @@ describe('the real hook - reuse of an audit that already covered this tree, and 
     fs.writeFileSync(path.join(scripts, 'prepush-step.mjs'), [
       "import { spawnSync } from 'node:child_process';",
       `const real = ${JSON.stringify(real)};`,
-      `if (process.argv[2] === 'audit-reuse') { process.stdout.write(${JSON.stringify(`${line}\n`)}); process.exit(0); }`,
+      `if (process.argv[2] === 'audit-reuse') { if (${JSON.stringify(line)} === 'hang') { setInterval(() => {}, 1000); await new Promise(() => {}); } else { process.stdout.write(${JSON.stringify(`${line}\n`)}); process.exit(0); } }`,
       "const r = spawnSync(process.execPath, [real, ...process.argv.slice(2)], { stdio: 'inherit' });",
       'process.exit(r.status ?? 1);', '',
     ].join('\n'));
@@ -661,6 +661,19 @@ describe('the real hook - reuse of an audit that already covered this tree, and 
       assert.equal(got.status, 0, got.stderr);
       assert.equal(got.audited, false, 'the audit must not run when its run is reused');
       assert.match(got.stderr, /reusing audit run audit-run-0003 2 abcdef012345/);
+    } finally { rmrf(ws); }
+  });
+  it('a stalled reuse check is bounded: the push is REFUSED with the runner\'s timeout message visible, the audit never runs', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const ws = tmpDir('hook-reuse-hang-');
+    try {
+      const source = makeSourceRepo(ws);
+      stubReuse(source, 'hang');
+      const c = buildConsumer(ws);
+      const got = runHook(c.local, source, stdinOf(pushOf(c)), { ...base, AUDIT_PREPUSH_STEP_BUDGET_SEC: '2', AUDIT_PREPUSH_PROGRESS_SEC: '1' });
+      assert.equal(got.status, 1, got.stderr);
+      assert.match(got.stderr, /step 'audit-reuse' exceeded its 2s budget/);
+      assert.equal(got.audited, false);
     } finally { rmrf(ws); }
   });
   it('no reusable run -> the audit runs, and the reason is printed', (t) => {

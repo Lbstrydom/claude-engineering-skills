@@ -593,8 +593,11 @@ prepush_audit() {
 # evidence, and redoing a ~25-minute audit of it is what timed a 60-file push out at a flat 600s. Anything the check cannot establish
 # (no marker, a different tree, a store it cannot read) is "none": the audit runs. The reason is printed either way.
 AUDIT_REUSED=""
-# Bounded like every other step: a helper that stalls refuses the push (124), it does not hang it.
-AUDIT_REUSE="$(prepush_bounded audit-reuse "$STEP_BUDGET" node "$STEP_CLI" audit-reuse 2>/dev/null)"
+# Bounded like every other step: a helper that stalls refuses the push (124), it does not hang it. stderr stays visible so the
+# runner's timeout refusal (and any helper error) is never swallowed; only stdout is captured.
+# A reused run is a CONVERGED one - the audit-code loop already adjudicated what it found - so it is not re-judged against
+# AUDIT_PREPUSH_BLOCK, which gates the findings of an audit THIS push ran.
+AUDIT_REUSE="$(prepush_bounded audit-reuse "$STEP_BUDGET" node "$STEP_CLI" audit-reuse)"
 AUDIT_REUSE_RC=$?
 [ "$AUDIT_REUSE_RC" -eq 124 ] && exit 1
 [ "$AUDIT_REUSE_RC" -ne 0 ] && AUDIT_REUSE="none the reuse check could not run"
@@ -612,7 +615,7 @@ if [ "$AUDIT_REUSED" != "1" ]; then
   if [ -n "$AUDIT_PREPUSH_AUDIT_BUDGET_SEC" ]; then
     AUDIT_BUDGET="$AUDIT_PREPUSH_AUDIT_BUDGET_SEC"; AUDIT_BUDGET_BASIS="pinned by AUDIT_PREPUSH_AUDIT_BUDGET_SEC"
   else
-    if [ -n "$AUDIT_OWN_FILES" ]; then AUDIT_BUDGET_LINE="$(prepush_bounded audit-budget "$STEP_BUDGET" node "$STEP_CLI" audit-budget --files "$AUDIT_OWN_FILES" 2>/dev/null)"; else AUDIT_BUDGET_LINE="$(prepush_bounded audit-budget "$STEP_BUDGET" node "$STEP_CLI" audit-budget 2>/dev/null)"; fi
+    if [ -n "$AUDIT_OWN_FILES" ]; then AUDIT_BUDGET_LINE="$(prepush_bounded audit-budget "$STEP_BUDGET" node "$STEP_CLI" audit-budget --files "$AUDIT_OWN_FILES")"; else AUDIT_BUDGET_LINE="$(prepush_bounded audit-budget "$STEP_BUDGET" node "$STEP_CLI" audit-budget)"; fi
     [ "$?" -eq 124 ] && exit 1
     AUDIT_BUDGET="\${AUDIT_BUDGET_LINE%% *}"; AUDIT_BUDGET_BASIS="scaled to \${AUDIT_BUDGET_LINE#* }"
     case "$AUDIT_BUDGET" in ''|*[!0-9]*) AUDIT_BUDGET=600; AUDIT_BUDGET_BASIS="default (the diff size could not be read)" ;; esac
