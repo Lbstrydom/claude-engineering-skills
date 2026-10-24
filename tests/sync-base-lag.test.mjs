@@ -320,7 +320,7 @@ describe('sync:pr and the pre-write check share ONE stale-base predicate', () =>
 describe('sync-to-repos.mjs CLI - the lag is asked before the first write', { timeout: 600_000 }, () => {
   function staleConsumer({ dirty }) {
     const w = world();
-    fs.rmSync(path.join(w.consumer, '.sync-receipt.json'), { force: true });
+    fs.rmSync(path.join(w.consumer, '.sync-receipt.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     fs.writeFileSync(path.join(w.consumer, 'package.json'), JSON.stringify({ name: 'lag-fixture', type: 'module' }));
     seedInstalledDeps(w.consumer);
     fs.writeFileSync(path.join(w.consumer, '.gitignore'), '');
