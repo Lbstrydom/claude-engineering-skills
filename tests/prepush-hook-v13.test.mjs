@@ -4,7 +4,7 @@
  *
  *   A. REUSE BY PATCHES (eb21). A cherry-pick recovery after a squash divergence changes the pushed TREE but not the branch's own
  *      diff, so v12 re-ran a ~14 minute audit over work it had already converged. A converged run is now also reused when the
- *      branch's own commits have exactly the audited commits' patch ids - and the output says range-diff-equivalent, never "same tree".
+ *      branch's own commits have exactly the audited commits' content fingerprints - and the output says range-diff-equivalent, never "same tree".
  *   B. NO PLAN (33e2). The plan selector resolving nothing made the hook `finish` having audited NOTHING, with only a status line
  *      (storyline #431). That is UNMEASURED: refused unless the push carries nothing a code audit reads, or the named override is set.
  *   C. THE BUDGET is refit from measured durations (the formula's own doc carries the numbers); the regression that motivated it is
@@ -383,5 +383,44 @@ describe('hook v13 housekeeping', () => {
   it('the fail-closed-on-signal block is untouched by this change (byte-identical in both hooks is pinned elsewhere; here: still present once)', () => {
     assert.equal(HOOK_BODY.split('# >>> fail-closed-on-signal >>>').length - 1, 1);
     assert.equal(HOOK_BODY.split('# <<< fail-closed-on-signal <<<').length - 1, 1);
+  });
+});
+
+// ── audit round 1: renames, and the budget's input contract ───────────────────────────────────────────────────────────────────────
+describe('no-plan push - a rename lists BOTH endpoints (a code file renamed to a docs path is not docs-only)', () => {
+  it('noPlanExit refuses src/app.mjs -> docs/app.md; the same content merely ADDED as docs is exempt (control)', () => {
+    const dir = tmpDir('audit-noplan-rename-');
+    try {
+      git(['init', '-q', '-b', 'main'], dir);
+      git(['config', 'user.email', 'a@example.invalid'], dir);
+      git(['config', 'user.name', 'A'], dir);
+      fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'src', 'app.mjs'), 'export const answer = 42;\nexport const more = "enough lines so git sees a rename";\n');
+      git(['add', '.'], dir); git(['commit', '-q', '-m', 'seed'], dir);
+      const base = git(['rev-parse', 'HEAD'], dir);
+      fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+      git(['mv', 'src/app.mjs', 'docs/app.md'], dir); git(['commit', '-q', '-m', 'rename code to docs'], dir);
+      const env = { AUDIT_PUSH_RANGE_BASE: base, AUDIT_PUSH_RANGE_HEAD: git(['rev-parse', 'HEAD'], dir) };
+      // instrument check: default rename detection reports ONLY the destination - the blind spot this closes
+      assert.equal(git(['diff', '--name-only', `${base}..HEAD`], dir), 'docs/app.md');
+      const lines = [];
+      assert.equal(noPlanExit({ env, cwd: dir, write: (l) => lines.push(l) }), 1);
+      assert.match(lines.join('\n'), /src\/app\.mjs/);
+      // control: adding a doc (no code file touched) is exempt
+      const base2 = git(['rev-parse', 'HEAD'], dir);
+      fs.writeFileSync(path.join(dir, 'docs', 'extra.md'), 'words\n'); git(['add', '.'], dir); git(['commit', '-q', '-m', 'docs only'], dir);
+      assert.equal(noPlanExit({ env: { AUDIT_PUSH_RANGE_BASE: base2, AUDIT_PUSH_RANGE_HEAD: git(['rev-parse', 'HEAD'], dir) }, cwd: dir, write: () => {} }), 0);
+    } finally { rmrf(dir); }
+  });
+});
+
+describe('auditBudgetSec - the input contract is the file count', () => {
+  it('files alone is enough (no fall back to the floor), a missing/garbage lines value only drops it from the basis, and unknown files keeps the floor', () => {
+    assert.equal(auditBudgetSec({ files: 23 }).budgetSec, 1290);
+    assert.equal(auditBudgetSec({ files: 23, lines: null }).budgetSec, 1290);
+    assert.equal(auditBudgetSec({ files: 23, lines: -5 }).budgetSec, 1290);
+    assert.equal(auditBudgetSec({ files: 23 }).basis, '23 file(s)');
+    assert.equal(auditBudgetSec({ files: 23, lines: 1208 }).basis, '23 file(s), 1208 changed line(s)');
+    for (const bad of [{}, { files: null }, { files: NaN }, { files: -1 }]) assert.deepEqual(auditBudgetSec(bad), { budgetSec: BUDGET.floorSec, basis: 'diff size unknown' });
   });
 });

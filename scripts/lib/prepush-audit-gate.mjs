@@ -140,7 +140,7 @@ export function decideAuditGate({ outcome, env = {} }) {
  * Decide whether a recorded audit run already covers the pushed commit.
  *
  * Identity is the TREE, or - when the tree differs - the branch's own PATCHES: the marker's `auditedTree` must equal the pushed
- * commit's tree object id, or `equivalence` must say the pushed branch's own commits have exactly the audited commits' patch ids
+ * commit's tree object id, or `equivalence` must say the pushed branch's own commits have exactly the audited commits' content fingerprints
  * (`patchRangesEquivalent`; the caller only asks when the marker names an `auditedSha`). The marker alone proves an audit RAN (its
  * own header says so), so a reuse additionally needs the store's row for that run to say it CONVERGED - and when that cannot be
  * read (cloud off, query failed, no row) the answer is "re-run", never "assume it passed".
@@ -188,17 +188,17 @@ export const BUDGET = Object.freeze({ floorSec: 600, baseSec: 600, perFileSec: 3
 /**
  * The code-audit budget for a diff of this size. The previous flat 600s refused a ~60-file push whose audit had already passed;
  * the cap keeps a runaway audit bounded (a step that exceeds even this still REFUSES - it is never a skip).
- * @param {{files: number|null, lines: number|null}} size `null` = the size is unknown, which keeps the old floor
+ * @param {{files: number|null, lines?: number|null}} size `files: null` = the size is unknown, which keeps the old floor; `lines` is informational
  * @returns {{budgetSec: number, basis: string}}
  */
 export function auditBudgetSec({ files, lines } = {}) {
   const { floorSec, baseSec, perFileSec, capSec } = BUDGET;
-  if (!Number.isFinite(files) || !Number.isFinite(lines) || files < 0 || lines < 0) {
-    return { budgetSec: floorSec, basis: 'diff size unknown' };
-  }
+  // Only the file count is an input; `lines` is shown when known, and its absence or garbage never costs the file-based answer.
+  if (!Number.isFinite(files) || files < 0) return { budgetSec: floorSec, basis: 'diff size unknown' };
   const raw = Math.round(baseSec + perFileSec * files);
   const budgetSec = Math.min(capSec, Math.max(floorSec, raw));
-  return { budgetSec, basis: `${files} file(s), ${lines} changed line(s)${budgetSec === capSec && raw > capSec ? ` (capped at ${capSec}s)` : ''}` };
+  const shownLines = Number.isFinite(lines) && lines >= 0 ? `, ${lines} changed line(s)` : '';
+  return { budgetSec, basis: `${files} file(s)${shownLines}${budgetSec === capSec && raw > capSec ? ` (capped at ${capSec}s)` : ''}` };
 }
 
 /**

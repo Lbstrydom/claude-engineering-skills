@@ -283,7 +283,7 @@ export function checkEvidenceProvenance({ evidence, committingBranch, isAncestor
 
 /** The line ship-commit prints when a marker is accepted by patch equivalence rather than by ancestry. */
 export function describeEquivalenceAcceptance({ auditedSha, commits }) {
-  return `ship-commit: audit evidence accepted as RANGE-DIFF-EQUIVALENT: the audited commit ${auditedSha.slice(0, 12)} is no longer in this history (a rebase or cherry-pick), but this branch's ${commits} own commit(s) have exactly the patch ids of the commits that run audited. The gate still compares trees, so this supports converged, never passed.`;
+  return `ship-commit: audit evidence accepted as RANGE-DIFF-EQUIVALENT: the audited commit ${auditedSha.slice(0, 12)} is no longer in this history (a rebase or cherry-pick), but this branch's ${commits} own commit(s) have exactly the content fingerprints of the commits that run audited. The gate still compares trees, so this supports converged, never passed.`;
 }
 
 /**

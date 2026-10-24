@@ -17,7 +17,7 @@
  *   prepush-step.mjs audit-reuse
  *       `reuse <runId> <round> <tree12>` when a CONVERGED audit run recorded for exactly the pushed commit's tree exists;
  *       `reuse-equivalent <runId> <round> <commits>` when the tree differs but the branch's own commits have exactly the audited
- *       commits' patch ids (range-diff-equivalent: a rebase / cherry-pick recovery); else `none <reason>`. Anything unverifiable is
+ *       commits' content fingerprints (range-diff-equivalent: a rebase / cherry-pick recovery); else `none <reason>`. Anything unverifiable is
  *       `none` (the audit runs).
  *   prepush-step.mjs audit-budget [--files <a,b,...>]
  *       `<seconds> <basis>`: the code-audit budget scaled to the pushed diff (`600 + 30*files`, capped; refit from the store).
@@ -114,7 +114,7 @@ export function noPlanExit({ env = process.env, cwd = process.cwd(), gitFn = git
   try {
     const range = resolvePushRange({ env, run: runIn(cwd, gitFn) });
     if (range.ok && range.trusted) {
-      files = gitFn(cwd, ['diff', '--name-only', '-z', `${range.base}..${range.head}`]).split('\0').filter(Boolean);
+      files = gitFn(cwd, ['diff', '--name-only', '--no-renames', '-z', `${range.base}..${range.head}`]).split('\0').filter(Boolean);
     }
   } catch { files = null; }
   const decision = decideNoPlanGate({ files, env, selectorFailed });

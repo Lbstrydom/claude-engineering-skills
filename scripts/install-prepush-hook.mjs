@@ -157,7 +157,7 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // is plan-keyed (`openai-audit.mjs code <plan-file>`), so a plan-less audit was not the cheap option. (2) The diff-scaled audit budget is
 // refit from the store's MEASURED round-1 audit durations (600s + 30s per file, capped): v12's formula gave a 23-file / 1208-line push
 // 881s and the audit took 882s. (3) A converged audit is also reused when the tree differs but the branch's own commits have exactly
-// the audited commits' patch ids (a rebase / cherry-pick recovery moves the tree, not the diff) - printed as range-diff-equivalent,
+// the audited commits' content fingerprints (a rebase / cherry-pick recovery moves the tree, not the diff) - printed as range-diff-equivalent,
 // never as "the same tree". Logic: lib/prepush-audit-gate.mjs, lib/patch-equivalence.mjs. Re-install: `npm run hooks:install -- --target <name>`.
 const HOOK_VERSION    = 13;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
@@ -605,7 +605,7 @@ prepush_audit() {
 }
 
 # ── Reuse an audit that already covered this exact tree (v12) ────────────────
-# Keyed on TREE identity (never the branch name, never recency) or, when the tree moved, on the branch's own PATCH IDS (v13): a CONVERGED
+# Keyed on TREE identity (never the branch name, never recency) or, when the tree moved, on the branch's own content-preserving PATCH FINGERPRINTS (v13; never a merge-bearing range): a CONVERGED
 # run recorded for the pushed commit's tree - or for exactly these patches - is the
 # evidence, and redoing a ~25-minute audit of it is what timed a 60-file push out at a flat 600s. Anything the check cannot establish
 # (no marker, a different tree, a store it cannot read) is "none": the audit runs. The reason is printed either way.
@@ -625,7 +625,7 @@ case "$AUDIT_REUSE" in
     ;;
   "reuse-equivalent "*)
     AUDIT_REUSED=1
-    echo "[prepush-hook] ▸ reusing audit run \${AUDIT_REUSE#reuse-equivalent } (run, converged round, commits): range-diff-equivalent - the tree differs (the base moved) but the branch's own commits have exactly the patch ids of the commits that run audited - code audit skipped" >&2
+    echo "[prepush-hook] ▸ reusing audit run \${AUDIT_REUSE#reuse-equivalent } (run, converged round, commits): range-diff-equivalent - the tree differs (the base moved) but the branch's own commits have exactly the content fingerprints of the commits that run audited - code audit skipped" >&2
     ;;
   *) echo "[prepush-hook] ▸ no audit run to reuse: \${AUDIT_REUSE#none }" >&2 ;;
 esac
