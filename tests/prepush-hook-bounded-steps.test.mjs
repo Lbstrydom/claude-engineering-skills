@@ -549,12 +549,13 @@ const stdinOf = (p) => `refs/heads/main ${p.head} refs/heads/main ${p.base}\n`;
 
 describe('the real hook - an audit that did not run is UNMEASURED and refuses the push', () => {
   const clear = { AUDIT_PREPUSH_ALLOW_UNMEASURED: '', AUDIT_PREPUSH_BLOCK: '' };
-  function scenario(stub, env = {}) {
+  function scenario(stub, env = {}, before = null) {
     const ws = tmpDir('hook-outcome-');
     try {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
       const p = pushOf(c);
+      if (before) before(c.local);
       return runHook(c.local, source, stdinOf(p), { AUDIT_STUB: stub, ...clear, ...env });
     } finally { rmrf(ws); }
   }
@@ -600,11 +601,12 @@ describe('the real hook - an audit that did not run is UNMEASURED and refuses th
     assert.equal(blocked.status, 1, blocked.stderr);
     assert.match(blocked.stderr, /push BLOCKED: AUDIT_PREPUSH_BLOCK=1/);
   });
-  it('no private temp file (mktemp fails) -> refuses before auditing: there is no predictable-path fallback to read a verdict from', (t) => {
+  it('no private file (the keep directory cannot be created) -> refuses before auditing: there is no predictable-path fallback to read a verdict from', (t) => {
     if (!HAS_BASH) return t.skip('bash is required');
-    const got = scenario('pass', { TMPDIR: path.join(os.tmpdir(), 'does-not-exist-prepush-v12'), TMP: path.join(os.tmpdir(), 'does-not-exist-prepush-v12'), TEMP: path.join(os.tmpdir(), 'does-not-exist-prepush-v12') });
+    // v14 keeps the files under .audit/prepush/, so the way to make creation fail is a FILE squatting on that path.
+    const got = scenario('pass', {}, (local) => { fs.mkdirSync(path.join(local, '.audit'), { recursive: true }); fs.writeFileSync(path.join(local, '.audit', 'prepush'), 'x'); });
     assert.equal(got.status, 1, got.stderr);
-    assert.match(got.stderr, /cannot create private temp files/);
+    assert.match(got.stderr, /cannot create private files under \.audit\/prepush/);
     assert.equal(got.audited, false);
   });
   it('RAN CLEAN passes, and says it ran', (t) => {
