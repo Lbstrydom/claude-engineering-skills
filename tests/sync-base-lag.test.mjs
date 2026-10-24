@@ -261,6 +261,12 @@ describe('enforceBaseLag - real git', () => {
 
 // ── C. one oracle ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 describe('the remote calls are bounded', () => {
+  it('the bound is a HARD one: a process that ignores SIGTERM is still ended (killSignal SIGKILL)', { skip: process.platform === 'win32' ? 'Windows has no catchable SIGTERM; its kill is already unconditional' : false }, () => {
+    const t0 = Date.now();
+    const r = spawnRunnerDirect(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { timeoutMs: 300 });
+    assert.ok(Date.now() - t0 < 10_000, 'a SIGTERM-ignoring process must not outlive its bound');
+    assert.ok(r.error || r.status !== 0);
+  });
   it('spawnRunner with timeoutMs ends a stalled process as an ordinary failure (so a hung ls-remote reads as "not checked"), and with none it does not time out', () => {
     const t0 = Date.now();
     const hung = spawnRunnerDirect(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 300 });

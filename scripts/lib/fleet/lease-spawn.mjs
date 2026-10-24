@@ -83,6 +83,10 @@ export function runChild({ cmd, args = [], signal, timeoutMs, graceMs = 10_000, 
       signal?.removeEventListener('abort', onAbort); // a caller-owned controller aborted LATER must not reach a finished child
       resolve({ timedOut, stopped, target, ...r, ...(stopFailed.length > 0 ? { stopFailed: [...stopFailed] } : {}) });
     };
+    // An abandoned child must not keep THIS process alive (a detached child is still referenced) nor leave parent-owned pipes open.
+    function release() {
+      try { child.unref?.(); for (const s of [child.stdin, child.stdout, child.stderr]) s?.destroy?.(); } catch { /* best effort: the result is delivered either way */ }
+    }
     function stopNow() {
       if (stopped || settled) return;
       stopped = true;
@@ -91,7 +95,7 @@ export function runChild({ cmd, args = [], signal, timeoutMs, graceMs = 10_000, 
         const before = stopFailed.length;
         attempt({ force: true });
         // The forced stop FAILED too: waiting for `close` could be forever. Give the root a last chance to go, then report.
-        if (stopFailed.length > before) abandonTimer = setTimeout(() => finish({ code: null, signal: null, abandoned: true }), abandonMs);
+        if (stopFailed.length > before) abandonTimer = setTimeout(() => { release(); finish({ code: null, signal: null, abandoned: true }); }, abandonMs);
       }, graceMs);
     }
     child.once('error', (e) => finish({ code: null, signal: null, spawnError: e.message }));

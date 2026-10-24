@@ -134,6 +134,23 @@ describe('runChild - a stop that cannot be made to work does not hang the caller
       assert.deepEqual(res.stopFailed, ['first stop: refused (first)', 'force stop: refused (force)']);
     } finally { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
   });
+  it('an abandoned child is unreferenced and its piped stdio destroyed, so it cannot keep the caller alive', async () => {
+    const { EventEmitter } = await import('node:events');
+    const destroyed = [];
+    const fake = Object.assign(new EventEmitter(), {
+      pid: 4321, unrefCalled: false, unref() { this.unrefCalled = true; },
+      stdout: { destroy: () => destroyed.push('stdout') }, stderr: { destroy: () => destroyed.push('stderr') }, stdin: null,
+    });
+    const ac = new AbortController();
+    const res = await new Promise((resolve) => {
+      const child = runChild({ cmd: process.execPath, args: [], signal: ac.signal, graceMs: 20, abandonMs: 20, spawn: () => fake, stop: () => ({ ok: false, why: 'refused' }) });
+      setTimeout(() => ac.abort(), 10);
+      child.then(resolve);
+    });
+    assert.equal(res.abandoned, true);
+    assert.equal(fake.unrefCalled, true);
+    assert.deepEqual(destroyed, ['stdout', 'stderr']);
+  });
   it('CONTROL: a forced stop that WORKS never abandons - the result waits for the real close and carries no abandoned flag', async () => {
     const ac = new AbortController();
     let n = 0;

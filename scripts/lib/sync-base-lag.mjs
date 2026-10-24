@@ -66,7 +66,8 @@ export function classifyBaseLag({ baseBranch, baseSha, currentBranch, aheadCount
 export function spawnRunner(cmd, args, { cwd, input, timeoutMs, env } = {}) {
   const r = spawnSync(cmd, args, {
     cwd, input, encoding: 'utf-8', windowsHide: true, maxBuffer: 64 * 1024 * 1024,
-    ...(timeoutMs > 0 ? { timeout: timeoutMs } : {}), ...(env ? { env: { ...process.env, ...env } } : {}),
+    // SIGKILL, not spawnSync's default SIGTERM: a process that ignores SIGTERM would otherwise outlive its own bound.
+    ...(timeoutMs > 0 ? { timeout: timeoutMs, killSignal: 'SIGKILL' } : {}), ...(env ? { env: { ...process.env, ...env } } : {}),
   });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error };
 }
