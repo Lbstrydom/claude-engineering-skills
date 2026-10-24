@@ -131,7 +131,7 @@ async function waitFor(file, ms = 5000) {
   return fs.existsSync(file);
 }
 
-function runHook({ consumer, source }, stdin) {
+function runHook({ consumer, source }, stdin, extraEnv = {}) {
   const script = path.join(consumer, '.hook.sh');
   fs.writeFileSync(script, HOOK_BODY);
   const r = spawnSync('bash', [script, 'origin', 'https://example.invalid'], {
@@ -145,6 +145,8 @@ function runHook({ consumer, source }, stdin) {
       PLAN_STATUS_DISABLE: '',
       AUDIT_PREPUSH_DISABLE: '',
       AUDIT_PUSH_RANGE_REQUIRED: '',
+      AUDIT_PREPUSH_ALLOW_UNMEASURED: '',
+      ...extraEnv,
     },
   });
   const driftPath = path.join(consumer, DRIFT_MARKER);
@@ -261,7 +263,13 @@ describe('HOOK_BODY — anything that publishes is still gated', () => {
     if (!HAS_GIT || !HAS_BASH) return t.skip('git and bash are both required');
     const fx = makeFixture();
     try {
-      const got = runHook(fx, '');
+      // v13: with no plan selected and no range from git the hook now reports UNMEASURED and refuses; the named override keeps this case
+      // about what it is for - that empty stdin is not read as a delete-only push, so the gate (and the consumer's local hook) still run.
+      const refused = runHook(fx, '');
+      assert.equal(refused.status, 1, refused.stderr);
+      assert.match(refused.stderr, /UNMEASURED: no plan was selected/);
+      assert.doesNotMatch(refused.stderr, SKIP_NOTE);
+      const got = runHook(fx, '', { AUDIT_PREPUSH_ALLOW_UNMEASURED: '1' });
       assert.equal(got.status, 0, got.stderr);
       assert.deepEqual(got.drift, { base: '', head: '' }, 'with no push info the gate must still run (inferring its range)');
       assert.doesNotMatch(got.stderr, SKIP_NOTE);
