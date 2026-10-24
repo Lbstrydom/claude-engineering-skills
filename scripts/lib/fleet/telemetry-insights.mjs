@@ -14,8 +14,16 @@
 export const THRESHOLDS = Object.freeze({
   minN: 10,                    // events of a verb before its rates are judged
   minSessions: 5,              // sessions before flow rates are judged
-  errorRate: 0.05,             // error+argv share of a verb's invocations
-  slowP95Ms: { status: 10_000, next: 5_000, claim: 10_000, touch: 5_000, ready: 10_000, default: 30_000 },
+  // Re-tuned 2026-10-24 against 14 days of this repo's events (3,567): the old rule judged
+  // error+argv together, and 8 of the 9 HIGH findings it raised had ZERO errors, only
+  // mis-invocations, so the weekly `--fail-on high` failed on usability every week.
+  errorRate: 0.05,             // ERROR share of a verb's invocations (argv is judged apart, below)
+  minErrors: 2,                // a lone error in a small sample reads medium, never HIGH
+  argvRate: 0.1,               // mis-invocation share: above it a docs/CLI-shape gap reads medium, not low
+  // Keyed by label ("verb mode") first, then verb. `lease run`'s duration and exit are the
+  // WRAPPED job's (a 5-10 min gate; exit 1 = the tests failed), so neither is a fleet signal.
+  slowP95Ms: { status: 10_000, next: 5_000, claim: 10_000, touch: 5_000, ready: 10_000, 'lease run': null, default: 30_000 },
+  wrapsJob: ['lease run'],     // labels whose outcome is the wrapped command's: the error rule skips them
   abandonRate: 0.2,            // abandoned / started sessions
   refusalsPerSession: 1,       // refusals INSIDE a claim→release lifecycle (ready/land gates)
   claimRefusalRate: 0.25,      // refused claims / claim attempts: sessions colliding
@@ -54,18 +62,19 @@ export function deriveWeaknesses(m, spool, { nowMs = Date.now(), t = THRESHOLDS 
     const label = v.mode ? `${v.verb} ${v.mode}` : v.verb;
     if (v.n < t.minN) { insufficient.push(label); continue; }
     judged += 1;
-    if (v.errorRate != null && v.errorRate > t.errorRate) {
-      add('high', 'errors', `${label}: ${pct(v.errorRate)} of ${v.n} runs errored or were mis-invoked`);
+    const errors = v.error ?? 0;
+    if (!t.wrapsJob.includes(label) && errors / v.n > t.errorRate) {
+      add(errors >= t.minErrors ? 'high' : 'medium', 'errors', `${label}: ${pct(errors / v.n)} of ${v.n} runs errored (${errors})`);
     }
-    const slow = t.slowP95Ms[v.verb] ?? t.slowP95Ms.default;
-    if (v.p95Ms != null && v.p95Ms > slow) add('medium', 'latency', `${label}: p95 ${Math.round(v.p95Ms)} ms (budget ${slow} ms)`);
+    const slow = label in t.slowP95Ms ? t.slowP95Ms[label] : (t.slowP95Ms[v.verb] ?? t.slowP95Ms.default);
+    if (slow != null && v.p95Ms != null && v.p95Ms > slow) add('medium', 'latency', `${label}: p95 ${Math.round(v.p95Ms)} ms (budget ${slow} ms)`);
     if (v.verb === 'land' && v.pending / v.n > t.pendingShare) {
       add('medium', 'flow', `${label}: ${pct(v.pending / v.n)} of runs ended in WAIT — checks or approvals are the bottleneck`);
     }
     if (v.verb === 'claim' && v.refused / v.n > t.claimRefusalRate) {
       add('medium', 'collisions', `${pct(v.refused / v.n)} of ${v.n} claims were refused — sessions are colliding on the same files`);
     }
-    if (v.argv > 0) add('low', 'usability', `${label}: ${v.argv} mis-invocation(s) — see top reasons for the flag; a docs or CLI-shape gap`);
+    if (v.argv > 0) add(v.argv / v.n > t.argvRate ? 'medium' : 'low', 'usability', `${label}: ${v.argv} mis-invocation(s) (${pct(v.argv / v.n)}) — see top reasons for the flag; a docs or CLI-shape gap`);
   }
 
   const f = m.sessionFlow ?? {};

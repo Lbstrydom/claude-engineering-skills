@@ -350,6 +350,30 @@ describe('weakness findings', () => {
     assert.deepEqual(f.sort(), ['errors', 'flow', 'latency', 'usability']);
   });
 
+  // Boundaries re-tuned 2026-10-24 (telemetry-insights.mjs THRESHOLDS): a fixture just inside and just outside each.
+  const at = (o) => deriveWeaknesses(m({ goldenSignals: [verb(o)] }), null).findings.map((x) => [x.severity, x.signal]);
+
+  test('error rate is ERRORS only: 5% of 40 is inside, 3 of 40 is outside', () => {
+    assert.deepEqual(at({ n: 40, error: 2 }), []);
+    assert.deepEqual(at({ n: 40, error: 3 }), [['high', 'errors']]);
+  });
+
+  test('mis-invocations never raise the error rule; above 10% they read medium usability', () => {
+    assert.deepEqual(at({ n: 20, argv: 2, errorRate: 0.1 }), [['low', 'usability']]);
+    assert.deepEqual(at({ n: 20, argv: 3, errorRate: 0.15 }), [['medium', 'usability']]);
+  });
+
+  test('a lone error over the rate is medium; two make it HIGH', () => {
+    assert.deepEqual(at({ n: 13, error: 1 }), [['medium', 'errors']]);
+    assert.deepEqual(at({ n: 13, error: 2 }), [['high', 'errors']]);
+  });
+
+  test('lease run reports the wrapped job: its exit and duration raise nothing, while other lease modes keep the default budget', () => {
+    assert.deepEqual(at({ verb: 'lease', mode: 'run', n: 23, error: 14, p95Ms: 312_066 }), []);
+    assert.deepEqual(at({ verb: 'lease', mode: 'status', p95Ms: 30_000 }), []);
+    assert.deepEqual(at({ verb: 'lease', mode: 'status', p95Ms: 30_001 }), [['medium', 'latency']]);
+  });
+
   test('a rate is not judged below the minimum sample', () => {
     const f = deriveWeaknesses(m({ goldenSignals: [verb({ n: THRESHOLDS.minN - 1, errorRate: 1 })] }), null).findings;
     assert.deepEqual(f, []);
