@@ -17,6 +17,7 @@ import {
 } from '../scripts/lib/fleet/telemetry.mjs';
 import { drainSpool, pendingFiles, spoolHealth, SpooledEventSchema } from '../scripts/lib/fleet/telemetry-drain.mjs';
 import { deriveWeaknesses, THRESHOLDS } from '../scripts/lib/fleet/telemetry-insights.mjs';
+import { leaseRunResult } from '../scripts/lib/fleet/lease-cmd.mjs';
 import { cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv, tmpRoot } from './helpers/fleet-repo.mjs';
 import { git } from './helpers/git.mjs';
 
@@ -368,8 +369,20 @@ describe('weakness findings', () => {
     assert.deepEqual(at({ n: 13, error: 2 }), [['high', 'errors']]);
   });
 
-  test('lease run reports the wrapped job: its exit and duration raise nothing, while other lease modes keep the default budget', () => {
-    assert.deepEqual(at({ verb: 'lease', mode: 'run', n: 23, error: 14, p95Ms: 312_066 }), []);
+  test('a lone error is medium on EVERY path: per-verb and crash-kind findings share one severity policy', () => {
+    const both = (n) => deriveWeaknesses(m({ goldenSignals: [verb({ n: 13, error: n })], errorKinds: [{ kind: 'TypeError', n }] }), null)
+      .findings.filter((x) => x.signal === 'errors').map((x) => x.severity);
+    assert.deepEqual(both(1), ['medium', 'medium']);
+    assert.deepEqual(both(2), ['high', 'high']);
+  });
+
+  test('lease run: exits the wrapped command owns (childExit) raise nothing; wrapper errors still do', () => {
+    assert.deepEqual(at({ verb: 'lease', mode: 'run', n: 23, error: 0, childExit: 14 }), []);
+    assert.deepEqual(at({ verb: 'lease', mode: 'run', n: 23, error: 2, childExit: 12 }), [['high', 'errors']]);
+  });
+
+  test('lease run has no latency budget (its duration is the job), while other lease modes keep the default', () => {
+    assert.deepEqual(at({ verb: 'lease', mode: 'run', p95Ms: 312_066 }), []);
     assert.deepEqual(at({ verb: 'lease', mode: 'status', p95Ms: 30_000 }), []);
     assert.deepEqual(at({ verb: 'lease', mode: 'status', p95Ms: 30_001 }), [['medium', 'latency']]);
   });
@@ -450,5 +463,39 @@ describe('fleet.mjs wiring', () => {
       assert.equal(r.status, 1);
       assert.doesNotMatch(r.stderr, /telemetry/);
     } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+});
+
+describe('lease run: the origin of a non-zero exit is decided at capture', () => {
+  const ran = (result, o = {}) => ({ ran: true, outcome: 'ran', result, released: { ok: true }, ...o });
+
+  test('the wrapped command\'s own exit, timeout or signal is a childExit, and is spooled as one', () => {
+    for (const res of [ran({ code: 1 }), ran({ code: null, timedOut: true }), ran({ code: null, signal: 'SIGKILL' })]) {
+      const r = leaseRunResult(res, { timeoutMin: 1 });
+      assert.equal(r.code, 'error');
+      assert.equal(r.childExit, true, JSON.stringify(res));
+      assert.equal(buildEvent({ verb: 'lease', positionals: ['run'], result: r, exitCode: r.exitCode, startedMs: 0, endedMs: 1 }).detail.childExit, true);
+    }
+    assert.equal(leaseRunResult(ran({ code: 0 })).childExit, undefined, 'a clean exit carries no marker');
+  });
+
+  test('a wrapper failure is never a childExit: spawn failure, stop signal, lost release, lease error', () => {
+    const cases = [
+      ran({ spawnError: { code: 'ENOENT' } }),
+      ran({ code: 143 }, { signalled: 'SIGTERM' }),
+      ran({ code: 1 }, { released: { ok: false } }),
+      { ran: false, outcome: 'lease-error', reason: 'registry unreadable' },
+    ];
+    for (const res of cases) {
+      const r = leaseRunResult(res, { cmd: 'x' });
+      assert.equal(r.code, 'error', JSON.stringify(res));
+      assert.equal(r.childExit, undefined, JSON.stringify(res));
+    }
+  });
+
+  test('a refused acquire is recorded as refused, and still exits 75', () => {
+    const r = leaseRunResult({ ran: false, outcome: 'not-granted', code: 'held', reason: 'held by x' });
+    assert.deepEqual([r.code, r.exitCode], ['refused', 75]);
+    assert.equal(outcomeOf(r, null), 'refused');
   });
 });

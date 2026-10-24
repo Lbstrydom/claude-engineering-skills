@@ -93,15 +93,20 @@ export async function readFleetTelemetry(repoId, { sinceIso, untilIso = new Date
   const p = [repoId, sinceIso, untilIso];
   // ONE window predicate for every query, and ONE failure predicate: a crash
   // ('error') or a mis-invocation ('argv') — the sibling metrics must agree.
+  // An error a wrapped command owns (`lease run`'s child exited non-zero, marked
+  // `childExit` at capture) is not a fleet failure, and is counted apart.
   const W = 'repo_id = $1 AND created_at >= $2 AND created_at < $3';
-  const FAILED = "outcome IN ('error', 'argv')";
+  const CHILD_EXIT = "outcome = 'error' AND detail->>'childExit' = 'true'";
+  const FLEET_ERROR = `outcome = 'error' AND NOT coalesce(${CHILD_EXIT}, false)`;
+  const FAILED = `(outcome = 'argv' OR (${FLEET_ERROR}))`;
   try {
     const verbs = await many(
       `SELECT verb, mode, count(*)::int AS n,
               count(*) FILTER (WHERE outcome = 'ok')::int AS ok,
               count(*) FILTER (WHERE outcome = 'refused')::int AS refused,
               count(*) FILTER (WHERE outcome = 'pending')::int AS pending,
-              count(*) FILTER (WHERE outcome = 'error')::int AS error,
+              count(*) FILTER (WHERE ${FLEET_ERROR})::int AS error,
+              count(*) FILTER (WHERE ${CHILD_EXIT})::int AS child_exit,
               count(*) FILTER (WHERE outcome = 'argv')::int AS argv,
               percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50_ms,
               percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95_ms,
@@ -184,7 +189,7 @@ export async function readFleetTelemetry(repoId, { sinceIso, untilIso = new Date
     const s = saturation[0] ?? {};
     return {
       goldenSignals: verbs.map((v) => ({
-        verb: v.verb, mode: v.mode, n: v.n, ok: v.ok, refused: v.refused, pending: v.pending, error: v.error, argv: v.argv,
+        verb: v.verb, mode: v.mode, n: v.n, ok: v.ok, refused: v.refused, pending: v.pending, error: v.error, childExit: v.child_exit, argv: v.argv,
         errorRate: v.n ? Number(((v.error + v.argv) / v.n).toFixed(3)) : null,
         p50Ms: num(v.p50_ms), p95Ms: num(v.p95_ms), maxMs: num(v.max_ms),
       })),
