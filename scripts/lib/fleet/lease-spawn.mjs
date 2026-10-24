@@ -59,16 +59,19 @@ export function stopTree(pid, { force = false, platform = process.platform, kill
 /**
  * Run `cmd args...` to completion, stopping its whole tree when `signal` aborts or `timeoutMs` passes.
  * `stopFailed` is present (and non-empty) only when a stop request FAILED: the tree may still be running, whatever the root did next.
- * @returns {Promise<{code: number|null, signal: string|null, timedOut: boolean, stopped: boolean, spawnError?: string, stopFailed?: string[]}>}
+ * If the FORCED stop also failed and the root still has not closed `abandonMs` later, the child is ABANDONED: the result is delivered with
+ * `abandoned: true` (code and signal null) instead of waiting on a process the caller was told it could not stop. A caller that sees
+ * `abandoned` knows the tree is still running; nothing here claims it was terminated.
+ * @returns {Promise<{code: number|null, signal: string|null, timedOut: boolean, stopped: boolean, spawnError?: string, stopFailed?: string[], abandoned?: boolean}>}
  */
-export function runChild({ cmd, args = [], signal, timeoutMs, graceMs = 10_000, onSpawn, spawn = cp.spawn, stop = stopTree, platform = process.platform, execPath, exists, stdio = 'inherit' }) {
+export function runChild({ cmd, args = [], signal, timeoutMs, graceMs = 10_000, abandonMs = 5_000, onSpawn, spawn = cp.spawn, stop = stopTree, platform = process.platform, execPath, exists, stdio = 'inherit' }) {
   return new Promise((resolve) => {
     let child;
     const target = resolveSpawnTarget({ cmd, args, platform, ...(execPath ? { execPath } : {}), ...(exists ? { exists } : {}) });
     try {
       child = spawn(target.cmd, target.args, { stdio, shell: false, detached: platform !== 'win32', windowsHide: true });
     } catch (e) { resolve({ code: null, signal: null, timedOut: false, stopped: false, spawnError: e.message, target }); return; }
-    let stopped = false; let timedOut = false; let graceTimer = null; let timeoutTimer = null; let settled = false;
+    let stopped = false; let timedOut = false; let graceTimer = null; let timeoutTimer = null; let abandonTimer = null; let settled = false;
     const stopFailed = [];
     // An injected `stop` that returns nothing (the old contract) is read as ok: only an explicit {ok: false} is a failure.
     const attempt = (opts) => { const r = stop(child.pid, opts); if (r && r.ok === false) stopFailed.push(`${opts.force ? 'force' : 'first'} stop: ${r.why}`); };
@@ -76,7 +79,7 @@ export function runChild({ cmd, args = [], signal, timeoutMs, graceMs = 10_000, 
     const finish = (r) => {
       if (settled) return;
       settled = true;
-      clearTimeout(graceTimer); clearTimeout(timeoutTimer);
+      clearTimeout(graceTimer); clearTimeout(timeoutTimer); clearTimeout(abandonTimer);
       signal?.removeEventListener('abort', onAbort); // a caller-owned controller aborted LATER must not reach a finished child
       resolve({ timedOut, stopped, target, ...r, ...(stopFailed.length > 0 ? { stopFailed: [...stopFailed] } : {}) });
     };
@@ -84,7 +87,12 @@ export function runChild({ cmd, args = [], signal, timeoutMs, graceMs = 10_000, 
       if (stopped || settled) return;
       stopped = true;
       attempt({ force: false });
-      graceTimer = setTimeout(() => attempt({ force: true }), graceMs);
+      graceTimer = setTimeout(() => {
+        const before = stopFailed.length;
+        attempt({ force: true });
+        // The forced stop FAILED too: waiting for `close` could be forever. Give the root a last chance to go, then report.
+        if (stopFailed.length > before) abandonTimer = setTimeout(() => finish({ code: null, signal: null, abandoned: true }), abandonMs);
+      }, graceMs);
     }
     child.once('error', (e) => finish({ code: null, signal: null, spawnError: e.message }));
     child.once('spawn', () => { try { onSpawn?.(child.pid); } catch { /* attaching is best effort */ } });

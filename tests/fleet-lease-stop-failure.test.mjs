@@ -106,7 +106,48 @@ describe('runChild - a failed stop reaches the result', () => {
       child.then(resolve);
     });
     assert.equal(res.stopped, true);
-    assert.deepEqual(res.stopFailed, ['first stop: taskkill exited 1: Access is denied.']);
+    assert.equal(res.stopFailed[0], 'first stop: taskkill exited 1: Access is denied.');
+    // POSIX runChild also sweeps the group once more when the root closes after a deliberate stop, and that attempt fails here too.
+    assert.equal(res.stopFailed.length, process.platform === 'win32' ? 1 : 2, JSON.stringify(res.stopFailed));
+    if (process.platform !== 'win32') assert.equal(res.stopFailed[1], 'force stop: taskkill exited 1: Access is denied.');
+  });
+});
+
+describe('runChild - a stop that cannot be made to work does not hang the caller', () => {
+  it('both stops FAILED and the root never closes: the result is delivered ABANDONED, with the failures, instead of waiting forever', async () => {
+    const ac = new AbortController();
+    let pid;
+    const t0 = Date.now();
+    const res = await new Promise((resolve) => {
+      const child = runChild({
+        cmd: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], signal: ac.signal, graceMs: 50, abandonMs: 100, onSpawn: (p) => { pid = p; },
+        stop: (_pid, o) => ({ ok: false, why: `refused (${o.force ? 'force' : 'first'})` }),
+      });
+      setTimeout(() => ac.abort(), 50);
+      child.then(resolve);
+    });
+    try {
+      assert.ok(Date.now() - t0 < 10_000, 'delivered promptly');
+      assert.equal(res.abandoned, true);
+      assert.equal(res.stopped, true);
+      assert.equal(res.code, null);
+      assert.deepEqual(res.stopFailed, ['first stop: refused (first)', 'force stop: refused (force)']);
+    } finally { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
+  });
+  it('CONTROL: a forced stop that WORKS never abandons - the result waits for the real close and carries no abandoned flag', async () => {
+    const ac = new AbortController();
+    let n = 0;
+    const res = await new Promise((resolve) => {
+      const child = runChild({
+        cmd: process.execPath, args: ['-e', 'setTimeout(() => process.exit(0), 400)'], signal: ac.signal, graceMs: 50, abandonMs: 50,
+        stop: () => { n += 1; return n === 1 ? { ok: false, why: 'first refused' } : { ok: true }; },
+      });
+      setTimeout(() => ac.abort(), 20);
+      child.then(resolve);
+    });
+    assert.equal('abandoned' in res, false);
+    assert.deepEqual(res.stopFailed, ['first stop: first refused']);
+    assert.equal(res.code, 0, 'the real exit, not an abandon');
   });
 });
 

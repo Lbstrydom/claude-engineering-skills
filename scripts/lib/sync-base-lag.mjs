@@ -23,7 +23,7 @@
  */
 import { spawnSync } from 'node:child_process';
 
-/** @typedef {(cmd: string, args: string[], opts?: {cwd?: string, input?: string}) => {status: number|null, stdout: string, stderr: string, error?: Error}} Runner */
+/** @typedef {(cmd: string, args: string[], opts?: {cwd?: string, input?: string, timeoutMs?: number, env?: Record<string, string>}) => {status: number|null, stdout: string, stderr: string, error?: Error}} Runner */
 
 /**
  * The remote's default branch from `git ls-remote --symref origin HEAD`
@@ -47,10 +47,10 @@ export function parseSymrefHead(text) {
  *  - `behind`   origin has commits this checkout lacks, and it has none origin lacks
  *  - `current`  not behind (ahead-only is not lag; `planConsumerPr` refuses it separately as `local-commits-ahead`)
  *
- * @param {{baseBranch: string, baseSha?: string|null, currentBranch: string|null, aheadCount: number|null, behindCount: number|null}} f
+ * @param {{baseBranch: string, baseSha: string|null|undefined, currentBranch: string|null, aheadCount: number|null, behindCount: number|null}} f
  * @returns {'unknown'|'off-base'|'diverged'|'behind'|'current'}
  */
-export function classifyBaseLag({ baseBranch, baseSha = 'x', currentBranch, aheadCount, behindCount }) {
+export function classifyBaseLag({ baseBranch, baseSha, currentBranch, aheadCount, behindCount }) {
   if (typeof baseSha !== 'string' || !baseSha || !Number.isInteger(aheadCount) || !Number.isInteger(behindCount)) return 'unknown';
   if (currentBranch !== baseBranch) return 'off-base';
   if (behindCount > 0) return aheadCount > 0 ? 'diverged' : 'behind';
@@ -59,11 +59,15 @@ export function classifyBaseLag({ baseBranch, baseSha = 'x', currentBranch, ahea
 
 /**
  * The real process runner. Shared by `sync-pr.mjs` and `sync-to-repos.mjs` (the pre-write base-lag check) so the two ask git the
- * same way. A consumer's pre-push hook can run its whole test suite, so there is deliberately no timeout here.
+ * same way. A consumer's pre-push hook can run its whole test suite, so by default there is no timeout; network fact-gathering passes
+ * `timeoutMs` (a stalled `ls-remote` / `fetch` must end in an ordinary failure, not hang the sync) and `env`.
  * @type {Runner}
  */
-export function spawnRunner(cmd, args, { cwd, input } = {}) {
-  const r = spawnSync(cmd, args, { cwd, input, encoding: 'utf-8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+export function spawnRunner(cmd, args, { cwd, input, timeoutMs, env } = {}) {
+  const r = spawnSync(cmd, args, {
+    cwd, input, encoding: 'utf-8', windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+    ...(timeoutMs > 0 ? { timeout: timeoutMs } : {}), ...(env ? { env: { ...process.env, ...env } } : {}),
+  });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error };
 }
 
@@ -196,26 +200,45 @@ export function enforceBaseLag({ repoRoot, run, classify, dryRun = false, allowS
   const target = `origin/${facts.baseBranch}`;
   const note = plan.discard.length > 0 ? `restore ${plan.discard.length} sync-written file(s) to HEAD (this sync rewrites them), then ` : '';
   if (dryRun) return { ok: true, outcome: 'would-fast-forward', lines: [`would ${note}fast-forward ${plan.behindCount} commit(s) to ${target} (dry run: nothing changed)`] };
+  // The restore is the only destructive step, so it is made RECOVERABLE first: `git stash create` writes a commit of the tracked
+  // changes (index and worktree) WITHOUT touching refs or the tree, and a failed fast-forward re-applies it. If the snapshot cannot
+  // be taken, nothing is restored and the consumer is refused.
+  let snapshot = null;
   if (plan.discard.length > 0) {
+    const snap = git(['stash', 'create']);
+    if (snap.error || snap.status !== 0) return refusedFastForward(repoRoot, target, `could not snapshot the sync-written files before restoring them (${firstLine(snap)}); nothing was changed`);
+    snapshot = snap.stdout.trim() || null;
     const restored = git(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...plan.discard]);
-    if (restored.error || restored.status !== 0) {
-      return refusedFastForward(repoRoot, target, `could not restore the sync-written files (${firstLine(restored)})`);
-    }
+    if (restored.error || restored.status !== 0) return failedAfterRestore(git, repoRoot, target, snapshot, `could not restore the sync-written files (${firstLine(restored)})`);
   }
   const merged = git(['merge', '--ff-only', '--quiet', facts.baseSha]);
-  if (merged.error || merged.status !== 0) return refusedFastForward(repoRoot, target, firstLine(merged));
-  return { ok: true, outcome: 'fast-forwarded', lines: [`fast-forwarded ${plan.behindCount} commit(s) to ${target} ${facts.baseSha.slice(0, 8)}${plan.discard.length > 0 ? ` (restored ${plan.discard.length} sync-written file(s) first; this sync rewrites them)` : ''}`] };
+  if (merged.error || merged.status !== 0) return failedAfterRestore(git, repoRoot, target, snapshot, firstLine(merged));
+  return { ok: true, outcome: 'fast-forwarded', lines: [`fast-forwarded ${plan.behindCount} commit(s) to ${target} ${facts.baseSha.slice(0, 8)}${plan.discard.length > 0 ? ` (restored ${plan.discard.length} sync-written file(s) first; this sync rewrites them${snapshot ? `; snapshot ${snapshot.slice(0, 8)} kept until git gc` : ''})` : ''}`] };
 }
 
 const firstLine = (r) => (r.error?.message || `${r.stderr || ''}${r.stdout || ''}`.trim() || `exit ${r.status}`).split('\n')[0];
 
-function refusedFastForward(repoRoot, target, because) {
+/** A step after the restore failed: put the sync-written changes back, and say whether that worked. */
+function failedAfterRestore(git, repoRoot, target, snapshot, because) {
+  let recovery = '';
+  if (snapshot) {
+    const back = git(['stash', 'apply', '--index', '--quiet', snapshot]);
+    recovery = back.error || back.status !== 0
+      ? ` The sync-written changes could NOT be re-applied automatically (${firstLine(back)}); they are in commit ${snapshot}: git -C ${q(repoRoot)} stash apply --index ${snapshot}.`
+      : ' The sync-written changes were put back as they were.';
+  }
+  return refusedFastForward(repoRoot, target, because, recovery);
+}
+
+function refusedFastForward(repoRoot, target, because, recovery = '') {
   return {
     ok: false, outcome: 'refused',
-    lines: [`REFUSED: the fast-forward to ${target} failed in ${repoRoot} (${because}).`, `remedy: git -C ${q(repoRoot)} status, resolve what it shows, then git -C ${q(repoRoot)} pull --ff-only and re-run the sync`],
+    lines: [`REFUSED: the fast-forward to ${target} failed in ${repoRoot} (${because}).${recovery}`, `remedy: git -C ${q(repoRoot)} status, resolve what it shows, then git -C ${q(repoRoot)} pull --ff-only and re-run the sync`],
   };
 }
 
+/** One git call (ls-remote, fetch, merge, ...) outliving this is a failure, which the lag check reads as "not checked"/"refused". */
+const REMOTE_CALL_MS = 60_000;
 const C = { R: '\x1b[31m', Y: '\x1b[33m', G: '\x1b[32m', D: '\x1b[2m', X: '\x1b[0m' };
 
 /**
@@ -228,7 +251,8 @@ const C = { R: '\x1b[31m', Y: '\x1b[33m', G: '\x1b[32m', D: '\x1b[2m', X: '\x1b[
  * @returns {Promise<boolean>}
  */
 export async function enforceBaseLagForTarget(repo, { dryRun = false, allowStale = false, run, classify, write = (l) => console.log(l) } = {}) {
-  const runner = run ?? spawnRunner;
+  // Every git call here is local or one short network round trip: bound it, and never let git prompt for credentials in a sync.
+  const runner = run ?? ((cmd, args, o) => spawnRunner(cmd, args, { ...o, timeoutMs: REMOTE_CALL_MS, env: { GIT_TERMINAL_PROMPT: '0' } }));
   let classifier = classify;
   if (!classifier) {
     const { classifyRepo } = await import('../sync-status.mjs');

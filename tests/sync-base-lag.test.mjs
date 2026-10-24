@@ -16,6 +16,7 @@ import path from 'node:path';
 import { classifyBaseLag, planBaseLag, enforceBaseLag, enforceBaseLagForTarget } from '../scripts/lib/sync-base-lag.mjs';
 import { planConsumerPr, classifyBaseLag as classifyFromSyncPr, SKIP_REASON } from '../scripts/lib/sync-pr.mjs';
 import { spawnRunner } from '../scripts/lib/sync-pr.mjs';
+import { spawnRunner as spawnRunnerDirect } from '../scripts/lib/sync-base-lag.mjs';
 import { seedInstalledDeps, runSyncCli, whySyncFailed } from './helpers/consumer-fixture.mjs';
 import { git } from './lib/hook-test-helpers.mjs';
 
@@ -38,6 +39,11 @@ describe('classifyBaseLag', () => {
     assert.equal(classifyBaseLag(f({ aheadCount: null })), 'unknown');
     assert.equal(classifyBaseLag(f({ baseSha: null })), 'unknown');
     assert.equal(classifyBaseLag(f({ baseSha: '' })), 'unknown');
+    // OMITTED / undefined is missing evidence too: there is no fabricated default that could turn it into 'current' or 'behind'.
+    assert.equal(classifyBaseLag(f({ baseSha: undefined })), 'unknown');
+    const { baseSha, ...omitted } = f({ behindCount: 17 });
+    assert.equal(baseSha.length, 40);
+    assert.equal(classifyBaseLag(omitted), 'unknown');
   });
 });
 
@@ -197,6 +203,36 @@ describe('enforceBaseLag - real git', () => {
       assert.deepEqual([r.ok, r.outcome, r.lines], [true, 'current', []]);
     } finally { w.rm(); }
   });
+  it('RECOVERABLE: a fast-forward that fails AFTER the restore puts the sync-written changes back, byte for byte, and says so', () => {
+    const w = world();
+    try {
+      w.advance('.sync-receipt.json', '{"v":2}\n');
+      fs.writeFileSync(path.join(w.consumer, '.sync-receipt.json'), '{"v":1,"local sync output":true}\n');
+      const classify = () => ({ ok: true, clean: false, syncOwned: [{ status: ' M', path: '.sync-receipt.json', origPath: null }], needsReview: [], other: [], degraded: false });
+      const flaky = (cmd, args, o) => (args.includes('merge') ? { status: 1, stdout: '', stderr: 'fatal: Unable to create index.lock', error: undefined } : spawnRunner(cmd, args, o));
+      const before = w.head();
+      const r = enforceBaseLag({ repoRoot: w.consumer, run: flaky, classify });
+      assert.deepEqual([r.ok, r.outcome], [false, 'refused']);
+      assert.match(r.lines.join('\n'), /The sync-written changes were put back as they were/);
+      assert.equal(w.head(), before);
+      assert.equal(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8'), '{"v":1,"local sync output":true}\n');
+    } finally { w.rm(); }
+  });
+  it('if the snapshot cannot be taken NOTHING is restored (the destructive step never runs unrecoverable)', () => {
+    const w = world();
+    try {
+      w.advance('.sync-receipt.json', '{"v":2}\n');
+      fs.writeFileSync(path.join(w.consumer, '.sync-receipt.json'), 'local\n');
+      const classify = () => ({ ok: true, clean: false, syncOwned: [{ status: ' M', path: '.sync-receipt.json', origPath: null }], needsReview: [], other: [], degraded: false });
+      const calls = [];
+      const noSnap = (cmd, args, o) => { calls.push(args.filter((a) => !a.startsWith('-')).slice(2, 3)[0]); return args.includes('stash') ? { status: 1, stdout: '', stderr: 'fatal: no snapshot' } : spawnRunner(cmd, args, o); };
+      const r = enforceBaseLag({ repoRoot: w.consumer, run: noSnap, classify });
+      assert.equal(r.outcome, 'refused');
+      assert.match(r.lines.join('\n'), /could not snapshot.*nothing was changed/);
+      assert.equal(calls.includes('restore'), false, 'restore must not run without a snapshot');
+      assert.equal(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8'), 'local\n');
+    } finally { w.rm(); }
+  });
   it('a failed fast-forward is a refusal with the remedy, never a quiet proceed', () => {
     const w = world();
     try {
@@ -224,6 +260,16 @@ describe('enforceBaseLag - real git', () => {
 });
 
 // ── C. one oracle ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+describe('the remote calls are bounded', () => {
+  it('spawnRunner with timeoutMs ends a stalled process as an ordinary failure (so a hung ls-remote reads as "not checked"), and with none it does not time out', () => {
+    const t0 = Date.now();
+    const hung = spawnRunnerDirect(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 300 });
+    assert.ok(Date.now() - t0 < 10_000);
+    assert.ok(hung.error || hung.status !== 0, 'a timed-out process is a failure, never a pass');
+    assert.equal(spawnRunnerDirect(process.execPath, ['-e', 'process.stdout.write(process.env.PROBE)'], { env: { PROBE: 'seen' } }).stdout, 'seen');
+  });
+});
+
 describe('sync:pr and the pre-write check share ONE stale-base predicate', () => {
   it('sync-pr re-exports the very function the sync calls', () => {
     assert.equal(classifyFromSyncPr, classifyBaseLag);
@@ -244,7 +290,7 @@ describe('sync:pr and the pre-write check share ONE stale-base predicate', () =>
 });
 
 // ── D. the real CLI ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
-describe('sync-to-repos.mjs CLI - the lag is asked before the first write', () => {
+describe('sync-to-repos.mjs CLI - the lag is asked before the first write', { timeout: 600_000 }, () => {
   function staleConsumer({ dirty }) {
     const w = world();
     fs.rmSync(path.join(w.consumer, '.sync-receipt.json'), { force: true });
@@ -268,7 +314,7 @@ describe('sync-to-repos.mjs CLI - the lag is asked before the first write', () =
       assert.equal(fs.existsSync(path.join(w.consumer, '.sync-receipt.json')), false);
       assert.equal(fs.readFileSync(path.join(w.consumer, 'app.js'), 'utf8'), 'my unfinished edit\n');
     } finally { w.rm(); }
-  }, { timeout: 600_000 });
+  });
   it('a stale CLEAN consumer is fast-forwarded and then synced in the same run', async () => {
     const w = staleConsumer({ dirty: false });
     try {
@@ -278,7 +324,7 @@ describe('sync-to-repos.mjs CLI - the lag is asked before the first write', () =
       assert.equal(fs.readFileSync(path.join(w.consumer, 'upstream-only.txt'), 'utf8'), 'landed on origin\n');
       assert.ok(fs.existsSync(path.join(w.consumer, '.sync-receipt.json')), 'the sync ran after the fast-forward');
     } finally { w.rm(); }
-  }, { timeout: 600_000 });
+  });
   it('--dry-run reports the fast-forward without performing it, and --allow-stale-base is a known flag', async () => {
     const w = staleConsumer({ dirty: false });
     try {
@@ -291,5 +337,5 @@ describe('sync-to-repos.mjs CLI - the lag is asked before the first write', () =
       assert.equal(stale.code, 0, whySyncFailed(stale));
       assert.match(stripAnsi(stale.out), /stale base ACCEPTED/);
     } finally { w.rm(); }
-  }, { timeout: 600_000 });
+  });
 });
