@@ -240,6 +240,20 @@ describe('enforceBaseLag - real git', () => {
       assert.equal(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8'), 'local\n');
     } finally { w.rm(); }
   });
+  it('an IGNORED local file in the way of an incoming tracked file is never overwritten: the fast-forward is refused, the file survives', () => {
+    const w = world();
+    try {
+      fs.mkdirSync(path.join(w.consumer, '.git', 'info'), { recursive: true });
+      fs.appendFileSync(path.join(w.consumer, '.git', 'info', 'exclude'), 'local-notes.txt\n'); // ignored locally, tracked upstream
+      w.advance('local-notes.txt', 'tracked upstream now\n');
+      fs.writeFileSync(path.join(w.consumer, 'local-notes.txt'), 'my ignored private notes\n');
+      const before = w.head();
+      const r = enforceBaseLag({ repoRoot: w.consumer, run, classify: cleanClassify });
+      assert.deepEqual([r.ok, r.outcome], [false, 'refused'], r.lines.join('\n'));
+      assert.equal(w.head(), before);
+      assert.equal(fs.readFileSync(path.join(w.consumer, 'local-notes.txt'), 'utf8'), 'my ignored private notes\n');
+    } finally { w.rm(); }
+  });
   it('a failed fast-forward is a refusal with the remedy, never a quiet proceed', () => {
     const w = world();
     try {

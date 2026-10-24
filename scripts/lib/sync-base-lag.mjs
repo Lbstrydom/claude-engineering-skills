@@ -215,7 +215,7 @@ export function enforceBaseLag({ repoRoot, run, classify, dryRun = false, allowS
     const restored = git(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...plan.discard]);
     if (restored.error || restored.status !== 0) return failedAfterRestore(git, repoRoot, target, snapshot, `could not restore the sync-written files (${firstLine(restored)})`);
   }
-  const merged = git(['merge', '--ff-only', '--quiet', facts.baseSha]);
+  const merged = git(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', facts.baseSha]);
   if (merged.error || merged.status !== 0) return failedAfterRestore(git, repoRoot, target, snapshot, firstLine(merged));
   return { ok: true, outcome: 'fast-forwarded', lines: [`fast-forwarded ${plan.behindCount} commit(s) to ${target} ${facts.baseSha.slice(0, 8)}${plan.discard.length > 0 ? ` (restored ${plan.discard.length} sync-written file(s) first; this sync rewrites them${snapshot ? `; snapshot ${snapshot.slice(0, 8)} kept until git gc` : ''})` : ''}`] };
 }
