@@ -1224,7 +1224,7 @@ function assessConsumerAzureEmbed(repoPath) {
 const KNOWN_FLAGS = [
   '--dry-run', '--no-prompt', '--adopt-orphans', '--target',
   '--target-path', '--quiet-legacy-check', '--overwrite-diverged',
-  '--allow-rollback',
+  '--allow-rollback', '--allow-stale-base',
 ];
 
 /**
@@ -1427,6 +1427,7 @@ async function main() {
     const skippedWrites = new Set();  // source absent: likewise carried, but not a reason to keep the journal
 
     console.log(`${B}→ ${repo.name}${X} (${repo.path})`);
+    if (!await (await import('./lib/sync-base-lag.mjs')).enforceBaseLagForTarget(repo, { dryRun: DRY_RUN, allowStale: process.argv.includes('--allow-stale-base') })) { totalErrors++; console.log(''); continue; }
 
     // ── Pre-flight: stale .github/skills/ shadow detection ────────────────
     // Runs unconditionally (including --dry-run) since it uses the INTENDED

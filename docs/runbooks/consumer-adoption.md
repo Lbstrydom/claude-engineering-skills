@@ -1232,6 +1232,20 @@ thing it cannot do: move an MCP launcher from a pinned local path to an
 unpinned `npx -y …@latest` fetch. That is a supply-chain regression, refused by
 construction whatever flags are passed.
 
+### A consumer checkout behind origin (asked BEFORE the sync writes)
+
+Coordinators merge sync PRs on GitHub while nobody pulls the consumer's main checkout, so it always lags (2026-10-24: storyline 17 commits behind, wine 46). The sync now fetches `origin/<default>` first and asks `classifyBaseLag` (`lib/sync-base-lag.mjs`; the same predicate `sync:pr` uses after the write, which stays as the backstop) for each target on its base branch:
+
+| Checkout | The sync |
+|---|---|
+| current, ahead-only, or on another branch | proceeds, silently |
+| behind, clean apart from files the sync itself wrote | restores those files to HEAD (the next write regenerates them), fast-forwards to `origin/<default>`, says so |
+| behind with anything that is NOT sync output (a hand edit, an owned path whose hash no longer matches, an unreadable status) | **refuses that consumer**, naming the files and the remedy: commit or stash, `git -C "<repo>" pull --ff-only`, re-run |
+| diverged (behind AND ahead) | refuses: push or `pull --rebase` the local commits first |
+| origin unreachable / no `origin` | proceeds, with `base lag NOT CHECKED (<why>)` — an unasked question is not a clean answer |
+
+`--dry-run` reports the fast-forward without performing it. `--allow-stale-base` accepts a stale base on purpose (and prints that it did); `sync:pr` will still refuse it if origin changed a path the sync wrote.
+
 ### `.sync-receipt.json` — the in-repo trace
 
 Every sync writes a small, **committed** receipt at the consumer's root naming
