@@ -14,11 +14,15 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   decideSchemaPrecondition, describeSchemaBehind, assertStoreSchemaRealized,
   SCHEMA_BEHIND_OVERRIDE_ENV,
 } from '../scripts/lib/audit/schema-precondition.mjs';
+import { defaultRepoRoot } from '../scripts/lib/db/schema-realization.mjs';
 
 const BEHIND = {
   behind: true,
@@ -100,5 +104,20 @@ describe('assertStoreSchemaRealized — env + cwd wiring', () => {
       cwd: '/some/repo', env: {}, check: async (cwd) => { seen = cwd; return { behind: false, reason: 'realized' }; },
     });
     assert.equal(seen, '/some/repo');
+  });
+
+  test('the default root is the BUNDLE root, not process.cwd() — a foreign cwd (the consumer pre-push hook) must not choose the schema', async () => {
+    const foreign = fs.mkdtempSync(path.join(os.tmpdir(), 'schema-precond-foreign-'));
+    const before = process.cwd();
+    let seen = null;
+    try {
+      process.chdir(foreign);
+      await assertStoreSchemaRealized({ env: {}, check: async (root) => { seen = root; return { behind: false, reason: 'realized' }; } });
+    } finally {
+      process.chdir(before);
+      fs.rmSync(foreign, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+    assert.equal(seen, defaultRepoRoot());
+    assert.notEqual(path.resolve(seen), path.resolve(foreign), 'the cwd must not leak into the root');
   });
 });

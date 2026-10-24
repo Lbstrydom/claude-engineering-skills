@@ -31,7 +31,7 @@
  * @module scripts/lib/audit/schema-precondition
  */
 
-import { checkMigrationRealization } from '../db/schema-realization.mjs';
+import { checkMigrationRealization, defaultRepoRoot } from '../db/schema-realization.mjs';
 
 /** Set to `1` to audit anyway, accepting local-only findings and a `not-run` trailer. */
 export const SCHEMA_BEHIND_OVERRIDE_ENV = 'AUDIT_ALLOW_SCHEMA_BEHIND';
@@ -95,11 +95,20 @@ export function decideSchemaPrecondition({ realization, override }) {
 /**
  * Ask the store, then decide. Never throws: an unmeasurable answer is `proceed`.
  *
+ * **The root is the BUNDLE's, never `process.cwd()`.** The migrations that must be realized
+ * are the ones shipped beside THIS module (its layout picks the directory). The consumer
+ * pre-push hook runs the source checkout's `openai-audit.mjs` with cwd set to the consumer
+ * repo, so a cwd root resolved `<consumer>/supabase/migrations` — that repo's OWN app
+ * schema — compared it to the audit-loop ledger, refused every audit as "behind", and
+ * printed a `--migrate` that would apply the app's DDL to the shared store (measured
+ * 2026-10-24, wine pre-push under hook v12).
+ *
  * @param {{cwd?: string, env?: Record<string, string|undefined>, check?: typeof checkMigrationRealization}} [opts]
+ *   `cwd` overrides the bundle root (tests only).
  * @returns {Promise<{proceed: boolean, reason: string, message: string}>}
  */
 export async function assertStoreSchemaRealized({
-  cwd = process.cwd(), env = process.env, check = checkMigrationRealization,
+  cwd = defaultRepoRoot(), env = process.env, check = checkMigrationRealization,
 } = {}) {
   const realization = await check(cwd);
   return decideSchemaPrecondition({
