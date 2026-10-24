@@ -11,7 +11,7 @@
  * a provenance check refuses.
  *
  * The rule is `git range-diff`'s own idea, made content-preserving: the branch's OWN commits (those the default branch does not
- * contain) are compared by a fingerprint of each commit's diff (whitespace and binary payload included; see FINGERPRINT_LOG_ARGS),
+ * contain) are compared by a fingerprint of each commit's diff (whitespace and binary payload included; see COMMIT_DIFF_ARGS),
  * as a multiset, between the audited tip and the pushed tip. Equal means every audited change is in the push, byte for byte, and
  * nothing else is. A range holding a merge commit is never compared. It deliberately says NOTHING about whether the patches still behave
  * the same on the new base - that is the accepted residual risk of rebasing at all, and the caller says "range-diff-equivalent" in
@@ -54,7 +54,14 @@ export function makeGit(cwd) {
  * `index <blob>..<blob>` line (blob ids depend on the base) and the hunk-header line numbers. Every added, removed, mode and
  * binary byte stays in the hash.
  */
-const FINGERPRINT_LOG_ARGS = Object.freeze(['log', '--no-merges', '-p', '--format=%x01%H', '-U0', '--no-renames', '--binary', '--no-textconv', '--no-ext-diff', '--no-color']);
+const COMMIT_DIFF_ARGS = Object.freeze([
+  // Pin every setting that changes the TEXT of a diff, so the evidence is the change and not the operator's `.gitconfig`. `diff-tree` is
+  // plumbing (it already ignores most porcelain presentation config); the rest is pinned explicitly anyway.
+  '-c', 'diff.renames=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'core.quotepath=true',
+  '-c', 'diff.algorithm=myers', '-c', 'diff.indentHeuristic=false', '-c', 'diff.ignoreSubmodules=none', '-c', 'diff.submodule=short', '-c', 'diff.orderFile=',
+  'diff-tree', '-p', '-r', '--root', '--no-commit-id', '-U0', '--no-renames', '--binary', '--no-textconv', '--no-ext-diff', '--no-color',
+  '--src-prefix=a/', '--dst-prefix=b/', '--diff-algorithm=myers', '--no-indent-heuristic',
+]);
 
 /** @param {string} body one commit's diff text @returns {string} */
 function fingerprintOf(body) {
@@ -89,13 +96,16 @@ export function ownPatchFingerprints(rev, { defaultRef, git }) {
   if (!Number.isInteger(count)) return { ok: false, reason: `the own-commit count for ${rev} could not be read` };
   if (count === 0) return { ok: true, ids: [] };
   if (count > MAX_COMPARED_COMMITS) return { ok: false, reason: `${count} own commits exceed the ${MAX_COMPARED_COMMITS} that are compared` };
-  const log = git([...FINGERPRINT_LOG_ARGS, rev, '--not', defaultRef]);
-  if (log === null) return { ok: false, reason: `the patches of ${rev} could not be read` };
+  // One commit at a time: a delimiter inside `git log -p` output is in-band (any byte can occur in a changed line), so the framing is
+  // the commit list itself - never a separator searched for in diff text.
+  const list = git(['rev-list', '--no-merges', rev, '--not', defaultRef]);
+  const shas = list === null ? [] : list.split(/\s+/).filter(Boolean);
+  if (shas.length !== count) return { ok: false, reason: `the commit list of ${rev} could not be read (${shas.length} of ${count})` };
   const ids = [];
-  for (const chunk of log.split('\u0001')) {
-    if (chunk.trim() === '') continue;
-    const nl = chunk.indexOf('\n');
-    const body = nl < 0 ? '' : chunk.slice(nl + 1);
+  for (const sha of shas) {
+    if (!OBJECT_ID_RE.test(sha)) return { ok: false, reason: `unexpected commit id ${JSON.stringify(sha)} in the range of ${rev}` };
+    const body = git([...COMMIT_DIFF_ARGS, sha]);
+    if (body === null) return { ok: false, reason: `the patch of ${sha.slice(0, 12)} could not be read` };
     // A commit with no diff (an empty commit) has no content to compare.
     if (body.trim() !== '') ids.push(fingerprintOf(body));
   }

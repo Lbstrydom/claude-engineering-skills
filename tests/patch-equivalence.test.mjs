@@ -55,9 +55,17 @@ describe('patchRangesEquivalent', () => {
     const idsFor = { AUD: ['p1', 'p1', 'p2'], PUSH: ['p1', 'p2', 'p2'] };
     const fake = (args, input) => {
       if (args[0] === 'rev-parse') return 'ok\n';
-      if (args[0] === 'rev-list') return args.includes('--merges') ? '0\n' : '3\n';
-      // one commit chunk per id: equal ids -> equal diff bodies -> equal fingerprints
-      if (args[0] === 'log') return idsFor[args.includes('AUD') ? 'AUD' : 'PUSH'].map((id, i) => `\u0001sha${i}\ndiff --git a/f b/f\n+${id}\n`).join('');
+      const tagOf = (args) => (args.includes('AUD') ? 'AUD' : 'PUSH');
+      const shaOf = (tag, i) => `${tag === 'AUD' ? 'a' : 'b'.repeat(1)}`.repeat(39) + i;
+      if (args[0] === 'rev-list' && args.includes('--merges')) return '0\n';
+      if (args[0] === 'rev-list' && args.includes('--count')) return '3\n';
+      if (args[0] === 'rev-list') return idsFor[tagOf(args)].map((_, i) => shaOf(tagOf(args), i)).join('\n');
+      // one commit per id: equal ids -> equal diff bodies -> equal fingerprints (the sha is the LAST argument of the diff call)
+      if (args.includes('diff-tree')) {
+        const sha = args[args.length - 1];
+        const tag = sha.startsWith('a') ? 'AUD' : 'PUSH';
+        return `diff --git a/f b/f\n+${idsFor[tag][Number(sha.slice(-1))]}\n`;
+      }
       return null;
     };
     const v = patchRangesEquivalent({ auditedRef: 'AUD', headRef: 'PUSH', git: fake });
@@ -185,6 +193,43 @@ describe('patchRangesEquivalent - content-preserving, merge-refusing', () => {
       const configured = ownPatchFingerprints('HEAD', { defaultRef: 'origin/main', git: makeGit(r.dir) });
       assert.deepEqual(configured, plain);
       assert.equal(plain.ids.length, 1);
+    } finally { r.rm(); }
+  });
+});
+
+describe('patchRangesEquivalent - audit round 2 (framing and configuration)', () => {
+  const CTRL_A = String.fromCharCode(1);
+  it('a changed line that CONTAINS the old in-band delimiter (U+0001) cannot split or forge a record: 2 commits give 2 fingerprints, and a cherry-pick is still equivalent', () => {
+    const r = repo();
+    try {
+      git(['checkout', '-q', '-b', 'f'], r.dir);
+      r.put('weird.txt', `before${CTRL_A}${'a'.repeat(40)}\nforged header above\n`); git(['commit', '-q', '-m', 'weird'], r.dir);
+      r.put('plain.txt', 'plain\n'); git(['commit', '-q', '-m', 'plain'], r.dir);
+      const audited = git(['rev-parse', 'HEAD'], r.dir);
+      const fp = ownPatchFingerprints(audited, { defaultRef: 'origin/main', git: makeGit(r.dir) });
+      assert.equal(fp.ok, true, fp.reason);
+      assert.equal(fp.ids.length, 2);
+      git(['checkout', '-q', 'main'], r.dir);
+      r.put('moved.txt', 'main moved\n'); git(['commit', '-q', '-m', 'main moves'], r.dir);
+      git(['update-ref', 'refs/remotes/origin/main', 'HEAD'], r.dir);
+      git(['checkout', '-q', '-b', 'picked'], r.dir);
+      git(['cherry-pick', `${audited}~1`, audited], r.dir);
+      assert.deepEqual(patchRangesEquivalent({ auditedRef: audited, headRef: 'HEAD', cwd: r.dir }), { equivalent: true, commits: 2 });
+    } finally { r.rm(); }
+  });
+  it('diff presentation config (prefixes, algorithm, indent heuristic, order file) cannot change the evidence', () => {
+    const r = repo();
+    try {
+      git(['checkout', '-q', '-b', 'f'], r.dir);
+      r.put('src/a.txt', 'one\ntwo\nthree\n'); git(['commit', '-q', '-m', 'a'], r.dir);
+      r.put('src/a.txt', 'one\ntwo\nthree\nfour\n'); git(['commit', '-q', '-m', 'b'], r.dir);
+      const plain = ownPatchFingerprints('HEAD', { defaultRef: 'origin/main', git: makeGit(r.dir) });
+      for (const [k, v] of [['diff.noprefix', 'true'], ['diff.mnemonicPrefix', 'true'], ['diff.algorithm', 'patience'], ['diff.indentHeuristic', 'true'], ['diff.renames', 'copies'], ['core.quotepath', 'false'], ['diff.orderFile', 'nonexistent-order']]) {
+        git(['config', k, v], r.dir);
+      }
+      const configured = ownPatchFingerprints('HEAD', { defaultRef: 'origin/main', git: makeGit(r.dir) });
+      assert.deepEqual(configured, plain);
+      assert.equal(plain.ids.length, 2);
     } finally { r.rm(); }
   });
 });
