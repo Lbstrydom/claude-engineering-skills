@@ -249,13 +249,17 @@ export function resolveEvidence({ auditRunPath, headCommitTs, noRunId = false, f
  *
  * Narrow on purpose: a legacy marker with no `auditedBranch`/`auditedSha` is not judged (it can only support not-run/waived,
  * never `passed`), and `auditedBranch: null` (captured detached) is not a mismatch. Absent/opted-out/malformed evidence is
- * handled elsewhere. A rebase moves the audited sha out of HEAD's history, so a rebased branch's marker is refused too: the
- * conservative direction (the ship then records `not-run`, which is true of the rebased tree).
+ * handled elsewhere. A rebase moves the audited sha out of HEAD's history, so a rebased branch's marker is refused unless the
+ * caller passes `patchEquivalence` and it says the branch's own patches ARE the audited commits' (range-diff equivalence,
+ * lib/patch-equivalence.mjs - the SAME predicate the pre-push hook's audit reuse asks; fleet p-...-f757): then the marker is accepted
+ * and the result says `equivalence`, so the caller can print that the evidence is for equivalent patches, not for this history.
+ * Without it the conservative direction stands (the ship records `not-run`, which is true of the rebased tree). The gate that
+ * follows still compares trees, so an accepted-by-equivalence marker supports `converged` (tree differs), never `passed`.
  *
- * @param {{evidence: object, committingBranch: string|null, isAncestor: (sha: string) => boolean}} input
- * @returns {{ok: true} | {ok: false, reason: 'branch-mismatch'|'sha-not-ancestor', detail: string}}
+ * @param {{evidence: object, committingBranch: string|null, isAncestor: (sha: string) => boolean, patchEquivalence?: (auditedSha: string, auditedTree: string|null) => {equivalent: boolean, commits?: number, reason?: string}}} input
+ * @returns {{ok: true, equivalence?: {kind: 'range-diff', commits: number, auditedSha: string}} | {ok: false, reason: 'branch-mismatch'|'sha-not-ancestor', detail: string}}
  */
-export function checkEvidenceProvenance({ evidence, committingBranch, isAncestor }) {
+export function checkEvidenceProvenance({ evidence, committingBranch, isAncestor, patchEquivalence }) {
   if (!evidence || (evidence.state !== 'fresh' && evidence.state !== 'stale')) return { ok: true };
   if (typeof evidence.auditedBranch === 'string' && evidence.auditedBranch !== committingBranch) {
     return {
@@ -265,13 +269,21 @@ export function checkEvidenceProvenance({ evidence, committingBranch, isAncestor
     };
   }
   if (evidence.auditedSha && !isAncestor(evidence.auditedSha)) {
+    const eq = typeof patchEquivalence === 'function' ? patchEquivalence(evidence.auditedSha, evidence.auditedTree ?? null) : null;
+    if (eq?.equivalent === true) return { ok: true, equivalence: { kind: 'range-diff', commits: eq.commits ?? 0, auditedSha: evidence.auditedSha } };
+    const why = eq && eq.equivalent === false ? ` (and the branch's own patches are not range-diff-equivalent to it: ${eq.reason})` : '';
     return {
       ok: false,
       reason: 'sha-not-ancestor',
-      detail: `the audited commit ${evidence.auditedSha.slice(0, 12)} is not an ancestor of HEAD, so the audit did not run on this history`,
+      detail: `the audited commit ${evidence.auditedSha.slice(0, 12)} is not an ancestor of HEAD, so the audit did not run on this history${why}`,
     };
   }
   return { ok: true };
+}
+
+/** The line ship-commit prints when a marker is accepted by patch equivalence rather than by ancestry. */
+export function describeEquivalenceAcceptance({ auditedSha, commits }) {
+  return `ship-commit: audit evidence accepted as RANGE-DIFF-EQUIVALENT: the audited commit ${auditedSha.slice(0, 12)} is no longer in this history (a rebase or cherry-pick), but this branch's ${commits} own commit(s) have exactly the content fingerprints of the commits that run audited. The gate still compares trees, so this supports converged, never passed.`;
 }
 
 /**

@@ -140,12 +140,27 @@ describe('managed pre-push hook — the local hook runs on every success path', 
     withWorkspace((ws) => {
       makeSourceRepo(ws);
       const consumer = makeConsumer(ws, { plans: true });
-      const got = runHook(consumer);
+      // v13: with no plan selected and an unknown push range the hook reports UNMEASURED and REFUSES; the one named override is the
+      // path that still reaches `finish`, and `finish` must still run the consumer's own gates (that is what this case pins).
+      const got = runHook(consumer, { AUDIT_PREPUSH_ALLOW_UNMEASURED: '1' });
       assert.equal(got.status, 0, got.stderr);
       // Fixture validity: discovery SUCCEEDED and selection returned nothing.
       assert.doesNotMatch(got.stderr, /not found beside/);
       assert.doesNotMatch(got.stderr, /auditing/);
+      assert.match(got.stderr, /push ALLOWED UNMEASURED/);
       assert.equal(got.ran, true, `local hook did not run:\n${got.stderr}`);
+    });
+  });
+
+  it('...and a BLOCKING no-plan refusal stays a hard exit: the consumer\'s suite is not run for a push that will not happen', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    withWorkspace((ws) => {
+      makeSourceRepo(ws);
+      const consumer = makeConsumer(ws, { plans: true });
+      const got = runHook(consumer, { AUDIT_PREPUSH_ALLOW_UNMEASURED: '' });
+      assert.equal(got.status, 1, got.stderr);
+      assert.match(got.stderr, /UNMEASURED: no plan was selected/);
+      assert.equal(got.ran, false, 'a refused push must not run the (expensive) local hook');
     });
   });
 
