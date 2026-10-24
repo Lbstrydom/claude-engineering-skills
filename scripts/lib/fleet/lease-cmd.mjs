@@ -122,13 +122,15 @@ async function cmdRun(ctx, flags, positionals, { dir, repo }) {
     } else { say(`${res.reason}. The command did NOT run.`); exitCode = 70; }
   } else {
     const o = res.result;
+    // c729: a stop that FAILED leaves the tree possibly running while the slot is released below - say so, never a quiet "stopped".
+    if (o.stopFailed?.length) say(`WARNING: stopping the command's process tree FAILED (${o.stopFailed.join('; ')}). ${o.abandoned ? 'The command was ABANDONED still running. ' : ''}It may still be running on this machine and the slot is released regardless: check for stray processes before starting heavy work.`);
     if (o.spawnError) { say(describeSpawnFailure({ cmd, spawnError: o.spawnError, target: o.target, cwd: process.cwd() })); exitCode = 127; }
-    else if (res.signalled) { say(`stopped by ${res.signalled}; the command's process tree was stopped${res.released?.ok ? ' and the slot released' : ' but the slot could NOT be released (see above)'}`); exitCode = exitCodeForSignal(res.signalled); }
-    else if (o.timedOut) { say(`the command ran past --timeout ${timeoutMin} minute(s) and was stopped`); exitCode = 124; }
+    else if (res.signalled) { say(`stopped by ${res.signalled}; ${o.stopFailed?.length ? "the command's process tree was NOT confirmed stopped (see WARNING above)" : "the command's process tree was stopped"}${res.released?.ok ? ' and the slot released' : ' but the slot could NOT be released (see above)'}`); exitCode = exitCodeForSignal(res.signalled); }
+    else if (o.timedOut) { say(`the command ran past --timeout ${timeoutMin} minute(s) and ${o.stopFailed?.length ? 'a stop was requested but NOT confirmed (see WARNING above)' : 'was stopped'}`); exitCode = 124; }
     else if (o.signal) exitCode = exitCodeForSignal(o.signal);
     else exitCode = o.code ?? 1;
   }
-  return { ok: exitCode === 0, code: exitCode === 0 ? 'ok' : 'error', exitCode, quiet: true, text: '', ...(res.ran ? { released: res.released?.ok === true } : { ran: false, outcome: res.outcome }) };
+  return { ok: exitCode === 0, code: exitCode === 0 ? 'ok' : 'error', exitCode, quiet: true, text: '', ...(res.ran ? { released: res.released?.ok === true, ...(res.result?.stopFailed?.length ? { treeStopFailed: res.result.stopFailed } : {}) } : { ran: false, outcome: res.outcome }) };
 }
 
 /** `fleet lease <sub> [flags]`. */

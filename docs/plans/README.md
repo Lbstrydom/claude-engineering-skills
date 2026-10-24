@@ -42,6 +42,7 @@ This is the list to read when asking "what is in flight?".
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
 | [sync-pr supersedes an older open sync PR](./sync-pr-supersede-open-sync-pr.md) | `In Progress` |  |
 | [Sync contract — structural receipt check (gate 2B) + undeclared required-dep warning](./sync-receipt-structural-and-undeclared-deps.md) | `In Progress` |  |
+| [Sync checks the consumer's lag BEFORE writing; a failed tree-kill is reported](./sync-stale-base-and-stoptree.md) | `In Progress` | implemented on `fix/sync-stale-base-and-stoptree`, pending audit and merge |
 | [sync-to-repos failure honesty (verified audit hypotheses from #231)](./sync-to-repos-failure-honesty.md) | `Draft` |  |
 
 ## Parked

@@ -72,7 +72,7 @@ export function timeoutRefusal({ step, elapsedMs, budgetMs, lease }) {
  * @param {typeof setInterval} [o.every]
  * @param {typeof clearInterval} [o.stopEvery]
  * @param {() => string} [o.leaseText]
- * @returns {Promise<{code: number, timedOut: boolean, elapsedMs: number, interrupted?: boolean, signal?: string}>}
+ * @returns {Promise<{code: number, timedOut: boolean, elapsedMs: number, interrupted?: boolean, signal?: string, stopFailed?: string[]}>}
  */
 export async function runStep({
   step, cmd, args = [], budgetMs, progressMs = 30_000, stdio = 'inherit', signal, log = () => {}, clock = Date.now, run = runChild,
@@ -86,13 +86,16 @@ export async function runStep({
   let r;
   try { r = await run({ cmd, args, timeoutMs: budgetMs, stdio, ...(signal ? { signal } : {}) }); } finally { if (beat) stopEvery(beat); }
   const elapsedMs = clock() - t0;
+  // A stop that FAILED (c729) leaves the step's tree possibly running; the refusal below is still right, but it must not read as a clean kill.
+  const failed = Array.isArray(r.stopFailed) && r.stopFailed.length > 0 ? { stopFailed: r.stopFailed } : {};
+  if (failed.stopFailed) log(`⚠  [prepush-hook] step '${step}': stopping its process tree FAILED (${failed.stopFailed.join('; ')}) - it may still be running on this machine.`);
   if (r.timedOut) {
     log(timeoutRefusal({ step, elapsedMs, budgetMs, lease: leaseText() }));
-    return { code: STEP_TIMEOUT_EXIT, timedOut: true, elapsedMs };
+    return { code: STEP_TIMEOUT_EXIT, timedOut: true, elapsedMs, ...failed };
   }
   if (r.stopped && !r.timedOut) {
     log(`✗  [prepush-hook] step '${step}' was interrupted after ${secs(elapsedMs)}s - push BLOCKED.`);
-    return { code: INTERRUPTED_EXIT, timedOut: false, interrupted: true, elapsedMs };
+    return { code: INTERRUPTED_EXIT, timedOut: false, interrupted: true, elapsedMs, ...failed };
   }
   if (r.spawnError) {
     log(`✗  [prepush-hook] step '${step}' could not start: ${r.spawnError} - push BLOCKED.`);
