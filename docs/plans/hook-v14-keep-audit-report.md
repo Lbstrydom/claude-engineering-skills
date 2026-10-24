@@ -15,7 +15,8 @@ The hook's advisory audit writes its result envelope and the step's output to `m
 2. **Same creation safety.** `mkdir -p` the directory, then `mktemp` *inside it* (exclusive, no predictable-path fallback), rename to the tree-keyed names after the outcome is read. A directory/file that cannot be created BLOCKS the push and runs no audit. A failed rename keeps the `.tmp.*` file and prints that path.
 3. **Print on every outcome** (pass / findings / unmeasured / timeout), after the verdict lines. An empty file is not a kept path: the line says `none exists (the audit wrote nothing)`. On a timeout (124, still a refusal) whatever was written is kept.
 4. **Bounded.** Newest `AUDIT_PREPUSH_KEEP_REPORTS` (default 20; invalid or `0` falls back to 20, never to deleting everything) of each kind; stale `.tmp.*` older than a day removed; pruning is best-effort and never changes the outcome.
-5. **No new runner subcommand** — the v13 capability guard is unchanged; consumers need a sync + `hooks:install`.
+5. **Push base after a rebase (second proposal, p-20261024154912-06f9, same file).** The remote tip is the base only when it is an ancestor of the pushed commit; otherwise (rewritten history or new branch) it is `merge-base origin/main <pushed>`, printed with the reason and exported as `AUDIT_PUSH_RANGE_BASE`. Fast-forward is unchanged and tested as the direction that must not move.
+6. **No new runner subcommand** — the v13 capability guard is unchanged; consumers need a sync + `hooks:install`.
 
 ### Right-sizing
 
@@ -27,6 +28,7 @@ Band-aid: print the findings to the terminal only (lost in scrollback, nothing t
 - A timeout keeps partial output, or says none exists; no empty stubs remain.
 - Retention keeps the newest N of each kind, never the files just written; a bad knob never deletes everything.
 - A squatting file at `.audit/prepush` refuses the push with no audit run.
+- After a rebase + force push the base is the merge-base with origin/main (stale remote tip rejected); a fast-forward still uses the remote tip; a new branch is labelled as such.
 - Each test fails against v13's hook (seen: 10/10 fail).
 
 ## 4. Out of scope

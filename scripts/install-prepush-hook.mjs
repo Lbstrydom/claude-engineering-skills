@@ -260,10 +260,17 @@ if [ ! -t 0 ]; then
     fi
     PUBLISHED_REFS=$((PUBLISHED_REFS + 1))
     [ -n "$PUSH_BASE" ] && continue   # range already taken from an earlier ref
-    if [ -n "$REMOTE_SHA" ] && [ "$REMOTE_SHA" != "$ZERO_SHA" ]; then
+    if [ -n "$REMOTE_SHA" ] && [ "$REMOTE_SHA" != "$ZERO_SHA" ] && git merge-base --is-ancestor "$REMOTE_SHA" "$LOCAL_SHA" 2>/dev/null; then
+      # Fast-forward: the remote tip is in the pushed history, so what is new is exactly REMOTE_SHA..LOCAL_SHA.
       PUSH_BASE="$REMOTE_SHA"
       PUSH_HEAD="$LOCAL_SHA"
+      echo "[prepush-hook] push base: the remote tip $REMOTE_SHA (fast-forward)" >&2
     else
+      # A new branch - or (v14) REWRITTEN history: after a rebase and a force push the remote tip is NOT an ancestor of the pushed
+      # commit, and using it as the base made the audit fail not-an-ancestor (refused UNMEASURED) and dragged the default branch's
+      # files into the changed set, so plan selection picked a plan the branch never touched. Both cases take the same base: where the
+      # pushed commit diverged from the default branch.
+      if [ -n "$REMOTE_SHA" ] && [ "$REMOTE_SHA" != "$ZERO_SHA" ]; then PUSH_BASE_WHY="rewritten history: the remote tip $REMOTE_SHA is not an ancestor of $LOCAL_SHA"; else PUSH_BASE_WHY="new branch"; fi
       # New branch on the remote: the range is everything since it diverged
       # from the default branch — NOT HEAD~1, which would scope a
       # multi-commit branch to only its tip.
@@ -271,6 +278,9 @@ if [ ! -t 0 ]; then
       if [ -n "$CANDIDATE_BASE" ]; then
         PUSH_BASE="$CANDIDATE_BASE"
         PUSH_HEAD="$LOCAL_SHA"
+        echo "[prepush-hook] push base: $CANDIDATE_BASE, the merge-base with origin/main ($PUSH_BASE_WHY)" >&2
+      else
+        echo "[prepush-hook] push base: UNKNOWN - no merge-base with origin/main ($PUSH_BASE_WHY)" >&2
       fi
     fi
   done

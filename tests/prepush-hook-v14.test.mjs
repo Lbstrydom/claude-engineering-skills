@@ -43,6 +43,8 @@ function makeSource(ws) {
   fs.writeFileSync(path.join(scripts, 'openai-audit.mjs'), [
     "import fs from 'node:fs';",
     "fs.writeFileSync('AUDIT_RAN', '1');",
+    "fs.writeFileSync('AUDIT_ARGV', JSON.stringify(process.argv.slice(2)));",
+    "fs.writeFileSync('AUDIT_RANGE_BASE', process.env.AUDIT_PUSH_RANGE_BASE || '');",
     "const mode = process.env.AUDIT_STUB || 'pass';",
     "const envelope = (verdict, findings) => { const i = process.argv.indexOf('--out'); if (i >= 0) fs.writeFileSync(process.argv[i + 1], JSON.stringify({ verdict, findings })); };",
     "if (mode === 'hang' || mode === 'hangwrite') {",
@@ -255,14 +257,73 @@ describe('hook v14 - retention never prunes what the run just published, and its
 });
 
 describe('hook v14 - the key is the pushed tree or the push is refused', () => {
-  it('an unresolvable pushed commit refuses with the git reason and runs no audit (no invented key)', (t) => scenario(t, 'notree', ({ c, source }) => {
-    const bogus = 'deadbeef'.repeat(5);
-    const base = c.stdin.trim().split(' ')[3];
-    const got = runHook(c.local, source, `refs/heads/main ${bogus} refs/heads/main ${base}
-`);
+  it('a pushed tree git cannot resolve refuses with the git reason and runs no audit (no invented key)', (t) => scenario(t, 'notree', ({ c, source, ws }) => {
+    // The commit exists (the earlier steps resolved it), so make only the tree lookup fail: a git shim ahead of the real one on PATH.
+    const shim = path.join(ws, 'shim');
+    fs.mkdirSync(shim);
+    const realGit = spawnSync('bash', ['-c', 'command -v git'], { encoding: 'utf-8' }).stdout.trim();
+    fs.writeFileSync(path.join(shim, 'git'), [
+      '#!/bin/sh',
+      'case "$*" in *--verify*"^{tree}"*) echo "fatal: shimmed tree failure" >&2; exit 128 ;; esac',
+      `exec "${realGit}" "$@"`, '',
+    ].join('\n'), { mode: 0o755 });
+    const got = runHook(c.local, source, c.stdin, { PATH: `${shim}${path.delimiter}${process.env.PATH}` });
     assert.equal(got.status, 1, got.stderr);
-    assert.equal(fs.existsSync(path.join(c.local, 'AUDIT_RAN')), false, got.stderr);
+    assert.match(got.stderr, /cannot resolve the pushed tree of [0-9a-f]{40} \(git: fatal: shimmed tree failure ?\) .*push BLOCKED/);
+    assert.equal(fs.existsSync(path.join(c.local, 'AUDIT_RAN')), false, 'no key, no audit');
     assert.deepEqual(keptEntries(c).filter((f) => f.startsWith('unknown')), []);
+  }));
+});
+
+describe('hook v14 - the push base after a rebase + force push (fleet p-20261024154912-06f9)', () => {
+  /** feature (one commit) pushed to origin, then main moves on. Returns the old remote tip and the new main tip. */
+  function featurePushedAndMainMoved(c) {
+    const { local } = c;
+    const put = (rel, text, msg) => { fs.mkdirSync(path.dirname(path.join(local, rel)), { recursive: true }); fs.writeFileSync(path.join(local, rel), text); git(['add', rel], local); git(['commit', '-q', '-m', msg], local); return git(['rev-parse', 'HEAD'], local); };
+    git(['checkout', '-q', '-b', 'feature', 'origin/main'], local);
+    const oldRemote = put('src/f1.txt', 'f1\n', 'F1');
+    git(['push', '-q', 'origin', 'feature'], local);
+    git(['checkout', '-q', 'main'], local);
+    git(['reset', '-q', '--hard', 'origin/main'], local);
+    const mainTip = put('src/main-only.txt', 'm\n', 'M1 main moves on');
+    git(['push', '-q', 'origin', 'main'], local);
+    git(['checkout', '-q', 'feature'], local);
+    return { put, oldRemote, mainTip };
+  }
+  const baseOf = (c) => fs.readFileSync(path.join(c.local, 'AUDIT_RANGE_BASE'), 'utf8');
+  const argvOf = (c) => JSON.parse(fs.readFileSync(path.join(c.local, 'AUDIT_ARGV'), 'utf8'));
+
+  it('REBASED onto a moved main and force-pushed: the stale remote tip is NOT the base - the merge-base with origin/main is, and the output says why', (t) => scenario(t, 'rebase', ({ c, source }) => {
+    const f = featurePushedAndMainMoved(c);
+    git(['rebase', '-q', 'main'], c.local);
+    const head = git(['rev-parse', 'HEAD'], c.local);
+    assert.notEqual(git(['merge-base', f.oldRemote, head], c.local), f.oldRemote, 'fixture: the old remote tip really is not an ancestor');
+    const got = runHook(c.local, source, `refs/heads/feature ${head} refs/heads/feature ${f.oldRemote}\n`);
+    assert.equal(got.status, 0, got.stderr);
+    assert.equal(baseOf(c), f.mainTip, 'AUDIT_PUSH_RANGE_BASE carries the merge-base, so plan selection sees only the branch\'s own files');
+    assert.equal(argvOf(c)[argvOf(c).indexOf('--base') + 1], f.mainTip, 'the audit is handed the same base');
+    assert.match(got.stderr, new RegExp(`push base: ${f.mainTip}, the merge-base with origin/main \\(rewritten history: the remote tip ${f.oldRemote} is not an ancestor`));
+  }));
+
+  it('MUST NOT CHANGE: a plain fast-forward push still uses the remote tip as the base', (t) => scenario(t, 'ff', ({ c, source }) => {
+    const f = featurePushedAndMainMoved(c);
+    const head = f.put('src/f2.txt', 'f2\n', 'F2');
+    const got = runHook(c.local, source, `refs/heads/feature ${head} refs/heads/feature ${f.oldRemote}\n`);
+    assert.equal(got.status, 0, got.stderr);
+    assert.equal(baseOf(c), f.oldRemote, 'REMOTE_SHA, not the (older) merge-base with origin/main');
+    assert.notEqual(f.oldRemote, git(['merge-base', 'origin/main', head], c.local), 'fixture: the two candidates differ');
+    assert.equal(argvOf(c)[argvOf(c).indexOf('--base') + 1], f.oldRemote);
+    assert.match(got.stderr, new RegExp(`push base: the remote tip ${f.oldRemote} \\(fast-forward\\)`));
+  }));
+
+  it('a NEW branch still takes the merge-base with origin/main, saying it is a new branch', (t) => scenario(t, 'newbranch', ({ c, source }) => {
+    const f = featurePushedAndMainMoved(c);
+    git(['checkout', '-q', '-b', 'fresh'], c.local);
+    const head = f.put('src/f3.txt', 'f3\n', 'F3');
+    const got = runHook(c.local, source, `refs/heads/fresh ${head} refs/heads/fresh ${'0'.repeat(40)}\n`);
+    assert.equal(got.status, 0, got.stderr);
+    assert.equal(baseOf(c), git(['merge-base', 'origin/main', head], c.local));
+    assert.match(got.stderr, /merge-base with origin\/main \(new branch\)/);
   }));
 });
 
