@@ -92,10 +92,12 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
 
   // Stage 2: the turn rule decides a FRESH grant. A renewal or rotation is the same running job, never a new one.
   let basis = 'same-job';
+  let turnBasis = null; // what the turn rule said (a renewal's is judged on its projection); only 'in-turn' is capped below
   if (!(cur && mine)) {
     const tr = turnRule(base, req, now, probe, { namedGap: usesNamedGap(base, req.identity.repoKey, now, end) });
     if (!tr.ok) return waitRefusal('turn', tr.reason);
     basis = tr.basis;
+    turnBasis = tr.basis;
   } else {
     // D11 (finding 20ec): a renewal or rotation is the same running job, so it never starts a turn (the budget counts from the
     // turn's FIRST grant) - but it must not outlive the repo's turn while another repo waits. It is judged by the same rule as a fresh
@@ -106,6 +108,19 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
       const stays = cls.state === 'held' ? ` (the slot stays yours until ${hhmmOf(new Date(cur.expiresAt))})` : '';
       return waitRefusal('turn', `${tr.reason}; this lease is not extended - finish and \`lease release\`${stays}`);
     }
+    turnBasis = tr.basis;
+  }
+  // An IN-TURN grant is not a licence to outlive the turn (fleet p-...-9729): storyline was granted 120 minutes at 09:17Z on a turn that
+  // ended 09:59Z, held the slot to 11:17Z, and wine - waiting since 09:00Z with 105 refusals - was starved. While another repo waits, the
+  // grant ends WHEN THE TURN DOES; the caller is told, and asks again in its next turn. With nobody waiting the full --for stands
+  // (a solo repo is unaffected), and a granted gap or backfill already answers to its own interval.
+  let grantEnd = end;
+  let capped;
+  const turnEndsAt = base.turn && base.turn.repoKey === req.identity.repoKey ? new Date(base.turn.endsAt) : null;
+  const rivals = (base.waiters ?? []).filter((w) => w.repoKey !== req.identity.repoKey);
+  if (turnBasis === 'in-turn' && turnEndsAt && rivals.length > 0 && turnEndsAt.getTime() < end.getTime()) {
+    grantEnd = turnEndsAt;
+    capped = { requestedMin: forMin, grantedMin: Math.max(1, Math.ceil((grantEnd.getTime() - now.getTime()) / MIN)), turnEndsAt: grantEnd.toISOString(), waiting: rivals.sort((a, b) => ms(a.since) - ms(b.since))[0].repo };
   }
   const renewed = Boolean(cur && mine && req.token !== undefined);
   const rotated = Boolean(cur && mine && req.token === undefined);
@@ -114,13 +129,13 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
     ...(req.note !== undefined ? { note: req.note } : {}),
     scope: probe.scope, ...(req.pid !== undefined ? { pid: req.pid } : {}),
     token: req.newToken ?? crypto.randomBytes(8).toString('hex'),
-    startedAt: now.toISOString(), expiresAt: end.toISOString(),
+    startedAt: now.toISOString(), expiresAt: grantEnd.toISOString(),
   };
   // A renewal UPDATES the record it renews (audit H1): the attached pid and scope, the kind, the note and any field a
   // newer checkout added all survive; only what the caller restates changes. A rotation or a new holder starts fresh.
   const heavy = renewed
     ? {
-      ...cur, expiresAt: end.toISOString(), ...(req.repo !== undefined ? { repo: req.repo } : {}),
+      ...cur, expiresAt: grantEnd.toISOString(), ...(req.repo !== undefined ? { repo: req.repo } : {}),
       ...(req.kind !== undefined ? { kind } : {}), ...(req.note !== undefined ? { note: req.note } : {}),
       ...(req.pid !== undefined ? { pid: req.pid, scope: probe.scope } : {}),
     }
@@ -135,10 +150,10 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
   }
   next = appendJournal(next, jentry(now, 'acquired', req, {
     mode: event ? 'taken-over' : renewed ? 'renewed' : rotated ? 'rotated' : 'granted', basis,
-    job: { kind: heavy.kind, forMin, until: heavy.expiresAt }, ...(served ? { episode: episodeOf(served) } : {}),
+    job: { kind: heavy.kind, forMin: capped ? capped.grantedMin : forMin, until: heavy.expiresAt }, ...(capped ? { capped: { from: capped.requestedMin, to: capped.grantedMin, waiting: capped.waiting } } : {}), ...(served ? { episode: episodeOf(served) } : {}),
   }));
   next = settleQueue(next, now, probe);
-  return { ok: true, lease: next, heavy, renewed, rotated, basis, ...(event ? { event } : {}) };
+  return { ok: true, lease: next, heavy, renewed, rotated, basis, ...(capped ? { capped } : {}), ...(event ? { event } : {}) };
 }
 
 /** `attach --pid`: the holder records the long-lived job's pid after launching it. */
