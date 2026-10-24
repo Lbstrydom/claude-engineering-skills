@@ -63,8 +63,8 @@ describe('planBaseLag', () => {
     const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: own('.sync-receipt.json', '.claude/skills/plan/SKILL.md') } });
     assert.deepEqual(p, { action: 'fast-forward', discard: ['.sync-receipt.json', '.claude/skills/plan/SKILL.md'], behindCount: 17 });
   });
-  it('untracked and renamed sync output is left for the fast-forward to judge, never restored by path', () => {
-    const entries = [{ status: '??', path: 'new.md', origPath: null }, { status: 'R ', path: 'b.md', origPath: 'a.md' }, { status: ' M', path: 'm.md', origPath: null }];
+  it('untracked sync output is left for the fast-forward to judge, never restored by path', () => {
+    const entries = [{ status: '??', path: 'new.md', origPath: null }, { status: ' M', path: 'm.md', origPath: null }];
     const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: entries } });
     assert.deepEqual(p.discard, ['m.md']);
   });
@@ -82,6 +82,11 @@ describe('planBaseLag', () => {
     assert.equal(planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, degraded: true, syncOwned: own('a') } }).reason, 'dirty');
     const many = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, other: own(...Array.from({ length: 9 }, (_, i) => `f${i}.js`)) } });
     assert.match(many.detail, /f0\.js, f1\.js, f2\.js, f3\.js, f4\.js, and 4 more/);
+  });
+  it('a staged RENAME among the sync output is not restorable by path: refused as the human\'s, so the snapshot and the restore always cover the same set', () => {
+    const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: [{ status: 'R ', path: 'b.md', origPath: 'a.md' }, { status: ' M', path: 'm.md', origPath: null }] } });
+    assert.equal(p.action, 'refuse');
+    assert.match(p.detail, /not sync output: b\.md/);
   });
   it('diverged refuses (it cannot be fast-forwarded) and names the local commits', () => {
     const p = planBaseLag({ ...base, aheadCount: 2, lag: 'diverged', classified: null });
@@ -225,10 +230,12 @@ describe('enforceBaseLag - real git', () => {
       fs.writeFileSync(path.join(w.consumer, '.sync-receipt.json'), 'local\n');
       const classify = () => ({ ok: true, clean: false, syncOwned: [{ status: ' M', path: '.sync-receipt.json', origPath: null }], needsReview: [], other: [], degraded: false });
       const calls = [];
-      const noSnap = (cmd, args, o) => { calls.push(args.filter((a) => !a.startsWith('-')).slice(2, 3)[0]); return args.includes('stash') ? { status: 1, stdout: '', stderr: 'fatal: no snapshot' } : spawnRunner(cmd, args, o); };
+      // args are ['-C', <repo>, <subcommand>, ...]: record the subcommand itself, so the assertion below is about restore and not a filename.
+      const noSnap = (cmd, args, o) => { calls.push(args[0] === '-C' ? args[2] : args[0]); return args.includes('stash') ? { status: 1, stdout: '', stderr: 'fatal: no snapshot' } : spawnRunner(cmd, args, o); };
       const r = enforceBaseLag({ repoRoot: w.consumer, run: noSnap, classify });
       assert.equal(r.outcome, 'refused');
       assert.match(r.lines.join('\n'), /could not snapshot.*nothing was changed/);
+      assert.ok(calls.includes('stash'), 'vacuous-pass guard: the recorder really sees subcommands (the snapshot attempt)');
       assert.equal(calls.includes('restore'), false, 'restore must not run without a snapshot');
       assert.equal(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8'), 'local\n');
     } finally { w.rm(); }

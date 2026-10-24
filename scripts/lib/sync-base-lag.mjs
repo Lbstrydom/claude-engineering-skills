@@ -121,8 +121,8 @@ const LIST_MAX = 5;
 
 const q = (p) => `"${String(p).replace(/"/g, '\\"')}"`;
 const list = (paths) => `${paths.slice(0, LIST_MAX).join(', ')}${paths.length > LIST_MAX ? `, and ${paths.length - LIST_MAX} more` : ''}`;
-/** Modified/added/deleted in place: restorable from HEAD by path. Renames and untracked files are left for `merge --ff-only` to judge. */
-const restorable = (e) => !e.origPath && e.status !== '??' && !/[RC]/.test(e.status);
+/** Tracked in-place changes are restorable from HEAD by path. Untracked files are left for `merge --ff-only` to judge (renames never get here: see planBaseLag). */
+const restorable = (e) => e.status !== '??';
 
 /**
  * @typedef {{action: 'proceed'}
@@ -157,7 +157,10 @@ export function planBaseLag({ repoRoot, baseBranch, lag, behindCount, aheadCount
   if (!classified || !classified.ok) {
     return { action: 'refuse', reason: 'unreadable-status', detail: `${detail}, and its working tree could not be read (${classified?.error ?? 'no classification'})`, remedy: `fix git status in ${q(repoRoot)}, then git -C ${q(repoRoot)} pull --ff-only; re-run the sync` };
   }
-  const own = [...classified.needsReview, ...classified.other];
+  // A staged rename/copy cannot be restored by path (and the recovery snapshot would then cover more than the restore does), and the
+  // sync does not produce one: treat it as the human's, not as regenerable output.
+  const renamed = classified.syncOwned.filter((e) => e.origPath || /[RC]/.test(e.status));
+  const own = [...classified.needsReview, ...classified.other, ...renamed];
   if (classified.degraded || own.length > 0) {
     const what = classified.degraded
       ? 'its ownership could not be established, so none of its changes can be shown to be sync output'
@@ -238,7 +241,7 @@ function refusedFastForward(repoRoot, target, because, recovery = '') {
   };
 }
 
-/** One git call (ls-remote, fetch, merge, ...) outliving this is a failure, which the lag check reads as "not checked"/"refused". */
+/** One network git call (ls-remote, fetch) outliving this is a failure, which the lag check reads as "not checked"/"refused". */
 const REMOTE_CALL_MS = 60_000;
 const C = { R: '\x1b[31m', Y: '\x1b[33m', G: '\x1b[32m', D: '\x1b[2m', X: '\x1b[0m' };
 
@@ -253,7 +256,8 @@ const C = { R: '\x1b[31m', Y: '\x1b[33m', G: '\x1b[32m', D: '\x1b[2m', X: '\x1b[
  */
 export async function enforceBaseLagForTarget(repo, { dryRun = false, allowStale = false, run, classify, write = (l) => console.log(l) } = {}) {
   // Every git call here is local or one short network round trip: bound it, and never let git prompt for credentials in a sync.
-  const runner = run ?? ((cmd, args, o) => spawnRunner(cmd, args, { ...o, timeoutMs: REMOTE_CALL_MS, env: { GIT_TERMINAL_PROMPT: '0' } }));
+  // Only the NETWORK calls are bounded (killing a local merge / restore / stash halfway would leave locks and half-applied state).
+  const runner = run ?? ((cmd, args, o) => spawnRunner(cmd, args, { ...o, env: { GIT_TERMINAL_PROMPT: '0' }, ...(args.some((a) => a === 'ls-remote' || a === 'fetch') ? { timeoutMs: REMOTE_CALL_MS } : {}) }));
   let classifier = classify;
   if (!classifier) {
     const { classifyRepo } = await import('../sync-status.mjs');
