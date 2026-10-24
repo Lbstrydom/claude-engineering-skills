@@ -144,8 +144,8 @@ describe('hook v14 - the audit report survives the push, and its path is printed
     const got = runHook(c.local, source, c.stdin, { AUDIT_STUB: 'hang', AUDIT_PREPUSH_AUDIT_BUDGET_SEC: '3', AUDIT_PREPUSH_PROGRESS_SEC: '1' });
     assert.equal(got.status, 1, got.stderr);
     assert.match(got.stderr, /audit report\.json: none exists/);
-    assert.match(got.stderr, /audit output\.log: none exists|audit output\.log kept/);
-    assert.deepEqual(keptEntries(c).filter((f) => f.startsWith('.tmp.') || f.endsWith('.report.json')), []);
+    assert.match(got.stderr, /audit output\.log: none exists \(the audit wrote nothing\)/);
+    assert.deepEqual(keptEntries(c), [], 'no report, no output, no mktemp stub: the directory is empty');
   }));
 });
 
@@ -196,6 +196,64 @@ describe('hook v14 - fail closed when the report cannot be created', () => {
     assert.match(got.stderr, /cannot create private files under \.audit\/prepush .*push BLOCKED/);
     assert.equal(fs.readFileSync(path.join(c.local, KEEP), 'utf8'), 'not a directory', 'the squatter is untouched');
     assert.equal(fs.existsSync(path.join(c.local, 'AUDIT_RAN')), false, 'no private file, no audit');
+  }));
+});
+
+describe('hook v14 - the kept files describe the LATEST attempt on a tree', () => {
+  it('a later attempt that wrote nothing removes the earlier attempt files instead of leaving them to be read as its own', (t) => scenario(t, 'stale', ({ c, source }) => {
+    assert.equal(runHook(c.local, source, c.stdin, { AUDIT_STUB: 'findings' }).status, 0);
+    assert.ok(fs.existsSync(kept(c, 'report.json')) && fs.existsSync(kept(c, 'output.log')), 'fixture: the first attempt kept both');
+    const got = runHook(c.local, source, c.stdin, { AUDIT_STUB: 'hang', AUDIT_PREPUSH_AUDIT_BUDGET_SEC: '3', AUDIT_PREPUSH_PROGRESS_SEC: '1' });
+    assert.equal(got.status, 1, got.stderr);
+    assert.match(got.stderr, /earlier attempt's .*.report.json was removed/);
+    assert.deepEqual(keptEntries(c), []);
+  }));
+  it('a later attempt that wrote a report replaces the earlier one (same key, newest wins)', (t) => scenario(t, 'replace', ({ c, source }) => {
+    assert.equal(runHook(c.local, source, c.stdin, { AUDIT_STUB: 'findings' }).status, 0);
+    assert.equal(runHook(c.local, source, c.stdin).status, 0);
+    assert.equal(JSON.parse(fs.readFileSync(kept(c, 'report.json'), 'utf8')).verdict, 'PASS');
+    assert.deepEqual(keptEntries(c), [`${c.tree}.report.json`], 'the PASS attempt wrote no output, so the earlier output.log is gone too');
+  }));
+});
+
+describe('hook v14 - retention never prunes what the run just published, and its knob is a positive decimal', () => {
+  const seedFile = (c, name, ageHours) => {
+    const dir = path.join(c.local, KEEP);
+    fs.mkdirSync(dir, { recursive: true });
+    const f = path.join(dir, name);
+    fs.writeFileSync(f, '{}');
+    const when = new Date(Date.now() - ageHours * 3600_000);
+    fs.utimesSync(f, when, when);
+  };
+  const count = (c, ext) => keptEntries(c).filter((f) => f.endsWith(ext)).length;
+  it('KEEP=1 with a NEWER file already there: the just-published pair survives and the other goes (mtime order alone would delete it)', (t) => scenario(t, 'protect', ({ c, source }) => {
+    seedFile(c, `${'a'.repeat(40)}.report.json`, -24);   // 24h in the FUTURE: outranks anything this run writes
+    seedFile(c, `${'a'.repeat(40)}.output.log`, -24);
+    const got = runHook(c.local, source, c.stdin, { AUDIT_PREPUSH_KEEP_REPORTS: '1', AUDIT_STUB: 'findings' });
+    assert.equal(got.status, 0, got.stderr);
+    assert.deepEqual(keptEntries(c).sort(), [`${c.tree}.output.log`, `${c.tree}.report.json`].sort());
+  }));
+  for (const [value, expectReports] of [['00', 11], ['08', 8], ['0020', 11], ['1234567', 11], ['-3', 11], ['1.5', 11]]) {
+    it(`AUDIT_PREPUSH_KEEP_REPORTS=${value}: never deletes the run's own report; keeps ${expectReports - 1} older + it`, (t) => scenario(t, 'knob', ({ c, source }) => {
+      for (let i = 0; i < 10; i++) { seedFile(c, `${String(i).padStart(40, '0')}.report.json`, 10 + i); seedFile(c, `${String(i).padStart(40, '0')}.output.log`, 10 + i); }
+      const got = runHook(c.local, source, c.stdin, { AUDIT_PREPUSH_KEEP_REPORTS: value });
+      assert.equal(got.status, 0, got.stderr);
+      assert.ok(fs.existsSync(kept(c, 'report.json')), 'the own report of the run is never a casualty of a bad knob');
+      assert.equal(count(c, '.report.json'), expectReports);
+      assert.doesNotMatch(got.stderr, /value too great|syntax error|arithmetic/i);
+    }));
+  }
+});
+
+describe('hook v14 - the key is the pushed tree or the push is refused', () => {
+  it('an unresolvable pushed commit refuses with the git reason and runs no audit (no invented key)', (t) => scenario(t, 'notree', ({ c, source }) => {
+    const bogus = 'deadbeef'.repeat(5);
+    const base = c.stdin.trim().split(' ')[3];
+    const got = runHook(c.local, source, `refs/heads/main ${bogus} refs/heads/main ${base}
+`);
+    assert.equal(got.status, 1, got.stderr);
+    assert.equal(fs.existsSync(path.join(c.local, 'AUDIT_RAN')), false, got.stderr);
+    assert.deepEqual(keptEntries(c).filter((f) => f.startsWith('unknown')), []);
   }));
 });
 

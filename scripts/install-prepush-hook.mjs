@@ -654,8 +654,16 @@ if [ "$AUDIT_REUSED" != "1" ]; then
   # impossible. Same safety as before: mktemp is exclusive, no predictable-path fallback, and a directory or file that cannot be
   # created refuses the push.
   AUDIT_KEEP_DIR=".audit/prepush"
-  AUDIT_TREE="$(git rev-parse "\${PUSH_HEAD:-HEAD}^{tree}" 2>/dev/null)"
-  case "$AUDIT_TREE" in ''|*[!0-9a-f]*) AUDIT_TREE="unknown-tree-$(date +%s 2>/dev/null)" ;; esac
+  # The key is the pushed commit's TREE - the same identity audit-reuse speaks - and is a precondition, not a nicety: a made-up
+  # key would leave a report nobody can find by the tree they pushed. So an unresolvable tree refuses the push, with git's own reason.
+  AUDIT_TREE_ERR="$(mktemp 2>/dev/null)"
+  AUDIT_TREE="$(git rev-parse --verify "\${PUSH_HEAD:-HEAD}^{tree}" 2>"\${AUDIT_TREE_ERR:-/dev/null}")"
+  case "$AUDIT_TREE" in
+    ''|*[!0-9a-f]*)
+      echo "✗  [prepush-hook] cannot resolve the pushed tree of \${PUSH_HEAD:-HEAD} (git: $(cat "\${AUDIT_TREE_ERR:-/dev/null}" 2>/dev/null | head -n 3 | tr '\\n' ' ')) - the audit report cannot be keyed to it - push BLOCKED." >&2
+      rm -f "$AUDIT_TREE_ERR"; exit 1 ;;
+  esac
+  rm -f "$AUDIT_TREE_ERR"
   AUDIT_KEEP_BASE="$AUDIT_KEEP_DIR/$AUDIT_TREE"
   mkdir -p "$AUDIT_KEEP_DIR" 2>/dev/null && AUDIT_OUT="$(mktemp "$AUDIT_KEEP_DIR/.tmp.XXXXXX" 2>/dev/null)" && AUDIT_REPORT="$(mktemp "$AUDIT_KEEP_DIR/.tmp.XXXXXX" 2>/dev/null)" || {
     rm -f "$AUDIT_OUT" "$AUDIT_REPORT"
@@ -665,23 +673,39 @@ if [ "$AUDIT_REUSED" != "1" ]; then
   AUDIT_OUT_ARG="$AUDIT_OUT"
   AUDIT_REPORT_ARG="$AUDIT_REPORT"
   if command -v cygpath >/dev/null 2>&1; then AUDIT_OUT_ARG="$(cygpath -w "$AUDIT_OUT")"; AUDIT_REPORT_ARG="$(cygpath -w "$AUDIT_REPORT")"; fi
-  # Moves what the audit wrote to its tree-keyed names, keeps the newest AUDIT_PREPUSH_KEEP_REPORTS (default 20) of each kind, and says
-  # where everything is. Never changes the push's outcome: it only reports. An empty file is "nothing was written", said as such.
+  # Moves what the audit wrote to its tree-keyed names, keeps AUDIT_PREPUSH_KEEP_REPORTS (default 20) of each kind, and says where
+  # everything is. Never changes the push's outcome: it only reports. The files describe the LATEST attempt on this tree: an empty
+  # result is "nothing was written", said as such, and removes the previous attempt's file so it cannot be read as this one's.
   prepush_keep_audit() {
+    # A positive DECIMAL integer of at most 6 digits, else 20: leading zeros are stripped first (shell arithmetic reads 08 as a bad octal
+    # and 00 as zero, and zero would select everything for deletion), and a longer value is not a retention count, it is a typo.
     keep_n="\${AUDIT_PREPUSH_KEEP_REPORTS:-20}"
-    case "$keep_n" in ''|*[!0-9]*|0) keep_n=20 ;; esac
+    case "$keep_n" in ''|*[!0-9]*) keep_n=20 ;; esac
+    while [ "\${keep_n#0}" != "$keep_n" ]; do keep_n="\${keep_n#0}"; done
+    case "$keep_n" in ''|??????*) keep_n=20 ;; esac
+    keep_prot_report=""; keep_prot_output=""
     for keep_kind in report.json:"$AUDIT_REPORT" output.log:"$AUDIT_OUT"; do
       keep_suffix="\${keep_kind%%:*}"; keep_src="\${keep_kind#*:}"
+      keep_dest="$AUDIT_KEEP_BASE.$keep_suffix"; keep_prot=""
       if [ ! -s "$keep_src" ]; then
-        rm -f "$keep_src"; echo "[prepush-hook] ▸ audit $keep_suffix: none exists (the audit wrote nothing)" >&2; continue
+        rm -f "$keep_src"
+        if [ -e "$keep_dest" ]; then rm -f "$keep_dest"; echo "[prepush-hook] ▸ audit $keep_suffix: none exists (the audit wrote nothing; the earlier attempt's $keep_dest was removed so it is not mistaken for this one's)" >&2
+        else echo "[prepush-hook] ▸ audit $keep_suffix: none exists (the audit wrote nothing)" >&2; fi
+      else
+        mv -f "$keep_src" "$keep_dest" 2>/dev/null || keep_dest="$keep_src"
+        echo "[prepush-hook] ▸ audit $keep_suffix kept: $keep_dest" >&2
+        keep_prot="$keep_dest"
       fi
-      keep_dest="$AUDIT_KEEP_BASE.$keep_suffix"
-      mv -f "$keep_src" "$keep_dest" 2>/dev/null || keep_dest="$keep_src"
-      echo "[prepush-hook] ▸ audit $keep_suffix kept: $keep_dest" >&2
+      if [ "$keep_suffix" = "report.json" ]; then keep_prot_report="$keep_prot"; else keep_prot_output="$keep_prot"; fi
     done
-    for keep_glob in report.json output.log; do
-      ls -t "$AUDIT_KEEP_DIR"/*."$keep_glob" 2>/dev/null | tail -n +"$((keep_n + 1))" | while IFS= read -r keep_old; do rm -f -- "$keep_old"; done
-    done
+    # The files this run just published are NEVER prune candidates (mtime order is not enough: a rename keeps the temp file's mtime, so
+    # a newer file from another push can outrank it): the retained set is them plus the newest keep_n-1 others of each kind.
+    prepush_prune_kind() {   # $1 = suffix, $2 = the file this run published of that kind (empty: none)
+      prune_skip=$((keep_n + 1)); [ -n "$2" ] && prune_skip=$keep_n
+      ls -t "$AUDIT_KEEP_DIR"/*."$1" 2>/dev/null | { if [ -n "$2" ]; then grep -v -x -F -- "$2"; else cat; fi; } | tail -n +"$prune_skip" | while IFS= read -r prune_old; do rm -f -- "$prune_old"; done
+    }
+    prepush_prune_kind report.json "$keep_prot_report"
+    prepush_prune_kind output.log "$keep_prot_output"
     find "$AUDIT_KEEP_DIR" -maxdepth 1 -name '.tmp.*' -mmin +1440 -exec rm -f {} + 2>/dev/null
     return 0
   }
