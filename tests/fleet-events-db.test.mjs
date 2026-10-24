@@ -86,6 +86,9 @@ describe('fleet_events (disposable DB)', { skip }, () => {
       ev({ verb: 'claim', sessionId: 's3', outcome: 'refused', reasonClass: 'overlaps <path>', occurredAt: at(1) }),
       ev({ verb: 'land', mode: 'approve', outcome: 'pending', reasonClass: 'WAIT checks', occurredAt: at(1) }),
       ev({ verb: 'status', outcome: 'error', detail: { errorKind: 'TypeError' }, toolSha: 'abcdef1', occurredAt: at(1) }),
+      // `lease run`: a wrapped command's own exit (childExit) is counted apart; the wrapper's own failure is a fleet error.
+      ev({ verb: 'lease', mode: 'run', outcome: 'error', exitCode: 1, detail: { childExit: true, released: true }, occurredAt: at(1) }),
+      ev({ verb: 'lease', mode: 'run', outcome: 'error', exitCode: 127, detail: { released: true }, occurredAt: at(1) }),
       // A reused session id: two lifecycles (1h and 3h), each release paired with the claim before it.
       ev({ verb: 'claim', sessionId: 's4', occurredAt: at(1) }),
       ev({ verb: 'release', mode: 'done', sessionId: 's4', occurredAt: at(2) }),
@@ -99,6 +102,8 @@ describe('fleet_events (disposable DB)', { skip }, () => {
     const status = m.goldenSignals.find((v) => v.verb === 'status');
     assert.equal(status.n, 3);
     assert.equal(status.error, 1);
+    const run = m.goldenSignals.find((v) => v.verb === 'lease' && v.mode === 'run');
+    assert.deepEqual([run.n, run.error, run.childExit], [2, 1, 1], 'the child exit leaves the fleet error count');
     assert.equal(status.maxMs, 15_000, 'the event after untilIso is excluded');
     assert.ok(status.p95Ms > status.p50Ms);
     assert.equal(m.sessionFlow.started, 4, 's1, s2 and two s4 lifecycles; s3 was refused, so it never started');

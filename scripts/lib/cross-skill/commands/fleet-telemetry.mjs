@@ -87,9 +87,9 @@ function renderWorksheet(r) {
   for (const w of r.weaknesses) L.push(`  [${w.severity}] ${w.signal}: ${w.message}`);
   const m = r.telemetry;
   if (m && !m.error) {
-    L.push('', 'golden signals (verb · n · ok/refused/pending/error/argv · p50/p95 ms):');
+    L.push('', 'golden signals (verb · n · ok/refused/pending/error/argv · p50/p95 ms; +N child = non-zero exits the wrapped command owns):');
     for (const v of m.goldenSignals) {
-      L.push(`  ${(v.mode ? `${v.verb} ${v.mode}` : v.verb).padEnd(22)} ${String(v.n).padStart(5)}  ${v.ok}/${v.refused}/${v.pending}/${v.error}/${v.argv}  ${fmt(v.p50Ms)}/${fmt(v.p95Ms)}`);
+      L.push(`  ${(v.mode ? `${v.verb} ${v.mode}` : v.verb).padEnd(22)} ${String(v.n).padStart(5)}  ${v.ok}/${v.refused}/${v.pending}/${v.error}/${v.argv}  ${fmt(v.p50Ms)}/${fmt(v.p95Ms)}${v.childExit ? `  +${v.childExit} child` : ''}`);
     }
     const f = m.sessionFlow;
     L.push('', `session flow: ${f.started} started · ${f.released} released · ${f.abandoned} abandoned · lead time p50 ${fmt(f.leadTimeP50Hours, 1)}h p90 ${fmt(f.leadTimeP90Hours, 1)}h · refusals/session ${fmt(f.refusalsPerSession, 2)} · restacks/session ${fmt(f.restacksPerSession, 2)}`);
