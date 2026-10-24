@@ -58,6 +58,7 @@ import {
   renderAgentFixLines,
   resolveEvidence,
   checkEvidenceProvenance,
+  describeEquivalenceAcceptance,
   checkMessageFileSafety,
   messageFileError,
   composeFinalMessage,
@@ -66,6 +67,7 @@ import {
   formatTrailerBlock,
   parseMessageTrailers,
 } from './lib/commit-trailers.mjs';
+import { patchRangesEquivalent } from './lib/patch-equivalence.mjs';
 // ONE oracle for "is the store behind this checkout", shared with the pre-spend
 // refusal in openai-audit.mjs. It lived here as a private function until 2026-09-05,
 // which is why the audit — the caller whose provenance the answer decides — could not
@@ -472,7 +474,14 @@ async function main() {
     const committingBranch = ref.status === 0 ? (ref.stdout || '').trim() || null : null;
     // exit 0 = ancestor; 1 = not; anything else (unknown object, git failure) cannot be proven, so it is not an ancestor.
     const isAncestor = (sha) => headExists.status === 0 && gitRun(['merge-base', '--is-ancestor', sha, 'HEAD']).status === 0;
-    const provenance = checkEvidenceProvenance({ evidence, committingBranch, isAncestor });
+    const provenance = checkEvidenceProvenance({
+      evidence, committingBranch, isAncestor,
+      // A rebase moves the audited sha out of HEAD's history, not the branch's patches: the SAME predicate the hook's audit reuse asks.
+      patchEquivalence: (auditedSha, auditedTree) => (headExists.status === 0
+        ? patchRangesEquivalent({ auditedRef: auditedSha, headRef: 'HEAD', expectedAuditedTree: auditedTree, cwd: repoRoot })
+        : { equivalent: false, reason: 'no commit to compare against yet' }),
+    });
+    if (provenance.ok && provenance.equivalence) err(describeEquivalenceAcceptance(provenance.equivalence));
     if (!provenance.ok) {
       err(`ship-commit: audit evidence IGNORED (${provenance.reason}): ${provenance.detail}. Treated as absent: no AI-Run-ID, and --gate passed|converged|waived cannot be claimed from it (run /audit-code on this branch for evidence that counts).`);
       evidence = { state: 'absent', runId: null, ts: null };

@@ -78,12 +78,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { RECEIPT_PATH, readSyncReceipt, latestReceiptEntry } from './sync-receipt.mjs';
 import { OVERRIDES_PATH } from './sync-overrides.mjs';
 import { comparisonKey, isUpstreamOwned, isUsableSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './sync-owned-sidecar.mjs';
 import { pathspecsForCommit } from './sync-status.mjs';
 import { SYNC_BRANCH_PREFIX } from './sync-divergence.mjs';
 import { createGitAncestry } from './sync-rollback-guard.mjs';
+// The base-lag oracle (and the runner / git helpers it shares with this module) lives in sync-base-lag.mjs, which the sync asks BEFORE
+// writing; re-exported here so `sync:pr` and every existing importer keep one door.
+import { spawnRunner, ok, why, parseSymrefHead, classifyBaseLag, gatherBaseFacts } from './sync-base-lag.mjs';
+export { spawnRunner, parseSymrefHead, classifyBaseLag, gatherBaseFacts };
 
 /** Every reason `planConsumerPr` can decline. Strings are the CLI's contract. */
 export const SKIP_REASON = Object.freeze({
@@ -99,17 +104,6 @@ export const SKIP_REASON = Object.freeze({
 
 const RECEIPT_KEY = comparisonKey(RECEIPT_PATH);
 const DEFAULT_REPO = 'Lbstrydom/claude-engineering-skills';
-
-/**
- * The remote's default branch from `git ls-remote --symref origin HEAD`
- * (`ref: refs/heads/<name>	HEAD`). PURE.
- * @param {string} text
- * @returns {string|null}
- */
-export function parseSymrefHead(text) {
-  const m = /^ref:\s+refs\/heads\/(\S+)\s+HEAD\s*$/m.exec(String(text ?? ''));
-  return m ? m[1] : null;
-}
 
 /**
  * @param {string|null|undefined} commitSha — the consumer manifest's `commitSha`
@@ -218,7 +212,7 @@ export function planConsumerPr({
     };
   }
   const commitPathspecs = [...new Set(pathspecsForCommit(classified.syncOwned))].sort();
-  if (behindCount > 0) {
+  if (classifyBaseLag({ baseBranch, baseSha, currentBranch, aheadCount, behindCount }) === 'behind') {
     // Header rule 3: the working tree may ride onto origin's head only if
     // origin left every path the sync wrote (and the overrides it honoured)
     // exactly as the sync saw them.
@@ -270,28 +264,9 @@ export function planConsumerPr({
  */
 export function gatherConsumerFacts(run, repoRoot, { baseBranch = null, commitSha = null } = {}) {
   const git = (args) => run('git', ['-C', repoRoot, ...args]);
-  let base = baseBranch;
-  if (!base) {
-    const symref = git(['ls-remote', '--symref', 'origin', 'HEAD']);
-    base = ok(symref) ? parseSymrefHead(symref.stdout) : null;
-    if (!base) {
-      return { ok: false, step: 'resolve default branch', error: ok(symref) ? 'origin advertises no HEAD symref — pass --base' : why(symref) };
-    }
-  }
-  const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`]);
-  if (!ok(fetched)) return { ok: false, step: `fetch origin ${base}`, error: why(fetched) };
-  const resolved = git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}^{commit}`]);
-  const baseSha = ok(resolved) ? resolved.stdout.trim() : '';
-  if (!/^[0-9a-f]{40,64}$/.test(baseSha)) return { ok: false, step: `resolve origin/${base}`, error: why(resolved) };
-
-  const head = git(['rev-parse', '--abbrev-ref', 'HEAD']);
-  const currentBranch = ok(head) ? head.stdout.trim() : null;
-  const count = (range) => {
-    const r = git(['rev-list', '--count', range]);
-    return ok(r) && /^\d+$/.test(r.stdout.trim()) ? Number(r.stdout.trim()) : null;
-  };
-  const aheadCount = count(`${baseSha}..HEAD`);
-  const behindCount = count(`HEAD..${baseSha}`);
+  const lag = gatherBaseFacts(run, repoRoot, { baseBranch });
+  if (!lag.ok) return lag;
+  const { baseBranch: base, baseSha, behindCount } = lag;
   let upstreamChanged = [];
   if (behindCount > 0) {
     const diff = git(['diff', '--name-only', '--no-renames', '-z', 'HEAD', baseSha, '--']);
@@ -302,7 +277,7 @@ export function gatherConsumerFacts(run, repoRoot, { baseBranch = null, commitSh
   const local = git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
   const remote = git(['ls-remote', '--heads', 'origin', branch]);
   const branchExists = ok(local) || (ok(remote) && remote.stdout.trim() !== '');
-  return { ok: true, baseBranch: base, baseSha, currentBranch, aheadCount, behindCount, upstreamChanged, branchExists };
+  return { ...lag, upstreamChanged, branchExists };
 }
 
 /** CSI / OSC escape sequences, so a coloured reporter's lines still match. */
@@ -430,11 +405,6 @@ export function parseGhAccounts(text) {
 /**
  * @typedef {(cmd: string, args: string[], opts?: {cwd?: string, input?: string}) => {status: number|null, stdout: string, stderr: string, error?: Error}} Runner
  */
-
-/** @param {{status:number|null, error?:Error}} r */
-const ok = (r) => !r.error && r.status === 0;
-/** @param {{stdout:string, stderr:string, error?:Error, status:number|null}} r */
-const why = (r) => (r.error?.message || `${r.stderr || ''}${r.stdout || ''}`.trim() || `exit ${r.status}`);
 
 /** Why an older open sync PR was left open. Strings are the CLI's contract. */
 export const SUPERSEDE_KEEP_REASON = Object.freeze({

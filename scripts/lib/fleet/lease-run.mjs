@@ -121,6 +121,7 @@ export async function runUnderLease(opts, job) {
     await sleep(wait);
   }
   const token = grant.heavy.token;
+  if (grant.capped) log(`CAPPED: granted ${grant.capped.grantedMin} of the requested ${grant.capped.requestedMin} minutes - the turn ends at ${grant.capped.turnEndsAt.slice(11, 16)}Z and ${grant.capped.waiting} is waiting; the slot is released for them then unless this job is still running`);
 
   // 3. Run. Signals abort the job's AbortSignal; the job stops itself, and we release afterwards.
   const abort = new AbortController();

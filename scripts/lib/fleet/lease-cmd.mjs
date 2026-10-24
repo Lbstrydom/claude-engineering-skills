@@ -120,7 +120,8 @@ async function cmdRun(ctx, flags, positionals, { dir, repo }) {
  * The verb result for a finished `lease run`: its exit code, and the telemetry ORIGIN of a non-zero one.
  * `childExit: true` (recorded by telemetry as a boolean) marks the exit as the WRAPPED command's own — its
  * tests failed, it timed out, it died by a signal — so the fleet error rule can tell it from a fault of the
- * wrapper itself (a lease error, a command that cannot start, a stop signal, a release that did not land).
+ * wrapper itself (a lease error, a command that cannot start, a stop signal, a release that did not land,
+ * a process-tree stop that failed).
  * A refused acquire is `refused`, not an error; the exit stays 75 so a caller's `$?` is unchanged.
  */
 export function leaseRunResult(res, { say = () => {}, cmd, timeoutMin, cmdName = 'fleet' } = {}) {
@@ -136,18 +137,22 @@ export function leaseRunResult(res, { say = () => {}, cmd, timeoutMin, cmdName =
   }
   const o = res.result;
   const released = res.released?.ok === true;
+  const stopFailed = o.stopFailed?.length ? o.stopFailed : null;
+  // c729: a stop that FAILED leaves the tree possibly running while the slot is released below - say so, never a quiet "stopped".
+  if (stopFailed) say(`WARNING: stopping the command's process tree FAILED (${stopFailed.join('; ')}). ${o.abandoned ? 'The command was ABANDONED still running. ' : ''}It may still be running on this machine and the slot is released regardless: check for stray processes before starting heavy work.`);
   let exitCode;
   let child = false;
   if (o.spawnError) { say(describeSpawnFailure({ cmd, spawnError: o.spawnError, target: o.target, cwd: process.cwd() })); exitCode = 127; }
-  else if (res.signalled) { say(`stopped by ${res.signalled}; the command's process tree was stopped${released ? ' and the slot released' : ' but the slot could NOT be released (see above)'}`); exitCode = exitCodeForSignal(res.signalled); }
-  else if (o.timedOut) { say(`the command ran past --timeout ${timeoutMin} minute(s) and was stopped`); exitCode = 124; child = true; }
+  else if (res.signalled) { say(`stopped by ${res.signalled}; ${stopFailed ? "the command's process tree was NOT confirmed stopped (see WARNING above)" : "the command's process tree was stopped"}${released ? ' and the slot released' : ' but the slot could NOT be released (see above)'}`); exitCode = exitCodeForSignal(res.signalled); }
+  else if (o.timedOut) { say(`the command ran past --timeout ${timeoutMin} minute(s) and ${stopFailed ? 'a stop was requested but NOT confirmed (see WARNING above)' : 'was stopped'}`); exitCode = 124; child = true; }
   else if (o.signal) { exitCode = exitCodeForSignal(o.signal); child = true; }
   else { exitCode = o.code ?? 1; child = true; }
-  // A release that did not land is the wrapper's own failure, recorded as a fleet error WHATEVER the child did.
-  // The exit stays the child's, so a caller's `$?` still reports the job (lease-run.mjs already said on stderr
-  // how to free the slot by hand); only the event's outcome changes.
-  if (!released) return { ...done(exitCode, { released }), ok: false, code: 'error' };
-  return done(exitCode, { ...(exitCode !== 0 && child ? { childExit: true } : {}), released });
+  const extra = { released, ...(stopFailed ? { treeStopFailed: stopFailed } : {}) };
+  // A release that did not land, or a tree stop that failed, is the wrapper's own failure: recorded as a fleet
+  // error WHATEVER the child did. The exit stays the child's, so a caller's `$?` still reports the job (stderr
+  // already said what to do by hand); only the event's outcome changes.
+  if (!released || stopFailed) return { ...done(exitCode, extra), ok: false, code: 'error' };
+  return done(exitCode, { ...(exitCode !== 0 && child ? { childExit: true } : {}), ...extra });
 }
 
 /** `fleet lease <sub> [flags]`. */
@@ -202,11 +207,12 @@ export function cmdLease(ctx, flags, positionals) {
         if (['gate', 'test'].includes(h.kind) && peakState(d.lease.peakHours, ctx.now).now) warn.push('WARNING: this is a peak-cost hour (see `lease status`); the slot was granted anyway');
         const verb = d.renewed ? 'renewed' : d.rotated ? 'extended with a NEW token' : 'granted';
         return {
-          heavy: h, token: h.token, renewed: d.renewed, rotated: d.rotated, warnings: warn,
+          heavy: h, token: h.token, renewed: d.renewed, rotated: d.rotated, warnings: warn, ...(d.capped ? { capped: d.capped } : {}),
           text: [
             `OK: heavy slot ${verb} to ${h.holder} (${h.repo}) for ${h.kind} until ${hhmm(new Date(h.expiresAt))}`,
             `token: ${h.token}  (pass --token ${h.token} to attach/release/renew so a stale call is refused)`,
             ...(d.event ? [`taken over: ${d.event.reason}`] : []),
+            ...(d.capped ? [`CAPPED: granted ${d.capped.grantedMin} of the requested ${d.capped.requestedMin} minutes - the turn ends at ${hhmm(new Date(d.capped.turnEndsAt))} and ${d.capped.waiting} is waiting; ask again in your next turn`] : []),
             ...(h.pid === undefined ? [`no pid recorded: once the job starts, \`${ctx.cmd} lease attach --pid <n>\` lets a later session verify it stopped`] : []),
             ...warn,
           ].join('\n'),

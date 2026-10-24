@@ -501,6 +501,13 @@ describe('lease run: the origin of a non-zero exit is decided at capture', () =>
     }
   });
 
+  test('a timed-out child whose tree stop FAILED is the wrapper’s fault, never a childExit', () => {
+    const r = leaseRunResult(ran({ code: null, timedOut: true, stopFailed: ['first stop: refused'] }), { timeoutMin: 1 });
+    assert.deepEqual([r.ok, r.code, r.exitCode, r.childExit], [false, 'error', 124, undefined]);
+    assert.deepEqual(r.treeStopFailed, ['first stop: refused']);
+    assert.equal(leaseRunResult(ran({ code: null, timedOut: true }), { timeoutMin: 1 }).childExit, true, 'the same timeout with a confirmed stop is the child’s');
+  });
+
   test('a refused acquire is recorded as refused, and still exits 75', () => {
     const r = leaseRunResult({ ran: false, outcome: 'not-granted', code: 'held', reason: 'held by x' });
     assert.deepEqual([r.code, r.exitCode], ['refused', 75]);

@@ -29,10 +29,12 @@ This is the list to read when asking "what is in flight?".
 | [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `In Progress` | implemented on `fix/debt-readers-ask-store`; under /audit-code |
 | [Fleet chips & merge friction — conflict-free generated files, a standard chip preamble with a coded ship check, one recorded CI-flake re-run, and a harder handover](./fleet-chips-and-merge-friction.md) | `In Progress` |  |
 | [fleet handover — structured wind-down, coordinator context, and three probe fixes](./fleet-handover-winddown.md) | `Draft` |  |
+| [An in-turn lease grant ends with the turn while another repo waits](./fleet-lease-in-turn-cap.md) | `In Progress` | implemented on `fix/lease-in-turn-grant-cap`, pending audit and merge |
 | [fleet lease — announce race, transition journal, turns, gaps, sync:pr on the lease](./fleet-lease-turns-and-journal.md) | `In Progress` |  |
 | [fleet prune evidence reaches a person (upstream 56773c7c)](./fleet-prune-surfacing.md) | `In Progress` |  |
 | [fleet — catch abandoned worktree work regularly, and remove account-switch friction](./fleet-unclaimed-work-and-switch-friction.md) | `Draft` |  |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
+| [Consumer pre-push hook v13 — v12's first day in the field](./hook-v13-field-fixes.md) | `In Progress` | implemented on `fix/hook-v13-budget-reuse-noplan`, pending audit and merge |
 | [pre-push — a sanctioned lane for `archive/*` refs](./prepush-archive-lane.md) | `In Progress` |  |
 | [Consumer pre-push hook: bounded, visible, fail-closed steps (hook v11)](./prepush-hook-bounded-steps.md) | `In Progress` |  |
 | [Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed.md) | `Approved` |  |
@@ -42,6 +44,7 @@ This is the list to read when asking "what is in flight?".
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
 | [sync-pr supersedes an older open sync PR](./sync-pr-supersede-open-sync-pr.md) | `In Progress` |  |
 | [Sync contract — structural receipt check (gate 2B) + undeclared required-dep warning](./sync-receipt-structural-and-undeclared-deps.md) | `In Progress` |  |
+| [Sync checks the consumer's lag BEFORE writing; a failed tree-kill is reported](./sync-stale-base-and-stoptree.md) | `In Progress` | implemented on `fix/sync-stale-base-and-stoptree`, pending audit and merge |
 | [sync-to-repos failure honesty (verified audit hypotheses from #231)](./sync-to-repos-failure-honesty.md) | `Draft` |  |
 
 ## Parked

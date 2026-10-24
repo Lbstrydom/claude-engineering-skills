@@ -182,3 +182,69 @@ describe('ship-commit CLI: the incident, replayed', () => {
     assert.match(body, /AI-Gate: waived/);
   });
 });
+
+// ── fleet p-20261015194540-f757: a rebase moves the audited sha out of HEAD without touching the branch's own patches ──────────────
+describe('checkEvidenceProvenance - range-diff equivalence (the pure rule)', () => {
+  const fresh = (o = {}) => ({ state: 'fresh', runId: RUN_ID, ts: 'x', auditedBranch: 'feat', auditedSha: 'a'.repeat(40), auditedTree: 'b'.repeat(40), ...o });
+  const no = () => false;
+  it('a non-ancestor audited sha is accepted when the branch\'s own patches are the audited commits\', and the result says so', () => {
+    let asked = null;
+    const v = checkEvidenceProvenance({ evidence: fresh(), committingBranch: 'feat', isAncestor: no, patchEquivalence: (sha, tree) => { asked = [sha, tree]; return { equivalent: true, commits: 2 }; } });
+    assert.deepEqual(v, { ok: true, equivalence: { kind: 'range-diff', commits: 2, auditedSha: 'a'.repeat(40) } });
+    assert.deepEqual(asked, ['a'.repeat(40), 'b'.repeat(40)]);
+  });
+  it('NOT equivalent -> still refused, and the detail carries the comparison\'s reason', () => {
+    const v = checkEvidenceProvenance({ evidence: fresh(), committingBranch: 'feat', isAncestor: no, patchEquivalence: () => ({ equivalent: false, reason: 'the patches differ: audited 2 own commit(s), pushed 3' }) });
+    assert.deepEqual([v.ok, v.reason], [false, 'sha-not-ancestor']);
+    assert.match(v.detail, /not range-diff-equivalent.*pushed 3/);
+  });
+  it('equivalence never rescues a BRANCH mismatch, and is never consulted for an ancestor (the cheap, stronger rule wins)', () => {
+    const boom = () => { throw new Error('must not be asked'); };
+    assert.equal(checkEvidenceProvenance({ evidence: fresh({ auditedBranch: 'other' }), committingBranch: 'feat', isAncestor: no, patchEquivalence: () => ({ equivalent: true, commits: 1 }) }).reason, 'branch-mismatch');
+    assert.deepEqual(checkEvidenceProvenance({ evidence: fresh(), committingBranch: 'feat', isAncestor: () => true, patchEquivalence: boom }), { ok: true });
+  });
+  it('without a predicate the v12 behaviour is byte-identical (a rebased marker is refused)', () => {
+    const v = checkEvidenceProvenance({ evidence: fresh(), committingBranch: 'feat', isAncestor: no });
+    assert.deepEqual([v.ok, v.reason], [false, 'sha-not-ancestor']);
+    assert.doesNotMatch(v.detail, /range-diff/);
+  });
+});
+
+describe('ship-commit CLI: a ship whose audit predates a pure rebase (the #262 case)', () => {
+  /** feature = [A, B] on main; audited at its tip; then main moves and the feature is rebased onto it. */
+  function auditedThenRebased({ amendAfterRebase = false } = {}) {
+    git(['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    git(['checkout', '-q', '-b', 'feat']);
+    for (const [f, t] of [['a.txt', 'a1\na2\n'], ['b.txt', 'b1\nb2\n']]) { fs.writeFileSync(path.join(repo, f), t); git(['add', f]); git(['commit', '-q', '-m', `add ${f}`]); }
+    const audited = head();
+    const auditedTree = git(['rev-parse', 'HEAD^{tree}']).trim();
+    git(['checkout', '-q', 'main']);
+    fs.writeFileSync(path.join(repo, 'main-only.txt'), 'moved\n'); git(['add', 'main-only.txt']); git(['commit', '-q', '-m', 'main moves']);
+    git(['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    git(['checkout', '-q', 'feat']);
+    git(['rebase', 'main']);
+    if (amendAfterRebase) { fs.writeFileSync(path.join(repo, 'b.txt'), 'b1\nB2\n'); git(['commit', '-q', '-a', '--amend', '--no-edit']); }
+    assert.notEqual(git(['rev-parse', 'HEAD']).trim(), audited, 'fixture: the audited commit is no longer HEAD');
+    return { audited, auditedTree };
+  }
+
+  it('the rebased ship keeps its AI-Run-ID, says RANGE-DIFF-EQUIVALENT, and may claim waived (it could never claim passed: the tree moved)', () => {
+    const { audited, auditedTree } = auditedThenRebased();
+    const mf = arrange();
+    marker({ auditedBranch: 'feat', auditedSha: audited, auditedTree });
+    const r = run(mf, 'waived');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /RANGE-DIFF-EQUIVALENT.*2 own commit\(s\)/);
+    assert.doesNotMatch(r.stderr, /IGNORED/);
+    assert.match(git(['log', '-1', '--format=%B']), new RegExp(`AI-Run-ID: ${RUN_ID}`));
+  });
+  it('NEGATIVE CONTROL: the same rebase with one byte changed afterwards is IGNORED exactly as in v12 (no AI-Run-ID, nothing verified)', () => {
+    const { audited, auditedTree } = auditedThenRebased({ amendAfterRebase: true });
+    const mf = arrange();
+    marker({ auditedBranch: 'feat', auditedSha: audited, auditedTree });
+    const r = run(mf, 'not-run');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /audit evidence IGNORED \(sha-not-ancestor\).*not range-diff-equivalent/);
+    assert.doesNotMatch(git(['log', '-1', '--format=%B']), /AI-Run-ID/);
+  });
+});

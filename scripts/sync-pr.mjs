@@ -43,12 +43,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { resolveTargets, consumerAliases } from './lib/consumer-repos.mjs';
 import { MANIFEST_RELATIVE_PATH } from './lib/sync-manifest.mjs';
 import { classifyRepo } from './sync-status.mjs';
-import { planConsumerPr, runConsumerPr, gatherConsumerFacts, retrySupersession, supersessionRetryTarget } from './lib/sync-pr.mjs';
+import { planConsumerPr, runConsumerPr, gatherConsumerFacts, retrySupersession, supersessionRetryTarget, spawnRunner } from './lib/sync-pr.mjs';
 import { scratchPath } from './lib/temp-paths.mjs';
 import { repoIdentity } from './lib/fleet/lease-cmd.mjs';
 import { LeaseConfigError, machineDir } from './lib/fleet/lease.mjs';
@@ -60,15 +59,6 @@ const KNOWN_FLAGS = ['--target', '--dry-run', '--no-merge', '--base', '--lease-f
 /** The checkout this script lives in: the SOURCE repo whose turn a sync run takes (any worktree of it shares one repoKey). */
 const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
-
-/** @type {import('./lib/sync-pr.mjs').Runner} */
-function spawnRunner(cmd, args, { cwd, input } = {}) {
-  const r = spawnSync(cmd, args, {
-    cwd, input, encoding: 'utf-8', windowsHide: true, maxBuffer: 64 * 1024 * 1024,
-    // A consumer's pre-push hook can run its whole test suite; no timeout here.
-  });
-  return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error };
-}
 
 /** @param {string} repoRoot @returns {{repo?: string, commitSha?: string|null}|null} */
 function readManifest(repoRoot) {

@@ -628,7 +628,7 @@ describe('the real hook - an audit that did not run is UNMEASURED and refuses th
       const got = runHook(c.local, source, stdinOf(p), { ...clear });
       assert.equal(got.status, 1, got.stderr);
       assert.match(got.stderr, /step runner CANNOT RUN/);
-      assert.match(got.stderr, /predates hook v12/);
+      assert.match(got.stderr, /predates hook v13/);
       assert.equal(got.audited, false, 'the audit must not run when its outcome could not be classified');
     } finally { rmrf(ws); }
   });
@@ -661,6 +661,20 @@ describe('the real hook - reuse of an audit that already covered this tree, and 
       assert.equal(got.status, 0, got.stderr);
       assert.equal(got.audited, false, 'the audit must not run when its run is reused');
       assert.match(got.stderr, /reusing audit run audit-run-0003 2 abcdef012345/);
+    } finally { rmrf(ws); }
+  });
+  it('a range-diff-equivalent reuse SKIPS the audit and says so - never "the same tree"', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const ws = tmpDir('hook-reuse-eq-');
+    try {
+      const source = makeSourceRepo(ws);
+      stubReuse(source, 'reuse-equivalent audit-run-0004 3 2');
+      const c = buildConsumer(ws);
+      const got = runHook(c.local, source, stdinOf(pushOf(c)), { ...base, AUDIT_STUB: 'crash' });
+      assert.equal(got.status, 0, got.stderr);
+      assert.equal(got.audited, false);
+      assert.match(got.stderr, /reusing audit run audit-run-0004 3 2 \(run, converged round, commits\): range-diff-equivalent/);
+      assert.doesNotMatch(got.stderr, /exactly the tree it audited/);
     } finally { rmrf(ws); }
   });
   it('a stalled reuse check is bounded: the push is REFUSED with the runner\'s timeout message visible, the audit never runs', (t) => {
@@ -709,7 +723,7 @@ describe('the real hook - reuse of an audit that already covered this tree, and 
       const c = buildConsumer(ws);
       const p = pushOf(c);
       const scaled = runHook(c.local, source, stdinOf(p), { ...base });
-      assert.match(scaled.stderr, /budget 600s, scaled to 1 file\(s\), 1 changed line\(s\)/);
+      assert.match(scaled.stderr, /budget 630s, scaled to 1 file\(s\), 1 changed line\(s\)/);
       const pinned = runHook(c.local, source, stdinOf(p), { ...base, AUDIT_PREPUSH_AUDIT_BUDGET_SEC: '777' });
       assert.match(pinned.stderr, /budget 777s, pinned by AUDIT_PREPUSH_AUDIT_BUDGET_SEC/);
     } finally { rmrf(ws); }

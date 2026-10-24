@@ -150,7 +150,16 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // store row) is reused and the audit skipped, saying which run; a tree that differs by one byte re-runs. Otherwise the budget scales
 // with the diff (files + lines, floor 600s, capped) unless AUDIT_PREPUSH_AUDIT_BUDGET_SEC pins it. Logic: lib/prepush-audit-gate.mjs.
 // Re-install to pick it up: `npm run hooks:install -- --target <name>` (after the consumer's sync).
-const HOOK_VERSION    = 12;
+// v13 (2026-10-24): v12's first day in the field, three fixes. (1) A push the plan selector resolved NO plan for (none touched among
+// several active, or none active) exited at the selection with only "[plan-status] no active plan to audit": a code push passed with
+// NOTHING measured and was never reported UNMEASURED (storyline #431). It now REFUSES as UNMEASURED naming the cause, unless the push
+// carries nothing a code audit reads (docs or sync bookkeeping only) or AUDIT_PREPUSH_ALLOW_UNMEASURED=1 says so on purpose. The audit
+// is plan-keyed (`openai-audit.mjs code <plan-file>`), so a plan-less audit was not the cheap option. (2) The diff-scaled audit budget is
+// refit from the store's MEASURED round-1 audit durations (600s + 30s per file, capped): v12's formula gave a 23-file / 1208-line push
+// 881s and the audit took 882s. (3) A converged audit is also reused when the tree differs but the branch's own commits have exactly
+// the audited commits' content fingerprints (a rebase / cherry-pick recovery moves the tree, not the diff) - printed as range-diff-equivalent,
+// never as "the same tree". Logic: lib/prepush-audit-gate.mjs, lib/patch-equivalence.mjs. Re-install: `npm run hooks:install -- --target <name>`.
+const HOOK_VERSION    = 13;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -431,17 +440,17 @@ fi
 STEP_CLI="$AUDIT_LOOP_DIR/scripts/prepush-step.mjs"
 STEP_BUDGET="\${AUDIT_PREPUSH_STEP_BUDGET_SEC:-60}"
 PROGRESS_SEC="\${AUDIT_PREPUSH_PROGRESS_SEC:-30}"   # heartbeat interval: a slow step says so instead of going quiet
-# v12 relies on the runner's audit-outcome / audit-reuse / audit-budget subcommands: an older source checkout lacks them, and
+# v12/v13 rely on the runner's audit-outcome / audit-reuse / audit-budget / no-plan subcommands: an older source checkout lacks them, and
 # running the audit without them would mean deciding its outcome by hand - the defect this version exists to end.
 STEP_CAPS=" $(node "$STEP_CLI" capabilities 2>/dev/null) "
 STEP_CLI_OK=1
-for cap in audit-outcome audit-reuse audit-budget; do
+for cap in audit-outcome audit-reuse audit-budget no-plan; do
   case "$STEP_CAPS" in *" $cap "*) ;; *) STEP_CLI_OK="" ;; esac
 done
 if [ "$(node "$STEP_CLI" --selfcheck-relocation 2>/dev/null)" != "OK" ] || [ -z "$STEP_CLI_OK" ]; then
   echo "" >&2
   echo "❌ [prepush-hook] step runner CANNOT RUN: $STEP_CLI" >&2
-  echo "   Update the claude-engineering-skills checkout at $AUDIT_LOOP_DIR (it predates hook v12)," >&2
+  echo "   Update the claude-engineering-skills checkout at $AUDIT_LOOP_DIR (it predates hook v13)," >&2
   echo "   or bypass with git push --no-verify. Refusing rather than running steps that could hang silently." >&2
   echo "" >&2
   exit 1
@@ -523,8 +532,15 @@ PLAN_SELECT_RC=$?
 # which step, how long and who holds the lease. Any other non-zero stays a non-event: a malformed Status must never abort a push
 # (R3-H5) - but a hang must.
 [ "$PLAN_SELECT_RC" -eq 124 ] && exit 1
-[ "$PLAN_SELECT_RC" -ne 0 ] && PLAN_FILE=""
-[ -z "$PLAN_FILE" ] && finish
+PLAN_SELECTOR_FAILED=""
+[ "$PLAN_SELECT_RC" -ne 0 ] && { PLAN_FILE=""; PLAN_SELECTOR_FAILED="--selector-failed"; }
+# No plan (v13): the audit is keyed to one, so nothing below can run. That is UNMEASURED, not a pass - unless the push carries nothing a
+# code audit reads (docs / sync bookkeeping only). 124: the runner has said why; both refuse. A failure of the decision step refuses too.
+if [ -z "$PLAN_FILE" ]; then
+  prepush_bounded no-plan "$STEP_BUDGET" node "$STEP_CLI" no-plan $PLAN_SELECTOR_FAILED
+  [ "$?" -eq 0 ] || exit 1
+  finish
+fi
 
 # ── Sync-bookkeeping-only short-circuit (v7) ────────────────────────────────
 # A push that only touches this repo's own sync bookkeeping (.sync-receipt.json,
@@ -589,7 +605,8 @@ prepush_audit() {
 }
 
 # ── Reuse an audit that already covered this exact tree (v12) ────────────────
-# Keyed on TREE identity only (never the branch name, never recency): a CONVERGED run recorded for the pushed commit's tree is the
+# Keyed on TREE identity (never the branch name, never recency) or, when the tree moved, on the branch's own content-preserving PATCH FINGERPRINTS (v13; never a merge-bearing range): a CONVERGED
+# run recorded for the pushed commit's tree - or for exactly these patches - is the
 # evidence, and redoing a ~25-minute audit of it is what timed a 60-file push out at a flat 600s. Anything the check cannot establish
 # (no marker, a different tree, a store it cannot read) is "none": the audit runs. The reason is printed either way.
 AUDIT_REUSED=""
@@ -605,6 +622,10 @@ case "$AUDIT_REUSE" in
   "reuse "*)
     AUDIT_REUSED=1
     echo "[prepush-hook] ▸ reusing audit run \${AUDIT_REUSE#reuse } (converged round / audited tree): the pushed tree is exactly the tree it audited - code audit skipped" >&2
+    ;;
+  "reuse-equivalent "*)
+    AUDIT_REUSED=1
+    echo "[prepush-hook] ▸ reusing audit run \${AUDIT_REUSE#reuse-equivalent } (run, converged round, commits): range-diff-equivalent - the tree differs (the base moved) but the branch's own commits have exactly the content fingerprints of the commits that run audited - code audit skipped" >&2
     ;;
   *) echo "[prepush-hook] ▸ no audit run to reuse: \${AUDIT_REUSE#none }" >&2 ;;
 esac
