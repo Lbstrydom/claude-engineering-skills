@@ -682,7 +682,7 @@ if [ "$AUDIT_REUSED" != "1" ]; then
     keep_n="\${AUDIT_PREPUSH_KEEP_REPORTS:-20}"
     case "$keep_n" in ''|*[!0-9]*) keep_n=20 ;; esac
     while [ "\${keep_n#0}" != "$keep_n" ]; do keep_n="\${keep_n#0}"; done
-    case "$keep_n" in ''|??????*) keep_n=20 ;; esac
+    case "$keep_n" in ''|???????*) keep_n=20 ;; esac
     keep_prot_report=""; keep_prot_output=""
     for keep_kind in report.json:"$AUDIT_REPORT" output.log:"$AUDIT_OUT"; do
       keep_suffix="\${keep_kind%%:*}"; keep_src="\${keep_kind#*:}"

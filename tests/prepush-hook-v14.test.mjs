@@ -233,6 +233,15 @@ describe('hook v14 - retention never prunes what the run just published, and its
     assert.equal(got.status, 0, got.stderr);
     assert.deepEqual(keptEntries(c).sort(), [`${c.tree}.output.log`, `${c.tree}.report.json`].sort());
   }));
+  it('the six-digit limit is inclusive: 999999 is honoured (25 seeded + the run\'s own = 26 kept), 1000000 falls back to 20', (t) => {
+    for (const [value, expected] of [['999999', 26], ['1000000', 20]]) {
+      scenario(t, 'bound', ({ c, source }) => {
+        for (let i = 0; i < 25; i++) seedFile(c, `${String(i).padStart(40, '0')}.report.json`, 10 + i);
+        assert.equal(runHook(c.local, source, c.stdin, { AUDIT_PREPUSH_KEEP_REPORTS: value }).status, 0);
+        assert.equal(count(c, '.report.json'), expected, `value ${value}`);
+      });
+    }
+  });
   for (const [value, expectReports] of [['00', 11], ['08', 8], ['0020', 11], ['1234567', 11], ['-3', 11], ['1.5', 11]]) {
     it(`AUDIT_PREPUSH_KEEP_REPORTS=${value}: never deletes the run's own report; keeps ${expectReports - 1} older + it`, (t) => scenario(t, 'knob', ({ c, source }) => {
       for (let i = 0; i < 10; i++) { seedFile(c, `${String(i).padStart(40, '0')}.report.json`, 10 + i); seedFile(c, `${String(i).padStart(40, '0')}.output.log`, 10 + i); }
