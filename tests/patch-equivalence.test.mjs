@@ -217,7 +217,7 @@ describe('patchRangesEquivalent - audit round 2 (framing and configuration)', ()
       assert.deepEqual(patchRangesEquivalent({ auditedRef: audited, headRef: 'HEAD', cwd: r.dir }), { equivalent: true, commits: 2 });
     } finally { r.rm(); }
   });
-  it('diff presentation config (prefixes, algorithm, indent heuristic, order file) cannot change the evidence', () => {
+  it('diff presentation config (prefixes, algorithm, indent heuristic, order file: set to a NONEXISTENT file below, which the plumbing diff-tree must not read) cannot change the evidence', () => {
     const r = repo();
     try {
       git(['checkout', '-q', '-b', 'f'], r.dir);

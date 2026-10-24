@@ -60,7 +60,7 @@ const COMMIT_DIFF_ARGS = Object.freeze([
   // Pin every setting that changes the TEXT of a diff, so the evidence is the change and not the operator's `.gitconfig`. `diff-tree` is
   // plumbing (it already ignores most porcelain presentation config); the rest is pinned explicitly anyway.
   '-c', 'diff.renames=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'core.quotepath=true',
-  '-c', 'diff.algorithm=myers', '-c', 'diff.indentHeuristic=false', '-c', 'diff.ignoreSubmodules=none', '-c', 'diff.submodule=short', '-c', 'diff.orderFile=',
+  '-c', 'diff.algorithm=myers', '-c', 'diff.indentHeuristic=false', '-c', 'diff.ignoreSubmodules=none', '-c', 'diff.submodule=short',
   'diff-tree', '-p', '-r', '--root', '--no-commit-id', '-U0', '--no-renames', '--binary', '--no-textconv', '--no-ext-diff', '--no-color',
   '--src-prefix=a/', '--dst-prefix=b/', '--diff-algorithm=myers', '--no-indent-heuristic',
 ]);
