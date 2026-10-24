@@ -142,7 +142,7 @@ function runHook(local, sourceRepo, stdin) {
 
 describe('sync-bookkeeping-only short-circuit — static shape', () => {
   it('sits after PLAN_FILE selection and before the audit invocation', () => {
-    const selectAt = HOOK_BODY.indexOf('[ -z "$PLAN_FILE" ] && finish');
+    const selectAt = HOOK_BODY.indexOf('if [ -z "$PLAN_FILE" ]; then');
     const shortCircuitAt = HOOK_BODY.indexOf('NON_BOOKKEEPING_FILES=');
     const auditAt = HOOK_BODY.indexOf('auditing $PLAN_FILE');
     assert.ok(selectAt > 0 && shortCircuitAt > 0 && auditAt > 0);

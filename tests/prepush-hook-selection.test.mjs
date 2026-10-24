@@ -31,11 +31,11 @@ describe('prepush hook — Status-aware selection', () => {
   it('never lets selection abort the push (|| true + empty-check)', () => {
     // v11: bounded by the step runner; only its own 124 (budget exceeded) refuses, any other non-zero leaves PLAN_FILE empty.
     assert.match(HOOK_BODY, /prepush_bounded plan-select "\$STEP_BUDGET" node "\$STATUS_CLI" --select "\$PLANS_DIR"/);
-    assert.match(HOOK_BODY, /\[ "\$PLAN_SELECT_RC" -ne 0 \] && PLAN_FILE=""/);
-    // `finish 0` since v5 — still an unconditional success exit, but routed
-    // through the trailer so the consumer's own gates are not skipped with the
-    // audit. See prepush-local-hook-trailer.test.mjs.
-    assert.match(HOOK_BODY, /\[ -z "\$PLAN_FILE" ] && finish/);
+    assert.match(HOOK_BODY, /\[ "\$PLAN_SELECT_RC" -ne 0 \] && \{ PLAN_FILE=""; PLAN_SELECTOR_FAILED="--selector-failed"; \}/);
+    // v13: no plan is UNMEASURED unless the push carries nothing a code audit reads (the `no-plan` step decides, exit 0 = exempt or
+    // overridden); it still reaches `finish` when allowed, routed through the trailer so the consumer's own gates are not skipped
+    // with the audit. See prepush-local-hook-trailer.test.mjs and prepush-hook-v13.test.mjs.
+    assert.match(HOOK_BODY, /if \[ -z "\$PLAN_FILE" \]; then\n  prepush_bounded no-plan "\$STEP_BUDGET" node "\$STEP_CLI" no-plan \$PLAN_SELECTOR_FAILED\n  \[ "\$\?" -eq 0 \] \|\| exit 1\n  finish\nfi/);
   });
 
   it('carries the version marker', () => {

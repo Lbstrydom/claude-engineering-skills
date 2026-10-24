@@ -263,8 +263,8 @@ describe('auditReuseLine - against REAL git', () => {
 
 // ── C. budget ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 describe('auditBudgetSec - scales with the diff, bounded', () => {
-  it('a small diff keeps the old 600s floor', () => {
-    assert.equal(auditBudgetSec({ files: 3, lines: 80 }).budgetSec, BUDGET.floorSec);
+  it('a small diff is never below the 600s floor (the refit formula is pinned in prepush-hook-v13.test.mjs)', () => {
+    assert.ok(auditBudgetSec({ files: 3, lines: 80 }).budgetSec >= BUDGET.floorSec);
   });
   it('the incident\'s ~60-file push gets more than the 600s that refused it, and more files never means less time', () => {
     const big = auditBudgetSec({ files: 60, lines: 6000 });
@@ -306,7 +306,7 @@ describe('parseNumstatZ', () => {
       git(['add', '.'], dir);
       git(['commit', '-q', '-m', 'three files'], dir);
       const env = { AUDIT_PUSH_RANGE_BASE: git(['rev-parse', 'HEAD~1'], dir), AUDIT_PUSH_RANGE_HEAD: git(['rev-parse', 'HEAD'], dir) };
-      assert.match(auditBudgetLine({ env, cwd: dir }), /^600 3 file\(s\), 6 changed line\(s\)$/);
+      assert.match(auditBudgetLine({ env, cwd: dir }), /^690 3 file\(s\), 6 changed line\(s\)$/);
       assert.match(auditBudgetLine({ env, cwd: dir, files: 'a.txt' }), /1 file\(s\), 2 changed line\(s\)/);
       assert.match(auditBudgetLine({ env: {}, cwd: dir }), /^600 diff size unknown$/, 'no range from git -> the floor');
     } finally { rmrf(dir); }

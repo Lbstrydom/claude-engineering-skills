@@ -15,10 +15,15 @@
  *       Classifies the code-audit step (lib/prepush-audit-gate.mjs): exit 0 = the push may continue, 1 = refuse. An audit that did not
  *       run to a verdict (crash, auth/config failure, INCOMPLETE exit 3, no envelope) REFUSES unless AUDIT_PREPUSH_ALLOW_UNMEASURED=1.
  *   prepush-step.mjs audit-reuse
- *       `reuse <runId> <round> <tree12>` when a CONVERGED audit run recorded for exactly the pushed commit's tree exists, else
- *       `none <reason>`. Tree identity only; anything unverifiable is `none` (the audit runs).
+ *       `reuse <runId> <round> <tree12>` when a CONVERGED audit run recorded for exactly the pushed commit's tree exists;
+ *       `reuse-equivalent <runId> <round> <commits>` when the tree differs but the branch's own commits have exactly the audited
+ *       commits' patch ids (range-diff-equivalent: a rebase / cherry-pick recovery); else `none <reason>`. Anything unverifiable is
+ *       `none` (the audit runs).
  *   prepush-step.mjs audit-budget [--files <a,b,...>]
- *       `<seconds> <basis>`: the code-audit budget scaled to the pushed diff (floor 600s, capped).
+ *       `<seconds> <basis>`: the code-audit budget scaled to the pushed diff (`600 + 30*files`, capped; refit from the store).
+ *   prepush-step.mjs no-plan
+ *       The plan selector resolved NO plan: exit 0 when the push carries nothing a code audit reads (docs / sync bookkeeping only) or
+ *       AUDIT_PREPUSH_ALLOW_UNMEASURED=1 says so on purpose, exit 1 (UNMEASURED) otherwise - including when the file list is unknown.
  *
  * @module scripts/prepush-step
  */
@@ -30,17 +35,18 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { resolvePushRange, branchOwnedChangedFiles } from './lib/push-range.mjs';
 import { runStep } from './lib/prepush-step.mjs';
 import {
-  classifyAuditOutcome, decideAuditGate, decideAuditReuse, auditBudgetSec, parseNumstatZ,
+  classifyAuditOutcome, decideAuditGate, decideAuditReuse, auditBudgetSec, parseNumstatZ, decideNoPlanGate,
 } from './lib/prepush-audit-gate.mjs';
+import { patchRangesEquivalent, makeGit } from './lib/patch-equivalence.mjs';
 
 /** Signals that mean "stop": a terminal interrupt, a termination request, a hangup, and Ctrl+Break on Windows. */
 const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'];
 const KNOWN_FLAGS = [
   '--step', '--budget-sec', '--progress-sec', '--out', '--default-ref', '--selfcheck-relocation',
-  '--exit', '--report', '--files', '--cwd',
+  '--exit', '--report', '--files', '--cwd', '--selector-failed',
 ];
 /** What this runner can do. The hook asks before relying on a subcommand, because an older source checkout lacks the newer ones. */
-export const CAPABILITIES = Object.freeze(['run', 'own-files', 'audit-outcome', 'audit-reuse', 'audit-budget']);
+export const CAPABILITIES = Object.freeze(['run', 'own-files', 'audit-outcome', 'audit-reuse', 'audit-budget', 'no-plan']);
 /** A store lookup that outlives this is "unverifiable", i.e. a re-run - a reuse check must never be able to hang the hook. */
 const REUSE_LOOKUP_MS = 20_000;
 
@@ -97,6 +103,25 @@ export function auditOutcomeExit({ exitArg, reportFile, captureFile, env = proce
   return decision.allow ? 0 : 1;
 }
 
+/**
+ * `no-plan`: the hook's answer when the plan selector resolved nothing. The pushed file list comes from git's own range (never an
+ * inferred one: an unknown range cannot be shown to be docs-only). Returns the hook's exit (0 = continue, 1 = refuse).
+ * @returns {number}
+ */
+export function noPlanExit({ env = process.env, cwd = process.cwd(), gitFn = git, selectorFailed = false, write = (l) => process.stderr.write(`${l}
+`) } = {}) {
+  let files = null;
+  try {
+    const range = resolvePushRange({ env, run: runIn(cwd, gitFn) });
+    if (range.ok && range.trusted) {
+      files = gitFn(cwd, ['diff', '--name-only', '-z', `${range.base}..${range.head}`]).split('\0').filter(Boolean);
+    }
+  } catch { files = null; }
+  const decision = decideNoPlanGate({ files, env, selectorFailed });
+  for (const l of decision.lines) write(l);
+  return decision.allow ? 0 : 1;
+}
+
 /** `audit-budget`: one integer (seconds). The size is the pushed range, narrowed to the branch's own files when the hook scoped it. */
 export function auditBudgetLine({ env = process.env, cwd = process.cwd(), files = null, gitFn = git } = {}) {
   let size = { files: null, lines: null };
@@ -127,6 +152,7 @@ async function defaultConvergence(runId) {
  */
 export async function auditReuseLine({
   env = process.env, cwd = process.cwd(), gitFn = git, readConvergence = defaultConvergence, lookupMs = REUSE_LOOKUP_MS,
+  patchEquivalence = patchRangesEquivalent, defaultRef = 'origin/main',
 } = {}) {
   let marker = null;
   try { marker = JSON.parse(fs.readFileSync(path.join(cwd, '.audit', 'last-audit-run.json'), 'utf8')); } catch { marker = null; }
@@ -134,9 +160,20 @@ export async function auditReuseLine({
   const range = resolvePushRange({ env, run: runIn(cwd, gitFn) });
   let pushedTree = null;
   if (range.ok && range.trusted) { try { pushedTree = gitFn(cwd, ['rev-parse', '--verify', '--quiet', `${range.head}^{tree}`]).trim() || null; } catch { pushedTree = null; } }
+  // A different tree is reusable only when the branch's own patches are exactly the audited commits' (a rebase moves the tree, not the
+  // branch's diff). Asked only when the marker names the commit it audited: no sha, nothing to compare.
+  let equivalence = null;
+  if (marker?.runId && pushedTree && marker.auditedTree && marker.auditedTree !== pushedTree && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(String(marker.auditedSha ?? ''))) {
+    try {
+      equivalence = patchEquivalence({
+        auditedRef: marker.auditedSha, headRef: range.head, defaultRef, expectedAuditedTree: marker.auditedTree, cwd,
+        git: (args, input) => { try { return input === undefined ? gitFn(cwd, args) : makeGit(cwd)(args, input); } catch { return null; } },
+      });
+    } catch (e) { equivalence = { equivalent: false, reason: `the comparison failed (${e?.message || 'error'})` }; }
+  }
   let conv = { convergence: null, why: 'not looked up' };
-  // The store is only worth a round trip when the tree already matches: a different tree can never be reused.
-  if (marker?.runId && pushedTree && marker.auditedTree === pushedTree) {
+  // The store is only worth a round trip when the tree already matches or the patches are equivalent: nothing else can be reused.
+  if (marker?.runId && pushedTree && (marker.auditedTree === pushedTree || equivalence?.equivalent === true)) {
     let timer;
     try {
       conv = await Promise.race([
@@ -145,8 +182,9 @@ export async function auditReuseLine({
       ]);
     } catch (e) { conv = { convergence: null, why: `store lookup failed (${e?.code || e?.message || 'error'})` }; } finally { clearTimeout(timer); }
   }
-  const d = decideAuditReuse({ marker, pushedTree, convergence: conv.convergence, convergenceWhy: conv.why });
-  return d.reuse ? `reuse ${d.runId} ${d.round} ${d.auditedTree.slice(0, 12)}` : `none ${d.reason}`;
+  const d = decideAuditReuse({ marker, pushedTree, convergence: conv.convergence, convergenceWhy: conv.why, equivalence });
+  if (!d.reuse) return `none ${d.reason}`;
+  return d.equivalence === 'range-diff' ? `reuse-equivalent ${d.runId} ${d.round} ${d.commits}` : `reuse ${d.runId} ${d.round} ${d.auditedTree.slice(0, 12)}`;
 }
 
 async function main() {
@@ -179,12 +217,16 @@ async function main() {
     await finishAndExit(0);
     return;
   }
+  if (sub === 'no-plan') {
+    await finishAndExit(noPlanExit({ selectorFailed: head.includes('--selector-failed') }));
+    return;
+  }
   if (sub === 'audit-reuse') {
     process.stdout.write(`${await auditReuseLine()}\n`);
     await finishAndExit(0);
     return;
   }
-  if (sub !== 'run') throw new ArgvError('prepush-step.mjs: expected `run`, `own-files`, `audit-outcome`, `audit-reuse`, `audit-budget` or `capabilities`');
+  if (sub !== 'run') throw new ArgvError('prepush-step.mjs: expected `run`, `own-files`, `audit-outcome`, `audit-reuse`, `audit-budget`, `no-plan` or `capabilities`');
 
   const step = flagValue(head, '--step');
   const budgetSec = Number(flagValue(head, '--budget-sec'));
