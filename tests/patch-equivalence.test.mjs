@@ -233,3 +233,29 @@ describe('patchRangesEquivalent - audit round 2 (framing and configuration)', ()
     } finally { r.rm(); }
   });
 });
+
+describe('patchRangesEquivalent - audit round 3 (bytes, not decoded text)', () => {
+  it('two commits whose content differs ONLY in an invalid UTF-8 byte sequence are NOT equivalent (utf8 decoding maps both to the same replacement char)', () => {
+    const r = repo();
+    try {
+      const write = (bytes) => { fs.writeFileSync(path.join(r.dir, 'blob.dat'), Buffer.from(bytes)); git(['add', 'blob.dat'], r.dir); };
+      git(['checkout', '-q', '-b', 'one'], r.dir);
+      write([0x61, 0xff, 0x0a]); git(['commit', '-q', '-m', 'ff'], r.dir);
+      const audited = git(['rev-parse', 'HEAD'], r.dir);
+      git(['checkout', '-q', 'main'], r.dir);
+      git(['checkout', '-q', '-b', 'two'], r.dir);
+      write([0x61, 0xfe, 0x0a]); git(['commit', '-q', '-m', 'fe'], r.dir);
+      // instrument check: decoded as utf8 these two patches are indistinguishable
+      const asUtf8 = (rev) => spawnSync('git', ['diff-tree', '-p', '-r', '--root', '--no-commit-id', '-U0', '--text', rev], { cwd: r.dir, encoding: 'utf8' }).stdout.split('\n').filter((l) => l.startsWith('+a'));
+      assert.deepEqual(asUtf8('HEAD'), asUtf8(audited), 'instrument: utf8 decoding folds 0xff and 0xfe together');
+      const v = patchRangesEquivalent({ auditedRef: audited, headRef: 'HEAD', cwd: r.dir });
+      assert.equal(v.equivalent, false);
+      assert.match(v.reason, /patches differ/);
+      // vacuous-pass guard: the same bytes on both sides ARE equivalent
+      git(['checkout', '-q', 'main'], r.dir);
+      git(['checkout', '-q', '-b', 'three'], r.dir);
+      git(['cherry-pick', audited], r.dir);
+      assert.equal(patchRangesEquivalent({ auditedRef: audited, headRef: 'HEAD', cwd: r.dir }).equivalent, true);
+    } finally { r.rm(); }
+  });
+});

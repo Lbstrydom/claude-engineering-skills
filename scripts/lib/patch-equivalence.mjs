@@ -34,12 +34,14 @@ const OBJECT_ID_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 /**
  * @param {string} cwd
- * @returns {(args: string[], input?: string) => string|null} stdout, or null on ANY failure (spawn error, non-zero, timeout)
+ * @returns {(args: string[], input?: string, encoding?: BufferEncoding) => string|null} stdout, or null on ANY failure (spawn error, non-zero, timeout).
+ *   `encoding` defaults to utf8; the fingerprint path asks for `latin1`, which maps every byte to exactly one char, so decoding can never merge two
+ *   different byte sequences (utf8 would turn every invalid sequence into the same replacement character).
  */
 export function makeGit(cwd) {
-  return (args, input) => {
+  return (args, input, encoding = 'utf8') => {
     const r = spawnSync('git', args, {
-      cwd, encoding: 'utf8', input, windowsHide: true, timeout: GIT_TIMEOUT_MS, maxBuffer: 256 * 1024 * 1024, stdio: ['pipe', 'pipe', 'ignore'],
+      cwd, encoding, input, windowsHide: true, timeout: GIT_TIMEOUT_MS, maxBuffer: 256 * 1024 * 1024, stdio: ['pipe', 'pipe', 'ignore'],
     });
     return r.error || r.status !== 0 ? null : r.stdout;
   };
@@ -78,7 +80,7 @@ function fingerprintOf(body) {
  * compared at all: what a merge introduces (a conflict resolution, a manual edit) is in no non-merge commit, so a multiset of the
  * non-merge ones would call a range equivalent that carries unaudited changes (audit R1 H3/H5/H8).
  * @param {string} rev
- * @param {{defaultRef: string, git: (args: string[], input?: string) => string|null}} ctx
+ * @param {{defaultRef: string, git: (args: string[], input?: string, encoding?: BufferEncoding) => string|null}} ctx
  * @returns {{ok: true, ids: string[]} | {ok: false, reason: string}}
  */
 export function ownPatchFingerprints(rev, { defaultRef, git }) {
@@ -104,7 +106,7 @@ export function ownPatchFingerprints(rev, { defaultRef, git }) {
   const ids = [];
   for (const sha of shas) {
     if (!OBJECT_ID_RE.test(sha)) return { ok: false, reason: `unexpected commit id ${JSON.stringify(sha)} in the range of ${rev}` };
-    const body = git([...COMMIT_DIFF_ARGS, sha]);
+    const body = git([...COMMIT_DIFF_ARGS, sha], undefined, 'latin1');
     if (body === null) return { ok: false, reason: `the patch of ${sha.slice(0, 12)} could not be read` };
     // A commit with no diff (an empty commit) has no content to compare.
     if (body.trim() !== '') ids.push(fingerprintOf(body));
