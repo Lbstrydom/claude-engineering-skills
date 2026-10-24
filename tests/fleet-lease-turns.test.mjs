@@ -550,7 +550,8 @@ describe('renewals and rotations obey the turn (D11, finding 20ec)', () => {
 
   it('after the budget a renewal is refused for the turn although the repo still holds a LIVE slot, and the repo is queued behind B', () => {
     let l = loopWorld();
-    l = ok(renew(l, A, '20:22:00', { forMin: 15 })); // lease now runs to 20:37
+    l = ok(renew(l, A, '20:22:00', { forMin: 15 })); // B waits, so the renewal is capped at the turn's end (20:23:27), not 20:37
+    assert.equal(l.heavy.expiresAt, '2026-10-14T20:23:27.000Z');
     const r = renew(l, A, '20:24:00');
     assert.equal(r.ok, false);
     assert.equal(r.code, 'turn');
@@ -567,7 +568,7 @@ describe('renewals and rotations obey the turn (D11, finding 20ec)', () => {
     let l = loopWorld();
     l = ok(renew(l, A, '20:22:00', { forMin: 15 }));
     l = renew(l, A, '20:24:00').lease;
-    const b = acq(l, B, { forMin: 20 }, '20:40:00'); // A's lease ended 20:37; the probe says the pid is dead
+    const b = acq(l, B, { forMin: 20 }, '20:25:00'); // A's capped lease ended 20:23:27 with the turn; the probe says the pid is dead; B was offered the slot at once
     assert.equal(b.ok, true, JSON.stringify(b));
   });
 
@@ -641,5 +642,95 @@ describe('a token-less acquire never takes over a LIVE slot its own identity hol
     const r = acq(l, { repoKey: A.repoKey, holder: 'chip-2' }, { forMin: 10 }, '18:30');
     assert.equal(r.code, 'held');
     assert.equal(r.queued, true);
+  });
+});
+
+// ── fleet p-20261024094135-9729: an in-turn grant must not outlive the turn while another repo waits ─────────────────────────────────
+describe('an in-turn grant is capped at the turn end while another repo waits (9729)', () => {
+  const TOKEN = '1111111111111111';
+  /** A's turn starts at its first grant (09:00, so it ends 10:00); B is refused at 09:01 and has waited since. */
+  const world = () => {
+    const l = ok(acq(emptyLease(), A, { forMin: 10 }, '09:00'));
+    const refused = acq(l, B, { forMin: 20 }, '09:01');
+    assert.equal(refused.ok, false);
+    return refused.lease;
+  };
+  /** The incident: A is between jobs and asks again for 120 minutes at 09:17. */
+  const incident = (l = world()) => acq(ok(rel(l, A, {}, '09:10')), A, { forMin: 120 }, '09:17');
+  const turnEnd = (l) => l.turn.endsAt;
+  const hmAfter = (iso) => new Date(new Date(iso).getTime() + 60_000).toISOString().slice(11, 16);
+
+  it('A is granted 120 minutes at 09:17 on a turn that ends 10:00 -> the grant ends at 10:00, says so, and the journal records it', () => {
+    const w = world();
+    const end = turnEnd(w);
+    const g = incident(w);
+    assert.equal(g.ok, true, JSON.stringify({ code: g.code, reason: g.reason }));
+    assert.equal(g.basis, 'in-turn');
+    assert.equal(g.heavy.expiresAt, end, 'ends with the turn, not 120 minutes after the grant');
+    assert.deepEqual([g.capped.requestedMin, g.capped.turnEndsAt, g.capped.waiting], [120, end, 'o/b']);
+    assert.equal(g.capped.grantedMin, 43);
+    assert.equal(lastAcquired(g.lease).job.forMin, 43);
+    assert.deepEqual(lastAcquired(g.lease).capped, { from: 120, to: 43, waiting: 'o/b' });
+    assert.equal(LeaseSchema.safeParse(g.lease).success, true);
+  });
+  it('when the turn ends the longest-waiting repo is served: B goes first and A is told so', () => {
+    const w = world();
+    const g = ok(incident(w));
+    const hm = hmAfter(turnEnd(w));
+    const a = acq(g, A, { forMin: 30 }, hm);
+    assert.equal(a.code, 'turn');
+    assert.match(a.reason, /o\/b has waited since 09:01Z and goes first/);
+    const b = acq(a.lease, B, { forMin: 20 }, hm);
+    assert.equal(b.ok, true, JSON.stringify({ code: b.code, reason: b.reason }));
+  });
+  it('the LONGEST waiter is the one served, not the newest: B (09:01) before D (09:05)', () => {
+    const w = world();
+    const withD = acq(w, D, { forMin: 20 }, '09:05').lease;
+    const g = ok(incident(withD));
+    const hm = hmAfter(turnEnd(w));
+    const d = acq(g, D, { forMin: 20 }, hm);
+    assert.equal(d.code, 'turn');
+    assert.match(d.reason, /o\/b has waited since 09:01Z and goes first/);
+    assert.equal(acq(d.lease, B, { forMin: 20 }, hm).ok, true);
+  });
+  it('NEGATIVE CONTROL: a SOLO repo (nobody waiting) keeps its full --for, with no cap', () => {
+    const l = ok(acq(emptyLease(), A, { forMin: 10 }, '09:00'));
+    const g = acq(ok(rel(l, A, {}, '09:10')), A, { forMin: 120 }, '09:17');
+    assert.equal(g.ok, true);
+    assert.equal(g.capped, undefined);
+    assert.equal(g.heavy.expiresAt, new Date(T('09:17').getTime() + 120 * 60_000).toISOString());
+  });
+  it('a grant that already ends inside the turn is not touched, and the OWN queued sibling of the same repo is not another repo starved', () => {
+    const short = acq(ok(rel(world(), A, {}, '09:10')), A, { forMin: 20 }, '09:17');
+    assert.equal(short.capped, undefined);
+    assert.equal(short.heavy.expiresAt, new Date(T('09:17').getTime() + 20 * 60_000).toISOString());
+    // only A's sibling job waits: no OTHER repo is starved, so the full --for stands
+    let solo = ok(acq(emptyLease(), A, { forMin: 10 }, '09:00'));
+    const A2 = { repoKey: A.repoKey, holder: 'chip-2' };
+    solo = acq(solo, A2, { forMin: 10 }, '09:02').lease;
+    assert.ok(solo.waiters.some((w) => w.repoKey === A.repoKey));
+    const g = acq(ok(rel(solo, A, {}, '09:10')), A2, { forMin: 120 }, '09:17');
+    assert.equal(g.ok, true, JSON.stringify({ code: g.code, reason: g.reason }));
+    assert.equal(g.capped, undefined);
+  });
+  it('a RENEWAL is capped the same way: the same running job cannot be extended past the turn while another repo waits', () => {
+    const w = world();
+    const r = acq(w, A, { token: TOKEN, forMin: 120 }, '09:05');
+    assert.equal(r.ok, true, JSON.stringify({ code: r.code, reason: r.reason }));
+    assert.equal(r.renewed, true);
+    assert.equal(r.heavy.expiresAt, turnEnd(w));
+    assert.equal(r.capped.requestedMin, 120);
+  });
+  it('the cap applies only to an IN-TURN grant: a grant under a named gap is judged by its own interval, uncapped', () => {
+    // vacuous-pass guard: the in-turn path above really is the capped one
+    assert.equal(incident().capped.requestedMin, 120);
+    let l = ok(ann(emptyLease(), A, { kind: 'quiet', until: '2026-10-14T12:00:00.000Z' }, '08:00'));
+    l = acq(l, B, { forMin: 20 }, '08:01').lease;
+    const id = l.windows[0].id;
+    const g = ok(grant(l, A, { id, from: '2026-10-14T08:00:00.000Z', until: '2026-10-14T11:00:00.000Z', to: 'o/b' }, '08:02'));
+    const got = acq(g, B, { forMin: 60 }, '08:03');
+    assert.equal(got.ok, true, JSON.stringify({ code: got.code, reason: got.reason }));
+    assert.equal(got.basis, 'gap');
+    assert.equal(got.capped, undefined);
   });
 });

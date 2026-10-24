@@ -29,6 +29,7 @@ This is the list to read when asking "what is in flight?".
 | [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `In Progress` | implemented on `fix/debt-readers-ask-store`; under /audit-code |
 | [Fleet chips & merge friction — conflict-free generated files, a standard chip preamble with a coded ship check, one recorded CI-flake re-run, and a harder handover](./fleet-chips-and-merge-friction.md) | `In Progress` |  |
 | [fleet handover — structured wind-down, coordinator context, and three probe fixes](./fleet-handover-winddown.md) | `Draft` |  |
+| [An in-turn lease grant ends with the turn while another repo waits](./fleet-lease-in-turn-cap.md) | `In Progress` | implemented on `fix/lease-in-turn-grant-cap`, pending audit and merge |
 | [fleet lease — announce race, transition journal, turns, gaps, sync:pr on the lease](./fleet-lease-turns-and-journal.md) | `In Progress` |  |
 | [fleet prune evidence reaches a person (upstream 56773c7c)](./fleet-prune-surfacing.md) | `In Progress` |  |
 | [fleet — catch abandoned worktree work regularly, and remove account-switch friction](./fleet-unclaimed-work-and-switch-friction.md) | `Draft` |  |

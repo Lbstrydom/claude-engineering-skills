@@ -185,11 +185,12 @@ export function cmdLease(ctx, flags, positionals) {
         if (['gate', 'test'].includes(h.kind) && peakState(d.lease.peakHours, ctx.now).now) warn.push('WARNING: this is a peak-cost hour (see `lease status`); the slot was granted anyway');
         const verb = d.renewed ? 'renewed' : d.rotated ? 'extended with a NEW token' : 'granted';
         return {
-          heavy: h, token: h.token, renewed: d.renewed, rotated: d.rotated, warnings: warn,
+          heavy: h, token: h.token, renewed: d.renewed, rotated: d.rotated, warnings: warn, ...(d.capped ? { capped: d.capped } : {}),
           text: [
             `OK: heavy slot ${verb} to ${h.holder} (${h.repo}) for ${h.kind} until ${hhmm(new Date(h.expiresAt))}`,
             `token: ${h.token}  (pass --token ${h.token} to attach/release/renew so a stale call is refused)`,
             ...(d.event ? [`taken over: ${d.event.reason}`] : []),
+            ...(d.capped ? [`CAPPED: granted ${d.capped.grantedMin} of the requested ${d.capped.requestedMin} minutes - the turn ends at ${hhmm(new Date(d.capped.turnEndsAt))} and ${d.capped.waiting} is waiting; ask again in your next turn`] : []),
             ...(h.pid === undefined ? [`no pid recorded: once the job starts, \`${ctx.cmd} lease attach --pid <n>\` lets a later session verify it stopped`] : []),
             ...warn,
           ].join('\n'),
