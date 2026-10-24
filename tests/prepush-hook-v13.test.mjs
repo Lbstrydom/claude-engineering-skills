@@ -424,3 +424,37 @@ describe('auditBudgetSec - the input contract is the file count', () => {
     for (const bad of [{}, { files: null }, { files: NaN }, { files: -1 }]) assert.deepEqual(auditBudgetSec(bad), { budgetSec: BUDGET.floorSec, basis: 'diff size unknown' });
   });
 });
+
+describe('auditReuseLine - the REAL runner path reads patch bytes losslessly (audit round 4)', () => {
+  it('a rebase that changes ONLY an invalid UTF-8 byte (0xff -> 0xfe) is NOT reused, through the same code the hook runs', async () => {
+    const dir = tmpDir('audit-reuse-bytes-');
+    try {
+      git(['init', '-q', '-b', 'main'], dir);
+      git(['config', 'user.email', 'a@example.invalid'], dir);
+      git(['config', 'user.name', 'A'], dir);
+      fs.writeFileSync(path.join(dir, 'base.txt'), 'base\n'); git(['add', '.'], dir); git(['commit', '-q', '-m', 'seed'], dir);
+      git(['update-ref', 'refs/remotes/origin/main', 'HEAD'], dir);
+      git(['checkout', '-q', '-b', 'feature'], dir);
+      const put = (bytes) => { fs.writeFileSync(path.join(dir, 'blob.dat'), Buffer.from(bytes)); git(['add', 'blob.dat'], dir); };
+      put([0x61, 0xff, 0x0a]); git(['commit', '-q', '-m', 'audited'], dir);
+      const audited = git(['rev-parse', 'HEAD'], dir);
+      fs.mkdirSync(path.join(dir, '.audit'), { recursive: true });
+      const marker = { runId: 'audit-run-0042', auditedSha: audited, auditedTree: git(['rev-parse', `${audited}^{tree}`], dir), ts: new Date().toISOString() };
+      fs.writeFileSync(path.join(dir, '.audit', 'last-audit-run.json'), JSON.stringify(marker));
+      const converged = async () => ({ convergence: { roundConvergedAfter: 2 }, why: null });
+      const env = () => ({ AUDIT_PUSH_RANGE_BASE: git(['rev-parse', 'origin/main'], dir), AUDIT_PUSH_RANGE_HEAD: git(['rev-parse', 'HEAD'], dir) });
+      // the pushed branch: the same change with the one bad byte different, on a moved main (so the tree differs and equivalence is asked)
+      git(['checkout', '-q', 'main'], dir);
+      fs.writeFileSync(path.join(dir, 'moved.txt'), 'main moved\n'); git(['add', '.'], dir); git(['commit', '-q', '-m', 'main moves'], dir);
+      git(['update-ref', 'refs/remotes/origin/main', 'HEAD'], dir);
+      git(['checkout', '-q', '-b', 'pushed'], dir);
+      put([0x61, 0xfe, 0x0a]); git(['commit', '-q', '-m', 'same change, different bad byte'], dir);
+      assert.match(await auditReuseLine({ env: env(), cwd: dir, readConvergence: converged }), /^none .*patches differ/);
+      // control: the identical bytes, cherry-picked, ARE reused - so the refusal above is the byte difference and nothing else
+      git(['checkout', '-q', 'main'], dir);
+      git(['checkout', '-q', '-b', 'picked'], dir);
+      git(['cherry-pick', audited], dir);
+      assert.equal(await auditReuseLine({ env: env(), cwd: dir, readConvergence: converged }), 'reuse-equivalent audit-run-0042 2 1');
+    } finally { rmrf(dir); }
+  });
+});

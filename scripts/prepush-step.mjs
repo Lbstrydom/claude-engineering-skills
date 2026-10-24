@@ -37,7 +37,7 @@ import { runStep } from './lib/prepush-step.mjs';
 import {
   classifyAuditOutcome, decideAuditGate, decideAuditReuse, auditBudgetSec, parseNumstatZ, decideNoPlanGate,
 } from './lib/prepush-audit-gate.mjs';
-import { patchRangesEquivalent, makeGit } from './lib/patch-equivalence.mjs';
+import { patchRangesEquivalent } from './lib/patch-equivalence.mjs';
 
 /** Signals that mean "stop": a terminal interrupt, a termination request, a hangup, and Ctrl+Break on Windows. */
 const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'];
@@ -167,7 +167,9 @@ export async function auditReuseLine({
     try {
       equivalence = patchEquivalence({
         auditedRef: marker.auditedSha, headRef: range.head, defaultRef, expectedAuditedTree: marker.auditedTree, cwd,
-        git: (args, input) => { try { return input === undefined ? gitFn(cwd, args) : makeGit(cwd)(args, input); } catch { return null; } },
+        // The real path uses the predicate's own runner (it reads patch bytes losslessly; this file's utf8 `git` would not). Only a test that
+        // injected its own gitFn is routed through it.
+        ...(gitFn === git ? {} : { git: (args) => { try { return gitFn(cwd, args); } catch { return null; } } }),
       });
     } catch (e) { equivalence = { equivalent: false, reason: `the comparison failed (${e?.message || 'error'})` }; }
   }
