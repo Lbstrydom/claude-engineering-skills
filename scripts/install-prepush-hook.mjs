@@ -159,7 +159,13 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // 881s and the audit took 882s. (3) A converged audit is also reused when the tree differs but the branch's own commits have exactly
 // the audited commits' content fingerprints (a rebase / cherry-pick recovery moves the tree, not the diff) - printed as range-diff-equivalent,
 // never as "the same tree". Logic: lib/prepush-audit-gate.mjs, lib/patch-equivalence.mjs. Re-install: `npm run hooks:install -- --target <name>`.
-const HOOK_VERSION    = 13;
+// v14 (2026-10-24): the audit's report is KEPT. v13 wrote the result envelope and the step's output to mktemp files and deleted both
+// as soon as the outcome was read, so the H/M findings of an advisory run were gone when the push returned and could not be
+// triaged (wine #1171/#1181/#1183). They now live under the consumer's gitignored .audit/prepush/ (mktemp inside it, renamed to
+// <pushed-tree-sha>.report.json / .output.log), the path is printed on EVERY outcome (pass, findings, unmeasured, timeout - where a
+// partial output is kept, or "none exists" is said), the newest AUDIT_PREPUSH_KEEP_REPORTS (default 20) of each kind are retained,
+// and a directory or file that cannot be created still refuses the push. Re-install: `npm run hooks:install -- --target <name>`.
+const HOOK_VERSION    = 14;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -254,10 +260,17 @@ if [ ! -t 0 ]; then
     fi
     PUBLISHED_REFS=$((PUBLISHED_REFS + 1))
     [ -n "$PUSH_BASE" ] && continue   # range already taken from an earlier ref
-    if [ -n "$REMOTE_SHA" ] && [ "$REMOTE_SHA" != "$ZERO_SHA" ]; then
+    if [ -n "$REMOTE_SHA" ] && [ "$REMOTE_SHA" != "$ZERO_SHA" ] && git merge-base --is-ancestor "$REMOTE_SHA" "$LOCAL_SHA" 2>/dev/null; then
+      # Fast-forward: the remote tip is in the pushed history, so what is new is exactly REMOTE_SHA..LOCAL_SHA.
       PUSH_BASE="$REMOTE_SHA"
       PUSH_HEAD="$LOCAL_SHA"
+      echo "[prepush-hook] push base: the remote tip $REMOTE_SHA (fast-forward)" >&2
     else
+      # A new branch - or (v14) REWRITTEN history: after a rebase and a force push the remote tip is NOT an ancestor of the pushed
+      # commit, and using it as the base made the audit fail not-an-ancestor (refused UNMEASURED) and dragged the default branch's
+      # files into the changed set, so plan selection picked a plan the branch never touched. Both cases take the same base: where the
+      # pushed commit diverged from the default branch.
+      if [ -n "$REMOTE_SHA" ] && [ "$REMOTE_SHA" != "$ZERO_SHA" ]; then PUSH_BASE_WHY="rewritten history: the remote tip $REMOTE_SHA is not an ancestor of $LOCAL_SHA"; else PUSH_BASE_WHY="new branch"; fi
       # New branch on the remote: the range is everything since it diverged
       # from the default branch — NOT HEAD~1, which would scope a
       # multi-commit branch to only its tip.
@@ -265,6 +278,9 @@ if [ ! -t 0 ]; then
       if [ -n "$CANDIDATE_BASE" ]; then
         PUSH_BASE="$CANDIDATE_BASE"
         PUSH_HEAD="$LOCAL_SHA"
+        echo "[prepush-hook] push base: $CANDIDATE_BASE, the merge-base with origin/main ($PUSH_BASE_WHY)" >&2
+      else
+        echo "[prepush-hook] push base: UNKNOWN - no merge-base with origin/main ($PUSH_BASE_WHY)" >&2
       fi
     fi
   done
@@ -643,26 +659,78 @@ if [ "$AUDIT_REUSED" != "1" ]; then
   fi
   # mktemp creates each file exclusively. There is NO predictable-path fallback: the report file is what the outcome is read from, so
   # a pre-existing file at a guessable path could stand in for the audit's verdict. No private temp file, no audit, no push.
-  AUDIT_OUT="$(mktemp 2>/dev/null)" && AUDIT_REPORT="$(mktemp 2>/dev/null)" || {
+  # v14: the files are created INSIDE the repo's gitignored .audit/prepush/ (mktemp there, then renamed to <tree-sha>.* once the audit
+  # is done) and are KEPT - the findings of an advisory run are triaged AFTER the push returns, and a deleted report made that
+  # impossible. Same safety as before: mktemp is exclusive, no predictable-path fallback, and a directory or file that cannot be
+  # created refuses the push.
+  AUDIT_KEEP_DIR=".audit/prepush"
+  # The key is the pushed commit's TREE - the same identity audit-reuse speaks - and is a precondition, not a nicety: a made-up
+  # key would leave a report nobody can find by the tree they pushed. So an unresolvable tree refuses the push, with git's own reason.
+  AUDIT_TREE_ERR="$(mktemp 2>/dev/null)"
+  AUDIT_TREE="$(git rev-parse --verify "\${PUSH_HEAD:-HEAD}^{tree}" 2>"\${AUDIT_TREE_ERR:-/dev/null}")"
+  case "$AUDIT_TREE" in
+    ''|*[!0-9a-f]*)
+      echo "✗  [prepush-hook] cannot resolve the pushed tree of \${PUSH_HEAD:-HEAD} (git: $(cat "\${AUDIT_TREE_ERR:-/dev/null}" 2>/dev/null | head -n 3 | tr '\\n' ' ')) - the audit report cannot be keyed to it - push BLOCKED." >&2
+      rm -f "$AUDIT_TREE_ERR"; exit 1 ;;
+  esac
+  rm -f "$AUDIT_TREE_ERR"
+  AUDIT_KEEP_BASE="$AUDIT_KEEP_DIR/$AUDIT_TREE"
+  mkdir -p "$AUDIT_KEEP_DIR" 2>/dev/null && AUDIT_OUT="$(mktemp "$AUDIT_KEEP_DIR/.tmp.XXXXXX" 2>/dev/null)" && AUDIT_REPORT="$(mktemp "$AUDIT_KEEP_DIR/.tmp.XXXXXX" 2>/dev/null)" || {
     rm -f "$AUDIT_OUT" "$AUDIT_REPORT"
-    echo "✗  [prepush-hook] cannot create private temp files (mktemp failed) - the audit's result could not be read safely - push BLOCKED." >&2
+    echo "✗  [prepush-hook] cannot create private files under $AUDIT_KEEP_DIR (mkdir/mktemp failed) - the audit's result could not be read or kept safely - push BLOCKED." >&2
     exit 1
   }
   AUDIT_OUT_ARG="$AUDIT_OUT"
   AUDIT_REPORT_ARG="$AUDIT_REPORT"
   if command -v cygpath >/dev/null 2>&1; then AUDIT_OUT_ARG="$(cygpath -w "$AUDIT_OUT")"; AUDIT_REPORT_ARG="$(cygpath -w "$AUDIT_REPORT")"; fi
-  echo "[prepush-hook] ▸ auditing $PLAN_FILE via $AUDIT_LOOP_DIR (budget \${AUDIT_BUDGET}s, $AUDIT_BUDGET_BASIS; \${AUDIT_OWN_FILES:+branch-own files only, }output: $AUDIT_OUT)" >&2
+  # Moves what the audit wrote to its tree-keyed names, keeps AUDIT_PREPUSH_KEEP_REPORTS (default 20) of each kind, and says where
+  # everything is. Never changes the push's outcome: it only reports. The files describe the LATEST attempt on this tree: an empty
+  # result is "nothing was written", said as such, and removes the previous attempt's file so it cannot be read as this one's.
+  prepush_keep_audit() {
+    # A positive DECIMAL integer of at most 6 digits, else 20: leading zeros are stripped first (shell arithmetic reads 08 as a bad octal
+    # and 00 as zero, and zero would select everything for deletion), and a longer value is not a retention count, it is a typo.
+    keep_n="\${AUDIT_PREPUSH_KEEP_REPORTS:-20}"
+    case "$keep_n" in ''|*[!0-9]*) keep_n=20 ;; esac
+    while [ "\${keep_n#0}" != "$keep_n" ]; do keep_n="\${keep_n#0}"; done
+    case "$keep_n" in ''|???????*) keep_n=20 ;; esac
+    keep_prot_report=""; keep_prot_output=""
+    for keep_kind in report.json:"$AUDIT_REPORT" output.log:"$AUDIT_OUT"; do
+      keep_suffix="\${keep_kind%%:*}"; keep_src="\${keep_kind#*:}"
+      keep_dest="$AUDIT_KEEP_BASE.$keep_suffix"; keep_prot=""
+      if [ ! -s "$keep_src" ]; then
+        rm -f "$keep_src"
+        if [ -e "$keep_dest" ]; then rm -f "$keep_dest"; echo "[prepush-hook] ▸ audit $keep_suffix: none exists (the audit wrote nothing; the earlier attempt's $keep_dest was removed so it is not mistaken for this one's)" >&2
+        else echo "[prepush-hook] ▸ audit $keep_suffix: none exists (the audit wrote nothing)" >&2; fi
+      else
+        mv -f "$keep_src" "$keep_dest" 2>/dev/null || keep_dest="$keep_src"
+        echo "[prepush-hook] ▸ audit $keep_suffix kept: $keep_dest" >&2
+        keep_prot="$keep_dest"
+      fi
+      if [ "$keep_suffix" = "report.json" ]; then keep_prot_report="$keep_prot"; else keep_prot_output="$keep_prot"; fi
+    done
+    # The files this run just published are NEVER prune candidates (mtime order is not enough: a rename keeps the temp file's mtime, so
+    # a newer file from another push can outrank it): the retained set is them plus the newest keep_n-1 others of each kind.
+    prepush_prune_kind() {   # $1 = suffix, $2 = the file this run published of that kind (empty: none)
+      prune_skip=$((keep_n + 1)); [ -n "$2" ] && prune_skip=$keep_n
+      ls -t "$AUDIT_KEEP_DIR"/*."$1" 2>/dev/null | { if [ -n "$2" ]; then grep -v -x -F -- "$2"; else cat; fi; } | tail -n +"$prune_skip" | while IFS= read -r prune_old; do rm -f -- "$prune_old"; done
+    }
+    prepush_prune_kind report.json "$keep_prot_report"
+    prepush_prune_kind output.log "$keep_prot_output"
+    find "$AUDIT_KEEP_DIR" -maxdepth 1 -name '.tmp.*' -mmin +1440 -exec rm -f {} + 2>/dev/null
+    return 0
+  }
+  echo "[prepush-hook] ▸ auditing $PLAN_FILE via $AUDIT_LOOP_DIR (budget \${AUDIT_BUDGET}s, $AUDIT_BUDGET_BASIS; \${AUDIT_OWN_FILES:+branch-own files only, }report will be kept at $AUDIT_KEEP_BASE.report.json)" >&2
   prepush_audit
   EXIT=$?
   # 124: the budget ran out. The runner has said which step, how long and who holds the lease; this REFUSES the push - a gate that
-  # cannot finish is not a pass - whatever AUDIT_PREPUSH_BLOCK says.
-  if [ "$EXIT" = "124" ]; then rm -f "$AUDIT_OUT" "$AUDIT_REPORT"; exit 1; fi
+  # cannot finish is not a pass - whatever AUDIT_PREPUSH_BLOCK says. Whatever the audit managed to write is kept (v14), or said to not exist.
+  if [ "$EXIT" = "124" ]; then prepush_keep_audit; exit 1; fi
   # Did the audit MEASURE anything? Read from its exit contract and its envelope, never its prose (lib/prepush-audit-gate.mjs):
   # DID NOT RUN (crash, auth/config, INCOMPLETE exit 3, no envelope) refuses unless AUDIT_PREPUSH_ALLOW_UNMEASURED=1; RAN WITH
   # FINDINGS is advisory unless AUDIT_PREPUSH_BLOCK=1; RAN CLEAN passes. If the classifier itself fails, that is a refusal too.
   prepush_bounded audit-outcome "$STEP_BUDGET" node "$STEP_CLI" audit-outcome --exit "$EXIT" --report "$AUDIT_REPORT_ARG" --out "$AUDIT_OUT_ARG" >&2
   OUTCOME_RC=$?
-  rm -f "$AUDIT_OUT" "$AUDIT_REPORT"
+  prepush_keep_audit
   [ "$OUTCOME_RC" -eq 0 ] || exit 1
 fi
 

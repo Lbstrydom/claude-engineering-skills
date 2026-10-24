@@ -35,6 +35,7 @@ This is the list to read when asking "what is in flight?".
 | [fleet — catch abandoned worktree work regularly, and remove account-switch friction](./fleet-unclaimed-work-and-switch-friction.md) | `Draft` |  |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
 | [Consumer pre-push hook v13 — v12's first day in the field](./hook-v13-field-fixes.md) | `In Progress` | implemented on `fix/hook-v13-budget-reuse-noplan`, pending audit and merge |
+| [Consumer pre-push hook v14 — keep the audit's report](./hook-v14-keep-audit-report.md) | `In Progress` | implemented on `claude/hook-keeps-audit-report-bb2000`, pending audit and merge |
 | [pre-push — a sanctioned lane for `archive/*` refs](./prepush-archive-lane.md) | `In Progress` |  |
 | [Consumer pre-push hook: bounded, visible, fail-closed steps (hook v11)](./prepush-hook-bounded-steps.md) | `In Progress` |  |
 | [Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed.md) | `Approved` |  |
