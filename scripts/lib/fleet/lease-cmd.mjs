@@ -113,24 +113,46 @@ async function cmdRun(ctx, flags, positionals, { dir, repo }) {
     now: () => new Date(t0 + (Date.now() - r0)),
   }, ({ attach, signal }) => runChild({ cmd, args, signal, timeoutMs: timeoutMin ? timeoutMin * 60_000 : undefined, onSpawn: attach }));
 
-  let exitCode;
+  return leaseRunResult(res, { say, cmd, timeoutMin, cmdName: ctx.cmd });
+}
+
+/**
+ * The verb result for a finished `lease run`: its exit code, and the telemetry ORIGIN of a non-zero one.
+ * `childExit: true` (recorded by telemetry as a boolean) marks the exit as the WRAPPED command's own — its
+ * tests failed, it timed out, it died by a signal — so the fleet error rule can tell it from a fault of the
+ * wrapper itself (a lease error, a command that cannot start, a stop signal, a release that did not land,
+ * a process-tree stop that failed).
+ * A refused acquire is `refused`, not an error; the exit stays 75 so a caller's `$?` is unchanged.
+ */
+export function leaseRunResult(res, { say = () => {}, cmd, timeoutMin, cmdName = 'fleet' } = {}) {
+  const done = (exitCode, extra = {}) => ({ ok: exitCode === 0, code: exitCode === 0 ? 'ok' : 'error', exitCode, quiet: true, text: '', ...extra });
   if (!res.ran) {
     if (res.outcome === 'bad-request') throw new ArgvError(`fleet lease run: ${res.reason}`);
     if (res.outcome === 'not-granted') {
-      say(`REFUSED (${res.code}): ${res.reason}${res.queued ? ` This repo is now waiting for the slot (\`${ctx.cmd} lease wait --cancel\` withdraws it).` : ''} The command did NOT run.`);
-      exitCode = 75;
-    } else { say(`${res.reason}. The command did NOT run.`); exitCode = 70; }
-  } else {
-    const o = res.result;
-    // c729: a stop that FAILED leaves the tree possibly running while the slot is released below - say so, never a quiet "stopped".
-    if (o.stopFailed?.length) say(`WARNING: stopping the command's process tree FAILED (${o.stopFailed.join('; ')}). ${o.abandoned ? 'The command was ABANDONED still running. ' : ''}It may still be running on this machine and the slot is released regardless: check for stray processes before starting heavy work.`);
-    if (o.spawnError) { say(describeSpawnFailure({ cmd, spawnError: o.spawnError, target: o.target, cwd: process.cwd() })); exitCode = 127; }
-    else if (res.signalled) { say(`stopped by ${res.signalled}; ${o.stopFailed?.length ? "the command's process tree was NOT confirmed stopped (see WARNING above)" : "the command's process tree was stopped"}${res.released?.ok ? ' and the slot released' : ' but the slot could NOT be released (see above)'}`); exitCode = exitCodeForSignal(res.signalled); }
-    else if (o.timedOut) { say(`the command ran past --timeout ${timeoutMin} minute(s) and ${o.stopFailed?.length ? 'a stop was requested but NOT confirmed (see WARNING above)' : 'was stopped'}`); exitCode = 124; }
-    else if (o.signal) exitCode = exitCodeForSignal(o.signal);
-    else exitCode = o.code ?? 1;
+      say(`REFUSED (${res.code}): ${res.reason}${res.queued ? ` This repo is now waiting for the slot (\`${cmdName} lease wait --cancel\` withdraws it).` : ''} The command did NOT run.`);
+      return { ...done(75), code: 'refused', ran: false, outcome: res.outcome };
+    }
+    say(`${res.reason}. The command did NOT run.`);
+    return done(70, { ran: false, outcome: res.outcome });
   }
-  return { ok: exitCode === 0, code: exitCode === 0 ? 'ok' : 'error', exitCode, quiet: true, text: '', ...(res.ran ? { released: res.released?.ok === true, ...(res.result?.stopFailed?.length ? { treeStopFailed: res.result.stopFailed } : {}) } : { ran: false, outcome: res.outcome }) };
+  const o = res.result;
+  const released = res.released?.ok === true;
+  const stopFailed = o.stopFailed?.length ? o.stopFailed : null;
+  // c729: a stop that FAILED leaves the tree possibly running while the slot is released below - say so, never a quiet "stopped".
+  if (stopFailed) say(`WARNING: stopping the command's process tree FAILED (${stopFailed.join('; ')}). ${o.abandoned ? 'The command was ABANDONED still running. ' : ''}It may still be running on this machine and the slot is released regardless: check for stray processes before starting heavy work.`);
+  let exitCode;
+  let child = false;
+  if (o.spawnError) { say(describeSpawnFailure({ cmd, spawnError: o.spawnError, target: o.target, cwd: process.cwd() })); exitCode = 127; }
+  else if (res.signalled) { say(`stopped by ${res.signalled}; ${stopFailed ? "the command's process tree was NOT confirmed stopped (see WARNING above)" : "the command's process tree was stopped"}${released ? ' and the slot released' : ' but the slot could NOT be released (see above)'}`); exitCode = exitCodeForSignal(res.signalled); }
+  else if (o.timedOut) { say(`the command ran past --timeout ${timeoutMin} minute(s) and ${stopFailed ? 'a stop was requested but NOT confirmed (see WARNING above)' : 'was stopped'}`); exitCode = 124; child = true; }
+  else if (o.signal) { exitCode = exitCodeForSignal(o.signal); child = true; }
+  else { exitCode = o.code ?? 1; child = true; }
+  const extra = { released, ...(stopFailed ? { treeStopFailed: stopFailed } : {}) };
+  // A release that did not land, or a tree stop that failed, is the wrapper's own failure: recorded as a fleet
+  // error WHATEVER the child did. The exit stays the child's, so a caller's `$?` still reports the job (stderr
+  // already said what to do by hand); only the event's outcome changes.
+  if (!released || stopFailed) return { ...done(exitCode, extra), ok: false, code: 'error' };
+  return done(exitCode, { ...(exitCode !== 0 && child ? { childExit: true } : {}), ...extra });
 }
 
 /** `fleet lease <sub> [flags]`. */

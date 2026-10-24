@@ -14,8 +14,15 @@
 export const THRESHOLDS = Object.freeze({
   minN: 10,                    // events of a verb before its rates are judged
   minSessions: 5,              // sessions before flow rates are judged
-  errorRate: 0.05,             // error+argv share of a verb's invocations
-  slowP95Ms: { status: 10_000, next: 5_000, claim: 10_000, touch: 5_000, ready: 10_000, default: 30_000 },
+  // Re-tuned 2026-10-24 against 14 days of this repo's events (3,567): the old rule judged
+  // error+argv together, and 8 of the 9 HIGH findings it raised had ZERO errors, only
+  // mis-invocations, so the weekly `--fail-on high` failed on usability every week.
+  errorRate: 0.05,             // FLEET-ERROR share of a verb's invocations (argv and a wrapped command's exit are not counted)
+  minErrors: 2,                // a lone error reads medium, never HIGH — on every error path (errorSeverity)
+  argvRate: 0.1,               // mis-invocation share: above it a docs/CLI-shape gap reads medium, not low
+  // Keyed by label ("verb mode") first, then verb. `lease run`'s duration is the WRAPPED job's
+  // (a 5-10 min gate), so it has no budget; its child's exit is excluded at capture (`childExit`).
+  slowP95Ms: { status: 10_000, next: 5_000, claim: 10_000, touch: 5_000, ready: 10_000, 'lease run': null, default: 30_000 },
   abandonRate: 0.2,            // abandoned / started sessions
   refusalsPerSession: 1,       // refusals INSIDE a claim→release lifecycle (ready/land gates)
   claimRefusalRate: 0.25,      // refused claims / claim attempts: sessions colliding
@@ -25,6 +32,9 @@ export const THRESHOLDS = Object.freeze({
 });
 
 const pct = (x) => `${Math.round(x * 100)}%`;
+
+/** The ONE count-to-severity policy for an error finding: below `minErrors` it is medium, whichever path raised it. */
+export const errorSeverity = (count, t = THRESHOLDS) => (count >= t.minErrors ? 'high' : 'medium');
 
 /**
  * @param {object|null} m readFleetTelemetry result (null = not measured)
@@ -54,18 +64,19 @@ export function deriveWeaknesses(m, spool, { nowMs = Date.now(), t = THRESHOLDS 
     const label = v.mode ? `${v.verb} ${v.mode}` : v.verb;
     if (v.n < t.minN) { insufficient.push(label); continue; }
     judged += 1;
-    if (v.errorRate != null && v.errorRate > t.errorRate) {
-      add('high', 'errors', `${label}: ${pct(v.errorRate)} of ${v.n} runs errored or were mis-invoked`);
+    const errors = v.error ?? 0;
+    if (errors / v.n > t.errorRate) {
+      add(errorSeverity(errors, t), 'errors', `${label}: ${pct(errors / v.n)} of ${v.n} runs errored (${errors})`);
     }
-    const slow = t.slowP95Ms[v.verb] ?? t.slowP95Ms.default;
-    if (v.p95Ms != null && v.p95Ms > slow) add('medium', 'latency', `${label}: p95 ${Math.round(v.p95Ms)} ms (budget ${slow} ms)`);
+    const slow = label in t.slowP95Ms ? t.slowP95Ms[label] : (t.slowP95Ms[v.verb] ?? t.slowP95Ms.default);
+    if (slow != null && v.p95Ms != null && v.p95Ms > slow) add('medium', 'latency', `${label}: p95 ${Math.round(v.p95Ms)} ms (budget ${slow} ms)`);
     if (v.verb === 'land' && v.pending / v.n > t.pendingShare) {
       add('medium', 'flow', `${label}: ${pct(v.pending / v.n)} of runs ended in WAIT — checks or approvals are the bottleneck`);
     }
     if (v.verb === 'claim' && v.refused / v.n > t.claimRefusalRate) {
       add('medium', 'collisions', `${pct(v.refused / v.n)} of ${v.n} claims were refused — sessions are colliding on the same files`);
     }
-    if (v.argv > 0) add('low', 'usability', `${label}: ${v.argv} mis-invocation(s) — see top reasons for the flag; a docs or CLI-shape gap`);
+    if (v.argv > 0) add(v.argv / v.n > t.argvRate ? 'medium' : 'low', 'usability', `${label}: ${v.argv} mis-invocation(s) (${pct(v.argv / v.n)}) — see top reasons for the flag; a docs or CLI-shape gap`);
   }
 
   const f = m.sessionFlow ?? {};
@@ -78,7 +89,7 @@ export function deriveWeaknesses(m, spool, { nowMs = Date.now(), t = THRESHOLDS 
     }
   }
   for (const k of m.errorKinds ?? []) {
-    if (k.kind === 'Error' || k.kind === 'TypeError' || k.kind === 'RangeError') add('high', 'errors', `${k.n} unexpected ${k.kind}(s) — a crash path, not a refusal`);
+    if (k.kind === 'Error' || k.kind === 'TypeError' || k.kind === 'RangeError') add(errorSeverity(k.n, t), 'errors', `${k.n} unexpected ${k.kind}(s) — a crash path, not a refusal`);
   }
   if ((m.saturation?.registryInvalidSeen ?? 0) > 0) add('medium', 'integrity', `status saw an invalid registry record ${m.saturation.registryInvalidSeen} time(s)`);
 
