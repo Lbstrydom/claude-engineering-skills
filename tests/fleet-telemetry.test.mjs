@@ -493,6 +493,14 @@ describe('lease run: the origin of a non-zero exit is decided at capture', () =>
     }
   });
 
+  test('a lost release is a fleet error even when the child succeeded; the exit stays the child’s', () => {
+    for (const code of [0, 1]) {
+      const r = leaseRunResult(ran({ code }, { released: { ok: false } }));
+      assert.deepEqual([r.ok, r.code, r.exitCode, r.childExit], [false, 'error', code, undefined], `child exit ${code}`);
+      assert.equal(buildEvent({ verb: 'lease', positionals: ['run'], result: r, exitCode: r.exitCode, startedMs: 0, endedMs: 1 }).outcome, 'error');
+    }
+  });
+
   test('a refused acquire is recorded as refused, and still exits 75', () => {
     const r = leaseRunResult({ ran: false, outcome: 'not-granted', code: 'held', reason: 'held by x' });
     assert.deepEqual([r.code, r.exitCode], ['refused', 75]);

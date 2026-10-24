@@ -143,8 +143,11 @@ export function leaseRunResult(res, { say = () => {}, cmd, timeoutMin, cmdName =
   else if (o.timedOut) { say(`the command ran past --timeout ${timeoutMin} minute(s) and was stopped`); exitCode = 124; child = true; }
   else if (o.signal) { exitCode = exitCodeForSignal(o.signal); child = true; }
   else { exitCode = o.code ?? 1; child = true; }
-  // A release that did not land is the wrapper's own failure, and outranks the child's exit as the origin.
-  return done(exitCode, { ...(exitCode !== 0 && child && released ? { childExit: true } : {}), released });
+  // A release that did not land is the wrapper's own failure, recorded as a fleet error WHATEVER the child did.
+  // The exit stays the child's, so a caller's `$?` still reports the job (lease-run.mjs already said on stderr
+  // how to free the slot by hand); only the event's outcome changes.
+  if (!released) return { ...done(exitCode, { released }), ok: false, code: 'error' };
+  return done(exitCode, { ...(exitCode !== 0 && child ? { childExit: true } : {}), released });
 }
 
 /** `fleet lease <sub> [flags]`. */
