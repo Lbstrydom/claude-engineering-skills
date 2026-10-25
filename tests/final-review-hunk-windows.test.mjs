@@ -239,7 +239,10 @@ describe('summariseCodeCoverage — line-level outcomes', () => {
     assert.equal(cov.changedLinesUnread, null);
     assert.equal(cov.changedLinesTotalUnknownFiles, 2);
     assert.equal(cov.changedHeadCut[0].unread, null);
-    assert.equal(formatCodeCoverageSegment(cov), 'Code: PARTIAL, changed lines unmeasured for 1 file(s)');
+    // The file and the reason are NAMED (upstream d4dada5d): a bare count left a consumer unable to tell a missing diff
+    // base from a budget omission.
+    assert.equal(formatCodeCoverageSegment(cov),
+      'Code: PARTIAL, changed lines unmeasured for 1 file(s); UNMEASURED: a.js (no diff evidence for where its change is)');
     const allWhole = summariseCodeCoverage(statsOf({ full: ['b.js'], lineCounts: { 'b.js': 40 } }), ['b.js']);
     assert.equal(allWhole.state, 'full');
     assert.equal(allWhole.changedLinesUnread, 0, 'a whole render shows every line, evidence or not');

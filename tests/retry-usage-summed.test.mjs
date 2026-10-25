@@ -55,9 +55,9 @@ function geminiClient(replies) {
   return {
     models: {
       generateContentStream: async () => {
-        const { text, input, output } = replies.shift();
+        const { text, input, output, finishReason = 'STOP' } = replies.shift();
         return (async function* stream() {
-          yield { text, usageMetadata: { promptTokenCount: input, candidatesTokenCount: output, thoughtsTokenCount: 0, totalTokenCount: input + output } };
+          yield { text, candidates: [{ finishReason }], usageMetadata: { promptTokenCount: input, candidatesTokenCount: output, thoughtsTokenCount: 0, totalTokenCount: input + output } };
         })();
       },
     },
@@ -84,4 +84,16 @@ test('runReviewWithRetry: when every attempt fails, the thrown error carries the
   assert.ok(err, 'both attempts truncated: the call must reject');
   assert.equal(err.usage?.input_tokens, 2000);
   assert.equal(err.usage?.output_tokens, 900);
+});
+
+test('runReviewWithRetry: a cut-off response whose JSON still PARSES is retried, not accepted as a short review', async () => {
+  // The silent case: MAX_TOKENS landed after a closing brace, so the surviving
+  // prefix is well-formed. Before the fix it was returned as the review.
+  const client = geminiClient([
+    { text: VALID_REVIEW, input: 1000, output: 400, finishReason: 'MAX_TOKENS' },
+    { text: VALID_REVIEW, input: 1100, output: 300 },
+  ]);
+  const r = await runReviewWithRetry('gemini', client, '# plan', TRANSCRIPT, 'ctx', 'code');
+  assert.equal(r.result.verdict, 'APPROVE');
+  assert.equal(r.usage.input_tokens, 2100, 'the truncated attempt was billed and is summed in');
 });

@@ -8,6 +8,7 @@
  * @module scripts/lib/final-review-marker
  */
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { atomicWriteFileSync } from './file-io.mjs';
 import { retrySync } from './retry-transient-fs.mjs';
@@ -33,6 +34,73 @@ export const FINAL_REVIEW_RELPATH = path.join('.audit', 'last-final-review.json'
  * refuses while it exists. A successful write of a new marker removes it again.
  */
 export const REVOKED_SIDECAR_RELPATH = path.join('.audit', 'last-final-review.revoked');
+
+/**
+ * Pending-attempt registry (fleet proposal 0ace). A review registers ONE new file here when it STARTS, and the marker reader
+ * refuses while any entry exists. Without it, a review that finishes but loses the marker lock recorded nothing, so an EARLIER
+ * review's APPROVE kept standing beside a newer verdict that never got written. Creating a uniquely-named file needs no lock and
+ * no read-modify-write, so registering cannot lose a race the way a late revocation can. A review that records its marker removes
+ * its OWN entry and every entry that STARTED before it (a crashed or superseded attempt); an entry from a review that started
+ * LATER stays, because that review governs. A crashed review therefore leaves the ship refusing until a review records again,
+ * the fail-closed direction.
+ */
+export const PENDING_REVIEWS_RELPATH = path.join('.audit', 'last-final-review.pending');
+
+const PENDING_NAME_RE = /^\d{15}$/;
+
+/**
+ * Register a review that is about to run. The entry name IS the attempt's place in the order: a fixed-width millisecond stamp
+ * created with `wx`, so two attempts can never share a name, and a collision (same millisecond, or a clock that stepped back)
+ * moves this attempt to the next free stamp above every existing one. The order is therefore a total, persisted order that
+ * registration, cleanup and the final-write check all read the same way.
+ * @returns {{ok: true, id: string}|{ok: false, code: string}}
+ */
+export function registerPendingReview({ repoRoot, nowMs = Date.now(), fsMod = fs } = {}) {
+  try {
+    const dir = path.join(repoRoot, PENDING_REVIEWS_RELPATH);
+    fsMod.mkdirSync(dir, { recursive: true });
+    let stamp = nowMs;
+    for (const n of fsMod.readdirSync(dir)) if (PENDING_NAME_RE.test(n)) stamp = Math.max(stamp, Number(n) + 1);
+    const nonce = randomUUID();   // OWNERSHIP, apart from order: a stamp can be reused after cleanup (or a clock step), a nonce cannot
+    for (let attempt = 0; attempt < 50; attempt++, stamp++) {
+      const id = String(stamp).padStart(15, '0');
+      try {
+        fsMod.writeFileSync(path.join(dir, id), `${JSON.stringify({ startedAt: new Date(nowMs).toISOString(), pid: process.pid, nonce })}\n`, { flag: 'wx' });
+        return { ok: true, id, nonce };
+      } catch (e) { if (!(e && e.code === 'EEXIST')) throw e; }
+    }
+    return { ok: false, code: 'EEXIST' };
+  } catch (e) { return { ok: false, code: e?.code || e?.name || 'Error' }; }
+}
+
+/**
+ * Names under the pending directory: `{present: false}` when the directory is absent, `{unreadable: true}` when it cannot be
+ * listed (cannot tell, so the reader refuses), else the entry names. Any entry not shaped like ours is kept as a blocker too.
+ */
+function listPending(repoRoot, fsMod) {
+  try { return { names: fsMod.readdirSync(path.join(repoRoot, PENDING_REVIEWS_RELPATH)) }; } catch (e) {
+    if (e && e.code === 'ENOENT') return { names: [] };   // ENOTDIR is a regular file where the registry should be: cannot tell, refuse
+    return { unreadable: true, names: [] };
+  }
+}
+
+/** Is the entry at this stamp still THIS attempt's own (its nonce), not a later attempt that reused the name? */
+function ownsPendingEntry(repoRoot, id, nonce, fsMod) {
+  try { return JSON.parse(fsMod.readFileSync(path.join(repoRoot, PENDING_REVIEWS_RELPATH, id), 'utf-8')).nonce === nonce; } catch { return false; }
+}
+
+/** Remove this attempt's entry and every entry that started no later than it. @returns {{stuck: boolean}} */
+function clearPendingUpTo(repoRoot, id, fsMod) {
+  const { names, unreadable } = listPending(repoRoot, fsMod);
+  if (unreadable) return { stuck: true };
+  let stuck = false;
+  for (const name of names) {
+    const m = PENDING_NAME_RE.exec(name);
+    if (!m || name > id) continue;   // a foreign name is a blocker we do not own; a later start governs
+    try { retrySync(() => fsMod.unlinkSync(path.join(repoRoot, PENDING_REVIEWS_RELPATH, name))); } catch (e) { if (!(e && e.code === 'ENOENT')) stuck = true; }
+  }
+  return { stuck };
+}
 
 const FINAL_REVIEW_VERDICTS = new Set(['APPROVE', 'CONCERNS', 'CONCERNS_REMAINING', 'REJECT']);
 
@@ -114,7 +182,7 @@ export function writeFinalReviewMarker(args = {}) {
   return { written: false, reason: 'lock-contention', revoked: false, filePath: path.join(repoRoot, FINAL_REVIEW_RELPATH) };
 }
 
-function writeFinalReviewMarkerLocked({ repoRoot, evidence, verdict, disposition, log = (m) => process.stderr.write(m), adapters = {}, nowIso } = {}) {
+function writeFinalReviewMarkerLocked({ repoRoot, evidence, verdict, disposition, pendingId, pendingNonce, log = (m) => process.stderr.write(m), adapters = {}, nowIso } = {}) {
   const write = adapters.atomicWriteFileSync || atomicWriteFileSync;
   const unlink = adapters.unlinkSync || fs.unlinkSync;
   const filePath = path.join(repoRoot, FINAL_REVIEW_RELPATH);
@@ -122,6 +190,13 @@ function writeFinalReviewMarkerLocked({ repoRoot, evidence, verdict, disposition
   // marker is revoked FIRST. Otherwise a failed replacement leaves a previous APPROVE readable beside a newer CONCERNS/REJECT that
   // never got written, and a pre-authorised ship would read that stale approval for the same run, tree and round.
   const sidecarPath = path.join(repoRoot, REVOKED_SIDECAR_RELPATH);
+  // A LATER-started review that already recorded cleared this attempt's pending entry. This one is superseded: writing now would
+  // overwrite the newer verdict with an older review's (A starts, B starts, B records REJECT, A finishes and would write APPROVE).
+  const fsMod = adapters.fsMod || fs;
+  if (pendingId && !ownsPendingEntry(repoRoot, pendingId, pendingNonce, fsMod)) {
+    log('  [final-review-marker] a review that started after this one has already recorded: this verdict is superseded and records nothing\n');
+    return { written: false, reason: 'superseded', revoked: true, filePath };
+  }
   const revoked = revokePreviousMarker(filePath, { unlink, overwrite: adapters.overwriteFileSync || fs.writeFileSync, sidecarPath, create: adapters.createFileSync || fs.writeFileSync });
   if (!revoked.ok) {
     // Neither deleting nor overwriting worked (a lock another process holds). The previous approval may still read as current.
@@ -140,7 +215,11 @@ function writeFinalReviewMarkerLocked({ repoRoot, evidence, verdict, disposition
     let sidecarStuck = false;
     try { retrySync(() => unlink(sidecarPath)); } catch (e) { if (e && e.code !== 'ENOENT') sidecarStuck = true; }
     if (sidecarStuck) log('  [final-review-marker] the revocation file from an earlier failure could not be removed: the ship check will keep refusing until it is deleted\n');
-    return { written: true, payload, filePath, ...(sidecarStuck ? { sidecarStuck: true } : {}) };
+    // This review has concluded and recorded: its own pending entry, and any from attempts that started before it, are done.
+    // One it cannot remove keeps the reader refusing (fail closed), and the result says so.
+    const pendingStuck = pendingId ? clearPendingUpTo(repoRoot, pendingId, adapters.fsMod || fs).stuck : false;
+    if (pendingStuck) log('  [final-review-marker] a pending-review entry could not be removed: the ship check will keep refusing until .audit/last-final-review.pending is cleared\n');
+    return { written: true, payload, filePath, ...(sidecarStuck || pendingStuck ? { sidecarStuck: true } : {}) };
   } catch (err) {
     log(`  [final-review-marker] write failed (${err?.code || err?.name || 'Error'}) — a pre-authorised ship will read the review as unrecorded\n`);
     return { written: false, reason: 'write-failed', payload, filePath };
@@ -154,9 +233,13 @@ function writeFinalReviewMarkerLocked({ repoRoot, evidence, verdict, disposition
  * so each consumer decides for itself: the trailer is then absent, and the pre-authorised check refuses with its own reason. A
  * `disposition` that is present but is not one of the three, or that contradicts the verdict, is `malformed`.
  *
- * @returns {{ok: true, marker: {runId: string, auditedTree: string, round: number, verdict: string, disposition: string|null, ts: string}} | {ok: false, reason: 'absent'|'unreadable'|'malformed'|'revoked'}}
+ * @returns {{ok: true, marker: {runId: string, auditedTree: string, round: number, verdict: string, disposition: string|null, ts: string}} | {ok: false, reason: 'absent'|'unreadable'|'malformed'|'revoked'|'pending'}}
  */
 export function readFinalReviewMarker(repoRoot, { fsMod = fs } = {}) {
+  // A review that started and has not recorded (running, crashed, or refused the lock) outranks any marker beside it.
+  const pending = listPending(repoRoot, fsMod);
+  if (pending.unreadable) return { ok: false, reason: 'unreadable' };
+  if (pending.names.length > 0) return { ok: false, reason: 'pending' };
   // A standing revocation outranks any marker beside it.
   try { fsMod.readFileSync(path.join(repoRoot, REVOKED_SIDECAR_RELPATH), 'utf-8'); return { ok: false, reason: 'revoked' }; } catch (e) {
     if (!(e && e.code === 'ENOENT')) return { ok: false, reason: 'unreadable' };
@@ -239,20 +322,22 @@ function sameEvidenceIdentity(a, b) {
  *   approval unusable, or another review held the marker lock. Everything else (a write that failed after revoking, evidence that
  *   cannot identify the review or moved during it) leaves NO approval standing, which is the safe state, and is only reported.
  */
-export function recordFinalReviewMarker({ auditMode, result, repoRoot, reviewedEvidence, write = writeFinalReviewMarker, readEvidence = readGateEvidenceSnapshot } = {}) {
+export function recordFinalReviewMarker({ auditMode, result, repoRoot, reviewedEvidence, pending, write = writeFinalReviewMarker, readEvidence = readGateEvidenceSnapshot } = {}) {
   if (auditMode !== 'code') return false;
   const current = readEvidence(repoRoot);
   const moved = !sameEvidenceIdentity(reviewedEvidence, current);
   // Unchanged evidence is recorded; moved or unknown evidence goes to the writer as null, which revokes the old marker and writes none.
   const evidence = moved ? null : current;
-  const w = write({ repoRoot, evidence, verdict: result?.verdict, disposition: result?.gateDisposition });
+  const w = write({ repoRoot, evidence, verdict: result?.verdict, disposition: result?.gateDisposition, pendingId: pending?.ok ? pending.id : undefined, pendingNonce: pending?.ok ? pending.nonce : undefined });
   if (moved && current && reviewedEvidence) {
     console.error(`  [final-review-marker] the audit evidence changed while the review ran (reviewed run ${String(reviewedEvidence.runId).slice(0, 8)} round ${reviewedEvidence.round}; now run ${String(current.runId).slice(0, 8)} round ${current.round}): nothing bound to it — re-run the final review\n`);
   }
   if (w.written) {
     console.error(`  [final-review-marker] recorded ${result.verdict} (result ${result.gateDisposition}) for run ${String(evidence.runId).slice(0, 8)}, audit round ${evidence.round}, tree ${String(evidence.auditedTree).slice(0, 12)}\n`);
-    return Boolean(w.sidecarStuck);
+    // Registering the attempt failed at the start: the earlier approval was never shadowed while this review ran. It is recorded
+    // now, but the lifecycle is fatal so the caller does not read the run as clean.
+    return Boolean(w.sidecarStuck) || pending?.ok === false;
   }
   console.error(`  [final-review-marker] not recorded (${w.reason}): a pre-authorised ship will read this review as unrecorded\n`);
-  return w.revoked === false;
+  return w.revoked === false || pending?.ok === false;
 }

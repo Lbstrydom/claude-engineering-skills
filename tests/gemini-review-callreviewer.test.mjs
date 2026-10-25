@@ -135,3 +135,81 @@ describe('callReviewer — error normalization', () => {
     );
   });
 });
+
+const { GeminiFinalReviewSchema } = await import('../scripts/lib/final-review/output-schemas.mjs');
+const VALID = {
+  verdict: 'APPROVE',
+  deliberation_quality: { claude_bias_detected: false, gpt_false_positive_count: 0, deliberation_was_fair: true, quality_summary: 'ok' },
+  new_findings: [], wrongly_dismissed: [], over_engineering_flags: [],
+  architectural_coherence: 'Strong', overall_reasoning: 'ok',
+};
+const openaiReply = (content, finishReason) => ({ chat: { completions: { create: async () => ({
+  choices: [{ message: { content }, finish_reason: finishReason }], usage: { prompt_tokens: 11, completion_tokens: 22 },
+}) } } });
+
+describe('callReviewer — a cut-off or structurally invalid response is a FAILED review, never a short one', () => {
+  test('openai finish_reason "length" rejects even though the surviving JSON parses', async () => {
+    const err = await callReviewer(openaiReply(JSON.stringify(VALID), 'length'), { ...BASE, transportKind: 'openai' })
+      .then(() => null, (e) => e);
+    assert.ok(err, 'a truncated review must not resolve');
+    assert.match(err.message, /truncated at the output-token ceiling \(finish reason: length\)/);
+    assert.equal(err.truncated, true, 'structured flag survives the wrap, so the retry keys on it, not prose');
+    assert.equal(err.usage?.input_tokens, 11, 'the cut-off response was billed');
+  });
+
+  test('anthropic stop_reason "max_tokens" rejects', async () => {
+    const client = { messages: { create: async () => ({
+      content: [{ type: 'text', text: JSON.stringify(VALID) }], stop_reason: 'max_tokens', usage: { input_tokens: 1, output_tokens: 1 },
+    }) } };
+    await assert.rejects(callReviewer(client, { ...BASE, transportKind: 'anthropic' }), /finish reason: max_tokens/);
+  });
+
+  test('gemini finishReason "MAX_TOKENS" is READ from the stream and rejects', async () => {
+    const client = { models: { generateContentStream: async () => (async function* () {
+      yield { text: JSON.stringify(VALID), candidates: [{ finishReason: 'MAX_TOKENS' }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } };
+    })() } };
+    await assert.rejects(callReviewer(client, { ...BASE, transportKind: 'gemini' }), /finish reason: MAX_TOKENS/);
+  });
+
+  test('NEGATIVE CONTROL: a normal stop with a schema-valid body resolves', async () => {
+    const { result } = await callReviewer(openaiReply(JSON.stringify(VALID), 'stop'), { ...BASE, transportKind: 'openai', zodSchema: GeminiFinalReviewSchema });
+    assert.equal(result.verdict, 'APPROVE');
+  });
+
+  test('a verdict-only object fails schema validation instead of returning as a clean gate', async () => {
+    const err = await callReviewer(openaiReply('{"verdict":"APPROVE"}', 'stop'), { ...BASE, transportKind: 'openai', zodSchema: GeminiFinalReviewSchema })
+      .then(() => null, (e) => e);
+    assert.ok(err, '{verdict:"APPROVE"} alone is not a review');
+    assert.match(err.message, /failed schema validation/);
+    assert.match(err.message, /deliberation_quality/, 'names the missing structure');
+    assert.equal(err.usage?.output_tokens, 22, 'billed usage rides out on the failure');
+  });
+
+  test('an OVER-LIMIT-only violation is kept (Gemini strips maxItems) — the direction that must not fire', async () => {
+    const eleven = { ...VALID, over_engineering_flags: Array.from({ length: 11 }, (_, i) => `flag ${i}`) };
+    const { result } = await callReviewer(openaiReply(JSON.stringify(eleven), 'stop'), { ...BASE, transportKind: 'openai', zodSchema: GeminiFinalReviewSchema });
+    assert.equal(result.over_engineering_flags.length, 11);
+  });
+});
+
+describe('callReviewer — cancellation reaches the Gemini SDK, and an abort stays classifiable', () => {
+  test('gemini passes the AbortSignal as config.abortSignal in its ONE argument (a 2nd arg is dropped by the SDK)', async () => {
+    let args = null;
+    const client = { models: { generateContentStream: async (...a) => {
+      args = a;
+      return (async function* () { yield { text: '{"verdict":"APPROVE"}', usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } }; })();
+    } } };
+    await callReviewer(client, { ...BASE, transportKind: 'gemini' });
+    assert.equal(args.length, 1, '@google/genai generateContentStream takes exactly one parameter object');
+    assert.ok(args[0].config?.abortSignal instanceof AbortSignal, 'cancellation must ride in config.abortSignal');
+  });
+
+  test('a provider AbortError is wrapped with the structured timeout classification (behavioural, not a source pin)', async () => {
+    const client = { chat: { completions: { create: async () => {
+      throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+    } } } };
+    const err = await callReviewer(client, { ...BASE, transportKind: 'openai' }).then(() => null, (e) => e);
+    assert.equal(err.llmCategory, 'timeout');
+    assert.equal(err.llmRetryable, true);
+  });
+});

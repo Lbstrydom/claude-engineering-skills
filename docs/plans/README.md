@@ -163,6 +163,7 @@ source comments that no docs linter sees — stays valid.
 | [Final-review credit — a ruling is a ruling on either axis, and a re-run must not erase it](./final-review-credit-projection.md) | `Complete` |  |
 | [Final-review debt suppression — make the dead stage live, and make it correct](./final-review-debt-suppression-revival.md) | `Complete` |  |
 | [Hunk windows for the final-review envelope and the tiered discovery read](./final-review-hunk-windows.md) | `Complete` |  |
+| [Final-review reliability (backlog-triage cluster D)](./final-review-reliability-cluster-d.md) | `Complete` |  |
 | [Reduced-Scope Second Final Reviewer + 4-Arm Cost/Yield Campaign](./final-review-scoped-second-reviewer.md) | `Complete` | Clusters A–C implemented via `/cycle --autonomous`, consolidated Gemini gate APPROVE in 2 rounds (§10b),… |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `Complete` | VERDICT: KEEP opus (SELECT opus, the incumbent; no challenger cleared the relative floor). N reached 12/12… |
 | [Shadow Final-Review Reviewer (A/B test final-gate effectiveness)](./final-review-shadow-reviewer.md) | `Complete` | verified built; status corrected from Approved during archive triage 2026-06-27 |
