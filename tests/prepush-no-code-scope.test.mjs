@@ -46,6 +46,12 @@ describe('classifyNoCodePush - the per-file table', () => {
   test('an unrecognised type is never bypassed', () => {
     assert.equal(classify(['data.zzzunknown']).noCode, false);
   });
+  test('an UNEXPECTED taxonomy class never qualifies for the shared-bucket exemption (only an explicit `declarative` does)', () => {
+    for (const cls of ['profiled', 'model-only', 'mystery', undefined, null]) {
+      assert.equal(classifyNoCodePush({ files: ['src/config/x.thing'], ...deps, taxonomyClass: () => cls, bucketOf: () => 'shared' }).noCode, false, String(cls));
+    }
+    assert.equal(classifyNoCodePush({ files: ['src/config/x.yml'], ...deps, taxonomyClass: () => 'declarative', bucketOf: () => 'shared' }).noCode, true);
+  });
   test('fail closed: unknown list, empty list, junk entries, a throwing classifier', () => {
     assert.equal(classifyNoCodePush({ files: null, ...deps }).noCode, false);
     assert.equal(classify([]).noCode, false);

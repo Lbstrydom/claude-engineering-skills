@@ -94,7 +94,19 @@ describe('recurrenceLine against a real repository', () => {
     assert.ok(h1);
   });
 
-  test('a report with no recorded head, a corrupt earlier report, and a missing current report are all `unavailable`', () => {
+  test('a CORRUPT earlier report WITH a valid recorded ancestor head is `unavailable: ... unreadable` (isolated from the missing-head case)', () => {
+    const { dir, commit } = repo();
+    const h1 = commit('one'); const h2 = commit('two');
+    const k = keep(dir);
+    fs.writeFileSync(path.join(k, `${'a'.repeat(40)}.report.json`), '{not json');
+    const t = new Date(Date.now() - 60_000); fs.utimesSync(path.join(k, `${'a'.repeat(40)}.report.json`), t, t);
+    fs.writeFileSync(path.join(k, `${'a'.repeat(40)}.head`), `${h1}
+`);
+    const cur = putReport(k, 'b'.repeat(40), [F('c', 'src/j.ts')]);
+    assert.match(recurrenceLine({ reportFile: cur, headArg: h2, cwd: dir, env: {}, deps }), /^recurrence unavailable: the earlier report is unreadable/);
+  });
+
+  test('a report with no recorded head and a missing current report are `unavailable`', () => {
     const { dir, commit } = repo();
     commit('one'); const h2 = commit('two');
     const k = keep(dir);
