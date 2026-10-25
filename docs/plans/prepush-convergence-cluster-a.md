@@ -93,6 +93,27 @@ Integration test: a `--scope plan` ledger with findings 0 still converges, and p
 
 **Size ratchet (M3).** `scripts/install-prepush-hook.mjs` is 870 lines — under the 1000-line ratchet — so the constraint is a budget, not a baseline: the hook edit must stay under 1000 lines and the decision logic lives in `scripts/lib/prepush-audit-gate.mjs` / `scripts/prepush-step.mjs`, not in the shell template. **No re-baselining** of any file is an option in this plan; if a ratcheted file would grow, extract instead.
 
+### Contracts added by the Gemini final gate (round 1)
+
+**One subject predicate (G1 — supersedes the §8 wording "declarative is reviewable ⇒ audited").** Measured 2026-10-25 against the real functions: the taxonomy (`classifyFileCoverage`) calls `package.json`, `tsconfig.json`, workflows, `Dockerfile` and `README.md` all `declarative`; `resolveReferenceExtension` ADMITS them; and yet a `package.json`-only diff aborts, because `classifyFiles` (`scripts/lib/audit-scope.mjs`:416) files every `*.json` and every `/config/ /schemas/ /types/ /shared/` path under **`shared`**, and `auditSubjectFileGuard` counts only backend+frontend files ("shared files are context, not the subject"). So the oracle for "will the audit have a subject?" is the **guard's own bucketing**, not the taxonomy class. `classifyNoCodePush` therefore calls `classifyFiles` itself (exported, one spelling) and defines, per file:
+
+| File | No-code? | Why |
+|---|---|---|
+| sync bookkeeping (`SYNC_BOOKKEEPING_FILES`) | yes | machine-written |
+| taxonomy `non-code` (lockfile, image, asset) | yes | nothing to read |
+| `classifyFiles` ⇒ `shared` (any `*.json`, `/config/`, `/schemas/`, `/types/`, `/shared/`) | yes | the guard would count 0 subjects for it |
+| `classifyFiles` ⇒ `backend`/`frontend` (source, `.md`, `.yml`, `Dockerfile`, `.jsonl`, …) | **no** | the audit reads it as a subject today |
+| taxonomy `uncovered`, an infra path (`isAuditInfraFile`), unresolvable, unlisted | **no** | falls through to today's behaviour (audit or A1 refusal) — never a bypass |
+
+A push is `NO_CODE_IN_SCOPE` iff **every** pushed file is "yes". Doc-only pushes with a plan keep today's behaviour (audited as backend subjects) — changing that is a separate decision, not a requirement of 70b5. Tests carry a **parity test**: for a table of paths, `classifyNoCodePush` says no-code exactly when `auditSubjectFileGuard` over `classifyFiles` would refuse, in both directions (so the two cannot drift apart), plus the explicit rows `package.json`, `tsconfig.json`, `package-lock.json`, `src/config/x.ts` ⇒ no-code; `src/a.mjs`, `README.md`, `Dockerfile`, `a.jsonl` ⇒ code. §9/§10 "package.json-only" stays valid; the §8 sentence is superseded by this table.
+
+**Recurrence comparator and CLI (G2).** The concern index filters to dismissed entries (`countsTowardHardSuppress`), so over unadjudicated pre-push findings it is empty — AND its key is `category|file`, which the 484f diagnosis shows reworded away (0/32 exact category+file overlap). Neither is usable. `summariseRecurrence({previous, current})` (pure, in `scripts/lib/prepush-audit-gate.mjs`) uses two tiers, both over the reports' `findings[]`:
+- **same-file**: a current finding whose `findingFiles(f)` (exported from `scripts/lib/concern-identity.mjs`, no change to that module) intersects a previous finding's files;
+- **same-file + similar**: additionally `ledgerFindingSimilarity(f, p) > 0.35` (exported from `scripts/lib/ledger.mjs`; the threshold `suppressReRaises` already calibrates for paraphrased re-raises).
+`concern-identity.mjs` is NOT modified. Output is a count line only (never a gate, never suppression): `recurrence vs <prev-tree-12>: <S> of <N> findings on files already flagged in the previous push (<T> also textually similar)`.
+`prepush-step.mjs recurrence --report <current report path>`: stdout is exactly that line or `recurrence unavailable: <reason>` (rc 0 in both; rc non-zero only for argv errors). Prior-report selection: the newest `*.report.json` in `.audit/prepush/` other than the current tree's, **whose envelope records the same branch**; no branch recorded or none found ⇒ `unavailable: no earlier report for this branch` (the line is omitted rather than inventing a baseline). It runs **after** `audit-outcome` and **before** `prepush_keep_audit`'s prune, so the baseline cannot be deleted first (the prune retains `AUDIT_PREPUSH_KEEP_REPORTS`≥2 newest; a value below 2 ⇒ `unavailable`). The branch is recorded by the hook into the kept report's sidecar `<tree>.branch` (one line, via the same keyed path), not by reading git at comparison time.
+Tests: reworded same-file pair ⇒ same-file counted, similar counted only above threshold; unrelated files ⇒ 0; corrupt/empty previous report ⇒ `unavailable`; the real AIO envelope pair (`7ca4e676…`, `c375d97d…` `report.json` shapes) as a fixture for the 0/32 exact-overlap vs file-overlap claim.
+
 ### Execution model (Phase 1.5)
 All steps independent. One ordering constraint: the hook (cluster 2) calls two new `prepush-step.mjs` subcommands and gates on `capabilities`, so an older source checkout degrades to "run the audit as before" rather than breaking (#13).
 
@@ -133,7 +154,7 @@ Shipping: **two PRs** — A1 (audit libs; consumer `sync` only) then A2 (hook; `
 
 ## 8. Risk & Trade-off Register
 
-- **A wrong NO_CODE_IN_SCOPE is green-without-measuring.** Mitigations: fail closed — any file the taxonomy cannot classify (`uncovered`, e.g. an unrecognised extension), any resolve error, an unknown push range, or an unreadable file list is **not** no-code and falls through to the audit; no-code requires a positive classification of EVERY pushed file as `non-code`, docs or sync bookkeeping. A `profiled`, `model-only` or `declarative` file (config the audit reviews) is reviewable ⇒ audited. Both directions tested.
+- **A wrong NO_CODE_IN_SCOPE is green-without-measuring.** Mitigations: fail closed — any file the taxonomy cannot classify (`uncovered`, e.g. an unrecognised extension), any resolve error, an unknown push range, or an unreadable file list is **not** no-code and falls through to the audit; no-code requires a positive classification of EVERY pushed file as a non-subject. The per-file rule is the table in the Gemini-gate contract (G1): a file is a subject iff `classifyFiles` puts it in backend/frontend. Both directions tested.
 - **Recurrence is informational**: it can neither suppress nor gate, so a wrong match is a wrong sentence, not a wrong verdict. Unreadable previous report ⇒ the line is omitted with a reason, never "0 recurring".
 - **`gate:'warn'` instead of `pass`** for non-`code`: readers enumerated (decision table above); none branches on pass/warn.
 - **Hook rollout reaches every consumer on sync.** Capability-gated; older source ⇒ today's behaviour.
