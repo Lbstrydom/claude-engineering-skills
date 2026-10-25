@@ -63,6 +63,7 @@ function makeSource(ws, stepMode = 'real') {
     // The real audit derives a ledger beside --out: .tmp.XXXX -> .tmp-ledger.XXXX. Do the same so the hook has something to clean.
     "if (i >= 0) { const out = process.argv[i + 1]; fs.writeFileSync(out.replace(/\\.tmp\\.([^./\\\\]+)$/, '.tmp-ledger.$1'), '{}'); }",
     "const mode = process.env.AUDIT_STUB || 'pass';",
+    "if (mode === 'nothing') process.exit(0);",
     "const f = mode === 'findings' ? [{ severity: 'HIGH', id: 'H1', section: 'src/own.mjs', _primaryFile: 'src/own.mjs', category: 'c', detail: 'd' }] : [];",
     "if (i >= 0) fs.writeFileSync(process.argv[i + 1], JSON.stringify({ verdict: mode === 'findings' ? 'SIGNIFICANT_ISSUES' : 'PASS', findings: f }));",
     'process.exit(0);', '',
@@ -190,6 +191,15 @@ describe('hook v15 - recurrence', () => {
     assert.equal(got.status, 0, got.stderr);
     assert.match(got.stderr, /recurrence vs [0-9a-f]{12}: 1 of 1 finding\(s\) are on files already flagged/);
     assert.equal((got.stderr.match(/recurrence /g) || []).length, 1);
+  }));
+
+  it('a later attempt that wrote no report removes the earlier report AND its recurrence sidecar (no orphan is left to be read as current)', (t) => scenario(t, 'recur-orphan', CODE, ({ c, source }) => {
+    assert.equal(runHook(c.local, source, c.stdin, { AUDIT_STUB: 'findings' }).status, 0);
+    const k = path.join(c.local, KEEP);
+    assert.ok(fs.existsSync(path.join(k, `${c.tree}.head`)), 'the sidecar exists beside the report');
+    runHook(c.local, source, c.stdin, { AUDIT_STUB: 'nothing' }); // exits 0 with no envelope: UNMEASURED, but the keep step still runs
+    assert.equal(fs.existsSync(path.join(k, `${c.tree}.report.json`)), false);
+    assert.equal(fs.existsSync(path.join(k, `${c.tree}.head`)), false, 'the sidecar must go with its report');
   }));
 
   it('an older source checkout (no recurrence subcommand) prints no recurrence line and still audits', (t) => scenario(t, 'recur-old', CODE, ({ c, source }) => {

@@ -26,12 +26,17 @@ const deps = {
 const classify = (files) => classifyNoCodePush({ files, ...deps });
 
 describe('classifyNoCodePush - the per-file table', () => {
-  for (const f of ['package.json', 'tsconfig.json', 'package-lock.json', 'logo.png', 'src/config/x.yml', 'src/schemas/a.json', 'manifest.json', '.sync-receipt.json']) {
+  for (const f of ['package.json', 'tsconfig.json', 'package-lock.json', 'logo.png', 'src/config/x.yml', 'src/schemas/a.json', 'manifest.json']) {
     test(`${f} alone is no-code`, () => assert.equal(classify([f]).noCode, true, JSON.stringify(classify([f]))));
   }
   for (const f of ['src/a.mjs', 'src/config/x.ts', 'src/schemas/a.ts', 'src/types/t.ts', 'src/shared/h.mjs', 'README.md', 'Dockerfile', 'a.jsonl', 'styles.css', '.github/workflows/ci.yml']) {
     test(`${f} alone is CODE (the audit reads it as a subject today)`, () => assert.equal(classify([f]).noCode, false, f));
   }
+  test('sync bookkeeping alone is NOT relabelled (its own handling stays); alongside a manifest it is no-code', () => {
+    assert.equal(classify(['.sync-receipt.json']).noCode, false);
+    assert.equal(classify(['.sync-receipt.json', 'scripts/.sync-owned.json']).noCode, false);
+    assert.equal(classify(['.sync-receipt.json', 'package.json']).noCode, true);
+  });
   test('one code file among many non-code files makes the whole push code', () => {
     assert.equal(classify(['package.json', 'package-lock.json', 'src/a.mjs']).noCode, false);
   });

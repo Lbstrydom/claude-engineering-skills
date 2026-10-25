@@ -308,6 +308,8 @@ export const NO_CODE_OUTCOME = 'NO_CODE_IN_SCOPE';
 export function classifyNoCodePush({ files, isInfra, taxonomyClass, bucketOf } = {}) {
   if (!Array.isArray(files)) return { noCode: false, reason: 'the pushed file list could not be established' };
   if (files.length === 0) return { noCode: false, reason: 'the push lists no files' };
+  // Pure sync bookkeeping is already its own, earlier-handled case (the v7 short-circuit; the no-plan exemption). It is not re-labelled here.
+  if (files.every((f) => SYNC_BOOKKEEPING_FILES.includes(f))) return { noCode: false, reason: 'only sync bookkeeping, which has its own handling' };
   try {
     for (const f of files) {
       if (typeof f !== 'string' || f === '') return { noCode: false, reason: 'an unreadable path in the pushed file list' };

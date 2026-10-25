@@ -139,7 +139,7 @@ All steps independent. One ordering constraint: the hook (cluster 2) calls two n
 **Phase 2 — Adjacency bound**: scale and name the skipped files. Files: `scripts/lib/config.mjs` (modify), `scripts/lib/audit/adjacency-detector.mjs` (modify), `tests/adjacency-container-scaling.test.mjs` (create)
 **Phase 3 — Scope accounting line**: Files: `scripts/lib/audit/legacy-production-audit.mjs` (modify), `tests/audit-scope-accounting-line.test.mjs` (create)
 **Phase 4 — NO_CODE_IN_SCOPE and recurrence (pure + CLI)**: Files: `scripts/lib/prepush-audit-gate.mjs` (modify), `scripts/prepush-step.mjs` (modify), `tests/prepush-no-code-scope.test.mjs` (create), `tests/prepush-recurrence.test.mjs` (create)
-**Phase 5 — Hook v15**: Files: `scripts/install-prepush-hook.mjs` (modify), `tests/prepush-hook-v15.test.mjs` (create), `tests/prepush-hook-v14.test.mjs` (modify: version pin)
+**Phase 5 — Hook v15**: Files: `scripts/install-prepush-hook.mjs` (modify), `tests/prepush-hook-v15.test.mjs` (create), `tests/prepush-hook-v13.test.mjs`, `tests/prepush-hook-v14.test.mjs`, `tests/prepush-hook-bounded-steps.test.mjs`, `tests/prepush-hook-fail-closed-on-signal.test.mjs` (modify: their fixtures pushed `.txt` files as code stand-ins, which v15 correctly classifies no-code; they now push `.mjs`)
 
 **Close-out (not a phase)**: `npm run skills:regenerate && npm run skills:check`, `npm run docs:architecture-intent:check`, `npm run size:ratchet:gate` (no growth of any ratcheted file; a SHRINK must be re-baselined because the gate fails on it — that is the only permitted baseline edit), `npm run guards:preflight`.
 

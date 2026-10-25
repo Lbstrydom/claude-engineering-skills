@@ -736,6 +736,8 @@ if [ "$AUDIT_REUSED" != "1" ]; then
       keep_dest="$AUDIT_KEEP_BASE.$keep_suffix"; keep_prot=""
       if [ ! -s "$keep_src" ]; then
         rm -f "$keep_src"
+        # v15: the recurrence sidecar describes the report beside it; a report that is gone takes its sidecar with it.
+        [ "$keep_suffix" = "report.json" ] && rm -f -- "$AUDIT_KEEP_BASE.head"
         if [ -e "$keep_dest" ]; then rm -f "$keep_dest"; echo "[prepush-hook] ▸ audit $keep_suffix: none exists (the audit wrote nothing; the earlier attempt's $keep_dest was removed so it is not mistaken for this one's)" >&2
         else echo "[prepush-hook] ▸ audit $keep_suffix: none exists (the audit wrote nothing)" >&2; fi
       else
