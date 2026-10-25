@@ -197,6 +197,7 @@ export function classifyAgainstBase({ baseHash, diskHash }) {
  *
  *   1. an override claims the path         → HOLD   (consumer said so, in-repo)
  *   2. base state is not DIVERGED          → WRITE
+ *   2b. diverged, but disk equals an earlier upstream version of the file (not a stale-checkout case) → WRITE
  *   3. diverged + operator passed the flag → WRITE_LOUD
  *   4. diverged + untracked in the consumer→ WRITE_LOUD
  *   5. diverged (tracked, or git unknown)  → REFUSE
@@ -214,7 +215,7 @@ export function classifyAgainstBase({ baseHash, diskHash }) {
  *
  * @param {object} input
  * @param {'no-base'|'pristine'|'diverged'} input.baseState
- * @param {{tracked: boolean|null, matchesHead: boolean|null, staleSyncRef?: string|null}|null} input.vcs
+ * @param {{tracked: boolean|null, matchesHead: boolean|null, staleSyncRef?: string|null, priorUpstream?: boolean|null}|null} input.vcs
  * @param {boolean} input.overrideActive
  * @param {boolean} input.allowOverwriteDiverged
  * @returns {{action: 'write'|'write-loud'|'hold'|'refuse', reason: string}}
@@ -222,6 +223,11 @@ export function classifyAgainstBase({ baseHash, diskHash }) {
 export function decideAction({ baseState, vcs, overrideActive, allowOverwriteDiverged }) {
   if (overrideActive) return { action: ACTION.HOLD, reason: 'consumer-override' };
   if (baseState !== BASE_STATE.DIVERGED) return { action: ACTION.WRITE, reason: baseState };
+  // 2221: disk is byte-identical to an EARLIER upstream version of this file - a stale snapshot, not an edit. Nothing a consumer
+  // typed can be lost by replacing it. The stale-checkout case keeps its own remedy (pull), so it is excluded here.
+  if (vcs && vcs.priorUpstream === true && !vcs.staleSyncRef) {
+    return { action: ACTION.WRITE, reason: 'diverged-prior-upstream' };
+  }
   if (allowOverwriteDiverged) {
     return { action: ACTION.WRITE_LOUD, reason: 'diverged-overwrite-flag' };
   }
@@ -272,6 +278,8 @@ export function describeReason(reason) {
       return 'changed since our last sync and git could not say whether it is tracked';
     case 'diverged-untracked':
       return 'changed since our last sync; untracked here (upstream-owned — fix upstream, not this copy)';
+    case 'diverged-prior-upstream':
+      return 'equals an earlier upstream version - stale, not edited; safe to replace';
     case 'diverged-overwrite-flag':
       return 'changed since our last sync; overwritten because --overwrite-diverged was passed';
     default:
@@ -449,4 +457,92 @@ export function formatRefusalReport(refusals, { repoPath, receiptPath, overrides
     lines.push(`    ${D}  If upstream's version is WRONG for consumers, say so: cross-skill.mjs upstream report${X}`);
   }
   return lines;
+}
+
+/**
+ * Run-scoped answer to "is this file's content an EARLIER version of what upstream ships at this path?" (proposal 2221).
+ *
+ * A consumer's snapshot that is merely OUT OF DATE (disk equals upstream's version from two syncs ago, so it no longer equals the
+ * manifest's recorded base) used to be refused as if the consumer had edited it. The source repo's own history is the oracle: if the
+ * disk bytes equal a blob that upstream once held at the source path, nothing the consumer typed can be lost by replacing them.
+ *
+ * Work is bounded at the RUN, not just per path (audit R1 M2): one `git log --raw` per source path, ONE `git cat-file --batch`
+ * invocation per path for the blobs not already cached, a blob cache shared across paths, and a total blob budget. When the budget
+ * is spent, or any git call fails, the answer is `null` - which `decideAction` reads as today's refusal. The result is never
+ * `false` for "could not look", so an unanswered question cannot be mistaken for a negative one.
+ *
+ * Only meaningful for a file whose destination bytes are the source bytes (no path rewrites): a rewritten file's earlier versions
+ * were rewritten differently and cannot be reconstructed from the source blob, so the caller does not ask about those.
+ *
+ * @param {{sourceRoot: string, perPathMax?: number, totalBudget?: number,
+ *   git?: (args: string[], opts?: {input?: Buffer}) => {status: number|null, stdout: Buffer, error?: Error}}} opts - `git` is a test seam
+ * @returns {{matches: (srcRel: string, diskHash: string|null|undefined) => boolean|null,
+ *   stats: {logCalls: number, batchCalls: number, blobsRead: number, exhausted: boolean}}}
+ */
+export function createPriorUpstreamResolver({ sourceRoot, perPathMax = 100, totalBudget = 2000, git }) {
+  const run = git ?? ((args, { input } = {}) => spawnSync('git', ['-C', sourceRoot, ...args], {
+    windowsHide: true, maxBuffer: 256 * 1024 * 1024, ...(input ? { input } : {}),
+  }));
+  const stats = { logCalls: 0, batchCalls: 0, blobsRead: 0, exhausted: false };
+  /** @type {Map<string, string[]|null>} blob oid -> [sha256 of the LF bytes, sha256 of the CRLF form], null when unreadable */
+  const blobHashes = new Map();
+  /** @type {Map<string, string[]|null>} source path -> blob oids ever held there, null when history was unreadable */
+  const pathBlobs = new Map();
+  const sha = (buf) => createHash('sha256').update(buf).digest('hex');
+  const ok = (r) => !r.error && r.status === 0;
+
+  function blobsOf(srcRel) {
+    if (pathBlobs.has(srcRel)) return pathBlobs.get(srcRel);
+    stats.logCalls++;
+    const r = run(['log', '-n', String(perPathMax), '--no-renames', '--raw', '--no-abbrev', '--format=', '--', srcRel]);
+    let oids = null;
+    if (ok(r)) {
+      oids = [];
+      for (const line of String(r.stdout).split('\n')) {
+        // :100644 100644 <old> <new> M\t<path>   - <new> is all zeros for a delete
+        const m = /^:\d+ \d+ [0-9a-f]{40} ([0-9a-f]{40}) \w\t/.exec(line);
+        if (m && !/^0+$/.test(m[1]) && !oids.includes(m[1])) oids.push(m[1]);
+      }
+    }
+    pathBlobs.set(srcRel, oids);
+    return oids;
+  }
+
+  /** Read every uncached blob in ONE batch call. Returns false when the budget or git could not cover them. */
+  function load(oids) {
+    const need = oids.filter((o) => !blobHashes.has(o));
+    if (need.length === 0) return true;
+    if (stats.blobsRead + need.length > totalBudget) { stats.exhausted = true; return false; }
+    stats.batchCalls++;
+    const r = run(['cat-file', '--batch'], { input: Buffer.from(`${need.join('\n')}\n`) });
+    if (!ok(r)) return false;
+    const out = Buffer.isBuffer(r.stdout) ? r.stdout : Buffer.from(r.stdout);
+    let pos = 0;
+    for (const oid of need) {
+      const nl = out.indexOf(0x0a, pos);
+      if (nl < 0) return false;
+      const header = out.subarray(pos, nl).toString('latin1');
+      const m = /^([0-9a-f]{40}) blob (\d+)$/.exec(header);
+      if (!m || m[1] !== oid) { blobHashes.set(oid, null); pos = nl + 1; continue; }
+      const size = Number(m[2]);
+      const body = out.subarray(nl + 1, nl + 1 + size);
+      pos = nl + 1 + size + 1;
+      stats.blobsRead++;
+      const crlf = body.includes(0) ? null : Buffer.from(body.toString('latin1').replace(/\r?\n/g, '\r\n'), 'latin1');
+      blobHashes.set(oid, [sha(body), crlf ? sha(crlf) : sha(body)]);
+    }
+    return true;
+  }
+
+  return {
+    stats,
+    matches(srcRel, diskHash) {
+      const disk = typeof diskHash === 'string' ? diskHash.replace(/^sha256:/, '') : null;
+      if (!disk) return null;
+      const oids = blobsOf(srcRel);
+      if (!oids) return null;
+      if (!load(oids)) return null;
+      return oids.some((o) => blobHashes.get(o)?.includes(disk)) ? true : (oids.some((o) => blobHashes.get(o) === null) ? null : false);
+    },
+  };
 }

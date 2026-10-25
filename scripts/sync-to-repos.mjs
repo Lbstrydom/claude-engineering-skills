@@ -37,7 +37,7 @@ import { injectUpstreamBanner, BANNER_BODY } from './lib/sync-banner.mjs';
 import { classifyOwnership, describeEvidence } from './lib/sync-ownership.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import {
-  BASE_STATE, ACTION, classifyAgainstBase, decideAction, describeReason, readDivergenceVcs,
+  BASE_STATE, ACTION, classifyAgainstBase, decideAction, describeReason, readDivergenceVcs, createPriorUpstreamResolver,
   eolInsensitiveEqual, formatRefusalReport,
   isSyncBookkeeping,
 } from './lib/sync-divergence.mjs';
@@ -912,6 +912,8 @@ async function main() {
   // can distinguish "synced, nothing to change" from "reached nothing at all" —
   // see the coverage line at the end of main().
   let totalSkipped = 0;
+  // 2221: one resolver for the whole run - its blob cache and total budget are shared across every consumer and path.
+  const priorUpstream = createPriorUpstreamResolver({ sourceRoot: SOURCE_ROOT });
   const undeclaredDeps = []; // per-consumer `name: packages` lines for the end-of-run summary
 
   // `--target` (registry) and `--target-path` (arbitrary) are mutually
@@ -1669,6 +1671,9 @@ async function main() {
       const vcs = (!override && baseState === BASE_STATE.DIVERGED)
         ? readDivergenceVcs(repo.path, dstRel, baseHash)
         : null;
+      // 2221: a diverged file that equals an EARLIER upstream version is stale, not edited. Asked only when the destination bytes are the
+      // source bytes (no rewrites) - a rewritten file's earlier versions cannot be rebuilt from the source blob.
+      if (vcs && !rewriteResult.hits) vcs.priorUpstream = priorUpstream.matches(srcRel, dstHash);
       const decision = decideAction({
         baseState,
         vcs,
@@ -2219,6 +2224,7 @@ async function main() {
     }
   }
 
+  if (priorUpstream.stats.exhausted) console.log(`${Y}⚠ prior-upstream history lookup budget exhausted${X} ${D}— later diverged files were refused as before; re-run after resolving the first ones${X}`);
   if (undeclaredDeps.length) console.log(`${Y}⚠ undeclared required bundle packages${X} ${D}(per consumer; each line above names the command):${X}\n  ${undeclaredDeps.join('\n  ')}`);
   // D2b — sync-time shared-cloud-config trigger. Skip on dry-run, errors,
   // non-TTY, or --no-prompt. Silent on `already_current`; prompts on
