@@ -32,7 +32,7 @@ import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { normaliseCategoryKey, findingFiles, groupByLinkKeys } from '../concern-identity.mjs';
-import { normalizePath } from '../file-io.mjs';
+import { normalizePath, atomicWriteFileSync } from '../file-io.mjs';
 import { discoverRoundResults, readRoundResult } from './transcript.mjs';
 
 export const CARD_VERSION = 1;
@@ -605,9 +605,7 @@ export async function buildStructuralCard({
 export function writeCardFile(dir, fileName, card) {
   fs.mkdirSync(dir, { recursive: true });
   const target = path.join(dir, fileName);
-  const tmp = `${target}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(card, null, 2)}\n`);
-  fs.renameSync(tmp, target);
+  atomicWriteFileSync(target, `${JSON.stringify(card, null, 2)}\n`);
   return target;
 }
 
