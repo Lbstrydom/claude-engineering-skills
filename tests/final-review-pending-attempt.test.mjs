@@ -41,7 +41,7 @@ describe('pending-attempt registry (0ace)', () => {
     assert.equal(w.reason, 'lock-contention', 'precondition: the held lock must actually make B lose, or the assertions below prove nothing');
     assert.equal(readFinalReviewMarker(d).ok, false, 'B recorded nothing and A\'s APPROVE must not stand');
     assert.equal(readFinalReviewMarker(d).reason, 'pending');
-    fs.rmSync(lock, { recursive: true, force: true });
+    fs.rmSync(lock, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }));
 
   it('a crashed review (registered, never recorded) keeps the ship refusing; a later recording review clears it', () => withRepo((d) => {

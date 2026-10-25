@@ -4,7 +4,7 @@
 - **Author**: Claude + Louis
 - **Scope**: backend — stack `js-ts`
 - **Target domain(s)**: `audit-orchestration`, `shared-lib`
-- **Source**: `docs/plans/backlog-triage-2026-10-25.md` section 5 (cluster D); fleet proposal `p-20261015193106-0ace`; upstream `d4dada5d`.
+- **Source**: the 2026-10-25 backlog triage, section 5 (cluster D); fleet proposal `p-20261015193106-0ace`; upstream `d4dada5d`.
 
 ## 1. Problem
 A final review whose response was truncated, or that never got to record its verdict, must not read as a clean review
