@@ -1,6 +1,6 @@
 # Incremental refresh must propagate an ownership-rule change
 
-**Status:** Approved
+- **Status**: Approved
 **Created:** 2026-09-05
 **Upstream report:** `edc0948e` (MEDIUM) — Lbstrydom/wine-cellar-app, bundle sync 90822348
 **Base commit:** `5bf80dea`

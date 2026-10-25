@@ -394,3 +394,65 @@ describe('plan-status / checkPlanDependencies', () => {
     assert.deepEqual(checkPlanDependencies('- **Status**: Draft\n', { plansDir: plans }), []);
   });
 });
+
+describe('one status classification for the lint and the selector (round-cap plan §2.4, p-1ad3)', async () => {
+  const { classifyPlanStatus, listPlanFiles, parsePlanStatus: parse, selectAuditPlan: select } = await import('../scripts/lib/plan-status.mjs');
+  const doc = (line) => `# Plan: x\n${line}\n- **Date**: 2026-10-25\n`;
+
+  it('near-miss Status shapes are MALFORMED (a status was declared, unreadably), not absent', () => {
+    for (const line of ['**Status:** Approved', 'Status: In Progress', '> **Status**: Draft', '- Status: Draft']) {
+      const p = parse(doc(line));
+      assert.equal(p.ok, false, line);
+      assert.equal(p.reason, 'malformed', line);
+      assert.deepEqual(classifyPlanStatus(p), { validity: 'invalid', eligibility: 'invisible', reason: 'malformed' }, line);
+    }
+  });
+
+  it('prose that merely mentions a status, or a plan with no status at all, stays not-a-plan', () => {
+    for (const body of ['# Index\nSee the Status: column below.\n', '# Plan\n- **Date**: x\n', '# Plan\n\n## Meta\n**Status:** Approved\n']) {
+      assert.deepEqual(classifyPlanStatus(parse(body)), { validity: 'not-a-plan', eligibility: 'skipped', reason: 'absent' }, body);
+    }
+  });
+
+  it('a correctly formatted TERMINAL plan is valid and skipped — completing a plan must not fail the lint', () => {
+    assert.deepEqual(classifyPlanStatus(parse(doc('- **Status**: Complete'))), { validity: 'valid', eligibility: 'skipped', reason: null });
+    assert.deepEqual(classifyPlanStatus(parse(doc('- **Status**: Approved'))), { validity: 'valid', eligibility: 'selectable', reason: null });
+  });
+
+  it('duplicate / unrecognized / implemented are invalid and invisible', () => {
+    for (const body of [`${doc('- **Status**: Draft')}- **Status**: Approved\n`, doc('- **Status**: Whatever'), doc('- **Status**: Implemented')]) {
+      assert.equal(classifyPlanStatus(parse(body)).validity, 'invalid', body);
+    }
+  });
+
+  it('LINT ≡ SELECTOR over a fixture dir: whatever the lint passes as valid-and-active the selector can pick, whatever it fails the selector warns about', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-status-agree-'));
+    const files = {
+      'good.md': doc('- **Status**: Approved'),
+      'done.md': doc('- **Status**: Complete'),
+      'bold-colon.md': doc('**Status:** Approved'),
+      'bare.md': doc('Status: Draft'),
+      'index.md': '# Index\nno status here\n',
+      'x-audit-summary.md': doc('**Status:** nonsense'),
+    };
+    for (const [n, c] of Object.entries(files)) fs.writeFileSync(path.join(dir, n), c);
+    const names = listPlanFiles(dir).map((f) => f.name).sort();
+    assert.deepEqual(names, ['bare.md', 'bold-colon.md', 'done.md', 'good.md', 'index.md'], 'audit summaries are not plans');
+    const lintFails = names.filter((n) => classifyPlanStatus(parse(files[n])).validity === 'invalid').sort();
+    const warnings = [];
+    const sel = select(dir, { warn: (m) => warnings.push(m) });
+    assert.deepEqual(lintFails, ['bare.md', 'bold-colon.md']);
+    for (const n of lintFails) assert.ok(warnings.join(' ').includes(n), `selector warns about ${n}`);
+    assert.ok(!warnings.join(' ').includes('index.md') && !warnings.join(' ').includes('done.md'), 'not-a-plan and terminal plans are silent');
+    assert.equal(path.basename(sel.path), 'good.md');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('a symlinked plan is enumerated the same way for both consumers', { skip: process.platform === 'win32' ? 'symlinks need privileges on Windows' : false }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-status-link-'));
+    fs.writeFileSync(path.join(dir, 'real.md'), doc('- **Status**: Approved'));
+    fs.symlinkSync(path.join(dir, 'real.md'), path.join(dir, 'link.md'));
+    assert.deepEqual(listPlanFiles(dir).map((f) => f.name).sort(), ['link.md', 'real.md']);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

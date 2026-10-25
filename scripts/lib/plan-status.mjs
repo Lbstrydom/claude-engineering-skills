@@ -41,6 +41,14 @@ const TOKENS = Object.entries(PLAN_STATUS_VOCABULARY)
 // this module exists to prevent. The corpus is the truth; the parser widens.
 const STATUS_LINE_RE = /^-?\s*\*\*Status\*\*:\s*(.+)$/gm;
 
+// A header line that IS a status declaration but not in the form above: the colon inside the bold
+// (`**Status:** Approved`), a bare `Status: Draft`, or one under a blockquote/bullet marker. The strict regex does not
+// see these, so they used to read as `absent` — "not a plan" to the lint, which skipped them, while the selector
+// warned that the same file was invisible. 17 storyline plans passed the lint and could never be audited. They are
+// MALFORMED instead: a status was declared, in a shape the contract does not read. Matches only a line that STARTS
+// with the word (after bullet/quote markers), so prose that merely mentions a status is not caught.
+const NEAR_MISS_STATUS_RE = /^[ \t]*(?:[-*>][ \t]*)*(?:\*\*)?Status(?:\*\*[ \t]*:|:(?:\*\*)?)[ \t]*(\S.*)$/im;
+
 // A token is a prefix of the trimmed value followed by end-of-string or a
 // separator. The separator class deliberately EXCLUDES the hyphen (so
 // `Complete-ish` → unrecognized); a trailing `-` inside a bracket expression
@@ -88,7 +96,7 @@ function foldListContinuations(header) {
  * Parse a plan document's Status line.
  * @param {string} content
  * @returns {{ok:true, token:string, kind:'terminal'|'active', raw:string}
- *          | {ok:false, reason:'absent'|'duplicate'|'implemented'|'unrecognized', raw?:string, rawStatusValues?:string[], message?:string}}
+ *          | {ok:false, reason:'absent'|'malformed'|'duplicate'|'implemented'|'unrecognized', raw?:string, rawStatusValues?:string[], message?:string}}
  *   `raw` is the status text as authored (present whenever a Status line was
  *   found) so display surfaces need no second regex. On `duplicate`, `raw` is
  *   the FIRST value and `rawStatusValues` carries all conflicting values in
@@ -107,7 +115,18 @@ export function parsePlanStatus(content) {
   const header = foldListContinuations(firstH2 >= 0 ? content.slice(0, firstH2) : content);
   STATUS_LINE_RE.lastIndex = 0;
   const matches = [...header.matchAll(STATUS_LINE_RE)];
-  if (matches.length === 0) return { ok: false, reason: 'absent' };
+  if (matches.length === 0) {
+    const near = NEAR_MISS_STATUS_RE.exec(header);
+    if (near) {
+      return {
+        ok: false,
+        reason: 'malformed',
+        raw: near[1].trim(),
+        message: 'the Status line is not in the contract form — write it as "- **Status**: <value>" (the colon OUTSIDE the bold, nothing before the bullet).',
+      };
+    }
+    return { ok: false, reason: 'absent' };
+  }
   if (matches.length > 1) {
     // Carry the conflicting values (WS-D R3-L1). Two reasons, and the second is
     // a real bug this closes:
@@ -248,6 +267,50 @@ export function checkPlanDependencies(content, { plansDir, readFileSync = fs.rea
 // the natural home since both callers already import from it.
 export const isAuditSummary = (name) => /-audit-summary(?:-[\w-]+)?\.md$/.test(name);
 
+/**
+ * The ONE answer to "what does this parse mean?", for BOTH consumers: the vocabulary lint (which judges whether the
+ * Status is VALID) and `selectAuditPlan` (which judges whether the plan is ELIGIBLE for the pre-push audit). Two
+ * implementations of one contract is how a lint passed plans the selector could not read.
+ *
+ *   validity    `valid`        a recognised Status (active or terminal)
+ *               `not-a-plan`   no status-shaped header line at all (an index, a summary, a note)
+ *               `invalid`      a status was declared and cannot be read: malformed / unrecognized / duplicate / implemented
+ *   eligibility `selectable`   valid and active
+ *               `skipped`      valid-but-terminal, or not a plan — correctly not audited, nothing to say
+ *               `invisible`    invalid — the plan can NEVER be audited until the Status is fixed
+ *
+ * The lint fails `invalid` and passes the rest; the selector picks `selectable` and warns about `invisible`. A
+ * correctly formatted terminal plan is therefore valid AND skipped — completing a plan must not fail the lint.
+ *
+ * @param {ReturnType<typeof parsePlanStatus>} parsed
+ * @returns {{validity: 'valid'|'not-a-plan'|'invalid', eligibility: 'selectable'|'skipped'|'invisible', reason: string|null}}
+ */
+export function classifyPlanStatus(parsed) {
+  if (parsed.ok) return { validity: 'valid', eligibility: parsed.kind === 'active' ? 'selectable' : 'skipped', reason: null };
+  if (parsed.reason === 'absent') return { validity: 'not-a-plan', eligibility: 'skipped', reason: 'absent' };
+  return { validity: 'invalid', eligibility: 'invisible', reason: parsed.reason };
+}
+
+/**
+ * The plan files in `plansDir`, shallow, as `[{name, abs}]` — the ONE enumeration for the lint and the selector.
+ * Follows symlinks (`statSync`), so a symlinked plan is neither linted-but-unselectable nor the reverse. Audit
+ * summaries and non-markdown files are excluded; a subdirectory named `*.md` is not a file.
+ * @param {string} plansDir
+ * @returns {Array<{name: string, abs: string}>|null} null when the directory cannot be read
+ */
+export function listPlanFiles(plansDir) {
+  let names;
+  try { names = fs.readdirSync(plansDir); } catch { return null; }
+  const out = [];
+  for (const name of names) {
+    if (!isSelectableName(name)) continue;
+    const abs = path.join(plansDir, name);
+    try { if (!fs.statSync(abs).isFile()) continue; } catch { continue; }
+    out.push({ name, abs });
+  }
+  return out;
+}
+
 /** A plan is selectable iff it is a docs/plans/*.md that is not an audit-summary. */
 function isSelectableName(name) {
   return name.endsWith('.md') && !isAuditSummary(name);
@@ -267,23 +330,20 @@ function isSelectableName(name) {
  */
 export function selectAuditPlan(plansDir, opts = {}) {
   const warn = opts.warn ?? (() => {});
-  let entries;
-  try { entries = fs.readdirSync(plansDir, { withFileTypes: true }); }
-  catch { return null; }
+  const files = listPlanFiles(plansDir);
+  if (files === null) return null;
 
   const actives = [];
   const unparseable = [];
-  for (const e of entries) {
-    if (!e.isFile() || !isSelectableName(e.name)) continue;
-    const abs = path.join(plansDir, e.name);
+  for (const { name, abs } of files) {
     let content;
     try { content = fs.readFileSync(abs, 'utf8'); } catch { continue; }
-    const s = parsePlanStatus(content);
-    if (s.ok && s.kind === 'active') {
+    const { eligibility } = classifyPlanStatus(parsePlanStatus(content));
+    if (eligibility === 'selectable') {
       let mtimeMs = 0;
       try { mtimeMs = fs.statSync(abs).mtimeMs; } catch { /* keep 0 */ }
-      actives.push({ path: abs, name: e.name, mtimeMs });
-    } else if (!s.ok) {
+      actives.push({ path: abs, name, mtimeMs });
+    } else if (eligibility === 'invisible') {
       // A plan whose Status prose doesn't match the vocabulary is INVISIBLE to
       // selection. Silently skipping it makes "no active plan to audit" a lie by
       // omission: the honest statement is "I could not read N candidates".
@@ -292,7 +352,7 @@ export function selectAuditPlan(plansDir, opts = {}) {
       // actually being implemented could never be selected, while two stale
       // active plans sat around winning the old mtime tiebreak. That is why the
       // pre-push audit had produced a verdict zero times.
-      unparseable.push(e.name);
+      unparseable.push(name);
     }
   }
   // Report unreadable candidates whatever the outcome — it explains BOTH "nothing
