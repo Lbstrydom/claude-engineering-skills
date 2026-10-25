@@ -558,6 +558,23 @@ export function classifyStatementDependence(statementPath, { conditionNode, bran
   return 'independent';
 }
 
+/** Hard ceiling on the diff-scaled container bound; also `adjacencyConfig.maxContainers`' own clamp maximum. */
+export const MAX_CONTAINERS_CEILING = 500;
+/** Containers allowed per changed file when the bound scales: a fixed 20 cut a 26-file diff (fleet df45, 2026-10-25). */
+const CONTAINERS_PER_CHANGED_FILE = 2;
+/** At most this many skipped files are named in the incompleteness detail; the rest are counted. */
+const MAX_SKIPPED_NAMES = 10;
+
+/**
+ * The container bound for THIS diff. Pure. An operator-pinned bound (`scaleContainersWithDiff` false or absent - hand-built bounds keep
+ * their historical fixed meaning) is exact; otherwise the configured value is a floor that grows with the changed-file count.
+ */
+export function effectiveMaxContainers(bounds, changedFileCount) {
+  if (bounds.scaleContainersWithDiff !== true) return bounds.maxContainers;
+  const scaled = CONTAINERS_PER_CHANGED_FILE * (Number.isFinite(changedFileCount) ? changedFileCount : 0);
+  return Math.min(MAX_CONTAINERS_CEILING, Math.max(bounds.maxContainers, scaled));
+}
+
 /**
  * Run the mechanical adjacency analysis.
  *
@@ -637,11 +654,17 @@ export async function runAdjacencyAnalysis({ repoRoot, auditBaseCommit, bounds, 
     if (targets.length === 0) return done();
 
     const seenContainers = new Set();
+    const maxContainers = effectiveMaxContainers(bounds, ns.files.length);
 
-    for (const target of targets) {
-      if (containersEnumerated >= bounds.maxContainers) {
+    for (let ti = 0; ti < targets.length; ti += 1) {
+      const target = targets[ti];
+      if (containersEnumerated >= maxContainers) {
+        // Name what was NOT enumerated. A sensitive path is never named (its existence must not leak - the loop below skips it silently).
+        const skipped = targets.slice(ti).map((x) => x.newPath).filter((x) => a.classifyPath(x, repoRoot)?.category !== 'sensitive');
+        const shown = skipped.slice(0, MAX_SKIPPED_NAMES).join(', ');
+        const more = skipped.length > MAX_SKIPPED_NAMES ? ` (+${skipped.length - MAX_SKIPPED_NAMES} more)` : '';
         inc.push(incompleteness(INCOMPLETENESS_KINDS.ENUMERATION_BOUND, target.newPath,
-          `maxContainers=${bounds.maxContainers} reached — remaining files not enumerated`));
+          `maxContainers=${maxContainers} reached — remaining files not enumerated${skipped.length ? `: ${shown}${more}` : ''}`));
         break;
       }
 
