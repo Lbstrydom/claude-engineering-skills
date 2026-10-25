@@ -456,3 +456,21 @@ describe('one status classification for the lint and the selector (round-cap pla
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('mixed canonical and near-miss Status declarations (code-audit R1 M2/M6)', async () => {
+  const { parsePlanStatus: parse, classifyPlanStatus: classify } = await import('../scripts/lib/plan-status.mjs');
+  it('a canonical Status plus a near-miss one is a DUPLICATE, not a pass on the canonical', () => {
+    for (const extra of ['**Status:** Approved', 'Status: Complete', '> **Status**: Draft']) {
+      const p = parse(`# Plan\n- **Status**: Complete\n${extra}\n`);
+      assert.equal(p.ok, false, extra);
+      assert.equal(p.reason, 'duplicate', extra);
+      assert.equal(classify(p).validity, 'invalid', extra);
+      assert.equal(p.rawStatusValues.length, 2, extra);
+    }
+  });
+  it('a lone canonical line is untouched, and a lone near-miss is still malformed (negative controls)', () => {
+    assert.equal(parse('# Plan\n- **Status**: Complete\n- **Date**: x\n').ok, true);
+    assert.equal(parse('# Plan\n**Status:** Approved\n').reason, 'malformed');
+    assert.equal(parse('# Plan\n- **Status**: In Progress — see **Status**: notes below\n').ok, true, 'inline mention is not a second declaration');
+  });
+});

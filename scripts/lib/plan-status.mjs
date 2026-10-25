@@ -49,6 +49,18 @@ const STATUS_LINE_RE = /^-?\s*\*\*Status\*\*:\s*(.+)$/gm;
 // with the word (after bullet/quote markers), so prose that merely mentions a status is not caught.
 const NEAR_MISS_STATUS_RE = /^[ \t]*(?:[-*>][ \t]*)*(?:\*\*)?Status(?:\*\*[ \t]*:|:(?:\*\*)?)[ \t]*(\S.*)$/im;
 
+/** Every near-miss status line in a header that is NOT also a canonical one (a canonical line matches the pattern above too). */
+function nearMissStatusValues(header) {
+  const re = new RegExp(NEAR_MISS_STATUS_RE.source, 'gim');
+  const out = [];
+  for (const m of header.matchAll(re)) {
+    STATUS_LINE_RE.lastIndex = 0;
+    if (!STATUS_LINE_RE.test(m[0].trim())) out.push(m[1].trim());
+  }
+  STATUS_LINE_RE.lastIndex = 0;
+  return out;
+}
+
 // A token is a prefix of the trimmed value followed by end-of-string or a
 // separator. The separator class deliberately EXCLUDES the hyphen (so
 // `Complete-ish` → unrecognized); a trailing `-` inside a bracket expression
@@ -115,17 +127,24 @@ export function parsePlanStatus(content) {
   const header = foldListContinuations(firstH2 >= 0 ? content.slice(0, firstH2) : content);
   STATUS_LINE_RE.lastIndex = 0;
   const matches = [...header.matchAll(STATUS_LINE_RE)];
+  // Status-shaped lines that are NOT in the contract form. They are examined whether or not a canonical line exists: a header
+  // with `- **Status**: Complete` AND `**Status:** Approved` declares two statuses, and "the canonical one wins" would hide
+  // the other (the lint passing a plan whose readers disagree is the failure this classification exists to close).
+  const nearMisses = nearMissStatusValues(header);
   if (matches.length === 0) {
-    const near = NEAR_MISS_STATUS_RE.exec(header);
-    if (near) {
+    if (nearMisses.length > 0) {
       return {
         ok: false,
         reason: 'malformed',
-        raw: near[1].trim(),
+        raw: nearMisses[0],
         message: 'the Status line is not in the contract form — write it as "- **Status**: <value>" (the colon OUTSIDE the bold, nothing before the bullet).',
       };
     }
     return { ok: false, reason: 'absent' };
+  }
+  if (nearMisses.length > 0) {
+    const values = [...matches.map((m) => (m[1] ?? '').trim()), ...nearMisses];
+    return { ok: false, reason: 'duplicate', raw: values[0], rawStatusValues: values };
   }
   if (matches.length > 1) {
     // Carry the conflicting values (WS-D R3-L1). Two reasons, and the second is
