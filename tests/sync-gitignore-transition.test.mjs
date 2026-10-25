@@ -156,6 +156,7 @@ describe('a held-back .gitignore is named even when no PR is opened (audit R1 M1
       assert.match(p.detail, /\.gitignore left uncommitted/, state);
     }
     assert.match(clean('mixed', { sourceSha: 'a'.repeat(40) }).detail, /differs from the source[\s\S]*\.gitignore left uncommitted/);
+    assert.match(clean('mixed', { sourceDirty: true }).detail, /could not be verified[\s\S]*\.gitignore left uncommitted/, 'CLEAN_UNVERIFIED carries it too (audit R2 M3)');
     const receiptOnly = planConsumerPr({ ...baseFacts, classified: classified([RECEIPT_PATH]), gitignoreTransition: 'mixed' });
     assert.equal(receiptOnly.reason, SKIP_REASON.RECEIPT_ONLY);
     assert.match(receiptOnly.detail, /\.gitignore left uncommitted/);

@@ -97,6 +97,22 @@ describe('createPriorUpstreamResolver - on a real source repository', () => {
     } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
+  test('an inherited GIT_DIR does not redirect the history lookup to another repository (audit R2 H1)', () => {
+    const dir = makeSource(['{"v":1}\n', '{"v":2}\n']);
+    const other = makeSource(['unrelated\n']);
+    const saved = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
+    process.env.GIT_DIR = join(other, '.git');
+    process.env.GIT_WORK_TREE = other;
+    try {
+      // Unsanitised, `git -C dir log` would read `other`'s history and answer false for a version that only `dir` holds.
+      assert.equal(createPriorUpstreamResolver({ sourceRoot: dir }).matches(SRC, sha('{"v":1}\n')), true);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      rmSync(other, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
   test('a SHALLOW source answers null for everything: absent commits cannot be called a non-match (audit R1 M7)', () => {
     const full = makeSource(['a\n', 'b\n', 'c\n']);
     const shallow = join(tmpdir(), `shallow-${process.pid}-${Date.now()}`);

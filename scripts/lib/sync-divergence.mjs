@@ -50,6 +50,7 @@
  * @module scripts/lib/sync-divergence
  */
 
+import { sanitizeGitEnv } from './git-env-sanitize.mjs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
@@ -482,8 +483,9 @@ export function formatRefusalReport(refusals, { repoPath, receiptPath, overrides
  *   stats: {logCalls: number, batchCalls: number, blobsRead: number, exhausted: boolean}}}
  */
 export function createPriorUpstreamResolver({ sourceRoot, perPathMax = 100, totalBudget = 2000, git }) {
+  // The environment is sanitised: an inherited GIT_DIR / GIT_OBJECT_DIRECTORY outranks `-C` and would answer for another repository (audit R2 H1).
   const run = git ?? ((args, { input } = {}) => spawnSync('git', ['-C', sourceRoot, ...args], {
-    windowsHide: true, maxBuffer: 256 * 1024 * 1024, ...(input ? { input } : {}),
+    windowsHide: true, maxBuffer: 256 * 1024 * 1024, env: sanitizeGitEnv(sourceRoot), ...(input ? { input } : {}),
   }));
   const stats = { logCalls: 0, batchCalls: 0, blobsRead: 0, exhausted: false };
   /** @type {Map<string, string[]|null>} blob oid -> [sha256 of the LF bytes, sha256 of the CRLF form], null when unreadable */

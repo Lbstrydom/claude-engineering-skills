@@ -41,7 +41,13 @@ before(async () => {
 
 after(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
-describe('a stale snapshot of a generated artifact is updated, not refused (2221)', () => {
+// A shallow source checkout cannot answer "was this ever upstream's version" - the resolver correctly says null and the sync refuses. That is
+// the product being right, not a failure, so this suite is SKIPPED (visibly, with the reason) rather than failed or silently passed.
+const SOURCE_IS_SHALLOW = execFileSync('git', ['-C', REPO_ROOT, 'rev-parse', '--is-shallow-repository'], { encoding: 'utf-8' }).trim() === 'true';
+
+describe('a stale snapshot of a generated artifact is updated, not refused (2221)', {
+  skip: SOURCE_IS_SHALLOW && 'the source checkout is shallow: its history cannot answer the prior-upstream question (CI uses fetch-depth: 0)',
+}, () => {
   let current;
   let olderRev;
   it('fixture: the source holds several versions of the file and an OLDER one differs from the current', () => {

@@ -48,6 +48,9 @@ before(() => {
   fs.mkdirSync(path.join(consumer, 'scripts'));
   fs.writeFileSync(path.join(consumer, 'scripts', '.sync-manifest.json'), JSON.stringify({ repo: 'Acme/upstream', commitSha: upstreamSha, files: {} }));
   git(consumer, 'add', 'README'); git(consumer, 'commit', '-q', '-m', 'consumer root');
+  // A pristine copy taken BEFORE any test fetches the upstream commit: later tests clone from this, never from the mutated `consumer`
+  // (audit R2 M1/M5 - a fetched object made the "upstream-only" commit locally available and the test vacuous).
+  fs.cpSync(consumer, path.join(tmp, 'consumer-pristine'), { recursive: true });
 });
 after(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
@@ -79,7 +82,7 @@ describe('resolveFixCommit - a consumer closing a report fixed upstream', () => 
 
   it('NEGATIVE CONTROLS - each failing step is BAD_INPUT-worthy and names itself', () => {
     const fresh = path.join(tmp, 'consumer-fresh');
-    fs.cpSync(consumer, fresh, { recursive: true });
+    fs.cpSync(path.join(tmp, 'consumer-pristine'), fresh, { recursive: true });
     const missing = 'deadbeefcafe';
     // 1. not hex at all
     assert.match(resolveFixCommit({ repoRoot: fresh, commit: 'not-a-sha' }).error, /does not resolve/);
@@ -122,7 +125,8 @@ describe('upstreamTransition --commit from a consumer', () => {
 
   it('stores the FULL oid for an upstream-only short sha', async () => {
     const c2 = path.join(tmp, 'consumer-2');
-    fs.cpSync(consumer, c2, { recursive: true });
+    fs.cpSync(path.join(tmp, 'consumer-pristine'), c2, { recursive: true });
+    assert.throws(() => git(c2, 'cat-file', '-e', `${upstreamSha}^{commit}`), undefined, 'vacuous-pass guard: the commit must be ABSENT before the close');
     const res = await close(upstreamSha.slice(0, 9), { repoRoot: c2 });
     assert.equal(res.ok, true, JSON.stringify(res));
     assert.equal(res.stored.commit, upstreamSha);

@@ -216,7 +216,7 @@ export function planConsumerPr({
     if (freshness === 'unverified') {
       return {
         action: 'skip', reason: SKIP_REASON.CLEAN_UNVERIFIED,
-        detail: 'no synced changes on disk, and the bundle stamp could not be verified against the source (missing or short stamp, unreadable or uncommitted source) - not proven up to date',
+        detail: 'no synced changes on disk, and the bundle stamp could not be verified against the source (missing or short stamp, unreadable or uncommitted source) - not proven up to date' + (giNote ? `; ${giNote}` : ''),
       };
     }
     return { action: 'skip', reason: SKIP_REASON.CLEAN, ...(giNote ? { detail: giNote } : {}) };
