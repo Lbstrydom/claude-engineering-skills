@@ -90,7 +90,7 @@ All steps independent. One ordering constraint: the hook (cluster 2) calls two n
 **Phase 2 — Adjacency bound**: scale and name the skipped files. Files: `scripts/lib/config.mjs` (modify), `scripts/lib/audit/adjacency-detector.mjs` (modify), `tests/adjacency-container-scaling.test.mjs` (create)
 **Phase 3 — Scope accounting line**: Files: `scripts/lib/audit/legacy-production-audit.mjs` (modify), `tests/audit-scope-accounting-line.test.mjs` (create)
 **Phase 4 — NO_CODE_IN_SCOPE and recurrence (pure + CLI)**: Files: `scripts/lib/prepush-audit-gate.mjs` (modify), `scripts/prepush-step.mjs` (modify), `tests/prepush-no-code-scope.test.mjs` (create), `tests/prepush-recurrence.test.mjs` (create)
-**Phase 5 — Hook v15**: Files: `scripts/install-prepush-hook.mjs` (modify), `tests/install-prepush-hook.test.mjs` (modify)
+**Phase 5 — Hook v15**: Files: `scripts/install-prepush-hook.mjs` (modify), `tests/prepush-hook-v15.test.mjs` (create), `tests/prepush-hook-v14.test.mjs` (modify: version pin)
 
 **Close-out (not a phase)**: `npm run skills:regenerate && npm run skills:check`, `npm run docs:architecture-intent:check`, `npm run size:ratchet:gate` (re-baseline `.file-size-baseline.json` if a file shrinks or `install-prepush-hook.mjs` grows past its entry — oversized files may not grow, so the hook change must net out or be re-baselined with a stated reason), `npm run guards:preflight`.
 
