@@ -246,6 +246,32 @@ Enforcement is **default-deny by provenance**: eligibility is a stored flag deci
 
 Do the **H1 gap fixes in §2.1 first** (diff persistence and non-null `audited_sha`, `adjudicator_kind`, `dismiss_reason`, `fix_commit_sha` / fixed-before-adjudication, Stage-1 prediction, `audit_repos.training_eligible`), then capture points 1, 2, 3, 6 and 7 (≈ 1-2 weeks, *expected*): they cover the data that is lost today (decisions in chat, corrections, chip outcomes, handover). Points 4, 5, 8, 9 enrich joins; point 10 ships with 1.
 
+### 6.8 Data-science collection checklist (data mining / ML lens)
+
+Added 2026-10-25 at Louis's request: collect broadly **now**, because history cannot be re-observed. Each item names the failure it prevents. Capture is cheap; missing history is permanent.
+
+| # | Principle | Collect | Prevents |
+|---|---|---|---|
+| 1 | **Append-only, event-time vs ingest-time** | Every label change is a new row with `event_at` and `ingested_at`; never overwrite. Today `audit_findings.user_action` is overwritten in place; `finding_adjudication_events` is append-only (good) and must become the source of truth for labels | Losing label history; cannot tell what was known when |
+| 2 | **Point-in-time features** | Snapshot decision-time inputs (state summary, diff hash, prompt hash, retrieved precedents) at decision time, never re-derive later | Target leakage; training on information that did not exist at the decision |
+| 3 | **Negatives and denominators** | Log what was *not* done: options not chosen, suppressed re-raises and auto-dismissals with reason, runs that found nothing, audits that skipped a pass, and the eligible population per decision | Survivorship bias; a model that never sees the cases the process filtered out |
+| 4 | **Propensity and exploration** | For every routing/policy choice (reviewer, pass set, rounds, model) record the policy version, the probability or rule that selected it, and a `randomised` flag; reserve a small randomised share (H2 routing) | Confounded learning (hard diffs always get the expensive reviewer); no counterfactual |
+| 5 | **Model and prompt provenance** | Per LLM call: resolved model id, route (native or OpenRouter), prompt-variant/hash, temperature, tokens in/out, cached tokens, truncation/retry/fallback flags, latency, cost | Mixing outputs of different models/prompts into one label distribution |
+| 6 | **Code and policy versions** | `tool_sha`, AGENTS.md hash (`policy_version`), SKILL.md hashes, key config flags, on every decision and run | Rules change weekly: without versions, drift is indistinguishable from noise |
+| 7 | **Outcome windows and censoring** | `outcome_observed_at` plus window (+1 d CI, +7 d revert, +30 d incident); an unobserved outcome is *censored*, never success | Survival-analysis errors; false "merged cleanly" labels |
+| 8 | **Human-in-the-loop timing** | When the question was asked, when Louis answered, which option, override direction, count of rework cycles, and whether the answer was the default | Latency/effort features; separating approvals from rubber-stamps |
+| 9 | **Grouping and split keys** | `work_item_id`, `run_id`, PR number, `repo`, `split_date` on every row; `finding_fingerprint` for dedup | Group leakage across train/test; duplicate-inflated sample counts |
+| 10 | **Embeddings with provenance** | Store embeddings of findings, briefs and decisions with model id, dimension and compose-template version | Retrieval (H3 step 1) that silently mixes vector spaces |
+| 11 | **Schema and quality metadata** | `schema_version` and `redaction_version` per row; a weekly **null-rate and coverage report per column** (a capture-quality gate, drift-only, like the existing ratchets) | Silent gaps: `adjudicator_kind` was 97% null and nobody saw it |
+| 12 | **Consent lineage** | `training_eligible`, who approved it, when, and which repo flag it derived from | A corpus that cannot prove it may be used |
+| 13 | **Resource accounting** | Per chip/task: wall-clock, queue/wait time, token and money cost, gate minutes, lease time | Cost-per-task and scheduling models |
+| 14 | **Free-text feedback as structured pairs** | Louis's corrections stored as (proposal, revision, class, context ref); chip briefs stored with their outcome | Preference learning; brief-quality prediction |
+
+**Backfill-now actions (history that dies):**
+- **Archive existing coordinator and chip transcripts** (the desktop app's `export_transcript`) into a durable, access-controlled store *before* the next account switch, tagged with repo, coordinator, date and `training_eligible`; they are the only record of historical decisions and Louis's corrections. Mining them into decision rows is a later offline job.
+- **Snapshot the current `learning_decisions`, `finding_adjudication_events` and `fleet_events`** counts and null-rates as the dated baseline for the coverage report.
+- **Back-populate where the data still exists in git**: `audited_sha`/diffs for runs whose commits are reachable, `fix_commit_sha` via the remediation sweep.
+
 ## 7. What NOT to build
 
 - **A fine-tuned coordinator/agent.** Rules change weekly, frontier models improve quarterly; it is stale before it is trusted.
