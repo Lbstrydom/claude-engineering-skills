@@ -66,6 +66,33 @@ graph LR
 
 **Adjacency (df45).** Chosen: the default bound scales with the diff (`max(configured, 2 × changed files)`, hard ceiling 500) unless the operator pinned `ADJACENCY_MAX_CONTAINERS`; when a cap still bites, the incompleteness names the skipped files (bounded list + count). Over-built alternative (per-file budgets) rejected: no current requirement.
 
+### Contracts added by audit round 1
+
+**Temp-ledger lifecycle (H1).** The orphan is `.tmp-ledger.<suffix>`, named from the audit's `--out` file (`path.parse('.tmp.<suffix>')` ⇒ name `.tmp`, ext `.<suffix>`; `scripts/lib/robustness.mjs` `resolveLedgerPath`). Ownership is by **exact path**, never by prefix:
+- *Own run*: `prepush_keep_audit` removes exactly `$AUDIT_KEEP_DIR/.tmp-ledger.${AUDIT_REPORT##*.}` — the one derived from this invocation's own `$AUDIT_REPORT` mktemp name. Nothing else is touched on the success path, so a concurrent invocation's live ledger is untouchable by construction.
+- *Orphans from killed runs* (the 6 seen in the AIO worktree): the same age rule the hook already applies to `.tmp.*` (`-mmin +1440`, 24 h against a 45-min budget cap, `BUDGET.capSec = 2700`), extended to `.tmp-ledger.*`. No lock protocol is invented: a run cannot be live at 24 h.
+- Tests: two simulated concurrent invocations (distinct suffixes) — A's cleanup leaves B's ledger; an unrelated `.tmp-ledger.*` younger than 24 h survives; one older than 24 h is removed.
+
+**NO_CODE_IN_SCOPE bypass contract (H2).** `prepush-step.mjs no-code` reads the pushed range itself (`resolvePushRange`, as `own-files` does) and prints exactly ONE line:
+`no-code <N> <record-path>` | `code <reason>`.
+- It writes the record **before** printing `no-code`: `.audit/prepush/<pushed-tree>.no-code.json` = `{outcome:'NO_CODE_IN_SCOPE', tree, base, head, files[], classifiedAt}`, via `atomicWriteFileSync` (temp + rename), keyed to the same tree identity as the kept audit report. A failed write ⇒ it prints `code record-write-failed`.
+- Every failure direction means *measure*: unknown range, unlistable files, any `uncovered`/reviewable file, classifier throw, write failure ⇒ `code <reason>`.
+- The hook bypasses only when **all three** hold: the step exits 0, stdout starts with the exact token `no-code `, and the named record exists and is non-empty. Exit 124 ⇒ `exit 1` like every bounded step; any other non-zero, malformed or empty output, or a missing record ⇒ the audit runs exactly as in v14. A capability-absent source checkout ⇒ same. Tests assert each of these rows by spawning the real CLI.
+
+**Gate propagation decision table (M1).** Readers measured by grep (`scripts/`, excluding the synced copy): the **only** code that reads `coverage.gate` is `=== 'fail'` — `scripts/lib/audit/finding-assembly.mjs`:860, `scripts/lib/audit/findings-pipeline.mjs`:411, `scripts/lib/audit/tiered-pipeline.mjs`:494. Nothing branches on `'pass'` vs `'warn'`, so pass→warn changes wording only. `convergence.mjs` reads counts, never the gate.
+
+| `scopeOutcome` | `status` | `gate` | convergence | audit verdict | hook outcome |
+|---|---|---|---|---|---|
+| `code` | as today | as today | as today | as today | as today |
+| `no-change-set` (plan/full scope) | `complete` | `warn` (was `pass`) | unchanged — findings decide; the audit DID read the plan's files | unchanged | unchanged (the hook only runs diff/`--files` audits) |
+| `no-code-in-scope` (diff, only non-code changed) | `complete` | `warn` | unchanged | unchanged | n/a — the A1 guard aborts first; the hook's `no-code` step decides before spending |
+
+Integration test: a `--scope plan` ledger with findings 0 still converges, and prints the not-measured suffix; a `code` ledger with one unaudited reviewable file is still `partial`/`none` (negative control).
+
+**Persisted-schema compatibility (M2).** `scopeOutcome` is `.optional()` in `CoverageSchema` (reads of legacy serialized `_coverage` validate unchanged) and always written by `buildCoverageReport` (canonical write). It is **derived** from `files[]`/`counts`, never an independent input, so `validateCoverage`'s re-derivation also checks it. Persistence/cache paths traced: `_coverage` is consumed in `transcript.mjs`, `run-finalization.mjs`, `finalization-contract.mjs`, `required-subjects.mjs`, `map-reduce-scheduler.mjs` (all read-only of a freshly built ledger within one run); no cross-run cache stores it, so there is nothing to invalidate; an old persisted result simply lacks the field and reads as today. Test: an actual legacy serialized report (fixture captured from `.audit/…-result.json` shape) through `validateCoverage` then `formatCoverageSuffix`.
+
+**Size ratchet (M3).** `scripts/install-prepush-hook.mjs` is 870 lines — under the 1000-line ratchet — so the constraint is a budget, not a baseline: the hook edit must stay under 1000 lines and the decision logic lives in `scripts/lib/prepush-audit-gate.mjs` / `scripts/prepush-step.mjs`, not in the shell template. **No re-baselining** of any file is an option in this plan; if a ratcheted file would grow, extract instead.
+
 ### Execution model (Phase 1.5)
 All steps independent. One ordering constraint: the hook (cluster 2) calls two new `prepush-step.mjs` subcommands and gates on `capabilities`, so an older source checkout degrades to "run the audit as before" rather than breaking (#13).
 
@@ -92,7 +119,7 @@ All steps independent. One ordering constraint: the hook (cluster 2) calls two n
 **Phase 4 — NO_CODE_IN_SCOPE and recurrence (pure + CLI)**: Files: `scripts/lib/prepush-audit-gate.mjs` (modify), `scripts/prepush-step.mjs` (modify), `tests/prepush-no-code-scope.test.mjs` (create), `tests/prepush-recurrence.test.mjs` (create)
 **Phase 5 — Hook v15**: Files: `scripts/install-prepush-hook.mjs` (modify), `tests/prepush-hook-v15.test.mjs` (create), `tests/prepush-hook-v14.test.mjs` (modify: version pin)
 
-**Close-out (not a phase)**: `npm run skills:regenerate && npm run skills:check`, `npm run docs:architecture-intent:check`, `npm run size:ratchet:gate` (re-baseline `.file-size-baseline.json` if a file shrinks or `install-prepush-hook.mjs` grows past its entry — oversized files may not grow, so the hook change must net out or be re-baselined with a stated reason), `npm run guards:preflight`.
+**Close-out (not a phase)**: `npm run skills:regenerate && npm run skills:check`, `npm run docs:architecture-intent:check`, `npm run size:ratchet:gate` (no growth of any ratcheted file; a SHRINK must be re-baselined because the gate fails on it — that is the only permitted baseline edit), `npm run guards:preflight`.
 
 ## 11. Execution Clustering
 
@@ -108,7 +135,7 @@ Shipping: **two PRs** — A1 (audit libs; consumer `sync` only) then A2 (hook; `
 
 - **A wrong NO_CODE_IN_SCOPE is green-without-measuring.** Mitigations: fail closed — any file the taxonomy cannot classify (`uncovered`, e.g. an unrecognised extension), any resolve error, an unknown push range, or an unreadable file list is **not** no-code and falls through to the audit; no-code requires a positive classification of EVERY pushed file as `non-code`, docs or sync bookkeeping. A `profiled`, `model-only` or `declarative` file (config the audit reviews) is reviewable ⇒ audited. Both directions tested.
 - **Recurrence is informational**: it can neither suppress nor gate, so a wrong match is a wrong sentence, not a wrong verdict. Unreadable previous report ⇒ the line is omitted with a reason, never "0 recurring".
-- **`gate:'warn'` instead of `pass`** for non-`code`: anything reading `gate === 'pass'` must be checked (Phase 1 greps the readers; listed in the PR).
+- **`gate:'warn'` instead of `pass`** for non-`code`: readers enumerated (decision table above); none branches on pass/warn.
 - **Hook rollout reaches every consumer on sync.** Capability-gated; older source ⇒ today's behaviour.
 - **Deferred, on purpose**: a pre-push dismissal channel (what would let a carried ledger actually suppress). It needs a design of its own; recording it here is the honest scope boundary, not a defer-because-harder: the new code does not depend on it.
 - **Open probe (Phase 3)**: whether `--files` + `--base` supplies hunk text so the 29 files get hunk-centred windows. Probe first; change the hook's merge branch only if it is honoured and tested.
