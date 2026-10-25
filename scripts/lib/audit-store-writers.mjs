@@ -57,6 +57,7 @@ import {
   recordConvergenceState, recordDiffComplexity, backfillLearningOutcome,
 } from './store/learning-decisions.mjs';
 import { upsertDebtEntries } from './store/debt.mjs';
+import { recordRunDiff } from './store/run-diffs.mjs';
 
 /**
  * Turn a store receipt into a `durableWrite` result.
@@ -89,7 +90,11 @@ import { upsertDebtEntries } from './store/debt.mjs';
 // envelope and loses the write, while calling a decline a failure only spills
 // an artifact a later drain retires. When a classification cannot be pinned
 // down, take the side whose mistake is recoverable.
-const DECLINED_REASONS = new Set(['cloud-off', 'no-run-id', 'no-repo-identity']);
+// `store-not-migrated` (own-model telemetry, 20261026120000): the writer probed and
+// the target columns do not exist yet. Nothing was attempted, so it is a decline —
+// failing it would mark every audit on a not-yet-migrated consumer store
+// `incomplete`. The writer logs it once and the census reports UNMIGRATED.
+const DECLINED_REASONS = new Set(['cloud-off', 'no-run-id', 'no-repo-identity', 'store-not-migrated']);
 
 async function receipt(promise) {
   const r = await promise;
@@ -196,6 +201,16 @@ export function registerAuditStoreWriters() {
     schemaVersion: 1,
     rowKey: (row) => `${row.run_id}`,
     replay: (payload) => receipt(recordDiffComplexity(payload.runId, payload.complexity)),
+  });
+
+  // ── audit.runDiff ─────────────────────────────────────────────────────────
+  // The H1 training substrate: the diff a run's findings were raised on. Keyed on
+  // the run row, and replay-safe because the content INSERT is
+  // `ON CONFLICT (diff_ref) DO NOTHING` and the run UPDATE is keyed on `id`.
+  registerWriter('audit.runDiff', {
+    schemaVersion: 1,
+    rowKey: (row) => `${row.run_id}`,
+    replay: (payload) => receipt(recordRunDiff(payload.runId, payload)),
   });
 
   // ── learning.outcome ──────────────────────────────────────────────────────

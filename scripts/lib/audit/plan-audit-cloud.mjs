@@ -30,6 +30,9 @@ import {
 import { populateFindingMetadata } from '../ledger.mjs';
 import { costFromUsage } from '../model-pricing.mjs';
 import { openaiConfig } from '../config.mjs';
+import { durableWrite } from '../durable-write.mjs';
+import '../audit-store-writers.mjs'; // the registry's only bootstrap: importing it registers every writer
+import { captureTargetIdentity } from './target-identity.mjs';
 
 /**
  * Price a plan-audit result from the usage it carries.
@@ -130,6 +133,21 @@ export async function registerPlanAuditRun({ repoProfile, planFile, runId = null
     const cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'plan', {
       scopeMode: 'plan', commitSha, branch, planId, runId,
     }).catch(() => null);
+    // Plan-mode runs never captured the audit target identity, so every NULL
+    // `audited_sha` in the store was a plan run (own-model telemetry gap 1).
+    // Same writer and key as the code path's convergence record, and idempotent
+    // across the rounds of one run. Best-effort: identity is evidence, not a gate.
+    if (cloudRunId) {
+      const { auditedSha, auditedTree } = captureTargetIdentity(process.cwd());
+      if (auditedSha || auditedTree) {
+        await durableWrite('audit.convergenceState', {
+          runId: cloudRunId, run_id: cloudRunId,
+          state: { audited_sha: auditedSha, audited_tree: auditedTree },
+        }).catch((err) => {
+          process.stderr.write(`  [learning] plan-run target identity not recorded (non-blocking): ${err.message}\n`);
+        });
+      }
+    }
     return { cloudRunId, cloudRepoId, planLinkLost };
   } catch (err) {
     process.stderr.write(`  [learning] plan-run registration failed (non-blocking): ${err.message}\n`);

@@ -81,7 +81,9 @@ const ORCHESTRATORS = [
   },
   {
     file: path.join('scripts', 'lib', 'audit', 'plan-audit-cloud.mjs'),
-    expect: { recordRunComplete: 'present', recordConvergenceState: 'none' },
+    // convergenceState is present since own-model telemetry gap 1: plan runs now record
+    // their audited target identity through the same writer.
+    expect: { recordRunComplete: 'present', recordConvergenceState: 'present' },
   },
   {
     // The spine: its cloud block was extracted into run-persistence.mjs

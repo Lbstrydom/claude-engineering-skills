@@ -173,3 +173,16 @@ export async function columnExists(table, col, manyFn, cloudFn) {
   const { present } = await probeColumnExistence(table, col, manyFn, cloudFn);
   return present;
 }
+
+/**
+ * Like `columnExists`, but an exhausted TRANSIENT probe throws instead of reading
+ * as "absent". For write sites whose provenance protection depends on the answer
+ * (own-model telemetry: the campaign-event guard, the chronology stamps): writing
+ * without them on a blip would silently drop the protection, so the write fails
+ * loudly and the caller's failure accounting sees it.
+ */
+export async function strictColumnExists(table, col, manyFn, cloudFn) {
+  const { present, definitive } = await probeColumnExistence(table, col, manyFn, cloudFn);
+  if (!present && !definitive) throw new Error(`schema probe for ${table}.${col} unresolved (transient) — refusing to write without it`);
+  return present;
+}

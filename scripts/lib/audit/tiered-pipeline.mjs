@@ -75,6 +75,7 @@ import { processFindings, computeAuditVerdict } from './findings-pipeline.mjs';
 import { mergeIntoEnvelopes, flattenEnvelopeToFinding } from './candidate-envelope.mjs';
 import { runStage0EvidenceTriage, resolveScopeBucketForFinding } from './evidence-triage.mjs';
 import { runStage1CheapTriage } from './stage1-triage.mjs';
+import { logStage1Predictions } from './stage1-prediction-log.mjs';
 import { runFinalAdjudication, selectFinalAdjudicationWorkItems } from './final-adjudication.mjs';
 import { runDiscoveryPortfolio } from './discovery-portfolio.mjs';
 import { resolveGptTrigger } from './gpt-sentinel-trigger.mjs';
@@ -412,6 +413,11 @@ export async function runTieredAuditPipeline(ctx) {
     candidateWorstCaseMs: stage1CandidateWorstCaseMs,
   });
   const stage1LatencyMs = Date.now() - stage1Start;
+  // Own-model telemetry gap 5: the Stage-1 verdict per envelope, in Stage-1 input
+  // order, as a learning_decisions row. Observation-only — never gates the run.
+  logStage1Predictions(stage0EligibleForStage1, {
+    auditRunId: ctx.runId || ctx.cloudRunId, round: ctx.round || 1, model: triagerCall.modelId ?? null,
+  });
 
   // ── Stage 1 → Stage 2 / human_queue routing (the SINGLE classification point) ──
   const cleanRegionFiles = (ctx.changedFiles || []).filter(

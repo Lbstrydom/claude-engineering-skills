@@ -504,7 +504,7 @@ describe('write-boundary transaction abort (DB integration)', { skip }, () => {
 
   test('Phase 4: recordAdjudicationEvent names a missing finding instead of resolving to undefined', async () => {
     const res = await recordAdjudicationEvent(runId, `nosuch-${crypto.randomUUID().slice(0, 8)}`, {
-      adjudicationOutcome: 'accepted', remediationState: 'fixed', ruling: 'sustain', round: 1,
+      adjudicationOutcome: 'accepted', remediationState: 'fixed', ruling: 'sustain', round: 1, adjudicatorKind: 'pipeline',
     });
     assert.deepEqual(res, { ok: false, reason: 'no-match' });
   });
@@ -539,7 +539,7 @@ describe('write-boundary transaction abort (DB integration)', { skip }, () => {
       const { rows: [{ pid }] } = await t1.query('SELECT pg_backend_pid() AS pid');
       await t1.query(`UPDATE audit_findings SET remediation_state = 'fixed' WHERE id = $1`, [id]); // projection, statement 1
       adjudication = recordAdjudicationEvent(runId, fp, {
-        adjudicationOutcome: 'accepted', remediationState: 'fixed', ruling: 'sustain', round: 1,
+        adjudicationOutcome: 'accepted', remediationState: 'fixed', ruling: 'sustain', round: 1, adjudicatorKind: 'pipeline',
       });
       // Barrier, not a sleep: proceed only once the adjudication is OBSERVED waiting
       // on the lock T1 holds, so the interleaving under test is the one that ran.

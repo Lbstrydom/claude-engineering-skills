@@ -80,7 +80,7 @@ describe('recordAdjudicationEvent — remediation_state reaches audit_findings (
   test('writes remediation_state onto audit_findings, not only the events table', async () => {
     await store.recordAdjudicationEvent(runId, FP, {
       adjudicationOutcome: 'accepted', remediationState: 'fixed',
-      ruling: 'sustain', rulingRationale: 'live propagation test', round: 1,
+      ruling: 'sustain', rulingRationale: 'live propagation test', round: 1, adjudicatorKind: 'pipeline',
     });
 
     const row = await readFinding();
@@ -113,7 +113,7 @@ describe('recordAdjudicationEvent — remediation_state reaches audit_findings (
     // does not conclude from the patch-builder test that a partial adjudication
     // is a supported call shape. It is not; the store fails closed on it.
     await store.recordAdjudicationEvent(runId, FP, {
-      adjudicationOutcome: 'dismissed', ruling: 'overrule', round: 1,
+      adjudicationOutcome: 'dismissed', ruling: 'overrule', round: 1, adjudicatorKind: 'pipeline', dismissReasonClass: 'other',
     });
 
     const row = await readFinding();
