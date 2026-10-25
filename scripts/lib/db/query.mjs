@@ -88,7 +88,16 @@ function stripNul(s, col) {
 function cleanNul(v, col) {
   if (typeof v === 'string') return stripNul(v, col);
   if (Array.isArray(v)) return v.map((x) => cleanNul(x, col));
-  if (isPlainObject(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [stripNul(k, col), cleanNul(x, col)]));
+  if (isPlainObject(v)) {
+    const out = {};
+    for (const [k, x] of Object.entries(v)) {
+      const key = stripNul(k, col);
+      // Two keys that differ only by a NUL would silently overwrite one another: refuse, never pick by insertion order.
+      if (Object.hasOwn(out, key)) throw new Error(`db write seam: keys differ only by U+0000 and collide after stripping it (column ${col ?? '(unnamed)'}: "${key}")`);
+      out[key] = cleanNul(x, col);
+    }
+    return out;
+  }
   return v;
 }
 

@@ -119,3 +119,11 @@ test('UPDATE SET strips U+0000; a clean string stays silent', async () => {
   assert.equal(clean.result.params[0], 'pq');
   assert.equal(clean.text, '');
 });
+
+test('jsonb object keys that collide once U+0000 is stripped are refused, in either order', async () => {
+  const ab = { ab: 1, ['a\u0000b']: 2 };
+  const ba = { ['a\u0000b']: 2, ab: 1 };
+  for (const meta of [ab, ba]) {
+    await captureStderr(() => assert.throws(() => buildInsert('t', { meta }), /collide after stripping/));
+  }
+});
