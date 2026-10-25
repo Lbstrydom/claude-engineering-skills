@@ -103,6 +103,7 @@ source comments that no docs linter sees — stays valid.
 | [Azure AI Foundry Work Profile](./azure-work-profile.md) | `Complete` |  |
 | [Backlog and Drift Reduction — make the private ledger durable, the instruments honest, and the queues owned](./backlog-and-drift-reduction.md) | `Complete` | all 14 phases implemented 2026-09-04 in one session. The headline outcome is not a gate: 37 tech-debt… |
 | [Backlog-tooling honesty — telemetry parity, reachable credit queue, shared work-unit grouping, non-vacuous scans, cwd-independent locks](./backlog-tooling-honesty.md) | `Complete` |  |
+| [Backlog triage + arch drift — 2026-10-25](./backlog-triage-2026-10-25.md) | `Complete` |  |
 | [/brainstorm Skill + Architecture-Map Discoverability + VS Code Mermaid](./brainstorm-and-arch-discoverability.md) | `Complete` | shipped — `/brainstorm` skill + `scripts/brainstorm-round.mjs` + 7 modules under `scripts/lib/brainstorm/`… |
 | [`/brainstorm --with-arch` — codebase architecture context for external LLMs](./brainstorm-arch-context.md) | `Complete` |  |
 | [Brainstorm-skill upgrades + Quick-fix detection (v1)](./brainstorm-quickfix-v1.md) | `Complete` | shipped — both halves: `/brainstorm` enhancements (see brainstorm-and-arch-discoverability) + quick-fix… |
