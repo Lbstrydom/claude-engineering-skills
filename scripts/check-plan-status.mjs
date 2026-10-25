@@ -119,7 +119,8 @@ function lintMode(jsonOut, drift = false) {
   if (files === null) {
     if (jsonOut) console.log(JSON.stringify({ ok: false, error: `cannot read ${PLANS_DIR}` }));
     else console.error(`${R}cannot read ${PLANS_DIR}${X}`);
-    process.exit(2);
+    process.exitCode = 2;   // return, don't process.exit(): a piped stdout may not have flushed the envelope above
+    return;
   }
 
   const flagged = [];

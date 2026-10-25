@@ -445,7 +445,7 @@ describe('one status classification for the lint and the selector (round-cap pla
     for (const n of lintFails) assert.ok(warnings.join(' ').includes(n), `selector warns about ${n}`);
     assert.ok(!warnings.join(' ').includes('index.md') && !warnings.join(' ').includes('done.md'), 'not-a-plan and terminal plans are silent');
     assert.equal(path.basename(sel.path), 'good.md');
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('a symlinked plan is enumerated the same way for both consumers', { skip: process.platform === 'win32' ? 'symlinks need privileges on Windows' : false }, () => {
@@ -453,7 +453,7 @@ describe('one status classification for the lint and the selector (round-cap pla
     fs.writeFileSync(path.join(dir, 'real.md'), doc('- **Status**: Approved'));
     fs.symlinkSync(path.join(dir, 'real.md'), path.join(dir, 'link.md'));
     assert.deepEqual(listPlanFiles(dir).map((f) => f.name).sort(), ['link.md', 'real.md']);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });
 
