@@ -286,3 +286,83 @@ export function decideNoPlanGate({ files, env = {}, selectorFailed = false, exis
     ],
   };
 }
+
+// ── NO_CODE_IN_SCOPE (hook v15; fleet 70b5, docs/plans/prepush-convergence-cluster-a.md) ────────────────────────────────────────────────
+// The dependencies are INJECTED so this module stays light (it is loaded by every hook CLI call); the CLI passes the real ones and a test
+// proves they agree with the audit's own refusal.
+
+/** The outcome token a push with no implementation file is recorded as. It is a MEASURED fact about the push, not a verdict. */
+export const NO_CODE_OUTCOME = 'NO_CODE_IN_SCOPE';
+
+/**
+ * Does the pushed file list contain nothing the code audit would take as a subject? The oracle is the audit's OWN bucketing
+ * (`classifyFiles`: `shared` = context, not subject; `auditSubjectFileGuard` counts only backend+frontend), NOT the coverage taxonomy -
+ * the taxonomy calls `package.json` "declarative" and the audit admits it, yet a package.json-only diff aborts because it is `shared`.
+ * Anything this cannot positively place is CODE (the audit runs, or refuses, exactly as in v14): an unknown list, an unrecognised type,
+ * an audit-infra path, a classifier that throws.
+ *
+ * @param {{files: string[]|null,
+ *   isInfra: (p: string) => boolean, taxonomyClass: (p: string) => string, bucketOf: (p: string) => 'backend'|'frontend'|'shared'}} input
+ * @returns {{noCode: true, files: string[]} | {noCode: false, reason: string}}
+ */
+export function classifyNoCodePush({ files, isInfra, taxonomyClass, bucketOf } = {}) {
+  if (!Array.isArray(files)) return { noCode: false, reason: 'the pushed file list could not be established' };
+  if (files.length === 0) return { noCode: false, reason: 'the push lists no files' };
+  try {
+    for (const f of files) {
+      if (typeof f !== 'string' || f === '') return { noCode: false, reason: 'an unreadable path in the pushed file list' };
+      if (SYNC_BOOKKEEPING_FILES.includes(f)) continue;
+      if (isInfra(f)) return { noCode: false, reason: `${f} is audit infrastructure` };
+      const cls = taxonomyClass(f);
+      if (cls === 'non-code') continue;
+      if (cls === 'uncovered') return { noCode: false, reason: `${f} is of a type the audit does not recognise` };
+      if (bucketOf(f) === 'shared') continue;
+      return { noCode: false, reason: `${f} is an implementation file the audit reads` };
+    }
+  } catch (e) {
+    return { noCode: false, reason: `the classifier failed (${e?.message || 'error'})` };
+  }
+  return { noCode: true, files: [...files] };
+}
+
+/** The record a no-code bypass leaves, bound to the pushed tree. `files` is capped: the count is the evidence, the list is a convenience. */
+export function buildNoCodeRecord({ tree, base, head, files, now = () => new Date().toISOString() }) {
+  return { outcome: NO_CODE_OUTCOME, tree, base: base ?? null, head: head ?? null, fileCount: files.length, files: files.slice(0, 200), classifiedAt: now() };
+}
+
+/** The single protocol line `prepush-step.mjs no-code` prints: `no-code <N> <record-path>` | `code <reason>`. */
+export const noCodeLine = (n, recordPath) => `no-code ${n} ${recordPath}`;
+export const codeLine = (reason) => `code ${String(reason).replace(/[\r\n]+/g, ' ')}`;
+
+// ── Recurrence (informational only; never suppresses, never gates) ───────────────────────────────────────────────────────────────────────
+
+/** Similarity above which two findings on the same file read as one concern - the threshold `suppressReRaises` calibrated for paraphrased re-raises. */
+export const RECURRENCE_SIMILARITY = 0.35;
+
+/**
+ * How much of this push's findings sit where the previous push's findings sat. Two tiers because the diagnosis measured 0/32 exact
+ * category+file overlap between consecutive pushes while the SAME files came back reworded: `sameFile` (a robust lower bound on "again")
+ * and `alsoSimilar` (same file AND textually close). Count-only: a wrong match is a wrong sentence, never a wrong verdict.
+ *
+ * @param {{previous: object[], current: object[], filesOf: (f: object) => Set<string>, similarity: (a: object, b: object) => number}} input
+ * @returns {{total: number, sameFile: number, alsoSimilar: number}}
+ */
+export function summariseRecurrence({ previous, current, filesOf, similarity }) {
+  const prev = Array.isArray(previous) ? previous : [];
+  const cur = Array.isArray(current) ? current : [];
+  const prevFiles = prev.map((p) => ({ p, files: filesOf(p) }));
+  let sameFile = 0; let alsoSimilar = 0;
+  for (const f of cur) {
+    const files = filesOf(f);
+    const hits = prevFiles.filter((x) => [...files].some((file) => x.files.has(file)));
+    if (hits.length === 0) continue;
+    sameFile += 1;
+    if (hits.some((x) => similarity(f, x.p) > RECURRENCE_SIMILARITY)) alsoSimilar += 1;
+  }
+  return { total: cur.length, sameFile, alsoSimilar };
+}
+
+/** The operator-facing sentence. */
+export function formatRecurrenceLine({ prevTree, total, sameFile, alsoSimilar }) {
+  return `recurrence vs ${String(prevTree).slice(0, 12)}: ${sameFile} of ${total} finding(s) are on files already flagged in the previous push (${alsoSimilar} also textually similar)`;
+}
