@@ -37,7 +37,7 @@ import { createOpenAIClient } from './lib/openai-client.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
-import { recordFinalReviewMarker, readGateEvidenceSnapshot } from './lib/final-review-marker.mjs';
+import { recordFinalReviewMarker, readGateEvidenceSnapshot, registerPendingReview } from './lib/final-review-marker.mjs';
 import { isRefuted } from './lib/audit/finding-verification.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
 import { sumUsage } from './lib/model-pricing.mjs';
@@ -880,6 +880,11 @@ async function main() {
   const planContent = readFileOrDie(planFile);
   const transcriptContent = readFileOrDie(transcriptFile);
   const reviewedEvidence = readGateEvidenceSnapshot(process.cwd()); // what this review is OF; the marker refuses evidence that moved meanwhile
+  // Shadow any earlier approval from the moment this review starts: if this one never records (crash, or the marker lock goes to
+  // another review), the earlier APPROVE must not keep standing beside a verdict that was never written (fleet proposal 0ace).
+  const pendingReview = auditMode === 'code' ? registerPendingReview({ repoRoot: process.cwd() }) : undefined;
+  if (pendingReview && !pendingReview.ok) process.stderr.write(`  [final-review-marker] FATAL: could not register this review as pending (${pendingReview.code}) — an earlier approval stays readable while it runs
+`);
   // Bound to THIS transcript (run-id-recovery.mjs) — so it is read first.
   const runId = resolveReviewRunId({ cliRunId, auditMode, cloudEnabled: await isCloudEnabled(), transcriptContent, repoRoot: process.cwd() });
   await initAuditBrief();
@@ -920,7 +925,7 @@ async function main() {
     await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode }, { modelEvalOverride, envelopeScopeCli, campaignDigest, runReviewWithRetry });
     emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile, gateSummary);
     recordGeminiOutcomes(result, primaryModel);
-    await finishAndExit(recordFinalReviewMarker({ auditMode, result, repoRoot: process.cwd(), reviewedEvidence }) ? 1 : 0); // never rely on natural drain; a marker that cannot be made safe is fatal
+    await finishAndExit(recordFinalReviewMarker({ auditMode, result, repoRoot: process.cwd(), reviewedEvidence, pending: pendingReview }) ? 1 : 0); // never rely on natural drain; a marker that cannot be made safe is fatal
   } catch (err) {
     // Route-enriched for the Azure provider (a bare 401/404 there names neither
     // the endpoint nor the credential variable); byte-identical `err.message`
