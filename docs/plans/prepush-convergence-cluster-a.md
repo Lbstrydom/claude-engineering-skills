@@ -1,6 +1,6 @@
 # Plan: Pre-push convergence and scope honesty (cluster A)
 - **Date**: 2026-10-25
-- **Status**: Draft
+- **Status**: Approved (audit-plan: GPT 2 rounds -> READY; Gemini 2 rounds -> APPROVE)
 - **Author**: Claude + Louis
 - **Scope**: backend (audit core + consumer pre-push hook; no UI)
 - **Fleet proposals**: 484f, df45, 70b5, 5c16 · brief: `docs/plans/backlog-triage-2026-10-25.md` §5-A
