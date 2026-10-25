@@ -247,6 +247,10 @@ describe('readAuditRounds against real files', () => {
     assert.equal(r.unmeasured, null);
     assert.deepEqual(r.rounds.map((x) => [x.round, x.findings.length, x.suppressed]), [[1, 1, 2], [2, 0, 1]]);
   });
+  it('a code-mode result stores the suppressed findings as an array: its length is the count', () => {
+    fs.writeFileSync(path.join(dir, 'audit-code-1-2-r1-result.json'), JSON.stringify({ findings: [], _suppression: { suppressed: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] } }));
+    assert.equal(readAuditRounds({ sid: 'audit-code-1-2', auditDir: dir }).rounds[0].suppressed, 3);
+  });
   it('no session id, or no files, is unmeasured with a reason', () => {
     assert.match(readAuditRounds({ sid: null, auditDir: dir }).unmeasured, /no session id/);
     assert.match(readAuditRounds({ sid: 'other', auditDir: dir }).unmeasured, /no other-r<N>-result\.json/);

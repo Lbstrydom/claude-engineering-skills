@@ -384,7 +384,9 @@ export function readAuditRounds({ sid, auditDir }) {
   for (const { path: p, round } of found) {
     try {
       const r = readRoundResult(p);
-      rounds.push({ round, findings: r.findings || [], suppressed: Number(r._suppression?.suppressed) || 0 });
+      // Plan-mode results store a COUNT here; code-mode results (legacy-production-audit) store the suppressed findings.
+      const sup = r._suppression?.suppressed;
+      rounds.push({ round, findings: r.findings || [], suppressed: Array.isArray(sup) ? sup.length : (Number(sup) || 0) });
     } catch (err) {
       return { rounds: null, unmeasured: `unreadable round result (${err.message})` };
     }
