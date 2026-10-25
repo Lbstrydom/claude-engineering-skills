@@ -98,7 +98,7 @@ describe('record and protocol line', () => {
 });
 
 // ── The real CLI against a real repository (Tier 3: the hook trusts this output) ─────────────────────────────────────────────────────────
-const run = (cwd, args, env = {}) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', ...env } }).trim();
+const run = (cwd, args, env = {}) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('AZURE_'))), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', ...env } }).trim();
 function repoWith(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nocode-'));
   run(dir, ['init', '-q', '-b', 'main']);
@@ -111,7 +111,7 @@ function repoWith(files) {
 }
 const STEP = path.resolve(import.meta.dirname, '../scripts/prepush-step.mjs');
 const cli = (cwd, base, head, extra = {}) => spawnSync(process.execPath, [STEP, 'no-code'], {
-  cwd, encoding: 'utf8', env: { ...process.env, AUDIT_PUSH_RANGE_BASE: base, AUDIT_PUSH_RANGE_HEAD: head, ...extra },
+  cwd, encoding: 'utf8', env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('AZURE_'))), AUDIT_PUSH_RANGE_BASE: base, AUDIT_PUSH_RANGE_HEAD: head, ...extra },
 });
 
 describe('prepush-step.mjs no-code against a real repository', () => {
@@ -140,7 +140,7 @@ describe('prepush-step.mjs no-code against a real repository', () => {
 
   test('no range handed over by git: `code`, never `no-code`', () => {
     const { dir } = repoWith({ 'package.json': '{}\n' });
-    const r = spawnSync(process.execPath, [STEP, 'no-code'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AUDIT_PUSH_RANGE_BASE: '', AUDIT_PUSH_RANGE_HEAD: '' } });
+    const r = spawnSync(process.execPath, [STEP, 'no-code'], { cwd: dir, encoding: 'utf8', env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('AZURE_'))), AUDIT_PUSH_RANGE_BASE: '', AUDIT_PUSH_RANGE_HEAD: '' } });
     assert.match(r.stdout, /^code /);
   });
 

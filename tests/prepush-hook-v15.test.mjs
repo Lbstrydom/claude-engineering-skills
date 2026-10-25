@@ -99,7 +99,7 @@ function runHook(local, source, stdin, env = {}) {
   fs.writeFileSync(script, HOOK_BODY);
   return spawnSync('bash', [script, 'origin', 'https://example.invalid'], {
     cwd: local, encoding: 'utf-8', input: stdin, timeout: 120_000,
-    env: { ...process.env, CLAUDE_AUDIT_LOOP_DIR: source, AUDIT_PREPUSH_BLOCK: '', AUDIT_PREPUSH_DISABLE: '', AUDIT_PREPUSH_ALLOW_UNMEASURED: '', AUDIT_PREPUSH_KEEP_REPORTS: '', AUDIT_STUB: '', ...env },
+    env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('AZURE_'))), CLAUDE_AUDIT_LOOP_DIR: source, AUDIT_PREPUSH_BLOCK: '', AUDIT_PREPUSH_DISABLE: '', AUDIT_PREPUSH_ALLOW_UNMEASURED: '', AUDIT_PREPUSH_KEEP_REPORTS: '', AUDIT_STUB: '', ...env },
   });
 }
 function scenario(t, name, files, fn, stepMode = 'real', opts = {}) {

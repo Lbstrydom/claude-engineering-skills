@@ -128,11 +128,29 @@ describe('recurrenceLine against a real repository', () => {
     assert.equal(fs.existsSync(path.join(k, `${'b'.repeat(40)}.head`)), true);
   });
 
+  test('cleanup is by OWNERSHIP, not by suffix: foreign `.head` files and a directory named like a sidecar are left alone', () => {
+    const { dir, commit } = repo();
+    commit('one'); const h2 = commit('two');
+    const k = keep(dir);
+    fs.writeFileSync(path.join(k, 'notes.head'), 'a user file');
+    fs.writeFileSync(path.join(k, 'HEAD.head'), 'also not ours');
+    fs.mkdirSync(path.join(k, `${'d'.repeat(40)}.head`));
+    fs.writeFileSync(path.join(k, `${'d'.repeat(40)}.head`, 'keep.txt'), 'x');
+    fs.writeFileSync(path.join(k, `${'c'.repeat(40)}.head`), `${h2}
+`); // ours, orphaned
+    const cur = putReport(k, 'b'.repeat(40), []);
+    recurrenceLine({ reportFile: cur, headArg: h2, cwd: dir, env: {}, deps });
+    assert.equal(fs.existsSync(path.join(k, 'notes.head')), true);
+    assert.equal(fs.existsSync(path.join(k, 'HEAD.head')), true);
+    assert.equal(fs.existsSync(path.join(k, `${'d'.repeat(40)}.head`, 'keep.txt')), true);
+    assert.equal(fs.existsSync(path.join(k, `${'c'.repeat(40)}.head`)), false, 'our orphan is still removed');
+  });
+
   test('the real CLI prints exactly one line and exits 0 even when nothing can be compared', () => {
     const { dir, commit } = repo();
     commit('one'); const h2 = commit('two');
     const cur = putReport(keep(dir), 'b'.repeat(40), [F('c', 'src/j.ts')]);
-    const r = spawnSync(process.execPath, [path.resolve(import.meta.dirname, '../scripts/prepush-step.mjs'), 'recurrence', '--report', cur, '--head', h2], { cwd: dir, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [path.resolve(import.meta.dirname, '../scripts/prepush-step.mjs'), 'recurrence', '--report', cur, '--head', h2], { cwd: dir, encoding: 'utf8', env: Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('AZURE_'))) });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout.trim().split('\n').length, 1);
     assert.match(r.stdout, /^recurrence unavailable: no earlier report on this lineage\n$/);

@@ -166,6 +166,8 @@ async function loadNoCodeDeps() {
 }
 
 const OID_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+/** The only sidecar name this tool writes: a tree object id plus `.head`. */
+const SIDECAR_RE = /^[0-9a-f]{40}([0-9a-f]{24})?\.head$/;
 
 /**
  * `no-code`: the protocol line. Every failure direction is `code <reason>` (measure), never `no-code`.
@@ -212,7 +214,8 @@ export function recurrenceLine({ reportFile, headArg = null, env = process.env, 
     try { writeAtomic(path.join(dir, `${treeOfReport(reportFile)}.head`), `${curHead}\n`); } catch { /* the next push loses its baseline; this line is still computed */ }
     // Sidecars whose report was pruned are dead weight: removed here so the hook's shell prune stays unchanged.
     for (const e of fs.readdirSync(dir)) {
-      if (e.endsWith('.head') && !fs.existsSync(path.join(dir, e.replace(/\.head$/, '.report.json')))) { try { fs.rmSync(path.join(dir, e), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } }
+      // Ownership: only a sidecar THIS tool names (<tree-oid>.head), a regular file, with no report beside it. Never a suffix match alone.
+      if (SIDECAR_RE.test(e) && fs.lstatSync(path.join(dir, e)).isFile() && !fs.existsSync(path.join(dir, e.replace(/\.head$/, '.report.json')))) { try { fs.rmSync(path.join(dir, e), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } }
     }
     const others = fs.readdirSync(dir).filter((e) => e.endsWith('.report.json') && e !== path.basename(reportFile))
       .map((e) => ({ e, mtime: fs.statSync(path.join(dir, e)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
