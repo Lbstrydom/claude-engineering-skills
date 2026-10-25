@@ -13,174 +13,18 @@ import path from 'node:path';
 import { enumerateSkillFiles, listSkillNames } from './skill-packaging.mjs';
 import { CONSUMER_REPOS } from './consumer-repos.mjs';
 import { collectImportClosure } from './module-graph.mjs';
+import {
+  CORE_ENTRY as CORE_ENTRY_ALL, LEARNING_ENTRY, ARCH_ENTRY, SYNC_ISOLATION_ENTRY, DEBT_ENTRY,
+} from './sync-entry-lists.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
 
-const CORE_ENTRY = [
-  'scripts/openai-audit.mjs',
-  // /cycle Step 3C's per-cluster scope pre-flight. Shipped because the SKILL.md
-  // that names it is synced: a documented command whose tooling is absent where
-  // it runs is the shape AGENTS.md records as defect class (4).
-  'scripts/cycle-cluster-scope.mjs',
-  // /cycle Step 0.5's cross-plan coordination check (`--check-deps`, upstream
-  // report f5ac366f) and /plan Phase 7's documented convention for declaring
-  // it. Same reason as cycle-cluster-scope.mjs above: both synced SKILL.md
-  // files name this command.
-  'scripts/check-plan-status.mjs',
-  'scripts/gemini-review.mjs',
-  'scripts/bandit.mjs',
-  'scripts/learning-store.mjs',
-  'scripts/cross-skill.mjs',
-  'scripts/phase7-check.mjs',
-  'scripts/shared.mjs',
-  'scripts/check-sync.mjs',
-  'scripts/check-setup.mjs',
-  'scripts/check-audit-tool-version.mjs',
-  'scripts/cache-hitrate-check.mjs',
-  // The unknown-flag gate, its npm `--`-swallow sibling, and the AGENTS.md ↔
-  // CLAUDE.md drift gate two synced skills tell consumers to run.
-  // Authoritative list is sync-to-repos.mjs; keep in lock-step.
-  'scripts/check-cli-flags.mjs',
-  'scripts/check-npm-run-args.mjs',
-  'scripts/check-context-drift.mjs',
-  'scripts/brainstorm-round.mjs',
-  'scripts/fleet.mjs',
-  'scripts/explain-history.mjs',
-  'scripts/skills-help.mjs',
-  'scripts/skills-fit-check.mjs',
-  'scripts/requirements.mjs',
-  'scripts/audit-metrics.mjs',
-  'scripts/write-code-outcomes.mjs',
-  // Final-review transcript builder for the two MANDATORY gates, the ledger
-  // writer both Step 3.5s run, and Step 5.0b's detector census (an entry point
-  // nothing imports, so the walker never finds it). Authoritative list is
-  // sync-to-repos.mjs; keep in lock-step.
-  'scripts/build-audit-transcript.mjs',
-  'scripts/audit-structural-card.mjs',   // round-cap card CLI; see sync-to-repos.mjs for the note
-  // The `.audit/` sweeper two synced shared references promise runs "in every
-  // consumer". See sync-to-repos.mjs for the full note; keep in lock-step.
-  'scripts/audit-clean.mjs',
-  'scripts/write-ledger-entries.mjs',
-  'scripts/lib/audit/detector.mjs',
-  'scripts/build-dashboard.mjs',
-  'scripts/setup-postgres.mjs',
-  // Companion RLS-exposure diagnostic — same lib/db/ closure as
-  // setup-postgres.mjs. Authoritative list lives in sync-to-repos.mjs;
-  // keep in lock-step (see plan §7 R2 H2 — single-source-of-truth intent).
-  'scripts/check-rls.mjs',
-  // Standalone operator CLIs nothing imports (branch-protection ratchet,
-  // audit_repos identity reconcile, tiered-shadow report reader). Authoritative
-  // list is sync-to-repos.mjs; keep in lock-step.
-  'scripts/ensure-branch-protection.mjs',
-  // Self-hosted-runner fallback doctor. Authoritative list is
-  // sync-to-repos.mjs; keep in lock-step.
-  'scripts/actions-runner-doctor.mjs',
-  // Scheduled-workflow cadence doctor — asks GitHub whether a repo's crons
-  // actually ran and passed, narrowed by triggering event. A standalone CLI
-  // nothing imports, so the walker cannot discover it; consumers need it
-  // because a cron that stops firing is invisible everywhere else. Spawned by
-  // maintenance-checks.mjs's `workflow-cadence` entry, and in CLI_SMOKE_SET.
-  // Authoritative list is sync-to-repos.mjs; keep sync-inventory.mjs in lock-step.
-  'scripts/workflow-cadence-doctor.mjs',
-  'scripts/reconcile-repo-identity.mjs',
-  // Test-evidence record/check CLI (Cluster C). Authoritative list is sync-to-repos.mjs; keep in lock-step.
-  'scripts/test-evidence.mjs',
-  'scripts/tiered-shadow-report.mjs',
-  '.claude/hooks/quickfix-scan.mjs',
-  // Session-start advisory: a retired skill surface on the machine can shadow
-  // the repo-scoped copy. Registered in the SYNCED .claude/settings.json, so it
-  // must ship too -- it was registered everywhere and shipped nowhere until
-  // 2026-08-20. Walker pulls in lib/install/legacy-surfaces.mjs.
-  '.claude/hooks/legacy-surface-advisory.mjs',
-  // PreToolUse Bash nudge toward the Grep tool. Zero imports, fully portable.
-  // Same registered-but-unshipped bug as the advisory above.
-  '.claude/hooks/bash-grep-nudge.mjs',
-  '.claude/hooks/syntax-check.mjs',
-  'scripts/persona-consistency-run.mjs',
-  // Deterministic /ux-lock runner (WS2). Authoritative list is sync-to-repos.mjs;
-  // keep in lock-step. Walker pulls in lib/playwright-runner.mjs +
-  // lib/plan-criteria-parser.mjs.
-  'scripts/ux-lock-run.mjs',
-  // Consumer-invoked surfaces.json builder (validates against our
-  // SurfaceManifestSchema). Authoritative list is sync-to-repos.mjs; keep
-  // in lock-step. Walker pulls in its lib/persona-test/schemas.mjs import.
-  'scripts/build-surfaces-manifest.mjs',
-  // /nav-audit CLI entry — walker pulls in scripts/lib/nav/** closure.
-  // Authoritative list is sync-to-repos.mjs; keep in lock-step.
-  'scripts/nav-audit.mjs',
-  // /visual-audit CLI entry — walker pulls in lib/visual/** closure.
-  // Authoritative list is sync-to-repos.mjs; keep in lock-step.
-  'scripts/visual-audit.mjs',
-  // GREEN≠REALIZED Cluster A efficacy-lints CLI — walker pulls in lib/efficacy-lints.mjs +
-  // its model-resolver / glob-match / sensitive-paths closure. Keep in lock-step with sync-to-repos.mjs.
-  'scripts/efficacy-lints-check.mjs',
-  // Citation re-resolver (see the entry's rationale in sync-to-repos.mjs, which
-  // is authoritative for this list).
-  'scripts/check-doc-citations.mjs',
-  // Consumer sync-ownership triage CLI (see the entry's rationale in
-  // sync-to-repos.mjs, which is authoritative for this list).
-  'scripts/sync-status.mjs',
-  // Local weekly-maintenance replica of the (now 7) GH Actions / opt-in
-  // checks — opt-in, default-OFF, invoked opportunistically from the
-  // pre-push hook. maintenance-checks.mjs spawns the other four as
-  // subprocesses, so all five must ship together. Authoritative list is
-  // sync-to-repos.mjs; keep in lock-step (a prior drift here produced a
-  // live MODULE_NOT_FOUND when a consumer first enabled the opt-in — see
-  // sync-to-repos.mjs's comment).
-  'scripts/maintenance-checks.mjs',
-  'scripts/memory-health.mjs',
-  'scripts/concern-telemetry-report.mjs', // concern-report maintenance check
-  'scripts/check-model-freshness.mjs',
-  'scripts/context-staleness.mjs',
-  'scripts/debt-health-check.mjs',
-  // Three checks maintenance-checks.mjs spawns WITHOUT `sourceRepoOnly`, i.e.
-  // they are meant to run in a consumer — but were declared nowhere, so a
-  // consumer's weekly maintenance run died on MODULE_NOT_FOUND for each. That
-  // is the class recorded at sync-to-repos.mjs:430-437 (live wine-cellar-app
-  // incident, 2026-07-22).
-  //
-  // `check-accepted-debt.mjs` is deliberately NOT here, and that is not an
-  // oversight: its check carries `sourceRepoOnly: true`, so the runner skips it
-  // cleanly in a consumer, and its ACCEPTED_DEBT_ROWS registry is hardcoded to
-  // THIS repo's AGENTS.md rows — syncing it would report a consumer's whole
-  // table unregistered forever. Pinned by
-  // tests/cli-smoke-set-sync-parity.test.mjs.
-  //
-  // Closure is asserted mechanically by
-  // tests/sync-inventory-maintenance-closure.test.mjs, which derives the spawn
-  // list from maintenance-checks.mjs rather than trusting this comment.
-  'scripts/debt-ledger-claims-check.mjs',
-  'scripts/debt-capture-trail-check.mjs',
-  'scripts/slice-recurrence-check.mjs',
-  // Local-vs-store debt reconciler. Consumers carry the same divergence this
-  // was built for: a gitignored local cache against the private store.
-  'scripts/debt-reconcile.mjs',
-  // Per-ship backlog snapshot the synced /ship SKILL.md tells the operator to
-  // run. Consumers carry the same standing queues, and a documented command
-  // whose tooling is absent where it runs is defect class (4) in AGENTS.md.
-  // Resolves its sibling readers relative to its OWN directory, so it works
-  // unchanged under the consumer's scripts/.claude-skills/ layout.
-  'scripts/backlog-snapshot.mjs',
-  // Remediation-state verification reconciler — spawned by maintenance-checks.mjs's
-  // `remediation-reconcile` entry AND by /ship Step 0.5e. Authoritative list is
-  // sync-to-repos.mjs; keep in lock-step.
-  'scripts/remediation-reconcile.mjs',
-  // Deterministic /ship commit helper (AI-* provenance trailers). Authoritative
-  // list is sync-to-repos.mjs; keep in lock-step. Walker pulls in
-  // lib/commit-trailers.mjs + sensitive-paths closure.
-  'scripts/ship-commit.mjs',
-  // Consumer-friction doctor CLI. Authoritative list is sync-to-repos.mjs;
-  // keep in lock-step. Walker pulls in lib/doctor/** automatically.
-  'scripts/doctor.mjs',
-  // ignoredUntrackedPaths oracle, shared by the doctor and the context-drift
-  // scanner. Authoritative list is sync-to-repos.mjs; keep in lock-step.
-  'scripts/lib/disowned-paths.mjs',
-];
 
 // CORE_NON_IMPORTABLE lists modules that are documented runtime injection
 // points (callers `import()` them dynamically) so the static import-graph
-// walker cannot reach them. Authoritative list is sync-to-repos.mjs; keep in
-// lock-step.
+// walker cannot reach them. They are a SUBSET of the shared CORE_ENTRY
+// (sync-entry-lists.mjs, the one list); this array only marks which of them the
+// static walker cannot follow.
 //
 // NOTE: this used to also carry a `./lib/redact.mjs` entry (relative-form
 // duplicate of the absolute `scripts/lib/redact.mjs` below), on the theory
@@ -214,64 +58,14 @@ const CORE_NON_IMPORTABLE = [
   'scripts/lib/install/legacy-surfaces.mjs',
 ];
 
-const LEARNING_ENTRY = [
-  'scripts/refine-prompts.mjs',
-  'scripts/evolve-prompts.mjs',
-  'scripts/meta-assess.mjs',
-];
+// The importable half is DERIVED from the one shared list (sync-entry-lists.mjs): everything the
+// static walker can reach. Only the dynamic-import-only subset above is declared here, and
+// tests/sync-inventory-parity.test.mjs asserts it is a subset of the shared CORE_ENTRY.
+const CORE_ENTRY = CORE_ENTRY_ALL.filter((e) => !CORE_NON_IMPORTABLE.includes(e));
 
-const ARCH_ENTRY = [
-  'scripts/symbol-index/extract.mjs',
-  'scripts/symbol-index/summarise.mjs',
-  'scripts/symbol-index/embed.mjs',
-  'scripts/symbol-index/refresh.mjs',
-  'scripts/symbol-index/render-mermaid.mjs',
-  'scripts/symbol-index/drift.mjs',
-  'scripts/symbol-index/duplicates.mjs',
-  'scripts/symbol-index/prune.mjs',
-  'scripts/symbol-index/spike-extract.mjs',
-  'scripts/symbol-index/summarise-domains.mjs',
-  'scripts/arch-intent-bootstrap.mjs',
-  'scripts/security-memory/parse-strategy.mjs',
-  'scripts/security-memory/incident-status.mjs',
-  'scripts/security-memory/refresh-incidents.mjs',
-  'scripts/lib/arch-intent/adapters/js-ts.mjs',
-  'scripts/lib/arch-intent/adapters/java.mjs',
-  'scripts/lib/arch-intent/adapters/python.mjs',
-  'scripts/lib/arch-intent/adapters/postgres.mjs',
-];
 
-const DEBT_ENTRY = [
-  'scripts/setup-permissions.mjs',
-  'scripts/write-plan-outcomes.mjs',
-  'scripts/write-ledger-r1.mjs',
-  'scripts/debt-auto-capture.mjs',
-  'scripts/debt-backfill.mjs',
-  'scripts/debt-budget-check.mjs',
-  'scripts/debt-pr-comment.mjs',
-  'scripts/debt-resolve.mjs',
-  'scripts/debt-review.mjs',
-  'scripts/debt-ledger-migrate.mjs', // per-entry ledger move (the sync-to-repos.mjs copy is in lock-step)
-];
 
-// New (Phase 1): the sync-isolation infrastructure scripts/libs themselves
-// need to ship to consumers so the verifier + migration helpers exist
-// post-hydration.
-const SYNC_ISOLATION_ENTRY = [
-  'scripts/lib/sync-path-map.mjs',
-  'scripts/lib/sync-rewriter.mjs',
-  'scripts/lib/sync-gitignore.mjs',
-  // sync-inventory.mjs is source-only (imports consumer-repos.mjs which
-  // computes paths relative to the source-repo parent dir; not meaningful
-  // on the consumer side). See the matching note in sync-to-repos.mjs.
-  'scripts/lib/sync-isolation-verify.mjs',
-  'scripts/lib/npm-script-enumerator.mjs',
-  'scripts/lib/remove-legacy-synced.mjs',
-  // Gate 2B reads the consumer's `.sync-overrides.json`. Two edits, always —
-  // this list AND the one in sync-to-repos.mjs; the lock-step test in
-  // tests/sync-inventory-parity.test.mjs is what catches the half-edit.
-  'scripts/lib/sync-overrides.mjs',
-];
+
 
 function syncMigrations() {
   const dir = path.join(REPO_ROOT, 'supabase', 'migrations');
