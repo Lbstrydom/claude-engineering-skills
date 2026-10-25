@@ -191,28 +191,35 @@ export const MIN_CONCERN_REF_LENGTH = 6;
  *
  * A reference may name a finding id in the same triage batch, a full ledger
  * topicId, or a unique topicId prefix of at least MIN_CONCERN_REF_LENGTH chars
- * (what the adjudicator sees in the rulings block). An unresolvable, ambiguous,
- * self- or cyclic reference is an ERROR, never a silent skip: a dropped link is
- * exactly the lost knowledge this field exists to keep.
+ * (what the adjudicator sees in the rulings block) - or, since fleet fac2, the
+ * topicId of a TECH-DEBT entry (`debtTopicIds`): a re-raise of a concern already
+ * parked as debt names the debt entry. An unresolvable, ambiguous, self- or
+ * cyclic reference is reported in `errors` and is never silently skipped: the
+ * entry comes back carrying the raw reference as `unresolvedConcernRef`, so the
+ * author's claim ("this repeats X") is STORED rather than dropped, and the caller
+ * decides what to do with the error list. (It used to be all-or-nothing: one bad
+ * link discarded a whole triage batch.)
  *
  * @param {object[]} pending - entries about to be written (carry topicId)
  * @param {Map<string, string>} refsByTopic - topicId → raw sameConcernAs
  * @param {Map<string, string>} topicByFindingId - this batch's finding id → topicId
  * @param {Map<string, object>} ledgerByTopic - current ledger entries by topicId
+ * @param {Iterable<string>} [debtTopicIds] - topicIds of persisted tech-debt entries (resolvable link targets)
  * @returns {{entries: object[], errors: string[]}}
  */
-export function resolveConcernLinks(pending, refsByTopic, topicByFindingId, ledgerByTopic) {
+export function resolveConcernLinks(pending, refsByTopic, topicByFindingId, ledgerByTopic, debtTopicIds = []) {
   const errors = [];
   const batch = new Map(pending.map((e) => [e.topicId, e]));
-  const known = [...new Set([...ledgerByTopic.keys(), ...batch.keys()])];
+  const known = [...new Set([...ledgerByTopic.keys(), ...batch.keys(), ...debtTopicIds])];
+  const debt = new Set(debtTopicIds);
 
   const target = (ref) => {
     if (topicByFindingId.has(ref)) return topicByFindingId.get(ref);
-    if (batch.has(ref) || ledgerByTopic.has(ref)) return ref;
+    if (batch.has(ref) || ledgerByTopic.has(ref) || debt.has(ref)) return ref;
     if (ref.length < MIN_CONCERN_REF_LENGTH) return { error: `is shorter than ${MIN_CONCERN_REF_LENGTH} chars and is not a finding id in this triage` };
     const hits = known.filter((t) => t.startsWith(ref));
     if (hits.length === 1) return hits[0];
-    return { error: hits.length === 0 ? 'matches no ledger topicId' : `is ambiguous (${hits.length} topicIds)` };
+    return { error: hits.length === 0 ? 'matches no ledger or debt topicId' : `is ambiguous (${hits.length} topicIds)` };
   };
 
   const rootOf = (topicId, seen) => {
@@ -243,7 +250,7 @@ export function resolveConcernLinks(pending, refsByTopic, topicByFindingId, ledg
     const root = rootOf(e.topicId, new Set());
     if (typeof root !== 'string') {
       errors.push(`${e.latestFindingId ?? e.topicId}.sameConcernAs ${JSON.stringify(refsByTopic.get(e.topicId))} ${root.error}`);
-      return e;
+      return { ...e, unresolvedConcernRef: refsByTopic.get(e.topicId) };
     }
     return { ...e, concernId: root };
   });

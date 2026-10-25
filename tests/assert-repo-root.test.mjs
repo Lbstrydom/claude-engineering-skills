@@ -191,3 +191,47 @@ describe('assertRepoRoot — case-only cwd difference must NOT abort (win32)', (
     }
   });
 });
+
+describe('assertRepoRoot - a linked worktree of the same repo is a valid cwd (fleet 619c)', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } = await import('node:fs');
+  const { execFileSync } = await import('node:child_process');
+  const os = await import('node:os');
+  const { gitFixtureEnv } = await import('./helpers/fixtures.mjs');
+
+  const tmp = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'arr-wt-')));
+  const env = gitFixtureEnv();
+  const git = (cwd, ...a) => execFileSync('git', a, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
+  const main = path.join(tmp, 'main');
+  const other = path.join(tmp, 'other');
+  const wt = path.join(tmp, 'wt');
+  for (const d of [main, other]) {
+    mkdirSync(path.join(d, 'scripts'), { recursive: true });
+    git(tmp, 'init', '-q', d);
+    git(d, 'config', 'user.email', 't@t.t'); git(d, 'config', 'user.name', 't');
+    writeFileSync(path.join(d, 'scripts', 'x.mjs'), '//\n');
+    git(d, 'add', '-A'); git(d, 'commit', '-qm', 'init');
+  }
+  git(main, 'worktree', 'add', '-q', '-b', 'feat', wt);
+  const scriptUrl = pathToFileURL(path.join(main, 'scripts', 'x.mjs')).href;
+  const run = (cwd) => {
+    const exits = [];
+    const orig = process.cwd();
+    process.chdir(cwd);
+    try { assertRepoRoot(scriptUrl, { stderr: { write() {} }, exit: (c) => exits.push(c), env: {} }); } finally { process.chdir(orig); }
+    return exits;
+  };
+
+  it("accepts the root of a linked worktree of the script's repo", () => {
+    assert.deepEqual(run(wt), []);
+  });
+  it('still refuses a subdirectory of the main checkout (negative control)', () => {
+    assert.deepEqual(run(path.join(main, 'scripts')), [1]);
+  });
+  it('still refuses a different repository (negative control)', () => {
+    assert.deepEqual(run(other), [1]);
+  });
+  it('still refuses a subdirectory of the linked worktree (negative control)', () => {
+    assert.deepEqual(run(path.join(wt, 'scripts')), [1]);
+  });
+  it('cleanup', () => { rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+});

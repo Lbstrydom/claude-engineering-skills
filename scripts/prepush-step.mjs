@@ -28,6 +28,14 @@
  *   prepush-step.mjs recurrence --report <current report.json> [--head <sha>]
  *       One informational line: how many of this push's findings sit on files the previous push on this lineage flagged, or
  *       `recurrence unavailable: <reason>`. Never suppresses, never gates; exit 0 either way.
+ *   prepush-step.mjs landing --destination=<url> < push-lines
+ *       `landing none <n> ...` when EVERY published ref is a tag whose commits the push DESTINATION (ls-remote, not a local remote-tracking ref)
+ *       already holds - nothing lands on a branch, so there is nothing to audit; else `landing code <reason>` (the audit runs as before).
+ *   prepush-step.mjs sync-lane --destination=<url> < push-lines
+ *       `sync-lane <bundleSha> <n>` when the push is exactly one `sync:pr` commit (Sync-Bundle trailer == the receipt in the pushed tree) touching
+ *       only paths the sync owns; else `not-sync <reason>`. Never an allowlist: ownership is the commit's own sidecar.
+ *   prepush-step.mjs hook-version
+ *       The consumer hook version this source checkout expects (the installed body warns when it is older).
  *   prepush-step.mjs no-plan
  *       The plan selector resolved NO plan: exit 0 when the push carries nothing a code audit reads (docs / sync bookkeeping only) or
  *       AUDIT_PREPUSH_ALLOW_UNMEASURED=1 says so on purpose, exit 1 (UNMEASURED) otherwise - including when the file list is unknown.
@@ -46,15 +54,17 @@ import {
   classifyNoCodePush, buildNoCodeRecord, noCodeLine, codeLine, summariseRecurrence, formatRecurrenceLine,
 } from './lib/prepush-audit-gate.mjs';
 import { patchRangesEquivalent } from './lib/patch-equivalence.mjs';
+import { landingStepLine, syncLaneStepLine } from './lib/prepush-lane-steps.mjs';
+import { PREPUSH_HOOK_VERSION } from './lib/prepush-hook-version.mjs';
 
 /** Signals that mean "stop": a terminal interrupt, a termination request, a hangup, and Ctrl+Break on Windows. */
 const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'];
 const KNOWN_FLAGS = [
   '--step', '--budget-sec', '--progress-sec', '--out', '--default-ref', '--selfcheck-relocation',
-  '--exit', '--report', '--files', '--cwd', '--selector-failed', '--head',
+  '--exit', '--report', '--files', '--cwd', '--selector-failed', '--head', '--destination',
 ];
 /** What this runner can do. The hook asks before relying on a subcommand, because an older source checkout lacks the newer ones. */
-export const CAPABILITIES = Object.freeze(['run', 'own-files', 'audit-outcome', 'audit-reuse', 'audit-budget', 'no-plan', 'no-code', 'recurrence']);
+export const CAPABILITIES = Object.freeze(['run', 'own-files', 'audit-outcome', 'audit-reuse', 'audit-budget', 'no-plan', 'no-code', 'recurrence', 'landing', 'sync-lane', 'hook-version']);
 /** A store lookup that outlives this is "unverifiable", i.e. a re-run - a reuse check must never be able to hang the hook. */
 const REUSE_LOOKUP_MS = 20_000;
 
@@ -304,6 +314,20 @@ export async function auditReuseLine({
   return d.equivalence === 'range-diff' ? `reuse-equivalent ${d.runId} ${d.round} ${d.commits}` : `reuse ${d.runId} ${d.round} ${d.auditedTree.slice(0, 12)}`;
 }
 
+/** Stdin as text; a TTY is empty by definition, a failed read propagates (it is not "no ref updates"). */
+async function readStdinText() {
+  if (process.stdin.isTTY) return '';
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/** `--destination=<url>` (the `=` form: a destination beginning with `-` must not read as a flag) or `--destination <url>`. */
+function destinationOf(head) {
+  const eq = head.find((a) => a.startsWith('--destination='));
+  return eq ? eq.slice('--destination='.length) : (flagValue(head, '--destination') ?? '');
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const dd = argv.indexOf('--');
@@ -346,6 +370,19 @@ async function main() {
     await finishAndExit(0);
     return;
   }
+  if (sub === 'landing' || sub === 'sync-lane') {
+    const args = { stdinText: await readStdinText(), destination: destinationOf(head) };
+    process.stdout.write(`${sub === 'landing' ? await landingStepLine(args) : await syncLaneStepLine(args)}
+`);
+    await finishAndExit(0);
+    return;
+  }
+  if (sub === 'hook-version') {
+    process.stdout.write(`${PREPUSH_HOOK_VERSION}
+`);
+    await finishAndExit(0);
+    return;
+  }
   if (sub === 'no-plan') {
     await finishAndExit(noPlanExit({ selectorFailed: head.includes('--selector-failed') }));
     return;
@@ -355,7 +392,7 @@ async function main() {
     await finishAndExit(0);
     return;
   }
-  if (sub !== 'run') throw new ArgvError('prepush-step.mjs: expected `run`, `own-files`, `audit-outcome`, `audit-reuse`, `audit-budget`, `no-plan`, `no-code`, `recurrence` or `capabilities`');
+  if (sub !== 'run') throw new ArgvError('prepush-step.mjs: expected `run`, `own-files`, `audit-outcome`, `audit-reuse`, `audit-budget`, `no-plan`, `no-code`, `recurrence`, `landing`, `sync-lane`, `hook-version` or `capabilities`');
 
   const step = flagValue(head, '--step');
   const budgetSec = Number(flagValue(head, '--budget-sec'));

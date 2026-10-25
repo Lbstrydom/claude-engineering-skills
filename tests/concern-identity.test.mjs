@@ -256,15 +256,27 @@ describe('write-ledger-entries --triage sameConcernAs → hard-suppress end to e
     assert.match(hardSuppressed(r).reason, new RegExp(`concern=${rootTopic}; linked=yes`));
   });
 
-  it('refuses an unresolvable reference and writes nothing', () => {
+  it('an unresolvable reference costs the LINK, not the batch (fleet fac2): ruling written, raw reference kept, caller told', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'concern-'));
     const ledgerPath = path.join(dir, 'ledger.json');
     const triage = path.join(dir, 'triage.json');
-    const r1 = roundFixture(dir, 1, [f('M1', '[Sustainability] Hardcoded policy value', EGRESS, 'h1')]);
-    fs.writeFileSync(triage, JSON.stringify({ M1: overrule('x', { sameConcernAs: 'ffffff' }) }));
-    assert.throws(() => cli(['--result', r1, '--ledger', ledgerPath, '--triage', triage]),
-      (err) => err.status === 2 && /matches no ledger topicId/.test(err.stderr));
-    assert.equal(fs.existsSync(ledgerPath), false, 'a batch applies whole or not at all');
+    const r1 = roundFixture(dir, 1, [
+      f('M1', '[Sustainability] Hardcoded policy value', EGRESS, 'h1'),
+      f('M2', '[Structure] Unrelated duplicate helper', RUNNER, 'h2'),
+    ]);
+    fs.writeFileSync(triage, JSON.stringify({ M1: overrule('x', { sameConcernAs: 'ffffff' }), M2: overrule('fine') }));
+    const out = JSON.parse(cli(['--result', r1, '--ledger', ledgerPath, '--triage', triage]));
+    assert.equal(out.ok, true);
+    assert.equal(out.written.length, 2, 'the whole batch is written');
+    assert.equal(out.linked, 0);
+    assert.equal(out.unlinked.length, 1);
+    assert.match(out.unlinked[0], /matches no ledger or debt topicId/);
+    const entries = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')).entries;
+    assert.equal(entries.length, 2);
+    const bad = entries.find((x) => x.unresolvedConcernRef === 'ffffff');
+    assert.ok(bad, 'the raw reference survives the schema (it is not stripped)');
+    assert.equal(bad.concernId, undefined);
+    assert.equal(entries.filter((x) => x.unresolvedConcernRef).length, 1, 'the good ruling carries no unresolved ref');
   });
 });
 
@@ -286,6 +298,20 @@ describe('resolveConcernLinks — refusals', () => {
     const cyc = resolveConcernLinks([e('t1', 'M1'), e('t2', 'M2')],
       new Map([['t1', 'M2'], ['t2', 'M1']]), new Map([['M1', 't1'], ['M2', 't2']]), ledger);
     assert.match(cyc.errors[0], /cycle/);
+  });
+  it('a tech-debt topicId resolves as a link target and becomes the concern root (fleet fac2)', () => {
+    const debt = ['debt00000001aaaa'];
+    const { entries, errors } = resolveConcernLinks([e('t1', 'M1'), e('t2', 'M2')],
+      new Map([['t1', 'debt00000001aaaa'], ['t2', 'debt00']]), new Map([['M1', 't1'], ['M2', 't2']]), ledger, debt);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(entries.map((x) => x.concernId), ['debt00000001aaaa', 'debt00000001aaaa']);
+  });
+  it('an unresolved link returns the entry carrying the raw reference, beside resolved ones', () => {
+    const { entries, errors } = resolveConcernLinks([e('t1', 'M1'), e('t2', 'M2')],
+      new Map([['t1', 'nonexistent']]), new Map([['M1', 't1'], ['M2', 't2']]), ledger);
+    assert.equal(errors.length, 1);
+    assert.equal(entries[0].unresolvedConcernRef, 'nonexistent');
+    assert.equal(entries[1].unresolvedConcernRef, undefined);
   });
   it('a same-batch finding id resolves, and an existing link survives a re-ruling', () => {
     const linkedLedger = new Map([['t9', { topicId: 't9', concernId: 'root00000000' }]]);

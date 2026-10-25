@@ -112,7 +112,7 @@ const CODE = { 'src/own.mjs': 'export const a = 1;\n' };
 const MANIFEST = { 'package.json': '{"name":"x"}\n' };
 
 describe('hook v15 - version', () => {
-  it('the installed body carries the v15 marker', () => assert.equal(HOOK_VERSION_MARKER, '# hook-version: 15'));
+  it('v15 behaviour is carried forward: the marker is v15 or later (v16 pins its own number)', () => assert.match(HOOK_VERSION_MARKER, /^# hook-version: (1[5-9]|[2-9][0-9])$/));
 });
 
 describe('hook v15 - NO_CODE_IN_SCOPE', () => {

@@ -17,7 +17,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
+import { GIT_LOCAL_ENV_VARS } from './git-env-sanitize.mjs';
+import { resolveMainRoot } from './pinned-worktree/paths.mjs';
 
 /**
  * Do two path strings denote the SAME directory?
@@ -56,6 +58,33 @@ function sameDirectory(a, b) {
   }
   if (process.platform === 'win32') return a.toLowerCase() === b.toLowerCase();
   return false;
+}
+
+/**
+ * Is `cwd` the root of a LINKED WORKTREE of the same repository whose main checkout holds the script (`expectedRoot`)?
+ *
+ * A consumer's tooling (`scripts/.claude-skills/`) is gitignored, so it exists in the main checkout only; a worker in a linked
+ * worktree ran the script from the main checkout and the cwd guard refused the worktree (fleet 619c), leaving the audit to read the
+ * WRONG tree. The question is "is cwd a working tree of this repo", answered by git: both directories derive the same MAIN checkout
+ * (resolveMainRoot), and cwd is a worktree TOP-LEVEL (a subdirectory of the main checkout still refuses - the accident this guard exists
+ * for). Any git failure answers false: the guard stays strict.
+ *
+ * @param {string} cwd
+ * @param {string} expectedRoot
+ * @returns {boolean}
+ */
+function isLinkedWorktreeOf(cwd, expectedRoot) {
+  const env = { ...process.env };
+  for (const k of GIT_LOCAL_ENV_VARS) delete env[k];
+  try {
+    // The canonical main-checkout derivation (pinned-worktree/paths.mjs): two directories are one repository iff it answers alike.
+    const main = (dir) => fs.realpathSync.native(resolveMainRoot(dir, { env }));
+    if (main(cwd) !== main(expectedRoot)) return false;
+    const top = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return sameDirectory(top, cwd);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -113,6 +142,7 @@ export function assertRepoRoot(importMetaUrl, opts = {}) {
   if (env.AUDIT_ALLOW_FOREIGN_CWD === '1') return { root: expectedRoot, cwd };
 
   if (sameDirectory(cwd, expectedRoot)) return { root: expectedRoot, cwd };
+  if (isLinkedWorktreeOf(cwd, expectedRoot)) return { root: expectedRoot, cwd };
 
   const rel = path.relative(expectedRoot, scriptPath).replaceAll(path.sep, '/');
   stderr.write(
@@ -190,4 +220,4 @@ const _rootCache = new Map();
 /** Test-only: the cache is process-lifetime, so a test changing cwd must clear it. */
 export function _resetRepoRootCache() { _rootCache.clear(); }
 
-export const _internals = Object.freeze({ findExpectedRoot, sameDirectory });
+export const _internals = Object.freeze({ findExpectedRoot, sameDirectory, isLinkedWorktreeOf });
