@@ -127,3 +127,9 @@ test('jsonb object keys that collide once U+0000 is stripped are refused, in eit
     await captureStderr(() => assert.throws(() => buildInsert('t', { meta }), /collide after stripping/));
   }
 });
+
+test('an own __proto__ key in a jsonb object survives the copy', () => {
+  const meta = JSON.parse('{"__proto__":{"enabled":true},"note":"keep"}');
+  const { params } = buildInsert('t', { meta });
+  assert.equal(JSON.stringify(params[0]), '{"__proto__":{"enabled":true},"note":"keep"}');
+});

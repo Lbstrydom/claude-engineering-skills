@@ -94,7 +94,8 @@ function cleanNul(v, col) {
       const key = stripNul(k, col);
       // Two keys that differ only by a NUL would silently overwrite one another: refuse, never pick by insertion order.
       if (Object.hasOwn(out, key)) throw new Error(`db write seam: keys differ only by U+0000 and collide after stripping it (column ${col ?? '(unnamed)'}: "${key}")`);
-      out[key] = cleanNul(x, col);
+      // defineProperty, not assignment: a JSON.parse'd own "__proto__" key would hit the inherited setter and vanish.
+      Object.defineProperty(out, key, { value: cleanNul(x, col), enumerable: true, writable: true, configurable: true });
     }
     return out;
   }
