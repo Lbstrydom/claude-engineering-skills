@@ -883,8 +883,10 @@ async function main() {
   // Shadow any earlier approval from the moment this review starts: if this one never records (crash, or the marker lock goes to
   // another review), the earlier APPROVE must not keep standing beside a verdict that was never written (fleet proposal 0ace).
   const pendingReview = auditMode === 'code' ? registerPendingReview({ repoRoot: process.cwd() }) : undefined;
-  if (pendingReview && !pendingReview.ok) process.stderr.write(`  [final-review-marker] FATAL: could not register this review as pending (${pendingReview.code}) — an earlier approval stays readable while it runs
-`);
+  if (pendingReview && !pendingReview.ok) {
+    process.stderr.write(`  [final-review-marker] FATAL: could not register this review as pending (${pendingReview.code}) — an earlier approval would stay readable while it runs; no review was started\n`);
+    await finishAndExit(1);
+  }
   // Bound to THIS transcript (run-id-recovery.mjs) — so it is read first.
   const runId = resolveReviewRunId({ cliRunId, auditMode, cloudEnabled: await isCloudEnabled(), transcriptContent, repoRoot: process.cwd() });
   await initAuditBrief();

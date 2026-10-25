@@ -45,16 +45,29 @@ export const REVOKED_SIDECAR_RELPATH = path.join('.audit', 'last-final-review.re
  */
 export const PENDING_REVIEWS_RELPATH = path.join('.audit', 'last-final-review.pending');
 
-const PENDING_NAME_RE = /^(\d{15})-[0-9a-f]{12}$/;
+const PENDING_NAME_RE = /^\d{15}$/;
 
-/** Register a review that is about to run. @returns {{ok: true, id: string}|{ok: false, code: string}} */
-export function registerPendingReview({ repoRoot, nowMs = Date.now(), fsMod = fs, randomHex = () => Math.random().toString(16).slice(2, 14).padEnd(12, '0') } = {}) {
-  const id = `${String(nowMs).padStart(15, '0')}-${randomHex()}`;
+/**
+ * Register a review that is about to run. The entry name IS the attempt's place in the order: a fixed-width millisecond stamp
+ * created with `wx`, so two attempts can never share a name, and a collision (same millisecond, or a clock that stepped back)
+ * moves this attempt to the next free stamp above every existing one. The order is therefore a total, persisted order that
+ * registration, cleanup and the final-write check all read the same way.
+ * @returns {{ok: true, id: string}|{ok: false, code: string}}
+ */
+export function registerPendingReview({ repoRoot, nowMs = Date.now(), fsMod = fs } = {}) {
   try {
     const dir = path.join(repoRoot, PENDING_REVIEWS_RELPATH);
     fsMod.mkdirSync(dir, { recursive: true });
-    fsMod.writeFileSync(path.join(dir, id), `${JSON.stringify({ startedAt: new Date(nowMs).toISOString(), pid: process.pid })}\n`, { flag: 'wx' });
-    return { ok: true, id };
+    let stamp = nowMs;
+    for (const n of fsMod.readdirSync(dir)) if (PENDING_NAME_RE.test(n)) stamp = Math.max(stamp, Number(n) + 1);
+    for (let attempt = 0; attempt < 50; attempt++, stamp++) {
+      const id = String(stamp).padStart(15, '0');
+      try {
+        fsMod.writeFileSync(path.join(dir, id), `${JSON.stringify({ startedAt: new Date(nowMs).toISOString(), pid: process.pid })}\n`, { flag: 'wx' });
+        return { ok: true, id };
+      } catch (e) { if (!(e && e.code === 'EEXIST')) throw e; }
+    }
+    return { ok: false, code: 'EEXIST' };
   } catch (e) { return { ok: false, code: e?.code || e?.name || 'Error' }; }
 }
 
@@ -64,7 +77,7 @@ export function registerPendingReview({ repoRoot, nowMs = Date.now(), fsMod = fs
  */
 function listPending(repoRoot, fsMod) {
   try { return { names: fsMod.readdirSync(path.join(repoRoot, PENDING_REVIEWS_RELPATH)) }; } catch (e) {
-    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { names: [] };
+    if (e && e.code === 'ENOENT') return { names: [] };   // ENOTDIR is a regular file where the registry should be: cannot tell, refuse
     return { unreadable: true, names: [] };
   }
 }
@@ -170,6 +183,13 @@ function writeFinalReviewMarkerLocked({ repoRoot, evidence, verdict, disposition
   // marker is revoked FIRST. Otherwise a failed replacement leaves a previous APPROVE readable beside a newer CONCERNS/REJECT that
   // never got written, and a pre-authorised ship would read that stale approval for the same run, tree and round.
   const sidecarPath = path.join(repoRoot, REVOKED_SIDECAR_RELPATH);
+  // A LATER-started review that already recorded cleared this attempt's pending entry. This one is superseded: writing now would
+  // overwrite the newer verdict with an older review's (A starts, B starts, B records REJECT, A finishes and would write APPROVE).
+  const fsMod = adapters.fsMod || fs;
+  if (pendingId && !fsMod.existsSync(path.join(repoRoot, PENDING_REVIEWS_RELPATH, pendingId))) {
+    log('  [final-review-marker] a review that started after this one has already recorded: this verdict is superseded and records nothing\n');
+    return { written: false, reason: 'superseded', revoked: true, filePath };
+  }
   const revoked = revokePreviousMarker(filePath, { unlink, overwrite: adapters.overwriteFileSync || fs.writeFileSync, sidecarPath, create: adapters.createFileSync || fs.writeFileSync });
   if (!revoked.ok) {
     // Neither deleting nor overwriting worked (a lock another process holds). The previous approval may still read as current.

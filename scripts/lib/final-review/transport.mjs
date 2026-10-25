@@ -458,12 +458,12 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
       if (validated.success) {
         result = validated.data;
       } else {
-        // Only an OVER-LIMIT issue is survivable: Gemini's dialect strips
+        // Only an OVER-LIMIT ARRAY issue is survivable (a too_big STRING is a different constraint): Gemini's dialect strips
         // `maxItems`, so an 11th finding is extra evidence, not a broken review.
         // Anything else — a missing verdict, a wrong type, an unknown enum — is
         // not a review at all, and returning it through the success contract
         // let `{verdict:'APPROVE'}` alone read as a clean gate.
-        const structural = validated.error.issues.filter((i) => i.code !== 'too_big');
+        const structural = validated.error.issues.filter((i) => !(i.code === 'too_big' && i.origin === 'array'));
         if (structural.length > 0) {
           const named = structural.slice(0, 5).map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
           throw Object.assign(new Error(

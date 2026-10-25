@@ -38,10 +38,9 @@ describe('pending-attempt registry (0ace)', () => {
     const lock = path.join(d, '.audit', 'last-final-review.lock');
     fs.mkdirSync(lock, { recursive: true });
     const w = quiet(() => writeFinalReviewMarker({ repoRoot: d, evidence: readGateEvidenceSnapshot(d), verdict: 'CONCERNS', disposition: 'approve_with_debt', pendingId: b.id, adapters: { lockAttempts: 1 } }));
-    if (w.reason === 'lock-contention') {
-      assert.equal(readFinalReviewMarker(d).ok, false, 'B recorded nothing and A\'s APPROVE must not stand');
-      assert.equal(readFinalReviewMarker(d).reason, 'pending');
-    }
+    assert.equal(w.reason, 'lock-contention', 'precondition: the held lock must actually make B lose, or the assertions below prove nothing');
+    assert.equal(readFinalReviewMarker(d).ok, false, 'B recorded nothing and A\'s APPROVE must not stand');
+    assert.equal(readFinalReviewMarker(d).reason, 'pending');
     fs.rmSync(lock, { recursive: true, force: true });
   }));
 
@@ -70,7 +69,7 @@ describe('pending-attempt registry (0ace)', () => {
   }));
 
   it('registration that cannot write reports ok:false, and the recording call then reports the lifecycle FATAL', () => withRepo((d) => {
-    const bad = registerPendingReview({ repoRoot: d, fsMod: { mkdirSync() {}, writeFileSync() { throw Object.assign(new Error('x'), { code: 'EACCES' }); } } });
+    const bad = registerPendingReview({ repoRoot: d, fsMod: { mkdirSync() {}, readdirSync: () => [], writeFileSync() { throw Object.assign(new Error('x'), { code: 'EACCES' }); } } });
     assert.deepEqual(bad, { ok: false, code: 'EACCES' });
     assert.equal(record(d, approve, bad), true);
   }));
@@ -81,5 +80,29 @@ describe('pending-attempt registry (0ace)', () => {
     const a = registerPendingReview({ repoRoot: d, nowMs: 1000 });
     record(d, approve, a);
     assert.equal(readFinalReviewMarker(d).reason, 'pending');
+  }));
+
+  it('two attempts in the SAME millisecond get distinct, ordered stamps (the order is persisted, never a random suffix)', () => withRepo((d) => {
+    const a = registerPendingReview({ repoRoot: d, nowMs: 7000 });
+    const b = registerPendingReview({ repoRoot: d, nowMs: 7000 });
+    assert.ok(a.id < b.id, 'the second registration sorts after the first');
+    const c = registerPendingReview({ repoRoot: d, nowMs: 100 });
+    assert.ok(c.id > b.id, 'a clock that stepped back still sorts after every existing entry');
+  }));
+
+  it('A starts, B starts, B records REJECT, THEN A finishes: A is superseded and cannot overwrite the later verdict', () => withRepo((d) => {
+    const a = registerPendingReview({ repoRoot: d, nowMs: 1000 });
+    const b = registerPendingReview({ repoRoot: d, nowMs: 2000 });
+    record(d, { verdict: 'REJECT', gateDisposition: 'blocked' }, b);
+    const fatal = record(d, approve, a);
+    assert.equal(fatal, false, 'superseded is reported, not fatal');
+    const m = readFinalReviewMarker(d);
+    assert.equal(m.ok, true);
+    assert.equal(m.marker.verdict, 'REJECT', 'the later review verdict stands');
+  }));
+
+  it('a pending registry that is a regular file (ENOTDIR) is refused, never read as no pending reviews', () => withRepo((d) => {
+    fs.writeFileSync(path.join(d, PENDING_REVIEWS_RELPATH), 'not a directory');
+    assert.equal(readFinalReviewMarker(d).reason, 'unreadable');
   }));
 });
