@@ -20,11 +20,9 @@ Banner each section (`# ═══` rule, numbered title). Omit a section that ha
 8. **Local dev only** — test accounts, NAS/tunnel credentials, `NODE_ENV`
 9. **UNUSED? (Louis to confirm)** — keys nothing reads or whose name looks wrong. A *move*, never a delete.
 
-## Per key
+## Comments
 
-- One `# comment` line above each key saying what it is. **Never a value, never a fragment of one.**
-- Extra history comments (dates, decisions) may follow the description line; keep them above the key they explain.
-- Within a section, group related keys (a key and its `_URL`/`_ENDPOINT`).
+Keep only the section banners and, where a key is not self-explanatory, **one short comment line** naming what it is. No history, dated change logs, long explanations, duplicate headers or commented-out `KEY=value` lines (old values and secrets) — explanation belongs in this doc and `.env.example`. Never a value, never a fragment of one.
 
 ## Naming
 
@@ -48,6 +46,6 @@ Update it in the same change that adds a key.
 
 ## Tidying an existing file (no value may change)
 
-Back up first (`.env.bak-<date>`, gitignored), reorder and comment only, then compare a SHA-256 of the
+Back up first (the backup keeps every removed comment) (`.env.bak-<date>`, gitignored), reorder and comment only, then compare a SHA-256 of the
 dotenv-parsed, key-sorted map before and after — equal or restore. Then run the repo's own self-check
 (`scripts/.claude-skills/check-setup.mjs` in consumers, `scripts/check-setup.mjs` here).
