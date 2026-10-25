@@ -294,3 +294,79 @@ describe('plan findings that name a file by bare name', () => {
     assert.match(card.notes[0], /bare file names were not resolved/);
   });
 });
+
+describe('code-audit round 1 fixes', () => {
+  const okSrc = { status: 'measured', items: [] };
+  const baseDeps = (over = {}) => ({
+    readRounds: () => ({ rounds: [1, 2].map((round) => ({ round, findings: [code('A', 'src/a.js')] })), unmeasured: null }),
+    readStore: async () => ({ debt: okSrc, recurring: okSrc, triage: okSrc }),
+    readProposals: async () => okSrc, gatherBacklog: async () => ({ upstream: okSrc, q2: okSrc }), runArch: async () => okSrc, ...over,
+  });
+
+  it('nested plan sections stay distinct: §2.3.1 and §2.3.2 are not one cluster', () => {
+    const r = clusterAuditRounds([
+      { round: 1, findings: [f({ category: 'A', section: '§2.3.1 first' })] },
+      { round: 2, findings: [f({ category: 'B', section: '§2.3.2 second' })] },
+    ], 'plan');
+    assert.equal(r.clusters.length, 2);
+    const same = clusterAuditRounds([
+      { round: 1, findings: [f({ category: 'A', section: '§2.3.1 first' })] },
+      { round: 2, findings: [f({ category: 'B', section: '§2.3.1 again' })] },
+    ], 'plan');
+    assert.equal(same.clusters.length, 1);
+  });
+
+  it('a PARTIAL source still contributes positive matches but cannot support a LOCAL verdict', () => {
+    const rounds = [1, 2].map((round) => ({ round, findings: [code('Lock ordering', 'src/db/lots.js')] }));
+    const audit = clusterAuditRounds(rounds, 'code');
+    const ok = { status: 'measured', items: [] };
+    const sources = { debt: ok, recurring: ok, triage: ok, upstream: ok, q2: ok, proposals: { status: 'partial', detail: 'truncated read', items: [] }, arch: ok };
+    const noEvidence = assembleCard({ sid: 's', mode: 'code', round: 7, caps: null, audit, sources, archByCluster: { c1: ok } });
+    assert.equal(noEvidence.clusters[0].verdict, 'local-or-structural', 'incomplete read ⇒ never LOCAL');
+    assert.ok(noEvidence.clusters[0].unmeasured.includes('proposals'));
+    const withHit = { ...sources, proposals: { status: 'partial', detail: 'truncated read', items: [{ id: 'p', label: 'x', files: ['src/db/lots.js'] }] } };
+    assert.equal(assembleCard({ sid: 's', mode: 'code', round: 7, caps: null, audit, sources: withHit, archByCluster: { c1: ok } }).clusters[0].verdict, 'structural');
+    assert.match(renderStructuralCard(noEvidence), /proposals PARTIAL\(0; truncated read\)/);
+  });
+
+  it('a hung store read is bounded as a whole, repo resolution included', async () => {
+    const t0 = Date.now();
+    // Same module-level deadline constant the card uses; the injected reader never settles.
+    const { card } = await buildStructuralCard({
+      sid: 's', mode: 'code', round: 7, env: { AUDIT_CARD_NO_ARCH: '1' },
+      deps: baseDeps({ readStore: () => new Promise(() => {}) }),
+      timeoutMs: 50,
+    });
+    assert.ok(Date.now() - t0 < 5000);
+    assert.equal(card.sources.debt.status, 'failed');
+    assert.match(card.sources.debt.detail, /timed out/);
+  });
+
+  it('default audit dir follows the supplied cwd, not the process cwd', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'card-cwd-'));
+    fs.mkdirSync(path.join(dir, '.audit'));
+    fs.writeFileSync(path.join(dir, '.audit', 'audit-plan-9-9-r1-result.json'), JSON.stringify({ findings: [f({})] }));
+    let seen = null;
+    await buildStructuralCard({
+      sid: 'audit-plan-9-9', mode: 'plan', round: 4, cwd: dir, env: { AUDIT_CARD_NO_ARCH: '1' },
+      deps: baseDeps({ readRounds: ({ auditDir }) => { seen = auditDir; return { rounds: null, unmeasured: 'x' }; } }),
+    });
+    assert.equal(path.resolve(seen), path.resolve(dir, '.audit'));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('a card is bound to its mode and plan: the same session and round for another audit does not authorise an override', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'card-prov-'));
+    writeCardFile(dir, 'x-r4-structural-card.json', { version: CARD_VERSION, round: 4, mode: 'plan', planFile: 'docs/plans/a.md' });
+    assert.equal(readMatchingCard(dir, 'x-r4-structural-card.json', { round: 4, mode: 'plan', planFile: 'docs/plans/a.md' }).ok, true);
+    assert.match(readMatchingCard(dir, 'x-r4-structural-card.json', { round: 4, mode: 'code', planFile: 'docs/plans/a.md' }).reason, /plan audit, not code/);
+    assert.match(readMatchingCard(dir, 'x-r4-structural-card.json', { round: 4, mode: 'plan', planFile: 'docs/plans/b.md' }).reason, /card is for plan/);
+    for (const [label, planFile] of [['null', null], ['empty', ''], ['missing', undefined]]) {
+      const body = { version: CARD_VERSION, round: 4, mode: 'plan' };
+      if (planFile !== undefined) body.planFile = planFile;
+      writeCardFile(dir, 'y-r4-structural-card.json', body);
+      assert.match(readMatchingCard(dir, 'y-r4-structural-card.json', { round: 4, mode: 'plan', planFile: 'docs/plans/a.md' }).reason, /none recorded/, `${label} planFile must not authorise`);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

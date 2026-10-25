@@ -108,10 +108,16 @@ describe('refreshRunAdjudicationCounts (DB integration)', { skip }, () => {
     const gate = new Promise((r) => { release = r; });
     let counted;
     const countedP = new Promise((r) => { counted = r; });
+    // Every wait in this schedule is bounded: a hung worker fails the test instead of hanging the suite.
+    const bounded = (p, what) => {
+      let timer;
+      const limit = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} did not happen within 10s`)), 10_000); });
+      return Promise.race([p, limit]).finally(() => clearTimeout(timer));
+    };
 
     // A has counted (1 accepted) but not yet written.
-    const A = refresh(run, { _afterCount: async () => { counted(); await gate; } });
-    await countedP;
+    const A = refresh(run, { _afterCount: async () => { counted(); await bounded(gate, 'the barrier release'); } });
+    await bounded(countedP, 'refresh A reaching its post-count barrier');
     // A newer ruling commits, then B refreshes.
     await q.query(`UPDATE audit_findings SET adjudication_outcome = 'accepted' WHERE id = $1`, [f2]);
     let bDone = false;
@@ -125,7 +131,7 @@ describe('refreshRunAdjudicationCounts (DB integration)', { skip }, () => {
       await new Promise((r) => setTimeout(r, 25));
     }
     release();
-    await Promise.all([A, B]);
+    await bounded(Promise.all([A, B]), 'both refreshes completing');
     void f1;
     return { blocked, bFinishedBeforeA: bDone && !blocked, final: { ...(await counts(run)) } };
   }
@@ -181,5 +187,63 @@ describe('strict backlog readers on a real schema (DB integration)', { skip }, (
     assert.equal(badTriage.ok, false);
     // The contrast that motivates the strict variants: the existing reader turns the same fault into an empty list.
     assert.deepEqual(await readers.readPendingTriageFindings({ repoId: 'not-a-uuid' }), []);
+  });
+});
+
+describe('recordPastCap (DB integration)', { skip }, () => {
+  let q, agg, repoId, savedUrl, client;
+  const runs = [];
+  before(async () => {
+    client = await import('../scripts/lib/db/client.mjs');
+    savedUrl = process.env.AUDIT_DB_URL;
+    client.assertDisposableDbUrl(TEST_URL, { productionUrl: savedUrl });
+    process.env.AUDIT_DB_URL = TEST_URL;
+    await client._resetForTest?.();
+    q = await import('../scripts/lib/db/query.mjs');
+    agg = await import('../scripts/lib/store/run-aggregates.mjs');
+    repoId = crypto.randomUUID();
+    await q.query(`INSERT INTO audit_repos (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`, [repoId, `test-${repoId.slice(0, 8)}`]);
+  });
+  after(async () => {
+    for (const id of runs) await q.query('DELETE FROM audit_runs WHERE id = $1', [id]);
+    await q.query('DELETE FROM audit_repos WHERE id = $1', [repoId]);
+    await client.closePool();
+    if (savedUrl === undefined) delete process.env.AUDIT_DB_URL; else process.env.AUDIT_DB_URL = savedUrl;
+  });
+  async function newRun() {
+    const id = crypto.randomUUID();
+    runs.push(id);
+    await q.query(`INSERT INTO audit_runs (id, repo_id, plan_file, mode) VALUES ($1, $2, 'docs/plans/t.md', 'code')`, [id, repoId]);
+    return id;
+  }
+  const row = (id) => q.one('SELECT past_cap_reason, past_cap_card FROM audit_runs WHERE id = $1', [id]);
+
+  test('rounds sharing a run each keep their override: reasons append, cards merge by round, re-recording is a no-op', async () => {
+    const run = await newRun();
+    const r7 = await agg.recordPastCap(run, { reason: 'seventh round will converge: the cluster is fixed', card: { structural: 1, clusters: 3 }, round: 7 });
+    const r8 = await agg.recordPastCap(run, { reason: 'eighth round is the last: only polish left', card: { structural: 0, clusters: 2 }, round: 8 });
+    await agg.recordPastCap(run, { reason: 'seventh round will converge: the cluster is fixed', card: { structural: 1, clusters: 3 }, round: 7 });
+    assert.equal(r7.ok, true);
+    assert.equal(r8.ok, true);
+    // first-wins for BOTH columns: re-recording round 7 with a DIFFERENT reason and card changes neither
+    await agg.recordPastCap(run, { reason: 'a different seventh-round reason entirely', card: { structural: 9, clusters: 9 }, round: 7 });
+    const got = await row(run);
+    assert.equal(got.past_cap_reason, 'r7: seventh round will converge: the cluster is fixed\nr8: eighth round is the last: only polish left');
+    assert.deepEqual(got.past_cap_card, { 7: { structural: 1, clusters: 3 }, 8: { structural: 0, clusters: 2 } });
+  });
+
+  test('a reason carrying newlines and its own "r8:" text cannot forge or hide a round boundary', async () => {
+    const run = await newRun();
+    await agg.recordPastCap(run, { reason: 'Follow-up plan:\nr8: review remaining issues', card: { structural: 0 }, round: 7 });
+    await agg.recordPastCap(run, { reason: 'the genuine eighth round will converge', card: { structural: 1 }, round: 8 });
+    const got = await row(run);
+    assert.equal(got.past_cap_reason, 'r7: Follow-up plan: r8: review remaining issues\nr8: the genuine eighth round will converge');
+    assert.deepEqual(Object.keys(got.past_cap_card).sort(), ['7', '8']);
+  });
+
+  test('an unknown run is reported, not claimed written', async () => {
+    const r = await agg.recordPastCap(crypto.randomUUID(), { reason: 'a reason that is long enough', card: { structural: 0 }, round: 7 });
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'no-row');
   });
 });

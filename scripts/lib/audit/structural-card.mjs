@@ -43,6 +43,9 @@ export const CARD_SOURCES = Object.freeze(['debt', 'recurring', 'triage', 'upstr
 /** Clusters whose architectural neighbourhood is queried (the paid, embedding-backed read). */
 export const ARCH_QUERY_BUDGET = 3;
 
+/** Rows asked of a store reader; a result this long may have been cut, so it is `partial`, never `measured`. */
+const STORE_READ_LIMIT = 1000;
+
 /** Per-source read cap; a slow store must not turn a cheap refusal into a slow one. */
 export const SOURCE_TIMEOUT_MS = 60_000;
 
@@ -55,7 +58,7 @@ function looksLikePath(s) {
 
 const PLAN_PATH_RE = /(?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9]{1,6}\b/g;
 const BARE_FILE_RE = /\b[\w-]+(?:\.[\w-]+)*\.(?:mjs|cjs|js|jsx|ts|tsx|json|md|sql|ya?ml|sh)\b/g;
-const SECTION_ANCHOR_RE =/§\s*(\d+(?:\.\d+)?)/;
+const SECTION_ANCHOR_RE = /§\s*(\d+(?:\.\d+)*)/;
 
 /**
  * The files a finding concerns, normalised. Code findings carry them in
@@ -197,7 +200,7 @@ export function matchCluster(cluster, sources, precedents = []) {
   const files = cluster.files.map(lc);
   const catKeys = new Set(cluster.categoryKeys);
   for (const [name, src] of Object.entries(sources)) {
-    if (src.status !== 'measured') continue;
+    if (src.status !== 'measured' && src.status !== 'partial') continue;   // a partial read still contributes its positive matches
     for (const item of src.items || []) {
       const itemFiles = (item.files || []).map((x) => lc(normalizePath(x)));
       const hit = files.find((f) => itemFiles.includes(f));
@@ -315,7 +318,7 @@ export function renderStructuralCard(card) {
     L.push(`This audit: UNMEASURED (${card.auditUnmeasured || 'no round results found'})`);
   }
   const srcText = Object.entries(card.sources).map(([n, s]) =>
-    s.status === 'measured' ? `${n} ok(${s.count})` : `${n} ${s.detail ? `unreadable (${s.detail})` : s.status}`).join(' · ');
+    s.status === 'measured' ? `${n} ok(${s.count})` : s.status === 'partial' ? `${n} PARTIAL(${s.count}; ${s.detail})` : `${n} ${s.detail ? `unreadable (${s.detail})` : s.status}`).join(' · ');
   L.push(`Sources: ${srcText}`);
 
   const sp = card.sharedPrimitiveCheck;
@@ -365,6 +368,8 @@ function withTimeout(promise, ms, name) {
 }
 
 const measured = (items, detail = null) => ({ status: 'measured', items, detail });
+/** Answered, but not exhaustively (truncated page, incomplete read): positive matches count, an uncorroborated verdict does not. */
+const partial = (items, detail) => ({ status: 'partial', items, detail });
 const failed = (detail) => ({ status: 'failed', items: [], detail });
 
 /** Read this audit's round results. Never throws; a bad file is `unmeasured`. */
@@ -411,20 +416,22 @@ async function defaultReadStoreSources({ cwd }) {
     const r = await readOpenRecurringClusters({ repoId: repo.repoRowId });
     if (!r.ok) return failed(r.error);
     if (!r.cloud) return failed('store-off (cloud not configured)');
-    return measured(r.rows.map((x) => ({
+    const items = r.rows.map((x) => ({
       id: String(x.cluster_hash || x.id || '').slice(0, 8), label: x.cluster_label || 'recurring cluster',
       category: x.cluster_label, files: x.files_affected || [],
-    })));
+    }));
+    return r.rows.length >= STORE_READ_LIMIT ? partial(items, `first ${STORE_READ_LIMIT} rows only`) : measured(items);
   })();
 
   const triageP = noRepo ? failed(noRepo) : (async () => {
     const r = await readPendingTriageFindingsStrict({ repoId: repo.repoRowId });
     if (!r.ok) return failed(r.error);
     if (!r.cloud) return failed('store-off (cloud not configured)');
-    return measured(r.rows.map((x) => ({
+    const items = r.rows.map((x) => ({
       id: String(x.id || x.finding_id || x.fingerprint || '').slice(0, 8), label: x.title || x.category || 'pending triage',
       category: x.title || x.category, files: x.primary_file ? [x.primary_file] : [],
-    })));
+    }));
+    return r.rows.length >= STORE_READ_LIMIT ? partial(items, `first ${STORE_READ_LIMIT} rows only`) : measured(items);
   })();
 
   const [debt, recurring, triage] = await Promise.all([
@@ -442,9 +449,10 @@ async function defaultReadProposals({ cwd }) {
     const { readProposals } = await import('../fleet/proposals.mjs');
     const read = readProposals(fleetDir(cwd));
     if (read.unmeasured) return failed('proposals unmeasured');
-    return measured(read.records.map((p) => ({
+    const items = read.records.map((p) => ({
       id: String(p.id || '').slice(-8), label: String(p.what || '').slice(0, 90), text: `${p.where || ''} ${p.what || ''}`, files: [],
-    })), read.complete ? null : 'incomplete read');
+    }));
+    return read.complete && !read.truncated ? measured(items) : partial(items, read.truncated ? 'truncated read' : 'incomplete read');
   } catch (err) {
     return failed(err.message);
   }
@@ -479,7 +487,7 @@ async function defaultGatherBacklog({ cwd, here }) {
 export function defaultFileIndex({ cwd }) {
   const out = execFileSync('git', ['ls-files', '-z'], { cwd, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, windowsHide: true });
   const index = new Map();
-  for (const p of out.split(' ')) {
+  for (const p of out.split('\0')) {
     if (!p) continue;
     const key = path.posix.basename(p).toLowerCase();
     if (!index.has(key)) index.set(key, []);
@@ -500,7 +508,10 @@ function defaultRunArch({ cluster, planFile, cwd, here }) {
         const line = String(stdout || '').trim().split('\n').filter(Boolean).pop();
         let env = null;
         try { env = line ? JSON.parse(line) : null; } catch { env = null; }
-        if (!env) return resolve(failed(err ? `process failed: ${String(err.message).slice(0, 80)}` : 'malformed response'));
+        // The process outcome is judged independently of whether stdout parsed: a valid envelope followed by a non-zero exit
+        // or a timeout kill is a failed read, its output at most diagnostic.
+        if (err) return resolve(failed(env?.error?.code ? String(env.error.code) : `process failed${err.killed ? ' (timeout)' : ''}: ${String(err.message).slice(0, 80)}`));
+        if (!env) return resolve(failed('malformed response'));
         if (env.ok === false) return resolve(failed(`${env.error?.code || 'error'}`));
         if (env.cloud === false) return resolve(failed(`store-off${env.degraded ? ` (${env.degraded})` : ''}`));
         if (env.degraded) return resolve(failed(String(env.degraded)));
@@ -526,10 +537,12 @@ function defaultRunArch({ cluster, planFile, cwd, here }) {
  * @param {string} [opts.cwd]
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @param {object} [opts.deps] - test seams: readRounds, readStore, readProposals, gatherBacklog, runArch
+ * @param {number} [opts.timeoutMs] - deadline for the whole store read (repo resolution included)
  * @returns {Promise<{card: object, text: string}>}
  */
 export async function buildStructuralCard({
-  sid, mode, round, planFile = null, caps = null, auditDir = path.resolve('.audit'), cwd = process.cwd(), env = process.env, deps = {},
+  sid, mode, round, planFile = null, caps = null, cwd = process.cwd(), auditDir = path.resolve(cwd, '.audit'), env = process.env, deps = {},
+  timeoutMs = SOURCE_TIMEOUT_MS,
 }) {
   const here = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const readRounds = deps.readRounds || readAuditRounds;
@@ -546,7 +559,7 @@ export async function buildStructuralCard({
   const airGapped = Object.hasOwn(env, 'AUDIT_DB_URL') && env.AUDIT_DB_URL === '';
   const safe = (fn, name) => Promise.resolve().then(fn).catch((e) => ({ __err: `${name}: ${e.message}` }));
   const [store, proposals, backlog] = await Promise.all([
-    safe(() => (deps.readStore || defaultReadStoreSources)({ cwd }), 'store'),
+    safe(() => withTimeout(Promise.resolve((deps.readStore || defaultReadStoreSources)({ cwd })), timeoutMs, 'store'), 'store'),
     safe(() => (deps.readProposals || defaultReadProposals)({ cwd }), 'proposals'),
     safe(() => (deps.gatherBacklog || defaultGatherBacklog)({ cwd, here }), 'backlog'),
   ]);
@@ -602,12 +615,16 @@ export function writeCardFile(dir, fileName, card) {
  * Read a card back and confirm it was computed for this exact (sid, round).
  * @returns {{ok: true, card: object} | {ok: false, reason: string}}
  */
-export function readMatchingCard(dir, fileName, { round }) {
+export function readMatchingCard(dir, fileName, { round, mode = null, planFile = null }) {
   const target = path.join(dir, fileName);
   let card;
   try { card = JSON.parse(fs.readFileSync(target, 'utf-8')); } catch (err) {
     return { ok: false, reason: err.code === 'ENOENT' ? 'no card on disk' : `unreadable card (${err.message})` };
   }
   if (!card || card.version !== CARD_VERSION || card.round !== round) return { ok: false, reason: `card is for a different round (${card?.round ?? '?'})` };
+  // Same session id + round is not the same audit: a card built for another mode or plan does not authorise this override.
+  if (mode && card.mode !== mode) return { ok: false, reason: `card is for a ${card.mode} audit, not ${mode}` };
+  // Fail closed: when a plan is expected the card must NAME one and it must match — a card without plan provenance is not bound to this audit.
+  if (planFile && (!card.planFile || normalizePath(card.planFile) !== normalizePath(planFile))) return { ok: false, reason: `card is for plan ${card.planFile || '(none recorded)'}, not ${planFile}` };
   return { ok: true, card };
 }

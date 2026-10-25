@@ -64,7 +64,7 @@ async function emitCard({ argv, sid, mode, round, caps, auditDir, cwd, env, writ
  *   pastCapReason: string|null, cardSummary: object|null}} | {ok: false, exitCode: number, code: string}>}
  */
 export async function gateRoundCap(argv, {
-  auditDir = path.resolve('.audit'), cwd = process.cwd(), env = process.env,
+  cwd = process.cwd(), auditDir = path.resolve(cwd, '.audit'), env = process.env,
   write = (s) => process.stderr.write(s), build = buildStructuralCard,
 } = {}) {
   const modeRes = resolveAuditMode(argv);
@@ -90,7 +90,7 @@ export async function gateRoundCap(argv, {
 
   let cardSummary = null;
   if (v.pastCap) {
-    const found = readMatchingCard(auditDir, cardFileName(sid, round), { round });
+    const found = readMatchingCard(auditDir, cardFileName(sid, round), { round, mode, planFile: argv[1] || null });
     if (!found.ok) {
       // A past-cap round needs the card for THIS (session, round) computed first — the evidence existed at the decision.
       await emitCard(ctx);
@@ -121,8 +121,8 @@ export async function gateRoundCap(argv, {
  */
 export async function applyRoundCap(data, roundCap) {
   if (!roundCap) return data;
-  const { soft, absolute, pastCap, pastCapReason, cardSummary } = roundCap;
+  const { soft, absolute, pastCap, pastCapReason, cardSummary, round } = roundCap;
   data._roundCap = { soft, absolute, pastCap, pastCapReason, cardSummary };
-  if (pastCap && data._cloudRunId) await recordPastCap(data._cloudRunId, { reason: pastCapReason, card: cardSummary });
+  if (pastCap && data._cloudRunId) await recordPastCap(data._cloudRunId, { reason: pastCapReason, card: cardSummary, round });
   return data;
 }

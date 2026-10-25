@@ -271,6 +271,19 @@ describe('finalizeRoundOutcomes', () => {
     });
   });
 
+  it('a failed run-count recompute is NOT reported as a successful cloud capture', async () => {
+    const { finding, entry } = ruledPair('F', 'accepted');
+    const mk = (refresh) => ({
+      recordAdjudicationEvent: async () => ({ ok: true }),
+      updatePassStatsPostDeliberation: async () => true,
+      updateRunMeta: async () => true,
+      refreshRunAdjudicationCounts: refresh,
+    });
+    const run = (store) => finalizeRoundOutcomes({ result: { findings: [finding], _cloudRunId: 'run-f' }, ledger: { entries: [entry] }, round: 2, store, sid: 'run-f' });
+    assert.equal((await run(mk(async () => ({ ok: false, reason: 'boom' })))).cloudOk, false, 'stale aggregate ⇒ capture incomplete');
+    assert.equal((await run(mk(async () => ({ ok: true, accepted: 1, dismissed: 0 })))).cloudOk, true, 'negative control');
+  });
+
   it('un-ruled findings stay pending (not labelled)', async () => {
     const result = { findings: [{ id: 'Z', severity: 'LOW', category: 'X', section: 'z.js', _pass: 'backend' }] };
     const ledger = { entries: [] };

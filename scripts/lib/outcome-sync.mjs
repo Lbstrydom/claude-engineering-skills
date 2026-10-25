@@ -209,7 +209,11 @@ async function writeCloudOutcomes(store, runId, enriched, passCounts, round) {
   // lock — never this round's slice, which a later round would overwrite. A store without the recompute (an old
   // adapter) writes no counts at all rather than a per-round figure standing in for the aggregate.
   if (typeof store.refreshRunAdjudicationCounts === 'function') {
-    await store.refreshRunAdjudicationCounts(runId);
+    const refreshed = await store.refreshRunAdjudicationCounts(runId);
+    // The events landed but the run's aggregate is stale: cloud capture is NOT complete. Returning false names that to the
+    // caller ("cloud: no") instead of reporting success; the recount is a pure function of the findings table, so the
+    // next finalize (or write-code-outcomes) repairs it.
+    if (refreshed && refreshed.ok === false) return false;
   } else if (typeof store.updateRunMeta === 'function') {
     process.stderr.write('  [outcome-sync] store lacks refreshRunAdjudicationCounts; run counts not written\n');
   }

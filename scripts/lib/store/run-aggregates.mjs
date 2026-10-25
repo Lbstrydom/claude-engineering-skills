@@ -6,7 +6,7 @@
  *
  * @module scripts/lib/store/run-aggregates
  */
-import { many, one, updateWhere, withTx } from '../db/query.mjs';
+import { many, one, query, updateWhere, withTx } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import { probeColumnExistence } from './column-probes.mjs';
 
@@ -48,7 +48,8 @@ export async function refreshRunAdjudicationCounts(runId, { _afterCount } = {}) 
         [runId],
       );
       if (_afterCount) await _afterCount(counts);
-      await updateWhere('audit_runs', { accepted_count: counts.accepted, dismissed_count: counts.dismissed, labeled: true }, { id: runId });
+      const { rowCount } = await updateWhere('audit_runs', { accepted_count: counts.accepted, dismissed_count: counts.dismissed, labeled: true }, { id: runId });
+      if (rowCount !== 1) throw new Error(`audit_runs ${runId}: ${rowCount} row(s) updated, expected 1`);
     });
     return { ok: true, accepted: counts.accepted, dismissed: counts.dismissed };
   } catch (err) {
@@ -63,27 +64,49 @@ export async function refreshRunAdjudicationCounts(runId, { _afterCount } = {}) 
  * different times and a past-cap round must not fail on an unmigrated one: the absent column is named on stderr, the
  * authoritative local record (`_roundCap` on the round result, plus the card JSON) is kept, and the round proceeds.
  *
+ * Rounds that share a run id each record their own override and never replace an earlier one: the reason is APPENDED as
+ * an `rN: <reason>` line and the card summary is merged under its round number. ONE policy for both: the FIRST record for a
+ * round wins (it is the evidence the decision was made on), and re-recording that round, with the same or a different
+ * reason, changes neither column.
+ *
  * @param {string} runId
- * @param {{reason: string|null, card: object|null}} record
+ * @param {{reason: string|null, card: object|null, round: number}} record
  * @returns {Promise<{ok: boolean, partial?: boolean, reason?: string}>}
  */
-export async function recordPastCap(runId, { reason, card }) {
+export async function recordPastCap(runId, { reason, card, round }) {
   if (!runId) return { ok: false, reason: 'no-run-id' };
   if (!await isCloudEnabled()) return { ok: false, reason: 'cloud-off' };
   try {
-    const update = {};
+    const sets = [];
+    const params = [runId];
     const absent = [];
-    for (const [col, value] of [['past_cap_reason', reason], ['past_cap_card', card]]) {
-      if (value == null) continue;
+    const probe = async (col) => {
       const { present } = await probeColumnExistence('audit_runs', col, many, isCloudEnabled);
-      if (present) update[col] = value; else absent.push(col);
+      if (!present) absent.push(col);
+      return present;
+    };
+    if (reason != null && await probe('past_cap_reason')) {
+      // One line per round, always: a reason with its own newlines (or its own "r8:" text) must not be able to forge or
+      // hide a record boundary, so the identity the dedup reads is the line START, which only this code writes.
+      const oneLine = String(reason).replace(/\s+/g, ' ').trim();
+      params.push(`r${round}: ${oneLine}`, `(^|\n)r${round}: `);
+      const line = `$${params.length - 1}`;
+      const seen = `$${params.length}`;
+      sets.push(`past_cap_reason = CASE WHEN COALESCE(past_cap_reason, '') ~ ${seen}::text THEN past_cap_reason `
+        + `ELSE COALESCE(past_cap_reason || chr(10), '') || ${line}::text END`);
+    }
+    if (card != null && await probe('past_cap_card')) {
+      params.push(String(round), JSON.stringify(card));
+      const key = `$${params.length - 1}::text`;
+      sets.push(`past_cap_card = CASE WHEN COALESCE(past_cap_card, '{}'::jsonb) ? ${key} THEN past_cap_card `
+        + `ELSE COALESCE(past_cap_card, '{}'::jsonb) || jsonb_build_object(${key}, $${params.length}::jsonb) END`);
     }
     if (absent.length > 0) {
       process.stderr.write(`  [round-cap] store lacks ${absent.join(', ')} (run setup-postgres --migrate); the override is recorded locally only\n`);
     }
-    if (Object.keys(update).length === 0) return { ok: false, partial: true, reason: 'columns-absent' };
-    const { rowCount } = await updateWhere('audit_runs', update, { id: runId });
-    return rowCount === 0 ? { ok: false, reason: 'no-row' } : { ok: true, partial: absent.length > 0 };
+    if (sets.length === 0) return { ok: false, partial: true, reason: 'columns-absent' };
+    const res = await query(`UPDATE audit_runs SET ${sets.join(', ')} WHERE id = $1`, params);
+    return (res.rowCount ?? 0) === 0 ? { ok: false, reason: 'no-row' } : { ok: true, partial: absent.length > 0 };
   } catch (err) {
     process.stderr.write(`  [round-cap] past-cap record not written (${err.message})\n`);
     return { ok: false, reason: err.message };
