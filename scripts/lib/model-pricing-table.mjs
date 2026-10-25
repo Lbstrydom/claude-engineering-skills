@@ -97,6 +97,9 @@ export const modelPricing = Object.freeze({
   // CACHE_MULTIPLIER (model-pricing.mjs); Opus 5.5's and Sonnet 5.5's read is
   // 0.05x (pricing page footnote 2, measured 2026-10-20), carried as a real
   // `cachedInput` rate so costFromUsage uses it over the multiplier.
+  // Fable 5.1 cache read is $0.25 (0.025x); Fable 5's is $1 (0.10x). Source: platform.claude.com pricing, read 2026-10-25.
+  'claude-fable-5-1':  { input: 10, output: 50, cachedInput: 0.25 },
+  'claude-fable-5':    { input: 10, output: 50, cachedInput: 1 },
   'claude-opus-5-5':   { input: 4, output: 20, cachedInput: 0.20 },
   'claude-opus-5':     { input: 5, output: 25 },
   'claude-opus-4-8':   { input: 5, output: 25 },
