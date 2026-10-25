@@ -199,10 +199,7 @@ function planConsumerPrCore({
   // a5ce: the managed .gitignore block is sync output in a file the consumer owns. It rides in the PR only when the edit is the block
   // and nothing else (classifyGitignoreTransition); any other dirty state of that file is named under leftBehind, never swept in.
   const gitignoreRides = gitignoreTransition === GITIGNORE_PATH_STATE.BLOCK_ONLY;
-  // A skip must not hide a held-back .gitignore (audit R1 M1/M10): name it on every early return, not only when a PR is opened.
-  const giNote = gitignoreTransition && !gitignoreRides && gitignoreTransition !== 'unchanged'
-    ? `${GITIGNORE_PATH} left uncommitted: ${GITIGNORE_LEFT_BEHIND_REASON[gitignoreTransition] ?? 'could not be verified as managed-block-only'}`
-    : '';
+  // A skip must not hide a held-back .gitignore: that note is added to EVERY skip by the planConsumerPr wrapper (audit R1 M1/M10, R4 M1, R5 M1).
   if ((classified.clean || classified.syncOwned.length === 0) && !gitignoreRides) {
     // 'clean' compared nothing against the source: say whether the bundle is actually current (da9a).
     const freshness = classifyBundleFreshness({ stamp: manifest?.commitSha, sourceSha, sourceDirty });
@@ -210,16 +207,16 @@ function planConsumerPrCore({
       return {
         action: 'skip', reason: SKIP_REASON.CLEAN_BUNDLE_DIFFERS,
         detail: `no synced changes on disk, but the bundle stamp ${manifest.commitSha.slice(0, 8)} differs from the source ${sourceSha.slice(0, 8)}`
-          + ` - run npm run sync -- --target ${consumerName} first${giNote ? `; ${giNote}` : ''}`,
+          + ` - run npm run sync -- --target ${consumerName} first`,
       };
     }
     if (freshness === 'unverified') {
       return {
         action: 'skip', reason: SKIP_REASON.CLEAN_UNVERIFIED,
-        detail: 'no synced changes on disk, and the bundle stamp could not be verified against the source (missing or short stamp, unreadable or uncommitted source) - not proven up to date' + (giNote ? `; ${giNote}` : ''),
+        detail: 'no synced changes on disk, and the bundle stamp could not be verified against the source (missing or short stamp, unreadable or uncommitted source) - not proven up to date',
       };
     }
-    return { action: 'skip', reason: SKIP_REASON.CLEAN, ...(giNote ? { detail: giNote } : {}) };
+    return { action: 'skip', reason: SKIP_REASON.CLEAN };
   }
   if (classified.degraded) {
     return { action: 'skip', reason: SKIP_REASON.UNCLASSIFIABLE, detail: 'no ownership sidecar and no readable git-ignore state' };
@@ -231,7 +228,7 @@ function planConsumerPrCore({
   const addPaths = [...new Set([...classified.syncOwned.map((e) => e.path), ...(gitignoreRides ? [GITIGNORE_PATH] : [])])].sort();
   const surface = addPaths.filter((p) => comparisonKey(p) !== RECEIPT_KEY);
   if (surface.length === 0) {
-    return { action: 'skip', reason: SKIP_REASON.RECEIPT_ONLY, ...(giNote ? { detail: giNote } : {}) };
+    return { action: 'skip', reason: SKIP_REASON.RECEIPT_ONLY };
   }
   if (currentBranch !== baseBranch) {
     return { action: 'skip', reason: SKIP_REASON.NOT_ON_BASE, detail: `on ${currentBranch ?? '(detached)'}, expected ${baseBranch}` };
