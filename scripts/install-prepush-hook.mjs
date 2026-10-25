@@ -753,7 +753,7 @@ if [ "$AUDIT_REUSED" != "1" ]; then
     }
     prepush_prune_kind report.json "$keep_prot_report"
     prepush_prune_kind output.log "$keep_prot_output"
-    find "$AUDIT_KEEP_DIR" -maxdepth 1 \( -name '.tmp.*' -o -name '.tmp-ledger.*' \) -mmin +1440 -exec rm -f {} + 2>/dev/null
+    find "$AUDIT_KEEP_DIR" -maxdepth 1 \\( -name '.tmp.*' -o -name '.tmp-ledger.*' \\) -mmin +1440 -exec rm -f {} + 2>/dev/null
     return 0
   }
   echo "[prepush-hook] ▸ auditing $PLAN_FILE via $AUDIT_LOOP_DIR (budget \${AUDIT_BUDGET}s, $AUDIT_BUDGET_BASIS; \${AUDIT_OWN_FILES:+branch-own files only, }report will be kept at $AUDIT_KEEP_BASE.report.json)" >&2

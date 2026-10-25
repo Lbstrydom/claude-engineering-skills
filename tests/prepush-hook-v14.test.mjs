@@ -281,11 +281,11 @@ describe('hook v14 - the push base after a rebase + force push (fleet p-20261024
     const { local } = c;
     const put = (rel, text, msg) => { fs.mkdirSync(path.dirname(path.join(local, rel)), { recursive: true }); fs.writeFileSync(path.join(local, rel), text); git(['add', rel], local); git(['commit', '-q', '-m', msg], local); return git(['rev-parse', 'HEAD'], local); };
     git(['checkout', '-q', '-b', 'feature', 'origin/main'], local);
-    const oldRemote = put('src/f1.txt', 'f1\n', 'F1');
+    const oldRemote = put('src/f1.mjs', 'f1\n', 'F1');
     git(['push', '-q', 'origin', 'feature'], local);
     git(['checkout', '-q', 'main'], local);
     git(['reset', '-q', '--hard', 'origin/main'], local);
-    const mainTip = put('src/main-only.txt', 'm\n', 'M1 main moves on');
+    const mainTip = put('src/main-only.mjs', 'm\n', 'M1 main moves on');
     git(['push', '-q', 'origin', 'main'], local);
     git(['checkout', '-q', 'feature'], local);
     return { put, oldRemote, mainTip };
@@ -307,7 +307,7 @@ describe('hook v14 - the push base after a rebase + force push (fleet p-20261024
 
   it('MUST NOT CHANGE: a plain fast-forward push still uses the remote tip as the base', (t) => scenario(t, 'ff', ({ c, source }) => {
     const f = featurePushedAndMainMoved(c);
-    const head = f.put('src/f2.txt', 'f2\n', 'F2');
+    const head = f.put('src/f2.mjs', 'f2\n', 'F2');
     const got = runHook(c.local, source, `refs/heads/feature ${head} refs/heads/feature ${f.oldRemote}\n`);
     assert.equal(got.status, 0, got.stderr);
     assert.equal(baseOf(c), f.oldRemote, 'REMOTE_SHA, not the (older) merge-base with origin/main');
@@ -319,7 +319,7 @@ describe('hook v14 - the push base after a rebase + force push (fleet p-20261024
   it('a NEW branch still takes the merge-base with origin/main, saying it is a new branch', (t) => scenario(t, 'newbranch', ({ c, source }) => {
     const f = featurePushedAndMainMoved(c);
     git(['checkout', '-q', '-b', 'fresh'], c.local);
-    const head = f.put('src/f3.txt', 'f3\n', 'F3');
+    const head = f.put('src/f3.mjs', 'f3\n', 'F3');
     const got = runHook(c.local, source, `refs/heads/fresh ${head} refs/heads/fresh ${'0'.repeat(40)}\n`);
     assert.equal(got.status, 0, got.stderr);
     assert.equal(baseOf(c), git(['merge-base', 'origin/main', head], c.local));

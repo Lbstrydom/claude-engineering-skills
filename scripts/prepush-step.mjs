@@ -131,6 +131,7 @@ export function noPlanExit({ env = process.env, cwd = process.cwd(), gitFn = git
 }
 
 /** Where the kept audit files live, relative to the repo (the hook's AUDIT_KEEP_DIR). */
+const KEEP_REL = '.audit/prepush';
 const KEEP_DIR = path.join('.audit', 'prepush');
 
 /** Atomic write: a temp file in the SAME directory (exclusive create), then a rename, so a reader sees all of the record or none of it. */
@@ -181,7 +182,7 @@ export async function noCodeStepLine({ env = process.env, cwd = process.cwd(), g
     let tree = '';
     try { tree = gitFn(cwd, ['rev-parse', '--verify', '--quiet', `${range.head}^{tree}`]).trim(); } catch { tree = ''; }
     if (!OID_RE.test(tree)) return codeLine('the pushed tree could not be resolved');
-    const rel = path.join(KEEP_DIR, `${tree}.no-code.json`);
+    const rel = `${KEEP_REL}/${tree}.no-code.json`; // a protocol string: forward slashes on every platform
     try { writeAtomic(path.join(cwd, rel), `${JSON.stringify(buildNoCodeRecord({ tree, base: range.base, head: range.head, files: c.files }), null, 2)}\n`); } catch (e) { return codeLine(`the no-code record could not be written (${e?.code || 'error'})`); }
     pruneNoCodeRecords(path.join(cwd, KEEP_DIR), path.basename(rel), env.AUDIT_PREPUSH_KEEP_REPORTS);
     return noCodeLine(c.files.length, rel);
