@@ -15,6 +15,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { hermeticGitEnv } from './helpers/git-bash.mjs';
 import { parseSummary } from '../scripts/lib/test-tier.mjs';
+import { writeFileIn as write } from './helpers/write-file.mjs';
 
 const REAL = path.resolve(import.meta.dirname, '..');
 const IS_WIN = process.platform === 'win32';
@@ -25,7 +26,6 @@ const git = (cwd, args) => {
   assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
 };
-const write = (repo, rel, body) => { const f = path.join(repo, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); };
 const commit = (repo, msg) => { git(repo, ['add', '-A']); git(repo, ['commit', '-q', '-m', msg]); return git(repo, ['rev-parse', 'HEAD']); };
 
 const marker = (name) => `import { test } from 'node:test';\nimport fs from 'node:fs';\nimport path from 'node:path';\n__IMPORT__test('${name}', () => { fs.appendFileSync(path.join(process.env.TIER_MARKER_DIR, 'ran.txt'), '${name}\\n'); });\n`;

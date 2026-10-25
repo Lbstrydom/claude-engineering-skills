@@ -19,9 +19,7 @@
  * @module scripts/prepush-archive-lane
  */
 import { argOption, assertKnownFlags, finishAndExit } from './lib/cli-io.mjs';
-import { LANE_PROTOCOL, makeGit, runArchiveLane } from './lib/prepush-archive-lane.mjs';
-
-const EXIT_FOR = Object.freeze({ clean: 0, findings: 1, error: 1, 'not-applicable': 3 });
+import { EXIT_FOR, LANE_PROTOCOL, makeGit, runArchiveLane } from './lib/prepush-archive-lane.mjs';
 
 /**
  * Stdin as text. A TTY (a manual run) is empty by definition. A read that FAILS is

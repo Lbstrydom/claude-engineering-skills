@@ -52,6 +52,7 @@ import {
 import { describeSafeToCommit } from './lib/sync-status.mjs';
 import { createGitAncestry, planRollbackResponse } from './lib/sync-rollback-guard.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
+import { hookEpilogueLines } from './lib/prepush-hook-version.mjs';
 import { computeEolPins, renderEolPinLines, canonicaliseOutboundEol } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
@@ -2221,6 +2222,8 @@ async function main() {
       // "silently did more than you asked" family as the unknown-flag gate,
       // which cannot catch it because the flag never reaches argv at all.
       console.log(`  ${D}If a consumer uses the pre-push audit hook, re-run \`npm run hooks:install -- --target <name>\` to pick up bundle hook changes.${X}`);
+      // Per consumer, read-only (the effective hook as git resolves it): which ones are actually stale, and the exact command.
+      for (const line of hookEpilogueLines(targetRepos)) console.log(`  ${Y}hook${X}  ${line}`);
     }
   }
 

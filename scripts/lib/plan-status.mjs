@@ -23,6 +23,7 @@ import path from 'node:path';
 // plan-authoring side while `status-vocabulary.mjs` is the single definition.
 // See status-vocabulary.mjs for the full rationale.
 import { PLAN_STATUS_VOCABULARY, toDbPlanStatus, DB_PLAN_STATUSES } from './status-vocabulary.mjs';
+import { selectByDeclaredPaths } from './plan-declared-paths.mjs';
 
 export { PLAN_STATUS_VOCABULARY, toDbPlanStatus, DB_PLAN_STATUSES };
 
@@ -344,24 +345,27 @@ function isSelectableName(name) {
  * identically), so >1 active reports the ambiguity via `opts.warn`.
  *
  * @param {string} plansDir - absolute path to docs/plans
- * @param {{warn?: (msg:string)=>void}} [opts]
- * @returns {{path:string}|null}
+ * Entries may carry their own `content` (hook v16: the plan files of the PUSHED commit, `plan-git-source.mjs`), in which case the
+ * working tree is not read; `opts.planFiles` supplies them.
+ *
+ * @param {{warn?: (msg:string)=>void, changedFiles?: string[]|null, planFiles?: Array<{name: string, abs: string, content?: string, mtimeMs?: number}>|null}} [opts]
+ * @returns {{path:string, boundBy?: string, why?: string}|null}
  */
 export function selectAuditPlan(plansDir, opts = {}) {
   const warn = opts.warn ?? (() => {});
-  const files = listPlanFiles(plansDir);
+  const files = opts.planFiles ?? listPlanFiles(plansDir);
   if (files === null) return null;
 
   const actives = [];
   const unparseable = [];
-  for (const { name, abs } of files) {
-    let content;
-    try { content = fs.readFileSync(abs, 'utf8'); } catch { continue; }
+  for (const { name, abs, content: given, mtimeMs: givenMtime } of files) {
+    let content = given;
+    if (typeof content !== 'string') { try { content = fs.readFileSync(abs, 'utf8'); } catch { continue; } }
     const { eligibility } = classifyPlanStatus(parsePlanStatus(content));
     if (eligibility === 'selectable') {
-      let mtimeMs = 0;
-      try { mtimeMs = fs.statSync(abs).mtimeMs; } catch { /* keep 0 */ }
-      actives.push({ path: abs, name, mtimeMs });
+      let mtimeMs = givenMtime ?? 0;
+      if (givenMtime === undefined) { try { mtimeMs = fs.statSync(abs).mtimeMs; } catch { /* keep 0 */ } }
+      actives.push({ path: abs, name, mtimeMs, content });
     } else if (eligibility === 'invisible') {
       // A plan whose Status prose doesn't match the vocabulary is INVISIBLE to
       // selection. Silently skipping it makes "no active plan to audit" a lie by
@@ -396,24 +400,41 @@ export function selectAuditPlan(plansDir, opts = {}) {
   // signal: /ship updates a plan's Status + implementation log in the same push
   // that implements it, so the implemented plan is normally IN the diff.
   const changed = normalizeChangedPlanNames(opts.changedFiles);
+  let pool = actives;   // the plans a declared-paths decision may choose among
+  let poolWhy = '';
   if (changed !== null) {
     const bound = actives.filter(a => changed.has(a.name));
     if (bound.length === 1) return { path: bound[0].path, boundBy: 'changed-file' };
     if (bound.length > 1) {
-      // Genuinely ambiguous. Refuse rather than guess — picking by mtime here is
-      // the exact coin-flip this block exists to remove.
-      warn(`${bound.length} active plans changed in this push (${bound.map(a => a.name).join(', ')}); refusing to guess which one this change implements. Audit explicitly, or set AUDIT_PREPUSH_PLAN=<path>.`);
-      return null;
+      // Several active plans were edited by this push. Mtime would be a coin-flip; the plans' own declared paths can still say which
+      // one the CODE changes belong to (v16), but only among these.
+      pool = bound;
+      poolWhy = `${bound.length} active plans changed in this push (${bound.map(a => a.name).join(', ')})`;
     }
-    // bound.length === 0 — nothing in this push touches an active plan. Fall
-    // through: a SINGLE active plan is still unambiguous (no guess required).
+    // bound.length === 0 - nothing in this push touches an active plan. Fall through: a SINGLE active plan is still unambiguous.
   }
 
-  if (actives.length === 1) return { path: actives[0].path, boundBy: 'sole-active-plan' };
+  if (bound0(changed, actives) && actives.length === 1) return { path: actives[0].path, boundBy: 'sole-active-plan' };
+
+  // v16: bind the choice to the CHANGE - the plan whose declared paths cover the pushed code files (plan-declared-paths.mjs).
+  if (changed !== null && Array.isArray(opts.changedFiles)) {
+    const d = selectByDeclaredPaths(pool, opts.changedFiles);
+    if (d.selected) {
+      const chosen = pool.find(a => a.name === d.selected.name);
+      return { path: chosen.path, boundBy: 'declared-paths', why: d.why };
+    }
+    warn(`${poolWhy ? `${poolWhy}; refusing to guess which one this change implements` : `>1 active plan (${actives.length}) and none of them changed in this push (${actives.map(a => a.name).join(', ')}); refusing to pick by mtime`}; not selected by declared paths either: ${d.why}. Audit explicitly, or set AUDIT_PREPUSH_PLAN=<path>.`);
+    return null;
+  }
 
   actives.sort((a, b) => (b.mtimeMs - a.mtimeMs) || a.name.localeCompare(b.name));
-  warn(`>1 active plan (${actives.length}) and none of them changed in this push (${actives.map(a => a.name).join(', ')}); refusing to pick by mtime — it is a heuristic, not the contract. Audit explicitly, or set AUDIT_PREPUSH_PLAN=<path>.`);
+  warn(`>1 active plan (${actives.length}) and none of them changed in this push (${actives.map(a => a.name).join(', ')}); refusing to pick by mtime - it is a heuristic, not the contract. Audit explicitly, or set AUDIT_PREPUSH_PLAN=<path>.`);
   return null;
+}
+
+/** True when the push is known and edited none of the active plans (so a sole active plan is unambiguous, as it always was). */
+function bound0(changed, actives) {
+  return changed === null || !actives.some(a => changed.has(a.name));
 }
 
 /**

@@ -87,6 +87,7 @@ import { SYNC_BRANCH_PREFIX } from './sync-divergence.mjs';
 import { classifyBundleFreshness, gatherSourceFacts, gatherGitignoreTransition, GITIGNORE_PATH, GITIGNORE_PATH_STATE, GITIGNORE_LEFT_BEHIND_REASON } from './sync-pr-facts.mjs';
 export { classifyBundleFreshness, gatherSourceFacts, gatherGitignoreTransition };
 import { createGitAncestry } from './sync-rollback-guard.mjs';
+import { SYNC_BUNDLE_TRAILER } from './prepush-lanes.mjs';
 // The base-lag oracle (and the runner / git helpers it shares with this module) lives in sync-base-lag.mjs, which the sync asks BEFORE
 // writing; re-exported here so `sync:pr` and every existing importer keep one door.
 import { spawnRunner, ok, why, parseSymrefHead, classifyBaseLag, gatherBaseFacts } from './sync-base-lag.mjs';
@@ -135,6 +136,9 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
     `Commits the tracked artifacts of the claude-engineering-skills sync at ${short}`,
     `(${surface.length} sync-owned path(s), content verified against scripts/.sync-manifest.json).`,
     'Opened by `npm run sync:pr` in the upstream repo; the sync itself never commits here.',
+    // Provenance the consumer's pre-push hook (v16 sync lane) verifies against the receipt in the pushed tree. NOT an `AI-*` trailer.
+    '',
+    `${SYNC_BUNDLE_TRAILER}: ${commitSha}`,
   ].join('\n');
   const body = [
     '## Summary',
@@ -475,7 +479,7 @@ const SUPERSEDE_LIST_FIELDS = 'number,url,headRefName,baseRefName,isCrossReposit
 const SHORT_SHA = /^[0-9a-f]{8}$/;
 const FULL_OID = /^[0-9a-f]{40}$/;
 /** The receipt and the sidecar are written by every sync but listed in neither. */
-const ALWAYS_SYNC_OWNED = new Set([RECEIPT_KEY, comparisonKey(OWNED_SIDECAR_RELATIVE_PATH)]);
+export const ALWAYS_SYNC_OWNED = new Set([RECEIPT_KEY, comparisonKey(OWNED_SIDECAR_RELATIVE_PATH)]);
 /** `upstreamDir` default: git discovers the upstream repo from this module's own directory. */
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 

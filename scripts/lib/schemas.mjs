@@ -1063,7 +1063,7 @@ const LedgerCoreFields = {
   // The ROOT topicId of the concern this entry was linked to via triage
   // `sameConcernAs` (concern-identity.mjs). Declared so no parse→persist path
   // strips it — the latestFindingId lesson above. Absent = its own concern.
-  concernId: z.string().optional(),
+  concernId: z.string().optional(), unresolvedConcernRef: z.string().optional(), // 2nd: the raw unresolvable sameConcernAs (fleet fac2); never read by suppression
   // The prior ruling's topicId this entry was declared DISTINCT from via triage
   // `newConcern: true`. Without it a newConcern ruling left no trace, so the
   // observation plan's "sample 5 newConcern rulings" could not be run

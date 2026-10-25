@@ -17,7 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 
 /**
  * Do two path strings denote the SAME directory?
@@ -56,6 +56,40 @@ function sameDirectory(a, b) {
   }
   if (process.platform === 'win32') return a.toLowerCase() === b.toLowerCase();
   return false;
+}
+
+/**
+ * Is `cwd` the root of a LINKED WORKTREE of the same repository whose main checkout holds the script (`expectedRoot`)?
+ *
+ * A consumer's tooling (`scripts/.claude-skills/`) is gitignored, so it exists in the main checkout only; a worker in a linked
+ * worktree ran the script from the main checkout and the cwd guard refused the worktree (fleet 619c), leaving the audit to read the
+ * WRONG tree. The question is "is cwd a working tree of this repo", answered by git: both directories report the same MAIN working tree
+ * (the first entry of `git worktree list`), and cwd is a worktree TOP-LEVEL (a subdirectory of the main checkout still refuses - the accident this guard exists
+ * for). Any git failure answers false: the guard stays strict.
+ *
+ * @param {string} cwd
+ * @param {string} expectedRoot
+ * @returns {boolean}
+ */
+function isLinkedWorktreeOf(cwd, expectedRoot) {
+  // This module is a BOOTSTRAP: every CLI imports it, a doctor fixture copies it with no sibling, and a consumer lays it out under
+  // scripts/.claude-skills/. It therefore depends on node builtins only - hence no shared env-sanitise helper: every GIT_* variable is
+  // dropped (a superset of the repo-pointing ones), so an inherited GIT_DIR cannot redirect either probe to another repository.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k)));
+  const git = (dir, args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  try {
+    // The first entry of `worktree list` is the MAIN working tree, from any worktree of the repository.
+    // -z: NUL-delimited and UNQUOTED. Without it git C-quotes a path holding non-ASCII or unusual characters, and the quoted text is not a path.
+    const main = (dir) => {
+      const first = execFileSync('git', ['-C', dir, 'worktree', 'list', '--porcelain', '-z'], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] }).split('\0')[0];
+      if (!first.startsWith('worktree ')) throw new Error('unexpected worktree list shape');
+      return fs.realpathSync.native(first.slice('worktree '.length));
+    };
+    if (main(cwd) !== main(expectedRoot)) return false;
+    return sameDirectory(git(cwd, ['rev-parse', '--show-toplevel']), cwd);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -113,6 +147,7 @@ export function assertRepoRoot(importMetaUrl, opts = {}) {
   if (env.AUDIT_ALLOW_FOREIGN_CWD === '1') return { root: expectedRoot, cwd };
 
   if (sameDirectory(cwd, expectedRoot)) return { root: expectedRoot, cwd };
+  if (isLinkedWorktreeOf(cwd, expectedRoot)) return { root: expectedRoot, cwd };
 
   const rel = path.relative(expectedRoot, scriptPath).replaceAll(path.sep, '/');
   stderr.write(
@@ -190,4 +225,4 @@ const _rootCache = new Map();
 /** Test-only: the cache is process-lifetime, so a test changing cwd must clear it. */
 export function _resetRepoRootCache() { _rootCache.clear(); }
 
-export const _internals = Object.freeze({ findExpectedRoot, sameDirectory });
+export const _internals = Object.freeze({ findExpectedRoot, sameDirectory, isLinkedWorktreeOf });

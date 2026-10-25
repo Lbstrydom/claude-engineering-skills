@@ -27,6 +27,8 @@ import {
 } from './lib/plan-status.mjs';
 import { resolvePushRange, branchOwnedChangedFiles } from './lib/push-range.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { gitPlanFiles } from './lib/plan-git-source.mjs';
+import { canonicalizeEol } from './lib/file-io.mjs';
 
 const PLANS_DIR = 'docs/plans';
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
@@ -64,6 +66,32 @@ function changedFilesForPush() {
   return owned.files;
 }
 
+/**
+ * The plan files of the commit being pushed, or `null` to use the working tree. Only a range git ITSELF handed the hook (trusted)
+ * names the pushed commit; an inferred one is a guess, and so is any git failure - both fall back to the working tree, said aloud.
+ * Fleet 4146: reading the working tree judged the wrong tree whenever the push came from a different checkout than the branch.
+ */
+const UNAVAILABLE = Symbol('pushed-plans-unavailable');
+function pushedPlanFiles() {
+  const range = resolvePushRange({});
+  if (!range.ok || !range.trusted) return null;
+  const files = gitPlanFiles({ head: range.head });
+  if (files === null) {
+    // A trusted pushed commit that cannot be read is NOT licence to read the working tree: that is the wrong-tree behaviour this exists to end.
+    process.stderr.write("  [plan-status] could not read the pushed commit's plans from git; refusing to substitute this checkout's working tree\n");
+    return UNAVAILABLE;
+  }
+  process.stderr.write(`  [plan-status] reading ${files.length} plan(s) from the pushed commit ${String(range.head).slice(0, 8)}, not the working tree\n`);
+  return files;
+}
+
+/** The audit receives a PATH and reads the checkout: a plan whose pushed content differs from (or is absent in) the checkout would be audited as another document. */
+function planMatchesCheckout(planFiles, absPath) {
+  const pushed = planFiles.find((p) => p.abs === absPath);
+  if (!pushed) return true;
+  try { return canonicalizeEol(fs.readFileSync(absPath)).equals(canonicalizeEol(Buffer.from(pushed.content, 'utf8'))); } catch { return false; }
+}
+
 function selectMode(dir) {
   const abs = path.resolve(dir);
 
@@ -80,12 +108,20 @@ function selectMode(dir) {
   }
 
   const changedFiles = changedFilesForPush();
+  const planFiles = pushedPlanFiles();
+  if (planFiles === UNAVAILABLE) { process.stderr.write('  [plan-status] no active plan to audit\n'); process.exit(0); }
   const sel = selectAuditPlan(abs, {
     warn: m => process.stderr.write(`  [plan-status] ${m}\n`),
     changedFiles,
+    planFiles,
   });
+  if (sel && planFiles && !planMatchesCheckout(planFiles, sel.path)) {
+    process.stderr.write(`  [plan-status] the pushed ${path.basename(sel.path)} differs from this checkout's copy (or is absent here) - the audit would read a different document than the one selected, so nothing is selected. Check out the pushed commit, or set AUDIT_PREPUSH_PLAN=<path>.\n`);
+    process.stderr.write('  [plan-status] no active plan to audit\n');
+    process.exit(0);
+  }
   if (sel) {
-    if (sel.boundBy) process.stderr.write(`  [plan-status] selected via ${sel.boundBy}\n`);
+    if (sel.boundBy) process.stderr.write(`  [plan-status] selected ${path.basename(sel.path)} via ${sel.boundBy}${sel.why ? `: ${sel.why}` : ''}\n`);
     process.stdout.write(path.relative(process.cwd(), sel.path).replace(/\\/g, '/') + '\n');
   } else {
     process.stderr.write('  [plan-status] no active plan to audit\n');
@@ -115,7 +151,14 @@ function lintMode(jsonOut, drift = false) {
   const dir = path.resolve(PLANS_DIR);
   // The same enumeration and the same classification the selector uses (lib/plan-status.mjs): audit summaries are
   // excluded, non-files are skipped, symlinks are followed. A file the lint passes is a file the selector can read.
-  const files = listPlanFiles(dir);
+  // Drift mode judges what is being PUSHED, so it reads the pushed commit's plans (fleet 4146); whole-tree mode is the working tree.
+  const pushed = drift ? pushedPlanFiles() : null;
+  if (pushed === UNAVAILABLE) {
+    console.error(`${R}plans:status${X} - the pushed commit's plans could not be read, so the push cannot be judged; not substituting the working tree`);
+    process.exitCode = 1;
+    return;
+  }
+  const files = pushed ?? listPlanFiles(dir);
   if (files === null) {
     if (jsonOut) console.log(JSON.stringify({ ok: false, error: `cannot read ${PLANS_DIR}` }));
     else console.error(`${R}cannot read ${PLANS_DIR}${X}`);
@@ -124,8 +167,8 @@ function lintMode(jsonOut, drift = false) {
   }
 
   const flagged = [];
-  for (const { name, abs } of files) {
-    const s = parsePlanStatus(fs.readFileSync(abs, 'utf8'));
+  for (const { name, abs, content } of files) {
+    const s = parsePlanStatus(typeof content === 'string' ? content : fs.readFileSync(abs, 'utf8'));
     // Fails INVALID only: a correctly formatted terminal plan (Complete/Superseded) is valid and merely not selectable,
     // and a file with no status-shaped line is not a plan.
     if (classifyPlanStatus(s).validity !== 'invalid') continue;
