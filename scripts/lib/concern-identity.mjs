@@ -72,6 +72,56 @@ function countsTowardHardSuppress(e) {
 }
 
 /**
+ * Union-find grouping: items sharing ANY link key are one group. The one
+ * grouping rule behind both the dismissed-entry concern index below and
+ * `clusterFindings`, so the two cannot drift.
+ *
+ * @template T
+ * @param {T[]} items
+ * @param {(item: T) => string[]} keysOf - link keys for one item
+ * @returns {number[][]} groups of item indices, each ascending, ordered by first member
+ */
+export function groupByLinkKeys(items, keysOf) {
+  const parent = items.map((_, i) => i);
+  const find = (i) => {
+    while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+    return i;
+  };
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[rb] = ra; };
+
+  const firstByKey = new Map();
+  items.forEach((item, i) => {
+    for (const key of keysOf(item)) {
+      if (firstByKey.has(key)) union(firstByKey.get(key), i); else firstByKey.set(key, i);
+    }
+  });
+
+  const byRoot = new Map();
+  items.forEach((_, i) => {
+    const r = find(i);
+    if (!byRoot.has(r)) byRoot.set(r, []);
+    byRoot.get(r).push(i);
+  });
+  return [...byRoot.values()];
+}
+
+/**
+ * Cluster raw audit findings into concerns: the same category key AND any
+ * shared file (the rule `buildConcernIndex` applies to dismissed entries), over
+ * findings from any number of rounds.
+ *
+ * @param {object[]} findings
+ * @returns {object[][]} groups of the original finding objects, ordered by first member
+ */
+export function clusterFindings(findings) {
+  const list = findings || [];
+  return groupByLinkKeys(list, (f) => {
+    const cat = normaliseCategoryKey(f.category);
+    return [...findingFiles(f)].map((file) => `catfile:${cat}|${file}`);
+  }).map((idxs) => idxs.map((i) => list[i]));
+}
+
+/**
  * Group dismissed entries into concerns. Two entries are one concern when the
  * adjudicator linked them (shared `concernId`, or one's `concernId` is the
  * other's `topicId`), or when they share a category key AND any file.
@@ -82,30 +132,23 @@ function countsTowardHardSuppress(e) {
  */
 export function buildConcernIndex(entries) {
   const members = (entries || []).filter(countsTowardHardSuppress);
-  const parent = members.map((_, i) => i);
-  const find = (i) => {
-    while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
-    return i;
-  };
-  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[rb] = ra; };
-
-  const firstByKey = new Map();
-  const link = (key, i) => (firstByKey.has(key) ? union(firstByKey.get(key), i) : firstByKey.set(key, i));
-  members.forEach((e, i) => {
-    link(`concern:${e.concernId || e.topicId}`, i);
-    const cat = normaliseCategoryKey(e.category);
-    for (const file of entryFiles(e)) link(`catfile:${cat}|${file}`, i);
-  });
+  const groups = groupByLinkKeys(members, (e) => [
+    `concern:${e.concernId || e.topicId}`,
+    ...entryFiles(e).map((file) => `catfile:${normaliseCategoryKey(e.category)}|${file}`),
+  ]);
 
   const byRoot = new Map();
-  members.forEach((e, i) => {
-    const r = find(i);
-    const g = byRoot.get(r) || { id: e.concernId || e.topicId, count: 0, linked: false, keys: [] };
-    g.count += 1;
-    g.linked ||= Boolean(e.concernId);
-    const cat = normaliseCategoryKey(e.category);
-    for (const file of entryFiles(e)) g.keys.push(`${cat}|${file}`);
-    byRoot.set(r, g);
+  groups.forEach((idxs, gi) => {
+    const first = members[idxs[0]];
+    const g = { id: first.concernId || first.topicId, count: 0, linked: false, keys: [] };
+    for (const i of idxs) {
+      const e = members[i];
+      g.count += 1;
+      g.linked ||= Boolean(e.concernId);
+      const cat = normaliseCategoryKey(e.category);
+      for (const file of entryFiles(e)) g.keys.push(`${cat}|${file}`);
+    }
+    byRoot.set(gi, g);
   });
 
   // A group's reach is every (category, file) pair any member covers, so a

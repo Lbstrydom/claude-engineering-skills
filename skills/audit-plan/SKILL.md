@@ -295,13 +295,14 @@ Use the count as a **secondary backstop**, read together with the rate:
 | HIGH count dropping | Continue (the classic converging case) |
 | R2+ findings push for v2 features, parser deps | **STOP** — record as "Out of Scope" |
 
-**Cap: 3 rounds by default, 5 absolute.** Exceed 3 only while the acceptance
-rate stays high AND the findings are concrete *design* defects; the same
-finding-character test the Gemini gate uses applies here — an
-**implementation-completeness** finding ("specify the store step", "where does
-the cooldown go") belongs to the code audit, which checks it against real code.
-Record the stop decision (round count + acceptance rate + why) in the plan's
-audit trail.
+**Cap: 3 rounds, 5 absolute — enforced by `openai-audit.mjs`.** Round 4 exits
+`4` (`CAPPED`) with a structural-or-stop card: a stop for a human call, never a
+retry (`references/round-cap-and-structural-card.md`). At round 3 without
+convergence run `node scripts/audit-structural-card.mjs --sid "$SID" --mode plan --plan "$PLAN_FILE"`
+and **present the card to the operator** with its three choices (STOP /
+STRUCTURAL / CONTINUE); continuing is their call. An **implementation-completeness**
+finding ("specify the store step") belongs to the code audit. Record the call
+(rounds, acceptance rate, card verdicts, why) in the plan's audit trail.
 
 When stopping with deferrals, append a `## Out of Scope (Future)` section to
 the plan listing deferred concerns with rationale.
@@ -328,39 +329,26 @@ Full writer invocation example + status field semantics: `references/ledger-form
 
 ## Step 3.5b — Record Triage Outcomes (closes the adaptive-learning loop)
 
-**Automatic for rounds 1..N-1 — no manual step.** Each R2+ invocation of
-`openai-audit.mjs plan` finalizes the **prior** round's accepted/dismissed
-outcomes from the ledger you just wrote (the same shared capture the code
-audit uses — plan audits create cloud `audit_runs` rows with `mode='plan'`
-since 2026-07-13, so plan-triage ground truth reaches the learning store,
-not just the local PlanFpTracker). Relies on the `…-r<N>-result.json`
-`--out` naming this skill already uses; best-effort — a failure logs and
-the audit proceeds.
+**Automatic — no manual step.** `write-ledger-entries.mjs` labels the round it
+just triaged (once every finding has a ruling) and each R2+ invocation of
+`openai-audit.mjs plan` re-checks the prior round idempotently, so the **final**
+round is labelled too (plan audits create `audit_runs` rows with `mode='plan'`).
+Best-effort: a failure logs `[finalize] WARN` and the audit proceeds. **Only if
+that line appeared**, run the manual fallback (`--result` is the round's result,
+`--ledger` the ledger from Step 3.5 — rulings must already be in it):
 
-> **Run unification (multi-round sessions)**: each invocation mints its own
-> cloud run row by default. To attach all rounds of one plan-audit session
-> to a single `audit_runs` row, mint one id up front and pass the SAME
-> `--run-id <uuid>` to every round's invocation (same contract as the code
-> audit / `/cycle`). Fragmented per-round rows are harmless for outcome
-> labeling (each round labels against its own row) but unify effectiveness
-> metrics when you bother.
-
-**Manual fallback — run ONLY when there is no "next round" to carry the
-capture** (the final converged round, or a 1-round audit):
+> **Run unification**: to attach all rounds to one `audit_runs` row, mint one
+> id up front and pass the SAME `--run-id <uuid>` every round (as the code audit
+> and `/cycle` do). The run's accepted/dismissed counts are recomputed
+> run-wide, so shared and per-round rows both read correctly.
 
 ```bash
 ROUND=2   # the round number just completed
 node scripts/write-code-outcomes.mjs --result ".audit/$SID-r$ROUND-result.json" --ledger .audit/$SID-ledger.json --round "$ROUND"
 ```
 
-> **Precondition: the ledger must already carry per-finding rulings.** This CLI
-> *records* adjudications; it does not make them. Run Step 3.5 first. With an
-> empty or all-`pending` ledger it reports `0/N findings labelled · cloud=ok`
-> and exits 0 — success-shaped, having closed nothing (reported live
-> 2026-08-08). It now prints a `WARN:` line naming which of the three causes
-> applies (no entries / all pending / ruled-but-unjoined identity mismatch) and
-> carries the same text as `warning` on its JSON. **`labelled: 0` with a
-> non-zero `total` is a failure to fix, never a pass.**
+`labelled: 0` with a non-zero `total` is a failure to fix, never a pass: the
+ledger had no rulings, or they did not join the findings.
 
 (The CLI is mode-agnostic — it works off the result+ledger artifacts;
 plan findings carry `pass: 'plan'`.) Additionally, still record dismissed
@@ -520,5 +508,6 @@ situations — read them only when the trigger applies.
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 6 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
+| `references/round-cap-and-structural-card.md` | Enforced GPT round cap (plan 3/5, code 6/8), exit 4 CAPPED, and the structural-or-stop card read at the cap. | A round exited 4, OR the audit reached round 3 without converging. |
 | `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — a prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 3 — applying the grounding rubric to a plan whose Code Trace cites `file:line`. |

@@ -586,3 +586,29 @@ Human call (pick one; record it in the plan's audit trail):
 | Final round labelled | `write-ledger-entries` against the fixture store | `labeled=true`, counts = triage | test |
 | Lint ≡ selector | shared fixture dir | identical eligibility per file | test |
 | Live check | after merge, query `audit_runs` for `past_cap_reason IS NOT NULL` and plan rows `labeled` at the final round | non-zero within one week of the sync | recorded in status.md by the coordinator |
+
+## Implementation notes (2026-10-25, deviations from the text above)
+
+Recorded where the build met the code; none changes a decision.
+
+- **`_suppression` is a count, not the findings.** A round result stores `{kept, suppressed, reopened}`, so the re-raised
+  findings are not on disk. Recurrence counts the findings that SURVIVED each round; suppressed re-raises are totalled and
+  reported (`N re-raise(s) suppressed (not clustered)`). The card says so.
+- **Readers.** The debt ledger, recurring clusters, pending triage and fleet proposals are read in-process
+  (`resolveDebtReadContext`/`loadAuthoritativeDebt`, the two strict readers, `readProposals`); upstream issues and
+  unremediated acceptances go through `gatherBacklogEnvelopes` (new optional `readers` argument, default unchanged);
+  architectural memory spawns `cross-skill.mjs get-neighbourhood`. No new cross-skill commands were needed.
+- **Corroboration** is a shared file or an architectural precedent. "A category match backed by a file match in another
+  source" (§2.2) is subsumed by the first, so it is not a separate rule.
+- **Plan findings name files loosely.** Bare names (`runs-findings.mjs`) resolve through `git ls-files` only when unique;
+  a finding that names no file clusters by cited plan section and shows `(no file named)`. Files raised in 3+ rounds are
+  listed separately because rewording defeats the category key (the AIO capture-inbox evidence).
+- **`audit-loop.mjs` plan mode is single-round,** so `--max-rounds` is validated for both modes but only the code loop uses it.
+  Its exit-4 stop is pinned by a source-contract test, because driving a child to a cap refusal would spend a real round 1.
+- **Persistence.** `recordPastCap` (new `scripts/lib/store/run-aggregates.mjs`, with `refreshRunAdjudicationCounts`) is
+  probe-guarded and fail-open; it is exempted in the durable-writer registry with that reason. `runs-findings.mjs` and
+  `openai-audit.mjs` are size-ratcheted, so the new store code and the usage text live in their own modules.
+- **`write-ledger-entries.mjs` finalizes only when the result carries `_cloudRunId`** and every finding has a ruling; a
+  local-only audit keeps the old path. `--no-finalize` opts out.
+- **The proof of "zero inference requests"** is `tests/fixtures/no-network-preload.mjs` (records and refuses fetch, TCP and
+  TLS), with its own positive-control test.

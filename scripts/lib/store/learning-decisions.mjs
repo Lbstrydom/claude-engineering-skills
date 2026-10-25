@@ -220,6 +220,50 @@ export async function readPendingTriageFindings({ repoId, limit = 100 }) {
   }
 }
 
+/**
+ * The STRICT sibling of {@link readPendingTriageFindings}: same view, but a
+ * failed query is `{ok:false}` and not `[]`. The structural-or-stop card needs
+ * to tell "nothing pending" from "could not ask" — the lenient reader renders
+ * both as an empty list. Cloud off is `{ok:true, cloud:false}`, never a result.
+ *
+ * @param {{repoId: string, limit?: number}} opts
+ * @returns {Promise<{ok: true, cloud: boolean, rows: object[]} | {ok: false, cloud: true, error: string}>}
+ */
+export async function readPendingTriageFindingsStrict({ repoId, limit = 1000 }) {
+  if (!repoId) throw new Error('repoId is required');
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
+  try {
+    const rows = await many(
+      `SELECT * FROM pending_triage_findings WHERE repo_id = $1 LIMIT $2`,
+      [repoId, limit],
+    );
+    return { ok: true, cloud: true, rows };
+  } catch (err) {
+    return { ok: false, cloud: true, error: err?.code ? `${err.code}: ${err.message}` : String(err?.message ?? err) };
+  }
+}
+
+/**
+ * Every OPEN recurring cluster for a repo (the existing readers return only
+ * stale ones or the 3+/HIGH view). Strict: a query failure is `{ok:false}`.
+ *
+ * @param {{repoId: string, limit?: number}} opts
+ * @returns {Promise<{ok: true, cloud: boolean, rows: object[]} | {ok: false, cloud: true, error: string}>}
+ */
+export async function readOpenRecurringClusters({ repoId, limit = 1000 }) {
+  if (!repoId) throw new Error('repoId is required');
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
+  try {
+    const rows = await many(
+      `SELECT * FROM recurring_finding_clusters WHERE repo_id = $1 AND status = 'open' ORDER BY occurrence_count DESC LIMIT $2`,
+      [repoId, limit],
+    );
+    return { ok: true, cloud: true, rows };
+  } catch (err) {
+    return { ok: false, cloud: true, error: err?.code ? `${err.code}: ${err.message}` : String(err?.message ?? err) };
+  }
+}
+
 export async function readNoBrainerRecommendations({ repoId, limit = 50 }) {
   if (!repoId) throw new Error('repoId is required');
   if (!await isCloudEnabled()) return [];

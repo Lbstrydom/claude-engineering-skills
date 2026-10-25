@@ -77,6 +77,8 @@ on:
       # Postgres transaction-abort behaviour, named explicitly since it doesn't
       # start with 'db-'.
       - 'tests/store-finding-write-db.test.mjs'
+      # Round cap (docs/plans/audit-round-cap-structural-or-stop.md §2.3): the run-wide recount's row-lock suite.
+      - 'tests/run-adjudication-counts-db.test.mjs'
       # ship-trains Phase 2: the binding query's real-Postgres suite; its name matches
       # no glob above, and scripts/lib/store/** does not cover the test file itself.
       - 'tests/ship-train-provenance.db.test.mjs'
@@ -140,6 +142,8 @@ on:
       # Postgres transaction-abort behaviour, named explicitly since it doesn't
       # start with 'db-'.
       - 'tests/store-finding-write-db.test.mjs'
+      # Round cap (docs/plans/audit-round-cap-structural-or-stop.md §2.3): the run-wide recount's row-lock suite.
+      - 'tests/run-adjudication-counts-db.test.mjs'
       # ship-trains Phase 2: the binding query's real-Postgres suite; its name matches
       # no glob above, and scripts/lib/store/** does not cover the test file itself.
       - 'tests/ship-train-provenance.db.test.mjs'
@@ -303,6 +307,7 @@ jobs:
             tests/campaign-quarantine.test.mjs \
             tests/candidate-audit-findings-window.test.mjs \
             tests/control-marker-acceptance-db.test.mjs \
+            tests/run-adjudication-counts-db.test.mjs \
             tests/db-schema-realization-live.test.mjs \
             tests/debt-alias-integration.test.mjs \
             tests/debt-authoritative-read-db.test.mjs \

@@ -36,6 +36,7 @@ import {
   recordAdjudicationEvent,
   updatePassStatsPostDeliberation,
   updateRunMeta,
+  refreshRunAdjudicationCounts,
 } from './learning-store.mjs';
 
 function parseArgs(argv) {
@@ -120,7 +121,7 @@ async function main() {
   // result's `_cloudRunId` are present; pass null when cloud is off so it cleanly
   // degrades to the local `.audit/outcomes.jsonl` write.
   const store = cloud
-    ? { recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta }
+    ? { recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta, refreshRunAdjudicationCounts }
     : null;
 
   // Delegate to the single shared finalize (same logic as the orchestrator + /cycle).

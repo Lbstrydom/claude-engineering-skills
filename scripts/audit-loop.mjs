@@ -25,6 +25,8 @@ import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib
 import { formatCoverageSuffix, coverageMissingNote } from './lib/coverage-format.mjs';
 import { COVERAGE_CONVERGENCE_REASONS } from './lib/audit/convergence.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { AUDIT_ROUND_CAPS, EXIT_CAPPED, parseRoundFlag, readFlagValue, validateAuditRound } from './lib/audit/round-cap.mjs';
+import { finishAndExit } from './lib/cli-io.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -152,7 +154,8 @@ function parseArgs(argv) {
   const args = {
     mode: argv[0],         // 'code' or 'plan'
     planFile: argv[1],
-    maxRounds: 4,
+    maxRounds: 4,          // replaced in main() by the strict, mode-aware parse (parseRoundFlag)
+    pastCap: null,
     skipGemini: false,
     scope: null,           // null = use openai-audit default (diff)
     base: null,
@@ -168,7 +171,8 @@ function parseArgs(argv) {
 
   for (let i = 2; i < argv.length; i++) {
     switch (argv[i]) {
-      case '--max-rounds': args.maxRounds = Number.parseInt(argv[++i], 10); break;
+      case '--max-rounds': i++; break;   // parsed strictly in main() by parseRoundFlag
+      case '--past-cap': args.pastCap = argv[++i] ?? ''; break;
       case '--skip-gemini': args.skipGemini = true; break;
       case '--scope': args.scope = argv[++i]; break;
       case '--base': args.base = argv[++i]; break;
@@ -196,7 +200,8 @@ async function main() {
     console.error('Usage: node scripts/audit-loop.mjs <code|plan> <plan-file> [options]');
     console.error('');
     console.error('Options:');
-    console.error('  --max-rounds <n>        Max audit rounds (default: 4)');
+    console.error('  --max-rounds <n>        Max audit rounds (default: min(4, soft cap): plan 3, code 4; soft cap plan 3 / code 6, absolute 5 / 8)');
+    console.error('  --past-cap "<reason>"    Required with --max-rounds above the soft cap; recorded on the run');
     console.error('  --skip-gemini           Skip Step 7 (Gemini final review)');
     console.error('  --scope <diff|plan|full> Audit scope (default: diff)');
     console.error('  --base <ref>            Git base ref for diff (default: HEAD~1)');
@@ -212,6 +217,15 @@ async function main() {
     console.error(`${R}Plan file not found:${X} ${args.planFile}`);
     process.exit(1);
   }
+
+  // Round cap: --max-rounds is strict (no parseInt coercion), defaults per mode, and anything above the soft cap needs
+  // --past-cap — refused at STARTUP, not mid-loop. A child round that exits CAPPED stops the loop (see the run below).
+  const capsForMode = AUDIT_ROUND_CAPS[args.mode];
+  const maxRoundsRes = parseRoundFlag(rawArgs, '--max-rounds', Math.min(4, capsForMode?.soft ?? 4));
+  if (!maxRoundsRes.ok) { console.error(`${R}${maxRoundsRes.error}${X}`); process.exit(1); }
+  args.maxRounds = maxRoundsRes.value;
+  const startCap = validateAuditRound({ mode: args.mode, round: args.maxRounds, pastCapReason: readFlagValue(rawArgs, '--past-cap').present ? (args.pastCap ?? '') : null });
+  if (!startCap.ok) { console.error(`${R}[${startCap.code}]${X} --max-rounds ${args.maxRounds}: ${startCap.error}`); process.exit(startCap.exitCode); }
 
   // Step 0 — Pre-flight checks
   banner(`AUDIT LOOP — ${args.mode.toUpperCase()} — Pre-flight`);
@@ -307,6 +321,7 @@ async function main() {
     if (args.passes) auditArgs.push('--passes', args.passes);
     if (args.noTools) auditArgs.push('--no-tools');
     if (args.strictLint) auditArgs.push('--strict-lint');
+    if (args.pastCap && capsForMode && round > capsForMode.soft) auditArgs.push('--past-cap', args.pastCap);
 
     // Step 2 — Run audit
     banner(`ROUND ${round} — GPT-5.4 Audit`);
@@ -316,6 +331,12 @@ async function main() {
     try {
       execFileSync('node', fullAuditArgs, { stdio: 'inherit', timeout: 600000 });
     } catch (err) {
+      // A cap stop is a human call, never a retry: stop the whole loop and carry the code out.
+      if (err?.status === EXIT_CAPPED) {
+        console.error(`
+${R}Round ${round} stopped at the round cap${X} — read the structural-or-stop card above. Not retrying.`);
+        await finishAndExit(EXIT_CAPPED);
+      }
       console.error(`${Y}Round ${round} audit exited with errors${X} — checking results...`);
     }
 
