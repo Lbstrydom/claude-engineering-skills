@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  parsePlanStatus, selectAuditPlan, isAuditSummary, checkPlanDependencies,
+  parsePlanStatus, selectAuditPlan, classifyPlanStatus, listPlanFiles, checkPlanDependencies,
 } from './lib/plan-status.mjs';
 import { resolvePushRange, branchOwnedChangedFiles } from './lib/push-range.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
@@ -113,25 +113,22 @@ function selectMode(dir) {
  */
 function lintMode(jsonOut, drift = false) {
   const dir = path.resolve(PLANS_DIR);
-  let names;
-  try { names = fs.readdirSync(dir).filter(n => n.endsWith('.md')); }
-  catch (err) {
-    if (jsonOut) console.log(JSON.stringify({ ok: false, error: `cannot read ${PLANS_DIR}: ${err.message}` }));
-    else console.error(`${R}cannot read ${PLANS_DIR}: ${err.message}${X}`);
-    process.exit(2);
+  // The same enumeration and the same classification the selector uses (lib/plan-status.mjs): audit summaries are
+  // excluded, non-files are skipped, symlinks are followed. A file the lint passes is a file the selector can read.
+  const files = listPlanFiles(dir);
+  if (files === null) {
+    if (jsonOut) console.log(JSON.stringify({ ok: false, error: `cannot read ${PLANS_DIR}` }));
+    else console.error(`${R}cannot read ${PLANS_DIR}${X}`);
+    process.exitCode = 2;   // return, don't process.exit(): a piped stdout may not have flushed the envelope above
+    return;
   }
 
   const flagged = [];
-  for (const name of names) {
-    if (isAuditSummary(name)) continue;                 // exempt
-    const abs = path.join(dir, name);
-    // A subdirectory named `*.md` would EISDIR on readFileSync (G1) — skip
-    // non-files. Shallow, like selection.
-    try { if (!fs.statSync(abs).isFile()) continue; } catch { continue; }
-    const content = fs.readFileSync(abs, 'utf8');
-    const s = parsePlanStatus(content);
-    if (s.ok) continue;
-    if (s.reason === 'absent') continue;                // not a plan; not a failure
+  for (const { name, abs } of files) {
+    const s = parsePlanStatus(fs.readFileSync(abs, 'utf8'));
+    // Fails INVALID only: a correctly formatted terminal plan (Complete/Superseded) is valid and merely not selectable,
+    // and a file with no status-shaped line is not a plan.
+    if (classifyPlanStatus(s).validity !== 'invalid') continue;
     flagged.push({ file: `${PLANS_DIR}/${name}`, reason: s.reason, message: s.message });
   }
 
@@ -157,7 +154,7 @@ function lintMode(jsonOut, drift = false) {
   if (jsonOut) {
     console.log(JSON.stringify({
       ok: gating.length === 0, mode: drift ? 'drift' : 'all',
-      checked: names.length, flagged, gating, preExisting, driftBaseKnown,
+      checked: files.length, flagged, gating, preExisting, driftBaseKnown,
     }, null, 2));
     process.exit(gating.length === 0 ? 0 : 1);
   }
@@ -173,7 +170,7 @@ function lintMode(jsonOut, drift = false) {
   }
 
   if (gating.length === 0) {
-    if (!drift) console.log(`${G}✓${X} plans:status — ${names.length} file(s), all Status lines conform (or are exempt).`);
+    if (!drift) console.log(`${G}✓${X} plans:status — ${files.length} file(s), all Status lines conform (or are exempt).`);
     process.exit(0);
   }
   console.error(`\n${R}${B}✗ plans:status${X} — ${gating.length} non-conforming Status line(s)${drift ? ' in this push' : ''}:\n`);

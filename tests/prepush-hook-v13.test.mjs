@@ -168,7 +168,7 @@ describe('classifyNoPlanPush / decideNoPlanGate - nothing to select is UNMEASURE
     const d = decideNoPlanGate({ files: ['src/a.js', 'docs/readme.md'], env: {} });
     assert.equal(d.allow, false);
     const text = d.lines.join('\n');
-    assert.match(text, /UNMEASURED: no plan was selected for this push \(none changed in it among several active, or none active\).*1 code file\(s\) in the push \(src\/a\.js\)/);
+    assert.match(text, /UNMEASURED: no plan was selected for this push \(no single active plan could be chosen: none is active, or several are and the push does not single one out\).*1 code file\(s\) in the push \(src\/a\.js\)/);
     assert.match(text, /AUDIT_PREPUSH_ALLOW_UNMEASURED=1/);
     assert.doesNotMatch(text, /noise/i);
   });
@@ -456,5 +456,28 @@ describe('auditReuseLine - the REAL runner path reads patch bytes losslessly (au
       git(['cherry-pick', audited], dir);
       assert.equal(await auditReuseLine({ env: env(), cwd: dir, readConvergence: converged }), 'reuse-equivalent audit-run-0042 2 1');
     } finally { rmrf(dir); }
+  });
+});
+
+describe('the no-plan refusal names the way out (p-1ad3 (a))', async () => {
+  const { PLAN_OVERRIDE_ENV } = await import('../scripts/lib/prepush-audit-gate.mjs');
+  const refusal = (extra = {}) => decideNoPlanGate({ files: ['src/a.js'], env: {}, ...extra }).lines.join('\n');
+
+  it('puts AUDIT_PREPUSH_PLAN first, as a runnable command, before the UNMEASURED override', () => {
+    const text = refusal();
+    assert.equal(PLAN_OVERRIDE_ENV, 'AUDIT_PREPUSH_PLAN');
+    assert.match(text, /AUDIT_PREPUSH_PLAN=docs\/plans\/<plan>\.md git push/);
+    assert.ok(text.indexOf('AUDIT_PREPUSH_PLAN') < text.indexOf(UNMEASURED_OVERRIDE_ENV), 'the measured fix is offered before the unmeasured one');
+  });
+
+  it('an override that points at a missing file is named as the reason (it selects nothing)', () => {
+    const text = refusal({ env: { AUDIT_PREPUSH_PLAN: 'docs/plans/nope.md' }, exists: () => false });
+    assert.match(text, /AUDIT_PREPUSH_PLAN=docs\/plans\/nope\.md does not exist/);
+  });
+
+  it('an override that exists is not blamed, and the generic reason is honest about both ways to get here', () => {
+    const text = refusal({ env: { AUDIT_PREPUSH_PLAN: 'docs/plans/real.md' }, exists: () => true });
+    assert.doesNotMatch(text, /does not exist/);
+    assert.match(text, /none is active, or several are and the push does not single one out/);
   });
 });

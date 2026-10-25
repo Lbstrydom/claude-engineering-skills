@@ -1,7 +1,7 @@
 {
   "_description": "Reachable `process.exit()` sites preceded by a stdout write, per scripts/check-stdout-flush.mjs. Drift-only ratchet: a net-new site fails, and so does an unrecorded shrink. Shrink this list; never grow it. Re-baseline deliberately with --update. The fix for an entry is `await finishAndExit(code)` from scripts/lib/cli-io.mjs.",
-  "total": 209,
-  "envelope": 100,
+  "total": 208,
+  "envelope": 99,
   "files": {
     "scripts/audit-full.mjs": 4,
     "scripts/audit-loop.mjs": 2,
@@ -25,7 +25,7 @@
     "scripts/check-mcp-parity.mjs": 1,
     "scripts/check-model-freshness.mjs": 5,
     "scripts/check-npm-run-args.mjs": 2,
-    "scripts/check-plan-status.mjs": 5,
+    "scripts/check-plan-status.mjs": 4,
     "scripts/check-rls.mjs": 3,
     "scripts/check-setup.mjs": 1,
     "scripts/check-skill-consumer-refs.mjs": 3,
@@ -152,7 +152,6 @@
     "scripts/check-npm-run-args.mjs::main::console.log->exit(dynamic)#1",
     "scripts/check-plan-status.mjs::selectMode[if>then]::process.stdout.write->exit(0)#1",
     "scripts/check-plan-status.mjs::selectMode::process.stdout.write->exit(0)#1",
-    "scripts/check-plan-status.mjs::lintMode[try>catch]::console.log->exit(2)#1",
     "scripts/check-plan-status.mjs::lintMode[if>then]::console.log->exit(dynamic)#1",
     "scripts/check-plan-status.mjs::lintMode[if>then]::console.log->exit(0)#1",
     "scripts/check-rls.mjs::main[if>then]::process.stdout.write->exit(0)#1",

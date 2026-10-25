@@ -249,13 +249,20 @@ export function classifyNoPlanPush({ files } = {}) {
  * @param {{files: string[]|null, env?: Record<string, string|undefined>, selectorFailed?: boolean}} input `selectorFailed`: the plan
  *   selector itself errored (e.g. a malformed Status), which is no plan selected for a different reason and is named as such
  */
-export function decideNoPlanGate({ files, env = {}, selectorFailed = false }) {
+export const PLAN_OVERRIDE_ENV = 'AUDIT_PREPUSH_PLAN';
+
+export function decideNoPlanGate({ files, env = {}, selectorFailed = false, exists = () => true }) {
   const c = classifyNoPlanPush({ files });
   if (c.exempt) return { allow: true, lines: [`[prepush-hook] no plan to audit, and the push carries nothing a code audit reads: ${c.why} - code audit skipped`] };
   const shown = c.codeFiles === null
     ? 'the pushed file list could not be established (no push range from git), so it cannot be shown to be docs or bookkeeping'
     : `${c.codeFiles.length} code file(s) in the push (${c.codeFiles.slice(0, 5).join(', ')}${c.codeFiles.length > 5 ? ', ...' : ''})`;
-  const why = selectorFailed ? 'the plan selector failed (its error is above)' : 'none changed in it among several active, or none active';
+  // The override is read in exactly one place (check-plan-status.mjs --select) and a missing file selects NOTHING, so name that
+  // case: telling the operator "none changed among several active" when they HAD set the override sends them hunting.
+  const override = String(env[PLAN_OVERRIDE_ENV] ?? '').trim();
+  const why = selectorFailed ? 'the plan selector failed (its error is above)'
+    : override && !exists(override) ? `${PLAN_OVERRIDE_ENV}=${override} does not exist`
+      : 'no single active plan could be chosen: none is active, or several are and the push does not single one out';
   const head = `UNMEASURED: no plan was selected for this push (${why}), so no code audit ran - ${shown}.`;
   if (env[UNMEASURED_OVERRIDE_ENV] === '1') {
     return {
@@ -272,7 +279,8 @@ export function decideNoPlanGate({ files, env = {}, selectorFailed = false }) {
       '',
       `✗  [prepush-hook] ${head}`,
       '   The code audit is keyed to a plan in docs/plans/. A gate that did not run is not a pass.',
-      '   Either touch the plan this work belongs to in the push (or leave exactly one plan with an active Status), so the selector can pick it,',
+      `   Name the plan this work belongs to - an explicit override always wins: ${PLAN_OVERRIDE_ENV}=docs/plans/<plan>.md git push`,
+      '   or touch that plan in the push (or leave exactly one plan with an active Status), so the selector can pick it,',
       `   or push this one UNMEASURED on purpose: ${UNMEASURED_OVERRIDE_ENV}=1 git push (recorded in the output), or skip every hook step: git push --no-verify.`,
       '',
     ],

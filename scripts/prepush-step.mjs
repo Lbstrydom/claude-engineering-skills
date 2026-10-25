@@ -117,7 +117,7 @@ export function noPlanExit({ env = process.env, cwd = process.cwd(), gitFn = git
       files = gitFn(cwd, ['diff', '--name-only', '--no-renames', '-z', `${range.base}..${range.head}`]).split('\0').filter(Boolean);
     }
   } catch { files = null; }
-  const decision = decideNoPlanGate({ files, env, selectorFailed });
+  const decision = decideNoPlanGate({ files, env, selectorFailed, exists: (p) => fs.existsSync(path.resolve(cwd, p)) });
   for (const l of decision.lines) write(l);
   return decision.allow ? 0 : 1;
 }
