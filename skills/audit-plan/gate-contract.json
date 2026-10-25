@@ -4,8 +4,17 @@
   "gates": [
     {
       "id": "round-caps",
-      "kind": "document-only",
-      "reason": "The GPT cap (max 3 rounds, stop unless HIGH is actively dropping) and the symmetric Gemini cap (max 2 rounds) are enforced by the MODEL following the skill — it decides each round whether findings still warrant continuing. There is no CLI exit code or counter a cli-exit recipe can assert; the caps live in the agent's judgement, not a mechanical seam. Document-only is the honest disposition."
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "statedIn": "skills/audit-plan/SKILL.md",
+      "stated": "**Cap: 3 rounds, 5 absolute — enforced by `openai-audit.mjs`.** Round 4 exits",
+      "implementation": "scripts/openai-audit.mjs",
+      "scenario": "round-cap-plan-refusal",
+      "tests": [
+        "tests/gate-honesty.test.mjs",
+        "tests/audit-round-cap-cli.test.mjs"
+      ],
+      "proof": "process"
     },
     {
       "id": "mode-plan-required",
@@ -30,10 +39,6 @@
       "reason": "The worktree-preflight marker block's inlined `skills:hydrate` recipe. Every node one-liner carries `require` and `process.exit`, two ENFORCEMENT_VERBS, and no phrasing of a runnable recipe avoids them — the verbs are JavaScript here, not an enforcement claim about this skill. The recipe is inlined rather than cited because in an unadopted consumer both of the old pointers are dead at once (no `skills:hydrate` script yet, and `docs/runbooks/` is not synced), so a skill file is the only carrier that reaches the reader. Byte-identical across all 16 contracts by construction: it is generated from CONSUMER_HYDRATE_NPM_SCRIPT via MARKER_BLOCK, and `checkSkill` pins the block in every copy."
     },
     {
-      "line": "> **Precondition: the ledger must already carry per-finding rulings.** This CLI",
-      "reason": "Step 3.5b documents an INPUT precondition of write-code-outcomes.mjs, not a gate the skill enforces. The CLI records rulings and cannot make them; with an un-adjudicated ledger it labels nothing and exits 0 deliberately (telemetry must never fail a run). What it now does — name which of three causes applies, on stderr and as `warning` on the JSON — is advisory output, with no exit code for a cli-exit recipe to bind. All three diagnosis branches were exercised live on 2026-08-08 (empty ledger / all-pending / ruled-but-unjoined)."
-    },
-    {
       "line": "> and exits 0 — success-shaped, having closed nothing (reported live",
       "reason": "Continuation of the same precondition block: the narrative of the reported defect (0/N labelled reading as success). Not a separate claim, and deliberately not a new exit code — a telemetry CLI that fails a run is worse than one that warns."
     },
@@ -48,10 +53,6 @@
     {
       "line": "the independent Gemini gate scoring the deliberation \"exemplary… no false",
       "reason": "Field evidence for why the count rule was wrong (the reported session's H:5→5→6 with 23/23 accepted). A citation, not a rule."
-    },
-    {
-      "line": "**Cap: 3 rounds by default, 5 absolute.** Exceed 3 only while the acceptance",
-      "reason": "The round cap itself — already contracted as the document-only round-caps gate; this is its restated numeric form after the acceptance-rate rework. Still enforced by the model round-by-round, still no counter a cli-exit recipe can read."
     },
     {
       "line": "finding-character test the Gemini gate uses applies here — an",
@@ -108,6 +109,26 @@
     {
       "line": "Run the final reviewer — the newest Gemini Pro by default (`latest-pro`, resolved at runtime; override with `FINAL_REVIEW_MODEL`) as the final gate. Falls back to Claude Opus when",
       "reason": "Describes which model the final reviewer runs and how to change it (the latest-pro default, the FINAL_REVIEW_MODEL override, the Opus fallback) - configuration, not an enforcement claim. Reworded 2026-10-10 from the stale \"Run Gemini 3.1 Pro as the final gate\"; the word override names an env var, not a bypass. The model default itself is pinned by tests/final-review-env-alias.test.mjs; the gate being MANDATORY is dispositioned separately."
+    },
+    {
+      "line": "`labelled: 0` with a non-zero `total` is a failure to fix, never a pass: the",
+      "reason": "Step 3.5b documents an INPUT precondition of write-code-outcomes.mjs, not a gate the skill enforces. The CLI records rulings and cannot make them; with an un-adjudicated ledger it labels nothing and exits 0, so the skill tells the operator to read `labelled: 0` with a non-zero `total` as a failure. The CLI prints a WARN naming the cause. Re-worded 2026-10-25 when write-ledger-entries began labelling the triaged round itself; the sentence is the same warning, shorter."
+    },
+    {
+      "line": "`4` (`CAPPED`) with a structural-or-stop card: a stop for a human call, never a",
+      "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
+    },
+    {
+      "line": "retry (`references/round-cap-and-structural-card.md`). At round 3 without",
+      "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
+    },
+    {
+      "line": "`--ledger` the ledger from Step 3.5 — rulings must already be in it):",
+      "reason": "A wrapped line of the Step 3.5b manual-fallback instruction: it tells the operator what to pass to write-code-outcomes.mjs and that rulings must already exist (an INPUT precondition of that CLI, not a gate this skill enforces)."
+    },
+    {
+      "line": "| `references/round-cap-and-structural-card.md` | Enforced GPT round cap (plan 3/5, code 6/8), exit 4 CAPPED, and the structural-or-stop card read at the cap. | A round exited 4, OR the audit reached round 3 without converging. |",
+      "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
     }
   ]
 }

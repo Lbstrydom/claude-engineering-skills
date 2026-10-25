@@ -250,6 +250,20 @@
       "statedIn": "skills/audit-code/SKILL.md",
       "stated": "| Summary line ends `— not convergence evidence` (changed lines, an unrecognised file type, or a `--require` subject not read in full) | **Not stable, whatever H/M/L say** — the change was not read (`changed-lines-unread` / `unrecognised-files-unreviewed` / `required-subjects-not-full`). Re-run short files with `--files`; too big alone → report not converged. Unrecognised type: `.auditignore` it or report upstream. Required subject: fix the read, never `.auditignore` it |",
       "reason": "Mechanically enforced AND wired (docs/plans/audit-hunk-window-coverage.md D9): evaluateConvergenceWithDetectors (scripts/lib/audit/convergence.mjs) returns `changed-lines-unread` when the round's `_coverage` measures changed lines no completed pass rendered (changedLinesUnreadTotal in scripts/lib/coverage-format.mjs), and `unrecognised-files-unreviewed` when a changed file of an unrecognised type was never sent to any pass (unreviewedUnrecognisedFiles, same module; upstream 57bd3de9; the verdict stays PASS); finding-assembly.mjs passes the ledger, run-persistence.mjs withholds round_converged_after (so AI-Gate passed/converged refuse) and run-finalization.mjs puts `_convergence` on the round JSON; formatAuditSummaryLine prints \"not convergence evidence\" beside the verdict. Pinned by tests/file-coverage.test.mjs (the oracle, incl. budget-omitted and policy-excluded files) and tests/coverage-orchestrator.test.mjs (end to end through the orchestrator). Document-only for the same reason as coverage-gate-fail-incomplete: the closed oracle registry has no ledger-fixture oracle. The same row now also covers `required-subjects-not-full` (docs/plans/copilot-feedback-item4.md Cluster A): evaluateConvergenceWithDetectors returns it when `_coverage.requiredSubjects.notFull` is non-empty (requiredSubjectsNotFull, scripts/lib/coverage-format.mjs), COVERAGE_CONVERGENCE_REASONS makes audit-loop refuse it, pinned by tests/required-subjects.test.mjs and tests/required-subjects-egress.test.mjs."
+    },
+    {
+      "id": "round-caps",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "statedIn": "skills/audit-code/SKILL.md",
+      "stated": "**Max 6 rounds for code audits, 8 absolute — enforced by `openai-audit.mjs`.** Round 7 exits `4` (`CAPPED`) with",
+      "implementation": "scripts/openai-audit.mjs",
+      "scenario": "round-cap-code-refusal",
+      "tests": [
+        "tests/gate-honesty.test.mjs",
+        "tests/audit-round-cap-cli.test.mjs"
+      ],
+      "proof": "process"
     }
   ],
   "ignoredCandidates": [
@@ -316,10 +330,6 @@
     {
       "line": "| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. ALSO Step 6 — about to emit the convergence report's pass/wave census, to apply §7's named-state rule. |",
       "reason": "A REFERENCE-TABLE row. The 'Read when' cell describes when to open a reference file; it asserts nothing this skill enforces and produces no exit code. The enforcement verb is incidental to a trigger description. (Text extended 2026-08-20 to add the Step 6 trigger — same disposition, updated to match the new cell text verbatim.)"
-    },
-    {
-      "line": "> **Precondition: the ledger must already carry per-finding rulings.** This CLI",
-      "reason": "Step 3.5b documents an INPUT precondition of write-code-outcomes.mjs, not a gate the skill enforces. The CLI records rulings and cannot make them; with an un-adjudicated ledger it labels nothing and exits 0 deliberately (telemetry must never fail a run). What it now does — name which of three causes applies, on stderr and as `warning` on the JSON — is advisory output, with no exit code for a cli-exit recipe to bind. All three diagnosis branches were exercised live on 2026-08-08 (empty ledger / all-pending / ruled-but-unjoined)."
     },
     {
       "line": "> and exits 0 — success-shaped, having closed nothing (reported live",
@@ -516,6 +526,26 @@
     {
       "line": "against). Optional flags: `--scope diff|plan|full`, `--require <paths>` (must-read files; any not FULL withholds convergence).",
       "reason": "Documents the `--require` flag in the input line. The enforcement it names (any subject not FULL withholds convergence) is the `required-subjects-not-full` reason covered by the changed-lines-unread-blocks-convergence gate above and pinned by tests/required-subjects.test.mjs; this line only advertises the flag."
+    },
+    {
+      "line": "(Step 3.5): **`labelled: 0` with a non-zero `total` is a failure to fix, never a pass.**",
+      "reason": "Step 3.5b documents an INPUT precondition of write-code-outcomes.mjs, not a gate the skill enforces. The CLI records rulings and cannot make them; with an un-adjudicated ledger it labels nothing and exits 0, so the skill tells the operator to read `labelled: 0` with a non-zero `total` as a failure. The CLI prints a WARN naming the cause. Re-worded 2026-10-25 when write-ledger-entries began labelling the triaged round itself; the sentence is the same warning, shorter."
+    },
+    {
+      "line": "a structural-or-stop card: a stop for a human call, never a retry. At round 6 without convergence run",
+      "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
+    },
+    {
+      "line": "operator (STOP / STRUCTURAL / CONTINUE); continuing is their call (`references/round-cap-and-structural-card.md`).",
+      "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
+    },
+    {
+      "line": "local append is marker-guarded). The ledger must already carry per-finding rulings",
+      "reason": "A wrapped line of the Step 3.5b manual-fallback instruction: it tells the operator what to pass to write-code-outcomes.mjs and that rulings must already exist (an INPUT precondition of that CLI, not a gate this skill enforces)."
+    },
+    {
+      "line": "| `references/round-cap-and-structural-card.md` | Enforced GPT round cap (plan 3/5, code 6/8), exit 4 CAPPED, and the structural-or-stop card read at the cap. | A round exited 4, OR the audit reached round 6 without converging. |",
+      "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
     }
   ]
 }

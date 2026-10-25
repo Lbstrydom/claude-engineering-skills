@@ -66,7 +66,8 @@ const PINNED_EXECUTABLE = {
   // refuses a dismissal beside an earlier dismissal with no concern decision.
   // Same shape as the one above: the trigger is files on disk (a ledger, a
   // round result carrying _priorRuling, a triage), so cli-exit builds it outright.
-  'audit-code': ['convergence-threshold', 'tiered-shadow-window-honesty', 'debt-capture-partial-refusal', 'concern-decision-required'],
+  // `round-caps` (2026-10-25): the GPT round cap is enforced in code (openai-audit exit 4), no longer document-only.
+  'audit-code': ['convergence-threshold', 'tiered-shadow-window-honesty', 'debt-capture-partial-refusal', 'concern-decision-required', 'round-caps'],
   'visual-audit': ['static-gate-refusal', 'empty-capture-unverified', 'gate-unverified-reasons'],
   // gate-contract-authoring.md Phase B exemplar — the two ai-context-management
   // exit-map scenarios (one per outcome, R3-H1).
@@ -79,7 +80,7 @@ const PINNED_EXECUTABLE = {
   investigate: [],
   skills: [],
   // Phase C — document-only skills (no executable gate).
-  'audit-plan': [],
+  'audit-plan': ['round-caps'],
   'security-strategy': [],
   // Phase C — brainstorm's argv-error executable gate.
   brainstorm: ['argv-error-exit'],
@@ -128,7 +129,7 @@ const PINNED_DOCUMENT_ONLY = {
   // disposition; the silence IS the defect the step documents (0 of 55 plan
   // runs carried a verdict before it), and claiming enforcement would be the
   // fake-check class this suite exists to catch.
-  'audit-plan': ['round-caps', 'mode-plan-required', 'final-gate-mandatory', 'run-id-arms-verdict-writeback'],
+  'audit-plan': ['mode-plan-required', 'final-gate-mandatory', 'run-id-arms-verdict-writeback'],
   'security-strategy': ['write-gated-on-round-trip-parse', 'never-include-real-secrets', 'never-inflate-threat-model', 'on-demand-non-blocking'],
   brainstorm: ['artifact-sensitive-path-refusal', 'exit-0-on-provider-failure'],
   'click-test': ['verdict-precedence', 'arg-validation-refusals', 'capability-abort', 'scanner-error-caps'],
@@ -260,7 +261,7 @@ describe('gate-honesty — real skills/', () => {
     // 15 -> 16: +1 audit-code (concern-decision-required, /audit-code Step 3.5,
     //   2026-09-22). The stderr match ('no concern decision') is load-bearing --
     //   exit 2 is also this CLI's code for argv and schema errors.
-    assert.equal(totalExecutable, 16); // +1 ux-lock strict-selectors (Phase C final)
+    assert.equal(totalExecutable, 18); // +1 ux-lock strict-selectors (Phase C final); +2 round-caps (audit-plan, audit-code; 2026-10-25)
     // 35 → 36: +1 ship (unremediated-acceptances-never-blocks, /ship Step 0.5e, 2026-07-27).
     // 36 → 37: +1 ship (unit-test-lock-refuses-unverifiable-claims, 2026-07-29).
     // 37 → 38: +1 ship (final-review-credit-advisory-exit-zero, 2026-07-29).
@@ -319,7 +320,9 @@ describe('gate-honesty — real skills/', () => {
     //   (stub writers, negative-controlled) and tests/plan-verification-items-db.test.mjs
     //   (real writers on disposable Postgres: exit 0 recorded, exit 4 unrecordable).
     // 56 -> 57: +1 audit-code (changed-lines-unread-blocks-convergence, 2026-10-10, upstream 58f4e3a5).
-    assert.equal(totalDocOnly, 57);   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
+    // 57 -> 56: audit-plan round-caps moved from document-only to executable (2026-10-25). The cap is enforced in code now:
+    //   openai-audit.mjs exits 4 past the soft cap, and the cli-exit scenarios drive the real CLI to that refusal.
+    assert.equal(totalDocOnly, 56);   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));

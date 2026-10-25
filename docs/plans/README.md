@@ -21,6 +21,7 @@ This is the list to read when asking "what is in flight?".
 |---|---|---|
 | [The drift report says how far the active index trails the default branch](./arch-index-freshness.md) | `In Progress` | implemented on `fix/arch-index-freshness`; under /audit-code |
 | [Triage: the eight `archive/worktree-agent-*` tags (2026-10-11)](./archive-tag-triage-2026-10-11.md) | `Draft` | findings and recommendations only; no tag was deleted and nothing was landed by this document |
+| [Enforced audit round cap + structural-or-stop card](./audit-round-cap-structural-or-stop.md) | `Approved` |  |
 | [Audit honesty — unadmitted changed files, and the bundle's own generated stores](./audit-unadmitted-files.md) | `Approved` | audit-plan converged 2026-10-15; implementation pending |
 | [migrate every CLI entry guard to `isInvokedAsScript`](./cli-entry-guard-migration.md) | `In Progress` |  |
 | [Copilot consumer feedback, item 4: required-subject coverage, a final-review provenance fact, and hash-bound test evidence](./copilot-feedback-item4.md) | `Approved` | (audit-plan converged 2026-10-19; Gemini APPROVE; one PR per cluster). Cluster A implemented 2026-10-19… |

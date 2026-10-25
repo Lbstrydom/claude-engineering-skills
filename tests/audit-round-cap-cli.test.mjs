@@ -7,6 +7,10 @@
  * the moment the gate's own stderr line appears, and the preload would block any request anyway.
  *
  * AUDIT_DB_URL= (empty) is the air-gap signal: no store read, no embedding call from the card.
+ *
+ * Gate-honesty binding: this file is the in-process half of the `round-caps` gate declared in skills/audit-plan and
+ * skills/audit-code `gate-contract.json` (the cli-exit scenarios `round-cap-plan-refusal` / `round-cap-code-refusal` in
+ * scripts/lib/gate-honesty/oracles.mjs run the same refusal from a foreign cwd).
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
