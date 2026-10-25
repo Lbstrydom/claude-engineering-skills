@@ -165,7 +165,16 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // <pushed-tree-sha>.report.json / .output.log), the path is printed on EVERY outcome (pass, findings, unmeasured, timeout - where a
 // partial output is kept, or "none exists" is said), the newest AUDIT_PREPUSH_KEEP_REPORTS (default 20) of each kind are retained,
 // and a directory or file that cannot be created still refuses the push. Re-install: `npm run hooks:install -- --target <name>`.
-const HOOK_VERSION    = 14;
+// v15 (2026-10-25): (1) a push whose files are ALL non-subjects for the code audit (lockfiles, images, *.json, config/schema/type dirs -
+// the audit's own `shared` bucket) is NO_CODE_IN_SCOPE: a distinct, recorded, MEASURED outcome (.audit/prepush/<tree>.no-code.json),
+// neither a pass of the audit nor UNMEASURED. Before this a package.json-only push aborted in the audit's own "0 implementation files"
+// guard and was refused as UNMEASURED (fleet 70b5). The decision is made by `prepush-step.mjs no-code` and the hook bypasses only on rc 0 +
+// the exact token + a non-empty record; anything else runs the audit as in v14, and an older source checkout without the subcommand does too.
+// (2) After the report is kept, ONE informational line says how much of this push's findings sit on files the previous push flagged
+// (`prepush-step.mjs recurrence`) - it never suppresses and never gates (fleet 484f). (3) The run's own `.tmp-ledger.*` is removed by
+// exact path, and older orphans by the 24h rule `.tmp.*` already had. Logic: lib/prepush-audit-gate.mjs, prepush-step.mjs.
+// Re-install: `npm run hooks:install -- --target <name>`.
+const HOOK_VERSION    = 15;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -477,6 +486,27 @@ prepush_bounded() {
   node "$STEP_CLI" run --step "$prepush_step_name" --budget-sec "$prepush_step_budget" --progress-sec "$PROGRESS_SEC" -- "$@"
 }
 
+# prepush_no_code (v15): 0 ONLY when the step proves the push has no file the code audit would read AND left its record. Every other
+# outcome - the step absent (older source checkout), failing, malformed output, no record - returns 1 and the audit runs as in v14.
+# 124 is the runner's budget refusal and refuses the push like every bounded step.
+prepush_no_code() {
+  case "$STEP_CAPS" in *" no-code "*) ;; *) return 1 ;; esac
+  nc_line="$(prepush_bounded no-code "$STEP_BUDGET" node "$STEP_CLI" no-code)"
+  nc_rc=$?
+  [ "$nc_rc" -eq 124 ] && exit 1
+  [ "$nc_rc" -eq 0 ] || return 1
+  case "$nc_line" in
+    "no-code "*)
+      nc_rec="\${nc_line#no-code * }"
+      if [ -s "$nc_rec" ]; then
+        echo "[prepush-hook] ▸ NO_CODE_IN_SCOPE: this push changes no file the code audit reads (recorded at $nc_rec) - a measured outcome, not an audit pass; code audit skipped" >&2
+        return 0
+      fi ;;
+  esac
+  [ -n "$nc_line" ] && echo "[prepush-hook] ▸ code audit needed: \${nc_line#code }" >&2
+  return 1
+}
+
 # Select the ONE in-flight plan to audit via the Status-aware CLI — NOT
 # \`ls -t | head -1\`, which selected any newest .md regardless of its Status
 # and would re-audit a Complete plan. The CLI writes ONLY the chosen path to
@@ -553,6 +583,7 @@ PLAN_SELECTOR_FAILED=""
 # No plan (v13): the audit is keyed to one, so nothing below can run. That is UNMEASURED, not a pass - unless the push carries nothing a
 # code audit reads (docs / sync bookkeeping only). 124: the runner has said why; both refuse. A failure of the decision step refuses too.
 if [ -z "$PLAN_FILE" ]; then
+  if prepush_no_code; then finish; fi
   prepush_bounded no-plan "$STEP_BUDGET" node "$STEP_CLI" no-plan $PLAN_SELECTOR_FAILED
   [ "$?" -eq 0 ] || exit 1
   finish
@@ -583,6 +614,9 @@ if [ -n "$PUSH_BASE" ] && [ -n "$PUSH_HEAD" ]; then
     fi
   fi
 fi
+
+# ── NO_CODE_IN_SCOPE (v15): before any audit spend, and before the merge-scope and reuse steps ─────────────
+if prepush_no_code; then finish; fi
 
 # ── What the audit reads (v11) ──────────────────────────────────────────────
 # A MERGE push (main merged into the branch) carries the whole of main's delta in base..head, and the audit's default scope on a
@@ -694,11 +728,16 @@ if [ "$AUDIT_REUSED" != "1" ]; then
     while [ "\${keep_n#0}" != "$keep_n" ]; do keep_n="\${keep_n#0}"; done
     case "$keep_n" in ''|???????*) keep_n=20 ;; esac
     keep_prot_report=""; keep_prot_output=""
+    # v15: the audit derives a ledger beside its --out file (.tmp.XXXX -> .tmp-ledger.XXXX) and nothing ever reads it. Remove exactly THIS
+    # run's (the suffix of our own mktemp name), never by prefix: a concurrent push's live ledger is not ours.
+    rm -f -- "$AUDIT_KEEP_DIR/.tmp-ledger.\${AUDIT_REPORT##*.}"
     for keep_kind in report.json:"$AUDIT_REPORT" output.log:"$AUDIT_OUT"; do
       keep_suffix="\${keep_kind%%:*}"; keep_src="\${keep_kind#*:}"
       keep_dest="$AUDIT_KEEP_BASE.$keep_suffix"; keep_prot=""
       if [ ! -s "$keep_src" ]; then
         rm -f "$keep_src"
+        # v15: the recurrence sidecar describes the report beside it; a report that is gone takes its sidecar with it.
+        [ "$keep_suffix" = "report.json" ] && rm -f -- "$AUDIT_KEEP_BASE.head"
         if [ -e "$keep_dest" ]; then rm -f "$keep_dest"; echo "[prepush-hook] ▸ audit $keep_suffix: none exists (the audit wrote nothing; the earlier attempt's $keep_dest was removed so it is not mistaken for this one's)" >&2
         else echo "[prepush-hook] ▸ audit $keep_suffix: none exists (the audit wrote nothing)" >&2; fi
       else
@@ -716,7 +755,7 @@ if [ "$AUDIT_REUSED" != "1" ]; then
     }
     prepush_prune_kind report.json "$keep_prot_report"
     prepush_prune_kind output.log "$keep_prot_output"
-    find "$AUDIT_KEEP_DIR" -maxdepth 1 -name '.tmp.*' -mmin +1440 -exec rm -f {} + 2>/dev/null
+    find "$AUDIT_KEEP_DIR" -maxdepth 1 \\( -name '.tmp.*' -o -name '.tmp-ledger.*' \\) -mmin +1440 -exec rm -f {} + 2>/dev/null
     return 0
   }
   echo "[prepush-hook] ▸ auditing $PLAN_FILE via $AUDIT_LOOP_DIR (budget \${AUDIT_BUDGET}s, $AUDIT_BUDGET_BASIS; \${AUDIT_OWN_FILES:+branch-own files only, }report will be kept at $AUDIT_KEEP_BASE.report.json)" >&2
@@ -731,6 +770,8 @@ if [ "$AUDIT_REUSED" != "1" ]; then
   prepush_bounded audit-outcome "$STEP_BUDGET" node "$STEP_CLI" audit-outcome --exit "$EXIT" --report "$AUDIT_REPORT_ARG" --out "$AUDIT_OUT_ARG" >&2
   OUTCOME_RC=$?
   prepush_keep_audit
+  # v15: informational only - it can neither gate nor suppress, so its failure is ignored by design (stdout is the one line; stderr stays visible).
+  case "$STEP_CAPS" in *" recurrence "*) [ -n "$keep_prot_report" ] && { prepush_bounded recurrence "$STEP_BUDGET" node "$STEP_CLI" recurrence --report "$keep_prot_report" --head "\${PUSH_HEAD:-HEAD}" | sed 's/^/[prepush-hook] ▸ /' >&2; } ;; esac
   [ "$OUTCOME_RC" -eq 0 ] || exit 1
 fi
 

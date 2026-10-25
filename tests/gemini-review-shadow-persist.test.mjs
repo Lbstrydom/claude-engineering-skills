@@ -152,3 +152,24 @@ describe('buildFinalReviewPersistPayload — the three shadow states (real funct
     assert.equal(payload.verdict, 'REJECT', 'the shadow is observation-only and must never reach the gating verdict column');
   });
 });
+
+describe('runShadowAndPersist — the ran block carries the shadow request identity', () => {
+  it('a shadow that RAN stamps requestIdentity from its review, not null', async () => {
+    // runShadowReview's hand-built return dropped requestIdentity, so the
+    // `sr.requestIdentity ?? null` read in the ran block was null on every run.
+    const READY = { repoId: null, modelEvalRunId: null, shadow: { state: 'ready', provider: 'gemini', model: 'gemini-test' } };
+    const shadowReview = async () => ({
+      result: { verdict: 'APPROVE', new_findings: [] },
+      usage: { input_tokens: 1, output_tokens: 1 }, latencyMs: 1,
+      requestFingerprint: 'fp00000000000001', requestIdentity: 'ri1:0000000000000001',
+      transcriptContent: '{}',
+    });
+    const result = { verdict: 'APPROVE', new_findings: [] };
+    await runShadowAndPersist(result, 'gpt-5.6', null, ctx, {
+      modelEvalOverride: READY, runReviewWithRetry: shadowReview, buildShadowClientFn: async () => ({}),
+    });
+    assert.equal(result._shadow.state, 'ran', `precondition: the shadow ran (got ${result._shadow.state}: ${result._shadow.error})`);
+    assert.equal(result._shadow.requestFingerprint, 'fp00000000000001');
+    assert.equal(result._shadow.requestIdentity, 'ri1:0000000000000001');
+  });
+});

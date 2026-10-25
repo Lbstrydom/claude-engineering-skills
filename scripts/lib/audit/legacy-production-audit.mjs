@@ -46,7 +46,7 @@ import { classifyProviderReadiness } from './provider-readiness.mjs';
 import {
   safeInt, readFileOrDie, readFilesAsContext, readFilesAsContextDetailed,
   writeOutput, normalizePath, parseDiffFile, extractPlanPaths, mergeScopeFiles, classifyFiles,
-  isAuditInfraFile, auditSubjectFileGuard, atomicWriteFileSync
+  isAuditInfraFile, auditSubjectFileGuard, formatScopeAccountingLine, formatFileScopeLine, atomicWriteFileSync
 } from '../file-io.mjs';
 import { readFilesAsAnnotatedContextDetailed } from '../diff-annotation.mjs';
 import { startCoverage, makeCoverageInput } from './file-coverage.mjs';

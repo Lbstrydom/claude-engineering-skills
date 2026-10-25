@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 import { _builders, pgArray } from '../scripts/lib/db/query.mjs';
+import { captureStderr } from './helpers/capture-stderr.mjs';
 
 const { buildInsert, buildUpsert, buildUpdate } = _builders;
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..');
@@ -81,3 +82,54 @@ for (const [file, col] of Object.entries(TEXT_ARRAY_WRITERS)) {
     assert.match(m[1], /pgArray\(/, `${file}: text[] column "${col}" must use pgArray() (a raw array is JSON-corrupted by the seam)`);
   });
 }
+
+// ── NUL bytes: Postgres text/jsonb cannot store U+0000 (fleet p-f136) ──
+test('INSERT strips U+0000 from a string and names the column', async () => {
+  const { result, text } = await captureStderr(() => buildInsert('t', { detail_snapshot: 'a\u0000b', n: 1 }));
+  assert.equal(result.params[0], 'ab');
+  assert.match(text, /column detail_snapshot/);
+});
+
+test('a NUL inside a jsonb array element is stripped, an escaped backslash-u0000 is left alone', async () => {
+  const { result } = await captureStderr(() => buildUpsert('t', [{ files: ['x\u0000y', 'lit\\u0000eral'] }], { onConflict: 'id', update: 'all' }));
+  assert.equal(result.params[0], JSON.stringify(['xy', 'lit\\u0000eral']));
+});
+
+test('a NUL in a plain jsonb object (value, key, nested array) is stripped', async () => {
+  const { result } = await captureStderr(() => buildInsert('t', { meta: { 'k\u0000ey': 'a\u0000b', deep: [{ n: 'c\u0000d' }] } }));
+  assert.deepEqual(result.params[0], { key: 'ab', deep: [{ n: 'cd' }] });
+});
+
+test('a pgArray text[] is cleaned and stays a RAW array', async () => {
+  const { result } = await captureStderr(() => buildInsert('t', { tags: pgArray(['a\u0000b', 'c']) }));
+  assert.deepEqual(result.params[0], ['ab', 'c']);
+});
+
+test('Date and Buffer binds are untouched', () => {
+  const d = new Date(0); const b = Buffer.from('x');
+  const { params } = buildInsert('t', { at: d, raw: b });
+  assert.equal(params[0], d);
+  assert.equal(params[1], b);
+});
+
+test('UPDATE SET strips U+0000; a clean string stays silent', async () => {
+  const dirty = await captureStderr(() => buildUpdate('t', { note: 'p\u0000q' }, { id: 'r1' }));
+  assert.equal(dirty.result.params[0], 'pq');
+  const clean = await captureStderr(() => buildUpdate('t', { note: 'pq' }, { id: 'r1' }));
+  assert.equal(clean.result.params[0], 'pq');
+  assert.equal(clean.text, '');
+});
+
+test('jsonb object keys that collide once U+0000 is stripped are refused, in either order', async () => {
+  const ab = { ab: 1, ['a\u0000b']: 2 };
+  const ba = { ['a\u0000b']: 2, ab: 1 };
+  for (const meta of [ab, ba]) {
+    await captureStderr(() => assert.throws(() => buildInsert('t', { meta }), /collide after stripping/));
+  }
+});
+
+test('an own __proto__ key in a jsonb object survives the copy', () => {
+  const meta = JSON.parse('{"__proto__":{"enabled":true},"note":"keep"}');
+  const { params } = buildInsert('t', { meta });
+  assert.equal(JSON.stringify(params[0]), '{"__proto__":{"enabled":true},"note":"keep"}');
+});

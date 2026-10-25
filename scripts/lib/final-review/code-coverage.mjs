@@ -226,7 +226,16 @@ export function formatCodeCoverageSegment(cov) {
   const named = notReceived.length > 0
     ? `; NONE: ${notReceived.slice(0, 5).map((f) => oneLine(f.path)).join(', ')}${notReceived.length > 5 ? ` (+${notReceived.length - 5} more)` : ''}`
     : '';
-  return `Code: ${cov.state.toUpperCase()}${parts.length ? `, ${parts.join(', ')}` : ''}${named}`;
+  // Which file(s) the changed-line count could not measure, and WHY (upstream d4dada5d): the count alone left a consumer
+  // unable to tell a missing diff base from a render-budget omission. A sensitive path is never named (its NAME is what
+  // the sensitive-path policy keeps out of output); it stays in the count and is reported by reason only.
+  // Expected exclusions (binary / asset / lockfile) are not a gap, as in the NONE list above.
+  const unmeasured = (Array.isArray(cov.changedUnmeasured) ? cov.changedUnmeasured : [])
+    .filter((u) => matchFileKind(u.path).kind !== 'non-code');
+  const unmeasuredNamed = unmeasured.length > 0
+    ? `; UNMEASURED: ${unmeasured.slice(0, 5).map((u) => `${classifyPath(u.path) === 'sensitive' ? '[sensitive path]' : oneLine(u.path)} (${classifyPath(u.path) === 'sensitive' ? 'excluded as sensitive' : oneLine(u.reason)})`).join(', ')}${unmeasured.length > 5 ? ` (+${unmeasured.length - 5} more)` : ''}`
+    : '';
+  return `Code: ${cov.state.toUpperCase()}${parts.length ? `, ${parts.join(', ')}` : ''}${named}${unmeasuredNamed}`;
 }
 
 /**

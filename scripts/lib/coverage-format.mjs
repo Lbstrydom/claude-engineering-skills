@@ -63,6 +63,10 @@ export function formatCoverageSuffix(cov) {
     return `coverage: LEDGER INVALID — ${(cov.invariantViolations || []).slice(0, 2).map(oneLine).join('; ') || 'unspecified'}`;
   }
   const parts = [];
+  // An empty measurement universe is said so (5c16 / 70b5): `complete` over nothing is not a clean bill. `scopeOutcome` is absent on a
+  // ledger written before it existed, which reads exactly as it always did.
+  if (cov.scopeOutcome === 'no-change-set') parts.push('coverage: not measured — no change set (plan/full scope audits files, not a diff)');
+  else if (cov.scopeOutcome === 'no-code-in-scope') parts.push(`coverage: NO_CODE_IN_SCOPE — ${c.required === 0 ? 'none' : c.required} of the ${cov.changedTotal} changed file(s) are implementation code`);
   if (cov.status === 'none') {
     parts.push(`coverage: NONE of the ${c.required} changed source file(s) were audited`);
   } else if (cov.status === 'partial') {

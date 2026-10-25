@@ -170,14 +170,17 @@ describe('B2b end to end: an APPROVE verdict whose RESULT is blocked never pre-a
 describe('the producer is actually wired (a marker with no caller is the failure this whole class is about)', () => {
   it('gemini-review.mjs imports recordFinalReviewMarker and its exit status depends on the result', () => {
     const src = fs.readFileSync(path.resolve(import.meta.dirname, '../scripts/gemini-review.mjs'), 'utf8');
-    assert.match(src, /import \{ recordFinalReviewMarker, readGateEvidenceSnapshot \} from '\.\/lib\/final-review-marker\.mjs'/);
+    assert.match(src, /import \{ recordFinalReviewMarker, readGateEvidenceSnapshot, registerPendingReview \} from '\.\/lib\/final-review-marker\.mjs'/);
     // The snapshot is taken BEFORE the provider call, so it names what was reviewed, not what the evidence says afterwards.
     const snap = src.indexOf('const reviewedEvidence = readGateEvidenceSnapshot(process.cwd());');
     const review = src.indexOf(': await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, null, roundOpts)');
     assert.ok(review > 0, 'the instrument must find the main-path review call, or the ordering check below proves nothing');
     assert.ok(snap > 0 && snap < review, 'the evidence snapshot precedes the review');
+    // The pending registration (fleet proposal 0ace) must also precede it, or a review that never records leaves the earlier approval standing.
+    const reg = src.indexOf('registerPendingReview({ repoRoot: process.cwd() })');
+    assert.ok(reg > 0 && reg < review, 'the review registers itself as pending before it runs');
     // `await` is part of the pattern: a `void finishAndExit(...)` would return before the exit code is applied.
-    assert.match(src, /await finishAndExit\(recordFinalReviewMarker\(\{ auditMode, result, repoRoot: process\.cwd\(\), reviewedEvidence \}\) \? 1 : 0\)/,
+    assert.match(src, /await finishAndExit\(recordFinalReviewMarker\(\{ auditMode, result, repoRoot: process\.cwd\(\), reviewedEvidence, pending: pendingReview \}\) \? 1 : 0\)/,
       'the review must call the recorder after emitting its verdict and exit non-zero when the recorder says fatal');
   });
 });

@@ -60,9 +60,45 @@ export function pgArray(value) {
 
 /** Serialize a write-side bind value: unwrap `pgArray()` to a raw array; JSON-
  *  serialize a plain array (jsonb-safe); pass everything else through unchanged. */
-function serializeWriteParam(v) {
-  if (v !== null && typeof v === 'object' && v[PG_ARRAY]) return v.value;
-  if (Array.isArray(v)) return JSON.stringify(v);
+function serializeWriteParam(v, col) {
+  if (v !== null && typeof v === 'object' && v[PG_ARRAY]) return cleanNul(v.value, col);
+  if (typeof v === 'string') return stripNul(v, col);
+  if (Array.isArray(v)) return JSON.stringify(cleanNul(v, col));
+  // A plain object stays an object (node-pg JSON-serializes it); Date, Buffer and class instances keep their own serialization.
+  if (isPlainObject(v)) return cleanNul(v, col);
+  return v;
+}
+
+const isPlainObject = (v) => v !== null && typeof v === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(v));
+
+/**
+ * Postgres text and jsonb cannot store U+0000 (`invalid byte sequence for encoding "UTF8": 0x00`), and one NUL in
+ * one field fails the whole write — and its spill replay, forever. Strip it at the seam and SAY which column, so
+ * the loss is visible rather than silent (fleet p-f136). The loss is deliberate: U+0000 has no textual meaning, the
+ * alternative is a write that can never land, and the callers are free-text fields (debt prose, findings), not identity keys.
+ */
+function stripNul(s, col) {
+  if (!s.includes('\u0000')) return s;
+  process.stderr.write(`  [db] stripped U+0000 from column ${col ?? '(unnamed)'}: Postgres text/jsonb cannot store it
+`);
+  return s.replaceAll('\u0000', '');
+}
+
+/** stripNul over every string — values AND object keys — in arrays and plain objects, returning a copy only where needed. */
+function cleanNul(v, col) {
+  if (typeof v === 'string') return stripNul(v, col);
+  if (Array.isArray(v)) return v.map((x) => cleanNul(x, col));
+  if (isPlainObject(v)) {
+    const out = {};
+    for (const [k, x] of Object.entries(v)) {
+      const key = stripNul(k, col);
+      // Two keys that differ only by a NUL would silently overwrite one another: refuse, never pick by insertion order.
+      if (Object.hasOwn(out, key)) throw new Error(`db write seam: keys differ only by U+0000 and collide after stripping it (column ${col ?? '(unnamed)'}: "${key}")`);
+      // defineProperty, not assignment: a JSON.parse'd own "__proto__" key would hit the inherited setter and vanish.
+      Object.defineProperty(out, key, { value: cleanNul(x, col), enumerable: true, writable: true, configurable: true });
+    }
+    return out;
+  }
   return v;
 }
 
@@ -201,7 +237,7 @@ function buildInsert(table, row, { returning } = {}) {
   }
   const cols = entries.map(([k]) => quoteIdent(k));
   const placeholders = entries.map((_, i) => `$${i + 1}`);
-  const params = entries.map(([, v]) => serializeWriteParam(v));
+  const params = entries.map(([k, v]) => serializeWriteParam(v, k));
   let sql = `INSERT INTO ${quoteIdent(table)} (${cols.join(', ')}) VALUES (${placeholders.join(', ')})`;
   if (returning !== undefined) sql += ` RETURNING ${normalizeReturning(returning)}`;
   return { sql, params };
@@ -279,7 +315,7 @@ function buildUpsert(table, rows, { onConflict, conflictWhere, update, returning
   const params = [];
   const valueGroups = rows.map((row) => {
     const placeholders = keys.map((k) => {
-      params.push(serializeWriteParam(row[k]));
+      params.push(serializeWriteParam(row[k], k));
       return `$${params.length}`;
     });
     return `(${placeholders.join(', ')})`;
@@ -383,7 +419,7 @@ function buildUpdate(table, patch, where, { returning } = {}) {
 
   const params = [];
   const setClauses = patchEntries.map(([k, v]) => {
-    params.push(serializeWriteParam(v));
+    params.push(serializeWriteParam(v, k));
     return `${quoteIdent(k)} = $${params.length}`;
   });
   const flat = flattenWhere(table, 'buildUpdate', where, params.length);

@@ -88,8 +88,8 @@ function makeFixture(label) {
   gitOk(work, ['config', 'user.name', 'fixture']);
   gitOk(work, ['config', 'user.email', 'fixture@example.invalid']);
   gitOk(work, ['config', 'core.hooksPath', hooks.replace(/\\/g, '/')]);
-  fs.writeFileSync(path.join(work, 'a.txt'), 'a\n');
-  gitOk(work, ['add', 'a.txt']);
+  fs.writeFileSync(path.join(work, 'a.mjs'), 'a\n');
+  gitOk(work, ['add', 'a.mjs']);
   gitOk(work, ['commit', '--quiet', '-m', 'seed']);
   gitOk(work, ['remote', 'add', 'origin', remote]);
   const fx = {
@@ -266,8 +266,8 @@ describe('L3 — an untrappable kill is REPORTED on the next push', { skip: skip
 
   /** The second push: protected, no hold. Returns its stderr. */
   async function nextPush(fx, ref) {
-    fs.writeFileSync(path.join(fx.work, `${ref}.txt`), `${ref}\n`);
-    gitOk(fx.work, ['add', `${ref}.txt`]);
+    fs.writeFileSync(path.join(fx.work, `${ref}.mjs`), `${ref}\n`);
+    gitOk(fx.work, ['add', `${ref}.mjs`]);
     gitOk(fx.work, ['commit', '--quiet', '-m', ref]);
     installHook(fx, composeHook({ blocks: [l1, l3], l3: true, hold: 'none' }));
     const push = startPush(fx, ref);

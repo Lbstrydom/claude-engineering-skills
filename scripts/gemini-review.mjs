@@ -22,8 +22,7 @@
  */
 
 // dotenv loaded by lib/config.mjs (worktree-safe discovery)
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { statSync } from 'node:fs';
 import { once } from 'node:events';
 import crypto from 'node:crypto';
 import { z } from 'zod';
@@ -31,16 +30,14 @@ import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
 import { readFileOrDie, extractPlanPaths, writeOutput, isAuditInfraFile, resolveInfraScope, atomicWriteFileSync } from './lib/file-io.mjs';
 import { formatFindings } from './lib/findings.mjs';
 import { readProjectContext, initAuditBrief } from './lib/context.mjs';
-import { azureConfig, finalReviewConfig, auditShadowConfig } from './lib/config.mjs';
+import { finalReviewConfig } from './lib/config.mjs';
 import { describeAzureRoute, describeTransportFailure } from './lib/azure-route-report.mjs';
 import { SHADOW_PROVIDER_SPECS, shadowModelMatchesFamily } from './lib/final-review/provider-specs.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
-import { RUN_ID_RE } from './lib/commit-trailers.mjs';
-import { GATE_EVIDENCE_RELPATH } from './lib/audit/gate-evidence.mjs';
-import { recordFinalReviewMarker, readGateEvidenceSnapshot } from './lib/final-review-marker.mjs';
+import { recordFinalReviewMarker, readGateEvidenceSnapshot, registerPendingReview } from './lib/final-review-marker.mjs';
 import { isRefuted } from './lib/audit/finding-verification.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
 import { sumUsage } from './lib/model-pricing.mjs';
@@ -178,8 +175,7 @@ import {
   runSetProvider,
   buildClient,
   refreshProviderModels,
-  MODEL,
-  CLAUDE_OPUS_MODEL,
+  reviewerModelOf,
 } from './lib/final-review/providers.mjs';
 
 // ── Shadow review (relocated to lib/final-review/shadow.mjs) ───────────────────
@@ -203,6 +199,7 @@ import {
   shadowErrorBlock,
   buildFinalReviewPersistPayload,
   runShadowAndPersist,
+  resolveShadowEnvelopeScope,
 } from './lib/final-review/shadow.mjs';
 
 // ── Post-review findings pipeline (relocated to lib/final-review/post-review.mjs) ──
@@ -234,6 +231,11 @@ import { assertKnownFlags } from './lib/cli-io.mjs';
 import {
   validateRoundArgs, parsePriorResult, priorFindingsOf, buildPriorRoundBlock, stampGateDisposition,
 } from './lib/final-review/round-gate.mjs';
+// Run-id recovery (extracted; the public names keep being exported from here).
+export {
+  shouldWarnMissingRunId, canAttemptRunIdRecovery, MISSING_RUN_ID_WARNING, RUN_ID_MARKER_MAX_AGE_MS, recoverRunIdFromMarker,
+} from './lib/final-review/run-id-recovery.mjs';
+import { resolveReviewRunId } from './lib/final-review/run-id-recovery.mjs';
 
 // ── Review Orchestrator ────────────────────────────────────────────────────────
 
@@ -657,9 +659,7 @@ const PING_TRANSPORTS = {
 async function runPing(args = []) {
   const providerIdx = args.indexOf('--provider');
   const providerOverride = providerIdx !== -1 && args[providerIdx + 1] ? args[providerIdx + 1] : null;
-  // selectProvider runs the descriptor's assertReady and exits non-zero, naming
-  // the missing variable, when the chosen provider is not configured.
-  const provider = selectProvider(providerOverride || resolveProviderSetting());
+  const provider = selectProviderOrExit(providerOverride || resolveProviderSetting());
   const descriptor = PROVIDERS[provider];
   const model = descriptor.resolveModel();
   const kind = descriptor.transportKind();
@@ -682,7 +682,7 @@ async function runPing(args = []) {
 }
 
 function isJsonTruncationError(err) {
-  return err.message?.includes('Unterminated string')
+  return err.truncated === true || err.message?.includes('Unterminated string')
     || err.message?.includes('JSON')
     || err.message?.includes('parse');
 }
@@ -733,8 +733,7 @@ export async function runAdjudicatorOnlyReview(provider, client, planContent, tr
 
 function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile, gateSummary) {
   if (jsonMode || outFile) {
-    const selectedModel = provider === 'gemini' ? MODEL : (provider === 'azure-claude' ? azureConfig.claudeDeployment : CLAUDE_OPUS_MODEL);
-    const data = { ...result, _model: selectedModel, _provider: provider, _usage: usage };
+    const data = { ...result, _model: reviewerModelOf(provider), _provider: provider, _usage: usage };
     if (outFile) {
       const newCount = result.new_findings?.length ?? 0;
       const dismissedCount = result.wrongly_dismissed?.length ?? 0;
@@ -808,114 +807,17 @@ function runFixtureReview({ transcriptFile, outFile, jsonMode, round = null, pri
 }
 
 /**
- * A cloud-enabled `review` invocation with no `--run-id` is a SILENT total
- * loss of this review's persistence (found live 2026-07-26, chasing a
- * consumer repo whose `audit_runs` rows all showed real, non-zero
- * rounds/findings — the audit itself genuinely ran — but
- * `gemini_verdict`/`final_review_model` were NULL on every one of 101 runs
- * across 30 days). Root cause: `runId` simply defaults to null when
- * `--run-id` is omitted (a manual, easy-to-forget CLI flag — the caller must
- * extract `_cloudRunId` from the audit `--out` JSON and pass it through), and
- * `runShadowAndPersist`'s cloud-write guard (`if (!runId) return`) then
- * no-ops with ZERO signal that anything was skipped. The review still runs,
- * still prints a real verdict — it just never reaches the store, silently,
- * every time, indistinguishable from a deliberate "cloud is off" run.
- *
- * Extracted as a pure predicate (Tier 1 — a deterministic seam per this
- * repo's testing doctrine) so the condition is unit-testable without mocking
- * the whole CLI/cloud-detection flow.
- *
- * @param {{mode: string, runId: string|null, cloudEnabled: boolean}} args
- * @returns {boolean}
+ * The provider the CLI will use, or a printed refusal and exit 1. Readiness
+ * THROWS in the provider catalog (ProviderNotReadyError) — deciding what a
+ * failure does to the process is this CLI's job, not the catalog's.
  */
-export function shouldWarnMissingRunId({ mode, runId, cloudEnabled }) {
-  return mode === 'review' && !runId && cloudEnabled;
-}
-
-/**
- * Whether marker-based run-id recovery may even be ATTEMPTED for this call.
- *
- * Restricted to `auditMode === 'code'` because `.audit/last-audit-run.json`
- * is written ONLY by the code-audit path (`legacy-production-audit.mjs` via
- * `writeGateEvidence`) — `/audit-plan`'s `--mode plan` review never refreshes
- * it, and never has. Without this gate, a plan review that omits --run-id
- * (which is not a stale-context bug for plan mode — audit-plan's SKILL.md
- * never teaches it to pass one at all, because a plan isn't a commit-scoped
- * `audit_runs` row the same way code is) would recover whatever CODE audit's
- * marker happened to still sit inside the freshness window and misattach to
- * it. Found live 2026-07-27, the day this recovery shipped: a wine-cellar-app
- * `/audit-plan` session's shadow findings landed under an unrelated code
- * audit's run_id, and `recordFinalReviewFindings`'s own DELETE (scoped only
- * by `run_id`, so it cannot tell "replace this run's stale findings" apart
- * from "wipe another run's findings out from under it") then destroyed that
- * code audit's 4 already-adjudicated findings as a side effect — not just a
- * mislabel, real data loss. A wrong row is worse than no row; here it was
- * worse than that again.
- *
- * @param {{auditMode: string}} args
- * @returns {boolean}
- */
-export function canAttemptRunIdRecovery({ auditMode }) {
-  return auditMode === 'code';
-}
-
-export const MISSING_RUN_ID_WARNING =
-  '  [gemini-review] WARNING: cloud is enabled but no --run-id was supplied. '
-  + 'This review\'s verdict and findings will NOT be persisted to audit_runs — '
-  + 'they exist only in this process\'s stdout/--out file. If this is unintentional, '
-  + 're-invoke with --run-id <audit_runs.id> (read _cloudRunId from the audit --out JSON).\n';
-
-/**
- * How stale a gate-evidence marker may be and still identify THIS review's run.
- *
- * Step 7 runs minutes after the audit round that wrote the marker. Six hours is
- * far beyond any real gap while still refusing yesterday's marker — attaching a
- * review to a run it did not review is a worse failure than not persisting it,
- * because a wrong row looks like real evidence.
- */
-export const RUN_ID_MARKER_MAX_AGE_MS = 6 * 60 * 60 * 1000;
-
-/**
- * Recover the audit run id from the gate-evidence marker when `--run-id` was
- * not passed.
- *
- * **Why a fallback exists at all.** The flag is extracted by an AGENT following
- * a markdown snippet in SKILL.md, so its correctness depends on the agent
- * reading the current instructions — which a long-running session that loaded
- * an older SKILL.md into context will not do. That is not a hypothetical: a
- * consumer repo lost 101 runs' final reviews to it, and then lost one MORE
- * immediately after the snippet was fixed, because the session already
- * mid-flight kept executing the stale snippet from memory. A flag whose only
- * enforcement is "the caller remembers" fails exactly this way. `.audit/last-audit-run.json`
- * is written by the audit itself ([`lib/audit/gate-evidence.mjs`](lib/audit/gate-evidence.mjs)),
- * so the id is already on disk and needs no agent cooperation to find.
- *
- * Pure (marker content + clock in, decision out) so every branch is testable
- * without a filesystem — Tier 1 per this repo's testing doctrine.
- *
- * @param {{marker: unknown, nowMs: number, maxAgeMs?: number}} args
- * @returns {{runId: string|null, reason: 'recovered'|'no-marker'|'malformed'|'stale'}}
- */
-export function recoverRunIdFromMarker({ marker, nowMs, maxAgeMs = RUN_ID_MARKER_MAX_AGE_MS }) {
-  if (!marker || typeof marker !== 'object') return { runId: null, reason: 'no-marker' };
-  const { runId, ts } = /** @type {{runId?: unknown, ts?: unknown}} */ (marker);
-  // Same shape gate the ship-commit readers apply, so a marker this accepts can
-  // never be one they reject.
-  if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) return { runId: null, reason: 'malformed' };
-  const tsMs = typeof ts === 'string' ? Date.parse(ts) : NaN;
-  if (Number.isNaN(tsMs)) return { runId: null, reason: 'malformed' };
-  if (nowMs - tsMs > maxAgeMs) return { runId: null, reason: 'stale' };
-  return { runId, reason: 'recovered' };
-}
-
-/** Read + parse the gate-evidence marker. Any I/O or parse failure → null. */
-function readGateEvidenceMarker(repoRoot) {
+function selectProviderOrExit(choice) {
   try {
-    const p = resolve(repoRoot, GATE_EVIDENCE_RELPATH);
-    if (!existsSync(p)) return null;
-    return JSON.parse(readFileSync(p, 'utf8'));
-  } catch {
-    return null;
+    return selectProvider(choice);
+  } catch (err) {
+    if (!err.providerNotReady) throw err;
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
   }
 }
 
@@ -940,41 +842,6 @@ async function main() {
   }
   const { round } = roundCheck;
   const { prior } = priorCheck;
-  let runId = cliRunId;
-  // A cloud-enabled invocation with no --run-id is a SILENT total loss of this
-  // review's persistence (found live 2026-07-26, chasing a consumer repo whose
-  // audit_runs rows all showed real, non-zero rounds/findings — the audit
-  // itself genuinely ran — but `gemini_verdict`/`final_review_model` were NULL
-  // on every one of 101 runs across 30 days). Root cause: `runId` simply
-  // defaults to null when `--run-id` is omitted (a manual, easy-to-forget CLI
-  // flag — the caller must extract `_cloudRunId` from the audit --out JSON and
-  // pass it through), and `runShadowAndPersist`'s cloud-write guard
-  // (`if (!runId) return`) then no-ops with ZERO signal that anything was
-  // skipped. The review still runs, still prints a real verdict — it just
-  // never reaches the store, silently, every time, indistinguishable from a
-  // deliberate "cloud is off" run. Warn loudly instead of vanishing quietly;
-  // this is advisory only (never blocks a review) — the same "audit your
-  // success paths" doctrine as everything else this session hardened.
-  //
-  // Warning alone was NOT enough (proven the same day it shipped): a session
-  // already holding a stale SKILL.md kept omitting the flag, and the warning
-  // scrolled past unread. So recover the id from the marker the audit itself
-  // wrote — no agent cooperation required — and only warn when that also fails.
-  if (shouldWarnMissingRunId({ mode, runId, cloudEnabled: await isCloudEnabled() })) {
-    const rec = canAttemptRunIdRecovery({ auditMode })
-      ? recoverRunIdFromMarker({ marker: readGateEvidenceMarker(process.cwd()), nowMs: Date.now() })
-      : { runId: null, reason: 'plan-mode-has-no-marker' };
-    if (rec.runId) {
-      runId = rec.runId;
-      console.error(
-        `  [gemini-review] no --run-id supplied; recovered ${runId} from ${GATE_EVIDENCE_RELPATH} `
-        + '(written by this audit). Persisting to that run.\n'
-      );
-    } else {
-      console.error(MISSING_RUN_ID_WARNING);
-      console.error(`  [gemini-review] (marker fallback also unavailable: ${rec.reason})\n`);
-    }
-  }
   if (mode !== 'review' || !planFile || !transcriptFile) {
     console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic|openai-compatible|openrouter] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>] [--envelope-scope full|thin|gap] [--campaign-digest <hex>] [--round 1|2] [--prior <round-1 result.json>]');
     console.error('       node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|openai-compatible|openrouter|default>');
@@ -989,6 +856,10 @@ async function main() {
     console.error(`Error: --role must be "adjudicator-only", got "${role}"`);
     process.exit(1);
   }
+
+  // Campaign-safety refusal BEFORE any provider work — even the fixture path. It
+  // used to fire inside runShadowAndPersist, after the primary was billed.
+  try { resolveShadowEnvelopeScope({ envelopeScopeCli, campaignDigest }); } catch (err) { console.error(`Error: ${err.message}`); process.exit(1); }
 
   // Test-only deterministic fixture path (Phase 12) — accepted ONLY under
   // NODE_ENV=test, skips all real provider construction / network calls.
@@ -1005,10 +876,19 @@ async function main() {
   armReviewWatchdog();
 
   // CLI --provider wins; else the persistent FINAL_REVIEW_PROVIDER setting; else auto-detect.
-  const provider = selectProvider(providerOverride || resolveProviderSetting());
+  const provider = selectProviderOrExit(providerOverride || resolveProviderSetting());
   const planContent = readFileOrDie(planFile);
   const transcriptContent = readFileOrDie(transcriptFile);
   const reviewedEvidence = readGateEvidenceSnapshot(process.cwd()); // what this review is OF; the marker refuses evidence that moved meanwhile
+  // Shadow any earlier approval from the moment this review starts: if this one never records (crash, or the marker lock goes to
+  // another review), the earlier APPROVE must not keep standing beside a verdict that was never written (fleet proposal 0ace).
+  const pendingReview = auditMode === 'code' ? registerPendingReview({ repoRoot: process.cwd() }) : undefined;
+  if (pendingReview && !pendingReview.ok) {
+    process.stderr.write(`  [final-review-marker] FATAL: could not register this review as pending (${pendingReview.code}) — an earlier approval would stay readable while it runs; no review was started\n`);
+    await finishAndExit(1);
+  }
+  // Bound to THIS transcript (run-id-recovery.mjs) — so it is read first.
+  const runId = resolveReviewRunId({ cliRunId, auditMode, cloudEnabled: await isCloudEnabled(), transcriptContent, repoRoot: process.cwd() });
   await initAuditBrief();
   const projectContext = readProjectContext();
   const client = await buildClient(provider);
@@ -1028,19 +908,15 @@ async function main() {
     applyExistenceGate(result);
     addSemanticIds(result, provider);
     const gateSummary = stampGateDisposition(result, round);
-    // Primary reviewer's resolved concrete model id (for source_model attribution).
-    const primaryModel = provider === 'gemini' ? MODEL
-      : provider === 'azure-claude' ? azureConfig.claudeDeployment
-      : CLAUDE_OPUS_MODEL;
+    // Primary reviewer's resolved concrete model id (for source_model attribution)
+    // — the descriptor's own, so every provider is named, not just three.
+    const primaryModel = reviewerModelOf(provider);
     // Shadow reviewer + cloud persistence — runs BEFORE emit so the --out
     // artifact carries the _shadow block (R1 M1). Observation-only for an
     // ACTUAL PROVIDER CALL failure — that half still never throws out (its own
     // try/catch keeps the primary review unaffected). NOT observation-only for
-    // a config-level campaign-safety refusal (invalid/gap scope under
-    // --campaign-digest): that throws PAST this call, past the outer catch
-    // below, to a non-zero exit — deliberately losing this arm's otherwise-good
-    // primary result too, because the whole point is "nothing about this arm
-    // invocation should be trusted" when its own campaign config is wrong.
+    // a config-level campaign-safety refusal — and that now fires in the
+    // preflight above, before any client exists, so it cannot reach here.
     // Phase 4: resolved UNCONDITIONALLY (independent of FINAL_REVIEW_SHADOW,
     // round-6 audit H4) — a non-null result overrides the ordinary shadow
     // resolution for this invocation only when a Tier A/B eval is active.
@@ -1051,7 +927,7 @@ async function main() {
     await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode }, { modelEvalOverride, envelopeScopeCli, campaignDigest, runReviewWithRetry });
     emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile, gateSummary);
     recordGeminiOutcomes(result, primaryModel);
-    await finishAndExit(recordFinalReviewMarker({ auditMode, result, repoRoot: process.cwd(), reviewedEvidence }) ? 1 : 0); // never rely on natural drain; a marker that cannot be made safe is fatal
+    await finishAndExit(recordFinalReviewMarker({ auditMode, result, repoRoot: process.cwd(), reviewedEvidence, pending: pendingReview }) ? 1 : 0); // never rely on natural drain; a marker that cannot be made safe is fatal
   } catch (err) {
     // Route-enriched for the Azure provider (a bare 401/404 there names neither
     // the endpoint nor the credential variable); byte-identical `err.message`
