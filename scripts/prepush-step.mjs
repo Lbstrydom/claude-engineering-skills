@@ -141,7 +141,7 @@ function writeAtomic(file, text) {
   try {
     fs.writeFileSync(tmp, text, { flag: 'wx' });
     fs.renameSync(tmp, file);
-  } catch (e) { try { fs.rmSync(tmp, { force: true }); } catch { /* best effort */ } throw e; }
+  } catch (e) { try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } throw e; }
 }
 
 /** Keep the newest N no-code records (the hook's AUDIT_PREPUSH_KEEP_REPORTS policy: a positive integer of at most 6 digits, else 20), never the one just written. */
@@ -150,7 +150,7 @@ function pruneNoCodeRecords(dir, protect, keepArg) {
   try {
     fs.readdirSync(dir).filter((e) => e.endsWith('.no-code.json') && e !== protect)
       .map((e) => ({ e, m: fs.statSync(path.join(dir, e)).mtimeMs })).sort((a, b) => b.m - a.m).slice(Math.max(0, n - 1))
-      .forEach((x) => fs.rmSync(path.join(dir, x.e), { force: true }));
+      .forEach((x) => fs.rmSync(path.join(dir, x.e), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
   } catch { /* retention is housekeeping: it never changes the outcome */ }
 }
 
@@ -212,7 +212,7 @@ export function recurrenceLine({ reportFile, headArg = null, env = process.env, 
     try { writeAtomic(path.join(dir, `${treeOfReport(reportFile)}.head`), `${curHead}\n`); } catch { /* the next push loses its baseline; this line is still computed */ }
     // Sidecars whose report was pruned are dead weight: removed here so the hook's shell prune stays unchanged.
     for (const e of fs.readdirSync(dir)) {
-      if (e.endsWith('.head') && !fs.existsSync(path.join(dir, e.replace(/\.head$/, '.report.json')))) { try { fs.rmSync(path.join(dir, e), { force: true }); } catch { /* best effort */ } }
+      if (e.endsWith('.head') && !fs.existsSync(path.join(dir, e.replace(/\.head$/, '.report.json')))) { try { fs.rmSync(path.join(dir, e), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } }
     }
     const others = fs.readdirSync(dir).filter((e) => e.endsWith('.report.json') && e !== path.basename(reportFile))
       .map((e) => ({ e, mtime: fs.statSync(path.join(dir, e)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
