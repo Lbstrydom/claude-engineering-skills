@@ -673,6 +673,8 @@ export const adjacencyConfig = Object.freeze({
   maxSourceFileBytes: clampAdjacencyBound(process.env.ADJACENCY_MAX_SOURCE_FILE_BYTES, { min: 1024, max: 50_000_000, dflt: 1_000_000, name: 'maxSourceFileBytes' }),
   // ── Enumeration
   maxContainers: clampAdjacencyBound(process.env.ADJACENCY_MAX_CONTAINERS, { min: 1, max: 500, dflt: 20, name: 'maxContainers' }),
+  // The default scales with the diff (adjacency-detector's effectiveMaxContainers); an operator who SET the variable pinned it, and a pin is exact.
+  scaleContainersWithDiff: process.env.ADJACENCY_MAX_CONTAINERS === undefined || process.env.ADJACENCY_MAX_CONTAINERS === '',
   maxStatementsPerContainer: clampAdjacencyBound(process.env.ADJACENCY_MAX_STATEMENTS, { min: 1, max: 500, dflt: 40, name: 'maxStatementsPerContainer' }),
   maxCandidates: clampAdjacencyBound(process.env.ADJACENCY_MAX_CANDIDATES, { min: 1, max: 200, dflt: 25, name: 'maxCandidates' }),
   // ── Payload (bytes leaving the process)

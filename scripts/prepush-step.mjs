@@ -21,6 +21,13 @@
  *       `none` (the audit runs).
  *   prepush-step.mjs audit-budget [--files <a,b,...>]
  *       `<seconds> <basis>`: the code-audit budget scaled to the pushed diff (`600 + 30*files`, capped; refit from the store).
+ *   prepush-step.mjs no-code
+ *       `no-code <N> <record-path>` when EVERY pushed file is a non-subject for the code audit (lockfiles, images, `*.json`, config/schema/type
+ *       dirs - the audit's own `shared` bucket): the record `.audit/prepush/<tree>.no-code.json` is written first, atomically. Anything else, or any
+ *       failure including a failed record write, is `code <reason>` and the audit runs. The hook bypasses only on rc 0 + this exact token + the record.
+ *   prepush-step.mjs recurrence --report <current report.json> [--head <sha>]
+ *       One informational line: how many of this push's findings sit on files the previous push on this lineage flagged, or
+ *       `recurrence unavailable: <reason>`. Never suppresses, never gates; exit 0 either way.
  *   prepush-step.mjs no-plan
  *       The plan selector resolved NO plan: exit 0 when the push carries nothing a code audit reads (docs / sync bookkeeping only) or
  *       AUDIT_PREPUSH_ALLOW_UNMEASURED=1 says so on purpose, exit 1 (UNMEASURED) otherwise - including when the file list is unknown.
@@ -36,6 +43,7 @@ import { resolvePushRange, branchOwnedChangedFiles } from './lib/push-range.mjs'
 import { runStep } from './lib/prepush-step.mjs';
 import {
   classifyAuditOutcome, decideAuditGate, decideAuditReuse, auditBudgetSec, parseNumstatZ, decideNoPlanGate,
+  classifyNoCodePush, buildNoCodeRecord, noCodeLine, codeLine, summariseRecurrence, formatRecurrenceLine,
 } from './lib/prepush-audit-gate.mjs';
 import { patchRangesEquivalent } from './lib/patch-equivalence.mjs';
 
@@ -43,10 +51,10 @@ import { patchRangesEquivalent } from './lib/patch-equivalence.mjs';
 const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'];
 const KNOWN_FLAGS = [
   '--step', '--budget-sec', '--progress-sec', '--out', '--default-ref', '--selfcheck-relocation',
-  '--exit', '--report', '--files', '--cwd', '--selector-failed',
+  '--exit', '--report', '--files', '--cwd', '--selector-failed', '--head',
 ];
 /** What this runner can do. The hook asks before relying on a subcommand, because an older source checkout lacks the newer ones. */
-export const CAPABILITIES = Object.freeze(['run', 'own-files', 'audit-outcome', 'audit-reuse', 'audit-budget', 'no-plan']);
+export const CAPABILITIES = Object.freeze(['run', 'own-files', 'audit-outcome', 'audit-reuse', 'audit-budget', 'no-plan', 'no-code', 'recurrence']);
 /** A store lookup that outlives this is "unverifiable", i.e. a re-run - a reuse check must never be able to hang the hook. */
 const REUSE_LOOKUP_MS = 20_000;
 
@@ -120,6 +128,113 @@ export function noPlanExit({ env = process.env, cwd = process.cwd(), gitFn = git
   const decision = decideNoPlanGate({ files, env, selectorFailed, exists: (p) => fs.existsSync(path.resolve(cwd, p)) });
   for (const l of decision.lines) write(l);
   return decision.allow ? 0 : 1;
+}
+
+/** Where the kept audit files live, relative to the repo (the hook's AUDIT_KEEP_DIR). */
+const KEEP_REL = '.audit/prepush';
+const KEEP_DIR = path.join('.audit', 'prepush');
+
+/** Atomic write: a temp file in the SAME directory (exclusive create), then a rename, so a reader sees all of the record or none of it. */
+function writeAtomic(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, text, { flag: 'wx' });
+    fs.renameSync(tmp, file);
+  } catch (e) { try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } throw e; }
+}
+
+/** Keep the newest N no-code records (the hook's AUDIT_PREPUSH_KEEP_REPORTS policy: a positive integer of at most 6 digits, else 20), never the one just written. */
+function pruneNoCodeRecords(dir, protect, keepArg) {
+  const n = /^[1-9][0-9]{0,5}$/.test(String(keepArg ?? '')) ? Number(keepArg) : 20;
+  try {
+    fs.readdirSync(dir).filter((e) => e.endsWith('.no-code.json') && e !== protect)
+      .map((e) => ({ e, m: fs.statSync(path.join(dir, e)).mtimeMs })).sort((a, b) => b.m - a.m).slice(Math.max(0, n - 1))
+      .forEach((x) => fs.rmSync(path.join(dir, x.e), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+  } catch { /* retention is housekeeping: it never changes the outcome */ }
+}
+
+/** The audit's own predicates, loaded only by the subcommand that needs them (~190ms of imports the other subcommands do not pay). */
+async function loadNoCodeDeps() {
+  const { classifyFiles, isAuditInfraFile } = await import('./lib/audit-scope.mjs');
+  const { classifyFileCoverage } = await import('./lib/language-profiles.mjs');
+  return {
+    isInfra: (f) => isAuditInfraFile(f),
+    taxonomyClass: (f) => classifyFileCoverage(f).class,
+    bucketOf: (f) => { const b = classifyFiles([f]); return b.shared.length ? 'shared' : (b.frontend.length ? 'frontend' : 'backend'); },
+  };
+}
+
+const OID_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+/** The only sidecar name this tool writes: a tree object id plus `.head`. */
+const SIDECAR_RE = /^[0-9a-f]{40}([0-9a-f]{24})?\.head$/;
+
+/**
+ * `no-code`: the protocol line. Every failure direction is `code <reason>` (measure), never `no-code`.
+ * @returns {Promise<string>}
+ */
+export async function noCodeStepLine({ env = process.env, cwd = process.cwd(), gitFn = git, deps = null } = {}) {
+  try {
+    const range = resolvePushRange({ env, run: runIn(cwd, gitFn) });
+    if (!range.ok || !range.trusted) return codeLine('the push range was not handed over by git');
+    let files;
+    try { files = gitFn(cwd, ['diff', '--name-only', '--no-renames', '-z', `${range.base}..${range.head}`]).split('\0').filter(Boolean); } catch { return codeLine('the pushed file list could not be read'); }
+    const c = classifyNoCodePush({ files, ...(deps ?? await loadNoCodeDeps()) });
+    if (!c.noCode) return codeLine(c.reason);
+    let tree = '';
+    try { tree = gitFn(cwd, ['rev-parse', '--verify', '--quiet', `${range.head}^{tree}`]).trim(); } catch { tree = ''; }
+    if (!OID_RE.test(tree)) return codeLine('the pushed tree could not be resolved');
+    const rel = `${KEEP_REL}/${tree}.no-code.json`; // a protocol string: forward slashes on every platform
+    try { writeAtomic(path.join(cwd, rel), `${JSON.stringify(buildNoCodeRecord({ tree, base: range.base, head: range.head, files: c.files }), null, 2)}\n`); } catch (e) { return codeLine(`the no-code record could not be written (${e?.code || 'error'})`); }
+    pruneNoCodeRecords(path.join(cwd, KEEP_DIR), path.basename(rel), env.AUDIT_PREPUSH_KEEP_REPORTS);
+    return noCodeLine(c.files.length, rel);
+  } catch (e) { return codeLine(`the no-code step failed (${e?.message || 'error'})`); }
+}
+
+const treeOfReport = (file) => path.basename(file).replace(/\.report\.json$/, '');
+
+/**
+ * `recurrence`: one informational line. The previous push on THIS lineage is the newest other kept report whose recorded head is an
+ * ANCESTOR of the current head (the hook has no branch name, and a rebased branch honestly reads as unavailable). The current head is
+ * recorded beside the report so the next push can ask the same question.
+ * @returns {string}
+ */
+export function recurrenceLine({ reportFile, headArg = null, env = process.env, cwd = process.cwd(), gitFn = git, deps } = {}) {
+  try {
+    if (!reportFile) return 'recurrence unavailable: no current report';
+    if (!deps) return 'recurrence unavailable: comparator not loaded';
+    const range = resolvePushRange({ env, run: runIn(cwd, gitFn) });
+    const head = headArg || (range.ok ? range.head : null);
+    const curHead = head ? (OID_RE.test(head) ? head : (runIn(cwd, gitFn)(['rev-parse', '--verify', '--quiet', `${head}^{commit}`]) || null)) : null;
+    if (!OID_RE.test(String(curHead ?? ''))) return 'recurrence unavailable: the pushed head could not be resolved';
+    let cur;
+    try { cur = JSON.parse(fs.readFileSync(reportFile, 'utf8')); } catch { return 'recurrence unavailable: the current report is unreadable'; }
+    if (!Array.isArray(cur?.findings)) return 'recurrence unavailable: the current report has no findings list';
+    const dir = path.dirname(path.resolve(cwd, reportFile));
+    try { writeAtomic(path.join(dir, `${treeOfReport(reportFile)}.head`), `${curHead}\n`); } catch { /* the next push loses its baseline; this line is still computed */ }
+    // Sidecars whose report was pruned are dead weight: removed here so the hook's shell prune stays unchanged.
+    for (const e of fs.readdirSync(dir)) {
+      // Ownership: only a sidecar THIS tool names (<tree-oid>.head), a regular file, with no report beside it. Never a suffix match alone.
+      if (SIDECAR_RE.test(e) && fs.lstatSync(path.join(dir, e)).isFile() && !fs.existsSync(path.join(dir, e.replace(/\.head$/, '.report.json')))) { try { fs.rmSync(path.join(dir, e), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } }
+    }
+    const others = fs.readdirSync(dir).filter((e) => e.endsWith('.report.json') && e !== path.basename(reportFile))
+      .map((e) => ({ e, mtime: fs.statSync(path.join(dir, e)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
+    let prev = null;
+    for (const o of others) {
+      let prevHead = '';
+      try { prevHead = fs.readFileSync(path.join(dir, o.e.replace(/\.report\.json$/, '.head')), 'utf8').trim(); } catch { continue; }
+      if (!OID_RE.test(prevHead) || prevHead === curHead) continue;
+      try { gitFn(cwd, ['merge-base', '--is-ancestor', prevHead, curHead]); } catch { continue; }
+      prev = { file: path.join(dir, o.e), tree: o.e.replace(/\.report\.json$/, '') };
+      break;
+    }
+    if (!prev) return 'recurrence unavailable: no earlier report on this lineage';
+    let prevReport;
+    try { prevReport = JSON.parse(fs.readFileSync(prev.file, 'utf8')); } catch { return 'recurrence unavailable: the earlier report is unreadable'; }
+    if (!Array.isArray(prevReport?.findings)) return 'recurrence unavailable: the earlier report has no findings list';
+    const s = summariseRecurrence({ previous: prevReport.findings, current: cur.findings, filesOf: deps.filesOf, similarity: deps.similarity });
+    return formatRecurrenceLine({ prevTree: prev.tree, ...s });
+  } catch (e) { return `recurrence unavailable: ${e?.message || 'error'}`; }
 }
 
 /** `audit-budget`: one integer (seconds). The size is the pushed range, narrowed to the branch's own files when the hook scoped it. */
@@ -219,6 +334,18 @@ async function main() {
     await finishAndExit(0);
     return;
   }
+  if (sub === 'no-code') {
+    process.stdout.write(`${await noCodeStepLine()}\n`);
+    await finishAndExit(0);
+    return;
+  }
+  if (sub === 'recurrence') {
+    const { findingFiles } = await import('./lib/concern-identity.mjs');
+    const { ledgerFindingSimilarity } = await import('./lib/ledger.mjs');
+    process.stdout.write(`${recurrenceLine({ reportFile: flagValue(head, '--report'), headArg: flagValue(head, '--head'), deps: { filesOf: findingFiles, similarity: ledgerFindingSimilarity } })}\n`);
+    await finishAndExit(0);
+    return;
+  }
   if (sub === 'no-plan') {
     await finishAndExit(noPlanExit({ selectorFailed: head.includes('--selector-failed') }));
     return;
@@ -228,7 +355,7 @@ async function main() {
     await finishAndExit(0);
     return;
   }
-  if (sub !== 'run') throw new ArgvError('prepush-step.mjs: expected `run`, `own-files`, `audit-outcome`, `audit-reuse`, `audit-budget`, `no-plan` or `capabilities`');
+  if (sub !== 'run') throw new ArgvError('prepush-step.mjs: expected `run`, `own-files`, `audit-outcome`, `audit-reuse`, `audit-budget`, `no-plan`, `no-code`, `recurrence` or `capabilities`');
 
   const step = flagValue(head, '--step');
   const budgetSec = Number(flagValue(head, '--budget-sec'));

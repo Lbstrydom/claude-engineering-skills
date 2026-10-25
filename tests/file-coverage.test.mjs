@@ -67,12 +67,13 @@ describe('buildCoverageReport — the storyline shape', () => {
     assert.match(formatCoverageSuffix(cov), /xyz ×2/);
   });
 
-  it('a PNG-only diff is complete/pass: nothing source-shaped changed', () => {
+  it('a PNG-only diff is status complete but NOT gate pass: nothing source-shaped changed, and it says so (70b5)', () => {
     const cov = build({ changed: ['a.png', 'b.woff2', 'package-lock.json'] });
     assert.equal(cov.status, 'complete');
-    assert.equal(cov.gate, 'pass');
+    assert.equal(cov.scopeOutcome, 'no-code-in-scope');
+    assert.equal(cov.gate, 'warn');
     assert.equal(cov.counts.required, 0);
-    assert.equal(formatCoverageSuffix(cov), '');
+    assert.match(formatCoverageSuffix(cov), /NO_CODE_IN_SCOPE/);
   });
 });
 

@@ -69,11 +69,11 @@ describe('auditReuseLine - range-diff equivalence against REAL git (rebase / che
     git(['config', 'user.email', 'a@example.invalid'], dir);
     git(['config', 'user.name', 'A'], dir);
     const put = (rel, text) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); git(['add', rel], dir); };
-    put('base.txt', 'base\n'); git(['commit', '-q', '-m', 'seed'], dir);
+    put('base.mjs', 'base\n'); git(['commit', '-q', '-m', 'seed'], dir);
     git(['update-ref', 'refs/remotes/origin/main', 'HEAD'], dir);
     git(['checkout', '-q', '-b', 'feature'], dir);
-    put('src/a.txt', 'a1\na2\n'); git(['commit', '-q', '-m', 'A'], dir);
-    put('src/b.txt', 'b1\nb2\n'); git(['commit', '-q', '-m', 'B'], dir);
+    put('src/a.mjs', 'a1\na2\n'); git(['commit', '-q', '-m', 'A'], dir);
+    put('src/b.mjs', 'b1\nb2\n'); git(['commit', '-q', '-m', 'B'], dir);
     return { dir, put, tip: () => git(['rev-parse', 'HEAD'], dir) };
   }
   const writeMarker = (dir, sha, extra = {}) => {
@@ -85,7 +85,7 @@ describe('auditReuseLine - range-diff equivalence against REAL git (rebase / che
   /** main moves on (a file the feature does not touch), then the feature is rebased onto it. */
   function rebaseOntoMovedMain(f) {
     git(['checkout', '-q', 'main'], f.dir);
-    f.put('main-only.txt', 'moved\n'); git(['commit', '-q', '-m', 'main moves'], f.dir);
+    f.put('main-only.mjs', 'moved\n'); git(['commit', '-q', '-m', 'main moves'], f.dir);
     git(['update-ref', 'refs/remotes/origin/main', 'HEAD'], f.dir);
     git(['checkout', '-q', 'feature'], f.dir);
     git(['rebase', 'main'], f.dir);
@@ -106,7 +106,7 @@ describe('auditReuseLine - range-diff equivalence against REAL git (rebase / che
     try {
       writeMarker(f.dir, f.tip());
       rebaseOntoMovedMain(f);
-      f.put('src/b.txt', 'b1\nB2\n'); git(['commit', '-q', '--amend', '--no-edit'], f.dir);
+      f.put('src/b.mjs', 'b1\nB2\n'); git(['commit', '-q', '--amend', '--no-edit'], f.dir);
       let asked = false;
       const line = await auditReuseLine({ env: env(f.dir), cwd: f.dir, readConvergence: async () => { asked = true; return converged(); } });
       assert.match(line, /^none .*not the pushed tree.*not range-diff-equivalent.*differ/);
@@ -117,7 +117,7 @@ describe('auditReuseLine - range-diff equivalence against REAL git (rebase / che
     const f = featureRepo();
     try {
       writeMarker(f.dir, f.tip());
-      f.put('src/c.txt', 'c\n'); git(['commit', '-q', '-m', 'C after the audit'], f.dir);
+      f.put('src/c.mjs', 'c\n'); git(['commit', '-q', '-m', 'C after the audit'], f.dir);
       assert.match(await auditReuseLine({ env: env(f.dir), cwd: f.dir, readConvergence: converged }), /^none .*1 pushed patch\(es\) were never audited/);
       git(['reset', '-q', '--hard', 'HEAD~2'], f.dir);
       assert.match(await auditReuseLine({ env: env(f.dir), cwd: f.dir, readConvergence: converged }), /^none .*1 audited patch\(es\) are not in the push/);
@@ -135,10 +135,10 @@ describe('auditReuseLine - range-diff equivalence against REAL git (rebase / che
     const f = featureRepo();
     try {
       const parent = f.tip();
-      f.put('src/dirty.txt', 'only in the working tree when audited\n');
+      f.put('src/dirty.mjs', 'only in the working tree when audited\n');
       const dirtyTree = git(['write-tree'], f.dir);
       writeMarker(f.dir, parent, { auditedTree: dirtyTree });
-      f.put('src/other.txt', 'a different commit than what was audited\n');
+      f.put('src/other.mjs', 'a different commit than what was audited\n');
       git(['commit', '-q', '-m', 'then committed differently'], f.dir);
       assert.match(await auditReuseLine({ env: env(f.dir), cwd: f.dir, readConvergence: converged }), /^none .*not range-diff-equivalent.*uncommitted changes on top/);
     } finally { rmrf(f.dir); }
@@ -211,7 +211,7 @@ describe('classifyNoPlanPush / decideNoPlanGate - nothing to select is UNMEASURE
       git(['init', '-q', '-b', 'main'], dir);
       git(['config', 'user.email', 'a@example.invalid'], dir);
       git(['config', 'user.name', 'A'], dir);
-      fs.writeFileSync(path.join(dir, 'seed.txt'), 's\n'); git(['add', '.'], dir); git(['commit', '-q', '-m', 'seed'], dir);
+      fs.writeFileSync(path.join(dir, 'seed.mjs'), 's\n'); git(['add', '.'], dir); git(['commit', '-q', '-m', 'seed'], dir);
       const rangeOf = () => ({ AUDIT_PUSH_RANGE_BASE: git(['rev-parse', 'HEAD~1'], dir), AUDIT_PUSH_RANGE_HEAD: git(['rev-parse', 'HEAD'], dir) });
       fs.writeFileSync(path.join(dir, 'a.md'), 'doc\n'); git(['add', '.'], dir); git(['commit', '-q', '-m', 'docs'], dir);
       const lines = []; const write = (l) => lines.push(l);
@@ -432,7 +432,7 @@ describe('auditReuseLine - the REAL runner path reads patch bytes losslessly (au
       git(['init', '-q', '-b', 'main'], dir);
       git(['config', 'user.email', 'a@example.invalid'], dir);
       git(['config', 'user.name', 'A'], dir);
-      fs.writeFileSync(path.join(dir, 'base.txt'), 'base\n'); git(['add', '.'], dir); git(['commit', '-q', '-m', 'seed'], dir);
+      fs.writeFileSync(path.join(dir, 'base.mjs'), 'base\n'); git(['add', '.'], dir); git(['commit', '-q', '-m', 'seed'], dir);
       git(['update-ref', 'refs/remotes/origin/main', 'HEAD'], dir);
       git(['checkout', '-q', '-b', 'feature'], dir);
       const put = (bytes) => { fs.writeFileSync(path.join(dir, 'blob.dat'), Buffer.from(bytes)); git(['add', 'blob.dat'], dir); };
@@ -445,7 +445,7 @@ describe('auditReuseLine - the REAL runner path reads patch bytes losslessly (au
       const env = () => ({ AUDIT_PUSH_RANGE_BASE: git(['rev-parse', 'origin/main'], dir), AUDIT_PUSH_RANGE_HEAD: git(['rev-parse', 'HEAD'], dir) });
       // the pushed branch: the same change with the one bad byte different, on a moved main (so the tree differs and equivalence is asked)
       git(['checkout', '-q', 'main'], dir);
-      fs.writeFileSync(path.join(dir, 'moved.txt'), 'main moved\n'); git(['add', '.'], dir); git(['commit', '-q', '-m', 'main moves'], dir);
+      fs.writeFileSync(path.join(dir, 'moved.mjs'), 'main moved\n'); git(['add', '.'], dir); git(['commit', '-q', '-m', 'main moves'], dir);
       git(['update-ref', 'refs/remotes/origin/main', 'HEAD'], dir);
       git(['checkout', '-q', '-b', 'pushed'], dir);
       put([0x61, 0xfe, 0x0a]); git(['commit', '-q', '-m', 'same change, different bad byte'], dir);

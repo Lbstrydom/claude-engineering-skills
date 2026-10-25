@@ -73,8 +73,8 @@ function consumer(ws) {
   git(['push', '-q', 'origin', 'main'], local);
   const base = git(['rev-parse', 'HEAD'], local);
   fs.mkdirSync(path.join(local, 'src'), { recursive: true });
-  fs.writeFileSync(path.join(local, 'src', 'own.txt'), 'x\n');
-  git(['add', 'src/own.txt'], local);
+  fs.writeFileSync(path.join(local, 'src', 'own.mjs'), 'x\n');
+  git(['add', 'src/own.mjs'], local);
   git(['commit', '-q', '-m', 'own'], local);
   const head = git(['rev-parse', 'HEAD'], local);
   return { local, stdin: `refs/heads/main ${head} refs/heads/main ${base}\n`, tree: git(['rev-parse', `${head}^{tree}`], local) };
@@ -89,7 +89,8 @@ function runHook(local, source, stdin, env = {}) {
   });
 }
 const kept = (c, suffix) => path.join(c.local, KEEP, `${c.tree}.${suffix}`);
-const keptEntries = (c) => (fs.existsSync(path.join(c.local, KEEP)) ? fs.readdirSync(path.join(c.local, KEEP)) : []);
+// v15's recurrence sidecar (<tree>.head) rides beside a kept report by design; these v14 assertions are about the report/output pair.
+const keptEntries = (c) => (fs.existsSync(path.join(c.local, KEEP)) ? fs.readdirSync(path.join(c.local, KEEP)).filter((f) => !f.endsWith('.head')) : []);
 /** One scenario in a fresh workspace; the callback gets the consumer and the source. */
 function scenario(t, name, fn) {
   if (!HAS_BASH) return t.skip('bash is required');
@@ -281,11 +282,11 @@ describe('hook v14 - the push base after a rebase + force push (fleet p-20261024
     const { local } = c;
     const put = (rel, text, msg) => { fs.mkdirSync(path.dirname(path.join(local, rel)), { recursive: true }); fs.writeFileSync(path.join(local, rel), text); git(['add', rel], local); git(['commit', '-q', '-m', msg], local); return git(['rev-parse', 'HEAD'], local); };
     git(['checkout', '-q', '-b', 'feature', 'origin/main'], local);
-    const oldRemote = put('src/f1.txt', 'f1\n', 'F1');
+    const oldRemote = put('src/f1.mjs', 'f1\n', 'F1');
     git(['push', '-q', 'origin', 'feature'], local);
     git(['checkout', '-q', 'main'], local);
     git(['reset', '-q', '--hard', 'origin/main'], local);
-    const mainTip = put('src/main-only.txt', 'm\n', 'M1 main moves on');
+    const mainTip = put('src/main-only.mjs', 'm\n', 'M1 main moves on');
     git(['push', '-q', 'origin', 'main'], local);
     git(['checkout', '-q', 'feature'], local);
     return { put, oldRemote, mainTip };
@@ -307,7 +308,7 @@ describe('hook v14 - the push base after a rebase + force push (fleet p-20261024
 
   it('MUST NOT CHANGE: a plain fast-forward push still uses the remote tip as the base', (t) => scenario(t, 'ff', ({ c, source }) => {
     const f = featurePushedAndMainMoved(c);
-    const head = f.put('src/f2.txt', 'f2\n', 'F2');
+    const head = f.put('src/f2.mjs', 'f2\n', 'F2');
     const got = runHook(c.local, source, `refs/heads/feature ${head} refs/heads/feature ${f.oldRemote}\n`);
     assert.equal(got.status, 0, got.stderr);
     assert.equal(baseOf(c), f.oldRemote, 'REMOTE_SHA, not the (older) merge-base with origin/main');
@@ -319,7 +320,7 @@ describe('hook v14 - the push base after a rebase + force push (fleet p-20261024
   it('a NEW branch still takes the merge-base with origin/main, saying it is a new branch', (t) => scenario(t, 'newbranch', ({ c, source }) => {
     const f = featurePushedAndMainMoved(c);
     git(['checkout', '-q', '-b', 'fresh'], c.local);
-    const head = f.put('src/f3.txt', 'f3\n', 'F3');
+    const head = f.put('src/f3.mjs', 'f3\n', 'F3');
     const got = runHook(c.local, source, `refs/heads/fresh ${head} refs/heads/fresh ${'0'.repeat(40)}\n`);
     assert.equal(got.status, 0, got.stderr);
     assert.equal(baseOf(c), git(['merge-base', 'origin/main', head], c.local));

@@ -68,6 +68,13 @@ export const COVERAGE_OUTCOMES = Object.freeze([
 export const READ_STATES = Object.freeze(['full', 'windowed', 'head-cut', 'none', 'unknown']);
 export const CHANGE_KINDS = Object.freeze(['added', 'modified', 'deleted', 'renamed', 'untracked']);
 export const COVERAGE_STATUSES = Object.freeze(['complete', 'partial', 'none', 'incomplete']);
+/**
+ * What universe the ledger describes (docs/plans/prepush-convergence-cluster-a.md). Derived, never an input: `code` = at least one
+ * reviewable changed file (or one excluded by policy); `no-code-in-scope` = files changed, none reviewable (70b5); `no-change-set` =
+ * nothing changed to cover, which is what plan/full scope always looks like (5c16). The last two are not measurements of code, so
+ * they never carry `gate: 'pass'`.
+ */
+export const SCOPE_OUTCOMES = Object.freeze(['code', 'no-code-in-scope', 'no-change-set']);
 export const COVERAGE_GATES = Object.freeze(['pass', 'warn', 'fail']);
 
 /** Capability states (chunking etc). `degraded` = the analysis bailed out and a coarser fallback was used. */
@@ -128,6 +135,8 @@ export const CoverageSchema = z.object({
   schemaVersion: z.literal(COVERAGE_SCHEMA_VERSION),
   status: enumOf(COVERAGE_STATUSES),
   gate: enumOf(COVERAGE_GATES),
+  // Optional ON READ: a ledger serialized before this field existed stays valid. validateCoverage re-derives it when present.
+  scopeOutcome: enumOf(SCOPE_OUTCOMES).optional(),
   changedTotal: z.number().int().nonnegative(),
   counts: z.object({
     byClass: z.record(z.string(), z.number().int().nonnegative()),
@@ -529,15 +538,17 @@ export function buildCoverageReport(input) {
   else if (presentRequired > 0 && auditedRequired === 0) status = 'none';
   else if (short > 0) status = 'partial';
   else status = 'complete';
+  const scopeOutcome = deriveScopeOutcome({ required, excludedRequired, changedTotal: files.length });
   let gate;
   if (status === 'none' || status === 'incomplete') gate = 'fail';
-  else if (status === 'partial' || excludedRequired > 0) gate = 'warn';
+  else if (status === 'partial' || excludedRequired > 0 || scopeOutcome !== 'code') gate = 'warn';
   else gate = 'pass';
 
   const report = {
     schemaVersion: COVERAGE_SCHEMA_VERSION,
     status,
     gate,
+    scopeOutcome,
     changedTotal: files.length,
     counts: { byClass, byOutcome, required, examined, short, excludedRequired },
     uncoveredByExtension,
@@ -564,6 +575,12 @@ export function buildCoverageReport(input) {
   return report;
 }
 
+/** The one derivation of `scopeOutcome` - the builder writes it and `validateCoverage` re-derives it, so they cannot drift. */
+function deriveScopeOutcome({ required, excludedRequired, changedTotal }) {
+  if (required > 0 || excludedRequired > 0) return 'code';
+  return changedTotal === 0 ? 'no-change-set' : 'no-code-in-scope';
+}
+
 /**
  * Validate a `_coverage` value against the strict schema AND re-derive its counts from `files[]`.
  * Returns `{ok:true}` or `{ok:false, problems}` — used by consumers (audit-loop, the transcript
@@ -575,6 +592,10 @@ export function validateCoverage(cov) {
   const problems = [];
   const c = parsed.data;
   if (c.changedTotal !== c.files.length) problems.push(`changedTotal ${c.changedTotal} != files.length ${c.files.length}`);
+  if (c.scopeOutcome !== undefined) {
+    const want = deriveScopeOutcome({ required: c.counts.required, excludedRequired: c.counts.excludedRequired, changedTotal: c.files.length });
+    if (c.scopeOutcome !== want) problems.push(`scopeOutcome ${c.scopeOutcome} != derived ${want}`);
+  }
   const ids = new Set();
   for (const f of c.files) {
     const k = normalizePath(f.path);

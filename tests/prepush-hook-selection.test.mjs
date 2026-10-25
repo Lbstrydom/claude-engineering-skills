@@ -35,7 +35,7 @@ describe('prepush hook — Status-aware selection', () => {
     // v13: no plan is UNMEASURED unless the push carries nothing a code audit reads (the `no-plan` step decides, exit 0 = exempt or
     // overridden); it still reaches `finish` when allowed, routed through the trailer so the consumer's own gates are not skipped
     // with the audit. See prepush-local-hook-trailer.test.mjs and prepush-hook-v13.test.mjs.
-    assert.match(HOOK_BODY, /if \[ -z "\$PLAN_FILE" \]; then\n  prepush_bounded no-plan "\$STEP_BUDGET" node "\$STEP_CLI" no-plan \$PLAN_SELECTOR_FAILED\n  \[ "\$\?" -eq 0 \] \|\| exit 1\n  finish\nfi/);
+    assert.match(HOOK_BODY, /if \[ -z "\$PLAN_FILE" \]; then\n  if prepush_no_code; then finish; fi\n  prepush_bounded no-plan "\$STEP_BUDGET" node "\$STEP_CLI" no-plan \$PLAN_SELECTOR_FAILED\n  \[ "\$\?" -eq 0 \] \|\| exit 1\n  finish\nfi/);
   });
 
   it('carries the version marker', () => {
