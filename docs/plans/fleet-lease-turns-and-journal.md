@@ -1,6 +1,6 @@
 # Plan: fleet lease — announce race, transition journal, turns, gaps, sync:pr on the lease
 - **Date**: 2026-10-14
-- **Status**: In Progress
+- **Status**: Complete — shipped in #252, #253, #257, #265 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`; engineering principles apply)
 - **Target domain(s)**: `fleet`, `scripts`, `shared-lib`, `tests`

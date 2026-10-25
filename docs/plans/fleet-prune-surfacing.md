@@ -1,6 +1,6 @@
 # Plan: fleet prune evidence reaches a person (upstream 56773c7c)
 - **Date**: 2026-10-13
-- **Status**: In Progress
+- **Status**: Complete — shipped in #235 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (Node CLI, `scripts/lib/fleet/**`). Stack `js-ts`.
 - **Target domain(s)**: `fleet`

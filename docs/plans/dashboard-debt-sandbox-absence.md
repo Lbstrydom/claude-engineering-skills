@@ -1,7 +1,7 @@
 # Plan: The dashboard's debt queue treats "no local cache" as an expected absence
 
 - **Date**: 2026-10-11
-- **Status**: In Progress — implemented on `fix/dashboard-debt-sandbox-absence`; under /audit-code
+- **Status**: Complete — shipped in #194 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (one classifier in the dashboard's queue reader; no UI change)
 

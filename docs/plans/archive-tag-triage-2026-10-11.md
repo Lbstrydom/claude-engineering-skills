@@ -1,7 +1,7 @@
 # Triage: the eight `archive/worktree-agent-*` tags (2026-10-11)
 
 - **Date**: 2026-10-11
-- **Status**: Draft (findings and recommendations only; no tag was deleted and nothing was landed by this document)
+- **Status**: Complete — shipped in #228 (doc only; landing or dropping the archive tags is Louis's call) (status reconciled against merged PRs 2026-10-25)
 - **Scope**: tooling (repo hygiene)
 - **Base measured against**: `origin/main` at `b8091c44` (the 2026-10-11 measurement); refreshed 2026-10-12 against `5b63b773`, see "Update 2026-10-12"
 

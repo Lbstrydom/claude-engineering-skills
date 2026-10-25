@@ -19,36 +19,10 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [The drift report says how far the active index trails the default branch](./arch-index-freshness.md) | `In Progress` | implemented on `fix/arch-index-freshness`; under /audit-code |
-| [Triage: the eight `archive/worktree-agent-*` tags (2026-10-11)](./archive-tag-triage-2026-10-11.md) | `Draft` | findings and recommendations only; no tag was deleted and nothing was landed by this document |
-| [Enforced audit round cap + structural-or-stop card](./audit-round-cap-structural-or-stop.md) | `Approved` |  |
-| [Audit honesty — unadmitted changed files, and the bundle's own generated stores](./audit-unadmitted-files.md) | `Approved` | audit-plan converged 2026-10-15; implementation pending |
-| [migrate every CLI entry guard to `isInvokedAsScript`](./cli-entry-guard-migration.md) | `In Progress` |  |
-| [Copilot consumer feedback, item 4: required-subject coverage, a final-review provenance fact, and hash-bound test evidence](./copilot-feedback-item4.md) | `Approved` | (audit-plan converged 2026-10-19; Gemini APPROVE; one PR per cluster). Cluster A implemented 2026-10-19… |
-| [The dashboard's debt queue treats "no local cache" as an expected absence](./dashboard-debt-sandbox-absence.md) | `In Progress` | implemented on `fix/dashboard-debt-sandbox-absence`; under /audit-code |
-| [Tech-Debt Ledger — One File Per Entry (merge conflict-free by construction)](./debt-ledger-per-entry-files.md) | `In Progress` |  |
-| [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `In Progress` | implemented on `fix/debt-readers-ask-store`; under /audit-code |
-| [Fleet chips & merge friction — conflict-free generated files, a standard chip preamble with a coded ship check, one recorded CI-flake re-run, and a harder handover](./fleet-chips-and-merge-friction.md) | `In Progress` |  |
-| [fleet handover — structured wind-down, coordinator context, and three probe fixes](./fleet-handover-winddown.md) | `Draft` |  |
-| [An in-turn lease grant ends with the turn while another repo waits](./fleet-lease-in-turn-cap.md) | `In Progress` | implemented on `fix/lease-in-turn-grant-cap`, pending audit and merge |
-| [fleet lease — announce race, transition journal, turns, gaps, sync:pr on the lease](./fleet-lease-turns-and-journal.md) | `In Progress` |  |
-| [fleet prune evidence reaches a person (upstream 56773c7c)](./fleet-prune-surfacing.md) | `In Progress` |  |
-| [fleet — catch abandoned worktree work regularly, and remove account-switch friction](./fleet-unclaimed-work-and-switch-friction.md) | `Draft` |  |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
-| [Consumer pre-push hook v13 — v12's first day in the field](./hook-v13-field-fixes.md) | `In Progress` | implemented on `fix/hook-v13-budget-reuse-noplan`, pending audit and merge |
-| [Consumer pre-push hook v14 — keep the audit's report](./hook-v14-keep-audit-report.md) | `In Progress` | implemented on `claude/hook-keeps-audit-report-bb2000`, pending audit and merge |
-| [Incremental refresh must propagate an ownership-rule change](./incremental-refresh-ownership-propagation.md) | `Approved` |  |
-| [pre-push — a sanctioned lane for `archive/*` refs](./prepush-archive-lane.md) | `In Progress` |  |
-| [Consumer pre-push hook: bounded, visible, fail-closed steps (hook v11)](./prepush-hook-bounded-steps.md) | `In Progress` |  |
-| [Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed.md) | `Approved` |  |
-| [ship-commit refuses an audit marker that describes another branch's code](./ship-commit-marker-provenance.md) | `In Progress` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Ship trains — batched, impact-based `/ship --train`](./ship-trains.md) | `Approved` |  |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
-| [sync-pr supersedes an older open sync PR](./sync-pr-supersede-open-sync-pr.md) | `In Progress` |  |
-| [Sync contract — structural receipt check (gate 2B) + undeclared required-dep warning](./sync-receipt-structural-and-undeclared-deps.md) | `In Progress` |  |
-| [Sync checks the consumer's lag BEFORE writing; a failed tree-kill is reported](./sync-stale-base-and-stoptree.md) | `In Progress` | implemented on `fix/sync-stale-base-and-stoptree`, pending audit and merge |
-| [sync-to-repos failure honesty (verified audit hypotheses from #231)](./sync-to-repos-failure-honesty.md) | `Draft` |  |
 
 ## Parked
 
@@ -97,6 +71,7 @@ source comments that no docs linter sees — stays valid.
 | [Anthropic Backend Routing (Agent SDK credit prep)](./anthropic-backend-routing.md) | `Complete` | implemented + audited (R1→R3 + Gemini) |
 | [Arch-Memory & Audit-Pipeline Observability Hardening (13-item punch list)](./arch-audit-pipeline-observability-hardening.md) | `Complete` | all 13 items implemented + tested (74 new/updated tests across 8 test files), audit-code Gemini-gate-clear… |
 | [Architectural-Drift Duplication Cleanup — Consolidate Real Dupes + Exclusion Mechanism](./arch-drift-duplication-cleanup.md) | `Complete` | implemented… |
+| [The drift report says how far the active index trails the default branch](./arch-index-freshness.md) | `Complete` | shipped in #195 (status reconciled against merged PRs 2026-10-25) |
 | [Architecture-Intent PR-B — Python & Java Adapters](./arch-intent-pr-b-python-java-adapters.md) | `Complete` | implemented + audited via /cycle; /audit-code → Gemini APPROVE 2026-05-15; see audit summary at… |
 | [Architecture-Intent PR-C — Postgres Adapter](./arch-intent-pr-c-postgres-adapter.md) | `Complete` | implemented + audited via /cycle; /audit-code 2 GPT + 2 Gemini rounds 2026-05-15, all findings fixed, Gemini… |
 | [Arch-Memory Consultation — Close the Query/Index Asymmetry](./arch-memory-band-recalibration.md) | `Complete` |  |
@@ -105,6 +80,7 @@ source comments that no docs linter sees — stays valid.
 | [Architectural Memory — Human-Facing Surfaces](./architectural-memory-frontend.md) | `Complete` | shipped — `Neighbourhood considered` callout fires in `/plan` Phase 0.5 + `/audit-code` Phase 0.5;… |
 | [Architectural Memory](./architectural-memory.md) | `Complete` | shipped — master plan; 6 tables live… |
 | [Architecture-Intent Framework + JS Adapter (PR-A of 3)](./architecture-intent-framework.md) | `Complete` | all 3 PRs shipped… |
+| [Triage: the eight `archive/worktree-agent-*` tags (2026-10-11)](./archive-tag-triage-2026-10-11.md) | `Complete` | shipped in #228 (doc only; landing or dropping the archive tags is Louis's call)… |
 | [Unified arm-evaluation framework (blinded Claude-judge, human-anchored)](./arm-eval-framework.md) | `Complete` | built 2026-07-02 via `/cycle code --autonomous` (2 clusters). Audit-plan converged… |
 | [Adopt `atomicWriteFileSync`/`retrySync` at the 9 Remaining Raw-`renameSync` Sites](./atomic-write-adoption-remaining-sites.md) | `Complete` | audit-plan gate: Gemini APPROVE round 4; audit-code gate: Gemini APPROVE round 2, 2 GPT rounds |
 | [Audit-Backlog-Triage Hardening (7-item punch list)](./audit-backlog-triage-hardening.md) | `Complete` | all 7 items implemented + tested (50+ new/updated tests), audit-code Gemini-gate-clear… |
@@ -116,10 +92,12 @@ source comments that no docs linter sees — stays valid.
 | [Split `/audit-loop` into `/audit-plan` + `/audit-code`](./audit-loop-skill-split.md) | `Complete` | all 6 phases shipped 2026-04-27 |
 | [Claude Audit Loop v1.0](./audit-loop-v1.md) | `Complete` |  |
 | [Audit Orchestrator Hardening](./audit-orchestrator-hardening.md) | `Complete` | implemented (9 phases, 5 clusters), audit-code gate-clear (2 rounds, 6 genuine bugs fixed), covered by the… |
+| [Enforced audit round cap + structural-or-stop card](./audit-round-cap-structural-or-stop.md) | `Complete` | shipped in #292, #293 (status reconciled against merged PRs 2026-10-25) |
 | [Audit-store write durability and failure contract](./audit-store-write-durability.md) | `Complete` | all 6 phases shipped; the final gate ran twice over the union diff… |
 | [Correct audit-target identity readers off `commit_sha` onto `audited_sha`/`audited_tree`](./audit-target-identity-commit-sha-correction.md) | `Complete` |  |
 | [Plan — Consumer-side audit-tool staleness check (Option A)](./audit-tool-staleness-check.md) | `Complete` | shipped 2026-05-13 as commit bc537f0. |
 | [Audit-Transcript Durability Across Worktree Teardown](./audit-transcript-durability.md) | `Complete` | mirror-at-write + filesystem sweep backstop shipped with `tests/audit-transcript-durability.test.mjs`… |
+| [Audit honesty — unadmitted changed files, and the bundle's own generated stores](./audit-unadmitted-files.md) | `Complete` | shipped in #258, #259, #261 (status reconciled against merged PRs 2026-10-25) |
 | [Auditor Controls Execution Wiring](./auditor-controls-execution-wiring.md) | `Complete` | implemented and shipped… |
 | [Azure Embedding-Deployment Discovery + Provenance Truth](./azure-embed-deployment-discovery.md) | `Complete` | (2026-07-17) — all 3 clusters implemented + audited; consolidated Gemini gate APPROVE (0 findings);… |
 | [Azure AI Foundry Work Profile](./azure-work-profile.md) | `Complete` |  |
@@ -131,6 +109,7 @@ source comments that no docs linter sees — stays valid.
 | [Campaign Arm-State and Snapshot-Identity Integrity](./campaign-arm-state-and-identity-integrity.md) | `Complete` | implemented via `/cycle --autonomous` (3 clusters, each audited to convergence), consolidated Gemini gate… |
 | [CES full suite on GitHub Actions, light local pre-push](./ci-full-suite-actions.md) | `Complete` |  |
 | [CLI contract hardening — strict boolean flags, emit ordering, replay CLI honesty](./cli-contract-hardening-flags-emit-replay.md) | `Complete` | plan audited: GPT 2 rounds NEEDS_REVISION to READY_TO_IMPLEMENT; Gemini plan gate APPROVE, round 1 |
+| [migrate every CLI entry guard to `isInvokedAsScript`](./cli-entry-guard-migration.md) | `Complete` | shipped in #236 (status reconciled against merged PRs 2026-10-25) |
 | [Wire the Cloud FP-Pattern Read Loop into Audit Suppression](./cloud-fp-suppression-read-loop.md) | `Complete` | implemented + audited. Plan audit: 5 GPT + 2 Gemini rounds. Code audit: 5 GPT rounds + 1 deliberation + 3… |
 | [Comparison-Tooling Consolidation](./comparison-tooling-consolidation.md) | `Complete` | all clusters (A/A′, B, C, D) implemented, individually audited to convergence, and the mandatory… |
 | [Concern identity for re-raise suppression, and a one-week observation window](./concern-identity-suppression.md) | `Complete` | readout done 2026-09-29 (§3.1): hard-suppress fires, no tuning |
@@ -142,6 +121,7 @@ source comments that no docs linter sees — stays valid.
 | [Consumer sync durability — making deliberate divergence survive](./consumer-sync-durability.md) | `Complete` | 2026-08-29 |
 | [Audit Context Brief Generator](./context-brief.md) | `Complete` | shipped — `scripts/lib/context.mjs`… |
 | [VS Code GitHub Copilot compatibility audit + fixes](./copilot-compat-audit.md) | `Complete` | audited + fixed 2026-07-21 (one Gemini-caught regression resolved; pre-existing sync debt deferred). |
+| [Copilot consumer feedback, item 4: required-subject coverage, a final-review provenance fact, and hash-bound test evidence](./copilot-feedback-item4.md) | `Complete` | shipped in #271 (plan), A #275, B #277, C #278 (status reconciled against merged PRs 2026-10-25) |
 | [Cross-Agent Delivery Parity](./cross-agent-delivery-parity.md) | `Complete` |  |
 | [Cross-Host Parity v2 — Skills Correct on VS Code Copilot](./cross-host-parity-v2.md) | `Complete` | (cross-host unverified) — E1–E6 in §9 are NOT yet run; see Copilot acceptance below |
 | [Cross-Model Finding Matching](./cross-model-finding-matching.md) | `Complete` | implemented + audited |
@@ -149,6 +129,7 @@ source comments that no docs linter sees — stays valid.
 | [cross-skill CLI — declarative command registry](./cross-skill-command-registry.md) | `Complete` | shipped 2026-08-12 across six clusters… |
 | [/cycle's per-cluster audit must name the flag that actually scopes](./cycle-cluster-audit-scope.md) | `Complete` |  |
 | [Read-only Audit-Run Findings Viewer (dashboard module)](./dashboard-audit-run-viewer.md) | `Complete` | implemented + audited — see Implementation Log |
+| [The dashboard's debt queue treats "no local cache" as an expected absence](./dashboard-debt-sandbox-absence.md) | `Complete` | shipped in #194 (status reconciled against merged PRs 2026-10-25) |
 | [Dashboard Home summary — what changed, is it healthy, what needs me](./dashboard-home-summary.md) | `Complete` |  |
 | [Dashboard "Purpose" view — v2 (coverage, reverse-link, live health)](./dashboard-purpose-view-v2.md) | `Complete` |  |
 | [Dashboard "Purpose" view — v3 (per-domain health + outcome×domain matrix)](./dashboard-purpose-view-v3.md) | `Complete` |  |
@@ -158,7 +139,9 @@ source comments that no docs linter sees — stays valid.
 | [Dead-Code Detection — Phase 1 (Orphan-Introduced Check)](./dead-code-phase-1-orphan-introduced.md) | `Complete` |  |
 | [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `Complete` | (2026-07-19) — all workstreams closed and traced against the code, not against their labels. WS-D and… |
 | [Debt-Ledger Merge-Safety — CI Gate + Serialization Hardening](./debt-ledger-merge-safety.md) | `Complete` | Plan audit: GPT converged after 4 rounds, Gemini APPROVE round 1. Implementation: Cluster A (CI-gate)… |
+| [Tech-Debt Ledger — One File Per Entry (merge conflict-free by construction)](./debt-ledger-per-entry-files.md) | `Complete` | shipped in #247 (disposition #251) (status reconciled against merged PRs 2026-10-25) |
 | [Enforce the debt ledger's persisted-record contract (§2 of aged-out-acceptance-remainder.md)](./debt-ledger-persisted-record-contract.md) | `Complete` | shipped in #108 (bea0b270, merged 2026-09-15), Fixes A–D… |
+| [The debt reporting CLIs read the private store, not the local cache](./debt-readers-ask-store.md) | `Complete` | shipped in #193 (status reconciled against merged PRs 2026-10-25) |
 | [Determinism Follow-ups — Model-Independent Outcome Capture + Deterministic ux-lock Runners](./determinism-follow-ups.md) | `Complete` | both workstreams implemented, audited, and shipped via autonomous `/cycle` (2026-06-22). WS1… |
 | [Deterministic `/audit-code` outcome capture for rounds 1..N-1 (orchestrator-only)](./deterministic-outcome-capture.md) | `Complete` | shipped 2026-06-29. Audit trail: v1 hook+queue design REJECTED by Gemini… |
 | [Device-profile emulation for persona-driven + structural browser tests](./device-profile-emulation.md) | `Complete` | implemented in this repo; shareable brief for porting elsewhere |
@@ -183,15 +166,21 @@ source comments that no docs linter sees — stays valid.
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `Complete` | VERDICT: KEEP opus (SELECT opus, the incumbent; no challenger cleared the relative floor). N reached 12/12… |
 | [Shadow Final-Review Reviewer (A/B test final-gate effectiveness)](./final-review-shadow-reviewer.md) | `Complete` | verified built; status corrected from Approved during archive triage 2026-06-27 |
 | [/fleet — idle-branch hiding and hot files (capstone consumer feedback)](./fleet-capstone-feedback.md) | `Complete` |  |
+| [Fleet chips & merge friction — conflict-free generated files, a standard chip preamble with a coded ship check, one recorded CI-flake re-run, and a harder handover](./fleet-chips-and-merge-friction.md) | `Complete` | shipped in #256, #263, #264, #266, #267 (status reconciled against merged PRs 2026-10-25) |
 | [/fleet — session-only verbs stop diffing every untracked branch](./fleet-claim-analysis-scope.md) | `Complete` |  |
 | [/fleet — status truth, a coordination channel, and real landing (wine + storyline feedback)](./fleet-consumer-feedback-oct.md) | `Complete` | shipped in #173 (ead39e7d), #174 (842d8dbe), #175 (f689caca), #176 (aa7699a0), #178 (5884285b) |
+| [fleet handover — structured wind-down, coordinator context, and three probe fixes](./fleet-handover-winddown.md) | `Complete` | shipped in #281, #282, #283 (status reconciled against merged PRs 2026-10-25) |
 | [fleet handover — move coordination to another Claude Code account on this machine](./fleet-handover.md) | `Complete` |  |
+| [An in-turn lease grant ends with the turn while another repo waits](./fleet-lease-in-turn-cap.md) | `Complete` | shipped in #290 (status reconciled against merged PRs 2026-10-25) |
+| [fleet lease — announce race, transition journal, turns, gaps, sync:pr on the lease](./fleet-lease-turns-and-journal.md) | `Complete` | shipped in #252, #253, #257, #265 (status reconciled against merged PRs 2026-10-25) |
 | [fleet machine-wide lease (`fleet lease`)](./fleet-machine-lease.md) | `Complete` |  |
 | [/fleet — coordinating several concurrent AI coding sessions](./fleet-multi-session-coordination.md) | `Complete` |  |
 | [fleet findings intake queue (`fleet propose`)](./fleet-proposals-queue.md) | `Complete` |  |
+| [fleet prune evidence reaches a person (upstream 56773c7c)](./fleet-prune-surfacing.md) | `Complete` | shipped in #235 (status reconciled against merged PRs 2026-10-25) |
 | [/fleet — four fixes from the storyline consumer's first real use](./fleet-storyline-feedback.md) | `Complete` |  |
 | [/fleet — supervisors end promptly and reap what an exited hook/tier left behind](./fleet-supervisor-lifecycle.md) | `Complete` |  |
 | [/fleet telemetry — measure performance and find weaknesses, sustainably](./fleet-telemetry.md) | `Complete` |  |
+| [fleet — catch abandoned worktree work regularly, and remove account-switch friction](./fleet-unclaimed-work-and-switch-friction.md) | `Complete` | shipped in #198, #199 (plan), #216 (status reconciled against merged PRs 2026-10-25) |
 | [Friction-Feedback Loop (recurrence-aware quality signal)](./friction-feedback-loop.md) | `Complete` | built Clusters A–C 2026-06-28; `/audit-code` R1 found 8 genuine in-scope bugs — all fixed; consolidated… |
 | [Friction Log + Weekly Digest Surface (v1)](./friction-log-and-digest-v1.md) | `Complete` | shipped 2026-05-09; schema applied to live Supabase; auto-archived via `/ship` Step 5.5 |
 | [Gate-contract authoring — bind the surveyed gates, ratchet the rest](./gate-contract-authoring.md) | `Complete` |  |
@@ -207,6 +196,9 @@ source comments that no docs linter sees — stays valid.
 | [God-module and layering debt — two problems, two answers](./god-module-and-layering-debt.md) | `Complete` | all three clusters shipped 2026-08-13. Cluster 1 (Phases 0–3): 14 layering violations → 0, now gated at… |
 | [Closing the Green-but-Unrealized Gap](./green-but-unrealized.md) | `Complete` | implemented 2026-08-01; both clusters shipped, consolidated Gemini gate APPROVE — see Implementation Log.… |
 | [Closing the "GREEN ≠ REALIZED" gap](./green-not-realized.md) | `Complete` | all three clusters shipped (2026-06-28). A: efficacy-lints (AST, Gemini APPROVE). B: runtime-truth audit… |
+| [Consumer pre-push hook v13 — v12's first day in the field](./hook-v13-field-fixes.md) | `Complete` | shipped in #289 (status reconciled against merged PRs 2026-10-25) |
+| [Consumer pre-push hook v14 — keep the audit's report](./hook-v14-keep-audit-report.md) | `Complete` | shipped in #291 (status reconciled against merged PRs 2026-10-25) |
+| [Incremental refresh must propagate an ownership-rule change](./incremental-refresh-ownership-propagation.md) | `Complete` | shipped in d0284929 (Phase 1), ce497f61 (Phase 2); Phase 3 upstream close not verified… |
 | [Harden `scripts/lib/install/transaction.mjs`'s WAL Crash-Safety Contract](./install-transaction-wal-hardening.md) | `Complete` |  |
 | [Cross-Domain Layering + Mutation-Contract Cleanup](./layering-and-mutation-contracts.md) | `Complete` | shipped 2026-07-31 — see Implementation Log |
 | [Honest failure across the learning / brainstorm / persona-promote seams](./learning-persona-quickfix-honest-failure.md) | `Complete` | (2026-08-09) — all 5 phases shipped across 3 clusters; all 7 topicIds resolved with attributable commit… |
@@ -258,6 +250,9 @@ source comments that no docs linter sees — stays valid.
 | [pnpm-aware consumer installation](./pnpm-consumer-support.md) | `Complete` |  |
 | [Postgres Parity — One Postgres Code Path for the Audit-Loop Store](./postgres-parity.md) | `Complete` | 2026-07-18 — the one deferred follow-up was retired, not built; see §12 "Follow-up retired". No open work… |
 | [Predictive Audit Strategy — Data Loop Completion & Intelligence](./predictive-audit-strategy.md) | `Complete` | shipped — `predictiveConfig` block exported from `scripts/lib/config.mjs`… |
+| [pre-push — a sanctioned lane for `archive/*` refs](./prepush-archive-lane.md) | `Complete` | shipped in #208 (status reconciled against merged PRs 2026-10-25) |
+| [Consumer pre-push hook: bounded, visible, fail-closed steps (hook v11)](./prepush-hook-bounded-steps.md) | `Complete` | shipped in #284 (status reconciled against merged PRs 2026-10-25) |
+| [Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed.md) | `Complete` | shipped in #225 (status reconciled against merged PRs 2026-10-25) |
 | [Git-Native Provenance Trailers (F1) + Executable Gate-Honesty Suite (F2)](./provenance-trailers-and-gate-honesty.md) | `Complete` | implemented via `/cycle --autonomous`… |
 | [Quickfix Mechanical Blind-Spot Patterns](./quickfix-blindspot-patterns.md) | `Complete` | plan-audit (3 GPT rounds + 4 Gemini rounds) converged as documented below; implemented… |
 | [Adaptive Audit Intelligence — Efficiency, Learning, and Continuous Improvement](./r2-efficiency.md) | `Complete` | shipped — R2+ mode is the canonical audit re-run path: `R2_ROUND_MODIFIER` + `buildRulingsBlock` in… |
@@ -298,6 +293,7 @@ source comments that no docs linter sees — stays valid.
 | [Shadow write-gate + orchestrator smoke execution](./shadow-write-gate-and-orchestrator-smoke.md) | `Complete` |  |
 | [Shared cloud-config file for consumer repos](./shared-cloud-config.md) | `Complete` |  |
 | [Shared-Env Loading Root-Fix + Contract Guard (+ cache-seed experiment record)](./shared-env-loading-root-fix.md) | `Complete` |  |
+| [ship-commit refuses an audit marker that describes another branch's code](./ship-commit-marker-provenance.md) | `Complete` | shipped in #262 (status reconciled against merged PRs 2026-10-25) |
 | [Reduce `skills/ship/SKILL.md`'s size via progressive disclosure](./ship-skill-size-reduction.md) | `Complete` | shipped 2026-09-16 directly on main (ee0e7da0, 85166fe0, e4edb530), closed out at 360a5abb. Re-measured… |
 | [Close Two Sibling-Path Defects (bandit_arms NULL key + local FP tracker in the ledger branch)](./sibling-path-suppression-defects.md) | `Complete` | implemented + audited via `/cycle --autonomous` (2026-07-18). Plan audit: 4 GPT + 1 Gemini → APPROVE. Code:… |
 | [Four places that report success without establishing it](./silent-success-cluster.md) | `Complete` |  |
@@ -313,6 +309,10 @@ source comments that no docs linter sees — stays valid.
 | [Symbol-Index / Arch-Memory Pipeline Reliability Hardening](./symbol-index-pipeline-reliability-hardening.md) | `Complete` | all 5 execution clusters (A-E) built and audited via `/cycle --autonomous` on 2026-07-27; consolidated… |
 | [Sync output drift classification](./sync-output-drift-classification.md) | `Complete` | `/audit-code` converged 2026-09-10… |
 | [Sync ownership from content, not a tracked artifact](./sync-ownership-from-content.md) | `Complete` | all sections (§0 rollback detection, §A content-derived ownership, §B untrack consumer manifest) implemented… |
+| [sync-pr supersedes an older open sync PR](./sync-pr-supersede-open-sync-pr.md) | `Complete` | shipped in #230, #238, #242 (status reconciled against merged PRs 2026-10-25) |
+| [Sync contract — structural receipt check (gate 2B) + undeclared required-dep warning](./sync-receipt-structural-and-undeclared-deps.md) | `Complete` | shipped in #231 (status reconciled against merged PRs 2026-10-25) |
+| [Sync checks the consumer's lag BEFORE writing; a failed tree-kill is reported](./sync-stale-base-and-stoptree.md) | `Complete` | shipped in #288 (status reconciled against merged PRs 2026-10-25) |
+| [sync-to-repos failure honesty (verified audit hypotheses from #231)](./sync-to-repos-failure-honesty.md) | `Complete` | shipped in #233, #236 (H6 receipt/manifest lock stays recorded debt)… |
 | [Tech Debt Wave 2 — Responsibility Splits & Safety Fixes](./tech-debt-wave-2.md) | `Complete` | shipped — `scripts/shared.mjs` god-module split into focused `scripts/lib/*.mjs` files: `code-analysis.mjs`,… |
 | [Tech Debt Wave 3 — Lint Modernization + Cognitive-Complexity Sweep](./tech-debt-wave-3.md) | `Complete` | all 5 PRs shipped 2026-04-27 |
 | [Tiered Testing Doctrine + Egress/Relocation Behavioral-Gap Backfill](./testing-doctrine-and-egress-relocation-gaps.md) | `Complete` |  |

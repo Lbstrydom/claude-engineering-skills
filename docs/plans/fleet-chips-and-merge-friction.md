@@ -1,7 +1,7 @@
 # Plan: Fleet chips & merge friction — conflict-free generated files, a standard chip preamble with a coded ship check, one recorded CI-flake re-run, and a harder handover
 
 - **Date**: 2026-10-15
-- **Status**: In Progress
+- **Status**: Complete — shipped in #256, #263, #264, #266, #267 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`; engineering principles apply; no UI)
 - **Target domain(s)**: `fleet`, `install`, `scripts`, `shared-lib`, `ship`, `skills-content`

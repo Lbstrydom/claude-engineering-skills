@@ -1,7 +1,7 @@
 # Plan: Sync checks the consumer's lag BEFORE writing; a failed tree-kill is reported
 
 - **Date**: 2026-10-24
-- **Status**: In Progress — implemented on `fix/sync-stale-base-and-stoptree`, pending audit and merge
+- **Status**: Complete — shipped in #288 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude (fleet chip for CES: Coordinator; proposals 2753, c729)
 - **Scope**: backend (consumer sync CLI, shared lease runner; no UI)
 

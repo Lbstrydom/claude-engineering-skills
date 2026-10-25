@@ -1,6 +1,6 @@
 # Plan: Sync contract — structural receipt check (gate 2B) + undeclared required-dep warning
 - **Date**: 2026-10-13
-- **Status**: In Progress
+- **Status**: Complete — shipped in #231 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `install`, `shared-lib`

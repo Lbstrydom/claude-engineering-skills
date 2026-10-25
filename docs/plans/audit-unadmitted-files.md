@@ -1,6 +1,6 @@
 # Plan: Audit honesty — unadmitted changed files, and the bundle's own generated stores
 - **Date**: 2026-10-15
-- **Status**: Approved (audit-plan converged 2026-10-15; implementation pending)
+- **Status**: Complete — shipped in #258, #259, #261 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (audit CLIs + `scripts/lib/**`; no UI) · stack `js-ts`
 - **Target domain(s)**: `audit-orchestration`, `shared-lib`, `skills-content`, `tech-debt`

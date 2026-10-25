@@ -1,7 +1,7 @@
 # Plan: An in-turn lease grant ends with the turn while another repo waits
 
 - **Date**: 2026-10-24
-- **Status**: In Progress — implemented on `fix/lease-in-turn-grant-cap`, pending audit and merge
+- **Status**: Complete — shipped in #290 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude (fleet chip for CES: Coordinator; proposal 9729, HIGH)
 - **Scope**: backend (fleet lease decision; no UI)
 

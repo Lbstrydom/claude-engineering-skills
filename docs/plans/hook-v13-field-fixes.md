@@ -1,7 +1,7 @@
 # Plan: Consumer pre-push hook v13 — v12's first day in the field
 
 - **Date**: 2026-10-24
-- **Status**: In Progress — implemented on `fix/hook-v13-budget-reuse-noplan`, pending audit and merge
+- **Status**: Complete — shipped in #289 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude (fleet chip for CES: Coordinator; proposals eb21, f757, 33e2)
 - **Scope**: backend (consumer pre-push hook, step runner, ship provenance; no UI)
 

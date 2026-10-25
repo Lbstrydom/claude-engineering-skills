@@ -1,6 +1,6 @@
 # Plan: Pre-push hook fails closed when killed
 - **Date**: 2026-10-12
-- **Status**: Approved
+- **Status**: Complete — shipped in #225 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (git hooks, CLI scripts) — stack `js-ts` + POSIX shell
 

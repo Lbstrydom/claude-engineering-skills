@@ -1,6 +1,6 @@
 # Plan: ship-commit refuses an audit marker that describes another branch's code
 - **Date**: 2026-10-15
-- **Status**: In Progress
+- **Status**: Complete — shipped in #262 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (one CLI + one pure module; no UI)
 - **Origin**: fleet `p-20261015130416-f9f9`, found while shipping `audit-unadmitted-files` PR 1. Direct fix (coordinator route): no plan phase, no new behaviour beyond the refusal.

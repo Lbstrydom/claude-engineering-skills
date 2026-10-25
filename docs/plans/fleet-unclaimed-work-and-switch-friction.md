@@ -1,6 +1,6 @@
 # Plan: fleet — catch abandoned worktree work regularly, and remove account-switch friction
 - **Date**: 2026-10-11
-- **Status**: Draft
+- **Status**: Complete — shipped in #198, #199 (plan), #216 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (fleet CLI + skill prose; no UI) · stack `js-ts` (`detect-stack`: `js-ts`)
 - **Target domain(s)**: `fleet`, `shared-lib`

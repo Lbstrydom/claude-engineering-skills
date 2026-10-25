@@ -1,6 +1,6 @@
 # Plan: sync-pr supersedes an older open sync PR
 - **Date**: 2026-10-13
-- **Status**: In Progress
+- **Status**: Complete — shipped in #230, #238, #242 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (js-ts) — one library module + its two test files
 - **Target domain(s)**: `shared-lib`, `tests`

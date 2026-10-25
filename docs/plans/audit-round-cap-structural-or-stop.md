@@ -1,6 +1,6 @@
 # Plan: Enforced audit round cap + structural-or-stop card
 - **Date**: 2026-10-25
-- **Status**: Approved
+- **Status**: Complete — shipped in #292, #293 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI scripts, store readers, one migration, skill prose). Stack `js-ts`.
 - **Target domain(s)**: `audit-orchestration`, `plan`, `scripts`, `skills-content`
