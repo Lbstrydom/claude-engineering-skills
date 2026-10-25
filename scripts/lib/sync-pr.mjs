@@ -84,7 +84,8 @@ import { OVERRIDES_PATH } from './sync-overrides.mjs';
 import { comparisonKey, isUpstreamOwned, isUsableSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './sync-owned-sidecar.mjs';
 import { pathspecsForCommit } from './sync-status.mjs';
 import { SYNC_BRANCH_PREFIX } from './sync-divergence.mjs';
-import { classifyGitignoreTransition } from './sync-gitignore.mjs';
+import { classifyBundleFreshness, gatherSourceFacts, gatherGitignoreTransition, GITIGNORE_PATH, GITIGNORE_PATH_STATE, GITIGNORE_LEFT_BEHIND_REASON } from './sync-pr-facts.mjs';
+export { classifyBundleFreshness, gatherSourceFacts, gatherGitignoreTransition };
 import { createGitAncestry } from './sync-rollback-guard.mjs';
 // The base-lag oracle (and the runner / git helpers it shares with this module) lives in sync-base-lag.mjs, which the sync asks BEFORE
 // writing; re-exported here so `sync:pr` and every existing importer keep one door.
@@ -106,38 +107,6 @@ export const SKIP_REASON = Object.freeze({
   /** Nothing synced is on disk and the stamp cannot be compared to the source (malformed, short, source unreadable or dirty). */
   CLEAN_UNVERIFIED: 'clean-unverified',
 });
-
-const FULL_SHA = /^[0-9a-f]{40}$/;
-const GITIGNORE_PATH = '.gitignore';
-/** `block-only` is the one state that rides in the PR; the rest are named under leftBehind. */
-const GITIGNORE_PATH_STATE = Object.freeze({ BLOCK_ONLY: 'block-only' });
-const GITIGNORE_LEFT_BEHIND_REASON = Object.freeze({
-  mixed: 'edited beyond the sync-managed block',
-  invalid: 'managed-block markers are malformed',
-  unverified: 'could not be compared with the base',
-});
-
-/**
- * Is the consumer's bundle stamp the source's current commit? PURE.
- *
- * A 'clean' consumer only means the tracked surface on disk is committed - it compares nothing against the source, so a STALE
- * bundle read 'skip clean' (storyline, 2026-10-16: the bundle lacked #265 until a separate sync). Decision table:
- *
- *   stamp not 40-hex (missing/short/malformed) -> unverified
- *   sourceSha not 40-hex                       -> unverified
- *   different                                  -> different (NEVER 'behind': no ancestry is verified - it may be ahead or divergent)
- *   equal, source tree dirty or unknown        -> unverified (a matching HEAD stamp does not prove equal content)
- *   equal, source tree clean                   -> current
- *
- * @param {{stamp: unknown, sourceSha: unknown, sourceDirty: unknown}} input
- * @returns {'current'|'different'|'unverified'}
- */
-export function classifyBundleFreshness({ stamp, sourceSha, sourceDirty }) {
-  if (typeof stamp !== 'string' || !FULL_SHA.test(stamp)) return 'unverified';
-  if (typeof sourceSha !== 'string' || !FULL_SHA.test(sourceSha)) return 'unverified';
-  if (stamp !== sourceSha) return 'different';
-  return sourceDirty === false ? 'current' : 'unverified';
-}
 
 const RECEIPT_KEY = comparisonKey(RECEIPT_PATH);
 const DEFAULT_REPO = 'Lbstrydom/claude-engineering-skills';
@@ -991,50 +960,4 @@ export async function runConsumerPr({
   } finally {
     restoreGhAccount();
   }
-}
-
-/**
- * The SOURCE repo's HEAD and whether its tree is dirty - the two facts `planConsumerPr` needs to say whether a 'clean' consumer is
- * actually current (da9a). Any git failure yields `undefined` for that fact, which the planner reads as UNVERIFIED, never as current.
- *
- * @param {Runner} run
- * @param {string} sourceRoot
- * @returns {{sourceSha: string|undefined, sourceDirty: boolean|undefined}}
- */
-export function gatherSourceFacts(run, sourceRoot) {
-  const head = run('git', ['rev-parse', 'HEAD'], { cwd: sourceRoot });
-  const status = run('git', ['status', '--porcelain'], { cwd: sourceRoot });
-  return {
-    sourceSha: ok(head) ? head.stdout.trim() : undefined,
-    sourceDirty: ok(status) ? status.stdout.trim().length > 0 : undefined,
-  };
-}
-
-/**
- * What the sync did to the consumer's `.gitignore`, compared with the commit the PR branch will fork from (`baseSha`, never the local
- * HEAD - that is the stale-base lesson of header rule 3). IMPURE; never throws. "The path is absent at the base" and "git could not
- * answer" are different outcomes: the first is a legitimate new file, the second is `unverified` and the file is left behind.
- *
- * @param {Runner} run
- * @param {string} repoRoot
- * @param {string|null} baseSha
- * @returns {'unchanged'|'block-only'|'mixed'|'invalid'|'unverified'}
- */
-export function gatherGitignoreTransition(run, repoRoot, baseSha) {
-  if (typeof baseSha !== 'string' || !baseSha) return 'unverified';
-  let work;
-  try {
-    work = fs.readFileSync(path.join(repoRoot, '.gitignore'), 'utf-8');
-  } catch (e) {
-    return e && e.code === 'ENOENT' ? 'unchanged' : 'unverified';
-  }
-  const tree = run('git', ['ls-tree', baseSha, '--', '.gitignore'], { cwd: repoRoot });
-  if (!ok(tree)) return 'unverified';
-  let head = null;
-  if (tree.stdout.trim()) {
-    const shown = run('git', ['show', `${baseSha}:.gitignore`], { cwd: repoRoot });
-    if (!ok(shown)) return 'unverified';
-    head = shown.stdout;
-  }
-  return classifyGitignoreTransition(head, work);
 }
