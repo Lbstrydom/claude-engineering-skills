@@ -390,8 +390,8 @@ Two surfaces catch broken Mermaid before it ships. **Interactive**: `.mcp.json` 
 
 | Package | Version | Notes |
 |---------|---------|-------|
-| `zod` | **4.6.5** | Zod 4 API — NOT Zod 3. `_def.type` is a string (`'object'`, `'array'`, `'enum'`), NOT `_def.typeName` (`'ZodObject'`). `shape` is a direct property on object schemas, NOT `_def.shape()`. `_def.entries` for enums, NOT `_def.values`. |
-| `openai` | **7.8.0** | v7 since 2026-08-09; `responses.parse()` + `zodTextFormat()` unchanged and live-verified on the bump to 7.8.0 + zod 4.5.2 (2026-09-03); zod 4.6.5 (2026-09-24, #115) is CI-verified only |
+| `zod` | **4.6.7** | Zod 4 API — NOT Zod 3. `_def.type` is a string (`'object'`, `'array'`, `'enum'`), NOT `_def.typeName` (`'ZodObject'`). `shape` is a direct property on object schemas, NOT `_def.shape()`. `_def.entries` for enums, NOT `_def.values`. |
+| `openai` | **7.8.0** | v7 since 2026-08-09; `responses.parse()` + `zodTextFormat()` unchanged and live-verified on the bump to 7.8.0 + zod 4.5.2 (2026-09-03); zod 4.6.5 (2026-09-24, #115) and 4.6.7 (2026-10-25, #294) are CI-verified only |
 | `@google/genai` | ^2.19.0 | Google Generative AI SDK. Uses `responseMimeType: 'application/json'` + `responseSchema` for structured output |
 | `dotenv` | 17.4.2 | Load via `lib/load-env.mjs`, never `dotenv/config` (cwd-only) |
 
