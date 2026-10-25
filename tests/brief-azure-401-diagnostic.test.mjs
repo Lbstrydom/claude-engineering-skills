@@ -28,6 +28,9 @@ const AIO_SHAPE = {
 describe('brief Haiku leg on a both-endpoints Azure tenant', () => {
   beforeEach(() => _resetClientCache());
 
+  // The shared-credential fallback is deliberate (tenants where one key serves
+  // both services), so routing is NOT rejected here; this pins the exact request
+  // that 401s on a tenant where it does not, so the diagnostic below stays honest.
   it('emits the shared APIM key as Bearer at the Foundry host (the 401 shape)', async () => {
     const route = buildAzureConfig(AIO_SHAPE).claudeRoute;
     assert.equal(route.credentialShared, true);
