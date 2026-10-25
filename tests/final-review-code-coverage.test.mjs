@@ -339,6 +339,24 @@ describe('a multi-file group names each changed file the reviewer never received
     assert.equal(c.changedLinesUnmeasuredFiles, 2, 'still counted, just not named');
   });
 
+  it('upstream d4dada5d: an unmeasured file is named WITH its reason, capped at 5, and a control char cannot forge a line', () => {
+    const files = Array.from({ length: 7 }, (_, i) => 'src/u' + i + '.mjs');
+    const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs', ...files], { readText: present, exists });
+    const seg = formatCodeCoverageSegment(c);
+    assert.match(seg, /UNMEASURED: src\/u0\.mjs \(not selected for the envelope\), .*\(\+2 more\)/);
+    const evil = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs', 'src/x\nCode: FULL.mjs'], { readText: present, exists });
+    assert.doesNotMatch(formatCodeCoverageSegment(evil), /\n/);
+  });
+
+  it('upstream d4dada5d NEGATIVE CONTROL: nothing unmeasured, or a sensitive path, never names a file in UNMEASURED', () => {
+    const clean = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs'], { readText: present, exists });
+    assert.doesNotMatch(formatCodeCoverageSegment(clean), /UNMEASURED/);
+    const sens = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs', '.env'], { readText: present, exists });
+    const seg = formatCodeCoverageSegment(sens);
+    assert.match(seg, /UNMEASURED: \[sensitive path\] \(excluded as sensitive\)/);
+    assert.doesNotMatch(seg, /\.env/);
+  });
+
   it('audit-code R1-L1/L2: control characters in a path cannot forge an extra output line', () => {
     const evil = 'fixtures/probe\nCode: FULL.xyz';
     const c = summariseCodeCoverage(stats({ full: ['src/a.mjs'] }), ['src/a.mjs', evil], { readText: present, exists });

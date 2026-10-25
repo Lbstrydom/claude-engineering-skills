@@ -130,3 +130,11 @@ describe('model pricing: gemini-4-argon (final-review trial, 2026-10-14)', () =>
     assert.ok(Math.abs(c.totalUsd - 3.00) < 1e-9, 'expected 1M in at $2 + 100K out at $10 = $3.00, got ' + c.totalUsd);
   });
 });
+
+describe('model pricing — Fable (fleet p-ddc3, read 2026-10-25)', () => {
+  it('claude-fable-5-1 is priced at its own row with the published 0.025x cache read', () => {
+    assert.equal(isPriced('claude-fable-5-1'), true, 'a Fable run must report a cost, not null');
+    const cost = costFromUsage({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 }, 'claude-fable-5-1');
+    assert.equal(cost.totalUsd, 0.25);
+  });
+});
