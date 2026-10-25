@@ -9,6 +9,25 @@
 
 **Build the dataset now; earn the right to train.** The scarce asset is a trustworthy join from *decision → outcome*, not weights. Spend the next six weeks on (a) a content-bearing **decision ledger** that survives account switches, kept apart from counts-only fleet telemetry, and (b) an H1 *measurement* experiment whose first exit is "a prompted cheap model already meets the bar, skip the LoRA". Do **not** fine-tune a coordinator. H3's durable asset is the dataset; the first H3 tool is retrieval, the second a prompted critic, and a trained ranker only if held-out evaluation shows it adds value.
 
+## 0.1 Decisions received from Louis (2026-10-25)
+
+- **Scope**: storyline, CES, ai-organiser and wine-cellar-app are all approved for the training corpus, **and** Azure-store retrieval is approved. This **supersedes** the default-exclude rows of the first draft and the brainstorm voices' storyline/AIO exclusion, which Louis has overridden. Mechanism unchanged: eligibility stays a per-repo stored flag (`training_eligible`), so a later revocation is one update plus a purge, not a code change. The approval is Louis's; whether Wärtsilä's own terms allow work-repo content to leave the Azure tenant or reach a non-tenant training host is not something this memo can establish, so §6.6 keeps storyline data **on tenant-reachable hosts only** until that is checked.
+- **Compute**: local Radeon RX 6600 XT; assessed in §0.2.
+- **H1**: prepare the labelling weekend (§3.1); do not execute it yet.
+- **Telemetry first**: audit what H1 needs that is not captured (§2.1) and start capturing it.
+
+## 0.2 Is the RX 6600 XT enough? (expected; verify before buying anything)
+
+The screenshot shows an **AMD Radeon RX 6600 XT (Navi 23, RDNA2)**. "Adapter RAM 1,048,576 bytes" is the known 32-bit WMI display bug, not the real memory; the card has **8 GB VRAM** (*expected*, from the model, not read from the machine; confirm in Task Manager).
+
+| Use | Verdict |
+|---|---|
+| **H1 prompted baselines** (Haiku/Flash/GPT-mini, retrieval few-shot) | Needs no GPU. Unaffected. |
+| **Running a small open model for inference** (4-8B, 4-bit, llama.cpp Vulkan) | Works on 8 GB. Enough to try a local classifier or embedder. |
+| **LoRA/QLoRA on a 7-14B** | **Not realistic here.** 8 GB is tight for even a 7B QLoRA once a sequence is a finding plus a diff (long context); 14B does not fit. The bigger blocker is software: the usual training stacks (Unsloth, TRL, bitsandbytes) are CUDA-first, and ROCm on Windows for a consumer RDNA2 card is poorly supported (*expected*; check the current ROCm/PyTorch support matrix before relying on it). A 1-3B QLoRA may be possible with effort, but the H1 plan names 7-14B. |
+
+**Recommendation: do not buy a GPU for H1.** The pre-registered rule makes the LoRA a branch expected not to run. If it does, rent a GPU for a few hours (a third-party host, so subject to the terms check in §6.6) or buy **after** the verdict. If you buy for the learning-project goal, an **NVIDIA card with 16-24 GB** (used 24 GB class) is what the tooling assumes; price is not researched here. Revisit at the H1 verdict, not before.
+
 ## 1. Where the voices landed
 
 **Agree.** (1) Accept/dismiss is the operator's workflow state, not defect truth; a model can score well by learning Louis's habits and suppress exactly the uncomfortable findings. (2) Skip the LoRA if prompting meets the bar. (3) Dataset durable, model disposable. (4) Decision content must not enter counts-only fleet telemetry. (5) Storyline and the AIO vault are out of any corpus by default. (6) Convergence prediction should *trigger structural review*, not auto-abort.
@@ -56,6 +75,25 @@ Queries run 2026-10-25 via `scripts/lib/db/query.mjs` `many()` on the audit stor
 
 Reading: the clean-label set (1,524) is smaller than it looks (two repos carry 98%; findings cluster by run) and the effective independent-task count is far lower. `adjudication_outcome` is richer (15,711 non-null) but is exactly the confounded triage column; keep it as a *feature of the process*, never the sole target. **Storyline findings (217) exist in the store and must be excluded by an explicit repo filter before any export (D2).**
 
+## 2.1 H1 telemetry gap audit (what is captured vs what H1 needs)
+
+Queries run 2026-10-25 on the audit store (*measured*).
+
+| H1 need | State in store | Evidence (query) | Action |
+|---|---|---|---|
+| **The diff the finding was raised on** | **Not stored.** Only reconstructable from `audit_runs.audited_sha`/`audited_tree`, set on 3,906 of 6,092 runs (64%); no base sha, so the range is not recoverable | `select count(*), count(audited_sha) from audit_runs` | Persist a bounded, redacted, content-addressed diff per run plus `diff_base_sha`; make `audited_sha` non-null |
+| **Finding text** | `detail_snapshot` on every finding (avg 334 chars) | `count(detail_snapshot), avg(length(detail_snapshot))` | Adequate; confirm it is not truncated |
+| **Who decided** | `finding_adjudication_events.adjudicator_kind` null on 14,973 of 15,426 events (97%); only campaign code writes it (`scripts/lib/store/campaign.mjs`). 139 `human`, 314 `agent` | `group by adjudicator_kind` | Set `adjudicator_kind`/`adjudicator_model` on the normal adjudication write path |
+| **When it was resolved** | `audit_findings.decided_at` exists; `time_to_resolution_ms` populated on **0** rows | `count(time_to_resolution_ms)` | Populate or drop the dead column |
+| **Why dismissed** | `dismiss_reason` on 136 of 652 dismissed + auto-dismissed rows | `count(dismiss_reason)` vs `user_action in ('dismissed','auto_dismissed')` | Closed-vocabulary reason at dismissal |
+| **Fixed before adjudication** | `fix_commit_sha` on 842 of 23,797 (3.5%) | `count(fix_commit_sha)` | Remediation sweep sets it; add a `fixed_before_adjudication` flag |
+| **Pipeline prediction at decision time** | `stage` and `arm` null on all 23,797 findings | `select stage, arm, count(*) …` | Record the Stage-1 prediction and its model per finding (shadow data for H1 baselines) |
+| **Run cost** | `total_cost_estimate` on 5,142 of 6,092 runs | `count(total_cost_estimate)` | Make non-null |
+| **Corpus eligibility** | no flag; storyline rows share the table (217 findings, 0 clean labels) | repo census in §2 | Add `audit_repos.training_eligible` and an export-time check |
+| **Join key to decisions** | `audit_runs.task_id` **exists but is the arm-eval task-text hash and is empty (0 rows)**: a name collision | `count(task_id), count(distinct task_id)` | Use a different name (`work_item_id`) for the ledger join key |
+
+**Reuse, do not duplicate.** `learning_decisions` already is a decision-trace table (`context`, `context_hash`, `choice`, `outcome`, `outcome_at`; *measured*: arch_memory_band 11,144, pass_selection 3,971, convergence_predict 3,971 with 2,561 outcomes, author_tier 3,869, quickfix_hit 1,213; query `select decision_type, count(*), count(outcome) from learning_decisions group by 1`). The H2 convergence candidate therefore **already has ~2,600 outcome-labelled rows**. Coordinator decisions should extend this table (new `decision_type` values) unless content-bearing columns force a separate one.
+
 ## 3. H1 — narrow distillation experiment (ready for `/plan`)
 
 **Question.** Can a cheap model identify *actionable* GPT audit findings well enough to cut reviewer spend, without suppressing valid findings?
@@ -79,6 +117,18 @@ Reading: the clean-label set (1,524) is smaller than it looks (two repos carry 9
 - **Skip-the-fine-tune rule**: if any prompted arm meets keep, stop; record the verdict in `docs/research/`; no LoRA.
 
 **Rollout if kept.** Shadow mode inside the tiered pipeline's Stage 1 (observation only, never gates) for a pre-declared window, then validated low-risk strata only. Follow the repo's "synchronous, not a background window" rule for model evaluations.
+
+### 3.1 Labelling-weekend preparation (design only; not executed)
+
+Prepared in advance so the weekend is pure labelling. **Nothing here runs until Louis says go.**
+
+- **Sampling frame** (a read-only script, written when approved): findings with a reconstructable diff, `created_at` ≥ 2026-07-17, excluding `source_kind='LINTER'`; one row per `finding_fingerprint` (latest raise); tag each with repo, severity, pass, round, `user_action`, `adjudication_outcome`, `remediation_state`, `fix_commit_sha` presence.
+- **Strata and quotas (~250 items)**: disposition (fix-now, dismissed, auto_dismissed, accepted-permanent, null-user_action-but-`remediation_state=fixed`, null-with-nothing) × repo (CES, wine, storyline, ai-organiser) × severity. Storyline is now in scope: give it a small quota (*expected* ~40) because its labelled share is zero today. Draw with a seed written down before sampling; stratify by audit run so no run supplies more than 3 items.
+- **Worksheet** (rendered, not raw JSON): finding text, file, severity and the diff hunk(s) around `primary_file`; **no** adjudicator ruling, **no** later patch, **no** user_action. Fields: `actionable` (yes/no/indeterminate), `valid` (yes/no/indeterminate), reason code (wrong-premise, out-of-scope-for-diff, duplicate, style-only, already-handled, real-defect, needs-context), confidence 1-3, free note. Order randomised; stored labels held out until labelling ends.
+- **Double-label**: a 40-item subset re-shown after the first pass; report Cohen's kappa.
+- **Time box**: ~5 h *expected* for ~290 label events; a 15-item pilot first to calibrate reason codes and timing.
+- **Outputs**: labelled rows in the store (`h1_label_sample`, `training_eligible` inherited from the repo) and the eligible-set table from step 1.
+- **Gate**: every sampled item's diff must be reconstructable, so the diff-persistence fix in §2.1 (or a one-off reconstruction check on the frame) comes first.
 
 **Cost / effort (*expected*).** Census + sample prep: 2-3 engineer-days; Louis labelling 4-6 h; prompted baselines: ≈$15-40 of API spend (five arms × ~250 + 400 holdout items); LoRA branch if taken: local GPU hours, no API spend, +1 week. Calendar: 4 weeks to verdict, 6 with the LoRA branch.
 
@@ -181,20 +231,20 @@ An **absent outcome means unknown, never success**. Outcomes are appended (rever
 |---|---|---|---|
 | CES (public) | C1 + C2 + C3 | eligible after licence/secret check (public ≠ rights-cleared) | H1 yes |
 | WCA / wine (private, owned) | C1 + C2 + C3 | eligible with Louis's explicit sign-off + redaction check (third-party material, secrets) | H1 optional, H2 yes |
-| STO / storyline (work, Wärtsilä, Azure store) | **C1 only**; `training_eligible` forced false; repo filter at write and at export | **none** without explicit employer-side permission (D2) | never by default |
-| AIO / ai-organiser (Obsidian vault) | **C1 only**; no vault content | excluded | never by default |
+| STO / storyline (work, Wärtsilä, Azure store) | C1 + C2 + C3, **Louis approved 2026-10-25**; flag stored per repo, revocable; stays on the Azure store | approved by Louis; **runs only on hosts inside the tenant boundary** until the work-repo terms question (§0.1) is checked | H1 sample quota; H2 |
+| AIO / ai-organiser (Obsidian vault) | C1 + C2 + C3 for repo code and audit data, **Louis approved 2026-10-25**; **vault note content stays prohibited (class P)**: it is not repo data | eligible for audit/decision data, never vault notes | H1; H2 |
 
 Enforcement is **default-deny by provenance**: eligibility is a stored flag decided at write time by repo + class, checked again at export. A repo-name `if` alone is not the control; an export that cannot prove eligibility refuses.
 
 ### 6.6 Where training may run
 
 - **Local GPU (preferred)**: no third-party disclosure; does not create rights, so the eligibility rules above still apply. Cost is hardware time, not zero. Hardware inventory is open (D1).
-- **Provider fine-tuning API**: acceptable only for CES-public data and only after reading the exact service's *current* retention, training-use, deletion and residency terms (they change; do not rely on this memo). Never wine, storyline or AIO content.
+- **Provider fine-tuning API / rented GPU**: only after reading the exact service's *current* retention, training-use, deletion and residency terms (they change; do not rely on this memo). Louis approved all four repos for the corpus; the remaining constraint is the host boundary: CES-public may go to any host passing the terms check, wine and ai-organiser need the same check, **storyline stays inside the tenant** until Wärtsilä's terms are confirmed.
 - **Never** pool first and sort out consent later; eligibility travels with each record through every export and derivative model.
 
 ### 6.7 Minimal first slice (smallest thing that preserves data)
 
-Do capture points 1, 2, 3, 6 and 7 first (≈ 1-2 weeks, *expected*): they cover the data that is lost today (decisions in chat, corrections, chip outcomes, handover). Points 4, 5, 8, 9 enrich joins; point 10 ships with 1.
+Do the **H1 gap fixes in §2.1 first** (diff persistence and non-null `audited_sha`, `adjudicator_kind`, `dismiss_reason`, `fix_commit_sha` / fixed-before-adjudication, Stage-1 prediction, `audit_repos.training_eligible`), then capture points 1, 2, 3, 6 and 7 (≈ 1-2 weeks, *expected*): they cover the data that is lost today (decisions in chat, corrections, chip outcomes, handover). Points 4, 5, 8, 9 enrich joins; point 10 ships with 1.
 
 ## 7. What NOT to build
 
@@ -207,7 +257,7 @@ Do capture points 1, 2, 3, 6 and 7 first (≈ 1-2 weeks, *expected*): they cover
 - **Mining historical reviewer routing** for a "cheaper equivalent" claim; only randomised comparisons.
 - **A graph/vector memory for decisions** beyond what `pgvector` already provides; retrieval first.
 - **A model-eval harness fork**; reuse it with an explicit classifier contract.
-- **Cross-repo pooling of storyline or AIO** in any form.
+- **Vault note content** from ai-organiser in any corpus (repo and audit data are approved; the vault is not repo data).
 
 ## 8. Cost and effort summary (all *expected*)
 
@@ -220,8 +270,8 @@ Do capture points 1, 2, 3, 6 and 7 first (≈ 1-2 weeks, *expected*): they cover
 
 ## 9. Decisions only Louis can make
 
-- **D1. Local GPU or provider?** Is a usable local GPU available, and is a CES-public-only provider fine-tune acceptable? (This memo assumes local-first.)
-- **D2. Storyline.** Confirm: exclude from every training corpus, **and** whether Azure-store-local retrieval (no training, no cross-repo) is acceptable at all. 217 storyline findings exist today (*measured*).
+- **D1. Local GPU: resolved 2026-10-25** (§0.2): the RX 6600 XT (8 GB) suffices for H1 prompted baselines and small inference, not for 7-14B LoRA. Open: buy now or wait for the H1 verdict (recommended: wait).
+- **D2. Storyline: resolved 2026-10-25**, approved for training and Azure retrieval. Residual check: confirm Wärtsilä's terms permit non-tenant training hosts, otherwise train in-tenant only.
 - **D3. H1 go/no-go and tolerance.** Approve the census + 250-item labelling weekend, and set the maximum tolerated rate of wrongly suppressed actionable findings (placeholder 5%).
 - **D4.** Which of wine's content may enter an eligible corpus (and whether wine needs a separate sign-off).
 
