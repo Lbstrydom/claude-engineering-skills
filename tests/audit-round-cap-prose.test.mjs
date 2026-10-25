@@ -77,6 +77,7 @@ function run(args) {
   fs.writeFileSync(netLog, '');
   return new Promise((resolve) => {
     const env = { ...process.env, AUDIT_DB_URL: '', NO_NET_LOG: netLog, MODEL_CATALOG_REFRESH: 'skip', AUDIT_TOOL_VERSION_CHECK: 'skip', CI: '1' };
+    for (const k of Object.keys(env)) if (/^(OPENAI|GEMINI|ANTHROPIC|OPENROUTER|AZURE)_|API_KEY$/.test(k)) delete env[k];
     delete env.AUDIT_SESSION_ID;
     const child = spawn(process.execPath, ['--import', PRELOAD, ...args], { cwd: ROOT, env, windowsHide: true });
     let stderr = '';

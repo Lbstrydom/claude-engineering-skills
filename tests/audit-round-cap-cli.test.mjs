@@ -45,20 +45,26 @@ function run(args, { until = null, timeoutMs = 60_000 } = {}) {
   fs.writeFileSync(netLog, '');
   return new Promise((resolve) => {
     const env = { ...process.env, AUDIT_DB_URL: '', NO_NET_LOG: netLog, MODEL_CATALOG_REFRESH: 'skip', AUDIT_TOOL_VERSION_CHECK: 'skip', CI: '1' };
+    // Scrub what this process passes on. (The child's own .env loading is not under the test's control; the no-network
+    // preload is what makes a credential unusable, and its positive control below proves it.)
+    for (const k of Object.keys(env)) if (/^(OPENAI|GEMINI|ANTHROPIC|OPENROUTER|AZURE)_|API_KEY$/.test(k)) delete env[k];
     delete env.AUDIT_SESSION_ID;
     const child = spawn(process.execPath, ['--import', PRELOAD, AUDIT, ...args], { cwd: ROOT, env, windowsHide: true });
     let stderr = '';
     let killedEarly = false;
-    const timer = setTimeout(() => child.kill(), timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
     child.stderr.on('data', (d) => {
       stderr += d;
       if (until && until.test(stderr) && !killedEarly) { killedEarly = true; child.kill(); }
     });
     child.stdout.on('data', () => {});
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       clearTimeout(timer);
       const attempts = fs.readFileSync(netLog, 'utf-8').split('\n').filter(Boolean);
-      resolve({ code, stderr, killedEarly, attempts });
+      // A timeout is a FAILURE the caller must see, never an ordinary exit: a killed child closes with code null, which
+      // would satisfy any `notEqual(code, 4)` style assertion having verified nothing.
+      resolve({ code, signal, timedOut, stderr, killedEarly, attempts });
     });
   });
 }
@@ -147,7 +153,9 @@ describe('code audit round cap (spawned CLI)', () => {
 
   it('a rebuttal has no round and is never capped', async () => {
     const r = await run(['rebuttal', PLAN], {});
-    assert.notEqual(r.code, 4);
+    assert.equal(r.timedOut, false, 'the child must complete on its own');
+    assert.equal(r.code, 1, r.stderr);   // the rebuttal-file argument is missing: a plain usage error, not a cap stop
+    assert.match(r.stderr, /rebuttal mode requires a rebuttal file path/);
     assert.doesNotMatch(r.stderr, /round-cap/);
   });
 });
