@@ -141,7 +141,7 @@ export async function readFleetTelemetry(repoId, { sinceIso, untilIso = new Date
          SELECT session_id, claimed_at,
                 CASE WHEN end_mode = 'done' THEN ended_at END AS released_at,
                 coalesce(end_mode = 'abandoned', false) AS abandoned,
-                (SELECT count(*) FROM e x WHERE x.session_id = r.session_id AND x.outcome = 'refused'
+                (SELECT count(*) FROM e x WHERE x.session_id = r.session_id AND x.outcome = 'refused' AND x.verb IN ('ready', 'land')
                     AND x.created_at >= r.claimed_at AND x.created_at < coalesce(r.ended_at, r.next_claim_at, 'infinity'))::int AS refusals,
                 (SELECT count(*) FROM e x WHERE x.session_id = r.session_id AND x.verb = 'restack' AND x.outcome = 'ok'
                     AND x.created_at >= r.claimed_at AND x.created_at < coalesce(r.ended_at, r.next_claim_at, 'infinity'))::int AS restacks,

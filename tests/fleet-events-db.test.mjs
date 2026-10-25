@@ -78,6 +78,9 @@ describe('fleet_events (disposable DB)', { skip }, () => {
       ev({ verb: 'claim', sessionId: 's1', occurredAt: at(1) }),
       ev({ verb: 'restack', sessionId: 's1', occurredAt: at(2) }),
       ev({ verb: 'ready', sessionId: 's1', occurredAt: at(3) }),
+      // Inside s1: a queued lease acquire is NOT a gate block; a refused ready is (p-82e1).
+      ev({ verb: 'lease', mode: 'acquire', sessionId: 's1', outcome: 'refused', occurredAt: at(2) }),
+      ev({ verb: 'ready', sessionId: 's1', outcome: 'refused', occurredAt: at(4) }),
       ev({ verb: 'release', mode: 'done', sessionId: 's1', occurredAt: at(5) }),
       // After s1's release and with no later claim: belongs to no lifecycle.
       ev({ verb: 'ready', sessionId: 's1', outcome: 'refused', occurredAt: at(7) }),
@@ -111,7 +114,7 @@ describe('fleet_events (disposable DB)', { skip }, () => {
     assert.equal(m.sessionFlow.abandoned, 1);
     assert.equal(m.sessionFlow.leadTimeP50Hours, 3, 'leads 4h (s1), 1h and 3h (s4) → median 3h');
     assert.equal(m.sessionFlow.readiesPerSession, 0.25, 'one ready inside s1, none elsewhere, over 4 lifecycles');
-    assert.equal(m.sessionFlow.refusalsPerSession, 0, 'the refusal after s1 released is outside every lifecycle');
+    assert.equal(m.sessionFlow.refusalsPerSession, 0.25, 'only the refused ready inside s1 counts: the lease acquire is queueing, the one after release is outside every lifecycle');
     assert.ok(m.topReasons.some((r) => r.reason_class === 'overlaps <path>' && r.outcome === 'refused'));
     assert.deepEqual(m.errorKinds, [{ kind: 'TypeError', n: 1 }]);
     assert.equal(m.saturation.itemsMax, 23);
