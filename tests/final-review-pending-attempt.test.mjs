@@ -105,4 +105,16 @@ describe('pending-attempt registry (0ace)', () => {
     fs.writeFileSync(path.join(d, PENDING_REVIEWS_RELPATH), 'not a directory');
     assert.equal(readFinalReviewMarker(d).reason, 'unreadable');
   }));
+
+  it('a stamp reused after cleanup (clock stepped back) is a DIFFERENT attempt: the old owner is superseded by nonce, not by name', () => withRepo((d) => {
+    const a = registerPendingReview({ repoRoot: d, nowMs: 1000 });
+    const b = registerPendingReview({ repoRoot: d, nowMs: 1001 });
+    record(d, { verdict: 'REJECT', gateDisposition: 'blocked' }, b);   // clears both entries
+    const c = registerPendingReview({ repoRoot: d, nowMs: 1000 });     // reuses A's stamp
+    assert.equal(c.id, a.id, 'precondition: the name was reused');
+    assert.notEqual(c.nonce, a.nonce);
+    record(d, approve, a);
+    assert.equal(readFinalReviewMarker(d).reason, 'pending', 'A must not have written: C is in flight and A is superseded');
+    assert.equal(fs.readdirSync(path.join(d, PENDING_REVIEWS_RELPATH)).length, 1, 'A did not delete the later entry');
+  }));
 });

@@ -8,6 +8,7 @@
  * @module scripts/lib/final-review-marker
  */
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { atomicWriteFileSync } from './file-io.mjs';
 import { retrySync } from './retry-transient-fs.mjs';
@@ -60,11 +61,12 @@ export function registerPendingReview({ repoRoot, nowMs = Date.now(), fsMod = fs
     fsMod.mkdirSync(dir, { recursive: true });
     let stamp = nowMs;
     for (const n of fsMod.readdirSync(dir)) if (PENDING_NAME_RE.test(n)) stamp = Math.max(stamp, Number(n) + 1);
+    const nonce = randomUUID();   // OWNERSHIP, apart from order: a stamp can be reused after cleanup (or a clock step), a nonce cannot
     for (let attempt = 0; attempt < 50; attempt++, stamp++) {
       const id = String(stamp).padStart(15, '0');
       try {
-        fsMod.writeFileSync(path.join(dir, id), `${JSON.stringify({ startedAt: new Date(nowMs).toISOString(), pid: process.pid })}\n`, { flag: 'wx' });
-        return { ok: true, id };
+        fsMod.writeFileSync(path.join(dir, id), `${JSON.stringify({ startedAt: new Date(nowMs).toISOString(), pid: process.pid, nonce })}\n`, { flag: 'wx' });
+        return { ok: true, id, nonce };
       } catch (e) { if (!(e && e.code === 'EEXIST')) throw e; }
     }
     return { ok: false, code: 'EEXIST' };
@@ -80,6 +82,11 @@ function listPending(repoRoot, fsMod) {
     if (e && e.code === 'ENOENT') return { names: [] };   // ENOTDIR is a regular file where the registry should be: cannot tell, refuse
     return { unreadable: true, names: [] };
   }
+}
+
+/** Is the entry at this stamp still THIS attempt's own (its nonce), not a later attempt that reused the name? */
+function ownsPendingEntry(repoRoot, id, nonce, fsMod) {
+  try { return JSON.parse(fsMod.readFileSync(path.join(repoRoot, PENDING_REVIEWS_RELPATH, id), 'utf-8')).nonce === nonce; } catch { return false; }
 }
 
 /** Remove this attempt's entry and every entry that started no later than it. @returns {{stuck: boolean}} */
@@ -175,7 +182,7 @@ export function writeFinalReviewMarker(args = {}) {
   return { written: false, reason: 'lock-contention', revoked: false, filePath: path.join(repoRoot, FINAL_REVIEW_RELPATH) };
 }
 
-function writeFinalReviewMarkerLocked({ repoRoot, evidence, verdict, disposition, pendingId, log = (m) => process.stderr.write(m), adapters = {}, nowIso } = {}) {
+function writeFinalReviewMarkerLocked({ repoRoot, evidence, verdict, disposition, pendingId, pendingNonce, log = (m) => process.stderr.write(m), adapters = {}, nowIso } = {}) {
   const write = adapters.atomicWriteFileSync || atomicWriteFileSync;
   const unlink = adapters.unlinkSync || fs.unlinkSync;
   const filePath = path.join(repoRoot, FINAL_REVIEW_RELPATH);
@@ -186,7 +193,7 @@ function writeFinalReviewMarkerLocked({ repoRoot, evidence, verdict, disposition
   // A LATER-started review that already recorded cleared this attempt's pending entry. This one is superseded: writing now would
   // overwrite the newer verdict with an older review's (A starts, B starts, B records REJECT, A finishes and would write APPROVE).
   const fsMod = adapters.fsMod || fs;
-  if (pendingId && !fsMod.existsSync(path.join(repoRoot, PENDING_REVIEWS_RELPATH, pendingId))) {
+  if (pendingId && !ownsPendingEntry(repoRoot, pendingId, pendingNonce, fsMod)) {
     log('  [final-review-marker] a review that started after this one has already recorded: this verdict is superseded and records nothing\n');
     return { written: false, reason: 'superseded', revoked: true, filePath };
   }
@@ -321,7 +328,7 @@ export function recordFinalReviewMarker({ auditMode, result, repoRoot, reviewedE
   const moved = !sameEvidenceIdentity(reviewedEvidence, current);
   // Unchanged evidence is recorded; moved or unknown evidence goes to the writer as null, which revokes the old marker and writes none.
   const evidence = moved ? null : current;
-  const w = write({ repoRoot, evidence, verdict: result?.verdict, disposition: result?.gateDisposition, pendingId: pending?.ok ? pending.id : undefined });
+  const w = write({ repoRoot, evidence, verdict: result?.verdict, disposition: result?.gateDisposition, pendingId: pending?.ok ? pending.id : undefined, pendingNonce: pending?.ok ? pending.nonce : undefined });
   if (moved && current && reviewedEvidence) {
     console.error(`  [final-review-marker] the audit evidence changed while the review ran (reviewed run ${String(reviewedEvidence.runId).slice(0, 8)} round ${reviewedEvidence.round}; now run ${String(current.runId).slice(0, 8)} round ${current.round}): nothing bound to it — re-run the final review\n`);
   }
