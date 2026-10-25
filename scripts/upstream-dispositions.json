@@ -762,6 +762,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "d4dada5d-df49-4c44-92ec-1d0fe959a219",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/final-review-code-coverage.test.mjs"
+      },
+      "recordedAt": "2026-10-25T15:08:10.890Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "d6849e0b-1767-42bc-b4af-b24ed080274b",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
