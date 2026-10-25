@@ -60,6 +60,7 @@ export * from './lib/store/persona.mjs';
 export * from './lib/store/plans-ship.mjs';
 export * from './lib/store/repo.mjs';
 export * from './lib/store/runs-findings.mjs';
+export * from './lib/store/run-aggregates.mjs';
 // Explicit (not `export *`) — `security.mjs` also exports `_internals`
 // (a test-only escape hatch, mirrors anthropic-client.mjs's pattern), which
 // must never leak into this barrel's curated, function-only public surface

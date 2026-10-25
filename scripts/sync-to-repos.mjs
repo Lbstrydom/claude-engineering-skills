@@ -332,7 +332,7 @@ const CORE_ENTRY = [
   // that runs it ships: a consumer reported (2026-08-08) that following the
   // skill literally died on `File not found` for a transcript no step produced,
   // and hand-assembled one instead. Walker pulls in lib/audit/transcript.mjs.
-  'scripts/build-audit-transcript.mjs',
+  'scripts/build-audit-transcript.mjs', 'scripts/audit-structural-card.mjs', // the card CLI the audit skills name (round cap); lock-step with sync-inventory
   // The `.audit/` sweeper. Two synced shared references (gemini-gate.md,
   // ledger-format.md) promised `.audit/` is "gitignored + swept … in this repo
   // and in every consumer" and named `npm run audit:clean` — an alias no

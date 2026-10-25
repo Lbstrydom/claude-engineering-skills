@@ -432,6 +432,26 @@ const CLI_EXIT_RECIPES = {
     expectStderrContains: 'no concern decision',
     envPrereq: null, // deterministic: filesystem only
   },
+  // The GPT round cap (/audit-plan, /audit-code): a round past the soft cap exits 4 with the structural-or-stop card,
+  // before any catalog refresh, brief or provider. `env` opts out of the cwd check (the fixture dir is not the repo
+  // root) and out of the card's one paid read; the stderr match proves the refusal is the CAP, not argv validation
+  // (exit 1) or a missing key. Pinned in both directions by tests/audit-round-cap-cli.test.mjs (round 3 / 6 pass the gate).
+  'round-cap-plan-refusal': {
+    args: ['plan', 'plan.md', '--mode', 'plan', '--round', '4'],
+    env: { AUDIT_ALLOW_FOREIGN_CWD: '1', AUDIT_CARD_NO_ARCH: '1', MODEL_CATALOG_REFRESH: 'skip', AUDIT_TOOL_VERSION_CHECK: 'skip' },
+    fixture(dir) { atomicWriteFileSync(path.join(dir, 'plan.md'), '# Plan: fixture\n- **Status**: Draft\n'); },
+    expectExit: 4,
+    expectStderrContains: 'PAST_CAP_REQUIRED',
+    envPrereq: null,
+  },
+  'round-cap-code-refusal': {
+    args: ['code', 'plan.md', '--round', '7'],
+    env: { AUDIT_ALLOW_FOREIGN_CWD: '1', AUDIT_CARD_NO_ARCH: '1', MODEL_CATALOG_REFRESH: 'skip', AUDIT_TOOL_VERSION_CHECK: 'skip' },
+    fixture(dir) { atomicWriteFileSync(path.join(dir, 'plan.md'), '# Plan: fixture\n- **Status**: Draft\n'); },
+    expectExit: 4,
+    expectStderrContains: 'Structural-or-stop: code audit, round 7 requested',
+    envPrereq: null,
+  },
 };
 
 /** @returns {Promise<OracleResult>} */
@@ -456,7 +476,7 @@ async function cliExit(gate, { repoRoot }) {
     const r = spawnSync(process.execPath, [cliAbs, ...recipe.args], {
       cwd: tmpDir,
       encoding: 'utf-8',
-      env: provisionEnv,
+      env: { ...provisionEnv, ...(recipe.env ?? {}) },
       timeout: recipe.timeoutMs ?? 60_000,
     });
     // A killed child has a null status; treating that as "not the expected

@@ -213,17 +213,20 @@ describe('finalizeRoundOutcomes', () => {
     function mockStore() {
       const calls = [];
       const runMeta = [];
+      const refreshed = [];
       const store = {
         recordAdjudicationEvent: async (runId, fp, ev) => { calls.push({ fp, ev }); return { ok: true }; },
         updatePassStatsPostDeliberation: async () => true,
         updateRunMeta: async (runId, meta) => { runMeta.push(meta); return true; },
+        // The run's counts are recomputed from the findings table (refreshRunAdjudicationCounts), not from this round's slice.
+        refreshRunAdjudicationCounts: async (runId) => { refreshed.push(runId); return { ok: true }; },
       };
-      return { store, calls, runMeta };
+      return { store, calls, runMeta, refreshed };
     }
 
     for (const outcome of ['accepted', 'severity_adjusted']) {
       it(`a ledger ruling of '${outcome}' on a control marker is refused — no adjudication event, stays pending`, async () => {
-        const { store, calls, runMeta } = mockStore();
+        const { store, calls, runMeta, refreshed } = mockStore();
         const { finding, entry } = controlPair('C', outcome);
         const status = await finalizeRoundOutcomes({
           result: { findings: [finding], _cloudRunId: 'run-c' }, ledger: { entries: [entry] },
@@ -233,7 +236,9 @@ describe('finalizeRoundOutcomes', () => {
         assert.equal(status.enriched[0].adjudicationOutcome, 'pending',
           'pending is what routes it to auto_dismissed in splitPendingFindings');
         assert.equal(status.labelled, 0);
-        assert.equal(runMeta[0].acceptedCount, 0, 'the run must not count a control marker as accepted');
+        // The refused marker is never written, so the findings table (the source of the run's count) holds no accepted row for it.
+        assert.equal(runMeta.some((m) => m.acceptedCount !== undefined), false, 'no per-round count may be stamped on the run');
+        assert.deepEqual(refreshed, ['run-c'], 'the run-wide recount is requested once');
         assert.equal(outcomesLines().length, 0, 'no bandit reward for a control marker');
         assert.deepEqual(splitPendingFindings(status.enriched).autoDismissFps, ['hash-C']);
       });
@@ -252,7 +257,7 @@ describe('finalizeRoundOutcomes', () => {
     });
 
     it('a real finding the ledger accepts is unaffected (negative control)', async () => {
-      const { store, calls, runMeta } = mockStore();
+      const { store, calls, runMeta, refreshed } = mockStore();
       const { finding, entry } = ruledPair('R', 'accepted');
       const status = await finalizeRoundOutcomes({
         result: { findings: [finding], _cloudRunId: 'run-r' }, ledger: { entries: [entry] },
@@ -261,8 +266,22 @@ describe('finalizeRoundOutcomes', () => {
       assert.equal(calls.length, 1);
       assert.equal(calls[0].ev.adjudicationOutcome, 'accepted');
       assert.equal(status.labelled, 1);
-      assert.equal(runMeta[0].acceptedCount, 1);
+      assert.equal(runMeta.some((m) => m.acceptedCount !== undefined), false);
+      assert.deepEqual(refreshed, ['run-r']);
     });
+  });
+
+  it('a failed run-count recompute is NOT reported as a successful cloud capture', async () => {
+    const { finding, entry } = ruledPair('F', 'accepted');
+    const mk = (refresh) => ({
+      recordAdjudicationEvent: async () => ({ ok: true }),
+      updatePassStatsPostDeliberation: async () => true,
+      updateRunMeta: async () => true,
+      refreshRunAdjudicationCounts: refresh,
+    });
+    const run = (store) => finalizeRoundOutcomes({ result: { findings: [finding], _cloudRunId: 'run-f' }, ledger: { entries: [entry] }, round: 2, store, sid: 'run-f' });
+    assert.equal((await run(mk(async () => ({ ok: false, reason: 'boom' })))).cloudOk, false, 'stale aggregate ⇒ capture incomplete');
+    assert.equal((await run(mk(async () => ({ ok: true, accepted: 1, dismissed: 0 })))).cloudOk, true, 'negative control');
   });
 
   it('un-ruled findings stay pending (not labelled)', async () => {

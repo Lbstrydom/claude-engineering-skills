@@ -103,6 +103,8 @@ import {
 import { runTieredAuditPipeline } from './lib/audit/tiered-pipeline.mjs';
 import { runTieredShadowComparison } from './lib/audit/tiered-shadow-compare.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { gateRoundCap, applyRoundCap } from './lib/audit/round-cap-gate.mjs';
+import { OPENAI_AUDIT_USAGE } from './lib/audit/openai-audit-usage.mjs';
 
 /**
  * Print a one-line cost-estimate preflight to stderr so users see what
@@ -556,6 +558,11 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
 
 async function main() {
   assertRepoRoot(import.meta.url);
+  // Round cap: BEFORE the catalog refresh, sync check, brief or any provider — a refused round makes no inference request
+  // and writes no --out file or gate evidence (docs/plans/audit-round-cap-structural-or-stop.md §2.1).
+  const roundGate = await gateRoundCap(process.argv.slice(2));
+  if (!roundGate.ok) { process.exitCode = roundGate.exitCode; return; }
+  const { roundCap, round } = roundGate;   // `round`: the strictly parsed --round (1 when absent); R2+ enables suppression, diff annotation, impact scoping
   // Live-catalog refresh: populate session cache so providers' newest
   // models are visible to resolveModel(). Module-load resolution
   // (config.mjs) used STATIC_POOL only; we now RE-RESOLVE the sentinel
@@ -627,10 +634,6 @@ async function main() {
   // e.g. --files src/routes/wines.js,src/services/wine/parser.js
   const filesIdx = args.indexOf('--files');
   const fileFilter = filesIdx !== -1 && args[filesIdx + 1] ? args[filesIdx + 1].split(',').map(s => s.trim()) : null;
-
-  // --round <n>: audit round number (default: 1). R2+ enables suppression, diff annotation, impact scoping
-  const roundIdx = args.indexOf('--round');
-  const round = roundIdx !== -1 && args[roundIdx + 1] ? Number.parseInt(args[roundIdx + 1], 10) : 1;
 
   // --run-id <uuid>: run-unification (WS1). When the orchestrator
   // (audit-loop.mjs / /cycle Step 3C) mints one run_id and passes it to every
@@ -722,16 +725,7 @@ async function main() {
 
   // A/B test: pipeline variant selection
   if (!mode || !planFile || !['plan', 'code', 'rebuttal'].includes(mode)) {
-    console.error('Usage: node scripts/openai-audit.mjs <plan|code> <plan-file> [--json] [--out <file>] [--history <file>] [--passes <list>] [--files <list>]');
-    console.error('       node scripts/openai-audit.mjs code <plan-file> [--scope diff|plan|full] [--base <git-ref>]');
-    console.error('         --scope diff (default): auto-scope to git-changed files (dirty-aware base: HEAD if tree dirty, else HEAD~1; --base overrides)');
-    console.error('         --scope plan          : audit all plan-referenced files');
-    console.error('         --scope full          : audit entire repo (slowest, most comprehensive)');
-    console.error('       node scripts/openai-audit.mjs code <plan-file> --round 2 --ledger <ledger.json> --diff <diff.patch> --changed <file1,file2>');
-    console.error('       node scripts/openai-audit.mjs rebuttal <plan-file> <rebuttal-file> [--json] [--out <file>]');
-    console.error('         --allow-infra-scope   : opt-in — audit this tool\'s OWN infra files (schemas.mjs, ledger.mjs, …)');
-    console.error('                                 as subject files. Only for META plans whose deliverable IS a change');
-    console.error('                                 to the audit tool itself; leave off for normal (consumer-code) audits.');
+    console.error(OPENAI_AUDIT_USAGE);
     process.exit(1);
   }
 
@@ -1248,6 +1242,7 @@ async function main() {
     if (jsonMode || outFile) {
       // A rebuttal is not a round's audit and is invoked with no --round.
       const data = stampAuditRound({ ...result, _usage: usage }, mode === 'rebuttal' ? null : round);
+      await applyRoundCap(data, roundCap);
       if (outFile) {
         const summaryLine = mode === 'rebuttal'
           ? `Deliberation complete: ${result.resolutions?.length ?? 0} resolutions`

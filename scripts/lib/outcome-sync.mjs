@@ -205,14 +205,17 @@ async function writeCloudOutcomes(store, runId, enriched, passCounts, round) {
 
   // Stamp the run via a NON-destructive partial update — recordRunComplete
   // rewrites the whole row and would null rounds/total_findings/cost.
-  if (typeof store.updateRunMeta === 'function') {
-    const accepted = enriched.filter(f => f.adjudicationOutcome === 'accepted').length;
-    const dismissed = enriched.filter(f => f.adjudicationOutcome === 'dismissed').length;
-    await store.updateRunMeta(runId, {
-      labeled: true,
-      acceptedCount: accepted,
-      dismissedCount: dismissed,
-    });
+  // The run's counts are RUN-WIDE (every round that shares this run id), recomputed from the findings under a row
+  // lock — never this round's slice, which a later round would overwrite. A store without the recompute (an old
+  // adapter) writes no counts at all rather than a per-round figure standing in for the aggregate.
+  if (typeof store.refreshRunAdjudicationCounts === 'function') {
+    const refreshed = await store.refreshRunAdjudicationCounts(runId);
+    // The events landed but the run's aggregate is stale: cloud capture is NOT complete. Returning false names that to the
+    // caller ("cloud: no") instead of reporting success; the recount is a pure function of the findings table, so the
+    // next finalize (or write-code-outcomes) repairs it.
+    if (refreshed && refreshed.ok === false) return false;
+  } else if (typeof store.updateRunMeta === 'function') {
+    process.stderr.write('  [outcome-sync] store lacks refreshRunAdjudicationCounts; run counts not written\n');
   }
 
   return true;

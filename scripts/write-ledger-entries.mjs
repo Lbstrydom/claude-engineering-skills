@@ -58,13 +58,13 @@ import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { generateTopicId, populateFindingMetadata } from './lib/ledger.mjs';
 import { resolveConcernLinks, findUndecidedReRaises } from './lib/concern-identity.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
-import { parseResultPath } from './lib/finalize-outcomes.mjs';
+import { parseResultPath, captureRoundOutcomes } from './lib/finalize-outcomes.mjs';
 import { withFileLock } from './lib/file-lock.mjs';
 import { LedgerEntrySchema } from './lib/schemas.mjs';
 
 const KNOWN_FLAGS = [
   '--result', '--ledger', '--triage', '--pass', '--round', '--mark-fixed',
-  '--json', '--selfcheck-relocation',
+  '--json', '--no-finalize', '--selfcheck-relocation',
 ];
 
 const OUTCOMES = new Set(['accepted', 'dismissed', 'severity_adjusted']);
@@ -499,6 +499,27 @@ async function main() {
     process.stderr.write(
       `  [ledger] WARN: ${unruled.length} finding(s) have no triage entry and stay pending: ${unruled.join(', ')}\n`,
     );
+  }
+
+  // Label the round in the store NOW. The R2+ start of the next round labels rounds 1..N-1, but the LAST round has no
+  // next round, and its row sat at accepted 0 / dismissed 0 / unlabelled unless the operator remembered
+  // write-code-outcomes.mjs (3 of 3 final rounds after 2026-10-04 were left that way). Idempotent, so the R2+ capture
+  // that follows is a no-op for this round. Only when the result is tied to a cloud run (a local-only audit has
+  // nothing to label) and only when EVERY finding has a ruling: finalizing a half-ruled round would flag the
+  // not-yet-ruled findings needs_triage. Fail-open; `--no-finalize` opts out.
+  if (!argv.includes('--no-finalize') && result._cloudRunId) {
+    if (unruled.length > 0) {
+      process.stderr.write(`  [finalize] skipped: ${unruled.length} finding(s) are not ruled yet; re-run once every finding has a ruling\n`);
+    } else {
+      try {
+        await import('./lib/load-env.mjs');
+        const { initLearningStore } = await import('./learning-store.mjs');
+        await initLearningStore();
+        await captureRoundOutcomes({ resultPath, ledgerPath, round, sid: parseResultPath(resultPath).sid });
+      } catch (err) {
+        process.stderr.write(`  [finalize] WARN: could not label round ${round} (${err.message}); run write-code-outcomes.mjs\n`);
+      }
+    }
   }
 }
 

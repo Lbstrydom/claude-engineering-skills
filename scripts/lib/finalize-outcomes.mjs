@@ -24,6 +24,7 @@ import {
   markRunFindingsNeedsTriage, markRunFindingsAutoDismissed, recordAdjudicationEvent,
   updatePassStatsPostDeliberation, updateRunMeta,
 } from './store/runs-findings.mjs';
+import { refreshRunAdjudicationCounts } from './store/run-aggregates.mjs';
 import { isCloudEnabled } from './store/repo.mjs';
 import { atomicWriteFileSync } from './file-io.mjs';
 import { isControlMarkerDetail } from './audit/control-markers.mjs';
@@ -219,6 +220,51 @@ export async function finalizeRoundOutcomes({ result, ledger, round, store, sid 
 }
 
 /**
+ * Finalize ONE round's triage outcomes from its result + ledger artifacts and stamp the compact capture status
+ * onto the result file. The single body behind both capture paths: the R2+ start of the next round
+ * (`finalizePriorRoundOutcomes`) and the end of the triage that rules the round (`write-ledger-entries`), so the
+ * final round — which has no "next round" to carry the capture — is labelled too. Idempotent: the cloud write is a
+ * scoped delete+insert and the local append is marker-guarded by `<runId|sid>:<round>`. Never throws.
+ *
+ * @param {{ resultPath: string, ledgerPath: string, round: number, sid?: string|null }} args
+ * @returns {Promise<object|null>} the stamped capture status, or null when the inputs could not be loaded
+ */
+export async function captureRoundOutcomes({ resultPath, ledgerPath, round, sid = null }) {
+  let inputs;
+  try {
+    inputs = loadAuditInputs({ resultPath, ledgerPath });
+  } catch (err) {
+    process.stderr.write(`  [finalize] WARN: round ${round} inputs unreadable (${err.message}); skipping capture\n`);
+    return null;
+  }
+  const { result, ledger } = inputs;
+  const cloud = await isCloudEnabled();
+  const store = cloud ? { recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta, refreshRunAdjudicationCounts } : null;
+  let capture;
+  try {
+    const status = await finalizeRoundOutcomes({ result, ledger, round, store, sid });
+    // Stamp a COMPACT status (scalars only) — never spread `status.enriched`
+    // (the full findings payload) into the artifact; it's caller-only.
+    capture = {
+      status: 'captured', round: status.round, labelled: status.labelled,
+      total: status.total, cloudOk: status.cloudOk,
+      skippedLocal: status.skippedLocal, needsTriage: status.needsTriage,
+      autoDismissed: status.autoDismissed,
+    };
+    process.stderr.write(`  [finalize] round ${round}: ${status.labelled}/${status.total} labelled `
+      + `(cloud: ${status.cloudOk ? 'yes' : 'no'}${status.skippedLocal ? ', local skipped' : ''})\n`);
+  } catch (err) {
+    capture = { status: 'failed', round, reason: err.message };
+    process.stderr.write(`  [finalize] WARN: finalize round ${round} failed: ${err.message}\n`);
+  }
+  // Stamp machine-readable capture status onto the result artifact
+  // (M5). atomicWriteFileSync — never a torn write on crash.
+  try { result._outcomeCapture = capture; atomicWriteFileSync(resultPath, JSON.stringify(result)); }
+  catch { /* best-effort annotation */ }
+  return capture;
+}
+
+/**
  * Deterministic outcome capture (orchestrator-only). At the start of an R2+
  * audit invocation — the one the agent already makes for R2+ suppression —
  * finalize the PRIOR round's triage outcomes from the ledger the agent just
@@ -245,30 +291,7 @@ export async function finalizePriorRoundOutcomes({ outFile, round, ledgerFile })
       process.stderr.write(`  [finalize] prior-round result not found (${priorResultPath}); skipping\n`);
       return;
     }
-    const { result, ledger } = loadAuditInputs({ resultPath: priorResultPath, ledgerPath: ledgerFile });
-    const cloud = await isCloudEnabled();
-    const store = cloud ? { recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta } : null;
-    let capture;
-    try {
-      const status = await finalizeRoundOutcomes({ result, ledger, round: priorRound, store, sid });
-      // Stamp a COMPACT status (scalars only) — never spread `status.enriched`
-      // (the full findings payload) into the artifact; it's caller-only.
-      capture = {
-        status: 'captured', round: status.round, labelled: status.labelled,
-        total: status.total, cloudOk: status.cloudOk,
-        skippedLocal: status.skippedLocal, needsTriage: status.needsTriage,
-        autoDismissed: status.autoDismissed,
-      };
-      process.stderr.write(`  [finalize] round ${priorRound}: ${status.labelled}/${status.total} labelled `
-        + `(cloud: ${status.cloudOk ? 'yes' : 'no'}${status.skippedLocal ? ', local skipped' : ''})\n`);
-    } catch (err) {
-      capture = { status: 'failed', round: priorRound, reason: err.message };
-      process.stderr.write(`  [finalize] WARN: finalize round ${priorRound} failed: ${err.message}\n`);
-    }
-    // Stamp machine-readable capture status onto the prior result artifact
-    // (M5). atomicWriteFileSync — never a torn write on crash.
-    try { result._outcomeCapture = capture; atomicWriteFileSync(priorResultPath, JSON.stringify(result)); }
-    catch { /* best-effort annotation */ }
+    await captureRoundOutcomes({ resultPath: priorResultPath, ledgerPath: ledgerFile, round: priorRound, sid });
   } catch (err) {
     process.stderr.write(`  [finalize] WARN: prior-round capture failed: ${err.message}\n`);
   }

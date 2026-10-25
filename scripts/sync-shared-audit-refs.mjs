@@ -52,6 +52,8 @@ const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', X = '\x1b[0m', B = '\x1b[1
  */
 export const EXPECTED_CONSUMERS = Object.freeze({
   'ledger-format.md': ['audit-plan', 'audit-code'],
+  // The enforced GPT round cap + the structural-or-stop card read at the cap (both audit skills quote the cap).
+  'round-cap-and-structural-card.md': ['audit-plan', 'audit-code'],
   // /cycle runs the consolidated Gemini gate itself (autonomous mode) and
   // resolves the audit prerequisites at its own Step 0, so it needs its own
   // copy of both contracts rather than a pointer into /audit-code's directory.

@@ -86,6 +86,10 @@ const EXPECTED_EXPORTS = [
   'buildSuppressionEventRows',
   'updatePassStatsPostDeliberation',
   'updateRunMeta',
+  // Run-wide accepted/dismissed counts, recomputed under a run-row lock (round-cap plan §2.3).
+  'refreshRunAdjudicationCounts',
+  // Round-cap override record: why a round ran past the soft cap + the card summary (probe-guarded columns).
+  'recordPastCap',
   'getPassTimings',
   // debt (5)
   'appendDebtEventsCloud',
@@ -237,6 +241,9 @@ const EXPECTED_EXPORTS = [
   'insertLearningDecision',
   'readNoBrainerRecommendations',
   'readPendingTriageFindings',
+  // STRICT variants for the structural-or-stop card: a failed query is {ok:false}, never [] (round-cap plan §2.2).
+  'readPendingTriageFindingsStrict',
+  'readOpenRecurringClusters',
   'readRecentFriction',
   'readStaleClusters',
   'refreshRecurringClusters', // Cluster C / Phase 6 — recurring-cluster recompute
@@ -395,6 +402,10 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
   });
 
   it('pins the total export count (update deliberately when the surface changes)', () => {
+    // 215 → 216: recordPastCap added 2026-10-25 (round-cap override record).
+    // 213 → 215: readPendingTriageFindingsStrict + readOpenRecurringClusters added 2026-10-25 (structural-or-stop card).
+    // 212 → 213: refreshRunAdjudicationCounts added 2026-10-25 — the run-wide accepted/dismissed recount under a
+    // run-row lock (docs/plans/audit-round-cap-structural-or-stop.md §2.3).
     // 199 → 200: listSnapshotFilePaths added 2026-09-05 — the ownership filter's
     // candidate set for incremental copy-forward. UNIONed over symbol_index and
     // symbol_file_imports because a file that imports but exports no extractable
@@ -622,6 +633,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // 211 → 212: +readDebtEventsCloudResult (2026-10-11, debt-readers-ask-
     // store.md) — the events read that says whether it happened, so a
     // reporting caller cannot count a failed query as "no recurrence".
-    assert.equal(EXPECTED_EXPORTS.length, 212);
+    assert.equal(EXPECTED_EXPORTS.length, 216);
   });
 });

@@ -98,6 +98,9 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // mock store cannot show what the view selects. Two edits, always — this
   // list AND postgres-parity.yml.
   'tests/control-marker-acceptance-db.test.mjs',
+  // Enrolled 2026-10-25 with migration 20261025120000 (round cap): the run-wide accepted/dismissed recount, its run
+  // scoping and the stale-last-writer schedule need real row locks and a real audit_findings table.
+  'tests/run-adjudication-counts-db.test.mjs',
   // Enrolled 2026-10-10 with migration 20261010120000 (fleet_events): the ON
   // CONFLICT re-drain, the outcome CHECK and every derived metric are Postgres-only.
   'tests/fleet-events-db.test.mjs',

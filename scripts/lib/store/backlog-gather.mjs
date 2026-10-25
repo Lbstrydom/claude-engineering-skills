@@ -223,15 +223,16 @@ const SCRIPTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
  * @param {string} [opts.cwd]        - child cwd (the repo being reported on)
  * @param {Function} [opts.run]      - injectable `({script,args,cwd,timeoutMs,signal}) => Promise<{exitCode,stdout,aborted}>`
  * @param {number} [opts.timeoutMs]  - per-read cap
+ * @param {Record<string, {script: string, args: readonly string[]}>} [opts.readers] - the reads to make (default: the five backlog reads)
  * @param {AbortSignal} [opts.signal]
  * @returns {Promise<{envelopes: Record<string, object|null>, outcomes: Record<string, {kind: string, detail: string}>}>}
  */
 export async function gatherBacklogEnvelopes({
-  repo = '', here = SCRIPTS_DIR, cwd = process.cwd(), run = execReader, timeoutMs = 120_000, signal,
+  repo = '', here = SCRIPTS_DIR, cwd = process.cwd(), run = execReader, timeoutMs = 120_000, signal, readers = READERS,
 } = {}) {
   const envelopes = {};
   const outcomes = {};
-  await Promise.all(Object.entries(READERS).map(async ([key, def]) => {
+  await Promise.all(Object.entries(readers).map(async ([key, def]) => {
     if (key === 'q3' && !repo) {
       envelopes[key] = null;
       outcomes[key] = out('store-off', 'no repository slug resolved, so the final-review queue was not asked');

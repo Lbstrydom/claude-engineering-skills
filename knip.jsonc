@@ -34,7 +34,11 @@
     // precisely so the default `tests/*.test.mjs` glob cannot pick them up —
     // one of them is deliberately broken, and it must only ever run under the
     // suite that asserts the guard catches it.
-    "tests/fixtures/test-guard/*.fixture.mjs"
+    "tests/fixtures/test-guard/*.fixture.mjs",
+
+    // Loaded by `node --import <file URL>` in the round-cap CLI tests (tests/audit-round-cap-cli.test.mjs), which
+    // records and refuses every outbound request — a flag on a spawn command line, not an import knip can follow.
+    "tests/fixtures/no-network-preload.mjs"
   ],
 
   "project": [

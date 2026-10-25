@@ -510,3 +510,31 @@ describe('a dismissal beside an earlier dismissal must decide: same concern or n
       (err) => err.status === 2 && /pick one/.test(err.stderr));
   });
 });
+
+describe('groupByLinkKeys / clusterFindings — the one grouping rule (round-cap card)', async () => {
+  const { groupByLinkKeys, clusterFindings } = await import('../scripts/lib/concern-identity.mjs');
+  const f = (category, file) => ({ category, _primaryFile: file, affectedFiles: [file] });
+
+  it('groups items that share any link key, transitively, ordered by first member', () => {
+    const items = ['a', 'b', 'c', 'd'];
+    const keys = { a: ['k1'], b: ['k2'], c: ['k1', 'k2'], d: ['k9'] };
+    assert.deepEqual(groupByLinkKeys(items, (x) => keys[x]), [[0, 1, 2], [3]]);
+  });
+  it('an item with no keys is its own group', () => {
+    assert.deepEqual(groupByLinkKeys(['x', 'y'], () => []), [[0], [1]]);
+  });
+  it('clusters findings by category key AND a shared file — case/tag-insensitive on the category', () => {
+    const groups = clusterFindings([
+      f('Persistence recovery', 'src/a.js'),
+      f('[Backend] persistence recovery', 'src/a.js'),
+      f('Persistence recovery', 'src/b.js'),
+      f('Other', 'src/a.js'),
+    ]);
+    assert.deepEqual(groups.map((g) => g.length), [2, 1, 1]);
+  });
+  it('buildConcernIndex still groups dismissed entries the way it did (delegates to the same rule)', () => {
+    const e = (topicId, category, file) => ({ topicId, category, affectedFiles: [file], ruling: 'overrule', adjudicationOutcome: 'dismissed' });
+    const idx = buildConcernIndex([e('t1', 'X', 'a.js'), e('t2', 'x', 'a.js'), e('t3', 'Y', 'b.js')]);
+    assert.deepEqual(idx.groups.map((g) => g.count).sort(), [1, 2]);
+  });
+});

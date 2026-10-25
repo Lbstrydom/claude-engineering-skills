@@ -56,6 +56,7 @@ const CORE_ENTRY = [
   // nothing imports, so the walker never finds it). Authoritative list is
   // sync-to-repos.mjs; keep in lock-step.
   'scripts/build-audit-transcript.mjs',
+  'scripts/audit-structural-card.mjs',   // round-cap card CLI; see sync-to-repos.mjs for the note
   // The `.audit/` sweeper two synced shared references promise runs "in every
   // consumer". See sync-to-repos.mjs for the full note; keep in lock-step.
   'scripts/audit-clean.mjs',

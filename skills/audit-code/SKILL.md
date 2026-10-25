@@ -423,9 +423,12 @@ Stability uses `_hash` for exact cross-round matching:
 | Summary line ends `— not convergence evidence` (changed lines, an unrecognised file type, or a `--require` subject not read in full) | **Not stable, whatever H/M/L say** — the change was not read (`changed-lines-unread` / `unrecognised-files-unreviewed` / `required-subjects-not-full`). Re-run short files with `--files`; too big alone → report not converged. Unrecognised type: `.auditignore` it or report upstream. Required subject: fix the read, never `.auditignore` it |
 | Threshold met, 0 new, 2/2 stable | **CONVERGED** → Step 6, then REQUIRED Step 7 |
 | Same file/concern recurs 3 rounds running | **Pivot**: stop, propose a new design (`references/pivot-rule.md`) |
-| Round 6, not stable | Present to user, then REQUIRED Step 7 |
+| Round 6, not stable | Run the structural-or-stop card, present it to the operator, then REQUIRED Step 7 |
 
-**Max 6 rounds for code audits.**
+**Max 6 rounds for code audits, 8 absolute — enforced by `openai-audit.mjs`.** Round 7 exits `4` (`CAPPED`) with
+a structural-or-stop card: a stop for a human call, never a retry. At round 6 without convergence run
+`node scripts/audit-structural-card.mjs --sid "$SID" --mode code --plan "$PLAN_FILE"` and present the card to the
+operator (STOP / STRUCTURAL / CONTINUE); continuing is their call (`references/round-cap-and-structural-card.md`).
 
 **Step 7 (Gemini final review) is MANDATORY** after the last audit round,
 regardless of convergence — except when both `GEMINI_API_KEY` and
@@ -482,39 +485,24 @@ Three linked dismissals hard-suppress the next raise. See `references/ledger-for
 
 ## Step 3.5b — Record Triage Outcomes (closes the adaptive-learning loop)
 
-**Automatic for rounds 1..N-1 — no manual step.** When you invoke
-`openai-audit.mjs` for the next round (N ≥ 2), it finalizes the **prior** round's
-accepted/dismissed outcomes from the ledger you just wrote, before running round N.
-This relies on the `…-r<N>-result.json` `--out` naming convention (which this
-skill already uses) and is best-effort — a failure logs and the audit proceeds.
-It bridges the ledger → `finding_adjudication_events` + `audit_pass_stats` +
+**Automatic — no manual step.** `write-ledger-entries.mjs` labels the round it just
+triaged (once every finding has a ruling), and each R2+ `openai-audit.mjs` invocation
+re-checks the prior round idempotently, so the **final** round is labelled too. It
+bridges the ledger → `finding_adjudication_events` + `audit_pass_stats` +
 `audit_findings` + `audit_runs.labeled` (cloud) and `.audit/outcomes.jsonl` (local
-bandit reward), idempotently. So the bandit / FP-learning / prompt evolution get
-their ground-truth training signal without you remembering to run anything.
+bandit reward). Best-effort: a failure logs `[finalize] WARN` and the audit proceeds.
 
-**Manual fallback — run ONLY when there is no "next round" to carry the capture:**
-the **final converged round** of a standalone audit, a **1-round** audit, or
-**non-Claude-Code / cloud-off CI** where the orchestrator path didn't fire. (Inside
-`/cycle`, finalization is fully covered — skip this.)
+**Manual fallback — only if that WARN appeared**, or on **non-Claude-Code / cloud-off
+CI** where the orchestrator path didn't fire (inside `/cycle` it is fully covered):
 
 ```bash
 ROUND=2   # the round number just completed
 node scripts/write-code-outcomes.mjs --result ".audit/$SID-r$ROUND-result.json" --ledger .audit/$SID-ledger.json --round "$ROUND"
 ```
 
-Both the automatic path and this CLI delegate to the same shared
-`finalizeRoundOutcomes`, so they are idempotent — running the manual step after an
-automatic capture re-labels (cloud) and skips the local append (marker-guarded),
-never double-counting.
-
-> **Precondition: the ledger must already carry per-finding rulings.** This CLI
-> *records* adjudications; it does not make them. Run Step 3.5 first. With an
-> empty or all-`pending` ledger it reports `0/N findings labelled · cloud=ok`
-> and exits 0 — success-shaped, having closed nothing (reported live
-> 2026-08-08). It now prints a `WARN:` line naming which of the three causes
-> applies (no entries / all pending / ruled-but-unjoined identity mismatch) and
-> carries the same text as `warning` on its JSON. **`labelled: 0` with a
-> non-zero `total` is a failure to fix, never a pass.**
+Both paths share `finalizeRoundOutcomes`, so they are idempotent (cloud re-labels; the
+local append is marker-guarded). The ledger must already carry per-finding rulings
+(Step 3.5): **`labelled: 0` with a non-zero `total` is a failure to fix, never a pass.**
 
 ---
 
@@ -998,6 +986,7 @@ situations — read them only when the trigger applies.
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/debt-capture.md` | Phase D debt ledger — persist out-of-scope valid findings so they don't re-surface. | Step 3.6 — candidate deferrals present, OR Step 5.1 — debt resolution prompt firing, OR periodically to cluster/resolve the accumulated backlog (see its "Periodic Debt Health" section). |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 7 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
+| `references/round-cap-and-structural-card.md` | Enforced GPT round cap (plan 3/5, code 6/8), exit 4 CAPPED, and the structural-or-stop card read at the cap. | A round exited 4, OR the audit reached round 6 without converging. |
 | `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — a prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
 | `references/pivot-rule.md` | Pivot rule - findings recurring in one file or concern for 3 consecutive rounds mean rethink the design, not loop. | Step 3 - same file or concern accepted in 3 consecutive rounds. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. ALSO Step 6 — about to emit the convergence report's pass/wave census, to apply §7's named-state rule. |

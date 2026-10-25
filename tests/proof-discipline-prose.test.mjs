@@ -44,7 +44,10 @@ describe('proof-discipline prose contracts', () => {
     const t = read('skills/audit-code/SKILL.md');
     assert.match(t, /recurs 3 rounds running \| \*\*Pivot\*\*/);
     assert.ok(t.includes('references/pivot-rule.md'));
-    assert.ok(t.includes('**Max 6 rounds for code audits.**'), 'cap unchanged');
+    // The soft cap is still 6. The sentence now also states the absolute cap (8) and that openai-audit enforces both
+    // (docs/plans/audit-round-cap-structural-or-stop.md); the numbers themselves are pinned to AUDIT_ROUND_CAPS by
+    // tests/audit-round-cap-prose.test.mjs.
+    assert.ok(t.includes('**Max 6 rounds for code audits, 8 absolute'), 'cap unchanged (6 soft, now with the absolute cap)');
     assert.match(t, /Threshold met, 0 new, 2\/2 stable \| \*\*CONVERGED\*\*/, 'convergence unchanged');
     const ref = read('skills/audit-code/references/pivot-rule.md');
     for (const must of ['2026-10-18', 'B3c', 'baseline-permissions']) assert.ok(ref.includes(must), must);

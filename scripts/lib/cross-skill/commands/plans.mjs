@@ -226,6 +226,7 @@ export async function finalizeOutcomesCmd(ctx) {
     recordAdjudicationEvent: ctx.deps.recordAdjudicationEvent,
     updatePassStatsPostDeliberation: ctx.deps.updatePassStatsPostDeliberation,
     updateRunMeta: ctx.deps.updateRunMeta,
+    refreshRunAdjudicationCounts: ctx.deps.refreshRunAdjudicationCounts,
   };
   const status = await finalizeRoundOutcomes(
     { result: { ...result, _cloudRunId: runId }, ledger, round, store, sid: runId },

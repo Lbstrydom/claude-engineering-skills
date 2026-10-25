@@ -1,6 +1,6 @@
 {
   "$comment": "Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.",
-  "totalSites": 221,
+  "totalSites": 225,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -36,6 +36,11 @@
       "disposition": "provenance",
       "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
       "sites": 3
+    },
+    "doc docs/audit/shared-references/round-cap-and-structural-card.md": {
+      "disposition": "provenance",
+      "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
+      "sites": 2
     },
     "doc docs/audit/shared-references/verification-discipline.md": {
       "disposition": "provenance",
@@ -177,11 +182,6 @@
       "reason": "Alias only; audit-clean.mjs itself is now synced and the references name it by path, so the sweep the text promises actually runs in a consumer.",
       "sites": 5
     },
-    "npm guards:preflight": {
-      "disposition": "source-repo-only",
-      "reason": "Runs this repo's own declared whole-suite guard tests (tests/ files a consumer does not carry) before a gate slot is requested; the prose says source repo only. A consumer's equivalent is its own test entry point.",
-      "sites": 2
-    },
     "npm build": {
       "disposition": "source-repo-only",
       "reason": "Illustrative example of a consumer script name inside a doc snippet, not a command this bundle offers.",
@@ -190,7 +190,7 @@
     "npm check": {
       "disposition": "source-repo-only",
       "reason": "The source repo pre-push aggregate. A consumer has its own test/verify entry point; the skills never depend on the aggregate existing.",
-      "sites": 33
+      "sites": 35
     },
     "npm dashboard:setup": {
       "disposition": "source-repo-only",
@@ -226,6 +226,11 @@
       "disposition": "source-repo-only",
       "reason": "Validates gate-contract.json files, which are never packaged or synced.",
       "sites": 1
+    },
+    "npm guards:preflight": {
+      "disposition": "source-repo-only",
+      "reason": "Runs this repo's own declared whole-suite guard tests (tests/ files a consumer does not carry) before a gate slot is requested; the prose says source repo only. A consumer's equivalent is its own test entry point.",
+      "sites": 2
     },
     "npm security:refresh": {
       "disposition": "source-repo-only",

@@ -59,6 +59,10 @@ export const CLI_EXIT_SCENARIOS = Object.freeze([
   // audit-code concern decision: a dismissal beside an earlier dismissal with
   // neither sameConcernAs nor newConcern. Files only, like the one above.
   'ledger-undecided-reraise',
+  // The GPT round cap: openai-audit refuses a round past the soft cap with exit 4 (CAPPED) before it spends anything.
+  // Files only: a plan path argument; the card's store reads are cloud-off under the hermetic env.
+  'round-cap-plan-refusal',
+  'round-cap-code-refusal',
 ]);
 
 const ProofSchema = z.enum(['process', 'unit-seam']);
