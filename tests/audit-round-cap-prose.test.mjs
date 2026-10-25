@@ -86,7 +86,7 @@ function run(args) {
     child.on('close', (code) => {
       clearTimeout(timer);
       const attempts = fs.readFileSync(netLog, 'utf-8').split('\n').filter(Boolean);
-      fs.rmSync(netLog, { force: true });
+      fs.rmSync(netLog, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       resolve({ code, stderr, attempts });
     });
   });
@@ -106,7 +106,7 @@ describe('the commands the skills publish, run past their cap, are refused', () 
         assert.deepEqual(r.attempts, []);
       } finally {
         for (const f of fs.existsSync(AUDIT_DIR) ? fs.readdirSync(AUDIT_DIR) : []) {
-          if (f.startsWith(sid)) fs.rmSync(path.join(AUDIT_DIR, f), { force: true });
+          if (f.startsWith(sid)) fs.rmSync(path.join(AUDIT_DIR, f), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
         }
       }
     });

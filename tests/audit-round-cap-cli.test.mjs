@@ -29,9 +29,9 @@ let seq = 0;
 const newSid = (prefix) => { const s = `${prefix}-clitest-${process.pid}-${Date.now()}-${seq++}`; sids.push(s); return s; };
 
 after(() => {
-  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   for (const f of fs.existsSync(AUDIT_DIR) ? fs.readdirSync(AUDIT_DIR) : []) {
-    if (sids.some((s) => f.startsWith(s))) fs.rmSync(path.join(AUDIT_DIR, f), { force: true });
+    if (sids.some((s) => f.startsWith(s))) fs.rmSync(path.join(AUDIT_DIR, f), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 

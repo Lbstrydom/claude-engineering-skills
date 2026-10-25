@@ -352,7 +352,7 @@ describe('code-audit round 1 fixes', () => {
       deps: baseDeps({ readRounds: ({ auditDir }) => { seen = auditDir; return { rounds: null, unmeasured: 'x' }; } }),
     });
     assert.equal(path.resolve(seen), path.resolve(dir, '.audit'));
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('a card is bound to its mode and plan: the same session and round for another audit does not authorise an override', () => {
@@ -367,6 +367,6 @@ describe('code-audit round 1 fixes', () => {
       writeCardFile(dir, 'y-r4-structural-card.json', body);
       assert.match(readMatchingCard(dir, 'y-r4-structural-card.json', { round: 4, mode: 'plan', planFile: 'docs/plans/a.md' }).reason, /none recorded/, `${label} planFile must not authorise`);
     }
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });
