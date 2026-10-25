@@ -100,7 +100,35 @@ export const SKIP_REASON = Object.freeze({
   AHEAD: 'local-commits-ahead',
   STALE_BASE_COLLISION: 'stale-base-collision',
   BRANCH_EXISTS: 'branch-exists',
+  /** Nothing synced is on disk, but the bundle stamp differs from the source HEAD: 'clean' would read as 'up to date' (proposal da9a). */
+  CLEAN_BUNDLE_DIFFERS: 'clean-bundle-differs',
+  /** Nothing synced is on disk and the stamp cannot be compared to the source (malformed, short, source unreadable or dirty). */
+  CLEAN_UNVERIFIED: 'clean-unverified',
 });
+
+const FULL_SHA = /^[0-9a-f]{40}$/;
+
+/**
+ * Is the consumer's bundle stamp the source's current commit? PURE.
+ *
+ * A 'clean' consumer only means the tracked surface on disk is committed - it compares nothing against the source, so a STALE
+ * bundle read 'skip clean' (storyline, 2026-10-16: the bundle lacked #265 until a separate sync). Decision table:
+ *
+ *   stamp not 40-hex (missing/short/malformed) -> unverified
+ *   sourceSha not 40-hex                       -> unverified
+ *   different                                  -> different (NEVER 'behind': no ancestry is verified - it may be ahead or divergent)
+ *   equal, source tree dirty or unknown        -> unverified (a matching HEAD stamp does not prove equal content)
+ *   equal, source tree clean                   -> current
+ *
+ * @param {{stamp: unknown, sourceSha: unknown, sourceDirty: unknown}} input
+ * @returns {'current'|'different'|'unverified'}
+ */
+export function classifyBundleFreshness({ stamp, sourceSha, sourceDirty }) {
+  if (typeof stamp !== 'string' || !FULL_SHA.test(stamp)) return 'unverified';
+  if (typeof sourceSha !== 'string' || !FULL_SHA.test(sourceSha)) return 'unverified';
+  if (stamp !== sourceSha) return 'different';
+  return sourceDirty === false ? 'current' : 'unverified';
+}
 
 const RECEIPT_KEY = comparisonKey(RECEIPT_PATH);
 const DEFAULT_REPO = 'Lbstrydom/claude-engineering-skills';
@@ -175,6 +203,8 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
  *   behindCount: number|null,      — commits on baseSha not on HEAD
  *   upstreamChanged?: string[],    — paths that differ between HEAD and baseSha
  *   branchExists: boolean,
+ *   sourceSha?: string,            — the SOURCE repo HEAD (40-hex); absent => a clean skip is "unverified"
+ *   sourceDirty?: boolean,         — the SOURCE working tree has uncommitted changes
  * }} input
  * @returns {{action:'skip', reason:string, detail?:string}
  *   | {action:'pr', branch:string, bundleSha:string, repo:string, startPoint:string, behindCount:number, addPaths:string[],
@@ -182,11 +212,27 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
  */
 export function planConsumerPr({
   consumerName, classified, manifest, baseBranch, baseSha, currentBranch, aheadCount, behindCount, upstreamChanged = [], branchExists,
+  sourceSha, sourceDirty,
 }) {
   if (!classified || !classified.ok) {
     return { action: 'skip', reason: SKIP_REASON.UNCLASSIFIABLE, detail: classified?.error ?? 'no classification' };
   }
   if (classified.clean || classified.syncOwned.length === 0) {
+    // 'clean' compared nothing against the source: say whether the bundle is actually current (da9a).
+    const freshness = classifyBundleFreshness({ stamp: manifest?.commitSha, sourceSha, sourceDirty });
+    if (freshness === 'different') {
+      return {
+        action: 'skip', reason: SKIP_REASON.CLEAN_BUNDLE_DIFFERS,
+        detail: `no synced changes on disk, but the bundle stamp ${manifest.commitSha.slice(0, 8)} differs from the source ${sourceSha.slice(0, 8)}`
+          + ` - run npm run sync -- --target ${consumerName} first`,
+      };
+    }
+    if (freshness === 'unverified') {
+      return {
+        action: 'skip', reason: SKIP_REASON.CLEAN_UNVERIFIED,
+        detail: 'no synced changes on disk, and the bundle stamp could not be verified against the source (missing or short stamp, unreadable or uncommitted source) - not proven up to date',
+      };
+    }
     return { action: 'skip', reason: SKIP_REASON.CLEAN };
   }
   if (classified.degraded) {
@@ -929,4 +975,21 @@ export async function runConsumerPr({
   } finally {
     restoreGhAccount();
   }
+}
+
+/**
+ * The SOURCE repo's HEAD and whether its tree is dirty - the two facts `planConsumerPr` needs to say whether a 'clean' consumer is
+ * actually current (da9a). Any git failure yields `undefined` for that fact, which the planner reads as UNVERIFIED, never as current.
+ *
+ * @param {Runner} run
+ * @param {string} sourceRoot
+ * @returns {{sourceSha: string|undefined, sourceDirty: boolean|undefined}}
+ */
+export function gatherSourceFacts(run, sourceRoot) {
+  const head = run('git', ['rev-parse', 'HEAD'], { cwd: sourceRoot });
+  const status = run('git', ['status', '--porcelain'], { cwd: sourceRoot });
+  return {
+    sourceSha: ok(head) ? head.stdout.trim() : undefined,
+    sourceDirty: ok(status) ? status.stdout.trim().length > 0 : undefined,
+  };
 }
