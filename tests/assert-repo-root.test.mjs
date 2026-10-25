@@ -227,6 +227,21 @@ describe('assertRepoRoot - a linked worktree of the same repo is a valid cwd (fl
   it('still refuses a subdirectory of the main checkout (negative control)', () => {
     assert.deepEqual(run(path.join(main, 'scripts')), [1]);
   });
+  it('accepts a linked worktree whose main checkout path is NON-ASCII (git would C-quote it without -z)', () => {
+    const cafe = path.join(tmp, 'café');
+    mkdirSync(path.join(cafe, 'scripts'), { recursive: true });
+    git(tmp, 'init', '-q', cafe);
+    git(cafe, 'config', 'user.email', 't@t.t'); git(cafe, 'config', 'user.name', 't');
+    writeFileSync(path.join(cafe, 'scripts', 'x.mjs'), '//\n');
+    git(cafe, 'add', '-A'); git(cafe, 'commit', '-qm', 'i');
+    const wt2 = path.join(tmp, 'wt-café');
+    git(cafe, 'worktree', 'add', '-q', '-b', 'f2', wt2);
+    const exits = [];
+    const orig = process.cwd();
+    process.chdir(wt2);
+    try { assertRepoRoot(pathToFileURL(path.join(cafe, 'scripts', 'x.mjs')).href, { stderr: { write() {} }, exit: (c) => exits.push(c), env: {} }); } finally { process.chdir(orig); }
+    assert.deepEqual(exits, []);
+  });
   it('still refuses a different repository (negative control)', () => {
     assert.deepEqual(run(other), [1]);
   });

@@ -18,8 +18,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync, execFileSync } from 'node:child_process';
-import { GIT_LOCAL_ENV_VARS } from './git-env-sanitize.mjs';
-import { resolveMainRoot } from './pinned-worktree/paths.mjs';
 
 /**
  * Do two path strings denote the SAME directory?
@@ -65,8 +63,8 @@ function sameDirectory(a, b) {
  *
  * A consumer's tooling (`scripts/.claude-skills/`) is gitignored, so it exists in the main checkout only; a worker in a linked
  * worktree ran the script from the main checkout and the cwd guard refused the worktree (fleet 619c), leaving the audit to read the
- * WRONG tree. The question is "is cwd a working tree of this repo", answered by git: both directories derive the same MAIN checkout
- * (resolveMainRoot), and cwd is a worktree TOP-LEVEL (a subdirectory of the main checkout still refuses - the accident this guard exists
+ * WRONG tree. The question is "is cwd a working tree of this repo", answered by git: both directories report the same MAIN working tree
+ * (the first entry of `git worktree list`), and cwd is a worktree TOP-LEVEL (a subdirectory of the main checkout still refuses - the accident this guard exists
  * for). Any git failure answers false: the guard stays strict.
  *
  * @param {string} cwd
@@ -74,14 +72,21 @@ function sameDirectory(a, b) {
  * @returns {boolean}
  */
 function isLinkedWorktreeOf(cwd, expectedRoot) {
-  const env = { ...process.env };
-  for (const k of GIT_LOCAL_ENV_VARS) delete env[k];
+  // This module is a BOOTSTRAP: every CLI imports it, a doctor fixture copies it with no sibling, and a consumer lays it out under
+  // scripts/.claude-skills/. It therefore depends on node builtins only - hence no shared env-sanitise helper: every GIT_* variable is
+  // dropped (a superset of the repo-pointing ones), so an inherited GIT_DIR cannot redirect either probe to another repository.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k)));
+  const git = (dir, args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   try {
-    // The canonical main-checkout derivation (pinned-worktree/paths.mjs): two directories are one repository iff it answers alike.
-    const main = (dir) => fs.realpathSync.native(resolveMainRoot(dir, { env }));
+    // The first entry of `worktree list` is the MAIN working tree, from any worktree of the repository.
+    // -z: NUL-delimited and UNQUOTED. Without it git C-quotes a path holding non-ASCII or unusual characters, and the quoted text is not a path.
+    const main = (dir) => {
+      const first = execFileSync('git', ['-C', dir, 'worktree', 'list', '--porcelain', '-z'], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] }).split('\0')[0];
+      if (!first.startsWith('worktree ')) throw new Error('unexpected worktree list shape');
+      return fs.realpathSync.native(first.slice('worktree '.length));
+    };
     if (main(cwd) !== main(expectedRoot)) return false;
-    const top = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return sameDirectory(top, cwd);
+    return sameDirectory(git(cwd, ['rev-parse', '--show-toplevel']), cwd);
   } catch {
     return false;
   }
