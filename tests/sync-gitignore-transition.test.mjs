@@ -165,3 +165,24 @@ describe('a held-back .gitignore is named even when no PR is opened (audit R1 M1
     assert.equal(clean(undefined).detail, undefined);
   });
 });
+
+describe('EVERY skip rule names a held-back .gitignore (audit R4 M1)', () => {
+  const cases = {
+    'unclassifiable': { classified: { ok: false, error: 'git status failed' } },
+    'no-manifest': { classified: classified([RECEIPT_PATH, 'x']), manifest: null },
+    'not-on-base': { classified: classified([RECEIPT_PATH, 'x']), currentBranch: 'feat/x' },
+    'local-commits-ahead': { classified: classified([RECEIPT_PATH, 'x']), aheadCount: 2 },
+    'branch-exists': { classified: classified([RECEIPT_PATH, 'x']), branchExists: true },
+    'receipt-only': { classified: classified([RECEIPT_PATH]) },
+  };
+  for (const [reason, over] of Object.entries(cases)) {
+    it(`${reason}: the note rides on the skip; an unchanged .gitignore adds nothing`, () => {
+      const held = planConsumerPr({ ...baseFacts, ...over, gitignoreTransition: 'mixed' });
+      assert.equal(held.action, 'skip');
+      assert.equal(held.reason, reason);
+      assert.match(held.detail, /\.gitignore left uncommitted/);
+      const quiet = planConsumerPr({ ...baseFacts, ...over, gitignoreTransition: 'unchanged' });
+      assert.doesNotMatch(String(quiet.detail ?? ''), /\.gitignore/);
+    });
+  }
+});

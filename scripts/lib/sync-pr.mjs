@@ -189,7 +189,7 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
  *   | {action:'pr', branch:string, bundleSha:string, repo:string, startPoint:string, behindCount:number, addPaths:string[],
  *      commitPathspecs:string[], surface:string[], leftBehind:string[], title:string, message:string, body:string}}
  */
-export function planConsumerPr({
+function planConsumerPrCore({
   consumerName, classified, manifest, baseBranch, baseSha, currentBranch, aheadCount, behindCount, upstreamChanged = [], branchExists,
   sourceSha, sourceDirty, gitignoreTransition,
 }) {
@@ -282,6 +282,22 @@ export function planConsumerPr({
     leftBehind,
     ...text,
   };
+}
+
+/**
+ * Decide whether this consumer earns a PR (see `planConsumerPrCore` for the table). Every SKIP also names a held-back
+ * `.gitignore`, whichever rule skipped (audit R4 M1): the diagnostic belongs to the file, not to one early return.
+ *
+ * @param {Parameters<typeof planConsumerPrCore>[0]} input
+ * @returns {ReturnType<typeof planConsumerPrCore>}
+ */
+export function planConsumerPr(input) {
+  const plan = planConsumerPrCore(input);
+  const state = input.gitignoreTransition;
+  if (plan.action !== 'skip' || !state || state === 'unchanged' || state === GITIGNORE_PATH_STATE.BLOCK_ONLY) return plan;
+  const note = `${GITIGNORE_PATH} left uncommitted: ${GITIGNORE_LEFT_BEHIND_REASON[state] ?? 'could not be verified as managed-block-only'}`;
+  if (plan.detail?.includes(note)) return plan;
+  return { ...plan, detail: plan.detail ? `${plan.detail}; ${note}` : note };
 }
 
 /**
