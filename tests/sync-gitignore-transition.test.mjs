@@ -146,3 +146,21 @@ describe('gatherGitignoreTransition - on a real repository', () => {
     assert.equal(gatherGitignoreTransition(spawnRunner, dir, null), 'unverified');
   });
 });
+
+describe('a held-back .gitignore is named even when no PR is opened (audit R1 M1/M10)', () => {
+  it('a skip (clean / receipt-only / bundle-differs) carries the left-uncommitted note; block-only and unchanged add none', () => {
+    const clean = (gi, extra = {}) => planConsumerPr({ ...baseFacts, classified: classified([]), gitignoreTransition: gi, ...extra });
+    for (const state of ['mixed', 'invalid', 'unverified']) {
+      const p = clean(state);
+      assert.equal(p.reason, SKIP_REASON.CLEAN, state);
+      assert.match(p.detail, /\.gitignore left uncommitted/, state);
+    }
+    assert.match(clean('mixed', { sourceSha: 'a'.repeat(40) }).detail, /differs from the source[\s\S]*\.gitignore left uncommitted/);
+    const receiptOnly = planConsumerPr({ ...baseFacts, classified: classified([RECEIPT_PATH]), gitignoreTransition: 'mixed' });
+    assert.equal(receiptOnly.reason, SKIP_REASON.RECEIPT_ONLY);
+    assert.match(receiptOnly.detail, /\.gitignore left uncommitted/);
+    // NEGATIVE CONTROLS: nothing to say, nothing said.
+    assert.equal(clean('unchanged').detail, undefined);
+    assert.equal(clean(undefined).detail, undefined);
+  });
+});

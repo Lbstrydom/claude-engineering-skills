@@ -136,3 +136,25 @@ describe('upstreamTransition --commit from a consumer', () => {
     assert.equal(reached, false);
   });
 });
+
+describe('resolveFixCommit - the lookup is about THIS repo (audit R1 H12)', () => {
+  it('an inherited GIT_DIR / GIT_OBJECT_DIRECTORY does not redirect the lookup to another repository', () => {
+    const elsewhere = path.join(tmp, 'elsewhere');
+    init(elsewhere);
+    fs.writeFileSync(path.join(elsewhere, 'x'), 'x\n'); git(elsewhere, 'add', '-A'); git(elsewhere, 'commit', '-q', '-m', 'other repo');
+    const otherSha = git(elsewhere, 'rev-parse', 'HEAD');
+    const consumerHead = git(consumer, 'rev-parse', 'HEAD'); // read BEFORE the environment is polluted
+    const saved = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
+    process.env.GIT_DIR = path.join(elsewhere, '.git');
+    process.env.GIT_WORK_TREE = elsewhere;
+    try {
+      // `otherSha` exists ONLY in `elsewhere`. Unsanitised, git would find it through GIT_DIR and report the consumer as holding it.
+      const r = resolveFixCommit({ repoRoot: consumer, commit: otherSha, resolveUpstreamCommit: () => ({ ok: false, error: 'not upstream' }) });
+      assert.equal(r.ok, false, 'the consumer repo does not hold that commit');
+      // POSITIVE CONTROL: the consumer's own commit still resolves under the same polluted environment.
+      assert.equal(resolveFixCommit({ repoRoot: consumer, commit: consumerHead }).ok, true);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  });
+});

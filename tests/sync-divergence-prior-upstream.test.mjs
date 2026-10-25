@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import {
   BASE_STATE, ACTION, decideAction, describeReason, createPriorUpstreamResolver,
@@ -22,9 +23,9 @@ const diverged = { baseState: BASE_STATE.DIVERGED, overrideActive: false, allowO
 const committed = { tracked: true, matchesHead: true, staleSyncRef: null };
 
 describe('decideAction - prior upstream version', () => {
-  test('a diverged file equal to an earlier upstream version is WRITTEN quietly (not write-loud: nothing of the consumer is replaced)', () => {
+  test('a diverged file equal to an earlier upstream version is replaced LOUDLY (it may be a deliberate rollback, so it is printed and recorded)', () => {
     const d = decideAction({ ...diverged, vcs: { ...committed, priorUpstream: true } });
-    assert.equal(d.action, ACTION.WRITE);
+    assert.equal(d.action, ACTION.WRITE_LOUD);
     assert.equal(d.reason, 'diverged-prior-upstream');
     assert.match(describeReason(d.reason), /earlier upstream version/);
   });
@@ -85,6 +86,31 @@ describe('createPriorUpstreamResolver - on a real source repository', () => {
     } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
+  test('a literal path only: a source file named with glob characters never matches its glob siblings (audit R1 H6/H8)', () => {
+    const dir = makeSource(['{"v":1}\n', '{"v":2}\n'], 'x/a.json');
+    try {
+      writeFileSync(join(dir, 'x', '[ab].json'), '{"only":"bracket"}\n');
+      git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'bracket file');
+      const r = createPriorUpstreamResolver({ sourceRoot: dir });
+      assert.equal(r.matches('x/[ab].json', sha('{"v":1}\n')), false, "a.json's history must not answer for [ab].json");
+      assert.equal(r.matches('x/[ab].json', sha('{"only":"bracket"}\n')), true, 'positive control: the literal file is found');
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  test('a SHALLOW source answers null for everything: absent commits cannot be called a non-match (audit R1 M7)', () => {
+    const full = makeSource(['a\n', 'b\n', 'c\n']);
+    const shallow = join(tmpdir(), `shallow-${process.pid}-${Date.now()}`);
+    try {
+      execFileSync('git', ['clone', '-q', '--depth', '1', pathToFileURL(full).href, shallow]);
+      assert.equal(git(shallow, 'rev-parse', '--is-shallow-repository'), 'true', 'fixture: the clone is shallow');
+      assert.equal(createPriorUpstreamResolver({ sourceRoot: shallow }).matches(SRC, sha('a\n')), null);
+      assert.equal(createPriorUpstreamResolver({ sourceRoot: full }).matches(SRC, sha('a\n')), true, 'NEGATIVE CONTROL: the complete repository does find it');
+    } finally {
+      rmSync(full, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      rmSync(shallow, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
   test('git unable to answer -> null (today\'s refusal), never false', () => {
     const dir = mkdtempSync(join(tmpdir(), 'prior-up-nogit-'));
     try {
@@ -99,6 +125,7 @@ describe('createPriorUpstreamResolver - bounded work (audit R1 M2)', () => {
   /** An instrumented git: N blobs per path, every path shares the same history blobs. */
   const fakeGit = (blobsPerPath, calls) => (args, { input } = {}) => {
     calls.push(args[0]);
+    if (args[0] === 'rev-parse') return { status: 0, stdout: Buffer.from('false\n') };
     if (args[0] === 'log') {
       const lines = Array.from({ length: blobsPerPath }, (_, i) => `:100644 100644 ${'0'.repeat(39)}1 ${String(i + 1).padStart(40, 'a')} M\tx`);
       return { status: 0, stdout: Buffer.from(`${lines.join('\n')}\n`) };

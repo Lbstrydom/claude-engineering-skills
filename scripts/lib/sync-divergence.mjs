@@ -197,7 +197,7 @@ export function classifyAgainstBase({ baseHash, diskHash }) {
  *
  *   1. an override claims the path         → HOLD   (consumer said so, in-repo)
  *   2. base state is not DIVERGED          → WRITE
- *   2b. diverged, but disk equals an earlier upstream version of the file (not a stale-checkout case) → WRITE
+ *   2b. diverged, but disk equals an earlier upstream version of the file (not a stale-checkout case) → WRITE_LOUD
  *   3. diverged + operator passed the flag → WRITE_LOUD
  *   4. diverged + untracked in the consumer→ WRITE_LOUD
  *   5. diverged (tracked, or git unknown)  → REFUSE
@@ -226,7 +226,9 @@ export function decideAction({ baseState, vcs, overrideActive, allowOverwriteDiv
   // 2221: disk is byte-identical to an EARLIER upstream version of this file - a stale snapshot, not an edit. Nothing a consumer
   // typed can be lost by replacing it. The stale-checkout case keeps its own remedy (pull), so it is excluded here.
   if (vcs && vcs.priorUpstream === true && !vcs.staleSyncRef) {
-    return { action: ACTION.WRITE, reason: 'diverged-prior-upstream' };
+    // LOUD, not quiet (audit R1 H14): equality with an older upstream blob cannot tell a stale snapshot from a DELIBERATE rollback, so the
+    // replacement is printed and recorded and the prose names the declaration that keeps it.
+    return { action: ACTION.WRITE_LOUD, reason: 'diverged-prior-upstream' };
   }
   if (allowOverwriteDiverged) {
     return { action: ACTION.WRITE_LOUD, reason: 'diverged-overwrite-flag' };
@@ -279,7 +281,7 @@ export function describeReason(reason) {
     case 'diverged-untracked':
       return 'changed since our last sync; untracked here (upstream-owned — fix upstream, not this copy)';
     case 'diverged-prior-upstream':
-      return 'equals an earlier upstream version - stale, not edited; safe to replace';
+      return 'equals an earlier upstream version (a stale snapshot, or a deliberate rollback) - replaced; declare it in .sync-overrides.json to keep it';
     case 'diverged-overwrite-flag':
       return 'changed since our last sync; overwritten because --overwrite-diverged was passed';
     default:
@@ -491,10 +493,23 @@ export function createPriorUpstreamResolver({ sourceRoot, perPathMax = 100, tota
   const sha = (buf) => createHash('sha256').update(buf).digest('hex');
   const ok = (r) => !r.error && r.status === 0;
 
+  // A shallow source holds only part of the history: "no earlier version matched" would be a claim about commits that are absent. Asked
+  // once; anything but an affirmative "not shallow" makes every answer null (audit R1 M7).
+  let complete;
+  function historyIsComplete() {
+    if (complete === undefined) {
+      const r = run(['rev-parse', '--is-shallow-repository']);
+      complete = ok(r) && String(r.stdout).trim() === 'false';
+    }
+    return complete;
+  }
+
   function blobsOf(srcRel) {
+    if (!historyIsComplete()) return null;
     if (pathBlobs.has(srcRel)) return pathBlobs.get(srcRel);
     stats.logCalls++;
-    const r = run(['log', '-n', String(perPathMax), '--no-renames', '--raw', '--no-abbrev', '--format=', '--', srcRel]);
+    // :(literal) - a source path such as scripts/lib/[ab].mjs must name that file, never a glob over others (audit R1 H6/H8).
+    const r = run(['log', '-n', String(perPathMax), '--no-renames', '--raw', '--no-abbrev', '--format=', '--', `:(literal)${srcRel}`]);
     let oids = null;
     if (ok(r)) {
       oids = [];

@@ -7,9 +7,20 @@
 import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
+import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 
-function git(args, cwd) {
-  return spawnSync('git', args, { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+/** A fetch of an upstream commit may move a lot of history; bounded so a stalled network cannot hang a close (audit R1 M2/M9). */
+const FETCH_TIMEOUT_MS = 180_000;
+
+/**
+ * git in `cwd`. The environment is sanitised (GIT_DIR / GIT_OBJECT_DIRECTORY and friends must not redirect the lookup away from
+ * `cwd`) and never prompts for credentials (audit R1 H12/M9).
+ */
+function git(args, cwd, { timeout } = {}) {
+  return spawnSync('git', args, {
+    cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...(timeout ? { timeout, killSignal: 'SIGKILL' } : {}),
+    env: { ...sanitizeGitEnv(cwd), GIT_TERMINAL_PROMPT: '0' },
+  });
 }
 
 /** `owner/name` - the only shape a manifest repo may take before it is put in a URL or an API path. */
@@ -70,6 +81,7 @@ function defaultResolveUpstreamCommit(repo, sha) {
 const NL = String.fromCharCode(10);
 
 function defaultFetchObject({ repoRoot, repo, oid }) {
-  const r = git(['fetch', '--no-tags', `https://github.com/${repo}.git`, oid], repoRoot);
+  const r = git(['fetch', '--no-tags', `https://github.com/${repo}.git`, oid], repoRoot, { timeout: FETCH_TIMEOUT_MS });
+  if (r.error) return { ok: false, error: r.error.code === 'ETIMEDOUT' ? `timed out after ${FETCH_TIMEOUT_MS / 1000}s` : r.error.message };
   return r.status === 0 ? { ok: true } : { ok: false, error: String(r.stderr).trim().split(NL).slice(-2).join(' ') || `git fetch exited ${r.status}` };
 }

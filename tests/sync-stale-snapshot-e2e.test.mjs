@@ -59,7 +59,7 @@ describe('a stale snapshot of a generated artifact is updated, not refused (2221
     git(['commit', '-m', 'sync', '--no-gpg-sign'], consumer);
   });
 
-  it('the consumer holds an OLDER upstream version, committed: the next sync replaces it quietly', async () => {
+  it('the consumer holds an OLDER upstream version, committed: the next sync replaces it, loudly, without a refusal', async () => {
     fs.writeFileSync(path.join(consumer, DST_REL), sourceBlob(olderRev));
     git(['add', '-A'], consumer);
     git(['commit', '-m', 'stale snapshot', '--no-gpg-sign'], consumer);
@@ -68,7 +68,7 @@ describe('a stale snapshot of a generated artifact is updated, not refused (2221
     assert.equal(r.code, 0, whySyncFailed(r));
     assert.doesNotMatch(out, /REFUSED/, out.slice(-2500));
     assert.equal(read(DST_REL).replace(/\r\n/g, '\n'), current, 'the stale snapshot was not brought up to date');
-    assert.doesNotMatch(out, /overwrote consumer content[^\n]*\n[^\n]*expected-schema/i, 'a stale snapshot is not consumer content');
+    assert.match(out, /equals an earlier upstream version/, 'the replacement must be visible: it may have been a deliberate rollback');
   });
 
   it('NEGATIVE CONTROL: a consumer EDIT of that file (matches no upstream version) is still refused and left intact', async () => {
