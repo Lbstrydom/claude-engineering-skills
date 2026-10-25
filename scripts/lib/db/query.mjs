@@ -61,21 +61,35 @@ export function pgArray(value) {
 /** Serialize a write-side bind value: unwrap `pgArray()` to a raw array; JSON-
  *  serialize a plain array (jsonb-safe); pass everything else through unchanged. */
 function serializeWriteParam(v, col) {
-  if (v !== null && typeof v === 'object' && v[PG_ARRAY]) return v.value;
+  if (v !== null && typeof v === 'object' && v[PG_ARRAY]) return cleanNul(v.value, col);
   if (typeof v === 'string') return stripNul(v, col);
-  if (Array.isArray(v)) return JSON.stringify(v, (_k, val) => (typeof val === 'string' ? stripNul(val, col) : val));
+  if (Array.isArray(v)) return JSON.stringify(cleanNul(v, col));
+  // A plain object stays an object (node-pg JSON-serializes it); Date, Buffer and class instances keep their own serialization.
+  if (isPlainObject(v)) return cleanNul(v, col);
   return v;
 }
+
+const isPlainObject = (v) => v !== null && typeof v === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 
 /**
  * Postgres text and jsonb cannot store U+0000 (`invalid byte sequence for encoding "UTF8": 0x00`), and one NUL in
  * one field fails the whole write — and its spill replay, forever. Strip it at the seam and SAY which column, so
- * the loss is visible rather than silent (fleet p-f136).
+ * the loss is visible rather than silent (fleet p-f136). The loss is deliberate: U+0000 has no textual meaning, the
+ * alternative is a write that can never land, and the callers are free-text fields (debt prose, findings), not identity keys.
  */
 function stripNul(s, col) {
   if (!s.includes('\u0000')) return s;
-  process.stderr.write(`  [db] stripped U+0000 from column ${col ?? '(unnamed)'}: Postgres text/jsonb cannot store it\n`);
+  process.stderr.write(`  [db] stripped U+0000 from column ${col ?? '(unnamed)'}: Postgres text/jsonb cannot store it
+`);
   return s.replaceAll('\u0000', '');
+}
+
+/** stripNul over every string — values AND object keys — in arrays and plain objects, returning a copy only where needed. */
+function cleanNul(v, col) {
+  if (typeof v === 'string') return stripNul(v, col);
+  if (Array.isArray(v)) return v.map((x) => cleanNul(x, col));
+  if (isPlainObject(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [stripNul(k, col), cleanNul(x, col)]));
+  return v;
 }
 
 // ── Identifier quoting ─────────────────────────────────────────────────────
