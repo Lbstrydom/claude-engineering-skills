@@ -1,7 +1,7 @@
 # Plan: Sync contract batch (cluster B)
 
 - **Date**: 2026-10-25
-- **Status**: In progress - audit-plan 3 rounds (H2→M1→clean), Gemini APPROVE 2026-10-25
+- **Status**: Complete - implemented 2026-10-25; audit-plan 3 rounds (Gemini APPROVE), audit-code 5 rounds + Gemini APPROVE (round 2)
 - **Author**: Claude (CES chip, cluster B of the 2026-10-25 backlog triage (plan doc not yet on main), §5)
 - **Scope**: backend (sync / sync:pr / check-setup / upstream CLI; no UI, **no migrations**)
 
@@ -101,3 +101,15 @@ Negative controls (must NOT fire): D2 disk equals neither base nor any prior ver
 ## 7. Out of scope
 
 Pre-push hook, final-review, anthropic-client (clusters A/C/D/E). `degraded` classification, receipt rotation, `sync-path-map` layout.
+
+## 8. Execution outcome (2026-10-25)
+
+All six items shipped as planned, each with its test in the same commit. Deviations the audits forced:
+
+- **D2** the prior-upstream replacement is **loud**, not quiet (equality with an older upstream blob cannot tell a stale snapshot from a deliberate rollback); the resolver uses a `:(literal)` pathspec, a sanitised git env, and answers `null` for a shallow source.
+- **D1** `check-setup` already failed on a *missing* package; the new FAIL is for *present but undeclared*.
+- **D3/D4** the held-back `.gitignore` note is added by a wrapper to every skip rule; `classifyGitignoreTransition` treats EOL-equivalent texts as unchanged and an unchanged block as never block-only.
+- **D6** the git calls are env-sanitised and the fetch has a 180 s deadline.
+- Two helper modules were split out for the size ratchet: `sync-pr-facts.mjs`, `upstream/fix-commit.mjs`.
+
+Audit trail: 25 + 6 + 1 + 1 + 1 code-audit findings across 5 rounds; 15 pre-existing `sync-to-repos.mjs` findings captured as debt (independence stated per entry), 1 dismissed (H13), the rest fixed. Final review: round 1 CONCERNS (G1, fixed), round 2 APPROVE.

@@ -23,7 +23,6 @@ This is the list to read when asking "what is in flight?".
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Ship trains — batched, impact-based `/ship --train`](./ship-trains.md) | `Approved` |  |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
-| [Sync contract batch (cluster B)](./sync-contract-batch-b.md) | `In Progress` | audit-plan 3 rounds (H2→M1→clean), Gemini APPROVE 2026-10-25 |
 
 ## Parked
 
@@ -308,6 +307,7 @@ source comments that no docs linter sees — stays valid.
 | [Sustainability cleanup batch — god-module split + monolithic renderer decomp + refresh.mjs hardening](./sustainability-cleanup-batch.md) | `Complete` | WS1 (efca5ea), WS2 (13a0af9), WS3 (this commit) |
 | [symbol-index bugs — patches for arch:refresh --force + arch:duplicates thin-delegate](./symbol-index-bugs.md) | `Complete` | applied 2026-05-11 |
 | [Symbol-Index / Arch-Memory Pipeline Reliability Hardening](./symbol-index-pipeline-reliability-hardening.md) | `Complete` | all 5 execution clusters (A-E) built and audited via `/cycle --autonomous` on 2026-07-27; consolidated… |
+| [Sync contract batch (cluster B)](./sync-contract-batch-b.md) | `Complete` | implemented 2026-10-25; audit-plan 3 rounds (Gemini APPROVE), audit-code 5 rounds + Gemini APPROVE (round 2) |
 | [Sync output drift classification](./sync-output-drift-classification.md) | `Complete` | `/audit-code` converged 2026-09-10… |
 | [Sync ownership from content, not a tracked artifact](./sync-ownership-from-content.md) | `Complete` | all sections (§0 rollback detection, §A content-derived ownership, §B untrack consumer manifest) implemented… |
 | [sync-pr supersedes an older open sync PR](./sync-pr-supersede-open-sync-pr.md) | `Complete` | shipped in #230, #238, #242 (status reconciled against merged PRs 2026-10-25) |
