@@ -186,3 +186,22 @@ describe('EVERY skip rule names a held-back .gitignore (audit R4 M1)', () => {
     });
   }
 });
+
+describe('an unchanged managed block is never reported block-only (final review G1)', () => {
+  it('a CRLF working file against an LF base blob, block already committed -> unchanged (Windows autocrlf)', () => {
+    const head = insert('node_modules/\n', '.audit/');
+    assert.equal(classifyGitignoreTransition(head, head.replace(/\n/g, '\r\n')), 'unchanged');
+  });
+
+  it('blank lines moved around an UNCHANGED block are a hand edit -> mixed, never block-only', () => {
+    const head = insert('node_modules/\n', '.audit/');
+    assert.equal(classifyGitignoreTransition(head, `\n\n${head}\n\n`), 'mixed');
+  });
+
+  it('POSITIVE CONTROL: a genuinely changed block is still block-only, with or without CRLF', () => {
+    const head = insert('node_modules/\n', '.audit/');
+    const next = insert(head, '.audit/*', 'x/');
+    assert.equal(classifyGitignoreTransition(head, next), 'block-only');
+    assert.equal(classifyGitignoreTransition(head, next.replace(/\n/g, '\r\n')), 'block-only');
+  });
+});

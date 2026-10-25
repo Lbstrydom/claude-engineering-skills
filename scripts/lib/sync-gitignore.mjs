@@ -176,7 +176,9 @@ export const _internals = { BEGIN, END, detectEol };
  */
 export function classifyGitignoreTransition(headText, workText) {
   if (typeof workText !== 'string') return 'invalid';
-  if (headText === workText) return 'unchanged';
+  // Line endings are git's business, not a change: a Windows working file is CRLF where the base blob is LF (final review G1).
+  const lf = (s) => s.replace(/\r\n/g, '\n');
+  if (headText === workText || (headText !== null && lf(headText) === lf(workText))) return 'unchanged';
   const split = (text) => {
     const state = parseGitignoreState(text);
     const { beginIndices, endIndices, orderValid, blockSpan } = state;
@@ -192,7 +194,7 @@ export function classifyGitignoreTransition(headText, workText) {
       return ls.slice(a, b);
     };
     return blockSpan
-      ? { hasBlock: true, before: trim(lines.slice(0, blockSpan.beginLine)), after: trim(lines.slice(blockSpan.endLine + 1)) }
+      ? { hasBlock: true, block: lines.slice(blockSpan.beginLine, blockSpan.endLine + 1), before: trim(lines.slice(0, blockSpan.beginLine)), after: trim(lines.slice(blockSpan.endLine + 1)) }
       : { hasBlock: false, before: trim(lines), after: [] };
   };
   const work = split(workText);
@@ -200,5 +202,9 @@ export function classifyGitignoreTransition(headText, workText) {
   if (!work || !head) return 'invalid';
   if (!work.hasBlock) return 'mixed';
   const same = (a, b) => a.length === b.length && a.every((l, i) => l === b[i]);
-  return same(head.before, work.before) && same(head.after, work.after) ? 'block-only' : 'mixed';
+  if (!same(head.before, work.before) || !same(head.after, work.after)) return 'mixed';
+  // Same surroundings AND the same block, yet the texts differ (we already ruled out line endings): only blank lines moved - a hand edit, and
+  // nothing the sync wrote. Reporting it block-only would commit a change that is not the block's (final review G1).
+  if (head.hasBlock && same(head.block, work.block)) return 'mixed';
+  return 'block-only';
 }
