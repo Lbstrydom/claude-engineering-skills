@@ -1,6 +1,6 @@
 # Plan: Final-review reliability (backlog-triage cluster D)
 - **Date**: 2026-10-25
-- **Status**: In progress
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend — stack `js-ts`
 - **Target domain(s)**: `audit-orchestration`, `shared-lib`
@@ -41,3 +41,11 @@ A final review whose response was truncated, or that never got to record its ver
 - `tests/final-review-pending-attempt.test.mjs`, `tests/final-review-code-coverage.test.mjs`,
   `tests/final-review-hunk-windows.test.mjs`, `tests/gemini-review-*.test.mjs` pass.
 - No migration; consumer-visible change is the final-review report line and the new `pending` refusal reason.
+
+## 5. Outcome (2026-10-25)
+- Carried `94b59fe2`, `b3849183`, `dd0f2ed7` from the archive tag; `d9eda256` (optional refactor, four conflicts) not carried.
+- /audit-code: 4 rounds (R3, R4 PASS), Gemini APPROVE (0 blocking, 0 debt). Round 1 found 8 HIGH, of which the pending
+  registry needed a persisted total order (wx-created stamp), a supersession check (a review whose entry a later
+  recorder cleared writes nothing) and a per-attempt nonce for ownership; ENOTDIR now refuses; recovery of an oversize
+  array is restricted to arrays. Dismissed: run-id fallback to an earlier round (deliberate, tested, bound by marker-run equality).
+- Audit plan step skipped: the design is the approved triage brief; the audit exercised it.
