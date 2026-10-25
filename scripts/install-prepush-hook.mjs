@@ -174,14 +174,13 @@ const KNOWN_FLAGS = ['--dry-run', '--uninstall', '--target', '--format'];
 // (`prepush-step.mjs recurrence`) - it never suppresses and never gates (fleet 484f). (3) The run's own `.tmp-ledger.*` is removed by
 // exact path, and older orphans by the 24h rule `.tmp.*` already had. Logic: lib/prepush-audit-gate.mjs, prepush-step.mjs.
 // Re-install: `npm run hooks:install -- --target <name>`.
-// v16 (2026-10-25): v15's first day in the field, four gaps. (1) A `sync:pr` push with no single active plan read UNMEASURED (its .gitignore managed-block
-// edit looked like code; every consumer sync needed AUDIT_PREPUSH_ALLOW_UNMEASURED): the SANCTIONED SYNC LANE recognises exactly one commit with a
+// v16 (2026-10-25): v15's field gaps. (1) A `sync:pr` push with no single active plan read UNMEASURED (its .gitignore managed-block edit looked like code;
+// every consumer sync needed AUDIT_PREPUSH_ALLOW_UNMEASURED): the SANCTIONED SYNC LANE recognises exactly one commit with a
 // `Sync-Bundle:` trailer the receipt in the pushed tree attests, touching only paths the sync owns (its own sidecar; .gitignore only as a managed-block edit). (2) A tag-only push (7 archive tags: a ~10 min paid audit)
 // selected a plan and audited: the consumer now runs the archive lane (a secret/sensitive-path scan of what an archive ref publishes) and skips the
 // audit for tag pushes whose commits the destination already holds (`prepush-step.mjs landing`, ls-remote, never a stale local ref). (3) Plan
 // selection also reads the plan whose DECLARED PATHS cover the changed code (reason printed), and the plan-status gate reads the pushed commit, not
-// the working tree. (4) The body warns when the source expects a newer hook. Also the trap probe is `trap '' SIG`, not `kill -l NAME` (dash). Step-CLI
-// changes reach an installed v15 body at once; the lanes, the warning and the probe need `npm run hooks:install -- --target <name>`.
+// the working tree. (4) The body warns when the source expects a newer hook. The trap probe is `trap '' SIG` (dash). Re-install: `npm run hooks:install -- --target <name>`.
 const HOOK_VERSION    = PREPUSH_HOOK_VERSION;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
@@ -583,7 +582,6 @@ case "$STEP_CAPS" in *" landing "*)
     "landing code "*) echo "[prepush-hook] ▸ not a tag-only push of published commits: \${LANDING#landing code }" >&2 ;;
   esac ;;
 esac
-# (3) SANCTIONED SYNC LANE: exactly one \`sync:pr\` commit (Sync-Bundle trailer == the receipt in the pushed tree) touching only paths the sync owns.
 case "$STEP_CAPS" in *" sync-lane "*)
   SYNC_LANE="$(printf '%s\\n' "$PUSH_STDIN" | prepush_bounded sync-lane 120 node "$STEP_CLI" sync-lane --destination="$2")"
   SYNC_LANE_RC=$?
