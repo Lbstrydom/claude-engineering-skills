@@ -15,9 +15,9 @@
 | Index freshness | **165 commits behind `origin/main`** (indexed at `a6b035b3`, PR #125) | measured — the report's own freshness line |
 
 **Read the table with the freshness row first.** The run measured an index 165 commits old, so "0 layering violations" is a statement about
-`a6b035b3`, not about today's code. A fresh `npm run arch:refresh` is heavy and was queued behind another repo's gate on the machine
-lease (`node scripts/fleet.mjs lease run --kind gate -- npm run arch:refresh`); if it lands before this PR merges the numbers are
-appended in §1.1, otherwise the follow-up is "re-run `arch:refresh` then `arch:drift` when the slot is free".
+`a6b035b3`, not about today's code. A fresh `npm run arch:refresh` is heavy and was NOT run: the machine's heavy slot was held by another repo's gate for the whole session (the
+request waited in the lease queue, then was withdrawn). **Open follow-up:** `node scripts/fleet.mjs lease run --kind gate -- npm run arch:refresh`,
+then `npm run arch:drift`, when the slot is free; until then treat the layering figure as unmeasured for current code.
 
 Top duplication clusters (all test-helper duplication, none in `scripts/`): `write` ×3 (`tests/claudemd/file-scanner-gitignore`,
 `ship-commit-worktree-identity`, `symbol-index-corpus-ownership`), `writeRoundLedger` ×N (`tests/debt-auto-capture-*`), `seedLedger` ×2,
