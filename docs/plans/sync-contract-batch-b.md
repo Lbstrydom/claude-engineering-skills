@@ -2,7 +2,7 @@
 
 - **Date**: 2026-10-25
 - **Status**: In progress - audit-plan 3 rounds (H2→M1→clean), Gemini APPROVE 2026-10-25
-- **Author**: Claude (CES chip, cluster B of `docs/plans/backlog-triage-2026-10-25.md` §5)
+- **Author**: Claude (CES chip, cluster B of the 2026-10-25 backlog triage (plan doc not yet on main), §5)
 - **Scope**: backend (sync / sync:pr / check-setup / upstream CLI; no UI, **no migrations**)
 
 > **Target domain(s)**: `sync`, `install`, `upstream`, `tests`. Tier 3 seam (consumer sync contract): every change below lands with its test in the same commit.

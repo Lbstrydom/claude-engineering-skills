@@ -74,7 +74,7 @@ describe('createPriorUpstreamResolver - on a real source repository', () => {
       assert.equal(r.matches(SRC, sha('{"v":1}\n')), true);
       assert.equal(r.matches(SRC, sha('{"v":2}\n')), true);
       assert.equal(r.matches(SRC, sha('{"v":1,"mine":true}\n')), false, 'a consumer edit matches no upstream version');
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   test('a CRLF copy of an earlier version (a Windows consumer) matches too', () => {
@@ -82,7 +82,7 @@ describe('createPriorUpstreamResolver - on a real source repository', () => {
     try {
       const r = createPriorUpstreamResolver({ sourceRoot: dir });
       assert.equal(r.matches(SRC, sha('a\r\nb\r\n')), true);
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   test('git unable to answer -> null (today\'s refusal), never false', () => {
@@ -91,7 +91,7 @@ describe('createPriorUpstreamResolver - on a real source repository', () => {
       const r = createPriorUpstreamResolver({ sourceRoot: dir });
       assert.equal(r.matches(SRC, sha('x')), null);
       assert.equal(r.matches(SRC, null), null);
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
