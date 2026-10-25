@@ -560,8 +560,11 @@ export function classifyStatementDependence(statementPath, { conditionNode, bran
 
 /** Hard ceiling on the diff-scaled container bound; also `adjacencyConfig.maxContainers`' own clamp maximum. */
 export const MAX_CONTAINERS_CEILING = 500;
-/** Containers allowed per changed file when the bound scales: a fixed 20 cut a 26-file diff (fleet df45, 2026-10-25). */
-const CONTAINERS_PER_CHANGED_FILE = 2;
+/**
+ * Containers allowed per changed file when the bound scales: a fixed 20 cut a 26-file diff (fleet df45, 2026-10-25). `measured`: this branch's own
+ * 18-file diff held 35 containers (1.94/file, `runAdjacencyAnalysis` at maxContainers=500), so 3 leaves ~1.5x headroom where 2 would sit on the edge.
+ */
+const CONTAINERS_PER_CHANGED_FILE = 3;
 /** At most this many skipped files are named in the incompleteness detail; the rest are counted. */
 const MAX_SKIPPED_NAMES = 10;
 
@@ -663,7 +666,8 @@ export async function runAdjacencyAnalysis({ repoRoot, auditBaseCommit, bounds, 
         const skipped = targets.slice(ti).map((x) => x.newPath).filter((x) => a.classifyPath(x, repoRoot)?.category !== 'sensitive');
         const shown = skipped.slice(0, MAX_SKIPPED_NAMES).join(', ');
         const more = skipped.length > MAX_SKIPPED_NAMES ? ` (+${skipped.length - MAX_SKIPPED_NAMES} more)` : '';
-        inc.push(incompleteness(INCOMPLETENESS_KINDS.ENUMERATION_BOUND, target.newPath,
+        // The record's subject is the first NAMEABLE skipped file - target.newPath itself may be sensitive, and must not leave through this field either.
+        inc.push(incompleteness(INCOMPLETENESS_KINDS.ENUMERATION_BOUND, skipped[0] ?? 'diff',
           `maxContainers=${maxContainers} reached — remaining files not enumerated${skipped.length ? `: ${shown}${more}` : ''}`));
         break;
       }

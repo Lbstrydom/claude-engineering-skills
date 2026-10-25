@@ -329,7 +329,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     try {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const base = git(['rev-parse', 'HEAD~1'], c.local);
       const d = decideAcquire(emptyLease(), { identity: { repoKey: 'abcdef012345', holder: 'sess-other' }, repo: 'o/r', kind: 'gate', forMin: 30, pid: process.pid, exclusive: true }, new Date());
@@ -354,7 +354,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     try {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const base = git(['rev-parse', 'HEAD~1'], c.local);
       // The SAME identity the pushing session would use, and a different one: neither may delay or block the hook.
@@ -376,7 +376,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     try {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${git(['rev-parse', 'HEAD~1'], c.local)}\n`);
       assert.equal(got.status, 0, got.stderr);
@@ -424,7 +424,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     try {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${git(['rev-parse', 'HEAD~1'], c.local)}\n`, {
         STUB_PROBE_SLEEP_MS: '2500', AUDIT_PREPUSH_PROGRESS_SEC: '1',
@@ -454,7 +454,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     try {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const base = git(['rev-parse', 'HEAD~1'], c.local);
       const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${base}\n`);
@@ -472,7 +472,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
       const source = makeSourceRepo(ws);
       fs.rmSync(path.join(source, 'scripts', 'prepush-step.mjs'), { recursive: true, maxRetries: 3, retryDelay: 50 });
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${git(['rev-parse', 'HEAD~1'], c.local)}\n`);
       assert.equal(got.status, 1);
@@ -541,7 +541,7 @@ describe('check-plan-status --select on a real merge push (the incident, at the 
 // lib/prepush-audit-gate.mjs holds the logic (tests/prepush-audit-gate.test.mjs); these pin that the HOOK wires it: the audit's
 // exit contract and envelope decide, the override is the one named variable, and the reuse branch really skips the audit.
 function pushOf(c) {
-  c.put('src/own.txt', 'x\n');
+  c.put('src/own.mjs', 'x\n');
   const head = c.commit('own');
   return { head, base: git(['rev-parse', 'HEAD~1'], c.local) };
 }

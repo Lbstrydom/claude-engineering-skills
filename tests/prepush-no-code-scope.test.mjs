@@ -26,10 +26,10 @@ const deps = {
 const classify = (files) => classifyNoCodePush({ files, ...deps });
 
 describe('classifyNoCodePush - the per-file table', () => {
-  for (const f of ['package.json', 'tsconfig.json', 'package-lock.json', 'logo.png', 'src/config/x.ts', 'src/schemas/a.ts', 'manifest.json', '.sync-receipt.json']) {
+  for (const f of ['package.json', 'tsconfig.json', 'package-lock.json', 'logo.png', 'src/config/x.yml', 'src/schemas/a.json', 'manifest.json', '.sync-receipt.json']) {
     test(`${f} alone is no-code`, () => assert.equal(classify([f]).noCode, true, JSON.stringify(classify([f]))));
   }
-  for (const f of ['src/a.mjs', 'README.md', 'Dockerfile', 'a.jsonl', 'styles.css', '.github/workflows/ci.yml']) {
+  for (const f of ['src/a.mjs', 'src/config/x.ts', 'src/schemas/a.ts', 'src/types/t.ts', 'src/shared/h.mjs', 'README.md', 'Dockerfile', 'a.jsonl', 'styles.css', '.github/workflows/ci.yml']) {
     test(`${f} alone is CODE (the audit reads it as a subject today)`, () => assert.equal(classify([f]).noCode, false, f));
   }
   test('one code file among many non-code files makes the whole push code', () => {
@@ -58,7 +58,7 @@ describe('PARITY with the audit\'s own refusal (the two cannot drift apart)', ()
     return auditSubjectFileGuard({ scopeMode: 'diff', subjectFileCount: backend.length + frontend.length, hasFileFilter: true, foundCount: admitted.length }) !== null;
   };
   const TABLE = [
-    ['package.json'], ['package.json', 'package-lock.json'], ['logo.png', 'a.woff2'], ['src/config/a.ts'], ['tsconfig.json', 'src/types/t.ts'],
+    ['package.json'], ['package.json', 'package-lock.json'], ['logo.png', 'a.woff2'], ['src/config/a.yml'], ['src/config/a.ts'], ['tsconfig.json', 'src/types/t.ts'],
     ['src/a.mjs'], ['README.md'], ['Dockerfile'], ['package.json', 'src/a.mjs'], ['a.jsonl'], ['styles.css'], ['x.yml'],
   ];
   for (const files of TABLE) {

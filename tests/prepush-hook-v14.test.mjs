@@ -73,8 +73,8 @@ function consumer(ws) {
   git(['push', '-q', 'origin', 'main'], local);
   const base = git(['rev-parse', 'HEAD'], local);
   fs.mkdirSync(path.join(local, 'src'), { recursive: true });
-  fs.writeFileSync(path.join(local, 'src', 'own.txt'), 'x\n');
-  git(['add', 'src/own.txt'], local);
+  fs.writeFileSync(path.join(local, 'src', 'own.mjs'), 'x\n');
+  git(['add', 'src/own.mjs'], local);
   git(['commit', '-q', '-m', 'own'], local);
   const head = git(['rev-parse', 'HEAD'], local);
   return { local, stdin: `refs/heads/main ${head} refs/heads/main ${base}\n`, tree: git(['rev-parse', `${head}^{tree}`], local) };

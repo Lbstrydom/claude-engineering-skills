@@ -316,7 +316,9 @@ export function classifyNoCodePush({ files, isInfra, taxonomyClass, bucketOf } =
       const cls = taxonomyClass(f);
       if (cls === 'non-code') continue;
       if (cls === 'uncovered') return { noCode: false, reason: `${f} is of a type the audit does not recognise` };
-      if (bucketOf(f) === 'shared') continue;
+      // The `shared` bucket is a PROMPT-CONTEXT grouping, not an exemption: `/config/ /schemas/ /types/ /shared/` hold real code. Only DATA
+      // (declarative: *.json, yaml, ...) in that bucket is a non-subject; source there is code, and the audit will refuse or read it as in v14.
+      if (cls !== 'profiled' && cls !== 'model-only' && bucketOf(f) === 'shared') continue;
       return { noCode: false, reason: `${f} is an implementation file the audit reads` };
     }
   } catch (e) {

@@ -143,6 +143,16 @@ function writeAtomic(file, text) {
   } catch (e) { try { fs.rmSync(tmp, { force: true }); } catch { /* best effort */ } throw e; }
 }
 
+/** Keep the newest N no-code records (the hook's AUDIT_PREPUSH_KEEP_REPORTS policy: a positive integer of at most 6 digits, else 20), never the one just written. */
+function pruneNoCodeRecords(dir, protect, keepArg) {
+  const n = /^[1-9][0-9]{0,5}$/.test(String(keepArg ?? '')) ? Number(keepArg) : 20;
+  try {
+    fs.readdirSync(dir).filter((e) => e.endsWith('.no-code.json') && e !== protect)
+      .map((e) => ({ e, m: fs.statSync(path.join(dir, e)).mtimeMs })).sort((a, b) => b.m - a.m).slice(Math.max(0, n - 1))
+      .forEach((x) => fs.rmSync(path.join(dir, x.e), { force: true }));
+  } catch { /* retention is housekeeping: it never changes the outcome */ }
+}
+
 /** The audit's own predicates, loaded only by the subcommand that needs them (~190ms of imports the other subcommands do not pay). */
 async function loadNoCodeDeps() {
   const { classifyFiles, isAuditInfraFile } = await import('./lib/audit-scope.mjs');
@@ -173,6 +183,7 @@ export async function noCodeStepLine({ env = process.env, cwd = process.cwd(), g
     if (!OID_RE.test(tree)) return codeLine('the pushed tree could not be resolved');
     const rel = path.join(KEEP_DIR, `${tree}.no-code.json`);
     try { writeAtomic(path.join(cwd, rel), `${JSON.stringify(buildNoCodeRecord({ tree, base: range.base, head: range.head, files: c.files }), null, 2)}\n`); } catch (e) { return codeLine(`the no-code record could not be written (${e?.code || 'error'})`); }
+    pruneNoCodeRecords(path.join(cwd, KEEP_DIR), path.basename(rel), env.AUDIT_PREPUSH_KEEP_REPORTS);
     return noCodeLine(c.files.length, rel);
   } catch (e) { return codeLine(`the no-code step failed (${e?.message || 'error'})`); }
 }

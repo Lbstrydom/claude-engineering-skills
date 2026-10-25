@@ -1,4 +1,5 @@
 import { describe, it } from 'node:test';
+import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import {
   buildCoverageReport, createCoverageRecorder, validateCoverage, formatCoverageSuffix, projectCoverageForReview,
@@ -96,6 +97,32 @@ describe('scopeOutcome - persistence compatibility (a legacy serialized ledger)'
     const proj = projectCoverageForReview(build({ changed: [] }));
     assert.equal(proj.scopeOutcome, 'no-change-set');
     assert.match(formatCoverageSuffix(proj), /not measured/i);
+  });
+});
+
+describe('scopeOutcome - a ledger CAPTURED from the pre-change builder (not re-derived from the current one)', () => {
+  const fx = JSON.parse(fs.readFileSync(new URL('./fixtures/coverage/legacy-pre-scope-outcome.json', import.meta.url), 'utf8'));
+
+  it('the fixture really predates the field (a vacuous-pass guard)', () => {
+    for (const [name, cov] of Object.entries(fx.reports)) assert.equal('scopeOutcome' in cov, false, name);
+    assert.equal(fx.reports.empty.gate, 'pass', 'the captured defect: an empty universe read gate:pass');
+  });
+
+  it('every captured ledger still validates and formats exactly as the old code did', () => {
+    for (const [name, cov] of Object.entries(fx.reports)) {
+      assert.deepEqual(validateCoverage(cov), { ok: true }, name);
+      assert.equal(formatCoverageSuffix(cov), '', name);
+    }
+  });
+
+  it('rebuilding the same inputs with the current builder differs ONLY by the new field and the gate that field corrects', () => {
+    const now = build({ changed: [] });
+    const { scopeOutcome, gate, ...rest } = now;
+    const { gate: oldGate, ...oldRest } = fx.reports.empty;
+    assert.deepEqual(rest, oldRest);
+    assert.equal(oldGate, 'pass');
+    assert.equal(gate, 'warn');
+    assert.equal(scopeOutcome, 'no-change-set');
   });
 });
 

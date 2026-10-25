@@ -39,7 +39,7 @@ describe('effectiveMaxContainers - pure', () => {
   test('unpinned: scales with the diff, never below the configured floor, never above the ceiling', () => {
     const b = { maxContainers: 20, scaleContainersWithDiff: true };
     assert.equal(effectiveMaxContainers(b, 5), 20);
-    assert.equal(effectiveMaxContainers(b, 26), 52);
+    assert.equal(effectiveMaxContainers(b, 26), 78);
     assert.equal(effectiveMaxContainers(b, 10_000), MAX_CONTAINERS_CEILING);
   });
 
@@ -81,5 +81,27 @@ describe('runAdjacencyAnalysis - the 26-file diff from the field report', () => 
     const d = capNotes(r)[0].detail;
     assert.match(d, /\(\+25 more\)/);
     assert.equal((d.match(/src\/f\d\d\.mjs/g) || []).length, 10);
+  });
+});
+
+describe('a sensitive file at the cap does not leave through the record\'s subject field either (audit H1/H3)', () => {
+  test('the subject is the first NAMEABLE skipped file, never a sensitive one; all-sensitive falls back to `diff`', async () => {
+    const mk = (n, sensitive) => runAdjacencyAnalysis({
+      repoRoot: process.cwd(), auditBaseCommit: 'HEAD', bounds: { ...BOUNDS, maxContainers: 1, scaleContainersWithDiff: false },
+      adapters: {
+        numstat: () => ({ ok: true, files: Array.from({ length: n }, (_, i) => ({ path: pathOf(i), added: 1, deleted: 0, binary: false })), totalChangedLines: n }),
+        unifiedDiff: () => ({ ok: true, truncated: false, diffText: Array.from({ length: n }, (_, i) => `diff --git a/${pathOf(i)} b/${pathOf(i)}\n@@ -2,0 +3,1 @@\n+  console.log(x);\n`).join('') }),
+        classifyPath: (p) => ({ category: sensitive.has(p) ? 'sensitive' : null }),
+        statSize: () => SRC.length,
+        readFile: () => SRC,
+      },
+    });
+    // f01 is the first skipped file and is sensitive: it must be neither named in the detail nor used as the record's file.
+    const a = capNotes(await mk(4, new Set([pathOf(1)])))[0];
+    assert.equal(a.scope, pathOf(2));
+    assert.ok(!a.detail.includes(pathOf(1)) && !JSON.stringify(a).includes(pathOf(1)), JSON.stringify(a));
+    const b = capNotes(await mk(3, new Set([pathOf(1), pathOf(2)])))[0];
+    assert.equal(b.scope, "diff");
+    assert.ok(!JSON.stringify(b).includes(pathOf(1)) && !JSON.stringify(b).includes(pathOf(2)), JSON.stringify(b));
   });
 });
