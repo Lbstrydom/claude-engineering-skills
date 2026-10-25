@@ -25,7 +25,9 @@ import { fileURLToPath } from 'node:url';
 import { _internals } from '../scripts/lib/sync-isolation-verify.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SYNC_SRC = fs.readFileSync(path.join(ROOT, 'scripts/sync-to-repos.mjs'), 'utf8');
+// The entry arrays live in the one shared list (sync-entry-lists.mjs); the sync's own source holds the rest.
+const SYNC_SRC = fs.readFileSync(path.join(ROOT, 'scripts/sync-to-repos.mjs'), 'utf8')
+  + fs.readFileSync(path.join(ROOT, 'scripts/lib/sync-entry-lists.mjs'), 'utf8');
 const SYNC_INVENTORY_SRC = fs.readFileSync(path.join(ROOT, 'scripts/lib/sync-inventory.mjs'), 'utf8');
 
 describe('CLI_SMOKE_SET ↔ sync-to-repos parity', () => {

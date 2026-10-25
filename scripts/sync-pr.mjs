@@ -47,7 +47,7 @@ import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { resolveTargets, consumerAliases } from './lib/consumer-repos.mjs';
 import { MANIFEST_RELATIVE_PATH } from './lib/sync-manifest.mjs';
 import { classifyRepo } from './sync-status.mjs';
-import { planConsumerPr, runConsumerPr, gatherConsumerFacts, retrySupersession, supersessionRetryTarget, spawnRunner } from './lib/sync-pr.mjs';
+import { planConsumerPr, runConsumerPr, gatherConsumerFacts, gatherSourceFacts, gatherGitignoreTransition, retrySupersession, supersessionRetryTarget, spawnRunner } from './lib/sync-pr.mjs';
 import { scratchPath } from './lib/temp-paths.mjs';
 import { repoIdentity } from './lib/fleet/lease-cmd.mjs';
 import { LeaseConfigError, machineDir } from './lib/fleet/lease.mjs';
@@ -178,6 +178,8 @@ async function runLeased({ lease, repoRoot, name, job, opts, out }) {
  */
 export async function main(argv = process.argv, out = process.stdout, deps = {}) {
   const { run = spawnRunner, resolve = resolveTargets, classify = classifyRepo, ancestry } = deps;
+  // Asked once per run: what the source's HEAD is, so a 'clean' consumer can be told apart from a CURRENT one (da9a).
+  const sourceFacts = deps.sourceFacts ?? gatherSourceFacts(run, SOURCE_ROOT);
   const lease = 'lease' in deps ? deps.lease : {};
   const { dryRun, merge, baseOverride, target, leaseFor, leaseWait, ciWindow } = parseArgs(argv);
   const targets = resolve(target);
@@ -209,7 +211,9 @@ export async function main(argv = process.argv, out = process.stdout, deps = {})
       continue;
     }
     const { baseBranch } = facts;
-    const plan = planConsumerPr({ consumerName: t.name, classified, manifest, ...facts });
+    const plan = planConsumerPr({
+      consumerName: t.name, classified, manifest, ...facts, ...sourceFacts, gitignoreTransition: gatherGitignoreTransition(run, repoRoot, facts.baseSha),
+    });
 
     if (plan.action === 'skip') {
       out.write(`  ${Y}skip${X} ${plan.reason}${plan.detail ? ` ${D}— ${plan.detail}${X}` : ''}\n`);

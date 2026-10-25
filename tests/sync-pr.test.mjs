@@ -17,7 +17,7 @@ import {
   SKIP_REASON, branchNameFor, buildPrText, planConsumerPr, runConsumerPr,
   parseGhAccounts, isRepoNotResolvable, parseSymrefHead, parseFailingTests,
   SUPERSEDE_KEEP_REASON, SUPERSEDE_LIST_LIMIT, parseOpenSyncPrs, parseNameStatus, decideSupersession, supersedeOlderSyncPrs,
-  SUPERSEDE_RETRY_SKIP, retrySupersession, supersessionRetryTarget,
+  SUPERSEDE_RETRY_SKIP, retrySupersession, supersessionRetryTarget, classifyBundleFreshness,
 } from '../scripts/lib/sync-pr.mjs';
 import { parseArgs } from '../scripts/sync-pr.mjs';
 import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
@@ -30,7 +30,8 @@ const classified = (syncOwned, needsReview = [], extra = {}) => ({
   ok: true, clean: false, syncOwned, needsReview, other: [], manifestFound: true, degraded: false, partial: false, blindTo: [], ...extra,
 });
 const ORIGIN_SHA = '1e538526d0000000000000000000000000000000';
-const facts = { baseBranch: 'main', baseSha: ORIGIN_SHA, currentBranch: 'main', aheadCount: 0, behindCount: 0, upstreamChanged: [], branchExists: false };
+// The source is at the consumer's stamp and clean unless a case says otherwise (da9a).
+const facts = { sourceSha: SHA, sourceDirty: false, baseBranch: 'main', baseSha: ORIGIN_SHA, currentBranch: 'main', aheadCount: 0, behindCount: 0, upstreamChanged: [], branchExists: false };
 const plan = (over = {}) => planConsumerPr({
   consumerName: 'wine-cellar-app',
   classified: classified([entry(RECEIPT_PATH), entry('.claude/skills/plan/SKILL.md')]),
@@ -76,6 +77,20 @@ describe('planConsumerPr — decision table', () => {
   it('a clean tree, or no sync-owned paths, skips as clean', async () => {
     assert.equal(plan({ classified: classified([]) }).reason, SKIP_REASON.CLEAN);
     assert.equal(plan({ classified: { ...classified([]), clean: true } }).reason, SKIP_REASON.CLEAN);
+  });
+
+  it('a clean consumer whose bundle stamp DIFFERS from the source is not "clean": it names the sync to run first (da9a)', async () => {
+    const p = plan({ classified: classified([]), sourceSha: 'a'.repeat(40) });
+    assert.equal(p.reason, SKIP_REASON.CLEAN_BUNDLE_DIFFERS);
+    assert.match(p.detail, /bundle stamp cb0903cf differs from the source aaaaaaaa/);
+    assert.match(p.detail, /npm run sync -- --target wine-cellar-app/);
+  });
+
+  it('a clean consumer whose stamp cannot be compared is UNVERIFIED, never clean (negative control: a matching clean source stays clean)', async () => {
+    for (const over of [{ sourceDirty: true }, { sourceDirty: undefined }, { sourceSha: undefined }, { manifest: { ...MANIFEST, commitSha: 'cb0903cf' } }]) {
+      assert.equal(plan({ classified: classified([]), ...over }).reason, SKIP_REASON.CLEAN_UNVERIFIED, JSON.stringify(over));
+    }
+    assert.equal(plan({ classified: classified([]) }).reason, SKIP_REASON.CLEAN, 'current + clean source still reads clean');
   });
 
   it('refuses when classification failed or is degraded — never commits on a guess', async () => {
@@ -814,5 +829,19 @@ describe('retrySupersession — a same-bundle re-run (BRANCH_EXISTS) retries, cr
     assert.equal(r.retried, true, JSON.stringify(r));
     const switches = calls.filter((c) => c.args[0] === 'auth' && c.args[1] === 'switch').map((c) => c.args[3]);
     assert.deepEqual(switches, ['home-user', 'work-user'], 'falls back, then restores the original active account');
+  });
+});
+
+describe('classifyBundleFreshness - the decision table', () => {
+  const A = 'a'.repeat(40), B = 'b'.repeat(40);
+  it('covers every row', () => {
+    assert.equal(classifyBundleFreshness({ stamp: A, sourceSha: A, sourceDirty: false }), 'current');
+    assert.equal(classifyBundleFreshness({ stamp: A, sourceSha: A, sourceDirty: true }), 'unverified');
+    assert.equal(classifyBundleFreshness({ stamp: A, sourceSha: B, sourceDirty: false }), 'different');
+    assert.equal(classifyBundleFreshness({ stamp: A, sourceSha: B, sourceDirty: true }), 'different');
+    for (const bad of [null, undefined, '', 'abc123', A.slice(0, 39), `${A.slice(0, 39)}Z`, 7]) {
+      assert.equal(classifyBundleFreshness({ stamp: bad, sourceSha: A, sourceDirty: false }), 'unverified', String(bad));
+      assert.equal(classifyBundleFreshness({ stamp: A, sourceSha: bad, sourceDirty: false }), 'unverified', String(bad));
+    }
   });
 });

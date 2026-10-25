@@ -1,0 +1,177 @@
+/**
+ * @fileoverview 2221 - the divergence guard must tell a STALE snapshot (disk equals an earlier upstream version) from a consumer EDIT.
+ * A Copilot consumer's sync was refused on an out-of-date `expected-schema.json` that nobody had touched; the guard worked but
+ * called stale content "changed since our last sync". The source repo's history answers the question.
+ *
+ * Both directions are pinned: a stale snapshot is written, and a real edit - or anything git could not answer - still refuses.
+ */
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+import {
+  BASE_STATE, ACTION, decideAction, describeReason, createPriorUpstreamResolver,
+} from '../scripts/lib/sync-divergence.mjs';
+
+const sha = (s) => createHash('sha256').update(s).digest('hex');
+const diverged = { baseState: BASE_STATE.DIVERGED, overrideActive: false, allowOverwriteDiverged: false };
+const committed = { tracked: true, matchesHead: true, staleSyncRef: null };
+
+describe('decideAction - prior upstream version', () => {
+  test('a diverged file equal to an earlier upstream version is replaced LOUDLY (it may be a deliberate rollback, so it is printed and recorded)', () => {
+    const d = decideAction({ ...diverged, vcs: { ...committed, priorUpstream: true } });
+    assert.equal(d.action, ACTION.WRITE_LOUD);
+    assert.equal(d.reason, 'diverged-prior-upstream');
+    assert.match(describeReason(d.reason), /earlier upstream version/);
+  });
+
+  test('NEGATIVE CONTROLS: false, null and absent all still refuse', () => {
+    for (const priorUpstream of [false, null, undefined]) {
+      const d = decideAction({ ...diverged, vcs: { ...committed, priorUpstream } });
+      assert.equal(d.action, ACTION.REFUSE, String(priorUpstream));
+      assert.equal(d.reason, 'diverged-committed');
+    }
+  });
+
+  test('the stale-checkout remedy (pull) is not overridden: writing there would block the very pull that fixes it', () => {
+    const d = decideAction({ ...diverged, vcs: { ...committed, staleSyncRef: 'chore/sync-abc', priorUpstream: true } });
+    assert.equal(d.action, ACTION.REFUSE);
+    assert.equal(d.reason, 'diverged-stale-checkout');
+  });
+
+  test('an override still wins over everything', () => {
+    const d = decideAction({ ...diverged, overrideActive: true, vcs: { ...committed, priorUpstream: true } });
+    assert.equal(d.action, ACTION.HOLD);
+  });
+});
+
+describe('createPriorUpstreamResolver - on a real source repository', () => {
+  const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf-8' }).trim();
+  const makeSource = (versions, file = 'tests/fixtures/expected-schema.json') => {
+    const dir = mkdtempSync(join(tmpdir(), 'prior-up-'));
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'config', 'user.email', 't@example.com');
+    git(dir, 'config', 'user.name', 't');
+    git(dir, 'config', 'core.autocrlf', 'false');
+    execFileSync(process.execPath, ['-e', `require('fs').mkdirSync(require('path').dirname(${JSON.stringify(join(dir, file))}),{recursive:true})`]);
+    for (const [i, v] of versions.entries()) {
+      writeFileSync(join(dir, file), v);
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '-m', `v${i}`);
+    }
+    return dir;
+  };
+  const SRC = 'tests/fixtures/expected-schema.json';
+
+  test('disk equal to v1 of three upstream versions -> true; to an unrelated edit -> false', () => {
+    const dir = makeSource(['{"v":1}\n', '{"v":2}\n', '{"v":3}\n']);
+    try {
+      const r = createPriorUpstreamResolver({ sourceRoot: dir });
+      assert.equal(r.matches(SRC, sha('{"v":1}\n')), true);
+      assert.equal(r.matches(SRC, sha('{"v":2}\n')), true);
+      assert.equal(r.matches(SRC, sha('{"v":1,"mine":true}\n')), false, 'a consumer edit matches no upstream version');
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  test('a CRLF copy of an earlier version (a Windows consumer) matches too', () => {
+    const dir = makeSource(['a\nb\n', 'c\n']);
+    try {
+      const r = createPriorUpstreamResolver({ sourceRoot: dir });
+      assert.equal(r.matches(SRC, sha('a\r\nb\r\n')), true);
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  test('a literal path only: a source file named with glob characters never matches its glob siblings (audit R1 H6/H8)', () => {
+    const dir = makeSource(['{"v":1}\n', '{"v":2}\n'], 'x/a.json');
+    try {
+      writeFileSync(join(dir, 'x', '[ab].json'), '{"only":"bracket"}\n');
+      git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'bracket file');
+      const r = createPriorUpstreamResolver({ sourceRoot: dir });
+      assert.equal(r.matches('x/[ab].json', sha('{"v":1}\n')), false, "a.json's history must not answer for [ab].json");
+      assert.equal(r.matches('x/[ab].json', sha('{"only":"bracket"}\n')), true, 'positive control: the literal file is found');
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  test('an inherited GIT_DIR does not redirect the history lookup to another repository (audit R2 H1)', () => {
+    const dir = makeSource(['{"v":1}\n', '{"v":2}\n']);
+    const other = makeSource(['unrelated\n']);
+    const saved = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
+    process.env.GIT_DIR = join(other, '.git');
+    process.env.GIT_WORK_TREE = other;
+    try {
+      // Unsanitised, `git -C dir log` would read `other`'s history and answer false for a version that only `dir` holds.
+      assert.equal(createPriorUpstreamResolver({ sourceRoot: dir }).matches(SRC, sha('{"v":1}\n')), true);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      rmSync(other, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  test('a SHALLOW source answers null for everything: absent commits cannot be called a non-match (audit R1 M7)', () => {
+    const full = makeSource(['a\n', 'b\n', 'c\n']);
+    const shallow = join(tmpdir(), `shallow-${process.pid}-${Date.now()}`);
+    try {
+      execFileSync('git', ['clone', '-q', '--depth', '1', pathToFileURL(full).href, shallow]);
+      assert.equal(git(shallow, 'rev-parse', '--is-shallow-repository'), 'true', 'fixture: the clone is shallow');
+      assert.equal(createPriorUpstreamResolver({ sourceRoot: shallow }).matches(SRC, sha('a\n')), null);
+      assert.equal(createPriorUpstreamResolver({ sourceRoot: full }).matches(SRC, sha('a\n')), true, 'NEGATIVE CONTROL: the complete repository does find it');
+    } finally {
+      rmSync(full, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      rmSync(shallow, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  test('git unable to answer -> null (today\'s refusal), never false', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prior-up-nogit-'));
+    try {
+      const r = createPriorUpstreamResolver({ sourceRoot: dir });
+      assert.equal(r.matches(SRC, sha('x')), null);
+      assert.equal(r.matches(SRC, null), null);
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+});
+
+describe('createPriorUpstreamResolver - bounded work (audit R1 M2)', () => {
+  /** An instrumented git: N blobs per path, every path shares the same history blobs. */
+  const fakeGit = (blobsPerPath, calls) => (args, { input } = {}) => {
+    calls.push(args[0]);
+    if (args[0] === 'rev-parse') return { status: 0, stdout: Buffer.from('false\n') };
+    if (args[0] === 'log') {
+      const lines = Array.from({ length: blobsPerPath }, (_, i) => `:100644 100644 ${'0'.repeat(39)}1 ${String(i + 1).padStart(40, 'a')} M\tx`);
+      return { status: 0, stdout: Buffer.from(`${lines.join('\n')}\n`) };
+    }
+    const oids = String(input).trim().split('\n');
+    const out = oids.map((o) => `${o} blob 3\nabc\n`).join('');
+    return { status: 0, stdout: Buffer.from(out) };
+  };
+
+  test('100 diverged paths sharing history: one log per path, ONE batch call in total (cache reuse), blobs read once', () => {
+    const calls = [];
+    const r = createPriorUpstreamResolver({ sourceRoot: '.', git: fakeGit(5, calls) });
+    for (let i = 0; i < 100; i++) assert.equal(r.matches(`p${i}`, sha('nope')), false);
+    assert.equal(r.stats.logCalls, 100);
+    assert.equal(r.stats.batchCalls, 1, 'the shared blobs are fetched once and cached');
+    assert.equal(r.stats.blobsRead, 5);
+    assert.equal(calls.filter((c) => c === 'cat-file').length, 1);
+  });
+
+  test('the total budget cuts the lookup off: later paths answer null, exhausted is flagged', () => {
+    const calls = [];
+    const r = createPriorUpstreamResolver({ sourceRoot: '.', totalBudget: 4, git: fakeGit(5, calls) });
+    assert.equal(r.matches('p0', sha('nope')), null, 'five blobs exceed a budget of four');
+    assert.equal(r.stats.exhausted, true);
+    assert.equal(r.stats.blobsRead, 0);
+  });
+
+  test('NEGATIVE CONTROL: within budget the same input answers false, not null', () => {
+    const r = createPriorUpstreamResolver({ sourceRoot: '.', totalBudget: 5, git: fakeGit(5, []) });
+    assert.equal(r.matches('p0', sha('nope')), false);
+    assert.equal(r.stats.exhausted, false);
+  });
+});
