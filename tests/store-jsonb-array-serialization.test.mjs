@@ -81,3 +81,30 @@ for (const [file, col] of Object.entries(TEXT_ARRAY_WRITERS)) {
     assert.match(m[1], /pgArray\(/, `${file}: text[] column "${col}" must use pgArray() (a raw array is JSON-corrupted by the seam)`);
   });
 }
+
+// ── NUL bytes: Postgres text/jsonb cannot store U+0000 (fleet p-f136) ──
+function captureStderr(fn) {
+  const orig = process.stderr.write;
+  let out = '';
+  process.stderr.write = (s) => { out += s; return true; };
+  try { return { value: fn(), out }; } finally { process.stderr.write = orig; }
+}
+
+test('INSERT strips U+0000 from a string and names the column', () => {
+  const { value, out } = captureStderr(() => buildInsert('t', { detail_snapshot: 'a\u0000b', n: 1 }));
+  assert.equal(value.params[0], 'ab');
+  assert.match(out, /column detail_snapshot/);
+});
+
+test('a NUL inside a jsonb array element is stripped, an escaped backslash-u0000 is left alone', () => {
+  const { value } = captureStderr(() => buildUpsert('t', [{ files: ['x\u0000y', 'lit\\u0000eral'] }], { onConflict: 'id', update: 'all' }));
+  assert.equal(value.params[0], JSON.stringify(['xy', 'lit\\u0000eral']));
+});
+
+test('UPDATE SET strips U+0000; a clean string stays silent', () => {
+  const dirty = captureStderr(() => buildUpdate('t', { note: 'p\u0000q' }, { id: 'r1' }));
+  assert.equal(dirty.value.params[0], 'pq');
+  const clean = captureStderr(() => buildUpdate('t', { note: 'pq' }, { id: 'r1' }));
+  assert.equal(clean.value.params[0], 'pq');
+  assert.equal(clean.out, '');
+});
