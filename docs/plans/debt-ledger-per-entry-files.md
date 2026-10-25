@@ -1,7 +1,7 @@
 # Plan: Tech-Debt Ledger — One File Per Entry (merge conflict-free by construction)
 
 - **Date**: 2026-10-13
-- **Status**: In Progress
+- **Status**: Complete — shipped in #247 (disposition #251) (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend (js-ts) — CLI/library + consumer sync contract; no UI
 - **Target domain(s)**: `tech-debt`, `install`

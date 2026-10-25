@@ -1,6 +1,6 @@
 # Plan: Consumer pre-push hook: bounded, visible, fail-closed steps (hook v11)
 - **Date**: 2026-10-23
-- **Status**: In Progress
+- **Status**: Complete — shipped in #284 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (git hooks, CLI scripts) — stack `js-ts` + POSIX shell
 

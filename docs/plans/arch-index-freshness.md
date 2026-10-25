@@ -1,7 +1,7 @@
 # Plan: The drift report says how far the active index trails the default branch
 
 - **Date**: 2026-10-11
-- **Status**: In Progress — implemented on `fix/arch-index-freshness`; under /audit-code
+- **Status**: Complete — shipped in #195 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (architectural-memory report; no store or schema change)
 

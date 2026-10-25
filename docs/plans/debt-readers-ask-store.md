@@ -1,7 +1,7 @@
 # Plan: The debt reporting CLIs read the private store, not the local cache
 
 - **Date**: 2026-10-11
-- **Status**: In Progress — implemented on `fix/debt-readers-ask-store`; under /audit-code
+- **Status**: Complete — shipped in #193 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (two CLIs + the debt read seam; no migration, no UI)
 

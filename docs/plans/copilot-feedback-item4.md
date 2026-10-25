@@ -1,7 +1,7 @@
 # Plan: Copilot consumer feedback, item 4: required-subject coverage, a final-review provenance fact, and hash-bound test evidence
 
 - **Date**: 2026-10-19
-- **Status**: Approved (audit-plan converged 2026-10-19; Gemini APPROVE; one PR per cluster). Cluster A implemented 2026-10-19 (required-subject coverage); Clusters B and C pending
+- **Status**: Complete — shipped in #271 (plan), A #275, B #277, C #278 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`; engineering principles apply; no UI). The consumer is Python/Streamlit on Windows, so every new contract must work for a non-Node test runner and on Windows paths.
 - **Target domain(s)**: `audit-orchestration`, `scripts`, `shared-lib`, `ship`

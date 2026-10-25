@@ -1,6 +1,6 @@
 # Plan: pre-push — a sanctioned lane for `archive/*` refs
 - **Date**: 2026-10-11
-- **Status**: In Progress
+- **Status**: Complete — shipped in #208 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (git hook + one CLI + one lib; no UI) · stack `js-ts` (`detect-stack`: `js-ts`)
 - **Target domain(s)**: `root-scripts`, `shared-lib`

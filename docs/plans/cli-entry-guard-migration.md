@@ -1,6 +1,6 @@
 # Plan: migrate every CLI entry guard to `isInvokedAsScript`
 - **Date**: 2026-10-13
-- **Status**: In Progress
+- **Status**: Complete — shipped in #236 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`)
 - **Target domain(s)**: `shared-lib` (the helper), every domain that owns a CLI (mechanical one-line change per file)

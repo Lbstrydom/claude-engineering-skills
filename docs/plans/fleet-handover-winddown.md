@@ -1,6 +1,6 @@
 # Plan: fleet handover — structured wind-down, coordinator context, and three probe fixes
 - **Date**: 2026-10-21
-- **Status**: Draft
+- **Status**: Complete — shipped in #281, #282, #283 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI + skill prose; no UI) · stack `js-ts`
 - **Target domain(s)**: `fleet`, `skills-content`

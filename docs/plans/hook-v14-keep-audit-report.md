@@ -1,7 +1,7 @@
 # Plan: Consumer pre-push hook v14 — keep the audit's report
 
 - **Date**: 2026-10-24
-- **Status**: In Progress — implemented on `claude/hook-keeps-audit-report-bb2000`, pending audit and merge
+- **Status**: Complete — shipped in #291 (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude (fleet chip for CES: Coordinator; proposal p-20261024142941-39f0)
 - **Scope**: backend (consumer pre-push hook, `scripts/install-prepush-hook.mjs`; no UI)
 

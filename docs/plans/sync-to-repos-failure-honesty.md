@@ -1,6 +1,6 @@
 # Plan: sync-to-repos failure honesty (verified audit hypotheses from #231)
 - **Date**: 2026-10-13
-- **Status**: Draft
+- **Status**: Complete — shipped in #233, #236 (H6 receipt/manifest lock stays recorded debt) (status reconciled against merged PRs 2026-10-25)
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`)
 - **Target domain(s)**: `install`, `shared-lib`
