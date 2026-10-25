@@ -84,6 +84,7 @@ import { OVERRIDES_PATH } from './sync-overrides.mjs';
 import { comparisonKey, isUpstreamOwned, isUsableSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './sync-owned-sidecar.mjs';
 import { pathspecsForCommit } from './sync-status.mjs';
 import { SYNC_BRANCH_PREFIX } from './sync-divergence.mjs';
+import { classifyGitignoreTransition } from './sync-gitignore.mjs';
 import { createGitAncestry } from './sync-rollback-guard.mjs';
 // The base-lag oracle (and the runner / git helpers it shares with this module) lives in sync-base-lag.mjs, which the sync asks BEFORE
 // writing; re-exported here so `sync:pr` and every existing importer keep one door.
@@ -107,6 +108,14 @@ export const SKIP_REASON = Object.freeze({
 });
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
+const GITIGNORE_PATH = '.gitignore';
+/** `block-only` is the one state that rides in the PR; the rest are named under leftBehind. */
+const GITIGNORE_PATH_STATE = Object.freeze({ BLOCK_ONLY: 'block-only' });
+const GITIGNORE_LEFT_BEHIND_REASON = Object.freeze({
+  mixed: 'edited beyond the sync-managed block',
+  invalid: 'managed-block markers are malformed',
+  unverified: 'could not be compared with the base',
+});
 
 /**
  * Is the consumer's bundle stamp the source's current commit? PURE.
@@ -205,6 +214,7 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
  *   branchExists: boolean,
  *   sourceSha?: string,            — the SOURCE repo HEAD (40-hex); absent => a clean skip is "unverified"
  *   sourceDirty?: boolean,         — the SOURCE working tree has uncommitted changes
+ *   gitignoreTransition?: 'unchanged'|'block-only'|'mixed'|'invalid'|'unverified' — what the sync did to the consumer's .gitignore
  * }} input
  * @returns {{action:'skip', reason:string, detail?:string}
  *   | {action:'pr', branch:string, bundleSha:string, repo:string, startPoint:string, behindCount:number, addPaths:string[],
@@ -212,12 +222,15 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
  */
 export function planConsumerPr({
   consumerName, classified, manifest, baseBranch, baseSha, currentBranch, aheadCount, behindCount, upstreamChanged = [], branchExists,
-  sourceSha, sourceDirty,
+  sourceSha, sourceDirty, gitignoreTransition,
 }) {
   if (!classified || !classified.ok) {
     return { action: 'skip', reason: SKIP_REASON.UNCLASSIFIABLE, detail: classified?.error ?? 'no classification' };
   }
-  if (classified.clean || classified.syncOwned.length === 0) {
+  // a5ce: the managed .gitignore block is sync output in a file the consumer owns. It rides in the PR only when the edit is the block
+  // and nothing else (classifyGitignoreTransition); any other dirty state of that file is named under leftBehind, never swept in.
+  const gitignoreRides = gitignoreTransition === GITIGNORE_PATH_STATE.BLOCK_ONLY;
+  if ((classified.clean || classified.syncOwned.length === 0) && !gitignoreRides) {
     // 'clean' compared nothing against the source: say whether the bundle is actually current (da9a).
     const freshness = classifyBundleFreshness({ stamp: manifest?.commitSha, sourceSha, sourceDirty });
     if (freshness === 'different') {
@@ -242,7 +255,7 @@ export function planConsumerPr({
   if (typeof commitSha !== 'string' || commitSha.length < 8) {
     return { action: 'skip', reason: SKIP_REASON.NO_MANIFEST, detail: 'scripts/.sync-manifest.json has no commitSha' };
   }
-  const addPaths = [...new Set(classified.syncOwned.map((e) => e.path))].sort();
+  const addPaths = [...new Set([...classified.syncOwned.map((e) => e.path), ...(gitignoreRides ? [GITIGNORE_PATH] : [])])].sort();
   const surface = addPaths.filter((p) => comparisonKey(p) !== RECEIPT_KEY);
   if (surface.length === 0) {
     return { action: 'skip', reason: SKIP_REASON.RECEIPT_ONLY };
@@ -257,7 +270,7 @@ export function planConsumerPr({
       detail: aheadCount > 0 ? `${aheadCount} local commit(s) not on origin/${baseBranch}` : `could not compare against origin/${baseBranch}`,
     };
   }
-  const commitPathspecs = [...new Set(pathspecsForCommit(classified.syncOwned))].sort();
+  const commitPathspecs = [...new Set([...pathspecsForCommit(classified.syncOwned), ...(gitignoreRides ? [GITIGNORE_PATH] : [])])].sort();
   if (classifyBaseLag({ baseBranch, baseSha, currentBranch, aheadCount, behindCount }) === 'behind') {
     // Header rule 3: the working tree may ride onto origin's head only if
     // origin left every path the sync wrote (and the overrides it honoured)
@@ -277,7 +290,10 @@ export function planConsumerPr({
   if (branchExists) {
     return { action: 'skip', reason: SKIP_REASON.BRANCH_EXISTS, detail: branch };
   }
-  const leftBehind = classified.needsReview.map((e) => e.path).sort();
+  const leftBehind = [
+    ...classified.needsReview.map((e) => e.path),
+    ...(gitignoreTransition && !gitignoreRides && gitignoreTransition !== 'unchanged' ? [`${GITIGNORE_PATH} (${GITIGNORE_LEFT_BEHIND_REASON[gitignoreTransition] ?? 'could not be verified as managed-block-only'})`] : []),
+  ].sort();
   const repo = manifest.repo ?? DEFAULT_REPO;
   const text = buildPrText({ repo, commitSha, surface, leftBehind, consumerName });
   return {
@@ -992,4 +1008,33 @@ export function gatherSourceFacts(run, sourceRoot) {
     sourceSha: ok(head) ? head.stdout.trim() : undefined,
     sourceDirty: ok(status) ? status.stdout.trim().length > 0 : undefined,
   };
+}
+
+/**
+ * What the sync did to the consumer's `.gitignore`, compared with the commit the PR branch will fork from (`baseSha`, never the local
+ * HEAD - that is the stale-base lesson of header rule 3). IMPURE; never throws. "The path is absent at the base" and "git could not
+ * answer" are different outcomes: the first is a legitimate new file, the second is `unverified` and the file is left behind.
+ *
+ * @param {Runner} run
+ * @param {string} repoRoot
+ * @param {string|null} baseSha
+ * @returns {'unchanged'|'block-only'|'mixed'|'invalid'|'unverified'}
+ */
+export function gatherGitignoreTransition(run, repoRoot, baseSha) {
+  if (typeof baseSha !== 'string' || !baseSha) return 'unverified';
+  let work;
+  try {
+    work = fs.readFileSync(path.join(repoRoot, '.gitignore'), 'utf-8');
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? 'unchanged' : 'unverified';
+  }
+  const tree = run('git', ['ls-tree', baseSha, '--', '.gitignore'], { cwd: repoRoot });
+  if (!ok(tree)) return 'unverified';
+  let head = null;
+  if (tree.stdout.trim()) {
+    const shown = run('git', ['show', `${baseSha}:.gitignore`], { cwd: repoRoot });
+    if (!ok(shown)) return 'unverified';
+    head = shown.stdout;
+  }
+  return classifyGitignoreTransition(head, work);
 }

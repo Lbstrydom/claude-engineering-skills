@@ -150,3 +150,55 @@ export function updateManagedBlock(existingContent, ignorePatterns) {
 }
 
 export const _internals = { BEGIN, END, detectEol };
+
+/**
+ * Is a consumer's `.gitignore` edit nothing but the managed block? PURE - built on the one canonical parser
+ * (`parseGitignoreState`), never a second one.
+ *
+ * `sync:pr` commits the sync's output, and the sync rewrites the managed block in a file the consumer owns. That edit used to be
+ * left uncommitted (proposal a5ce: both WCA and STO reported an unexplained `.gitignore` change in their main checkout), but
+ * committing the file blind would sweep in any hand edit beside the block. This asks the narrow question: with the block cut out,
+ * is everything else byte-for-byte what `headText` has?
+ *
+ *   outcome       when
+ *   unchanged     the two texts are identical
+ *   block-only    the only difference is the managed block: replaced in place, inserted into a file that had none (first
+ *                 install), or - `headText === null`, the file absent from the base - the file consists of the block alone
+ *   mixed         anything else differs, or the block vanished (line endings are NOT compared: git normalises them, and a Windows
+ *                 consumer's working file is CRLF while the base blob is LF)
+ *   invalid       either side has duplicate, orphan or out-of-order markers
+ *
+ * Surrounding blank lines are not part of the comparison: `updateManagedBlock` inserts one before a new block.
+ *
+ * @param {string|null} headText - the file at the base, or null when the path does not exist there
+ * @param {string} workText - the working-tree file
+ * @returns {'unchanged'|'block-only'|'mixed'|'invalid'}
+ */
+export function classifyGitignoreTransition(headText, workText) {
+  if (typeof workText !== 'string') return 'invalid';
+  if (headText === workText) return 'unchanged';
+  const split = (text) => {
+    const state = parseGitignoreState(text);
+    const { beginIndices, endIndices, orderValid, blockSpan } = state;
+    const wellFormed = (beginIndices.length === 0 && endIndices.length === 0)
+      || (beginIndices.length === 1 && endIndices.length === 1 && orderValid && blockSpan);
+    if (!wellFormed) return null;
+    const lines = text.split(/\r?\n/);
+    const trim = (ls) => {
+      let a = 0;
+      let b = ls.length;
+      while (a < b && ls[a].trim() === '') a++;
+      while (b > a && ls[b - 1].trim() === '') b--;
+      return ls.slice(a, b);
+    };
+    return blockSpan
+      ? { hasBlock: true, before: trim(lines.slice(0, blockSpan.beginLine)), after: trim(lines.slice(blockSpan.endLine + 1)) }
+      : { hasBlock: false, before: trim(lines), after: [] };
+  };
+  const work = split(workText);
+  const head = headText === null ? { hasBlock: false, before: [], after: [] } : split(headText);
+  if (!work || !head) return 'invalid';
+  if (!work.hasBlock) return 'mixed';
+  const same = (a, b) => a.length === b.length && a.every((l, i) => l === b[i]);
+  return same(head.before, work.before) && same(head.after, work.after) ? 'block-only' : 'mixed';
+}
