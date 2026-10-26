@@ -15,7 +15,12 @@ import { assertKnownFlags, ArgvError, arg, finishAndExit } from './lib/cli-io.mj
 async function main(argv) {
   if (argv.includes('--selfcheck-relocation')) { console.log('OK'); return 0; }
   const sub = argv[2];
-  assertKnownFlags(argv.slice(3), ['repo', 'eligible', 'reason'], { cli: 'training-eligibility', from: 0 });
+  // Flag names carry their dashes (assertKnownFlags compares the literal argv token).
+  assertKnownFlags(argv.slice(3), ['--repo', '--eligible', '--reason'], { cli: 'training-eligibility', from: 0 });
+  // Validate BEFORE touching the store, so a bad invocation never needs one.
+  if (sub !== 'list' && sub !== 'set') throw new ArgvError('usage: training-eligibility.mjs list | set --repo <name> --eligible true|false --reason "<why>"');
+  const eligibleRaw = arg(argv, '--eligible');
+  if (sub === 'set' && eligibleRaw !== 'true' && eligibleRaw !== 'false') throw new ArgvError('--eligible must be true or false');
   const { initLearningStore } = await import('./lib/store/repo.mjs');
   const { closePool } = await import('./lib/db/client.mjs');
   const mod = await import('./lib/store/training-eligibility.mjs');
@@ -28,13 +33,11 @@ async function main(argv) {
       return 0;
     }
     if (sub === 'set') {
-      const raw = arg(argv, '--eligible');
-      if (raw !== 'true' && raw !== 'false') throw new ArgvError('--eligible must be true or false');
-      const res = await mod.setTrainingEligibility({ repoName: arg(argv, '--repo'), eligible: raw === 'true', reason: arg(argv, '--reason') });
+      const res = await mod.setTrainingEligibility({ repoName: arg(argv, '--repo'), eligible: eligibleRaw === 'true', reason: arg(argv, '--reason') });
       console.log(JSON.stringify(res));
       return res.ok ? 0 : 1;
     }
-    throw new ArgvError('usage: training-eligibility.mjs list | set --repo <name> --eligible true|false --reason "<why>"');
+    return 2; // unreachable: sub was validated above
   } finally { await closePool(); }
 }
 

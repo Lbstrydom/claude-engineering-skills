@@ -7,6 +7,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import {
   ADJUDICATOR_KINDS, EVENT_ORIGINS, DISMISS_REASON_CLASSES, DIFF_CAPTURE_STATUSES, fixOrderFlag,
@@ -273,5 +274,25 @@ describe('closeFindingById requires a vocabulary class for a non-fix disposition
           { ok: false, reason: 'reason-class-required' }, `${disposition} / ${JSON.stringify(reasonClass)}`);
       }
     }
+  });
+});
+
+describe('scripts/training-eligibility.mjs argv (no store needed)', () => {
+  const run = (...args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts/training-eligibility.mjs'), ...args],
+    { encoding: 'utf8', env: { ...process.env, AUDIT_DB_URL: '', LEARNING_DISABLE: '1' } });
+
+  it('accepts the documented flags: a bad VALUE is refused for its value, never as an unknown flag', () => {
+    const r = run('set', '--repo', 'o/r', '--eligible', 'maybe', '--reason', 'x');
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /--eligible must be true or false/);
+    assert.doesNotMatch(r.stderr, /unknown flag/);
+  });
+  it('still refuses a genuinely unknown flag (negative control)', () => {
+    const r = run('set', '--repo', 'o/r', '--bogus', '1');
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /unknown flag "--bogus"/);
+  });
+  it('an unknown subcommand is a usage error', () => {
+    assert.equal(run('frobnicate').status, 2);
   });
 });
