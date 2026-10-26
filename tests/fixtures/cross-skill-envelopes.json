@@ -2080,6 +2080,7 @@
           "audit.runComplete",
           "audit.convergenceState",
           "audit.diffComplexity",
+          "audit.runDiff",
           "learning.outcome",
           "audit.passStats",
           "audit.suppressionEvents",

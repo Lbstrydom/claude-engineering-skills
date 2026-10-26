@@ -605,6 +605,7 @@ export async function closeFindingCmd(ctx) {
   const disposition = ctx.flag('as');
   const reason = ctx.flag('reason') ?? '';
   const commitSha = ctx.flag('commit') ?? null;
+  const reasonClass = ctx.flag('reason-class') ?? null;
   if (!findingId || !ctx.deps.FINDING_DISPOSITIONS.includes(disposition)) {
     return { ok: false, closed: false, error: 'close-finding needs --finding and --as fixed|dismissed|accepted-permanent. Example: '
       + 'node scripts/cross-skill.mjs close-finding --finding a4969127-d5d0-47bb-8b2e-0acb0ed71546 --as fixed --commit 41c4d194' };
@@ -617,11 +618,12 @@ export async function closeFindingCmd(ctx) {
   if (!repoId) {
     return { ok: false, closed: false, error: 'refusing: repo identity unresolvable — a finding is closed within its own repo, never by an unscoped id.' };
   }
-  const res = await ctx.deps.closeFindingById({ repoId, findingId, disposition, reason, commitSha });
+  const res = await ctx.deps.closeFindingById({ repoId, findingId, disposition, reason, commitSha, reasonClass });
   if (!res.ok) {
     const why = {
       'reason-required': `--as ${disposition} needs a non-empty --reason: a dismissal or permanent acceptance is a claim, and an unexplained one cannot be checked`,
       'not-found-in-repo': `no finding "${findingId}" in THIS repo`,
+      'reason-class-required': `--as ${disposition} needs --reason-class, one of the closed vocabulary (false-positive|not-actionable|duplicate|out-of-scope|accepted-risk|already-fixed|control-marker|other): the free-text --reason cannot be counted`,
     }[res.reason] ?? `${res.reason}${res.detail ? ` (${res.detail})` : ''}`;
     return { ok: false, closed: false, error: `refusing: ${why}`, reason: res.reason };
   }

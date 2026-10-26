@@ -26,6 +26,8 @@
 import { isCloudEnabled } from './repo.mjs';
 import { many } from '../db/query.mjs';
 import { markFindingsRemediation, recordAdjudicationEvent } from './runs-findings.mjs';
+import { strictColumnExists } from './column-probes.mjs';
+import { isDismissReasonClass } from '../adjudication-vocab.mjs';
 
 export const FINDING_DISPOSITIONS = Object.freeze(['fixed', 'dismissed', 'accepted-permanent']);
 
@@ -37,7 +39,7 @@ export const FINDING_DISPOSITIONS = Object.freeze(['fixed', 'dismissed', 'accept
  * @param {{repoId: string, findingId: string, disposition: string, reason?: string, commitSha?: string|null}} a
  * @returns {Promise<{ok: true, disposition: string, findingId: string} | {ok: false, reason: string, detail?: string}>}
  */
-export async function closeFindingById({ repoId, findingId, disposition, reason = '', commitSha = null }) {
+export async function closeFindingById({ repoId, findingId, disposition, reason = '', commitSha = null, reasonClass = null }) {
   if (!repoId || !findingId) throw new Error('closeFindingById: repoId and findingId are required');
   if (!FINDING_DISPOSITIONS.includes(disposition)) {
     throw new Error(`closeFindingById: disposition must be one of ${FINDING_DISPOSITIONS.join('|')}, got "${disposition}"`);
@@ -55,6 +57,12 @@ export async function closeFindingById({ repoId, findingId, disposition, reason 
   // skipped the CLI would otherwise mark a finding fixed with nothing to check.
   if (disposition === 'fixed' && !String(commitSha ?? '').trim()) {
     return { ok: false, reason: 'commit-required' };
+  }
+  // The class is what makes a dismissal countable (own-model telemetry gap 3);
+  // the free-text reason above is for a human reader. `unclassified` is a
+  // producer fallback, not something a person may choose here.
+  if (disposition !== 'fixed' && (!isDismissReasonClass(reasonClass) || reasonClass === 'unclassified')) {
+    return { ok: false, reason: 'reason-class-required' };
   }
   if (!await isCloudEnabled()) return { ok: false, reason: 'cloud-disabled' };
 
@@ -95,6 +103,8 @@ export async function closeFindingById({ repoId, findingId, disposition, reason 
       remediationState: row.remediation_state ?? 'pending',
       ruling: 'overrule',
       rulingRationale: why,
+      adjudicatorKind: 'human',
+      dismissReasonClass: reasonClass,
       passName: row.pass_name,
       round: row.round_raised ?? 1,
     });
@@ -104,12 +114,14 @@ export async function closeFindingById({ repoId, findingId, disposition, reason 
     return { ok: true, disposition, findingId: row.id, reasonRecorded: true };
   }
 
+  const classColumn = await strictColumnExists('audit_findings', 'dismiss_reason_class', many, isCloudEnabled);
   const updated = await many(
-    `UPDATE audit_findings f SET user_action = 'accepted-permanent', dismiss_reason = $3
+    `UPDATE audit_findings f SET user_action = 'accepted-permanent', dismiss_reason = $3${
+        classColumn ? ', dismiss_reason_class = $4' : ''}
        FROM audit_runs r
       WHERE f.id = $1 AND r.id = f.run_id AND r.repo_id = $2
       RETURNING f.id`,
-    [row.id, repoId, why],
+    classColumn ? [row.id, repoId, why, reasonClass] : [row.id, repoId, why],
   );
   return updated.length === 1
     ? { ok: true, disposition, findingId: row.id }

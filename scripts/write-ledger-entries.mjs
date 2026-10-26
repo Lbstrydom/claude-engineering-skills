@@ -61,6 +61,7 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { parseResultPath, captureRoundOutcomes } from './lib/finalize-outcomes.mjs';
 import { withFileLock } from './lib/file-lock.mjs';
 import { LedgerEntrySchema } from './lib/schemas.mjs';
+import { isDismissReasonClass, DISMISS_REASON_CLASSES } from './lib/adjudication-vocab.mjs';
 import { readPersistedDebtEntries } from './lib/debt-ledger.mjs';
 
 const KNOWN_FLAGS = [
@@ -384,6 +385,9 @@ async function main() {
         );
       }
     }
+    if (t.dismissReasonClass !== undefined && !isDismissReasonClass(t.dismissReasonClass)) {
+      throw new ArgvError(`write-ledger-entries: ${id}.dismissReasonClass must be one of ${DISMISS_REASON_CLASSES.join('|')}, got ${JSON.stringify(t.dismissReasonClass)}`);
+    }
     if (typeof t.why !== 'string' || t.why.trim() === '') {
       throw new ArgvError(`write-ledger-entries: ${id}.why (the ruling rationale) is required.`);
     }
@@ -417,6 +421,7 @@ async function main() {
       affectedPrinciples: f.principle ? [f.principle] : [],
       ruling: t.ruling,
       rulingRationale: t.why,                      // rationale is YOURS; identity is the finding's
+      ...(t.dismissReasonClass !== undefined ? { dismissReasonClass: t.dismissReasonClass } : {}),
       // A newConcern decision is recorded against the prior it was ruled
       // distinct from, so it can be audited later; see LedgerCoreFields.
       ...(t.newConcern === true && f._priorRuling?.topicId ? { newConcernOf: f._priorRuling.topicId } : {}),

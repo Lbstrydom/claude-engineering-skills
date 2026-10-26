@@ -101,7 +101,7 @@ describe('closeFindingById — by-id disposition of ordinary-pass findings', { s
 
   it('dismissed: records an overrule event with the reason and leaves the open set', async () => {
     const id = await insFinding(RUN, 'fp-dismissed');
-    const res = await mod.closeFindingById({ repoId: REPO, findingId: id, disposition: 'dismissed', reason: 'claim is false on current code' });
+    const res = await mod.closeFindingById({ repoId: REPO, findingId: id, disposition: 'dismissed', reason: 'claim is false on current code', reasonClass: 'false-positive' });
     assert.equal(res.ok, true, JSON.stringify(res));
     const ev = await q.one('SELECT adjudication_outcome, ruling, ruling_rationale, round FROM finding_adjudication_events WHERE finding_id = $1', [id]);
     assert.deepEqual(ev, { adjudication_outcome: 'dismissed', ruling: 'overrule', ruling_rationale: 'claim is false on current code', round: 2 });
@@ -112,7 +112,7 @@ describe('closeFindingById — by-id disposition of ordinary-pass findings', { s
 
   it('accepted-permanent: stays visible as a disposition, not as an open obligation', async () => {
     const id = await insFinding(RUN, 'fp-permanent');
-    const res = await mod.closeFindingById({ repoId: REPO, findingId: id, disposition: 'accepted-permanent', reason: 'documented trade-off' });
+    const res = await mod.closeFindingById({ repoId: REPO, findingId: id, disposition: 'accepted-permanent', reason: 'documented trade-off', reasonClass: 'accepted-risk' });
     assert.equal(res.ok, true, JSON.stringify(res));
     assert.equal(await isOpen(id), false);
     const still = await q.many('SELECT 1 FROM unremediated_acceptances_all WHERE audit_finding_id = $1', [id]);
@@ -153,7 +153,7 @@ describe('closeFindingById — by-id disposition of ordinary-pass findings', { s
   it('dismissed: a reason stamp that FAILS leaves the finding open with no event written', async () => {
     const id = await insFinding(RUN, 'fp-dismissed-stampfail');
     const res = await withFault('audit_findings', 'UPDATE', `NEW.dismiss_reason = 'boom-reason'`,
-      () => mod.closeFindingById({ repoId: REPO, findingId: id, disposition: 'dismissed', reason: 'boom-reason' }));
+      () => mod.closeFindingById({ repoId: REPO, findingId: id, disposition: 'dismissed', reason: 'boom-reason', reasonClass: 'other' }));
     assert.equal(res.ok, false);
     assert.equal(res.reason, 'write-failed');
     assert.match(res.detail, /injected fault/);
@@ -165,12 +165,12 @@ describe('closeFindingById — by-id disposition of ordinary-pass findings', { s
   it('dismissed: if the DISCHARGE fails after the reason is stamped, the finding stays open and a retry completes it', async () => {
     const id = await insFinding(RUN, 'fp-dismissed-eventfail');
     const res = await withFault('finding_adjudication_events', 'INSERT', `NEW.ruling_rationale = 'boom-event'`,
-      () => mod.closeFindingById({ repoId: REPO, findingId: id, disposition: 'dismissed', reason: 'boom-event' }));
+      () => mod.closeFindingById({ repoId: REPO, findingId: id, disposition: 'dismissed', reason: 'boom-event', reasonClass: 'other' }));
     assert.equal(res.ok, false);
     assert.match(res.detail, /retry is safe/);
     assert.equal(await isOpen(id), true, 'a failed discharge must not take the finding out of the open set');
     assert.equal((await findingRow(id)).adjudication_outcome, 'accepted', 'the adjudication update rolled back with its event');
-    const retry = await mod.closeFindingById({ repoId: REPO, findingId: id, disposition: 'dismissed', reason: 'boom-event' });
+    const retry = await mod.closeFindingById({ repoId: REPO, findingId: id, disposition: 'dismissed', reason: 'boom-event', reasonClass: 'other' });
     assert.equal(retry.ok, true, JSON.stringify(retry));
     assert.equal(await isOpen(id), false);
   });

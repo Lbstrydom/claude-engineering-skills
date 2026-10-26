@@ -813,7 +813,7 @@ export const REGISTRY = Object.freeze([
   },
   {
     name: 'close-finding',
-    flags: ['finding', 'as', 'reason', 'commit', 'repo', 'repo-id'],
+    flags: ['finding', 'as', 'reason', 'reason-class', 'commit', 'repo', 'repo-id'],
     positionals: 'none', payload: 'none',
     // ambient-ok like repoint-regression-spec: a per-repo write with no
     // worksheet; the handler refuses outright when identity is unresolvable.

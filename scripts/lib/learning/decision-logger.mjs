@@ -68,6 +68,7 @@ const VALID_DECISION_TYPES = Object.freeze([
   'needs_triage_route',
   'quickfix_hit',
   'author_tier',
+  'stage1_prediction',
 ]);
 
 const STDERR_WARN_THROTTLE_MS = 1000;

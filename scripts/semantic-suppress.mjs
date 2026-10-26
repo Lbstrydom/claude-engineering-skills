@@ -172,11 +172,14 @@ async function main() {
       const meta = await pool.query('SELECT run_id, finding_fingerprint, pass_name, round_raised FROM audit_findings WHERE id=$1', [d.id]);
       const m = meta.rows[0];
       if (!m) continue;
-      await recordAdjudicationEvent(m.run_id, m.finding_fingerprint, {
+      const res = await recordAdjudicationEvent(m.run_id, m.finding_fingerprint, {
         passName: m.pass_name, round: m.round_raised,
         adjudicationOutcome: 'dismissed', ruling: 'overrule', remediationState: 'pending',
+        adjudicatorKind: 'rule', dismissReasonClass: 'duplicate',
         rulingRationale: `Semantic re-raise duplicate (cosine ≥ ${threshold}, same file) of open finding ${c.canonical.id}. Suppressed by scripts/semantic-suppress.mjs — the canonical finding remains open. The audit's own report is unaffected; only the duplicate learning-store row is removed.`,
       });
+      // A typed refusal (bad-input, no-match, db-error) is not a suppression.
+      if (res?.ok === false) { console.log(`  ${R}skipped${X} ${d.id.slice(0, 8)}: ${res.reason}${res.detail ? ` — ${res.detail}` : ''}`); continue; }
       ok++;
     }
   }

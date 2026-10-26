@@ -1224,7 +1224,7 @@ export async function loadBlindWorksheet(worksheetId, { key, campaignId }) {
  * `adjudication_outcome`; writing it to both would put one fact in two
  * vocabularies, and the CHECK constraints would disagree about it.
  */
-const CAMPAIGN_EVENT_DEFAULTS = Object.freeze({ remediation_state: 'pending', round: 1, ruling: null });
+const CAMPAIGN_EVENT_DEFAULTS = Object.freeze({ remediation_state: 'pending', round: 1, ruling: null, event_origin: 'campaign' });
 
 /** Outcomes a campaign verdict may record. `needs_triage` is the honest value
  *  for a claim the instrument could not settle — never `dismissed`, which a

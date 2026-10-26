@@ -306,6 +306,7 @@ const EXPECTED_EXPORTS = [
   'buildFindingRow',            // 2026-08-13 — pure finding→row mapper (existence-gate persistence, migration 20260813120000)
   'filterPersistableRows',      // 2026-09-25 — NOT-NULL write-boundary guard, lifted out of recordFindings for direct unit testing (triage-independence-test-and-write-boundary-fixes.md)
   // fix-lifecycle projection (docs/plans/remediation-state-fix-lifecycle.md)
+  'adjudicationEventRefusal',      // own-model telemetry gap 2/3 — pure write-boundary refusal (kind + dismissal class)
   'buildFindingAdjudicationPatch', // gap #2 — remediation_state → audit_findings (pure seam)
   'markFindingsRemediation',       // repo-scoped fingerprint writer for fixed/regressed
   'normalizeRemediationUpdates',   // pure validation seam for the writer (audit R1/M7)
@@ -402,6 +403,7 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
   });
 
   it('pins the total export count (update deliberately when the surface changes)', () => {
+    // 216 → 217: adjudicationEventRefusal added 2026-10-26 (own-model telemetry: required adjudicator kind + dismissal class).
     // 215 → 216: recordPastCap added 2026-10-25 (round-cap override record).
     // 213 → 215: readPendingTriageFindingsStrict + readOpenRecurringClusters added 2026-10-25 (structural-or-stop card).
     // 212 → 213: refreshRunAdjudicationCounts added 2026-10-25 — the run-wide accepted/dismissed recount under a
@@ -633,6 +635,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // 211 → 212: +readDebtEventsCloudResult (2026-10-11, debt-readers-ask-
     // store.md) — the events read that says whether it happened, so a
     // reporting caller cannot count a failed query as "no recurrence".
-    assert.equal(EXPECTED_EXPORTS.length, 216);
+    assert.equal(EXPECTED_EXPORTS.length, 217);
   });
 });

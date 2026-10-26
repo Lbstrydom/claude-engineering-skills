@@ -77,7 +77,11 @@ the adjudication queues are `--worksheet`-first rather than raw JSON.
 `pending|planned|fixed|verified|regressed`, `ruling` ∈
 `sustain|overrule|compromise|defer`; all four fields are required and an
 unknown finding id is refused (a typo'd id would otherwise leave a finding
-silently un-adjudicated). Findings you don't rule on stay `pending` and are
+silently un-adjudicated). A **dismissed** entry may also carry
+`"dismissReasonClass"` ∈ `false-positive|not-actionable|duplicate|out-of-scope|accepted-risk|already-fixed|control-marker|other`
+(closed vocabulary; `why` stays the free-text reason). It is what makes dismissals
+countable for the own-model training corpus; when omitted the store records
+`unclassified`, so supply it. An unknown value is refused. Findings you don't rule on stay `pending` and are
 reported on stderr — that is the silent half of a `0/N labelled` outcome
 report.
 

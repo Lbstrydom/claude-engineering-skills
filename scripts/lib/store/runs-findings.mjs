@@ -27,7 +27,7 @@ import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 import { findingKeyString, selectFindingRow } from './finding-identity.mjs';
 import { applyFindingWrite } from './finding-write.mjs';
-import { detectClassificationColumns, detectPassStatsRoundColumn, probeColumnExistence, columnExists } from './column-probes.mjs';
+import { detectClassificationColumns, detectPassStatsRoundColumn, probeColumnExistence, columnExists, strictColumnExists } from './column-probes.mjs';
 export { _resetClassificationColumnCache, _resetPassStatsRoundColumnCache, _resetRunReadColumnCache } from './column-probes.mjs';
 // Imported, never re-exported (learning-store.mjs does `export *` from here).
 import { CREDIT_BRANCH_SHADOW_WHERE, CREDIT_BRANCH_PRIMARY_LABEL_GAP_WHERE, pendingQueueSql, UNRULED_WHERE } from './final-review-credit-population.mjs';
@@ -1624,10 +1624,12 @@ export async function markRunFindingsAutoDismissed(runId, fingerprints, reason) 
     return { updated: 0 };
   }
   try {
+    // Own-model telemetry gap 3: a control marker's class is known by construction.
+    const hasClass = await strictColumnExists('audit_findings', 'dismiss_reason_class', many, isCloudEnabled);
     const rows = await many(
       `UPDATE audit_findings
           SET user_action = 'auto_dismissed',
-              dismiss_reason = $3
+              dismiss_reason = $3${hasClass ? ", dismiss_reason_class = 'control-marker'" : ''}
         WHERE run_id = $1
           AND finding_fingerprint = ANY($2::text[])
           AND adjudication_outcome IS NULL
@@ -2257,82 +2259,8 @@ export async function recordSuppressionEvents(runId, suppressionResult) {
 }
 
 // ── finding_adjudication_events ────────────────────────────────────────────
-
-/**
- * Build the denormalised `audit_findings` patch for an adjudication event.
- * Pure + exported so the propagation contract is unit-testable without a DB.
- *
- * `remediation_state` (fix-lifecycle plan, gap #2): the `unlocked_fixes` view
- * reads `audit_findings.remediation_state`, but this UPDATE historically set
- * only `adjudication_outcome`, so the column was write-never and the view was
- * permanently empty. It is now propagated here — **only when the event carries a
- * value** (`!= null`), so an adjudication event lacking `remediationState` can
- * never null an existing state (monotonic-safe).
- *
- * @param {{adjudicationOutcome: string, remediationState?: string|null}} event
- * @param {Date} decidedAt
- * @returns {Record<string, unknown>}
- */
-export function buildFindingAdjudicationPatch(event, decidedAt) {
-  // decided_at (model-swap-eval-harness Phase 4 migration 20260713110000) — the
-  // only column recording WHEN a finding was adjudicated; created_at is when it
-  // was RAISED, not decided.
-  const patch = { adjudication_outcome: event.adjudicationOutcome, decided_at: decidedAt };
-  if (event.remediationState != null) patch.remediation_state = event.remediationState;
-  return patch;
-}
-
-/**
- * Record an adjudication event for a finding. Two-step:
- *   1. Resolve the audit_findings.id from the finding fingerprint
- *      (+ optional pass_name / round_raised disambiguation), via the shared
- *      `selectFindingRow` oracle (write-boundary-hardening plan Phase 4,
- *      debt 28d5f3d2fde7/8dbc3a738ff8) — never a bare `LIMIT 1` with no
- *      `ORDER BY`, and a missing/ambiguous/db-error outcome is now
- *      distinguishable to the caller instead of a uniform `undefined`.
- *   2. Inside a transaction:
- *        - UPDATE audit_findings.adjudication_outcome + remediation_state (denormalised),
- *          asserting exactly one row
- *        - DELETE any prior adjudication events on this finding (idempotent re-record)
- *        - INSERT the new event
- *
- * @returns {Promise<{ok: true} | {ok: false, reason: 'no-match'|'ambiguous'|'db-error', detail?: string}>}
- */
-export async function recordAdjudicationEvent(runId, findingFingerprint, event) {
-  if (!runId || !await isCloudEnabled()) return { ok: false, reason: 'no-match' };
-  try {
-    const resolved = await selectFindingRow({
-      runId,
-      fingerprint: findingFingerprint,
-      passName: event.passName || undefined,
-      roundRaised: event.round || undefined,
-    });
-    if (!resolved.ok) {
-      return { ok: false, reason: resolved.reason === 'ambiguous' ? 'ambiguous' : 'no-match' };
-    }
-    const finding = { id: resolved.id };
-
-    await withTx(async () => {
-      // audit_findings FIRST, then the event: the lock order projectRemediationState
-      // takes. The reverse order deadlocked against a concurrent projection (40P01).
-      const { rowCount } = await updateWhere('audit_findings', buildFindingAdjudicationPatch(event, new Date()), { id: finding.id });
-      if (rowCount !== 1) throw new Error(`audit_findings ${finding.id}: ${rowCount} row(s) updated, expected 1`);
-      await deleteWhere('finding_adjudication_events', { finding_id: finding.id });
-      await insertReturning('finding_adjudication_events', {
-        finding_id: finding.id,
-        adjudication_outcome: event.adjudicationOutcome,
-        remediation_state: event.remediationState,
-        ruling: event.ruling,
-        ruling_rationale: event.rulingRationale,
-        round: event.round,
-      });
-    });
-    return { ok: true };
-  } catch (err) {
-    process.stderr.write(`  [learning] recordAdjudicationEvent failed: ${err.message}\n`);
-    return { ok: false, reason: 'db-error', detail: err.message };
-  }
-}
+// Moved to ./adjudication-events.mjs (own-model telemetry slice 1; this file may not grow).
+export { buildFindingAdjudicationPatch, adjudicationEventRefusal, recordAdjudicationEvent } from './adjudication-events.mjs';
 
 // ── Fix-lifecycle projection (docs/plans/remediation-state-fix-lifecycle.md) ──
 
@@ -2495,6 +2423,20 @@ export function normalizeRemediationUpdates(updates) {
  */
 async function projectRemediationState(repoId, findingId, state, { resolvedRound = null, throttleStamp = null, fingerprint = null, fromOpenOnly = false } = {}) {
   if (!repoId) throw new Error('projectRemediationState requires repoId');
+  // Own-model telemetry slice 1: chronology columns exist only on a migrated store.
+  const chron = await strictColumnExists('audit_findings', 'fix_recorded_at', many, isCloudEnabled);
+  // Campaign verdicts are separate provenance: this projection never rewrites them.
+  const evScope = await strictColumnExists('finding_adjudication_events', 'event_origin', many, isCloudEnabled) ? " AND event_origin IS DISTINCT FROM 'campaign' AND method IS NULL" : '';
+  // The first terminal-fix transition is provable only from a state that cannot
+  // follow an earlier fix: NULL/pending/planned (SET reads the old row). Already
+  // fixed OR regressed (a regression implies an earlier fix) keeps a NULL stamp.
+  const FIRST_FIX = `$1 IN ('fixed','verified') AND fix_recorded_at IS NULL
+                     AND (remediation_state IS NULL OR remediation_state IN ('pending','planned'))`;
+  const chronSet = chron ? `,
+              fix_recorded_at = CASE WHEN ${FIRST_FIX} THEN now() ELSE fix_recorded_at END,
+              fixed_before_adjudication = CASE
+                WHEN fixed_before_adjudication IS NULL AND first_decided_at IS NOT NULL AND ${FIRST_FIX}
+                THEN (now() <= first_decided_at) ELSE fixed_before_adjudication END` : '';
   return withTx(async () => {
     // `user_action` is filled here, and ONLY out of an undecided state.
     //
@@ -2529,7 +2471,7 @@ async function projectRemediationState(repoId, findingId, state, { resolvedRound
                 WHEN $1 IN ('fixed','verified')
                  AND (user_action IS NULL OR user_action = 'needs_triage')
                 THEN 'fix-now'
-                ELSE user_action END
+                ELSE user_action END${chronSet}
         WHERE id = $2
           AND EXISTS (SELECT 1 FROM audit_runs r WHERE r.id = audit_findings.run_id AND r.repo_id = $3)
           AND ($4::text IS NULL OR finding_fingerprint = $4)
@@ -2551,11 +2493,11 @@ async function projectRemediationState(repoId, findingId, state, { resolvedRound
     // untouched on the existing row.
     const eventRows = resolvedRound != null
       ? await many(
-          `UPDATE finding_adjudication_events SET remediation_state = $1, round = $2 WHERE finding_id = $3 RETURNING id`,
+          `UPDATE finding_adjudication_events SET remediation_state = $1, round = $2 WHERE finding_id = $3${evScope} RETURNING id`,
           [state, resolvedRound, findingId]
         )
       : await many(
-          `UPDATE finding_adjudication_events SET remediation_state = $1 WHERE finding_id = $2 RETURNING id`,
+          `UPDATE finding_adjudication_events SET remediation_state = $1 WHERE finding_id = $2${evScope} RETURNING id`,
           [state, findingId]
         );
     if (eventRows.length === 0) {
@@ -2564,7 +2506,11 @@ async function projectRemediationState(repoId, findingId, state, { resolvedRound
     let throttleStamped = null;
     if (throttleStamp) {
       const throttleRows = await many(
-        `UPDATE audit_findings SET remediation_last_checked_at = now(), remediation_last_checked_commit = $1
+        `UPDATE audit_findings SET remediation_last_checked_at = now(), remediation_last_checked_commit = $1${
+          // The sweep's commit is an upper bound for the fix, kept apart from
+          // fix_commit_sha (an explicitly identified fix) so no reader mistakes it.
+          chron && (state === 'fixed' || state === 'verified')
+            ? ', fix_verified_commit = COALESCE(fix_verified_commit, $1)' : ''}
           WHERE id = $2 RETURNING id`,
         [throttleStamp.checkedAtCommit, findingId]
       );

@@ -485,12 +485,11 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
   // fields null, `writeGateEvidence` then declines to write a marker, and the
   // commit honestly reads `not-run`.
   {
-    const { gitWorktreeTree, gitCommitSha } = await import('./lib/vcs.mjs');
+    const { captureTargetIdentity } = await import('./lib/audit/target-identity.mjs');
     const { readActualIdentity, makeGitRunner } = await import('./lib/worktree-identity.mjs');
-    const treeRes = gitWorktreeTree(process.cwd());
-    const shaRes = gitCommitSha(process.cwd());
-    ctx.auditedTree = treeRes.ok ? treeRes.tree : null;
-    ctx.auditedSha = shaRes.ok ? shaRes.sha : null;
+    const { auditedTree, auditedSha, treeError } = captureTargetIdentity(process.cwd());
+    ctx.auditedTree = auditedTree;
+    ctx.auditedSha = auditedSha;
     // The REF the audit ran on, captured here beside the sha so the evidence
     // marker carries a COMPLETE identity bundle. `/ship`'s guard B falls back to
     // this when no --expect-head was passed, and a sha without a ref cannot
@@ -508,8 +507,8 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
     if (!idRes.ok) {
       process.stderr.write(`  [gate-evidence] branch capture failed (${idRes.reason}) — recording detached\n`);
     }
-    if (!treeRes.ok) {
-      process.stderr.write(`  [gate-evidence] audit-target capture failed (${treeRes.error?.code || 'UNKNOWN'}) — this run will be evidence-less\n`);
+    if (treeError) {
+      process.stderr.write(`  [gate-evidence] audit-target capture failed (${treeError?.code || 'UNKNOWN'}) — this run will be evidence-less\n`);
     }
   }
 

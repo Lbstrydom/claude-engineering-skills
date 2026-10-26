@@ -126,6 +126,7 @@ function enrichFindings(findings, ledger, cannotAccept = () => false) {
       remediationState: entry?.remediationState ?? 'pending',
       _ruling: entry?.ruling,
       _rulingRationale: entry?.rulingRationale,
+      _dismissReasonClass: entry?.dismissReasonClass,
     };
   });
 }
@@ -189,6 +190,12 @@ async function writeCloudOutcomes(store, runId, enriched, passCounts, round) {
         remediationState: f.remediationState,
         ruling: dbRuling(f),
         round,
+        // The pipeline's own ruling (not a campaign verdict). The model is not
+        // known here: audit_runs.author_model is unset, so it stays NULL honestly.
+        adjudicatorKind: 'pipeline',
+        // `unclassified` = the ledger entry named no class; never NULL, never a
+        // silent `other` — the census reports the unclassified share.
+        dismissReasonClass: f.adjudicationOutcome === 'dismissed' ? (f._dismissReasonClass ?? 'unclassified') : undefined,
       });
       // write-boundary-hardening plan Phase 4: the write's outcome is now a
       // typed result instead of a discarded `undefined` — surface a failure

@@ -334,6 +334,23 @@ export async function runPersistence(data, assembled, mergedResult, persistenceS
     } catch (e) {
       process.stderr.write(`  [gate-evidence] convergence record failed: ${e.message}\n`);
     }
+    // The diff this run's findings were raised on (own-model telemetry gap 1).
+    // Prepared (filtered, redacted, bounded) here and persisted through the same
+    // seam; a failure tallies as lost/spilled like its siblings.
+    try {
+      const { prepareDiffArtifact } = await import('./diff-capture.mjs');
+      const { resolveRevisionSha } = await import('./target-identity.mjs');
+      tallyWriteOutcomes(writeOutcomes, [await durableWrite('audit.runDiff', {
+        runId: cloudRunId,
+        run_id: cloudRunId,
+        baseSha: resolveRevisionSha(process.cwd(), ctx.auditBaseCommit),
+        artifact: prepareDiffArtifact(ctx.diffText),
+      })]);
+    } catch (e) {
+      // A throw before the seam (artifact preparation) is a lost write, not silence.
+      tallyWriteOutcomes(writeOutcomes, [{ outcome: 'lost', writerId: 'audit.runDiff', error: e.message }]);
+      process.stderr.write(`  [diff-capture] run diff record failed: ${e.message}\n`);
+    }
   }
 
   // Phase 5b: Finalise cloud run record with counts + run metadata

@@ -28,7 +28,7 @@ export function selectStage1TriagerCall({ tieredAuditConfig, providers, recordUs
 
   if (stage1Resolution.model && providers.ossCall) {
     process.stderr.write(`  [tiered-pipeline] Stage 1 triager: ${stage1Resolution.model} (${stage1Resolution.source}${stage1Resolution.datasetHash ? `, datasetHash=${stage1Resolution.datasetHash.slice(0, 12)}…` : ''})\n`);
-    return async (envelope) => {
+    const ossTriager = async (envelope) => {
       const { result, usage } = await validatedTriagerCall(envelope, providers, stage1Resolution.model);
       recordUsage({
         provider: 'oss', modelSentinel: stage1Resolution.model, resolvedModel: stage1Resolution.model,
@@ -37,6 +37,9 @@ export function selectStage1TriagerCall({ tieredAuditConfig, providers, recordUs
       });
       return result;
     };
+    // The model that actually triaged, for the stage1_prediction decision record.
+    ossTriager.modelId = stage1Resolution.model;
+    return ossTriager;
   }
 
   // A resolved model with no ossCall to reach it (e.g. OPENROUTER_API_KEY
@@ -48,11 +51,13 @@ export function selectStage1TriagerCall({ tieredAuditConfig, providers, recordUs
   // whatever openaiConfig.model resolves to — a stale hardcoded label could
   // silently drift from the real fallback model.
   process.stderr.write(`  [tiered-pipeline] WARNING: Stage 1 triager falling back to ${openaiConfig.model} (${reason})\n`);
-  return async (envelope) => {
+  const fallbackTriager = async (envelope) => {
     const { result, usage } = await defaultTriagerCall(envelope, providers);
     // The default triager uses callGPT's audit GPT model; attribute cost to
     // it (family-keyed pricing makes a minor concrete-id difference moot).
     recordUsage({ provider: 'openai', modelSentinel: openaiConfig.model, resolvedModel: openaiConfig.model, usage });
     return result;
   };
+  fallbackTriager.modelId = openaiConfig.model;
+  return fallbackTriager;
 }

@@ -167,6 +167,8 @@ export const KNOWN_FLAGS = [
   // Registry introspection (conformance/ratchet suites read the running CLI's
   // registry-vs-legacy split through this; same family as selfcheck).
   '--inventory-json',
+  // close-finding: the closed-vocabulary class of a dismissal (own-model telemetry gap 3).
+  '--reason-class',
   // ── Shared identity / scoping flags (many subcommands) ────────────────────
   '--repo', '--repo-id', '--repo-uuid', '--limit', '--offset', '--format', '--out', '--cwd',
   // ── backlog grouping (list-unremediated-acceptances) ──────────────────────
