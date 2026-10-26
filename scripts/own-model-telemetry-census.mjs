@@ -47,10 +47,9 @@ export const CENSUS_GAPS = [
   { id: 'g4-fixed-before-adjudication', label: 'fixed_before_adjudication (decided where fixed)', needs: [['audit_findings', 'fixed_before_adjudication']],
     sql: `SELECT count(fixed_before_adjudication)::int AS populated, count(*)::int AS population
             FROM audit_findings WHERE remediation_state IN ('fixed','verified')` },
-  { id: 'g5-stage1-prediction', label: 'learning_decisions stage1_prediction rows', needs: [['learning_decisions', 'decision_type']],
-    sql: `SELECT count(*) FILTER (WHERE decision_type = 'stage1_prediction')::int AS populated,
-                (SELECT count(*)::int FROM audit_findings) AS population
-            FROM learning_decisions` },
+  { id: 'g5-stage1-prediction', label: 'stage1_prediction rows / distinct runs that logged any (a volume pair, NOT a coverage ratio)', needs: [['learning_decisions', 'decision_type']],
+    sql: `SELECT count(*)::int AS populated, count(DISTINCT audit_run_id)::int AS population
+            FROM learning_decisions WHERE decision_type = 'stage1_prediction'` },
   { id: 'g6-training-eligible', label: 'audit_repos.training_eligible (explicit)', needs: [['audit_repos', 'training_eligible']],
     sql: 'SELECT count(training_eligible)::int AS populated, count(*)::int AS population FROM audit_repos' },
   { id: 'g7-time-to-resolution', label: 'time_to_resolution_ms (decided findings)', needs: [['audit_findings', 'time_to_resolution_ms']],

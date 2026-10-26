@@ -26,7 +26,7 @@
 import { isCloudEnabled } from './repo.mjs';
 import { many } from '../db/query.mjs';
 import { markFindingsRemediation, recordAdjudicationEvent } from './runs-findings.mjs';
-import { columnExists } from './column-probes.mjs';
+import { strictColumnExists } from './column-probes.mjs';
 import { isDismissReasonClass } from '../adjudication-vocab.mjs';
 
 export const FINDING_DISPOSITIONS = Object.freeze(['fixed', 'dismissed', 'accepted-permanent']);
@@ -114,7 +114,7 @@ export async function closeFindingById({ repoId, findingId, disposition, reason 
     return { ok: true, disposition, findingId: row.id, reasonRecorded: true };
   }
 
-  const classColumn = await columnExists('audit_findings', 'dismiss_reason_class', many, isCloudEnabled);
+  const classColumn = await strictColumnExists('audit_findings', 'dismiss_reason_class', many, isCloudEnabled);
   const updated = await many(
     `UPDATE audit_findings f SET user_action = 'accepted-permanent', dismiss_reason = $3${
         classColumn ? ', dismiss_reason_class = $4' : ''}
