@@ -104,6 +104,9 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // Enrolled 2026-10-26 with migration 20261026120000 (own-model telemetry slice 1): chronology columns, campaign-event survival,
   // the diff writer and default-deny eligibility need a real schema. Two edits, always — this list AND postgres-parity.yml.
   'tests/own-model-telemetry-db.test.mjs',
+  // Enrolled 2026-10-26 with migration 20261027120000 (own-model decision ledger): the append-only trigger, the purge
+  // barrier + advisory-lock interleaving, the cost view and the sweep keying are Postgres-only. Two edits, always.
+  'tests/own-model-ledger-db.test.mjs',
   // Enrolled 2026-10-10 with migration 20261010120000 (fleet_events): the ON
   // CONFLICT re-drain, the outcome CHECK and every derived metric are Postgres-only.
   'tests/fleet-events-db.test.mjs',

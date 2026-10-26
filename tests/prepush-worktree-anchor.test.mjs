@@ -352,6 +352,10 @@ describe('main-checkout derivation population', () => {
       'Needs the git COMMON DIRECTORY itself — the shared registry lives inside it so every linked worktree '
       + 'sees one state — not the main checkout root. resolveMainRoot returns the root, and deriving the '
       + 'directory back from it breaks for bare repositories and relocated git dirs.'],
+    ['scripts/lib/ledger/spool.mjs',
+      'Needs the git COMMON DIRECTORY itself — the own-model ledger spool lives inside it so every linked worktree and '
+      + 'the pre-push sandbox share one queue (same shape as fleet/git-facts.mjs) — not the main checkout root, which '
+      + 'resolveMainRoot returns and which cannot be turned back into the directory for bare or relocated git dirs.'],
     ['scripts/lib/suite-run-record.mjs',
       'Needs the git COMMON DIRECTORY itself — the suite-run record is filed inside it so the pre-push sandbox\'s '
       + 'throwaway worktree and every linked worktree write the one place doctor reads — not the main checkout root. '

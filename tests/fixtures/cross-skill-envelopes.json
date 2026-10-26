@@ -1081,6 +1081,18 @@
         "deleted": false
       }
     },
+    "ledger-rollup-cloud-off": {
+      "args": [
+        "ledger",
+        "rollup"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "verb": "rollup"
+      }
+    },
     "close-finding-cloud-off": {
       "args": [
         "close-finding",
