@@ -552,6 +552,19 @@ export const REGISTRY = Object.freeze([
     load: () => import('./commands/fleet-telemetry.mjs').then((m) => m.fleetTelemetryCmd),
   },
   {
+    // docs/plans/own-model-decision-ledger.md. The ONLY writer verbs of the own-model
+    // decision ledger; events go through submitLedgerEvent (validate, shape by repo
+    // flag, redact, deliver or spool). cloud:'none' because delivery degrades to a
+    // local spool on its own, and mint/status must work without a store.
+    name: 'ledger',
+    flags: ['kind', 'work-item', 'coordinator', 'actor', 'decision', 'proposal-file', 'revision-file', 'class', 'source', 'repo', 'limit'],
+    positionals: { verbs: ['mint', 'record', 'task', 'outcome', 'usage', 'handover', 'correction', 'flush', 'purge', 'sweep-reverts', 'rollup', 'status'] },
+    payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'none',
+    reportsFailure: { all: true, reason: 'a refused or unwritable ledger event is a failure whose receipt IS the point; the handler throws a CommandError carrying it.' },
+    load: () => import('./commands/ledger.mjs').then((m) => m.ledgerCmd),
+  },
+  {
     name: 'shadow-overlap',
     flags: [], positionals: 'none', payload: 'json',
     scope: 'none', kind: 'read', cloud: 'degrade-noop',

@@ -147,13 +147,14 @@ situations — read them only when the trigger applies.
 |---|---|---|
 | `references/participant-rules.md` | The short rule block every spawned session receives, and why. | You spawn or brief a chip, or a session asks how to behave under /fleet. |
 | `references/chip-preamble.md` | The standard launch block for a chip prompt: authority, route, turn rule, claim, stop point, pre-authorised ship. | You write or paste a chip's launch prompt, or a chip asks what it may do alone. |
-| `references/coordination.md` | Coordinating without host messages — next, directives, unregistered work, and the numbered coordinator rules. | You coordinate several sessions, post or read a directive, or dispatch chips as a coordinator. |
-| `references/coordination-rationale.md` | Why each coordinator rule exists, with the measurements, incidents and command detail the terse rules omit. | A coordinator rule needs its why, a measurement, or exact detail (lease file, test-tier merge, proposals, model switch). |
-| `references/ending-a-session.md` | Ending a session — release, archive-check, prune, archive, and stopping branch and worktree clutter. | You retire a session, or archive-check, archive or prune a worktree or branch. |
-| `references/handover-winddown.md` | Wind-down before handover prepare — the directive, measured readiness, context file and safe-to-archive list. | You wind down before an account switch, or archive on the departing account. |
+| `references/coordination.md` | Coordinating without host messages — next, directives, unregistered work, and the numbered coordinator rules. | You coordinate sessions, post or read a directive, or dispatch chips. |
+| `references/coordination-rationale.md` | Why each coordinator rule exists, with the measurements, incidents and command detail the terse rules omit. | A coordinator rule needs its why, a measurement or exact detail. |
+| `references/ending-a-session.md` | Ending a session — release, archive-check, prune, archive, and stopping branch and worktree clutter. | You retire a session or prune a worktree or branch. |
+| `references/handover-winddown.md` | Wind-down before handover prepare — the directive, measured readiness, context file and safe-to-archive list. | You wind down before an account switch. |
 | `references/handover.md` | Moving to another Claude Code account — handover prepare and receive, the scheduler step, exit codes, follow-ups. | You move to another Claude Code account on this machine (`fleet handover`). |
 | `references/config.md` | The optional .fleet.json - base branch, merge method, test tiers, collision checks, hotFiles, archiveIgnore. | You read or write `.fleet.json`, or configure test tiers, collision checks or `hotFiles`. |
-| `references/landing.md` | Landing beyond one combined run — required checks that ran, serial landing, restack, append-only files. | You approve a pr-mode train, land PRs one at a time, restack after a squash merge, or configure append-only files. |
+| `references/landing.md` | Landing beyond one combined run — required checks that ran, serial landing, restack, append-only files. | You approve a train, land serially, restack, or set append-only files. |
 | `references/lease.md` | The machine lease - slot, windows, waiting and the journal. | You use or change `fleet lease`. |
 | `references/hosts.md` | Which hosts run /fleet and how: VS Code harnesses, subagents vs sessions, a manual recipe. | You run fleet on VS Code, Copilot or Codex. |
-| `references/telemetry.md` | Usage telemetry — what each verb records, the weakness findings stats derives, and how to turn it off. | You want to know how fleet is performing, why stats flags a weakness, or what fleet sends to the store. |
+| `references/decision-ledger.md` | Own-model ledger — when to record a task, decision, correction or outcome. | You record a ledger event or purge one. |
+| `references/telemetry.md` | Usage telemetry — what each verb records, the weakness findings stats derives, and how to turn it off. | You want fleet's performance, a stats weakness, or what it sends. |

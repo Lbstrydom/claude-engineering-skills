@@ -49,6 +49,7 @@ import {
   runPlan, runMessage, runVerify, runLand, runSync,
 } from './lib/ship-train/commands.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { recordTrainLandings } from './lib/fleet/ledger-hook.mjs';
 
 const VERBS = ['plan', 'message', 'land', 'verify', 'sync'];
 const KNOWN_FLAGS = [
@@ -244,6 +245,7 @@ export async function main(argv = process.argv) {
     const ctx = await realContext(process.cwd());
     const fn = { plan: runPlan, message: runMessage, land: runLand, verify: runVerify, sync: runSync }[verb];
     const env = await fn(ctx, opts);
+    if (verb === 'land') await recordTrainLandings(env); // own-model ledger: merged outcomes, spool-only, never throws
     if (hasOption(argv, '--json')) emit(env); else process.stdout.write(`${renderText(env)}\n`);
     return finishAndExit(0);
   } catch (err) {

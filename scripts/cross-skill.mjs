@@ -169,6 +169,8 @@ export const KNOWN_FLAGS = [
   '--inventory-json',
   // close-finding: the closed-vocabulary class of a dismissal (own-model telemetry gap 3).
   '--reason-class',
+  // ledger (own-model decision ledger): event defaults and correction inputs.
+  '--work-item', '--coordinator', '--decision', '--proposal-file', '--revision-file', '--class', '--source',
   // ── Shared identity / scoping flags (many subcommands) ────────────────────
   '--repo', '--repo-id', '--repo-uuid', '--limit', '--offset', '--format', '--out', '--cwd',
   // ── backlog grouping (list-unremediated-acceptances) ──────────────────────

@@ -196,6 +196,7 @@
         "scripts/.claude-skills/lib/fleet/unregistered.mjs",
         "scripts/.claude-skills/lib/fleet/upstream-count.mjs",
         "scripts/.claude-skills/lib/learning/author-tier-observation.mjs",
+        "scripts/.claude-skills/lib/ledger/schemas.mjs",
         "scripts/.claude-skills/lib/llm-wrappers.mjs",
         "scripts/.claude-skills/lib/memory-paths.mjs",
         "scripts/.claude-skills/lib/model-eval/contracts.mjs",

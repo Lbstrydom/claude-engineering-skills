@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveAndClassify } from './sensitive-paths.mjs';
 import { GIT_OBJECT_ID_RE } from './worktree-identity.mjs';
+import { isWorkItemId } from './ledger/work-item.mjs';
 
 export const GATE_VALUES = Object.freeze(['passed', 'converged', 'waived', 'not-run']);
 
@@ -26,7 +27,7 @@ export const GATE_VALUES = Object.freeze(['passed', 'converged', 'waived', 'not-
  * against (ship-train verify), so adding a key here is the only edit a reader needs; a test pins the renderer to it.
  */
 export const AI_TRAILER_KEYS = Object.freeze([
-  'AI-Skill', 'AI-Models', 'AI-Gate', 'AI-Run-ID', 'AI-Audited-Tree', 'AI-Final-Review', 'AI-Ship-Authority',
+  'AI-Skill', 'AI-Models', 'AI-Gate', 'AI-Run-ID', 'AI-Work-Item', 'AI-Audited-Tree', 'AI-Final-Review', 'AI-Ship-Authority',
 ]);
 
 /**
@@ -358,6 +359,12 @@ export function validateTrailerInput(input, { skillNames }) {
     values.gate = gate;
   }
 
+  // --work-item (own-model ledger join key): a UUIDv7 or absent; never guessed.
+  if (input.workItem != null) {
+    if (isWorkItemId(String(input.workItem))) values.workItem = String(input.workItem);
+    else errors.push({ field: '--work-item', expected: 'a UUIDv7 from `cross-skill.mjs ledger mint`', got: String(input.workItem), example: '--work-item 01a179bd-3d97-739c-b15b-3eb0d65f78b2' });
+  }
+
   // reserved trailers in the message (only when we have message text)
   if (typeof input.messageText === 'string') {
     for (const t of findReservedTrailers(input.messageText)) {
@@ -556,6 +563,7 @@ export function formatTrailerBlock(v) {
     `AI-Gate: ${v.gate}`,
   ];
   if (v.runId) lines.push(`AI-Run-ID: ${v.runId}`);
+  if (v.workItem) lines.push(`AI-Work-Item: ${v.workItem}`);
   // Guarded by gate AND shape: a caller that threads a value through on a
   // non-`passed` gate, or a malformed oid, emits nothing rather than a trailer
   // asserting an identity nobody verified.

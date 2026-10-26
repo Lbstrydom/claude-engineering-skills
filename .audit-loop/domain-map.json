@@ -30,6 +30,28 @@
       "domain": "fleet"
     },
     {
+      "pattern": "scripts/lib/ledger/schemas.mjs",
+      "domain": "shared-lib",
+      "_why": "The ledger's PURE contracts and preparation pipeline (no I/O, no store): the commit-trailer renderer (shared-lib) and the store writer both depend on them, so they cannot sit in fleet."
+    },
+    {
+      "pattern": "scripts/lib/ledger/work-item.mjs",
+      "domain": "shared-lib"
+    },
+    {
+      "pattern": "scripts/lib/ledger/repo-shape.mjs",
+      "domain": "shared-lib"
+    },
+    {
+      "pattern": "scripts/lib/ledger/prepare.mjs",
+      "domain": "shared-lib"
+    },
+    {
+      "pattern": "scripts/lib/ledger/**",
+      "domain": "fleet",
+      "_why": "The own-model ledger's capture side (prepare, spool, submit, sweep) is the same shape as fleet's telemetry spool and is fed by the fleet and ship-train hooks (scripts/lib/fleet/ledger-hook.mjs); it is not shared-lib, which may not import the store writer it delivers to."
+    },
+    {
       "pattern": "scripts/lib/prepush-step.mjs",
       "domain": "fleet",
       "_why": "The hook step runner reads the machine lease (to name its holder in a timeout refusal) and reuses fleet's tree-killing child runner; shared-lib may not import fleet, fleet may import shared-lib."

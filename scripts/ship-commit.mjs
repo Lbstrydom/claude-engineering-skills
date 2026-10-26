@@ -84,7 +84,7 @@ import { finishAndExit } from './lib/cli-io.mjs';
 
 const KNOWN_FLAGS = new Set([
   '--message-file', '--skill', '--models', '--gate', '--path',
-  '--expect-head', '--expect-branch',
+  '--expect-head', '--expect-branch', '--work-item',
 ]);
 const KNOWN_BOOLEAN_FLAGS = new Set([
   '--no-run-id', '--no-tests', '--selfcheck-relocation', '--expect-detached',
@@ -280,7 +280,7 @@ async function main() {
     if (!KNOWN_BOOLEAN_FLAGS.has(a)) {
       inputErrors.push({
         field: a,
-        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--path|--expect-head|--expect-branch|--expect-detached|--no-run-id|--no-tests|--preauthorised. Example: --gate converged`,
+        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--path|--expect-head|--expect-branch|--expect-detached|--no-run-id|--no-tests|--preauthorised|--work-item. Example: --gate converged`,
       });
     }
   }
@@ -515,7 +515,7 @@ async function main() {
     modelsRaw: opts.models,
     gate: opts.gate,
     messageText,
-    evidence,
+    evidence, workItem: opts.workItem,
   }, { skillNames: [...skillNames] });
 
   const allErrors = [...inputErrors, ...errors];

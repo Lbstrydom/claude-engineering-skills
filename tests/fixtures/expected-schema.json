@@ -5598,6 +5598,327 @@
       ]
     },
     {
+      "table_name": "own_model_ledger",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "event_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "kind",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "work_item_id",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "decision_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "parent_decision_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "parent_event_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "repo_name",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "coordinator",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 10
+        },
+        {
+          "column_name": "actor",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 11
+        },
+        {
+          "column_name": "event_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 12
+        },
+        {
+          "column_name": "ingested_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 13
+        },
+        {
+          "column_name": "purge_generation",
+          "data_type": "bigint",
+          "is_nullable": "NO",
+          "column_default": "0",
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 14
+        },
+        {
+          "column_name": "schema_version",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 15
+        },
+        {
+          "column_name": "redaction_version",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 16
+        },
+        {
+          "column_name": "tool_sha",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 17
+        },
+        {
+          "column_name": "policy_version",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 18
+        },
+        {
+          "column_name": "session_ref",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 19
+        },
+        {
+          "column_name": "content_state",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 20
+        },
+        {
+          "column_name": "training_eligible",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "false",
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 21
+        },
+        {
+          "column_name": "eligibility_basis",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 22
+        },
+        {
+          "column_name": "payload",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 23
+        }
+      ]
+    },
+    {
+      "table_name": "own_model_purge_barrier",
+      "columns": [
+        {
+          "column_name": "scope_kind",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "scope_value",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "generation",
+          "data_type": "bigint",
+          "is_nullable": "NO",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 3
+        }
+      ]
+    },
+    {
+      "table_name": "own_model_task_cost",
+      "columns": [
+        {
+          "column_name": "work_item_id",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "usage_cost_usd",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "input_tokens",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "output_tokens",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "usage_events",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "audit_cost_usd",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "audit_runs",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "total_cost_usd",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 8
+        }
+      ]
+    },
+    {
       "table_name": "pending_triage_findings",
       "columns": [
         {
@@ -10603,6 +10924,27 @@
       "config": "search_path=public, pg_temp"
     },
     {
+      "function_name": "own_model_ledger_append_only",
+      "args": "",
+      "return_type": "trigger",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "own_model_purge",
+      "args": "p_work_item text, p_repo text",
+      "return_type": "TABLE(deleted bigint, generation bigint)",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "own_model_purge_lock_key",
+      "args": "",
+      "return_type": "bigint",
+      "security_definer": false,
+      "config": null
+    },
+    {
       "function_name": "pgp_armor_headers",
       "args": "text, OUT key text, OUT value text",
       "return_type": "SETOF record",
@@ -11289,6 +11631,10 @@
     {
       "view_name": "no_brainer_recommendations",
       "definition": " SELECT id,\n    repo_id,\n    cluster_hash,\n    severity_history,\n    first_seen,\n    last_seen,\n    occurrence_count,\n    latest_finding_id,\n    files_affected,\n    cluster_label,\n    status\n   FROM recurring_finding_clusters\n  WHERE ((occurrence_count >= 3) AND (status = 'open'::text) AND (('HIGH'::text = ANY (severity_history)) OR ((occurrence_count >= 5) AND ('MEDIUM'::text = ANY (severity_history)))))\n  ORDER BY occurrence_count DESC, last_seen DESC\n LIMIT 50;"
+    },
+    {
+      "view_name": "own_model_task_cost",
+      "definition": " WITH ledger_usage AS (\n         SELECT own_model_ledger.work_item_id,\n            sum(((own_model_ledger.payload ->> 'cost_usd'::text))::numeric) AS usage_cost_usd,\n            sum(((own_model_ledger.payload ->> 'input_tokens'::text))::bigint) AS input_tokens,\n            sum(((own_model_ledger.payload ->> 'output_tokens'::text))::bigint) AS output_tokens,\n            count(*) AS usage_events\n           FROM own_model_ledger\n          WHERE ((own_model_ledger.kind = 'usage'::text) AND (own_model_ledger.work_item_id IS NOT NULL))\n          GROUP BY own_model_ledger.work_item_id\n        ), audit_cost AS (\n         SELECT audit_runs.work_item_id,\n            sum(audit_runs.total_cost_estimate) AS audit_cost_usd,\n            count(*) AS audit_runs\n           FROM audit_runs\n          WHERE (audit_runs.work_item_id IS NOT NULL)\n          GROUP BY audit_runs.work_item_id\n        )\n SELECT COALESCE(u.work_item_id, a.work_item_id) AS work_item_id,\n    u.usage_cost_usd,\n    u.input_tokens,\n    u.output_tokens,\n    COALESCE(u.usage_events, (0)::bigint) AS usage_events,\n    a.audit_cost_usd,\n    COALESCE(a.audit_runs, (0)::bigint) AS audit_runs,\n    (COALESCE(u.usage_cost_usd, (0)::numeric) + COALESCE(a.audit_cost_usd, (0)::numeric)) AS total_cost_usd\n   FROM (ledger_usage u\n     FULL JOIN audit_cost a ON ((a.work_item_id = u.work_item_id)));"
     },
     {
       "view_name": "pending_triage_findings",
@@ -12413,6 +12759,60 @@
       "constraint_name": "nav_audit_runs_pkey",
       "constraint_type": "PRIMARY KEY",
       "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "own_model_ledger",
+      "constraint_name": "own_model_ledger_actor_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((actor = ANY (ARRAY['coordinator'::text, 'louis'::text, 'chip'::text, 'system'::text])))"
+    },
+    {
+      "table_name": "own_model_ledger",
+      "constraint_name": "own_model_ledger_content_state_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((content_state = ANY (ARRAY['full'::text, 'structural'::text])))"
+    },
+    {
+      "table_name": "own_model_ledger",
+      "constraint_name": "own_model_ledger_coordinator_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((coordinator = ANY (ARRAY['CES'::text, 'WCA'::text, 'STO'::text, 'AIO'::text, 'other'::text])))"
+    },
+    {
+      "table_name": "own_model_ledger",
+      "constraint_name": "own_model_ledger_event_id_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (event_id)"
+    },
+    {
+      "table_name": "own_model_ledger",
+      "constraint_name": "own_model_ledger_kind_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((kind = ANY (ARRAY['task'::text, 'decision'::text, 'correction'::text, 'outcome'::text, 'usage'::text])))"
+    },
+    {
+      "table_name": "own_model_ledger",
+      "constraint_name": "own_model_ledger_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "own_model_ledger",
+      "constraint_name": "own_model_ledger_structural_not_eligible_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((content_state = 'full'::text) OR (training_eligible = false)))"
+    },
+    {
+      "table_name": "own_model_purge_barrier",
+      "constraint_name": "own_model_purge_barrier_kind_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((scope_kind = ANY (ARRAY['work_item'::text, 'repo'::text])))"
+    },
+    {
+      "table_name": "own_model_purge_barrier",
+      "constraint_name": "own_model_purge_barrier_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (scope_kind, scope_value)"
     },
     {
       "table_name": "persona_audit_correlations",
@@ -13922,6 +14322,41 @@
       "indexdef": "CREATE UNIQUE INDEX uq_nav_audit_runs_identity ON public.nav_audit_runs USING btree (repo_id, head_sha, scope, content_hash)"
     },
     {
+      "tablename": "own_model_ledger",
+      "indexname": "idx_oml_one_observation_per_merge",
+      "indexdef": "CREATE UNIQUE INDEX idx_oml_one_observation_per_merge ON public.own_model_ledger USING btree (parent_event_id) WHERE ((kind = 'outcome'::text) AND ((payload ->> 'kind'::text) = ANY (ARRAY['reverted'::text, 'observed-clean'::text])))"
+    },
+    {
+      "tablename": "own_model_ledger",
+      "indexname": "idx_oml_parent_event",
+      "indexdef": "CREATE INDEX idx_oml_parent_event ON public.own_model_ledger USING btree (parent_event_id)"
+    },
+    {
+      "tablename": "own_model_ledger",
+      "indexname": "idx_oml_repo_kind",
+      "indexdef": "CREATE INDEX idx_oml_repo_kind ON public.own_model_ledger USING btree (repo_id, kind, event_at)"
+    },
+    {
+      "tablename": "own_model_ledger",
+      "indexname": "idx_oml_work_item",
+      "indexdef": "CREATE INDEX idx_oml_work_item ON public.own_model_ledger USING btree (work_item_id, event_at)"
+    },
+    {
+      "tablename": "own_model_ledger",
+      "indexname": "own_model_ledger_event_id_key",
+      "indexdef": "CREATE UNIQUE INDEX own_model_ledger_event_id_key ON public.own_model_ledger USING btree (event_id)"
+    },
+    {
+      "tablename": "own_model_ledger",
+      "indexname": "own_model_ledger_pkey",
+      "indexdef": "CREATE UNIQUE INDEX own_model_ledger_pkey ON public.own_model_ledger USING btree (id)"
+    },
+    {
+      "tablename": "own_model_purge_barrier",
+      "indexname": "own_model_purge_barrier_pkey",
+      "indexdef": "CREATE UNIQUE INDEX own_model_purge_barrier_pkey ON public.own_model_purge_barrier USING btree (scope_kind, scope_value)"
+    },
+    {
       "tablename": "persona_audit_correlations",
       "indexname": "idx_correlations_audit_finding",
       "indexdef": "CREATE INDEX idx_correlations_audit_finding ON public.persona_audit_correlations USING btree (audit_finding_id) WHERE (audit_finding_id IS NOT NULL)"
@@ -14534,6 +14969,13 @@
       "action_statement": "EXECUTE FUNCTION check_model_eval_run_comparison_repo_scope()"
     },
     {
+      "table_name": "own_model_ledger",
+      "trigger_name": "own_model_ledger_append_only_trg",
+      "action_timing": "BEFORE",
+      "events": "DELETE,UPDATE",
+      "action_statement": "EXECUTE FUNCTION own_model_ledger_append_only()"
+    },
+    {
       "table_name": "persona_finding_outcomes",
       "trigger_name": "trg_persona_finding_outcomes_touch",
       "action_timing": "BEFORE",
@@ -14571,6 +15013,10 @@
     {
       "sequence_name": "model_ab_spend_ledger_id_seq",
       "owned_by": "model_ab_spend_ledger.id"
+    },
+    {
+      "sequence_name": "own_model_purge_gen",
+      "owned_by": null
     }
   ],
   "extensions": [
@@ -14844,6 +15290,21 @@
     },
     {
       "grantee": "postgres",
+      "object": "public.own_model_ledger",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.own_model_purge_barrier",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.own_model_task_cost",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
       "object": "public.pending_triage_findings",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
@@ -15070,6 +15531,11 @@
       "owner": "postgres"
     },
     {
+      "object_name": "own_model_purge_gen",
+      "object_kind": "S",
+      "owner": "postgres"
+    },
+    {
       "object_name": "arm_eval_crosschecks",
       "object_kind": "r",
       "owner": "postgres"
@@ -15285,6 +15751,16 @@
       "owner": "postgres"
     },
     {
+      "object_name": "own_model_ledger",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "own_model_purge_barrier",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
       "object_name": "persona_audit_correlations",
       "object_kind": "r",
       "owner": "postgres"
@@ -15456,6 +15932,11 @@
     },
     {
       "object_name": "no_brainer_recommendations",
+      "object_kind": "v",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "own_model_task_cost",
       "object_kind": "v",
       "owner": "postgres"
     },

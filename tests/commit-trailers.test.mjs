@@ -556,8 +556,16 @@ test('composeFinalMessage: AI-Final-Review lands in the parseable trailer block'
 });
 
 test('AI_TRAILER_KEYS is exactly what the renderer emits, in block order (the one list readers canonicalise against)', () => {
-  const full = formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'passed', runId: 'ecae388d-c176-4182-9d27-0210b919b844', auditedTree: AUDITED_TREE, finalReview: 'approve', shipAuthority: 'launch-prompt' });
+  const full = formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'passed', runId: 'ecae388d-c176-4182-9d27-0210b919b844', workItem: '01a179bd-3d97-739c-b15b-3eb0d65f78b2', auditedTree: AUDITED_TREE, finalReview: 'approve', shipAuthority: 'launch-prompt' });
   assert.deepEqual(full.map((l) => l.split(': ')[0]), [...AI_TRAILER_KEYS]);
+});
+
+test('AI-Work-Item is validated as a UUIDv7 and only emitted when present', () => {
+  const ok = validateTrailerInput({ skill: 'ship', modelsRaw: 'claude', gate: 'not-run', workItem: '01a179bd-3d97-739c-b15b-3eb0d65f78b2' }, { skillNames: ['ship'] });
+  assert.equal(ok.values.workItem, '01a179bd-3d97-739c-b15b-3eb0d65f78b2');
+  const bad = validateTrailerInput({ skill: 'ship', modelsRaw: 'claude', gate: 'not-run', workItem: 'not-a-uuid' }, { skillNames: ['ship'] });
+  assert.ok(bad.errors.some((e) => e.field === '--work-item'));
+  assert.ok(!formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'not-run' }).some((l) => l.startsWith('AI-Work-Item')));
 });
 
 test('a hand-typed AI-Final-Review in the message is a reserved trailer: it cannot be declared (P-B3)', () => {

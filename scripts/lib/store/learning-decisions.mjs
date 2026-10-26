@@ -141,6 +141,8 @@ export async function recordConvergenceState(runId, state) {
   // `auditedTree` would disagree with the row for the same runId).
   if (state.audited_sha  !== undefined) patch.audited_sha  = state.audited_sha;
   if (state.audited_tree !== undefined) patch.audited_tree = state.audited_tree;
+  // Own-model ledger join key (docs/plans/own-model-decision-ledger.md decision 11); only a well-formed UUIDv7 is written.
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(state.work_item_id ?? '')) patch.work_item_id = state.work_item_id;
   // Nothing to write is NOT "applied" — but it is also not a failure, and it
   // must not be retried forever. `nothing-to-write` is deliberately OUTSIDE
   // DECLINED_REASONS: a spilled artifact carrying an empty patch is malformed,

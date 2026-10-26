@@ -32,6 +32,7 @@ import * as upstreamIssues from '../store/upstream-issues.mjs';
 import * as skillCensus from '../store/skill-census.mjs';
 import * as fleetEvents from '../store/fleet-events.mjs';
 import * as findingDisposition from '../store/finding-disposition.mjs';
+import * as ownModelLedger from '../store/own-model-ledger.mjs';
 import { getCloudState, getCloudInitFailure } from '../store/client-state.mjs';
 
 function compose(...modules) {
@@ -60,5 +61,6 @@ export const STORE_PORT = compose(
   skillCensus,
   fleetEvents,
   findingDisposition,
+  ownModelLedger,
   { getCloudState, getCloudInitFailure },
 );

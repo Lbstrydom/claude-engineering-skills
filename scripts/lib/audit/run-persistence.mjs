@@ -19,6 +19,7 @@ import path from 'node:path';
 import { classifyLedgerEntry, batchWriteLedger } from '../ledger.mjs';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { durableWrite } from '../durable-write.mjs';
+import { ownModelWorkItemPatch } from '../ledger/work-item.mjs';
 import { writeLearningState, tallyWriteOutcomes, AUDIT_DIR, SESSION_MANIFEST_PREFIX, SESSION_LEDGER_FILE } from '../robustness.mjs';
 import { classifyGateEvidenceGap, formatGateEvidenceGap } from './gate-evidence.mjs';
 import { setupPostgresCommand } from '../db/schema-realization.mjs';
@@ -328,6 +329,7 @@ export async function runPersistence(data, assembled, mergedResult, persistenceS
         state: {
           audited_sha: ctx.auditedSha ?? null,
           audited_tree: ctx.auditedTree ?? null,
+          ...ownModelWorkItemPatch(process.env.OWN_MODEL_WORK_ITEM_ID),
           ...(convergedNow ? { round_converged_after: round || 1 } : {}),
         },
       })]);

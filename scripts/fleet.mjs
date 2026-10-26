@@ -63,6 +63,7 @@ import { cmdPropose, cmdProposal, cmdProposals } from './lib/fleet/proposals-cmd
 import { cmdLease } from './lib/fleet/lease-cmd.mjs';
 import { fleetDir, RegistryError } from './lib/fleet/registry.mjs';
 import { recordInvocation } from './lib/fleet/telemetry.mjs';
+import { recordFleetDecision } from './lib/fleet/ledger-hook.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const EXIT = { ok: 0, error: 1, argv: 2, refused: 3, pending: 3 };
@@ -153,6 +154,7 @@ async function main() {
     const code = result.exitCode ?? EXIT[result.code] ?? 1;
     process.exitCode = code;
     record(verb, parsed, { result }, code, startedMs);
+    await recordFleetDecision(verb, parsed, result); // own-model ledger: refusal/WAIT decisions only, spool-only, never throws
     if (result.quiet) {
       // nothing to print: the verb already spoke on stderr
     } else if (flags['--json']) {
