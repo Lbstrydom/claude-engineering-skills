@@ -25,6 +25,7 @@ import {
 } from '../scripts/lib/dashboard/collect-home.mjs';
 import { execReader } from '../scripts/lib/store/backlog-gather.mjs';
 import { waitForPidFile, isAlive } from './helpers/child-ready.mjs';
+import { writeFileIn as write } from './helpers/write-file.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -38,7 +39,6 @@ function tmp(prefix = 'home-deadline-') {
   return d;
 }
 after(() => { for (const d of dirs.splice(0)) { try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } } });
-const write = (dir, rel, body) => { const f = path.join(dir, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); };
 
 const OK_ENV = {
   q1: { ok: true, cloud: true, measured: true, scope: { mode: 'repo' }, byMode: { total: 3, code: 2, plan: 1 }, agedOut: 0 },

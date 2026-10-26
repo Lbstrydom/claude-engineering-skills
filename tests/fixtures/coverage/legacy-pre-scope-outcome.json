@@ -1,0 +1,193 @@
+{
+ "captured_from": "scripts/lib/audit/file-coverage.mjs at 17cabfc6 (before scopeOutcome existed)",
+ "reports": {
+  "code": {
+   "schemaVersion": 1,
+   "status": "complete",
+   "gate": "pass",
+   "changedTotal": 1,
+   "counts": {
+    "byClass": {
+     "profiled": 1,
+     "model-only": 0,
+     "declarative": 0,
+     "non-code": 0,
+     "uncovered": 0
+    },
+    "byOutcome": {
+     "audited": 1,
+     "not-admitted": 0,
+     "excluded-infra": 0,
+     "excluded-user": 0,
+     "sensitive": 0,
+     "deleted": 0,
+     "unreadable": 0,
+     "budget-omitted": 0
+    },
+    "required": 1,
+    "examined": 1,
+    "short": 0,
+    "excludedRequired": 0
+   },
+   "uncoveredByExtension": {},
+   "files": [
+    {
+     "path": "a.ts",
+     "class": "profiled",
+     "language": "ts",
+     "outcome": "audited",
+     "reason": null,
+     "changeKind": "modified",
+     "renamedFrom": null,
+     "read": {
+      "state": "full",
+      "charsOnDisk": null,
+      "bestCharsRendered": null,
+      "byPass": {
+       "backend": {
+        "charsRendered": 0,
+        "headCut": false,
+        "passCompleted": true
+       }
+      }
+     },
+     "changedLinesUnread": 0,
+     "analysis": {
+      "chunking": null,
+      "tools": []
+     }
+    }
+   ],
+   "tools": [],
+   "toolPolicy": {
+    "disabled": false,
+    "restore": null,
+    "deadlineMs": null,
+    "maxProjects": null
+   },
+   "waves": [],
+   "invariantViolations": []
+  },
+  "pngOnly": {
+   "schemaVersion": 1,
+   "status": "complete",
+   "gate": "pass",
+   "changedTotal": 2,
+   "counts": {
+    "byClass": {
+     "profiled": 0,
+     "model-only": 0,
+     "declarative": 0,
+     "non-code": 2,
+     "uncovered": 0
+    },
+    "byOutcome": {
+     "audited": 0,
+     "not-admitted": 2,
+     "excluded-infra": 0,
+     "excluded-user": 0,
+     "sensitive": 0,
+     "deleted": 0,
+     "unreadable": 0,
+     "budget-omitted": 0
+    },
+    "required": 0,
+    "examined": 0,
+    "short": 0,
+    "excludedRequired": 0
+   },
+   "uncoveredByExtension": {},
+   "files": [
+    {
+     "path": "a.png",
+     "class": "non-code",
+     "language": null,
+     "outcome": "not-admitted",
+     "reason": null,
+     "changeKind": "modified",
+     "renamedFrom": null,
+     "read": {
+      "state": "unknown",
+      "charsOnDisk": null,
+      "bestCharsRendered": null,
+      "byPass": {}
+     },
+     "changedLinesUnread": null,
+     "analysis": {
+      "chunking": null,
+      "tools": []
+     }
+    },
+    {
+     "path": "package-lock.json",
+     "class": "non-code",
+     "language": null,
+     "outcome": "not-admitted",
+     "reason": null,
+     "changeKind": "modified",
+     "renamedFrom": null,
+     "read": {
+      "state": "unknown",
+      "charsOnDisk": null,
+      "bestCharsRendered": null,
+      "byPass": {}
+     },
+     "changedLinesUnread": null,
+     "analysis": {
+      "chunking": null,
+      "tools": []
+     }
+    }
+   ],
+   "tools": [],
+   "toolPolicy": {
+    "disabled": false,
+    "restore": null,
+    "deadlineMs": null,
+    "maxProjects": null
+   },
+   "waves": [],
+   "invariantViolations": []
+  },
+  "empty": {
+   "schemaVersion": 1,
+   "status": "complete",
+   "gate": "pass",
+   "changedTotal": 0,
+   "counts": {
+    "byClass": {
+     "profiled": 0,
+     "model-only": 0,
+     "declarative": 0,
+     "non-code": 0,
+     "uncovered": 0
+    },
+    "byOutcome": {
+     "audited": 0,
+     "not-admitted": 0,
+     "excluded-infra": 0,
+     "excluded-user": 0,
+     "sensitive": 0,
+     "deleted": 0,
+     "unreadable": 0,
+     "budget-omitted": 0
+    },
+    "required": 0,
+    "examined": 0,
+    "short": 0,
+    "excludedRequired": 0
+   },
+   "uncoveredByExtension": {},
+   "files": [],
+   "tools": [],
+   "toolPolicy": {
+    "disabled": false,
+    "restore": null,
+    "deadlineMs": null,
+    "maxProjects": null
+   },
+   "waves": [],
+   "invariantViolations": []
+  }
+ }
+}

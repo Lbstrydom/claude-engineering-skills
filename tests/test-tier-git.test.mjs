@@ -12,6 +12,7 @@ import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots, scrubbedEnv, tmpRoot } from './helpers/fleet-repo.mjs';
 import { SELECTOR_IDENTITY_FILES } from '../scripts/lib/test-tier.mjs';
 import { blobSha, changedFiles, committerTime, readFileAt, readTreeAt, resolveSelectionBase, selectorIdentity } from '../scripts/lib/test-tier-git.mjs';
+import { writeFileIn as write } from './helpers/write-file.mjs';
 
 after(cleanupFleetRoots);
 
@@ -19,7 +20,6 @@ const REAL = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(REAL, 'scripts', 'test-tier.mjs');
 const today = new Date().toISOString().slice(0, 10);
 
-const write = (repo, rel, body) => { const f = path.join(repo, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); };
 const commit = (repo, msg) => { git(['add', '-A'], repo); git(['commit', '-q', '-m', msg], repo); return git(['rev-parse', 'HEAD'], repo); };
 
 /** A repo with a bare origin: main has `base`, branch `topic` has one more commit. Returns the oids. */

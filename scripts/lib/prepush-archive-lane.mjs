@@ -37,6 +37,8 @@ import { classifyPath } from './sensitive-paths.mjs';
 
 export const LANE_PROTOCOL = 'archive-lane/v1';
 export const OUTCOMES = Object.freeze(['not-applicable', 'clean', 'findings', 'error']);
+/** Exit status transport per outcome (the hook reads status AND token together; a crash exits 3 with NO token). */
+export const EXIT_FOR = Object.freeze({ clean: 0, findings: 1, error: 1, 'not-applicable': 3 });
 export const ZERO_SHA = '0'.repeat(40);
 
 /** Every limit ends in `error` except `maxObjectBytes`, which is a finding. */

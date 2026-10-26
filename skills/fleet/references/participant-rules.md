@@ -43,8 +43,10 @@ You are one of several concurrent sessions coordinated by /fleet.
    `--token` that `acquire` printed to `attach`/`release` when a script wraps the run. Extend a running job with
    `acquire --token`, never a bare re-acquire (refused while your name holds the slot; a second session of one checkout needs
    its own `--id`); once your repo's turn is over and another repo waits, a renewal is refused too. `lease status` shows the slot, the
-   windows other repos announced and the peak-cost hours; `fleet next` mentions them too. An install counts as heavy for the
-   window check, including the one `skills:hydrate` runs in a fresh worktree: check `lease status` first. The lease says whether the slot is
+   windows other repos announced and the peak-cost hours; `fleet next` mentions them too. A dependency install (`npm ci` and
+   the like) counts as heavy for the window check: check `lease status` before it. `skills:hydrate` (step 0) is NOT that install:
+   it only copies the gitignored tooling in from the main checkout, and in a consumer worktree the lease CLI does not exist until
+   it has run - so hydrate first, then check the lease before any install. The lease says whether the slot is
    free; the coordinator still decides who goes next, and a `hold` or directive from them outranks it.
 5. When your work is committed and tested, mark it: node scripts/fleet.mjs ready
    (it records your current commit; commit again and the mark goes stale).

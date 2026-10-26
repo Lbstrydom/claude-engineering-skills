@@ -92,7 +92,8 @@ describe('sync packaging — setup-postgres + compat-bootstrap + migrations', ()
   });
 
   it('scripts/sync-to-repos.mjs declares setup-postgres.mjs + compat-bootstrap + migrations in the routing arrays', () => {
-    const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf-8');
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf-8')
+      + fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-entry-lists.mjs'), 'utf-8');
 
     // Each helper greps the source for an array-element-shaped occurrence
     // (single-or-double-quoted string with a leading comma/bracket/whitespace),

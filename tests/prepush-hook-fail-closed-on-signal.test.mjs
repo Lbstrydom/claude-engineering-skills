@@ -88,8 +88,8 @@ function makeFixture(label) {
   gitOk(work, ['config', 'user.name', 'fixture']);
   gitOk(work, ['config', 'user.email', 'fixture@example.invalid']);
   gitOk(work, ['config', 'core.hooksPath', hooks.replace(/\\/g, '/')]);
-  fs.writeFileSync(path.join(work, 'a.txt'), 'a\n');
-  gitOk(work, ['add', 'a.txt']);
+  fs.writeFileSync(path.join(work, 'a.mjs'), 'a\n');
+  gitOk(work, ['add', 'a.mjs']);
   gitOk(work, ['commit', '--quiet', '-m', 'seed']);
   gitOk(work, ['remote', 'add', 'origin', remote]);
   const fx = {
@@ -198,10 +198,9 @@ async function killDuringPush(fx, ref, sig) {
 
 const skipReason = BASH ? false : 'Git for Windows bash not found next to `git --exec-path`';
 
-// On a host whose `/bin/sh` is dash (Ubuntu CI), the CONSUMER hook cannot install the XSI-signal trap: dash's
-// `kill -l NAME` errors, so the probe in the L1 block skips them. The push is still refused (that assertion stays on
-// every platform); only the 'interrupted by SIG<name>' diagnostic is absent. Finding p-20261014101800-ecff.
-const SH_IS_DASH = process.platform !== 'win32' && (() => { try { return path.basename(fs.realpathSync('/bin/sh')) === 'dash'; } catch { return false; } })();
+// dash (Ubuntu's /bin/sh) rejects `kill -l NAME`, which the L1 probe used to run, so the XSI signals were never trapped there
+// (finding p-20261014101800-ecff). The probe is now `( trap '' SIG )`; the TRAP case below no longer skips on dash, and the
+// dash-specific case after the loop proves the block's output directly where a dash binary exists.
 
 describe('L1 — a signal that kills the hook BLOCKS the push', { skip: skipReason }, () => {
   const l1 = extractBlock(REPO_HOOK, L1);
@@ -226,10 +225,24 @@ describe('L1 — a signal that kills the hook BLOCKS the push', { skip: skipReas
       const { result, state, landed } = await killDuringPush(fx, 'topic', sig);
       assert.equal(classify(result, state), 'blocked', `exit=${result.code} landed=${landed}
 ${result.stderr}`);
-      if (sig === 'TRAP' && SH_IS_DASH) { t.skip('dash: the diagnostic-message assertion is not run (finding p-20261014101800-ecff); the push-refusal assertion above did run'); return; }
       assert.match(result.stderr, new RegExp(`interrupted by SIG${sig}`));
     });
   }
+
+  it('dash: every XSI signal is trapped (the probe no longer asks `kill -l NAME`), and a bogus name is skipped without an error', (t) => {
+    const dash = [BASH && path.join(path.dirname(BASH), 'dash.exe'), BASH && path.join(path.dirname(BASH), 'dash'), '/usr/bin/dash', '/bin/dash'].filter(Boolean).find((p) => fs.existsSync(p));
+    if (!dash) { t.skip('no dash binary on this host'); return; }
+    for (const [label, block] of [['repo hook', extractBlock(REPO_HOOK, L1)], ['consumer hook', extractBlock(CONSUMER_HOOK, L1)]]) {
+      const probe = block.replace('VTALRM PROF; do', 'VTALRM PROF NOSUCHSIG; do').replace('VTALRM|PROF)', 'VTALRM|PROF|NOSUCHSIG)');
+      assert.notEqual(probe, block, 'the bogus name was injected into the probed set');
+      const r = spawnSync(dash, ['-c', `${probe}
+echo "TRAPPED:$PREPUSH_TRAPPED"`], { encoding: 'utf8' });
+      assert.equal(r.status, 0, `${label}: ${r.stderr}`);
+      assert.match(r.stdout, /TRAPPED:.* TRAP /, `${label} must trap TRAP under dash`);
+      assert.match(r.stdout, /VTALRM|XCPU/, `${label} must trap at least one more XSI signal`);
+      assert.doesNotMatch(r.stdout, /NOSUCHSIG/, `${label}: an unknown name is not trapped`);
+    }
+  });
 
   it('characterises the installed git: the UNPROTECTED hook (instrument check, never a contract)', async (t) => {
     // On today's Git for Windows this reads `fail-open` — the defect, reproduced, beside the
@@ -266,8 +279,8 @@ describe('L3 — an untrappable kill is REPORTED on the next push', { skip: skip
 
   /** The second push: protected, no hold. Returns its stderr. */
   async function nextPush(fx, ref) {
-    fs.writeFileSync(path.join(fx.work, `${ref}.txt`), `${ref}\n`);
-    gitOk(fx.work, ['add', `${ref}.txt`]);
+    fs.writeFileSync(path.join(fx.work, `${ref}.mjs`), `${ref}\n`);
+    gitOk(fx.work, ['add', `${ref}.mjs`]);
     gitOk(fx.work, ['commit', '--quiet', '-m', ref]);
     installHook(fx, composeHook({ blocks: [l1, l3], l3: true, hold: 'none' }));
     const push = startPush(fx, ref);

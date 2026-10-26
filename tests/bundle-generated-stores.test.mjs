@@ -27,6 +27,7 @@ import { runAdjacencyAnalysis } from '../scripts/lib/audit/adjacency-detector.mj
 import { INCOMPLETENESS_KINDS } from '../scripts/lib/audit/adjacency-state.mjs';
 import { adjacencyConfig } from '../scripts/lib/config.mjs';
 import { gitInitWithEmptyCommit, gitFixtureEnv } from './helpers/fixtures.mjs';
+import { writeFileIn as write } from './helpers/write-file.mjs';
 
 const ENTRY = '.audit/tech-debt/entries/topic-1.json';
 
@@ -87,10 +88,6 @@ function repo(t) {
   return dir;
 }
 const git = (dir, args) => execFileSync('git', args, { cwd: dir, env: gitFixtureEnv(), encoding: 'utf8' }).trim();
-const write = (dir, rel, text) => {
-  fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
-  fs.writeFileSync(path.join(dir, rel), text);
-};
 const EXCLUDE = ['.', ...bundleStorePathspecs({ exclude: true })];
 // A source with a conditional container, so "analysed" is observable: runAdjacencyAnalysis reports containersEnumerated.
 const WITH_BRANCH = (n) => [`export function f${n}(x) {`, '  if (x) {', '    const a = 1;', '    const b = 2;', '    return a + b;', '  }', '  return 0;', '}', ''].join('\n');

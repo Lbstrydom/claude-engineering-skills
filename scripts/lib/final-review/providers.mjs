@@ -46,6 +46,21 @@ export let CLAUDE_OPUS_MODEL = claudeConfig.finalReviewModel;
 // still honours XAI_MODEL env override and reads XAI_POOL's head.
 export const XAI_MODEL = resolveModel('latest-grok');
 
+/**
+ * A provider that cannot be used as configured — a missing key, model or route.
+ * THROWN, never `process.exit`: the catalog decides readiness, the CLI decides
+ * what a failure does to the process (gemini-review.mjs prints and exits 1;
+ * a library caller can recover). `providerNotReady: true` is the structured
+ * discriminator, so no caller has to match on the message.
+ */
+export class ProviderNotReadyError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ProviderNotReadyError';
+    this.providerNotReady = true;
+  }
+}
+
 // ── Provider descriptor catalog (single source of truth) ────────────────────
 //
 // One immutable descriptor per provider is THE source of truth for identity,
@@ -62,7 +77,7 @@ export const PROVIDERS = {
     transportKind: () => 'gemini',
     resolveModel: () => MODEL,
     assertReady: (env = process.env) => {
-      if (!env.GEMINI_API_KEY) { console.error('Error: provider "gemini" requires GEMINI_API_KEY'); process.exit(1); }
+      if (!env.GEMINI_API_KEY) { throw new ProviderNotReadyError('provider "gemini" requires GEMINI_API_KEY'); }
     },
     buildClient: async () => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }),
   },
@@ -72,7 +87,7 @@ export const PROVIDERS = {
     transportKind: () => 'anthropic',
     resolveModel: () => CLAUDE_OPUS_MODEL,
     assertReady: (env = process.env) => {
-      if (!env.ANTHROPIC_API_KEY) { console.error('Error: provider "anthropic" requires ANTHROPIC_API_KEY'); process.exit(1); }
+      if (!env.ANTHROPIC_API_KEY) { throw new ProviderNotReadyError('provider "anthropic" requires ANTHROPIC_API_KEY'); }
     },
     buildClient: async () => {
       process.stderr.write(`  [final-review] GEMINI_API_KEY missing; using Claude Opus fallback (${CLAUDE_OPUS_MODEL}).\n`);
@@ -131,8 +146,7 @@ export const PROVIDERS = {
       if (!c.apiKey) missing.push('FINAL_REVIEW_API_KEY');
       if (!c.model) missing.push('FINAL_REVIEW_MODEL');
       if (missing.length) {
-        console.error(`Error: provider "openai-compatible" requires ${missing.join(' + ')}.`);
-        process.exit(1);
+        throw new ProviderNotReadyError(`provider "openai-compatible" requires ${missing.join(' + ')}.`);
       }
     },
     buildClient: async () => {
@@ -156,8 +170,7 @@ export const PROVIDERS = {
       if (!c.apiKey) missing.push('FINAL_REVIEW_API_KEY (or OPENROUTER_API_KEY)');
       if (!c.model) missing.push('FINAL_REVIEW_MODEL');
       if (missing.length) {
-        console.error(`Error: provider "openrouter" requires ${missing.join(' + ')}.`);
-        process.exit(1);
+        throw new ProviderNotReadyError(`provider "openrouter" requires ${missing.join(' + ')}.`);
       }
     },
     buildClient: async () => {
@@ -207,7 +220,7 @@ export const PROVIDERS = {
     transportKind: () => 'openai',
     resolveModel: () => XAI_MODEL,
     assertReady: (env = process.env) => {
-      if (!env.XAI_API_KEY) { console.error('Error: provider "xai" requires XAI_API_KEY'); process.exit(1); }
+      if (!env.XAI_API_KEY) { throw new ProviderNotReadyError('provider "xai" requires XAI_API_KEY'); }
     },
     buildClient: async () => {
       const c = resolveXaiCreds();
@@ -243,7 +256,7 @@ export const PROVIDERS = {
       const missing = [];
       if (!env.ALIBABA_CLOUD_API_KEY) missing.push('ALIBABA_CLOUD_API_KEY');
       if (!env.ALIBABA_CLOUD_BASE_URL) missing.push('ALIBABA_CLOUD_BASE_URL');
-      if (missing.length) { console.error(`Error: provider "alibaba" requires ${missing.join(' + ')}`); process.exit(1); }
+      if (missing.length) { throw new ProviderNotReadyError(`provider "alibaba" requires ${missing.join(' + ')}`); }
     },
     buildClient: async () => {
       const c = resolveAlibabaCreds();
@@ -293,7 +306,7 @@ export const PROVIDERS = {
     // default — this reads the ambient config rather than a sentinel.
     resolveModel: () => finalReviewConfig.model,
     assertReady: (env = process.env) => {
-      if (!env.DEEPSEEK_API_KEY) { console.error('Error: provider "deepseek" requires DEEPSEEK_API_KEY'); process.exit(1); }
+      if (!env.DEEPSEEK_API_KEY) { throw new ProviderNotReadyError('provider "deepseek" requires DEEPSEEK_API_KEY'); }
     },
     buildClient: async () => {
       const c = resolveDeepseekCreds();
@@ -366,15 +379,13 @@ export function selectProvider(choice, { env = process.env, azureActive = azureC
   // ── 1. Explicit choice (flag or FINAL_REVIEW_PROVIDER setting) — always wins.
   if (choice === 'anthropic' || choice === 'claude-opus') {
     if (!env.ANTHROPIC_API_KEY) {
-      console.error('Error: provider "anthropic" requires ANTHROPIC_API_KEY');
-      process.exit(1);
+      throw new ProviderNotReadyError('provider "anthropic" requires ANTHROPIC_API_KEY');
     }
     return 'claude-opus';
   }
   if (choice === 'gemini') {
     if (!env.GEMINI_API_KEY) {
-      console.error('Error: provider "gemini" requires GEMINI_API_KEY');
-      process.exit(1);
+      throw new ProviderNotReadyError('provider "gemini" requires GEMINI_API_KEY');
     }
     return 'gemini';
   }
@@ -391,8 +402,7 @@ export function selectProvider(choice, { env = process.env, azureActive = azureC
     return choice;
   }
   if (choice) {
-    console.error(`Error: Unknown provider "${choice}". Use "gemini", "anthropic", "azure-claude", "openai-compatible", or "openrouter".`);
-    process.exit(1);
+    throw new ProviderNotReadyError(`Unknown provider "${choice}". Use "gemini", "anthropic", "azure-claude", "openai-compatible", or "openrouter".`);
   }
   // ── 2-4. Auto-detect. Gemini first (default reviewer); Azure only when no
   // Gemini key AND the profile is active; public Opus last. NO fallback to a
@@ -403,11 +413,11 @@ export function selectProvider(choice, { env = process.env, azureActive = azureC
     return 'azure-claude';
   }
   if (env.ANTHROPIC_API_KEY) return 'claude-opus';
-  console.error('Error: Final review requires GEMINI_API_KEY, ANTHROPIC_API_KEY, or an active Azure profile.');
-  console.error('Set GEMINI_API_KEY (Gemini), ANTHROPIC_API_KEY (Claude Opus), or run');
-  console.error('`node scripts/gemini-review.mjs set-provider azure-claude` for the Azure work profile.');
-  process.exit(1);
-  return null;
+  throw new ProviderNotReadyError(
+    'Final review requires GEMINI_API_KEY, ANTHROPIC_API_KEY, or an active Azure profile.\n'
+    + 'Set GEMINI_API_KEY (Gemini), ANTHROPIC_API_KEY (Claude Opus), or run\n'
+    + '`node scripts/gemini-review.mjs set-provider azure-claude` for the Azure work profile.',
+  );
 }
 
 /** The persistent per-repo final-review setting (FINAL_REVIEW_PROVIDER), or null. */
@@ -484,13 +494,27 @@ function assertAzureClaudeReady() {
   if (!route?.apiKey) missing.push(route?.credentialVar || 'AZURE_OPENAI_API_KEY');
   if (!azureConfig.claudeDeployment) missing.push('AZURE_FOUNDRY_CLAUDE_DEPLOYMENT');
   if (missing.length > 0) {
-    console.error(
-      `Error: Azure final reviewer (${route?.mode || 'unresolved'} route) requires ` +
+    throw new ProviderNotReadyError(
+      `Azure final reviewer (${route?.mode || 'unresolved'} route) requires ` +
       `${missing.join(' + ')}. Set ${missing.length > 1 ? 'them' : 'it'} or unset ` +
       `AZURE_OPENAI_ENDPOINT to use Gemini/Claude.`,
     );
-    process.exit(1);
   }
+}
+
+/**
+ * The concrete model a provider's review is ATTRIBUTED to (`source_model`,
+ * `_model`). The descriptor's own `resolveModel` — the same one dispatch uses —
+ * never a second ternary: two hand-written copies named gemini and azure-claude
+ * and filed every other provider (openrouter, openai-compatible, …) under the
+ * Opus fallback's id, so an OpenRouter GPT review was persisted as Opus.
+ * @param {string} provider - a PROVIDERS key
+ * @returns {string}
+ */
+export function reviewerModelOf(provider) {
+  const descriptor = PROVIDERS[provider];
+  if (!descriptor) throw new Error(`[final-review] unknown provider "${provider}"`);
+  return descriptor.resolveModel();
 }
 
 export async function buildClient(provider) {

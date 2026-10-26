@@ -84,7 +84,10 @@ import { OVERRIDES_PATH } from './sync-overrides.mjs';
 import { comparisonKey, isUpstreamOwned, isUsableSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './sync-owned-sidecar.mjs';
 import { pathspecsForCommit } from './sync-status.mjs';
 import { SYNC_BRANCH_PREFIX } from './sync-divergence.mjs';
+import { classifyBundleFreshness, gatherSourceFacts, gatherGitignoreTransition, GITIGNORE_PATH, GITIGNORE_PATH_STATE, GITIGNORE_LEFT_BEHIND_REASON } from './sync-pr-facts.mjs';
+export { classifyBundleFreshness, gatherSourceFacts, gatherGitignoreTransition };
 import { createGitAncestry } from './sync-rollback-guard.mjs';
+import { SYNC_BUNDLE_TRAILER } from './prepush-lanes.mjs';
 // The base-lag oracle (and the runner / git helpers it shares with this module) lives in sync-base-lag.mjs, which the sync asks BEFORE
 // writing; re-exported here so `sync:pr` and every existing importer keep one door.
 import { spawnRunner, ok, why, parseSymrefHead, classifyBaseLag, gatherBaseFacts } from './sync-base-lag.mjs';
@@ -100,6 +103,10 @@ export const SKIP_REASON = Object.freeze({
   AHEAD: 'local-commits-ahead',
   STALE_BASE_COLLISION: 'stale-base-collision',
   BRANCH_EXISTS: 'branch-exists',
+  /** Nothing synced is on disk, but the bundle stamp differs from the source HEAD: 'clean' would read as 'up to date' (proposal da9a). */
+  CLEAN_BUNDLE_DIFFERS: 'clean-bundle-differs',
+  /** Nothing synced is on disk and the stamp cannot be compared to the source (malformed, short, source unreadable or dirty). */
+  CLEAN_UNVERIFIED: 'clean-unverified',
 });
 
 const RECEIPT_KEY = comparisonKey(RECEIPT_PATH);
@@ -129,6 +136,9 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
     `Commits the tracked artifacts of the claude-engineering-skills sync at ${short}`,
     `(${surface.length} sync-owned path(s), content verified against scripts/.sync-manifest.json).`,
     'Opened by `npm run sync:pr` in the upstream repo; the sync itself never commits here.',
+    // Provenance the consumer's pre-push hook (v16 sync lane) verifies against the receipt in the pushed tree. NOT an `AI-*` trailer.
+    '',
+    `${SYNC_BUNDLE_TRAILER}: ${commitSha}`,
   ].join('\n');
   const body = [
     '## Summary',
@@ -175,18 +185,41 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
  *   behindCount: number|null,      — commits on baseSha not on HEAD
  *   upstreamChanged?: string[],    — paths that differ between HEAD and baseSha
  *   branchExists: boolean,
+ *   sourceSha?: string,            — the SOURCE repo HEAD (40-hex); absent => a clean skip is "unverified"
+ *   sourceDirty?: boolean,         — the SOURCE working tree has uncommitted changes
+ *   gitignoreTransition?: 'unchanged'|'block-only'|'mixed'|'invalid'|'unverified' — what the sync did to the consumer's .gitignore
  * }} input
  * @returns {{action:'skip', reason:string, detail?:string}
  *   | {action:'pr', branch:string, bundleSha:string, repo:string, startPoint:string, behindCount:number, addPaths:string[],
  *      commitPathspecs:string[], surface:string[], leftBehind:string[], title:string, message:string, body:string}}
  */
-export function planConsumerPr({
+function planConsumerPrCore({
   consumerName, classified, manifest, baseBranch, baseSha, currentBranch, aheadCount, behindCount, upstreamChanged = [], branchExists,
+  sourceSha, sourceDirty, gitignoreTransition,
 }) {
   if (!classified || !classified.ok) {
     return { action: 'skip', reason: SKIP_REASON.UNCLASSIFIABLE, detail: classified?.error ?? 'no classification' };
   }
-  if (classified.clean || classified.syncOwned.length === 0) {
+  // a5ce: the managed .gitignore block is sync output in a file the consumer owns. It rides in the PR only when the edit is the block
+  // and nothing else (classifyGitignoreTransition); any other dirty state of that file is named under leftBehind, never swept in.
+  const gitignoreRides = gitignoreTransition === GITIGNORE_PATH_STATE.BLOCK_ONLY;
+  // A skip must not hide a held-back .gitignore: that note is added to EVERY skip by the planConsumerPr wrapper (audit R1 M1/M10, R4 M1, R5 M1).
+  if ((classified.clean || classified.syncOwned.length === 0) && !gitignoreRides) {
+    // 'clean' compared nothing against the source: say whether the bundle is actually current (da9a).
+    const freshness = classifyBundleFreshness({ stamp: manifest?.commitSha, sourceSha, sourceDirty });
+    if (freshness === 'different') {
+      return {
+        action: 'skip', reason: SKIP_REASON.CLEAN_BUNDLE_DIFFERS,
+        detail: `no synced changes on disk, but the bundle stamp ${manifest.commitSha.slice(0, 8)} differs from the source ${sourceSha.slice(0, 8)}`
+          + ` - run npm run sync -- --target ${consumerName} first`,
+      };
+    }
+    if (freshness === 'unverified') {
+      return {
+        action: 'skip', reason: SKIP_REASON.CLEAN_UNVERIFIED,
+        detail: 'no synced changes on disk, and the bundle stamp could not be verified against the source (missing or short stamp, unreadable or uncommitted source) - not proven up to date',
+      };
+    }
     return { action: 'skip', reason: SKIP_REASON.CLEAN };
   }
   if (classified.degraded) {
@@ -196,7 +229,7 @@ export function planConsumerPr({
   if (typeof commitSha !== 'string' || commitSha.length < 8) {
     return { action: 'skip', reason: SKIP_REASON.NO_MANIFEST, detail: 'scripts/.sync-manifest.json has no commitSha' };
   }
-  const addPaths = [...new Set(classified.syncOwned.map((e) => e.path))].sort();
+  const addPaths = [...new Set([...classified.syncOwned.map((e) => e.path), ...(gitignoreRides ? [GITIGNORE_PATH] : [])])].sort();
   const surface = addPaths.filter((p) => comparisonKey(p) !== RECEIPT_KEY);
   if (surface.length === 0) {
     return { action: 'skip', reason: SKIP_REASON.RECEIPT_ONLY };
@@ -211,7 +244,7 @@ export function planConsumerPr({
       detail: aheadCount > 0 ? `${aheadCount} local commit(s) not on origin/${baseBranch}` : `could not compare against origin/${baseBranch}`,
     };
   }
-  const commitPathspecs = [...new Set(pathspecsForCommit(classified.syncOwned))].sort();
+  const commitPathspecs = [...new Set([...pathspecsForCommit(classified.syncOwned), ...(gitignoreRides ? [GITIGNORE_PATH] : [])])].sort();
   if (classifyBaseLag({ baseBranch, baseSha, currentBranch, aheadCount, behindCount }) === 'behind') {
     // Header rule 3: the working tree may ride onto origin's head only if
     // origin left every path the sync wrote (and the overrides it honoured)
@@ -231,7 +264,10 @@ export function planConsumerPr({
   if (branchExists) {
     return { action: 'skip', reason: SKIP_REASON.BRANCH_EXISTS, detail: branch };
   }
-  const leftBehind = classified.needsReview.map((e) => e.path).sort();
+  const leftBehind = [
+    ...classified.needsReview.map((e) => e.path),
+    ...(gitignoreTransition && !gitignoreRides && gitignoreTransition !== 'unchanged' ? [`${GITIGNORE_PATH} (${GITIGNORE_LEFT_BEHIND_REASON[gitignoreTransition] ?? 'could not be verified as managed-block-only'})`] : []),
+  ].sort();
   const repo = manifest.repo ?? DEFAULT_REPO;
   const text = buildPrText({ repo, commitSha, surface, leftBehind, consumerName });
   return {
@@ -247,6 +283,22 @@ export function planConsumerPr({
     leftBehind,
     ...text,
   };
+}
+
+/**
+ * Decide whether this consumer earns a PR (see `planConsumerPrCore` for the table). Every SKIP also names a held-back
+ * `.gitignore`, whichever rule skipped (audit R4 M1): the diagnostic belongs to the file, not to one early return.
+ *
+ * @param {Parameters<typeof planConsumerPrCore>[0]} input
+ * @returns {ReturnType<typeof planConsumerPrCore>}
+ */
+export function planConsumerPr(input) {
+  const plan = planConsumerPrCore(input);
+  const state = input.gitignoreTransition;
+  if (plan.action !== 'skip' || !state || state === 'unchanged' || state === GITIGNORE_PATH_STATE.BLOCK_ONLY) return plan;
+  const note = `${GITIGNORE_PATH} left uncommitted: ${GITIGNORE_LEFT_BEHIND_REASON[state] ?? 'could not be verified as managed-block-only'}`;
+  if (plan.detail?.includes(note)) return plan;
+  return { ...plan, detail: plan.detail ? `${plan.detail}; ${note}` : note };
 }
 
 /**
@@ -427,7 +479,7 @@ const SUPERSEDE_LIST_FIELDS = 'number,url,headRefName,baseRefName,isCrossReposit
 const SHORT_SHA = /^[0-9a-f]{8}$/;
 const FULL_OID = /^[0-9a-f]{40}$/;
 /** The receipt and the sidecar are written by every sync but listed in neither. */
-const ALWAYS_SYNC_OWNED = new Set([RECEIPT_KEY, comparisonKey(OWNED_SIDECAR_RELATIVE_PATH)]);
+export const ALWAYS_SYNC_OWNED = new Set([RECEIPT_KEY, comparisonKey(OWNED_SIDECAR_RELATIVE_PATH)]);
 /** `upstreamDir` default: git discovers the upstream repo from this module's own directory. */
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 

@@ -87,7 +87,7 @@ export function makeInstalledProbe(repoRoot) {
  * @param {{section: Function, pass: Function, warn: Function, fail: Function}} report
  * @param {string} repoRoot the repo being checked
  * @param {string} scriptsDir where the calling CLI lives
- * @param {{installed?: (pkg: string) => boolean}} [io] injected for tests
+ * @param {{installed?: (pkg: string) => boolean, assessDeclared?: typeof assessDeclaredBundleDeps}} [io] injected for tests
  */
 export function checkBundleDependencies(report, repoRoot, scriptsDir, io = {}) {
   report.section('Bundle dependencies');
@@ -120,6 +120,34 @@ export function checkBundleDependencies(report, repoRoot, scriptsDir, io = {}) {
       `${missingOptional.length} optional package(s) missing`,
       `${missingOptional.map((p) => p.name).join(', ')} — features degrade, imports still resolve`,
       displayAddDev(pm, missingOptional.map((p) => p.name), repoRoot));
+  }
+
+  // PRESENT is not DECLARED (proposal d93e). A hoisted or hand-installed copy satisfies every probe above, and the next install may
+  // drop it - the sync has always only WARNED on this, in a block that scrolls past. The doctor is where it must be a verdict: a
+  // required package the consumer's package.json does not durably declare FAILS, with the exact command for its package manager.
+  const assess = io.assessDeclared ?? assessDeclaredBundleDeps;
+  const decl = assess(repoRoot, scriptsDir);
+  if (!decl.measured) {
+    // Unmeasurable is SAID, never a pass.
+    report.warn('Declared bundle packages not checked', decl.reason, 'Run from a repo with a readable package.json and the synced bundle-deps.json.');
+  } else {
+    const wanted = [...decl.undeclared, ...decl.optionalOnly];
+    const importerOf = (p) => `${p.name} (imported by ${p.importer ?? 'the bundle'})`;
+    if (wanted.length) {
+      report.fail(
+        `${wanted.length} required package(s) not declared in package.json`,
+        `${wanted.map(importerOf).join(', ')} - present only if hoisted or hand-installed, and the next install may drop them`
+          + `${decl.optionalOnly.length ? ` (${decl.optionalOnly.length} sit in optionalDependencies, which tolerates omission)` : ''}`,
+        decl.command ?? decl.pmNote ?? `declare ${wanted.map((p) => p.name).join(', ')} as devDependencies`);
+    }
+    if (decl.uncommitted.length) {
+      report.warn(
+        `${decl.uncommitted.length} required package(s) declared but not committed`,
+        `${decl.uncommitted.map((p) => p.name).join(', ')} - ${decl.committedKnown ? 'commit package.json and the lockfile' : 'HEAD could not be read'}`);
+    }
+    if (!wanted.length && !decl.uncommitted.length) {
+      report.pass('Declared bundle packages', `package.json declares all ${decl.required} required packages`);
+    }
   }
 
   // A DIFFERENT claim, reported separately: nothing in the bundle imports these,

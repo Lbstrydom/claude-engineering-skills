@@ -36,12 +36,12 @@ import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 // The generated hook's static unset list IS this baseline — one list, not two.
 import { GIT_LOCAL_ENV_VARS } from './lib/git-env-sanitize.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { PREPUSH_HOOK_VERSION, HOOK_MARKER } from './lib/prepush-hook-version.mjs';
 
 // Every accepted flag. `--target` and `--format` TAKE A VALUE (both the
 // `--flag value` and `--flag=value` forms are accepted by the guard).
 const KNOWN_FLAGS = ['--dry-run', '--uninstall', '--target', '--format'];
 
-const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush-hook.mjs';
 // Bump when the generated body changes in a way a consumer must re-install to
 // pick up. v2 (reference-integrity-gate Cluster C): plan selection moved from
 // `ls -t docs/plans/*.md | head -1` to the Status-aware `check-plan-status.mjs
@@ -165,7 +165,23 @@ const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush
 // <pushed-tree-sha>.report.json / .output.log), the path is printed on EVERY outcome (pass, findings, unmeasured, timeout - where a
 // partial output is kept, or "none exists" is said), the newest AUDIT_PREPUSH_KEEP_REPORTS (default 20) of each kind are retained,
 // and a directory or file that cannot be created still refuses the push. Re-install: `npm run hooks:install -- --target <name>`.
-const HOOK_VERSION    = 14;
+// v15 (2026-10-25): (1) a push whose files are ALL non-subjects for the code audit (lockfiles, images, *.json, config/schema/type dirs -
+// the audit's own `shared` bucket) is NO_CODE_IN_SCOPE: a distinct, recorded, MEASURED outcome (.audit/prepush/<tree>.no-code.json),
+// neither a pass of the audit nor UNMEASURED. Before this a package.json-only push aborted in the audit's own "0 implementation files"
+// guard and was refused as UNMEASURED (fleet 70b5). The decision is made by `prepush-step.mjs no-code` and the hook bypasses only on rc 0 +
+// the exact token + a non-empty record; anything else runs the audit as in v14, and an older source checkout without the subcommand does too.
+// (2) After the report is kept, ONE informational line says how much of this push's findings sit on files the previous push flagged
+// (`prepush-step.mjs recurrence`) - it never suppresses and never gates (fleet 484f). (3) The run's own `.tmp-ledger.*` is removed by
+// exact path, and older orphans by the 24h rule `.tmp.*` already had. Logic: lib/prepush-audit-gate.mjs, prepush-step.mjs.
+// Re-install: `npm run hooks:install -- --target <name>`.
+// v16 (2026-10-25): v15's field gaps. (1) A `sync:pr` push with no single active plan read UNMEASURED (its .gitignore managed-block edit looked like code;
+// every consumer sync needed AUDIT_PREPUSH_ALLOW_UNMEASURED): the SANCTIONED SYNC LANE recognises exactly one commit with a
+// `Sync-Bundle:` trailer the receipt in the pushed tree attests, touching only paths the sync owns (its own sidecar; .gitignore only as a managed-block edit). (2) A tag-only push (7 archive tags: a ~10 min paid audit)
+// selected a plan and audited: the consumer now runs the archive lane (a secret/sensitive-path scan of what an archive ref publishes) and skips the
+// audit for tag pushes whose commits the destination already holds (`prepush-step.mjs landing`, ls-remote, never a stale local ref). (3) Plan
+// selection also reads the plan whose DECLARED PATHS cover the changed code (reason printed), and the plan-status gate reads the pushed commit, not
+// the working tree. (4) The body warns when the source expects a newer hook. The trap probe is `trap '' SIG` (dash). Re-install: `npm run hooks:install -- --target <name>`.
+const HOOK_VERSION    = PREPUSH_HOOK_VERSION;
 const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
@@ -197,11 +213,12 @@ prepush_killed() {
   exit 1
 }
 # Every POSIX terminating signal, unconditionally; then the XSI ones this shell knows
-# (\`kill -l NAME\` fails on an unknown name, so an exotic sh never errors on \`trap\`).
+# (probed with \`trap '' SIG\` in a subshell, NOT \`kill -l NAME\`: dash rejects \`kill -l\` with a name, so the XSI signals were never trapped
+# on Ubuntu consumers - fleet ecff, measured on ubuntu-latest 2026-10-14. An unknown name fails the probe, so an exotic sh never errors on \`trap\`).
 PREPUSH_TRAPPED=""
 for prepush_sig in HUP INT QUIT ABRT ALRM TERM PIPE USR1 USR2 TRAP BUS FPE ILL SEGV SYS XCPU XFSZ VTALRM PROF; do
   case "$prepush_sig" in
-    TRAP|BUS|FPE|ILL|SEGV|SYS|XCPU|XFSZ|VTALRM|PROF) kill -l "$prepush_sig" >/dev/null 2>&1 || continue ;;
+    TRAP|BUS|FPE|ILL|SEGV|SYS|XCPU|XFSZ|VTALRM|PROF) ( trap '' "$prepush_sig" ) >/dev/null 2>&1 || continue ;;
   esac
   trap "prepush_killed $prepush_sig" "$prepush_sig"
   PREPUSH_TRAPPED="$PREPUSH_TRAPPED $prepush_sig"
@@ -247,7 +264,9 @@ PUSH_BASE=""
 PUSH_HEAD=""
 PUBLISHED_REFS=0   # ref updates that send commits — anything but a deletion
 DELETED_REFS=0
+PUSH_STDIN=""   # v16: kept whole - the archive lane, \`landing\` and \`sync-lane\` read the same lines (stdin can be consumed once)
 if [ ! -t 0 ]; then
+  PUSH_STDIN="$(cat)"
   # \`|| [ -n "$LOCAL_SHA" ]\` keeps a final line with no trailing newline: read
   # fails on it but has already filled the variables, and clears them again on
   # the next (EOF) call, which ends the loop.
@@ -283,7 +302,9 @@ if [ ! -t 0 ]; then
         echo "[prepush-hook] push base: UNKNOWN - no merge-base with origin/main ($PUSH_BASE_WHY)" >&2
       fi
     fi
-  done
+  done <<PUSH_STDIN_EOF
+$PUSH_STDIN
+PUSH_STDIN_EOF
 fi
 export AUDIT_PUSH_RANGE_BASE="$PUSH_BASE"
 export AUDIT_PUSH_RANGE_HEAD="$PUSH_HEAD"
@@ -459,6 +480,17 @@ PROGRESS_SEC="\${AUDIT_PREPUSH_PROGRESS_SEC:-30}"   # heartbeat interval: a slow
 # v12/v13 rely on the runner's audit-outcome / audit-reuse / audit-budget / no-plan subcommands: an older source checkout lacks them, and
 # running the audit without them would mean deciding its outcome by hand - the defect this version exists to end.
 STEP_CAPS=" $(node "$STEP_CLI" capabilities 2>/dev/null) "
+# v16: a stale install says so, on every push, without blocking. The source checkout (which runs every step above) may be newer than
+# the body frozen into .git/hooks/pre-push; an older checkout lacks the subcommand and this stays silent.
+PREPUSH_OWN_VERSION=${HOOK_VERSION}
+PREPUSH_EXPECTED_VERSION="$(node "$STEP_CLI" hook-version 2>/dev/null)"
+case "$PREPUSH_EXPECTED_VERSION" in
+  ''|*[!0-9]*) ;;
+  *) if [ "$PREPUSH_EXPECTED_VERSION" -gt "$PREPUSH_OWN_VERSION" ]; then
+       echo "⚠ [prepush-hook] this installed hook is v$PREPUSH_OWN_VERSION but $AUDIT_LOOP_DIR expects v$PREPUSH_EXPECTED_VERSION - new lanes and fixes are NOT active until you re-install (from $AUDIT_LOOP_DIR):" >&2
+       echo "     npm run hooks:install -- --target <this repo's alias>" >&2
+     fi ;;
+esac
 STEP_CLI_OK=1
 for cap in audit-outcome audit-reuse audit-budget no-plan; do
   case "$STEP_CAPS" in *" $cap "*) ;; *) STEP_CLI_OK="" ;; esac
@@ -476,6 +508,91 @@ prepush_bounded() {
   prepush_step_name="$1"; prepush_step_budget="$2"; shift 2
   node "$STEP_CLI" run --step "$prepush_step_name" --budget-sec "$prepush_step_budget" --progress-sec "$PROGRESS_SEC" -- "$@"
 }
+
+# prepush_no_code (v15): 0 ONLY when the step proves the push has no file the code audit would read AND left its record. Every other
+# outcome - the step absent (older source checkout), failing, malformed output, no record - returns 1 and the audit runs as in v14.
+# 124 is the runner's budget refusal and refuses the push like every bounded step.
+prepush_no_code() {
+  case "$STEP_CAPS" in *" no-code "*) ;; *) return 1 ;; esac
+  nc_line="$(prepush_bounded no-code "$STEP_BUDGET" node "$STEP_CLI" no-code)"
+  nc_rc=$?
+  [ "$nc_rc" -eq 124 ] && exit 1
+  [ "$nc_rc" -eq 0 ] || return 1
+  case "$nc_line" in
+    "no-code "*)
+      nc_rec="\${nc_line#no-code * }"
+      if [ -s "$nc_rec" ]; then
+        echo "[prepush-hook] ▸ NO_CODE_IN_SCOPE: this push changes no file the code audit reads (recorded at $nc_rec) - a measured outcome, not an audit pass; code audit skipped" >&2
+        return 0
+      fi ;;
+  esac
+  [ -n "$nc_line" ] && echo "[prepush-hook] ▸ code audit needed: \${nc_line#code }" >&2
+  return 1
+}
+
+# ── v16 early exits: pushes that need no code audit, proved rather than guessed ──────────────────────────────────────────────────────────
+# (1) Archive lane (CES's own hook has had it since #208): a push whose EVERY ref is under refs/heads|tags/archive/ is a backup of work in flight; the
+# lane scans exactly what it publishes (secrets, sensitive paths) and the audit - keyed to a plan, meaningless for a backup - is skipped. Decided on
+# exit STATUS AND token together (the lane exits 0 clean / 1 findings,error / 3 not-applicable, and 3 with NO token on a crash). A lane that is
+# present but gave no valid result is never read as "not applicable": an archive-looking push is REFUSED (the full gate does not scan), any other
+# push continues with a warning. Absent script (an older source checkout): v15 behaviour. AUDIT_PREPUSH_ARCHIVE_LANE=0 reverts.
+prepush_looks_archive() {   # 0 = every destination ref is an archive ref, 1 = not, 2 = could not tell (CES's predicate, awk over the captured copy)
+  pl_seen="$(printf '%s\\n' "$PUSH_STDIN" | awk 'NF >= 4 && $(NF-1) ~ /^refs\\/(heads|tags)\\/archive\\/./ { n++ } END { print n + 0 }')" || return 2
+  pl_other="$(printf '%s\\n' "$PUSH_STDIN" | awk 'NF >= 4 && $(NF-1) !~ /^refs\\/(heads|tags)\\/archive\\/./ { n++ } END { print n + 0 }')" || return 2
+  case "$pl_seen" in ''|*[!0-9]*) return 2 ;; esac
+  case "$pl_other" in ''|*[!0-9]*) return 2 ;; esac
+  [ "$pl_other" -eq 0 ] && [ "$pl_seen" -gt 0 ] && return 0
+  return 1
+}
+LANE_SCRIPT="$AUDIT_LOOP_DIR/scripts/prepush-archive-lane.mjs"
+if [ "$AUDIT_PREPUSH_ARCHIVE_LANE" != "0" ] && [ "$PUBLISHED_REFS" -gt 0 ] && [ -f "$LANE_SCRIPT" ]; then
+  LANE_OUT="$(printf '%s\\n' "$PUSH_STDIN" | prepush_bounded archive-lane 240 node "$LANE_SCRIPT" --remote="$1" --destination="$2")"
+  LANE_RC=$?
+  [ "$LANE_RC" -eq 124 ] && exit 1
+  LANE_TOKENS="$(printf '%s\\n' "$LANE_OUT" | grep -E '^archive-lane/v1 ' || true)"
+  LANE_VERDICT=""
+  case "$LANE_TOKENS" in
+    "archive-lane/v1 clean"|"archive-lane/v1 findings"|"archive-lane/v1 error"|"archive-lane/v1 not-applicable") LANE_VERDICT="\${LANE_TOKENS#archive-lane/v1 }" ;;
+  esac
+  case "$LANE_RC:$LANE_VERDICT" in
+    0:clean)
+      echo "[prepush-hook] ▸ archive lane clean - what this push publishes was scanned (secrets, sensitive paths); the plan-keyed code audit does not apply to a backup ref" >&2
+      finish ;;
+    1:findings|1:error) echo "✗  [prepush-hook] the archive lane blocked this push - the details are above." >&2; exit 1 ;;
+    3:not-applicable) ;;
+    *)
+      prepush_looks_archive
+      if [ "$?" -ne 1 ]; then
+        echo "✗  [prepush-hook] the archive lane produced no valid result (exit $LANE_RC, '\${LANE_TOKENS:-no token}') for a push that looks archive-only or cannot be classified: refusing, because the full gate does NOT scan published content." >&2
+        echo "   Revert to the full gate on purpose: AUDIT_PREPUSH_ARCHIVE_LANE=0 git push" >&2
+        exit 1
+      fi
+      echo "⚠ [prepush-hook] the archive lane produced no valid result (exit $LANE_RC); this push is not archive-only, so the normal gate continues." >&2 ;;
+  esac
+fi
+# (2) Tag-only push: every published ref is a tag and the DESTINATION (ls-remote) already holds each tagged commit - nothing lands on a branch, so
+# there is no change to audit. A tag that publishes an unseen commit, any branch update, and any doubt (code <reason>) go on to the audit as in v15.
+case "$STEP_CAPS" in *" landing "*)
+  LANDING="$(printf '%s\\n' "$PUSH_STDIN" | prepush_bounded landing 120 node "$STEP_CLI" landing --destination="$2")"
+  LANDING_RC=$?
+  [ "$LANDING_RC" -eq 124 ] && exit 1
+  [ "$LANDING_RC" -eq 0 ] || LANDING="landing code the step exited $LANDING_RC"   # a token from a FAILED step is not a result
+  case "$LANDING" in
+    "landing none "*) echo "[prepush-hook] ▸ tag-only push: \${LANDING#landing none } - no commit lands on a branch, code audit skipped" >&2; finish ;;
+    "landing code "*) echo "[prepush-hook] ▸ not a tag-only push of published commits: \${LANDING#landing code }" >&2 ;;
+  esac ;;
+esac
+case "$STEP_CAPS" in *" sync-lane "*)
+  SYNC_LANE="$(printf '%s\\n' "$PUSH_STDIN" | prepush_bounded sync-lane 120 node "$STEP_CLI" sync-lane --destination="$2")"
+  SYNC_LANE_RC=$?
+  [ "$SYNC_LANE_RC" -eq 124 ] && exit 1
+  [ "$SYNC_LANE_RC" -eq 0 ] || SYNC_LANE="not-sync the step exited $SYNC_LANE_RC"
+  case "$SYNC_LANE" in
+    "sync-lane "*) echo "[prepush-hook] ▸ SANCTIONED SYNC LANE: a sync:pr commit for bundle \${SYNC_LANE#sync-lane } file(s) - every path is owned by the sync and the receipt attests the bundle; code audit skipped" >&2; finish ;;
+    "not-sync no Sync-Bundle trailer"*|"") ;;
+    "not-sync "*) echo "[prepush-hook] ▸ looks like a sync commit but is not proven one: \${SYNC_LANE#not-sync } - the normal gate continues" >&2 ;;
+  esac ;;
+esac
 
 # Select the ONE in-flight plan to audit via the Status-aware CLI — NOT
 # \`ls -t | head -1\`, which selected any newest .md regardless of its Status
@@ -553,6 +670,7 @@ PLAN_SELECTOR_FAILED=""
 # No plan (v13): the audit is keyed to one, so nothing below can run. That is UNMEASURED, not a pass - unless the push carries nothing a
 # code audit reads (docs / sync bookkeeping only). 124: the runner has said why; both refuse. A failure of the decision step refuses too.
 if [ -z "$PLAN_FILE" ]; then
+  if prepush_no_code; then finish; fi
   prepush_bounded no-plan "$STEP_BUDGET" node "$STEP_CLI" no-plan $PLAN_SELECTOR_FAILED
   [ "$?" -eq 0 ] || exit 1
   finish
@@ -583,6 +701,9 @@ if [ -n "$PUSH_BASE" ] && [ -n "$PUSH_HEAD" ]; then
     fi
   fi
 fi
+
+# ── NO_CODE_IN_SCOPE (v15): before any audit spend, and before the merge-scope and reuse steps ─────────────
+if prepush_no_code; then finish; fi
 
 # ── What the audit reads (v11) ──────────────────────────────────────────────
 # A MERGE push (main merged into the branch) carries the whole of main's delta in base..head, and the audit's default scope on a
@@ -694,11 +815,16 @@ if [ "$AUDIT_REUSED" != "1" ]; then
     while [ "\${keep_n#0}" != "$keep_n" ]; do keep_n="\${keep_n#0}"; done
     case "$keep_n" in ''|???????*) keep_n=20 ;; esac
     keep_prot_report=""; keep_prot_output=""
+    # v15: the audit derives a ledger beside its --out file (.tmp.XXXX -> .tmp-ledger.XXXX) and nothing ever reads it. Remove exactly THIS
+    # run's (the suffix of our own mktemp name), never by prefix: a concurrent push's live ledger is not ours.
+    rm -f -- "$AUDIT_KEEP_DIR/.tmp-ledger.\${AUDIT_REPORT##*.}"
     for keep_kind in report.json:"$AUDIT_REPORT" output.log:"$AUDIT_OUT"; do
       keep_suffix="\${keep_kind%%:*}"; keep_src="\${keep_kind#*:}"
       keep_dest="$AUDIT_KEEP_BASE.$keep_suffix"; keep_prot=""
       if [ ! -s "$keep_src" ]; then
         rm -f "$keep_src"
+        # v15: the recurrence sidecar describes the report beside it; a report that is gone takes its sidecar with it.
+        [ "$keep_suffix" = "report.json" ] && rm -f -- "$AUDIT_KEEP_BASE.head"
         if [ -e "$keep_dest" ]; then rm -f "$keep_dest"; echo "[prepush-hook] ▸ audit $keep_suffix: none exists (the audit wrote nothing; the earlier attempt's $keep_dest was removed so it is not mistaken for this one's)" >&2
         else echo "[prepush-hook] ▸ audit $keep_suffix: none exists (the audit wrote nothing)" >&2; fi
       else
@@ -716,7 +842,7 @@ if [ "$AUDIT_REUSED" != "1" ]; then
     }
     prepush_prune_kind report.json "$keep_prot_report"
     prepush_prune_kind output.log "$keep_prot_output"
-    find "$AUDIT_KEEP_DIR" -maxdepth 1 -name '.tmp.*' -mmin +1440 -exec rm -f {} + 2>/dev/null
+    find "$AUDIT_KEEP_DIR" -maxdepth 1 \\( -name '.tmp.*' -o -name '.tmp-ledger.*' \\) -mmin +1440 -exec rm -f {} + 2>/dev/null
     return 0
   }
   echo "[prepush-hook] ▸ auditing $PLAN_FILE via $AUDIT_LOOP_DIR (budget \${AUDIT_BUDGET}s, $AUDIT_BUDGET_BASIS; \${AUDIT_OWN_FILES:+branch-own files only, }report will be kept at $AUDIT_KEEP_BASE.report.json)" >&2
@@ -731,6 +857,8 @@ if [ "$AUDIT_REUSED" != "1" ]; then
   prepush_bounded audit-outcome "$STEP_BUDGET" node "$STEP_CLI" audit-outcome --exit "$EXIT" --report "$AUDIT_REPORT_ARG" --out "$AUDIT_OUT_ARG" >&2
   OUTCOME_RC=$?
   prepush_keep_audit
+  # v15: informational only - it can neither gate nor suppress, so its failure is ignored by design (stdout is the one line; stderr stays visible).
+  case "$STEP_CAPS" in *" recurrence "*) [ -n "$keep_prot_report" ] && { prepush_bounded recurrence "$STEP_BUDGET" node "$STEP_CLI" recurrence --report "$keep_prot_report" --head "\${PUSH_HEAD:-HEAD}" | sed 's/^/[prepush-hook] ▸ /' >&2; } ;; esac
   [ "$OUTCOME_RC" -eq 0 ] || exit 1
 fi
 

@@ -435,6 +435,31 @@ export function classifyFiles(filePaths) {
 }
 
 /**
+ * The opening accounting line. When a `--files` / diff filter is active the number printed here counts what the PLAN resolved plus the
+ * changed-not-planned files - it is printed BEFORE the filter narrows what the passes read (fleet 484f b: "94 files in scope" beside
+ * "File scope: 29 files" read as a 3x scope widening on a merge push; the audit had read 29). Unfiltered runs print the historical line.
+ *
+ * @param {{foundCount: number, planCount: number, addedCount: number, missingCount: number, referencedCount: number, filtered: boolean}} a
+ * @returns {string}
+ */
+export function formatScopeAccountingLine({ foundCount, planCount, addedCount, missingCount, referencedCount, filtered }) {
+  const detail = `(${planCount} from the plan + ${addedCount} changed-not-planned), ${missingCount} missing, ${referencedCount} referenced`;
+  return filtered
+    ? `
+Multi-pass code audit: ${foundCount} files resolved ${detail} - plan accounting, not the audited count (the audited scope follows)
+`
+    : `
+Multi-pass code audit: ${foundCount} files in scope ${detail}
+`;
+}
+
+/** The line stating what the passes will actually read under a `--files` / diff filter. */
+export function formatFileScopeLine({ filterCount, backend, frontend }) {
+  return `  File scope: ${filterCount} files → ${backend} BE + ${frontend} FE in scope (audited)
+`;
+}
+
+/**
  * A1 guard — "audit your success paths" applied to the auditor ITSELF. Returns a
  * refusal message when a code audit would read ZERO implementation (subject) files,
  * else null. A scoped audit whose scope matched none of the plan's files — or a plan

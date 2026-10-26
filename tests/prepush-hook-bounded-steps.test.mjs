@@ -113,16 +113,16 @@ describe('branchOwnedChangedFiles - against REAL git output (the fakes above enc
     try {
       const c = buildConsumer(ws);
       const { remoteTip } = mergePush(c, { ownCommitAfterRemote: false });
-      c.put('src/evil-one.txt', 'one\n');
+      c.put('src/evil-one.mjs', 'one\n');
       git(['commit', '-q', '--amend', '--no-edit'], c.local); // merge 1 authors a file
       git(['checkout', '-q', 'main'], c.local);
-      c.put('src/from-main-2.txt', 'm2\n');
+      c.put('src/from-main-2.mjs', 'm2\n');
       c.commit('M2');
       git(['push', '-q', 'origin', 'main'], c.local);
       git(['checkout', '-q', 'feature'], c.local);
       git(['merge', '-q', '--no-edit', '--no-commit', 'origin/main'], c.local);
-      c.put('src/evil-two café.txt', 'two\n');
-      c.put(' lead.txt', 'a path with leading whitespace\n');
+      c.put('src/evil-two café.mjs', 'two\n');
+      c.put(' lead.mjs', 'a path with leading whitespace\n');
       c.commit('merge 2 authors a file');
       const head = git(['rev-parse', 'HEAD'], c.local);
       // The SHIPPED runner (push-range's defaultRun), which reads the current directory - not a re-spelling of it.
@@ -130,7 +130,7 @@ describe('branchOwnedChangedFiles - against REAL git output (the fakes above enc
       let r;
       try { process.chdir(c.local); r = branchOwnedChangedFiles({ base: remoteTip, head }); } finally { process.chdir(cwd); }
       assert.equal(r.scoped, true, r.reason);
-      assert.deepEqual(r.files, [' lead.txt', 'src/evil-one.txt', 'src/evil-two café.txt'], 'leading whitespace of a path is part of the path');
+      assert.deepEqual(r.files, [' lead.mjs', 'src/evil-one.mjs', 'src/evil-two café.mjs'], 'leading whitespace of a path is part of the path');
       assert.ok(r.files.every((f) => !/[\x00-\x1f]/.test(f)), 'no control byte may leak into a path');
       assert.ok(!r.files.some((f) => /from-main/.test(f)));
     } finally { rmrf(ws); }
@@ -292,16 +292,16 @@ function buildConsumer(ws) {
 function mergePush(c, { ownCommitAfterRemote }) {
   const { local, put, commit } = c;
   git(['checkout', '-q', '-b', 'feature'], local);
-  put('src/f1.txt', 'f1\n');
+  put('src/f1.mjs', 'f1\n');
   const remoteTip = commit('F1 own work, already on the remote');
   git(['push', '-q', 'origin', 'feature'], local);
   git(['checkout', '-q', 'main'], local);
   put('docs/plans/active.md', '# Plan\n\n- **Status**: In Progress\n\nlanded on main, 149 KB in the incident\n');
-  put('src/from-main.txt', 'main\n');
+  put('src/from-main.mjs', 'main\n');
   commit('M1 main moves on');
   git(['push', '-q', 'origin', 'main'], local);
   git(['checkout', '-q', 'feature'], local);
-  if (ownCommitAfterRemote) { put('src/f2.txt', 'f2\n'); commit('F2 own work after the remote tip'); }
+  if (ownCommitAfterRemote) { put('src/f2.mjs', 'f2\n'); commit('F2 own work after the remote tip'); }
   git(['merge', '-q', '--no-edit', 'origin/main'], local);
   const head = git(['rev-parse', 'HEAD'], local);
   return { stdin: `refs/heads/feature ${head} refs/heads/feature ${remoteTip}\n`, remoteTip, head };
@@ -329,7 +329,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     try {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const base = git(['rev-parse', 'HEAD~1'], c.local);
       const d = decideAcquire(emptyLease(), { identity: { repoKey: 'abcdef012345', holder: 'sess-other' }, repo: 'o/r', kind: 'gate', forMin: 30, pid: process.pid, exclusive: true }, new Date());
@@ -354,7 +354,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     try {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const base = git(['rev-parse', 'HEAD~1'], c.local);
       // The SAME identity the pushing session would use, and a different one: neither may delay or block the hook.
@@ -376,7 +376,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     try {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${git(['rev-parse', 'HEAD~1'], c.local)}\n`);
       assert.equal(got.status, 0, got.stderr);
@@ -397,7 +397,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
       const argv = argvOf(c.local);
       assert.deepEqual(argv.slice(0, 2), ['code', 'docs/plans/active.md']);
       assert.equal(argv[2], '--files');
-      assert.equal(argv[3], 'src/f2.txt', 'only what the branch wrote after the remote tip');
+      assert.equal(argv[3], 'src/f2.mjs', 'only what the branch wrote after the remote tip');
       assert.doesNotMatch(argv.join(' '), /from-main|--scope/);
     } finally { rmrf(ws); }
   });
@@ -409,12 +409,12 @@ describe('the real hook - bounded, visible, fail-closed', () => {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
       const { remoteTip } = mergePush(c, { ownCommitAfterRemote: true });
-      c.put('src/evil café.txt', 'written by the merge\n');
+      c.put('src/evil café.mjs', 'written by the merge\n');
       git(['commit', '-q', '--amend', '--no-edit'], c.local);
       const head = git(['rev-parse', 'HEAD'], c.local);
       const got = runHook(c.local, source, `refs/heads/feature ${head} refs/heads/feature ${remoteTip}\n`);
       assert.equal(got.status, 0, got.stderr);
-      assert.equal(argvOf(c.local)[3], 'src/evil café.txt,src/f2.txt', 'the merge-authored file is in scope, main\'s files are not');
+      assert.equal(argvOf(c.local)[3], 'src/evil café.mjs,src/f2.mjs', 'the merge-authored file is in scope, main\'s files are not');
     } finally { rmrf(ws); }
   });
 
@@ -424,7 +424,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     try {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${git(['rev-parse', 'HEAD~1'], c.local)}\n`, {
         STUB_PROBE_SLEEP_MS: '2500', AUDIT_PREPUSH_PROGRESS_SEC: '1',
@@ -454,7 +454,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
     try {
       const source = makeSourceRepo(ws);
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const base = git(['rev-parse', 'HEAD~1'], c.local);
       const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${base}\n`);
@@ -472,7 +472,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
       const source = makeSourceRepo(ws);
       fs.rmSync(path.join(source, 'scripts', 'prepush-step.mjs'), { recursive: true, maxRetries: 3, retryDelay: 50 });
       const c = buildConsumer(ws);
-      c.put('src/own.txt', 'x\n');
+      c.put('src/own.mjs', 'x\n');
       const head = c.commit('own');
       const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${git(['rev-parse', 'HEAD~1'], c.local)}\n`);
       assert.equal(got.status, 1);
@@ -541,7 +541,7 @@ describe('check-plan-status --select on a real merge push (the incident, at the 
 // lib/prepush-audit-gate.mjs holds the logic (tests/prepush-audit-gate.test.mjs); these pin that the HOOK wires it: the audit's
 // exit contract and envelope decide, the override is the one named variable, and the reuse branch really skips the audit.
 function pushOf(c) {
-  c.put('src/own.txt', 'x\n');
+  c.put('src/own.mjs', 'x\n');
   const head = c.commit('own');
   return { head, base: git(['rev-parse', 'HEAD~1'], c.local) };
 }

@@ -34,6 +34,7 @@ import {
   applyMissingDispositions, captureReconcilePrecondition, readUpstreamLedgerEvidence, readWorkingLedger,
 } from './disposition-ledger.mjs';
 import { resolveBaseFreshness } from '../git-freshness.mjs';
+import { resolveFixCommit } from './fix-commit.mjs'; export { resolveFixCommit };
 import { foldEventsToState, NON_LIFECYCLE_EVENTS } from './events.mjs';
 
 // The disposition-ledger surface lives in ./disposition-ledger.mjs; re-exported
@@ -557,7 +558,7 @@ export async function upstreamList({
  */
 export async function upstreamTransition({
   repoRoot = process.cwd(), transitionFn, id, to, note = null, commit = null, actor = null,
-  disposition = null, storeFingerprint,
+  disposition = null, storeFingerprint, resolveUpstreamCommit, fetchObject,
 }) {
   // NO `= null` default, deliberately (2026-09-07). A default here would convert "the
   // caller never asked" into "the caller determined there is no store" before
@@ -587,10 +588,10 @@ export async function upstreamTransition({
   }
   if (to === 'fixed') {
     if (!commit) return { ok: false, code: 'BAD_INPUT', errors: ['--commit is required for `fix`'] };
-    const v = git(['rev-parse', '--verify', `${commit}^{commit}`], repoRoot);
-    if (v.status !== 0) {
-      return { ok: false, code: 'BAD_INPUT', errors: [`--commit "${commit}" does not resolve in this repo`] };
-    }
+    // A consumer's fix lives in the UPSTREAM repo; resolveFixCommit fetches it so the stored value still resolves in THIS one.
+    const resolved = resolveFixCommit({ repoRoot, commit, resolveUpstreamCommit, fetchObject });
+    if (!resolved.ok) return { ok: false, code: 'BAD_INPUT', errors: [resolved.error] };
+    commit = resolved.oid;
   }
   if (to === 'wont_fix' && !String(note ?? '').trim()) {
     return { ok: false, code: 'BAD_INPUT', errors: ['--note is required for `wont-fix` (a refusal needs a reason)'] };

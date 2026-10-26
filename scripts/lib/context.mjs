@@ -221,6 +221,24 @@ const BRIEF_ATTEMPT_TIMEOUT_MS = Number(process.env.BRIEF_ATTEMPT_TIMEOUT_MS) ||
 const BRIEF_MIN_ATTEMPT_MS = 2_000;
 
 /**
+ * The Haiku leg's failure text. On the Azure work profile a bare "401" read as
+ * noise for days (ai-organiser, 21-25 Oct 2026: the brief step never ran) because
+ * it named neither the endpoint nor which env var supplied the credential. The
+ * route report names both, and says when the credential is shared across
+ * services — the actual defect there.
+ * @param {any} err
+ * @param {object} [cfg] - azureConfig override (tests)
+ * @returns {Promise<string>}
+ */
+export async function describeBriefClaudeFailure(err, cfg) {
+  const { azureConfig } = await import('./config.mjs');
+  const effective = cfg ?? azureConfig;
+  if (!effective?.claudeRoute) return err?.message || String(err);
+  const { describeTransportFailure } = await import('./azure-route-report.mjs');
+  return describeTransportFailure(err, 'azure-claude', effective);
+}
+
+/**
  * Phase B: LLM condensation of CLAUDE.md into audit-relevant facts.
  * Fallback chain: Claude Haiku -> Gemini Flash -> null (regex-only).
  * Haiku is primary (better quality, captures all constraints).
@@ -303,7 +321,7 @@ async function _llmCondense(content) {
         process.stderr.write(`  [brief] ${model} done in ${((Date.now() - startMs) / 1000).toFixed(1)}s (${text?.length ?? 0} chars)\n`);
         if (text && text.length > 100) return text.slice(0, 3000); // Cap at 3000 chars
       } catch (err) {
-        process.stderr.write(`  [brief] Claude Haiku failed: ${err.message} — trying Gemini Flash\n`);
+        process.stderr.write(`  [brief] Claude Haiku failed: ${await describeBriefClaudeFailure(err)} — trying Gemini Flash\n`);
       }
     }
   }

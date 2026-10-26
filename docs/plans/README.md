@@ -20,7 +20,9 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
+| [Hook fidelity and the v15 field gaps (cluster C, hook v16)](./hook-fidelity-and-v15-field-gaps.md) | `Approved` | audit-plan: GPT 3 rounds, H4 M2 -> H1 -> M1 -> 0; Gemini 2 rounds -> APPROVE |
 | [Own-model telemetry slice 1 (H1 capture gaps)](./own-model-telemetry-slice-1.md) | `In Progress` | plan audited: GPT 2 rounds, 10 findings all accepted; Gemini final gate APPROVE |
+| [Pre-push convergence and scope honesty (cluster A)](./prepush-convergence-cluster-a.md) | `Approved` | audit-plan: GPT 2 rounds -> READY; Gemini 2 rounds -> APPROVE |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Ship trains — batched, impact-based `/ship --train`](./ship-trains.md) | `Approved` |  |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
@@ -104,6 +106,7 @@ source comments that no docs linter sees — stays valid.
 | [Azure AI Foundry Work Profile](./azure-work-profile.md) | `Complete` |  |
 | [Backlog and Drift Reduction — make the private ledger durable, the instruments honest, and the queues owned](./backlog-and-drift-reduction.md) | `Complete` | all 14 phases implemented 2026-09-04 in one session. The headline outcome is not a gate: 37 tech-debt… |
 | [Backlog-tooling honesty — telemetry parity, reachable credit queue, shared work-unit grouping, non-vacuous scans, cwd-independent locks](./backlog-tooling-honesty.md) | `Complete` |  |
+| [Backlog triage + arch drift — 2026-10-25](./backlog-triage-2026-10-25.md) | `Complete` |  |
 | [/brainstorm Skill + Architecture-Map Discoverability + VS Code Mermaid](./brainstorm-and-arch-discoverability.md) | `Complete` | shipped — `/brainstorm` skill + `scripts/brainstorm-round.mjs` + 7 modules under `scripts/lib/brainstorm/`… |
 | [`/brainstorm --with-arch` — codebase architecture context for external LLMs](./brainstorm-arch-context.md) | `Complete` |  |
 | [Brainstorm-skill upgrades + Quick-fix detection (v1)](./brainstorm-quickfix-v1.md) | `Complete` | shipped — both halves: `/brainstorm` enhancements (see brainstorm-and-arch-discoverability) + quick-fix… |
@@ -163,6 +166,7 @@ source comments that no docs linter sees — stays valid.
 | [Final-review credit — a ruling is a ruling on either axis, and a re-run must not erase it](./final-review-credit-projection.md) | `Complete` |  |
 | [Final-review debt suppression — make the dead stage live, and make it correct](./final-review-debt-suppression-revival.md) | `Complete` |  |
 | [Hunk windows for the final-review envelope and the tiered discovery read](./final-review-hunk-windows.md) | `Complete` |  |
+| [Final-review reliability (backlog-triage cluster D)](./final-review-reliability-cluster-d.md) | `Complete` |  |
 | [Reduced-Scope Second Final Reviewer + 4-Arm Cost/Yield Campaign](./final-review-scoped-second-reviewer.md) | `Complete` | Clusters A–C implemented via `/cycle --autonomous`, consolidated Gemini gate APPROVE in 2 rounds (§10b),… |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `Complete` | VERDICT: KEEP opus (SELECT opus, the incumbent; no challenger cleared the relative floor). N reached 12/12… |
 | [Shadow Final-Review Reviewer (A/B test final-gate effectiveness)](./final-review-shadow-reviewer.md) | `Complete` | verified built; status corrected from Approved during archive triage 2026-06-27 |
@@ -308,6 +312,7 @@ source comments that no docs linter sees — stays valid.
 | [Sustainability cleanup batch — god-module split + monolithic renderer decomp + refresh.mjs hardening](./sustainability-cleanup-batch.md) | `Complete` | WS1 (efca5ea), WS2 (13a0af9), WS3 (this commit) |
 | [symbol-index bugs — patches for arch:refresh --force + arch:duplicates thin-delegate](./symbol-index-bugs.md) | `Complete` | applied 2026-05-11 |
 | [Symbol-Index / Arch-Memory Pipeline Reliability Hardening](./symbol-index-pipeline-reliability-hardening.md) | `Complete` | all 5 execution clusters (A-E) built and audited via `/cycle --autonomous` on 2026-07-27; consolidated… |
+| [Sync contract batch (cluster B)](./sync-contract-batch-b.md) | `Complete` | implemented 2026-10-25; audit-plan 3 rounds (Gemini APPROVE), audit-code 5 rounds + Gemini APPROVE (round 2) |
 | [Sync output drift classification](./sync-output-drift-classification.md) | `Complete` | `/audit-code` converged 2026-09-10… |
 | [Sync ownership from content, not a tracked artifact](./sync-ownership-from-content.md) | `Complete` | all sections (§0 rollback detection, §A content-derived ownership, §B untrack consumer manifest) implemented… |
 | [sync-pr supersedes an older open sync PR](./sync-pr-supersede-open-sync-pr.md) | `Complete` | shipped in #230, #238, #242 (status reconciled against merged PRs 2026-10-25) |

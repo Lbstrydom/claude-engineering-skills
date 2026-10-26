@@ -21,6 +21,7 @@ import { collectConsumers, MAX_CONSUMERS, MAX_RECEIPT_BYTES } from '../scripts/l
 import { collectShippedMerges, shippedLog, readStatusHead } from '../scripts/lib/dashboard/collect-home-shipped.mjs';
 import { collectInflight, INFLIGHT_ROW_CAP, PRS_NOTE } from '../scripts/lib/dashboard/collect-home-inflight.mjs';
 import { buildHomeModel } from '../scripts/lib/dashboard/home-model.mjs';
+import { writeFileIn as write } from './helpers/write-file.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = JSON.parse(fs.readFileSync(path.join(HERE, 'fixtures', 'dashboard-home', 'store-unreachable-envelopes.json'), 'utf8'));
@@ -34,7 +35,6 @@ function tmp(prefix = 'home-collect-') {
 }
 after(() => { for (const d of dirs.splice(0)) { try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } } });
 
-const write = (dir, rel, body) => { const f = path.join(dir, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body); };
 
 /** A repo on `main` with `commits` commits; optionally a bare local origin. */
 function mkRepo({ commits = 1, remote = false } = {}) {

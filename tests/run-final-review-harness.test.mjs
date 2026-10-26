@@ -72,7 +72,8 @@ const CONCERNS_FIXTURE = {
   verdict: 'CONCERNS',
   new_findings: [{
     id: 'G1', severity: 'MEDIUM', category: 'X', section: 'src/a.mjs', detail: 'issue',
-    risk: 'risk', recommendation: 'fix', is_quick_fix: false, is_mechanical: false, principle: 'p',
+    risk: 'risk', recommendation: 'fix', is_quick_fix: false, is_mechanical: false, is_reopened: false, principle: 'p',
+    release_blocking: false, blocking_basis: 'none',
     classification: { sonarType: 'CODE_SMELL', effort: 'EASY', sourceKind: 'REVIEWER', sourceName: 'test' },
   }],
 };

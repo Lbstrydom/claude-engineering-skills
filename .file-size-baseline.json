@@ -5,7 +5,6 @@
   "files": {
     "scripts/campaign.mjs": 1017,
     "scripts/cross-skill.mjs": 1124,
-    "scripts/gemini-review.mjs": 1090,
     "scripts/lib/anthropic-client.mjs": 1029,
     "scripts/lib/audit/evidence-triage.mjs": 1245,
     "scripts/lib/audit/legacy-production-audit.mjs": 1702,
@@ -22,6 +21,6 @@
     "scripts/setup-postgres.mjs": 1372,
     "scripts/solo-control-audit.mjs": 2461,
     "scripts/symbol-index/extract.mjs": 1219,
-    "scripts/sync-to-repos.mjs": 2683
+    "scripts/sync-to-repos.mjs": 2323
   }
 }

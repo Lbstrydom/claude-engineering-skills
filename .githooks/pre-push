@@ -44,11 +44,12 @@ prepush_killed() {
   exit 1
 }
 # Every POSIX terminating signal, unconditionally; then the XSI ones this shell knows
-# (`kill -l NAME` fails on an unknown name, so an exotic sh never errors on `trap`).
+# (probed with `trap '' SIG` in a subshell, NOT `kill -l NAME`: dash rejects `kill -l` with a name, so the XSI signals were never trapped
+# on Ubuntu consumers - fleet ecff, measured on ubuntu-latest 2026-10-14. An unknown name fails the probe, so an exotic sh never errors on `trap`).
 PREPUSH_TRAPPED=""
 for prepush_sig in HUP INT QUIT ABRT ALRM TERM PIPE USR1 USR2 TRAP BUS FPE ILL SEGV SYS XCPU XFSZ VTALRM PROF; do
   case "$prepush_sig" in
-    TRAP|BUS|FPE|ILL|SEGV|SYS|XCPU|XFSZ|VTALRM|PROF) kill -l "$prepush_sig" >/dev/null 2>&1 || continue ;;
+    TRAP|BUS|FPE|ILL|SEGV|SYS|XCPU|XFSZ|VTALRM|PROF) ( trap '' "$prepush_sig" ) >/dev/null 2>&1 || continue ;;
   esac
   trap "prepush_killed $prepush_sig" "$prepush_sig"
   PREPUSH_TRAPPED="$PREPUSH_TRAPPED $prepush_sig"

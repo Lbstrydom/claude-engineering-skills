@@ -22,6 +22,14 @@ present on a fresh clone until you re-sync.
 
 ## Diagnostics — the doctor
 
+> **Sync-contract verdicts (cluster B, 2026-10-25).** `check-setup` (and so the doctor) now **FAILS**, with the exact install
+> command for your package manager, when a required bundle package is not durably declared in `package.json` — the sync only
+> ever warned. A diverged file that is byte-identical to an *earlier* upstream version is replaced quietly as a stale snapshot
+> (looked up in the source repo's history; any git doubt keeps the refusal). `sync:pr` says `clean-bundle-differs` /
+> `clean-unverified` rather than `clean` when the consumer's bundle stamp is not the source's current commit, and commits the
+> sync-managed `.gitignore` block (only when it is the sole change to that file). `upstream fix --commit` run in a consumer
+> fetches the upstream commit before storing it.
+
 Hitting friction? Before reaching for any of the scattered checks below
 (sync isolation, worktree preflight, setup, azure/runner doctors — each is
 still documented in its own section further down), run the **one** command

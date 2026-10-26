@@ -84,7 +84,7 @@ describe('scripts/doctor.mjs import closure', () => {
     // Matches the FULL array via the non-greedy `[\s\S]*?` to its closing
     // `\n];` — the array is long enough that a fixed-length slice from its
     // start can cut off before reaching an entry appended near the end.
-    const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf-8');
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-entry-lists.mjs'), 'utf-8');
     const arrayMatch = /const CORE_ENTRY = \[([\s\S]*?)\n\];/.exec(src);
     assert.ok(arrayMatch, 'could not locate CORE_ENTRY array in sync-to-repos.mjs — test instrument itself is broken');
     assert.match(arrayMatch[1], /'scripts\/doctor\.mjs'/);

@@ -150,3 +150,33 @@ for (const [label, spec] of [
     });
   });
 }
+
+// 689c: the lists are no longer two hand-kept copies - both modules import the ONE list in
+// sync-entry-lists.mjs. These assert the structure, so a re-introduced second copy fails here.
+describe('one entry list (sync-entry-lists.mjs) feeds both the sync and the inventory', () => {
+  it('sync-to-repos.mjs and sync-inventory.mjs hold the very same arrays', async () => {
+    const shared = await import('../scripts/lib/sync-entry-lists.mjs');
+    for (const name of ['LEARNING_ENTRY', 'ARCH_ENTRY', 'DEBT_ENTRY', 'SYNC_ISOLATION_ENTRY']) {
+      assert.strictEqual(syncToRepos[name], shared[name], `sync-to-repos.mjs ${name} is not the shared array`);
+      assert.strictEqual(syncInventory[name], shared[name], `sync-inventory.mjs ${name} is not the shared array`);
+    }
+    assert.strictEqual(syncToRepos.CORE_ENTRY, shared.CORE_ENTRY);
+  });
+
+  it('inventory CORE_NON_IMPORTABLE is a subset of the shared CORE_ENTRY and the split is a partition', async () => {
+    const shared = await import('../scripts/lib/sync-entry-lists.mjs');
+    const all = new Set(shared.CORE_ENTRY);
+    const stray = syncInventory.CORE_NON_IMPORTABLE.filter((e) => !all.has(e));
+    assert.deepEqual(stray, [], 'CORE_NON_IMPORTABLE names an entry the shared CORE_ENTRY does not carry');
+    const overlap = syncInventory.CORE_ENTRY.filter((e) => syncInventory.CORE_NON_IMPORTABLE.includes(e));
+    assert.deepEqual(overlap, []);
+    assert.equal(syncInventory.CORE_ENTRY.length + syncInventory.CORE_NON_IMPORTABLE.length, all.size,
+      'importable + non-importable must cover the shared list exactly');
+  });
+
+  it('negative control: the shared module has no imports, so it cannot run the sync main', async () => {
+    const fs = await import('node:fs');
+    const src = fs.default.readFileSync(new URL('../scripts/lib/sync-entry-lists.mjs', import.meta.url), 'utf8');
+    assert.ok(!/^\s*import\s/m.test(src), 'sync-entry-lists.mjs must stay a leaf module');
+  });
+});

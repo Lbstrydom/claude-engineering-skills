@@ -62,6 +62,7 @@ import { parseResultPath, captureRoundOutcomes } from './lib/finalize-outcomes.m
 import { withFileLock } from './lib/file-lock.mjs';
 import { LedgerEntrySchema } from './lib/schemas.mjs';
 import { isDismissReasonClass, DISMISS_REASON_CLASSES } from './lib/adjudication-vocab.mjs';
+import { readPersistedDebtEntries } from './lib/debt-ledger.mjs';
 
 const KNOWN_FLAGS = [
   '--result', '--ledger', '--triage', '--pass', '--round', '--mark-fixed',
@@ -436,6 +437,11 @@ async function main() {
   // `sameConcernAs` resolves INSIDE the lock, against the ledger as it is now:
   // the concern it names may have been written by a concurrent adjudication.
   let linked = 0;
+  let unlinked = [];
+  // Tech-debt entries are valid link targets (fac2). Read once, outside the ledger lock; an unreadable debt ledger resolves nothing extra
+  // (the link is then reported unresolved, never guessed).
+  let debtTopicIds = [];
+  try { debtTopicIds = readPersistedDebtEntries().map((e) => e?.topicId).filter((x) => typeof x === 'string'); } catch { debtTopicIds = []; }
   await writeLedgerAtomically(ledgerPath, (byTopic) => {
     const undecided = findUndecidedReRaises(Object.entries(triage).map(([id, t]) => [id, byId.get(id), t]), byTopic);
     if (undecided.length > 0) {
@@ -446,13 +452,10 @@ async function main() {
         + undecided.map(u => `${u.id} beside ${u.prior.slice(0, 6)} "${u.priorCategory}"`).join('\n  '),
       );
     }
-    const { entries, errors } = resolveConcernLinks(pending, concernRefs, topicByFindingId, byTopic);
-    if (errors.length > 0) {
-      throw new ArgvError(
-        `write-ledger-entries: ${errors.length} sameConcernAs reference(s) could not be resolved. Nothing was `
-        + `written — a dropped link is the lost knowledge the field exists to keep.\n  ${errors.join('\n  ')}`,
-      );
-    }
+    const { entries, errors } = resolveConcernLinks(pending, concernRefs, topicByFindingId, byTopic, debtTopicIds);
+    // One bad link costs that LINK, not the batch (fleet fac2): the rulings are written, the raw reference is stored on the entry as
+    // unresolvedConcernRef, and the caller is told below - never silently.
+    unlinked = errors;
     linked = entries.filter(e => e.concernId && concernRefs.has(e.topicId)).length;
     return entries;
   });
@@ -486,7 +489,7 @@ async function main() {
 
   if (argv.includes('--json')) {
     console.log(JSON.stringify({
-      ok: true, ledger: ledgerPath, round, written, unruled,
+      ok: true, ledger: ledgerPath, round, written, unruled, unlinked,
       accepted, adjusted, dismissed, deferred, acceptanceRate, linked,
     }));
   } else {
@@ -495,6 +498,12 @@ async function main() {
       `acceptance ${(acceptanceRate * 100).toFixed(0)}% `
       + `(accepted ${accepted} · severity-adjusted ${adjusted} · dismissed ${dismissed} · deferred ${deferred})`
       + (linked > 0 ? ` · ${linked} linked to an earlier concern` : ''),
+    );
+  }
+  if (unlinked.length > 0) {
+    process.stderr.write(
+      `  [ledger] UNLINKED: ${unlinked.length} sameConcernAs reference(s) did not resolve; the rulings WERE written without the link and `
+      + `the raw reference is kept as unresolvedConcernRef. Re-triage with a resolvable reference to link them:\n    ${unlinked.join('\n    ')}\n`,
     );
   }
   if (unruled.length > 0) {

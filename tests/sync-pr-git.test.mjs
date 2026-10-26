@@ -29,6 +29,7 @@ import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
 import { gitFixtureEnv, makeGitRunner, mkdtemp, rmrfBestEffort } from './helpers/fixtures.mjs';
 import { currentScope, decideAcquire, decideRelease, readLease, transactLease } from '../scripts/lib/fleet/lease.mjs';
 import { repoIdentity } from '../scripts/lib/fleet/lease-cmd.mjs';
+import { writeFileIn as write } from './helpers/write-file.mjs';
 
 const SHA = 'f3991844aa30eb2d3e87bd42f3f31bb1db850083';
 const SKILL = '.claude/skills/plan/SKILL.md';
@@ -55,10 +56,6 @@ function makeRunner(gh = () => undefined) {
   return { run, ghCalls };
 }
 
-const write = (root, rel, content) => {
-  fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-  fs.writeFileSync(path.join(root, rel), content);
-};
 
 /**
  * origin (bare, default branch `trunk` — so a hardcoded `main` cannot pass),
