@@ -15,6 +15,7 @@
 - **Compute**: local Radeon RX 6600 XT; assessed in §0.2.
 - **H1**: prepare the labelling weekend (§3.1); do not execute it yet.
 - **Telemetry first**: audit what H1 needs that is not captured (§2.1) and start capturing it.
+- **Storyline training flag flipped (2026-10-27)**: Louis approved storyline for training use, so decision D2 is closed. `audit_repos.training_eligible` for `louis-strydom_wartsila/storyline` is now `true` in storyline's Azure store (set with `scripts/training-eligibility.mjs set`, approved by Louis, recorded with its reason). From now on storyline is captured at C1 + C2 + C3, and the tenant-boundary rule for compute still applies. Where this memo says `training_eligible=false` for storyline, read it as the state of 2026-10-26.
 
 ## 0.2 Is the RX 6600 XT enough? (expected; verify before buying anything)
 
