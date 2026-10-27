@@ -242,9 +242,9 @@ describe('own-model telemetry slice 1 (DB integration)', { skip }, () => {
     let res = await elig.checkReposEligibleForExport([repoId]);
     assert.deepEqual([res.ok, res.refused[0].reason], [false, 'undecided']);
     assert.equal((await elig.setTrainingEligibility({ repoName: `omt-${tag}`, eligible: true, reason: '' })).reason, 'reason-required');
-    assert.equal((await elig.setTrainingEligibility({ repoName: `omt-${tag}`, eligible: true, reason: 'test repo' })).ok, true);
+    assert.equal((await elig.setTrainingEligibility({ repoName: `omt-${tag}`, eligible: true, reason: 'test repo', approvedBy: 'test' })).ok, true);
     assert.equal((await elig.checkReposEligibleForExport([repoId])).ok, true);
-    await elig.setTrainingEligibility({ repoName: `omt-${tag}`, eligible: false, reason: 'revoked' });
+    await elig.setTrainingEligibility({ repoName: `omt-${tag}`, eligible: false, reason: 'revoked', approvedBy: 'test' });
     res = await elig.checkReposEligibleForExport([repoId]);
     assert.deepEqual([res.ok, res.refused[0].reason], [false, 'ineligible']);
     assert.equal((await elig.checkReposEligibleForExport([crypto.randomUUID()])).refused[0].reason, 'unknown-repo');
