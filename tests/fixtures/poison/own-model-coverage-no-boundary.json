@@ -1,0 +1,5 @@
+{
+  "entries": [
+    { "table": "learning_decisions", "column": "tool_sha", "since": "2026-10-29", "expectFill": 0.95, "tolerance": 0.05 }
+  ]
+}

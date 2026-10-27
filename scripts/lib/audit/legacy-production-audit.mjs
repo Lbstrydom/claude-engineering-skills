@@ -89,7 +89,7 @@ import { durableWrite, drainSpill, spillSummary } from '../durable-write.mjs';
 import '../audit-store-writers.mjs';
 import { buildCloudFpPolicy, runSuppressionPasses } from '../suppression-policy.mjs';
 import { finalizePriorRoundOutcomes } from '../finalize-outcomes.mjs';
-import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from '../learning/decision-logger.mjs';
+import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox, allPassesPropensity } from '../learning/decision-logger.mjs';
 import { deriveSignals as _deriveTierSignals, buildAuthorTierObservation as _buildAuthorTierObservation } from '../learning/author-tier-observation.mjs';
 import { loadDomainRules as _loadDomainRules, computeTargetDomains as _computeTargetDomains } from '../symbol-index/domain-tagger.mjs';
 import { PromptBandit, computeReward, buildContext } from '../../bandit.mjs';
@@ -458,7 +458,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'code', {
         scopeMode, commitSha, branch, planId, runId,
       });
-
+      (await import('../telemetry/llm-call-log.mjs')).bindRun({ runId: cloudRunId, repoId: cloudRepoId, workItemId: process.env.OWN_MODEL_WORK_ITEM_ID, producer: 'audit' });
       // Phase 1 — adaptive-learning-v1 telemetry.  Compute diff_complexity
       // (file count, LOC, scope mode) and record pass_selection decision
       // pre-wave with outcome=null; the outcome is backfilled at audit-end.
@@ -502,7 +502,7 @@ async function runLegacyProductionAuditImpl(ctx) {
               diffLines: diffComplexity.diffLines,
             },
             choice: { chose: 'all' },
-            outcome: null,
+            outcome: null, ...allPassesPropensity(PASS_NAMES.length, ctx?.auditedTree),
           });
           _learningInstallHooks({ insertLearningDecision, backfillLearningOutcome, isCloudEnabled });
         } catch { /* validation failure — best-effort telemetry */ }

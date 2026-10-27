@@ -35,6 +35,7 @@ import {
   retryAttemptsFor, retryAfterMs, nextRetryDelayMs,
 } from '../robustness.mjs';
 import { buildAuditPassPrompt } from './prompt-builder.mjs';
+import { recordGptCall } from '../telemetry/llm-call-log.mjs';
 import { readProjectContextForPass, extractPlanForPass } from '../context.mjs';
 import { R2_ROUND_MODIFIER, buildRulingsBlock } from '../ledger.mjs';
 import { getActivePrompt, bootstrapFromConstants } from '../prompt-registry.mjs';
@@ -426,6 +427,7 @@ export async function callGPT(openai, opts) {
         result._retried = true;
         result._attempts = attempt + 1;
       }
+      recordGptCall({ result, opts });   // metadata-only provenance; never throws
       return result;
     } catch (err) {
       lastErr = err;

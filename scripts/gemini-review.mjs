@@ -236,6 +236,7 @@ export {
   shouldWarnMissingRunId, canAttemptRunIdRecovery, MISSING_RUN_ID_WARNING, RUN_ID_MARKER_MAX_AGE_MS, recoverRunIdFromMarker,
 } from './lib/final-review/run-id-recovery.mjs';
 import { resolveReviewRunId } from './lib/final-review/run-id-recovery.mjs';
+import { recordFinalReviewCall } from './lib/telemetry/final-review-call.mjs';
 
 // ── Review Orchestrator ────────────────────────────────────────────────────────
 
@@ -911,6 +912,7 @@ async function main() {
     // Primary reviewer's resolved concrete model id (for source_model attribution)
     // — the descriptor's own, so every provider is named, not just three.
     const primaryModel = reviewerModelOf(provider);
+    await recordFinalReviewCall({ runId, model: primaryModel, provider, usage, latencyMs });   // metadata only; never throws
     // Shadow reviewer + cloud persistence — runs BEFORE emit so the --out
     // artifact carries the _shadow block (R1 M1). Observation-only for an
     // ACTUAL PROVIDER CALL failure — that half still never throws out (its own

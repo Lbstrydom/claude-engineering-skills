@@ -1,0 +1,315 @@
+{
+  "schema": "own-model-coverage-snapshot/v1",
+  "measuredAt": "2026-10-27T09:49:49.810Z",
+  "note": "counts and null rates only; no row content",
+  "tables": [
+    {
+      "table": "learning_decisions",
+      "rows": 25065,
+      "columns": [
+        {
+          "column": "decision_id",
+          "filled": 25065,
+          "nullRate": 0
+        },
+        {
+          "column": "decision_key",
+          "filled": 25065,
+          "nullRate": 0
+        },
+        {
+          "column": "audit_run_id",
+          "filled": 12420,
+          "nullRate": 0.5045
+        },
+        {
+          "column": "decision_type",
+          "filled": 25065,
+          "nullRate": 0
+        },
+        {
+          "column": "round",
+          "filled": 12420,
+          "nullRate": 0.5045
+        },
+        {
+          "column": "sequence",
+          "filled": 12420,
+          "nullRate": 0.5045
+        },
+        {
+          "column": "external_id",
+          "filled": 12645,
+          "nullRate": 0.4955
+        },
+        {
+          "column": "repo_id",
+          "filled": 23607,
+          "nullRate": 0.0582
+        },
+        {
+          "column": "context",
+          "filled": 25065,
+          "nullRate": 0
+        },
+        {
+          "column": "context_hash",
+          "filled": 25065,
+          "nullRate": 0
+        },
+        {
+          "column": "choice",
+          "filled": 25065,
+          "nullRate": 0
+        },
+        {
+          "column": "outcome",
+          "filled": 20561,
+          "nullRate": 0.1797
+        },
+        {
+          "column": "created_at",
+          "filled": 25065,
+          "nullRate": 0
+        },
+        {
+          "column": "outcome_at",
+          "filled": 16497,
+          "nullRate": 0.3418
+        },
+        {
+          "column": "tool_sha",
+          "filled": 12,
+          "nullRate": 0.9995
+        },
+        {
+          "column": "policy_version",
+          "filled": 12,
+          "nullRate": 0.9995
+        },
+        {
+          "column": "schema_version",
+          "filled": 12,
+          "nullRate": 0.9995
+        },
+        {
+          "column": "selection_rule",
+          "filled": 4,
+          "nullRate": 0.9998
+        },
+        {
+          "column": "selection_probability",
+          "filled": 4,
+          "nullRate": 0.9998
+        },
+        {
+          "column": "randomised",
+          "filled": 4,
+          "nullRate": 0.9998
+        },
+        {
+          "column": "input_snapshot",
+          "filled": 4,
+          "nullRate": 0.9998
+        },
+        {
+          "column": "options_not_chosen",
+          "filled": 4,
+          "nullRate": 0.9998
+        },
+        {
+          "column": "eligible_population",
+          "filled": 4,
+          "nullRate": 0.9998
+        }
+      ]
+    },
+    {
+      "table": "finding_adjudication_events",
+      "rows": 16339,
+      "columns": [
+        {
+          "column": "id",
+          "filled": 16339,
+          "nullRate": 0
+        },
+        {
+          "column": "user_id",
+          "filled": 0,
+          "nullRate": 1
+        },
+        {
+          "column": "finding_id",
+          "filled": 16339,
+          "nullRate": 0
+        },
+        {
+          "column": "adjudication_outcome",
+          "filled": 16339,
+          "nullRate": 0
+        },
+        {
+          "column": "remediation_state",
+          "filled": 16339,
+          "nullRate": 0
+        },
+        {
+          "column": "ruling",
+          "filled": 15886,
+          "nullRate": 0.0277
+        },
+        {
+          "column": "ruling_rationale",
+          "filled": 487,
+          "nullRate": 0.9702
+        },
+        {
+          "column": "round",
+          "filled": 16339,
+          "nullRate": 0
+        },
+        {
+          "column": "created_at",
+          "filled": 16339,
+          "nullRate": 0
+        },
+        {
+          "column": "adjudicator_kind",
+          "filled": 567,
+          "nullRate": 0.9653
+        },
+        {
+          "column": "adjudicator_model",
+          "filled": 314,
+          "nullRate": 0.9808
+        },
+        {
+          "column": "method",
+          "filled": 453,
+          "nullRate": 0.9723
+        },
+        {
+          "column": "self_family",
+          "filled": 314,
+          "nullRate": 0.9808
+        },
+        {
+          "column": "overrides_event_id",
+          "filled": 139,
+          "nullRate": 0.9915
+        },
+        {
+          "column": "campaign_arm_run_id",
+          "filled": 314,
+          "nullRate": 0.9808
+        },
+        {
+          "column": "evidence",
+          "filled": 314,
+          "nullRate": 0.9808
+        },
+        {
+          "column": "superseded_at",
+          "filled": 5,
+          "nullRate": 0.9997
+        },
+        {
+          "column": "event_origin",
+          "filled": 15592,
+          "nullRate": 0.0457
+        },
+        {
+          "column": "ingested_at",
+          "filled": 16339,
+          "nullRate": 0
+        },
+        {
+          "column": "ingested_at_inferred",
+          "filled": 16339,
+          "nullRate": 0
+        }
+      ]
+    },
+    {
+      "table": "fleet_events",
+      "rows": 8980,
+      "columns": [
+        {
+          "column": "id",
+          "filled": 8980,
+          "nullRate": 0
+        },
+        {
+          "column": "event_id",
+          "filled": 8980,
+          "nullRate": 0
+        },
+        {
+          "column": "repo_id",
+          "filled": 8980,
+          "nullRate": 0
+        },
+        {
+          "column": "repo_name",
+          "filled": 0,
+          "nullRate": 1
+        },
+        {
+          "column": "verb",
+          "filled": 8980,
+          "nullRate": 0
+        },
+        {
+          "column": "mode",
+          "filled": 6809,
+          "nullRate": 0.2418
+        },
+        {
+          "column": "outcome",
+          "filled": 8980,
+          "nullRate": 0
+        },
+        {
+          "column": "exit_code",
+          "filled": 8980,
+          "nullRate": 0
+        },
+        {
+          "column": "duration_ms",
+          "filled": 8980,
+          "nullRate": 0
+        },
+        {
+          "column": "session_id",
+          "filled": 2277,
+          "nullRate": 0.7464
+        },
+        {
+          "column": "reason_class",
+          "filled": 2028,
+          "nullRate": 0.7742
+        },
+        {
+          "column": "tool_sha",
+          "filled": 4675,
+          "nullRate": 0.4794
+        },
+        {
+          "column": "detail",
+          "filled": 8980,
+          "nullRate": 0
+        },
+        {
+          "column": "created_at",
+          "filled": 8980,
+          "nullRate": 0
+        },
+        {
+          "column": "recorded_at",
+          "filled": 8980,
+          "nullRate": 0
+        }
+      ]
+    }
+  ]
+}

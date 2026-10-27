@@ -14,7 +14,7 @@
  *
  * @module scripts/lib/store/training-eligibility
  */
-import { many, updateWhere } from '../db/query.mjs';
+import { many, query, withTx } from '../db/query.mjs';
 
 /**
  * PURE. Decide over already-loaded repo rows.
@@ -60,20 +60,34 @@ export async function checkReposEligibleForExport(repoIds) {
 }
 
 /**
- * Flip a repo's flag. The reason is REQUIRED: an unexplained eligibility is a
- * claim nobody can check later.
- * @param {{repoName: string, eligible: boolean, reason: string}} a
+ * Flip a repo's flag. The reason AND the approver are REQUIRED: an unexplained or
+ * unattributed eligibility is a claim nobody can check later. The change is also
+ * appended to `training_eligibility_events` in the SAME transaction, so the consent
+ * history is never overwritten (memo 6.8 row 12).
+ * @param {{repoName: string, eligible: boolean, reason: string, approvedBy: string}} a
  */
-export async function setTrainingEligibility({ repoName, eligible, reason }) {
+export async function setTrainingEligibility({ repoName, eligible, reason, approvedBy }) {
   const why = String(reason ?? '').trim();
+  const who = String(approvedBy ?? '').trim();
   if (!repoName) return { ok: false, reason: 'repo-required' };
   if (typeof eligible !== 'boolean') return { ok: false, reason: 'eligible-must-be-boolean' };
   if (!why) return { ok: false, reason: 'reason-required' };
+  if (!who) return { ok: false, reason: 'approved-by-required' };
   const found = await many('SELECT id FROM audit_repos WHERE name = $1', [repoName]);
   if (found.length !== 1) return { ok: false, reason: found.length === 0 ? 'repo-not-found' : 'repo-ambiguous' };
-  const res = await updateWhere('audit_repos',
-    { training_eligible: eligible, training_eligibility_reason: why }, { id: found[0].id });
-  return res.rowCount === 1 ? { ok: true, repoId: found[0].id } : { ok: false, reason: 'write-failed' };
+  const repoId = found[0].id;
+  const wrote = await withTx(async () => {
+    const res = await query(
+      `UPDATE audit_repos SET training_eligible = $2, training_eligibility_reason = $3,
+              training_eligibility_approved_by = $4, training_eligibility_set_at = now()
+        WHERE id = $1`, [repoId, eligible, why, who]);
+    if (res.rowCount !== 1) return false;
+    await query(
+      `INSERT INTO training_eligibility_events (repo_id, eligible, reason, approved_by, set_at)
+         VALUES ($1, $2, $3, $4, now())`, [repoId, eligible, why, who]);
+    return true;
+  });
+  return wrote ? { ok: true, repoId } : { ok: false, reason: 'write-failed' };
 }
 
 /** All repos with their stored decision (NULL = undecided = refused). */

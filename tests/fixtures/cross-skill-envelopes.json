@@ -2093,6 +2093,7 @@
           "audit.convergenceState",
           "audit.diffComplexity",
           "audit.runDiff",
+          "audit.llmCalls",
           "learning.outcome",
           "audit.passStats",
           "audit.suppressionEvents",

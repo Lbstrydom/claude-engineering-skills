@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "gate": "own-model:coverage:gate",
+  "guards": ".own-model-coverage.json — the tracked own-model capture columns and the scan boundary that makes every newly added nullable column answer for itself",
+  "gates": [
+    {
+      "id": "own-model-coverage-gate-rejects-a-config-with-no-scan-boundary",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "A capture column with no coverage entry is a column nobody will notice stops filling.",
+      "implementation": "scripts/own-model-coverage.mjs",
+      "tests": [
+        "tests/own-model-pr3.test.mjs",
+        "tests/gate-poison-pills.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/own-model-coverage.mjs",
+          "check",
+          "--static"
+        ],
+        "expectExit": 1,
+        "expectStderr": "coverageFromMigration",
+        "why": "A config whose scan boundary is not a migration timestamp: the shape that used to default to a date past every migration, so the gate scanned nothing and reported clean. A gate that reads green over zero migrations is the vacuous pass this one exists to prevent, so the pill removes the one field that decides how much it looks at.",
+        "needsGit": true,
+        "overlay": {
+          ".own-model-coverage.json": "tests/fixtures/poison/own-model-coverage-no-boundary.json"
+        }
+      }
+    }
+  ]
+}
