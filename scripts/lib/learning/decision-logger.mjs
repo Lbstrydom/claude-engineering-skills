@@ -16,6 +16,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { atomicWriteFileSync } from '../file-io.mjs';
+import { stampDecision } from '../telemetry/provenance.mjs';
+export { allPassesPropensity } from '../telemetry/provenance.mjs';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -352,6 +354,7 @@ export function recordDecision(input) {
     choice: snapshot(input.choice),
     outcome: snapshot(input.outcome ?? null),
     enqueuedAt: new Date().toISOString(),
+    ...stampDecision(input),
   };
 
   const queue = getQueue(input.decisionType);

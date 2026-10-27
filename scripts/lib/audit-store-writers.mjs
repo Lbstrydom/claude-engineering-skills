@@ -58,6 +58,7 @@ import {
 } from './store/learning-decisions.mjs';
 import { upsertDebtEntries } from './store/debt.mjs';
 import { recordRunDiff } from './store/run-diffs.mjs';
+import { recordLlmCalls } from './store/llm-calls.mjs';
 
 /**
  * Turn a store receipt into a `durableWrite` result.
@@ -211,6 +212,16 @@ export function registerAuditStoreWriters() {
     schemaVersion: 1,
     rowKey: (row) => `${row.run_id}`,
     replay: (payload) => receipt(recordRunDiff(payload.runId, payload)),
+  });
+
+  // ── audit.llmCalls ────────────────────────────────────────────────────────
+  // Per-LLM-call provenance (memo 6.8 row 5). Keyed per PRODUCING PROCESS; replay-safe
+  // because call rows are `ON CONFLICT (call_id) DO NOTHING` (deterministic UUIDv5) and the
+  // summary row is keyed (run, producer, process nonce).
+  registerWriter('audit.llmCalls', {
+    schemaVersion: 1,
+    rowKey: (row) => `${row.run_id}:${row.producer}:${row.nonce}`,
+    replay: (payload) => receipt(recordLlmCalls(payload)),
   });
 
   // ── learning.outcome ──────────────────────────────────────────────────────

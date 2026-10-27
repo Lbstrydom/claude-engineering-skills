@@ -84,6 +84,7 @@ export const ARCHIVE_LANE_CHECK_CLASSIFICATION = Object.freeze({
   'on-conflict:check': S('store write-path lint'),
   'arch:coverage-gate': E('needs the observed-graph envelope, DB-derived at main HEAD, not the commit'),
   'db:check-rls:gate': S('migration RLS check'),
+  'own-model:coverage:gate': S('capture-column coverage config vs schema fixture'),
   'cli:flags:gate': S('drift-only ratchet'),
   'emit:exit:gate': S('drift-only ratchet'),
   'stdout:flush:gate': S('drift-only ratchet'),

@@ -20,6 +20,7 @@ import { classifyLedgerEntry, batchWriteLedger } from '../ledger.mjs';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { durableWrite } from '../durable-write.mjs';
 import { ownModelWorkItemPatch } from '../ledger/work-item.mjs';
+import { toolSha, policyVersion } from '../telemetry/provenance.mjs';
 import { writeLearningState, tallyWriteOutcomes, AUDIT_DIR, SESSION_MANIFEST_PREFIX, SESSION_LEDGER_FILE } from '../robustness.mjs';
 import { classifyGateEvidenceGap, formatGateEvidenceGap } from './gate-evidence.mjs';
 import { setupPostgresCommand } from '../db/schema-realization.mjs';
@@ -330,6 +331,7 @@ export async function runPersistence(data, assembled, mergedResult, persistenceS
           audited_sha: ctx.auditedSha ?? null,
           audited_tree: ctx.auditedTree ?? null,
           ...ownModelWorkItemPatch(process.env.OWN_MODEL_WORK_ITEM_ID),
+          tool_sha: toolSha(), policy_version: policyVersion(),
           ...(convergedNow ? { round_converged_after: round || 1 } : {}),
         },
       })]);
@@ -352,6 +354,19 @@ export async function runPersistence(data, assembled, mergedResult, persistenceS
       // A throw before the seam (artifact preparation) is a lost write, not silence.
       tallyWriteOutcomes(writeOutcomes, [{ outcome: 'lost', writerId: 'audit.runDiff', error: e.message }]);
       process.stderr.write(`  [diff-capture] run diff record failed: ${e.message}\n`);
+    }
+    // Per-LLM-call provenance (memo 6.8 row 5): the process's buffered calls, written once.
+    // A buffer that overflowed persisted a SUBSET, so that is a lost write, not a quiet success.
+    try {
+      const { drain } = await import('../telemetry/llm-call-log.mjs');
+      const log = drain();
+      if (log && (log.rows.length || log.recorded)) {
+        tallyWriteOutcomes(writeOutcomes, [await durableWrite('audit.llmCalls', { ...log, run_id: cloudRunId })]);
+        if (log.dropped > 0) tallyWriteOutcomes(writeOutcomes, [{ outcome: 'lost', writerId: 'audit.llmCalls', error: `llm call log dropped ${log.dropped} of ${log.recorded} calls (buffer cap)` }]);
+      }
+    } catch (e) {
+      tallyWriteOutcomes(writeOutcomes, [{ outcome: 'lost', writerId: 'audit.llmCalls', error: e.message }]);
+      process.stderr.write(`  [llm-calls] record failed: ${e.message}\n`);
     }
   }
 

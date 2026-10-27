@@ -13,6 +13,7 @@
 import { many, one, insertReturning, upsert, updateWhere } from '../db/query.mjs';
 import { deferFinding as rpcDeferFinding, markFindingNeedsTriage as rpcMarkFindingNeedsTriage } from '../db/rpc.mjs';
 import { isCloudEnabled } from './repo.mjs';
+import { strictColumnExists } from './column-probes.mjs';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -67,6 +68,14 @@ function notAttempted(reason) {
 
 // ── learning_decisions ─────────────────────────────────────────────────────
 
+let _warnedProvUnmigrated = false;
+/** Loud, once: a store one migration behind records decisions WITHOUT their stamps, and that loss is permanent. */
+function warnProvenanceUnmigrated() {
+  if (_warnedProvUnmigrated) return;
+  _warnedProvUnmigrated = true;
+  process.stderr.write('  [learning] store lacks 20261028120000 — decisions are recorded WITHOUT provenance stamps (permanently); run setup-postgres.mjs --migrate on this store\n');
+}
+
 /**
  * Insert one learning_decisions row. Idempotent via decision_key UNIQUE
  * (`ON CONFLICT DO NOTHING`). Caller MUST derive decision_key first via
@@ -77,7 +86,32 @@ function notAttempted(reason) {
  */
 export async function insertLearningDecision(entry) {
   if (!await isCloudEnabled()) return { ok: true };
+  // Provenance columns (20261028120000): written only on a store that has them, so a consumer one migration
+  // behind keeps recording decisions (columnless, loudly) instead of failing every row. An unresolved probe
+  // throws, which the decision logger's retry/outbox path handles; it never silently drops the stamps.
+  const hasProv = await strictColumnExists('learning_decisions', 'tool_sha', many, isCloudEnabled);
+  if (!hasProv) warnProvenanceUnmigrated();
   // @on-conflict-ok: decision_key is GLOBALLY unique by construction — buildDecisionKey emits either `<audit_run_id uuid>:<type>:r<n>:s<n>` or `<type>:<external_id>`, so the scope is already carried inside the key text. Adding repo_id would WEAKEN this: UNIQUE(repo_id, decision_key) starts permitting the same decision_key under two repos, and repo_id is nullable — reintroducing the NULL-distinct bug WS-C exists to close. Measured 2026-07-19: 1876 rows, 0 NULL repo_id, 2 distinct repos, no key collisions (WS-C2).
+  if (!hasProv) {
+    return safeWrite(() => upsert(
+      'learning_decisions',
+      [{
+        decision_key:  entry.decisionKey,
+        audit_run_id:  entry.auditRunId  ?? null,
+        decision_type: entry.decisionType,
+        round:         entry.round       ?? null,
+        sequence:      entry.sequence    ?? null,
+        external_id:   entry.externalId  ?? null,
+        repo_id:       entry.repoId      ?? null,
+        context:       entry.context,
+        context_hash:  entry.contextHash,
+        choice:        entry.choice,
+        outcome:       entry.outcome     ?? null,
+      }],
+      { onConflict: 'decision_key', update: 'ignore' }   // matches ignoreDuplicates: true
+    ));
+  }
+  // @on-conflict-ok: same decision_key rationale as the columnless branch above.
   return safeWrite(() => upsert(
     'learning_decisions',
     [{
@@ -92,6 +126,15 @@ export async function insertLearningDecision(entry) {
       context_hash:  entry.contextHash,
       choice:        entry.choice,
       outcome:       entry.outcome     ?? null,
+      tool_sha:              entry.toolSha              ?? null,
+      policy_version:        entry.policyVersion        ?? null,
+      schema_version:        entry.schemaVersion        ?? null,
+      selection_rule:        entry.selectionRule        ?? null,
+      selection_probability: entry.selectionProbability ?? null,
+      randomised:            entry.randomised           ?? null,
+      input_snapshot:        entry.inputSnapshot        ?? null,
+      options_not_chosen:    entry.optionsNotChosen     ?? null,
+      eligible_population:   entry.eligiblePopulation   ?? null,
     }],
     { onConflict: 'decision_key', update: 'ignore' }   // matches ignoreDuplicates: true
   ));
@@ -141,6 +184,12 @@ export async function recordConvergenceState(runId, state) {
   // `auditedTree` would disagree with the row for the same runId).
   if (state.audited_sha  !== undefined) patch.audited_sha  = state.audited_sha;
   if (state.audited_tree !== undefined) patch.audited_tree = state.audited_tree;
+  // Own-model PR 3 version stamps (bounded shapes only). An un-migrated store would reject the
+  // columns, so they are written only where the column exists.
+  const stamps = {};
+  if (typeof state.tool_sha === 'string' && /^[0-9a-f]{7,40}$/.test(state.tool_sha)) stamps.tool_sha = state.tool_sha;
+  if (typeof state.policy_version === 'string' && /^[0-9a-f]{16}$/.test(state.policy_version)) stamps.policy_version = state.policy_version;
+  if (Object.keys(stamps).length && await strictColumnExists('audit_runs', 'tool_sha', many, isCloudEnabled)) Object.assign(patch, stamps);
   // Own-model ledger join key (docs/plans/own-model-decision-ledger.md decision 11); only a well-formed UUIDv7 is written.
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(state.work_item_id ?? '')) patch.work_item_id = state.work_item_id;
   // Nothing to write is NOT "applied" — but it is also not a failure, and it

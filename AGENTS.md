@@ -105,6 +105,13 @@
 > re-baseline — because a baseline pinned at the historical high-water mark lets
 > a file grow back unchallenged. [Measurement](docs/reference/ratchet-gates.md).
 >
+> **A capture column with no coverage entry is a column nobody will notice stops filling.**
+> `.own-model-coverage.json` tracks the own-model telemetry columns with hand-set floors;
+> `npm run own-model:coverage:gate` (offline, in `check`) fails when an entry names a column
+> the schema fixture lacks or a nullable column a covered migration added has no entry or
+> reasoned exemption, and `own-model:coverage` is the live drift check (zero eligible rows is
+> `unmeasured`, never green). [Plan](docs/plans/own-model-telemetry-pr3.md)
+>
 > **Skill markdown may not grow.** `npm run skills:size:gate` ratchets every
 > `skills/**/*.md` (and the canonical shared references, never the generated copies)
 > in characters against `.skill-size-baseline.json`: a file over 12,000 chars (≈3K

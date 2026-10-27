@@ -799,6 +799,14 @@
     "cadence:doctor:json": {
       "description": "cadence:doctor, machine-readable (one envelope on stdout).",
       "category": "diagnostic"
+    },
+    "own-model:coverage:gate": {
+      "description": "Offline null-rate coverage gate: every tracked own-model capture column exists in the schema fixture and every new nullable column has an entry or a reasoned exemption.",
+      "category": "diagnostic"
+    },
+    "own-model:coverage": {
+      "description": "Live null-rate coverage check of the own-model capture columns against the store (exit 0 ok, 1 drift or below floor, 3 unmeasured).",
+      "category": "diagnostic"
     }
   },
   "entryPoints": {
@@ -877,6 +885,10 @@
     "scripts/write-plan-outcomes.mjs": {
       "description": "Record dismissed plan-audit findings into the local PlanFpTracker.",
       "category": "learning"
+    },
+    "scripts/transcript-archive.mjs": {
+      "description": "Archive, verify or purge redacted coordinator transcripts in a local content-addressed store; default-deny by repo training_eligible flag.",
+      "category": "other"
     }
   }
 }

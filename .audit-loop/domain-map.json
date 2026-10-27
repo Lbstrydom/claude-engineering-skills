@@ -22,6 +22,11 @@
       "domain": "claude-hooks"
     },
     {
+      "pattern": "scripts/lib/telemetry/**",
+      "domain": "shared-lib",
+      "_why": "Own-model telemetry primitives (provenance stamps, the per-call log, the coverage core, the transcript archive core) are pure or filesystem-only and are called from the audit spine, the decision logger and the store; none imports the store writer it feeds, except final-review-call.mjs which reaches the registered writer through durable-write."
+    },
+    {
       "pattern": "scripts/lib/brainstorm/**",
       "domain": "brainstorm"
     },
