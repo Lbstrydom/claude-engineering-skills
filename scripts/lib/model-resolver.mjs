@@ -68,7 +68,8 @@ export const STATIC_POOL = Object.freeze({
     // GPT-6.1 (added 2026-09-29): sol only — no 6.1 astra/luna on the pricing
     // page. The live catalog already resolved `latest-gpt` to it; this keeps
     // offline resolution in step (models:freshness HIGH sentinel-drift).
-    'gpt-6.1-sol',
+    // gpt-6.1-terra (2026-10-28): half sol's price, the auditor (experiment-8).
+    'gpt-6.1-terra', 'gpt-6.1-sol',
     'gpt-6-sol', 'gpt-6-astra', 'gpt-6-luna',
     'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-5.6-luna',
   ]),
@@ -576,11 +577,12 @@ export function parseOpenAIModel(id) {
   const variant = m[4] || null;
   const firstSeg = variant ? variant.split('-')[0] : null;
   const major = Number.parseInt(m[2], 10);
+  const minor = m[3] ? Number.parseInt(m[3], 10) : 0;
   return {
     provider: 'openai',
     family: m[1],
     major,
-    minor: m[3] ? Number.parseInt(m[3], 10) : 0,
+    minor,
     variant,
     isLite: /^(mini|nano|luna)$/.test(firstSeg || ''),
     // Premium/flagship SKU at the same version as the plain/balanced SKU.
@@ -593,11 +595,13 @@ export function parseOpenAIModel(id) {
     //   gpt-5.5  pro (premium)   / plain
     //   gpt-5.6  sol (premium)   / terra (balanced) / luna (lite)
     //   gpt-6    astra (premium) / sol (balanced)   / luna (lite)
-    // so `sol` is premium below major 6 and balanced from 6 on. Reading it
-    // as premium everywhere would leave GPT-6 with no balanced SKU at all;
-    // reading astra as plain (the state until 2026-09-23) is what let the
-    // live catalog upgrade `latest-gpt` to the $10/$50 astra by list order.
-    isPremium: firstSeg === 'pro' || firstSeg === 'astra' || (firstSeg === 'sol' && major < 6),
+    //   gpt-6.1  sol (2x terra)  / terra (balanced)
+    // so `sol` is premium below 6, balanced at 6.0 and premium at 6.1
+    // (else the 6.1 sol/terra tie fell to list order: live → terra, offline
+    // → sol). Reading astra as plain is what let the live catalog upgrade
+    // `latest-gpt` to the $10/$50 astra by list order (until 2026-09-23).
+    isPremium: firstSeg === 'pro' || firstSeg === 'astra'
+      || (firstSeg === 'sol' && (major < 6 || (major === 6 && minor === 1))),
     isPreview: /(^|-)preview(-|$)/.test(variant || ''),
     original: id,
   };

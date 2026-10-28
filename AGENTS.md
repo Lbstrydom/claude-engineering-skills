@@ -828,8 +828,8 @@ worth switching to?" for the **auditor** (currently GPT) or **adjudicator**
 - **Egress-gate prose/diff false positives: fixed 2026-07-12** — historical recall
   is the contract; don't re-add trailing-punctuation stripping (tried, reverted:
   it re-blocked valid entries).
-- **Verdicts**: GPT auditor `gpt-6.1-sol` (10-01, cost only,
-  [exp-7](docs/research/experiment-7-gpt-sol-auditor-swap.md)); GLM-5.2 → keep GPT (07-13).
+- **Verdicts**: GPT auditor `gpt-6.1-terra` (10-28, half the cost, quality matched on 11 cases,
+  [exp-8](docs/research/experiment-8-gpt-terra-auditor-swap.md)); GLM-5.2 → keep GPT (07-13).
 - **A model swap is SYNCHRONOUS, never a background window**: run it when the model
   ships, adjudicate in the same sitting, verdict → `docs/research/`. Passive
   collection killed arm-eval and produced five false "window met" reads. Only

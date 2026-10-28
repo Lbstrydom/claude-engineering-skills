@@ -204,9 +204,10 @@ static, offline list of model ids the public-profile `latest-gpt`/`latest-opus`
 sentinels already resolve from (`model-resolver.mjs`'s `STATIC_POOL`) — a
 narrowing hint only, since an Azure deployment NAME is tenant-chosen and need
 not match a catalog model id. The ladder is tier-aware and newest-first:
-`--target gpt` probes only the balanced SKUs (`gpt-6.1-sol`, then `gpt-6-sol`,
-then `gpt-5.6-terra`), never guessing a premium (`gpt-6-astra`) or lite
-(`gpt-6-luna`) deployment for the auditor slot; `--target claude` probes Opus
+`--target gpt` probes only the balanced SKUs (`gpt-6.1-terra`, then `gpt-6-sol`,
+then `gpt-5.6-terra`), never guessing a premium (`gpt-6-astra`, and since
+2026-10-28 `gpt-6.1-sol`) or lite (`gpt-6-luna`) deployment for the auditor slot
+(a tenant that serves only `gpt-6.1-sol` names it with `--candidate gpt-6.1-sol`); `--target claude` probes Opus
 newest-first (`claude-opus-5-5` first), then Sonnet, then Haiku. Pass
 `--candidate <your-deployment-name>` for a custom alias the pool can't guess,
 or to select a premium/lite deployment deliberately. Every other invariant from §3 carries over

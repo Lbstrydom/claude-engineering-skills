@@ -44,6 +44,14 @@ export const modelPricing = Object.freeze({
       { maxInputTokens: Infinity, input: 4.00, output: 15.00, cachedInput: 0.20 },
     ],
   },
+  // gpt-6.1-terra (read 2026-10-28): half of gpt-6.1-sol on every rate. The
+  // GPT auditor since experiment-8.
+  'gpt-6.1-terra': {
+    tiers: [
+      { maxInputTokens: 272_000, input: 1.00, output: 5.00, cachedInput: 0.05 },
+      { maxInputTokens: Infinity, input: 2.00, output: 7.50, cachedInput: 0.10 },
+    ],
+  },
   // OpenAI — GPT-6 (astra = premium, sol = balanced, luna = lite)
   'gpt-6-astra': {
     tiers: [
