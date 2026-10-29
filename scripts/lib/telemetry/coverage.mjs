@@ -21,7 +21,7 @@
  * @module scripts/lib/telemetry/coverage
  */
 
-import { MECHANICAL_WAVES } from '../audit-shadow.mjs';
+import { MECHANICAL_WAVES } from '../mechanical-waves.mjs';
 
 /**
  * SQL for "this row was raised by a pass that has no model", GENERATED from MECHANICAL_WAVES -- never a hand list, so a

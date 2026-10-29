@@ -22,7 +22,6 @@ import { generateTopicId } from './ledger.mjs';
 import { rewardWeights } from './config.mjs';
 import { withFileLock } from './file-lock.mjs';
 import { atomicWriteFileSync } from './file-io.mjs';
-import { recordWriteReceipt } from './store/write-receipts.mjs';
 
 const OUTCOMES_PATH = '.audit/outcomes.jsonl';
 const FINALIZED_MARKER = '.audit/.outcomes-finalized';
@@ -214,7 +213,7 @@ async function writeCloudOutcomes(store, runId, enriched, passCounts, round) {
         receipt.written++;
       }
     }
-    await recordWriteReceipt(runId, 'outcome_sync', receipt);
+    if (typeof store.recordWriteReceipt === 'function') await store.recordWriteReceipt(runId, 'outcome_sync', receipt);
   }
 
   if (typeof store.updatePassStatsPostDeliberation === 'function') {

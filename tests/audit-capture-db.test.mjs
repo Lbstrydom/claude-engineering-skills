@@ -308,6 +308,10 @@ describe('audit telemetry capture (DB integration)', { skip }, () => {
       assert.equal(second.outcome, 'written');
       assert.equal(second.root, a);
       assert.deepEqual(await eqRow(c), { canonical_finding_id: a, created_by: 'semantic-suppress' });
+      // Flat table: re-pointing B at a new root re-points everything that used B.
+      const [d] = [`p4chaind-${tag}`]; cleanup.push(d); await seed(d);
+      await recordEquivalence({ duplicateFingerprint: a, canonicalFingerprint: d, createdBy: 'concern-v1' });
+      assert.equal((await eqRow(b)).canonical_finding_id, d, 'B pointed at A, and A now points at D');
     });
 
     test('P4: a missing endpoint, a cross-repo endpoint, a fingerprint in two repos and a cycle are each skipped and named', async () => {

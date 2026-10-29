@@ -87,24 +87,29 @@ export function redactAndCapText(value) {
  * @returns {Promise<string|null>}
  */
 export async function resolveSourceRun(reviewingRunId, round) {
-  const rv = await one('SELECT repo_id, audit_session_id, audit_round FROM audit_runs WHERE id = $1', [reviewingRunId]);
-  if (!rv?.audit_session_id) return null;
+  const rv = await one('SELECT repo_id, audit_session_id, audit_round, capture_epoch FROM audit_runs WHERE id = $1', [reviewingRunId]);
+  // A run with no repo cannot be scoped to one, and a run with no epoch has no meaning to match on: both resolve nothing.
+  if (!rv?.audit_session_id || !rv.repo_id || !rv.capture_epoch) return null;
   const hit = await one(
     `SELECT id FROM audit_runs
-      WHERE repo_id IS NOT DISTINCT FROM $1 AND audit_session_id = $2 AND audit_round = $3
+      WHERE repo_id = $1 AND audit_session_id = $2 AND audit_round = $3 AND capture_epoch = $4
       ORDER BY created_at DESC, id DESC LIMIT 1`,
-    [rv.repo_id, rv.audit_session_id, round],
+    [rv.repo_id, rv.audit_session_id, round, rv.capture_epoch],
   );
   if (hit?.id) return hit.id;
   return rv.audit_round == null ? reviewingRunId : null;
 }
 
 /**
- * Does `fingerprint` have a finding row in `runId`? A run id alone proves nothing about the finding a reversal names.
+ * Does `fingerprint` have a finding row in `runId` raised in `round`? A run id alone proves nothing about the finding a
+ * reversal names, and a unified run holds several rounds: the round is the same key the event writer resolves the row by.
  * @returns {Promise<boolean>}
  */
-export async function hasFinding(runId, fingerprint) {
-  return Boolean(await one('SELECT 1 AS present FROM audit_findings WHERE run_id = $1 AND finding_fingerprint = $2 LIMIT 1', [runId, fingerprint]));
+export async function hasFinding(runId, fingerprint, round) {
+  return Boolean(await one(
+    'SELECT 1 AS present FROM audit_findings WHERE run_id = $1 AND finding_fingerprint = $2 AND round_raised = $3 LIMIT 1',
+    [runId, fingerprint, round],
+  ));
 }
 
 /**

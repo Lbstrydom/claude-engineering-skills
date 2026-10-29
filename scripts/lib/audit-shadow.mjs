@@ -93,7 +93,8 @@ function dedupByHash(findings) {
  * as an inline filter with no name to look for. A future wave author now has
  * one obvious place to declare their wave's shape.
  */
-export const MECHANICAL_WAVES = Object.freeze(['quickfix', 'duplication', 'adjacency']);
+export { MECHANICAL_WAVES } from './mechanical-waves.mjs'; // declared there (shared-lib) so telemetry/coverage.mjs can read it too
+import { MECHANICAL_WAVES } from './mechanical-waves.mjs';
 
 /** The generation passes an arm runs — DERIVED from PASS_PROMPTS (minus the
  * mechanical waves) so the shadow's decomposition can't drift from the baseline

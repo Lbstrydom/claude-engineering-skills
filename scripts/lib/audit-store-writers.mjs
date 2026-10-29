@@ -192,11 +192,7 @@ export function registerAuditStoreWriters() {
   registerWriter('audit.equivalence', {
     schemaVersion: 1,
     rowKey: (row) => `${row.duplicateFingerprint}`,
-    replay: async (payload) => {
-      const r = await recordEquivalence(payload);
-      if (r.outcome === 'written') return { applied: true, rows: 1 };
-      return { applied: false, rows: 0, reason: r.outcome === 'skipped:unmigrated' ? 'store-not-migrated' : r.outcome.replace('skipped:cloud-off', 'cloud-off'), declined: true };
-    },
+    replay: (payload) => receipt(recordEquivalence(payload)),
   });
 
   // ── audit.runComplete ─────────────────────────────────────────────────────

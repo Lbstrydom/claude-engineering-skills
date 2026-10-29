@@ -33,7 +33,7 @@ export function tallyEquivalenceOutcome(tally, out) {
   else if (out.outcome === 'spilled') tally.spilled++;
   else if (out.outcome === 'lost') tally.lost++;
   else if (out.outcome === 'skipped') {
-    const key = typeof out.error === 'string' && Object.hasOwn(tally, out.error) ? out.error : 'skipped:other';
+    const key = typeof out.error === 'string' && out.error.startsWith('skipped:') && Object.hasOwn(tally, out.error) ? out.error : 'skipped:other';
     tally[key]++;
   } else tally.lost++; // an unknown outcome is not a success
   return tally;

@@ -169,12 +169,16 @@ export async function persistReviewerEvents({ runId, reviewRound, primaryModel, 
     const sourceOf = new Map();
     for (const r of plan.resolvable) {
       const sourceRunId = runByRound.get(r.entry.resolvedRound);
-      if (sourceRunId && await deps.hasFinding(sourceRunId, r.fingerprint)) sourceOf.set(r.entry, sourceRunId);
+      if (sourceRunId && await deps.hasFinding(sourceRunId, r.fingerprint, r.entry.resolvedRound)) sourceOf.set(r.entry, sourceRunId);
     }
     const presentedResolved = sourceOf.size;
 
     // A re-run of THIS review replaces its earlier observations wholesale: a reversal the reviewer no longer makes must
     // not survive. Other reviews of the same findings are untouched (the delete is keyed on this reviewing run).
+    // The earlier receipt describes events that are about to be removed: mark it incomplete FIRST, so a failure between the
+    // delete and the final receipt can never leave a stale "complete" beside a half-rewritten event set.
+    const invalidated = await deps.recordWriteReceipt(runId, 'reviewer', { status: 'incomplete', reason: 'rewrite-in-progress' });
+    if (invalidated?.applied !== true) return { skipped: 'receipt-not-invalidated' }; // never delete beneath a receipt still reading complete
     await deps.clearReviewerEvents(runId);
 
     let reversalsWritten = 0;

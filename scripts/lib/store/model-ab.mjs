@@ -426,17 +426,17 @@ async function reposOfFingerprint(fingerprint) {
 export async function recordEquivalence({ duplicateFingerprint, canonicalFingerprint, runId = null, createdBy }) {
   if (!AUTOMATIC_EQUIVALENCE_CREATORS.includes(createdBy)) throw new Error(`recordEquivalence: createdBy must be one of ${AUTOMATIC_EQUIVALENCE_CREATORS.join('|')}`);
   if (!duplicateFingerprint || !canonicalFingerprint) throw new Error('recordEquivalence: both fingerprints are required');
-  if (!await isCloudEnabled()) return { outcome: 'skipped:cloud-off' };
-  if (!await captureV1Present()) return { outcome: 'skipped:unmigrated' };
-  if (duplicateFingerprint === canonicalFingerprint) return { outcome: 'skipped:cycle' };
+  if (!await isCloudEnabled()) return { outcome: 'skipped:cloud-off', applied: false, rows: 0, reason: 'cloud-off' };
+  if (!await captureV1Present()) return { outcome: 'skipped:unmigrated', applied: false, rows: 0, reason: 'store-not-migrated' };
+  if (duplicateFingerprint === canonicalFingerprint) return { outcome: 'skipped:cycle', applied: false, rows: 0, reason: 'skipped:cycle' };
   return withTx(async () => {
     await query(EQUIVALENCE_LOCK_SQL);
     const [dupRepos, canonRepos] = await Promise.all([reposOfFingerprint(duplicateFingerprint), reposOfFingerprint(canonicalFingerprint)]);
-    if (dupRepos.length === 0 || canonRepos.length === 0) return { outcome: 'skipped:endpoint' };
-    if (dupRepos.length > 1 || canonRepos.length > 1) return { outcome: 'skipped:ambiguous-repo' };
-    if (dupRepos[0] !== canonRepos[0]) return { outcome: 'skipped:endpoint' };
+    if (dupRepos.length === 0 || canonRepos.length === 0) return { outcome: 'skipped:endpoint', applied: false, rows: 0, reason: 'skipped:endpoint' };
+    if (dupRepos.length > 1 || canonRepos.length > 1) return { outcome: 'skipped:ambiguous-repo', applied: false, rows: 0, reason: 'skipped:ambiguous-repo' };
+    if (dupRepos[0] !== canonRepos[0]) return { outcome: 'skipped:endpoint', applied: false, rows: 0, reason: 'skipped:endpoint' };
     const root = await resolveCanonicalRoot(canonicalFingerprint);
-    if (root === duplicateFingerprint) return { outcome: 'skipped:cycle' };
+    if (root === duplicateFingerprint) return { outcome: 'skipped:cycle', applied: false, rows: 0, reason: 'skipped:cycle' };
     const res = await query(
       `INSERT INTO finding_equivalence (duplicate_finding_id, canonical_finding_id, run_id, created_by)
        VALUES ($1, $2, $3, $4)
@@ -445,7 +445,10 @@ export async function recordEquivalence({ duplicateFingerprint, canonicalFingerp
        WHERE finding_equivalence.created_by = ANY($5::text[])`,
       [duplicateFingerprint, root, runId, createdBy, AUTOMATIC_EQUIVALENCE_CREATORS],
     );
-    return (res?.rowCount ?? 0) > 0 ? { outcome: 'written', root } : { outcome: 'skipped:manual' };
+    if ((res?.rowCount ?? 0) === 0) return { outcome: 'skipped:manual', applied: false, rows: 0, reason: 'skipped:manual' };
+    // Keep the table flat: anything that pointed at this duplicate now points at its root, so readers need one hop, not a walk.
+    await query('UPDATE finding_equivalence SET canonical_finding_id = $2 WHERE canonical_finding_id = $1', [duplicateFingerprint, root]);
+    return { outcome: 'written', applied: true, rows: 1, root };
   });
 }
 

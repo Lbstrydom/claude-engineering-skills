@@ -56,10 +56,10 @@ async function accumulateReceipt(runId, key, receipt) {
     if (!row) return { applied: false, reason: 'run-row-absent' };
     const merged = { ...(row.prior ?? {}) };
     for (const [k, v] of Object.entries(receipt)) merged[k] = typeof v === 'number' ? (Number(merged[k]) || 0) + v : v;
-    await query(
+    const res = await query(
       `UPDATE audit_runs SET write_outcomes = COALESCE(write_outcomes, '{}'::jsonb) || jsonb_build_object($2::text, $3::jsonb) WHERE id = $1`,
       [runId, key, JSON.stringify(merged)],
     );
-    return { applied: true };
+    return (res?.rowCount ?? 0) > 0 ? { applied: true } : { applied: false, reason: 'run-row-absent' };
   });
 }
