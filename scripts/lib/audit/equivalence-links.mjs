@@ -18,6 +18,7 @@ export function emptyEquivalenceTally() {
   return {
     expected: 0, written: 0, spilled: 0, lost: 0,
     'skipped:endpoint': 0, 'skipped:ambiguous-repo': 0, 'skipped:cycle': 0, 'skipped:manual': 0, 'skipped:other': 0,
+    'skipped:no-fingerprint': 0,
   };
 }
 
@@ -43,11 +44,15 @@ export function tallyEquivalenceOutcome(tally, out) {
  * @param {{duplicateFingerprint: string, canonicalFingerprint: string}[]} args.links
  * @param {string|null} args.runId - the run whose receipt carries the tally
  * @param {'semantic-suppress'|'concern-v1'} args.createdBy
+ * @param {number} [args.unfingerprinted] - links the caller could not name by fingerprint; counted as skipped
  * @param {object} args.deps - `{durableWrite, recordWriteReceipt}` (injected; this module imports no store)
  * @returns {Promise<ReturnType<typeof emptyEquivalenceTally>>}
  */
-export async function recordEquivalenceLinks({ links, runId, createdBy, deps }) {
+export async function recordEquivalenceLinks({ links, runId, createdBy, deps, unfingerprinted = 0 }) {
   const tally = emptyEquivalenceTally();
+  // Links the caller could not even name by fingerprint (a debt-entry target, an older ledger entry): counted, never dropped.
+  tally.expected += unfingerprinted;
+  tally['skipped:no-fingerprint'] += unfingerprinted;
   for (const link of links) {
     // A write that throws is still a link that did not land: count it, never let it hide the rest.
     let out;
@@ -60,6 +65,10 @@ export async function recordEquivalenceLinks({ links, runId, createdBy, deps }) 
     }
     tallyEquivalenceOutcome(tally, out);
   }
-  if (runId && tally.expected > 0) await deps.recordWriteReceipt(runId, 'equivalence', tally);
+  if (runId && tally.expected > 0) {
+    // ACCUMULATED: several batches report on one run, and a later clean one must not erase an earlier batch's losses.
+    const stored = await deps.recordWriteReceipt(runId, 'equivalence', tally, { accumulate: true });
+    tally.receiptApplied = stored?.applied === true;
+  }
   return tally;
 }

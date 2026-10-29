@@ -1387,7 +1387,7 @@ export async function recordHumanOverride({ findingId, outcome, note = null, act
       if (!id) throw new Error('override insert returned no id');
       // `finding_adjudication_events` has no `actor` column; the actor is recorded in `evidence` above AND the CLI
       // appends it to `campaign_events`. It is returned so the caller can do so without re-deriving it.
-      return { ok: true, cloud: true, id, overrides: target, actor: actor ?? null };
+      return { ok: true, cloud: true, id, overrides: target, actor: redactAndCapText(actor) };
     });
   } catch (err) {
     process.stderr.write(`  [campaign] recordHumanOverride failed: ${err.message}\n`);

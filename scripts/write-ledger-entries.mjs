@@ -439,6 +439,7 @@ async function main() {
   let linked = 0;
   let unlinked = [];
   let equivalenceLinks = [];
+  let unfingerprintedLinks = 0;
   // Tech-debt entries are valid link targets (fac2). Read once, outside the ledger lock; an unreadable debt ledger resolves nothing extra
   // (the link is then reported unresolved, never guessed).
   let debtTopicIds = [];
@@ -456,9 +457,9 @@ async function main() {
     const { entries, errors, links } = resolveConcernLinks(pending, concernRefs, topicByFindingId, byTopic, debtTopicIds);
     // The links as FINGERPRINT pairs, for finding_equivalence. A debt-entry target has no fingerprint and is skipped.
     const hashOf = (topicId) => pending.find((e) => e.topicId === topicId)?.semanticHash ?? byTopic.get(topicId)?.semanticHash;
-    equivalenceLinks = links
-      .map((l) => ({ duplicateFingerprint: hashOf(l.duplicateTopicId), canonicalFingerprint: hashOf(l.canonicalTopicId) }))
-      .filter((l) => l.duplicateFingerprint && l.canonicalFingerprint);
+    const named = links.map((l) => ({ duplicateFingerprint: hashOf(l.duplicateTopicId), canonicalFingerprint: hashOf(l.canonicalTopicId) }));
+    equivalenceLinks = named.filter((l) => l.duplicateFingerprint && l.canonicalFingerprint);
+    unfingerprintedLinks = named.length - equivalenceLinks.length;
     // One bad link costs that LINK, not the batch (fleet fac2): the rulings are written, the raw reference is stored on the entry as
     // unresolvedConcernRef, and the caller is told below - never silently.
     unlinked = errors;
@@ -482,7 +483,7 @@ async function main() {
 
   // Persist the concern links as finding_equivalence rows (audit-telemetry-capture Decision 6). Fail-open: a link the
   // store cannot take is COUNTED on the run's `equivalence` receipt, never allowed to fail the ledger write that just landed.
-  if (equivalenceLinks.length > 0 && result._cloudRunId) {
+  if ((equivalenceLinks.length > 0 || unfingerprintedLinks > 0) && result._cloudRunId) {
     try {
       await import('./lib/load-env.mjs');
       const { initLearningStore } = await import('./learning-store.mjs');
@@ -491,7 +492,7 @@ async function main() {
         import('./lib/audit/equivalence-links.mjs'), import('./lib/durable-write.mjs'), import('./lib/store/write-receipts.mjs'),
       ]);
       await import('./lib/audit-store-writers.mjs');
-      await recordEquivalenceLinks({ links: equivalenceLinks, runId: result._cloudRunId, createdBy: 'concern-v1', deps: { durableWrite, recordWriteReceipt } });
+      await recordEquivalenceLinks({ links: equivalenceLinks, runId: result._cloudRunId, createdBy: 'concern-v1', unfingerprinted: unfingerprintedLinks, deps: { durableWrite, recordWriteReceipt } });
     } catch (err) {
       process.stderr.write(`  [ledger] equivalence links not recorded (non-blocking): ${err.message}\n`);
     }

@@ -170,7 +170,8 @@ export async function recordAdjudicationEvent(runId, findingFingerprint, event) 
         remediation_state: event.remediationState,
         ruling: event.ruling,
         // Free text goes through the secret redactor and a length cap at the store boundary (Decision 5).
-        ruling_rationale: captureV1 ? redactAndCapText(event.rulingRationale) : event.rulingRationale,
+        // Unconditional, un-migrated stores included: a secret in a rationale is worth redacting whatever the schema.
+        ruling_rationale: redactAndCapText(event.rulingRationale),
         round: event.round,
         ...(migrated ? {
           event_origin: 'audit',

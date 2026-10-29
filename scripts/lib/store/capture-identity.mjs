@@ -10,7 +10,7 @@
  *
  * @module scripts/lib/store/capture-identity
  */
-import { many, one } from '../db/query.mjs';
+import { many, one, query } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import { columnExists } from './column-probes.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
@@ -97,4 +97,26 @@ export async function resolveSourceRun(reviewingRunId, round) {
   );
   if (hit?.id) return hit.id;
   return rv.audit_round == null ? reviewingRunId : null;
+}
+
+/**
+ * Does `fingerprint` have a finding row in `runId`? A run id alone proves nothing about the finding a reversal names.
+ * @returns {Promise<boolean>}
+ */
+export async function hasFinding(runId, fingerprint) {
+  return Boolean(await one('SELECT 1 AS present FROM audit_findings WHERE run_id = $1 AND finding_fingerprint = $2 LIMIT 1', [runId, fingerprint]));
+}
+
+/**
+ * Remove every reviewer event THIS reviewing run wrote, before it writes its current set: a re-run that no longer
+ * reverses a finding must not leave the old reversal behind. Events of OTHER reviews are untouched.
+ * @param {string} reviewingRunId
+ * @returns {Promise<number>} rows removed
+ */
+export async function clearReviewerEvents(reviewingRunId) {
+  const res = await query(
+    `DELETE FROM finding_adjudication_events WHERE adjudicator_kind = 'reviewer' AND evidence ->> 'reviewing_run_id' = $1`,
+    [reviewingRunId],
+  );
+  return res?.rowCount ?? 0;
 }

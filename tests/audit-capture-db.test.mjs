@@ -211,7 +211,10 @@ describe('audit telemetry capture (DB integration)', { skip }, () => {
           { round: 2, findings: [{ id: 'H1', _hash: h.b }, { id: 'M2', _hash: h.c }] },
         ],
       };
-      const deps = { captureV1Present: capture.captureV1Present, resolveSourceRun: capture.resolveSourceRun, durableWrite, recordWriteReceipt: receipts.recordWriteReceipt };
+      const deps = {
+        captureV1Present: capture.captureV1Present, resolveSourceRun: capture.resolveSourceRun, hasFinding: capture.hasFinding,
+        clearReviewerEvents: capture.clearReviewerEvents, durableWrite, recordWriteReceipt: receipts.recordWriteReceipt,
+      };
       const out = await persistReviewerEvents({
         runId: reviewing, reviewRound: 1, primaryModel: 'gemini-test',
         result: { verdict: 'CONCERNS', wrongly_dismissed: [{ original_finding_id: 'R1 H1', reason_claude_was_wrong: 'real bug' }] },
@@ -237,6 +240,25 @@ describe('audit telemetry capture (DB integration)', { skip }, () => {
       });
       assert.equal(bad.receipt.status, 'incomplete');
       assert.equal(bad.receipt.unresolved, 1);
+      // The re-run no longer reverses R1 H1: the earlier reversal must not survive (replaced wholesale, keyed on the reviewing run).
+      assert.equal((await events(fa.id)).length, 0, 'a reversal the re-run no longer makes is removed');
+
+      // A transcript that never said what was presented is an unknown denominator, not an empty one.
+      const unknown = await persistReviewerEvents({
+        runId: reviewing, reviewRound: 1, primaryModel: 'gemini-test',
+        result: { verdict: 'APPROVE', wrongly_dismissed: [] }, transcript: { rounds: transcript.rounds }, deps,
+      });
+      assert.equal(unknown.receipt.status, 'incomplete');
+      assert.equal(unknown.receipt.reason, 'no-presented-set');
+
+      // presented_resolved needs the FINDING to exist in the resolved run, not just the run.
+      const ghost = { ...transcript, rounds: [{ round: 1, findings: [{ id: 'H1', _hash: `ghost-${tag}` }] }, transcript.rounds[1]] };
+      const ghosted = await persistReviewerEvents({
+        runId: reviewing, reviewRound: 1, primaryModel: 'gemini-test', result: { verdict: 'APPROVE', wrongly_dismissed: [] }, transcript: ghost, deps,
+      });
+      assert.equal(ghosted.receipt.presented, 3);
+      assert.equal(ghosted.receipt.presented_resolved, 2);
+      assert.equal(ghosted.receipt.status, 'incomplete');
     });
 
     test('P3: the outcome_sync receipt merges without erasing other write_outcomes keys', async () => {
@@ -249,6 +271,15 @@ describe('audit telemetry capture (DB integration)', { skip }, () => {
       assert.equal(stored.written, 4);
       assert.deepEqual(stored.outcome_sync, { expected: 2, written: 2, spilled: 0, lost: 0 });
       assert.equal((await receipts.recordWriteReceipt(runId, 'bogus-key', {})).reason, 'bad-input');
+    });
+
+    test('P3: an accumulated receipt SUMS batches, so a later clean batch cannot erase an earlier batch loss', async () => {
+      const receipts = await import('../scripts/lib/store/write-receipts.mjs');
+      const runId = await newRun('p3-accumulate', 1);
+      await receipts.recordWriteReceipt(runId, 'equivalence', { expected: 2, written: 1, lost: 1 }, { accumulate: true });
+      await receipts.recordWriteReceipt(runId, 'equivalence', { expected: 3, written: 3, lost: 0 }, { accumulate: true });
+      const stored = (await q.one('SELECT write_outcomes FROM audit_runs WHERE id = $1', [runId])).write_outcomes.equivalence;
+      assert.deepEqual([stored.expected, stored.written, stored.lost], [5, 4, 1]);
     });
   }
   // Phase 4: finding_equivalence
@@ -352,4 +383,116 @@ describe('audit telemetry capture (DB integration)', { skip }, () => {
       assert.equal(stored.equivalence.written, 1);
     });
   }
+  // Phase 5: coverage SQL
+  test('P5: every new coverage entry measures on a real Postgres (the predicate SQL is valid)', async () => {
+    const { buildMeasureSql } = await import('../scripts/lib/telemetry/coverage.mjs');
+    const config = JSON.parse(fs.readFileSync(path.resolve('.own-model-coverage.json'), 'utf8'));
+    const wanted = new Set(['audit_session_id', 'capture_epoch', 'source_model', 'ruling_rationale', 'adjudicator_model', 'canonical_finding_id']);
+    const entries = config.entries.filter((e) => wanted.has(e.column));
+    assert.ok(entries.length >= 7, 'vacuous-pass guard: the new entries must be present');
+    for (const e of entries) {
+      const { sql, params } = buildMeasureSql(e, config.windowDays);
+      const row = await q.one(sql, params);
+      assert.ok(Number.isInteger(row.total) && Number.isInteger(row.filled), `${e.table}.${e.column} must measure`);
+    }
+  });
+  // Phase 5: the query recipes are executable
+  {
+    const DOC = fs.readFileSync(path.resolve('docs/reference/audit-telemetry-queries.md'), 'utf8');
+    const block = (name) => {
+      const m = DOC.match(new RegExp(`<!-- sql:${name}:start -->\\s*\`\`\`sql\\n([\\s\\S]*?)\`\`\`\\s*<!-- sql:${name}:end -->`));
+      assert.ok(m, `doc block ${name} must exist`);
+      return m[1].replaceAll(':epochs', "'{capture-v1}'::text[]");
+    };
+    const norm = (sql) => sql.replace(/\s+/g, ' ').trim();
+
+    test('P5: the doc inlines the SAME terminal-state CASE in the concerns view (the two cannot drift)', () => {
+      assert.ok(norm(block('capture-concerns')).includes(norm(block('terminal-state').replaceAll('f.user_action', 'f.user_action'))));
+    });
+
+    test('P5: terminal-state mapping, one fixture per row of the mapping', async () => {
+      const cases = [
+        [null, 'auto_dismissed', null], ['accepted', null, 'accepted'], [null, 'accepted-permanent', 'accepted'],
+        ['dismissed', null, 'dismissed'], ['severity_adjusted', null, 'severity_adjusted'],
+        [null, null, 'open'], ['pending', null, 'open'], ['needs_triage', null, 'open'], ['weird', null, 'unknown'],
+      ];
+      const values = cases.map((_, i) => `($${i * 2 + 1}::text, $${i * 2 + 2}::text)`).join(', ');
+      const rows = await q.many(
+        `SELECT (${block('terminal-state')}) AS state FROM (VALUES ${values}) AS f(adjudication_outcome, user_action)`,
+        cases.flatMap(([o, u]) => [o, u]),
+      );
+      assert.deepEqual(rows.map((r) => r.state), cases.map((c) => c[2]));
+    });
+
+    test('P5: reviewer-vs-ledger run agreement, one fixture per row of the table', async () => {
+      const cases = [
+        ['APPROVE', true, 'agree'], ['REJECT', false, 'agree'], ['REJECT', true, 'disagree'], ['APPROVE', false, 'disagree'],
+        [null, true, 'unknown'], ['CONCERNS', true, 'unknown'], ['CONCERNS_REMAINING', false, 'unknown'],
+      ];
+      const values = cases.map((_, i) => `($${i * 2 + 1}::text, $${i * 2 + 2}::boolean)`).join(', ');
+      const rows = await q.many(
+        `SELECT (${block('c-run-agreement')}) AS result FROM (VALUES ${values}) AS v(gemini_verdict, converged)`,
+        cases.flatMap(([v, c]) => [v, c]),
+      );
+      assert.deepEqual(rows.map((r) => r.result), cases.map((c) => c[2]));
+    });
+
+    test('P5: every recipe executes, and a seeded two-round session yields the expected re-raise and reopen rates', async () => {
+      const session = `p5-${tag}`;
+      const complete = async (round, hash, outcome) => {
+        const id = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { auditSessionId: session, auditRound: round });
+        runIds.push(id);
+        await rf.recordFindings(id, [{ _hash: hash, _bucket: null, severity: 'HIGH', category: 'test', section: 'x', detail: 'd', _sourceModel: 'gpt-6.1-terra' }], 'backend', round);
+        await q.query(`UPDATE audit_runs SET run_status = 'complete' WHERE id = $1`, [id]);
+        if (outcome) await q.query(`UPDATE audit_findings SET adjudication_outcome = $2 WHERE run_id = $1`, [id, outcome]);
+        return id;
+      };
+      // Round 1 dismisses concern X; round 2 re-raises X (a reopen) and raises a fresh concern Y.
+      await complete(1, `p5x-${tag}`, 'dismissed');
+      const r2 = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { auditSessionId: session, auditRound: 2 });
+      runIds.push(r2);
+      await rf.recordFindings(r2, [
+        { _hash: `p5x-${tag}`, _bucket: null, severity: 'HIGH', category: 'test', section: 'x', detail: 'd' },
+        { _hash: `p5y-${tag}`, _bucket: null, severity: 'HIGH', category: 'test', section: 'y', detail: 'd' },
+      ], 'backend', 2);
+      await q.query(`UPDATE audit_runs SET run_status = 'complete' WHERE id = $1`, [r2]);
+
+      await q.withTx(async () => {
+        await q.query(block('capture-rounds'));
+        await q.query(block('capture-concerns'));
+        const scoped = (sql) => sql.replace('FROM capture_concerns GROUP BY', `FROM capture_concerns WHERE audit_session_id = '${session}' GROUP BY`);
+        const reraise = await q.one(scoped(block('reraise-rate')));
+        assert.equal(Number(reraise.concerns), 2);
+        assert.equal(Number(reraise.reraise_rate), 0.5, 'X seen in 2 rounds, Y in 1');
+        const reopen = await q.one(block('reopen-rate').replace('GROUP BY 1, 2)', 'GROUP BY 1, 2)'));
+        assert.ok(Number(reopen.dismissed_concerns) >= 1);
+        assert.ok(Number(reopen.reopen_rate) > 0, 'the dismissed-in-round-1 concern X was re-raised in round 2');
+        for (const name of ['dispute-rate', 'quality-prospective', 'quality-historical', 'reversal-rate', 'null-outcome']) {
+          await q.many(block(name));
+        }
+        // Temp views outlive the transaction on a pooled connection and would pin audit_runs columns (the old-schema test drops one).
+        await q.query('DROP VIEW capture_concerns');
+        await q.query('DROP VIEW capture_rounds');
+      });
+    });
+  }
+  // Compatibility: an un-migrated store keeps working
+  test('P6: on a store without the capture-v1 columns the existing writes succeed and only the additive parts are skipped', async () => {
+    const { execFileSync } = await import('node:child_process');
+    await q.query('ALTER TABLE audit_runs DROP COLUMN capture_epoch');
+    let out;
+    try {
+      const stdout = execFileSync(process.execPath, ['tests/helpers/audit-capture-oldschema-child.mjs', repoId], {
+        env: { ...process.env, AUDIT_DB_TEST_URL: TEST_URL, AUDIT_DB_URL: TEST_URL }, encoding: 'utf8', timeout: 60000,
+      });
+      out = JSON.parse(stdout.split('\n').find((l) => l.startsWith('RESULT ')).slice(7));
+    } finally {
+      await q.query('ALTER TABLE audit_runs ADD COLUMN IF NOT EXISTS capture_epoch text');
+    }
+    assert.equal(out.runStarted, true, 'the run row is still registered (the unknown column is not inserted)');
+    assert.equal(out.pipelineEvent, true, 'the pipeline event still lands');
+    assert.equal(out.reviewerEvent, 'unmigrated', 'a reviewer event is skipped, not failed against an old CHECK');
+    assert.equal(out.receipt, 'unmigrated');
+    assert.equal(out.equivalence, 'skipped:unmigrated');
+  });
 });

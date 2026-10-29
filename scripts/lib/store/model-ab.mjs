@@ -441,7 +441,7 @@ export async function recordEquivalence({ duplicateFingerprint, canonicalFingerp
       `INSERT INTO finding_equivalence (duplicate_finding_id, canonical_finding_id, run_id, created_by)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (duplicate_finding_id)
-       DO UPDATE SET canonical_finding_id = EXCLUDED.canonical_finding_id, created_by = EXCLUDED.created_by
+       DO UPDATE SET canonical_finding_id = EXCLUDED.canonical_finding_id, created_by = EXCLUDED.created_by, run_id = EXCLUDED.run_id
        WHERE finding_equivalence.created_by = ANY($5::text[])`,
       [duplicateFingerprint, root, runId, createdBy, AUTOMATIC_EQUIVALENCE_CREATORS],
     );

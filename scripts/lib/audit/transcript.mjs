@@ -228,8 +228,8 @@ export function buildAuditTranscript({
   };
   const resolutions = ledgerResolutions(ledger);
   if (resolutions.length > 0) transcript.claude_resolutions = resolutions;
-  const presented = presentedDismissals(ledger);
-  if (presented.length > 0) transcript.presented_dismissals = presented;
+  // Emitted whenever a ledger was supplied, EMPTY included: an absent field means "never said what was presented", an empty array "nothing was".
+  if (ledger) transcript.presented_dismissals = presentedDismissals(ledger);
   if (summary) transcript.summary = summary;
   // The operator's --require list, as the audit ended it (the single source the final review reads; docs/plans/copilot-feedback-item4.md A5).
   const required = isPlan ? [] : requiredSubjectsOfRounds(rounds);

@@ -152,6 +152,15 @@ describe('reviewer events: id parsing, matching and the receipt', async () => {
     assert.equal(re.buildReviewerReceipt({ plan: clean, presentedResolved: 2, reversalsWritten: 1 }).status, 'incomplete', 'an unresolved presented entry is not complete');
   });
 
+  it('an absent presented set is an unknown denominator (incomplete), distinct from an empty one', () => {
+    const absent = re.planReviewerEvents({ transcript: { rounds: [] }, wronglyDismissed: [] });
+    assert.equal(absent.presentedKnown, false);
+    assert.equal(re.buildReviewerReceipt({ plan: absent, presentedResolved: 0, reversalsWritten: 0 }).status, 'incomplete');
+    const empty = re.planReviewerEvents({ transcript: { rounds: [], presented_dismissals: [] }, wronglyDismissed: [] });
+    assert.equal(empty.presentedKnown, true);
+    assert.equal(re.buildReviewerReceipt({ plan: empty, presentedResolved: 0, reversalsWritten: 0 }).status, 'complete');
+  });
+
   it('the same finding cited twice is one reversal', () => {
     const plan = re.planReviewerEvents({ transcript, wronglyDismissed: [{ original_finding_id: 'R2 M3' }, { original_finding_id: 'r2 m3' }] });
     assert.equal(plan.reversals.length, 1);
@@ -205,5 +214,22 @@ describe('equivalence links: tally and concern link pairs', async () => {
     const ledgerByTopic = new Map([['T-old-root', { topicId: 'T-old-root' }]]);
     const { links } = resolveConcernLinks(pending, new Map([['T-new', 'T-old-root']]), new Map([['H1', 'T-new'], ['H2', 'T-other']]), ledgerByTopic);
     assert.deepEqual(links, [{ duplicateTopicId: 'T-new', canonicalTopicId: 'T-old-root' }]);
+  });
+});
+
+describe('coverage applicability keys are generated from MECHANICAL_WAVES', async () => {
+  const { APPLICABILITY } = await import('../scripts/lib/telemetry/coverage.mjs');
+  const { MECHANICAL_WAVES } = await import('../scripts/lib/audit-shadow.mjs');
+
+  it('every mechanical wave is excluded from model_pass and model_finding (no hand list)', () => {
+    assert.ok(MECHANICAL_WAVES.length > 0, 'vacuous-pass guard: the wave list must not be empty');
+    for (const w of MECHANICAL_WAVES) {
+      assert.ok(APPLICABILITY.model_pass.includes(`'${w}'`), `model_pass must exclude ${w}`);
+      assert.ok(APPLICABILITY.model_finding.includes(`[${w[0].toUpperCase()}${w.slice(1)}]`), `model_finding must exclude [${w}]`);
+    }
+  });
+
+  it('model_pass counts only passes that made a model call (tokens recorded)', () => {
+    assert.match(APPLICABILITY.model_pass, /COALESCE\(input_tokens, 0\) > 0/);
   });
 });

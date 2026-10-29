@@ -84,7 +84,10 @@ export function fingerprintOfPresented(entry, rounds) {
  *   matched more than one entry. Neither is ever written.
  */
 export function planReviewerEvents({ transcript, wronglyDismissed }) {
-  const presented = Array.isArray(transcript?.presented_dismissals) ? transcript.presented_dismissals : [];
+  // An ABSENT field is not an empty set: a transcript built without a ledger (or by an older builder, or hand-made) never
+  // said what was presented, so the denominator is unknown. The builder always emits the field when it had a ledger.
+  const presentedKnown = Array.isArray(transcript?.presented_dismissals);
+  const presented = presentedKnown ? transcript.presented_dismissals : [];
   const rounds = transcript?.rounds ?? [];
   const resolvable = [];
   for (const entry of presented) {
@@ -107,7 +110,7 @@ export function planReviewerEvents({ transcript, wronglyDismissed }) {
       reason: wd.reason_claude_was_wrong ?? '', severity: wd.recommended_severity ?? null,
     });
   }
-  return { presented: presented.length, resolvable, reversals, unresolved, ambiguous };
+  return { presented: presented.length, presentedKnown, resolvable, reversals, unresolved, ambiguous };
 }
 
 /**
@@ -117,7 +120,8 @@ export function planReviewerEvents({ transcript, wronglyDismissed }) {
  * ambiguous. A query for the reversal rate uses `complete` runs only.
  */
 export function buildReviewerReceipt({ plan, presentedResolved, reversalsWritten }) {
-  const complete = plan.presented === presentedResolved
+  const complete = plan.presentedKnown !== false
+    && plan.presented === presentedResolved
     && reversalsWritten === plan.reversals.length
     && plan.unresolved === 0
     && plan.ambiguous === 0;
@@ -129,6 +133,7 @@ export function buildReviewerReceipt({ plan, presentedResolved, reversalsWritten
     unresolved: plan.unresolved,
     ambiguous: plan.ambiguous,
     status: complete ? 'complete' : 'incomplete',
+    ...(plan.presentedKnown === false ? { reason: 'no-presented-set' } : {}),
   };
 }
 
@@ -155,17 +160,27 @@ export async function persistReviewerEvents({ runId, reviewRound, primaryModel, 
 
     const plan = planReviewerEvents({ transcript, wronglyDismissed: result.wrongly_dismissed });
 
-    // Resolve each distinct source round once: (repo, session, round) -> run id.
+    // Resolve each distinct source round once: (repo, session, round) -> run id. A presented entry is RESOLVED only when
+    // its fingerprint also has a finding row in that run -- a run id alone proves nothing about the finding.
     const runByRound = new Map();
     for (const round of new Set(plan.resolvable.map((r) => r.entry.resolvedRound))) {
       runByRound.set(round, await deps.resolveSourceRun(runId, round));
     }
-    const presentedResolved = plan.resolvable.filter((r) => runByRound.get(r.entry.resolvedRound)).length;
+    const sourceOf = new Map();
+    for (const r of plan.resolvable) {
+      const sourceRunId = runByRound.get(r.entry.resolvedRound);
+      if (sourceRunId && await deps.hasFinding(sourceRunId, r.fingerprint)) sourceOf.set(r.entry, sourceRunId);
+    }
+    const presentedResolved = sourceOf.size;
+
+    // A re-run of THIS review replaces its earlier observations wholesale: a reversal the reviewer no longer makes must
+    // not survive. Other reviews of the same findings are untouched (the delete is keyed on this reviewing run).
+    await deps.clearReviewerEvents(runId);
 
     let reversalsWritten = 0;
     let unresolvedSource = 0;
     for (const rev of plan.reversals) {
-      const sourceRunId = runByRound.get(rev.entry.resolvedRound);
+      const sourceRunId = sourceOf.get(rev.entry);
       if (!sourceRunId) { unresolvedSource++; continue; }
       const out = await deps.durableWrite('audit.reviewerEvents', {
         runId: sourceRunId, run_id: sourceRunId, fingerprint: rev.fingerprint,

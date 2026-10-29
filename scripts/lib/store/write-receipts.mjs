@@ -12,7 +12,7 @@
  *
  * @module scripts/lib/store/write-receipts
  */
-import { query } from '../db/query.mjs';
+import { query, one, withTx } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import { captureV1Present } from './capture-identity.mjs';
 
@@ -25,13 +25,17 @@ export const RECEIPT_KEYS = Object.freeze(['outcome_sync', 'reviewer', 'equivale
  * @param {string} runId
  * @param {'outcome_sync'|'reviewer'|'equivalence'} key
  * @param {object} receipt - passed RAW; the jsonb write seam serialises it
+ * @param {{accumulate?: boolean}} [opts] - `accumulate` SUMS numeric fields into the stored receipt instead of replacing it:
+ *   the equivalence receipt takes several batches per run (ledger writer, semantic-suppress), and a later clean batch
+ *   must not erase an earlier batch's losses.
  * @returns {Promise<{applied: boolean, reason?: string}>}
  */
-export async function recordWriteReceipt(runId, key, receipt) {
+export async function recordWriteReceipt(runId, key, receipt, { accumulate = false } = {}) {
   if (!runId || !RECEIPT_KEYS.includes(key)) return { applied: false, reason: 'bad-input' };
   if (!await isCloudEnabled()) return { applied: false, reason: 'cloud-off' };
   if (!await captureV1Present()) return { applied: false, reason: 'unmigrated' };
   try {
+    if (accumulate) return await accumulateReceipt(runId, key, receipt);
     const res = await query(
       `UPDATE audit_runs
           SET write_outcomes = COALESCE(write_outcomes, '{}'::jsonb) || jsonb_build_object($2::text, $3::jsonb)
@@ -43,4 +47,19 @@ export async function recordWriteReceipt(runId, key, receipt) {
     process.stderr.write(`  [learning] recordWriteReceipt(${key}) failed: ${err.message}\n`);
     return { applied: false, reason: 'db-error' };
   }
+}
+
+/** Sum `receipt`'s numeric fields into the stored receipt for `key`, under a row lock so two batches cannot lose an update. */
+async function accumulateReceipt(runId, key, receipt) {
+  return withTx(async () => {
+    const row = await one('SELECT write_outcomes -> $2::text AS prior FROM audit_runs WHERE id = $1 FOR UPDATE', [runId, key]);
+    if (!row) return { applied: false, reason: 'run-row-absent' };
+    const merged = { ...(row.prior ?? {}) };
+    for (const [k, v] of Object.entries(receipt)) merged[k] = typeof v === 'number' ? (Number(merged[k]) || 0) + v : v;
+    await query(
+      `UPDATE audit_runs SET write_outcomes = COALESCE(write_outcomes, '{}'::jsonb) || jsonb_build_object($2::text, $3::jsonb) WHERE id = $1`,
+      [runId, key, JSON.stringify(merged)],
+    );
+    return { applied: true };
+  });
 }
