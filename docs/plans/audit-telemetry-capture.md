@@ -188,7 +188,7 @@ graph LR
    - `mintArmRun` stamps `audited_sha/audited_tree` from the snapshot it already holds, which also stops arm runs from dragging the `code_run` floor down.
    - The `'pending'` literal at `scripts/lib/store/model-ab.mjs:451` becomes "leave NULL".
    - The 34.7% gets a committed classification query (§9). The remaining NULL states are legitimate lifecycle states, not a capture failure.
-   - **Terminal state is derived from one committed mapping.** `(adjudication_outcome, user_action)` maps to `accepted | dismissed | severity_adjusted | open | unknown`. `user_action='accepted-permanent'` maps to `accepted` (`scripts/lib/store/finding-disposition.mjs:119` (58352c39)), and `'auto_dismissed'` control markers are excluded. The mapping lives as a SQL CASE in `docs/reference/audit-telemetry-queries.md`, and query (b) reads it from there. The producer is not changed.
+   - **Terminal state is derived from one committed mapping.** `(adjudication_outcome, user_action)` maps to `accepted | dismissed | severity_adjusted | open | unknown`. `user_action='accepted-permanent'` maps to `accepted` (`scripts/lib/store/finding-disposition.mjs:119` (58352c39)), and `'auto_dismissed'` control markers are excluded. The mapping lives as a SQL CASE in `docs/reference/audit-telemetry-queries.md` (planned), and query (b) reads it from there. The producer is not changed.
 
 ### Right-sizing
 
@@ -245,7 +245,7 @@ A fast-forward of main is a live deploy to consumer hooks.
 | `scripts/write-ledger-entries.mjs` | modify: persist the concern links via `durableWrite('audit.equivalence')` | #16 |
 | `scripts/lib/telemetry/coverage.mjs` | modify: add the `APPLICABILITY` keys `model_finding` and `model_pass` (predicate on `source_kind` / pass name, generated from `MECHANICAL_WAVES`, never a hand list) and `reviewer_event` | #4, #5 |
 | `.own-model-coverage.json` | modify: entries for the newly filled columns (§9); exemption for `adjudicator_model` on pipeline rows | #19 |
-| `docs/reference/audit-telemetry-queries.md` | create: the three question queries plus the null-outcome classification | #19 |
+| `docs/reference/audit-telemetry-queries.md` (planned) | create: the three question queries plus the null-outcome classification | #19 |
 
 **Path self-check**: run `node scripts/lib/plan-paths.mjs docs/plans/audit-telemetry-capture.md` before `/audit-code`. The plan has about 20 repo-relative paths, so fuzzy discovery should not fire.
 
@@ -279,7 +279,7 @@ A fast-forward of main is a live deploy to consumer hooks.
 - **Phase 5 — Coverage and query recipes**: add the applicability keys, the coverage entries and the reference doc. Files:
   - `scripts/lib/telemetry/coverage.mjs` (modify)
   - `.own-model-coverage.json` (modify)
-  - `docs/reference/audit-telemetry-queries.md` (create)
+  - `docs/reference/audit-telemetry-queries.md` (planned) (create)
 
 **Close-out (not a phase)**:
 - Run `npm run db:local`, `npm test`, `npm run own-model:coverage:gate` and `npm run guards:preflight`.
@@ -340,7 +340,7 @@ A fast-forward of main is a live deploy to consumer hooks.
 - `finding_equivalence.canonical_finding_id`, where `all`. Zero rows reads `unmeasured`, never green.
 - Exemption: `adjudicator_model` on `pipeline` rows, because the host-agent model cannot be observed.
 
-**Query recipes** (in `docs/reference/audit-telemetry-queries.md`). There are two paths, and they are never pooled:
+**Query recipes** (in `docs/reference/audit-telemetry-queries.md` (planned)). There are two paths, and they are never pooled:
 - The **prospective** path takes `:epochs` as a parameter (today `{'capture-v1'}`) and applies Decision 2's eligibility.
 - The **historical-derived** path (only (b)'s Sol cohort) uses recorded-data eligibility: the `(run_id, pass_name)` join has exactly one model, and `run_status = 'complete'` *or* the row predates `run_status`. Its exclusions are counted.
 
