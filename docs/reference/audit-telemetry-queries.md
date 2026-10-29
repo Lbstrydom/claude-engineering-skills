@@ -90,7 +90,8 @@ SELECT f.id AS finding_id, r.repo_id, r.audit_session_id, r.audit_round,
          WHEN f.adjudication_outcome IS NULL OR f.adjudication_outcome IN ('pending', 'needs_triage') THEN 'open'
          ELSE 'unknown'
        END AS state
-  FROM audit_findings f JOIN capture_rounds r ON r.id = f.run_id;
+  FROM audit_findings f JOIN capture_rounds r ON r.id = f.run_id
+ WHERE f.user_action IS DISTINCT FROM 'auto_dismissed'; -- control markers are not concerns (see the CASE: they map to NULL)
 ```
 <!-- sql:capture-concerns:end -->
 

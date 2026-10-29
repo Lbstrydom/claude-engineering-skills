@@ -2089,6 +2089,8 @@
         "oldestAgeMs": null,
         "writers": [
           "audit.findings",
+          "audit.reviewerEvents",
+          "audit.equivalence",
           "audit.runComplete",
           "audit.convergenceState",
           "audit.diffComplexity",

@@ -397,7 +397,7 @@ async function resolveCanonicalRoot(fingerprint) {
 }
 
 /** The writers that may be overwritten by a later automatic link. Anything else (a human actor, NULL) is a manual link. */
-export const AUTOMATIC_EQUIVALENCE_CREATORS = Object.freeze(['semantic-suppress', 'concern-v1']);
+const AUTOMATIC_EQUIVALENCE_CREATORS = Object.freeze(['semantic-suppress', 'concern-v1']);
 
 /** One fixed key: write volume is low, so a single global lock is the simple, correct way to serialise opposite-direction inserts. */
 const EQUIVALENCE_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('finding_equivalence'))";
