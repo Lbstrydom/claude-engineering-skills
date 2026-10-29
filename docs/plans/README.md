@@ -19,6 +19,7 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
+| [Audit telemetry capture — make dispute and model-quality questions plain queries](./audit-telemetry-capture.md) | `Approved` |  |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
 | [Hook fidelity and the v15 field gaps (cluster C, hook v16)](./hook-fidelity-and-v15-field-gaps.md) | `Approved` | audit-plan: GPT 3 rounds, H4 M2 -> H1 -> M1 -> 0; Gemini 2 rounds -> APPROVE |
 | [Own-model decision ledger and coordinator capture points (PR 2 of 3)](./own-model-decision-ledger.md) | `In Progress` | plan audited: GPT 3 rounds, 15 findings all accepted, Gemini final gate APPROVE |
