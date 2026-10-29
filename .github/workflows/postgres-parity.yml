@@ -83,6 +83,7 @@ on:
       - 'tests/own-model-telemetry-db.test.mjs'
       - 'tests/own-model-ledger-db.test.mjs'
       - 'tests/own-model-pr3-db.test.mjs'
+      - 'tests/audit-capture-db.test.mjs'
       # ship-trains Phase 2: the binding query's real-Postgres suite; its name matches
       # no glob above, and scripts/lib/store/** does not cover the test file itself.
       - 'tests/ship-train-provenance.db.test.mjs'
@@ -152,6 +153,7 @@ on:
       - 'tests/own-model-telemetry-db.test.mjs'
       - 'tests/own-model-ledger-db.test.mjs'
       - 'tests/own-model-pr3-db.test.mjs'
+      - 'tests/audit-capture-db.test.mjs'
       # ship-trains Phase 2: the binding query's real-Postgres suite; its name matches
       # no glob above, and scripts/lib/store/** does not cover the test file itself.
       - 'tests/ship-train-provenance.db.test.mjs'
@@ -319,6 +321,7 @@ jobs:
             tests/own-model-telemetry-db.test.mjs \
             tests/own-model-ledger-db.test.mjs \
             tests/own-model-pr3-db.test.mjs \
+            tests/audit-capture-db.test.mjs \
             tests/db-schema-realization-live.test.mjs \
             tests/debt-alias-integration.test.mjs \
             tests/debt-authoritative-read-db.test.mjs \

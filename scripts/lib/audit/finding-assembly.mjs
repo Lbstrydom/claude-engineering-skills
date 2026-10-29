@@ -55,6 +55,7 @@ import { wireModel } from './llm-helpers.mjs';
 import { getSeedTelemetry } from './map-reduce-scheduler.mjs';
 import { costFromUsage } from '../model-pricing.mjs';
 import { openaiConfig } from '../config.mjs';
+import { stampableSourceModel } from './audit-identity.mjs';
 
 /** Per-topic cap on the `detailSnapshot` carried in the `_debtMemory` envelope — the persisted
  *  debt entry's own cap (debt-capture.mjs `DETAIL_SNAPSHOT_MAX`) and `FinalReviewFindingSchema.detail`'s
@@ -265,9 +266,12 @@ export async function assembleFindings(data) {
   let dedupCount = 0;
   const sevOrder = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
-  function addFindings(findings, prefix) {
+  function addFindings(findings, prefix, sourceModel = null) {
     // Sort by severity (HIGH first) before adding
     const sorted = [...(findings ?? [])].sort((a, b) => (sevOrder[a.severity] ?? 2) - (sevOrder[b.severity] ?? 2));
+    // The model that raised these findings (Decision 3). Null for mechanical passes and unresolved sentinels:
+    // the spread then leaves any `_sourceModel` the finding already carries untouched.
+    const stampSource = sourceModel ? { _sourceModel: sourceModel } : {};
     for (const rawF of sorted) {
       // Reserve the `[Architecture]` namespace for the mechanical arch pass:
       // a general LLM pass cannot see `allowedDeps`, so any arch-boundary
@@ -297,7 +301,7 @@ export async function assembleFindings(data) {
           allFindings[existingExactIdx] = {
             ...f,
             id: dedupReplacementId(allFindings[existingExactIdx].id, allFindings[existingExactIdx].severity, f.severity, findingCounter),
-            _hash: hash, _pass: prefix,
+            _hash: hash, _pass: prefix, ...stampSource,
             category: `[${prefix}] ${f.category}`,
           };
         }
@@ -325,7 +329,7 @@ export async function assembleFindings(data) {
           allFindings[dupeIdx] = {
             ...f,
             id: dedupReplacementId(allFindings[dupeIdx].id, allFindings[dupeIdx].severity, f.severity, findingCounter),
-            _hash: hash, _pass: prefix,
+            _hash: hash, _pass: prefix, ...stampSource,
             category: `[${prefix}] ${f.category}`,
           };
         }
@@ -341,6 +345,7 @@ export async function assembleFindings(data) {
         id: `${letter}${num}`,
         _hash: hash,
         _pass: prefix,
+        ...stampSource,
         category: `[${prefix}] ${f.category}`
       });
     }
@@ -354,7 +359,7 @@ export async function assembleFindings(data) {
   // architecture, and quickfix are mechanical/low-cost passes, no
   // different in kind from the LLM quality passes here).
   for (const entry of passRegistry) {
-    addFindings(entry.findings, entry._displayPrefix);
+    addFindings(entry.findings, entry._displayPrefix, stampableSourceModel(entry._model));
   }
 
   if (dedupCount > 0) {

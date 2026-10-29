@@ -344,6 +344,8 @@ const EXPECTED_EXPORTS = [
   'releaseOrphanedReservations',
   'cumulativeSpendEur',
   'applyModelAbAdjudication',
+  'recordEquivalence',
+  'recordWriteReceipt',
   'getModelAbAdjudicationQueue',
   'getModelAbEffectiveness',
   'getModelAbFindingScores',
@@ -403,7 +405,8 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
   });
 
   it('pins the total export count (update deliberately when the surface changes)', () => {
-    // 216 → 217: adjudicationEventRefusal added 2026-10-26 (own-model telemetry: required adjudicator kind + dismissal class).
+    // 217 → 219: recordEquivalence + recordWriteReceipt added 2026-10-29 (audit telemetry capture v1).
+    // 216 → 219: adjudicationEventRefusal added 2026-10-26 (own-model telemetry: required adjudicator kind + dismissal class).
     // 215 → 216: recordPastCap added 2026-10-25 (round-cap override record).
     // 213 → 215: readPendingTriageFindingsStrict + readOpenRecurringClusters added 2026-10-25 (structural-or-stop card).
     // 212 → 213: refreshRunAdjudicationCounts added 2026-10-25 — the run-wide accepted/dismissed recount under a
@@ -635,6 +638,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // 211 → 212: +readDebtEventsCloudResult (2026-10-11, debt-readers-ask-
     // store.md) — the events read that says whether it happened, so a
     // reporting caller cannot count a failed query as "no recurrence".
-    assert.equal(EXPECTED_EXPORTS.length, 217);
+    assert.equal(EXPECTED_EXPORTS.length, 219);
   });
 });

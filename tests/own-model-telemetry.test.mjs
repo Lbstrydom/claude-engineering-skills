@@ -19,11 +19,14 @@ import { buildStage1PredictionEntries } from '../scripts/lib/audit/stage1-predic
 import { resolveRevisionSha } from '../scripts/lib/audit/target-identity.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const MIGRATION = fs.readFileSync(path.join(ROOT, 'supabase/migrations/20261026120000_own_model_telemetry_slice1.sql'), 'utf8');
+// Later migrations may re-add a constraint (the adjudicator-kind CHECK was widened by 20261029120000): the LAST definition is live.
+const MIGRATIONS = ['20261026120000_own_model_telemetry_slice1.sql', '20261029120000_audit_capture_v1.sql']
+  .map((f) => fs.readFileSync(path.join(ROOT, 'supabase/migrations', f), 'utf8'));
 
 /** The quoted values of the `IN (...)` list of a named CHECK constraint in the migration. */
 function checkValues(constraint) {
-  const m = MIGRATION.match(new RegExp(`ADD\\s+CONSTRAINT\\s+${constraint}\\s+CHECK\\s*\\(([\\s\\S]*?)\\);`));
+  const re = new RegExp(`ADD\\s+CONSTRAINT\\s+${constraint}\\s+CHECK\\s*\\(([\\s\\S]*?)\\);`);
+  const m = [...MIGRATIONS].reverse().map((sql) => sql.match(re)).find(Boolean);
   assert.ok(m, `constraint ${constraint} must exist in the migration`);
   return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
 }

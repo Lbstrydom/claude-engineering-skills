@@ -279,7 +279,6 @@ async function main() {
   let stableCount = 0;
   let priorHashes = new Set();
   const roundResults = [];
-  let sessionId = null; // populated from R1 result._sid, passed to R2+
 
   // Run-unification (WS1 Phase 1d): the orchestrator mints ONE run_id and
   // threads it to every round's openai-audit invocation. recordRunStart reuses
@@ -294,12 +293,12 @@ async function main() {
     const stderrFile = path.join(outDir, `${sid}-r${round}-stderr.log`);
 
     // Build audit args — thread the unified run_id every round (Phase 1d)
-    const auditArgs = ['--out', outFile, '--round', String(round), '--run-id', auditRunId];
+    // `--session-id` is the loop's own `sid` (the `--out` filename stem), NOT `results._sid` (a per-process debt
+    // run id): the store keys the rounds of one audit on it, and a flag that disagrees with the path is refused.
+    const auditArgs = ['--out', outFile, '--round', String(round), '--run-id', auditRunId, '--session-id', sid];
     if (round >= 2) {
       auditArgs.push('--ledger', ledgerFile);
 
-      // Pass SID so R2 can resolve the ledger via the session manifest
-      if (sessionId) auditArgs.push('--session-id', sessionId);
 
       // Generate diff
       const diffFile = path.join(outDir, `${sid}-diff.patch`);
@@ -350,7 +349,6 @@ ${R}Round ${round} stopped at the round cap${X} — read the structural-or-stop 
     roundResults.push({ round, counts, file: outFile });
 
     // Capture SID from R1 for R2+ session manifest lookup
-    if (round === 1 && results._sid) sessionId = results._sid;
 
     // Show results card
     banner(`ROUND ${round} RESULTS — ${results.verdict || 'UNKNOWN'}\n  H:${counts.high} M:${counts.medium} L:${counts.low} | Total: ${counts.total}`);

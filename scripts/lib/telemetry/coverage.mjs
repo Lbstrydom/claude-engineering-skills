@@ -21,6 +21,21 @@
  * @module scripts/lib/telemetry/coverage
  */
 
+import { MECHANICAL_WAVES } from '../mechanical-waves.mjs';
+
+/**
+ * SQL for "this row was raised by a pass that has no model", GENERATED from MECHANICAL_WAVES -- never a hand list, so a
+ * new mechanical wave leaves the model-attribution floors without an edit here (audit-telemetry-capture Decision 5).
+ * Each wave name is a fixed identifier asserted below, so the fragment never carries caller text.
+ */
+const waveName = (w) => {
+  if (!/^[a-z][a-z-]*$/.test(w)) throw new Error(`coverage: unsafe mechanical wave name ${JSON.stringify(w)}`);
+  return w;
+};
+const WAVE_SQL_LIST = MECHANICAL_WAVES.map((w) => `'${waveName(w)}'`).join(', ');
+/** A finding's category is prefixed `[<DisplayPrefix>]` by finding-assembly; the display prefix is the wave name capitalised. */
+const WAVE_CATEGORY_GUARD = MECHANICAL_WAVES.map((w) => `category NOT LIKE '[${waveName(w)[0].toUpperCase()}${w.slice(1)}]%'`).join(' AND ');
+
 /** Closed enum of applicability predicates: key -> fixed SQL fragment. */
 export const APPLICABILITY = Object.freeze({
   all: 'TRUE',
@@ -28,6 +43,15 @@ export const APPLICABILITY = Object.freeze({
   non_campaign_event: "event_origin IS DISTINCT FROM 'campaign'",
   code_run: "mode = 'code'",
   audit_producer: "producer = 'audit'",
+  // Rows raised by a model: audit_findings by classification kind and wave prefix, audit_pass_stats by pass name.
+  model_finding: `source_kind = 'MODEL' AND ${WAVE_CATEGORY_GUARD}`,
+  // A pass that made a model call recorded tokens; one that never ran (frontend on a backend diff) or never called a model
+  // (architecture's mechanical siblings) did not. Measured 2026-10-29 on rows since 2026-08-23: with the token guard every
+  // LLM pass fills source_model 100% and the only nulls are the MECHANICAL_WAVES that bill tokens without a model
+  // (adjacency, duplication) -- without it the same column reads 51% on passes that never had a model to record.
+  model_pass: `COALESCE(input_tokens, 0) > 0 AND pass_name NOT IN (${WAVE_SQL_LIST})`,
+  // The final reviewer's per-finding reversals: the one adjudicator kind whose model the script CAN observe.
+  reviewer_event: "adjudicator_kind = 'reviewer'",
 });
 
 export const STATUSES = Object.freeze(['ok', 'drift', 'below-floor', 'unmeasured:no-eligible-rows', 'unmeasured:store']);

@@ -28,6 +28,8 @@ import {
   recordRunStart, recordRunComplete, recordFindings,
 } from '../../learning-store.mjs';
 import { populateFindingMetadata } from '../ledger.mjs';
+import { stampableSourceModel } from './audit-identity.mjs';
+import { captureV1Present } from '../store/capture-identity.mjs';
 import { costFromUsage } from '../model-pricing.mjs';
 import { openaiConfig } from '../config.mjs';
 import { durableWrite } from '../durable-write.mjs';
@@ -95,7 +97,7 @@ async function gitAnchor() {
  * @returns {Promise<{ cloudRunId: string|null, cloudRepoId: string|null,
  *                     planLinkLost: string|null }>}
  */
-export async function registerPlanAuditRun({ repoProfile, planFile, runId = null } = {}) {
+export async function registerPlanAuditRun({ repoProfile, planFile, runId = null, auditIdentity = null } = {}) {
   const NONE = { cloudRunId: null, cloudRepoId: null, planLinkLost: null };
   try {
     if (!await isCloudEnabled() || !repoProfile) return NONE;
@@ -132,6 +134,7 @@ export async function registerPlanAuditRun({ repoProfile, planFile, runId = null
 
     const cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'plan', {
       scopeMode: 'plan', commitSha, branch, planId, runId,
+      auditSessionId: auditIdentity?.auditSessionId, auditRound: auditIdentity?.auditRound,
     }).catch(() => null);
     // Plan-mode runs never captured the audit target identity, so every NULL
     // `audited_sha` in the store was a plan run (own-model telemetry gap 1).
@@ -180,12 +183,15 @@ export async function registerPlanAuditRun({ repoProfile, planFile, runId = null
  * @param {object} result - the plan-audit result (findings already suppressed/enriched)
  * @param {{ round?: number, durationMs?: number|null, costEstimate?: number|null }} [stats]
  */
-export async function completePlanAuditRun(cloudRunId, result, { round = 1, durationMs = null, costEstimate = null, usage = null } = {}) {
+export async function completePlanAuditRun(cloudRunId, result, { round = 1, durationMs = null, costEstimate = null, usage = null, sourceModel = null } = {}) {
   if (!cloudRunId || !result || !Array.isArray(result.findings)) return;
   try {
     // Defensive: recordFindings keys on _hash/_primaryFile metadata — the
     // suppression/ledger blocks usually populated these already; idempotent.
     for (const f of result.findings) populateFindingMetadata(f, 'plan');
+    // The model the provider RETURNED for the plan call, not `openaiConfig.model` (Decision 3). Gated on the
+    // capture-v1 probe so an un-migrated store's plan findings stay byte-identical.
+    await stampPlanSourceModel(result.findings, sourceModel);
     // Best-effort but never SILENT: a failed findings insert must be visible
     // (the run row would otherwise read complete-with-zero-findings and the
     // operator would have no clue the labels are missing).
@@ -209,4 +215,16 @@ export async function completePlanAuditRun(cloudRunId, result, { round = 1, dura
   } catch (err) {
     process.stderr.write(`  [learning] plan-run completion failed (non-blocking): ${err.message}\n`);
   }
+}
+
+/**
+ * Stamp the model the provider RETURNED for the plan call onto its findings (Decision 3). Shared by the production
+ * plan run and the plan-shadow baseline, which records the same findings as arm A. Gated on the capture-v1 probe so
+ * an un-migrated store's findings stay byte-identical; a sentinel or absent model stamps nothing.
+ * @param {object[]} findings
+ * @param {unknown} sourceModel
+ */
+export async function stampPlanSourceModel(findings, sourceModel) {
+  const servedModel = stampableSourceModel(sourceModel);
+  if (servedModel && await captureV1Present()) for (const f of findings) f._sourceModel ??= servedModel;
 }

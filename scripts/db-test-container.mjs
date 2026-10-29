@@ -110,6 +110,8 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // Enrolled 2026-10-28 with migration 20261028120000 (own-model telemetry PR 3): decision provenance columns, per-call
   // provenance idempotency, consent history and the coverage SQL are Postgres-only. Two edits, always.
   'tests/own-model-pr3-db.test.mjs',
+  'tests/audit-capture-db.test.mjs',
+  'tests/audit-capture-db.test.mjs',
   // Enrolled 2026-10-10 with migration 20261010120000 (fleet_events): the ON
   // CONFLICT re-drain, the outcome CHECK and every derived metric are Postgres-only.
   'tests/fleet-events-db.test.mjs',

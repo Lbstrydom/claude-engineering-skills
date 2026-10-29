@@ -37,6 +37,10 @@ import { isCloudEnabled } from './lib/store/repo.mjs';
 import { initLearningStore, recordAdjudicationEvent } from './learning-store.mjs';
 import { embedText, findingEmbeddingSpace } from './lib/embed-text.mjs';
 import { semanticSuppressConfig } from './lib/config.mjs';
+import { recordEquivalenceLinks } from './lib/audit/equivalence-links.mjs';
+import { durableWrite } from './lib/durable-write.mjs';
+import './lib/audit-store-writers.mjs'; // registers audit.equivalence
+import { recordWriteReceipt } from './lib/store/write-receipts.mjs';
 import { greedyReRaiseClusters, toVectorLiteral, buildOpenFindingsQuery, CAP_ORDERS } from './lib/semantic-suppression.mjs';
 
 export const KNOWN_FLAGS = Object.freeze([
@@ -167,7 +171,9 @@ async function main() {
 
   // Apply: dismiss each duplicate, naming its canonical. Verify by re-count.
   let ok = 0;
+  const linksByRun = new Map(); // dup run id -> [{duplicateFingerprint, canonicalFingerprint}]
   for (const c of clusters) {
+    const canon = (await pool.query('SELECT finding_fingerprint FROM audit_findings WHERE id=$1', [c.canonical.id])).rows[0];
     for (const d of c.duplicates) {
       const meta = await pool.query('SELECT run_id, finding_fingerprint, pass_name, round_raised FROM audit_findings WHERE id=$1', [d.id]);
       const m = meta.rows[0];
@@ -181,7 +187,16 @@ async function main() {
       // A typed refusal (bad-input, no-match, db-error) is not a suppression.
       if (res?.ok === false) { console.log(`  ${R}skipped${X} ${d.id.slice(0, 8)}: ${res.reason}${res.detail ? ` — ${res.detail}` : ''}`); continue; }
       ok++;
+      // The canonical stays open and the duplicate is dismissed: they are the same concern. Recorded as an automatic link.
+      if (canon?.finding_fingerprint) {
+        if (!linksByRun.has(m.run_id)) linksByRun.set(m.run_id, []);
+        linksByRun.get(m.run_id).push({ duplicateFingerprint: m.finding_fingerprint, canonicalFingerprint: canon.finding_fingerprint });
+      }
     }
+  }
+  for (const [runId, links] of linksByRun) {
+    const t = await recordEquivalenceLinks({ links, runId, createdBy: 'semantic-suppress', deps: { durableWrite, recordWriteReceipt } });
+    console.log(`  ${D}equivalence links for run ${runId.slice(0, 8)}: ${t.written}/${t.expected} written${t.spilled + t.lost ? `, ${t.spilled} spilled, ${t.lost} lost` : ''}${D}${X}`);
   }
   // Verify against the store (best-effort recordAdjudicationEvent must not be trusted on its word).
   const dupIds = clusters.flatMap((c) => c.duplicates.map((d) => d.id));

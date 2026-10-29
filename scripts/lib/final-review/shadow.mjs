@@ -414,6 +414,30 @@ function shadowSkipBlock(shadow) {
 }
 
 /**
+ * Production wiring for the reviewer-event writes: the store seams are imported lazily so this module keeps its
+ * existing import graph, and the transcript is parsed here because `runShadowAndPersist` is handed its text.
+ * @returns {Promise<void>}
+ */
+async function recordReviewerEvents({ runId, reviewRound, primaryModel, result, transcriptContent }) {
+  let transcript = null;
+  // An unparseable transcript (the CLI also accepts Markdown) has no presented set: persistReviewerEvents then records an
+  // INCOMPLETE receipt naming that, rather than this silently recording nothing.
+  try { transcript = typeof transcriptContent === 'string' ? JSON.parse(transcriptContent) : transcriptContent; } catch { transcript = null; }
+  const [{ persistReviewerEvents }, { durableWrite }, capture, receipts] = await Promise.all([
+    import('./reviewer-events.mjs'), import('../durable-write.mjs'),
+    import('../store/capture-identity.mjs'), import('../store/write-receipts.mjs'),
+  ]);
+  await import('../audit-store-writers.mjs'); // registers audit.reviewerEvents
+  await persistReviewerEvents({
+    runId, reviewRound, primaryModel, result, transcript,
+    deps: {
+      captureV1Present: capture.captureV1Present, resolveSourceRun: capture.resolveSourceRun, hasFinding: capture.hasFinding,
+      clearReviewerEvents: capture.clearReviewerEvents, durableWrite, recordWriteReceipt: receipts.recordWriteReceipt,
+    },
+  });
+}
+
+/**
  * Build the `recordFinalReviewFindings` payload from an already-completed
  * review round. PURE — no I/O, no provider call — extracted 2026-09-14
  * (audit-code cluster A R1 M6) specifically so the three shapes this produces
@@ -526,7 +550,7 @@ export function resolveShadowEnvelopeScope({ envelopeScopeCli = null, campaignDi
  *   (`modelEvalOverride` with `shadow.state !== 'ready'`) never reach the
  *   code path that calls it, so they may omit it.
  */
-export async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }, { modelEvalOverride = null, envelopeScopeCli = null, campaignDigest = null, persistFn = recordFinalReviewFindings, runReviewWithRetry, appendModelEvalShadowObservationFn = appendModelEvalShadowObservation, buildShadowClientFn = buildShadowClient } = {}) {
+export async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }, { modelEvalOverride = null, envelopeScopeCli = null, campaignDigest = null, persistFn = recordFinalReviewFindings, reviewRound = null, reviewerEventsFn = recordReviewerEvents, runReviewWithRetry, appendModelEvalShadowObservationFn = appendModelEvalShadowObservation, buildShadowClientFn = buildShadowClient } = {}) {
   // `persistFn` is a test seam ONLY, same shape as `modelEvalOverride` above —
   // production always takes the default (the real store writer). Lets the
   // producer→store contract test capture the payload this function builds
@@ -645,6 +669,12 @@ export async function runShadowAndPersist(result, primaryModel, runId, { planCon
   if (!runId) return;
   const persistPayload = buildFinalReviewPersistPayload({ result, diff, primaryModel, shadow });
   const persistResult = await persistFn(runId, persistPayload);
+  // PRIMARY reviewer only: the shadow stays observation-only. Reversals become `reviewer` events on the source rows
+  // (audit-telemetry-capture Decision 4); never throws, so a store failure cannot cost the review its result.
+  // Wrapped: the lazy imports inside the production wiring can reject too, and telemetry must not cost the review its result.
+  try { await reviewerEventsFn({ runId, reviewRound, primaryModel, result, transcriptContent }); } catch (err) {
+    process.stderr.write(`  [reviewer-events] not recorded (non-blocking): ${err.message}\n`);
+  }
   // write-boundary-hardening plan Phase 10: surface the genuinely inconsistent
   // state (findings landed, verdict metadata didn't) loudly — findingsRecorded
   // === false is a different, already-clean outcome (nothing was written, so

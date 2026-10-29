@@ -21,6 +21,7 @@
 
 import { one, many, query, withTx, upsert, pgArray } from '../db/query.mjs';
 import { isCloudEnabled, assertRepoRowId } from './repo.mjs';
+import { captureV1Present } from './capture-identity.mjs';
 import { CANONICAL_ARMS, stagesForArm } from '../arm-vocabulary.mjs';
 
 // ── Schema preflight (decision 13) ───────────────────────────────────────────
@@ -395,6 +396,62 @@ async function resolveCanonicalRoot(fingerprint) {
   return cur;
 }
 
+/** The writers that may be overwritten by a later automatic link. Anything else (a human actor, NULL) is a manual link. */
+const AUTOMATIC_EQUIVALENCE_CREATORS = Object.freeze(['semantic-suppress', 'concern-v1']);
+
+/** One fixed key: write volume is low, so a single global lock is the simple, correct way to serialise opposite-direction inserts. */
+const EQUIVALENCE_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('finding_equivalence'))";
+
+/**
+ * The repo ids a fingerprint has a persisted finding row under. The table is keyed on the fingerprint GLOBALLY, so a
+ * fingerprint seen in two repos cannot be linked unambiguously.
+ */
+async function reposOfFingerprint(fingerprint) {
+  const rows = await many(
+    `SELECT DISTINCT r.repo_id FROM audit_findings f JOIN audit_runs r ON r.id = f.run_id WHERE f.finding_fingerprint = $1`,
+    [fingerprint],
+  );
+  return rows.map((r) => r.repo_id);
+}
+
+/**
+ * Record an AUTOMATIC finding-equivalence link (audit-telemetry-capture Decision 6): the duplicate is the same concern
+ * as the canonical. An automatic link never sets an outcome -- only the manual `duplicate` adjudication does -- and a
+ * manual link is never overwritten. Everything runs inside one transaction holding the global equivalence lock, and
+ * every refusal is a NAMED outcome the caller counts; nothing is dropped silently.
+ *
+ * @param {{duplicateFingerprint: string, canonicalFingerprint: string, runId?: string|null, createdBy: 'semantic-suppress'|'concern-v1'}} link
+ * @returns {Promise<{outcome: 'written'|'skipped:endpoint'|'skipped:ambiguous-repo'|'skipped:cycle'|'skipped:manual'|'skipped:unmigrated'|'skipped:cloud-off', root?: string}>}
+ */
+export async function recordEquivalence({ duplicateFingerprint, canonicalFingerprint, runId = null, createdBy }) {
+  if (!AUTOMATIC_EQUIVALENCE_CREATORS.includes(createdBy)) throw new Error(`recordEquivalence: createdBy must be one of ${AUTOMATIC_EQUIVALENCE_CREATORS.join('|')}`);
+  if (!duplicateFingerprint || !canonicalFingerprint) throw new Error('recordEquivalence: both fingerprints are required');
+  if (!await isCloudEnabled()) return { outcome: 'skipped:cloud-off', applied: false, rows: 0, reason: 'cloud-off' };
+  if (!await captureV1Present()) return { outcome: 'skipped:unmigrated', applied: false, rows: 0, reason: 'store-not-migrated' };
+  if (duplicateFingerprint === canonicalFingerprint) return { outcome: 'skipped:cycle', applied: false, rows: 0, reason: 'skipped:cycle' };
+  return withTx(async () => {
+    await query(EQUIVALENCE_LOCK_SQL);
+    const [dupRepos, canonRepos] = await Promise.all([reposOfFingerprint(duplicateFingerprint), reposOfFingerprint(canonicalFingerprint)]);
+    if (dupRepos.length === 0 || canonRepos.length === 0) return { outcome: 'skipped:endpoint', applied: false, rows: 0, reason: 'skipped:endpoint' };
+    if (dupRepos.length > 1 || canonRepos.length > 1) return { outcome: 'skipped:ambiguous-repo', applied: false, rows: 0, reason: 'skipped:ambiguous-repo' };
+    if (dupRepos[0] !== canonRepos[0]) return { outcome: 'skipped:endpoint', applied: false, rows: 0, reason: 'skipped:endpoint' };
+    const root = await resolveCanonicalRoot(canonicalFingerprint);
+    if (root === duplicateFingerprint) return { outcome: 'skipped:cycle', applied: false, rows: 0, reason: 'skipped:cycle' };
+    const res = await query(
+      `INSERT INTO finding_equivalence (duplicate_finding_id, canonical_finding_id, run_id, created_by)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (duplicate_finding_id)
+       DO UPDATE SET canonical_finding_id = EXCLUDED.canonical_finding_id, created_by = EXCLUDED.created_by, run_id = EXCLUDED.run_id
+       WHERE finding_equivalence.created_by = ANY($5::text[])`,
+      [duplicateFingerprint, root, runId, createdBy, AUTOMATIC_EQUIVALENCE_CREATORS],
+    );
+    if ((res?.rowCount ?? 0) === 0) return { outcome: 'skipped:manual', applied: false, rows: 0, reason: 'skipped:manual' };
+    // Keep the table flat: anything that pointed at this duplicate now points at its root, so readers need one hop, not a walk.
+    await query('UPDATE finding_equivalence SET canonical_finding_id = $2 WHERE canonical_finding_id = $1', [duplicateFingerprint, root]);
+    return { outcome: 'written', applied: true, rows: 1, root };
+  });
+}
+
 async function setFindingOutcome(runId, fingerprint, outcome, userAction) {
   // Returns rowCount so the caller can detect a 0-row no-op (audit R1 M5) — a
   // fingerprint that matched nothing is a silent adjudication failure. A
@@ -435,6 +492,7 @@ export async function applyModelAbAdjudication({ runId, fingerprint, action, can
     // set the dup's outcome must be all-or-nothing (query() joins the active tx
     // via AsyncLocalStorage, so these run on one client).
     return withTx(async () => {
+      await query(EQUIVALENCE_LOCK_SQL); // the same lock the automatic writer takes: a manual link and an automatic one serialise
       const root = await resolveCanonicalRoot(canonicalFingerprint);
       if (root === fingerprint) throw new Error('duplicate cannot point at itself (would form a cycle)');
       await query(
@@ -448,9 +506,10 @@ export async function applyModelAbAdjudication({ runId, fingerprint, action, can
         'SELECT adjudication_outcome FROM audit_findings WHERE run_id = $1 AND finding_fingerprint = $2 LIMIT 1',
         [runId, root],
       );
-      const outcome = canon?.adjudication_outcome || 'pending';
+      // Leave NULL when the canonical has no outcome yet: the literal 'pending' is not an adjudication outcome.
+      const outcome = canon?.adjudication_outcome ?? null;
       const rows = await setFindingOutcome(runId, fingerprint, outcome, 'dismissed');
-      return { ok: true, mappedOutcome: outcome, canonicalRoot: root, rowsUpdated: rows };
+      return { ok: true, mappedOutcome: outcome ?? 'pending', canonicalRoot: root, rowsUpdated: rows };
     });
   }
 

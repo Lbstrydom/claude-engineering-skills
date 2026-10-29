@@ -284,7 +284,7 @@ async function runLegacyProductionAuditImpl(ctx) {
     changedFiles = [], auditBaseCommit = null, repoProfile = null, bandit = null, fpTracker = null, noLedger = false,
     noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false,
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
-    sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
+    sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, auditIdentity = null, allowInfraScope = false,
     outFile = null, providers = {}, noCloudRecording = false,
     coverageChanged = null, coverageExcluded = null, requiredSubjects = null,
     // In ctx since buildAuditRunContext but not destructured until 2026-08-13 (the orphan wave could not tell a dirty
@@ -456,7 +456,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       // which was not happening, and would have masked a genuine future throw.
       // Same removal, same reasoning, as the `recordDiffComplexity` call below.
       cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'code', {
-        scopeMode, commitSha, branch, planId, runId,
+        scopeMode, commitSha, branch, planId, runId, auditSessionId: auditIdentity?.auditSessionId, auditRound: auditIdentity?.auditRound,
       });
       (await import('../telemetry/llm-call-log.mjs')).bindRun({ runId: cloudRunId, repoId: cloudRepoId, workItemId: process.env.OWN_MODEL_WORK_ITEM_ID, producer: 'audit' });
       // Phase 1 — adaptive-learning-v1 telemetry.  Compute diff_complexity

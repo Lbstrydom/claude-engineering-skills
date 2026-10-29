@@ -21,9 +21,18 @@
     { "table": "llm_call_provenance", "column": "route", "since": "2026-10-29", "expectFill": 0.99, "tolerance": 0.02 },
     { "table": "llm_call_provenance", "column": "input_tokens", "since": "2026-10-29", "expectFill": 0.95, "tolerance": 0.05 },
     { "table": "llm_call_provenance", "column": "latency_ms", "since": "2026-10-29", "expectFill": 0.95, "tolerance": 0.05 },
-    { "table": "llm_call_provenance", "column": "prompt_hash", "since": "2026-10-29", "where": "audit_producer", "expectFill": 0.95, "tolerance": 0.05 }
+    { "table": "llm_call_provenance", "column": "prompt_hash", "since": "2026-10-29", "where": "audit_producer", "expectFill": 0.95, "tolerance": 0.05 },
+    { "table": "audit_runs", "column": "audit_session_id", "since": "2026-10-29", "where": "code_run", "expectFill": 0.9, "tolerance": 0.05 },
+    { "table": "audit_runs", "column": "capture_epoch", "since": "2026-10-29", "where": "code_run", "expectFill": 0.9, "tolerance": 0.05 },
+    { "table": "audit_findings", "column": "source_model", "since": "2026-10-29", "where": "model_finding", "expectFill": 0.9, "tolerance": 0.05 },
+    { "table": "audit_pass_stats", "column": "source_model", "since": "2026-10-29", "where": "model_pass", "expectFill": 0.9, "tolerance": 0.05 },
+    { "table": "finding_adjudication_events", "column": "ruling_rationale", "since": "2026-10-29", "where": "non_campaign_event", "expectFill": 0.6, "tolerance": 0.1 },
+    { "table": "finding_adjudication_events", "column": "adjudicator_model", "since": "2026-10-29", "where": "reviewer_event", "expectFill": 0.95, "tolerance": 0.05 },
+    { "table": "finding_equivalence", "column": "canonical_finding_id", "since": "2026-10-29", "expectFill": 0.99, "tolerance": 0.02 }
   ],
   "exempt": [
+    { "table": "audit_runs", "column": "audit_round", "reason": "NULL by design on unified runs (one row spans every round), plan A/B arm runs and bake-off arm runs; a null rate says nothing about capture quality. audit_session_id is the covered linkage column" },
+    { "table": "finding_adjudication_events", "column": "adjudicator_model", "reason": "unknowable on pipeline rows: the model is the HOST agent doing triage, which the script cannot observe, and AUDIT_AUTHOR_TIER_HINT is an observation-only tier. Covered only for reviewer rows (where reviewer_event)" },
     { "table": "finding_adjudication_events", "column": "ingested_at", "reason": "added nullable only so the backfill can run; the same migration sets it NOT NULL DEFAULT now(), so it can never be null" },
     { "table": "audit_repos", "column": "training_eligibility_approved_by", "reason": "set only when a repo's flag is changed; most repos stay undecided, so a null rate says nothing about capture quality" },
     { "table": "audit_repos", "column": "training_eligibility_set_at", "reason": "set only when a repo's flag is changed (see approved_by)" }

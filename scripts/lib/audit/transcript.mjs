@@ -153,6 +153,34 @@ function requiredSubjectsOfRounds(rounds) {
 }
 
 /**
+ * The dismissed ledger entries the final reviewer is shown -- the PRESENTED SET against which its
+ * `wrongly_dismissed[]` reversals are counted (docs/plans/audit-telemetry-capture.md Decision 4). A finding the
+ * reviewer did not reverse is "not reversed", never "sustained": the reviewer's schema rules on reversals only.
+ *
+ * `id` is round-qualified (`R2 H7`) when the entry carries `resolvedRound`, because finding ids restart every round
+ * and `R1 H1` / `R2 H1` can both be present. It is the same form `claude_resolutions` prints.
+ *
+ * @param {object|Array|null} ledger - ledger object, its `entries` array, or null
+ * @returns {{id: string, latestFindingId: string, resolvedRound: number|null, topicId: string|null}[]}
+ */
+export function presentedDismissals(ledger) {
+  if (!ledger) return [];
+  const entries = Array.isArray(ledger) ? ledger : Array.isArray(ledger.entries) ? ledger.entries : [];
+  const out = [];
+  for (const e of entries) {
+    if (!e || typeof e !== 'object' || e.adjudicationOutcome !== 'dismissed') continue;
+    const latestFindingId = e.latestFindingId || e.findingId;
+    if (!latestFindingId) continue;
+    const resolvedRound = Number.isInteger(e.resolvedRound) ? e.resolvedRound : null;
+    out.push({
+      id: resolvedRound == null ? latestFindingId : `R${resolvedRound} ${latestFindingId}`,
+      latestFindingId, resolvedRound, topicId: e.topicId ?? null,
+    });
+  }
+  return out;
+}
+
+/**
  * Build the transcript object.
  *
  * Structurally load-bearing for `runFinalReview()`: `code_files` (paths it
@@ -200,6 +228,8 @@ export function buildAuditTranscript({
   };
   const resolutions = ledgerResolutions(ledger);
   if (resolutions.length > 0) transcript.claude_resolutions = resolutions;
+  // Emitted whenever a ledger was supplied, EMPTY included: an absent field means "never said what was presented", an empty array "nothing was".
+  if (ledger) transcript.presented_dismissals = presentedDismissals(ledger);
   if (summary) transcript.summary = summary;
   // The operator's --require list, as the audit ended it (the single source the final review reads; docs/plans/copilot-feedback-item4.md A5).
   const required = isPlan ? [] : requiredSubjectsOfRounds(rounds);

@@ -12,6 +12,7 @@ import { many, one, query, updateWhere, deleteWhere, insertReturning, withTx } f
 import { isCloudEnabled } from './repo.mjs';
 import { selectFindingRow } from './finding-identity.mjs';
 import { strictColumnExists } from './column-probes.mjs';
+import { captureV1Present, redactAndCapText } from './capture-identity.mjs';
 import { isAdjudicatorKind, isDismissReasonClass, fixOrderFlag, isTerminalFixState } from '../adjudication-vocab.mjs';
 
 /**
@@ -78,7 +79,7 @@ export function buildFindingAdjudicationPatch(event, decidedAt, pre = null) {
  */
 export function adjudicationEventRefusal(event) {
   if (!isAdjudicatorKind(event?.adjudicatorKind)) {
-    return `adjudicatorKind must be one of agent|human|pipeline|rule (got ${JSON.stringify(event?.adjudicatorKind)})`;
+    return `adjudicatorKind must be one of agent|human|pipeline|rule|reviewer (got ${JSON.stringify(event?.adjudicatorKind)})`;
   }
   if (event.adjudicationOutcome === 'dismissed' && !isDismissReasonClass(event.dismissReasonClass)) {
     return `a dismissed event needs a vocabulary-valid dismissReasonClass (got ${JSON.stringify(event.dismissReasonClass)})`;
@@ -107,6 +108,11 @@ export async function recordAdjudicationEvent(runId, findingFingerprint, event) 
   if (!runId || !await isCloudEnabled()) return { ok: false, reason: 'no-match' };
   const refusal = adjudicationEventRefusal(event);
   if (refusal) return { ok: false, reason: 'bad-input', detail: refusal };
+  // The compatibility gate: `reviewer` rows (and the kind-scoped delete below) exist only where the capture-v1
+  // migration widened the CHECK. An un-migrated store keeps today's behaviour; a reviewer event is skipped, not failed.
+  const captureV1 = await captureV1Present();
+  const isReviewer = event.adjudicatorKind === 'reviewer';
+  if (isReviewer && !captureV1) return { ok: false, reason: 'unmigrated', detail: 'audit_runs.capture_epoch absent' };
   try {
     const resolved = await selectFindingRow({
       runId,
@@ -133,11 +139,26 @@ export async function recordAdjudicationEvent(runId, findingFingerprint, event) 
                     fixed_before_adjudication, created_at
                FROM audit_findings WHERE id = $1 FOR UPDATE`, [finding.id])
         : null;
-      const { rowCount } = await updateWhere('audit_findings', buildFindingAdjudicationPatch(event, new Date(), pre), { id: finding.id });
-      if (rowCount !== 1) throw new Error(`audit_findings ${finding.id}: ${rowCount} row(s) updated, expected 1`);
+      // A reviewer event is an observation about the ruling, not the ruling: it must not rewrite the finding's
+      // denormalised outcome (the label every query reads). The row lock above is still taken, so reviewer and
+      // pipeline writes on one finding serialise.
+      if (!isReviewer) {
+        const { rowCount } = await updateWhere('audit_findings', buildFindingAdjudicationPatch(event, new Date(), pre), { id: finding.id });
+        if (rowCount !== 1) throw new Error(`audit_findings ${finding.id}: ${rowCount} row(s) updated, expected 1`);
+      }
       // This workflow's rows: stamped 'audit', or unstamped by an OLDER tool version
       // mid-rollout (NULL origin and no campaign `method`). Campaign rows survive.
-      if (migrated) {
+      if (migrated && captureV1) {
+        // Scoped to the SAME adjudicator kind, so a reviewer row and a pipeline row on one finding coexist. Legacy
+        // NULL-kind rows keep matching the pipeline path. A reviewer rewrite replaces only the SAME reviewing run's row:
+        // a later review of the same source finding adds its own.
+        const kind = event.adjudicatorKind;
+        await query(`DELETE FROM finding_adjudication_events WHERE finding_id = $1
+                       AND (event_origin = 'audit' OR (event_origin IS NULL AND method IS NULL))
+                       AND (adjudicator_kind = $2 OR ($2 = 'pipeline' AND adjudicator_kind IS NULL))
+                       AND ($2 <> 'reviewer' OR evidence ->> 'reviewing_run_id' IS NOT DISTINCT FROM $3)`,
+        [finding.id, kind, isReviewer ? String(event.evidence?.reviewing_run_id ?? '') || null : null]);
+      } else if (migrated) {
         await query(`DELETE FROM finding_adjudication_events WHERE finding_id = $1
                        AND (event_origin = 'audit' OR (event_origin IS NULL AND method IS NULL))`, [finding.id]);
       } else {
@@ -148,12 +169,16 @@ export async function recordAdjudicationEvent(runId, findingFingerprint, event) 
         adjudication_outcome: event.adjudicationOutcome,
         remediation_state: event.remediationState,
         ruling: event.ruling,
-        ruling_rationale: event.rulingRationale,
+        // Free text goes through the secret redactor and a length cap at the store boundary (Decision 5).
+        // Unconditional, un-migrated stores included: a secret in a rationale is worth redacting whatever the schema.
+        ruling_rationale: redactAndCapText(event.rulingRationale),
         round: event.round,
         ...(migrated ? {
           event_origin: 'audit',
           adjudicator_kind: event.adjudicatorKind,
           adjudicator_model: event.adjudicatorModel ?? null,
+          // jsonb: passed RAW, the write seam serialises it.
+          ...(captureV1 && event.evidence ? { evidence: event.evidence } : {}),
         } : {}),
       });
     });
