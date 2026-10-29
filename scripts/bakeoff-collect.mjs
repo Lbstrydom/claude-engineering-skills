@@ -37,6 +37,9 @@ import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { withFileLockSync } from './lib/file-lock.mjs';
 import { UnresolvedScopeError, ScopeMismatchError } from './lib/bakeoff/scope.mjs';
+import { durableWrite } from './lib/durable-write.mjs';
+import './lib/audit-store-writers.mjs'; // registers every audit-store writer
+import { captureTargetIdentity } from './lib/audit/target-identity.mjs';
 import { LOG_PATH, CONTRACT_EPOCH, snapshotId, planContentHash, readLog } from './lib/bakeoff/log.mjs';
 import { resolveArms, scopeForEntry, armDidRun } from './lib/bakeoff/arms.mjs';
 import { isComplete, armCostUsd, distinctFindingCount, cohortDigest } from './lib/bakeoff/summary.mjs';
@@ -355,14 +358,26 @@ async function mintArmRun(arm, { plan, mode, id }) {
     // to promote it.
     const { gitCommitSha } = await import('./lib/vcs.mjs');
     const head = gitCommitSha(process.cwd());
-    return await store.recordRunStart(repoId, plan, mode === 'plan' ? 'plan' : 'code', {
+    const armRunId = await store.recordRunStart(repoId, plan, mode === 'plan' ? 'plan' : 'code', {
       scopeMode: mode === 'plan' ? 'plan' : 'diff',
       experimentTag: 'final-review-bakeoff',
+      // Arm runs carry the bake-off run id as their session and NO round: they are not rounds of a primary audit.
+      auditSessionId: id, auditRound: null,
       // Structured result, never a throw — an unreadable HEAD degrades to a
       // run with no sha (unpromotable, and visibly so) rather than losing the
       // whole registration and with it the findings.
       ...(head.ok ? { commitSha: head.sha } : {}),
     });
+    // The arm reviews the tree at this revision: record the audited identity so arm runs stop dragging the
+    // `code_run` audited_sha floor down. Evidence, not a gate -- a failure leaves the run registered.
+    if (armRunId) {
+      const { auditedSha, auditedTree } = captureTargetIdentity(process.cwd());
+      if (auditedSha || auditedTree) {
+        await durableWrite('audit.convergenceState', { runId: armRunId, run_id: armRunId, state: { audited_sha: auditedSha, audited_tree: auditedTree } })
+          .catch((err) => process.stderr.write(`  [bakeoff] arm ${arm.id} target identity not recorded: ${err.message}\n`));
+      }
+    }
+    return armRunId;
   } catch (err) {
     process.stderr.write(`  [bakeoff] run registration failed for arm ${arm.id} (findings will be file-only): ${err.message}\n`);
     return null;

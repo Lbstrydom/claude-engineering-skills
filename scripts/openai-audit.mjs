@@ -104,6 +104,8 @@ import { runTieredAuditPipeline } from './lib/audit/tiered-pipeline.mjs';
 import { runTieredShadowComparison } from './lib/audit/tiered-shadow-compare.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { gateRoundCap, applyRoundCap } from './lib/audit/round-cap-gate.mjs';
+import { readFlagValue } from './lib/audit/round-cap.mjs';
+import { resolveAuditIdentity } from './lib/audit/audit-identity.mjs';
 import { OPENAI_AUDIT_USAGE } from './lib/audit/openai-audit-usage.mjs';
 
 /**
@@ -641,6 +643,11 @@ async function main() {
   const runIdIdx = args.indexOf('--run-id');
   const explicitRunId = runIdIdx !== -1 && args[runIdIdx + 1] ? args[runIdIdx + 1] : null;
 
+  // --session-id <sid>: links the rounds of one audit (audit_runs.audit_session_id); a flag that
+  // disagrees with the --out path is refused, never picked between.
+  const auditIdentity = resolveAuditIdentity({ sessionFlag: readFlagValue(args, '--session-id').value, roundFlag: round, outPath: outFile });
+  if (auditIdentity.conflict) process.stderr.write(`  [learning] audit identity left unset: ${auditIdentity.conflict}\n`);
+
   // --ledger <file>: adjudication ledger — single canonical read+write path
   const ledgerIdx = args.indexOf('--ledger');
   const ledgerFileArg = ledgerIdx !== -1 && args[ledgerIdx + 1] ? args[ledgerIdx + 1] : null;
@@ -935,7 +942,7 @@ async function main() {
       openaiConfig.reasoning === 'high' ? codeContextChars * 4 : 0);
     // allowTiered: true — main() is the ONE production CLI entrypoint allowed
     // to execute the tiered pipeline / shadow (see buildAuditRunContext).
-    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, coverageChanged, coverageExcluded, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty, requiredSubjects: required.subjects });
+    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, coverageChanged, coverageExcluded, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, auditIdentity, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty, requiredSubjects: required.subjects });
     // An INCOMPLETE run measured less than the change, and exiting 0 made that
     // indistinguishable from a pass to anything checking `$?` (2026-09-04
     // consumer report). 3, not 1: 1 already means "the CLI itself errored" on
@@ -1040,7 +1047,7 @@ async function main() {
     openaiConfig.reasoning === 'high' ? (userPrompt?.length || 0) * 2 : 0);
 
   try {
-    const { result, usage, latencyMs } = await callGPT(openai, {
+    const { result, usage, latencyMs, model: servedModel } = await callGPT(openai, {
       systemPrompt, userPrompt, schema, schemaName,
       passName: mode
     });
@@ -1131,7 +1138,7 @@ async function main() {
               commitSha = execFileSync('git', ['rev-parse', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
               branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
             } catch { /* not a git repo */ }
-            const planShadowRunId = await recordRunStart(planRepoId, planFile || 'ad-hoc', 'plan', { commitSha, branch }).catch(() => null);
+            const planShadowRunId = await recordRunStart(planRepoId, planFile || 'ad-hoc', 'plan', { commitSha, branch, auditSessionId: auditIdentity.auditSessionId, auditRound: null }).catch(() => null);
             if (planShadowRunId) {
               // Persist arm A's (production plan-audit) findings with stage=null so
               // the scorer view attributes them to A — the baseline the B/C arms
@@ -1178,7 +1185,7 @@ async function main() {
     // Best-effort: cloud off / failure → result simply lacks _cloudRunId,
     // exactly today's behaviour.
     if (mode === 'plan' && !result._cloudRunId && Array.isArray(result.findings)) {
-      const { cloudRunId, planLinkLost } = await registerPlanAuditRun({ repoProfile, planFile, runId: explicitRunId });
+      const { cloudRunId, planLinkLost } = await registerPlanAuditRun({ repoProfile, planFile, runId: explicitRunId, auditIdentity });
       // A plan upsert that failed against a reachable store is carried onto the
       // result (durability plan decision 6). Without this the plan-audit branch
       // would keep the silence the code-audit branch just lost: `_cloudRunId` is
@@ -1194,7 +1201,7 @@ async function main() {
         // `costEstimate` is still not passed — the pricing stays owned by
         // `completePlanAuditRun` so a caller cannot forget it; what the caller
         // owes is the raw usage, which only it has.
-        await completePlanAuditRun(cloudRunId, result, { round, durationMs: Date.now() - startMs, usage });
+        await completePlanAuditRun(cloudRunId, result, { round, durationMs: Date.now() - startMs, usage, sourceModel: servedModel });
         process.stderr.write(`  [learning] plan-audit run registered: ${cloudRunId} (${result.findings.length} findings, round ${round})\n`);
       }
     }

@@ -27,6 +27,7 @@ import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 import { findingKeyString, selectFindingRow } from './finding-identity.mjs';
 import { applyFindingWrite } from './finding-write.mjs';
+import { captureIdentityColumns } from './capture-identity.mjs';
 import { detectClassificationColumns, detectPassStatsRoundColumn, probeColumnExistence, columnExists, strictColumnExists } from './column-probes.mjs';
 export { _resetClassificationColumnCache, _resetPassStatsRoundColumnCache, _resetRunReadColumnCache } from './column-probes.mjs';
 // Imported, never re-exported (learning-store.mjs does `export *` from here).
@@ -252,7 +253,10 @@ function repoIdentityMatches(a, b) {
   return a === b;
 }
 
-export async function recordRunStart(repoId, planFile, mode, { scopeMode, commitSha, branch, planId, runId, experimentTag } = {}) {
+// A re-record carrying NULL here must not erase a value an earlier write set (audit-telemetry-capture Decision 3).
+const KEEP_WHEN_NULL = new Set(['source_model', 'stage', 'arm']);
+
+export async function recordRunStart(repoId, planFile, mode, { scopeMode, commitSha, branch, planId, runId, experimentTag, auditSessionId, auditRound } = {}) {
   if (!await isCloudEnabled()) return null;
   // Run-unification (WS1 §1.2/§1.3b): when the orchestrator threads an explicit
   // `runId`, REUSE the existing audit_runs row so all rounds of one audit share
@@ -301,6 +305,7 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
     // failure — the graceful-degradation invariant runs the other way.
     ...(experimentTag && await columnExists('audit_runs', 'experiment_tag', many, isCloudEnabled)
       ? { experiment_tag: experimentTag } : {}),
+    ...(await captureIdentityColumns({ auditSessionId, auditRound, unifiedRun: Boolean(runId) })),
   };
   try {
     const out = await insertReturning('audit_runs', row, { returning: ['id'] });
@@ -339,10 +344,10 @@ export async function recordRunComplete(runId, stats) {
     accepted_count: stats.accepted,
     dismissed_count: stats.dismissed,
     fixed_count: stats.fixed,
-    gemini_verdict: stats.geminiVerdict,
     total_cost_estimate: stats.costEstimate,
     total_duration_ms: stats.durationMs,
   };
+  if (stats.geminiVerdict != null) update.gemini_verdict = stats.geminiVerdict; // a null must not erase a verdict already written
   if (stats.diffLinesChanged != null) update.diff_lines_changed = stats.diffLinesChanged;
   if (stats.diffFilesChanged != null) update.diff_files_changed = stats.diffFilesChanged;
   if (stats.sessionCacheHit != null) update.session_cache_hit = stats.sessionCacheHit;
@@ -963,7 +968,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
       : `run_id, finding_fingerprint, pass_name`;
     const updatable = cols.filter((c) => c !== 'run_id' && c !== 'finding_fingerprint' && c !== 'pass_name' && c !== 'bucket');
     const conflict = updatable.length > 0
-      ? `ON CONFLICT (${conflictTarget}) DO UPDATE SET ${updatable.map((c) => `"${c}" = EXCLUDED."${c}"`).join(', ')}`
+      ? `ON CONFLICT (${conflictTarget}) DO UPDATE SET ${updatable.map((c) => (KEEP_WHEN_NULL.has(c) ? `"${c}" = COALESCE(EXCLUDED."${c}", audit_findings."${c}")` : `"${c}" = EXCLUDED."${c}"`)).join(', ')}`
       : `ON CONFLICT (${conflictTarget}) DO NOTHING`;
     const sql = `INSERT INTO audit_findings (${cols.map((c) => `"${c}"`).join(', ')})
                  VALUES ${valueGroups.join(', ')}
