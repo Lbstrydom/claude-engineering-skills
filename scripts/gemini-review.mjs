@@ -926,7 +926,7 @@ async function main() {
     // `runReviewWithRetry` is this file's own function — shadow.mjs cannot
     // import it without a permanent cross-file cycle (see shadow.mjs's
     // fileoverview), so it is threaded through as an explicit dependency.
-    await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode }, { modelEvalOverride, envelopeScopeCli, campaignDigest, runReviewWithRetry });
+    await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode }, { modelEvalOverride, envelopeScopeCli, campaignDigest, runReviewWithRetry, reviewRound: round });
     emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile, gateSummary);
     recordGeminiOutcomes(result, primaryModel);
     await finishAndExit(recordFinalReviewMarker({ auditMode, result, repoRoot: process.cwd(), reviewedEvidence, pending: pendingReview }) ? 1 : 0); // never rely on natural drain; a marker that cannot be made safe is fatal

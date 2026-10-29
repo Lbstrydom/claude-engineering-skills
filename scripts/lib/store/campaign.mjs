@@ -37,6 +37,7 @@ import { FINDING_MATCH_SCHEMA_VERSION } from '../config.mjs';
 import { terminalEvent } from '../campaign/verdict.mjs';
 import { hmacKeyRefFor } from '../campaign/config.mjs';
 import { verdictPairError } from '../campaign/adjudicate.mjs';
+import { redactAndCapText } from './capture-identity.mjs';
 
 // ── The blind DTO ───────────────────────────────────────────────────────────
 
@@ -1378,13 +1379,14 @@ export async function recordHumanOverride({ findingId, outcome, note = null, act
         adjudicator_kind: 'human',
         method: 'override',
         overrides_event_id: target,
+        // Who overrode: the table has no actor column, so it rides in `evidence` (jsonb, passed RAW), redacted and
+        // capped like every free-text value the capture-v1 writers store. Absent actor -> no evidence key at all.
+        ...(redactAndCapText(actor) ? { evidence: { actor: redactAndCapText(actor) } } : {}),
       }, { returning: ['id'] });
       const id = Array.isArray(row) ? row[0]?.id : row?.id;
       if (!id) throw new Error('override insert returned no id');
-      // `finding_adjudication_events` has no `actor` column, and adding one for
-      // this would duplicate a fact `campaign_events` already holds. The CLI
-      // appends the actor there; it is returned so the caller can do so without
-      // re-deriving it.
+      // `finding_adjudication_events` has no `actor` column; the actor is recorded in `evidence` above AND the CLI
+      // appends it to `campaign_events`. It is returned so the caller can do so without re-deriving it.
       return { ok: true, cloud: true, id, overrides: target, actor: actor ?? null };
     });
   } catch (err) {

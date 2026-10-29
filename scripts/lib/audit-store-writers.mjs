@@ -59,6 +59,8 @@ import {
 import { upsertDebtEntries } from './store/debt.mjs';
 import { recordRunDiff } from './store/run-diffs.mjs';
 import { recordLlmCalls } from './store/llm-calls.mjs';
+import { recordAdjudicationEvent } from './store/adjudication-events.mjs';
+import { recordEquivalence } from './store/model-ab.mjs';
 
 /**
  * Turn a store receipt into a `durableWrite` result.
@@ -95,7 +97,12 @@ import { recordLlmCalls } from './store/llm-calls.mjs';
 // the target columns do not exist yet. Nothing was attempted, so it is a decline —
 // failing it would mark every audit on a not-yet-migrated consumer store
 // `incomplete`. The writer logs it once and the census reports UNMIGRATED.
-const DECLINED_REASONS = new Set(['cloud-off', 'no-run-id', 'no-repo-identity', 'store-not-migrated']);
+// The `skipped:*` reasons are `recordEquivalence`'s deterministic refusals (a missing endpoint, a cross-repo or cyclic link, a
+// manual link that must not be overwritten): nothing was wrong with the store, and a retry would refuse the same way.
+const DECLINED_REASONS = new Set([
+  'cloud-off', 'no-run-id', 'no-repo-identity', 'store-not-migrated',
+  'skipped:endpoint', 'skipped:ambiguous-repo', 'skipped:cycle', 'skipped:manual',
+]);
 
 async function receipt(promise) {
   const r = await promise;
@@ -107,6 +114,15 @@ async function receipt(promise) {
     reason: r?.reason,
     declined: !applied && DECLINED_REASONS.has(r?.reason),
   };
+}
+
+// recordAdjudicationEvent answers `{ok}`, not a row receipt. Translate: an event the store accepted is applied; one the
+// store could not take yet (`unmigrated`) is a decline, not a failure; everything else throws so the write spills.
+async function eventReceipt(promise) {
+  const r = await promise;
+  if (r?.ok === true) return { applied: true, rows: 1 };
+  if (r?.reason === 'unmigrated') return { applied: false, rows: 0, reason: 'store-not-migrated', declined: true };
+  throw new Error(`adjudication event not recorded: ${r?.reason ?? 'unknown'}${r?.detail ? ` - ${r.detail}` : ''}`);
 }
 
 let _registered = false;
@@ -157,6 +173,30 @@ export function registerAuditStoreWriters() {
     replay: (payload) => receipt(
       recordFindings(payload.runId, payload.findings, payload.passName, payload.round),
     ),
+  });
+
+  // ── audit.reviewerEvents ──────────────────────────────────────────────────
+  // The final reviewer's reversals (audit-telemetry-capture Decision 4). Keyed on source run + fingerprint + the
+  // REVIEWING run: replaying recordAdjudicationEvent deletes that review's own reviewer row and re-inserts it, so a
+  // replay is idempotent by construction and a later review of the same finding adds its own row.
+  registerWriter('audit.reviewerEvents', {
+    schemaVersion: 1,
+    rowKey: (row) => `${row.run_id}:${row.fingerprint}:${row.event?.evidence?.reviewing_run_id}`,
+    replay: (payload) => eventReceipt(recordAdjudicationEvent(payload.runId, payload.fingerprint, payload.event)),
+  });
+
+  // ── audit.equivalence ─────────────────────────────────────────────────────
+  // Automatic finding_equivalence links (audit-telemetry-capture Decision 6). Keyed on the duplicate fingerprint, the
+  // table's own primary key: an upsert is idempotent by construction. `recordEquivalence` answers a NAMED outcome, so
+  // a refusal is translated into a decline carrying that name (the caller tallies it) rather than a failure.
+  registerWriter('audit.equivalence', {
+    schemaVersion: 1,
+    rowKey: (row) => `${row.duplicateFingerprint}`,
+    replay: async (payload) => {
+      const r = await recordEquivalence(payload);
+      if (r.outcome === 'written') return { applied: true, rows: 1 };
+      return { applied: false, rows: 0, reason: r.outcome === 'skipped:unmigrated' ? 'store-not-migrated' : r.outcome.replace('skipped:cloud-off', 'cloud-off'), declined: true };
+    },
   });
 
   // ── audit.runComplete ─────────────────────────────────────────────────────

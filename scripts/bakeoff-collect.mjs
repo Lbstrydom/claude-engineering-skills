@@ -373,8 +373,9 @@ async function mintArmRun(arm, { plan, mode, id }) {
     if (armRunId) {
       const { auditedSha, auditedTree } = captureTargetIdentity(process.cwd());
       if (auditedSha || auditedTree) {
-        await durableWrite('audit.convergenceState', { runId: armRunId, run_id: armRunId, state: { audited_sha: auditedSha, audited_tree: auditedTree } })
-          .catch((err) => process.stderr.write(`  [bakeoff] arm ${arm.id} target identity not recorded: ${err.message}\n`));
+        // durableWrite never rejects for a store failure: it RETURNS `{outcome}`, so the outcome is what to inspect.
+        const w = await durableWrite('audit.convergenceState', { runId: armRunId, run_id: armRunId, state: { audited_sha: auditedSha, audited_tree: auditedTree } });
+        if (w.outcome === 'lost' || w.outcome === 'spilled') process.stderr.write(`  [bakeoff] arm ${arm.id} target identity ${w.outcome}: ${w.error ?? 'queued for replay'}\n`);
       }
     }
     return armRunId;

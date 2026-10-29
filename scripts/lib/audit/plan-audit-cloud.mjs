@@ -191,8 +191,7 @@ export async function completePlanAuditRun(cloudRunId, result, { round = 1, dura
     for (const f of result.findings) populateFindingMetadata(f, 'plan');
     // The model the provider RETURNED for the plan call, not `openaiConfig.model` (Decision 3). Gated on the
     // capture-v1 probe so an un-migrated store's plan findings stay byte-identical.
-    const servedModel = stampableSourceModel(sourceModel);
-    if (servedModel && await captureV1Present()) for (const f of result.findings) f._sourceModel ??= servedModel;
+    await stampPlanSourceModel(result.findings, sourceModel);
     // Best-effort but never SILENT: a failed findings insert must be visible
     // (the run row would otherwise read complete-with-zero-findings and the
     // operator would have no clue the labels are missing).
@@ -216,4 +215,16 @@ export async function completePlanAuditRun(cloudRunId, result, { round = 1, dura
   } catch (err) {
     process.stderr.write(`  [learning] plan-run completion failed (non-blocking): ${err.message}\n`);
   }
+}
+
+/**
+ * Stamp the model the provider RETURNED for the plan call onto its findings (Decision 3). Shared by the production
+ * plan run and the plan-shadow baseline, which records the same findings as arm A. Gated on the capture-v1 probe so
+ * an un-migrated store's findings stay byte-identical; a sentinel or absent model stamps nothing.
+ * @param {object[]} findings
+ * @param {unknown} sourceModel
+ */
+export async function stampPlanSourceModel(findings, sourceModel) {
+  const servedModel = stampableSourceModel(sourceModel);
+  if (servedModel && await captureV1Present()) for (const f of findings) f._sourceModel ??= servedModel;
 }

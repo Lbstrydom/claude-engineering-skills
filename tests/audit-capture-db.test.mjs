@@ -35,6 +35,8 @@ describe('audit telemetry capture (DB integration)', { skip }, () => {
     if (!q) return;
     await q.query('DELETE FROM finding_adjudication_events WHERE finding_id IN (SELECT id FROM audit_findings WHERE run_id = ANY($1::uuid[]))', [runIds]);
     await q.query('DELETE FROM audit_findings WHERE run_id = ANY($1::uuid[])', [runIds]);
+    await q.query('DELETE FROM audit_runs WHERE id = ANY($1::uuid[])', [runIds]);
+    await q.query('DELETE FROM audit_repos WHERE name = $1', [`capture-other-${tag}`]);
     await q.query('DELETE FROM audit_runs WHERE repo_id = $1', [repoId]);
     await q.query('DELETE FROM audit_repos WHERE id = $1', [repoId]);
     const { closePool } = await import('../scripts/lib/db/client.mjs');
@@ -113,6 +115,241 @@ describe('audit telemetry capture (DB integration)', { skip }, () => {
       assert.equal((await q.one('SELECT gemini_verdict FROM audit_runs WHERE id = $1', [runId])).gemini_verdict, 'APPROVE');
       await rf.recordRunComplete(runId, { rounds: 1, totalFindings: 0, accepted: 0, dismissed: 0, fixed: 0, geminiVerdict: 'CONCERNS' });
       assert.equal((await q.one('SELECT gemini_verdict FROM audit_runs WHERE id = $1', [runId])).gemini_verdict, 'CONCERNS');
+    });
+  }
+  // Phase 3: adjudication provenance
+  {
+    const newRun = async (sessionId, round) => {
+      const id = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { auditSessionId: sessionId, auditRound: round });
+      runIds.push(id);
+      return id;
+    };
+    const addFinding = async (runId, hash, round) => {
+      await rf.recordFindings(runId, [{ _hash: hash, _bucket: null, severity: 'HIGH', category: 'test', section: 'x', detail: 'd' }], 'backend', round);
+      return q.one('SELECT id FROM audit_findings WHERE run_id = $1 AND finding_fingerprint = $2', [runId, hash]);
+    };
+    const events = (findingId) => q.many('SELECT adjudicator_kind, adjudication_outcome, ruling_rationale, evidence FROM finding_adjudication_events WHERE finding_id = $1 ORDER BY adjudicator_kind, ruling_rationale', [findingId]);
+    const pipelineEvent = (over = {}) => ({ adjudicationOutcome: 'dismissed', remediationState: 'pending', ruling: 'overrule', adjudicatorKind: 'pipeline', dismissReasonClass: 'unclassified', round: 1, ...over });
+    const reviewerEvent = (reviewing, over = {}) => ({ adjudicationOutcome: 'accepted', remediationState: 'pending', ruling: 'overrule', adjudicatorKind: 'reviewer', round: 1, evidence: { reviewing_run_id: reviewing }, ...over });
+
+    test('P3: the reviewer kind is accepted and an unknown kind is rejected by the CHECK', async () => {
+      const runId = await newRun('p3-kind', 1);
+      const f = await addFinding(runId, `p3k-${tag}`, 1);
+      const ok = await rf.recordAdjudicationEvent(runId, `p3k-${tag}`, reviewerEvent(runId));
+      assert.equal(ok.ok, true);
+      assert.deepEqual((await events(f.id)).map((e) => e.adjudicator_kind), ['reviewer']);
+      await assert.rejects(
+        q.query(`INSERT INTO finding_adjudication_events (finding_id, adjudication_outcome, remediation_state, ruling, round, adjudicator_kind) VALUES ($1, 'accepted', 'pending', 'sustain', 1, 'bogus')`, [f.id]),
+        (err) => err.code === '23514',
+      );
+      const refused = await rf.recordAdjudicationEvent(runId, `p3k-${tag}`, { adjudicationOutcome: 'accepted', ruling: 'sustain', adjudicatorKind: 'bogus', round: 1 });
+      assert.equal(refused.reason, 'bad-input');
+    });
+
+    test('P3: a pipeline re-write replaces its own row and a reviewer row survives (kind-scoped delete)', async () => {
+      const runId = await newRun('p3-delete', 1);
+      const f = await addFinding(runId, `p3d-${tag}`, 1);
+      await rf.recordAdjudicationEvent(runId, `p3d-${tag}`, pipelineEvent({ rulingRationale: 'first' }));
+      await rf.recordAdjudicationEvent(runId, `p3d-${tag}`, reviewerEvent(runId));
+      await rf.recordAdjudicationEvent(runId, `p3d-${tag}`, pipelineEvent({ rulingRationale: 'second' }));
+      const rows = await events(f.id);
+      assert.deepEqual(rows.map((e) => e.adjudicator_kind), ['pipeline', 'reviewer'], 'one pipeline row (no duplicate), reviewer intact');
+      assert.equal(rows.find((e) => e.adjudicator_kind === 'pipeline').ruling_rationale, 'second');
+    });
+
+    test('P3: a reviewer rewrite replaces only the SAME reviewing run; a later review adds its own row', async () => {
+      const runId = await newRun('p3-review', 1);
+      const f = await addFinding(runId, `p3r-${tag}`, 1);
+      await rf.recordAdjudicationEvent(runId, `p3r-${tag}`, reviewerEvent('rev-A', { rulingRationale: 'a1' }));
+      await rf.recordAdjudicationEvent(runId, `p3r-${tag}`, reviewerEvent('rev-A', { rulingRationale: 'a2' }));
+      await rf.recordAdjudicationEvent(runId, `p3r-${tag}`, reviewerEvent('rev-B', { rulingRationale: 'b1' }));
+      assert.deepEqual((await events(f.id)).map((e) => e.ruling_rationale), ['a2', 'b1']);
+    });
+
+    test('P3: a reviewer event does not rewrite the finding outcome the pipeline set', async () => {
+      const runId = await newRun('p3-outcome', 1);
+      const f = await addFinding(runId, `p3o-${tag}`, 1);
+      await rf.recordAdjudicationEvent(runId, `p3o-${tag}`, pipelineEvent());
+      await rf.recordAdjudicationEvent(runId, `p3o-${tag}`, reviewerEvent(runId));
+      assert.equal((await q.one('SELECT adjudication_outcome FROM audit_findings WHERE id = $1', [f.id])).adjudication_outcome, 'dismissed');
+    });
+
+    test('P3: a seeded secret in the rationale is redacted and the length is capped at the store boundary', async () => {
+      const runId = await newRun('p3-redact', 1);
+      const f = await addFinding(runId, `p3x-${tag}`, 1);
+      await rf.recordAdjudicationEvent(runId, `p3x-${tag}`, pipelineEvent({ rulingRationale: `leaked sk-${'a1B2c3D4'.repeat(6)} ${'y'.repeat(3000)}` }));
+      const [row] = await events(f.id);
+      assert.ok(!row.ruling_rationale.includes('a1B2c3D4a1B2c3D4'));
+      assert.ok(row.ruling_rationale.length <= 2000);
+    });
+
+    test('P3: reviewer events land on the SOURCE rows across rounds, with a complete receipt (3 presented, 1 reversal)', async () => {
+      const { persistReviewerEvents } = await import('../scripts/lib/final-review/reviewer-events.mjs');
+      const { presentedDismissals } = await import('../scripts/lib/audit/transcript.mjs');
+      const { durableWrite } = await import('../scripts/lib/durable-write.mjs');
+      await import('../scripts/lib/audit-store-writers.mjs');
+      const capture = await import('../scripts/lib/store/capture-identity.mjs');
+      const receipts = await import('../scripts/lib/store/write-receipts.mjs');
+
+      const session = `p3-x-${tag}`;
+      const r1 = await newRun(session, 1);
+      const r2 = await newRun(session, 2);
+      const reviewing = await newRun(session, null);
+      const h = { a: `p3xa-${tag}`, b: `p3xb-${tag}`, c: `p3xc-${tag}` };
+      const fa = await addFinding(r1, h.a, 1);
+      const fb = await addFinding(r2, h.b, 2);
+      const fc = await addFinding(r2, h.c, 2);
+      const ledger = { entries: [
+        { adjudicationOutcome: 'dismissed', latestFindingId: 'H1', resolvedRound: 1 },
+        { adjudicationOutcome: 'dismissed', latestFindingId: 'H1', resolvedRound: 2 },
+        { adjudicationOutcome: 'dismissed', latestFindingId: 'M2', resolvedRound: 2 },
+      ] };
+      const transcript = {
+        presented_dismissals: presentedDismissals(ledger),
+        rounds: [
+          { round: 1, findings: [{ id: 'H1', _hash: h.a }] },
+          { round: 2, findings: [{ id: 'H1', _hash: h.b }, { id: 'M2', _hash: h.c }] },
+        ],
+      };
+      const deps = { captureV1Present: capture.captureV1Present, resolveSourceRun: capture.resolveSourceRun, durableWrite, recordWriteReceipt: receipts.recordWriteReceipt };
+      const out = await persistReviewerEvents({
+        runId: reviewing, reviewRound: 1, primaryModel: 'gemini-test',
+        result: { verdict: 'CONCERNS', wrongly_dismissed: [{ original_finding_id: 'R1 H1', reason_claude_was_wrong: 'real bug' }] },
+        transcript, deps,
+      });
+      assert.equal(out.receipt.status, 'complete');
+      assert.equal(out.receipt.presented, 3);
+      assert.equal(out.receipt.presented_resolved, 3);
+      assert.equal(out.receipt.reversals_written, 1);
+      const written = await events(fa.id);
+      assert.deepEqual(written.map((e) => [e.adjudicator_kind, e.adjudication_outcome]), [['reviewer', 'accepted']]);
+      assert.equal(written[0].evidence.reviewing_run_id, reviewing);
+      assert.equal((await events(fb.id)).length, 0);
+      assert.equal((await events(fc.id)).length, 0);
+      const stored = (await q.one('SELECT write_outcomes FROM audit_runs WHERE id = $1', [reviewing])).write_outcomes;
+      assert.equal(stored.reviewer.status, 'complete');
+
+      // An id outside the presented set is counted and the receipt reads incomplete (negative control).
+      const bad = await persistReviewerEvents({
+        runId: reviewing, reviewRound: 1, primaryModel: 'gemini-test',
+        result: { verdict: 'CONCERNS', wrongly_dismissed: [{ original_finding_id: 'R5 H1', reason_claude_was_wrong: 'x' }] },
+        transcript, deps,
+      });
+      assert.equal(bad.receipt.status, 'incomplete');
+      assert.equal(bad.receipt.unresolved, 1);
+    });
+
+    test('P3: the outcome_sync receipt merges without erasing other write_outcomes keys', async () => {
+      const receipts = await import('../scripts/lib/store/write-receipts.mjs');
+      const runId = await newRun('p3-receipt', 1);
+      await q.query(`UPDATE audit_runs SET write_outcomes = '{"written": 4}'::jsonb WHERE id = $1`, [runId]);
+      const res = await receipts.recordWriteReceipt(runId, 'outcome_sync', { expected: 2, written: 2, spilled: 0, lost: 0 });
+      assert.equal(res.applied, true);
+      const stored = (await q.one('SELECT write_outcomes FROM audit_runs WHERE id = $1', [runId])).write_outcomes;
+      assert.equal(stored.written, 4);
+      assert.deepEqual(stored.outcome_sync, { expected: 2, written: 2, spilled: 0, lost: 0 });
+      assert.equal((await receipts.recordWriteReceipt(runId, 'bogus-key', {})).reason, 'bad-input');
+    });
+  }
+  // Phase 4: finding_equivalence
+  {
+    const mab = () => import('../scripts/lib/store/model-ab.mjs');
+    const eqRow = (dup) => q.one('SELECT canonical_finding_id, created_by FROM finding_equivalence WHERE duplicate_finding_id = $1', [dup]);
+    const seed = async (hash, repo = repoId) => {
+      const runId = crypto.randomUUID();
+      await q.query(`INSERT INTO audit_runs (id, repo_id, plan_file, mode) VALUES ($1, $2, 'docs/plans/x.md', 'code')`, [runId, repo]);
+      runIds.push(runId);
+      await rf.recordFindings(runId, [{ _hash: hash, _bucket: null, severity: 'HIGH', category: 'test', section: 'x', detail: 'd' }], 'backend', 1);
+      return runId;
+    };
+    const cleanup = [];
+    after(async () => {
+      for (const h of cleanup) await q.query('DELETE FROM finding_equivalence WHERE duplicate_finding_id = $1 OR canonical_finding_id = $1', [h]);
+    });
+
+    test('P4: a link round-trips and its root resolution matches the duplicate (chain A <- B <- C stores root A)', async () => {
+      const { recordEquivalence } = await mab();
+      const [a, b, c] = ['a', 'b', 'c'].map((x) => `p4chain${x}-${tag}`);
+      cleanup.push(a, b, c);
+      await seed(a); await seed(b); const runC = await seed(c);
+      assert.equal((await recordEquivalence({ duplicateFingerprint: b, canonicalFingerprint: a, createdBy: 'concern-v1' })).outcome, 'written');
+      const second = await recordEquivalence({ duplicateFingerprint: c, canonicalFingerprint: b, runId: runC, createdBy: 'semantic-suppress' });
+      assert.equal(second.outcome, 'written');
+      assert.equal(second.root, a);
+      assert.deepEqual(await eqRow(c), { canonical_finding_id: a, created_by: 'semantic-suppress' });
+    });
+
+    test('P4: a missing endpoint, a cross-repo endpoint, a fingerprint in two repos and a cycle are each skipped and named', async () => {
+      const { recordEquivalence } = await mab();
+      const [x, y, other, shared, cyc1, cyc2] = ['x', 'y', 'o', 's', 'c1', 'c2'].map((n) => `p4skip${n}-${tag}`);
+      cleanup.push(x, y, other, shared, cyc1, cyc2);
+      await seed(x);
+      const otherRepo = crypto.randomUUID();
+      await q.query('INSERT INTO audit_repos (id, name) VALUES ($1, $2)', [otherRepo, `capture-other-${tag}`]);
+      await seed(other, otherRepo);
+      await seed(y);
+      // missing endpoint
+      assert.equal((await recordEquivalence({ duplicateFingerprint: x, canonicalFingerprint: `nope-${tag}`, createdBy: 'concern-v1' })).outcome, 'skipped:endpoint');
+      // cross-repo
+      assert.equal((await recordEquivalence({ duplicateFingerprint: x, canonicalFingerprint: other, createdBy: 'concern-v1' })).outcome, 'skipped:endpoint');
+      // a fingerprint that appears in two repos
+      await seed(shared); await seed(shared, otherRepo);
+      assert.equal((await recordEquivalence({ duplicateFingerprint: x, canonicalFingerprint: shared, createdBy: 'concern-v1' })).outcome, 'skipped:ambiguous-repo');
+      // cycle: y -> x written, then x -> y would close the loop; self-link too
+      assert.equal((await recordEquivalence({ duplicateFingerprint: y, canonicalFingerprint: x, createdBy: 'concern-v1' })).outcome, 'written');
+      assert.equal((await recordEquivalence({ duplicateFingerprint: x, canonicalFingerprint: y, createdBy: 'concern-v1' })).outcome, 'skipped:cycle');
+      assert.equal((await recordEquivalence({ duplicateFingerprint: x, canonicalFingerprint: x, createdBy: 'concern-v1' })).outcome, 'skipped:cycle');
+      assert.equal(await eqRow(x), null, 'no row was written for any refused link');
+    });
+
+    test('P4: a manual link survives an automatic upsert; an automatic one is replaced by a later automatic one', async () => {
+      const { recordEquivalence, applyModelAbAdjudication } = await mab();
+      const [m1, m2, m3] = ['m1', 'm2', 'm3'].map((n) => `p4man${n}-${tag}`);
+      cleanup.push(m1, m2, m3);
+      const runDup = await seed(m1); await seed(m2); await seed(m3);
+      await applyModelAbAdjudication({ runId: runDup, fingerprint: m1, action: 'duplicate', canonicalFingerprint: m2, actor: 'louis' });
+      assert.equal((await eqRow(m1)).created_by, 'louis');
+      assert.equal((await recordEquivalence({ duplicateFingerprint: m1, canonicalFingerprint: m3, createdBy: 'semantic-suppress' })).outcome, 'skipped:manual');
+      assert.deepEqual(await eqRow(m1), { canonical_finding_id: m2, created_by: 'louis' });
+      // automatic over automatic is allowed
+      const [p, r1, r2] = ['auto-p', 'auto-r1', 'auto-r2'].map((n) => `p4${n}-${tag}`);
+      cleanup.push(p, r1, r2);
+      await seed(p); await seed(r1); await seed(r2);
+      await recordEquivalence({ duplicateFingerprint: p, canonicalFingerprint: r1, createdBy: 'concern-v1' });
+      assert.equal((await recordEquivalence({ duplicateFingerprint: p, canonicalFingerprint: r2, createdBy: 'semantic-suppress' })).outcome, 'written');
+      assert.equal((await eqRow(p)).canonical_finding_id, r2);
+    });
+
+    test('P4: the manual duplicate with no canonical outcome leaves the duplicate outcome NULL, not the literal pending', async () => {
+      const { applyModelAbAdjudication } = await mab();
+      const [d, c] = ['nulld', 'nullc'].map((n) => `p4${n}-${tag}`);
+      cleanup.push(d, c);
+      const runD = await seed(d); await seed(c);
+      const res = await applyModelAbAdjudication({ runId: runD, fingerprint: d, action: 'duplicate', canonicalFingerprint: c, actor: 'louis' });
+      assert.equal(res.ok, true);
+      assert.equal((await q.one('SELECT adjudication_outcome FROM audit_findings WHERE run_id = $1 AND finding_fingerprint = $2', [runD, d])).adjudication_outcome, null);
+    });
+
+    test('P4: durableWrite audit.equivalence tallies outcomes and the equivalence receipt lands on the run', async () => {
+      const { recordEquivalenceLinks } = await import('../scripts/lib/audit/equivalence-links.mjs');
+      const { durableWrite } = await import('../scripts/lib/durable-write.mjs');
+      await import('../scripts/lib/audit-store-writers.mjs');
+      const receipts = await import('../scripts/lib/store/write-receipts.mjs');
+      const [d, c] = ['rcd', 'rcc'].map((n) => `p4${n}-${tag}`);
+      cleanup.push(d, c);
+      const runD = await seed(d); await seed(c);
+      const tally = await recordEquivalenceLinks({
+        runId: runD, createdBy: 'concern-v1', deps: { durableWrite, recordWriteReceipt: receipts.recordWriteReceipt },
+        links: [
+          { duplicateFingerprint: d, canonicalFingerprint: c },
+          { duplicateFingerprint: d, canonicalFingerprint: `missing-${tag}` },
+        ],
+      });
+      assert.equal(tally.expected, 2);
+      assert.equal(tally.written, 1);
+      assert.equal(tally['skipped:endpoint'], 1);
+      const stored = (await q.one('SELECT write_outcomes FROM audit_runs WHERE id = $1', [runD])).write_outcomes;
+      assert.equal(stored.equivalence.written, 1);
     });
   }
 });

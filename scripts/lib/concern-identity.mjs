@@ -254,7 +254,11 @@ export function resolveConcernLinks(pending, refsByTopic, topicByFindingId, ledg
     }
     return { ...e, concernId: root };
   });
-  return { entries, errors };
+  // The resolved (duplicate -> canonical ROOT) topic pairs, for finding_equivalence. Only links made in THIS batch.
+  const links = entries
+    .filter((e) => refsByTopic.has(e.topicId) && typeof e.concernId === 'string' && e.concernId !== e.topicId)
+    .map((e) => ({ duplicateTopicId: e.topicId, canonicalTopicId: e.concernId }));
+  return { entries, errors, links };
 }
 
 /**

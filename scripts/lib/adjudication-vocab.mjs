@@ -8,8 +8,12 @@
  * @module scripts/lib/adjudication-vocab
  */
 
-/** Who decided. `agent` is the campaign-verdict kind and stays campaign-only. */
-export const ADJUDICATOR_KINDS = Object.freeze(['agent', 'human', 'pipeline', 'rule']);
+/**
+ * Who decided. `agent` is the campaign-verdict kind and stays campaign-only. `reviewer` is the final reviewer's
+ * per-finding reversal (audit-telemetry-capture Decision 4); it is only writable on a store whose
+ * `fae_adjudicator_kind_chk` was widened by migration 20261029120000.
+ */
+export const ADJUDICATOR_KINDS = Object.freeze(['agent', 'human', 'pipeline', 'rule', 'reviewer']);
 
 /** Which workflow owns a finding_adjudication_events row. */
 export const EVENT_ORIGINS = Object.freeze(['audit', 'campaign']);

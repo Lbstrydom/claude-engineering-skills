@@ -10,9 +10,10 @@
  *
  * @module scripts/lib/store/capture-identity
  */
-import { many } from '../db/query.mjs';
+import { many, one } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import { columnExists } from './column-probes.mjs';
+import { redactSecrets } from '../secret-patterns.mjs';
 
 /** Bumping this changes the eligible cohort of every capture query (they take the epoch set as a parameter). */
 export const CAPTURE_EPOCH = 'capture-v1';
@@ -53,4 +54,47 @@ export async function captureIdentityColumns({ auditSessionId, auditRound, unifi
     ...(auditSessionId ? { audit_session_id: auditSessionId } : {}),
     ...(auditSessionId && !unifiedRun && Number.isInteger(auditRound) ? { audit_round: auditRound } : {}),
   };
+}
+
+/** Max length of a free-text value written by the capture-v1 writers (rationale, actor). */
+export const CAPTURE_TEXT_MAX = 2000;
+
+/**
+ * Free-text boundary for the capture-v1 writers (Decision 5): the gentle secret
+ * redactor (`secret-patterns.mjs`, as docs/plans/security/ prescribes for prose),
+ * then a hard length cap. NOT `sanitizer.mjs`, which blanket-redacts any 20+ char
+ * token and would corrupt prose. A non-string or blank value is NULL.
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+export function redactAndCapText(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  return redactSecrets(value).text.slice(0, CAPTURE_TEXT_MAX);
+}
+
+/**
+ * The run that holds a presented finding's SOURCE row: the latest run of the
+ * reviewing run's own audit session at `round` (Decision 4 -- a presented entry
+ * can come from any round of the session). A retried round has several rows for
+ * one key; the latest `created_at` counts, so a retry counts once.
+ *
+ * A UNIFIED run (explicit `--run-id`, `audit_round` NULL) is one row spanning
+ * every round, so when no per-round row exists and the reviewing run itself has
+ * no round, the reviewing run IS the source. Null when nothing resolves -- the
+ * caller counts it, never guesses.
+ * @param {string} reviewingRunId
+ * @param {number} round
+ * @returns {Promise<string|null>}
+ */
+export async function resolveSourceRun(reviewingRunId, round) {
+  const rv = await one('SELECT repo_id, audit_session_id, audit_round FROM audit_runs WHERE id = $1', [reviewingRunId]);
+  if (!rv?.audit_session_id) return null;
+  const hit = await one(
+    `SELECT id FROM audit_runs
+      WHERE repo_id IS NOT DISTINCT FROM $1 AND audit_session_id = $2 AND audit_round = $3
+      ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [rv.repo_id, rv.audit_session_id, round],
+  );
+  if (hit?.id) return hit.id;
+  return rv.audit_round == null ? reviewingRunId : null;
 }

@@ -118,6 +118,7 @@ const NOT_A_DURABLE_WRITE = {
   recordFinalReviewFindings: 'Written by gemini-review.mjs in a separate process, not by the orchestrator cloud block. Its own replace-persistence transaction owns atomicity; folding it in would need a second design.',
   recordFinalReviewFix: 'Operator-initiated CLI write (cross-skill.mjs final-review-record-fix). Synchronous, awaited, and its failure reaches the operator as a non-zero exit.',
   recordAdjudicationEvent: 'Operator/ledger-initiated, awaited by its caller, and the ledger on disk is the durable copy — a spill would be a second queue over the same evidence.',
+  recordWriteReceipt: 'The receipt IS the durability record of a late writer (outcome-sync / reviewer / equivalence): it reports their written/spilled/lost counts onto the run row. Spilling it would be a receipt about a receipt; a failed receipt write leaves the key absent, which the capture queries read as "receipt missing -> ineligible", never as complete. It is awaited by writers that already tolerate its {applied:false} result.',
   recordConvergenceState: 'Gate-evidence write with its own try/catch and explicit stderr report at the call site; the local evidence marker is the durable copy.',
 
   // ── F1 exemption pass (§2b F1, 2026-08-12) ────────────────────────────────

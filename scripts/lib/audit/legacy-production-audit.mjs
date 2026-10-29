@@ -456,8 +456,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       // which was not happening, and would have masked a genuine future throw.
       // Same removal, same reasoning, as the `recordDiffComplexity` call below.
       cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'code', {
-        scopeMode, commitSha, branch, planId, runId,
-        auditSessionId: auditIdentity?.auditSessionId, auditRound: auditIdentity?.auditRound,
+        scopeMode, commitSha, branch, planId, runId, auditSessionId: auditIdentity?.auditSessionId, auditRound: auditIdentity?.auditRound,
       });
       (await import('../telemetry/llm-call-log.mjs')).bindRun({ runId: cloudRunId, repoId: cloudRepoId, workItemId: process.env.OWN_MODEL_WORK_ITEM_ID, producer: 'audit' });
       // Phase 1 — adaptive-learning-v1 telemetry.  Compute diff_complexity

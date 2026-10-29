@@ -22,6 +22,7 @@ import { generateTopicId } from './ledger.mjs';
 import { rewardWeights } from './config.mjs';
 import { withFileLock } from './file-lock.mjs';
 import { atomicWriteFileSync } from './file-io.mjs';
+import { recordWriteReceipt } from './store/write-receipts.mjs';
 
 const OUTCOMES_PATH = '.audit/outcomes.jsonl';
 const FINALIZED_MARKER = '.audit/.outcomes-finalized';
@@ -179,8 +180,12 @@ function dbRuling(f) {
  */
 async function writeCloudOutcomes(store, runId, enriched, passCounts, round) {
   if (typeof store.recordAdjudicationEvent === 'function') {
+    // The receipt a capture query requires (audit-telemetry-capture Decision 2): outcome-sync writes AFTER the run
+    // row's own `run_status` was settled, so it accounts for itself.
+    const receipt = { expected: 0, written: 0, spilled: 0, lost: 0 };
     for (const f of enriched) {
       if (f.adjudicationOutcome === 'pending') continue;
+      receipt.expected++;
       // 2nd arg MUST be the finding fingerprint (`_hash`) — that is what
       // recordFindings stores in `audit_findings.finding_fingerprint`.
       // `f.id` is a per-run short id ("H1") and never resolves.
@@ -193,6 +198,8 @@ async function writeCloudOutcomes(store, runId, enriched, passCounts, round) {
         // The pipeline's own ruling (not a campaign verdict). The model is not
         // known here: audit_runs.author_model is unset, so it stays NULL honestly.
         adjudicatorKind: 'pipeline',
+        // Already in hand on the ledger entry; the writer redacts and caps it.
+        rulingRationale: f._rulingRationale,
         // `unclassified` = the ledger entry named no class; never NULL, never a
         // silent `other` — the census reports the unclassified share.
         dismissReasonClass: f.adjudicationOutcome === 'dismissed' ? (f._dismissReasonClass ?? 'unclassified') : undefined,
@@ -201,9 +208,13 @@ async function writeCloudOutcomes(store, runId, enriched, passCounts, round) {
       // typed result instead of a discarded `undefined` — surface a failure
       // rather than silently proceeding as though the event was recorded.
       if (result && result.ok === false) {
+        receipt.lost++;
         process.stderr.write(`  [outcome-sync] recordAdjudicationEvent(${fingerprint}) failed: ${result.reason}${result.detail ? ` — ${result.detail}` : ''}\n`);
+      } else {
+        receipt.written++;
       }
     }
+    await recordWriteReceipt(runId, 'outcome_sync', receipt);
   }
 
   if (typeof store.updatePassStatsPostDeliberation === 'function') {

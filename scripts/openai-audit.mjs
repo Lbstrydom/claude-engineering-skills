@@ -106,6 +106,7 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { gateRoundCap, applyRoundCap } from './lib/audit/round-cap-gate.mjs';
 import { readFlagValue } from './lib/audit/round-cap.mjs';
 import { resolveAuditIdentity } from './lib/audit/audit-identity.mjs';
+import { stampPlanSourceModel } from './lib/audit/plan-audit-cloud.mjs';
 import { OPENAI_AUDIT_USAGE } from './lib/audit/openai-audit-usage.mjs';
 
 /**
@@ -643,11 +644,9 @@ async function main() {
   const runIdIdx = args.indexOf('--run-id');
   const explicitRunId = runIdIdx !== -1 && args[runIdIdx + 1] ? args[runIdIdx + 1] : null;
 
-  // --session-id <sid>: links the rounds of one audit (audit_runs.audit_session_id); a flag that
-  // disagrees with the --out path is refused, never picked between.
+  // --session-id <sid>: links the rounds of one audit (audit_runs.audit_session_id); a conflict with --out is refused, never picked.
   const auditIdentity = resolveAuditIdentity({ sessionFlag: readFlagValue(args, '--session-id').value, roundFlag: round, outPath: outFile });
   if (auditIdentity.conflict) process.stderr.write(`  [learning] audit identity left unset: ${auditIdentity.conflict}\n`);
-
   // --ledger <file>: adjudication ledger — single canonical read+write path
   const ledgerIdx = args.indexOf('--ledger');
   const ledgerFileArg = ledgerIdx !== -1 && args[ledgerIdx + 1] ? args[ledgerIdx + 1] : null;
@@ -1138,12 +1137,13 @@ async function main() {
               commitSha = execFileSync('git', ['rev-parse', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
               branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
             } catch { /* not a git repo */ }
-            const planShadowRunId = await recordRunStart(planRepoId, planFile || 'ad-hoc', 'plan', { commitSha, branch, auditSessionId: auditIdentity.auditSessionId, auditRound: null }).catch(() => null);
+            const planShadowRunId = await recordRunStart(planRepoId, planFile || 'ad-hoc', 'plan', { commitSha, branch, auditSessionId: auditIdentity.auditSessionId, auditRound: auditIdentity.auditRound }).catch(() => null);
             if (planShadowRunId) {
               // Persist arm A's (production plan-audit) findings with stage=null so
               // the scorer view attributes them to A — the baseline the B/C arms
               // are compared against for this assignment.
               for (const f of result.findings) populateFindingMetadata(f, 'plan');
+              await stampPlanSourceModel(result.findings, servedModel);
               await recordFindings(planShadowRunId, result.findings, 'plan-baseline', round).catch(() => {});
 
               const { runGenerationShadow } = await import('./lib/audit-shadow.mjs');
