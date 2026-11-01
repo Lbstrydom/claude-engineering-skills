@@ -538,6 +538,15 @@ test('runPass: effort raises max_tokens (thinking shares the budget) and a null 
   assert.ok(seen.max_tokens > 8000, 'raising effort without raising max_tokens truncates the chain of thought into a conformance miss');
 });
 
+test('runPass: NEVER sends temperature, even when a caller passes one — current Claude models 400 on it', async () => {
+  let seen = null;
+  const stub = { messages: { create: async (p) => { seen = p; return { content: [{ type: 'text', text: '{"findings":[],"summary":""}' }], usage: null }; } } };
+  await soloCtl.runPass(stub, 'claude-sonnet-5', 'structure', 'X', { temperature: 1.0 });
+  assert.ok(!('temperature' in seen));
+  await soloCtl.runPass(stub, 'claude-sonnet-5', 'structure', 'X', { temperature: 0, reasoningEffort: 'xhigh' });
+  assert.ok(!('temperature' in seen));
+});
+
 test('runDeepseekPass: sends thinking.reasoning_effort, sizes max_tokens to the documented thinking-mode ceiling, and NEVER sends temperature', async () => {
   let seen = null;
   const stub = { chat: { completions: { create: async (p) => { seen = p; return { choices: [{ message: { content: '{"findings":[],"summary":""}' } }], usage: { prompt_tokens: 1, completion_tokens: 1 }, system_fingerprint: 'fp_a' }; } } } };

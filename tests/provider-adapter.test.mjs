@@ -55,18 +55,13 @@ describe('applyAnthropicDials', () => {
     assert.equal('reasoning' in body, false);
   });
 
-  it('temperature <= 1 is forwarded and honored true', () => {
-    const body = {};
-    const honored = applyAnthropicDials(body, { temperature: 1 });
-    assert.equal(body.temperature, 1);
-    assert.equal(honored.temperature, true);
-  });
-
-  it('temperature > 1 is NOT forwarded (Anthropic range is [0,1]) and honored false — round-5 H3', () => {
-    const body = {};
-    const honored = applyAnthropicDials(body, { temperature: 1.5 });
-    assert.equal('temperature' in body, false);
-    assert.equal(honored.temperature, false);
+  it('temperature is NEVER forwarded at any value and is reported honored false — current Claude models 400 on it (supersedes the round-5 H3 [0,1] range check)', () => {
+    for (const t of [0, 0.5, 1, 1.5]) {
+      const body = {};
+      const honored = applyAnthropicDials(body, { temperature: t });
+      assert.equal('temperature' in body, false, `temperature ${t} must not reach a Messages request`);
+      assert.equal(honored.temperature, false);
+    }
   });
 
   it('maxOutputTokens present overrides max_tokens', () => {

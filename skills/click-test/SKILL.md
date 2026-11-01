@@ -240,7 +240,7 @@ in the run contract for the Phase 6 report.
 
 ## Phase 3 — Crawl Routes
 
-### Get the device-pass contract (MANDATORY; do not skip)
+### Get the device-pass contract (required; do not skip)
 
 Before any browser work, call:
 

@@ -600,7 +600,7 @@ function assertReasoningTier(recipient, tier) {
  * prompt shape. `reasoningEffort` null ⇒ omit `output_config` entirely (the
  * API default, `high`) so the pre-exp-5 solo-control:catchup request body
  * stays byte-identical. */
-async function runPass(client, model, passName, diff, { temperature, reasoningEffort = null } = {}) {
+async function runPass(client, model, passName, diff, { reasoningEffort = null } = {}) {
   const { system, user } = buildColdPassPrompt(passName, diff);
   const maxTokens = reasoningEffort ? REASONING_TIERS.anthropic[reasoningEffort] : 8000;
   let lastErr = null;
@@ -612,9 +612,8 @@ async function runPass(client, model, passName, diff, { temperature, reasoningEf
         model, max_tokens: maxTokens, system,
         messages: [{ role: 'user', content: attempt === 1 ? user : user + JSON_RETRY_SUFFIX }],
       };
-      // temperature only meaningful on the SDK backend (cli `claude -p` ignores it);
-      // pinned non-zero for --repeats so the N samples are genuinely independent.
-      if (temperature != null) params.temperature = temperature;
+      // No `temperature`: Claude 4.7+ 400s on any non-default value, API 2026-10-21 removes it
+      // everywhere (checked 2026-11-01); --repeats relies on stochastic decoding (samplingDegenerate).
       if (reasoningEffort) params.output_config = { effort: reasoningEffort };
       resp = await client.messages.create(params, { timeoutMs: 300000 });
     } catch (err) {
@@ -725,10 +724,11 @@ async function cmdRun() {
   const corpusArg = argOption('corpus');
   const force = hasFlag('force');
   const resume = hasFlag('resume');
-  // xN arm (the confound-breaker). N sequential samples per pass×chunk. A non-zero
-  // temperature is MANDATORY (Gemini-R2-HIGH): at temp 0 the N samples are identical
-  // and collapse to x1. temperature only works on the SDK backend (cli claude -p
-  // can't set it), so --repeats>1 forces the sdk backend.
+  // xN arm (the confound-breaker). N sequential samples per pass×chunk. Original
+  // design (Gemini-R2-HIGH): a non-zero temperature, because at temp 0 the N samples
+  // are identical and collapse to x1; only the sdk backend could set it (cli claude -p
+  // can't), so --repeats>1 forces sdk. No recipient takes one any more (see
+  // effectiveTemperature); --temperature is parsed only to report it as ignored.
   const repeats = Math.max(1, Number.parseInt(argOption('repeats', '1'), 10) || 1);
   const temperature = repeats > 1 ? Number.parseFloat(argOption('temperature', '1.0')) : null;
   // Diff-size sanity cap: a mega-commit (repo-import / 2000-file initial release)
@@ -754,11 +754,11 @@ async function cmdRun() {
   let reasoningEffort;
   try { reasoningEffort = assertReasoningTier(recipient, argOption('reasoning-effort') || null); }
   catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
-  // DeepSeek thinking mode ignores temperature (documented, no error) — the
-  // manifest must say so rather than carry a pinned value the provider dropped.
-  const effectiveTemperature = recipient === 'deepseek' ? null : temperature;
-  if (recipient === 'deepseek' && repeats > 1) {
-    log('  note: deepseek thinking mode ignores temperature — the x' + repeats + ' union relies on the model\'s own stochastic decoding; samplingDegenerate will report if the repeats did not vary.');
+  // No recipient takes a temperature (DeepSeek thinking mode ignores it; Claude
+  // rejects it, see runPass) — the manifest must not carry a value nobody sent.
+  const effectiveTemperature = null;
+  if (repeats > 1) {
+    log('  note: ' + recipient + ' takes no temperature' + (argOption('temperature') != null ? ` (--temperature ${temperature} ignored)` : '') + ' — the x' + repeats + ' union relies on the model\'s own stochastic decoding; samplingDegenerate will report if the repeats did not vary.');
   }
 
   // --label: armLabelFor only knows how to derive a distinct label for the
@@ -868,7 +868,7 @@ async function cmdRun() {
   // Provenance (§12.5): pin what actually ran so the experiment is reproducible + fair.
   out.provenance = {
     repeats, temperature: effectiveTemperature,
-    temperatureNote: recipient === 'deepseek' && repeats > 1 ? 'deepseek thinking mode ignores temperature; variance is the model\'s own stochastic decoding (see samplingDegenerate)' : null,
+    temperatureNote: repeats > 1 ? `${recipient} takes no temperature; variance is the model's own stochastic decoding (see samplingDegenerate)` : null,
     reasoningEffort: reasoningEffort ?? null,
     backend: recipient === 'anthropic' ? (backend || 'cli(default)') : recipient, maxChars, resolvedModel: model, budgetUsd,
   };
@@ -934,7 +934,7 @@ async function cmdRun() {
             break cells;
           }
           const r = recipient === 'anthropic'
-            ? await runPass(anthropicClient, model, passName, chunk, { temperature: effectiveTemperature, reasoningEffort })
+            ? await runPass(anthropicClient, model, passName, chunk, { reasoningEffort })
             : await runDeepseekPass(deepseekClient, model, passName, chunk, { reasoningEffort });
           if (r.usage) { totalIn += r.usage.input_tokens || 0; totalOut += r.usage.output_tokens || 0; }
           if (r.rawText != null) rawTexts.push(r.rawText);

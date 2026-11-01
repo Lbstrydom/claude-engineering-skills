@@ -958,7 +958,7 @@ confirmation prompts.
 SHIP_HEAD=$(git rev-parse HEAD)
 SHIP_BRANCH=$(git symbolic-ref --quiet --short HEAD)   # empty ⇒ detached
 EPOCH=$(date +%s)
-MODELS="claude-sonnet-5,gpt-6.1-sol"   # the models that actually did the work this ship
+MODELS="claude-opus-5-5,gpt-6.1-terra"   # the models that actually did the work this ship
 GATE=not-run                     # passed | converged | waived | not-run — see AI-Gate above
 
 node scripts/ship-commit.mjs --message-file ".claude/tmp/ship-commit-msg-$EPOCH.txt" --skill ship --models "$MODELS" --gate "$GATE" --expect-head "$SHIP_HEAD" --expect-branch "$SHIP_BRANCH" --path scripts/lib/*.mjs --path tests/*.test.mjs
