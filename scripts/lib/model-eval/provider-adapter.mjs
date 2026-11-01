@@ -74,10 +74,11 @@ function applyAnthropicDials(requestBody, dials) {
   const honoredDials = {};
   if (dials?.reasoningEffort !== undefined) honoredDials.reasoningEffort = false; // no native equivalent
   if (dials?.maxOutputTokens !== undefined) { requestBody.max_tokens = dials.maxOutputTokens; honoredDials.maxOutputTokens = true; }
-  if (dials?.temperature !== undefined) {
-    if (dials.temperature <= 1) { requestBody.temperature = dials.temperature; honoredDials.temperature = true; }
-    else honoredDials.temperature = false; // Anthropic's own range is [0,1] — round-5 H3
-  }
+  // Never forwarded: Claude 4.7+ models reject any non-default sampling value
+  // with a 400, and API version 2026-10-21 removes `temperature`/`top_p`/`top_k`
+  // from Messages requests on every model (checked 2026-11-01). Reported as an
+  // unhonored dial, the same shape as reasoningEffort above.
+  if (dials?.temperature !== undefined) honoredDials.temperature = false;
   return honoredDials;
 }
 
@@ -215,11 +216,9 @@ async function invokeNativeAnthropic({ route, messages, schema, signal, dials })
   ].filter(Boolean).join('\n\n');
   const userMessages = messages.filter((m) => m.role !== 'system');
 
-  // Dial forwarding (§2.5) — no native reasoningEffort equivalent, never
-  // forwarded. `temperature` is Anthropic-range-checked (round-5 H3): a
-  // present value > 1 is NOT sent (Anthropic's own API range is [0, 1],
-  // unlike OpenAI/Gemini's wider range) rather than risking a live 4xx.
-  // `maxOutputTokens` defaults to the shared ceiling when absent, or is
+  // Dial forwarding (§2.5) — no native reasoningEffort equivalent, and
+  // `temperature` is never sent (see applyAnthropicDials: current Claude
+  // models 400 on it). Both report honoredDials false. `maxOutputTokens` defaults to the shared ceiling when absent, or is
   // overridden by applyAnthropicDials when present.
   const requestBody = { model, max_tokens: TIER_C_MAX_OUTPUT_TOKENS, system, messages: userMessages };
   const honoredDials = applyAnthropicDials(requestBody, dials);
