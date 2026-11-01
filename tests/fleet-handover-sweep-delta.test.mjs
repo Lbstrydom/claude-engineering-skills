@@ -181,9 +181,13 @@ describe('audit R1 fixes', () => {
     const fx = makeFleetRepo();
     const at = (iso) => ({ ...process.env, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso });
     const commit = (name, iso) => { fs.writeFileSync(path.join(fx.repo, name), name); git(['add', name], fx.repo); const r = spawnSync('git', ['commit', '-q', '-m', name], { cwd: fx.repo, env: at(iso) }); assert.equal(r.status, 0, String(r.stderr)); };
-    commit('newer-parent.txt', '2026-12-01T00:00:00Z');
+    // Cutoff relative to NOW: the fixture's 'init' commit is stamped with the wall clock, so a
+    // fixed cutoff becomes a time bomb the day the clock passes it (it fired 2026-11-01).
+    const year = 365 * 24 * 3600 * 1000;
+    const cutoff = new Date(Date.now() + year).toISOString();
+    commit('newer-parent.txt', new Date(Date.now() + 2 * year).toISOString());
     commit('older-tip.txt', '2020-01-01T00:00:00Z');
-    const d = measureRepoDelta(fx.repo, '2026-11-01T00:00:00.000Z', { fetch: false, gh: () => ghOk([]), fleetDirOf: () => 'F', ...noFleet });
+    const d = measureRepoDelta(fx.repo, cutoff, { fetch: false, gh: () => ghOk([]), fleetDirOf: () => 'F', ...noFleet });
     assert.deepEqual(d.commits.items.map((c) => c.subject), ['newer-parent.txt']);
     // control: the pruning form really does miss it, so this test can fail
     const pruned = git(['log', '--all', `--since=${SINCE}`, '--format=%s'], fx.repo);
