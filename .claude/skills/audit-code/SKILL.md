@@ -115,8 +115,8 @@ unavailable — never fail the run.
 
 ## Step 1 — Choose Audit Scope
 
-**CRITICAL**: GPT doesn't know what's "new" vs pre-existing — it flags
-everything in scope. Choose deliberately:
+GPT doesn't know what's "new" vs pre-existing — it flags everything in
+scope, so choose deliberately:
 
 | Scope mode | When to use | Behaviour |
 |---|---|---|

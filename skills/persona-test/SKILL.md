@@ -297,7 +297,7 @@ that tells them apart before reporting anything.
 
 ---
 
-## Phase 1a — Device Profile Resolution (MANDATORY)
+## Phase 1a — Device Profile Resolution (required)
 
 A persona who describes themselves as "mobile-first" or "tablet user" must
 be tested in that viewport — otherwise responsive bugs, mobile-only CTAs,
@@ -307,7 +307,7 @@ The resolver lives at [`scripts/lib/device-presets.mjs`](https://github.com/Lbst
 (desktop, desktop-large, tablet, mobile, mobile-small) and falls back to
 desktop when no cue is present.
 
-### Step 1a.1 — Get the device contract (MANDATORY; do not skip)
+### Step 1a.1 — Get the device contract (required)
 
 Skip ONLY when `browser_status = "degraded"` and the driver has no viewport concept.
 Otherwise, this is non-negotiable — the LLM does not pick the device.
