@@ -55,7 +55,7 @@ describe('applyAnthropicDials', () => {
     assert.equal('reasoning' in body, false);
   });
 
-  it('temperature is NEVER forwarded at any value and is reported honored false — current Claude models 400 on it', () => {
+  it('temperature is NEVER forwarded at any value and is reported honored false — current Claude models 400 on it (supersedes the round-5 H3 [0,1] range check)', () => {
     for (const t of [0, 0.5, 1, 1.5]) {
       const body = {};
       const honored = applyAnthropicDials(body, { temperature: t });

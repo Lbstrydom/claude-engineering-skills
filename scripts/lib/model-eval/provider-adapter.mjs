@@ -77,7 +77,9 @@ function applyAnthropicDials(requestBody, dials) {
   // Never forwarded: Claude 4.7+ models reject any non-default sampling value
   // with a 400, and API version 2026-10-21 removes `temperature`/`top_p`/`top_k`
   // from Messages requests on every model (checked 2026-11-01). Reported as an
-  // unhonored dial, the same shape as reasoningEffort above.
+  // unhonored dial, the same shape as reasoningEffort above. Supersedes the
+  // round-5 H3 check, which forwarded values in Anthropic's then-range [0, 1]
+  // (narrower than OpenAI/Gemini's) and refused > 1 rather than risk a live 4xx.
   if (dials?.temperature !== undefined) honoredDials.temperature = false;
   return honoredDials;
 }

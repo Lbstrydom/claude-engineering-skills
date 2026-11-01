@@ -612,9 +612,8 @@ async function runPass(client, model, passName, diff, { reasoningEffort = null }
         model, max_tokens: maxTokens, system,
         messages: [{ role: 'user', content: attempt === 1 ? user : user + JSON_RETRY_SUFFIX }],
       };
-      // No `temperature`: Claude 4.7+ models 400 on any non-default value and API
-      // version 2026-10-21 removes it on every model (checked 2026-11-01).
-      // --repeats relies on stochastic decoding; samplingDegenerate reports on it.
+      // No `temperature`: Claude 4.7+ 400s on any non-default value, API 2026-10-21 removes it
+      // everywhere (checked 2026-11-01); --repeats relies on stochastic decoding (samplingDegenerate).
       if (reasoningEffort) params.output_config = { effort: reasoningEffort };
       resp = await client.messages.create(params, { timeoutMs: 300000 });
     } catch (err) {
@@ -725,10 +724,11 @@ async function cmdRun() {
   const corpusArg = argOption('corpus');
   const force = hasFlag('force');
   const resume = hasFlag('resume');
-  // xN arm (the confound-breaker). N sequential samples per pass×chunk. A pinned
-  // temperature was the original design (Gemini-R2-HIGH), but no recipient takes
-  // one any more (see effectiveTemperature below); --temperature is parsed only so
-  // an old invocation is told it was ignored. --repeats>1 still forces the sdk backend.
+  // xN arm (the confound-breaker). N sequential samples per pass×chunk. Original
+  // design (Gemini-R2-HIGH): a non-zero temperature, because at temp 0 the N samples
+  // are identical and collapse to x1; only the sdk backend could set it (cli claude -p
+  // can't), so --repeats>1 forces sdk. No recipient takes one any more (see
+  // effectiveTemperature); --temperature is parsed only to report it as ignored.
   const repeats = Math.max(1, Number.parseInt(argOption('repeats', '1'), 10) || 1);
   const temperature = repeats > 1 ? Number.parseFloat(argOption('temperature', '1.0')) : null;
   // Diff-size sanity cap: a mega-commit (repo-import / 2000-file initial release)
