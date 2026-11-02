@@ -275,6 +275,25 @@ model-invocable. `check-skill-frontmatter.mjs` cross-checks a lexical scan again
 a real YAML parse for exactly this; the same lib refuses the sync and runs
 consumer-side as `sync-isolation-verify` gate 9.
 
+**`allowed-tools` pre-approves exact read-only commands only (2026-11-02).** In
+Claude Code the key *pre-approves* the listed tools for the turn that invokes the
+skill; it does **not** restrict other tools, and it applies **even in a `-p` run in an
+untrusted folder** — so a synced skill pre-approves in every consumer. The same lib
+therefore validates the value: a single-line string of `Bash(<command>)` tokens, each
+an exact entry of `ALLOWED_TOOLS_PREAPPROVABLE`
+([`skill-frontmatter-layout.mjs`](../../scripts/lib/skill-frontmatter-layout.mjs)), in
+either layout (the sync rewrites `node scripts/` to `node scripts/.claude-skills/`, and
+the rule folds it back). **No wildcards**: a Bash rule's `*` matches any text, and
+`cross-skill.mjs` takes a global `--out <path>` on every subcommand, so `detect-stack *`
+would also pre-approve a file write. `check-skill-frontmatter.mjs` additionally requires
+each allowlisted subcommand to be `kind:'local'`, `cloud:'none'` in the cross-skill
+registry — necessary, never sufficient (`arm-eval-toggle` is local/none and writes).
+Nothing that spends, writes, pushes or egresses is pre-approvable. **Copilot**: its docs
+list `allowed-tools` ("space-separated string of pre-approved tools") but not how it
+reads the `Bash(...)` grammar; untested here. Bounded worst case: it ignores the grant
+(the pre-2026-11-02 state) or honours it as written. Plan:
+[`skill-best-practice-alignment.md`](../plans/skill-best-practice-alignment.md).
+
 **Exact-match only, deliberately**: fuzzy matching was measured at 47 cross-skill
 noise pairs (Jaccard ≥ 0.5, mostly one shared word) and rejected. Semantic overlap
 has no oracle — declare the discriminator in BOTH descriptions instead (*topic* →

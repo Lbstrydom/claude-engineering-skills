@@ -65,7 +65,78 @@ export const FINDING_KINDS = Object.freeze([
   'indented-known-key',
   'non-boolean-flag',
   'instrument-disagreement',
+  'allowed-tools-malformed',
+  'allowed-tools-not-preapprovable',
 ]);
+
+/**
+ * The ONLY commands a skill may pre-approve through `allowed-tools`, as exact
+ * full-command strings in the SOURCE layout.
+ *
+ * Why exact strings and never a wildcard: Claude Code applies a skill's
+ * `allowed-tools` for the invoking turn even in an untrusted folder, and a Bash
+ * rule's `*` matches any text — while `cross-skill.mjs` takes a global `--out
+ * <path>` flag on every subcommand, so `Bash(... detect-stack *)` would also
+ * pre-approve writing a file anywhere. A rule without `*` matches one exact
+ * command. Each entry here reads local files and prints JSON; nothing spends,
+ * writes, pushes or leaves the machine. Plan:
+ * docs/plans/skill-best-practice-alignment.md (Track B). The registry
+ * cross-check (`kind:'local'`, `cloud:'none'`) runs in tests/skill-allowed-tools.test.mjs.
+ */
+export const ALLOWED_TOOLS_PREAPPROVABLE = Object.freeze([
+  'node scripts/cross-skill.mjs detect-stack',
+  'node scripts/cross-skill.mjs detect-stack --include-env-manager',
+  'node scripts/cross-skill.mjs preview-gate --format human',
+]);
+
+const ALLOWED_TOOLS_VALUE_RE = /^Bash\(([^()]+)\)(?: Bash\(([^()]+)\))*$/;
+const ALLOWED_TOOLS_TOKEN_RE = /Bash\(([^()]+)\)/g;
+// The consumer sync rewrites `node scripts/X` to `node scripts/.claude-skills/X`
+// (sync-rewriter.mjs COMMAND_REGEX); fold it back so both layouts validate
+// against the one source-layout list.
+const CONSUMER_LAYOUT_RE = /^node scripts\/\.claude-skills\//;
+
+/**
+ * Validate the `allowed-tools` value — anchored and all-or-nothing.
+ *
+ * Accepted: a single-line scalar of one or more `Bash(<exact allowlisted
+ * command>)` tokens separated by exactly one space. Rejected: a YAML list, a
+ * block scalar, a duplicate key, anything before/between/after the tokens, a
+ * duplicated token, and any command not in `ALLOWED_TOOLS_PREAPPROVABLE`.
+ *
+ * @param {string[]} fmLines frontmatter lines
+ * @param {Record<string, unknown>} parsed
+ * @param {string} file
+ * @returns {Array<{kind: string, key: string, line: null, text: string|null, message: string}>}
+ */
+export function lintAllowedTools(fmLines, parsed, file) {
+  const out = [];
+  const bad = (kind, text, why) => out.push({ kind, key: 'allowed-tools', line: null, text, message: `${file}: \`allowed-tools\` ${why}` });
+  const declLines = fmLines.filter((l) => /^allowed-tools\s*:/.test(l));
+  if (declLines.length === 0) return out;
+  if (declLines.length > 1) { bad('allowed-tools-malformed', null, 'is declared more than once'); return out; }
+  const value = parsed['allowed-tools'];
+  if (typeof value !== 'string' || /[|>]\s*$/.test(declLines[0]) || value.includes('\n')) {
+    bad('allowed-tools-malformed', null, 'must be a single-line string of `Bash(<command>)` tokens (no list, no block scalar)');
+    return out;
+  }
+  if (!ALLOWED_TOOLS_VALUE_RE.test(value)) {
+    bad('allowed-tools-malformed', value, 'must match `Bash(<command>)` tokens separated by single spaces, with nothing else');
+    return out;
+  }
+  const seen = new Set();
+  for (const [, inner] of value.matchAll(ALLOWED_TOOLS_TOKEN_RE)) {
+    const command = inner.replace(CONSUMER_LAYOUT_RE, 'node scripts/');
+    if (seen.has(command)) { bad('allowed-tools-malformed', inner, `repeats \`${inner}\``); continue; }
+    seen.add(command);
+    if (!ALLOWED_TOOLS_PREAPPROVABLE.includes(command)) {
+      bad('allowed-tools-not-preapprovable', inner,
+        `pre-approves \`${inner}\`, which is not an exact read-only command in ALLOWED_TOOLS_PREAPPROVABLE ` +
+        '(a wildcard or extra argument could admit `--out <path>`; spend, push, store writes and egress are never pre-approvable)');
+    }
+  }
+  return out;
+}
 
 /**
  * The frontmatter block of a markdown file: the lines strictly between the
@@ -175,6 +246,7 @@ export function lintSkillFrontmatterLayout(raw, { file = '<memory>', knownKeys =
       });
     }
   }
+  findings.push(...lintAllowedTools(fm.lines, parsed, file));
 
   return { ok: findings.length === 0, file, findings, parsed, topLevelKnownKeys };
 }

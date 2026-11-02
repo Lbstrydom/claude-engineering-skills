@@ -12,6 +12,7 @@ description: |
   confirmation, which is exactly why it cannot be self-invoked.
   Full command syntax: see the Usage section in this skill.
 disable-model-invocation: true
+allowed-tools: Bash(node scripts/cross-skill.mjs detect-stack --include-env-manager)
 ---
 
 # Ship: Sync Docs → Commit → Push

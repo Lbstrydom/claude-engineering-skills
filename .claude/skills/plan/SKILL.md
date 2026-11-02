@@ -15,6 +15,7 @@ description: |
   an explicit scope hint and diagram controls are available as flags.
   Triggers on: "plan", "design this", "architect this".
   Full command syntax: see the Usage section in this skill.
+allowed-tools: Bash(node scripts/cross-skill.mjs detect-stack)
 ---
 
 > **Worktree preflight** — in a linked git worktree the synced tooling tree

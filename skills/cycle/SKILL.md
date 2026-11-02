@@ -14,6 +14,7 @@ description: |
   Triggers on: "run the full cycle", "do the whole flow", "plan + audit
   + ship", "feature cycle", "remediate the persona findings", "/cycle".
   Full command syntax: see the Usage section in this skill.
+allowed-tools: Bash(node scripts/cross-skill.mjs preview-gate --format human)
 ---
 
 > **Worktree preflight** — in a linked git worktree the synced tooling tree

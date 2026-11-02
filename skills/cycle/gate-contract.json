@@ -343,6 +343,10 @@
     {
       "line": "| `references/clustered-execution.md` | Step 3C detail — cluster-state schema, author-tier hint, scope-flag incident, 4a measurement, round-2 rationale. | Step 3C — first read/write of `.audit/cycle-cluster-state.json`, an `author-tier:` hint, OR a cluster's scope, class or gate is contested. |",
       "reason": "Reference-index row added by the Cluster B slim (2026-11-02). 'gate' names the fix-gate being contested, a read-when trigger, not an enforcement claim."
+    },
+    {
+      "line": "`--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). **It does not complete Step 7** — a fully autonomous run still stops at the Step 7 blocked-handoff card; only the human's `/ship` completes it.",
+      "reason": "Agent-facing description of the --autonomous flag reworded on 2026-11-02 (Cluster B audit R2 M2). It restates the Step 7 handoff that /ship's disable-model-invocation enforces; it makes no separate enforcement claim of this skill."
     }
   ]
 }
