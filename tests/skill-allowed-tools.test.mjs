@@ -84,7 +84,12 @@ describe('allowed-tools — rejected forms', () => {
     ['a plain scalar continued on the next line', `allowed-tools: Bash(${DETECT})\n  Bash(node scripts/openai-audit.mjs plan)`, 'allowed-tools-malformed'],
     ['a QUOTED key carrying a spend-bearing grant', '"allowed-tools": Bash(node scripts/openai-audit.mjs *)', 'allowed-tools-malformed'],
     ['a single-quoted key', `'allowed-tools': Bash(${DETECT})`, 'allowed-tools-malformed'],
+    ['an escaped spelling that decodes to an allowlisted command', 'allowed-tools: "Bash(node scripts\\u002Fcross-skill.mjs detect-stack)"', 'allowed-tools-malformed'],
   ];
+  test('an indented comment or blank line after a valid grant is not a continuation', () => {
+    assert.deepEqual(kinds(`allowed-tools: Bash(${DETECT})\n  # note`), []);
+    assert.deepEqual(kinds(`allowed-tools: Bash(${DETECT})\n\nmodel: inherit`), []);
+  });
   for (const [name, fm, kind] of cases) {
     test(name, () => assert.ok(kinds(fm).includes(kind), `expected ${kind}, got ${JSON.stringify(kinds(fm))}`));
   }

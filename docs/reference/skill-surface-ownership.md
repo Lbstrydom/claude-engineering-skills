@@ -285,8 +285,8 @@ an exact entry of `ALLOWED_TOOLS_PREAPPROVABLE`
 either layout (the sync rewrites `node scripts/` to `node scripts/.claude-skills/`, and
 the rule folds it back). **No wildcards**: a Bash rule's `*` matches any text, and
 `cross-skill.mjs` takes a global `--out <path>` on every subcommand, so `detect-stack *`
-would also pre-approve a file write. `check-skill-frontmatter.mjs` additionally requires
-each allowlisted subcommand to be `kind:'local'`, `cloud:'none'` in the cross-skill
+would also pre-approve a file write. `tests/skill-allowed-tools.test.mjs` (in `npm test`)
+additionally requires each allowlisted subcommand to be `kind:'local'`, `cloud:'none'` in the cross-skill
 registry — necessary, never sufficient (`arm-eval-toggle` is local/none and writes).
 Nothing that spends, writes, pushes or egresses is pre-approvable. **Trust boundary:** a
 grant names a repo-relative path and authenticates nothing — it pre-approves whatever file

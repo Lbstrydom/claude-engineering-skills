@@ -347,6 +347,10 @@
     {
       "line": "`--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). **It does not complete Step 7** — a fully autonomous run still stops at the Step 7 blocked-handoff card; only the human's `/ship` completes it.",
       "reason": "Agent-facing description of the --autonomous flag reworded on 2026-11-02 (Cluster B audit R2 M2). It restates the Step 7 handoff that /ship's disable-model-invocation enforces; it makes no separate enforcement claim of this skill."
+    },
+    {
+      "line": "allowed-tools: Bash(node scripts/cross-skill.mjs preview-gate --format human)",
+      "reason": "A frontmatter key, not prose: the word 'gate' is part of the subcommand name preview-gate. The grant itself is validated by the allowed-tools rule in scripts/lib/skill-frontmatter-layout.mjs (exact read-only command)."
     }
   ]
 }

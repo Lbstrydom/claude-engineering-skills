@@ -121,10 +121,21 @@ export function lintAllowedTools(fmLines, parsed, file) {
     return out;
   }
   const inline = fmLines[declIdx].slice('allowed-tools:'.length).trim();
-  const continued = declIdx + 1 < fmLines.length && /^\s/.test(fmLines[declIdx + 1]);
+  // A continuation is an indented line with content; an indented comment or a
+  // blank line is not one.
+  const next = fmLines[declIdx + 1] ?? '';
+  const continued = /^\s+\S/.test(next) && !/^\s+#/.test(next);
   const value = parsed['allowed-tools'];
   if (typeof value !== 'string' || inline === '' || /^[|>]/.test(inline) || continued || value.includes('\n')) {
     bad('allowed-tools-malformed', null, 'must be a single-line string of `Bash(<command>)` tokens on the key\'s own line (no list, no block or folded scalar, no continuation)');
+    return out;
+  }
+  // The raw text (minus one pair of surrounding quotes) must equal the decoded
+  // value: the sync rewriter edits RAW bytes, so an escaped spelling could decode
+  // to an allowlisted command while the consumer receives something else.
+  const rawValue = inline.replace(/\s+#.*$/, '').replace(/^(['"])(.*)\1$/, '$2');
+  if (rawValue !== value) {
+    bad('allowed-tools-malformed', inline, 'must be written literally — no YAML escapes or quoting tricks (the raw text has to equal the parsed value)');
     return out;
   }
   if (!ALLOWED_TOOLS_VALUE_RE.test(value)) {
