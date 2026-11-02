@@ -468,8 +468,18 @@ carries the compaction-recovery note + end marker (Finding 3). `context:check` c
 lowered 92,000 → 79,000 after measuring 75,884.
 
 **Routing evals** (`claude plugin eval . --tag pilot --runs 1 --ablation none`): baseline
-12/13 at `c351ac17` (`audit-code-request` failing before any change); candidate run —
-see §Eval comparison.
+12/13 at `c351ac17` (`audit-code-request` failing before any change). Candidate at `e6cdd25f`
+(clean `skills/ evals/ .claude-plugin/`, $2.23): **12/13, identical per case** — same single
+failure, no newly failing case. (`ai-context-management-drift-check` first errored because a
+concurrent test run left a temp fixture dir the sandbox could not copy — an instrument fault;
+re-run alone at `12b1ad77`: 1.00.)
+
+**Final gate** (Gemini, consolidated): APPROVE over the union diff, but coverage PARTIAL —
+3,831 changed lines never shown (generated copies excluded as byte-verified); a focused
+Gemini pass on the AGENTS.md cluster: APPROVE, 58 lines unseen. **Full suite** (local,
+`node --test`, 2026-11-02): 10,110 pass, 2 fail → one fixed (PowerShell fence labels); the
+other (`prepush-installed-tree-identity`) reads this machine's installed `node_modules`,
+which this branch does not change.
 
 **Audits** (`/audit-code`, per-cluster scope):
 - Cluster A: 5 rounds → PASS (H:0 M:0 L:0).
