@@ -262,6 +262,14 @@ confirm or revise the Phase 2–5 ceiling in §Pilot result. Files:
 `skills/click-test/SKILL.md`, `skills/plan/SKILL.md`, `skills/brainstorm/SKILL.md`,
 `skills/ux-lock/SKILL.md`, `skills/explain/SKILL.md`, `skills/nav-audit/SKILL.md`,
 `skills/fleet/SKILL.md` (modify), and each one's `references/*.md` (create).
+Also (pilot Finding 2): shorten the shared worktree-preflight marker and move its recipe
+to a synced shared reference. Files: `scripts/lib/worktree-preflight.mjs` (modify),
+`docs/audit/shared-references/worktree-preflight.md` (create),
+`scripts/sync-shared-audit-refs.mjs` (modify), `skills/*/SKILL.md` (modify — marker only),
+`skills/*/gate-contract.json` (modify — the pinned marker line in `ignoredCandidates`),
+each receiving skill's `## Reference files` table (modify — one row for
+`references/worktree-preflight.md`, its `summary:` byte-matching the row),
+`tests/worktree-preflight-gate.test.mjs` (modify).
 
 Phases 2–5 each also retarget any test that pinned moved prose to the reference file (same
 assertion, new path — never weakened; if the test pins it *because* it must be resident,
@@ -338,7 +346,7 @@ the committed HEAD (revision pinning above), compared per case with the baseline
 - **Proof plan** (per behaviour change):
   | Change | Oracle | Pass condition | Evidence |
   |---|---|---|---|
-  | SKILL.md slimmed | `count_tokens` (method above) | ≤4,500 tokens, or the exception's spine-offset ≤4,500 | before/after table in §Results |
+  | SKILL.md slimmed | `count_tokens` (Appendix A) + reading | spine-only (pilot Finding 1): no non-spine paragraph left resident, every "always" step still resident (Finding 4), recovery note + end marker present (Finding 3); tokens reported against 4,500 | before/after table in §Results |
   | Content preserved | `git diff` + reading: moved text appears verbatim in a reference, with a site pointer | no orphan deletions | per-skill "moved to" list |
   | Prose contracts intact | the skill's pinning tests | all pass | command + counts |
   | Routing unchanged | plugin evals, per case | no newly failing case vs baseline | both tables |
@@ -358,10 +366,64 @@ the committed HEAD (revision pinning above), compared per case with the baseline
 - **Final gate**: consolidated Gemini review over the union diff.
 
 ## Pilot result
-_(filled in by Phase 1)_
+Measured 2026-11-02 (§Appendix A method), `skills/audit-plan/SKILL.md`:
+**11,041 → 7,896 tokens (−28.5%)**, 27,401 → 18,889 chars. Moved verbatim:
+the full grounding / test-premise / §11 / same-module rubrics →
+`references/triage-rubrics.md`; acceptance-rate evidence, Gemini-cap rationale,
+`--run-id` measurement and the Step 3.5b manual fallback → `references/convergence-evidence.md`.
+Deleted (duplicates, not moves): the Key Principles list (each item is stated in its
+step). Compressed: three ASCII status cards to one-line formats. Every rubric keeps a
+resident one-line form with its HIGH/LOW consequence and a `→ references/…` pointer.
+Pinning tests: 10 files, 241 tests — none broke except the expected size baseline.
+
+**Finding 1 — the 4,500-token ceiling is not reachable with the spine resident.** After
+the cut, the file *is* the spine (step list, commands, triage/convergence/cap tables,
+final-gate disposition, reference index). Reaching 4,500 would require moving runner
+commands or critical-branch tables, which this plan forbids. **Revised target for
+Phases 2–5: "spine only"** — every non-spine paragraph moves or is deduplicated; the
+result is whatever the spine weighs, reported in tokens against 4,500 without hiding the
+gap. Expected reduction from the pilot: ~25–40% (more where a skill carries more
+incident history). This is a measured target, not a mandate.
+
+**Finding 2 — one shared block costs 870 tokens in every skill.** The worktree-preflight
+marker (`MARKER_BLOCK`, `scripts/lib/worktree-preflight.mjs`) inlines a ~1,700-char
+`skills:hydrate` one-liner; it is 11% of audit-plan's slimmed body and sits in 17 skills
+(~14,800 tokens total). Its gate-contract rationale says the recipe is inlined because a
+skill file is "the only carrier that reaches the reader" in an unadopted consumer — but a
+skill's own `references/` directory is synced with it and reaches the same reader.
+**Amendment (Phase 5)**: shorten `MARKER_BLOCK` to the instruction plus a pointer, and
+carry the recipe in a shared reference `references/worktree-preflight.md`
+(canonical `docs/audit/shared-references/worktree-preflight.md`, distributed by
+`scripts/sync-shared-audit-refs.mjs`). The gate keeps pinning the (shorter) block verbatim.
+
+**Finding 3 — what survives compaction is the start, so make the start a recovery
+pointer** (from the Cluster A audit, H1). A spine-only body above 5,000 tokens still
+loses its tail after compaction. Every SKILL.md over the cap therefore gets, directly
+under its `#` title, a note that *describes* (never quotes) an **end marker** — the
+file's last line, `— end of /<name> —`: *if that last line is not in your context,
+re-read `.claude/skills/<name>/SKILL.md` in full before continuing.* A missing last line
+is deterministic where "looks cut off" is not (truncation can end on a clean paragraph);
+the note must not contain the marker text, or seeing the note would look like seeing
+the marker (Cluster A audit R3). Truncation keeps the start (documented), so this line always survives, and the
+file it names exists in both layouts (it is the copy the host loaded). This turns
+post-compaction loss from silent into recoverable; it does not replace slimming.
+
+**Finding 4 — a slim can silently demote a normal-path step** (Cluster A audit, H2). The
+pilot moved "record dismissed findings into the local PlanFpTracker" into the
+manual-fallback section, so a warning-free run would have skipped it. Restored resident.
+Rule for Phases 2–5: before moving a paragraph, check whether its trigger is
+"always" or "only when X" — only the latter may move behind a conditional pointer.
 
 ## Results
-_(before/after tokens and chars per file, filled in per phase)_
+Tokens per Appendix A; chars = LF-canonical (ratchet unit).
+
+| File | tokens before | tokens after | chars before | chars after | Δ tokens |
+|---|---:|---:|---:|---:|---:|
+| skills/audit-plan/SKILL.md | 11,041 | 8,276 | 27,401 | 19,891 | −25.0% |
+
+Cluster A audit (`/audit-code`, per-cluster scope): 5 rounds, R5 PASS H:0 M:0 L:0; 19
+findings, all accepted — including two real regressions introduced by the slim (a
+demoted every-round step; a scripted edit that broke a shell one-liner).
 
 ## Out of Scope (Future)
 - **Ongoing token gate** (audit-plan R2 M2). A same-character edit could in principle add
