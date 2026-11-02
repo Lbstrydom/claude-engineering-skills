@@ -23,7 +23,7 @@
  *   2  MEDIUM findings only (without --strict)
  *
  * Config: optional `.claude-context-allowlist.json` at repo root:
- *   { "allowlist": [...], "maxClaudeMdLines": 100, "maxAgentsMdChars": 92000 }
+ *   { "allowlist": [...], "maxClaudeMdLines": 100, "maxAgentsMdChars": 79000 }
  *
  * @module scripts/check-context-drift
  */
@@ -410,7 +410,7 @@ Detects drift between AGENTS.md and CLAUDE.md within a repo. Enforces:
   - CLAUDE.md h2 headings only from Claude-only allowlist
   - CLAUDE.md size cap (default 80 lines)
   - Shared section bodies match between AGENTS.md and CLAUDE.md
-  - AGENTS.md sprawl cap (default 92000 chars) — condense dossier sections
+  - AGENTS.md sprawl cap (default 79000 chars) — condense dossier sections
     to stubs + docs/<topic>.md per the progressive-disclosure pattern
 
 Options:
@@ -420,7 +420,7 @@ Options:
   -h, --help         Show this help
 
 Config: .claude-context-allowlist.json (optional) at repo root:
-  { "allowlist": ["Custom Heading", ...], "maxClaudeMdLines": 100, "maxAgentsMdChars": 92000 }
+  { "allowlist": ["Custom Heading", ...], "maxClaudeMdLines": 100, "maxAgentsMdChars": 79000 }
 `);
 }
 

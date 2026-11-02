@@ -437,15 +437,72 @@ Rule for Phases 2–5: before moving a paragraph, check whether its trigger is
 "always" or "only when X" — only the latter may move behind a conditional pointer.
 
 ## Results
-Tokens per Appendix A; chars = LF-canonical (ratchet unit).
+Tokens per Appendix A (count_tokens, `claude-opus-5-5`, 2026-11-02); chars = LF-canonical
+(ratchet unit). "Before" = `c351ac17`; "after" = this branch.
 
-| File | tokens before | tokens after | chars before | chars after | Δ tokens |
+| File | tokens before | tokens after | Δ tokens | chars before | chars after |
 |---|---:|---:|---:|---:|---:|
-| skills/audit-plan/SKILL.md | 11,041 | 8,276 | 27,401 | 19,891 | −25.0% |
+| skills/ship/SKILL.md | 27,043 | 22,318 | −17.5% | 69,344 | 56,894 |
+| skills/persona-test/SKILL.md | 22,447 | 17,020 | −24.2% | 57,174 | 43,426 |
+| skills/audit-code/SKILL.md | 22,030 | 16,287 | −26.1% | 55,696 | 40,563 |
+| skills/cycle/SKILL.md | 18,621 | 16,316 | −12.4% | 46,673 | 40,966 |
+| skills/click-test/SKILL.md | 17,354 | 12,193 | −29.7% | 44,239 | 30,911 |
+| skills/plan/SKILL.md | 14,783 | 12,741 | −13.8% | 38,354 | 33,207 |
+| skills/audit-plan/SKILL.md (pilot) | 11,041 | 7,678 | −30.5% | 27,401 | 18,708 |
+| skills/brainstorm/SKILL.md | 9,456 | 8,183 | −13.5% | 23,546 | 20,551 |
+| skills/ux-lock/SKILL.md | 7,728 | 6,891 | −10.8% | 19,357 | 17,603 |
+| skills/explain/SKILL.md | 6,665 | 5,229 | −21.5% | 16,760 | 13,631 |
+| skills/nav-audit/SKILL.md | 6,378 | 5,192 | −18.6% | 16,368 | 13,460 |
+| skills/fleet/SKILL.md | 5,323 | 4,833 | −9.2% | 13,758 | 12,885 |
+| skills/investigate/SKILL.md | 4,822 | 4,225 | −12.4% | 13,548 | 12,366 |
+| skills/visual-audit/SKILL.md | 4,782 | 4,185 | −12.5% | 11,744 | 10,562 |
+| skills/ai-context-management/SKILL.md | 4,419 | 3,822 | −13.5% | 10,248 | 9,066 |
+| skills/security-strategy/SKILL.md | 3,603 | 3,034 | −15.8% | 9,100 | 7,989 |
+| skills/skills/SKILL.md | 2,617 | 2,048 | −21.7% | 6,496 | 5,385 |
+| **All 17 SKILL.md** | **189,112** | **152,195** | **−19.5%** | | |
+| AGENTS.md | 36,290 | 30,990 | −14.6% | 88,747 | 75,884 |
 
-Cluster A audit (`/audit-code`, per-cluster scope): 5 rounds, R5 PASS H:0 M:0 L:0; 19
-findings, all accepted — including two real regressions introduced by the slim (a
-demoted every-round step; a scripted edit that broke a shell one-liner).
+Every skill also lost ~620 tokens to pilot Finding 2 (hydrate recipe → shared reference).
+Over the 5,000-token re-attach cap after: 11 of 17 (before: 12); every over-cap skill now
+carries the compaction-recovery note + end marker (Finding 3). `context:check` cap
+lowered 92,000 → 79,000 after measuring 75,884.
+
+**Routing evals** (`claude plugin eval . --tag pilot --runs 1 --ablation none`): baseline
+12/13 at `c351ac17` (`audit-code-request` failing before any change); candidate run —
+see §Eval comparison.
+
+**Audits** (`/audit-code`, per-cluster scope):
+- Cluster A: 5 rounds → PASS (H:0 M:0 L:0).
+- Cluster B: 3 rounds, stopped on rigor pressure (R3 acceptance 1/16). Every remaining
+  HIGH is a re-raise of a deferred defect in text that predates the slim and was moved
+  verbatim or kept unchanged; each deferral names its independence in the ledger. Fixed
+  in-cluster: preflight marker asks before editing `package.json`; recipe fenced; playbook
+  merge bound with `--match-head-commit` and tree-id comparison; census JSON; cycle wording.
+- Cluster C: 3 rounds → converged in-cluster. Fixed a real bypass (quoted
+  `"allowed-tools":` key passed the old rule — reproduced old ok:true / new ok:false),
+  folded/continued scalars, escaped spellings; trust boundary documented (deliberated
+  HIGH → MEDIUM).
+
+**Deferred to a follow-up** (all predate this change, text unchanged or moved verbatim):
+persona-test shell safety (URL interpolation, PowerShell `cat` encoding, fixed payload
+paths, sessionKey wording, dedup wording); audit-code recipes (dirty-aware base in R2+,
+`--base HEAD` example, BSD `xargs -r`, Step 6 example, census trigger, honest-deferral
+reverse dependencies, cross-surface clause); ship Step 2 drain order and Step 5.8
+default-branch fallback; cycle stale-resume and Step 8 summary ordering; click-test v2
+design notes; three ship gate-contract `stated` strings already absent from SKILL.md;
+per-line disposition reasons for the 77 rewrapped lines.
+
+**Coordinator rules now in `/fleet`** (`skills/fleet/references/coordinator-playbook.md`):
+§1 merge only the audited head (`--match-head-commit`, tree ids); §2 retarget a stacked
+PR before `--delete-branch`; §3 before archiving or removing a worktree — shared worktree
+paths, tag local-only commits, back up ignored files, repoint hooks paths, re-list; §4
+fast-forwarding a checkout other repos execute is a deploy — migrate every store first;
+§5 look for competing implementations before rebasing; §6 whole suite before a branch's
+first push. Already in `/fleet` before this change (`coordination.md`): chip authority
+block, archive sweep, confirm-idle, WIP limits, one heavy job at a time, message budget,
+status words carry their artifact. Left out as private/account-specific: account
+switches, peak-hour windows, store hosts, pins/ghost-run handover steps,
+consumer-repo specifics.
 
 ## Out of Scope (Future)
 - **Ongoing token gate** (audit-plan R2 M2). A same-character edit could in principle add

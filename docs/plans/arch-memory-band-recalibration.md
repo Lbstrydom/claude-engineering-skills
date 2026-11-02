@@ -1146,3 +1146,25 @@ Also corrected three comments that described retired behaviour, and marked the
 `reuse`/`extend` branches in the outcome resolver as LEGACY-ONLY — they resolve
 the 1,763 historical rows and must not be "fixed" into the new banding, which
 would strand that data as permanently `uncertain`.
+
+## Moved from AGENTS.md (2026-11-02)
+
+Two paragraphs of AGENTS.md's "Architectural Memory — Pre-fix Consultation
+(MANDATORY)" section moved here to cut the per-session context cost (plan:
+`docs/plans/skill-best-practice-alignment.md` Track C); the consultation rule, the
+three bands, the uncalibrated-repo behaviour and the retired-band-names warning
+stay resident there. Verbatim (link targets re-based to this file):
+
+**Why no fixed numbers.** The old `reuse ≥0.90 / extend ≥0.85 / justify-divergence
+≥0.75` bands fired **zero times in 1,763 consultations** (the pipeline tops out near
+0.83 — mathematically unreachable). The cutoff is now `μ + 3σ` over the repo's OWN
+symbol-embedding background, computed at `arch:refresh`, because a threshold is a
+property of *corpus × summary style × embedding model × compose template ×
+normalizer*, not of the tool — and this tooling syncs elsewhere. **An uncalibrated
+repo bands `review` only**: honest, not degraded; run `npm run arch:refresh`. The
+three old band names are **retired** — seeing them means stale tooling. History:
+[arch-memory-band-recalibration.md](arch-memory-band-recalibration.md).
+
+**Empirical effectiveness test** — A/B the hook against an
+`ARCH_MEMORY_HOOK_DISABLE=1` control; recipe + threshold in the comment block at
+the bottom of `tests/hook-arch-memory-check.test.mjs`.

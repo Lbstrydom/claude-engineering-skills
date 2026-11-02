@@ -48,7 +48,7 @@ describe('agentsMdCharCount', () => {
 describe('resolveMaxAgentsMdChars', () => {
   test('default when no config', () => {
     withRepo('x', undefined, (dir) => assert.deepEqual(resolveMaxAgentsMdChars(dir), { cap: DEFAULT_MAX_AGENTS_MD_CHARS, source: 'default', problem: null }));
-    assert.equal(DEFAULT_MAX_AGENTS_MD_CHARS, 92000);
+    assert.equal(DEFAULT_MAX_AGENTS_MD_CHARS, 79000);
   });
   test('a valid config wins', () => {
     withRepo('x', JSON.stringify({ maxAgentsMdChars: 1234 }), (dir) => assert.deepEqual(resolveMaxAgentsMdChars(dir), { cap: 1234, source: 'config', problem: null }));

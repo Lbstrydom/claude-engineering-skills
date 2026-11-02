@@ -58,3 +58,22 @@ with the user-impact term weighted by persona severity. See
 This is the point of the whole loop: a persona finding that corroborates an
 audit finding is ground truth about user-visible impact, which nothing else in
 the pipeline observes.
+
+## Moved from AGENTS.md (2026-11-02)
+
+Two paragraphs of AGENTS.md's "Cross-Skill Data Loop" section moved here to cut the
+per-session context cost (plan: `docs/plans/skill-best-practice-alignment.md`
+Track C); the design rule stays resident there. Verbatim (link targets re-based):
+
+The highest-leverage row is `persona_audit_correlations`: a persona P0/P1 that
+corroborates an audit finding is ground truth about user-visible impact, and it
+re-weights `computeReward` from 40/30/30 to 35/25/25/15.
+
+**Skill recommender (à-la-carte "what's next" advisor).** `cross-skill.mjs
+recommend-skills` + the pure [`scripts/lib/skill-recommender.mjs`](../../scripts/lib/skill-recommender.mjs)
+suggest the FEW additional lenses that fit a change, so a user who ran ONE skill
+doesn't have to remember the chain (distinct from `/cycle`'s full-auto path).
+Deterministic (no LLM); signal hierarchy audit-findings → plan `applicable_lenses`
+→ tight file globs; **nudge-not-gate**, **cap 2**, **silent when nothing fits**,
+env-aware (browser lenses need a live URL), never re-suggests the just-ran or
+already-covered lens. `/audit-code` Step 6.6 prints the card at convergence.

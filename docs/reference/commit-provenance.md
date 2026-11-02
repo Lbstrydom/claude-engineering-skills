@@ -400,3 +400,32 @@ explicit v2 target (its unattended retry loop should not gate on an unproven
 exit-2 contract). Other v2 items (receipt-derived `AI-Models`, verdict-bound
 ship-evidence record, `--gate-reason`) are listed in the plan's §V2 with
 their promotion triggers.
+
+## Moved from AGENTS.md (2026-11-02)
+
+AGENTS.md's "Commit provenance trailers (`AI-*`)" section was condensed to a stub to
+cut the per-session context cost (plan: `docs/plans/skill-best-practice-alignment.md`
+Track C); the reserved-namespace and never-hand-write rules stay resident there. Its
+full former text, verbatim (link targets re-based to this file):
+
+`/ship` commits carry `AI-Skill`/`AI-Models`/`AI-Gate`/conditional `AI-Run-ID`
+git trailers written ONLY by two helpers sharing ONE renderer and ONE gate
+evaluator: `scripts/ship-commit.mjs` (`/ship` Step 6.3) and, for the squash
+messages of a `/ship --train`, `scripts/ship-train.mjs` — never hand-typed; the
+`AI-*` namespace is reserved. `AI-Final-Review` (`approve|approve-with-debt|blocked`)
+is DERIVED from the final-review marker bound to the run's evidence — no flag, never
+on a train squash, and it never moves `AI-Gate`. `AI-Gate` has **four**
+values, two verified against the store's `audit_runs` row and two declared:
+`passed` (converged AND the committed tree IS the audited tree) · **`converged`**
+(converged AND the tree is **not asserted equal** — it differs, the audited-then-**remediated** ship, or equality is unprovable on an unpinned squash) ·
+`waived` (declared, unverified) · `not-run` (no fresh evidence). Both verified
+values are fail-closed and clear the **same** store bar, so neither is cheaper;
+each refusal names the other — you may not over- *or* under-claim. **`passed` is
+rare by design** (`/ship`'s own Steps 2–5 move the tree after the audit): never
+hand-write `.audit/last-audit-run.json` or reorder a ship to chase it — the value
+worth investigating is a `passed` that should not be there. Applies from tag
+`provenance-v1` forward; absence after that = "not mechanically produced".
+Schema, measured counts, query cookbook, failure
+contract: [`docs/reference/commit-provenance.md`](commit-provenance.md);
+design + the measured reason `converged` carries no audited-tree trailer:
+[`docs/plans/gate-taxonomy-remediated-ships.md`](../plans/gate-taxonomy-remediated-ships.md).

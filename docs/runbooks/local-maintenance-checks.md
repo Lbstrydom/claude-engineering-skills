@@ -168,3 +168,40 @@ equivalent; check the log file or `maintenance:status` instead). The two
 are not mutually exclusive, but note `arch-maintenance` writes to and prunes
 the shared architectural-memory store (see above) — running both means
 those writes happen twice, not a harmless double-read.
+
+## Moved from AGENTS.md (2026-11-02)
+
+AGENTS.md's "Local Weekly Maintenance Checks (opt-in)" section was condensed to a
+stub to cut the per-session context cost (plan:
+`docs/plans/skill-best-practice-alignment.md` Track C); the cadence-observation and
+`audit-loop-no-measurement` rules stay resident there. Its full former text,
+verbatim (link targets re-based to this file):
+
+Optional, default-OFF local replica of the weekly maintenance checks, for orgs
+that block Actions runners — **and, in THIS repo, the only runner of the four
+store-backed ones** (arch-maintenance, migration-drift, memory-health,
+learning-weekly-review) since their Actions crons were deleted 2026-09-13: a
+GitHub-hosted runner cannot reach the NAS store, so every scheduled run had
+skipped on `AUDIT_DB_URL not set` and exited 0. Opportunistic — from the
+pre-push hook when overdue, **not** an OS scheduler (avoids the
+wrong-PATH/cwd/asleep-at-trigger class). Enable via `setup.mjs` Step 4 or
+`AUDIT_LOOP_WEEKLY_MAINTENANCE=1` (set on the maintainer's machine;
+`npm run maintenance:status` shows the heartbeat). [Detail](local-maintenance-checks.md).
+
+**Sibling tools**, both advisory: `npm run runner:doctor` (self-hosted-runner
+viability; `local`/`remove` inventory + teardown on THIS machine — health from
+GitHub, never the local service manager, [detail](actions-runner-doctor.md))
+and `npm run cadence:doctor`. **A cron that stops firing produces no run, no
+failure and no notification — nothing, which looks exactly like a quiet week**,
+so a cadence is OBSERVED, never trusted for having been configured. **The event
+filter is the load-bearing part** (unfiltered read `OK` where `event=schedule`
+read `NEVER-RAN`). Watch list: committed `.workflow-cadence.json`. **Every non-OK
+outcome warns — including its own API call failing, and its watch list being
+ABSENT while the repo has crons**; a checker that goes quiet when it cannot tell
+reproduces the defect it detects. **`ok` means "the run did not fail", not "the
+thing it measures is current"** — a fail-open branch exiting 0 is `success` (5 of
+THIS repo's 6 watched crons were green-and-skipping for months, 2026-09-13). A skip
+branch therefore emits `::notice title=audit-loop-no-measurement::<reason>`
+(`lib/measurement-marker.mjs`), and a watch with `requireMeasurement: true` reads
+it back from check-run annotations → verdict `unmeasured`; never grep the job log
+for it. [Detail](../reference/workflow-cadence-doctor.md).
