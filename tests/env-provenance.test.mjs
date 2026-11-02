@@ -27,6 +27,7 @@ import {
 import { evaluateAuditSetup, evaluateEnvProvenance, loadEnv } from '../scripts/check-setup.mjs';
 import { runAzureDoctor, EXIT, routeShadows, configuredMatch } from '../scripts/azure-doctor.mjs';
 import { runRouteDoctor } from '../scripts/lib/azure/route-doctor.mjs';
+import { resolveTokenSources } from '../scripts/lib/doctor/github-permissions.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET_INHERITED = 'sk-inherited-SECRET-0123456789';
@@ -140,6 +141,38 @@ describe('check-setup asks the SAME chain the runtime uses (the false-missing ca
     write(envFile, ['ENV_PROVENANCE_PROBE_ONLY_IN_FILE=1']);
     loadEnv(dir, { inherited: {}, localEnvPath: envFile, sharedPath: NO_SHARED() });
     assert.equal(process.env.ENV_PROVENANCE_PROBE_ONLY_IN_FILE, undefined);
+  });
+});
+
+describe('the GitHub token check gets the composed env as processEnv (check-setup checkGitHub)', () => {
+  // The exact composition checkGitHub passes: processEnv = readEnvLayers(...).env, fileEnv = layers.local.
+  const resolve = (inherited, fileLines, sharedLines) => {
+    write(envFile, fileLines);
+    write(sharedFile, sharedLines);
+    const l = readEnvLayers(dir, { inherited, localEnvPath: envFile, sharedPath: sharedFile });
+    return resolveTokenSources({ processEnv: l.env, fileEnv: l.layers.local, envFilePath: envFile, gh: { token: null } });
+  };
+  const T = (c) => `ghp_${c.repeat(36)}`;
+
+  it('a token in .env ONLY is credited to .env, not to the launch environment', () => {
+    const r = resolve({}, [`GH_TOKEN=${T('a')}`], []);
+    assert.deepEqual(r.sources.map((s) => s.id), ['dotenv:GH_TOKEN']);
+  });
+
+  it('.env outranks the shared file, as the runtime does', () => {
+    const r = resolve({}, [`GH_TOKEN=${T('a')}`], [`GH_TOKEN=${T('b')}`]);
+    assert.equal(r.winner.id, 'dotenv:GH_TOKEN');
+    assert.equal(r.sources.length, 1, 'the shadowed shared token is not a candidate');
+  });
+
+  it('a token in the shared file only is still found (it was lost when processEnv was the launch env alone)', () => {
+    const r = resolve({}, ['X=1'], [`GH_TOKEN=${T('b')}`]);
+    assert.ok(r.winner, 'found');
+  });
+
+  it('a differing launch export wins and is labelled as the shell', () => {
+    const r = resolve({ GH_TOKEN: T('c') }, [`GH_TOKEN=${T('a')}`], []);
+    assert.equal(r.winner.id, 'env:GH_TOKEN');
   });
 });
 
