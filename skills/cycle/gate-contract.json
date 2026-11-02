@@ -311,6 +311,38 @@
     {
       "line": "| `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Autonomous mode's consolidated Gemini gate — building the transcript, OR no `GEMINI_API_KEY` and the degradation ladder decides the substitute. |",
       "reason": "Reference-index row (the Summary column must byte-match the file's summary frontmatter). Verb match is the gate's NAME, not an enforcement claim."
+    },
+    {
+      "line": "`--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). **It does not reach Step 7** — a fully autonomous run still ends in the Step 7 blocked handoff.",
+      "reason": "Cluster B slim (2026-11-02) condensed the flag description. 'block' is the plan's §11 BLOCK (a document section), and the Step 7 handoff is the orchestration fact already dispositioned under preview-gate-halt-blocks-ship's class: /ship refuses programmatic calls via its own frontmatter, /cycle enforces nothing here."
+    },
+    {
+      "line": "**No §11 block + default (no `--autonomous`)** → `/cycle` **pauses here** for",
+      "reason": "Cluster B slim (2026-11-02) rewrap of the existing Step 3 pause bullet. 'block' names the plan's §11 section; the pause is the decision-table row above, agent flow with no /cycle exit code (same class as the 3C fix-gate ignoredCandidates entry)."
+    },
+    {
+      "line": "the human to implement; output the \"paused at implementation gate\" card below.",
+      "reason": "Continuation of the Step 3 pause bullet; 'gate' is the step's NAME (implementation gate), not an enforcement claim."
+    },
+    {
+      "line": "overwrite); one record per cluster with `gateStatus: pending|audited|gate-clear|stale`.",
+      "reason": "Cluster B slim (2026-11-02): resident summary of the cluster-state schema (full schema moved to references/clustered-execution.md). 'gate' matches the field value `gate-clear`, a state name, not an enforcement claim."
+    },
+    {
+      "line": "A `gate-clear` cluster flips to **`stale`** if any `derivedScope` file hash or its",
+      "reason": "Same state-record summary; 'gate' matches the state name `gate-clear`. The stale flip is model-performed bookkeeping, no /cycle exit code."
+    },
+    {
+      "line": "**4a. The gate scores IN-CLUSTER findings only — otherwise no cluster but the last can ever pass** (→ `references/clustered-execution.md` §4a — read when in-cluster scoring is challenged). Classify every finding by the cluster owning its cited file — the derived scopes are already computed, so this is mechanical, not a judgement call:",
+      "reason": "Cluster B slim (2026-11-02) of the already-dispositioned 4a line: the measurement moved to references/clustered-execution.md, the rule is unchanged. Same disposition as the original 4a ignoredCandidates entry — /cycle is a thin orchestrator; the convergence predicate is contracted in skills/audit-code/gate-contract.json."
+    },
+    {
+      "line": "**Convergence test scope — run the BROADEST suite, not unit-only (load-bearing for destructive clusters).** When \"iterate to green\" runs the project's tests at the cluster boundary, use the widest command the repo defines (`test:all` / `test:integration` / `test:e2e` — fall back to plain `test` / the full `node --test`), **never `test:unit` alone** (→ `references/clustered-execution.md` §Why the broadest test suite — read when a unit-only green is proposed). A cluster is \"green\" only when the integration tier passes; a `test:unit`-only green on a destructive cluster is a false-green and does **not** clear the fix-gate.",
+      "reason": "Cluster B slim (2026-11-02): the rationale sentence moved to references/clustered-execution.md; the instruction is unchanged. It tells the agent which test command to run — orchestration, no /cycle exit code (fix-gate convergence itself is contracted under fix-gate-convergence-before-next-cluster)."
+    },
+    {
+      "line": "| `references/clustered-execution.md` | Step 3C detail — cluster-state schema, author-tier hint, scope-flag incident, 4a measurement, round-2 rationale. | Step 3C — first read/write of `.audit/cycle-cluster-state.json`, an `author-tier:` hint, OR a cluster's scope, class or gate is contested. |",
+      "reason": "Reference-index row added by the Cluster B slim (2026-11-02). 'gate' names the fix-gate being contested, a read-when trigger, not an enforcement claim."
     }
   ]
 }

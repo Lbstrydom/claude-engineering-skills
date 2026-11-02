@@ -19,6 +19,12 @@ description: |
 
 # Code Audit Loop
 
+> **This skill's last line is an end marker naming the skill between em-dashes, after
+> the Reference files table.** If that last line is not in your context (context
+> compaction keeps only the start of a skill), re-read
+> `.claude/skills/audit-code/SKILL.md` in full before continuing — the later steps,
+> including the mandatory final gate, still apply.
+
 Multi-pass code audit with GPT + Gemini final review. Iterates until
 findings stabilise or max 6 rounds.
 
@@ -58,13 +64,7 @@ from one that passed.
 
 Initialise session ID: `SID=audit-code-$(node -e "process.stdout.write(Date.now()+'-'+process.pid)")` — epoch ms plus a PID, so two sessions started in the same second get separate result, stderr and ledger files (a bare `$(date +%s)` gave both the same ones).
 
-Show kickoff card:
-```
-═══════════════════════════════════════
-  /audit-code — Starting
-  Plan: <path> | Max 6 rounds | SID: $SID
-═══════════════════════════════════════
-```
+Kickoff card: `/audit-code — Starting | Plan: <path> | Max 6 rounds | SID: $SID`.
 
 ---
 
@@ -72,22 +72,16 @@ Show kickoff card:
 
 When `--scope=full`, fetch the repo's symbol catalogue from architectural
 memory (if populated) and inline a "Symbol catalogue" section into the
-prompt context. This helps the auditor catch cross-file duplication that
+prompt context — it lets the auditor catch cross-file duplication that
 diff-scope cannot see.
 
 ```bash
-# 0. `.audit/` is gitignored, so a fresh checkout or a newly created linked
-#    worktree does not have it — the redirect below fails BEFORE the command
-#    runs if it is missing.
+# .audit/ is gitignored — a fresh checkout or new linked worktree lacks it, and the redirect fails first.
 mkdir -p .audit
-# 1. Resolve repo identity + active snapshot.
-#    Read JSON with node, never jq — node is guaranteed by the runtime contract,
-#    jq is not, and is absent from check-deps.
+# 1. Resolve repo identity + active snapshot. Read JSON with node, never jq (not in check-deps).
 node scripts/cross-skill.mjs resolve-repo-identity > .audit/repo-identity.json
 node scripts/cross-skill.mjs get-active-refresh-id --repo-uuid "$(node -p "require('./.audit/repo-identity.json').repoUuid")" > .audit/active-refresh.json
-# 2. Fetch top-N symbols, CARRYING the refresh id forward (env-tunable:
-#    ARCH_AUDIT_FULL_TOPN, default 200). Capturing it is the point — printing
-#    it for a human to retype is how the two commands drift apart.
+# 2. Fetch top-N symbols, CARRYING the refresh id forward (ARCH_AUDIT_FULL_TOPN, default 200) — never retype it.
 REFRESH_ID=$(node -p "require('./.audit/active-refresh.json').refreshId")
 node scripts/cross-skill.mjs list-symbols-for-snapshot --json "{\"refreshId\":\"$REFRESH_ID\",\"limit\":200}"
 ```
@@ -96,12 +90,8 @@ Format the rows as a `## Symbol catalogue (top N by domain)` section
 with `(domain alphabetical, symbol_name alphabetical)` ordering. Note
 truncation in the section header if `count == limit`.
 
-States:
-- `cloud:false` or `refreshId:null` → skip section silently (audit proceeds normally).
-- `RPC_ERROR` → skip section, log warning to stderr.
-
-This step is advisory. Audit must work even if architectural memory is
-unavailable — never fail the run.
+States: `cloud:false` or `refreshId:null` → skip section silently;
+`RPC_ERROR` → skip section, log warning to stderr. Advisory — never fail the run.
 
 ---
 
@@ -118,21 +108,14 @@ scope, so choose deliberately:
 
 Default is `--scope diff`. Switch only when the user explicitly asks or `git diff` is empty.
 
-**Dirty-aware base (default) + the `--base` override (read this before clustered/resumed audits).**
-With no `--base`, `openai-audit.mjs` resolves the diff base by the working
-tree's state: **dirty → `HEAD`** (audit only your *uncommitted* work) /
-**clean → `HEAD~1`** (audit your last commit). This prevents the over-capture
-failure where an **already-shipped + already-audited** prior commit gets
-re-pulled into scope and floods the audit with out-of-scope findings (observed
-in ai-organiser: 33/34 findings were a previous audited cluster). The resolved
-base is logged as `[scope] base resolved to <ref> …`.
-
-⚠ **When the prior commit was already audited but you have BOTH committed and
-uncommitted work** (e.g. resuming a clustered build where Cluster A/B is
-committed and Cluster C is in-flight), pass `--base` explicitly to scope to
-exactly the new work — e.g. `--base <clusterStartRef>` or `--base HEAD` — and
-likewise scope the Gemini gate's `--diff` to the same range. Never rely on the
-default to separate audited-from-unaudited across a commit boundary.
+**Dirty-aware base**: with no `--base`, the CLI diffs a **dirty** tree against
+`HEAD` (uncommitted work only) and a **clean** one against `HEAD~1` (last
+commit); it logs `[scope] base resolved to <ref> …`. ⚠ With BOTH committed and
+uncommitted work where the prior commit was already audited (a resumed
+clustered build), pass `--base <clusterStartRef>` (or `--base HEAD`) and scope
+the Gemini gate's `--diff` to the same range — never rely on the default across
+a commit boundary. → `references/round-recipes.md` §Dirty-aware base — read when
+resuming a clustered/partly-audited build.
 
 ---
 
@@ -160,47 +143,31 @@ R2+ mode changes the prompt rubric and enables ledger-driven suppression.
 Full flag contract, smart pass selection, automatic behaviour, and
 tool pre-pass rules: `references/r2-plus-mode.md`.
 
-```bash
-# Dirty-aware base — match R1's scope (which uses `git status --porcelain`, so
-# UNTRACKED files count as dirty; do NOT use `git diff --quiet`, it ignores
-# untracked). Dirty tree → HEAD (uncommitted work only); clean → HEAD~1 (last
-# commit). The CLI's `[scope] base resolved to <ref>` log is the source of
-# truth. Pass --base/clusterStartRef instead when separating audited-from-
-# unaudited across a commit boundary.
-git status --porcelain
-```
-
-Non-empty output above → `BASE=HEAD` (dirty tree). Empty output → `BASE=HEAD~1` (clean, use last commit).
+Diff base — match R1 (`git status --porcelain` counts UNTRACKED files as dirty;
+never `git diff --quiet`, which ignores them). Non-empty output → `BASE=HEAD`
+(dirty tree); empty → `BASE=HEAD~1` (clean, last commit). Pass
+`--base`/clusterStartRef instead across an audited commit boundary.
 
 ```bash
 BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1)
 git diff --no-textconv --output=.audit/$SID-diff.patch "$BASE" -- .
 ```
 
-`--output` makes git write the patch bytes itself. A PowerShell `>` re-encodes
-them (UTF-16 on 5.1, CRLF on 7.x); the parser now tolerates both, but git's own
-bytes are what the annotations were built for.
-
-**Include UNTRACKED new files** — `git diff` omits them, so a brand-new file would reach the auditor with NO `[CHANGED]` annotation (still read in full via `--files`, without diff focus markers). Append each as a new-file diff against `/dev/null`. **POSIX shell only** (Git Bash on Windows; `xargs` and `/dev/null` have no PowerShell equivalent), even on a Windows/Copilot host:
+Use `--output`, never a PowerShell `>` (it re-encodes the patch).
+**Include UNTRACKED new files** — `git diff` omits them, so a brand-new file would
+reach the auditor with no `[CHANGED]` annotation. Append each as a new-file diff
+against `/dev/null`. **POSIX shell only** (Git Bash on Windows), even on a
+Windows/Copilot host:
 
 ```bash
 git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> .audit/$SID-diff.patch 2>.audit/$SID-untracked-diff-stderr.log || true
-```
-
-The trailing `|| true` is required — `git diff --no-index` always exits 1 when the
-compared files differ (expected on every invocation here, since one side is
-always `/dev/null`), and `xargs` propagates that as its own nonzero exit even
-on full success. But `2>/dev/null` used to throw away genuine `git ls-files`/
-`xargs`/`git diff` failures alongside that expected exit, leaving no way to
-tell "normal" from "broken" apart. Redirecting stderr to a file instead makes
-real failures observable: `git diff --no-index` writes nothing to stderr for
-the expected differ-from-`/dev/null` case, so any content in
-`.audit/$SID-untracked-diff-stderr.log` is a genuine error — check it before
-trusting the diff patch:
-
-```bash
 cat .audit/$SID-untracked-diff-stderr.log   # non-empty = a real failure occurred, not the expected exit
 ```
+
+`|| true` absorbs only `git diff --no-index`'s expected exit 1; it writes nothing to
+stderr in that case, so **a non-empty stderr log is a genuine failure — check it
+before trusting the patch.** → `references/round-recipes.md` §untracked-file append
+— read when that log is non-empty.
 
 ```bash
 # CHANGED = the exact files you edited this round, comma-separated, no globs:
@@ -211,87 +178,31 @@ PASSES="sustainability"                     # e.g. sustainability,backend — pe
 node scripts/openai-audit.mjs code "$PLAN_FILE" --round 2 --ledger .audit/$SID-ledger.json --diff .audit/$SID-diff.patch --changed "$CHANGED" --files "$FILES" --passes "$PASSES" --out .audit/$SID-r2-result.json 2>.audit/$SID-r2-stderr.log
 ```
 
-**R2+'s scope is always the diff, not Round 1's `--scope` flag** — `--files`
-is set on every R2+ invocation, and `openai-audit.mjs` ignores `--scope`
-whenever `--files` is explicitly provided. This is deliberate, not a
-propagation gap to close: Round 1's `--scope diff|plan|full` chooses what to
-*discover*; once you're fixing specific findings, `$CHANGED`/`$FILES`
-self-corrects to whatever you actually touched, which is the right R2+ scope
-regardless of how broad Round 1 was. Do not add `--scope "$SCOPE"` here
-expecting it to widen R2+ back to Round 1's scope — it would be silently
-ignored by the same `--files` precedence rule.
+**R2+'s scope is always the diff, not Round 1's `--scope`** — `--files` overrides
+`--scope`, deliberately; do not add `--scope "$SCOPE"` to R2+ (it is silently
+ignored). → `references/round-recipes.md` §R2+ scope — read when tempted to widen R2+.
 
-### Requirements rubric (automatic)
+### Automatic waves and rubrics (no flag)
 
-When `.requirements/ledger.json` exists, every code-audit pass is given a
-`<requirements_rubric>` block — the repo's de-facto invariants (security /
-safety / correctness / behavioural / persistence) the diff must not
-violate. It is assembled by `getRequirementsContext` and injected through
-the shared prompt builder; in-scope active requirements appear in full,
-the rest as an index. No flag needed — ledger absent → audit is
-unaffected. A stale ledger (in-scope files changed since extraction) or
-uncovered target files surface as a `[requirements]` stderr line; if you
-see `[stale]`, run `node scripts/requirements.mjs extract --files <…>`
-then `reconcile` to refresh it. See `docs/plans/requirements-layer.md`.
-
-### Duplication wave (Wave 5, automatic)
-
-Alongside the 5 core passes, `/audit-code` always attempts a mechanical
-**duplication** check: for each new/changed symbol in the diff, it queries
-the architectural-memory index (read-only — never mutates it) for a
-near-duplicate already indexed elsewhere. A genuine match becomes a
-`[Duplication] Near-duplicate of existing symbol` finding that gates
-convergence exactly like a `quickfix` finding does (reusing `is_quick_fix`).
-Detection is pure Git (diffs the symbol against its base-revision content),
-not the Postgres snapshot — so it's unaffected by a stale `arch:refresh`.
-**Scope**: symbol extraction only covers JS/TS-family files
-(`.js .jsx .mjs .cjs .ts .tsx`, ts-morph's parser) — a changed file in
-another language isn't scanned and doesn't produce a "clean" verdict for
-that file specifically; it's simply outside this wave's coverage today
-(round-1 code-audit M8: an earlier draft overclaimed multi-language scanning).
-
-If the duplication is intentional (e.g. a CLI script deliberately staying
-self-contained rather than taking a cross-module dependency), suppress it
-in place with a pragma immediately above the declaration:
-
-```js
-// @duplicate-justification: target=scripts/lib/nav/schema.mjs:sha256 reason=nav-audit and visual-audit are deliberately independent sister lenses (AGENTS.md), not accidental duplication
-```
-
-The pragma's own MATCHING logic recognizes any comment syntax (`//`, `#`,
-`/* */`, `<!-- -->`), for when JS/TS-family extraction eventually widens —
-today it only ever fires on the JS/TS files the detector actually scans.
-
-**A pragma under `tests/` is not read.** The repo-wide sweep excludes
-`*.md` and `tests/*`, so put the pragma on the declarations OUTSIDE
-`tests/`. For a cluster that spans both, that is enough: a cluster stops
-being reported once fewer than two of its files remain unjustified, so
-justifying the non-test members clears it. Reported by a consumer
-2026-09-04, who had to derive both facts from the migration SQL.
-A pragma whose `target` doesn't actually match the detected near-duplicate
-surfaces its own `[Duplication] Orphaned suppression pragma` finding
-rather than being silently honoured or ignored.
-
-Opt out for a single run with `--passes <csv>` omitting `duplication`. No `.env`
-var needed; it degrades to a silent, non-blocking `unavailable` state when the
-architectural-memory store isn't configured for this repo.
-
-Plan: `docs/plans/audit-code-duplication-wave.md`.
+- **Requirements rubric** — when `.requirements/ledger.json` exists every pass gets a
+  `<requirements_rubric>`. A `[stale]` `[requirements]` stderr line → refresh with
+  `node scripts/requirements.mjs extract --files <…>` then `reconcile`.
+  → `references/round-recipes.md` §Requirements rubric — read when that line appears.
+- **Duplication wave (Wave 5)** — a near-duplicate of an indexed symbol becomes a
+  `[Duplication]` finding that **gates convergence like a `quickfix` finding**. JS/TS
+  files only — another language is outside its coverage, never "clean". Intentional
+  duplicate → `@duplicate-justification` pragma above the declaration (never under
+  `tests/`, which is not read); a pragma whose target doesn't match raises its own
+  `Orphaned suppression pragma` finding. Opt out with `--passes` omitting
+  `duplication`. → `references/duplication-wave.md` — read when a `[Duplication]`
+  finding is intentional or a pragma is not honoured.
 
 ### Handle results
 
 If `verdict` is `INCOMPLETE` (passes timed out), offer: re-run with higher
 timeout, or continue with partial results.
 
-### Show results
-
-```
-═══════════════════════════════════════
-  ROUND 1 AUDIT — SIGNIFICANT_ISSUES
-  H:6 M:10 L:5 | Deduped: 3 | Cost: ~$0.45
-  Top: [H1] Missing auth on /api/...
-═══════════════════════════════════════
-```
+Results card per round: `ROUND N AUDIT — <verdict> | H:x M:y L:z | Deduped: d | Cost: ~$… | Top: [H1] …`.
 
 ---
 
@@ -334,49 +245,20 @@ behaviour. Default such findings to "prove independence" rather than to defer.
 Passing tests don't clear this — a green suite only covers exercised paths, not
 the load-bearing path's failure modes.
 
-**Same-file independence needs more than "doesn't call it" (measured
-2026-09-25 — don't re-loosen this).** 234 open `out-of-scope` debt entries
-accumulated in this repo, several audit runs each mass-deferring 19-46
-same-file findings with the identical boilerplate "unrelated to `<new
-function>`... verified zero coupling." That answers direct call-graph
-coupling, not the load-bearing test above — a same-file finding can share
-state or a transaction with the new code without either calling the other.
-When the finding's file is one the diff already touches, "my new/modified
-code doesn't call this function" is **not sufficient on its own**. The
-independence sentence must additionally state, truthfully, BOTH: (a) the
-cited code does not read or write the SAME column(s), or enforce/depend on
-the SAME constraint or invariant, that the new/modified code also reads,
-writes, or depends on — sharing a *table* alone is not sufficient, the
-overlap must be at the column/constraint level; and (b) the cited code's
-writes do not execute inside the SAME transaction instance the new/modified
-code's writes participate in — sharing a broader boundary (the same
-request, the same file, the same subsystem) alone is not sufficient. If
-either cannot be stated truthfully, the finding is load-bearing, not
-independent, regardless of whether anything calls it. This is checkable
-against real code (grep the column names, read the transaction boundary),
-not a judgement call. **This does not mean the prose test alone catches
-every mass-defer batch** — a same-file finding can be genuinely independent
-by this exact test (e.g. two functions in one file that share neither state
-nor a transaction) and still be part of a batch worth a second look purely
-for its size; `debt-auto-capture.mjs`'s same-file-batch WARN (Step 3.6)
-covers that separate, batch-shape signal.
+**Same-file independence needs more than "doesn't call it".** For a finding in a
+file the diff touches, the independence sentence must truthfully state BOTH (a) the
+cited code shares no column/constraint/invariant with the new code (a shared *table*
+is not enough) and (b) its writes do not run in the SAME transaction instance (a
+shared request/file/subsystem is not enough). Either unstateable → load-bearing.
+→ `references/triage-rubrics.md` §Same-file independence — read when deferring a
+same-file finding.
 
-**Honest-deferral check (Design right-sizing, AGENTS.md — the band-aid escape
-hatch).** `defer` is the place "patched the easy way" hides. A `defer` of a
-`valid` `in-scope` finding must name three things: (1) the **root cause**;
-(2) the **minimal in-scope fix you considered and rejected**; (3) the **residual
-risk**. A `defer` of an `out-of-scope` finding must additionally name the
-**independence** — for a same-file finding, both parts of the test above
-(no shared column/constraint, no shared transaction instance); for any other
-out-of-scope finding, one sentence stating the new code does not call/depend
-on the cited path. If you can't write it truthfully, it's load-bearing →
-`fix-now`. Invariant: **never `defer` because
-the correct fix is merely larger** — size is not scope, and neither is
-authorship. Legitimate `defer` = a true (impact-tested) scope boundary or
-explicitly accepted, documented debt. Strongest form: drop a `TODO` at the cited
-line naming the root cause, so the dodge becomes a visible artifact. (The
-over-engineering cliff is caught symmetrically by Gemini's `over_engineering_flags`
-in the final review.)
+**Honest-deferral check.** Every `defer` of a valid finding names (1) the root
+cause, (2) the minimal in-scope fix considered and rejected, (3) the residual risk;
+an out-of-scope `defer` also names the independence (both parts above for same-file).
+Can't write it truthfully → `fix-now`. **Never `defer` because the correct fix is
+merely larger** — size is not scope, and neither is authorship.
+→ `references/triage-rubrics.md` §Honest-deferral check — read when writing a defer.
 
 ### Mechanical vs architectural
 
@@ -423,40 +305,25 @@ a structural-or-stop card: a stop for a human call, never a retry. At round 6 wi
 operator (STOP / STRUCTURAL / CONTINUE); continuing is their call (`references/round-cap-and-structural-card.md`).
 
 **Step 7 (Gemini final review) is MANDATORY** after the last audit round,
-regardless of convergence — except when both `GEMINI_API_KEY` and
-`ANTHROPIC_API_KEY` are absent.
+regardless of convergence. No-key degradation ladder (`references/gemini-gate.md`
+— never a silent skip): Gemini → Claude Opus fallback → an **independent
+adversarial review agent** over the code + findings (verdict in the same
+APPROVE/CONCERNS/REJECT shape) → only when none is available, output
+`FINAL_GATE_SKIPPED` and do not claim full final-gate validation.
 
 ---
 
 ### Step 3.7 — Detector-first census (cross-cutting findings)
 
-**An audit's instance count is a floor, not a scope.** Measured 2026-07-31: a finding
-reported 1 non-atomic writer (there were 4) and 3 misnamed call sites (there were 5). An
-LLM enumerating a class by reading is doing exhaustive search with a next-token predictor;
-it stops early. So the *tool* enumerates, not you.
-
+**An audit's instance count is a floor, not a scope** — the *tool* enumerates, not you.
 **Trigger is mechanical**: `affectedFiles.length > 1` (or an explicit `crossCutting: true`
-you set at triage). Single-file findings are exempt — this is not ceremony for every bug.
-
-For each cross-cutting finding, record a detector on its ledger entry:
-
-```json
-{ "detector": { "kind": "regex",
-                "pattern": "fs\.writeFileSync\(",
-                "globs": ["scripts/**/*.mjs"],
-                "baseline": 4,
-                "disposition": { "scripts/<file>.mjs::const t = fs.writeFileSync(p)": "exempt — temp file" } } }
-```
-
-- **Structured, never a shell command.** `pattern`/`globs` reach ripgrep as argv. The
-  ledger is LLM-authored and merge-edited; an executable string there is an injection
-  surface.
-- **Dispositions key on `<path>::<trimmed matched line>`**, never a line number — a line
-  number orphans the moment anything above it shifts. Identical text repeated in one file
-  gets `::#1`, `::#2`, … after the first, so exempting one copy does not exempt the rest
-  (`matchKey` prints the key; copy it from the run's output rather than typing it).
-- **The detector's output IS the fix scope.** Run it, fix what it found, or disposition it
-  with a reason. Do not fix the instances the audit happened to name and stop.
+you set at triage); single-file findings are exempt. For each cross-cutting finding,
+record a **structured** `detector` (`kind`, `pattern`, `globs`, `baseline`,
+`disposition`) on its ledger entry — never a shell command. Dispositions key on
+`<path>::<trimmed matched line>`, never a line number. **The detector's output IS the
+fix scope** — fix or disposition everything it finds, not only the instances the audit
+named. → `references/detector-census.md` §Step 3.7 — read when recording a detector
+(schema + key format).
 
 ## Step 3.5 — Update Adjudication Ledger
 
@@ -551,19 +418,8 @@ ALL HIGH must be fixed. MEDIUM until ≤2 remain. LOW if mechanical.
 > never on a hand-rolled copy of the rule.
 
 **Track which files you modify** — you'll need this for `--changed` in Step 5.
-
-```
-═══════════════════════════════════════
-  FIXING — 17 findings
-  Auto-fixed: 3 (mechanical)
-  Fixed per recommendation: 8
-  Compromises: 2
-  Skipped (LOW): 4
-  Files modified: shared.mjs, openai-audit.mjs
-═══════════════════════════════════════
-```
-
-List each fix: `[ID] description → file:lines`.
+Card: `FIXING — N findings | Auto-fixed (mechanical): a | Per recommendation: b | Compromises: c | Skipped (LOW): d | Files modified: …`;
+then list each fix: `[ID] description → file:lines`.
 
 After fixing, update ledger entries to `remediationState: 'fixed'` for
 fixed items.
@@ -582,24 +438,12 @@ revert-and-watch-it-go-red does, and it costs seconds.
    health check shipped broken for months, each bug making the other invisible.
 4. Restore → confirm GREEN. Record that you ran it, and what the red said.
 
-**A before/after observation is not a negative control.** Watching a
-*pre-existing* defect go red→green says nothing about whether the *repaired*
-check would go red again — the repaired probe has then only ever been observed
-passing, and an always-passes probe is indistinguishable from a correct one.
-
-**Assertions of the form "expect empty" need a vacuous-pass guard.** A silently
-broken search returns nothing, which is exactly what passing looks like. Add one
-assertion proving the probe can find something it must find.
-
-**When the check itself fails, suspect the instrument first.** In one measured
-session, six consecutive verification-script failures were all instrument
-defects — directory entries counted as files, XML entities breaking matches,
-`grep` eating leading-dash content as flags.
-
-**If the guard is worth keeping past this session, scaffold it properly** —
-`examples/contract-test-scaffold.md` carries the three-part skeleton plus the
-`disposition` and retirement fields, so a temporary guard cannot quietly become
-a permanent one. → `references/verification-discipline.md` §3, §5.
+A before/after observation of a pre-existing defect is **not** a negative control.
+An "expect empty" assertion needs a vacuous-pass guard (one assertion proving the
+probe can find something it must find). When the check itself fails, suspect the
+instrument first. A guard worth keeping past this session gets the
+`examples/contract-test-scaffold.md` skeleton (disposition + retirement fields).
+→ `references/verification-discipline.md` §3, §5.
 
 ---
 
@@ -609,19 +453,13 @@ After fixes, re-audit using R2+ mode (back to Step 2):
 
 1. Collect files modified during Step 4 → `--changed`
 2. Compute scope: changed + importers → `--files`
-3. Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1); git diff --no-textconv "$BASE" -- . > .audit/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> .audit/$SID-diff.patch 2>.audit/$SID-untracked-diff-stderr.log || true` (the trailing `|| true` is only for `git diff --no-index`'s expected exit-1-on-differ; stderr goes to a file, not `/dev/null`, so a genuine `git`/`xargs` failure is still visible — see Step 2's fuller note on this exact pipeline)
+3. Regenerate the diff with Step 2's Round 2+ recipe exactly — dirty-aware `BASE`,
+   the untracked-file append, and the stderr-log check
 4. Build `--passes` from file types
 5. Run R2+ audit with `--round <N> --ledger --diff --changed --files`
 
 Track finding churn using `_hash` fields: resolved / recurring / new.
-
-```
-═══════════════════════════════════════
-  ROUND 2 → ROUND 3 (R2+ mode)
-  H:0 M:2 L:1 | New: 0 | Suppressed: 11
-  Stable: 1/2
-═══════════════════════════════════════
-```
+Card: `ROUND N → ROUND N+1 (R2+ mode) | H:x M:y L:z | New: n | Suppressed: s | Stable: k/2`.
 
 ### Step 5.0b — Re-run every detector at FULL scope (blocks convergence)
 
@@ -633,28 +471,12 @@ Exit 0 = every detector reached zero and every match is dispositioned; exit 1 =
 blocked; exit 2 = the ledger could not be read, which is "no census happened"
 and never a pass.
 
-**At each detector's own `globs`, NOT the round's changed files.** Restricting to the diff
-defeats the census: fix 1 of 4 occurrences and the other 3 are absent from the diff, so the
-detector returns 0 and the round converges clean — the audit's undercount faithfully
-reproduced by the tool built to prevent it.
-
-Full scope closes both gaps in one run:
-- a class member left **unfixed** still matches (the census);
-- an occurrence the fix itself **just wrote** also matches (author mimicry — twice on
-  2026-07-31 a fix reproduced the class it was fixing, because the buggy shape was in the
-  context window).
-
-`evaluateConvergenceWithDetectors` (`scripts/lib/audit/convergence.mjs`) enforces this —
-convergence requires `blocked === false`. `baseline` reports progress; it is never the pass
-condition.
-
-**Visibility, not a new gate.** This code-level convergence gate is unchanged.
-What Step 6's census adds is purely the human-readable record: a detector
-that errors during this full-scope re-run is reported as `errored` in the
-CENSUS block, never silently folded into "the census reached zero." The
-exit-2 case above ("no census happened … never a pass") is already a hard
-code-level non-pass and is unaffected — Step 6.7 / Step 7 already have
-standing to act on what the census now makes visible.
+**At each detector's own `globs`, NOT the round's changed files** — a diff-scoped
+re-run misses both the unfixed class members and any occurrence the fix itself just
+wrote. Convergence requires `blocked === false`; `baseline` reports progress, never
+the pass condition. A detector that errors here is reported `errored` in Step 6's
+census, never folded into "reached zero". → `references/detector-census.md` §Step 5.0b
+— read when a detector result is disputed.
 
 ### Step 5.1 — Debt Resolution Prompt
 
@@ -679,47 +501,18 @@ failed is a different thing from never-attempted (`references/verification-disci
 | `not-reached` | the round's control flow did not get to this pass/wave before stopping (rare — see below) |
 | `uncovered` | **file-level, from the result's `_coverage`, never from a pass:** changed files the audit did not (fully) examine — an unrecognised file type, an unreadable file, a deleted source file, a partial (head-cut or windowed) read. NOT `ineligible`: `ineligible` is an EXPECTED scope exclusion, and labelling a C# diff that way is exactly how twelve `.cs` files went unaudited under an APPROVE |
 
-**A per-round execution record.** `arch-memory` is resolved **once**, by
-Step 0.5, before any round's Step 2 begins, and is never re-seeded — Step 0.5
-is not inside the round loop, so a design that "transitions" it per round is
-chronologically unexecutable. Its single resolved value (`completed` /
-`unavailable` under `--scope=full`; `ineligible` under `--scope=diff`, since
-Step 0.5 is `--scope=full only`) is carried forward and rendered identically
-in every round's census. The five passes and three mechanical waves ARE
-seeded fresh each round: at Step 2's round start, seed one row per
-pass/wave identifier `pending`; each owning step transitions only its own
-row(s) on its own invocation. An aborted round finalizes every untouched
-pass/wave row as `not-reached` at round-end, never leaving it `pending` (a
-mid-round state, never a reportable one). Step 6 renders the current
-round's finalized pass/wave rows plus the once-resolved `arch-memory` row —
-not cumulative across rounds for the former.
+**Per-round record.** `arch-memory` is resolved once by Step 0.5 and carried into
+every round's census (`ineligible` under `--scope=diff`). The five passes and three
+mechanical waves are seeded `pending` at each round's start; on an aborted round every
+untouched row finalizes `not-reached` (never left `pending`) — it signals a killed
+process or hard timeout. Render the current round's rows plus `arch-memory`.
+→ `references/convergence-report.md` §per-round execution record — read when a row's
+state is ambiguous.
 
-`not-reached` is rare here: all five passes and three mechanical waves
-execute unconditionally every round by design, and Step 5.0b's full-scope
-detector re-run is mandatory for convergence to be assessed at all. If it
-appears, it signals an aborted run (killed process, hard timeout).
-
-```
-═══════════════════════════════════════
-  CONVERGED (1 errored · 1 unavailable — see census) — Round 4
-  Final: H:0 M:2 L:1
-  Rounds: 4 | Time: 14m | Cost: ~$0.20
-  Files changed: 6
-  Remaining (accepted): [M3], [M7]
-
-  CENSUS
-    structure          completed
-    wiring              completed
-    backend             errored      (timeout after 90s)
-    frontend            completed
-    sustainability      completed
-    quickfix (wave)     completed
-    duplication (wave)  completed
-    adjacency (wave)    completed
-    arch-memory         unavailable  (AUDIT_DB_URL unset)
-    file coverage       uncovered    (PARTIAL — 3 of 12 changed source file(s) not fully audited; 2 unrecognised file type(s): xyz ×2)
-═══════════════════════════════════════
-```
+Report card: `CONVERGED[ (<count> <kind> · … — see census)] — Round N | Final: H:x M:y L:z | Rounds | Time | Cost | Files changed | Remaining (accepted): [Mn]…`,
+then a `CENSUS` block — one `<identifier>  <state>  (<reason>)` row per pass, wave,
+`arch-memory` and `file coverage`. → `references/convergence-report.md` §example
+report card — read before printing a report with a non-`completed` row.
 
 **A wave row over a change it could not read says so.** The four JS/TS-only waves (`orphan-introduced`, `event-wiring-symmetry`,
 `duplication`, `adjacency`) report `ineligible (0 of N changed files are js/ts; nothing was examined)` — never `completed`,
@@ -738,14 +531,8 @@ reason; `none`/`incomplete` → the round is already `INCOMPLETE` (exit 3) and m
 Copy the suffix, never paraphrase it: it names the files.
 
 **A round with any non-`completed` row cannot print a bare `CONVERGED`.**
-The suffix names **every kind present, with its own count** — never
-hardcode one kind: a census with two non-`completed` rows of two different
-kinds (as above) that names only one silently drops the other from the
-top-level verdict, which is exactly the "issues masked by coverage gaps"
-failure this section exists to prevent. A round with only `ineligible` rows
-(an expected scope exclusion, e.g. no frontend passes on a backend-only
-diff) names them `ineligible`, never folded into "errored" — mislabelling
-an expected exclusion as a failure is its own honesty bug.
+The suffix names **every kind present, with its own count** — never hardcode one
+kind; a round with only `ineligible` rows names them `ineligible`, never "errored".
 
 Save convergence snapshot to `docs/plans/<name>-audit-summary.md`.
 
@@ -754,41 +541,22 @@ Do not close the loop in Step 6 — completion requires Step 7.
 ### Step 6.5 — Regenerate Telemetry Dashboard (advisory, source-repo only)
 
 **Source-repo-gated** — run ONLY when
-`package.json.name === "claude-engineering-skills"`. Skip silently in
-consumer repos. The dashboard is opt-in there, not absent: the builder syncs,
-but the sync never adds npm scripts, so a consumer runs
-`node scripts/build-dashboard.mjs telemetry` by path (`--help` lists every
-mode). Never blocks the audit.
+`package.json.name === "claude-engineering-skills"`; skip silently elsewhere. Never
+blocks the audit. Print the `file://…/dashboard/telemetry.html` link; never stage it.
 
 ```bash
 node scripts/build-dashboard.mjs telemetry 2>&1 || true
 ```
 
-This refreshes the gitignored `dashboard/telemetry.html` so the just-run
-audit's findings are visible in the local dashboard. Print the link:
-
-```
-Telemetry dashboard: file://<abs-path>/dashboard/telemetry.html
-```
-
-`telemetry.html` is gitignored — never staged, never committed.
+→ `references/convergence-report.md` §Step 6.5 — read when running it in a consumer.
 
 ### Step 6.5b — Solo author-model control (background, toggle-gated)
 
 **Source-repo-gated** — run ONLY when `package.json.name === "claude-engineering-skills"`
-(skip silently in consumers). The solo control is a *centralized* research baseline:
-its blind human adjudication happens in one place, and a single source-repo run already
-sweeps sibling repos' shadow commits via `SOLO_CONTROL_REPO_ROOTS`. So it collects
-data for ALL local repos from here — it does not fragment across consumers.
-
-Standing policy: whenever the model-A/B/C shadow (`arm-eval`) toggle is ON, keep the
-**solo author-model baseline** current — clean Sonnet-5 + Fable-5 cold-diff over the
-same shadow commits. This is the null-hypothesis control the A/B/C arms lack (do the
-external auditor pipelines earn their keep vs a capable model reviewing the diff bare,
-and is the *cheap* model already good enough?). See `docs/research/runbooks/solo-control-experiment.md`.
-
-Fire it **in the background, non-blocking** (it takes minutes; it must NEVER delay or
-gate the audit result):
+(skip silently in consumers). Fire it **in the background, non-blocking** (it takes
+minutes; it must NEVER delay or gate the audit result). It self-gates on the
+`arm-eval` shadow toggle and is incremental, so firing it unconditionally is safe;
+a failure is logged and ignored.
 
 ```bash
 node scripts/solo-control-audit.mjs run --model claude-sonnet-5
@@ -796,46 +564,29 @@ node scripts/solo-control-audit.mjs run --model claude-fable-5
 # run each backgrounded / in its own terminal — they're independent, not chained
 ```
 
-The script **self-gates on the toggle** (no-ops when the shadow is off) and is
-**incremental** (skips commits already covered), so this is safe to fire
-unconditionally after every source-repo audit; sibling-repo shadow commits are swept
-at the next source-repo run. Human blind adjudication is a separate offline step
-(`solo-control merge` → label → `score`) — never inline. Best-effort: a failure here
-is logged and ignored.
+→ `references/convergence-report.md` §Step 6.5b — read when asked why it runs.
 
 ### Step 6.6 — Recommended next (à-la-carte advisor)
 
-So the user doesn't have to remember the whole chain, suggest the FEW additional
-lenses that fit THIS change. Pass the final-round audit result (the `--out` JSON —
-its findings are the highest-signal input) so recommendations are grounded in what
-the audit actually found:
+Suggest the FEW additional lenses that fit THIS change, grounded in the final-round
+audit result:
 
 ```bash
 FINAL_ROUND=2   # the last round actually run
 node scripts/cross-skill.mjs recommend-skills --findings ".audit/$SID-r$FINAL_ROUND-result.json" --just-ran audit-code --format human
 ```
 
-Print the card verbatim if non-empty; **if it's empty, say nothing** (a backend-only
-change has no extra lenses — silence is correct, not a failure). It's an advisory
-**nudge, never a gate** — the user chooses. The browser lenses (persona/click/nav/visual)
-run against the **deployed** app, so at audit time they're "worth running after you
-deploy"; `/ship` surfaces them again when the app is live. Ranked by leverage
-(unguarded HIGH fix → theme → nav → semantic-DOM → journey), capped at 2, and it
-never re-suggests a lens already covered for this commit.
+Print the card verbatim if non-empty; **if it's empty, say nothing** (silence is
+correct, not a failure). A nudge, never a gate. → `references/convergence-report.md`
+§Step 6.6 — read when explaining a recommendation.
 
 ### Step 6.7 — Cross-surface honesty clause (GREEN ≠ REALIZED)
 
-A clean static audit is **necessary but not sufficient** for cross-surface agreement.
-When the change introduces a user-visible DYNAMIC value (a count / status / total /
-eligibility) that DUPLICATES or re-derives a value another surface shows, a green
-verdict on the changed file does **not** prove the two will agree at runtime — this
-class shipped a P0 past both `/audit-code` and the Gemini gate. If the frontend pass
-raised a `derived-state-parity` finding (or you can see this pattern), do not close it
-on "looks correct"; require one of the three checkable artifacts (shared SSoT / parity
-assertion / a declared `data-engine-claim` surface) and **nudge the author to declare
-the value as a `data-engine-claim` surface** so persona-test `--mode consistency`
-verifies it at runtime. Affordance/intent judgements stay out of scope — this is only
-the "two surfaces must show the same number" check.
+When the change introduces a user-visible DYNAMIC value that duplicates or re-derives
+one another surface shows (or a `derived-state-parity` finding was raised), a green
+audit does not prove they agree at runtime: do not close it on "looks correct" —
+require a shared SSoT, a parity assertion, or a declared `data-engine-claim` surface.
+→ `references/convergence-report.md` §Step 6.7 — read when that pattern appears.
 
 ---
 
@@ -862,31 +613,18 @@ It discovers every `.audit/$SID-r<N>-result.json`, folds in
 pass the same list you gave the R1 audit; without it out-of-scope findings stop
 being dropped and the builder warns on stderr.
 
+Read the cloud run id from the LAST round's result, passing the path as an argument
+(never a literal inside `-e`) — **`--run-id` arms the verdict write-back to
+`audit_runs`; without it the verdict is persisted nowhere:**
+
 ```bash
-# Pass --run-id <_cloudRunId> when the audit --out JSON carries one, so the
-# final-review (and the optional shadow A/B reviewer) persist their per-finding
-# results keyed to this audit_run. Read it from the audit result — pass the path
-# as an ARGUMENT (process.argv[1]), never embed it as a literal string inside
-# the -e source, so the SAME shell that resolved the audit's --out path resolves
-# this one identically. (Artifacts now live in repo-relative `.audit/`, which
-# every reader resolves the same way; under the old `/tmp/` layout Bash and Node
-# disagreed outright — confirmed live 2026-07-26: Bash's /tmp landed in
-# AppData/Local/Temp, Node's resolution of the same literal in C:\tmp, and the
-# snippet threw MODULE_NOT_FOUND on a file that genuinely existed.) Found by tracing
-# WHY a consumer repo's 101 real audit runs, over 30 days, all had a genuine
-# Gemini verdict computed (visible in that session's own logs) but NEVER
-# persisted to audit_runs — this exact snippet was silently throwing inside
-# $(...), which discards the failure and leaves RUN_ID empty with no visible
-# error. fs.readFileSync + JSON.parse (not require — this is a data file, not a
-# module) with a try/catch fails safe to an empty RUN_ID rather than crashing.
-# ROUND = the last round actually run (matches the `-r$ROUND-result.json`
-# convention Step 2/Step 3.5b/Step 6.6 already use — NOT a bare `-result.json`).
-ROUND=2
+ROUND=2   # the last round actually run
 RUN_ID=$(node -e "const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }" ".audit/$SID-r$ROUND-result.json")
-# gemini-review.mjs itself now warns loudly (2026-07-26) when cloud is enabled
-# but --run-id is absent — if you see that warning, the extraction above
-# failed; don't ignore it. Omit --run-id only when cloud is genuinely off.
 ```
+
+If `gemini-review.mjs` warns that cloud is on but `--run-id` is absent, the extraction
+failed — don't ignore it. → `references/convergence-report.md` §Step 7 RUN_ID — read
+when `RUN_ID` is unexpectedly empty.
 
 If `RUN_ID` is non-empty:
 
@@ -928,11 +666,8 @@ previews):
 node scripts/debt-auto-capture.mjs --final-review .audit/$SID-gemini-result.json --run $SID
 ```
 
-**Shadow A/B reviewer (optional, observation-only)**: set `FINAL_REVIEW_SHADOW`
-(e.g. `claude-opus`) to run a second blind reviewer in parallel with the
-primary — it never gates the build, attributes findings per `source_model`, and
-persists the diff for `final-review-stats`. No-op when unset or under an Azure
-profile. See `docs/plans/final-review-shadow-reviewer.md`.
+Optional observation-only shadow reviewer (`FINAL_REVIEW_SHADOW`) — never gates.
+→ `references/convergence-report.md` §shadow A/B reviewer — read when it is set.
 
 Full transcript-building, verdict routing, Step 7.1 deliberation protocol,
 and category-error handling: `references/gemini-gate.md`.
@@ -948,22 +683,6 @@ and category-error handling: `references/gemini-gate.md`.
 5. Batch all user decisions into one prompt
 6. Progress: show pass timings from stderr
 
-## Key Principles
-
-1. **Peer relationship** — neither model blindly defers
-2. **Three-model system** — Claude (author) + GPT (auditor) + Gemini (final arbiter)
-3. **Fix all HIGH**, MEDIUM until ≤2, LOW optional
-4. **Stability over speed** — 2 clean rounds required
-5. **No quick fixes** — band-aids rejected by all models
-6. **Deliberation is final** — no infinite debate
-7. **Graceful degradation, reported, not silent** — a failed pass or a missing
-   key for an optional capability degrades the run without crashing it, and
-   Step 6's census names which pass/wave `errored` or was `unavailable`
-   rather than folding it into a clean-looking skip. A missing ledger is a
-   different mechanism (R2+ suppression), outside the census's scope.
-8. **No self-review** — Step 7 final gate reviews Claude-GPT transcript
-9. **Adaptive learning** — outcomes logged, FP patterns tracked, prompts improve
-
 ---
 
 ## Reference files
@@ -974,9 +693,14 @@ situations — read them only when the trigger applies.
 | File | Summary | Read when |
 |---|---|---|
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
+| `references/round-recipes.md` | Step 1–2 detail — dirty-aware base rationale, diff-recipe stderr handling, R2+ scope rule, requirements rubric. | Resuming a partly-audited clustered build, OR the untracked-diff stderr log is non-empty, OR a `[stale]` requirements line appeared. |
+| `references/duplication-wave.md` | Duplication wave (Wave 5) — what it scans, the @duplicate-justification pragma, test-dir and orphan rules. | A `[Duplication]` finding is intentional, OR a pragma is not being honoured. |
 | `references/r2-plus-mode.md` | R2+ audit mode — ledger rulings, diff annotations, smart pass selection, suppression. | Round ≥ 2 AND need to choose passes OR troubleshoot suppression. |
+| `references/triage-rubrics.md` | Step 3 rubrics in full — same-file independence (column/constraint + transaction) and the honest-deferral check. | Step 3 — about to defer a finding, especially one in a file the diff touches. |
+| `references/detector-census.md` | Detector-first census — the ledger detector schema, disposition keys, and why Step 5.0b re-runs at full scope. | Step 3.7 — a finding spans more than one file, OR Step 5.0b — a detector result is disputed. |
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/debt-capture.md` | Phase D debt ledger — persist out-of-scope valid findings so they don't re-surface. | Step 3.6 — candidate deferrals present, OR Step 5.1 — debt resolution prompt firing, OR periodically to cluster/resolve the accumulated backlog (see its "Periodic Debt Health" section). |
+| `references/convergence-report.md` | Step 6–7 detail — census bookkeeping, example report card, source-repo steps, cross-surface clause, RUN_ID history. | Step 6 — printing a report with a non-`completed` row, OR Step 7 — `RUN_ID` is empty or `FINAL_REVIEW_SHADOW` is set. |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 7 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
 | `references/round-cap-and-structural-card.md` | Enforced GPT round cap (plan 3/5, code 6/8), exit 4 CAPPED, and the structural-or-stop card read at the cap. | A round exited 4, OR the audit reached round 6 without converging. |
 | `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — a prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
@@ -984,3 +708,5 @@ situations — read them only when the trigger applies.
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. ALSO Step 6 — about to emit the convergence report's pass/wave census, to apply §7's named-state rule. |
 | `examples/contract-test-scaffold.md` | Contract-test scaffold — subject probe, negative control, vacuous-pass guard, disposition, retirement. | Step 4.5 — promoting a one-off check into a permanent contract test. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
+
+— end of /audit-code —

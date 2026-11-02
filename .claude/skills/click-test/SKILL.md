@@ -43,16 +43,15 @@ Examples:
 
 # Click-Test — Structural DOM Audit
 
+> **This skill's last line is an end marker naming the skill between em-dashes, after
+> the Reference files table.** If that last line is not in your context (context
+> compaction keeps only the start of a skill), re-read
+> `.claude/skills/click-test/SKILL.md` in full before continuing — the later steps still apply.
+
 Walk every interactive element on each target route and assert the structural
-HTML contract. **Not a persona test.** This is the mechanical sibling of
-`/persona-test`:
-
-| Skill | Catches | Misses |
-|---|---|---|
-| `/persona-test` | Narrative UX, confusing copy, missed migration glyphs, FAB-modal stacking, broken happy paths | Duplicate IDs (rendered fine), orphan labels (no visible symptom), undersized touch targets the persona's finger happens not to miss |
-| `/click-test` | Structural / semantic / a11y contract violations across every interactive element | Whether the flow makes sense for any human |
-
-Run **both**. Findings from each rarely overlap.
+HTML contract. **Not a persona test** — the mechanical sibling of
+`/persona-test`; run both, their findings rarely overlap.
+→ `references/scan-rules-detail.md` §click-test vs /persona-test.
 
 ---
 
@@ -145,19 +144,13 @@ scan, check:
    `[type=password]`, classify as `coverageStatus: "auth-required"`. Catches
    first-party login walls.
 
-click-test itself never attempts to log in — credentials are out of scope
-for this skill's own logic. But click-test drives the same browser
-connection as persona-test (see `references/dom-scanner.md` and the
-delegated browser-tool detection below), so the same session-level
-pre-authentication applies here: if the target's primary surfaces need a
-login, pre-authenticate the shared driver connection via `--storage-state`
-BEFORE running click-test — see
-[`references/auth-bootstrap.md`](references/auth-bootstrap.md)
-for the sanctioned pattern (a per-repo sign-in script writing a
-`storageState` file, wired into `.mcp.json`). Without it, `auth-required`
-routes are real coverage gaps, not a v1 limitation. The OVERALL verdict
+click-test does not log in itself. If primary surfaces need a login,
+pre-authenticate the shared driver connection via `--storage-state` before
+running — see [`references/auth-bootstrap.md`](references/auth-bootstrap.md).
+The OVERALL verdict
 becomes at most `Incomplete` (never `Clean`) when any route is
 `auth-required`.
+→ `references/scan-rules-detail.md` §Auth-gated routes — read when a target is login-gated.
 
 ---
 
@@ -182,12 +175,9 @@ would report "no findings" from a page nobody scanned.
 
 ## Phase 2 — Pre-flight Cache-bust (own-app only by default)
 
-Service workers silently serve stale bundles, masking real deploys (the
-wine-cellar-app failure mode). The cache-bust is **mandatory for own-app
-hostnames** (localhost, `*.local`, `*.railway.app`, `*.vercel.app`,
-`*.netlify.app`) where the cost of clearing user state is zero.
-
-**For external URLs**: do NOT cache-bust by default. Clearing
+Service workers silently serve stale bundles, masking real deploys. The
+cache-bust is **mandatory for own-app hostnames**, where clearing user state
+costs nothing. **For external URLs**: do NOT cache-bust by default — clearing
 `serviceWorker` + `caches` on a third-party origin can log out the operator,
 remove offline data, or alter the very state being measured. Require the
 explicit `--force-cache-bust` flag — and even then, warn loudly on stderr.
@@ -245,27 +235,9 @@ Optional flags — add at most one, matching what your `$ARGUMENTS` contained (n
 <!-- host-contract: input-acquisition; grammar=path+flags; empty=default -->
 _This site: `path+flags` — neither device flag present means a single `desktop` pass — do not synthesise a matrix._
 
-was supplied; defaults to a single `desktop` pass.)
-
-The CLI returns:
-
-```json
-{
-  "kind": "click-test-prep",
-  "version": 1,
-  "matrixMode": true|false,
-  "totalPasses": 1 | N,
-  "passes": [
-    {
-      "passIndex": 0,
-      "device": { "name": "desktop", "viewport": {"width": 1280, "height": 720}, ... },
-      "expectedFirstMcpCall": { "tool": "browser_resize", "args": {"width": 1280, "height": 720} },
-      "logLine": "[device-profile] explicit → desktop (1280x720, touch=false) [pass 1/2]"
-    },
-    ...
-  ]
-}
-```
+The CLI returns `{kind: "click-test-prep", matrixMode, totalPasses, passes[]}`,
+each pass carrying `device`, `expectedFirstMcpCall` and `logLine`
+(→ `references/scan-rules-detail.md` §Device prep contract for the full shape).
 
 The LLM does NOT pick device order, dimensions, or pass count — it walks
 `passes` in array order, executing each `expectedFirstMcpCall` verbatim.
@@ -354,12 +326,9 @@ it's two regressions that may have different fix sites if responsive CSS
 hides one). The Phase 6 report's PER-DEVICE COVERAGE table surfaces which
 device flagged which.
 
-`small-touch-target` deserves special note: this rule is **device-sensitive**
-by design. A 24×24 button is acceptable on desktop with a mouse but fails the
-44×44 touch-target minimum on mobile. The scanner emits it on every pass, but
-the report should downgrade desktop-pass `small-touch-target` findings by one
-severity (P2 → P3) when both desktop and mobile passes ran — the mobile pass
-is the authoritative read.
+`small-touch-target` is **device-sensitive**: when both desktop and mobile
+passes ran, downgrade desktop-pass `small-touch-target` findings by one
+severity (P2 → P3) — the mobile pass is the authoritative read.
 
 If validation fails, classify the route as `coverageStatus: "scanner-error"`
 and skip its findings — never persist or report unvalidated output.
@@ -369,9 +338,8 @@ and skip its findings — never persist or report unvalidated output.
 scan's `elementsScanned` / `interactiveElementsScanned` as the route totals
 (modals are subsets, not additions). For `shadowGapCount` / `iframeGapCount`,
 take the **max** observed across passes (NOT sum — each modal pass re-scans
-the whole DOM, so the static gaps would be double-counted). The interpretation
-is "the worst coverage gap seen on this route", which is what the verdict
-cares about. `findings` are unioned and deduped by `{device, route, via, kind, selector}`.
+the whole DOM, so the static gaps would be double-counted). `findings` are
+unioned and deduped by `{device, route, via, kind, selector}`.
 Each finding's `via` field records its origin (`static` or `modal:<accessible-name>`).
 
 **Redaction**: before printing or persisting any `snippet`, run it through
@@ -408,17 +376,16 @@ other based on element type — never both for the same node.
 `--scope all` → keep everything. `--scope <name>` → keep rows with `✓` in
 that column. Invalid scope → fail with usage.
 
-**`duplicate-aria-label` FP note**: this rule has high false-positive rates
-on grid/card layouts where shared "Edit" / "Delete" buttons are
-contextually disambiguated by surrounding text. The scanner downgrades it
-to P2 by default and only fires when the duplicates share the same `role`
-AND same parent component region (closest `[role="list"]`, `[role="grid"]`,
-`<table>`, `<form>` — see scanner impl). If you want it ignored entirely,
-use `--scope ids` or `--scope forms`.
+`duplicate-aria-label` note: high false-positive rate on grid/card layouts,
+so the scanner only fires it within the same `role` + parent region.
+→ `references/scan-rules-detail.md` §duplicate-aria-label FP note.
 
 ---
 
 ## Phase 4b — Dynamic-surface Scan (`--with-modals` only)
+
+Modals mount duplicate IDs only while open, which the static scan cannot see
+(→ `references/scan-rules-detail.md` §Why `--with-modals` exists).
 
 ### Trigger discovery (one evaluate per route, before clicking)
 
@@ -478,23 +445,13 @@ Log each skipped trigger with reason: `skipped-destructive: <accessible-name> (m
 
 **Deduplication**: two triggers are dupes when they share `(accessibleName, role, closest [role="dialog"]/section ancestor)`. Skip dupes after the first.
 
-**Why this matters**: React/Vue/Svelte mount duplicate IDs *into* the live
-DOM when a modal opens. Static scan won't see them — they only exist while
-the modal is mounted. This is exactly what static template audits miss.
-
 ---
 
 ## Phase 5 — Severity Model
 
-The authoritative severity-per-kind mapping is the table in Phase 4 ("Finding
-taxonomy"). The intuition behind those assignments:
-
-| Code | Rule |
-|---|---|
-| **P0** | Breaks core function: React reconciliation (duplicate IDs), form submission (no name on field — wait, that's P1; let me explain), screen-reader announcement (input/button with no accessible name), click-to-focus (orphan `<label for>`) |
-| **P1** | Degrades experience but flow still works: aria-hidden focusable (non-`inert` subtrees only), empty `<a href="#">`, form-field-no-name — **only when the form has an `action`** (the browser natively submits and that field's value is dropped). An action-less form has no native submission path, so the same finding is **P3 advisory**: in a JS-driven form the missing `name` is often deliberate, and pressing to add one without `method="post"` would arm a credentials-in-URL leak on native fallback (found live 2026-07-30). |
-| **P2** | Polish / a11y suggestion: heading-skip, img-no-alt (decorative needs `alt=""`), small-touch-target, positive-tabindex, duplicate-aria-label (high FP rate) |
-| **P3** | Findings whose element was **not perceivable** in the captured state (severity capped here from `declaredSeverity`), plus reserved future suggestions (redundant ARIA, decorative-near-interactive) |
+The authoritative severity-per-kind mapping is the Phase 4 taxonomy table.
+→ `references/scan-rules-detail.md` §Severity intuition — read when a kind's
+severity is disputed (incl. the `form-field-no-name` P1-vs-P3 action rule).
 
 ### Perceivability cap (2026-07-30)
 
@@ -505,69 +462,27 @@ state (`display:none`, `visibility:hidden`, `opacity:0`,
 P3** and tagged `perceivable:false`; `declaredSeverity` preserves what the kind
 would otherwise have been.
 
-**Why this matters.** A `<input type="file" hidden>` — the standard
-custom-upload-button pattern — has `type === 'file'`, so it slips past the
-`type === 'hidden'` filter and was reported **P0 `input-no-name`**. A field run
-produced 704 findings of which ~6 were real: all 31 `aria-hidden-focusable`
-findings sat inside one `visibility:hidden` subtree, and 4 of 5 P0s were hidden
-file inputs.
-
 **Demote, do not drop.** A hidden element may become visible — that is exactly
 what `--with-modals` re-scans for — so dropping the finding destroys signal. The
 tag is **state-relative**: it says "not perceivable in *this* capture", never
 "never perceivable".
 
-> **Scope note — this is NOT a release-gate fix.** `/ship` does **not** gate on
-> click-test P0s: persistence to the shared store is deferred (Phase 7 below), so
-> no `record-click-test` subcommand, table or `/ship` read path exists, and
-> `/ship --ignore-p0` refers to **persona-test** P0s only. The harm being fixed
-> is a human reading a P0 list and treating it as blocking, plus the noise ratio.
-> Correcting severity *now* is preventive: it means the deferred v2 persistence
-> cannot turn a cosmetic wrong into a real false gate.
-
 **Filter the headline on `perceivable`,** and report capped findings separately
 so the count stays honest — 704 findings with 6 perceivable is a very different
 report from 704 undifferentiated ones.
 
-The predicate's canonical source is
-[`scripts/lib/browser/perceivable.mjs`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/scripts/lib/browser/perceivable.mjs);
-the copy inside `references/dom-scanner.md` is drift-checked by
-`tests/click-test-perceivability.test.mjs`. `/nav-audit --verify` injects the same
-function to qualify its `authSentinel`, which is why it is a module rather than
-scanner-local.
+→ `references/scan-rules-detail.md` §Perceivability — the field incident,
+the release-scope note, and the canonical predicate source.
 
-### Touch targets are measured over activating regions (2026-07-31)
+### Touch targets are measured over activating regions
 
 `small-touch-target` measures **every region that activates the control**, not
 just the control's own border box. A wrapping `<label>` — or one associated via
 `label[for=…]`, both covered by the spec's `el.labels` — is part of the tap
-target, because clicking it activates the control.
-
-**Why this matters.** The visually-hidden-input + styled-label pattern is
-ubiquitous, and measuring only the input reports a *guaranteed* false positive.
-Field data from a consumer run (2026-07-31):
-
-| Element | Input's own box | Real tap target (its `<label>`) |
-|---|---|---|
-| `#filter-reduce-now` | 1×1 | **74×44** |
-| `#wine-grouped-select-all` | 13×13 | **75×24** |
-
-The perceivability cap above cannot reach this class: these inputs are
-`visibility: visible` and genuinely **painted** at 1×1 — they are simply not the
-thing the user touches. Without this rule, any codebase using the standard
-styled-checkbox pattern carries a permanent floor of false positives that each
-need manual DOM verification to dismiss.
-
-**Contiguous regions, not a bounding-box union.** A `label[for]` may sit anywhere
-in the document, so a union spanning the gap between two far-apart boxes would
-describe an activating region that does not exist — trading the false positive
-for a false *negative*. WCAG 2.5.8 is satisfied when **some single** activating
-region is ≥24×24, so the rule passes on the first adequate region and reports the
-largest one (that is the number a verifier will measure).
-
-**Not a "has a label ⇒ exempt" escape hatch.** A control whose every activating
-region is undersized still fires, and a label that is not perceivable does not
-rescue one. Both are pinned in `tests/click-test-perceivability.test.mjs`.
+target, because clicking it activates the control. Regions are contiguous (no
+bounding-box union); the rule passes on the first region ≥24×24 and reports the
+largest; a control whose every region is undersized still fires.
+→ `references/scan-rules-detail.md` §Touch targets — field data and why.
 
 Confidence is not a click-test concept — assertions are deterministic. Either
 the DOM violates the contract or it doesn't. If runs vary across same
@@ -577,6 +492,8 @@ load-order race) is involved; flag that meta-finding itself.
 ---
 
 ## Phase 6 — Structured Report
+
+Header (the Phase 0b run contract, verbatim):
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -588,59 +505,23 @@ load-order race) is involved; flag that meta-finding itself.
   Ready-selector: <css>   Ready-timeout: <ms>
   Tool: <browser_tool> — <N> elements scanned (across all device passes) — <duration>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
 
-FINDINGS (<total>)
-────────────────────────────────────────────────────
-  [P0] duplicate-id "wine-card-3" (4 occurrences)
-     Device:   mobile
-     Route:    /cellar
-     Via:      static
-     Selector: #wine-card-3
-     Detail:   Repeated by the wine grid renderer when filter is active;
-               React will reconcile the wrong nodes on next render
-     Snippet:  <div id="wine-card-3" class="..."> [redacted if needed]
+Then, in order:
+- **FINDINGS (<total>)** — per finding `[P<n>] <kind> <subject>` then Device,
+  Route, Via, Selector, Detail, Snippet (redacted).
+- **ROUTE COVERAGE** — one line per route: `<route> — <coverageStatus> —
+  <n> elements — <n> findings (P0:n, …)` or `skipped (<reason>)`; under
+  `--devices`, grouped per `device=<name> (<WxH>)` plus a **CROSS-DEVICE**
+  section (shared / desktop-only / mobile-only counts + one interpretation line).
+- **DYNAMIC SURFACES** (`--with-modals`) — per device+route: triggers total,
+  scanned, skipped-destructive, modal-stuck.
+- **OVERALL** — `<Broken | Broken+Incomplete | Has issues | Incomplete | Clean>`
+  plus a one-sentence Reason.
 
-  [P0] input-no-name <input type="text">
-     Device:   mobile
-     Route:    /cellar
-     Via:      modal:"Add bottle"
-     Selector: form.add-bottle > input[type=text]:nth-child(2)
-     Detail:   No label, aria-label, aria-labelledby, or placeholder.
-               Screen readers announce this as "edit text" with no context.
-     Snippet:  <input type="text" class="form-control">
+→ `references/phase6-output-sample.md` — read before rendering, for the full sample.
 
-  ...
-
-ROUTE COVERAGE  (single-device run)
-────────────────────────────────────────────────────
-  /          — scanned          — 47 elements — 0 findings
-  /cellar    — scanned          — 312 elements — 8 findings (P0:2, P1:1, P2:5)
-  /admin     — auth-required    — 0 elements — skipped (login wall)
-  /reports   — readiness-timeout — 0 elements — skipped (ready-selector never matched)
-
-ROUTE COVERAGE  (per-device matrix — only when --devices used)
-────────────────────────────────────────────────────
-  device=desktop (1280x720)
-    /          — scanned — 47 elements — 0 findings
-    /cellar    — scanned — 312 elements — 4 findings (P0:1, P2:3)
-  device=mobile (390x844)
-    /          — scanned — 47 elements — 1 finding (P2:1 small-touch-target)
-    /cellar    — scanned — 308 elements — 9 findings (P0:2, P1:2, P2:5)
-
-  CROSS-DEVICE
-    Shared (both):     4 findings — duplicate-id × 2, orphan-label × 2
-    Desktop-only:      0
-    Mobile-only:       6 findings — small-touch-target × 4, input-no-name × 2
-    Interpretation: 6 issues only surface on mobile — typical responsive-CSS gap.
-
-DYNAMIC SURFACES (--with-modals)
-────────────────────────────────────────────────────
-  device=mobile  /cellar: 12 triggers — 8 scanned, 2 skipped-destructive, 2 modal-stuck
-  device=mobile  /admin:  — (route skipped)
-
-OVERALL: <Broken | Broken+Incomplete | Has issues | Incomplete | Clean>
-  Reason: <one sentence>
-
+```
 OVERALL VERDICT RULES (deterministic precedence — first match wins):
   Coverage condition (referenced below):
     "covered"     = every route coverageStatus="scanned" AND
@@ -674,92 +555,16 @@ Sort findings P0 first, then by `kind` alphabetical so similar issues group.
 
 ## Phase 7 — Persistence (Out of Scope for v1)
 
-Persisting click-test findings to the shared cross-skill store (so `/ship`
-can surface P0s as pre-push warnings) is **deferred to v2**. The v1 skill
-is authoritative purely from its local report — print, read, fix, re-run.
-
-Why deferred:
-- The required `scripts/cross-skill.mjs record-click-test` subcommand
-  doesn't exist yet, nor does the typed payload schema, table mapping,
-  or `/ship` read path.
-- Declaring "graceful no-op when subcommand missing" would ship a dead
-  integration path that silently never works — worse than no integration.
-- The local Phase 6 report covers the immediate use case (run, fix, ship).
-
-**v2 work item** (when the integration matters): add a new
-`record-click-test` subcommand with Zod-validated payload, decide table
-strategy (new `click_test_runs` table vs reusing `regression_specs` with
-a discriminator), update `/ship` to surface unresolved P0s, add tests.
-Tracked in docs/plans/click-test-v2-persistence.md (planned) — file to be
-created when v2 starts; not a v1 blocker.
-
----
-
-## Integration (skill deployment)
-
-This skill ships through the same auto-sync as every other skill in the
-bundle. No manual file list needed:
-
-- `scripts/sync-to-repos.mjs::buildSkillFiles()` enumerates `skills/*/` and
-  picks up `skills/click-test/` automatically.
-- The `.claude/skills/click-test/` mirror is regenerated on
-  `npm run skills:regenerate`. Copilot discovers it natively (Agent Skills) —
-  no separate prompt-shim surface (retired 2026-07-21).
-
-Deployment recipe:
-
-```bash
-npm run skills:regenerate     # update .claude/skills/click-test/ mirror
-npm run sync                  # push to every consumer repo in the registry
-```
-
-Both commands are idempotent and report drift / changed files in stderr.
-
-### Deployment acceptance criteria
-
-After running the recipe, verify ALL of these before declaring deployment complete:
-
-1. `.claude/skills/click-test/SKILL.md` exists and matches `skills/click-test/SKILL.md`
-   byte-for-byte (the generator copies, not re-formats).
-2. `.claude/skills/click-test/references/dom-scanner.md` exists.
-3. `npm run skills:check` passes (validates each reference file's `summary:`
-   frontmatter byte-matches the parent SKILL.md's reference-index row).
-4. For each consumer repo synced: `.claude/skills/click-test/SKILL.md`
-   present at the consumer repo root.
-
-If any of these fail, the deployment did NOT complete — fix the failure
-and re-run rather than declaring partial success.
-
----
-
-## Out of Scope (v2) — deferred from R3 audit
-
-These were raised by the GPT plan-auditor in R3. Each is a real concern,
-but v1 ships without them because (a) the local Phase 6 report still
-flags coverage gaps and (b) addressing them would require runner code
-that doesn't exist yet (this is a skill spec, not a CLI).
-
-| Concern | Why deferred | v2 mitigation |
-|---|---|---|
-| Dynamic-trigger classifier doesn't skip `Save/Submit/Publish/Apply` controls — could mutate state in `--with-modals` mode | The current safety regex catches obviously destructive labels (`delete`, `sign out`, etc.); state-changing labels are harder to enumerate without false positives. v1 is opt-in via `--with-modals` and users testing their own apps know which buttons are safe. | Extend regex + form-association classifier. Add a `--dry-run-dynamic` mode that lists triggers without clicking. |
-| `routeStatus` vs `dynamicStatus` aggregation not fully specified — a route can be `scanned` while modal coverage failed | The Phase 6 verdict rules cover the headline case (any P0+gap → Broken+Incomplete). The deep ROUTE COVERAGE block can report both fields per route. | Split the model formally when implementing — `RouteResult = { routeStatus, findings, dynamicCoverage: { triggersTotal, triggersScanned, failureReasons[] } }` |
-| Scanner-returned `severity` is trusted across the browser boundary — page could lie | Browser-side scanner is repo-controlled JS injected fresh each scan; a hostile page can't override it. If we run against attacker-controlled pages in v2, the runner should re-derive severity from `kind` (the kind → severity map is canonical in SKILL.md). | Re-derive `severity` runner-side using the taxonomy table; ignore the scanner's emitted severity. |
-| Lossy handling of finding sets at 999-cap | Capping silently truncates evidence. v1 returns `scanner-error` for >999 to fail loudly; counts above the cap suggest the scanner needs a separate per-rule cap or the page has runaway templates worth investigating manually. | Per-rule caps (e.g. max 50 duplicate-id rows from one ID collision) + total cap. |
-| Own-app classifier matches `*.local` which is reserved for mDNS — false positive risk | mDNS overlap is theoretical; in practice `*.local` in browser context means dev environments where cache-bust is safe. | Tighten classifier if we ever see a real collision. |
-| `auth-required` detection runs after readiness gate — login-only routes may readiness-timeout first | Both classifications correctly indicate "could not scan", so the OVERALL verdict still becomes Incomplete. The reason differs but the outcome doesn't. | Run a quick `[type=password]` check immediately after `load`, before readiness polling. |
-| Redaction boundary too narrow — only redacts `snippet`, not `selector` / `detail` | `selector` is structural (no PII expected); `detail` is composed by the scanner from rule descriptions (no user content). Genuine leakage path is `snippet`. | Audit each field; redact `detail` if/when the scanner starts interpolating page content. |
-| `ready-selector` not validated for CSS-correctness | An invalid selector throws when used; we surface the error as `scanner-error` with the message. Pre-validation would duplicate the engine's selector parser. | Wrap user selector in try/catch with a clearer error message. |
+v1 does not persist findings: no `record-click-test` subcommand exists, so do
+not invent one or claim a store write. The local Phase 6 report is the whole
+output — print, read, fix, re-run.
+→ `references/v1-scope-and-deployment.md` — read when asked why, what v2 adds,
+which R3 audit concerns were deferred, or how this skill is deployed.
 
 ---
 
 ## Reminders
 
-- **Cache-bust first, always** — stale SW will hand you yesterday's DOM.
-- **Don't click destructive triggers** in `--with-modals` mode.
-- **Run alongside `/persona-test`, not instead of it** — disjoint coverage.
-- **Findings are deterministic** — same URL + commit = same findings. If
-  they vary, something non-deterministic (load order, A/B test, random ID)
-  is involved — flag that as a finding itself.
 - **One scanner pass per settled DOM state** — one static pass per route per
   device, plus one pass per successfully opened dynamic surface in
   `--with-modals` mode. Aggregate findings in JS using
@@ -778,14 +583,9 @@ that doesn't exist yet (this is a skill spec, not a CLI).
 | `references/browser-tool-detection.md` | The browser-driver contract — capabilities, driver table, selection order, minimum sets, degraded/blocked evidence. | Phase 1 driver selection — resolving which driver to use, or diagnosing a `blocked` result. |
 | `references/auth-bootstrap.md` | Sanctioned auth-gated exploratory-testing pattern via MCP-server storageState, plus its connect-time-race escape hatch. | The target's primary surfaces need a login — pre-authenticate the shared driver connection before scanning, so `auth-required` routes are not coverage gaps. |
 | `references/dom-scanner.md` | The full browser_evaluate scanner JS — every assertion's implementation, selector-stringifier helpers, severity mapping. | About to run Phase 4 or Phase 4b. |
+| `references/scan-rules-detail.md` | Why the scan rules are what they are — perceivability, touch-target regions, severity intuition, FP notes, prep JSON. | A finding's severity or perceivability is disputed, a touch-target finding looks false, OR the prep contract shape is unclear. |
+| `references/phase6-output-sample.md` | Full Phase 6 output sample — finding entries, single-device and matrix ROUTE COVERAGE, CROSS-DEVICE, DYNAMIC SURFACES. | About to render the Phase 6 report. |
+| `references/v1-scope-and-deployment.md` | Why v1 has no persistence, the R3-deferred v2 concerns, and the maintainer deployment recipe + acceptance checks. | Asked about persistence, /ship integration or v2 scope, OR deploying/syncing this skill. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
 
-Phase 1 resolves its driver from `references/browser-tool-detection.md`, and
-pre-authentication follows `references/auth-bootstrap.md`, both listed in the
-table above. Both are **generated copies** — each one's header names the
-canonical it came from (source repo only; the canonical is not synced to
-consumers). Edit the canonical, never a copy. Both used to be cited across skill
-boundaries as
-`../persona-test/references/…`, which a packaged click-test would ship without:
-`enumerateSkillFiles` walks a skill's OWN directory only, so the contract this
-skill is told to obey could travel separately from the skill.
+— end of /click-test —

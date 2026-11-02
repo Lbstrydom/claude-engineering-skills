@@ -240,6 +240,42 @@
     {
       "line": "| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Phase 3 Record step / Phase 5 — rendering the COVERAGE block, to apply §7's reciprocal warning (it renders only from the session work-record). |",
       "reason": "Reference-index row for the shared verification-discipline copy (the Summary column must byte-match the file's summary frontmatter). Points at the same session-work-record instruction already dispositioned above; adds no gate."
+    },
+    {
+      "line": "table (NAME · LAST TESTED · VERDICT · SESSIONS) sorted **never-tested first,",
+      "reason": "Skill-slimming compression (Cluster B) of the LIST roster card to a one-line format. 'never-tested' is a roster sort key, not an enforcement claim."
+    },
+    {
+      "line": "never re-read. → `references/run-loop-detail.md` §Phase 1 + `references/auth-bootstrap.md`",
+      "reason": "Skill-slimming resident form (Cluster B) of the moved login-gated-target paragraph: an agent-behavioural ordering instruction (seed storageState before the MCP server connects), the same uncontracted category as the original paragraph's dispositioned lines. No script exit to bind."
+    },
+    {
+      "line": "**silently** — they shape Reflect scoring, never the Phase 5b persona voice.",
+      "reason": "Skill-slimming resident form (Cluster B) of Step 1a.3: a narrative-voice instruction for the agent, not a mechanical gate."
+    },
+    {
+      "line": "Render the `CONSISTENCY MODE REPORT` fence (Canary, URL, Verdict, Exit,",
+      "reason": "Skill-slimming compression (Cluster B) of the Step C4 report fence; 'Exit' names a field of the rendered card. The exit-code gate itself is the contracted consistency-fatal-rig-exit-3 row in the Step C3 table, unchanged."
+    },
+    {
+      "line": "shell\", not on the app — OVERALL reads `Needs work` at best, never `Ready for",
+      "reason": "Skill-slimming resident form (Cluster B) of the authWallUntested rule. The cap is enforced in code as one conjunct of the overall-verdict-boundary-cap gate (capPersonaVerdict, tests/persona-session-lifecycle-contract.test.mjs) whose stated text stays verbatim in Phase 5."
+    },
+    {
+      "line": "not evidence of an audit miss — never treat it as one). `malformed > 0`",
+      "reason": "Reflowed by the Cluster B slim (the malformed explanation moved to references/session-save-detail.md); the sentence 'an empty candidate set is not evidence of an audit miss — never treat it as one' is unchanged interpretation guidance for the agent, not a gate."
+    },
+    {
+      "line": "types, never auto-emitted.",
+      "reason": "Skill-slimming resident form (Cluster B) of manual-repair case 2: describes what the auto-correlator does not emit (a fact about scripts/lib/persona/audit-correlator.mjs), not an enforcement claim of this skill."
+    },
+    {
+      "line": "if it disagrees). A refusal exits 1 naming `PARENT_NOT_FOUND` or",
+      "reason": "Skill-slimming resident form (Cluster B) of Step P7. Same link-persona-pair behaviour as the already-dispositioned 'A refusal exits 1 with a code naming it' line: enforced in the cross-skill command, contracted by the registry golden suite."
+    },
+    {
+      "line": "| `references/shell-safe-payloads.md` | Why ADD and record-correlation payloads go through a Write-tool file on stdin, never a shell-quoted --json string. | Running `add` or a Phase 6b manual repair and tempted to inline the strings, OR asked why a file is used. |",
+      "reason": "Reference-index row added by the Cluster B slim (the Summary column must byte-match the file's summary frontmatter). Points at the add-persona/record-correlation --stdin convention already dispositioned above; adds no gate."
     }
   ]
 }

@@ -37,14 +37,14 @@ Triggers on: "plan", "design this", "architect this", "I want to add",
 
 # Unified Architecture + UX Planner
 
-Single planning skill that produces ONE consolidated plan document, even
-for cross-stack work.
+> **This skill's last line is an end marker naming the skill between em-dashes, after
+> the Reference files table.** If that last line is not in your context (context
+> compaction keeps only the start of a skill), re-read
+> `.claude/skills/plan/SKILL.md` in full before continuing — the later steps still apply.
 
-**Token efficiency**: principle tables (20 engineering, 26 UX, 17
-technical) live in `references/*.md` and load on demand only when the
-detected scope needs them. Backend-only work loads only engineering
-references; frontend-only loads only UX + technical; full-stack loads
-both. Per-invocation cost ≈ what you'd pay for the original skills.
+Single planning skill that produces ONE consolidated plan document, even
+for cross-stack work. Principle tables load from `references/*.md` by
+detected scope (Phase 0).
 
 ---
 
@@ -120,11 +120,8 @@ that choice; a distance score cannot see dependency direction, API shape or
 ownership. `review` = nothing cleared the repo's noise floor (proceed
 greenfield); `unscored` = no embedding, so nothing was compared.
 
-The neighbourhood callout includes a **Domain** column showing each
-candidate's `domainTag` from `.audit-loop/domain-map.json`. Use this
-to spot domain-mismatch reuse candidates (e.g. "the existing helper
-is in `wine-shop` but I want to add to `pairing-lab` — should this be
-shared?").
+The callout's **Domain** column flags domain-mismatch reuse candidates
+→ `references/context-callouts.md` §Phase 0.5 — read when a candidate sits in another domain.
 
 ### Phase 0.5b — Compute target domain(s) and surface boundary work
 
@@ -165,33 +162,11 @@ node scripts/cross-skill.mjs get-incident-neighbourhood --json '{
 
 Returns `{records, totalCandidatesConsidered, freshnessWarning}`. Render
 **only when `records.length > 0`** (don't add a "no incidents — proceed"
-line on every plan; that creates noise).
-
-```markdown
-> **Past incidents to verify against** (3 shown of 5 total)
->
-> | Incident | Affected paths | Status | Lessons |
-> |---|---|---|---|
-> | **INC-001** — Debug log leaked credit-card numbers | `src/billing/**` | `manual-verification-required` | Route payment logs through redact.mjs; never log raw payloads. |
-> | **INC-007** — Stripe webhook accepted unverified payloads | `src/checkout/stripe.js` | `mitigation-passing` (semgrep) | Always verify the signature header before parsing body. |
-```
-
-When `freshnessWarning` is non-null (markdown edited since last refresh),
-add the warning ABOVE the table:
-
-```markdown
-> ⚠ `docs/security-strategy.md` edited since last refresh — run
-> `node scripts/security-memory/refresh-incidents.mjs` to bring the security index current.
-```
-
-When `docs/security-strategy.md` doesn't exist (response will have
-`hint` containing the bootstrap suggestion), add a soft warning at the
-top of the plan output:
-
-```markdown
-> _No security strategy document found. Run `/security-strategy bootstrap`
-> to seed one and unlock proactive security memory consultation._
-```
+line on every plan; that creates noise). When `freshnessWarning` is non-null,
+add a freshness warning ABOVE the table. When the security strategy document
+doesn't exist (response carries a `hint`), add a soft bootstrap warning at the
+top of the plan output. → `references/context-callouts.md` §Phase 0.5c — read
+when rendering any of these three.
 
 Soft warning only — never blocks plan generation.
 
@@ -224,10 +199,7 @@ If scope ⊇ frontend, check whether persona testing has surfaced pain points in
 the area being planned. The command resolves the repo itself (`--repo` ->
 `PERSONA_TEST_REPO_NAME` from `.env` -> ambient `git remote`) — do NOT
 shell-expand the env var into `--repo`, which yields an empty flag in any
-session that did not export it. After
-the 20260507 RLS hardening this MUST go through `cross-skill.mjs` (which
-uses the service-role key) — anon reads are now blocked at the policy
-boundary.
+session that did not export it. Read it only through `cross-skill.mjs`.
 
 ```bash
 node scripts/cross-skill.mjs get-persona-sessions-by-repo --limit 5 --select persona,focus,verdict,findings,p0_count,p1_count
@@ -238,15 +210,8 @@ When `cloud:false`, no persona-test database is configured — proceed without
 this signal. When `measured:false`, no repo resolved and nothing was read —
 also proceed, but never read the empty `rows` as "no findings".
 
-Filter `rows` whose `focus` overlaps with the feature. If matches found, include in the Context Summary as **Known user-visible issues**:
-
-```
-Known user-visible issues (from persona testing):
-  • [P0] Form submit unresponsive — "Pieter" session, Apr 14 (focus: adding a bottle)
-  • [P1] No loading state on search — 3 sessions, recurring
-```
-
-Treat P0/P1 matches as HIGH priority in the design.
+Filter `rows` whose `focus` overlaps with the feature. If matches found, include in the Context Summary as **Known user-visible issues**
+(→ `references/context-callouts.md` §Phase 1 — read when rendering that block). Treat P0/P1 matches as HIGH priority in the design.
 
 ### Exploration checklist (apply the rows that match scope)
 
@@ -274,17 +239,9 @@ Do NOT propose a plan until exploration is complete.
 ## Phase 1.5 — Execution Model (backend or full-stack scope only)
 
 Forced question: **Are any planned operations dependent on others?**
-If yes, identify chains, prerequisites, and per-chain atomicity.
-
-This phase catches sequencing bugs that surface as HIGH findings in
-audit round 3+.
-
-### When this phase matters
-
-- **Batch operations**: moves, imports, migrations — order matters, partial failure needs rollback
-- **Multi-step workflows**: wizard flows, onboarding sequences — step N depends on step N-1
-- **State transitions**: status changes, approval chains — invalid intermediate states must be prevented
-- **Cross-entity operations**: swaps, cycles, rebalancing — A↔B swap is not two independent moves
+If yes, identify chains, prerequisites, and per-chain atomicity (typical
+cases: batch ops, multi-step workflows, state transitions, cross-entity swaps
+→ `references/authoring-rationale.md` §Phase 1.5 — read when unsure whether a dependency exists).
 
 ### What to produce
 
@@ -366,18 +323,11 @@ design is visibly in the middle, not on either cliff:
   → drop the abstraction.* "Might need it later" / "cleaner" / "extensible" is not
   a current requirement (YAGNI overrides the flexibility checklist).
 
-This is a brake, not ceremony: it fires only when new structure is on the table.
-Writing both extremes is the forcing function — it makes the right-sized middle
-obvious and is harder to rationalise past than a yes/no self-check.
+→ `references/authoring-rationale.md` §Phase 5 — right-sizing gate — read when the three lines feel like ceremony.
 
-**Manual vs scripted (right-sizing applied to execution).** When a change repeats
-across many similar sites — a rename, codemod, data backfill, ≥~5 regular edits —
-prefer a **one-off script** *only if* the transformation is regular and
-**verifiable** (you can assert the result). If the sites vary, the edit is
-judgment-heavy, or there are < ~5 — **do it by hand** (a fragile codemod for
-trivial/irregular work is the over-engineering cliff; grinding 50 regular edits
-by hand is the band-aid cliff). A throwaway script is a Category-A artifact
-(tmp / gitignored), never committed. State which path and why in the plan.
+**Manual vs scripted**: state in the plan which path the work takes and why
+→ `references/authoring-rationale.md` §Phase 5 — manual vs scripted — read when
+a change repeats across many similar sites (≥~5 regular edits).
 
 ### System-level thinking (always)
 
@@ -420,14 +370,10 @@ Structure ONE consolidated output document. Section presence depends on scope:
   §7b Gate-1 trigger class: ≥6 files, ≥2 subsystems, a dependency chain, or
   >1 sitting of work). Trivial single-file plans may write `Code Trace: <file>`
   and move on. An absent or hand-waved trace on a non-trivial plan means the
-  design is ungrounded — go back to Phase 1. This bullet makes "trace before
-  designing" leave a footprint instead of being an honour-system instruction.
+  design is ungrounded — go back to Phase 1.
   **Pin every `file:line` to the commit you read it at** — `src/foo.js:42
-  (a4ec98da)`. The trace is read weeks later, against a moved tree: a path is
-  durable, a path plus a line is a snapshot that decays into a wrong-but-
-  resolving reference (measured: 5 of 9 bad claims in one document were correct
-  when written). Cite append-newest-first files by section header, never by
-  line. → `references/verification-discipline.md` §1.
+  (a4ec98da)`. Cite append-newest-first files by section header, never by
+  line. → `references/verification-discipline.md` §1; why: `references/authoring-rationale.md` §1 — Code Trace.
 - Patterns reused vs new
 - Known user-visible issues (if persona data + frontend scope)
 - Neighbourhood considered (if Phase 0.5 fired with results)
@@ -441,10 +387,9 @@ Structure ONE consolidated output document. Section presence depends on scope:
 - User flow + ASCII wireframe — frontend/full-stack
 - Key design decisions and **which principles drove them** (cite #N)
 
-The Mermaid block is the **proposed** view — an artifact of this plan, not
-a maintained file. It dies with the plan; nothing claims it stays current.
-For *existing* structure defer to `docs/architecture-map.md` (the
-generated, always-current index). Pick the type from the Phase 0 scope:
+The Mermaid diagram is the **proposed** view, not a maintained file (existing
+structure: the generated architecture map, Phase 0.6; → `references/authoring-rationale.md`
+§2 — read when asked to keep the diagram current). Pick the type from the Phase 0 scope:
 
 | Scope / signal | Mermaid diagram |
 |---|---|
@@ -508,38 +453,17 @@ separately as `**Close-out (not a phase)**: <commands>`, excluded from the
 
 > **Write every path REPO-RELATIVE — `scripts/setup-postgres.mjs`, never
 > `setup-postgres.mjs`.** This is not style. `extractPlanPaths`
-> (the bundle's `lib/plan-paths.mjs`) matches on `(?:[\w.-]+\/)+[\w.-]+\.ext` —
-> it requires **at least one `/`**, so a bare basename is invisible to it
-> *anywhere in the plan*, including in `Files:` lines and prose.
+> (the bundle's `lib/plan-paths.mjs`) matches only paths containing a `/`; with
+> fewer than 5 resolvable paths the audit's fuzzy keyword discovery fills the
+> scope from plan *words* and reviews the wrong code. **Never invent file
+> references to clear the threshold** — qualify the paths you genuinely touch.
+> → `references/authoring-rationale.md` §7b — read when the count is under 5.
 >
-> The failure is silent and misleading, hence this callout.
-> Too few resolvable paths and `/audit-code --scope diff` finds an empty
-> diff∩plan intersection and **aborts** ("0 implementation files reached the
-> prompt") — correct, but it pushes you to `--scope plan`, where **fuzzy keyword
-> discovery** fills the scope from plan *words* instead.
->
-> **The threshold is exact: fewer than 5 resolvable paths and fuzzy fires**
-> (`plan-paths.mjs` — `FUZZY_DISCOVERY_THRESHOLD`). Measured 2026-07-19 across this
-> repo's plans: `debt-burndown` 31 → clean, `egress-secret-coverage-gap` 6 →
-> clean, `migration-bootstrap-coupling` **4 → fuzzy fired**, adding **21 unrelated
-> files** matched on words like "findings" and "provenance". The audit returned 17
-> findings, **16 citing files the change never touched** — an audit that looked
-> thorough and reviewed the wrong code.
->
-> A small plan can legitimately sit under 5. That is fine — the point is to know
-> it, not to pad the list. **Never invent file references to clear the
-> threshold**; a fabricated path is worse than fuzzy noise. Qualify the paths you
-> genuinely touch, then read the audit's scope line before trusting its findings.
->
-> Cheap self-check before persisting — it prints the REGEX-resolvable count (the
-> number the threshold actually tests), what fuzzy added, and how many paths
-> don't resolve. A large `missing` means your paths are basenames:
+> Self-check before persisting (report-only; read the `regex-resolvable` line,
+> not `found`/`missing` — fuzzy results are folded into `found`):
 > ```bash
 > node scripts/lib/plan-paths.mjs "$PLAN"   # $PLAN = the plan file you are about to persist
 > ```
-> Report-only, exit 0 — a small plan may legitimately sit under the threshold.
-> Read `found`/`missing` alone at your peril: fuzzy results are already folded
-> into `found`, so only the `regex-resolvable` line answers "did fuzzy fire?".
 
 #### 8. Risk & Trade-off Register
 - Trade-offs made + why
@@ -620,14 +544,7 @@ server that `.mcp.json` and `.vscode/mcp.json` both register. Pass the block as
 `mermaid` and `outputType: "mermaid"` — that echoes the source back instead of
 rendering an image, so validation costs nothing. Invalid syntax comes back as an
 MCP error carrying the parser's line and column; that error IS the validation.
-
-> This gate named `mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram`
-> until 2026-09-02 — a different server, with a verb the registered one does not
-> expose. Two mismatches, so the availability test could never be true, and
-> because the else-branch below skips *silently* the step could not report its
-> own deadness: it had never run once, in any host. When a step is written to
-> skip quietly, its availability check has to be verified by executing it, not
-> by reading it.
+(Tool-name history: `references/authoring-rationale.md` §Phase 6.5 — read when the tool seems unavailable.)
 
 - **MCP available** → validate each block; fix any reported syntax error
   in place before Phase 7.
@@ -636,12 +553,8 @@ MCP error carrying the parser's line and column; that error IS the validation.
   renders natively in GitHub and VS Code preview, so an unvalidated block
   still works for the reader. Do not warn the user about the missing MCP.
 
-**This does not replace `plans:lint`, and neither replaces the other.** Measured
-2026-09-02: the MCP accepts `SG1 -.- B` (a subgraph id used as an edge endpoint)
-without complaint, which `plans:lint` classifies as an ERROR because stricter
-renderers reject it; the MCP in turn catches ordinary parse errors the regex
-linter never looks for. Two instruments, two blind spots — do not delete either
-on the grounds that the other covers it.
+**This does not replace `plans:lint`, and neither replaces the other** (two
+blind spots → `references/authoring-rationale.md` §Phase 6.5 — read when one looks redundant).
 
 ---
 
@@ -659,9 +572,8 @@ needed. Metadata header:
 ```
 
 **If this plan must not ship before another plan lands**, say so as a
-structured line, not only in prose — a free "wait for Cluster F" note is
-invisible to every other session (upstream report `f5ac366f`: the loser
-hand-reconciled via a rebase + manual code transplant):
+structured line, not only in prose (→ `references/authoring-rationale.md`
+§Phase 7 `Depends on:` — read when tempted to leave it as prose):
 
 ```markdown
 - **Depends on**: docs/plans/<other-plan>.md — <why, e.g. "wait for Cluster F to land first">
@@ -676,13 +588,10 @@ knows whether it is still safe to proceed.
 Register in the cross-skill store so audit-plan/audit-code + ux-lock can link:
 
 Include the user's ORIGINAL task description as `taskText` in the SAME payload
-— that is what arm-eval scores the arms on. Persisting the plan and dispatching
-the capture is then one atomic call (no separate, skippable step). **Write the
+— that is what arm-eval scores the arms on. **Write the
 payload to a file with the Write tool, then pipe it via `--stdin`** — never
-inline it into a shell single-quoted string: the user's own task text can
-contain an apostrophe (e.g. "the user's original task"), and an apostrophe
-inside a single-quoted shell string terminates the string early, corrupting
-the call (same defect class the `--triage` payload note above already covers).
+inline it into a shell single-quoted string (an apostrophe in the task text
+corrupts the call; → `references/authoring-rationale.md` §Phase 7 payload — read when asked why).
 
 1. Write `.claude/tmp/upsert-plan.json` with the Write tool:
    ```json
@@ -740,4 +649,8 @@ in Phase 0 tells you which ones).
 | `examples/mermaid-blocks.md` | Mermaid diagram templates — sequenceDiagram, graph, erDiagram, stateDiagram-v2 — one per scope. | Phase 6 §2/§5 — emitting an architecture or state diagram; need the exact fence syntax. |
 | `references/proof-oracle.md` | Proof oracle for any plan - what proves the change right, its pass condition, and the evidence the report shows. | Phase 6 §9 Proof plan. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Phase 6 §1 — writing the Code Trace, or any `file:line` citation, into the plan document. |
+| `references/context-callouts.md` | Render templates for the plan's context callouts — incident table, freshness and bootstrap warnings, persona issues. | Phase 0.5c returned records, a `freshnessWarning` or a `hint`, OR Phase 1 persona rows matched the feature. |
+| `references/authoring-rationale.md` | Why /plan's authoring rules exist — Code Trace, repo-relative paths, Mermaid checks, payload file, Depends on. | A rule is questioned, fewer than 5 plan paths resolve, OR a change repeats across ≥~5 similar sites. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
+
+— end of /plan —

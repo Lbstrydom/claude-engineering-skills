@@ -45,6 +45,11 @@ Examples:
 
 # Persona-Driven Browser Testing
 
+> **This skill's last line is an end marker naming the skill between em-dashes, after
+> the Reference files table.** If that last line is not in your context (context
+> compaction keeps only the start of a skill), re-read
+> `.claude/skills/persona-test/SKILL.md` in full before continuing — the later steps still apply.
+
 Run an exploratory browser test with persona tracking. Check `$ARGUMENTS`
 first to pick the sub-command.
 
@@ -82,8 +87,6 @@ _This site: `subcommand` — no first word means no sub-command; fall through to
 Resolve the URL in order: positional argument → `PERSONA_TEST_APP_URL` env →
 ask the user.
 
-Fetch personas (graceful no-op when cloud is off):
-
 **Validate the URL before it reaches a shell.** It is user- or env-derived, and
 double quotes do **not** neutralise `$(…)` or backticks — the same defect class
 as the ADD payload below. Parse it with `new URL(value)` and reject it outright
@@ -94,28 +97,10 @@ newline. Only a value that survived that check is substituted below:
 node scripts/cross-skill.mjs list-personas --url "<validated url>"
 ```
 
-Response shape:
-```json
-{"ok": true, "cloud": true|false, "rows": [/* persona_dashboard rows */]}
-```
-
-Render the roster. Sort: **never-tested first, then oldest last-tested**
-(surfaces who's most overdue):
-
-```
-PERSONA ROSTER — <app_name or url>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  <N> personas registered
-
-  NAME                      LAST TESTED    VERDICT        SESSIONS
-  ──────────────────────    ─────────────  ─────────────  ────────
-  Pieter (wine enthusiast)  3 days ago     Needs work     4
-  Sarah (first-time user)   12 days ago    Blocked        2
-  Admin (power user)        Never          —              0
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-SUGGESTION: Run Admin next — never tested. Then Sarah (12 days, last blocked).
-```
+Response `{"ok": true, "cloud": true|false, "rows": [/* persona_dashboard rows */]}`
+(graceful no-op when cloud is off). Render a `PERSONA ROSTER — <app_name or url>`
+table (NAME · LAST TESTED · VERDICT · SESSIONS) sorted **never-tested first,
+then oldest last-tested**, then one `SUGGESTION:` line naming who to run next.
 
 STOP — do not proceed to the test phases.
 
@@ -151,19 +136,9 @@ single-quoted shell argument:**
 cat .audit/add-persona.json | node scripts/cross-skill.mjs add-persona --stdin
 ```
 
-> **Why a file.** `name` and `description` are free text the user typed. An
-> apostrophe — *"Pieter's tasting notes"* — closes the surrounding `'…'` and the
-> rest of the value is handed to the shell as command text; the same input can
-> break the JSON quoting inside it. This is the identical class the ledger
-> writer already documents ("write it with the `Write` tool, never as a shell
-> string"), where the workaround people reached for was stripping apostrophes
-> out of their own prose to satisfy a quoting rule. A file has no shell in the
-> loop, so the value stays the value.
->
-> `--stdin` is the verified flag (probed 2026-09-02: it parses the payload and
-> reports validation errors, rather than refusing as unknown). Do not reach for
-> `--name`/`--description`/`--url` instead — those put the same free text back
-> on the command line and reintroduce exactly this defect.
+Do not substitute `--name`/`--description`/`--url` flags — they put the free
+text back on the command line. → `references/shell-safe-payloads.md` §ADD — read
+when asked why a file, or tempted to inline the strings.
 
 Response `{"ok": true, "cloud": ..., "personaId": ..., "existed": bool}`.
 Report success with `personaId`. STOP.
@@ -193,21 +168,15 @@ Required: `persona_input` + `url`. If either is missing, output usage and STOP.
 | `AUDIT_DB_URL` | Cloud store on — saves sessions, reads history, and (with a repo name) cross-references audit findings. One Postgres store backs every feature post-M4. |
 | `PERSONA_TEST_REPO_NAME` | Enables audit-loop cross-reference (`audit_link = true`) |
 
-**Do NOT read `AUDIT_DB_URL` from the Claude Code session's `process.env`.** The
-consumer repo's `.env` (and the shared `~/.audit-loop.env`) are not loaded into
-the session, so a bare env check reports false negatives — the var looks unset
-even when cloud is fully configured, and the session silently runs stateless.
-`cross-skill.mjs` resolves config itself (it loads `.env` + the shared file via
-`config.mjs`); the pre-flight probe must go through it rather than reading
-`process.env` directly.
-
-Run this probe from the consumer-repo root (the same cwd used for every
-`node scripts/cross-skill.mjs` call) — `whoami` reports the real cloud state
-via `isCloudEnabled()` (an actual pool-presence check, not an env guess):
+Do not read `AUDIT_DB_URL` from the session's `process.env` — the consumer's
+`.env` is not loaded there, so it reads unset and the run silently goes
+stateless. Probe through the CLI, from the consumer-repo root:
 
 ```bash
 node scripts/cross-skill.mjs whoami
 ```
+
+→ `references/run-loop-detail.md` §Pre-flight — read when the probe and the env disagree.
 
 Set `memory_enabled = .cloud` from the probe's JSON output. When `cloud`
 is false the skill runs in "stateless" mode — tests complete but nothing is
@@ -270,39 +239,21 @@ findings".
 Full contract — capability vocabulary, driver table, selection order, status
 evidence, Windows spawn caveats: `references/browser-tool-detection.md`.
 
-**If the target requires login for its primary surfaces** (not just an
-optional account page), check whether the MCP session is already
-authenticated (e.g., landing on a logged-in view instead of a login
-form) before assuming a login wall will block the run. If it isn't, and
-this is a repeat session against the same app, ask whether a
-`--storage-state` bootstrap has been set up for it — see
-`references/auth-bootstrap.md`. **Seed it before the MCP server
-connects**: `.mcp.json` is read once, at connect time, so running the
-seeding step mid-session writes a fresh token to disk that nobody
-re-reads — the browser keeps carrying whatever was on disk at connect,
-and with a short-lived token that run still hits a login wall later, even
-though setup looked fine. This is a **one-time per-session setup step**,
-not something to attempt mid-exploration. If a login wall does appear
-mid-run anyway, it may be that connect-time race rather than a broken
-bootstrap — see Phase 3's login-wall special case for the decision order
-that tells them apart before reporting anything.
+**Login-gated target** (primary surfaces behind login): first check whether
+the MCP session is already authenticated; if not and this is a repeat
+session, ask whether a `--storage-state` bootstrap exists. Seed it **before
+the MCP server connects** — `.mcp.json` is read once, so a mid-session seed is
+never re-read. → `references/run-loop-detail.md` §Phase 1 + `references/auth-bootstrap.md`
+— read when the target is login-gated.
 
 ---
 
 ## Phase 1a — Device Profile Resolution (required)
 
-A persona who describes themselves as "mobile-first" or "tablet user" must
-be tested in that viewport — otherwise responsive bugs, mobile-only CTAs,
-narrow-width overflow, and touch-target sizing are silently invisible.
-The resolver lives at [`scripts/lib/device-presets.mjs`](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/scripts/lib/device-presets.mjs)
-— it keyword-matches the persona's description against five presets
-(desktop, desktop-large, tablet, mobile, mobile-small) and falls back to
-desktop when no cue is present.
-
-### Step 1a.1 — Get the device contract (required)
-
 Skip ONLY when `browser_status = "degraded"` and the driver has no viewport concept.
 Otherwise, this is non-negotiable — the LLM does not pick the device.
+
+### Step 1a.1 — Get the device contract (required)
 
 Run from the consumer-repo root:
 
@@ -310,29 +261,14 @@ Run from the consumer-repo root:
 node scripts/lib/device-presets.mjs prep "the persona's description, or ad-hoc persona_input text"
 ```
 
-Add `--device PRESET` only when `$ARGUMENTS` contained an explicit override preset (see below).
-
-Pass `--device <preset>` only when `$ARGUMENTS` contained an explicit
+Add `--device PRESET` only when `$ARGUMENTS` contained an explicit override preset (Phase 0b item 4).
 
 <!-- host-contract: input-acquisition; grammar=subcommand; empty=default -->
 _This site: `subcommand` — no explicit `--device` means the device is resolved from the persona description, never guessed from context._
 
-`--device` flag (Phase 0b item 4). The CLI returns a JSON contract:
-
-```json
-{
-  "kind": "persona-test-prep",
-  "version": 1,
-  "device": { "name": "mobile", "viewport": {"width": 390, "height": 844}, "isMobile": true, "hasTouch": true, ... },
-  "expectedFirstMcpCall": { "tool": "browser_resize", "args": {"width": 390, "height": 844} },
-  "personaMentalModelTags": ["mobile-viewport", "thumb-reach", ...],
-  "logLine": "[device-profile] mobile-first → mobile (390x844, touch=true)"
-}
-```
-
-**Echo the `logLine` verbatim to stderr.** This is the audit trail — if
-the device choice is later questioned, the line in the transcript proves
-which preset was applied.
+The CLI returns a JSON contract (`device`, `expectedFirstMcpCall`,
+`personaMentalModelTags`, `logLine`). **Echo the `logLine` verbatim to stderr**
+— it is the audit trail of which preset was applied.
 
 ### Step 1a.2 — Execute `expectedFirstMcpCall` verbatim
 
@@ -341,64 +277,21 @@ Call `browser_resize` with the args from `expectedFirstMcpCall.args` —
 do not pick your own dimensions. If the contract said `{width: 390,
 height: 844}`, that's what you call.
 
-Resizing mid-session does not retroactively change media queries that
-fired on the initial render — order matters.
-
 ### Step 1a.3 — Apply `personaMentalModelTags` to Phase 2
 
-When `device.isMobile === true`, the contract's `personaMentalModelTags`
-array carries implicit constraints (`thumb-reach`, `one-handed`,
-`distracted-attention`, `slow-network-assumption`). Apply these to
-Phase 2's persona mental model **silently** — they shape Reflect
-scoring (downgrade desktop-hover findings, upgrade thumb-reach
-findings), but do NOT leak into Phase 5b's first-person persona voice.
-A real mobile user doesn't narrate "I'm on mobile so I…" — they just
-behave that way. The device is a runner-side fact, not persona dialogue.
+When `device.isMobile === true`, apply the tags to Phase 2's mental model
+**silently** — they shape Reflect scoring, never the Phase 5b persona voice.
 
-### Limits — what viewport-only emulation does NOT cover
-
-`browser_resize` (the per-call MCP tool used in Step 1a.2) changes only
-the visual viewport. It does **not**:
-
-- Inject a mobile user-agent at the network layer.
-- Fire real touch events — synthesised clicks may remain mouse events;
-  touch-only handlers (`touchstart` without `click` fallback) may not trigger.
-- Change `navigator.maxTouchPoints` or pointer-type media queries.
-- Apply device-pixel-ratio scaling that affects `@media (resolution: ...)`.
-
-**Note this is a per-tool-call limit, not a hard ceiling on the MCP
-session.** The Playwright MCP *server* itself accepts `--device <name>`,
-`--mobile`, and `--user-agent <string>` launch flags (`npx @playwright/mcp
---help`), which apply Playwright's real device descriptor (UA string, DPR,
-`hasTouch`) for the whole session via `.mcp.json` — a heavier, session-wide
-lever that doesn't require switching modes. It has real limits of its own,
-though: it's static once the server connects (can't switch devices between
-Plan→Act→Reflect steps, and pair mode's two personas share one connection —
-see "Pair-mode interaction" below), and whether the MCP's click/tap tool
-implementations actually dispatch genuine touch events under `hasTouch:
-true` is worth verifying empirically before relying on it, not assumed from
-the flag's existence.
-
-For per-step device switching, geolocation, or network throttling — or
-if the empirical check above shows synthesised events still aren't real —
-use `--mode consistency` (code-driven Playwright with launch context) and
-write a consistency canary instead.
-
-### Pair-mode interaction
-
-In `--pair` mode (Phase 7), each persona gets its own device resolution.
-Persona A may run in mobile while persona B runs in desktop — that's
-intentional cross-device coverage. The pair report (Step P5) records
-both devices in the header.
+→ `references/device-profile.md` — read when you need the full contract shape,
+the tag semantics, what viewport-only emulation does not cover (UA, touch
+events, DPR — use `--mode consistency` for those), or the pair-mode device rule.
 
 ---
 
 ## Phase 1b — Service-worker cache-bust (MANDATORY for own apps)
 
-Service workers silently serve stale bundles. A fix that *is* deployed
-appears to "not be deployed" because the SW handed the persona last week's
-JS. This was a real failure mode in wine-cellar-app — burned ~30min of
-verification before we realised. Always cache-bust before the first action.
+Service workers silently serve stale bundles, so a deployed fix reads as "not
+deployed". → `references/run-loop-detail.md` §Phase 1b.
 
 Skip when `browser_status = "degraded"` (no `evaluate` capability). Skip when
 the URL is a static-hosted page with no service worker (`*.github.io`, etc.).
@@ -478,13 +371,9 @@ file that serves that page; a finding without it correlates on its text alone.
 
 ### Stateful mission checklist (REQUIRED when the goal changes state)
 
-A persona goal that **creates, submits, approves, completes, or selects an
-item and hands it to another screen** is a stateful mission. Reaching the goal
-is not the same as verifying it: a run once read `Ready for users` with 0
-P0/P1, and a deeper run of the same app found two P1s — the handover opened a
-*different* item than the one selected before navigation, and a completed item
-vanished from its queue instead of showing as completed. Both were visible
-only by checking state across the boundary, not by reaching the end.
+A goal that **creates, submits, approves, completes, or selects an item and
+hands it to another screen** is a stateful mission: reaching the goal is not
+verifying it. → `references/run-loop-detail.md` §Phase 3 — the incident behind this.
 
 For a stateful mission, verify each of these six steps, by screenshot, and
 record which you could not:
@@ -516,9 +405,6 @@ exploring sideways — an unverified lifecycle caps the verdict (Phase 5).
 | `terminalReason` | **exhaustive, closed enum** — set once, when the loop stops: `goal-reached` / `step-budget-exhausted` / `abandonment-threshold-hit` / `auth-wall-blocked` / `tool-error` / `safety-refusal` |
 | `authState` | `n/a-no-auth-encountered` / `authenticated-via-bootstrap` / `auth-wall-untested` (the last aligns with `authWallUntested` below) |
 | `lifecycle` | `{status, unchecked}` from the stateful mission checklist above — `verified` / `partial` (+ the unchecked step ids) / `not-applicable` |
-
-Every field is a direct record of something this loop already decides — this
-adds recording discipline, not new judgement calls.
 
 **`severity` is load-bearing, not a label** — it must be the literal string
 `"P0"`, `"P1"`, `"P2"` or `"P3"`, and it is the field the auto-correlator
@@ -564,8 +450,6 @@ field disagree.
 > deterministic runner which owns Playwright directly. Skip Phases 1-3 and
 > Phases 4-6 above; consistency mode has its own flow below.
 
-Use this mode to detect cross-step UI/state contradictions (the engine says
-"infeasible" but a CTA says "Reorganise") against a registered canary journey.
 Authoritative spec: [docs/reference/consistency-contract.md](https://github.com/Lbstrydom/claude-engineering-skills/blob/main/docs/reference/consistency-contract.md).
 
 ### Step C1 — Validate inputs
@@ -581,14 +465,9 @@ node scripts/persona-consistency-run.mjs --canary CANARY_NAME --url "https://you
 
 Optional: `--out .persona-test/sessions/$SID.json` to write the session artifact to a specific path.
 
-The runner:
-1. Resolves `surfaces.json` from `.persona-test/` → `<repo-root>/` → `src/` (first match wins).
-2. Loads `.persona-test/canaries/<name>.json` and validates against `CanaryDefinitionSchema`.
-3. Drives Playwright through `canary.journeySteps[]` deterministically (no LLM in the loop).
-4. Captures `{surfaceClaims, networkClaims}` synchronously per step via `scripts/lib/ux-lock/capture.mjs`.
-5. Diffs DOM vs network ground truth via `scripts/lib/persona-test/consistency.mjs`.
-6. Emits candidate `regression_specs` rows for P1+ contradictions (fingerprint-upserted).
-7. Verifies the canary's `expectedContradictions` and decides the exit code.
+The runner resolves the manifest + canary, drives `canary.journeySteps[]` with
+no LLM in the loop, diffs DOM vs network ground truth, and checks
+`expectedContradictions`. → `references/consistency-runner-and-report.md` §What the runner does.
 
 ### Step C3 — Read the verdict from the exit code (do NOT parse stdout)
 
@@ -603,43 +482,15 @@ The runner:
 
 ### Step C4 — Report
 
-Render this fence to stdout:
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  CONSISTENCY MODE REPORT
-  Canary: <name>
-  URL: <url>
-  Verdict: <healthy | broken | partial | fatal | app-error>
-  Exit: <code>
-  Contradictions: <n>   Candidates emitted: <n>   Warnings: <n>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-FINDINGS
-────────────────────────────────────────────────────
-  [<severity>] <kind> at <surfaceId>.<engineField>
-     DOM:      <value>   (data-freshness="<freshness>")
-     Engine:   <value>
-     Selector: <selector>
-     Detail:   <one-line>
-  ...
-
-OVERALL: <one-line verdict>
-```
-
-Sort findings by severity (P0 first), tie-break by surfaceId. If the canary
-verdict is `broken`, lead with a one-line callout above the report:
-
-```
-⚠ RIG BROKEN — canary expected min:N contradictions, found M.
-  Manifest drift or attribute regression suspected — fix before next run.
-```
+Render the `CONSISTENCY MODE REPORT` fence (Canary, URL, Verdict, Exit,
+counts; FINDINGS sorted P0 first, tie-break by surfaceId; OVERALL). On a
+`broken` verdict, lead with the `⚠ RIG BROKEN` callout.
+→ `references/consistency-runner-and-report.md` §Report fence — read before rendering it.
 
 ### Step C5 — Skip the persona debrief
 
 Consistency mode does NOT produce a Phase 5b debrief. The exit code + the
-findings fence is the entire report. Don't generate first-person narrative
-— consistency mode is rig output, not persona perception.
+findings fence is the entire report — rig output, not persona perception.
 
 Full grammar + manifest schema + canary schema + flow details:
 [references/consistency-mode.md](references/consistency-mode.md).
@@ -658,20 +509,10 @@ Full grammar + manifest schema + canary schema + flow details:
 Confidence threshold: ≥0.6 to report, ≥0.7 for P0, ≥0.8 when calling a
 recurring P0 from history.
 
-**Gate-honesty rule for `authWallUntested`**: 0 P0 findings on an
-`authWallUntested` run means "0 P0s on the public shell", not "0 P0s on
-the app". OVERALL must never read `Ready for users` in this case — cap it
-at `Needs work` so a downstream consumer (`/cycle` Step 5) can't read this
-run as a clean pass on a surface it never reached. This mirrors click-test's
-rule that the OVERALL verdict caps at `Incomplete` when any route is
-`auth-required` — same failure mode, same fix. Phase 5's composed
-eligibility predicate is this rule generalised: `authState !==
-'auth-wall-untested'` is one of three independent conjuncts a run must
-satisfy to read `Ready for users`, because the loop continuing past an
-untested wall onto public pages can otherwise reach its goal and read
-`terminalReason: 'goal-reached'` while the wall is still untested — a
-single-field check on `terminalReason` alone would silently drop this
-exact guarantee.
+**`authWallUntested` rule**: 0 P0s on such a run means "0 P0s on the public
+shell", not on the app — OVERALL reads `Needs work` at best, never `Ready for
+users` (it is one conjunct of Phase 5's predicate).
+→ `references/run-loop-detail.md` §Phase 4 — read when the verdict is contested.
 
 ---
 
@@ -737,21 +578,9 @@ then lists the unchecked steps. The cap is enforced in code too:
 whose payload fails any conjunct — including a MISSING `lifecycle`, which is
 unreported, not verified — and says so in the response's `verdictCap`.
 
-Any failing conjunct caps OVERALL at `Needs work`, and the Reason line names
-**every** failing conjunct (a run can fail more than one). This generalises
-the pre-existing `authWallUntested` cap as one named conjunct rather than a
-special case beside it — a session can hit an untested auth wall, continue
-exploring public surfaces (per the Special Cases rule below), and still end
-`terminalReason: 'goal-reached'`; checking `terminalReason` alone would
-silently clear that run as Ready even though its primary authenticated
-surfaces were never covered. Example:
-
-```
-OVERALL: Needs work
-  Reason: authState=auth-wall-untested — primary authenticated surfaces
-          untested — login wall hit, no auth bootstrap configured
-          (see references/auth-bootstrap.md).
-```
+Any failing conjunct → OVERALL `Needs work`, and the Reason line names
+**every** failing conjunct. → `references/run-loop-detail.md` §Phase 5 — why
+`terminalReason` alone is not enough, plus a worked Reason line.
 
 If `audit_link = true` and Phase 0d candidates match the persona findings,
 append an **AUDIT CORRELATIONS** section mapping each P0/P1 to a possible
@@ -776,12 +605,8 @@ Full tone rules, structure, and wrapper: `references/persona-debrief-format.md`.
 
 Skip if `memory_enabled = false`. Output `[Session not saved — memory disabled]` and stop.
 
-**Do NOT build a session ID yourself.** Omit `sessionId` and the CLI mints a
-collision-resistant one (`buildPersonaSessionId` — unix seconds + a
-`crypto.randomUUID()` suffix) and returns it as `sessionKey`. The old hand-built
-`persona-test-<unix timestamp>` shape collided across repos in the same second
-and silently overwrote the other repo's session. Pass `sessionId` explicitly
-ONLY to re-post an existing session (it is the idempotency key).
+Omit `sessionId` — the CLI mints a collision-resistant one and returns it as
+`sessionKey`; pass `sessionId` only to re-post an existing session.
 
 Record the session + trigger secondary persona stats update in one call:
 
@@ -812,10 +637,8 @@ node scripts/cross-skill.mjs record-persona-session --json '{
 
 ### Building `clickPath` (reachability evidence for `/nav-audit`)
 
-Across the Plan → **Act** → Reflect loop, accumulate **one entry per Act step** that
-*moved or activated something* (click / navigate / open / submit) — this is the
-path the persona actually reached, which `/nav-audit --bootstrap` seeds its contract
-from. Each entry:
+One entry per Act step that *moved or activated something* (click / navigate /
+open / submit):
 
 ```json
 { "step": <1-based step number>,
@@ -824,26 +647,15 @@ from. Each entry:
   "targetText": "<visible label of the control you acted on, ≤80 chars, or null>" }
 ```
 
-- **NEVER include typed input values.** `targetText` is the control's *visible
-  label* (e.g. "Add bottle", "Cellar"), never what you typed. The store rejects any
-  entry carrying a `value`/`input` key and sanitizes the URL + redacts `targetText`
-  server-side — but don't send secrets in the first place.
-- Omit the field entirely (don't send `[]`) if you didn't track a path — re-posting
-  a session with `clickPath` omitted preserves any path already recorded.
-- The store caps the stored path at 40 steps and drops malformed entries; you don't
-  need to pre-trim, but keep it to the meaningful navigation steps.
+`targetText` is the control's visible label — typed input values stay out of
+the payload. Omit the field (not `[]`) if you tracked no path.
+→ `references/session-save-detail.md` §clickPath edges.
 
-Response `{"ok": true, "cloud": ..., "sessionId": "<uuid>", "sessionKey":
-"<persona-test-…>", "existed": bool, "statsUpdated": bool, "statsReason": ...,
-"correlationSummary": {...}, "verdictCap"?: {...}}`. `sessionId` is the row's uuid PK — that is the
-one later phases pass as `personaSessionId`. `sessionKey` is the minted
-`session_id` text, needed only to re-post this same session.
-If `statsUpdated: false`, the session is preserved but the persona's
-`last_tested_at`/`last_verdict` were NOT updated, and `statsReason` says why:
-`no-persona-id` (an ad-hoc persona not in the registry — pass the registered
-id when one exists), `stats-write-failed` (the update threw; see stderr), or
-the rare `persona-not-found` (the persona was deleted mid-run). No reconciler
-back-fills these fields; do not report them as self-healing.
+**Response** — keep `sessionId` (the row uuid; later phases pass it as
+`personaSessionId`), not `sessionKey`. `statsUpdated: false` means the
+persona's `last_tested_at`/`last_verdict` were not updated — report
+`statsReason` (`no-persona-id` / `stats-write-failed` / `persona-not-found`);
+nothing back-fills them. → `references/session-save-detail.md` §Response fields.
 
 If `verdictCap` is present, the store did NOT record the verdict you claimed:
 `{"claimed": "Ready for users", "stored": "Needs work", "blockers": [...],
@@ -854,38 +666,15 @@ the stored session must never disagree.
 
 ## Phase 6b — Verify the Correlation Summary (automatic — do NOT re-emit)
 
-**As of 2026-07-13 this step is deterministic, not agent-discretionary.**
-`record-persona-session` (Phase 6) runs the correlator automatically —
-immediately after the session commits, matching every P0/P1 finding against
-recent audit findings for the repo and writing `persona_audit_correlations`
-rows itself. There is nothing to emit here; **do not call `record-correlation`
-per finding** — that CLI now exists only for manual repair (see below), and
-calling it redundantly for a finding the auto-correlator already wrote will
-just leave a second, identical row (or, for a genuinely different
-`auditFindingId`, a legitimate additional manual correlation — see the
-schema's multi-row-per-pair note in `references/audit-correlation.md`).
+`record-persona-session` (Phase 6) runs the correlator itself and writes the
+`persona_audit_correlations` rows. **Do not call `record-correlation` per
+finding** — it exists only for manual repair (below).
+→ `references/session-save-detail.md` §Phase 6b.
 
 Your only job this phase: **read `correlationSummary` from the Phase 6
-response and report it** (echo the counts into the session's debrief/report —
-this is the visibility the mechanism depends on). Shape:
-
-```json
-{
-  "attempted": true,
-  "reason": null,
-  "candidates": 4,
-  "route": 1, "fuzzy": 1, "missed": 1,
-  "skippedExisting": 0,
-  "malformed": 0,
-  "writeFailed": 0,
-  "matcherVersion": 2
-}
-```
-
-`route` counts matches whose file axis came from the finding's page URL naming
-the audited file (`/score_entry` ↔ `2_score_entry.py`); `fuzzy` counts
-matches on path/keyword token overlap alone. There is no `exact` tier since
-matcher v2 — it compared two identities that could never be equal.
+response and report it** (echo the counts — `candidates`, `route`, `fuzzy`,
+`missed`, `skippedExisting`, `malformed`, `writeFailed` — into the report).
+→ `references/session-save-detail.md` §correlationSummary — read when a field's meaning is unclear.
 
 `attempted: false` means the correlator didn't run at all — `reason` says why
 (`disabled-by-flag`, `no-repo-identity`, `no-p0p1-findings`,
@@ -897,44 +686,26 @@ correlated. Fix the payload and re-post — every finding needs `severity`
 (`no-candidate-runs`, `candidate-read-failed`, `existence-check-failed`) means
 it tried but couldn't compare against anything real — in BOTH cases, **zero
 correlation rows were written**, which is correct (an empty candidate set is
-not evidence of an audit miss — never treat it as one). `malformed > 0` means
-some P0/P1 findings were missing `element`/`observed` and were quarantined —
-never hashed or matched (a missing-field finding degrading to a shared empty
-identity would collide with every other malformed finding, corrupting ground
-truth — quarantine is correct, not a bug). `writeFailed > 0` is the one state
+not evidence of an audit miss — never treat it as one). `malformed > 0`
+(findings missing `element`/`observed`) were quarantined, correctly.
+`writeFailed > 0` is the one state
 worth flagging loudly in the debrief (a real DB write failed for some
 findings; already logged to stderr by the correlator).
 
 ### Manual repair — only for genuine corrections
 
 Use `record-correlation` **only** to:
-1. **Repair a false auto-emitted `audit_missed`** into a real match (the
-   auto-correlator's keyword matcher has real recall limits — a paraphrased
-   symptom description can miss a real audit finding it should have
-   matched). The store automatically retires the stale `audit_missed` row
-   when you supply a real `auditFindingId` — you never need to clean it up
-   yourself.
-2. **Emit `audit_false_positive` or `severity_overstated`** — these require
-   human judgment (a flagged issue that couldn't be reproduced) and are
-   never auto-emitted.
+1. **Repair a false auto-emitted `audit_missed`** into a real match (supplying
+   a real `auditFindingId` retires the stale row automatically).
+2. **Emit `audit_false_positive` or `severity_overstated`** — human-judgment
+   types, never auto-emitted.
 
-The finding-hash contract is unchanged in spirit but the ALGORITHM changed
-(2026-07-13): `personaFindingHash()` now lives in
-`scripts/lib/persona/audit-correlator.mjs` — see the updated formula in
-`references/audit-correlation.md` (the old `sha256(element+observed+code)`
-inline formula is retired; compute it the same way the auto-correlator does
-so a manual repair's hash matches the auto-emitted row it's correcting).
-
-**When one of the two repair cases above applies, run exactly one command per
-finding being corrected** (canonical contract, so the hash matches the audit
-side byte-for-byte — `personaFindingHash()` is the single source). **Never
-inline free text into a shell-quoted `--json '...'` string** — `matchRationale`
-and other text fields come from model-composed or persona-observed prose that
-can contain quotes or shell metacharacters. Always write the payload to a JSON file with the **Write tool** — never a
-shell heredoc (same convention as the `add-persona` recipe above) — and pipe
-it via `--stdin` (same convention as `/brainstorm`). Session artifacts live
-under `.audit/`, never `/tmp/` (the two disagree on Windows — see the `.audit/`
-vs `/tmp/` note elsewhere in this repo):
+Compute `personaFindingHash()` the same way the auto-correlator does
+(`references/audit-correlation.md`) so the repair matches the row it corrects.
+**When one of the two repair cases applies, run exactly one command per
+finding being corrected** — payload via a Write-tool file under `.audit/`
+piped on `--stdin`, not a shell-quoted `--json` string or heredoc
+(`references/shell-safe-payloads.md` §Manual correlation repair):
 
 1. Write `.audit/correlation-repair.json` with the Write tool:
    ```json
@@ -954,16 +725,9 @@ vs `/tmp/` note elsewhere in this repo):
    cat .audit/correlation-repair.json | node scripts/cross-skill.mjs record-correlation --stdin
    ```
 
-- Idempotent: the writer dedupes on `(persona_session_id, persona_finding_hash,
-  audit_finding_id)`, so re-running is safe. Supplying a real `auditFindingId`
-  for a hash that previously auto-emitted `audit_missed` automatically retires
-  that stale NULL-match row — no separate cleanup step.
-- Do **not** loop this over every P0/P1 finding — the automatic correlator
-  (Phase 6) already covers the normal case. Only run this for a finding that
-  needs one of the two repair cases above.
-
-Full classification rules + reverse-direction (audit false positives) protocol:
-`references/audit-correlation.md`.
+Idempotent (dedupes on session + hash + audit finding). Do **not** loop this
+over every P0/P1 finding. → `references/session-save-detail.md` §Manual repair,
+and `references/audit-correlation.md` for the classification rules.
 
 ---
 
@@ -987,11 +751,7 @@ _This site: `subcommand` — absence of `--pair` is a normal single-persona run 
 
 0b–6c above and follow the flow below.
 
-**Why pair mode exists**: two personas of opposed expertise surface disjoint
-findings — in the wine-cellar-app session that motivated this feature,
-Elena (sommelier) and Martha (newer drinker) overlapped on exactly 1 of
-~12 findings. Solo runs miss half the issues an opposed-expertise pair
-catches. Pair mode formalises that.
+Two opposed personas surface disjoint findings. → `references/pair-mode.md` §Why.
 
 ### Step P1 — Parse pair arguments
 
@@ -1009,7 +769,8 @@ Required: both personas + url. If missing, output usage and STOP.
 
 ### Step P2 — Run persona A end-to-end
 
-Run **Phases 0c → 6c** for persona A as if it were a solo run. Capture:
+Run **Phases 0c → 6c** for persona A as if it were a solo run (its own Phase 1a
+device resolution). Capture:
 - `report_a` (Phase 5 report text)
 - `findings_a` (the structured findings array used in Phase 5)
 - `verdict_a`
@@ -1039,46 +800,10 @@ Classify each finding into:
 
 ### Step P5 — Emit pair report
 
-After both solo reports (printed in full so the reader sees per-persona
-context), append:
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  PAIR DIFF — <persona_a> ∥ <persona_b>
-  URL: <url>
-  Focus: <focus or "exploratory">
-  A device: <preset_a> <WxH>   B device: <preset_b> <WxH>
-  A verdict: <verdict_a>   B verdict: <verdict_b>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-CONSENSUS (<n>) — both personas saw these
-────────────────────────────────────────────────────
-  [P<n>] <title>
-     A's framing: <observed_a — first 80 chars>
-     B's framing: <observed_b — first 80 chars>
-     Fix: <merged fix or A's if identical>
-
-A-ONLY (<n>) — caught by <persona_a>'s expertise
-────────────────────────────────────────────────────
-  [P<n>] <title> — <observed_a — first 100 chars>
-  ...
-
-B-ONLY (<n>) — caught by <persona_b>'s expertise
-────────────────────────────────────────────────────
-  [P<n>] <title> — <observed_b — first 100 chars>
-  ...
-
-COVERAGE METRIC
-────────────────────────────────────────────────────
-  Overlap rate: <consensus / (consensus + a_only + b_only)>
-  Interpretation:
-    < 0.20  — Strong disjoint coverage. Both personas were the right call.
-    0.20–0.50 — Healthy mix of consensus + coverage.
-    > 0.50 — High overlap. Consider picking more dissimilar personas next time.
-
-OVERALL: <Ready for users | Needs work | Blocked>
-  Reason: <one sentence — the WORSE of verdict_a and verdict_b>
-```
+Print both solo reports in full, then the `PAIR DIFF` fence (both devices and
+verdicts in the header; CONSENSUS / A-ONLY / B-ONLY; overlap rate
+`consensus / (consensus + a_only + b_only)`). → `references/pair-mode.md`
+§Step P5 — read before rendering it.
 
 OVERALL uses the solo vocabulary, and is the worse of the two solo verdicts
 (`Blocked` > `Needs work` > `Ready for users`): the pair is ready for users
@@ -1087,9 +812,7 @@ lifecycle conjunct.
 
 ### Step P6 — Skip the secondary debrief
 
-Each solo run already produced a Phase 5b debrief. Don't generate a third
-"pair debrief" — the two debriefs side-by-side are the artefact. Pair mode
-is about finding-level diff, not narrative synthesis.
+Each solo run already produced a Phase 5b debrief; do not write a pair debrief.
 
 ### Step P7 — Session linkage
 
@@ -1107,24 +830,17 @@ node scripts/cross-skill.mjs link-persona-pair --json '{
 }'
 ```
 
-`overlapRate` is optional — the CLI derives it from the three counts and
-REFUSES a supplied value that disagrees with them, so send the counts you
-printed in Step P5. Response `{"ok": true, "cloud": true, "pairId": "<uuid>",
-"overlapRate": <n>}`. A refusal exits 1 with a code naming it:
-`PARENT_NOT_FOUND` (a session id matches no row) or `PARENT_NOT_OWNED` (the
-sessions belong to different repos, or not to this one). With the cloud store
-off it returns `{"ok": true, "cloud": false, "pairId": null}` — say in the
-report that the pairing was not persisted rather than implying it was.
+Send the counts you printed in Step P5 (`overlapRate` is optional and refused
+if it disagrees). A refusal exits 1 naming `PARENT_NOT_FOUND` or
+`PARENT_NOT_OWNED`. With the cloud store off (`"cloud": false, "pairId": null`)
+say in the report that the pairing was not persisted.
+→ `references/pair-mode.md` §Step P7.
 
 ---
 
 ## Reminders
 
 - **You are the persona** — every click and judgement from their perspective
-- **Plan before every action** — impulsive clicking misses the persona's flow
-- **Reflect after every screenshot** — that's where findings are born
-- **Confidence <0.6 = don't report** — uncertainty is noise
-- **Screenshot every step** — never analyse what you cannot see
 - **Be specific** — "button looks bad" is useless; "CTA [7] has no hover state on mobile 390px" is actionable
 - **The verdict matters** — it drives whether the user ships or fixes
 
@@ -1143,8 +859,16 @@ situations — read them only when the trigger applies.
 | `references/auth-bootstrap.md` | Sanctioned auth-gated exploratory-testing pattern via MCP-server storageState, plus its connect-time-race escape hatch. | Phase 1 detects a login-gated target, OR Phase 3 hits a login wall (bootstrap configured or not). |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Phase 3 Record step / Phase 5 — rendering the COVERAGE block, to apply §7's reciprocal warning (it renders only from the session work-record). |
 | `references/consistency-mode.md` | Full consistency-mode grammar, manifest schema, canary schema, runner exit codes, contradiction kinds. | Phase 3b runs (i.e., `--mode consistency` was passed) and you need the full grammar reference; OR the user asks how the rig decides severity / coercion / negative-space. |
+| `references/consistency-runner-and-report.md` | Consistency-mode runner steps (Step C2) and the Step C4 report fence, including the RIG BROKEN callout. | Phase 3b — about to run the consistency runner (Step C2) or render its report (Step C4). |
 | `references/persona-debrief-format.md` | Full persona debrief generation rules, tone guide, and output wrapper. | About to write the Phase 5b debrief. |
 | `references/session-history.md` | Post-session history readback — recurring-issue surface + cross-session pattern detection. | Phase 6c runs AND Supabase is configured. |
 | `references/interop.md` | How persona-test interacts with /ship, /plan, and /audit-code/audit-plan — integration contracts. | User asks about cross-skill effects, OR a sibling skill needs to reference persona-test data. |
+| `references/shell-safe-payloads.md` | Why ADD and record-correlation payloads go through a Write-tool file on stdin, never a shell-quoted --json string. | Running `add` or a Phase 6b manual repair and tempted to inline the strings, OR asked why a file is used. |
+| `references/device-profile.md` | Phase 1a detail — device prep contract shape, mobile tag semantics, viewport-only limits, MCP launch flags, pair mode. | Phase 1a — the prep contract is unclear, a touch/UA/DPR bug is suspected, OR a pair run resolves two devices. |
+| `references/run-loop-detail.md` | Why the run-loop rules exist — cloud probe, auth at connect, cache-bust, stateful missions, Ready-for-users. | The cloud probe disagrees with env, the target is login-gated, OR a capped verdict is contested. |
+| `references/session-save-detail.md` | Phase 6/6b detail — session-id minting, clickPath edges, response fields, correlationSummary, manual repair. | Phase 6/6b — a response field (statsReason, correlationSummary count) is unclear, OR a manual repair is needed. |
+| `references/pair-mode.md` | Pair mode detail — why opposed personas, the Step P5 PAIR DIFF fence, overlap interpretation, Step P7 responses. | `--pair` was passed — before rendering Step P5, OR Step P7 returned a refusal. |
 | `examples/report-and-debrief.md` | Sample full persona-test output — structured report + debrief fences and example content. | About to emit Phase 5 + 5b output and unsure of the exact fence format. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
+
+— end of /persona-test —

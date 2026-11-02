@@ -91,6 +91,26 @@
     {
       "line": "an unmet dependency is reported, never blocked on, since only the operator",
       "reason": "A NEGATIVE guarantee (an absence of blocking) — same disposition class as cycle's 'Exit is always 0 ... never blocks' entry above and ship/step-0-5-gates-non-blocking: a claim about what the agent does with the tool's output, not a /plan exit code."
+    },
+    {
+      "line": "(→ `references/context-callouts.md` §Phase 1 — read when rendering that block). Treat P0/P1 matches as HIGH priority in the design.",
+      "reason": "Cluster B slim (2026-11-02): pointer to the moved render template. 'block' is the rendered markdown block; an authoring instruction, not a /plan exit code."
+    },
+    {
+      "line": "→ `references/authoring-rationale.md` §Phase 5 — right-sizing gate — read when the three lines feel like ceremony.",
+      "reason": "Cluster B slim (2026-11-02): pointer naming the reference section 'right-sizing gate' (an authoring forcing-question, not a mechanical gate)."
+    },
+    {
+      "line": "(a4ec98da)`. Cite append-newest-first files by section header, never by",
+      "reason": "Cluster B slim (2026-11-02) rewrap of the already-dispositioned Code-Trace citation-form line ('when written). Cite append-newest-first ...'); same rule, same disposition: a property of the produced markdown, no lint-a-markdown oracle."
+    },
+    {
+      "line": "> scope from plan *words* and reviews the wrong code. **Never invent file",
+      "reason": "Cluster B slim (2026-11-02) condensation of the §7b repo-relative-paths callout (measurement moved to references/authoring-rationale.md). The 'never invent file references' rule is an authoring instruction; the self-check is report-only, exit 0, as already dispositioned."
+    },
+    {
+      "line": "> references to clear the threshold** — qualify the paths you genuinely touch.",
+      "reason": "Continuation of the same callout sentence. 'threshold' is FUZZY_DISCOVERY_THRESHOLD in plan-paths.mjs, which /plan does not enforce — the report-only self-check exits 0 by design."
     }
   ]
 }

@@ -1,5 +1,5 @@
 ---
-summary: Why the arch-map and dashboard pages are Category A, and deleted-step history for 0.5c/0.5d.
+summary: Why the arch-map and dashboard pages are Category A, 0.5c's failure-mode matrix, and 0.5c/0.5d history.
 ---
 
 # Architecture-memory and dashboard refresh — design rationale
@@ -44,3 +44,45 @@ active/completed split. Plans no longer move (Step 5.5), so nothing can
 change between the two points and Step 5.5b was deleted along with the
 archiver — but this note outlived it and still said "if you only run one,
 run 5.5b", naming a step that does not exist.
+
+## 0.5c — failure-mode matrix (every row: the ship continues)
+
+**This step is ALWAYS advisory — it never blocks a ship.** Verified against
+the current `pg`-direct implementation (`scripts/lib/db/client.mjs`'s
+`resolveDbUrl()` and `scripts/symbol-index/refresh.mjs`) — the
+`SERVICE_ROLE_REQUIRED` / RPC vocabulary below predates the postgres-parity
+migration and no longer matches the code:
+
+- Cloud off (no `AUDIT_DB_URL`, and no legacy `SUPABASE_AUDIT_*` set) →
+  skip silently, ship continues.
+- Legacy-only `SUPABASE_AUDIT_*` present without `AUDIT_DB_URL` → `resolveDbUrl()`
+  throws (swallowed by this step's `|| true`), ship continues but the refresh
+  does not run.
+- Non-JS/TS stack → skips silently (`reason: 'unsupported-stack'`), exit 0,
+  ship continues.
+- HEAD not on the default branch (a feature branch, or detached at a commit
+  the default branch does not contain) → skips (`reason: 'not-default-branch'`),
+  status 0, ship continues. Deliberate: the next incremental refresh anchors on the
+  active snapshot, so only the default branch may publish one. The local map then
+  renders the default branch's snapshot.
+- Any other failure (DB error, embedding-provider error, repo-registration
+  or refresh-lock conflict) → `refresh.mjs` exits 1 or 2 and writes a message
+  to stderr; this step's own `|| true` swallows the non-zero exit so the ship
+  is never blocked, but the stderr line still prints — read it if the local
+  map looks stale.
+- Incremental refresh uses `git diff --name-status <since>`
+  (NO `..HEAD`) UNION `git ls-files --others --exclude-standard` so
+  the working-tree edits about to be committed are visible
+  (per Gemini-G1 fix).
+
+## 0.5d — building the dashboard in a consumer
+
+Skip silently in consumer repos — the dashboard is opt-in and unwired there
+(the sync never adds npm scripts), so a consumer runs it by path and gets
+gitignored pages under its own `dashboard/`:
+
+```bash
+node scripts/build-dashboard.mjs all         # reference + telemetry
+node scripts/build-dashboard.mjs serve       # build, then serve locally
+node scripts/build-dashboard.mjs --help      # every mode and flag
+```

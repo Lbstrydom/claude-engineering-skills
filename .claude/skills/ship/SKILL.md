@@ -16,14 +16,14 @@ disable-model-invocation: true
 
 # Ship: Sync Docs → Commit → Push
 
+> **This skill's last line is an end marker naming the skill between em-dashes, after
+> the Reference files table.** If that last line is not in your context (context
+> compaction keeps only the start of a skill), re-read
+> `.claude/skills/ship/SKILL.md` in full before continuing — the later steps still apply.
+
 > **Explicit invocation only — this is a host-neutral requirement, not just a
-> frontmatter flag.** `disable-model-invocation: true` above enforces it in
-> Claude Code, and **also in VS Code Copilot**, which reads `.claude/skills/`
-> and honours that exact key (it is a documented Copilot frontmatter field, not
-> a Claude-only one — verified against VS Code's Agent Skills docs 2026-09-02).
-> Hosts outside those two are not guaranteed to, and a frontmatter key cannot
-> explain *why* anyway, so the rule is stated here too, where every host reads
-> it:
+> frontmatter flag.** `disable-model-invocation: true` enforces it in Claude Code
+> and VS Code Copilot; other hosts are not guaranteed to, so it is stated here too:
 >
 > **Do not start this skill because a message sounded like approval.** Start it
 > only when the user asked, in their own words this turn, for their work to be
@@ -31,13 +31,10 @@ disable-model-invocation: true
 > design is assent to the *idea*, not an instruction to push — answer it by
 > offering `/ship`, never by running it.
 >
-> Why the bar is here and not on the individual steps: every step below skips
-> confirmation deliberately, and the thing that makes that safe is the user
-> having chosen to run this. Self-invoke and the approval those steps rely on
-> was never given — the skill would be citing its own execution as consent.
-> A push to a shared branch is also the least reversible action in this
-> bundle, and in this repo the working tree is shared with concurrent
-> sessions.
+> Every step below skips confirmation because the user chose to run this; a
+> self-invoked run would cite its own execution as consent.
+> → `references/flow-rationale.md` §Explicit invocation — read when deciding
+> whether a message is an invocation, or before changing this rule.
 
 A single command that ensures all project documentation is current, then
 commits and pushes. Follow every step in order.
@@ -54,7 +51,7 @@ commits and pushes. Follow every step in order.
 | `/ship --train [--waive n,…] [--allow-unaudited n,…] [--end-of-day]` | land a batch of ship-ready PRs in one action (see **Train mode**) |
 
 The three override flags are honoured only when the **user** passes them; see
-Step 3's override handling. Never add one on the skill's own initiative to get
+Step 0.5f's override handling. Never add one on the skill's own initiative to get
 past a red gate — that is the gate working.
 
 **Arguments**: `$ARGUMENTS` — optional path to a plan file to update
@@ -108,7 +105,10 @@ Python framework (if detected) shapes status.md section titles — see
 ## Step 0.5 — Pre-Ship Gate Queries (non-blocking by default)
 
 Collect signals before proceeding so the ship_event emitted at the end
-is accurate. Best-effort — if a query fails, log and proceed.
+is accurate. Best-effort — if a query fails, log and proceed. Sub-step order:
+`0.5a → 0.5b → 0.5e → 0.5g → 0.5h → 0.5i → 0.5f`, then the H2 Steps 0.5c and 0.5d.
+Incident history behind every rule below: `references/pre-ship-gate-queries.md`
+— read when debugging a nudge's behaviour, or before changing one.
 
 ### 0.5a — Recent persona-test P0s for this repo
 
@@ -186,15 +186,11 @@ was measured* (`reason: repo-identity-unresolvable` / `cloud-off`) — the zeroe
 are "not applicable", **not** "no obligations". Report it as unmeasured; never
 render it as a clean backlog.
 
-**Watch `agedOut` — it should be 0.** The 14-day window stays the default (an
-unbounded ship-time nudge becomes noise), split into what it dropped:
-- **`agedOut`** — expired while a locking practice was live. A real leak;
-  non-zero means obligations are being discharged by delay.
-- **`prePractice`** — expired before this repo's first lock (`practiceStart`).
-  Not an obligation — a repo that has never locked anything reports `agedOut: 0`.
-
-Read past the window with `--all-ages`; `total`/`byMode` then describe the
-unwindowed set:
+**Watch `agedOut` — it should be 0**: non-zero means obligations expired from the
+14-day window while a locking practice was live (a real leak). `prePractice`
+expired before this repo's first lock (`practiceStart`) — not an obligation. Read
+past the window with `--all-ages`; `total`/`byMode` then describe the unwindowed
+set:
 
 ```bash
 node scripts/cross-skill.mjs list-unlocked-fixes --all-ages
@@ -206,10 +202,8 @@ unresolvable one reports `measured:false` rather than an authoritative empty
 backlog.
 
 **Use `byMode.code` as `missing_spec_count` — NOT `rows.length`.** `rows` is
-capped at 20. `byMode.plan` findings have a section reference, not a file —
-**no lock of any kind can ever exist for them** — so a single mixed total
-makes part of the backlog read as work that cannot be done. `byMode` counts by
-what a row IS (`primary_file`'s shape), not by which run recorded it.
+capped at 20, and `byMode.plan` rows are section references for which **no lock
+of any kind can ever exist**.
 
 **`danglingLocks` — a recorded lock whose test file is no longer there.**
 `count: null` means the question went unasked (cloud off, unresolved repo, a
@@ -242,11 +236,12 @@ the former. Judge each row by `primary_file` before suggesting a fix, if
     node scripts/cross-skill.mjs lock-with-test --worksheet
   (reviewed queue; read the test before locking — a same-named file is not
   proof of coverage, and the writer refuses a missing path or empty rationale).
-  UI/DOM-facing fix → /ux-lock. Note it has a documented bad record on React
-  surfaces (wine-cellar-app 2026-07: generated specs proved brittle, several
-  reverted, root cause undiagnosed) — prefer a unit test there too unless the
-  contract genuinely needs a live DOM.
+  UI/DOM-facing fix → /ux-lock; on React surfaces prefer a unit test unless
+  the contract genuinely needs a live DOM.
 ```
+
+(The React caveat's history → `references/flow-rationale.md` §0.5b — read when
+deciding whether /ux-lock fits a React surface.)
 
 If `agedOutByMode.code > 0`, print it too — lead with the CODE split, not the
 mixed `agedOut` total (a plan row can never be locked, so it is never a lost
@@ -311,19 +306,12 @@ agedOutBySeverity:{HIGH,MEDIUM}, notYetDue, prePractice, practiceStart}`.
 `measured:false` means *nothing was measured*; an empty `rows` then means "not
 applicable", **not** "no unremediated acceptances".
 
-**Two bounds, and only one of them forgets** — both present as "not shown",
-opposite states:
-- **`notYetDue`** — under the 7-day maturity floor. In flight, not forgotten.
-  **Never add this to `agedOut`, and never report it as a backlog** — mention
-  it only if `total` is 0 and `notYetDue` is not, where it is the difference
-  between "nothing owed" and "nothing owed *yet*".
-- **`agedOut`** — over the 30-day ceiling, accepted after `practiceStart`. A
-  real leak: never shown again.
-- **`prePractice`** — over the ceiling but older than `practiceStart`. Not an
-  obligation this repo ever had.
-
-`--all-ages` drops both bounds; `total`/`byMode` then describe the unwindowed
-set:
+**Two bounds, and only one of them forgets**: `notYetDue` (under the 7-day
+floor) is in flight — **never add it to `agedOut`, never report it as a
+backlog**; mention it only if `total` is 0 and `notYetDue` is not. `agedOut`
+(over the 30-day ceiling, after `practiceStart`) is a real leak. `prePractice`
+is not an obligation. `--all-ages` drops both bounds; `total`/`byMode` then
+describe the unwindowed set:
 
 ```bash
 node scripts/cross-skill.mjs list-unremediated-acceptances --all-ages
@@ -332,33 +320,20 @@ node scripts/cross-skill.mjs list-unremediated-acceptances --all-ages
 **Use `byMode.total` as `unremediated_count` — NEVER `rows.length`** (capped
 at 20). `byMode.plan` rows depend on the plan's status:
 - **Plan still in flight** → real work; treat it as an obligation.
-- **Plan marked Complete** → the obligation is to edit a shipped design
-  document — close to worthless. Write the class off with the reasoning on
-  the record rather than let it sit as a permanent count.
+- **Plan marked Complete** → write the class off: record it as `dismissed`
+  (the store has no "written off" state) with the real reasoning in
+  `status.md`. A write-off covers the *document* obligation only.
 
-Write-offs cover the *document* obligation only — a code-level defect the
-ambiguity may have produced is a separate code finding, raised by code
-audits. The store has no "written off" state, so record a class write-off as
-`dismissed` and put the real reasoning in `status.md`.
-
-One step EARLIER in the lifecycle than 0.5b: `unlocked_fixes` asks *"this was
-fixed — is the fix locked?"*; this asks *"this was accepted — was it ever
-fixed at all?"*. The `unremediated_acceptances` view lists HIGH/MEDIUM findings
-whose `adjudication_outcome` is `accepted`/`severity_adjusted` but whose
-`remediation_state` is still NULL/`pending`/`planned` after 7+ days —
-`accepted` is not evidence of a fix, and no other mechanism re-raises these
-(audits default to `--scope diff`, so a finding is re-raised only if a later
-audit happens to cover the same file). **That cuts both ways** — a row can
-also be already fixed with nobody having written it down. Treat each row as a
+`accepted` is not evidence of a fix, and a row can also be already fixed with
+nobody having written it down. Treat each row as a
 hypothesis about current code, verify it, then close it in the right
 direction (`--state fixed` or a dismissal) rather than assuming either.
 
 If `> 0`, print — never blocks, no override flag. **Show the first 5 rows as
 returned** (HIGH first, then oldest first — do not re-sort). To read past the
-default 20-row page, pass the payload's `nextCursor` back as `--after` — a
-keyset cursor, so closing rows between reads neither repeats nor skips one
-(`--offset` counts positions in a set your closes just shrank, so it skips one
-unread row per row closed). `nextCursor: null` is the end:
+default 20-row page, pass the payload's `nextCursor` back as `--after` (a keyset
+cursor — never `--offset`); `nextCursor: null` is the end
+(→ `references/flow-rationale.md` §0.5e — read when paging while closing rows):
 
 ```bash
 node scripts/cross-skill.mjs list-unremediated-acceptances --limit 20 --after eyJ2IjoxLCJraW5kIjoidW5yZW1lZGlhdGVkIiwic2V2ZXJpdHlSYW5rIjowLCJhY2NlcHRlZEF0IjoiMjAyNi0wOS0xMyAxMDowMDowMC4wMDAwMDErMDAiLCJmaW5kaW5nSWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEifQ
@@ -380,10 +355,8 @@ can be told from an exhausted one. `list-unlocked-fixes` pages the same way.
 ```
 
 **`byDisposition.acceptedPermanent` is a decision, not a backlog — print it,
-do not chase it.** Those rows are weighed and declined on the merits, and
-excluded from `open`/`total`. Reported for one reason: a disposition you
-cannot see is indistinguishable from a leak. `open === total` always — one
-number under two names.
+do not chase it.** Those rows are excluded from `open`/`total`; `open === total`
+always.
 
 If `agedOut > 0`, print it separately — split by mode, since the two halves
 close by different acts (a code row needs a fix; a plan row is an obligation
@@ -406,24 +379,15 @@ only while its plan is still in flight):
 **Close rows with `close-finding`, by the row's `audit_finding_id`** — not
 `finalize-outcomes` (it needs a live round's `--ledger`/`--result`) and not
 `final-review-record-fix`, which only resolves final-review-pass rows and so
-answers `no-match` for an ordinary audit finding (all 142 rows of one queue,
-2026-10-02). `--as fixed` takes `--commit`; `--as dismissed` (not a defect, or
+answers `no-match` for an ordinary audit finding. `--as fixed` takes `--commit`;
+`--as dismissed` (not a defect, or
 a written-off plan section) and `--as accepted-permanent` (real, declined on
 the merits) take `--reason`. A finding outside this repo is refused.
 
-Judge the list before echoing it — two rows look identical but are not:
-
-- `audit_mode = 'code'` → `primary_file` is a real path; the defect is in the
-  code right now.
-- `audit_mode = 'plan'` → `primary_file` is a plan SECTION reference (e.g.
-  `§7 ws-a migration; close-out`), not a file. Equally a real obligation (the
-  plan was never amended), but say so rather than printing it as a code path.
-- `remediation_state = 'planned'` with a live plan is genuinely in-flight, not
-  forgotten — drop it from the printed list.
-
-Incident history behind each rule above (the scoping fix, the mode-split
-rationale, the HIGH-first ordering bug, why `finalize-outcomes` was wrong):
-`references/pre-ship-gate-queries.md` §0.5e.
+Judge the list before echoing it: an `audit_mode = 'plan'` row's `primary_file`
+is a plan SECTION reference, not a file — say so rather than printing it as a
+code path; a `remediation_state = 'planned'` row with a live plan is in flight —
+drop it from the printed list.
 
 ### 0.5g — Migration realization gate (ENFORCED by the binary, checked HERE too)
 
@@ -461,12 +425,9 @@ an operator decision. **Read the `unqueried` / `no store` lines** — a store
 nobody could reach is reported explicitly, never counted as current; if NO
 store answered, the card says `NOTHING WAS CHECKED` instead of `all current`.
 
-**The runtime DSN usually cannot apply migrations** — a consumer's `.env`
-carries its *runtime* role, which does not own the tables on managed Postgres.
-Do NOT resolve this by granting the runtime role ownership, or by putting an
-admin DSN in `.env`. Which role to use, and where its credential belongs (a
-secret store, never a file): `references/migration-credentials.md`. Incident
-history behind the rules above: `references/pre-ship-gate-queries.md` §0.5g.
+**The runtime DSN usually cannot apply migrations** — do NOT grant the runtime
+role ownership or put an admin DSN in `.env`. → `references/migration-credentials.md`
+— read when `--migrate` is refused with `42501`.
 
 ### 0.5h — Upstream issue queue (advisory, source-repo only)
 
@@ -478,35 +439,19 @@ they get triaged, and nothing else prompts anyone to read them.
 npm run upstream:queues 2>/dev/null
 ```
 
-Print its stdout verbatim — it renders the finished card. It reads **every
-registered consumer's own store** (never a single ambient one — consumers are
-not all on the same DSN), printing a fingerprint plus the consumer names,
-never a DSN or hostname.
+Print its stdout verbatim — it renders the finished card, reading **every
+registered consumer's own store** (fingerprint plus consumer names, never a DSN
+or hostname).
 
 **Never blocks, and there is no override flag** — the queue is cloud state,
 not repo state; it always exits 0. **Read the `unqueried` / `no store` lines,
 and do not treat the count as complete when either is present** —
 `NOTHING WAS CHECKED` means an unasked question, not a clean queue.
 
-Triage against **the store that owns the row** — `upstream ack|fix|wont-fix`
-writes to the ambient `AUDIT_DB_URL`, which is only one of them. For a report
-belonging to another consumer's store, run the transition with that store's
-DSN in the environment:
-
-```bash
-node scripts/cross-skill.mjs upstream ack --id ISSUE_UUID     # or fix --commit / wont-fix
-```
-
-Closing a report needs the **FULL uuid**, not a prefix — the committed
-disposition ledger records what you typed, and `upstream:coverage:gate`
-rejects a non-uuid key. Full ids: `node scripts/cross-skill.mjs upstream list
---worksheet` (ambient store) or the card above.
-
-Before triaging, check `freshness` and `priorFixes` on the row: a report can
-describe a defect that a LATER commit already fixed, so `fix --commit` may be
-the correct verb on a report you have not touched. Confirm against current
-code before closing one on the worksheet's evidence alone. Incident history:
-`references/pre-ship-gate-queries.md` §0.5h.
+Triaging a report is a separate act from shipping: run `ack|fix|wont-fix` only
+against **the store that owns the row**, by the **FULL uuid**, after checking
+`freshness`/`priorFixes` → `references/upstream-triage.md` — read before closing
+any report. Incident history: `references/pre-ship-gate-queries.md` §0.5h.
 
 ### 0.5i — Stalled comparison campaigns (advisory, source-repo only)
 
@@ -524,13 +469,9 @@ node scripts/campaign.mjs stale 2>/dev/null
 **Never blocks, no override flag** — collection state is cloud state the
 commit cannot change. Silent when no campaign is stalled, the store is
 unreachable, or a campaign has never collected at all (never-started is not
-stalled). Prints its own card; pass it through verbatim.
-
-Do **not** treat a stalled campaign as a reason to collect right now:
-collection is spend-bearing and revision-pinned (`npm run fixture:create`), a
-deliberate scheduled act, not a pre-push chore. The nudge exists so the
-decision is *made*, including closing it out with `declare-inconclusive`.
-Incident history: `references/pre-ship-gate-queries.md` §0.5i.
+stalled). Prints its own card; pass it through verbatim. Do **not** collect now
+because of it — collection is spend-bearing and revision-pinned, a deliberate
+scheduled act (`references/pre-ship-gate-queries.md` §0.5i).
 
 ### 0.5f — Override flags
 
@@ -541,10 +482,8 @@ _This site: `path+flags` — **no flag means no override.** Each of these disabl
 
 record which override is active — it goes into the ship_event.
 
-> **Numbering note**: this sub-step is `0.5f`, not `0.5d`, because two H2
-> sections below already claim `Step 0.5c` and `Step 0.5d` (a pre-existing
-> collision referenced from ~20 other files, so renumbering them is out of
-> scope here). The H3 sub-step order is `0.5a → 0.5b → 0.5e → 0.5g → 0.5h → 0.5i → 0.5f`.
+(Why this is `0.5f`, not `0.5d`: `references/flow-rationale.md` §0.5f — read
+before renumbering any Step 0.5 sub-step.)
 
 ---
 
@@ -564,44 +503,12 @@ node scripts/symbol-index/render-mermaid.mjs || true
 # NOTE: do NOT `git add docs/architecture-map.md` — it is gitignored (Category A).
 ```
 
-**`docs/architecture-map.md` is Category A and is NEVER staged** — it embeds a
-timestamp + commit sha, carries LLM-written summaries, and renders from the
-cloud `symbol_index`, so two renders of one commit differ. A fresh clone of
-the **source repo** regenerates it with `npm run dashboard:setup`; a consumer
-runs the three steps by path: `symbol-index/refresh.mjs`,
-`symbol-index/render-mermaid.mjs`, `build-dashboard.mjs all`. This step's
-value is a current LOCAL map plus a fresh cloud symbol-index for future
-arch-memory consultations — not a commit artifact. Why it is classified this
-way and the staging bug this replaced:
-`references/architecture-and-dashboard-refresh.md` §0.5c.
-
-**This step is ALWAYS advisory — it never blocks a ship.** Verified against
-the current `pg`-direct implementation (`scripts/lib/db/client.mjs`'s
-`resolveDbUrl()` and `scripts/symbol-index/refresh.mjs`) — the
-`SERVICE_ROLE_REQUIRED` / RPC vocabulary below predates the postgres-parity
-migration and no longer matches the code:
-
-- Cloud off (no `AUDIT_DB_URL`, and no legacy `SUPABASE_AUDIT_*` set) →
-  skip silently, ship continues.
-- Legacy-only `SUPABASE_AUDIT_*` present without `AUDIT_DB_URL` → `resolveDbUrl()`
-  throws (swallowed by this step's `|| true`), ship continues but the refresh
-  does not run.
-- Non-JS/TS stack → skips silently (`reason: 'unsupported-stack'`), exit 0,
-  ship continues.
-- HEAD not on the default branch (a feature branch, or detached at a commit
-  the default branch does not contain) → skips (`reason: 'not-default-branch'`),
-  status 0, ship continues. Deliberate: the next incremental refresh anchors on the
-  active snapshot, so only the default branch may publish one. The local map then
-  renders the default branch's snapshot.
-- Any other failure (DB error, embedding-provider error, repo-registration
-  or refresh-lock conflict) → `refresh.mjs` exits 1 or 2 and writes a message
-  to stderr; this step's own `|| true` swallows the non-zero exit so the ship
-  is never blocked, but the stderr line still prints — read it if the local
-  map looks stale.
-- Incremental refresh uses `git diff --name-status <since>`
-  (NO `..HEAD`) UNION `git ls-files --others --exclude-standard` so
-  the working-tree edits about to be committed are visible
-  (per Gemini-G1 fix).
+**`docs/architecture-map.md` is Category A and is NEVER staged** — two renders of
+one commit differ. **This step is ALWAYS advisory — it never blocks a ship**:
+every failure mode (cloud off, legacy-only env, non-JS stack, HEAD not on the
+default branch, DB/embedding error) skips or exits non-zero under `|| true`; read
+the stderr line if the local map looks stale. → `references/architecture-and-dashboard-refresh.md`
+§0.5c — read when debugging this step's staging or a refresh that did not run.
 
 Nothing from this step is ever staged. The drift sticky-issue is only updated by
 the weekly GH workflow, never by /ship directly.
@@ -612,17 +519,8 @@ the weekly GH workflow, never by /ship directly.
 
 **Source-repo-gated** — run this ONLY when
 `package.json.name === "claude-engineering-skills"` (same gate as Step 6.0).
-Skip silently in consumer repos — the dashboard is opt-in and unwired there
-(the sync never adds npm scripts), so a consumer runs it by path and gets
-gitignored pages under its own `dashboard/`:
-
-```bash
-node scripts/build-dashboard.mjs all         # reference + telemetry
-node scripts/build-dashboard.mjs serve       # build, then serve locally
-node scripts/build-dashboard.mjs --help      # every mode and flag
-```
-
-Never blocks the ship.
+Skip silently in consumer repos (→ `references/architecture-and-dashboard-refresh.md`
+§0.5d — read when a consumer asks to build its dashboard). Never blocks the ship.
 
 ```bash
 node scripts/build-dashboard.mjs reference 2>&1
@@ -635,18 +533,12 @@ treat a failure as "skip staging, print a heads-up, continue".
 `reference` mode regenerates `dashboard/index.html` + `dashboard/telemetry.html`.
 The CLI exits non-zero on a **degraded** build (a source was invalid/errored).
 
-**Nothing here is ever staged** — both pages are gitignored Category A (they
-derive from mutable store state, so two builds of one commit can differ). The
+**Nothing here is ever staged** — both pages are gitignored Category A. The
 exit code is a **reporting** signal, not a staging one:
 
 - Exit 0 → the local page is current; say nothing.
 - Exit non-zero → print a one-line heads-up that the dashboard build degraded;
   ship continues.
-
-This keeps the LOCAL reference dashboard current with the skills/plans being
-shipped. Why the pages are Category A, and the deleted second dashboard
-build this step's note used to reference:
-`references/architecture-and-dashboard-refresh.md` §0.5d.
 
 ---
 
@@ -683,13 +575,8 @@ see `references/status-md-format.md`. Then delete exactly the notes you just
 prepended, with the `pending-note clear --notes …` line the read printed for
 you. Pass those names verbatim: a note that arrived between the read and the
 clear must survive to the next drain, which is why `clear` refuses to delete
-everything it happens to find.
-
-The command resolves the MAIN checkout itself — `.claude/tmp/` is per-worktree
-and Step 6.8 deliberately writes to the durable one (a worktree is routinely
-deleted at session end, taking the note with it). The notes are gitignored
-scratch state (same directory the commit-message file uses), so they survive a
-session boundary but never ship as-is.
+everything it happens to find. (Where the notes live and why:
+`references/flow-rationale.md` §Step 2 — read when a note seems missing.)
 
 Write the session log entry. **If `docs/status/entries/README.md` exists, the
 entry is a NEW file there** (`<YYYY-MM-DD>-<HHMMSS>-<slug>.md`, UTC; `status.md`
@@ -709,12 +596,15 @@ node scripts/backlog-snapshot.mjs
 
 Paste its single stdout line into the entry. It reads every queue itself, at one
 instant, read-only, and **writes nothing** — you insert the line as part of the
-entry you are already authoring. Never let a script write `status.md`: PR #87
-destroyed 19,257 lines of it that way.
+entry you are already authoring. Never let a script write `status.md`.
 
-A queue it could not read renders **`unmeasured`**, never `0`. That distinction
-is the point — `0` reads as good news, and an unasked question is not good news.
-The command always exits 0; it is a nudge, never a gate.
+A queue it could not read renders **`unmeasured`**, never `0`. The command always
+exits 0; it is a nudge, never a gate. (Incident: `references/flow-rationale.md`
+§Step 2b.)
+
+---
+
+## Step 3 — Update CLAUDE.md (if needed)
 
 Review whether the current session introduced anything that should be
 captured:
@@ -742,8 +632,7 @@ that `@./AGENTS.md`-imports it and holds only Claude-Code-only notes. They are
 **not** byte-mirrors.
 
 - **NEVER copy `CLAUDE.md` over `AGENTS.md`** — a thin CLAUDE.md would overwrite
-  and destroy the canonical file. (This step used to say "mirror exactly"; that
-  was a landmine — removed.)
+  and destroy the canonical file.
 - Put **shared** content in `AGENTS.md`; **Claude-only** notes in `CLAUDE.md`.
 - Then run **`node scripts/check-context-drift.mjs --strict`** — it enforces the topology (CLAUDE.md
   `@`-imports AGENTS.md, stays ≤ the line cap, only allowlisted Claude-only
@@ -789,17 +678,9 @@ picks up what the autonomous run did.
 
 ## Step 5.5 — Plans no longer move on completion (removed)
 
-**There is no archive step.** Plans live in `docs/plans/` for their whole
-lifecycle; a completed plan simply carries `Status: Complete`. The
-`docs/plans/` → `docs/completed/` archiver was deleted by
-`docs/plans/reference-integrity-gate.md` Cluster C — moving a completed plan
-silently broke every reference to it (the failure that plan exists to kill).
-Status is metadata, never a path; the dashboard rebuild at Step 0.5d is
-sufficient (no post-archive rebuild is needed because nothing moves).
-
-*(The dashboard's Plans tab historically bucketed by directory; bucketing by
-`Status:` instead is a small follow-up, tracked separately — out of this
-plan's scope.)*
+**There is no archive step** — a completed plan stays in `docs/plans/` and
+carries `Status: Complete`; never move it. → `references/flow-rationale.md`
+§Step 5.5 — read before reintroducing any plan move.
 
 ---
 
@@ -810,15 +691,10 @@ main-only convention — nothing to compare against) or when Step 5 found no
 plan path in `$ARGUMENTS` (no plan means no declared file scope to diff
 against).
 
-A long `/cycle --autonomous` run — many audit rounds, multiple clusters — can
-take long enough for a **different** PR to merge to the default branch first,
-touching files this run also touched. What that produces downstream is
-confusing rather than obvious: `gh pr create` reports `mergeable:
-CONFLICTING`, and GitHub can additionally skip dispatching a `pull_request`
-CI run for it entirely — reading exactly like a CI-infrastructure flake (a
-self-hosted runner not picking up the job) and costing real diagnostic time
-before anyone checks mergeability and finds a plain merge conflict
-underneath. Catch it here instead:
+A different PR may have merged to the default branch first, touching files this
+run also touched — which surfaces later as `mergeable: CONFLICTING` and can read
+like a CI flake. Catch it here (→ `references/flow-rationale.md` §Step 5.8 —
+read when a PR shows CONFLICTING or no CI run):
 
 ```bash
 DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
@@ -841,12 +717,7 @@ confusing CI investigation later costs more than one question now.
 
 If a rebase or merge resolves real overlap, re-run the full test suite
 before continuing to Step 6 — a clean 3-way merge with zero conflict markers
-is not proof of correctness. git's own auto-merge can fold two independent
-additions of the same import line and the same component mount into one
-file with no conflict markers at all, producing a real duplicate-render bug
-that only a type-check or test failure catches. This applies to any merge
-touching files a `/cycle` run modified, not only the ones flagged with
-visible conflicts.
+is not proof of correctness.
 
 ---
 
@@ -854,16 +725,10 @@ visible conflicts.
 
 ### 6.0 Sync manifest — no action (source repo)
 
-The source repo's `scripts/.sync-manifest.json` is **gitignored** (it's
-regenerated on every `npm run sync` — which the pre-push hook runs only when
-the push updates the default branch — and carries
-volatile provenance — a timestamp + HEAD sha — so committing it is pure churn;
-Category A per the generated-artifact policy). **Do not `git add` it.** The
-pre-push sync regenerates it on disk for readers; it is never committed here.
-
-Consumers are unaffected: they track their **own** manifest (synced + eol-pinned
-via `.gitattributes`; the isolation verifier needs it). The source `.gitignore`
-entry is source-only and does not propagate to the consumer managed block.
+**Do not `git add` `scripts/.sync-manifest.json` in the source repo** — it is
+gitignored Category A (timestamp + HEAD sha). Consumers track their **own**
+manifest. → `references/flow-rationale.md` §Step 6.0 — read when the manifest
+shows up as a change.
 
 ### 6.1 Stage
 
@@ -969,10 +834,7 @@ explicitly. Full rationale: `references/commit-provenance-deep-dive.md`.
 **Shared working tree — `--path` is MANDATORY, not conditional.** `ship-commit`
 refuses an unscoped commit outright: it cannot know whose staged entries the
 index holds, so it requires you to declare what you are shipping. There is no
-override flag, deliberately — an unscoped commit is a TOCTOU by construction
-(the index is checked at one moment and consumed by `git commit` at another),
-and HEAD verification cannot cover it because index mutations do not move HEAD.
-Add one `--path <file>` per file you
+override flag, deliberately. Add one `--path <file>` per file you
 are shipping:
 
 ```bash
@@ -985,19 +847,16 @@ intent-to-add, rolled back if the run is rejected). Do **not** fall back to a
 bare `git commit -- <paths>` — it scopes correctly but drops the `AI-*`
 provenance trailers, which is exactly what this helper exists to prevent.
 
-**A directory is refused, not expanded.** `--path <dir>` would let git commit
-everything beneath it — measured: naming `sub/` committed a file the caller
-never named. Pass each file. A DELETED directory is refused for the same reason
-(and needs `cat-file -t`, not `-e`, to detect: `-e` exits 0 for a tree).
+**A directory is refused, not expanded** — pass each file, including for a
+deleted directory. (Why, and the TOCTOU reasoning behind `--path`:
+`references/commit-provenance-deep-dive.md` §Step 6.3 scoping detail — read
+when a `--path` refusal surprises you.)
 
 **After a successful commit, `ship-commit` re-verifies that the new commit's
-parent and branch are the ones it checked.** That DETECTS drift; it does not
-prevent it — `git commit` has already moved the ref by then. On
-`post-commit-drift` it exits 1 and prints a recovery command: **do not push.**
-The commit exists but was not built on the base you verified, and an unpushed
-wrong-parent commit is recoverable in seconds whereas a pushed one needed a
-human to notice a 12-line change with a 2,324-line diff. The transactional
-boundary that would prevent it is `docs/plans/ship-commit-transaction.md`.
+parent and branch are the ones it checked.** On `post-commit-drift` it exits 1
+and prints a recovery command: **do not push.** The commit exists but was not
+built on the base you verified; an unpushed wrong-parent commit is recoverable
+in seconds.
 
 (Consumer repos: the synced copy of this file already carries the
 rewritten `scripts/.claude-skills/ship-commit.mjs` path.)
@@ -1014,13 +873,9 @@ If push fails (behind remote, etc.), inform the user and suggest the
 fix. Do NOT force push.
 
 **Continuing work in the same worktree after a squash merge: rebase, never
-merge** — `git merge origin/<base>` reports a false conflict on an unchanged
-file after a squash-merged PR (no shared parent), while `git rebase
-origin/<base>` cleanly drops an already-landed SINGLE-commit PR's patch (a
-multi-commit squash needs each commit resolved/`--skip`ped by hand — see
-reference). A PR stuck at `mergeable: CONFLICTING` can also correlate with
-zero CI runs firing — check mergeability before assuming the CI trigger is
-broken. Why: `references/commit-provenance-deep-dive.md`.
+merge** — check mergeability before assuming a CI trigger is broken. Why, and
+the multi-commit caveat: `references/commit-provenance-deep-dive.md` §Continuing
+work after a squash merge.
 
 ---
 
@@ -1043,8 +898,7 @@ consumer's `package.json`); the refresher itself **is** synced
 
 After refresh, regex-match the HEAD commit subject against
 `/fix.*\bsecurity\b|\bcve\b|\bvuln\b|\bleak\b|\binjection\b|\bauth\b|\bxss\b|\bcsrf\b|\brce\b/i`
-(word-boundary-anchored — the unanchored form false-flagged ~6% of commits in
-a 200-commit sample). If matched, emit a single passive log line
+(word-boundary-anchored on purpose). If matched, emit a single passive log line
 (NOT an interactive prompt — `/ship` runs to completion without asking, which
 is the whole contract in its `description`; a prompt here would strand the
 push mid-flight):
@@ -1078,11 +932,8 @@ resolved, so a recurring papercut gets marked closed instead of recurring foreve
 > a `UserPromptSubmit` hook injects `> Relevant prior friction` callouts during
 > the session and records a breadcrumb, so the notes are already in view.
 >
-> **The cadence differs and that is worth knowing.** With the hook, friction is
-> surfaced *as you work*; without it, only here, once per ship. On a host with
-> no hooks the session-review call returns whatever the store holds — usually
-> empty. That is a correct empty, not a broken one: this step must not read an
-> empty list as evidence that no friction existed. Why:
+> On a host with no hooks the session-review call is usually empty — a correct
+> empty, never evidence that no friction existed. Why:
 > `references/post-push-advisories.md` §6.6.
 
 If push succeeded, list pending injected-but-unlinked friction:
@@ -1109,10 +960,8 @@ Advisory; never blocks the ship.
 
 ## Step 6.7 — Final-review credit (after successful push, advisory)
 
-Closes the loop the shadow A/B could not measure — this step is the missing
-caller of `final-review-adjudicate` / `final-review-record-fix`, both of
-which existed and were tested for months with nothing calling them (why:
-`references/post-push-advisories.md` §6.7).
+The missing caller of `final-review-adjudicate` / `final-review-record-fix`
+(why: `references/post-push-advisories.md` §6.7).
 
 **Run AFTER the commit lands**, so the sha handed to `--commit` is the real one.
 `$REPO` is the `owner/repo` slug (same value `LEARNING_REPO_NAME` uses — the
@@ -1127,42 +976,16 @@ the finished card, so there is nothing to parse and no formatting decision here.
 Omit `--render` to get the versioned JSON instead (`schemaVersion`, `state`,
 `counts`, `items`) if you need it programmatically.
 
-**Walking the whole queue.** The card shows one page. The JSON form pages by a
-**keyset cursor**, never an offset — the queue is drained by the very
-adjudication that walks it, so an offset would skip one row per adjudication.
-Loop on `nextCursor`, **not** on `shownCount`, and keep going through pages
-whose `items` is empty (`pageFilteredOut` says how many raw rows were fetched
-but not actionable); `nextCursor: null` is the end:
+**Walking the whole queue** (JSON form) pages by a **keyset cursor** on
+`nextCursor`, never an offset → `references/post-push-advisories.md` §6.7 — read
+when you need more than the card's one page.
 
-```bash
-node scripts/cross-skill.mjs final-review-pending --repo owner/repo --page-size 50
-```
-
-```bash
-node scripts/cross-skill.mjs final-review-pending --repo owner/repo --page-size 50 --after eyJ2IjoxLC4uLn0
-```
-
-`--page-size` is the alias of `--limit` (default 20, cap 200); `--offset` is
-**not supported**, by design. `--group-by work-unit` (and `--work-unit <key>`,
-`--no-llm-labels`) groups a page's actionable rows into refactor-sized units
-through the same grouper `list-unlocked-fixes` and `list-unremediated-acceptances`
-share.
-
-**A ruling on EITHER axis is a label.** A finding's adjudication lives on two
-columns: `adjudication_outcome` (the triage ruling — written automatically by
-the audit loop's own deliberation) and `user_action` (the ship-time
-disposition this step's `final-review-adjudicate` writes). `user_action` is a
-**durable override**: once set to anything but `needs_triage` it wins
-outright, so recording a ruling here is never undone by a later triage pass.
-The card surfaces a `⚠ N finding(s) where the ship-time disposition and the
-triage ruling disagree in direction` line (`axisConflicts`) when the two axes
-point opposite ways — reconcile those by hand; everything else needs no
-special handling.
-
-**Re-running the final reviewer does not erase prior rulings** — a re-run
-round or a consolidated union-diff gate upserts the new snapshot and prunes
-only rows the snapshot dropped that carry no ruling and no recorded
-remediation on either axis.
+**A ruling on EITHER axis is a label** — `adjudication_outcome` (triage) or
+`user_action` (this step's durable override). When the card prints a
+`⚠ N finding(s) where the ship-time disposition and the triage ruling disagree
+in direction` line (`axisConflicts`), reconcile those by hand; everything else
+needs no special handling. Re-running the final reviewer does not erase prior
+rulings (`references/post-push-advisories.md` §6.7).
 
 **Advisory only — the reader always exits 0** across its three result states
 (`ready` / `disabled` / `unavailable`), emitting empty output when cloud is off
@@ -1200,7 +1023,7 @@ Pick the row(s) this push actually produced:
 | Artifact | Consumer-side retrieval | Subject check |
 |---|---|---|
 | the pushed commit | `git fetch`, then `git worktree add --detach "$VERIFY_DIR" "$PUSHED_SHA"`; in it, a frozen clean install (`npm ci`, or the repo's own package manager's equivalent), then `skills:hydrate` (the Worktree preflight above — it copies the gitignored tooling tree in, as the pre-push run had it), then **exactly the command the pre-push hook runs**. Do not inject the main checkout's `.env` into the test process (e.g. `NODE_OPTIONS="-r dotenv/config"`): children spawned with a cwd outside the tree inherit the preload and die on `MODULE_NOT_FOUND`. A bare `git clone` is valid only when no test reads the tooling tree — otherwise tests that need it skip, and the run reads green having run less. Remove the worktree afterwards | green **in the worktree**, with **both the passed and the skipped count equal to the pre-push run's** — a different skip count is a different suite, not a confirmation. Catches tracked-vs-ignored and case-only path faults invisible locally |
-| the synced consumer bundle | **authoritative**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs`, run *in the consumer's MAIN checkout* — note the `lib/` segment, it is a module rather than a top-level script. A linked worktree cannot answer this, and since 2026-09-07 it SAYS so: `runGates` refuses a proven linked worktree at `preflight` with exit 2. The manifest records what the last sync wrote to the MAIN checkout's disk, and `skills:hydrate` populates a worktree by copying those same files — so a run there would re-read bytes hydrate just copied and report agreement it manufactured. Hydrate now carries the manifest as well as the tooling tree (upstream 5bc7ff30), so that refusal is explicit rather than the accident of a missing file. `npm run sync:dry` from here is the pre-check, not the verdict | zero unexpected diffs; no orphans |
+| the synced consumer bundle | **authoritative**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs`, run *in the consumer's MAIN checkout* — note the `lib/` segment, it is a module rather than a top-level script. A linked worktree cannot answer this (`runGates` refuses one at `preflight` with exit 2 — why: `references/flow-rationale.md` §Step 6.8). `npm run sync:dry` from here is the pre-check, not the verdict | zero unexpected diffs; no orphans |
 | the skill manifest | re-derive from the pushed sha, not the working tree | regenerated bytes identical |
 
 **Write the outcome with `pending-note write` (body on stdin) — never by
@@ -1214,17 +1037,12 @@ run, and the observed result. Write it with:
 node scripts/lib/worktree-preflight.mjs pending-note write
 ```
 
-It resolves the MAIN checkout (not the worktree you may be standing in —
-`.claude/tmp/` resolves per-tree, so a hand-written path would land in the
-wrong place; both reader and writer share one implementation of the durable
-lookup), stamps the filename with the shipped sha and the time, and writes
-there. The **next** `/ship` invocation's Step 2 drains every pending note,
-prepends them as a `### Consumer Verification (previous ship)` subsection
-above that session's own entry, then deletes exactly those (template:
-`references/status-md-format.md`). If no further `/ship` happens, the notes
-simply sit there unread — an acceptable loss for advisory documentation
-(never a gate), not a reason to force a push now. Incident history behind
-each of these rules: `references/post-push-advisories.md` §6.8.
+It resolves the MAIN checkout itself (never hand-write the path) and stamps the
+filename with the shipped sha and the time; the **next** `/ship`'s Step 2 drains
+it. If no further `/ship` happens, the notes simply sit there unread — an
+acceptable loss for advisory documentation (never a gate), not a reason to force
+a push now. Incident history behind each of these rules:
+`references/post-push-advisories.md` §6.8.
 
 **Three terminal states, and only three**: `verified`, `failed`, `unverified`.
 **`unverified` must name a concrete blocked prerequisite** — "no network in this
@@ -1284,25 +1102,6 @@ refusals, overrides, recovery: `references/train-mode.md` (read it before runnin
 
 ---
 
-## Quick Reference
-
-| Syntax | What happens |
-|---|---|
-| `/ship` | Update status.md → sync CLAUDE.md/AGENTS.md → commit → push |
-| `/ship docs/plans/<name>.md` | All of the above + update the plan file |
-
-## Reminders
-
-- **Always check git diff first** — understand what changed before documenting
-- **status.md is a log** — append, never rewrite history
-- **CLAUDE.md only changes when needed** — no cosmetic edits
-- **AGENTS.md is canonical; CLAUDE.md is a thin `@`-import addendum** — never
-  mirror/overwrite AGENTS.md from CLAUDE.md; verify with
-  `node scripts/check-context-drift.mjs --strict`
-- **No confirmation needed** — `/ship` is the approval. Execute autonomously
-
----
-
 ## Reference files
 
 This skill's canonical flow is above. The files below cover specialised
@@ -1310,14 +1109,18 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
-| `references/architecture-and-dashboard-refresh.md` | Why the arch-map and dashboard pages are Category A, and deleted-step history for 0.5c/0.5d. | Debugging Step 0.5c/0.5d's staging behaviour, or before changing either. |
-| `references/commit-provenance-deep-dive.md` | Step 6.2/6.3's AI-Gate and worktree-identity deep-dive — why each value/flag exists and the incidents behind them. | Debugging `--gate`/`--expect-head`/`--expect-branch` behaviour, or before changing one. |
+| `references/architecture-and-dashboard-refresh.md` | Why the arch-map and dashboard pages are Category A, 0.5c's failure-mode matrix, and 0.5c/0.5d history. | Debugging Step 0.5c/0.5d (staging, a refresh that did not run), or a consumer asks to build its dashboard. |
+| `references/commit-provenance-deep-dive.md` | Step 6.2/6.3's AI-Gate and worktree-identity deep-dive — why each value/flag exists and the incidents behind them. | Debugging `--gate`/`--expect-head`/`--expect-branch`/`--path` behaviour, or before changing one. |
+| `references/flow-rationale.md` | Why /ship's own flow is shaped as it is — the explicit-invocation bar, numbering, and Steps 0.5b-6.8 rationale. | A step's one-liner points here, or before changing that step's rule or its numbering. |
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |
-| `references/post-push-advisories.md` | Steps 6.5-6.8's post-push advisories and the Step 7 close-out - incident history, kept out of the routine flow. | Debugging Step 6.5-6.8's behaviour, changing one, or writing the close-out. |
+| `references/post-push-advisories.md` | Steps 6.5-6.8's post-push advisories and the Step 7 close-out - incident history, kept out of the routine flow. | Debugging Step 6.5-6.8's behaviour, changing one, walking Step 6.7's whole queue, or writing the close-out. |
 | `references/pre-ship-gate-queries.md` | Step 0.5's pre-ship nudges (0.5a/b/e/g/h/i) — the incident history behind each rule, kept out of the routine flow. | Debugging a Step 0.5 nudge's behaviour, or before changing one. |
 | `references/python-environment-discovery.md` | Python pre-push command discovery — env wrapper detection + per-tool probe order. | detect-stack returned `python` or `mixed` with Python files in the diff. |
 | `references/status-md-format.md` | status.md session-log template + update rules + persona / UX status sections. | Step 2 — creating status.md for the first time, OR appending UX / Persona / Regression-Lock / Plan-Verify sections. |
 | `references/train-mode.md` | /ship --train runbook — plan, land, verify, sync a batch of ship-ready PRs; refusals, overrides, recovery. | `/ship --train` was invoked, or the user asked to land several ready PRs together. |
+| `references/upstream-triage.md` | Step 0.5h — triaging a consumer's upstream report: the owning store, the FULL uuid, and the freshness check. | Step 0.5h's card lists a report you are about to `ack`, `fix` or `wont-fix`. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
+
+— end of /ship —

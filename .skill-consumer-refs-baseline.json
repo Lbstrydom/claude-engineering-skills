@@ -1,6 +1,6 @@
 {
   "$comment": "Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.",
-  "totalSites": 263,
+  "totalSites": 261,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -200,7 +200,7 @@
     "npm dashboard:setup": {
       "disposition": "source-repo-only",
       "reason": "Alias chaining three synced scripts. Named as a source-repo convenience beside the per-path form a consumer runs.",
-      "sites": 2
+      "sites": 1
     },
     "npm debt:capture-trail": {
       "disposition": "source-repo-only",
@@ -225,7 +225,7 @@
     "npm fixture:create": {
       "disposition": "source-repo-only",
       "reason": "Pinned-revision worktree for spend-bearing runs in this repo.",
-      "sites": 2
+      "sites": 1
     },
     "npm gates:check": {
       "disposition": "source-repo-only",

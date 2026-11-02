@@ -210,6 +210,25 @@ graph LR
 - Lower `DEFAULT_MAX_AGENTS_MD_CHARS` to (measured new size + ~3,000), rounded to the
   nearest 1,000, **only after** the shrink, in the same commit.
 
+**Scope addition (approved by Louis via the coordinator, 2026-11-02) — split by AUDIENCE.**
+The coordinator session and implementation sessions load the same AGENTS.md but do different
+jobs, so each pays for the other's material. Every section is tagged:
+1. **ALL** — repo-wide invariants (egress/security, stdout drain, store rules, scope
+   discipline, verification discipline): resident.
+2. **IMPLEMENTER** — testing doctrine, sync contract, code style, job dossiers: condensed
+   stubs pointing into `docs/` (as above).
+3. **COORDINATOR** — fleet operations, merging only the audited head, consumer-sync order,
+   session-brief conventions, one heavy job at a time, archive/worktree hygiene: moved to
+   `skills/fleet/references/coordinator-playbook.md`, with a "read when coordinating" row in
+   `/fleet`'s index and a one-line pointer left in AGENTS.md.
+
+**Guardrail**: CES is public and `/fleet` syncs to every consumer, so only generic,
+publishable rules move there. Anything account-specific, personal or private-repo-specific
+(account switches, peak-hour windows, store hosts, consumer-repo internals) is left out and
+stays in the coordinator's personal memory; each omission is listed in §Results. The
+coordinator's personal memory index is out of scope (the coordinator slims it after merge,
+pointing at the rules listed in the PR description).
+
 **Jev (TypeSafe System-One router) — rejected**, recorded in
 `docs/research/jev-router-rejected.md`: no current requirement (skill routing is already
 measured by `evals/`), egress of every task's text to `api.typesafe.ai`, measured wording
@@ -283,6 +302,9 @@ it stays resident). Files: `tests/*.test.mjs` (modify, only as found).
 **Phase 7 — Trim AGENTS.md + lower cap**: Files: `AGENTS.md` (modify),
 `scripts/lib/claudemd/context-size.mjs` (modify), `docs/reference/*.md` / `docs/runbooks/*.md`
 (modify — the existing targets each moved section already links).
+
+Also (scope addition): COORDINATOR-audience material → `skills/fleet/references/coordinator-playbook.md` (create),
+`skills/fleet/SKILL.md` (modify — one index row + pointer).
 
 **Phase 8 — Jev rejection note**: Files: `docs/research/jev-router-rejected.md` (create).
 

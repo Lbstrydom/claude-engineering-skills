@@ -38,6 +38,11 @@ Usage:
 
 # /brainstorm — Multi-LLM Brainstorming
 
+> **This skill's last line is an end marker naming the skill between em-dashes, after
+> the Reference files table.** If that last line is not in your context (context
+> compaction keeps only the start of a skill), re-read
+> `.claude/skills/brainstorm/SKILL.md` in full before continuing — the later steps still apply.
+
 You're acting as the user's brainstorming partner alongside one or more
 external LLMs. Your job is to fetch the other models' views, present them
 faithfully, add your own take, then **wait for the user to drive the
@@ -72,6 +77,14 @@ SAVE MODE (jump to §Step 5 below). Otherwise BRAINSTORM-ROUND mode.
 | `--openai-model <id>` | `latest-gpt` | OpenAI sentinel or concrete ID |
 | `--gemini-model <id>` | `latest-pro` | Gemini sentinel or concrete ID |
 | — | — | `azure-claude` has no model flag: it calls the deployment in `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` |
+| `--debate` | off | Run a SECOND round where each model reacts to the other's response. Doubles cost (~$0.05) and ~10s. Only meaningful when 2 providers AND both succeed in round 1. |
+| `--depth <tier>` | auto | Prose length asked for: `shallow` (150–250 words) / `standard` (250–500) / `deep` (600–1000). The output ceiling is derived from that plus reasoning headroom. Auto-promote to `deep` when topic mentions architecture/schema/migration/refactor/design/"how should we structure"/"what's the best approach". |
+| `--continue-from <sid>` | — | Resume from prior session id (assembles prior rounds as context per token budget). |
+| `--with-context "<text>"` | — | Additional context (repeatable; max 8000 chars per flag, 24000 total). |
+| `--with-arch` | auto | Force-attach the repo's `AGENTS.md` `## Architecture` section so the external LLMs share Claude's codebase grounding. |
+| `--no-arch` | auto | Force-skip architecture context — unanchored greenfield ideation. |
+| `--with-artifact <path>` | — | Attach the **focal artifact** verbatim — the plan/diff/module the topic is actually about. Repeatable. Auto-attaches the policy pack. Sensitive paths are refused, never sent. |
+| `--no-policy` | off | Suppress the auto-attached policy pack (artifact only). |
 
 **Which two voices you get depends on the profile** — the default is "two
 independent views", and which two is not a constant:
@@ -85,50 +98,19 @@ On Azure, say plainly in the synthesis that the second voice is Claude on
 Foundry: it has no conversation history and its own system prompt, so it is a
 separate view — but it is **not** the cross-vendor independence the public pair
 gives, and you should not present it as one.
-| `--debate` | off | Run a SECOND round where each model reacts to the other's response. Doubles cost (~$0.05) and ~10s. Only meaningful when 2 providers AND both succeed in round 1. |
-| `--depth <tier>` | auto | Prose length asked for: `shallow` (150–250 words) / `standard` (250–500) / `deep` (600–1000). The output ceiling is derived from that plus reasoning headroom. Auto-promote to `deep` when topic mentions architecture/schema/migration/refactor/design/"how should we structure"/"what's the best approach". |
-| `--continue-from <sid>` | — | Resume from prior session id (assembles prior rounds as context per token budget). |
-| `--with-context "<text>"` | — | Additional context (repeatable; max 8000 chars per flag, 24000 total). |
-| `--with-arch` | auto | Force-attach the repo's `AGENTS.md` `## Architecture` section so the external LLMs share Claude's codebase grounding. |
-| `--no-arch` | auto | Force-skip architecture context — unanchored greenfield ideation. |
-| `--with-artifact <path>` | — | Attach the **focal artifact** verbatim — the plan/diff/module the topic is actually about. Repeatable. Auto-attaches the policy pack. Sensitive paths are refused, never sent. |
-| `--no-policy` | off | Suppress the auto-attached policy pack (artifact only). |
 
-**Architecture context (`--with-arch` / `--no-arch`)**: by default the
-helper **auto-attaches** the repo's `## Architecture` section whenever the
-topic shows architecture intent (same keyword trigger as `--depth` deep:
-architecture / schema / migration / refactor / design). This fixes the
-asymmetry where Claude's take is codebase-grounded but the external models
-saw only the topic. `--with-arch` forces it on for any topic; `--no-arch`
-forces it off when you want an unanchored outside view. The flags are
-mutually exclusive (helper errors if both are passed).
+**Architecture context** auto-attaches on architecture-intent topics; `--with-arch`
+/ `--no-arch` force it on/off and are mutually exclusive (the helper errors if both
+are passed). → `references/artifact-context.md` §Architecture context — read when
+deciding whether to override the auto-attach.
 
-**Focal artifact (`--with-artifact`) — reach for this first.** Architecture
-context describes what *exists*; it does not describe the decision under
-debate, and attaching more of it does not help. That was measured, not
-assumed: a round with 7,664 chars of `## Architecture` attached still
-produced generic answers from both models. The thing that was missing was
-the **object under discussion** — and in the failure cases it always
-existed as a file (a plan, a diff, one module) that the models only ever
-received as Claude's *paraphrase*. They were reviewing a description, and
-it showed.
-
-So: **whenever the topic concerns something that already exists, pass
-`--with-artifact <path>`.** Do not paraphrase it into the topic; point at
-it. This is the single highest-value flag in the skill.
-
-Attaching an artifact also auto-attaches a **policy pack** — the repo's
-standing constraints, so a model can't optimise the local object while
-breaking a global rule it was never shown. Two sources, both canonical, no
-new prose to maintain: `.requirements/ledger.json` filtered to invariants
-governing the artifact's path, plus a fixed manifest of `AGENTS.md` H2
-sections (`POLICY_SECTIONS` in `lib/brainstorm/policy-context.mjs`). Both
-are resolved at call time — editing the rule in AGENTS.md changes what the
-next round sends, with no copy to sync.
-
-Budgets are absolute, not fractions of the provider ceiling: 3,000 tokens
-for artifacts (split across them), 2,000 for policy. The binding constraint
-is signal density, not window space.
+**Focal artifact (`--with-artifact`) — reach for this first.** **Whenever the topic
+concerns something that already exists, pass `--with-artifact <path>`.** Do not
+paraphrase it into the topic; point at it. This is the single highest-value flag in
+the skill. It also auto-attaches the repo **policy pack** (`--no-policy` suppresses
+it). → `references/artifact-context.md` §Why the focal artifact comes first /
+§The policy pack / §Budgets — read when the user questions why the artifact (not more
+architecture) is attached, or what the policy pack and budgets contain.
 
 `--with-artifact` is an **egress seam** — it reads an operator-supplied
 path and sends it to OpenAI and Gemini. Sensitive paths, symlinks resolving
@@ -141,20 +123,10 @@ refusal is surfaced (contract: `tests/brainstorm-artifact-context.test.mjs`).
 
 `/brainstorm save <sid> <round> "<insight-text>"` — record a keeper insight
 from a prior round into `.brainstorm/insights/<topic-slug>/`. Required:
-sid + round (which the skill prints in §Step 3). Implementation: invokes
-the helper's `save` subcommand with `--topic-stdin` + `--insight-stdin`
-via the `---END-TOPIC---` delimiter pattern (shell-safety per §16.A).
+sid + round (which the skill prints in §Step 3). Procedure: §Step 5.
 
 Strip flags; in brainstorm-round mode the remainder is the **topic**. If
 empty, ask the user what they want to brainstorm and stop.
-
-### Implicit synthesis triggers (Step 4)
-
-Don't restrict yourself to literal keyword matches. **Judge synthesis-
-readiness from conversation cues** — questions about value/decision/
-direction (`is it worth`, `should we`, `what's your call`, `ok let's
-continue`, `is there more value here`) all qualify, plus the explicit
-keywords. The literal keyword list is examples, not exhaustive.
 
 ---
 
@@ -274,45 +246,13 @@ truncated response is a partial view, not a failure, so it gets a full block
 BOTH genuinely failed, render the two error lines and STOP (no Claude take,
 no synthesis prompt); `truncated` does NOT count as a failure for that test.
 
-### Debate block (only when JSON has non-empty `debate` array)
+### Debate block (only when JSON has non-empty `debate` array or non-null `debateSkipped`)
 
-If `--debate` was passed AND both providers succeeded in round 1, the
-helper output includes a `debate: [...]` array of 2 entries. Render
-between the parallel views and Claude's take:
-
-```markdown
----
-
-### Debate round
-
-**OpenAI reacting to Gemini**:
-<text from debate[?].text where provider='openai', reactingTo='gemini'>
-
-**Gemini reacting to OpenAI**:
-<text from debate[?].text where provider='gemini', reactingTo='openai'>
-```
-
-**If `debateSkipped` is non-null, say so — do not render nothing.** The user
-asked for a debate and paid for round 1; silence reads as "the tool ignored my
-flag". `debateSkipped` is `null` when the debate was not requested or when it
-ran; an object means it was requested and cancelled, and carries the reason:
-
-| `reason` | What to tell the user |
-|---|---|
-| `not-a-pair` | The debate round needs exactly two voices; name how many ran, and that `--models` decides it. |
-| `round-1-incomplete` | One voice did not return usable text in round 1, so there was no peer response to react to; name which, from the `detail` string and the `providers[]` states. |
-
-Render it where the debate round would have gone:
-
-```markdown
----
-
-### Debate round — skipped
-
-<detail from debateSkipped.detail>
-
-Round 1 above is unaffected. Re-run with `--debate` once both voices return.
-```
+Render a `### Debate round` block between the parallel views and Claude's take.
+**If `debateSkipped` is non-null, say so — do not render nothing**: render a
+`### Debate round — skipped` block with its `detail`. → `references/debate-round.md`
+— read when the JSON has a non-empty `debate` array or a non-null `debateSkipped`,
+for both templates and the per-`reason` wording.
 
 After all blocks (parallel + debate?), render a separator and your own take:
 
@@ -359,20 +299,16 @@ more value here", any clear question about value/decision/direction.
 **Next concrete step**: <one sentence>
 ```
 
-The *one voice only* row is there because a lone view is what a synthesis
-drops first: in a 2026-09-28 A/B, the template without it silently lost 3 of
-Gemini's 5 unique points in one round.
+Never drop the *one voice only* row — a lone view is what a synthesis drops first.
+→ `references/synthesis-and-capture.md` §Why the one-voice-only row — read when asked why the row exists.
 
 ### Step 4.5 — Arm-eval capture (AUTOMATIC — no action)
 
-Capture is now fired by the round helper itself: after `brainstorm-round.mjs`
-appends the round-1 session it dispatches a detached, toggle-gated arm-eval
-capture (`scripts/lib/arm-eval/capture-trigger.mjs`). You do NOT run any
-`arm-eval-maybe-capture` command — doing so would double-capture. When the
-per-repo `arm-eval-toggle` is off it is a byte-identical no-op; when on, one
-blinded D/E/F session records for the same topic in the background, unaffecting
-YOUR brainstorm flow. If the helper printed `arm-eval capture dispatched`, you
-may mention it in one line; otherwise say nothing.
+The round helper fires capture itself. You do NOT run any `arm-eval-maybe-capture`
+command — doing so would double-capture. If the helper printed `arm-eval capture
+dispatched`, you may mention it in one line; otherwise say nothing.
+→ `references/synthesis-and-capture.md` §Step 4.5 — read when the user asks what
+the capture does or whether it affected the round.
 
 ---
 
@@ -422,10 +358,15 @@ sid and round exist (the helper checks too) then invoke the helper's
 
 ## Reference files
 
-This skill's canonical flow is above. The file below covers a specialised
-situation — read it only when the trigger applies.
+This skill's canonical flow is above. The files below cover specialised
+situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
+| `references/artifact-context.md` | Why --with-artifact beats more architecture context, what the policy pack attaches, and the context budgets. | Step 0 — deciding whether to override arch auto-attach, OR the user asks why/what the artifact and policy pack send. |
+| `references/debate-round.md` | Step 3 debate rendering — the debate block template and the debateSkipped reasons and skipped-block template. | Step 3 — the helper JSON has a non-empty `debate` array or a non-null `debateSkipped`. |
+| `references/synthesis-and-capture.md` | Why the synthesis keeps a one-voice-only row (dated A/B), and how the automatic arm-eval capture behaves. | Step 4/4.5 — asked why the one-voice row exists, OR what the arm-eval capture did. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
+
+— end of /brainstorm —
