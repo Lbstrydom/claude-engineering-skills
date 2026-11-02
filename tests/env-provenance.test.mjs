@@ -188,9 +188,21 @@ describe('selector provenance + shadow warning', () => {
   });
 
   it('only selector NAMES are judged: budgets and OS paths are not selectors, and a credential never is', () => {
-    for (const n of ['OPENAI_AUDIT_MODEL', 'AZURE_OPENAI_GPT_DEPLOYMENT', 'FINAL_REVIEW_SHADOW_MODEL', 'X_MODEL_ID']) assert.equal(isSelectorName(n), true, n);
+    for (const n of ['OPENAI_AUDIT_MODEL', 'AZURE_OPENAI_GPT_DEPLOYMENT', 'FINAL_REVIEW_SHADOW_MODEL', 'X_MODEL_ID', 'TOKENIZER_MODEL', 'KEYWORD_MODEL']) assert.equal(isSelectorName(n), true, n);
     for (const n of ['AUDIT_MODEL_SHADOW_BUDGET_EUR', 'PAI_MODEL_DIR', 'AZURE_DEPLOYMENT_KEY', 'MODEL_API_TOKEN']) assert.equal(isSelectorName(n), false, n);
     assert.equal(isSecretName('AZURE_OPENAI_API_KEY'), true);
+  });
+
+  it('a SELECTOR whose value is not identifier-shaped (a key pasted into the wrong variable) is withheld', () => {
+    const pasted = `sk-proj-${'A'.repeat(48)}`;
+    write(envFile, ['OPENAI_AUDIT_MODEL=gpt-6.1-terra']);
+    const inherited = { OPENAI_AUDIT_MODEL: pasted, FINAL_REVIEW_MODEL: 'has spaces in it' };
+    const r = evaluateEnvProvenance(null, dir, { inherited, localEnvPath: envFile, sharedPath: NO_SHARED() });
+    const text = JSON.stringify(r);
+    assert.ok(!text.includes(pasted), text);
+    assert.ok(!text.includes('has spaces'), text);
+    assert.match(text, /withheld: not an identifier/);
+    assert.match(text, /\.env says \\"gpt-6\.1-terra\\"/, 'the identifier-shaped value is still shown');
   });
 
   it('NO secret value appears anywhere in the output, even when the key differs across layers', () => {

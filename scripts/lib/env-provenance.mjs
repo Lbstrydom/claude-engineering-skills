@@ -13,11 +13,13 @@
  *
  * Pure: the caller supplies the layers (`readEnvLayers` in load-shared-env.mjs).
  * Only SELECTOR variables are judged — names ending in MODEL or DEPLOYMENT, whose
- * values are identifiers safe to print. A name that also looks like a credential
- * is never treated as a selector, so no key or secret value can reach a message.
+ * values are identifiers. A name with a credential word in it is never a
+ * selector, and a selector VALUE that is not identifier-shaped (or that a secret
+ * pattern matches) is withheld (`displayValue`), so no key reaches a message.
  *
  * @module scripts/lib/env-provenance
  */
+import { redactSecrets } from './secret-patterns.mjs';
 
 /** Human names for the three layers, in precedence order. */
 export const LAYER_LABELS = Object.freeze({
@@ -27,19 +29,38 @@ export const LAYER_LABELS = Object.freeze({
 });
 const ORDER = ['inherited', 'local', 'shared'];
 
-const SECRET_NAME = /KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|DSN|_URL\b|CONNECTION/i;
+// Whole `_`-separated words, so `TOKENIZER_MODEL` is a selector while `GH_TOKEN` and `API_KEY` are not.
+const SECRET_WORDS = new Set([
+  'KEY', 'APIKEY', 'SECRET', 'TOKEN', 'PASSWORD', 'PASSWD', 'PWD', 'CREDENTIAL', 'CREDENTIALS',
+  'DSN', 'URL', 'URI', 'CONNECTION', 'CONN',
+]);
 // The name ENDS in the selector noun: `OPENAI_AUDIT_MODEL`, `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT`.
 // Not `AUDIT_MODEL_SHADOW_BUDGET_EUR` (a budget) nor an OS `*_MODEL_DIR` (a path).
 const SELECTOR_NAME = /(?:^|_)(?:MODEL|DEPLOYMENT)S?(?:_ID|_NAME)?$/i;
+// What a model or deployment identifier looks like. Anything else is not printed.
+const IDENTIFIER_VALUE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/;
 
 /** A name whose value may be a credential. Its value is never printed. */
 export function isSecretName(name) {
-  return SECRET_NAME.test(String(name));
+  return String(name).toUpperCase().split('_').some((w) => SECRET_WORDS.has(w));
 }
 
 /** A model or deployment selector: its value is an identifier and may be shown. */
 export function isSelectorName(name) {
   return SELECTOR_NAME.test(String(name)) && !isSecretName(name);
+}
+
+/**
+ * A selector's value as it may be printed. The NAME says selector, but the value
+ * is whatever someone typed; one that is not identifier-shaped, or that a secret
+ * pattern matches (a key pasted into the wrong variable), is withheld.
+ * @param {string} value
+ */
+export function displayValue(value) {
+  const s = String(value ?? '');
+  if (s === '') return '""';
+  if (!IDENTIFIER_VALUE.test(s) || redactSecrets(s).redacted.length > 0) return '<withheld: not an identifier>';
+  return `"${s}"`;
 }
 
 /**
@@ -118,8 +139,8 @@ export function shadowRemedy(v) {
  */
 export function formatShadow(v) {
   if (!v || v.shadowed.length === 0 || !isSelectorName(v.name)) return null;
-  const lost = v.shadowed.map((s) => `${LAYER_LABELS[s.source]} says "${s.value}"`).join(', ');
-  return `${v.name}: the ${LAYER_LABELS[v.source]} value "${v.value}" is in effect; ${lost}`;
+  const lost = v.shadowed.map((s) => `${LAYER_LABELS[s.source]} says ${displayValue(s.value)}`).join(', ');
+  return `${v.name}: the ${LAYER_LABELS[v.source]} value ${displayValue(v.value)} is in effect; ${lost}`;
 }
 
 /**
@@ -146,7 +167,7 @@ export function reportSelectorProvenance(report, layers, opts = {}) {
       shadowed += 1;
       report.warn(`${v.name} is overridden by the ${LAYER_LABELS[v.source]}`, line, shadowRemedy(v));
     } else {
-      report.pass(`${v.name} = ${v.value}`, `from ${sourceLabel(v)}`);
+      report.pass(`${v.name} = ${displayValue(v.value).replace(/^"(.*)"$/, '$1')}`, `from ${sourceLabel(v)}`);
     }
   }
   return { shadowed, selectors: all.length };

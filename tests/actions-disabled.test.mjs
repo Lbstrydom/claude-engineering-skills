@@ -107,6 +107,10 @@ describe('ci-verdict: actions-disabled is its own unverified reason', () => {
     assert.equal(off.runId, 77);
     // Precedence (explicit contract): a FAILED run stays failed — a known red is never relabelled as configuration.
     assert.equal(classifyCiVerdict({ ...ev, actionsEnabled: false, runs: [{ ...success, conclusion: 'failure' }] }).verdict, 'failed');
+    // Every other run state is actions-disabled: an unrecognised status, a non-pass conclusion.
+    for (const over of [{ status: 'teleporting', conclusion: null }, { conclusion: 'cancelled' }]) {
+      assert.equal(classifyCiVerdict({ ...ev, actionsEnabled: false, runs: [{ ...success, ...over }] }).blocker, ACTIONS_DISABLED, JSON.stringify(over));
+    }
     // Precedence: a PR run missing its tested base still names actions-disabled, not the generic provenance gap.
     const noBase = classifyCiVerdict({ ...ev, actionsEnabled: false, runs: [{ ...success, pull_requests: [{ number: 7, base: { ref: 'main' } }] }] });
     assert.equal(noBase.blocker, ACTIONS_DISABLED);

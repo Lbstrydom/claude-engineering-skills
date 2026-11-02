@@ -106,19 +106,19 @@ export function classifyCiVerdict(evidence) {
   const status = String(run.status ?? '');
   const conclusion = run.conclusion ?? null;
 
-  if (PENDING_STATUSES.has(status)) return actionsEnabled === false ? { ...actionsOff(`run ${run.id} is ${status}`), ...common } : { verdict: 'pending', reason: `run ${run.id} is ${status}`, ...common };
+  // Precedence under Actions disabled (explicit contract): a completed red result on this head stays `failed` — the
+  // disabled state explains why nothing can turn GREEN, it never erases a known RED. EVERY other run state (queued, an
+  // unrecognised status, a non-pass conclusion, and a success from before Actions was switched off) is actions-disabled:
+  // the run is kept as evidence (runId/url), but nothing on this repository can re-grade the head.
+  if (status === 'completed' && FAILED_CONCLUSIONS.has(conclusion)) return { verdict: 'failed', reason: `run ${run.id} concluded ${conclusion}`, ...common };
+  if (actionsEnabled === false) return { ...actionsOff(`the newest run, ${run.id}, is ${status}${conclusion ? `/${conclusion}` : ''}`), ...common };
+
+  if (PENDING_STATUSES.has(status)) return { verdict: 'pending', reason: `run ${run.id} is ${status}`, ...common };
   if (status !== 'completed') return { ...unverified(`run ${run.id} has an unrecognised status ${JSON.stringify(status)}`), ...common };
-  // Precedence under Actions disabled (explicit contract): a red result on this head stays `failed` — the disabled state
-  // explains why nothing can turn GREEN, it never erases a known RED. Everything else below it becomes actions-disabled.
-  if (FAILED_CONCLUSIONS.has(conclusion)) return { verdict: 'failed', reason: `run ${run.id} concluded ${conclusion}`, ...common };
   if (conclusion !== 'success') return { ...unverified(`run ${run.id} concluded ${JSON.stringify(conclusion)}, which is not a pass`), ...common };
 
   const match = pr !== null ? (run.pull_requests ?? []).find((p) => p?.number === pr) : (run.pull_requests ?? [])[0];
   const testedBase = SHA40.test(String(match?.base?.sha ?? '')) ? match.base.sha : null;
-  // A confirmed-disabled repository never reads green, even over a success from before Actions was switched off: that run
-  // is kept as evidence (runId/url), but nothing on this repository can re-grade the head, so the verdict is the local
-  // remedy. Decided BEFORE the provenance checks below, which could only pick a less useful unverified reason.
-  if (actionsEnabled === false) return { ...actionsOff(`run ${run.id} succeeded on ${head.slice(0, 8)} before Actions was disabled`), ...common, testedBase };
 
   // PROVENANCE of the workflow the run actually EXECUTED (audit R1 H1/H4). A pull_request run executes the workflow of the
   // MERGE of the head with the base it was tested against, and the current default's file says nothing about that older base.
