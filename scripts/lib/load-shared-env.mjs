@@ -140,34 +140,50 @@ export function composeEnvLayers({ inherited = {}, local = {}, shared = {} }) {
   return { env, sharedContributed: contributed };
 }
 
-/** Parse an env file the way the runtime does; absent or unreadable is `{}`. */
-function parseEnvFileQuiet(p) {
-  if (!p) return {};
-  try { return dotenv.parse(fs.readFileSync(p, 'utf8')); } catch { return {}; }
+/**
+ * Parse an env file the way the runtime does. Absent is `{}` with no error (the
+ * runtime treats it so); unreadable is `{}` WITH the error code, so a doctor can
+ * say "this layer could not be read" instead of reporting it as empty.
+ * @returns {{parsed: Record<string,string>, error: string|null}}
+ */
+function parseEnvFile(p) {
+  if (!p) return { parsed: {}, error: null };
+  let raw;
+  try { raw = fs.readFileSync(p, 'utf8'); } catch (err) {
+    return { parsed: {}, error: err?.code === 'ENOENT' ? null : (err?.code || 'read error') };
+  }
+  try { return { parsed: dotenv.parse(raw), error: null }; } catch { return { parsed: {}, error: 'unparseable' }; }
 }
 
 /**
  * The three layers for a repository, READ but never applied — the doctors'
  * view of what the runtime will see in `repoPath`, without touching this
  * process's `process.env` (so several repos can be checked in one process).
- * `.env` is found by the same worktree-safe discovery the runtime uses.
+ * `.env` is chosen as the runtime chooses it: an inherited `DOTENV_CONFIG_PATH`
+ * wins (`loadCwdLayer` honours it), else the same worktree-safe discovery.
  *
  * @param {string} repoPath
  * @param {{inherited?: Record<string,string>, sharedPath?: string, localEnvPath?: string|null}} [opts]
- * @returns {{env: Record<string,string>, layers: {inherited: Record<string,string>, local: Record<string,string>, shared: Record<string,string>}, localEnvPath: string|null, sharedContributed: string[]}}
+ * @returns {{env: Record<string,string>, layers: {inherited: Record<string,string>, local: Record<string,string>, shared: Record<string,string>}, localEnvPath: string|null, sharedContributed: string[], errors: Array<{layer: 'local'|'shared', path: string, error: string}>}}
  */
 export function readEnvLayers(repoPath, opts = {}) {
+  const inherited = opts.inherited ?? inheritedEnv();
   const localEnvPath = opts.localEnvPath !== undefined
     ? opts.localEnvPath
-    : discoverLocalEnvPath(repoPath, { onNotice() {} });
-  const inherited = opts.inherited ?? inheritedEnv();
-  const local = parseEnvFileQuiet(localEnvPath);
+    : (inherited.DOTENV_CONFIG_PATH || discoverLocalEnvPath(repoPath, { onNotice() {} }));
+  const errors = [];
+  const read = (layer, p) => {
+    const { parsed, error } = parseEnvFile(p);
+    if (error) errors.push({ layer, path: p, error });
+    return parsed;
+  };
+  const local = read('local', localEnvPath);
   // The runtime decides the disable switch BEFORE it touches the shared file; so
   // does this, so a disabled layer is neither read nor reported as a source.
   const sharedOff = (inherited.AUDIT_LOOP_DISABLE_SHARED ?? local.AUDIT_LOOP_DISABLE_SHARED) === '1';
-  const layers = { inherited, local, shared: sharedOff ? {} : parseEnvFileQuiet(opts.sharedPath ?? sharedEnvPath()) };
+  const layers = { inherited, local, shared: sharedOff ? {} : read('shared', opts.sharedPath ?? sharedEnvPath()) };
   const { env, sharedContributed } = composeEnvLayers(layers);
-  return { env, layers, localEnvPath: localEnvPath || null, sharedContributed };
+  return { env, layers, localEnvPath: localEnvPath || null, sharedContributed, errors };
 }
 
 /**

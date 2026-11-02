@@ -71,6 +71,24 @@ describe('composeEnvLayers — the runtime precedence as a pure function', () =>
     assert.equal(formatShadow(resolveVariable('OPENAI_AUDIT_MODEL', layers)), null);
   });
 
+  it('an inherited DOTENV_CONFIG_PATH chooses .env, as the runtime loader honours it', () => {
+    const pinned = path.join(dir, 'pinned.env');
+    write(pinned, ['OPENAI_AUDIT_MODEL=from-pinned']);
+    const r = readEnvLayers(dir, { inherited: { DOTENV_CONFIG_PATH: pinned }, sharedPath: NO_SHARED() });
+    assert.equal(r.localEnvPath, pinned);
+    assert.equal(r.env.OPENAI_AUDIT_MODEL, 'from-pinned');
+  });
+
+  it('an UNREADABLE layer is reported, not read as empty; an absent one is silent', () => {
+    // A directory where a file is expected: readFileSync fails with something other than ENOENT.
+    const r = readEnvLayers(dir, { inherited: {}, localEnvPath: dir, sharedPath: NO_SHARED() });
+    assert.equal(r.errors.length, 1);
+    assert.equal(r.errors[0].layer, 'local');
+    const rep = evaluateEnvProvenance(null, dir, { inherited: {}, localEnvPath: dir, sharedPath: NO_SHARED() });
+    assert.ok(rep.items.some((i) => i.status === 'WARN' && /^\.env could not be read/.test(i.label)));
+    assert.deepEqual(readEnvLayers(dir, { inherited: {}, localEnvPath: path.join(dir, 'nope.env'), sharedPath: NO_SHARED() }).errors, []);
+  });
+
   it('a disable flag INSIDE the shared file does not stop the runtime applying it, so provenance still reports it', () => {
     write(sharedFile, ['AUDIT_LOOP_DISABLE_SHARED=1', 'OPENAI_AUDIT_MODEL=from-shared']);
     write(envFile, ['X=1']);

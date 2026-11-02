@@ -178,7 +178,12 @@ export const PROVENANCE_CREDENTIALS = Object.freeze([
  * @param {{pass: Function, warn: Function, info: Function}} report
  * @param {{layers: {inherited: object, local: object, shared: object}}} composed - `readEnvLayers`'s result
  */
-export function reportEnvProvenance(report, { layers }) {
+export function reportEnvProvenance(report, { layers, errors = [] }) {
+  // An unreadable layer is not an empty one: say so, or every value it holds reads as "not set".
+  for (const e of errors) {
+    report.warn(`${LAYER_LABELS[e.layer]} could not be read (${e.error})`,
+      `${e.path} — none of its values are counted here; the runtime skips it the same way`);
+  }
   // No second disable decision here: `readEnvLayers` already left a disabled shared
   // layer empty, deciding exactly as the runtime does (a flag INSIDE the shared file
   // does not stop the runtime applying that file, so it must not stop this either).

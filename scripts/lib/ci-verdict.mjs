@@ -108,6 +108,8 @@ export function classifyCiVerdict(evidence) {
 
   if (PENDING_STATUSES.has(status)) return actionsEnabled === false ? { ...actionsOff(`run ${run.id} is ${status}`), ...common } : { verdict: 'pending', reason: `run ${run.id} is ${status}`, ...common };
   if (status !== 'completed') return { ...unverified(`run ${run.id} has an unrecognised status ${JSON.stringify(status)}`), ...common };
+  // Precedence under Actions disabled (explicit contract): a red result on this head stays `failed` — the disabled state
+  // explains why nothing can turn GREEN, it never erases a known RED. Everything else below it becomes actions-disabled.
   if (FAILED_CONCLUSIONS.has(conclusion)) return { verdict: 'failed', reason: `run ${run.id} concluded ${conclusion}`, ...common };
   if (conclusion !== 'success') return { ...unverified(`run ${run.id} concluded ${JSON.stringify(conclusion)}, which is not a pass`), ...common };
 

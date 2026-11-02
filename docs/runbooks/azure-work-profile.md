@@ -269,7 +269,10 @@ changes nothing while the override is inherited.
 change, it returned "no run exists", which reads like a pending run. The reason
 names the local remedy: set `AUDIT_PREPUSH_TIER=full` so the push runs the full
 suite, and set `AUDIT_LOOP_WEEKLY_MAINTENANCE=1` so the weekly checks run from
-the pre-push hook. The verdict stays `unverified` and never turns green. If the
+the pre-push hook. The verdict stays `unverified` and never turns green, even
+when a successful run exists from before Actions was disabled. One exception: a
+completed run that **failed** on this head stays `failed`. A known failure is
+never relabelled as a configuration problem. If the
 permissions read fails (it needs admin read on many tokens), the generic reason
 stays. `cadence:doctor` gives its `never-ran`/`stale` verdicts the same
 `cause: "actions-disabled"`.
