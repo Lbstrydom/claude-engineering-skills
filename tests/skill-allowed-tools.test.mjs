@@ -79,6 +79,11 @@ describe('allowed-tools — rejected forms', () => {
     ['a repeated token', `allowed-tools: Bash(${DETECT}) Bash(${DETECT})`, 'allowed-tools-malformed'],
     ['a YAML list', `allowed-tools:\n  - Bash(${DETECT})`, 'allowed-tools-malformed'],
     ['a block scalar', `allowed-tools: |\n  Bash(${DETECT})`, 'allowed-tools-malformed'],
+    ['a folded strip scalar (>-), which parses to one line', `allowed-tools: >-\n  Bash(${DETECT})`, 'allowed-tools-malformed'],
+    ['a literal strip scalar (|-)', `allowed-tools: |-\n  Bash(${DETECT})`, 'allowed-tools-malformed'],
+    ['a plain scalar continued on the next line', `allowed-tools: Bash(${DETECT})\n  Bash(node scripts/openai-audit.mjs plan)`, 'allowed-tools-malformed'],
+    ['a QUOTED key carrying a spend-bearing grant', '"allowed-tools": Bash(node scripts/openai-audit.mjs *)', 'allowed-tools-malformed'],
+    ['a single-quoted key', `'allowed-tools': Bash(${DETECT})`, 'allowed-tools-malformed'],
   ];
   for (const [name, fm, kind] of cases) {
     test(name, () => assert.ok(kinds(fm).includes(kind), `expected ${kind}, got ${JSON.stringify(kinds(fm))}`));

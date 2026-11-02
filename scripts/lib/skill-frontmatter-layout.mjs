@@ -112,12 +112,19 @@ const CONSUMER_LAYOUT_RE = /^node scripts\/\.claude-skills\//;
 export function lintAllowedTools(fmLines, parsed, file) {
   const out = [];
   const bad = (kind, text, why) => out.push({ kind, key: 'allowed-tools', line: null, text, message: `${file}: \`allowed-tools\` ${why}` });
-  const declLines = fmLines.filter((l) => /^allowed-tools\s*:/.test(l));
-  if (declLines.length === 0) return out;
-  if (declLines.length > 1) { bad('allowed-tools-malformed', null, 'is declared more than once'); return out; }
+  // Presence is decided by the PARSER, never the raw line: a quoted key
+  // (`"allowed-tools": …`) is the same key to a host and must not slip past.
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'allowed-tools')) return out;
+  const declIdx = fmLines.findIndex((l) => /^allowed-tools:/.test(l));
+  if (declIdx === -1) {
+    bad('allowed-tools-malformed', null, 'must be written as an unquoted `allowed-tools:` key at column 0');
+    return out;
+  }
+  const inline = fmLines[declIdx].slice('allowed-tools:'.length).trim();
+  const continued = declIdx + 1 < fmLines.length && /^\s/.test(fmLines[declIdx + 1]);
   const value = parsed['allowed-tools'];
-  if (typeof value !== 'string' || /[|>]\s*$/.test(declLines[0]) || value.includes('\n')) {
-    bad('allowed-tools-malformed', null, 'must be a single-line string of `Bash(<command>)` tokens (no list, no block scalar)');
+  if (typeof value !== 'string' || inline === '' || /^[|>]/.test(inline) || continued || value.includes('\n')) {
+    bad('allowed-tools-malformed', null, 'must be a single-line string of `Bash(<command>)` tokens on the key\'s own line (no list, no block or folded scalar, no continuation)');
     return out;
   }
   if (!ALLOWED_TOOLS_VALUE_RE.test(value)) {
