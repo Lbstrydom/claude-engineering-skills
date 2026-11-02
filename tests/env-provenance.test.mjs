@@ -25,7 +25,8 @@ import {
   formatShadow, isSecretName, isSelectorName, resolveVariable, selectorProvenance,
 } from '../scripts/lib/env-provenance.mjs';
 import { evaluateAuditSetup, evaluateEnvProvenance, loadEnv } from '../scripts/check-setup.mjs';
-import { runAzureDoctor, EXIT, routeShadows } from '../scripts/azure-doctor.mjs';
+import { runAzureDoctor, EXIT, routeShadows, configuredMatch } from '../scripts/azure-doctor.mjs';
+import { runRouteDoctor } from '../scripts/lib/azure/route-doctor.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET_INHERITED = 'sk-inherited-SECRET-0123456789';
@@ -60,6 +61,14 @@ describe('composeEnvLayers — the runtime precedence as a pure function', () =>
     assert.equal(env.OTHER, 'x');
     // Same rule, same function, as the runtime loader.
     assert.deepEqual(sharedLayerPlan(shared, { AUDIT_DB_URL: '' }).contributed, ['OTHER']);
+  });
+
+  it('readEnvLayers does not even READ a disabled shared layer, so it is neither a source nor a shadow', () => {
+    write(sharedFile, ['OPENAI_AUDIT_MODEL=from-shared']);
+    write(envFile, ['OPENAI_AUDIT_MODEL=from-env']);
+    const { layers } = readEnvLayers(dir, { inherited: { AUDIT_LOOP_DISABLE_SHARED: '1' }, localEnvPath: envFile, sharedPath: sharedFile });
+    assert.deepEqual(layers.shared, {});
+    assert.equal(formatShadow(resolveVariable('OPENAI_AUDIT_MODEL', layers)), null);
   });
 
   it('AUDIT_LOOP_DISABLE_SHARED=1 in .env switches the shared layer off, as the runtime reads it after .env', () => {
@@ -128,14 +137,16 @@ describe('selector provenance + shadow warning', () => {
     assert.match(warn.fix, /restart the editor/);
   });
 
-  it('an EQUAL launch-environment value does not warn, and is credited to the file it equals', () => {
+  it('an EQUAL launch-environment value does not warn; it wins by precedence and the equal file is named beside it', () => {
     const composed = layersFor({ OPENAI_AUDIT_MODEL: 'gpt-6.1-terra' }, ['OPENAI_AUDIT_MODEL=gpt-6.1-terra']);
     const v = resolveVariable('OPENAI_AUDIT_MODEL', composed.layers);
-    assert.equal(v.source, 'local');
+    assert.equal(v.source, 'inherited');
+    assert.deepEqual(v.equalTo, ['local']);
     assert.equal(formatShadow(v), null);
+    assert.equal(configuredMatch(v).matches, true, 'equal to .env is the configured value');
     const r = evaluateEnvProvenance(null, dir, { inherited: { OPENAI_AUDIT_MODEL: 'gpt-6.1-terra' }, localEnvPath: envFile, sharedPath: NO_SHARED() });
     assert.equal(r.warnings, 0);
-    assert.ok(r.items.some((i) => i.status === 'PASS' && i.label === 'OPENAI_AUDIT_MODEL = gpt-6.1-terra' && i.detail === 'from .env'));
+    assert.ok(r.items.some((i) => i.status === 'PASS' && i.label === 'OPENAI_AUDIT_MODEL = gpt-6.1-terra' && /^from launch environment, same value as \.env \(possibly loaded from it by a parent process/.test(i.detail)));
   });
 
   it('.env over a different shared value also warns (every higher-over-lower difference)', () => {
@@ -143,6 +154,10 @@ describe('selector provenance + shadow warning', () => {
     write(sharedFile, ['FINAL_REVIEW_MODEL=b']);
     const { layers } = readEnvLayers(dir, { inherited: {}, localEnvPath: envFile, sharedPath: sharedFile });
     assert.match(formatShadow(resolveVariable('FINAL_REVIEW_MODEL', layers)), /\.env value "a".*~\/\.audit-loop\.env says "b"/);
+    const r = evaluateEnvProvenance(null, dir, { inherited: {}, localEnvPath: envFile, sharedPath: sharedFile });
+    const warn = r.items.find((i) => i.status === 'WARN');
+    assert.match(warn.fix, /Remove the line from whichever file/, 'no launch override exists, so the remedy must not claim one');
+    assert.doesNotMatch(warn.fix, /restart the editor/);
   });
 
   it('only selector NAMES are judged: budgets and OS paths are not selectors, and a credential never is', () => {
@@ -156,7 +171,7 @@ describe('selector provenance + shadow warning', () => {
     const inherited = { AZURE_OPENAI_API_KEY: SECRET_INHERITED, AZURE_DEPLOYMENT_KEY: SECRET_INHERITED, OPENAI_AUDIT_MODEL: 'm1' };
     const r = evaluateEnvProvenance(null, dir, { inherited, localEnvPath: envFile, sharedPath: NO_SHARED() });
     const text = JSON.stringify(r);
-    assert.ok(!text.includes('SECRET'), text);
+    for (const secret of [SECRET_INHERITED, SECRET_FILE, 'SECRET']) assert.ok(!text.includes(secret), text);
     assert.ok(r.items.some((i) => i.label === 'AZURE_OPENAI_API_KEY present' && i.detail === 'from launch environment'), 'presence and layer only');
     const sel = JSON.stringify(selectorProvenance(readEnvLayers(dir, { inherited, localEnvPath: envFile, sharedPath: NO_SHARED() }).layers));
     assert.ok(!sel.includes('SECRET'));
@@ -177,7 +192,7 @@ describe('azure:doctor separates "answers" from "is the configured one"', () => 
       },
     };
   };
-  const shadowed = { name: 'AZURE_FOUNDRY_CLAUDE_DEPLOYMENT', value: 'claude-opus-5', source: 'inherited', shadowed: [{ source: 'local', value: 'claude-opus-5-5' }] };
+  const shadowed = { name: 'AZURE_FOUNDRY_CLAUDE_DEPLOYMENT', value: 'claude-opus-5', source: 'inherited', shadowed: [{ source: 'local', value: 'claude-opus-5-5' }], equalTo: [] };
 
   it('a shadowed deployment that ANSWERS is not healthy: two lines, exit SHADOWED', async () => {
     const h = deps(shadowed);
@@ -199,20 +214,39 @@ describe('azure:doctor separates "answers" from "is the configured one"', () => 
   });
 
   it('CONTROL: the same verified deployment, unshadowed, is OK', async () => {
-    const h = deps({ name: 'AZURE_FOUNDRY_CLAUDE_DEPLOYMENT', value: 'claude-opus-5', source: 'local', shadowed: [] });
+    const h = deps({ name: 'AZURE_FOUNDRY_CLAUDE_DEPLOYMENT', value: 'claude-opus-5', source: 'local', shadowed: [], equalTo: [] });
     const r = await runAzureDoctor({ target: 'claude' }, h.d);
     assert.equal(r.exitCode, EXIT.OK);
     assert.match(h.lines.join('\n'), /Nothing to fix/);
   });
 
-  it('--routes names every shadowed slot', () => {
-    const lines = routeShadows({
-      inherited: { AZURE_OPENAI_GPT_DEPLOYMENT: 'gpt-5.6-terra' },
-      local: { AZURE_OPENAI_GPT_DEPLOYMENT: 'gpt-6.1-sol', AZURE_OPENAI_EMBED_DEPLOYMENT: 'e' },
+  it('.env winning over ~/.audit-loop.env IS the configuration — not a mismatch', () => {
+    const m = configuredMatch({ name: 'AZURE_OPENAI_GPT_DEPLOYMENT', value: 'a', source: 'local', shadowed: [{ source: 'shared', value: 'b' }], equalTo: [] });
+    assert.equal(m.matches, true);
+    assert.equal(configuredMatch({ name: 'X_DEPLOYMENT', value: 'a', source: 'inherited', shadowed: [], equalTo: [] }).matches, null, 'no file names it: nothing to compare');
+    // Launch value equal to the SHARED file but different from .env: .env is the configuration, so it is a mismatch.
+    assert.equal(configuredMatch({ name: 'X_DEPLOYMENT', value: 'a', source: 'inherited', shadowed: [{ source: 'local', value: 'b' }], equalTo: ['shared'] }).matches, false);
+  });
+
+  it('--routes maps each shadowed slot to its surface; only a PROBED surface carries it, in JSON too', async () => {
+    const shadows = routeShadows({
+      inherited: { AZURE_OPENAI_GPT_DEPLOYMENT: 'gpt-5.6-terra', AZURE_FOUNDRY_CLAUDE_DEPLOYMENT: 'claude-opus-5' },
+      local: { AZURE_OPENAI_GPT_DEPLOYMENT: 'gpt-6.1-sol', AZURE_OPENAI_EMBED_DEPLOYMENT: 'e', AZURE_FOUNDRY_CLAUDE_DEPLOYMENT: 'claude-opus-5-5' },
       shared: {},
     });
-    assert.equal(lines.length, 1);
-    assert.match(lines[0], /AZURE_OPENAI_GPT_DEPLOYMENT.*"gpt-5\.6-terra".*\.env says "gpt-6\.1-sol"/);
+    assert.deepEqual(Object.keys(shadows).sort(), ['claude', 'gpt']);
+    assert.match(shadows.gpt, /AZURE_OPENAI_GPT_DEPLOYMENT.*"gpt-5\.6-terra".*\.env says "gpt-6\.1-sol"/);
+    // No Claude route on this profile: its shadow must not decide the exit.
+    const azure = { active: true, openaiEndpoint: 'https://x.openai.azure.com', gptDeployment: 'gpt-5.6-terra', embedDeployment: 'e', apiKey: 'k', claudeRoute: null };
+    const ok = async () => ({});
+    const json = [];
+    const r = await runRouteDoctor({ json: true }, { azure, probes: { gpt: ok, embed: ok }, out: (s) => json.push(s), shadows, shadowedExit: EXIT.SHADOWED });
+    assert.equal(r.exitCode, EXIT.SHADOWED);
+    const routes = JSON.parse(json.join('')).routes;
+    assert.equal(routes.find((x) => x.surface === 'gpt').shadow, shadows.gpt);
+    assert.equal(routes.find((x) => x.surface === 'embed').shadow, null);
+    const onlyClaude = await runRouteDoctor({ json: true }, { azure, probes: { gpt: ok, embed: ok }, out: () => {}, shadows: { claude: shadows.claude }, shadowedExit: EXIT.SHADOWED });
+    assert.equal(onlyClaude.exitCode, 0, 'an unprobed surface never turns the exit');
   });
 });
 
@@ -235,7 +269,7 @@ describe('the spawned CLI: a launch-environment key passes setup (scrubbed env)'
       const r = spawnSync(process.execPath, [path.join(REPO, 'scripts', 'check-setup.mjs'), '--repo-path', repo, '--json'],
         { cwd: repo, encoding: 'utf8', env, timeout: 120_000 });
       const out = `${r.stdout}${r.stderr}`;
-      assert.ok(!out.includes('SECRET'), 'no secret value in any output');
+      for (const secret of [SECRET_INHERITED, 'SECRET']) assert.ok(!out.includes(secret), 'no secret value in any output');
       const report = JSON.parse(r.stdout);
       const items = report.sections.flatMap((s) => s.items);
       assert.ok(!items.some((i) => /AZURE_OPENAI_API_KEY missing/.test(i.label)), out);

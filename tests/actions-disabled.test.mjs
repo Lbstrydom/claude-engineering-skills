@@ -96,6 +96,17 @@ describe('ci-verdict: actions-disabled is its own unverified reason', () => {
     assert.equal(off.blocker, ACTIONS_DISABLED);
   });
 
+  it('Actions disabled never reads green — even over a completed success, whose run is kept as evidence', () => {
+    const success = { id: 77, path: WF, event: 'pull_request', head_sha: HEAD, status: 'completed', conclusion: 'success', html_url: 'u', pull_requests: [{ number: 7, base: { ref: 'main', sha: DEFAULT_SHA } }] };
+    const ev = { head: HEAD, pr: 7, defaultBranch: 'main', defaultSha: DEFAULT_SHA, workflowPath: WF, workflowBlobHead: BLOB, workflowBlobDefault: BLOB, workflowBlobAtBase: { [DEFAULT_SHA]: { blob: BLOB, why: null } }, runs: [success] };
+    assert.equal(classifyCiVerdict({ ...ev, actionsEnabled: null }).verdict, 'full', 'control: unknown permissions keep the evidence-based verdict');
+    const off = classifyCiVerdict({ ...ev, actionsEnabled: false });
+    assert.equal(off.verdict, 'unverified');
+    assert.equal(off.blocker, ACTIONS_DISABLED);
+    assert.equal(off.summary, undefined);
+    assert.equal(off.runId, 77);
+  });
+
   it('a runs endpoint that refuses on a disabled repo still names the cause', () => {
     const r = ciVerdict({ run: fake({ [PERMS]: ok(JSON.stringify({ enabled: false })), 'gh api repos/o/r/actions/runs': { status: 1, stdout: '', stderr: 'HTTP 404' } }), pr: 7 });
     assert.equal(r.verdict, 'unverified');

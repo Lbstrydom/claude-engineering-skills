@@ -64,11 +64,15 @@ function renderRow(r, out) {
  * Build + probe the route table.
  *
  * @param {{json?: boolean}} options
- * @param {{azure: object, probes: Record<string, (() => Promise<any>)|null>, out: (s:string)=>void}} deps
+ * @param {{azure: object, probes: Record<string, (() => Promise<any>)|null>, out: (s:string)=>void,
+ *          shadows?: Record<string, string>, shadowRemedy?: string, shadowedExit?: number}} deps
+ *   `shadows` maps a surface to the line saying its effective deployment is not the
+ *   configured one (azure-doctor's `routeShadows`). Only a PROBED surface carries it:
+ *   a route that answered on a shadowed deployment exits `shadowedExit`, not 0.
  * @returns {Promise<{exitCode: number, rows: object[]}>}
  */
 export async function runRouteDoctor(options, deps) {
-  const { azure, probes = {}, out } = deps;
+  const { azure, probes = {}, out, shadows = {}, shadowRemedy = '', shadowedExit = 8 } = deps;
   if (!azure?.active) {
     const payload = { active: false, routes: [] };
     out(options.json ? JSON.stringify(payload, null, 2)
@@ -84,19 +88,25 @@ export async function runRouteDoctor(options, deps) {
 
   const rows = [];
   for (const report of reports) {
-    rows.push({ ...report, probe: await runProbe(probes[report.surface]) });
+    rows.push({ ...report, probe: await runProbe(probes[report.surface]), shadow: shadows[report.surface] ?? null });
   }
+  const shadowed = rows.filter((r) => r.shadow);
 
   if (options.json) {
     out(JSON.stringify({ active: true, routes: rows }, null, 2));
   } else {
     out(`${G}Azure routes${X} ${D}(credential values are never printed — only their source variable)${X}\n`);
-    for (const r of rows) { renderRow(r, out); out(''); }
+    for (const r of rows) {
+      renderRow(r, out);
+      if (r.shadow) out(`  ${Y}⚠ ${r.shadow}. The probe tested this effective value, not the configured one.${X} ${shadowRemedy}`);
+      out('');
+    }
     const failed = rows.filter((r) => r.probe.outcome === 'failed');
     out(failed.length === 0
       ? `  ${G}All probed routes authenticated.${X}`
       : `  ${R}${failed.length} route(s) failed${X}: ${failed.map((r) => `${r.surface} (${r.probe.code})`).join(', ')}`);
   }
 
-  return { exitCode: rows.some((r) => r.probe.outcome === 'failed') ? 7 : 0, rows };
+  if (rows.some((r) => r.probe.outcome === 'failed')) return { exitCode: 7, rows };
+  return { exitCode: shadowed.length ? shadowedExit : 0, rows };
 }

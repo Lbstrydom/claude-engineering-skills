@@ -252,7 +252,11 @@ and `gpt-6.1-sol`. Setup then failed in two directions at once:
   deployment *answers*, and whether it *is the configured one*. If a shadowed
   deployment answers, the doctor exits `8` (`SHADOWED`), not `0`. In
   `--json`, see `answers`, `matchesConfigured` and `configuredSource`.
-  `--routes` prints one line for each shadowed slot.
+  `--routes` adds the shadow line to each probed route that it affects (in
+  `--json`, the route's `shadow` field). A shadow on a route that was not probed
+  never changes the exit code. The launch value only counts as a mismatch when
+  it differs from the value in the files: `.env` overriding
+  `~/.audit-loop.env` is the configuration, not a shadow.
 
 **Remedy:** clear the override from the launch environment (the shell
 `export`/`$env:`, or the user/system environment variable), then restart the

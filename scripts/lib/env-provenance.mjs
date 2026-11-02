@@ -45,10 +45,11 @@ export function isSelectorName(name) {
 /**
  * Where one variable's effective value comes from, and what it shadows.
  *
- * Attribution: a launch-environment value EQUAL to a file's value is credited to
- * that file — a parent process that loaded `.env` hands its children exactly
- * that, and an equal value overrides nothing. Only lower layers holding a
- * DIFFERENT value are reported as shadowed.
+ * `source` is the layer that WINS, by precedence. Lower layers holding the SAME
+ * value are listed in `equalTo`, apart from `shadowed` (lower layers holding a
+ * DIFFERENT value): an equal value overrides nothing and never warns, and a
+ * launch value equal to `.env` may simply be `.env` loaded by a parent process —
+ * which this process cannot tell apart from a shell export, so it says so.
  *
  * @param {string} name
  * @param {{inherited: object, local: object, shared: object}} layers
@@ -56,23 +57,33 @@ export function isSelectorName(name) {
  *   the shared layer at all (`AUDIT_LOOP_DISABLE_SHARED=1`): it is then neither a
  *   source nor a shadow.
  * @returns {{name: string, value: string|null, source: 'inherited'|'local'|'shared'|'unset',
- *            shadowed: Array<{source: string, value: string}>}}
+ *            shadowed: Array<{source: string, value: string}>, equalTo: string[]}}
  */
 export function resolveVariable(name, layers, { sharedActive = true } = {}) {
   const present = ORDER
     .filter((source) => sharedActive || source !== 'shared')
     .map((source) => ({ source, value: layers?.[source]?.[name] }))
     .filter(({ value }) => value !== undefined);
-  if (present.length === 0) return { name, value: null, source: 'unset', shadowed: [] };
-  const value = present[0].value;
-  // The LOWEST layer holding the effective value, provided every layer above it agrees.
-  let source = present[0].source;
-  for (const p of present.slice(1)) {
-    if (p.value !== value) break;
-    source = p.source;
-  }
-  const shadowed = present.filter((p) => p.value !== value).map(({ source: s, value: v }) => ({ source: s, value: v }));
-  return { name, value, source, shadowed };
+  if (present.length === 0) return { name, value: null, source: 'unset', shadowed: [], equalTo: [] };
+  const [{ source, value }, ...lower] = present;
+  const shadowed = lower.filter((p) => p.value !== value).map(({ source: s, value: v }) => ({ source: s, value: v }));
+  const equalTo = lower.filter((p) => p.value === value).map((p) => p.source);
+  return { name, value, source, shadowed, equalTo };
+}
+
+/**
+ * The human label for where a value comes from. A launch value equal to a file
+ * says so, because it may be that file loaded by a parent process rather than
+ * an override — and it would win silently the day the file changed.
+ * @param {ReturnType<typeof resolveVariable>} v
+ */
+export function sourceLabel(v) {
+  const base = LAYER_LABELS[v.source];
+  if (!v.equalTo?.length) return base;
+  const files = v.equalTo.map((s) => LAYER_LABELS[s]).join(' and ');
+  return v.source === 'inherited'
+    ? `${base}, same value as ${files} (possibly loaded from it by a parent process; it would win if the file changed)`
+    : `${base}, same value as ${files}`;
 }
 
 /**
@@ -86,9 +97,18 @@ export function selectorProvenance(layers, opts = {}) {
   return [...names].sort().map((n) => resolveVariable(n, layers, opts)).filter((v) => v.source !== 'unset');
 }
 
-/** Remedy text, shared by every surface that reports a shadow. */
+/** Remedy for a LAUNCH-ENVIRONMENT override, shared by every surface that reports one. */
 export const SHADOW_REMEDY = 'Clear the override from the launch environment (the shell export, or the user/system '
   + 'environment variable), then restart the editor and every terminal so they stop inheriting it.';
+
+/** Remedy for a `.env` value overriding `~/.audit-loop.env` — no launch override is involved. */
+export const FILE_SHADOW_REMEDY = 'The repo .env wins over ~/.audit-loop.env. Remove the line from whichever file '
+  + 'should not decide it, or make the two agree.';
+
+/** The remedy that matches the layer that won. */
+export function shadowRemedy(v) {
+  return v?.source === 'inherited' ? SHADOW_REMEDY : FILE_SHADOW_REMEDY;
+}
 
 /**
  * The warning for one shadowed selector: the variable, the winning layer and
@@ -124,9 +144,9 @@ export function reportSelectorProvenance(report, layers, opts = {}) {
     const line = formatShadow(v);
     if (line) {
       shadowed += 1;
-      report.warn(`${v.name} is overridden by the ${LAYER_LABELS[v.source]}`, line, SHADOW_REMEDY);
+      report.warn(`${v.name} is overridden by the ${LAYER_LABELS[v.source]}`, line, shadowRemedy(v));
     } else {
-      report.pass(`${v.name} = ${v.value}`, `from ${LAYER_LABELS[v.source]}`);
+      report.pass(`${v.name} = ${v.value}`, `from ${sourceLabel(v)}`);
     }
   }
   return { shadowed, selectors: all.length };
@@ -141,7 +161,7 @@ export function reportSelectorProvenance(report, layers, opts = {}) {
  */
 export function credentialSource(name, layers, opts = {}) {
   const v = resolveVariable(name, layers, opts);
-  return v.source === 'unset' || v.value === '' ? null : LAYER_LABELS[v.source];
+  return v.source === 'unset' || v.value === '' ? null : sourceLabel(v);
 }
 
 /** Credentials reported by PRESENCE and layer only — a value is never printed. */

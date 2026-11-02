@@ -40,7 +40,7 @@ import {
   resolveTokenSources, tokenFingerprint, tokenKind, tokenSourceKind,
 } from './lib/doctor/github-permissions.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
-import { readEnvLayers } from './lib/load-shared-env.mjs';
+import { inheritedEnv, readEnvLayers } from './lib/load-shared-env.mjs';
 import { reportEnvProvenance } from './lib/env-provenance.mjs';
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
@@ -422,7 +422,9 @@ async function checkGitHub(env, report, repoPath = REPO_PATH) {
   const fileEnv = readEnvLayers(repoPath, { localEnvPath: envFilePath }).layers.local;
 
   const { sources, winner, ghReason } = resolveTokenSources({
-    processEnv: process.env,
+    // The launch environment, not process.env: this CLI's own load-env import has
+    // already copied ITS repo's .env in, which would read as a "shell export" here.
+    processEnv: inheritedEnv(),
     fileEnv,
     envFilePath,
     gh: readGhKeyringToken(),
@@ -443,7 +445,7 @@ async function checkGitHub(env, report, repoPath = REPO_PATH) {
   // in its .env) — see evaluateExpectedSource for why this is a falsifiable
   // declaration rather than a suppression flag.
   const expected = evaluateExpectedSource(
-    fileEnv[EXPECTED_SOURCE_VAR] ?? process.env[EXPECTED_SOURCE_VAR],
+    fileEnv[EXPECTED_SOURCE_VAR] ?? inheritedEnv()[EXPECTED_SOURCE_VAR],
     winner.id,
   );
 

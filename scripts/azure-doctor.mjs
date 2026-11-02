@@ -101,15 +101,25 @@ export const EXIT = Object.freeze({
 });
 
 /**
- * Is the effective value of `envKey` the configured one? `provenance` is
- * `resolveVariable(envKey, layers)` (lib/env-provenance.mjs); absent ⇒ not asked,
- * which reads as "matches" exactly as it did before this check existed.
+ * Is the effective value of `envKey` the CONFIGURED one — the value the env
+ * FILES name (`.env`, else `~/.audit-loop.env`)? `provenance` is
+ * `resolveVariable(envKey, layers)` (lib/env-provenance.mjs). Only a launch-
+ * environment value that differs from the files is a mismatch: `.env` winning
+ * over the shared file IS the configuration. Absent ⇒ not asked (`null`).
  * @returns {{matches: boolean|null, line: string|null, source: string|null}}
  */
-function configuredMatch(provenance) {
+export function configuredMatch(provenance) {
   if (!provenance || provenance.source === 'unset') return { matches: null, line: null, source: null };
-  const line = formatShadow(provenance);
-  return { matches: line === null, line, source: LAYER_LABELS[provenance.source] };
+  // The highest-precedence FILE layer's value: equal layers carry the effective value, shadowed ones their own.
+  const fileLayers = [
+    ...(provenance.equalTo ?? []).map((source) => ({ source, value: provenance.value })),
+    ...provenance.shadowed,
+  ];
+  const file = provenance.source === 'inherited'
+    ? ['local', 'shared'].map((s) => fileLayers.find((l) => l.source === s)).find(Boolean)
+    : { value: provenance.value };
+  const matches = file ? file.value === provenance.value : null;
+  return { matches, line: matches === false ? formatShadow(provenance) : null, source: LAYER_LABELS[provenance.source] };
 }
 
 function renderProbeTable(result, configured) {
@@ -304,9 +314,14 @@ function parseArgs(argv) {
   return options;
 }
 
-/** One shadow line per deployment slot whose effective value is not the configured one. */
+/** `{surface: line}` for each deployment slot whose effective value is not the configured one. */
 export function routeShadows(layers) {
-  return Object.values(TARGETS).map((t) => formatShadow(resolveVariable(t.envKey, layers))).filter(Boolean);
+  const out = {};
+  for (const [surface, t] of Object.entries(TARGETS)) {
+    const m = configuredMatch(resolveVariable(t.envKey, layers));
+    if (m.matches === false) out[surface] = m.line;
+  }
+  return out;
 }
 
 /**
@@ -351,14 +366,11 @@ async function runRoutesMode(options, out) {
     },
   };
   try {
-    const r = await runRouteDoctor(options, { azure: azureConfig, probes, out });
-    // A route that answers on a SHADOWED deployment is not the configured route.
+    // A route that answers on a SHADOWED deployment is not the configured route;
+    // route-doctor attaches each line to the surface it probes (and to --json).
     const shadows = routeShadows(readEnvLayers(process.cwd()).layers);
-    // --json keeps stdout one machine object; the shadow goes to stderr there, and the exit code carries it.
-    const say = options.json ? (l) => process.stderr.write(`${l}
-`) : out;
-    for (const line of shadows) say(`⚠ ${line}. The probe above tested this effective value, not .env's. ${SHADOW_REMEDY}`);
-    return r.exitCode === EXIT.OK && shadows.length ? EXIT.SHADOWED : r.exitCode;
+    const r = await runRouteDoctor(options, { azure: azureConfig, probes, out, shadows, shadowRemedy: SHADOW_REMEDY, shadowedExit: EXIT.SHADOWED });
+    return r.exitCode;
   } finally {
     watchdog.disarm();
   }

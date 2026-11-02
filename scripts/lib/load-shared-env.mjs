@@ -160,11 +160,12 @@ export function readEnvLayers(repoPath, opts = {}) {
   const localEnvPath = opts.localEnvPath !== undefined
     ? opts.localEnvPath
     : discoverLocalEnvPath(repoPath, { onNotice() {} });
-  const layers = {
-    inherited: opts.inherited ?? inheritedEnv(),
-    local: parseEnvFileQuiet(localEnvPath),
-    shared: parseEnvFileQuiet(opts.sharedPath ?? sharedEnvPath()),
-  };
+  const inherited = opts.inherited ?? inheritedEnv();
+  const local = parseEnvFileQuiet(localEnvPath);
+  // The runtime decides the disable switch BEFORE it touches the shared file; so
+  // does this, so a disabled layer is neither read nor reported as a source.
+  const sharedOff = (inherited.AUDIT_LOOP_DISABLE_SHARED ?? local.AUDIT_LOOP_DISABLE_SHARED) === '1';
+  const layers = { inherited, local, shared: sharedOff ? {} : parseEnvFileQuiet(opts.sharedPath ?? sharedEnvPath()) };
   const { env, sharedContributed } = composeEnvLayers(layers);
   return { env, layers, localEnvPath: localEnvPath || null, sharedContributed };
 }
