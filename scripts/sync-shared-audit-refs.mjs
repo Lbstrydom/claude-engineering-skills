@@ -31,6 +31,7 @@ import path from 'node:path';
 import { sha, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { upstreamUrlFor } from './lib/synced-doc-links.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { skillsInvokingSyncedTooling, PREFLIGHT_REFERENCE } from './lib/worktree-preflight.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CANONICAL_DIR = path.join(ROOT, 'docs', 'audit', 'shared-references');
@@ -80,6 +81,10 @@ export const EXPECTED_CONSUMERS = Object.freeze({
     'investigate', 'audit-code', 'ux-lock', 'ship', 'explain', 'plan', 'audit-plan',
     'nav-audit', 'persona-test', 'cycle',
   ],
+  // The worktree-preflight hydrate recipe. DERIVED, not listed: every skill the
+  // preflight gate puts in scope carries the marker that points here, so the
+  // consumer set is that gate's own subject set (scripts/lib/worktree-preflight.mjs).
+  [PREFLIGHT_REFERENCE]: skillsInvokingSyncedTooling(ROOT),
 });
 
 /**
