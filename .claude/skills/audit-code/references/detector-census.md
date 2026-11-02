@@ -18,7 +18,7 @@ For each cross-cutting finding, record a detector on its ledger entry:
 
 ```json
 { "detector": { "kind": "regex",
-                "pattern": "fs\.writeFileSync\(",
+                "pattern": "fs\\.writeFileSync\\(",
                 "globs": ["scripts/**/*.mjs"],
                 "baseline": 4,
                 "disposition": { "scripts/<file>.mjs::const t = fs.writeFileSync(p)": "exempt — temp file" } } }

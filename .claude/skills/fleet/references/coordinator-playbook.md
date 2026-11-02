@@ -21,14 +21,17 @@ commit is the PR's REMOTE head, and green checks describe that commit — not th
 was reviewed. A rebased re-push can fail quietly (a hook refusal, a lease rejection)
 while the session believes its fixes are on the PR.
 
-Before merging another session's PR, ask it for the audited sha and compare:
+Before merging another session's PR, ask it for the audited sha, compare, and bind the
+merge to the commit you checked:
 
 ```bash
-gh pr view <n> --json headRefOid --jq .headRefOid
-git diff <audited-sha> <head-sha> --stat   # empty, or the trees match
+gh pr view <n> --json headRefOid --jq .headRefOid            # equals the audited sha?
+git rev-parse <audited-sha>^{tree} <head-sha>^{tree}          # or: the two trees are identical
+gh pr merge <n> --squash --match-head-commit <head-sha>       # refuses if the head moved since
 ```
 
-Mismatch → do not merge; ask the session. When handing off your own audited PR, report
+Compare trees by object id, not by an empty `git diff` (diff settings such as
+ignored submodules can hide a difference). Mismatch → do not merge; ask the session. When handing off your own audited PR, report
 both the audited sha and the PR head sha.
 
 ## 2. Stacked PRs: retarget before deleting a branch
