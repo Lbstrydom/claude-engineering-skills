@@ -266,7 +266,7 @@ this step; its own remediation gate is Step R.
   **empty implementation diff**, and auditing nothing returns a misleading green.
   So before Step 4, compute the diff base (the plan's commit, or `--baseline-ref`,
   else the dirty-aware base `/audit-code` uses) and check it's non-empty.
-  Run it in a POSIX shell (Git Bash on Windows), not PowerShell:
+  **POSIX shell only** (Git Bash on Windows), not PowerShell:
   ```bash
   BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1)   # or the plan commit / --baseline-ref
   [ -z "$(git diff "$BASE" --name-only)$(git ls-files --others --exclude-standard)" ] && echo EMPTY

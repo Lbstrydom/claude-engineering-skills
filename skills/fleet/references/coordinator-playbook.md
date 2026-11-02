@@ -24,10 +24,12 @@ while the session believes its fixes are on the PR.
 Before merging another session's PR, ask it for the audited sha, compare, and bind the
 merge to the commit you checked:
 
+With `$PR` the PR number, `$AUDITED` the sha the session reported and `$HEAD` the PR head:
+
 ```bash
-gh pr view <n> --json headRefOid --jq .headRefOid            # equals the audited sha?
-git rev-parse <audited-sha>^{tree} <head-sha>^{tree}          # or: the two trees are identical
-gh pr merge <n> --squash --match-head-commit <head-sha>       # refuses if the head moved since
+gh pr view $PR --json headRefOid --jq .headRefOid            # equals $AUDITED?
+git rev-parse "$AUDITED^{tree}" "$HEAD^{tree}"                # or: the two trees are identical
+gh pr merge $PR --squash --match-head-commit $HEAD            # refuses if the head moved since
 ```
 
 Compare trees by object id, not by an empty `git diff` (diff settings such as
@@ -41,7 +43,7 @@ branch of the next PR, and GitHub CLOSES that dependent PR instead of retargetin
 Retarget first, then delete:
 
 ```bash
-gh pr edit <next> --base main
+gh pr edit $NEXT_PR --base main
 ```
 
 or merge without `--delete-branch`. After a squash merge, rebasing the rest of the stack
@@ -77,7 +79,8 @@ fails its schema precondition. If you fast-forwarded too early, roll back with
 
 A concurrent session can implement the SAME feature and land it on main while you work —
 worse than a conflict, because both sides may apply cleanly into duplicate code. Before
-rebasing, list the files both lines changed:
+rebasing, list the files both lines changed (**POSIX shell only** — Git Bash on Windows;
+it uses process substitution):
 
 ```bash
 comm -12 <(git diff --name-only HEAD...origin/main | sort) \
