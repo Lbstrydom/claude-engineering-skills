@@ -54,6 +54,22 @@
     {
       "line": "persisted verify result correctly reads stale and must be re-run.",
       "reason": "Describes an existing, already-contracted freshness mechanism: authSentinel joins computeContractDigest, and NAV_VERIFY_TOOL_VERSION was bumped 2→3, so readVerifyResult rejects a pre-bump envelope. Covered by tests/nav-verify-store.test.mjs; this line restates that consequence for the operator."
+    },
+    {
+      "line": "authority lives; the static engine is kept for the pre-deploy gate + completeness",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "(orphans/unreachable a live crawl never clicks into), and its graph is a set of",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "is always a hypothesis to review before committing, never trusted.",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "**Coverage honesty**: `coverage-gap` reports (never drops) an unconfirmable",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
     }
   ]
 }

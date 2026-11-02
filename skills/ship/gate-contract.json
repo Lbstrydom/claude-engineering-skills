@@ -680,6 +680,102 @@
     {
       "line": "never reaches them). For a branch/PR ship, the synced-bundle row is `unverified",
       "reason": "States what the repo pre-push hook does (2026-10-10): consumer sync runs only when the push updates the default branch AND the checkout is that commit, so a branch ship publishes nothing to consumers. The behaviour lives in .githooks/pre-push, outside /ship's exit code, and is pinned behaviourally by tests/prepush-consumer-sync.test.mjs (5 cases, both directions). The /ship-side instruction it carries, reporting the synced-bundle row as unverified until the post-merge sync, is agent output in Step 6.8, which is advisory."
+    },
+    {
+      "line": "Step 0.5f's override handling. Never add one on the skill's own initiative to get",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "is accurate. Best-effort — if a query fails, log and proceed. Sub-step order:",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "Incident history behind every rule below: `references/pre-ship-gate-queries.md`",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "floor) is in flight — **never add it to `agedOut`, never report it as a",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "cursor — never `--offset`); `nextCursor: null` is the end",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "always.",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "registered consumer's own store** (fingerprint plus consumer names, never a DSN",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "any report. Incident history: `references/pre-ship-gate-queries.md` §0.5h.",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "scheduled act (`references/pre-ship-gate-queries.md` §0.5i).",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "**`docs/architecture-map.md` is Category A and is NEVER staged** — two renders of",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "one commit differ. **This step is ALWAYS advisory — it never blocks a ship**:",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "default branch, DB/embedding error) skips or exits non-zero under `|| true`; read",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "§0.5d — read when a consumer asks to build its dashboard). Never blocks the ship.",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "entry you are already authoring. Never let a script write `status.md`.",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "A queue it could not read renders **`unmeasured`**, never `0`. The command always",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "exits 0; it is a nudge, never a gate. (Incident: `references/flow-rationale.md`",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "carries `Status: Complete`; never move it. → `references/flow-rationale.md`",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "parent and branch are the ones it checked.** On `post-commit-drift` it exits 1",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "> empty, never evidence that no friction existed. Why:",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "`nextCursor`, never an offset → `references/post-push-advisories.md` §6.7 — read",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "| the synced consumer bundle | **authoritative**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs`, run *in the consumer's MAIN checkout* — note the `lib/` segment, it is a module rather than a top-level script. A linked worktree cannot answer this (`runGates` refuses one at `preflight` with exit 2 — why: `references/flow-rationale.md` §Step 6.8). `npm run sync:dry` from here is the pre-check, not the verdict | zero unexpected diffs; no orphans |",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "It resolves the MAIN checkout itself (never hand-write the path) and stamps the",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "acceptable loss for advisory documentation (never a gate), not a reason to force",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "| `references/commit-provenance-deep-dive.md` | Step 6.2/6.3's AI-Gate and worktree-identity deep-dive — why each value/flag exists and the incidents behind them. | Debugging `--gate`/`--expect-head`/`--expect-branch`/`--path` behaviour, or before changing one. |",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
     }
   ]
 }

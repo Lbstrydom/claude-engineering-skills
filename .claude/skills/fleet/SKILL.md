@@ -18,7 +18,8 @@ description: |
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
 > does not populate it, and every command below that uses it dies on a bare
 > `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. If this repo defines
-> no such script, add it from `references/worktree-preflight.md`.
+> no such script, `references/worktree-preflight.md` holds the entry to add — ask
+> the user first, since it edits their `package.json`.
 
 ## Usage
 
@@ -141,6 +142,7 @@ situations — read them only when the trigger applies.
 | `references/chip-preamble.md` | The standard launch block for a chip prompt: authority, route, turn rule, claim, stop point, pre-authorised ship. | You write or paste a chip's launch prompt, or a chip asks what it may do alone. |
 | `references/coordination.md` | Coordinating without host messages — next, directives, unregistered work, and the numbered coordinator rules. | You coordinate sessions, post or read a directive, or dispatch chips. |
 | `references/coordination-rationale.md` | Why each coordinator rule exists, with the measurements, incidents and command detail the terse rules omit. | A coordinator rule needs its why, a measurement or exact detail. |
+| `references/coordinator-playbook.md` | Coordinator playbook — merging, stacks, archiving, fast-forwards and rebases when one session coordinates the others. | You are the coordinating session and are about to merge, archive, remove a worktree, fast-forward a shared checkout, or rebase onto a moved main. |
 | `references/ending-a-session.md` | Ending a session — release, archive-check, prune, archive, and stopping branch and worktree clutter. | You retire a session or prune a worktree or branch. |
 | `references/handover-winddown.md` | Wind-down before handover prepare — the directive, measured readiness, context file and safe-to-archive list. | You wind down before an account switch. |
 | `references/handover.md` | Moving to another Claude Code account — handover prepare and receive, the scheduler step, exit codes, follow-ups. | You move to another Claude Code account on this machine (`fleet handover`). |

@@ -38,6 +38,34 @@
     {
       "line": "| `truncated` | `### <Provider> (<resolved-model>)`<br>`⚠ INCOMPLETE — <errorMessage>`<br>then the partial `<text>` verbatim. The errorMessage names the ceiling, how much of it thinking spent (when the provider reports it), and the remedy for this tier — at `deep` that is `--max-tokens`, not `--depth`; don't substitute your own. **Render the warning ABOVE the text, never below** — a fragment read as a finished view is the bug this state exists to prevent. Treat it as a partial view in any synthesis, and say so. |",
       "reason": "Storyline field report (2026-10-01): the `truncated` render row stopped hardcoding \"retry with a higher --depth\" (unactionable at the top tier) and now renders the adapter's errorMessage, which brought this row into the diff scope. Its enforcement verb is the pre-existing 'never below' — an instruction to the AGENT about where to print the warning, with no exit code to assert. The part that IS a code claim — that a length-capped response is labelled `truncated`, never `success`, and that its message names a tier-correct remedy — is enforced in the adapters and pinned by tests/brainstorm-truncation-honesty.test.mjs, tests/brainstorm-azure-claude-adapter.test.mjs and tests/brainstorm-provider-call.test.mjs. Same class as the 'Always pass --sid' entry above."
+    },
+    {
+      "line": "| `--with-context \"<text>\"` | — | Additional context (repeatable; max 8000 chars per flag, 24000 total). |",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "| `--with-artifact <path>` | — | Attach the **focal artifact** verbatim — the plan/diff/module the topic is actually about. Repeatable. Auto-attaches the policy pack. Sensitive paths are refused, never sent. |",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "### Debate block (only when JSON has non-empty `debate` array or non-null `debateSkipped`)",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "Render a `### Debate round` block between the parallel views and Claude's take.",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "`### Debate round — skipped` block with its `detail`. → `references/debate-round.md`",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "Never drop the *one voice only* row — a lone view is what a synthesis drops first.",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "| `references/debate-round.md` | Step 3 debate rendering — the debate block template and the debateSkipped reasons and skipped-block template. | Step 3 — the helper JSON has a non-empty `debate` array or a non-null `debateSkipped`. |",
+      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
     }
   ]
 }
