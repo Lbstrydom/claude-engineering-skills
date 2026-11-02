@@ -224,6 +224,52 @@ print for `--target gpt`/`--target claude`.
 > writes, and the next `arch:refresh` auto-promotes to a full re-embed so the index
 > can't silently mix spaces. Rebuild after any change (step 4).
 
+### 3c. A deployment that answers is not necessarily the one you configured
+
+Env layers resolve **launch environment > `.env` > `~/.audit-loop.env`**, with
+dotenv's `override:false` at each step. That precedence is deliberate and it is
+silent: a deployment name exported in a terminal, or set as a Windows user
+environment variable that the editor inherited, beats `.env` with no notice.
+
+Reported 2026-11-02 by the enterprise mirror (Actions disabled, hosted runners
+off by policy). Its terminal still carried
+`AZURE_FOUNDRY_CLAUDE_DEPLOYMENT=claude-opus-5` (a 404 DeploymentNotFound) and
+`AZURE_OPENAI_GPT_DEPLOYMENT=gpt-5.6-terra`, while `.env` named `claude-opus-5-5`
+and `gpt-6.1-sol`. Setup then failed in two directions at once:
+
+- **False "missing".** `check-setup` parsed `<repo>/.env` alone, so
+  `AZURE_OPENAI_API_KEY`, held in the launch environment, read as missing while
+  the GPT probe returned 200. It now reads `readEnvLayers()`
+  (`scripts/lib/load-shared-env.mjs`), the runtime loader's own composition, so
+  setup checks the chain the runtime authenticates with.
+- **Silent shadowing.** `check-setup` and the doctor
+  (`machine/env-selector-shadow`) now print an **Environment provenance**
+  section. It names the layer that every credential comes from (presence only,
+  never a value) and every `*MODEL` / `*DEPLOYMENT` selector (with its value).
+  It WARNs when a higher layer overrides a lower one with a *different* value,
+  and names the variable and both layers. An equal value never warns.
+- **`azure:doctor` reports two facts separately**: whether the effective
+  deployment *answers*, and whether it *is the configured one*. If a shadowed
+  deployment answers, the doctor exits `8` (`SHADOWED`), not `0`. In
+  `--json`, see `answers`, `matchesConfigured` and `configuredSource`.
+  `--routes` prints one line for each shadowed slot.
+
+**Remedy:** clear the override from the launch environment (the shell
+`export`/`$env:`, or the user/system environment variable), then restart the
+editor and every terminal, so they stop inheriting it. Editing `.env` alone
+changes nothing while the override is inherited.
+
+**Actions disabled on the mirror.** On a repository with Actions disabled,
+`node scripts/test-tier.mjs ci-verdict` returns `unverified` with the reason
+`actions-disabled` (`blocker: "actions-disabled"` in `--json`). Before this
+change, it returned "no run exists", which reads like a pending run. The reason
+names the local remedy: set `AUDIT_PREPUSH_TIER=full` so the push runs the full
+suite, and set `AUDIT_LOOP_WEEKLY_MAINTENANCE=1` so the weekly checks run from
+the pre-push hook. The verdict stays `unverified` and never turns green. If the
+permissions read fails (it needs admin read on many tokens), the generic reason
+stays. `cadence:doctor` gives its `never-ran`/`stale` verdicts the same
+`cause: "actions-disabled"`.
+
 ### 4. Rebuild the architecture index in the Azure vector space (important)
 
 Embeddings are only comparable **within one provider's vector space**. If your

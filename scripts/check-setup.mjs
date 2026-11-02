@@ -40,6 +40,8 @@ import {
   resolveTokenSources, tokenFingerprint, tokenKind, tokenSourceKind,
 } from './lib/doctor/github-permissions.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { readEnvLayers } from './lib/load-shared-env.mjs';
+import { reportEnvProvenance } from './lib/env-provenance.mjs';
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -57,29 +59,22 @@ const REPO_NAME = path.basename(REPO_PATH);
 // ── Env loading ───────────────────────────────────────────────────────────────
 
 /**
- * Load .env from the target repo path without polluting process.env,
- * so multiple repos can be checked in sequence.
+ * The environment the RUNTIME will see in `repoPath` — launch environment >
+ * `.env` (worktree-safe discovery) > `~/.audit-loop.env` — composed by the
+ * runtime loader's own `readEnvLayers`, never applied to `process.env`, so
+ * multiple repos can be checked in sequence.
  *
- * Exported (consumer-friction-doctor plan §2.3a) — this is the exact function
- * the doctor's probe adapters call as `loadEnv(ctx.subjectRoot)`, the same one
- * this CLI already uses via its own `--repo-path` flag. No new
- * environment-loading mechanism is introduced.
+ * This used to parse `<repoPath>/.env` alone, a second parser with a narrower
+ * chain than the runtime's: a key living in the launch environment or the
+ * shared file read as "missing" here while every audit authenticated with it
+ * (Azure work-profile mirror, 2026-11-02: GPT probe 200, check-setup
+ * "AZURE_OPENAI_API_KEY missing").
+ *
+ * Exported (consumer-friction-doctor plan §2.3a) — the doctor's probe adapters
+ * call it as `loadEnv(ctx.subjectRoot)`.
  */
-export function loadEnv(repoPath) {
-  const envFile = path.join(repoPath, '.env');
-  if (!fs.existsSync(envFile)) return {};
-
-  const env = {};
-  for (const line of fs.readFileSync(envFile, 'utf-8').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const val = trimmed.slice(eq + 1).trim().replaceAll(/^["']|["']$/g, '');
-    env[key] = val;
-  }
-  return env;
+export function loadEnv(repoPath, opts = {}) {
+  return readEnvLayers(repoPath, opts).env;
 }
 
 // ── Postgres helpers (M4 — migrated off supabase-js) ──────────────────────────
@@ -293,6 +288,12 @@ async function checkAuditSupabase(env, report, repoPath = REPO_PATH) {
   }
 }
 
+/** Which layer each credential (presence only) and selector comes from; WARN on a shadowed selector. */
+function checkEnvProvenance(report, repoPath = REPO_PATH, layerOpts = {}) {
+  report.section('Environment provenance');
+  reportEnvProvenance(report, readEnvLayers(repoPath, layerOpts));
+}
+
 async function checkAuditLoop(env, report, repoPath = REPO_PATH) {
   report.section('Audit-Loop');
   checkAuditApiKeys(env, report, repoPath);
@@ -416,7 +417,9 @@ async function checkGitHub(env, report, repoPath = REPO_PATH) {
   // own and must be credited with the main worktree's, or this reports "no
   // token in .env" for a repo whose .env has one.
   const envFilePath = discoverLocalEnvPath(repoPath, { onNotice() {} });
-  const fileEnv = envFilePath ? loadEnv(path.dirname(envFilePath)) : env;
+  // The FILE layer alone: the token resolver attributes the launch environment
+  // itself (`processEnv`), so a merged env here would credit a shell token to .env.
+  const fileEnv = readEnvLayers(repoPath, { localEnvPath: envFilePath }).layers.local;
 
   const { sources, winner, ghReason } = resolveTokenSources({
     processEnv: process.env,
@@ -918,6 +921,13 @@ export function evaluateAuditSetup(env, repoPath = REPO_PATH, cloudConfigOverrid
   return toAdapterResult(report);
 }
 
+/** `evaluateEnvProvenance` — layer of each credential (presence only) and selector; shadow WARNs. No I/O beyond the env files. */
+export function evaluateEnvProvenance(_env, repoPath = REPO_PATH, layerOpts = {}) {
+  const report = new Report();
+  checkEnvProvenance(report, repoPath, layerOpts);
+  return toAdapterResult(report);
+}
+
 /** `evaluateAuditSupabase` — DSN + table/view presence. Needs `process.env.AUDIT_DB_URL`. */
 export async function evaluateAuditSupabase(env, repoPath = REPO_PATH) {
   const report = new Report();
@@ -951,6 +961,7 @@ async function main() {
   const report = new Report();
 
   await checkAuditLoop(env, report);
+  checkEnvProvenance(report);
   await checkPersonaTest(env, report);
   await checkConsistencyMode(env, report);
   // The section body lives in lib/install/bundle-deps.mjs: it has to run in a
