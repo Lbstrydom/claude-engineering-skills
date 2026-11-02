@@ -77,6 +77,10 @@ describe('composeEnvLayers — the runtime precedence as a pure function', () =>
     const r = readEnvLayers(dir, { inherited: { DOTENV_CONFIG_PATH: pinned }, sharedPath: NO_SHARED() });
     assert.equal(r.localEnvPath, pinned);
     assert.equal(r.env.OPENAI_AUDIT_MODEL, 'from-pinned');
+    // A RELATIVE pin resolves against the repository (where the runtime runs), not this process's cwd.
+    const rel = readEnvLayers(dir, { inherited: { DOTENV_CONFIG_PATH: 'pinned.env' }, sharedPath: NO_SHARED() });
+    assert.equal(rel.localEnvPath, pinned);
+    assert.equal(rel.env.OPENAI_AUDIT_MODEL, 'from-pinned');
   });
 
   it('an UNREADABLE layer is reported, not read as empty; an absent one is silent', () => {

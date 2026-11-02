@@ -416,11 +416,12 @@ async function checkGitHub(env, report, repoPath = REPO_PATH) {
   // env-reading check in this file uses. A linked worktree has no `.env` of its
   // own and must be credited with the main worktree's, or this reports "no
   // token in .env" for a repo whose .env has one.
-  const envFilePath = discoverLocalEnvPath(repoPath, { onNotice() {} });
   // `fileEnv` is the .env layer alone (the resolver credits it to .env); `processEnv`
   // is the COMPOSED env for THIS repo — launch environment + shared file — never this
   // CLI's own process.env, whose load-env import already copied ITS repo's .env in.
-  const layered = readEnvLayers(repoPath, { localEnvPath: envFilePath });
+  // readEnvLayers picks the file as the runtime does (an inherited DOTENV_CONFIG_PATH first).
+  const layered = readEnvLayers(repoPath);
+  const envFilePath = layered.localEnvPath;
   const fileEnv = layered.layers.local;
 
   const { sources, winner, ghReason } = resolveTokenSources({

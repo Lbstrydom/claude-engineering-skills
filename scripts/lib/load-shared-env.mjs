@@ -25,6 +25,7 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
 import dotenv from 'dotenv';
 import {
   discoverLocalEnvPath, sharedEnvPath,
@@ -170,7 +171,8 @@ export function readEnvLayers(repoPath, opts = {}) {
   const inherited = opts.inherited ?? inheritedEnv();
   const localEnvPath = opts.localEnvPath !== undefined
     ? opts.localEnvPath
-    : (inherited.DOTENV_CONFIG_PATH || discoverLocalEnvPath(repoPath, { onNotice() {} }));
+    // A relative pin is relative to where the runtime runs: the repository's own root.
+    : (inherited.DOTENV_CONFIG_PATH ? path.resolve(repoPath, inherited.DOTENV_CONFIG_PATH) : discoverLocalEnvPath(repoPath, { onNotice() {} }));
   const errors = [];
   const read = (layer, p) => {
     const { parsed, error } = parseEnvFile(p);
