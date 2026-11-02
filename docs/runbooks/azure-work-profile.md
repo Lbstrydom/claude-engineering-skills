@@ -568,6 +568,10 @@ are the same code on two `.env`s.
 
 ## Moved from AGENTS.md (2026-11-02)
 
+> **Verbatim snapshot** of what AGENTS.md said here before the 2026-11-02 trim
+> (docs/plans/skill-best-practice-alignment.md, Track C), kept so no rule is lost.
+> Where it disagrees with the sections above, **the sections above are current**.
+
 AGENTS.md's "Azure AI Foundry Work Profile" section was condensed to cut the
 per-session context cost (plan: `docs/plans/skill-best-practice-alignment.md`
 Track C); its four provider invariants stay resident there in tightened wording.

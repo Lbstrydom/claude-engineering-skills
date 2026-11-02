@@ -187,6 +187,10 @@ is a loss, and neither contributes to `dropped`.
 
 ## Moved from AGENTS.md (2026-11-02)
 
+> **Verbatim snapshot** of what AGENTS.md said here before the 2026-11-02 trim
+> (docs/plans/skill-best-practice-alignment.md, Track C), kept so no rule is lost.
+> Where it disagrees with the sections above, **the sections above are current**.
+
 AGENTS.md's "Learning System (Phase 1)" section was condensed to a stub to cut the
 per-session context cost (plan: `docs/plans/skill-best-practice-alignment.md`
 Track C). Its full former text, verbatim (link targets re-based to this file):

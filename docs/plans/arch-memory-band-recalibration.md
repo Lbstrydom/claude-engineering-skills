@@ -1149,6 +1149,10 @@ would strand that data as permanently `uncertain`.
 
 ## Moved from AGENTS.md (2026-11-02)
 
+> **Verbatim snapshot** of what AGENTS.md said here before the 2026-11-02 trim
+> (docs/plans/skill-best-practice-alignment.md, Track C), kept so no rule is lost.
+> Where it disagrees with the sections above, **the sections above are current**.
+
 Two paragraphs of AGENTS.md's "Architectural Memory — Pre-fix Consultation
 (MANDATORY)" section moved here to cut the per-session context cost (plan:
 `docs/plans/skill-best-practice-alignment.md` Track C); the consultation rule, the
