@@ -43,7 +43,7 @@ before(() => {
   envFile = path.join(dir, '.env');
   sharedFile = path.join(dir, 'shared.env');
 });
-after(() => fs.rmSync(dir, { recursive: true, force: true }));
+after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
 
 describe('composeEnvLayers — the runtime precedence as a pure function', () => {
   it('launch environment > .env > shared, override:false at every step', () => {
@@ -69,6 +69,15 @@ describe('composeEnvLayers — the runtime precedence as a pure function', () =>
     const { layers } = readEnvLayers(dir, { inherited: { AUDIT_LOOP_DISABLE_SHARED: '1' }, localEnvPath: envFile, sharedPath: sharedFile });
     assert.deepEqual(layers.shared, {});
     assert.equal(formatShadow(resolveVariable('OPENAI_AUDIT_MODEL', layers)), null);
+  });
+
+  it('a disable flag INSIDE the shared file does not stop the runtime applying it, so provenance still reports it', () => {
+    write(sharedFile, ['AUDIT_LOOP_DISABLE_SHARED=1', 'OPENAI_AUDIT_MODEL=from-shared']);
+    write(envFile, ['X=1']);
+    const composed = readEnvLayers(dir, { inherited: {}, localEnvPath: envFile, sharedPath: sharedFile });
+    assert.equal(composed.env.OPENAI_AUDIT_MODEL, 'from-shared', 'the runtime takes it');
+    const r = evaluateEnvProvenance(null, dir, { inherited: {}, localEnvPath: envFile, sharedPath: sharedFile });
+    assert.ok(r.items.some((i) => i.label === 'OPENAI_AUDIT_MODEL = from-shared' && i.detail === 'from ~/.audit-loop.env'));
   });
 
   it('AUDIT_LOOP_DISABLE_SHARED=1 in .env switches the shared layer off, as the runtime reads it after .env', () => {
@@ -209,7 +218,8 @@ describe('azure:doctor separates "answers" from "is the configured one"', () => 
     const r = await runAzureDoctor({ target: 'claude', json: true }, h.d);
     assert.equal(r.json.answers, true);
     assert.equal(r.json.matchesConfigured, false);
-    assert.equal(r.json.configuredSource, 'launch environment');
+    assert.equal(r.json.effectiveSource, 'launch environment');
+    assert.equal(r.json.configuredSource, '.env', 'the configured source is the FILE, not the winning layer');
     assert.equal(r.exitCode, EXIT.SHADOWED);
   });
 
@@ -245,6 +255,11 @@ describe('azure:doctor separates "answers" from "is the configured one"', () => 
     const routes = JSON.parse(json.join('')).routes;
     assert.equal(routes.find((x) => x.surface === 'gpt').shadow, shadows.gpt);
     assert.equal(routes.find((x) => x.surface === 'embed').shadow, null);
+    // A shadowed surface whose probe never RAN claims no test and never turns the exit.
+    const lines = [];
+    const unprobed = await runRouteDoctor({}, { azure, probes: { embed: ok }, out: (s) => lines.push(s), shadows, shadowedExit: EXIT.SHADOWED });
+    assert.equal(unprobed.exitCode, 0);
+    assert.ok(lines.some((l) => /AZURE_OPENAI_GPT_DEPLOYMENT.*\(not probed\)/.test(l)));
     const onlyClaude = await runRouteDoctor({ json: true }, { azure, probes: { gpt: ok, embed: ok }, out: () => {}, shadows: { claude: shadows.claude }, shadowedExit: EXIT.SHADOWED });
     assert.equal(onlyClaude.exitCode, 0, 'an unprobed surface never turns the exit');
   });
@@ -276,7 +291,7 @@ describe('the spawned CLI: a launch-environment key passes setup (scrubbed env)'
       assert.ok(items.some((i) => i.label === 'Azure work profile' && i.status === 'PASS'));
       assert.ok(items.some((i) => i.status === 'WARN' && /AZURE_OPENAI_GPT_DEPLOYMENT/.test(i.label)), 'the shadowed deployment warns');
     } finally {
-      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

@@ -176,13 +176,15 @@ export const PROVENANCE_CREDENTIALS = Object.freeze([
  * silently.
  *
  * @param {{pass: Function, warn: Function, info: Function}} report
- * @param {{env: object, layers: {inherited: object, local: object, shared: object}}} composed - `readEnvLayers`'s result
+ * @param {{layers: {inherited: object, local: object, shared: object}}} composed - `readEnvLayers`'s result
  */
-export function reportEnvProvenance(report, { env, layers }) {
-  const opts = { sharedActive: env?.AUDIT_LOOP_DISABLE_SHARED !== '1' };
+export function reportEnvProvenance(report, { layers }) {
+  // No second disable decision here: `readEnvLayers` already left a disabled shared
+  // layer empty, deciding exactly as the runtime does (a flag INSIDE the shared file
+  // does not stop the runtime applying that file, so it must not stop this either).
   for (const name of PROVENANCE_CREDENTIALS) {
-    const from = credentialSource(name, layers, opts);
+    const from = credentialSource(name, layers);
     if (from) report.pass(`${name} present`, `from ${from}`);
   }
-  return reportSelectorProvenance(report, layers, opts);
+  return reportSelectorProvenance(report, layers);
 }

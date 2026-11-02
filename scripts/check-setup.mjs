@@ -40,7 +40,7 @@ import {
   resolveTokenSources, tokenFingerprint, tokenKind, tokenSourceKind,
 } from './lib/doctor/github-permissions.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
-import { inheritedEnv, readEnvLayers } from './lib/load-shared-env.mjs';
+import { readEnvLayers } from './lib/load-shared-env.mjs';
 import { reportEnvProvenance } from './lib/env-provenance.mjs';
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
@@ -417,14 +417,14 @@ async function checkGitHub(env, report, repoPath = REPO_PATH) {
   // own and must be credited with the main worktree's, or this reports "no
   // token in .env" for a repo whose .env has one.
   const envFilePath = discoverLocalEnvPath(repoPath, { onNotice() {} });
-  // The FILE layer alone: the token resolver attributes the launch environment
-  // itself (`processEnv`), so a merged env here would credit a shell token to .env.
-  const fileEnv = readEnvLayers(repoPath, { localEnvPath: envFilePath }).layers.local;
+  // `fileEnv` is the .env layer alone (the resolver credits it to .env); `processEnv`
+  // is the COMPOSED env for THIS repo — launch environment + shared file — never this
+  // CLI's own process.env, whose load-env import already copied ITS repo's .env in.
+  const layered = readEnvLayers(repoPath, { localEnvPath: envFilePath });
+  const fileEnv = layered.layers.local;
 
   const { sources, winner, ghReason } = resolveTokenSources({
-    // The launch environment, not process.env: this CLI's own load-env import has
-    // already copied ITS repo's .env in, which would read as a "shell export" here.
-    processEnv: inheritedEnv(),
+    processEnv: layered.env,
     fileEnv,
     envFilePath,
     gh: readGhKeyringToken(),
@@ -445,7 +445,7 @@ async function checkGitHub(env, report, repoPath = REPO_PATH) {
   // in its .env) — see evaluateExpectedSource for why this is a falsifiable
   // declaration rather than a suppression flag.
   const expected = evaluateExpectedSource(
-    fileEnv[EXPECTED_SOURCE_VAR] ?? inheritedEnv()[EXPECTED_SOURCE_VAR],
+    fileEnv[EXPECTED_SOURCE_VAR] ?? layered.env[EXPECTED_SOURCE_VAR],
     winner.id,
   );
 

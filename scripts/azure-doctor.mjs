@@ -106,10 +106,10 @@ export const EXIT = Object.freeze({
  * `resolveVariable(envKey, layers)` (lib/env-provenance.mjs). Only a launch-
  * environment value that differs from the files is a mismatch: `.env` winning
  * over the shared file IS the configuration. Absent ⇒ not asked (`null`).
- * @returns {{matches: boolean|null, line: string|null, source: string|null}}
+ * @returns {{matches: boolean|null, line: string|null, effectiveSource: string|null, configuredSource: string|null}}
  */
 export function configuredMatch(provenance) {
-  if (!provenance || provenance.source === 'unset') return { matches: null, line: null, source: null };
+  if (!provenance || provenance.source === 'unset') return { matches: null, line: null, effectiveSource: null, configuredSource: null };
   // The highest-precedence FILE layer's value: equal layers carry the effective value, shadowed ones their own.
   const fileLayers = [
     ...(provenance.equalTo ?? []).map((source) => ({ source, value: provenance.value })),
@@ -117,9 +117,14 @@ export function configuredMatch(provenance) {
   ];
   const file = provenance.source === 'inherited'
     ? ['local', 'shared'].map((s) => fileLayers.find((l) => l.source === s)).find(Boolean)
-    : { value: provenance.value };
+    : { source: provenance.source, value: provenance.value };
   const matches = file ? file.value === provenance.value : null;
-  return { matches, line: matches === false ? formatShadow(provenance) : null, source: LAYER_LABELS[provenance.source] };
+  return {
+    matches,
+    line: matches === false ? formatShadow(provenance) : null,
+    effectiveSource: LAYER_LABELS[provenance.source],
+    configuredSource: file ? LAYER_LABELS[file.source] : null,
+  };
 }
 
 function renderProbeTable(result, configured) {
@@ -207,7 +212,8 @@ export async function runAzureDoctor(options, deps) {
     const obj = {
       active: true, configured, status: result.status,
       selected: result.selected, catalogSource: result.catalogSource, probed: result.probed,
-      answers, configuredSource: match.source, matchesConfigured: match.matches, shadow: match.line,
+      answers, effectiveSource: match.effectiveSource, configuredSource: match.configuredSource,
+      matchesConfigured: match.matches, shadow: match.line,
     };
     out(JSON.stringify(obj));
     return { exitCode: shadowedExit(reportExitCode(result, configured)), wrote: false, json: obj };

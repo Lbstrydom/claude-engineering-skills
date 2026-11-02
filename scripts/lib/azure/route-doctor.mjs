@@ -90,7 +90,9 @@ export async function runRouteDoctor(options, deps) {
   for (const report of reports) {
     rows.push({ ...report, probe: await runProbe(probes[report.surface]), shadow: shadows[report.surface] ?? null });
   }
-  const shadowed = rows.filter((r) => r.shadow);
+  // Only a probe that RAN can have "answered on a shadowed deployment".
+  const ran = (r) => r.probe.outcome !== 'skipped';
+  const shadowed = rows.filter((r) => r.shadow && ran(r));
 
   if (options.json) {
     out(JSON.stringify({ active: true, routes: rows }, null, 2));
@@ -98,7 +100,9 @@ export async function runRouteDoctor(options, deps) {
     out(`${G}Azure routes${X} ${D}(credential values are never printed — only their source variable)${X}\n`);
     for (const r of rows) {
       renderRow(r, out);
-      if (r.shadow) out(`  ${Y}⚠ ${r.shadow}. The probe tested this effective value, not the configured one.${X} ${shadowRemedy}`);
+      if (r.shadow) {
+        out(`  ${Y}⚠ ${r.shadow}.${ran(r) ? ' The probe tested this effective value, not the configured one.' : ' (not probed)'}${X} ${shadowRemedy}`);
+      }
       out('');
     }
     const failed = rows.filter((r) => r.probe.outcome === 'failed');

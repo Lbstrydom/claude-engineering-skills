@@ -113,6 +113,10 @@ export function classifyCiVerdict(evidence) {
 
   const match = pr !== null ? (run.pull_requests ?? []).find((p) => p?.number === pr) : (run.pull_requests ?? [])[0];
   const testedBase = SHA40.test(String(match?.base?.sha ?? '')) ? match.base.sha : null;
+  // A confirmed-disabled repository never reads green, even over a success from before Actions was switched off: that run
+  // is kept as evidence (runId/url), but nothing on this repository can re-grade the head, so the verdict is the local
+  // remedy. Decided BEFORE the provenance checks below, which could only pick a less useful unverified reason.
+  if (actionsEnabled === false) return { ...actionsOff(`run ${run.id} succeeded on ${head.slice(0, 8)} before Actions was disabled`), ...common, testedBase };
 
   // PROVENANCE of the workflow the run actually EXECUTED (audit R1 H1/H4). A pull_request run executes the workflow of the
   // MERGE of the head with the base it was tested against, and the current default's file says nothing about that older base.
@@ -124,9 +128,6 @@ export function classifyCiVerdict(evidence) {
     if (!atBase || (!atBase.blob && atBase.why)) return { ...unverified(`cannot read ${workflowPath} at the base run ${run.id} was tested against (${testedBase.slice(0, 8)})${atBase?.why ? `: ${atBase.why}` : ''}`), ...common };
     if (atBase.blob !== workflowBlobDefault) return { ...unverified(`run ${run.id} executed the merge of this head with base ${testedBase.slice(0, 8)}, whose ${workflowPath} differs from the trusted one: the executed workflow is not the trusted workflow`), ...common };
   }
-  // A confirmed-disabled repository never reads green, even over a success from before Actions was switched off: that run
-  // is kept as evidence (runId/url), but nothing on this repository can re-grade the head, so the verdict is the local remedy.
-  if (actionsEnabled === false) return { ...actionsOff(`run ${run.id} succeeded on ${head.slice(0, 8)} before Actions was disabled`), ...common, testedBase };
   return {
     verdict: 'full', reason: `run ${run.id} succeeded on ${head.slice(0, 8)}`, ...common, testedBase,
     summary: summaryLine({ tier: 'full', head, skipped: 0, base: testedBase, reason: `ci:${run.id}` }),

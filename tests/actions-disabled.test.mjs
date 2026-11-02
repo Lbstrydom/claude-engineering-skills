@@ -105,6 +105,9 @@ describe('ci-verdict: actions-disabled is its own unverified reason', () => {
     assert.equal(off.blocker, ACTIONS_DISABLED);
     assert.equal(off.summary, undefined);
     assert.equal(off.runId, 77);
+    // Precedence: a PR run missing its tested base still names actions-disabled, not the generic provenance gap.
+    const noBase = classifyCiVerdict({ ...ev, actionsEnabled: false, runs: [{ ...success, pull_requests: [{ number: 7, base: { ref: 'main' } }] }] });
+    assert.equal(noBase.blocker, ACTIONS_DISABLED);
   });
 
   it('a runs endpoint that refuses on a disabled repo still names the cause', () => {
