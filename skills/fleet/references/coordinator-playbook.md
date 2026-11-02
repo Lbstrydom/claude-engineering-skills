@@ -84,7 +84,9 @@ comm -12 <(git diff --name-only HEAD...origin/main | sort) \
          <(git diff --name-only $(git merge-base HEAD origin/main)..HEAD | sort)
 ```
 
-A non-empty overlap is a reason to read both diffs before rebasing.
+A non-empty overlap is a reason to read both diffs before rebasing. An empty one is not
+proof of no competition — a second implementation can live in different files — so also
+read main's new commit subjects (`git log --oneline HEAD..origin/main`) for your feature.
 
 ## 6. Run the whole suite before a branch's first push
 
