@@ -248,6 +248,11 @@ and `gpt-6.1-sol`. Setup then failed in two directions at once:
   never a value) and every `*MODEL` / `*DEPLOYMENT` selector (with its value).
   It WARNs when a higher layer overrides a lower one with a *different* value,
   and names the variable and both layers. An equal value never warns.
+  Selector values are printed because the diagnostic needs them. A value is
+  withheld when it does not look like an identifier or when the secret-pattern
+  redactor matches it. That is a guard, not a proof: a credential pasted into a
+  `*_MODEL` variable that looks like an identifier would still be printed. Keep
+  credentials in key variables.
 - **`azure:doctor` reports two facts separately**: whether the effective
   deployment *answers*, and whether it *is the configured one*. If a shadowed
   deployment answers, the doctor exits `8` (`SHADOWED`), not `0`. In
