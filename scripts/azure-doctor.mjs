@@ -40,6 +40,8 @@ import { selectEmbedDeployment as realSelectEmbed } from './lib/azure/embed-disc
 import { selectGptDeployment as realSelectGpt } from './lib/azure/gpt-discovery.mjs';
 import { selectClaudeDeployment as realSelectClaude } from './lib/azure/claude-discovery.mjs';
 import { finishAndExit, armExitWatchdog } from './lib/cli-io.mjs';
+import { readEnvLayers } from './lib/load-shared-env.mjs';
+import { formatShadow, resolveVariable, LAYER_LABELS, SHADOW_REMEDY } from './lib/env-provenance.mjs';
 
 /**
  * Per-target wiring: the env key it writes, the comment stamped above it, how
@@ -92,7 +94,38 @@ export const EXIT = Object.freeze({
   NONE_FOUND: 5,  // every tried candidate was unsupported; supply --candidate
   REFUSED_CI: 6,  // --fix without a TTY: refuse to auto-write
   DECLINED: 130,  // user answered 'n' at the confirm prompt
+  // The effective deployment answers, but it is NOT the configured one: a
+  // higher-precedence layer (the launch environment) overrides .env with a
+  // different name. 7 is taken by `--routes` (a failed probe).
+  SHADOWED: 8,
 });
+
+/**
+ * Is the effective value of `envKey` the CONFIGURED one — the value the env
+ * FILES name (`.env`, else `~/.audit-loop.env`)? `provenance` is
+ * `resolveVariable(envKey, layers)` (lib/env-provenance.mjs). Only a launch-
+ * environment value that differs from the files is a mismatch: `.env` winning
+ * over the shared file IS the configuration. Absent ⇒ not asked (`null`).
+ * @returns {{matches: boolean|null, line: string|null, effectiveSource: string|null, configuredSource: string|null}}
+ */
+export function configuredMatch(provenance) {
+  if (!provenance || provenance.source === 'unset') return { matches: null, line: null, effectiveSource: null, configuredSource: null };
+  // The highest-precedence FILE layer's value: equal layers carry the effective value, shadowed ones their own.
+  const fileLayers = [
+    ...(provenance.equalTo ?? []).map((source) => ({ source, value: provenance.value })),
+    ...provenance.shadowed,
+  ];
+  const file = provenance.source === 'inherited'
+    ? ['local', 'shared'].map((s) => fileLayers.find((l) => l.source === s)).find(Boolean)
+    : { source: provenance.source, value: provenance.value };
+  const matches = file ? file.value === provenance.value : null;
+  return {
+    matches,
+    line: matches === false ? formatShadow(provenance) : null,
+    effectiveSource: LAYER_LABELS[provenance.source],
+    configuredSource: file ? LAYER_LABELS[file.source] : null,
+  };
+}
 
 function renderProbeTable(result, configured) {
   const rows = result.probed.map((p) => {
@@ -167,18 +200,30 @@ export async function runAzureDoctor(options, deps) {
     throttle: deps.throttle,
   });
   const configured = getConfigured(azure);
+  // Two questions a single "verified" used to answer as one (2026-11-02): does the
+  // EFFECTIVE deployment answer, and is it the CONFIGURED one? A stale name
+  // exported in the terminal beats .env (dotenv override:false) and can answer.
+  const answers = result.probed.some((p) => p.name === configured && p.outcome === 'verified');
+  const match = configuredMatch(deps.provenance);
+  const shadowedExit = (code) => (code === EXIT.OK && match.matches === false ? EXIT.SHADOWED : code);
 
   // --json: machine object, NEVER prompts, NEVER writes (H7). Exit mirrors the matrix.
   if (options.json) {
     const obj = {
       active: true, configured, status: result.status,
       selected: result.selected, catalogSource: result.catalogSource, probed: result.probed,
+      answers, effectiveSource: match.effectiveSource, configuredSource: match.configuredSource,
+      matchesConfigured: match.matches, shadow: match.line,
     };
     out(JSON.stringify(obj));
-    return { exitCode: reportExitCode(result, configured), wrote: false, json: obj };
+    return { exitCode: shadowedExit(reportExitCode(result, configured)), wrote: false, json: obj };
   }
 
   out(renderProbeTable(result, configured));
+  if (match.matches === false) {
+    out(`⚠ ${ENV_KEY} is shadowed — ${match.line}. The probe above tested the effective value, ` +
+        `not the one .env configures. ${SHADOW_REMEDY}`);
+  }
 
   if (result.status === 'unverified') {
     out('✗ Could not verify any candidate — the failure was auth/throttle/transport/5xx, not a ' +
@@ -193,6 +238,11 @@ export async function runAzureDoctor(options, deps) {
 
   // verified
   if (result.selected === configured) {
+    if (match.matches === false) {
+      out(`✓ Effective deployment "${configured}" answers.`);
+      out(`✗ It is not the configured deployment (${match.line}). Not healthy until the override is cleared.`);
+      return { exitCode: EXIT.SHADOWED, wrote: false };
+    }
     out(`✓ Configured deployment "${configured}" is verified. Nothing to fix.`);
     return { exitCode: EXIT.OK, wrote: false };
   }
@@ -270,6 +320,16 @@ function parseArgs(argv) {
   return options;
 }
 
+/** `{surface: line}` for each deployment slot whose effective value is not the configured one. */
+export function routeShadows(layers) {
+  const out = {};
+  for (const [surface, t] of Object.entries(TARGETS)) {
+    const m = configuredMatch(resolveVariable(t.envKey, layers));
+    if (m.matches === false) out[surface] = m.line;
+  }
+  return out;
+}
+
 /**
  * `--routes`: build + probe the route table. Deliberately short-circuits before
  * any of the embedding doctor's discovery/write machinery — it shares only the
@@ -312,7 +372,10 @@ async function runRoutesMode(options, out) {
     },
   };
   try {
-    const r = await runRouteDoctor(options, { azure: azureConfig, probes, out });
+    // A route that answers on a SHADOWED deployment is not the configured route;
+    // route-doctor attaches each line to the surface it probes (and to --json).
+    const shadows = routeShadows(readEnvLayers(process.cwd()).layers);
+    const r = await runRouteDoctor(options, { azure: azureConfig, probes, out, shadows, shadowRemedy: SHADOW_REMEDY, shadowedExit: EXIT.SHADOWED });
     return r.exitCode;
   } finally {
     watchdog.disarm();
@@ -394,6 +457,7 @@ async function main() {
   }
   const repoRoot = process.cwd();
   const envPath = resolveEnvPath(repoRoot, options.envFile);
+  const provenance = resolveVariable(TARGETS[target].envKey, readEnvLayers(repoRoot, { localEnvPath: envPath }).layers);
 
   // Snapshot reader (best-effort, M7) — resolve repo identity + active snapshot.
   // Embed-only: it feeds the architectural-memory vector-space warning, which
@@ -421,7 +485,7 @@ async function main() {
       prompt,
       readEnvFile: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : ''),
       writeEnvFile: (p, t) => atomicWriteFileSync(p, t),
-      envPath, getActiveSnapshot, repoId, out,
+      envPath, getActiveSnapshot, repoId, out, provenance,
     });
     rl.close();
     return finishAndExit(r.exitCode);

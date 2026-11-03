@@ -15,6 +15,7 @@
  * @module scripts/lib/ci-verdict
  */
 import { parseHeavyList, summaryLine } from './test-tier.mjs';
+import { ACTIONS_DISABLED, ACTIONS_DISABLED_SUITE_REMEDY, actionsEnabledFrom, actionsPermissionsPath } from './actions-availability.mjs';
 
 export const CI_VERDICT_VERSION = 'ci-verdict/v1';
 /** Process exit codes of `test-tier.mjs ci-verdict`: 1 error and 2 usage keep the CLI's own meanings. */
@@ -69,19 +70,26 @@ export function selectRun({ runs, head, pr = null, defaultBranch, workflowPath }
  * THE decision. `evidence`:
  *   head, pr (number|null), defaultBranch, defaultSha, workflowPath (from the TRUSTED default branch),
  *   workflowBlobHead / workflowBlobDefault (git blob ids of that workflow at each), runs (the Actions runs for head),
- *   mergeable (the PR's GitHub mergeable state, or null).
+ *   mergeable (the PR's GitHub mergeable state, or null), actionsEnabled (true | false | null = could not be asked).
  * @returns {{verdict: 'full'|'failed'|'pending'|'unverified', reason: string, runId?: number, url?: string, testedBase?: string|null, summary?: string, staleBase?: {tested: string, current: string}|null}}
  */
 export function classifyCiVerdict(evidence) {
   const unverified = (reason) => ({ verdict: 'unverified', reason });
-  const { head, pr = null, defaultBranch, defaultSha, workflowPath, workflowBlobHead, workflowBlobDefault, runs, workflowBlobErrors = {}, workflowBlobAtBase = {}, mergeable = null } = evidence ?? {};
+  const { head, pr = null, defaultBranch, defaultSha, workflowPath, workflowBlobHead, workflowBlobDefault, runs, workflowBlobErrors = {}, workflowBlobAtBase = {}, mergeable = null, actionsEnabled = null } = evidence ?? {};
+  // A repository with Actions DISABLED never produces the run: its "no run" and "queued" are not "not yet" but "never",
+  // and the remedy is local. Still unverified, never green. Only a confirmed `false` says so; `null` keeps the generic reason.
+  const actionsOff = (reason) => ({ ...unverified(`${ACTIONS_DISABLED}: ${ACTIONS_DISABLED_SUITE_REMEDY} (${reason})`), blocker: ACTIONS_DISABLED });
   // GitHub runs no pull_request workflow on a CONFLICTING PR, so "no run" there has a cause the reader must name (400e).
-  const noRun = (reason) => (pr !== null && mergeable === 'CONFLICTING'
-    ? { ...unverified(`conflicting: GitHub runs no pull_request workflow on a conflicting PR; merge the base in first (${reason})`), blocker: 'conflicting' }
-    : unverified(reason));
+  const noRun = (reason) => (actionsEnabled === false ? actionsOff(reason)
+    : pr !== null && mergeable === 'CONFLICTING'
+      ? { ...unverified(`conflicting: GitHub runs no pull_request workflow on a conflicting PR; merge the base in first (${reason})`), blocker: 'conflicting' }
+      : unverified(reason));
   if (!SHA40.test(String(head ?? ''))) return unverified('the head is not a full 40-hex commit id');
   if (!defaultBranch || !SHA40.test(String(defaultSha ?? ''))) return unverified('the default branch could not be resolved to a fresh commit');
-  if (!workflowPath) return unverified(`no ciVerdict workflow is declared in .test-tiers.json on ${defaultBranch}`);
+  if (!workflowPath) {
+    const why = `no ciVerdict workflow is declared in .test-tiers.json on ${defaultBranch}`;
+    return actionsEnabled === false ? actionsOff(why) : unverified(why);
+  }
   // A blob we could not READ (auth, rate limit, network) is a different fact from a blob that is confirmed ABSENT; the reason keeps the cause.
   if (!workflowBlobDefault) return unverified(workflowBlobErrors.default ? `cannot read ${workflowPath} on ${defaultBranch}: ${workflowBlobErrors.default}` : `the workflow ${workflowPath} does not exist on ${defaultBranch}: there is no trusted copy to grade against`);
   if (!workflowBlobHead && workflowBlobErrors.head) return unverified(`cannot read ${workflowPath} at ${head.slice(0, 8)}: ${workflowBlobErrors.head}`);
@@ -98,9 +106,15 @@ export function classifyCiVerdict(evidence) {
   const status = String(run.status ?? '');
   const conclusion = run.conclusion ?? null;
 
+  // Precedence under Actions disabled (explicit contract): a completed red result on this head stays `failed` — the
+  // disabled state explains why nothing can turn GREEN, it never erases a known RED. EVERY other run state (queued, an
+  // unrecognised status, a non-pass conclusion, and a success from before Actions was switched off) is actions-disabled:
+  // the run is kept as evidence (runId/url), but nothing on this repository can re-grade the head.
+  if (status === 'completed' && FAILED_CONCLUSIONS.has(conclusion)) return { verdict: 'failed', reason: `run ${run.id} concluded ${conclusion}`, ...common };
+  if (actionsEnabled === false) return { ...actionsOff(`the newest run, ${run.id}, is ${status}${conclusion ? `/${conclusion}` : ''}`), ...common };
+
   if (PENDING_STATUSES.has(status)) return { verdict: 'pending', reason: `run ${run.id} is ${status}`, ...common };
   if (status !== 'completed') return { ...unverified(`run ${run.id} has an unrecognised status ${JSON.stringify(status)}`), ...common };
-  if (FAILED_CONCLUSIONS.has(conclusion)) return { verdict: 'failed', reason: `run ${run.id} concluded ${conclusion}`, ...common };
   if (conclusion !== 'success') return { ...unverified(`run ${run.id} concluded ${JSON.stringify(conclusion)}, which is not a pass`), ...common };
 
   const match = pr !== null ? (run.pull_requests ?? []).find((p) => p?.number === pr) : (run.pull_requests ?? [])[0];
@@ -151,7 +165,7 @@ export function runText(run, cmd, args) {
  * @param {(cmd: string, args: string[]) => {status: number|null, stdout?: string, stderr?: string, error?: Error}} a.run
  * @param {number|null} a.pr
  * @param {string|null} a.head the head to verify when no PR is given
- * @returns {{ok: true, evidence: object} | {ok: false, reason: string}}
+ * @returns {{ok: true, evidence: object} | {ok: false, reason: string, blocker?: string}}
  */
 export function gatherCiEvidence({ run, pr = null, head = null }) {
   const repoInfo = runJson(run, 'gh', ['repo', 'view', '--json', 'nameWithOwner,defaultBranchRef']);
@@ -197,8 +211,17 @@ export function gatherCiEvidence({ run, pr = null, head = null }) {
     return /HTTP 404|Not Found/i.test(r.why) ? { blob: null, why: null } : { blob: null, why: r.why };
   };
 
+  // Whether Actions is enabled at all. A failed read (it needs admin read on many tokens) is `null`: unknown, not evidence.
+  const perms = runJson(run, 'gh', ['api', actionsPermissionsPath(nwo)]);
+  const actionsEnabled = perms.ok ? actionsEnabledFrom(perms.value) : null;
+
   const runsResp = runJson(run, 'gh', ['api', `repos/${nwo}/actions/runs?head_sha=${headSha}&per_page=100`]);
-  if (!runsResp.ok) return { ok: false, reason: `cannot read the Actions runs: ${runsResp.why}` };
+  if (!runsResp.ok) {
+    const why = `cannot read the Actions runs: ${runsResp.why}`;
+    return actionsEnabled === false
+      ? { ok: false, reason: `${ACTIONS_DISABLED}: ${ACTIONS_DISABLED_SUITE_REMEDY} (${why})`, blocker: ACTIONS_DISABLED }
+      : { ok: false, reason: why };
+  }
 
   const runs = Array.isArray(runsResp.value?.workflow_runs) ? runsResp.value.workflow_runs : null;
   const atHead = blobAt(headSha);
@@ -222,6 +245,7 @@ export function gatherCiEvidence({ run, pr = null, head = null }) {
       workflowBlobAtBase,
       runs,
       mergeable,
+      actionsEnabled,
       nwo,
     },
   };
@@ -246,6 +270,6 @@ export function parseVerdictTarget(prArg, headArg) {
 /** One call for the CLI: gather, classify, and say it. A gather failure is `unverified`, never an exception. */
 export function ciVerdict({ run, pr = null, head = null }) {
   const g = gatherCiEvidence({ run, pr, head });
-  if (!g.ok) return { version: CI_VERDICT_VERSION, verdict: 'unverified', reason: g.reason };
+  if (!g.ok) return { version: CI_VERDICT_VERSION, verdict: 'unverified', reason: g.reason, ...(g.blocker ? { blocker: g.blocker } : {}) };
   return { version: CI_VERDICT_VERSION, head: g.evidence.head, pr, defaultBranch: g.evidence.defaultBranch, ...classifyCiVerdict(g.evidence) };
 }

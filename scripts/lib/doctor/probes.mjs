@@ -17,8 +17,9 @@ import { reportToProbeOutcome } from './report.mjs';
 import { OPERATING_PROBES } from './operating-fit.mjs';
 import {
   loadEnv, injectResolvedDbEnv, evaluateAuditSetup, evaluateAuditSupabase,
-  evaluatePersonaTest, evaluateGitHub, checkPlaywrightAvailable,
+  evaluatePersonaTest, evaluateGitHub, evaluateEnvProvenance, checkPlaywrightAvailable,
 } from '../../check-setup.mjs';
+import { SHADOW_REMEDY } from '../env-provenance.mjs';
 
 // ── sync-isolation-verify gate adapter (§2.3a) ──────────────────────────────
 //
@@ -276,6 +277,15 @@ const CHECK_SETUP_PROBES = [
     // for a permission its human operator never needs.
     fix: 'See the finding detail: it names the missing permission, the endpoint that needs it, and which token source was used.',
     evaluate: (env, repoPath) => evaluateGitHub(env, repoPath),
+    cls: 'machine',
+  }),
+  checkSetupProbe({
+    id: 'machine/env-selector-shadow',
+    title: 'Model/deployment selectors: effective source + launch-environment shadowing',
+    // `machine`: a shadow lives in the launch environment of THIS machine
+    // (a shell export, a user env var), not in the repo.
+    fix: SHADOW_REMEDY,
+    evaluate: (env, repoPath) => evaluateEnvProvenance(env, repoPath),
     cls: 'machine',
   }),
 ];

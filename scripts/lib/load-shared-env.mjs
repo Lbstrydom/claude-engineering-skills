@@ -25,6 +25,7 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
 import dotenv from 'dotenv';
 import {
   discoverLocalEnvPath, sharedEnvPath,
@@ -39,6 +40,7 @@ const DB_GROUP_KEYS = new Set(DB_GROUP_KEY_LIST);
 let _cwdLoaded = false;   // cwd layer: one read per process
 let _loaded = false;      // shared layer: latched after first attempt (G2)
 let _readWarned = false;  // warn-once on an unreadable/malformed shared file
+let _inherited = null;    // process.env as launched, before any layer (first call only)
 
 function loadCwdLayer() {
   if (_cwdLoaded) return;
@@ -88,6 +90,105 @@ function readSharedFile(p) {
 }
 
 /**
+ * Which keys the shared layer contributes on top of `env` — the ONE statement of
+ * that rule, used by the runtime loader below and by `composeEnvLayers`, so a
+ * doctor's account of the environment cannot drift from what the runtime does.
+ * `override:false`, and the DB group as one bundle (see the provenance comment
+ * in `loadSharedEnv`). Reports what it would CONTRIBUTE, not merely which names
+ * are new: a before/after key diff cannot report a key it filled.
+ *
+ * @param {Record<string,string>} parsed - the shared file
+ * @param {Record<string,string|undefined>} env - everything of higher precedence
+ * @returns {{contributed: string[], dsnExplicitlyEmpty: boolean, higherHasDsn: boolean}}
+ */
+export function sharedLayerPlan(parsed, env) {
+  const dsnExplicitlyEmpty = DSN_GROUP_KEYS.some(
+    (k) => env[k] !== undefined && (env[k] || '').trim() === '',
+  );
+  const higherHasDsn = DSN_GROUP_KEYS.some((k) => (env[k] || '').trim() !== '');
+  const skipDbGroup = higherHasDsn || dsnExplicitlyEmpty;
+  const contributed = Object.keys(parsed)
+    .filter((k) => !(skipDbGroup && DB_GROUP_KEYS.has(k)) && env[k] === undefined);
+  return { contributed, dsnExplicitlyEmpty, higherHasDsn };
+}
+
+/**
+ * The launch environment, as it was before this process applied any layer.
+ * Before the loader has run there is nothing to subtract, so it is the live
+ * `process.env`. A value a PARENT process loaded out of a `.env` arrives here
+ * as inherited; `composeEnvLayers` credits it to the file it equals.
+ * @returns {Record<string,string>}
+ */
+export function inheritedEnv() {
+  return { ...(_inherited ?? process.env) };
+}
+
+/**
+ * The runtime's precedence as a pure function: inherited > `.env` > shared,
+ * with the shared contribution decided by `sharedLayerPlan` and switched off by
+ * `AUDIT_LOOP_DISABLE_SHARED=1` from either higher layer (the runtime reads it
+ * after the `.env` layer is applied).
+ *
+ * @param {{inherited: Record<string,string|undefined>, local: Record<string,string>, shared: Record<string,string>}} layers
+ * @returns {{env: Record<string,string>, sharedContributed: string[]}}
+ */
+export function composeEnvLayers({ inherited = {}, local = {}, shared = {} }) {
+  const env = { ...local };
+  for (const [k, v] of Object.entries(inherited)) if (v !== undefined) env[k] = v;
+  if (env.AUDIT_LOOP_DISABLE_SHARED === '1') return { env, sharedContributed: [] };
+  const { contributed } = sharedLayerPlan(shared, env);
+  for (const k of contributed) env[k] = shared[k];
+  return { env, sharedContributed: contributed };
+}
+
+/**
+ * Parse an env file the way the runtime does. Absent is `{}` with no error (the
+ * runtime treats it so); unreadable is `{}` WITH the error code, so a doctor can
+ * say "this layer could not be read" instead of reporting it as empty.
+ * @returns {{parsed: Record<string,string>, error: string|null}}
+ */
+function parseEnvFile(p) {
+  if (!p) return { parsed: {}, error: null };
+  let raw;
+  try { raw = fs.readFileSync(p, 'utf8'); } catch (err) {
+    return { parsed: {}, error: err?.code === 'ENOENT' ? null : (err?.code || 'read error') };
+  }
+  try { return { parsed: dotenv.parse(raw), error: null }; } catch { return { parsed: {}, error: 'unparseable' }; }
+}
+
+/**
+ * The three layers for a repository, READ but never applied — the doctors'
+ * view of what the runtime will see in `repoPath`, without touching this
+ * process's `process.env` (so several repos can be checked in one process).
+ * `.env` is chosen as the runtime chooses it: an inherited `DOTENV_CONFIG_PATH`
+ * wins (`loadCwdLayer` honours it), else the same worktree-safe discovery.
+ *
+ * @param {string} repoPath
+ * @param {{inherited?: Record<string,string>, sharedPath?: string, localEnvPath?: string|null}} [opts]
+ * @returns {{env: Record<string,string>, layers: {inherited: Record<string,string>, local: Record<string,string>, shared: Record<string,string>}, localEnvPath: string|null, sharedContributed: string[], errors: Array<{layer: 'local'|'shared', path: string, error: string}>}}
+ */
+export function readEnvLayers(repoPath, opts = {}) {
+  const inherited = opts.inherited ?? inheritedEnv();
+  const localEnvPath = opts.localEnvPath !== undefined
+    ? opts.localEnvPath
+    // A relative pin is relative to where the runtime runs: the repository's own root.
+    : (inherited.DOTENV_CONFIG_PATH ? path.resolve(repoPath, inherited.DOTENV_CONFIG_PATH) : discoverLocalEnvPath(repoPath, { onNotice() {} }));
+  const errors = [];
+  const read = (layer, p) => {
+    const { parsed, error } = parseEnvFile(p);
+    if (error) errors.push({ layer, path: p, error });
+    return parsed;
+  };
+  const local = read('local', localEnvPath);
+  // The runtime decides the disable switch BEFORE it touches the shared file; so
+  // does this, so a disabled layer is neither read nor reported as a source.
+  const sharedOff = (inherited.AUDIT_LOOP_DISABLE_SHARED ?? local.AUDIT_LOOP_DISABLE_SHARED) === '1';
+  const layers = { inherited, local, shared: sharedOff ? {} : read('shared', opts.sharedPath ?? sharedEnvPath()) };
+  const { env, sharedContributed } = composeEnvLayers(layers);
+  return { env, layers, localEnvPath: localEnvPath || null, sharedContributed, errors };
+}
+
+/**
  * Load env layers idempotently. Safe to call from any entrypoint, any number
  * of times. `getPool()` calls it on first init (then the pool is cached), so
  * steady-state cost is zero.
@@ -105,6 +206,10 @@ function readSharedFile(p) {
  *   `force` re-runs the shared layer (tests).
  */
 export function loadSharedEnv(opts = {}) {
+  // The launch environment as it was BEFORE any layer was applied — the only
+  // moment it is observable. `inheritedEnv()` hands it to the doctors so they
+  // can say which layer a value came from (see `composeEnvLayers`).
+  _inherited ??= { ...process.env };
   if (opts.includeCwd !== false) loadCwdLayer();
 
   // Hermeticity escape hatch — checked before the latch (cheap, no FS) so it
@@ -154,21 +259,8 @@ export function loadSharedEnv(opts = {}) {
   // production database. So the state is preserved and made LOUD instead: the
   // notice below names it and gives the remedy, and the drift report now prints
   // the store it read, which is what makes the CI case self-diagnosing.
-  const dsnExplicitlyEmpty = DSN_GROUP_KEYS.some(
-    (k) => process.env[k] !== undefined && (process.env[k] || '').trim() === '',
-  );
-  const higherHasDsn = DSN_GROUP_KEYS.some((k) => (process.env[k] || '').trim() !== '');
-  const skipDbGroup = higherHasDsn || dsnExplicitlyEmpty;
-
-  // What the shared layer actually CONTRIBUTED, not merely which NAMES are new.
-  // This used to be a before/after diff of `Object.keys(process.env)`, which
-  // cannot report a key it filled that was already present — so a notice meant
-  // to tell an operator what the shared file did was blind to one of its cases.
-  const contributed = [];
-  for (const [k, v] of Object.entries(parsed)) {
-    if (skipDbGroup && DB_GROUP_KEYS.has(k)) continue;
-    if (process.env[k] === undefined) { process.env[k] = v; contributed.push(k); } // override:false
-  }
+  const { contributed, dsnExplicitlyEmpty, higherHasDsn } = sharedLayerPlan(parsed, process.env);
+  for (const k of contributed) process.env[k] = parsed[k];
 
   // THE STATE THAT COST THREE CI DISPATCHES, SAID OUT LOUD. Two conditions keep
   // it from becoming noise, and noise is how a real warning gets ignored:
@@ -213,5 +305,6 @@ export function _resetSharedEnvForTest() {
   _cwdLoaded = false;
   _loaded = false;
   _readWarned = false;
+  _inherited = null;
   delete process.env._AUDIT_LOOP_SHARED_LOADED;
 }

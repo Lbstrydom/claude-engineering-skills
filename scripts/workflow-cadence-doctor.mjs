@@ -148,6 +148,9 @@ import { parseOriginRepo } from './lib/branch-protection.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import { NO_MEASUREMENT_TITLE, isNoMeasurementAnnotation } from './lib/measurement-marker.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import {
+  ACTIONS_DISABLED, ACTIONS_DISABLED_SCHEDULE_REMEDY, actionsEnabledFrom, actionsPermissionsPath,
+} from './lib/actions-availability.mjs';
 
 if (process.argv.includes('--selfcheck-relocation') && isInvokedAsScript(import.meta.url)) { console.log('OK'); process.exit(0); }
 
@@ -419,6 +422,36 @@ export async function fetchWorkflowRuns({
   }
 }
 
+/**
+ * Is Actions enabled for the repo at all? `true | false | null` (null = could not
+ * be asked: the endpoint wants admin read on many tokens). Never throws.
+ * @returns {Promise<boolean|null>}
+ */
+export async function fetchActionsEnabled({ repo, token, fetchImpl = fetch }) {
+  try {
+    const res = await fetchImpl(`https://api.github.com/${actionsPermissionsPath(repo)}`, { headers: githubHeaders(token) });
+    if (!res || !res.ok) return null;
+    return actionsEnabledFrom(await res.json());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A `never-ran` or `stale` verdict on a repository with Actions DISABLED is not
+ * a cron that slipped: nothing can fire there. Same status (it still warns, and
+ * the checks are still not running), a distinct `cause`, and the local remedy.
+ * A 404'd workflow keeps its own, more specific, cause.
+ */
+export function applyActionsDisabled(verdict, { actionsEnabled, notFound = false, label = 'the watched workflow' }) {
+  if (actionsEnabled !== false || notFound || !['never-ran', 'stale'].includes(verdict.status)) return verdict;
+  return {
+    ...verdict,
+    cause: ACTIONS_DISABLED,
+    message: `${label} cannot run: ${ACTIONS_DISABLED_SCHEDULE_REMEDY}. (${verdict.message})`,
+  };
+}
+
 function githubHeaders(token) {
   return {
     accept: 'application/vnd.github+json',
@@ -688,12 +721,19 @@ export async function assessWatchList({ watches, repo, token, now, fetchImpl = f
       event: watch.event ?? null,
       maxAgeDays: watch.maxAgeDays,
       requireMeasurement: Boolean(watch.requireMeasurement),
+      notFound: fetched.notFound,
       verdict: assessCadence({
         runs, now, maxAgeDays: watch.maxAgeDays, error: fetched.error, measurementError,
         notFound: fetched.notFound, requireMeasurement: watch.requireMeasurement, label,
       }),
     });
   }
+  // Asked only when an absence needs a cause, so a healthy repo pays no extra call.
+  if (results.some((r) => ['never-ran', 'stale'].includes(r.verdict.status) && !r.notFound)) {
+    const actionsEnabled = await fetchActionsEnabled({ repo, token, fetchImpl });
+    for (const r of results) r.verdict = applyActionsDisabled(r.verdict, { actionsEnabled, notFound: r.notFound, label: r.label });
+  }
+  for (const r of results) delete r.notFound;
   return { status: rollupStatus(results.map((r) => r.verdict.status)), watches: results };
 }
 
