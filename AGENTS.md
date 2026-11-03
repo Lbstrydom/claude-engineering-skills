@@ -13,7 +13,7 @@
 > messy middle" discipline as the generated-artifact policy below, applied to this
 > file itself. **Enforced since 2026-07-13**: `npm run context:check` (run by
 > the pre-push hook and `/ship` Step 4) fails on `ctx/oversized-agents-md`
-> when this file exceeds **92000 characters** (characters, not lines, since
+> when this file exceeds **79000 characters** (characters, not lines, since
 > 2026-08-01 — rationale at `DEFAULT_MAX_AGENTS_MD_CHARS` in
 > `scripts/check-context-drift.mjs`) — condense a dossier section to a stub +
 > `docs/<topic>.md` rather than raising the cap.
@@ -190,6 +190,7 @@
 chain and pausing for human implementation. The four lenses are **disjoint** and
 run together on a UI PR — click-test (page DOM) ∥ persona-test (journey) ∥
 nav-audit (system IA) ∥ visual-audit (paint). `/fleet` sits beside the chain: it coordinates concurrent sessions, cooperatively.
+Coordinating several sessions? → `/fleet` `references/coordinator-playbook.md`.
 
 Diagram, per-skill scope and depth (modes, flags, wave/lens design invariants)
 and the naming convention:
@@ -444,8 +445,7 @@ the marked `fail-closed-on-signal` trap block stays byte-identical in both hooks
 public, so `full-suite.yml` (`ubuntu-latest`, standard runners only: free) is its one
 full run per PR, and a local CES push is the **branch tier** by default
 (`.test-tiers.json` `defaultTier` + `ciVerdict`; `AUDIT_PREPUSH_TIER=full` and every push
-to `main` stay full). The merge verdict is READ: `node scripts/test-tier.mjs ci-verdict --pr
-<n>`; no run, a pending run or `gh` down is `unverified`, never green. The Actions budget
+to `main` stay full). The Actions budget
 (standard runners, no artifacts or cache, cancel-in-progress) is gated by
 `tests/workflow-runner-labels.test.mjs`. Consumers get none of this: wine and storyline
 stay local-first. [Plan](docs/plans/ci-full-suite-actions.md) ·
@@ -566,64 +566,23 @@ maintenance: [`docs/reference/model-resolution.md`](docs/reference/model-resolut
 
 ## Memory-Health Gate
 
-`scripts/memory-health.mjs` runs three trigger metrics against the audit store to
-decide whether our flat `audit_findings` + fingerprint-dedup design is starting to
-leak signal that a graph-shaped memory (pgvector + community clustering) would
-recover. **What it is / when you need it**: reading a weekly AMBER, changing a
-metric, or deciding whether to promote the graph design. The trigger table,
-the thresholds, the `memory_health_metrics(window_days)` RPC and the
-0/1/2-trigger decision rule live in
+`scripts/memory-health.mjs`: three trigger metrics deciding whether the flat
+`audit_findings` + fingerprint-dedup design leaks signal a graph memory would recover.
+**When you need it**: reading a weekly AMBER, changing a metric, or promoting the graph
+design. Dossier (sampled metrics, thresholds, pgvector record-time dedup):
 [`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md).
-Weekly via the local maintenance replica (`maintenance-checks.mjs` `memory-health`);
-ad hoc `npm run memory:health`. The Actions cron was **deleted 2026-09-13** (no
-store reachable from a GitHub-hosted runner — see Local Weekly Maintenance Checks).
-
-Three obligations stay resident; the incidents, query mechanics and thresholds are
-in [`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md):
-
-- **Metrics 1 and 3 are SAMPLED, not exhaustive** — `fuzzy_reraise.rate` /
-  `recurrence.rate` are estimates over the N most recent per repo; read
-  `new_fingerprints_total` / `fixed_findings_total` / `per_repo_cap` beside them.
-  When capping, **cap the driving set, NEVER the searched set** — the latter drops
-  real matches and biases the rate down into a false GREEN.
-- **Add a `control_marker_prefixes` sentinel when a new wave starts emitting
-  control state**, or the gate reads AMBER forever on its own logging:
-  machine-generated notices are byte-identical, so they pair at similarity 1.00
-  (44% of the raw signal on 2026-07-20). Matched on the detail-snapshot **prefix**,
-  never the category — a wave emits both control state and real findings.
-- **Bound an RPC at the CALLER** — `SET statement_timeout` inside a function is
-  decorative. `CREATE OR REPLACE FUNCTION` resets **`proconfig`** (restate `SET
-  search_path`) but PRESERVES the ACL; **changing the argument list makes a
-  DIFFERENT function**, whose default ACL is `EXECUTE` to `PUBLIC` and which the
-  old `REVOKE` does not name. Verify by `has_function_privilege`, never by review
-  or by a `proacl` that reads `NULL`. Both traps: the reference above.
-
-> **pgvector promoted (2026-07-21):** semantic cosine catches reworded re-raises that
-> trigram under-counts. Record-time hook in `recordFindings`, **default-ON**, fail-open,
-> kill switch `AUDIT_SEMANTIC_SUPPRESS_ENABLED=false`. Dedups the store row, NEVER the
-> audit report.
+**Resident rule**: a new wave that emits control state needs a
+`control_marker_prefixes` sentinel (matched on the detail-snapshot **prefix**, never the
+category), or the gate reads AMBER forever on its own logging.
 
 ## Learning System (Phase 1)
 
-Adaptive-learning telemetry across audit decision points (pass selection, convergence
-prediction, arch-memory band, auto-deferral) → the `learning_decisions` table +
-per-repo `recurring_finding_clusters`. Phase 1 is the foundation; later phases promote
-decision points to live learners. **Load-bearing**:
-
-- **Kill switch**: `LEARNING_DISABLE=1` disables all live learning + telemetry in one
-  env var (also in the Environment Variables table).
-- **Auto-deferral** (`--scope diff` only) fires only when BOTH hold: finding category
-  in the AUTO_DEFERRABLE_CLASSES allowlist AND deterministic SCM evidence (not in
-  HEAD~1..HEAD, or a plan marker, or recurring 2+ rounds); else → `needs_triage`. Plan
-  marker to accept a v1 limit: `<!-- audit:accept-v1: <glob> :: <reason> -->`.
-- Telemetry never crashes a run: flush failures spill to `.audit/learning-outbox/`
-  (CI: synchronous retry instead, counted as `lostInCI`).
-
-→ **Operations** (CLI `npm run learning:*`, weekly review, quickfix-learner hit
-lifecycle, Phase-3 replay framework + promotion recipe, outbox detail):
-[`docs/runbooks/learning-system.md`](docs/runbooks/learning-system.md).
-→ **Design**: master plan [`docs/plans/adaptive-learning-v1.md`](docs/plans/adaptive-learning-v1.md)
-+ per-phase `adaptive-learning-phase-{1,2,3}-*.md`.
+Adaptive-learning telemetry across audit decision points → `learning_decisions` +
+`recurring_finding_clusters`. **When you need it**: auto-deferral, `npm run learning:*`,
+the weekly review, replay/promotion — [`docs/runbooks/learning-system.md`](docs/runbooks/learning-system.md).
+**Resident rules**: `LEARNING_DISABLE=1` kills all live learning + telemetry; telemetry
+never crashes a run (flush failures spill to `.audit/learning-outbox/`); a plan accepts a
+v1 limit with `<!-- audit:accept-v1: <glob> :: <reason> -->`.
 
 ## Environment Variables
 
@@ -714,6 +673,13 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   string. No env escape hatch, deliberately, and **regenerate the fixture only
   from a fresh replay** (`npm run db:local:regen`).
   [postgres-parity.md](docs/runbooks/postgres-parity.md) §Incident + §Correction.
+- **Bound an RPC at the CALLER** — `SET statement_timeout` inside a function is
+  decorative. `CREATE OR REPLACE FUNCTION` resets **`proconfig`** (restate `SET
+  search_path`) but PRESERVES the ACL; **changing the argument list makes a
+  DIFFERENT function**, whose default ACL is `EXECUTE` to `PUBLIC` and which the
+  old `REVOKE` does not name. Verify by `has_function_privilege`, never by review
+  or by a `proacl` that reads `NULL`. Both traps:
+  [memory-health-gate.md](docs/reference/memory-health-gate.md).
 
 → **Design** (no-adapter `pg`-direct decision, schema scope, privilege model, file plan): [`docs/plans/postgres-parity.md`](docs/plans/postgres-parity.md) + [`postgres-parity-schema-coupling.md`](docs/plans/postgres-parity-schema-coupling.md). **Operations** (setup recipe, migration-drift CLI + exit codes, pre-push snippet, break-glass atomic-apply, shared-cloud-config, prerequisites): [`docs/runbooks/postgres-parity.md`](docs/runbooks/postgres-parity.md).
 
@@ -751,85 +717,37 @@ call-site list: [`docs/reference/anthropic-backend-routing.md`](docs/reference/a
 
 ## Shadow Final-Review A/B — CLOSED 2026-07-28, verdict KEEP
 
-Opt-in, observation-only 2nd final reviewer, run blind. **Committed default unset;
-paused locally 2026-08-14 on cost**, and confirmed off 2026-09-04. **When you need
-the dossier**: turning it on, choosing an envelope scope, or reading a campaign
-refusal. `FINAL_REVIEW_SHADOW` / `_MODEL` / `_SCOPE` semantics, the `thin` default
-intent, the campaign-ineligibility of `gap` and the budget cap are all in
-[`environment-variables.md`](docs/reference/environment-variables.md) §Shadow final
-review; verdict, method, stopping rule and three dated corrections in the
-[briefing](docs/research/final-review-shadow-adjudication-briefing.md) ·
-[plan](docs/plans/final-review-shadow-reviewer.md). Unset ⇒ byte-identical; never gates.
-
-Three results that generalise — **read before any reviewer/model comparison**:
-
-- **A floor arm and a ratio arm can BOTH fire.** Surface the contradiction; never pick
-  the arm fitting the data nor retune against the data that fired it — measure what
-  you left unmeasured instead.
-- **"Found it" ≠ "found it first."** KEEP = findings were real, NOT unique. Within-run
-  overlap vs GPT passes = 0 files / 19 both-runs; cross-run re-raises confirmed, unmeasured.
-- **The loop fixes the best catches BEFORE adjudication**, so credit lands in a source
-  comment, `user_action` stays null, and the tail reads as noise. One missing write-back,
-  two symptoms: set `user_action` at fix time; record same-run pass-finding refs.
-
-- **Operator-doc convention (repo-wide, bit twice pre-2026-07-02)**: real values or
-  PowerShell vars in CLI examples, **never `<angle-brackets>`** (PowerShell reserves
-  `<` — unpasteable); render a `--worksheet`, not raw JSON.
-
-→ Measurement how-to + attribution schema: the plan linked above. **Before building a bigger instrument**, read [`final-review-shadow-bakeoff.md`](docs/plans/final-review-shadow-bakeoff.md)'s PARKED banner (right-sizing) + [`final-review-credit-and-cheap-shadow.md`](docs/plans/final-review-credit-and-cheap-shadow.md) §1.2 (cheap-gateway evidence).
+Opt-in, observation-only 2nd final reviewer (`FINAL_REVIEW_SHADOW`); committed default
+unset, paused locally on cost. Unset ⇒ byte-identical; never gates. **When you need it**:
+turning it on, choosing an envelope scope, reading a campaign refusal, or **before any
+reviewer/model comparison** (three results that generalise) —
+[briefing](docs/research/final-review-shadow-adjudication-briefing.md) §Moved from
+AGENTS.md · [plan](docs/plans/final-review-shadow-reviewer.md) ·
+[`environment-variables.md`](docs/reference/environment-variables.md) §Shadow final review.
 
 ## Tiered-Recall Audit Pipeline
 
-A discovery → Stage 0 (deterministic evidence triage) → Stage 1 (cheap-model
-triage) → Stage 2 (Gemini adjudicator + bounded clean-challenge) alternative to
-the always-on GPT 5-pass legacy audit. All 12 phases (Clusters A-F) implemented
-and tested. `openai-audit.mjs`'s chooser (`tieredAuditConfig.pipelineEnabled`,
-env `AUDIT_TIERED_PIPELINE_ENABLED`) defaults **off** — production runs legacy.
+Discovery → Stage 0/1/2 alternative to the GPT 5-pass legacy audit; chooser
+`AUDIT_TIERED_PIPELINE_ENABLED` defaults **off** (production runs legacy). **When you
+need it**: enabling it, its shadow window, or Phase 14 —
+[`docs/plans/tiered-recall-audit-pipeline.md`](docs/plans/tiered-recall-audit-pipeline.md)
+(§Moved from AGENTS.md has the former dossier). Resident:
 
-**Load-bearing invariants** (mechanics, model-resolution, cross-repo behaviour,
-CLI/dashboard surfaces and full incident history: plan doc, pointer below):
-
-- **Execution eligibility is per-call, not env-global** (`allowTiered` — the
-  2026-07-13 incident fix): env flags only express "the window is open"; only
+- **Execution eligibility is per-call, not env-global** (`allowTiered`): only
   `openai-audit.mjs`'s `main()` passes `allowTiered: true`, so tests and library
   callers can never spend. Both must hold before a provider is constructed.
-- **The discovery generator needs forced `tool_choice`, so it pins
-  `{backend:'sdk'}` explicitly** — never the ambient `CLAUDE_BACKEND` (see the
-  Anthropic Backend Routing gotcha above).
 - **"Window met" is now epoch-gated, not eyeballed** (2026-07-26, after the 5th
   false green): `comparedRuns` counts only rows the collector stamped with the
   current `TIERED_SHADOW_CONTRACT_EPOCH`. All pre-stamp rows are ineligible and
   the window restarts — re-collect, never backfill (see the swap-eval section).
-- **Not yet done**: the shadow window (10–15 commits) and Phase 14. **Also at
-  Phase 14**: the adjudicator-role eval has never run (Stage 2 uses Gemini) —
-  [model-eval-harness.md](docs/runbooks/model-eval-harness.md) §"Adjudicator
-  role — not yet run".
-
-→ Everything enumerated above:
-[`docs/plans/tiered-recall-audit-pipeline.md`](docs/plans/tiered-recall-audit-pipeline.md).
 
 ## Model Swap-In Evaluation Harness
 
-A standing suite (`scripts/lib/model-eval/`) answering "is this new LLM release
-worth switching to?" for the **auditor** (currently GPT) or **adjudicator**
-(currently Gemini) role. Entry:
-`node scripts/model-eval-{auditor,adjudicator}.mjs --candidate <spec> --tier screen|promotion`
-— **step-by-step playbook in the runbook below; start there.**
-
-**Load-bearing invariants** (mechanics, tiers, history in the docs below):
-- **Accepted false-negative direction**: a Tier-C-only run (restricted-catalog
-  Azure) can never emit `verdict:'switch'` — only `keep`/`inconclusive`/
-  `manual_review_required`. Schema-enforced, not a convention.
-- **The oracle-matching recall ceiling**: scoring credits only the ONE curated
-  defect per entry while real models find OTHER genuine bugs in the same diff, so
-  **low recall is not a quality signal** — read the raw per-case output first and
-  treat recall as a floor; FP-rate + cost decide. Tier C never substitutes for a
-  Tier A/B comparative result.
-- **Egress-gate prose/diff false positives: fixed 2026-07-12** — historical recall
-  is the contract; don't re-add trailing-punctuation stripping (tried, reverted:
-  it re-blocked valid entries).
-- **Verdicts**: GPT auditor `gpt-6.1-terra` (10-28, half the cost, quality matched on 11 cases,
-  [exp-8](docs/research/experiment-8-gpt-terra-auditor-swap.md)); GLM-5.2 → keep GPT (07-13).
+`scripts/lib/model-eval/` answers "is this new LLM release worth switching to?" for
+the auditor or adjudicator role. **When you need it**: a model ships, or you are reading
+a verdict — playbook, tiers, recall-ceiling caveat and verdict history:
+[`docs/runbooks/model-eval-harness.md`](docs/runbooks/model-eval-harness.md). Resident,
+because they bind any measurement work:
 - **A model swap is SYNCHRONOUS, never a background window**: run it when the model
   ships, adjudicate in the same sitting, verdict → `docs/research/`. Passive
   collection killed arm-eval and produced five false "window met" reads. Only
@@ -841,96 +759,49 @@ worth switching to?" for the **auditor** (currently GPT) or **adjudicator**
   and re-collect — **never backfill by date**, the relabelling that let the fifth
   false green through.
 
-→ **Operational reference**: [`docs/runbooks/model-eval-harness.md`](docs/runbooks/model-eval-harness.md) · **Design + prior-art trace**: [`docs/plans/model-swap-eval-harness.md`](docs/plans/model-swap-eval-harness.md) · **First real verdict write-up**: [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
+→ Design: [`docs/plans/model-swap-eval-harness.md`](docs/plans/model-swap-eval-harness.md).
 
 ## Local Weekly Maintenance Checks (opt-in)
 
-Optional, default-OFF local replica of the weekly maintenance checks, for orgs
-that block Actions runners — **and, in THIS repo, the only runner of the four
-store-backed ones** (arch-maintenance, migration-drift, memory-health,
-learning-weekly-review) since their Actions crons were deleted 2026-09-13: a
-GitHub-hosted runner cannot reach the NAS store, so every scheduled run had
-skipped on `AUDIT_DB_URL not set` and exited 0. Opportunistic — from the
-pre-push hook when overdue, **not** an OS scheduler (avoids the
-wrong-PATH/cwd/asleep-at-trigger class). Enable via `setup.mjs` Step 4 or
-`AUDIT_LOOP_WEEKLY_MAINTENANCE=1` (set on the maintainer's machine;
-`npm run maintenance:status` shows the heartbeat). [Detail](docs/runbooks/local-maintenance-checks.md).
-
-**Sibling tools**, both advisory: `npm run runner:doctor` (self-hosted-runner
-viability; `local`/`remove` inventory + teardown on THIS machine — health from
-GitHub, never the local service manager, [detail](docs/runbooks/actions-runner-doctor.md))
-and `npm run cadence:doctor`. **A cron that stops firing produces no run, no
-failure and no notification — nothing, which looks exactly like a quiet week**,
-so a cadence is OBSERVED, never trusted for having been configured. **The event
-filter is the load-bearing part** (unfiltered read `OK` where `event=schedule`
-read `NEVER-RAN`). Watch list: committed `.workflow-cadence.json`. **Every non-OK
-outcome warns — including its own API call failing, and its watch list being
-ABSENT while the repo has crons**; a checker that goes quiet when it cannot tell
-reproduces the defect it detects. **`ok` means "the run did not fail", not "the
-thing it measures is current"** — a fail-open branch exiting 0 is `success` (5 of
-THIS repo's 6 watched crons were green-and-skipping for months, 2026-09-13). A skip
-branch therefore emits `::notice title=audit-loop-no-measurement::<reason>`
-(`lib/measurement-marker.mjs`), and a watch with `requireMeasurement: true` reads
-it back from check-run annotations → verdict `unmeasured`; never grep the job log
-for it. [Detail](docs/reference/workflow-cadence-doctor.md).
+Default-OFF local replica of the weekly maintenance checks, run from the pre-push hook
+when overdue (`AUDIT_LOOP_WEEKLY_MAINTENANCE=1`; `npm run maintenance:status`) — in THIS
+repo the only runner of the four store-backed checks, whose Actions crons were deleted
+2026-09-13. **When you need it**: enabling it, a stale heartbeat, `runner:doctor` /
+`cadence:doctor` — [local-maintenance-checks.md](docs/runbooks/local-maintenance-checks.md) ·
+[workflow-cadence-doctor.md](docs/reference/workflow-cadence-doctor.md).
+**Resident rule**: a cadence is OBSERVED, never trusted for having been configured — and
+**`ok` means "the run did not fail", not "the thing it measures is current"**, so a
+workflow skip branch emits `::notice title=audit-loop-no-measurement::<reason>`
+(`lib/measurement-marker.mjs`); never grep the job log for it.
 
 ## Azure AI Foundry Work Profile
 
-**What it is**: running the **same** bundle in a corporate Azure environment
-(restricted models) without drifting from the public-profile repo — env-selected
-role swaps, GPT auditor → Azure OpenAI, final reviewer → Opus on Foundry
-(replacing Gemini), embeddings → `text-embedding-3-large` (`dimensions: 768`).
-**When you need the dossier**: standing a tenant up, choosing an
-`AZURE_CLAUDE_ROUTE`, debugging a 401/404/429, or reading the env-var,
-final-reviewer-precedence, deployment-quota or throttling tables.
-**Pointer**: [`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md)
-(guide) + [`docs/plans/azure-work-profile.md`](docs/plans/azure-work-profile.md)
-(plan/audit trail); template
-[`defaults/work-profile.env.example`](defaults/work-profile.env.example).
+The **same** bundle in a corporate Azure tenant (restricted models), env-selected.
+**Opt-in invariant**: the Azure path activates **only** when `AZURE_OPENAI_ENDPOINT` is
+set; without Azure env vars, client construction and resolved models are
+**byte-identical** to the public path. Seams: `createOpenAIClient({purpose})`,
+`embedText()`, `azureConfig` in [config.mjs](scripts/lib/config.mjs). **When you need the
+dossier** (tenant setup, `AZURE_CLAUDE_ROUTE`, 401/404/429, quota and throttling):
+[`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md).
 
-> **Opt-in invariant (load-bearing).** The Azure path activates **only** when
-> `AZURE_OPENAI_ENDPOINT` is set. With no Azure env vars, client construction and
-> resolved models are **byte-identical** to the public path (regression-guarded
-> by `tests/openai-client.test.mjs`). It never touches your personal setup.
-
-**Seam** (mirrors `anthropic-client.mjs`): [`openai-client.mjs`](scripts/lib/openai-client.mjs)
-`createOpenAIClient({purpose})` + [`embed-text.mjs`](scripts/lib/embed-text.mjs)
-`embedText()` route to Azure or public **by env presence**; `azureConfig` in
-[config.mjs](scripts/lib/config.mjs).
-
-**Four invariants that constrain any code reaching a provider** (the mechanics,
-incidents and opt-out lists are in the guide):
+**Four invariants that constrain any code reaching a provider**:
 
 - **An availability gate must ask whether a ROUTE exists, not whether a public env
-  var is set** (four instances so far). An `if (!process.env.OPENAI_API_KEY)` guard
-  upstream of an Azure-aware seam makes the Azure branch unreachable — dead code on
-  exactly the installs it was written for, and the tell is a **failure with zero
-  latency**: nothing was called. **Grep the whole path a call site takes for the
-  public key name**, let ONE oracle answer
-  (`lib/brainstorm/provider-availability.mjs`), and use **`isClaudeAvailable()`,
-  never `ANTHROPIC_API_KEY`**. An **omitted `azureRoute` ADOPTS the tenant's
-  route**; pass `azureRoute: null` only where an id *means* the public service.
-  Tests spawning such a CLI must scrub `AZURE_*`, or they pass — or spend — by
-  whose machine they run on. A profile-dependent DEFAULT is the other half: which
-  voices /brainstorm runs is `defaultProviders()`, never a constant.
-- **The deployment is CONSTRUCTOR-level route state, not a body field** (2026-08-12).
-  Build `AzureOpenAI({endpoint, deployment, apiVersion})` and let the SDK derive
-  `/openai/deployments/{deployment}/…` — **never concatenate an operation path**,
-  and never share one client across purposes (the cache key carries purpose +
-  deployment). Probing *candidate* deployments needs a client per candidate.
-- **An endpoint and the credential it is addressed with are ONE unit.**
-  `azureConfig.claudeRoute` resolves them together; pass it as
-  `createAnthropicClient({azureRoute})`, **never a bare `baseURL`**. Generalise:
-  *if a change can make one host receive another's credential, the two were
-  resolved apart and must not be.* Assert on the **emitted request**, not the
-  client config ([azure-claude-route.test.mjs](tests/azure-claude-route.test.mjs))
-  — the SDK binds transport at construction, so a post-hoc `globalThis.fetch`
-  patch observes nothing and the request escapes to the network.
-- **A deployment or resource switch is a DIFFERENT vector space.** Provenance is the
-  single endpoint-qualified `resolveEmbedProfile()` identity, and `arch:refresh`
-  auto-promotes to a full re-embed so two spaces can't mix. An unset
-  `AZURE_OPENAI_EMBED_DEPLOYMENT` falls back to a guess that may 400 —
-  `npm run azure:doctor -- --fix` probes and locks the real name in.
+  var is set.** An `if (!process.env.OPENAI_API_KEY)` guard upstream of an Azure-aware
+  seam is dead code on exactly the installs it was written for (tell: a **failure with
+  zero latency**). Let ONE oracle answer (`lib/brainstorm/provider-availability.mjs`);
+  use **`isClaudeAvailable()`, never `ANTHROPIC_API_KEY`**. An **omitted `azureRoute`
+  ADOPTS the tenant's route**; pass `azureRoute: null` only where an id *means* the
+  public service. Tests spawning such a CLI must scrub `AZURE_*`. Which voices
+  /brainstorm runs is `defaultProviders()`, never a constant.
+- **The deployment is CONSTRUCTOR-level route state, not a body field**: build
+  `AzureOpenAI({endpoint, deployment, apiVersion})`, **never concatenate an operation
+  path**, never share one client across purposes; one client per candidate deployment.
+- **An endpoint and the credential it is addressed with are ONE unit** — pass
+  `azureConfig.claudeRoute` as `createAnthropicClient({azureRoute})`, **never a bare
+  `baseURL`**. Assert on the **emitted request**, not the client config.
+- **A deployment or resource switch is a DIFFERENT vector space** — provenance is
+  `resolveEmbedProfile()`, and `arch:refresh` auto-promotes to a full re-embed.
 
 ## Cross-Skill Data Loop
 
@@ -939,60 +810,23 @@ between the skills. Every skill writes to a shared learning store via
 `scripts/cross-skill.mjs` — graceful no-op when the cloud store is off.
 
 Catalogue — 9 tables, 3 added columns, 6 views, and the bandit reward
-extension: [`docs/reference/cross-skill-data-loop.md`](docs/reference/cross-skill-data-loop.md).
-The highest-leverage row is `persona_audit_correlations`: a persona P0/P1 that
-corroborates an audit finding is ground truth about user-visible impact, and it
-re-weights `computeReward` from 40/30/30 to 35/25/25/15.
+extension (and the `recommend-skills` advisor):
+[`docs/reference/cross-skill-data-loop.md`](docs/reference/cross-skill-data-loop.md).
 
 **Design rule**: all cross-skill writes go through `scripts/cross-skill.mjs`.
 Never hand-write curl POSTs in a SKILL.md for these tables — the CLI handles
 auth, graceful no-op, git-derived commit_sha, and error normalisation.
 
-**Skill recommender (à-la-carte "what's next" advisor).** `cross-skill.mjs
-recommend-skills` + the pure [`scripts/lib/skill-recommender.mjs`](scripts/lib/skill-recommender.mjs)
-suggest the FEW additional lenses that fit a change, so a user who ran ONE skill
-doesn't have to remember the chain (distinct from `/cycle`'s full-auto path).
-Deterministic (no LLM); signal hierarchy audit-findings → plan `applicable_lenses`
-→ tight file globs; **nudge-not-gate**, **cap 2**, **silent when nothing fits**,
-env-aware (browser lenses need a live URL), never re-suggests the just-ran or
-already-covered lens. `/audit-code` Step 6.6 prints the card at convergence.
-
 ## R2+ Audit Mode (Phase 1)
 
-When `--round >= 2`, the audit script enables three-layer defence against finding churn:
-
-1. **Rulings injection** (Layer 1): `buildRulingsBlock()` formats prior rulings as system-prompt exclusions
-2. **R2+ prompts** (Layer 2): `R2_ROUND_MODIFIER` + pass rubric (not "find all issues")
-3. **Post-output suppression** (Layer 3): `suppressReRaises()` against the ledger, then the cloud FP-pattern policy — called **unconditionally** (a no-ledger run is exactly the case a pattern learned elsewhere serves) and **exempting `reopened`** so statistics can never mask a regression. Layer 1 stays local-ledger-only on purpose.
-
-Three invariants constrain anyone changing them; the group table, both traps and
-the incidents are in
-[`docs/reference/r2-audit-mode.md`](docs/reference/r2-audit-mode.md):
-
-- **A rulings group's header may claim only what its ruling ESTABLISHED.** A
-  defer is not a disproof, so DEFERRED bars re-arguing scope while *licensing a
-  different defect in the same code*. Give a new group the weakest instruction
-  that is **true** — an overstated header suppresses true positives silently.
-- **Hard-suppress keys on the CONCERN, never on category text** — adjudicator
-  `sameConcernAs` links + file overlap ([concern-identity.mjs](scripts/lib/concern-identity.mjs)).
-  Died twice to rewording; do not fuzz the category.
-- **The existence gate runs on BOTH reviewer paths, and its classifier is
-  prose-shaped.** Widening classification is the safe direction (unadjudicable ⇒
-  `requires_verification`, severity preserved; only `refuted` downgrades) — and
-  both of its historical bugs let it report health while classifying zero.
-
-### R2+ CLI Flags
-
-| Flag | Purpose |
-|------|---------|
-| `--round <n>` | Round number (triggers R2+ mode if >= 2) |
-| `--ledger <path>` | Adjudication ledger JSON (rulings + suppression) |
-| `--diff <path>` | Unified diff (git diff output) for line-level annotations |
-| `--changed <list>` | Files modified this round (authoritative for reopen detection) |
-
-### Adjudication Ledger
-
-Two-axis state model: `adjudicationOutcome` (dismissed/accepted/severity_adjusted) + `remediationState` (pending/planned/fixed/verified/regressed). Written by orchestrator via `writeLedgerEntry()`.
+`--round >= 2` (with `--ledger`/`--diff`/`--changed`) enables three-layer defence
+against finding churn: rulings injection, R2+ prompts, post-output suppression. The
+**Adjudication Ledger** is two-axis: `adjudicationOutcome` × `remediationState`,
+written via `writeLedgerEntry()`. **When you need it**: changing suppression, a rulings
+group, or the existence gate — read [`docs/reference/r2-audit-mode.md`](docs/reference/r2-audit-mode.md)
+first. Resident: a rulings header claims only what its ruling ESTABLISHED, and
+hard-suppress keys on the CONCERN, never on category text — an overstated header or a
+fuzzed category suppresses true positives silently.
 
 ## Architectural Memory — Pre-fix Consultation (MANDATORY)
 
@@ -1034,15 +868,11 @@ numbers — the cutoff is computed per repo** (see "Why no fixed numbers" below)
   This is *absence of evidence*, not a weak match. Never read it as "checked
   and rejected".
 
-**Why no fixed numbers.** The old `reuse ≥0.90 / extend ≥0.85 / justify-divergence
-≥0.75` bands fired **zero times in 1,763 consultations** (the pipeline tops out near
-0.83 — mathematically unreachable). The cutoff is now `μ + 3σ` over the repo's OWN
-symbol-embedding background, computed at `arch:refresh`, because a threshold is a
-property of *corpus × summary style × embedding model × compose template ×
-normalizer*, not of the tool — and this tooling syncs elsewhere. **An uncalibrated
-repo bands `review` only**: honest, not degraded; run `npm run arch:refresh`. The
-three old band names are **retired** — seeing them means stale tooling. History:
-[arch-memory-band-recalibration.md](docs/plans/arch-memory-band-recalibration.md).
+**Why no fixed numbers**: the cutoff is `μ + 3σ` over the repo's OWN embedding
+background, computed at `arch:refresh`. **An uncalibrated repo bands `review` only**:
+honest, not degraded; run `npm run arch:refresh`. The old `reuse`/`extend`/
+`justify-divergence` band names are **retired** — seeing them means stale tooling.
+History: [arch-memory-band-recalibration.md](docs/plans/arch-memory-band-recalibration.md).
 
 **When NOT to consult**:
 
@@ -1102,12 +932,6 @@ evidence. One defence-in-depth invariant: the final-pass redactor is the gentle
 `lib/secret-patterns.mjs`, deliberately **NOT** `sanitizer.mjs`, which
 blanket-redacts any 20+ char token and would corrupt incident prose. Full kit +
 why the corporate Azure modules were not ported: [docs/plans/security/](docs/plans/security/).
-
----
-
-**Empirical effectiveness test** — A/B the hook against an
-`ARCH_MEMORY_HOOK_DISABLE=1` control; recipe + threshold in the comment block at
-the bottom of `tests/hook-arch-memory-check.test.mjs`.
 
 ## Quick-fix detection — two-layer architecture
 
@@ -1302,27 +1126,13 @@ byte-checked in `npm run check`. **Edit the canonical, never a copy.**
 
 ## Commit provenance trailers (`AI-*`)
 
-`/ship` commits carry `AI-Skill`/`AI-Models`/`AI-Gate`/conditional `AI-Run-ID`
-git trailers written ONLY by two helpers sharing ONE renderer and ONE gate
-evaluator: `scripts/ship-commit.mjs` (`/ship` Step 6.3) and, for the squash
-messages of a `/ship --train`, `scripts/ship-train.mjs` — never hand-typed; the
-`AI-*` namespace is reserved. `AI-Final-Review` (`approve|approve-with-debt|blocked`)
-is DERIVED from the final-review marker bound to the run's evidence — no flag, never
-on a train squash, and it never moves `AI-Gate`. `AI-Gate` has **four**
-values, two verified against the store's `audit_runs` row and two declared:
-`passed` (converged AND the committed tree IS the audited tree) · **`converged`**
-(converged AND the tree is **not asserted equal** — it differs, the audited-then-**remediated** ship, or equality is unprovable on an unpinned squash) ·
-`waived` (declared, unverified) · `not-run` (no fresh evidence). Both verified
-values are fail-closed and clear the **same** store bar, so neither is cheaper;
-each refusal names the other — you may not over- *or* under-claim. **`passed` is
-rare by design** (`/ship`'s own Steps 2–5 move the tree after the audit): never
-hand-write `.audit/last-audit-run.json` or reorder a ship to chase it — the value
-worth investigating is a `passed` that should not be there. Applies from tag
-`provenance-v1` forward; absence after that = "not mechanically produced".
-Schema, measured counts, query cookbook, failure
-contract: [`docs/reference/commit-provenance.md`](docs/reference/commit-provenance.md);
-design + the measured reason `converged` carries no audited-tree trailer:
-[`docs/plans/gate-taxonomy-remediated-ships.md`](docs/plans/gate-taxonomy-remediated-ships.md).
+`/ship` commits carry `AI-*` git trailers (`AI-Skill`/`AI-Models`/`AI-Gate`/…) written
+ONLY by `scripts/ship-commit.mjs` and `scripts/ship-train.mjs` — **never hand-typed; the
+`AI-*` namespace is reserved.** `AI-Gate` is `passed`/`converged` (verified against the
+store) or `waived`/`not-run` (declared); **`passed` is rare by design** — never
+hand-write `.audit/last-audit-run.json` or reorder a ship to chase it. **When you need
+it**: reading or querying trailers, or a gate refusal —
+[`docs/reference/commit-provenance.md`](docs/reference/commit-provenance.md).
 
 ## Code Style
 
@@ -1331,6 +1141,7 @@ design + the measured reason `converged` carries no audited-tree trailer:
 - `--out <file>` pattern: JSON to file, 1-line summary to stdout
 - Zod schemas define structured output contracts for all LLM calls
 - Functions follow `{result, usage, latencyMs}` return contract
+- Operator docs: real values or PowerShell vars in CLI examples, **never `<angle-brackets>`** (PowerShell reserves `<` — unpasteable); render a `--worksheet`, not raw JSON
 
 ## Do NOT
 

@@ -107,7 +107,7 @@ describe('lintSkillFrontmatterLayout — negative control (must FAIL on the prob
   });
 
   for (const key of KNOWN_TOP_LEVEL_KEYS) {
-    const value = BOOLEAN_FLAG_KEYS.includes(key) ? 'true' : (key === 'allowed-tools' ? 'Bash, Read' : 'x');
+    const value = BOOLEAN_FLAG_KEYS.includes(key) ? 'true' : (key === 'allowed-tools' ? 'Bash(node scripts/cross-skill.mjs detect-stack)' : 'x');
     it(`${key}: indented → fails; column 0 → passes`, () => {
       const bad = skillMd({ descriptionLines: ['Summary.', `${key}: ${value}`] });
       const rb = lintSkillFrontmatterLayout(bad);
@@ -171,7 +171,9 @@ describe('lintSkillFrontmatterLayout — the direction it must NOT fire', () => 
   it('a column-0 list value under allowed-tools is not an indented key', () => {
     const md = skillMd({ top: ['allowed-tools:', '  - Bash', '  - Read'] });
     const r = lintSkillFrontmatterLayout(md);
-    assert.equal(r.ok, true, JSON.stringify(r.findings));
+    // Layout: the list items are NOT indented keys. Content: the list form itself is
+    // refused by the allowed-tools rule (single-line exact grants only).
+    assert.deepEqual(r.findings.map((f) => f.kind), ['allowed-tools-malformed'], JSON.stringify(r.findings));
     assert.deepEqual(r.parsed['allowed-tools'], ['Bash', 'Read']);
   });
 

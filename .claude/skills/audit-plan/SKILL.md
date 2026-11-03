@@ -15,6 +15,12 @@ description: |
 
 # Plan Audit Loop
 
+> **This skill's last line is an end marker naming the skill between em-dashes, after
+> the Reference files table.** If that last line is not in your context (context
+> compaction keeps only the start of a skill), re-read
+> `.claude/skills/audit-plan/SKILL.md` in full before continuing — the later steps,
+> including the mandatory final gate, still apply.
+
 Iteratively refine a plan with GPT + Gemini final review until findings
 plateau, then gate with the independent reviewer.
 
@@ -33,16 +39,9 @@ Full contract: `references/input-acquisition.md`.
 > **Worktree preflight** — in a linked git worktree the synced tooling tree
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
 > does not populate it, and every command below that uses it dies on a bare
-> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first.
->
-> If this repo defines no such script, it has not adopted the remedy yet. Add
-> this entry to its `package.json` `scripts` and run it — it copies the tooling
-> tree in from the main checkout, and leans on nothing but node and git:
->
-> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
->
-> Rationale (source repo only — `docs/runbooks/` is not synced to consumers):
-> `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
+> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. If this repo defines
+> no such script, `references/worktree-preflight.md` holds the entry to add — ask
+> the user first, since it edits their `package.json`.
 
 ---
 
@@ -66,15 +65,9 @@ substitute when the GPT legs have no route, and which of `AUDIT_DEGRADED` /
 `AUDIT_NOT_RUN` to report so a run that did not happen stays distinguishable
 from one that passed.
 
-Initialise session ID: `SID=audit-plan-$(node -e "process.stdout.write(Date.now()+'-'+process.pid)")` — epoch ms plus a PID, so two sessions started in the same second get separate result, stderr and ledger files (a bare `$(date +%s)` gave both the same ones).
+Initialise session ID: `SID=audit-plan-$(node -e "process.stdout.write(Date.now()+'-'+process.pid)")` — epoch ms plus a PID, so two sessions started in the same second get separate result, stderr and ledger files.
 
-Show kickoff card:
-```
-═══════════════════════════════════════
-  /audit-plan — [MODE] — Starting
-  Plan: <path> | 3 rounds default | SID: $SID
-═══════════════════════════════════════
-```
+Kickoff card: `/audit-plan — [MODE] — Starting | Plan: <path> | 3 rounds default | SID: $SID`.
 
 ---
 
@@ -88,14 +81,8 @@ Show kickoff card:
 > persisted plan path. Same fallback `/cycle` documents; blocked results must
 > still reach this skill rather than being swallowed by the inlined planner.
 
-Generate the plan with `/plan` (the unified planner — auto-detects scope
-as backend / frontend / full-stack). Save to `docs/plans/<name>.md`.
-Skip for PLAN_AUDIT.
-
-Use `--scope=backend|frontend` on `/plan` for an explicit scope hint if
-auto-detection picks the wrong one. The output is one consolidated plan
-document regardless of scope, so this step always produces a single file
-to audit (no child-plan merging like the old flow).
+Generate the plan with `/plan` (auto-detects backend / frontend / full-stack; pass
+`--scope=…` if detection is wrong). Save to `docs/plans/<name>.md`. Skip for PLAN_AUDIT.
 
 ---
 
@@ -111,36 +98,17 @@ node scripts/openai-audit.mjs plan "$PLAN_FILE" --mode plan --out .audit/$SID-r1
 absent implementations (the plan describes work that doesn't exist yet, which
 is by design for plan-audit).
 
-### Round 2+ invocation
-
-R2+ mode injects prior rulings as system-prompt exclusions and applies
-post-output suppression against the ledger.
+**Round 2+** — injects prior rulings as exclusions and suppresses re-raises against
+the ledger:
 
 ```bash
 node scripts/openai-audit.mjs plan "$PLAN_FILE" --mode plan --round 2 --ledger .audit/$SID-ledger.json --out .audit/$SID-r2-result.json 2>.audit/$SID-r2-stderr.log
 ```
 
-Plan audit is single-file — no `--passes`, `--diff`, or `--changed` plumbing
-needed (those are code-audit concerns).
-
-### Requirements rubric (automatic)
-
-When `.requirements/ledger.json` exists, the plan audit prompt gets a
-`<requirements_rubric>` block scoped to the plan's own referenced files —
-a plan that violates an active repo invariant is flagged at design time
-(the cheapest point to catch it). No flag needed; ledger absent → audit
-unaffected. Same rubric the code audit injects, derived from plan text
-instead of a diff.
-
-### Show results
-
-```
-═══════════════════════════════════════
-  ROUND 1 PLAN AUDIT — SIGNIFICANT_ISSUES
-  H:4 M:7 L:2 | Cost: ~$0.18
-  Top: [H1] Missing failure mode for X
-═══════════════════════════════════════
-```
+Plan audit is single-file — no `--passes`, `--diff`, or `--changed`. When
+`.requirements/ledger.json` exists the prompt gets a `<requirements_rubric>`
+automatically; no flag. Show a results card per round:
+`ROUND N PLAN AUDIT — <verdict> | H:x M:y L:z | Cost: ~$… | Top: [H1] …`.
 
 ---
 
@@ -159,91 +127,34 @@ For each finding, record three orthogonal judgements:
 - `validity=invalid` → action MUST be `dismiss` or `rebut`
 - `validity=uncertain` → action MUST be `rebut` (GPT deliberation)
 - `validity=valid` + `scope=in-scope` + HIGH/MEDIUM → `fix-now`
-- `validity=valid` + `scope=out-of-scope` + **load-bearing** → `fix-now` (fold into the plan — see impact test below)
+- `validity=valid` + `scope=out-of-scope` + **load-bearing** → `fix-now` (fold into the plan)
 - `validity=valid` + `scope=out-of-scope` + **independent** → `defer` to "Out of Scope (Future)" plan section
 - `validity=valid` + `scope=in-scope` + LOW → operator choice
 
 **Scope is decided by impact, not ownership (load-bearing test).** "The plan
-doesn't own that section" is NOT a defer pass. Before any `out-of-scope` finding
-routes to `defer`, apply the test: *does the success of this plan's design
-depend on the cited concern?*
+doesn't own that section" is NOT a defer pass. Ask: *does the success of this
+plan's design depend on the cited concern?* **Load-bearing** → fold the resolution
+into the plan (or an explicit dependency note stating the assumption and how it is
+validated); **never silent-defer it**. **Independent** → defer. A `defer` must name
+the independence in one sentence; if you can't write it truthfully, it's
+load-bearing. When the cited concern is in a module/table the plan's design reads or
+writes, independence needs the two-part answer (same column/constraint? same
+transaction instance?) → `references/triage-rubrics.md` §Same-module independence.
 
-- **Load-bearing** — the plan's design rides on the cited contract / constraint
-  / subsystem behaviour (it would be wrong or unsafe if the concern holds) →
-  in-scope **for the fix/defer decision** even if the plan didn't name it.
-  Fold the resolution into the plan, or add an explicit dependency note that
-  states the assumption and how it's validated. **Never silent-defer it to
-  "Out of Scope (Future)".**
-- **Independent** — a genuine future enhancement / adjacent concern the plan's
-  correctness does not rest on → defer to "Out of Scope (Future)".
-
-A `defer` of an `out-of-scope` finding must name the **independence** in its
-rationale (one sentence: the plan's design does not depend on the cited
-concern). If you can't write it truthfully, it's load-bearing → fold it in.
-
-**Same-module independence needs more than "the plan doesn't propose editing
-that section" (measured 2026-09-25 in the sibling `/audit-code` invariant —
-same failure mode applies here).** A finding about a module/section the
-plan's own design already extends is not independent merely because the plan
-doesn't touch that section's *text*. When the cited concern is about a
-module/table the plan's new design reads or writes, the independence
-sentence needs the same two-part answer `/audit-code` Step 3 requires,
-reframed for a not-yet-built design: does the plan's new design read/write
-the SAME column(s) or depend on the SAME constraint the cited concern
-describes (not merely the same table), and does it execute inside the SAME
-transaction instance (not merely the same request or subsystem)? If either
-is true, fold the resolution into the plan rather than deferring it.
-
-### Grounding rubric (is the plan traced to real code?)
-
-The whole plan file is in context — no new machinery. Check that **§1's Code
-Trace** evidences Phase 1 actually happened: on a **non-trivial** plan (§7b
-Gate-1 class — ≥6 files, ≥2 subsystems, a dependency chain, or >1 sitting),
-the Context Summary must cite concrete `file_path:line` refs and a call path,
-not a hand-waved "the codebase does X." An **absent, empty, or generic** Code
-Trace on a non-trivial plan is a **HIGH finding** — `ungrounded-plan` — because
-every downstream claim about "what exists today" is then unverified, and the
-falsehood won't surface until code-audit runs against an implementation (far
-too late). Where a "what exists today" assertion drives a design decision,
-spot-check that the cited path plausibly supports it; a design built on a
-mis-described existing contract is HIGH regardless of trace presence. **An
-unpinned `file:line` in the trace is a LOW finding, not a pass**: it resolves
-today and decays into a wrong-but-resolving reference by the time anyone
-re-checks it, and the spot-check above is exactly the re-check that will land on
-the wrong content. Ask for `path:line (sha)`.
-→ `references/verification-discipline.md` §1. Trivial
-single-file plans are exempt (a bare `Code Trace: <file>` is fine).
-
-**Test-premise lint (#6 — GREEN ≠ REALIZED).** A plan assertion of the form
-"tests already cover X" / "the default path resolves Y" / "this is already
-exercised" is a **build-time spike**, NOT evidence, unless an **executed
-command + its result** is attached (e.g. `npm test -- foo` → `12 passing`).
-Flag the bare claim — it reads as green but nothing was run; the gap surfaces
-only when the code audit runs the command for real. Likewise a **discovery-freeze
-sub-step** that NAMES a source/feed/field must also **prove its semantics match
-the contract** (units, scope, filter, freshness) — "name the field → prove the
-field means what the design assumes." Naming a source is not proving it.
-
-### Execution-clustering rubric (when the plan has a §11 block)
-
-The whole plan file is already in the GPT/Gemini context, so no new
-machinery — but **deliberately scrutinize the §11 Execution Clustering
-boundaries**, because `/cycle` executes them and a bad boundary makes it
-build on un-audited coupled code. Check: (a) **partition** — every §7b
-implementation phase in exactly one cluster, none omitted/duplicated,
-close-out correctly outside the phase set; (b) **coupling soundness** —
-grouped phases share a real seam; split phases are genuinely independent;
-(c) **fix-gate placement** — `fix-gate: yes` before every cluster that
-depends on a prior cluster's output; (d) **ordering** — clusters are
-contiguous ascending ranges (valid topological order); (e) **derived
-scope** — each cluster's scope resolves from member phases' `Files:`
-(+ tagged `Additional files:`); flag any free-standing per-cluster `Files:`
-line as a second source of truth. A malformed block is a HIGH finding when
-it would cause `/cycle` to build on un-audited coupled code. (`/cycle` also
-re-validates fail-closed at execution time — this is the first of two
-layers.) The optional `author-tier:` sub-bullet is **advisory/observation-only**
-(`/cycle` records it, never routes on it) — do NOT treat its presence, absence,
-or value as a gate or a finding; a wrong tier hint has zero execution impact.
+**Rubrics — apply each; full text in `references/triage-rubrics.md`, read the section
+when its condition holds:**
+- **Grounding** — a non-trivial plan (≥6 files, ≥2 subsystems, a dependency chain, or
+  >1 sitting) whose §1 Code Trace lacks concrete `file:line` refs **and a call path** is
+  **HIGH `ungrounded-plan`**; spot-check each "what exists today" claim that drives a
+  design decision — a design built on a mis-described existing contract is HIGH; an unpinned `file:line`
+  is LOW (ask for `path:line (sha)`).
+- **Test-premise lint** — "tests already cover X" with no executed command + result
+  attached is a build-time spike, not evidence: flag it. Naming a source/field must
+  also prove its semantics match the contract.
+- **§11 clustering** (plan has the block) — check partition, coupling soundness,
+  fix-gate placement, contiguous ordering, derived scope; a malformed block that would
+  make `/cycle` build on un-audited coupled code is HIGH. `author-tier:` is advisory —
+  never a finding.
 
 ### Tiered rebuttal
 
@@ -262,12 +173,9 @@ node scripts/openai-audit.mjs rebuttal "$PLAN_FILE" "$REBUTTAL_FILE" --out .audi
 
 ### Convergence — early-stop on rigor pressure
 
-**Plan audits have infinite refinement surface** — after round 2-3, findings
-shift from "real design bugs" to "push for more rigor". Stop early.
-
 **Key on the ACCEPTANCE RATE, not the finding count.** `write-ledger-entries`
 prints it for the round you just triaged (`acceptance 92% (accepted 11 ·
-dismissed 1 · deferred 0)`) — that number is the signal:
+dismissed 1 · deferred 0)`):
 
 | Acceptance rate this round | Read |
 |---|---|
@@ -275,18 +183,9 @@ dismissed 1 · deferred 0)`) — that number is the signal:
 | **≤ ~⅓** | **STOP** — you are dismissing/deferring most of what arrives. That is rigor pressure by definition. |
 | in between | Decide on finding *character* (below), not on counts. |
 
-**A rising HIGH count is NOT a stop signal on its own.** Fixing round N's
-findings CREATES new specified surface that round N+1 legitimately audits: R2's
-findings are largely propagation debt from R1's fixes (stale cross-references in
-older sections), R3's are net-new surface from R2's. Measured 2026-08-08 on a
-large plan: H:5 → H:5 → H:6 across three rounds, with **23 of 23 findings
-accepted as fix-now — zero dismissals, zero deferrals, zero rebuttals** — and
-the independent Gemini gate scoring the deliberation "exemplary… no false
-positives". The old count rule said STOP after R2. It would have been wrong.
-A raw count cannot distinguish "the auditor is reaching" from "the plan is
-growing correct detail"; the acceptance rate can.
-
-Use the count as a **secondary backstop**, read together with the rate:
+The count is a **secondary backstop**, read with the rate (a rising HIGH count alone
+is not a stop signal — fixes create new surface; evidence in
+`references/convergence-evidence.md`):
 
 | Condition | Action |
 |---|---|
@@ -320,93 +219,43 @@ not claim full final-gate validation.
 ## Step 3.5 — Update Adjudication Ledger
 
 After each deliberation round, write ledger entries for every finding before
-proceeding to Step 4. The ledger drives R2+ rulings injection and post-output
-suppression.
+Step 4 — the ledger drives R2+ rulings injection and suppression. Write the
+`--triage` file with an editor, never as a shell string (rationale prose has
+apostrophes). Invocation + status semantics: `references/ledger-format.md`.
 
-Full writer invocation example + status field semantics: `references/ledger-format.md`.
-
----
-
-## Step 3.5b — Record Triage Outcomes (closes the adaptive-learning loop)
-
-**Automatic — no manual step.** `write-ledger-entries.mjs` labels the round it
-just triaged (once every finding has a ruling) and each R2+ invocation of
-`openai-audit.mjs plan` re-checks the prior round idempotently, so the **final**
-round is labelled too (plan audits create `audit_runs` rows with `mode='plan'`).
-Best-effort: a failure logs `[finalize] WARN` and the audit proceeds. **Only if
-that line appeared**, run the manual fallback (`--result` is the round's result,
-`--ledger` the ledger from Step 3.5 — rulings must already be in it):
-
-> **Run unification**: to attach all rounds to one `audit_runs` row, mint one
-> id up front and pass the SAME `--run-id <uuid>` every round (as the code audit
-> and `/cycle` do). The run's accepted/dismissed counts are recomputed
-> run-wide, so shared and per-round rows both read correctly.
+**Step 3.5b — record triage outcomes.** Cloud labels are automatic:
+`write-ledger-entries.mjs` labels the round it triaged, and each R2+ `openai-audit.mjs
+plan` re-checks the prior round. **Only if a `[finalize] WARN` line appeared**, run the
+manual fallback in `references/convergence-evidence.md` §Step 3.5b. `labelled: 0` with a
+non-zero `total` is a failure, never a pass. **Every round, also** record dismissed
+scope-pressure findings into the LOCAL PlanFpTracker, so future plan audits suppress the
+recurring ones:
 
 ```bash
-ROUND=2   # the round number just completed
-node scripts/write-code-outcomes.mjs --result ".audit/$SID-r$ROUND-result.json" --ledger .audit/$SID-ledger.json --round "$ROUND"
-```
-
-`labelled: 0` with a non-zero `total` is a failure to fix, never a pass: the
-ledger had no rulings, or they did not join the findings.
-
-(The CLI is mode-agnostic — it works off the result+ledger artifacts;
-plan findings carry `pass: 'plan'`.) Additionally, still record dismissed
-scope-pressure findings into the LOCAL PlanFpTracker so future plan audits
-suppress the recurring ones:
-
-```bash
+# --outcomes = THIS round's finding ids and actions (the two below are an example only)
 node scripts/write-plan-outcomes.mjs --result ".audit/$SID-r$ROUND-result.json" --outcomes '[{"id":"M3","action":"dismiss"},{"id":"H1","action":"fix-now"}]'
 ```
 
-Two stores, two purposes: the cloud labels feed effectiveness metrics /
-FP-learning / prompt evolution; the PlanFpTracker feeds the pre-output
-recurring-finding suppression specific to plan audits.
-
----
-
 ## Execution order
 
-**Wait for rebuttal BEFORE editing the plan.**
-
-1. Send rebuttal (if rebut HIGH/MEDIUM findings from triage)
-2. Wait for rebuttal response
-3. Write adjudication ledger (Step 3.5)
-4. Record triage outcomes — automatic next-round (Step 3.5b); manual CLIs only for the final/1-round case
-5. Edit plan (Step 4)
-6. Re-audit (Step 5)
+**Wait for rebuttal BEFORE editing the plan.** 1. send rebuttal (rebut HIGH/MEDIUM)
+→ 2. wait for the response → 3. write the ledger (3.5) → 4. outcomes (3.5b,
+automatic) → 5. edit the plan (Step 4) → 6. re-audit (Step 5).
 
 ---
 
 ## Step 4 — Edit Plan
 
-Plans are single files — apply fixes via `Edit` tool. ALL HIGH must be
-addressed (fix or defer-with-rationale). MEDIUM until ≤2 remain. LOW
-optional.
-
-```
-═══════════════════════════════════════
-  EDITING PLAN — 11 findings
-  Fixed in plan: 8
-  Deferred to "Out of Scope": 2 (with rationale)
-  Dismissed (LOW, low-leverage): 1
-═══════════════════════════════════════
-```
-
-After editing, update ledger entries to `remediationState: 'fixed'` for
-fixed items.
-
----
+Plans are single files — apply fixes via `Edit`. ALL HIGH must be addressed (fix or
+defer-with-rationale). MEDIUM until ≤2 remain. LOW optional. Show a card:
+`EDITING PLAN — N findings | Fixed: a | Deferred to "Out of Scope": b | Dismissed: c`.
+After editing, update ledger entries to `remediationState: 'fixed'` for fixed items.
 
 ## Step 5 — Verify and Loop (R2+)
 
-After edits, re-audit with R2+ mode (back to Step 2):
-
-1. Use the same plan file path.
-2. Pass `--round <N>` and `--ledger .audit/$SID-ledger.json`.
-3. Track finding churn using `_hash` fields: resolved / recurring / new.
-
-Stop per the rigor-pressure rule above (acceptance rate primary; 3 rounds
+Re-audit with R2+ mode (Step 2) on the same plan path, passing `--round <N>` and
+`--ledger .audit/$SID-ledger.json`; track churn with `_hash` (resolved / recurring /
+new). Stop per the convergence rule above (acceptance rate primary; 3 rounds
 default, 5 absolute).
 
 ---
@@ -423,23 +272,18 @@ writes. One command; never hand-assemble the JSON:
 node scripts/build-audit-transcript.mjs --sid $SID
 ```
 
-It discovers every `.audit/$SID-r<N>-result.json`, folds in
-`.audit/$SID-ledger.json` as the deliberation trail, infers `mode=plan` from the
-`audit-plan-` session-id prefix, and writes `.audit/$SID-transcript.json`.
+It folds every `.audit/$SID-r<N>-result.json` and `.audit/$SID-ledger.json` into
+`.audit/$SID-transcript.json` (mode inferred from the `audit-plan-` prefix).
 
 ```bash
-RUN_ID=$(node -e "const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }" ".audit/$SID-r$ROUND-result.json")
+RUN_ID=$(node -e "const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch (e) { process.stderr.write('RUN_ID: result artifact unreadable (' + e.message + ') - the verdict will NOT be written back'); }" ".audit/$SID-r$ROUND-result.json")
 node scripts/gemini-review.mjs review "$PLAN_FILE" .audit/$SID-transcript.json --mode plan --round 1 --run-id "$RUN_ID" --out .audit/$SID-gemini-result.json 2>.audit/$SID-gemini-stderr.log
 ```
 
-**`--mode plan` is as load-bearing here as it is in Step 2.** It defaults to
-`code`; without it the final gate reviews a not-yet-built plan as if it were
-shipped code and flags the absent implementations.
-
-**`--run-id` arms the `gemini_verdict` write-back.** Without it the review still
-runs and simply records no verdict — measured 2026-08-14, 0 of 55 plan runs had
-one against 45 of 178 code runs. The value is `_cloudRunId` on the last round's
-result artifact; when cloud is off it is absent and the flag is dropped.
+**`--mode plan` is as load-bearing here as it is in Step 2** (it defaults to `code`,
+which flags the absent implementations). **`--run-id` arms the `gemini_verdict`
+write-back** — omit it and the verdict is recorded nowhere (measurement in
+`references/convergence-evidence.md`).
 
 Act on the result's code-computed `gateDisposition` (the `verdict` word is the
 reviewer's own): `approve` → done. `approve_with_debt` → done — every remaining
@@ -452,12 +296,6 @@ as round 2 with `--round 2 --prior .audit/$SID-gemini-result.json --out
 
 ### Gemini round cap — **max 2 rounds** (symmetric with the GPT cap)
 
-The Gemini gate has the **same infinite-refinement surface** as the GPT loop:
-on a detailed plan it yields ~1–3 new edge findings *per round indefinitely*,
-and the verdict drifts from design defects → praise + implementation-completeness
-nits ("you didn't specify the store step / where the cooldown goes"). That is
-the **stop signal**, not a reason to run again.
-
 **Hard cap: 2 Gemini rounds** — `gemini-review.mjs` refuses `--round 3`. After
 round 2, if the disposition is still `blocked`:
 
@@ -467,14 +305,10 @@ round 2, if the disposition is still `blocked`:
 | **Implementation-completeness** (missing step, parameter placement, "specify X") | **STOP** — fold into the plan as captured items; hand off to `/cycle`'s **code** audit, which verifies them against real code (the right artifact) |
 | Rising **coherence/praise** + 1 nit/round | **STOP** — diminishing returns; record the nit, close the gate |
 
-This mirrors the GPT cap (3 rounds default, 5 absolute, extended only while the
-acceptance rate stays high): cap by
-default; a concrete net-new *design* bug after round 2 goes to the user, never
-to a third round, and never for rigor pressure or implementation detail. Record the stop decision (round count +
-why) in the plan's audit trail.
-
-Full transcript-building, verdict routing, deliberation protocol, and
-category-error handling: `references/gemini-gate.md`.
+Never a third round for rigor pressure or implementation detail (why:
+`references/convergence-evidence.md`). Record the stop decision (round count + why)
+in the plan's audit trail. Deliberation protocol and category-error handling:
+`references/gemini-gate.md`.
 
 ---
 
@@ -486,16 +320,6 @@ category-error handling: `references/gemini-gate.md`.
 4. Cost tracking: `cost ≈ (input × 2.5 + output × 10) / 1M`
 5. Batch all user decisions into one prompt
 
-## Key Principles
-
-1. **Peer relationship** — neither model blindly defers
-2. **Three-model system** — Claude (author) + GPT (auditor) + Gemini (final arbiter)
-3. **Stop at rigor pressure, measured by ACCEPTANCE RATE** — not by finding count. A round the author accepts wholesale is not rigor pressure whatever the HIGH count did (measured: H:5→5→6 with 23/23 accepted). 3 rounds default, 5 absolute
-4. **Always `--mode plan`** — without it, Gemini flags absent implementations
-5. **No self-review** — Step 6 final gate reviews Claude-GPT transcript
-6. **Audit the §11 clustering** — when present, check partition / coupling / fix-gate placement / ordering / derived scope (the first of two validation layers; `/cycle` re-validates at runtime)
-7. **Symmetric round caps** — GPT ≤3, **Gemini ≤2**. Both exceed the cap only for a concrete net-new *design* bug, never for rigor pressure / implementation-completeness. The Gemini cap is as load-bearing as the GPT one — implementation nits belong to the code audit, not the plan gate.
-
 ---
 
 ## Reference files
@@ -506,8 +330,13 @@ situations — read them only when the trigger applies.
 | File | Summary | Read when |
 |---|---|---|
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
+| `references/triage-rubrics.md` | Step 3 rubrics in full — impact-test detail, grounding, test-premise lint, and the §11 execution-clustering checks. | Step 3 — applying a rubric whose one-line form leaves the call borderline, OR ruling on same-module independence. |
+| `references/convergence-evidence.md` | Why the stop rules are what they are — acceptance-rate evidence, Gemini-cap rationale, outcome-recording fallback. | Step 3/6 — a stop decision is contested, OR a `[finalize] WARN` line appeared and Step 3.5b needs the manual fallback. |
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 6 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
 | `references/round-cap-and-structural-card.md` | Enforced GPT round cap (plan 3/5, code 6/8), exit 4 CAPPED, and the structural-or-stop card read at the cap. | A round exited 4, OR the audit reached round 3 without converging. |
 | `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — a prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 3 — applying the grounding rubric to a plan whose Code Trace cites `file:line`. |
+| `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
+
+— end of /audit-plan —

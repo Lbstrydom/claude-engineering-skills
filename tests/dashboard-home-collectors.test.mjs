@@ -171,7 +171,7 @@ describe('collectVitals', () => {
     const m = byId(collectVitals(root, { plans: { active: [] }, skills: [], now: NOW }), 'agents-size');
     assert.equal(m.status, 'ok');
     assert.equal(m.value.chars, text.length);
-    assert.equal(m.value.cap, 92000);
+    assert.equal(m.value.cap, 79000);
   });
 
   test('the cap follows .claude-context-allowlist.json (the gate\'s own resolution)', () => {

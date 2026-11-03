@@ -16,19 +16,17 @@ description: |
 
 # UX Lock — Playwright Spec Generator & Plan Verifier
 
+> **This skill's last line is an end marker naming the skill between em-dashes, after
+> the Reference files table.** If that last line is not in your context (context
+> compaction keeps only the start of a skill), re-read
+> `.claude/skills/ux-lock/SKILL.md` in full before continuing — the later steps still apply.
+
 > **Worktree preflight** — in a linked git worktree the synced tooling tree
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
 > does not populate it, and every command below that uses it dies on a bare
-> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first.
->
-> If this repo defines no such script, it has not adopted the remedy yet. Add
-> this entry to its `package.json` `scripts` and run it — it copies the tooling
-> tree in from the main checkout, and leans on nothing but node and git:
->
-> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
->
-> Rationale (source repo only — `docs/runbooks/` is not synced to consumers):
-> `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
+> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. If this repo defines
+> no such script, `references/worktree-preflight.md` holds the entry to add — ask
+> the user first, since it edits their `package.json`.
 
 ## Usage
 
@@ -161,13 +159,9 @@ hand right now; this is the only moment the proof is cheap.
 3. Restore the fix → confirm GREEN.
 4. Note the red output in the spec's header comment.
 
-This is not hypothetical. In one measured case a regression test for a blocked
-internal-address fetch passed **before** the fix too: nothing was listening on
-the probed port, so a raw request also returned null, and the assertion could
-not distinguish "blocked by the guard" from "connection refused". Rewritten to
-stand up a real local server serving a parseable payload, reverting the fix
-produced four red tests — red *because the old code successfully parsed the
-internal page*, which is the actual exploit.
+A spec can pass before the fix too, when its assertion cannot tell the guarded
+outcome from an incidental one. → `references/history-and-evidence.md` §Step 2.5 —
+read when a spec's RED/GREEN result is ambiguous.
 
 **Watch for the spec that goes red for the wrong reason** — that is the same
 failure wearing the opposite mask, and it is why step 2 says read the text.
@@ -189,15 +183,8 @@ COMMIT=$(git rev-parse HEAD)
 node scripts/ux-lock-run.mjs spec --spec "$SPEC" --commit "$COMMIT" --run-context manual --source-kind manual --strict-selectors
 ```
 
-> **Diagnosis (docs/plans/skill-efficacy-census.md Phase 1, 2026-08-22)**: a
-> live-store audit found `regression_spec_runs` at 0 rows and every
-> `regression_specs` row attributed to `/ship`'s `lock-with-test` instead of
-> this command. Tracing the actual write path (`recordRegressionSpec` /
-> `recordRegressionSpecRun`, `scripts/ux-lock-run.mjs:335-369`) found it
-> correctly wired — a failed write is counted and reported to stderr, not
-> swallowed. The gap is adoption, not a bug: this deterministic runner is
-> rarely invoked directly, and most fixes get locked via `/ship`'s simpler
-> `lock-with-test` path instead. No code change was warranted.
+→ `references/history-and-evidence.md` §Step 3 — read when `regression_spec_runs`
+looks empty or under-attributed in the store.
 
 Pass `--strict-selectors` for newly generated specs (recommended — a spec you
 just authored has no excuse for unmarked structural selectors; the flag fails
@@ -299,16 +286,10 @@ registers the SPEC row via cross-skill; this call owns only the RUN rows.)
   fail; a non-zero exit means the spec could not RUN (PW missing / fatal), not
   that a criterion failed. Exit 4 (`error.code: PERSIST_FAILED`) means it RAN
   but its run or criterion rows were NOT recorded.
-- **Nothing gates on this today.** An earlier version said gating was `/ship`'s
-  job "via the status rubric + `plan_satisfaction`". It is not: `/ship` never
-  queries `plan_satisfaction` — `readPlanSatisfaction`
-  (`scripts/lib/store/plans-ship.mjs`) is reachable through
-  `cross-skill.mjs plan-satisfaction`, but ship's only use of it is an optional
-  status.md reporting section. Meanwhile `skills/plan/SKILL.md` called §10 "the
-  ship gate" and pointed here. Each skill delegated the gate to the other and
-  nobody enforced it. Both claims are corrected; adding a real `/ship` gate is a
-  separate decision, deliberately not taken
-  (`docs/plans/gate-contract-expansion.md` §7b Phase 1, branch A1).
+- **Nothing gates on this today** — `/ship` never queries `plan_satisfaction`
+  as a gate; do not tell the user a failing verify blocks shipping.
+  → `references/history-and-evidence.md` §Steps V3–V5 — read when asked whether
+  verify gates `/ship`, or before claiming it does.
 
 The verify-spec template MUST emit each test with
 `{ annotation: [{ type: 'criterion_hash', description: '<hash>' }] }` — naming
@@ -330,9 +311,10 @@ P0+P1 evaluated and passing). Full template + precedence table:
 
 ### Failure policy
 
-Verify exits 0 even on fail — it's a report, not a blocker. To gate
-shipping, `/ship` reads `plan_satisfaction.failing_p0_criteria` via
-`cross-skill.mjs plan-satisfaction --plan-id <id>`.
+Verify exits 0 even on fail — it's a report, not a blocker. The result is
+readable via `cross-skill.mjs plan-satisfaction --plan-id <id>`
+(`failing_p0_criteria`), but no step reads it to gate a ship today (see the
+"Nothing gates on this today" rule above).
 
 ---
 
@@ -375,3 +357,7 @@ situations — read them only when the trigger applies.
 | `references/verify-mode-generation.md` | VERIFY mode — criterion parser wiring, translation rules, per-criterion run+record protocol. | Mode: VERIFY, Steps V0–V6 (parsing, generating, running, recording). |
 | `references/scope-and-limitations.md` | Where /ux-lock works well, where it doesn't (Obsidian/Electron), and fallback strategies. | Target is an Obsidian plugin / Electron app / CLI / anti-bot-protected URL, OR bootstrapping Playwright harness from scratch, OR user is on Windows and Playwright MCP tools aren't appearing. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 2.5 — the spec is written and must be proven RED against the un-fixed code before it is run and recorded. ALSO Step V6 — about to emit the VERIFY report, to apply §7's skipped-criteria rule. |
+| `references/history-and-evidence.md` | The measured cases behind Step 2.5's RED proof, the Step 3 store diagnosis, and why nothing gates on verify today. | Step 2.5 RED/GREEN is ambiguous, OR the store's spec-run rows look empty, OR asked whether verify gates `/ship`. |
+| `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
+
+— end of /ux-lock —

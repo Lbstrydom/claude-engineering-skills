@@ -25,10 +25,6 @@
   ],
   "ignoredCandidates": [
     {
-      "line": "> \"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\\\"\"",
-      "reason": "The worktree-preflight marker block's inlined `skills:hydrate` recipe. Every node one-liner carries `require` and `process.exit`, two ENFORCEMENT_VERBS, and no phrasing of a runnable recipe avoids them — the verbs are JavaScript here, not an enforcement claim about this skill. The recipe is inlined rather than cited because in an unadopted consumer both of the old pointers are dead at once (no `skills:hydrate` script yet, and `docs/runbooks/` is not synced), so a skill file is the only carrier that reaches the reader. Byte-identical across all 16 contracts by construction: it is generated from CONSUMER_HYDRATE_NPM_SCRIPT via MARKER_BLOCK, and `checkSkill` pins the block in every copy."
-    },
-    {
       "line": "Usage: /plan <task> --no-diagram                                 — skip the architecture mermaid block",
       "reason": "Usage/description documentation line surfaced by the 2026-07-21 Copilot-cap description trim (Usage relocated to the SKILL body). Not a new gate claim — it documents an existing flag; the real gate (where one exists, e.g. nav-audit --gate) is contracted separately in this file."
     },
@@ -95,6 +91,26 @@
     {
       "line": "an unmet dependency is reported, never blocked on, since only the operator",
       "reason": "A NEGATIVE guarantee (an absence of blocking) — same disposition class as cycle's 'Exit is always 0 ... never blocks' entry above and ship/step-0-5-gates-non-blocking: a claim about what the agent does with the tool's output, not a /plan exit code."
+    },
+    {
+      "line": "(→ `references/context-callouts.md` §Phase 1 — read when rendering that block). Treat P0/P1 matches as HIGH priority in the design.",
+      "reason": "Cluster B slim (2026-11-02): pointer to the moved render template. 'block' is the rendered markdown block; an authoring instruction, not a /plan exit code."
+    },
+    {
+      "line": "→ `references/authoring-rationale.md` §Phase 5 — right-sizing gate — read when the three lines feel like ceremony.",
+      "reason": "Cluster B slim (2026-11-02): pointer naming the reference section 'right-sizing gate' (an authoring forcing-question, not a mechanical gate)."
+    },
+    {
+      "line": "(a4ec98da)`. Cite append-newest-first files by section header, never by",
+      "reason": "Cluster B slim (2026-11-02) rewrap of the already-dispositioned Code-Trace citation-form line ('when written). Cite append-newest-first ...'); same rule, same disposition: a property of the produced markdown, no lint-a-markdown oracle."
+    },
+    {
+      "line": "> scope from plan *words* and reviews the wrong code. **Never invent file",
+      "reason": "Cluster B slim (2026-11-02) condensation of the §7b repo-relative-paths callout (measurement moved to references/authoring-rationale.md). The 'never invent file references' rule is an authoring instruction; the self-check is report-only, exit 0, as already dispositioned."
+    },
+    {
+      "line": "> references to clear the threshold** — qualify the paths you genuinely touch.",
+      "reason": "Continuation of the same callout sentence. 'threshold' is FUZZY_DISCOVERY_THRESHOLD in plan-paths.mjs, which /plan does not enforce — the report-only self-check exits 0 by design."
     }
   ]
 }

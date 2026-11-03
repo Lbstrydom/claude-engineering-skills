@@ -81,6 +81,24 @@ on that run's rows. It now upserts the new snapshot and prunes only the rows
 the snapshot dropped that carry no ruling and no recorded remediation on
 either axis.
 
+**Walking the whole queue (moved from SKILL.md).** Loop on `nextCursor`, **not** on `shownCount`, and keep going through pages
+whose `items` is empty (`pageFilteredOut` says how many raw rows were fetched
+but not actionable); `nextCursor: null` is the end:
+
+```bash
+node scripts/cross-skill.mjs final-review-pending --repo owner/repo --page-size 50
+```
+
+```bash
+node scripts/cross-skill.mjs final-review-pending --repo owner/repo --page-size 50 --after eyJ2IjoxLC4uLn0
+```
+
+`--page-size` is the alias of `--limit` (default 20, cap 200); `--offset` is
+**not supported**, by design. `--group-by work-unit` (and `--work-unit <key>`,
+`--no-llm-labels`) groups a page's actionable rows into refactor-sized units
+through the same grouper `list-unlocked-fixes` and `list-unremediated-acceptances`
+share.
+
 ## 6.8 — Consumer-side verification
 
 **One note per ship, and none of them overwrite each other** (2026-09-07,

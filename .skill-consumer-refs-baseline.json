@@ -1,6 +1,6 @@
 {
   "$comment": "Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.",
-  "totalSites": 225,
+  "totalSites": 261,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -46,6 +46,11 @@
       "disposition": "provenance",
       "reason": "The synced copy names its own canonical upstream path so an editor fixes the source, not the copy. Pointing at the source repo is the intent.",
       "sites": 10
+    },
+    "doc docs/audit/shared-references/worktree-preflight.md": {
+      "disposition": "provenance",
+      "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
+      "sites": 17
     },
     "doc docs/plans/architectural-memory.md": {
       "disposition": "provenance",
@@ -190,12 +195,12 @@
     "npm check": {
       "disposition": "source-repo-only",
       "reason": "The source repo pre-push aggregate. A consumer has its own test/verify entry point; the skills never depend on the aggregate existing.",
-      "sites": 35
+      "sites": 52
     },
     "npm dashboard:setup": {
       "disposition": "source-repo-only",
       "reason": "Alias chaining three synced scripts. Named as a source-repo convenience beside the per-path form a consumer runs.",
-      "sites": 2
+      "sites": 1
     },
     "npm debt:capture-trail": {
       "disposition": "source-repo-only",
@@ -220,7 +225,7 @@
     "npm fixture:create": {
       "disposition": "source-repo-only",
       "reason": "Pinned-revision worktree for spend-bearing runs in this repo.",
-      "sites": 2
+      "sites": 1
     },
     "npm gates:check": {
       "disposition": "source-repo-only",

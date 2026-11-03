@@ -14,21 +14,15 @@ description: |
   Triggers on: "run the full cycle", "do the whole flow", "plan + audit
   + ship", "feature cycle", "remediate the persona findings", "/cycle".
   Full command syntax: see the Usage section in this skill.
+allowed-tools: Bash(node scripts/cross-skill.mjs preview-gate --format human)
 ---
 
 > **Worktree preflight** — in a linked git worktree the synced tooling tree
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
 > does not populate it, and every command below that uses it dies on a bare
-> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first.
->
-> If this repo defines no such script, it has not adopted the remedy yet. Add
-> this entry to its `package.json` `scripts` and run it — it copies the tooling
-> tree in from the main checkout, and leans on nothing but node and git:
->
-> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
->
-> Rationale (source repo only — `docs/runbooks/` is not synced to consumers):
-> `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
+> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. If this repo defines
+> no such script, `references/worktree-preflight.md` holds the entry to add — ask
+> the user first, since it edits their `package.json`.
 
 ## Usage
 
@@ -49,6 +43,11 @@ Usage: /cycle --autonomous <plan-file> --authorize-stale-reaudit      — Resume
 ```
 
 # Feature Cycle Orchestrator
+
+> **This skill's last line is an end marker naming the skill between em-dashes, after
+> the Reference files table.** If that last line is not in your context (context
+> compaction keeps only the start of a skill), re-read
+> `.claude/skills/cycle/SKILL.md` in full before continuing — the later steps still apply.
 
 Chains the existing atomic skills into one workflow so you don't have to
 remember which to invoke when. Each step is a delegation to the
@@ -71,9 +70,8 @@ golden-path workflow without thinking about it.
 > **Pass the delegated skill its arguments explicitly** — the plan path, the
 > sub-command, the flags. `/cycle` already holds those values, so this is
 > orchestrator-supplied input (rule 0 of `references/input-acquisition.md`),
-> not inference. Without it an inlined `/audit-code` has no user message naming
-> a plan, and its own contract would correctly make it ask-and-stop — which
-> would deadlock every inline cycle.
+> not inference — omitting them deadlocks an inline cycle
+> (→ `references/orchestration-rationale.md` §No-dispatch — read when the reason is questioned).
 >
 > **Four invariants survive the fallback, and a run that breaks one is not a
 > `/cycle` run:**
@@ -119,11 +117,9 @@ golden-path workflow without thinking about it.
 
 **`/audit-plan` is never skipped by inference.** Only the explicit `code` or
 `remediate` keyword skips it — typing it is the operator's declaration that the
-plan is accepted. `/cycle` does not auto-detect "already accepted and unchanged":
-no audit record identifies the plan *content* that was approved (plan-mode
-`audit_runs` rows carry HEAD at capture, not the audited bytes), so any such
-check would read a stale approval as current. Detail:
-`references/remediate-mode.md` §"The accepted-plan skip".
+plan is accepted. `/cycle` does not auto-detect "already accepted and unchanged"
+(no record identifies the approved plan *content*) → `references/remediate-mode.md`
+§"The accepted-plan skip" — read when asked to skip /audit-plan by inference.
 
 Optional flags:
 - `--no-persona` — skip /persona-test (use when no live URL or backend-only)
@@ -133,7 +129,7 @@ Optional flags:
 - `--no-uxlock` — skip /ux-lock (use when no UI changes shipped)
 - `--no-ship` — stop after audit; don't commit or push
 - `--max-rounds N` — pass through to /audit-plan and /audit-code
-- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster (see "Clustered execution"). On a plan with **no §11 block** it runs the **degenerate single-cluster** path (the whole plan as one unit — Step 3) rather than silently pausing. Without the flag, `/cycle` pauses for the human at Step 3 exactly as today — the autonomous behaviour is never silent either way. **`--autonomous` does not reach Step 7** — `/ship` refuses every programmatic call regardless of this flag, so even a fully autonomous run ends in the Step 7 blocked handoff, not a completed ship.
+- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). **It does not complete Step 7** — a fully autonomous run still stops at the Step 7 blocked-handoff card; only the human's `/ship` completes it.
 - `--cluster <ID>` — implement/audit a single declared cluster (human resume path).
 - `--baseline-ref <sha>` — audit baseline for a resume where no `clusterStartRef` was captured (work already committed).
 - `--authorize-stale-reaudit` — resume a halted autonomous run by re-processing exactly the `stale` clusters.
@@ -179,12 +175,7 @@ run; a printed `unmet` line means a declared ordering dependency has not
 landed yet. **Read it and decide by hand** whether to proceed, hold, or
 sequence with whoever owns the other plan — this only makes the note visible,
 it cannot know whether proceeding anyway is actually safe.
-
-Why this exists: nothing previously checked a plan's own stated ordering
-dependency on another plan's status, so two concurrent sessions each running
-a different plan could land in the wrong order with no warning (upstream
-report `f5ac366f`). A plan with no `Depends on:` line prints nothing to act
-on and costs one cheap local read.
+→ `references/orchestration-rationale.md` §Step 0.5 — read when the check's purpose is questioned.
 
 ---
 
@@ -246,11 +237,8 @@ this step; its own remediation gate is Step R.
 | FULL / SKIP_PLAN | yes | **yes** | **Step 3C** clustered autonomous loop |
 | SKIP_TO_CODE (already implemented) | any | any | **Empty-diff guard first** (below); then **no gate** — go to Step 4 audit (per-cluster if `--cluster`, else union diff) |
 
-- **No §11 block + default (no `--autonomous`)** → **today's behaviour, unchanged**:
-  `/cycle` **pauses here** for the human to implement (or resume later via
-  `/cycle code <plan>`). Output the "paused at implementation gate" card
-  below. Skipped automatically only in SKIP_TO_CODE mode (the human already
-  implemented); SKIP_PLAN pauses here like FULL.
+- **No §11 block + default (no `--autonomous`)** → `/cycle` **pauses here** for
+  the human to implement; output the "paused at implementation gate" card below.
 - **No §11 block + `--autonomous`** → **degenerate single-cluster autonomous path**
   (do NOT silently fall back to the pause — that contradicts the explicit
   `--autonomous`). A plan below the §7b Gate-1 / §11 threshold is small + cohesive by
@@ -278,25 +266,17 @@ this step; its own remediation gate is Step R.
   **empty implementation diff**, and auditing nothing returns a misleading green.
   So before Step 4, compute the diff base (the plan's commit, or `--baseline-ref`,
   else the dirty-aware base `/audit-code` uses) and check it's non-empty.
-  **POSIX shell only** (Git Bash on Windows) — the `[ ... ]` test syntax has
-  no native PowerShell equivalent; run this step in a bash-capable shell
-  even on a Windows/Copilot host:
+  **POSIX shell only** (Git Bash on Windows), not PowerShell:
   ```bash
   BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1)   # or the plan commit / --baseline-ref
   [ -z "$(git diff "$BASE" --name-only)$(git ls-files --others --exclude-standard)" ] && echo EMPTY
   ```
   If empty → **do NOT audit a no-op.** Tell the operator the plan looks
-  unimplemented and offer the fork, naming the EXACT command for each side —
-  `--autonomous` alone does nothing here, since `SKIP_TO_CODE` routes straight
-  past the implementation gate regardless of the flag (Step 3's decision
-  table), so "just add `--autonomous`" is not a fix while the `code` keyword
-  stays: (1) drop the `code` keyword and re-run as `/cycle plan <plan-file>
-  --autonomous` (let `/cycle` implement it — `plan` mode is the one whose
-  gate actually reads `--autonomous`), or (2) implement manually then re-run
-  `/cycle code <plan-file>` unchanged. This mirrors the Step 3C rule "never
-  default `--diff` to HEAD — empty diff = silent skip" (line ~191), extended
-  to the human `code` path. (The AUTO-mode "any new code since the plan
-  commit" detection gates this too.)
+  unimplemented and offer the fork, naming the EXACT command for each side
+  (adding `--autonomous` to a `code` run does nothing): (1) re-run as
+  `/cycle plan <plan-file> --autonomous` (let `/cycle` implement it), or
+  (2) implement manually then re-run `/cycle code <plan-file>` unchanged.
+  → `references/orchestration-rationale.md` §Step 3 — read when the guard or the fork is questioned.
 
 ```
 ═══════════════════════════════════════
@@ -312,18 +292,11 @@ this step; its own remediation gate is Step R.
 
 ### Cluster execution state — `.audit/cycle-cluster-state.json`
 
-Durable, gitignored, lock-guarded (`withFileLock` for read-modify-write,
-atomic temp+rename; lock-acquire failure → stop, no racy overwrite).
-Schema: `{ schemaVersion:1, repoId, entries: { <canonicalPlanPath>: {
-clusters: { <clusterId>: <record> } } } }` — the path maps to a
-**collection** of cluster records (not the §11 content hash, so amending
-the plan never orphans cleared clusters). Per-cluster record: `{ clusterId,
-gateStatus: pending|audited|gate-clear|stale, scopeHash (this cluster's §11
-declaration + derivedScope), auditedBaselineRef, derivedScope:[…tagged
-paths…], auditedFileHashes:{path:sha256 over all derivedScope paths},
-lastAuditRound, lastUpdated }`. A `gate-clear` cluster flips to **`stale`**
-if any `derivedScope` hash changes OR its `scopeHash` changes; amending one
-cluster updates/invalidates only that cluster's record.
+Durable, gitignored, lock-guarded (lock-acquire failure → stop, no racy
+overwrite); one record per cluster with `gateStatus: pending|audited|gate-clear|stale`.
+A `gate-clear` cluster flips to **`stale`** if any `derivedScope` file hash or its
+`scopeHash` changes. → `references/clustered-execution.md` §Cluster execution
+state — read before the first read or write of this file in a session.
 
 ### Loop (autonomous)
 
@@ -332,19 +305,14 @@ For each remaining cluster in declared order:
 
 1. **Implement** the cluster's member-file phases.
 2. **Budget**: no runtime splitting in v1 — invoke `/audit-code` on the cluster's derived scope and let its internal map-reduce handle large diffs. `/cycle` only enforces **never merge** across a declared boundary.
-   - **Optional author-tier observation**: if the cluster carries an advisory `author-tier:` hint (§11 grammar), you MAY export `AUDIT_AUTHOR_TIER_HINT=<concrete model id or logical tier>` before invoking `/audit-code` so the audit's observation-only recorder captures actual-vs-suggested tier. This **does NOT change which model runs** — it is pure telemetry (`docs/plans/model-tier-observation.md`). Prefer a concrete model id (e.g. `claude-sonnet-5-5`) so the ladder partition key populates.
+   - **Optional author-tier observation** (telemetry only; it does NOT change which model runs) → `references/clustered-execution.md` §Optional author-tier — read when the cluster carries an `author-tier:` hint.
 3. **Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins, write the cluster's derived scope one-path-per-line to a scope file, then run the two commands below. On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default the base to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s own cap — no new policy here.
 
    > **`--files` is the ONLY flag that scopes the audit.** `--changed` is the R2+
    > impact set for reopen detection and `--diff` is hunk evidence; neither
-   > bounds what the model reads. Passing the derived scope as `--changed` and
-   > expecting it to scope is the defect this recipe was rewritten to fix —
-   > measured 2026-08-13, a per-cluster audit declaring 11 files audited **52**,
-   > because `--scope=diff` recomputed from a working tree shared with another
-   > session, and 26 of 31 findings were about code the cluster never touched.
-   > Do NOT hand-compute the change set or hand-apply the admission rules here:
-   > `cycle-cluster-scope.mjs` does that in code, because parsing NUL-delimited
-   > git output and applying `isAuditInfraFile` are not things to do in prose.
+   > bounds what the model reads. Do NOT hand-compute the change set or
+   > hand-apply the admission rules: `cycle-cluster-scope.mjs` does that in code.
+   > → `references/clustered-execution.md` §Why `--files` — read when the scope flags are questioned.
 
 <!-- cycle:cluster-audit-command -->
 ```bash
@@ -369,12 +337,8 @@ node scripts/openai-audit.mjs code "$PLAN" --scope diff --files "$FILES" --chang
 ```
 <!-- /cycle:cluster-audit-command -->
 
-   **Two sets, two purposes** — conflating them is unsatisfiable. The
-   *reconciliation set* includes deletes and both rename operands (that is how an
-   edit leaving the cluster is detected); the *allowlist* is that set filtered to
-   paths on disk (the audit's admission policy rejects off-disk paths, so
-   including them guarantees a shortfall). The script returns both and never
-   mixes them.
+   The script returns two sets (reconciliation set vs on-disk allowlist) — use
+   them as returned → `references/clustered-execution.md` §Two sets — read when they look inconsistent.
 
    **A deletion-only cluster has an empty allowlist** and reports
    `emptyAllowlist: true`. That is correct — there is no code to read. Route it
@@ -383,14 +347,11 @@ node scripts/openai-audit.mjs code "$PLAN" --scope diff --files "$FILES" --chang
 4. **Fix-gate**: `fix-gate: yes` → reach `/audit-code` convergence (`HIGH==0 && MEDIUM<=2 && quickFix==0`) **over this cluster's IN-CLUSTER findings** (see 4a) before the next cluster; `none` skips; `final` defers to the consolidated gate. Within-cluster fixing is authorized; a fix needing files **outside** the cluster's scope → **stop** for confirmation (mark any touched `gate-clear` cluster `stale`). Persistent non-convergence → hand back with a summary.
    - **3a. `clusterStartRef` is validated ON USE, not just captured.** Run
      `git merge-base --is-ancestor <clusterStartRef> HEAD` before it becomes a
-     diff base. A concurrent session can amend, rebase or check out between
-     capture and audit — HEAD moved six times in one session here — and a base
-     that has left this history yields a silently WRONG envelope rather than an
-     error. On a non-ancestor, halt and report rather than demoting to the
+     diff base. On a non-ancestor (a concurrent session moved HEAD),
+     halt and report rather than demoting to the
      dirty-aware default, which would quietly widen the range you asked for.
-     This is the first of two layers: `/audit-code`'s own resolver refuses the
-     same base (`not-an-ancestor`, hard fail), which is where the exit code is.
-   - **4a. The gate scores IN-CLUSTER findings only — otherwise no cluster but the last can ever pass.** `/audit-code` grades the cluster's *diff* against the *whole plan*, so a later cluster's not-yet-written file comes back as `[Structure] Missing planned file` — **HIGH**. Measured 2026-08-08 (`gate-honesty-adjudicated-defects.md` §11.1): a cluster's total HIGH went 6 → 5 → 3 while its in-cluster HIGH went 2 → 2 → **0**; at that point its own work was clean and the gate would have refused *forever*, on two files belonging to clusters correctly not yet implemented. A gate that cannot be satisfied by doing the work correctly is the cried-wolf shape that earns `--no-verify`. Classify every finding by the cluster owning its cited file — the derived scopes are already computed, so this is mechanical, not a judgement call:
+     → `references/clustered-execution.md` §3a — read when the base check is questioned.
+   - **4a. The gate scores IN-CLUSTER findings only — otherwise no cluster but the last can ever pass** (→ `references/clustered-execution.md` §4a — read when in-cluster scoring is challenged). Classify every finding by the cluster owning its cited file — the derived scopes are already computed, so this is mechanical, not a judgement call:
 
      | Cited file is in… | Class | Effect on THIS gate |
      |---|---|---|
@@ -400,12 +361,12 @@ node scripts/openai-audit.mjs code "$PLAN" --scope diff --files "$FILES" --chang
      | **no** cluster's derived scope | `out-of-scope` | unchanged: fail closed per step 3 |
 
      Three properties stop this becoming an escape hatch, and all three are load-bearing: **(1)** deferral is *bounded* — `deferred-declared` means "owned by a LATER cluster", and the final cluster has none, so the bucket is empty there by construction and every deferred completeness finding must be satisfied before Step 3C.2; **(2)** *"pre-existing" is still not a defer reason* — these buckets are about plan SCHEDULE, never authorship, so AGENTS.md's impact test applies unchanged to anything in-cluster; **(3)** the classification is *derived*, never argued — a finding cannot be talked into a friendlier bucket. **Every `deferred-declared` finding is listed in the cluster's hand-back summary with the cluster that owns it** — a deferral nobody can see is indistinguishable from a dismissal.
-   - **Convergence test scope — run the BROADEST suite, not unit-only (load-bearing for destructive clusters).** When "iterate to green" runs the project's tests at the cluster boundary, use the widest command the repo defines (`test:all` / `test:integration` / `test:e2e` — fall back to plain `test` / the full `node --test`), **never `test:unit` alone**. Unit isolation structurally *cannot* catch the failure modes a delete/refactor cluster introduces: a stale `vi.mock`/`jest.mock` of a now-deleted module path only errors when something actually resolves it (i.e. in integration), and cross-module integration breaks are invisible to per-module unit suites. A cluster is "green" only when the integration tier passes; a `test:unit`-only green on a destructive cluster is a false-green and does **not** clear the fix-gate.
+   - **Convergence test scope — run the BROADEST suite, not unit-only (load-bearing for destructive clusters).** When "iterate to green" runs the project's tests at the cluster boundary, use the widest command the repo defines (`test:all` / `test:integration` / `test:e2e` — fall back to plain `test` / the full `node --test`), **never `test:unit` alone** (→ `references/clustered-execution.md` §Why the broadest test suite — read when a unit-only green is proposed). A cluster is "green" only when the integration tier passes; a `test:unit`-only green on a destructive cluster is a false-green and does **not** clear the fix-gate.
 4.5. **Finalize outcomes (deterministic capture — WS1)**: once the cluster's audit has converged AND its findings are triaged (the adjudication ledger carries terminal `accepted`/`dismissed`/`severity_adjusted` outcomes), call **once** per converged audit:
    ```bash
    node scripts/cross-skill.mjs finalize-outcomes --run-id "$CLOUD_RUN_ID" --ledger "$FINAL_LEDGER_JSON" --result "$FINAL_ROUND_RESULT_JSON"
    ```
-   This deterministically captures `adjudication_outcome` + `audit_runs.labeled` + the `needs_triage` reconciliation for any finding the ledger omitted — replacing the model-remembered `/audit-code` Step 3.5b for the autonomous path. The `run-id` is the audit's `_cloudRunId` (written on the `--out` JSON; stable across rounds because `audit-loop.mjs`/the audit threads one unified id). Cloud-off → it no-ops with a hint; an unknown run-id is a hard error. Skip only when the audit produced no cloud run (cloud off).
+   The `run-id` is the audit's `_cloudRunId` (on the `--out` JSON); → `references/clustered-execution.md` §4.5 — read when asked what it captures. Cloud-off → it no-ops with a hint; an unknown run-id is a hard error. Skip only when the audit produced no cloud run (cloud off).
 5. **After the loop**: if any `gate-clear` cluster went `stale`, **halt + summarize**; resume only with `--authorize-stale-reaudit`, which re-processes exactly the stale clusters (their out-of-scope reconciliation ignores files owned by *other* clusters, since later clusters legitimately committed since the old baseline). No autonomous loop-back.
 
 ### Step 3C.1 — Close-out execution (autonomous)
@@ -452,38 +413,24 @@ protocol exactly — this closed loop is the SAME one, not a second one.** For
 each `CONCERNS`/`REJECT` finding decide ACCEPT / PARTIAL / CHALLENGE (a
 CHALLENGE must cite evidence); fix the accepted findings; then **rebuild the
 transcript before re-running Gemini**, passing `--summary` describing what
-round 1 decided per finding — fixed, or challenged-and-why. Skipping this
-rebuild is what makes round 2 blind to round 1's deliberation: a `--out
-…-v2.json` built from only the (unchanged) per-cluster round results, with no
-`--summary`, gives Gemini nothing that distinguishes "never addressed" from
-"addressed with cited evidence you already saw," and it re-raises the
-identical finding round 2. `--summary` is the existing mechanism Step 7.1
-already uses for this — carry it forward here rather than inventing a second
-one.
+round 1 decided per finding — fixed, or challenged-and-why; without it round 2
+re-raises the same findings. → `references/clustered-execution.md` §3C.2 round 2 — read when round 2 repeats round 1.
 
 Invocation: build the
 transcript the way `/audit-code` does (`changed_files`=union file set,
 accumulated per-cluster findings as the `rounds[]` trail), then
 `node scripts/gemini-review.mjs review <target> <transcript.json> --out …` —
 reuse `/audit-code`'s transcript path, no new gate machinery. **Pass one
-`--ledger <path>` per cluster** — `build-audit-transcript.mjs`'s `--ledger`
-flag is repeatable (mirroring `--result`), and clustered execution produces
-one ledger PER CLUSTER (each cluster's own `/audit-code` invocation writes its
-own `.audit/$CLUSTER_SID-ledger.json`); passing only one silently drops every
-other cluster's resolutions from the `claude_resolutions` trail the reviewer
-sees. **Concrete transcript
+`--ledger <path>` per cluster** (`.audit/$CLUSTER_SID-ledger.json` each) —
+`build-audit-transcript.mjs`'s `--ledger` flag is repeatable (mirroring
+`--result`); one ledger alone drops the other clusters' resolutions
+(→ `references/clustered-execution.md` §3C.2 one `--ledger` — read when a cluster's resolutions are missing). **Concrete transcript
 shape + the no-`GEMINI_API_KEY` degradation ladder (Opus fallback → independent
 adversarial agent over the union diff → only-then skip) are in
 `references/gemini-gate.md`** (the same contract /audit-code's Step 7 follows) — when no provider key is present, run the
 independent-agent substitute rather than skipping the mandatory gate. Generated
 `.claude/skills/**` copies are byte-verified by `skills:check`, not
-re-reviewed. Then continue to Step 5.
-
-> Reaching this point means the ENTIRE autonomous loop — implement, audit,
-> fix-gate, close-out, consolidated Gemini gate — completed without a human.
-> Step 7 still stops it: `/ship` cannot be invoked programmatically (see Step 7
-> below), so even a fully autonomous, fully converged run ends in a blocked
-> handoff naming `/ship docs/plans/<name>.md`, never a pushed commit.
+re-reviewed. Then continue to Step 5 (Step 7 still ends even a fully autonomous run in the blocked handoff).
 
 ---
 
@@ -523,11 +470,8 @@ review. Max 6 rounds; quality threshold `HIGH==0 && MEDIUM<=2 && quickFix==0`.
 - `INCOMPLETE` (passes timed out) → present to user, offer: continue with partial / re-run with higher timeout / stop
 - Persistent HIGH findings after R6 → present to user with finding list, recommend fix-then-retry rather than ship
 
-> **Solo author-model control** fires automatically inside `/audit-code`
-> (its Step 6.5b — backgrounded, toggle-gated) when the `arm-eval` shadow is on.
-> `/cycle` delegates to `/audit-code`, so no separate action is needed here; if
-> you run the autonomous per-cluster path (Step 3C) that invokes `/audit-code`,
-> it inherits the same trigger.
+Solo author-model control needs no `/cycle` action → `references/orchestration-rationale.md`
+§Step 4 — read when asked whether /cycle triggers it.
 
 ---
 
@@ -539,10 +483,8 @@ Detect whether persona-test is applicable:
 - Resolve the target URL in the same order `/persona-test` itself uses
   (Phase 0b): `--persona-url` flag → `PERSONA_TEST_APP_URL` env → (in
   `--autonomous` mode, where there's no human to ask) a running local dev
-  server if one is detectable, else skip. **`PERSONA_TEST_APP_URL` unset is
-  not the same fact as "no deployed instance"** — a repo that only sets the
-  env var for CI/PR-preview but runs a normal local dev server otherwise has
-  a perfectly runnable target that this env-only check would miss. If no
+  server if one is detectable, else skip (→ `references/orchestration-rationale.md`
+  §Step 5 — read when tempted to resolve from the env var alone). If no
   target resolves by any of these, **do not skip silently** — print
   `Step 5 skipped — persona-test has no target (PERSONA_TEST_APP_URL unset;
   pass --persona-url <url> to run it)` in the Step 8 summary so the gap is
@@ -597,12 +539,8 @@ scope.
 > **`/ship` cannot actually be invoked from here — by design, every time.**
 > `/ship`'s frontmatter carries `disable-model-invocation: true`, which refuses
 > ANY programmatic call, including one made from inside `/cycle`'s own
-> orchestration (Claude Code and VS Code Copilot both honour the key — see
-> `/ship`'s own header). This is not a failure mode to handle; it is the
-> permanent, unconditional shape of this step, autonomous or not — the
-> `--autonomous` flag authorizes within-cluster fixes (Hard rules), it does
-> NOT authorize shipping. There is no version of Step 7 that completes without
-> the human typing `/ship` themselves.
+> orchestration; `--autonomous` does NOT authorize shipping.
+> → `references/orchestration-rationale.md` §Step 7 — read when asked to ship from /cycle.
 >
 > So Step 7 always ends in a **blocked handoff**, never an "Invoke `/ship`."
 > Show this card and stop — name the plan path so the human never has to go
@@ -617,11 +555,6 @@ scope.
 >   Resume with: /ship docs/plans/<name>.md
 > ═══════════════════════════════════════
 > ```
->
-> Once the human runs that command, `/ship` executes its own checklist
-> (status update, AGENTS sync, plan update, stage + commit + push,
-> ship_event log) and its Step 0.5c refreshes the architectural-memory index —
-> no further action from `/cycle` either way.
 
 ---
 
@@ -683,3 +616,8 @@ situations — read them only when the trigger applies.
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Reporting a degraded or substituted run — §7's coverage rule, which the prerequisite ladder's census rows cite. |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Autonomous mode's consolidated Gemini gate — building the transcript, OR no `GEMINI_API_KEY` and the degradation ladder decides the substitute. |
 | `references/remediate-mode.md` | REMEDIATE mode — fix triaged post-ship findings against an accepted plan without replaying the full cycle. | The mode is REMEDIATE (Step R), OR the user asks to skip /audit-plan because the plan is already accepted. |
+| `references/clustered-execution.md` | Step 3C detail — cluster-state schema, author-tier hint, scope-flag incident, 4a measurement, round-2 rationale. | Step 3C — first read/write of `.audit/cycle-cluster-state.json`, an `author-tier:` hint, OR a cluster's scope, class or gate is contested. |
+| `references/orchestration-rationale.md` | Why /cycle's linear steps are shaped as they are — inline dispatch, plan deps, empty-diff guard, persona URL, ship. | A linear step's rule (Steps 0–7, outside 3C) is questioned or looks safe to skip. |
+| `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
+
+— end of /cycle —

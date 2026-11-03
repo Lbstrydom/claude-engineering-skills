@@ -48,44 +48,30 @@ export const CONSUMER_HYDRATE_NPM_SCRIPT = "\"skills:hydrate\": \"node -e \\\"co
  *
  * Byte-identity across copies is the whole anti-drift mechanism — it is what
  * lets the gate compare rather than merely detect, and it is why this constant
- * exists instead of 16 hand-written paragraphs.
+ * exists instead of 17 hand-written paragraphs.
  *
- * **Why the remedy is INLINE and not merely cited** (2026-08-27). The block used
- * to be a pure trigger — "run `npm run skills:hydrate`, detail in the runbook" —
- * on the assumption that the substance was one hop away. In an UNADOPTED consumer
- * both hops are dead ends at once: the npm script does not exist yet (that IS the
- * symptom the block is explaining), and `docs/runbooks/` is not in the sync's
- * CORE_ASSETS, so the runbook holding Remedy 1 is absent from the repo entirely.
- * Measured 2026-08-27: neither consumer of this bundle carries the runbook, and
- * one carries no `skills:hydrate` script either. A reader hits the failure,
- * follows the pointer, finds nothing, and concludes no remedy exists — which is
- * what a consumer reported after a session of manual workarounds.
- *
- * So the block now carries `CONSUMER_HYDRATE_NPM_SCRIPT` itself. The reader needs
- * no second artifact, and byte-pinning comes for free: `checkSkill` already
- * compares this whole constant across all 16 copies, so the recipe embedded here
- * cannot drift from the one `checkDocumentedRecipes` pins in the runbook. The
- * runbook citation stays, labelled source-repo-only, because it carries the
- * rationale — the part a blocked reader does not need.
- *
- * A skill file is the ONLY carrier that reaches this reader: it is copied into the
- * worktree with the `.claude/` tree, while everything the sync writes into
- * `scripts/.claude-skills/` is by construction absent. Same rule as the runbook's
- * own — a remedy has to ride on what reaches the reader.
+ * **Why the remedy is in a REFERENCE and not inline** (2026-11-02). The block was
+ * once a pure trigger pointing at the runbook — a dead end in an unadopted
+ * consumer, which has neither the npm script (that IS the symptom) nor
+ * `docs/runbooks/` (not synced). On 2026-08-27 the recipe was therefore inlined
+ * here. That fixed the reader but cost ~870 tokens in every skill invocation,
+ * and Claude Code re-attaches only a skill's first 5,000 tokens after context
+ * compaction (docs/plans/skill-best-practice-alignment.md, pilot Finding 2). A
+ * skill's own `references/` directory is copied with the skill, so
+ * `references/worktree-preflight.md` (canonical in
+ * `docs/audit/shared-references/`, distributed by `sync-shared-audit-refs.mjs`)
+ * reaches the same reader. `checkSkill` pins `CONSUMER_HYDRATE_NPM_SCRIPT` in that
+ * file byte-for-byte, so moving the recipe kept the anti-drift property.
  */
 export const MARKER_BLOCK = `> **Worktree preflight** — in a linked git worktree the synced tooling tree
 > \`scripts/.claude-skills/\` is absent — it is gitignored, so \`git worktree add\`
 > does not populate it, and every command below that uses it dies on a bare
-> \`MODULE_NOT_FOUND\`. Run \`npm run skills:hydrate\` first.
->
-> If this repo defines no such script, it has not adopted the remedy yet. Add
-> this entry to its \`package.json\` \`scripts\` and run it — it copies the tooling
-> tree in from the main checkout, and leans on nothing but node and git:
->
-> ${CONSUMER_HYDRATE_NPM_SCRIPT}
->
-> Rationale (source repo only — \`docs/runbooks/\` is not synced to consumers):
-> \`docs/runbooks/consumer-adoption.md\` §"Linked git worktrees".`;
+> \`MODULE_NOT_FOUND\`. Run \`npm run skills:hydrate\` first. If this repo defines
+> no such script, \`references/worktree-preflight.md\` holds the entry to add — ask
+> the user first, since it edits their \`package.json\`.`;
+
+/** The shared reference every in-scope skill carries, holding the hydrate recipe. */
+export const PREFLIGHT_REFERENCE = 'worktree-preflight.md';
 
 /**
  * Phrasing constraint, learned at the pre-push gate: keep this block clear of
@@ -97,15 +83,11 @@ export const MARKER_BLOCK = `> **Worktree preflight** — in a linked git worktr
  * claim at all. The first draft said "`git worktree add` never populates it";
  * the plainer wording above is both accurate and cheap.
  *
- * That still holds for the PROSE. It stopped holding for the whole block on
- * 2026-08-27, when the remedy was inlined: `CONSUMER_HYDRATE_NPM_SCRIPT` is a
- * node one-liner, and every such one-liner carries `require` and `process.exit`
- * — two ENFORCEMENT_VERBS — with no phrasing available that avoids them. So the
- * recipe line is dispositioned as an `ignoredCandidates` entry in all 16
- * contracts, which is what that field is for: a line carrying a verb while
- * making no enforcement claim. Editing the constant re-fires the check and the
- * 16 dispositions have to be re-stated; that is the price of the recipe
- * reaching a reader who can reach nothing else, and it is worth paying.
+ * From 2026-08-27 to 2026-11-02 the block also inlined `CONSUMER_HYDRATE_NPM_SCRIPT`,
+ * whose `require`/`process.exit` are unavoidable ENFORCEMENT_VERBS, so every
+ * contract carried an `ignoredCandidates` disposition for it. The recipe now
+ * lives in `references/worktree-preflight.md`, and those dispositions were
+ * removed with it.
  */
 
 /**
@@ -343,7 +325,12 @@ function reachesTooling(file, scripts) {
  *
  * @param {string} rootDir absolute repo root
  * @param {string} skill directory name
- * @returns {{skill:string, status:'ok'|'missing'|'edited'|'no-skill-md'}}
+ * The marker points at `references/worktree-preflight.md`, so that file is part
+ * of the contract: absent, the pointer is a dead end (`reference-missing`);
+ * present without the recipe byte-for-byte, the remedy has drifted
+ * (`reference-edited`).
+ *
+ * @returns {{skill:string, status:'ok'|'missing'|'edited'|'no-skill-md'|'reference-missing'|'reference-edited'}}
  */
 export function checkSkill(rootDir, skill) {
   const p = path.join(rootDir, 'skills', skill, 'SKILL.md');
@@ -353,6 +340,11 @@ export function checkSkill(rootDir, skill) {
   // Compare on LF so a CRLF checkout is not read as an edit — git calls such a
   // file clean, and a tool that disagrees is comparing the wrong thing.
   if (!text.replaceAll('\r\n', '\n').includes(MARKER_BLOCK)) return { skill, status: 'edited' };
+  const ref = path.join(rootDir, 'skills', skill, 'references', PREFLIGHT_REFERENCE);
+  if (!fs.existsSync(ref)) return { skill, status: 'reference-missing' };
+  if (!fs.readFileSync(ref, 'utf-8').replaceAll('\r\n', '\n').includes(CONSUMER_HYDRATE_NPM_SCRIPT)) {
+    return { skill, status: 'reference-edited' };
+  }
   return { skill, status: 'ok' };
 }
 

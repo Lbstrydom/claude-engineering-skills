@@ -17,6 +17,8 @@ import path from 'node:path';
 import {
   MARKER_BLOCK,
   MARKER_KEY,
+  CONSUMER_HYDRATE_NPM_SCRIPT,
+  PREFLIGHT_REFERENCE,
   checkSkill,
   skillsInvokingSyncedTooling,
 } from '../scripts/lib/worktree-preflight.mjs';
@@ -26,13 +28,17 @@ import {
  * @param {Record<string,string>} scripts package.json scripts map
  * @param {Record<string,string>} skills  skill name -> SKILL.md body
  */
-function makeRepo(scripts, skills) {
+function makeRepo(scripts, skills, { reference = `# remedy\n\n${CONSUMER_HYDRATE_NPM_SCRIPT}\n` } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wtpf-'));
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts }));
   for (const [name, body] of Object.entries(skills)) {
     const dir = path.join(root, 'skills', name);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'SKILL.md'), body);
+    if (reference !== null) {
+      fs.mkdirSync(path.join(dir, 'references'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'references', PREFLIGHT_REFERENCE), reference);
+    }
   }
   return root;
 }
@@ -107,6 +113,24 @@ describe('checkSkill — marker states', () => {
     // git calls such a file clean under .gitattributes eol=lf; a tool that
     // disagrees is comparing the wrong bytes.
     const root = makeRepo({}, { s: WITH_MARKER.replaceAll('\n', '\r\n') });
+    assert.equal(checkSkill(root, 's').status, 'ok');
+  });
+
+  test('reference-missing when the marker points at a file the skill does not carry', () => {
+    // The marker defers the recipe to references/worktree-preflight.md; without
+    // that file the pointer is the dead end the inlined recipe once fixed.
+    const root = makeRepo({}, { s: WITH_MARKER }, { reference: null });
+    assert.equal(checkSkill(root, 's').status, 'reference-missing');
+  });
+
+  test('reference-edited when the reference no longer carries the recipe byte-for-byte', () => {
+    const drifted = `# remedy\n\n${CONSUMER_HYDRATE_NPM_SCRIPT.replace('process.exit(1)', 'process.exit(2)')}\n`;
+    const root = makeRepo({}, { s: WITH_MARKER }, { reference: drifted });
+    assert.equal(checkSkill(root, 's').status, 'reference-edited');
+  });
+
+  test('a CRLF reference is not misread as edited', () => {
+    const root = makeRepo({}, { s: WITH_MARKER }, { reference: `# remedy\r\n\r\n${CONSUMER_HYDRATE_NPM_SCRIPT}\r\n` });
     assert.equal(checkSkill(root, 's').status, 'ok');
   });
 });

@@ -19,19 +19,17 @@ description: |
 
 # Code Explainer
 
+> **This skill's last line is an end marker naming the skill between em-dashes, after
+> the Reference files table.** If that last line is not in your context (context
+> compaction keeps only the start of a skill), re-read
+> `.claude/skills/explain/SKILL.md` in full before continuing — the later steps still apply.
+
 > **Worktree preflight** — in a linked git worktree the synced tooling tree
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
 > does not populate it, and every command below that uses it dies on a bare
-> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first.
->
-> If this repo defines no such script, it has not adopted the remedy yet. Add
-> this entry to its `package.json` `scripts` and run it — it copies the tooling
-> tree in from the main checkout, and leans on nothing but node and git:
->
-> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
->
-> Rationale (source repo only — `docs/runbooks/` is not synced to consumers):
-> `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
+> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. If this repo defines
+> no such script, `references/worktree-preflight.md` holds the entry to add — ask
+> the user first, since it edits their `package.json`.
 
 ## Usage
 
@@ -83,94 +81,22 @@ node scripts/explain-history.mjs --topic "rate limiting"
 
 Optional flags: `--since "GIT-SINCE-DATE"`, `--paths "CSV-OF-PATHS"`, `--limit N`.
 
-The aggregator searches four independent sources:
-
-1. **Git log** — three passes: commit subjects + bodies (case-insensitive
-   `--grep`); commits that introduced/removed the string (`-S`); and commits
-   that touched any line mentioning it (`-G`). `-S` alone misses **moves** —
-   a string deleted from one line and re-added verbatim on another leaves the
-   net count unchanged, so `-S` reports nothing and you conclude the change
-   never happened. Results are labelled per pass and selected round-robin so
-   one pass cannot consume the whole `--limit`.
-2. **Architectural memory** — `cross-skill.mjs get-neighbourhood` with
-   the topic as `intentDescription` (similar symbols + recommendations)
-3. **Plan documents** — line-by-line grep over `docs/plans/**/*.md` with
-   heading context preserved so each match is anchored
-4. **Brainstorm session ledger** — scan `.brainstorm/sessions/*.jsonl`
-   for matching topics OR provider-response substrings (so the search
-   surfaces "I asked OpenAI about X back in session Y" too)
-
-Output: one JSON document with per-source results plus a unified
-chronological timeline (most-recent first; plan matches use the plan
-file's mtime as a date proxy).
-
 Add `--skip-arch` when the cloud is offline or when the user wants
 faster local-only search.
 
-### Render the result
+The aggregator searches git log (three passes, incl. `-G` so moves are not
+missed), architectural memory, plan documents and the brainstorm session ledger,
+and returns one JSON document with per-source results plus a chronological
+timeline. Render it as a Markdown digest: the helper's `summary` verbatim, a
+most-recent-first timeline, then per-source tables — omit empty source-sections;
+an empty timeline reads "No prior touches found — this appears to be new ground."
+→ `references/history-mode.md` — read when running `--history`, for the source
+detail, the exact digest template and how to read the result.
 
-Read the helper's JSON output and produce a Markdown digest. Structure:
-
-```markdown
-## "<topic>" — prior touches
-
-<helper's `summary` field verbatim>
-
-### Timeline (most recent first)
-
-For each item in `chronological`, render one bullet:
-- **<date>** [<kind>] <summary> — `<ref>` (and author for git)
-
-If empty, write: "No prior touches found — this appears to be new ground."
-
-### Per-source detail
-
-#### Git commits (`<count>`)
-| Date | SHA | Author | Subject | How matched |
-|---|---|---|---|---|
-| <date> | `<sha>` | <author> | <subject> | <git-subject \| git-content \| git-touched> |
-
-#### Architectural-memory (`<count>`)
-| Sim | Symbol | Path | Recommendation | Purpose |
-|---|---|---|---|---|
-| <sim> | `<symbol>` | `<path>` | <reuse \| extend \| review> | <purpose> |
-
-(If `archMemory.skipped` is set, render: "_arch-memory skipped: <reason>_")
-
-#### Plan documents (`<count>`)
-| Path | Heading | Excerpt |
-|---|---|---|
-| `<path>:<line>` | <heading> | <excerpt> |
-
-#### Brainstorm sessions (`<count>`)
-| Date | Session | Round | Matched in | Excerpt |
-|---|---|---|---|---|
-| <capturedAt> | `<sid>` | <round> | <topic \| provider-response> | <excerpt> |
-```
-
-Omit empty source-sections rather than printing empty tables.
-
-### What to look for / how the user uses this
-
-- **High git + high plan touches** → topic is well-known; the user
-  should READ the plan first before re-solving
-- **High brainstorm + low git** → topic was discussed but not implemented
-  → user should consider resuming the brainstorm (`/brainstorm continue
-  <sid> <new-angle>`)
-- **High arch-memory + low everything-else** → similar code exists but
-  the topic itself isn't documented → recommend `/explain <symbol>`
-  on the matched record
-- **Empty across all four** → genuinely new ground; safe to plan from
-  scratch via `/plan "<topic>"`
-
-### Output rules
-
-- **Read-only** — same as the file/section modes; never edits anything
-- **Cite sources** — every claim in the digest maps to one of the four
-  source sections
-- **Cost is small** — `~$0.0003` for the arch-memory embedding (skipped
-  when `--skip-arch` or cloud is offline); the other three sources are
-  local-only
+**Output rules** — same as §Output rules below: read-only, and every claim in the
+digest maps to one of the four source sections. Cost: `~$0.0003` for the
+arch-memory embedding (skipped when `--skip-arch` or cloud is offline); the other
+three sources are local-only.
 
 ---
 
@@ -377,9 +303,13 @@ as `git show <sha>:<path>`; it resolves to nothing for any other reader.
 ## Reference files
 
 This skill is a multi-source synthesiser: its evidence comes from the repo +
-architectural-memory + git, gathered fresh each invocation. The one file below
-covers a specialised situation — read it when the trigger applies.
+architectural-memory + git, gathered fresh each invocation. The files below
+cover specialised situations — read them when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
+| `references/history-mode.md` | History mode in full — the four sources searched, the Markdown digest template, and how to read the result. | The input is `--history "<topic>"` — before rendering the aggregator's JSON. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Writing any `file:line` citation into the explanation — every one needs the commit it was read at (§1). |
+| `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
+
+— end of /explain —

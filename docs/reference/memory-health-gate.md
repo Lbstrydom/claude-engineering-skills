@@ -133,3 +133,50 @@ in `recordFindings` (merged pass) are **default-ON**, fail-open, kill switch
 audit report; core `semantic-suppression.mjs` / `semanticSuppressConfig`.
 Write-up:
 [`pgvector-clustering-prototype.md`](../research/pgvector-clustering-prototype.md).
+
+## Moved from AGENTS.md (2026-11-02)
+
+> **Verbatim snapshot** of what AGENTS.md said here before the 2026-11-02 trim
+> (docs/plans/skill-best-practice-alignment.md, Track C), kept so no rule is lost.
+> Where it disagrees with the sections above, **the sections above are current**.
+
+AGENTS.md's "Memory-Health Gate" section was condensed to a stub to cut the
+per-session context cost (plan: `docs/plans/skill-best-practice-alignment.md`
+Track C). Its full former text, verbatim (link targets re-based to this file):
+
+`scripts/memory-health.mjs` runs three trigger metrics against the audit store to
+decide whether our flat `audit_findings` + fingerprint-dedup design is starting to
+leak signal that a graph-shaped memory (pgvector + community clustering) would
+recover. **What it is / when you need it**: reading a weekly AMBER, changing a
+metric, or deciding whether to promote the graph design. The trigger table,
+the thresholds, the `memory_health_metrics(window_days)` RPC and the
+0/1/2-trigger decision rule live in
+[`docs/reference/memory-health-gate.md`](memory-health-gate.md).
+Weekly via the local maintenance replica (`maintenance-checks.mjs` `memory-health`);
+ad hoc `npm run memory:health`. The Actions cron was **deleted 2026-09-13** (no
+store reachable from a GitHub-hosted runner — see Local Weekly Maintenance Checks).
+
+Three obligations stay resident; the incidents, query mechanics and thresholds are
+in [`docs/reference/memory-health-gate.md`](memory-health-gate.md):
+
+- **Metrics 1 and 3 are SAMPLED, not exhaustive** — `fuzzy_reraise.rate` /
+  `recurrence.rate` are estimates over the N most recent per repo; read
+  `new_fingerprints_total` / `fixed_findings_total` / `per_repo_cap` beside them.
+  When capping, **cap the driving set, NEVER the searched set** — the latter drops
+  real matches and biases the rate down into a false GREEN.
+- **Add a `control_marker_prefixes` sentinel when a new wave starts emitting
+  control state**, or the gate reads AMBER forever on its own logging:
+  machine-generated notices are byte-identical, so they pair at similarity 1.00
+  (44% of the raw signal on 2026-07-20). Matched on the detail-snapshot **prefix**,
+  never the category — a wave emits both control state and real findings.
+- **Bound an RPC at the CALLER** — `SET statement_timeout` inside a function is
+  decorative. `CREATE OR REPLACE FUNCTION` resets **`proconfig`** (restate `SET
+  search_path`) but PRESERVES the ACL; **changing the argument list makes a
+  DIFFERENT function**, whose default ACL is `EXECUTE` to `PUBLIC` and which the
+  old `REVOKE` does not name. Verify by `has_function_privilege`, never by review
+  or by a `proacl` that reads `NULL`. Both traps: the reference above.
+
+> **pgvector promoted (2026-07-21):** semantic cosine catches reworded re-raises that
+> trigram under-counts. Record-time hook in `recordFindings`, **default-ON**, fail-open,
+> kill switch `AUDIT_SEMANTIC_SUPPRESS_ENABLED=false`. Dedups the store row, NEVER the
+> audit report.

@@ -35,10 +35,6 @@
   ],
   "ignoredCandidates": [
     {
-      "line": "> \"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\\\"\"",
-      "reason": "The worktree-preflight marker block's inlined `skills:hydrate` recipe. Every node one-liner carries `require` and `process.exit`, two ENFORCEMENT_VERBS, and no phrasing of a runnable recipe avoids them — the verbs are JavaScript here, not an enforcement claim about this skill. The recipe is inlined rather than cited because in an unadopted consumer both of the old pointers are dead at once (no `skills:hydrate` script yet, and `docs/runbooks/` is not synced), so a skill file is the only carrier that reaches the reader. Byte-identical across all 16 contracts by construction: it is generated from CONSUMER_HYDRATE_NPM_SCRIPT via MARKER_BLOCK, and `checkSkill` pins the block in every copy."
-    },
-    {
       "line": "> and exits 0 — success-shaped, having closed nothing (reported live",
       "reason": "Continuation of the same precondition block: the narrative of the reported defect (0/N labelled reading as success). Not a separate claim, and deliberately not a new exit code — a telemetry CLI that fails a run is worse than one that warns."
     },
@@ -129,6 +125,58 @@
     {
       "line": "| `references/round-cap-and-structural-card.md` | Enforced GPT round cap (plan 3/5, code 6/8), exit 4 CAPPED, and the structural-or-stop card read at the cap. | A round exited 4, OR the audit reached round 3 without converging. |",
       "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
+    },
+    {
+      "line": "> including the mandatory final gate, still apply.",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "validated); **never silent-defer it**. **Independent** → defer. A `defer` must name",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "attached is a build-time spike, not evidence: flag it. Naming a source/field must",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "**§11 clustering** (plan has the block) — check partition, coupling soundness,",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "fix-gate placement, contiguous ordering, derived scope; a malformed block that would",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "never a finding.",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "`--triage` file with an editor, never as a shell string (rationale prose has",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "non-zero `total` is a failure, never a pass. **Every round, also** record dismissed",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "Plans are single files — apply fixes via `Edit`. ALL HIGH must be addressed (fix or",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "RUN_ID=$(node -e \"const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch (e) { process.stderr.write('RUN_ID: result artifact unreadable (' + e.message + ') - the verdict will NOT be written back'); }\" \".audit/$SID-r$ROUND-result.json\")",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "Never a third round for rigor pressure or implementation detail (why:",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "`references/gemini-gate.md`.",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "| `references/convergence-evidence.md` | Why the stop rules are what they are — acceptance-rate evidence, Gemini-cap rationale, outcome-recording fallback. | Step 3/6 — a stop decision is contested, OR a `[finalize] WARN` line appeared and Step 3.5b needs the manual fallback. |",
+      "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
     }
   ]
 }

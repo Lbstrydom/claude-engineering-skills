@@ -46,7 +46,11 @@ export const ConfigSchema = z.object({
 // characters, so ~92K is the same policy expressed in the unit that actually
 // costs something. Raise it only for a deliberate, justified exception — the
 // intended remedy is still "move a dossier to docs/<topic>.md".
-export const DEFAULT_MAX_AGENTS_MD_CHARS = 92000;
+//
+// Lowered 92000 -> 79000 on 2026-11-02 AFTER the Track C trim measured 75,884
+// (docs/plans/skill-best-practice-alignment.md): the measured size plus ~3,000
+// headroom, so the shrink is locked in rather than left as slack to regrow into.
+export const DEFAULT_MAX_AGENTS_MD_CHARS = 79000;
 
 /**
  * AGENTS.md size in CHARACTERS of the decoded text — never bytes (`statSync` would

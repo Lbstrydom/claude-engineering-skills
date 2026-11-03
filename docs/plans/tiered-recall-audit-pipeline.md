@@ -1343,3 +1343,42 @@ this plan's own Phase 14 is planned.
 > so the 0% overlap is a real signal pointing at the MATCHER, not missing data.
 > See that document's "Interpretability gap closed" section.
 
+## Moved from AGENTS.md (2026-11-02)
+
+> **Verbatim snapshot** of what AGENTS.md said here before the 2026-11-02 trim
+> (docs/plans/skill-best-practice-alignment.md, Track C), kept so no rule is lost.
+> Where it disagrees with the sections above, **the sections above are current**.
+
+AGENTS.md's "Tiered-Recall Audit Pipeline" section was condensed to a stub to cut
+the per-session context cost (plan: `docs/plans/skill-best-practice-alignment.md`
+Track C); the `allowTiered` and epoch-gating bullets stay resident there. Its full
+former text, verbatim (link targets re-based to this file):
+
+A discovery → Stage 0 (deterministic evidence triage) → Stage 1 (cheap-model
+triage) → Stage 2 (Gemini adjudicator + bounded clean-challenge) alternative to
+the always-on GPT 5-pass legacy audit. All 12 phases (Clusters A-F) implemented
+and tested. `openai-audit.mjs`'s chooser (`tieredAuditConfig.pipelineEnabled`,
+env `AUDIT_TIERED_PIPELINE_ENABLED`) defaults **off** — production runs legacy.
+
+**Load-bearing invariants** (mechanics, model-resolution, cross-repo behaviour,
+CLI/dashboard surfaces and full incident history: plan doc, pointer below):
+
+- **Execution eligibility is per-call, not env-global** (`allowTiered` — the
+  2026-07-13 incident fix): env flags only express "the window is open"; only
+  `openai-audit.mjs`'s `main()` passes `allowTiered: true`, so tests and library
+  callers can never spend. Both must hold before a provider is constructed.
+- **The discovery generator needs forced `tool_choice`, so it pins
+  `{backend:'sdk'}` explicitly** — never the ambient `CLAUDE_BACKEND` (see the
+  Anthropic Backend Routing gotcha above).
+- **"Window met" is now epoch-gated, not eyeballed** (2026-07-26, after the 5th
+  false green): `comparedRuns` counts only rows the collector stamped with the
+  current `TIERED_SHADOW_CONTRACT_EPOCH`. All pre-stamp rows are ineligible and
+  the window restarts — re-collect, never backfill (see the swap-eval section).
+- **Not yet done**: the shadow window (10–15 commits) and Phase 14. **Also at
+  Phase 14**: the adjudicator-role eval has never run (Stage 2 uses Gemini) —
+  [model-eval-harness.md](../runbooks/model-eval-harness.md) §"Adjudicator
+  role — not yet run".
+
+→ Everything enumerated above:
+[`docs/plans/tiered-recall-audit-pipeline.md`](tiered-recall-audit-pipeline.md).
+

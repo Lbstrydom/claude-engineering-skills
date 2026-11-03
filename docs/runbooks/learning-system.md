@@ -184,3 +184,33 @@ is a loss, and neither contributes to `dropped`.
   recording in one env var.
 - `LEARNING_QUEUE_CAP_PER_TYPE=64` — bounded sub-queue cap per `decision_type`. Defaults
   to 64; high-frequency event types cannot evict low-frequency ones.
+
+## Moved from AGENTS.md (2026-11-02)
+
+> **Verbatim snapshot** of what AGENTS.md said here before the 2026-11-02 trim
+> (docs/plans/skill-best-practice-alignment.md, Track C), kept so no rule is lost.
+> Where it disagrees with the sections above, **the sections above are current**.
+
+AGENTS.md's "Learning System (Phase 1)" section was condensed to a stub to cut the
+per-session context cost (plan: `docs/plans/skill-best-practice-alignment.md`
+Track C). Its full former text, verbatim (link targets re-based to this file):
+
+Adaptive-learning telemetry across audit decision points (pass selection, convergence
+prediction, arch-memory band, auto-deferral) → the `learning_decisions` table +
+per-repo `recurring_finding_clusters`. Phase 1 is the foundation; later phases promote
+decision points to live learners. **Load-bearing**:
+
+- **Kill switch**: `LEARNING_DISABLE=1` disables all live learning + telemetry in one
+  env var (also in the Environment Variables table).
+- **Auto-deferral** (`--scope diff` only) fires only when BOTH hold: finding category
+  in the AUTO_DEFERRABLE_CLASSES allowlist AND deterministic SCM evidence (not in
+  HEAD~1..HEAD, or a plan marker, or recurring 2+ rounds); else → `needs_triage`. Plan
+  marker to accept a v1 limit: `<!-- audit:accept-v1: <glob> :: <reason> -->`.
+- Telemetry never crashes a run: flush failures spill to `.audit/learning-outbox/`
+  (CI: synchronous retry instead, counted as `lostInCI`).
+
+→ **Operations** (CLI `npm run learning:*`, weekly review, quickfix-learner hit
+lifecycle, Phase-3 replay framework + promotion recipe, outbox detail):
+[`docs/runbooks/learning-system.md`](learning-system.md).
+→ **Design**: master plan [`docs/plans/adaptive-learning-v1.md`](../plans/adaptive-learning-v1.md)
++ per-phase `adaptive-learning-phase-{1,2,3}-*.md`.

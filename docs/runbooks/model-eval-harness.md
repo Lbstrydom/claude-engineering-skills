@@ -353,3 +353,47 @@ whether Gemini is still the right adjudicator choice — the two decisions are
 independent (Phase 14 doesn't require this eval to run first) but they touch
 the same "which model does final review" question, so decide them together
 rather than flipping Phase 14 and separately forgetting this is still open.
+
+## Moved from AGENTS.md (2026-11-02)
+
+> **Verbatim snapshot** of what AGENTS.md said here before the 2026-11-02 trim
+> (docs/plans/skill-best-practice-alignment.md, Track C), kept so no rule is lost.
+> Where it disagrees with the sections above, **the sections above are current**.
+
+AGENTS.md's "Model Swap-In Evaluation Harness" section was condensed to a stub to
+cut the per-session context cost (plan: `docs/plans/skill-best-practice-alignment.md`
+Track C); the "synchronous swap" and "evidence under the contract" bullets stay
+resident there. Its full former text, verbatim (link targets re-based to this file):
+
+A standing suite (`scripts/lib/model-eval/`) answering "is this new LLM release
+worth switching to?" for the **auditor** (currently GPT) or **adjudicator**
+(currently Gemini) role. Entry:
+`node scripts/model-eval-{auditor,adjudicator}.mjs --candidate <spec> --tier screen|promotion`
+— **step-by-step playbook in the runbook below; start there.**
+
+**Load-bearing invariants** (mechanics, tiers, history in the docs below):
+- **Accepted false-negative direction**: a Tier-C-only run (restricted-catalog
+  Azure) can never emit `verdict:'switch'` — only `keep`/`inconclusive`/
+  `manual_review_required`. Schema-enforced, not a convention.
+- **The oracle-matching recall ceiling**: scoring credits only the ONE curated
+  defect per entry while real models find OTHER genuine bugs in the same diff, so
+  **low recall is not a quality signal** — read the raw per-case output first and
+  treat recall as a floor; FP-rate + cost decide. Tier C never substitutes for a
+  Tier A/B comparative result.
+- **Egress-gate prose/diff false positives: fixed 2026-07-12** — historical recall
+  is the contract; don't re-add trailing-punctuation stripping (tried, reverted:
+  it re-blocked valid entries).
+- **Verdicts**: GPT auditor `gpt-6.1-terra` (10-28, half the cost, quality matched on 11 cases,
+  [exp-8](../research/experiment-8-gpt-terra-auditor-swap.md)); GLM-5.2 → keep GPT (07-13).
+- **A model swap is SYNCHRONOUS, never a background window**: run it when the model
+  ships, adjudicate in the same sitting, verdict → `docs/research/`. Passive
+  collection killed arm-eval and produced five false "window met" reads. Only
+  intervention-over-organic-work earns a shadow; exactly two are open
+  (tiered-pipeline, final-review 2nd gate). **Do not add a sixth collector.**
+- **Evidence counts only if produced under the contract the stopping rule
+  validates**: stamp `contractEpoch` **at the collector** and verify by match.
+  Unstamped ⇒ ineligible, never "assume current"; bump on a meaning-changing fix
+  and re-collect — **never backfill by date**, the relabelling that let the fifth
+  false green through.
+
+→ **Operational reference**: [`docs/runbooks/model-eval-harness.md`](model-eval-harness.md) · **Design + prior-art trace**: [`docs/plans/model-swap-eval-harness.md`](../plans/model-swap-eval-harness.md) · **First real verdict write-up**: [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](../research/experiment-3-model-swap-glm-vs-gpt.md).

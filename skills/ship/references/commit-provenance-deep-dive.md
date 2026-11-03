@@ -94,6 +94,20 @@ The commit exists but was not built on the base you verified, and an
 unpushed wrong-parent commit is recoverable in seconds whereas a pushed one
 needed a human to notice a 12-line change with a 2,324-line diff.
 
+## Step 6.3 scoping detail (moved from SKILL.md)
+
+Why `--path` has no override: an unscoped commit is a TOCTOU by construction
+(the index is checked at one moment and consumed by `git commit` at another),
+and HEAD verification cannot cover it because index mutations do not move HEAD.
+
+**A directory is refused, not expanded.** `--path <dir>` would let git commit
+everything beneath it — measured: naming `sub/` committed a file the caller
+never named. Pass each file. A DELETED directory is refused for the same reason
+(and needs `cat-file -t`, not `-e`, to detect: `-e` exits 0 for a tree).
+
+The transactional
+boundary that would prevent post-commit drift is `docs/plans/ship-commit-transaction.md`.
+
 ## Continuing work after a squash merge
 
 **Rebase, never merge.** If a follow-up branch shares history with a

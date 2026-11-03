@@ -1,9 +1,10 @@
 # R2+ audit mode — the three-layer churn defence, in detail
 
 Moved out of `AGENTS.md` (2026-09-03) under its progressive-disclosure rule.
-AGENTS.md keeps what R2+ *is*, the three layers in one line each, the two
-invariants that constrain anyone changing them, and the CLI flags. Everything
-below is the elaboration.
+AGENTS.md kept what R2+ *is*, the three layers in one line each, the two
+invariants that constrain anyone changing them, and the CLI flags; since
+2026-11-02 it keeps only a stub, and that text is preserved verbatim in
+§Moved from AGENTS.md at the end. Everything below is the elaboration.
 
 ## Layer 3 is called unconditionally, and exempts `reopened`
 
@@ -68,3 +69,49 @@ Two traps, both of which made the gate look alive while classifying nothing:
 Widening classification is the safe direction here: an unadjudicable claim
 becomes `requires_verification` with its severity preserved, and only `refuted`
 downgrades anything.
+
+## Moved from AGENTS.md (2026-11-02)
+
+> **Verbatim snapshot** of what AGENTS.md said here before the 2026-11-02 trim
+> (docs/plans/skill-best-practice-alignment.md, Track C), kept so no rule is lost.
+> Where it disagrees with the sections above, **the sections above are current**.
+
+The rest of AGENTS.md's "R2+ Audit Mode (Phase 1)" section (layers, invariants, CLI
+flags, ledger) was condensed to a stub to cut the per-session context cost (plan:
+`docs/plans/skill-best-practice-alignment.md` Track C). Its full former text,
+verbatim (link targets re-based to this file):
+
+When `--round >= 2`, the audit script enables three-layer defence against finding churn:
+
+1. **Rulings injection** (Layer 1): `buildRulingsBlock()` formats prior rulings as system-prompt exclusions
+2. **R2+ prompts** (Layer 2): `R2_ROUND_MODIFIER` + pass rubric (not "find all issues")
+3. **Post-output suppression** (Layer 3): `suppressReRaises()` against the ledger, then the cloud FP-pattern policy — called **unconditionally** (a no-ledger run is exactly the case a pattern learned elsewhere serves) and **exempting `reopened`** so statistics can never mask a regression. Layer 1 stays local-ledger-only on purpose.
+
+Three invariants constrain anyone changing them; the group table, both traps and
+the incidents are in
+[`docs/reference/r2-audit-mode.md`](r2-audit-mode.md):
+
+- **A rulings group's header may claim only what its ruling ESTABLISHED.** A
+  defer is not a disproof, so DEFERRED bars re-arguing scope while *licensing a
+  different defect in the same code*. Give a new group the weakest instruction
+  that is **true** — an overstated header suppresses true positives silently.
+- **Hard-suppress keys on the CONCERN, never on category text** — adjudicator
+  `sameConcernAs` links + file overlap ([concern-identity.mjs](../../scripts/lib/concern-identity.mjs)).
+  Died twice to rewording; do not fuzz the category.
+- **The existence gate runs on BOTH reviewer paths, and its classifier is
+  prose-shaped.** Widening classification is the safe direction (unadjudicable ⇒
+  `requires_verification`, severity preserved; only `refuted` downgrades) — and
+  both of its historical bugs let it report health while classifying zero.
+
+### R2+ CLI Flags
+
+| Flag | Purpose |
+|------|---------|
+| `--round <n>` | Round number (triggers R2+ mode if >= 2) |
+| `--ledger <path>` | Adjudication ledger JSON (rulings + suppression) |
+| `--diff <path>` | Unified diff (git diff output) for line-level annotations |
+| `--changed <list>` | Files modified this round (authoritative for reopen detection) |
+
+### Adjudication Ledger
+
+Two-axis state model: `adjudicationOutcome` (dismissed/accepted/severity_adjusted) + `remediationState` (pending/planned/fixed/verified/regressed). Written by orchestrator via `writeLedgerEntry()`.

@@ -1996,3 +1996,42 @@ so this join had to be reconstructed by hand after the fact. Recording
 same transaction — would make marginal value a queryable column instead of a
 forensic exercise. The same gap is why `user_action` never gets set on
 fixed-during-loop findings; both are the same missing write-back.
+
+## Moved from AGENTS.md (2026-11-02)
+
+> **Verbatim snapshot** of what AGENTS.md said here before the 2026-11-02 trim
+> (docs/plans/skill-best-practice-alignment.md, Track C), kept so no rule is lost.
+> Where it disagrees with the sections above, **the sections above are current**.
+
+AGENTS.md's "Shadow Final-Review A/B — CLOSED 2026-07-28, verdict KEEP" section was
+condensed to a stub to cut the per-session context cost (plan:
+`docs/plans/skill-best-practice-alignment.md` Track C). Its full former text, verbatim
+(link targets re-based to this file). The operator-doc convention bullet stays
+resident in AGENTS.md §Code Style.
+
+Opt-in, observation-only 2nd final reviewer, run blind. **Committed default unset;
+paused locally 2026-08-14 on cost**, and confirmed off 2026-09-04. **When you need
+the dossier**: turning it on, choosing an envelope scope, or reading a campaign
+refusal. `FINAL_REVIEW_SHADOW` / `_MODEL` / `_SCOPE` semantics, the `thin` default
+intent, the campaign-ineligibility of `gap` and the budget cap are all in
+[`environment-variables.md`](../reference/environment-variables.md) §Shadow final
+review; verdict, method, stopping rule and three dated corrections in the
+[briefing](final-review-shadow-adjudication-briefing.md) ·
+[plan](../plans/final-review-shadow-reviewer.md). Unset ⇒ byte-identical; never gates.
+
+Three results that generalise — **read before any reviewer/model comparison**:
+
+- **A floor arm and a ratio arm can BOTH fire.** Surface the contradiction; never pick
+  the arm fitting the data nor retune against the data that fired it — measure what
+  you left unmeasured instead.
+- **"Found it" ≠ "found it first."** KEEP = findings were real, NOT unique. Within-run
+  overlap vs GPT passes = 0 files / 19 both-runs; cross-run re-raises confirmed, unmeasured.
+- **The loop fixes the best catches BEFORE adjudication**, so credit lands in a source
+  comment, `user_action` stays null, and the tail reads as noise. One missing write-back,
+  two symptoms: set `user_action` at fix time; record same-run pass-finding refs.
+
+- **Operator-doc convention (repo-wide, bit twice pre-2026-07-02)**: real values or
+  PowerShell vars in CLI examples, **never `<angle-brackets>`** (PowerShell reserves
+  `<` — unpasteable); render a `--worksheet`, not raw JSON.
+
+→ Measurement how-to + attribution schema: the plan linked above. **Before building a bigger instrument**, read [`final-review-shadow-bakeoff.md`](../plans/final-review-shadow-bakeoff.md)'s PARKED banner (right-sizing) + [`final-review-credit-and-cheap-shadow.md`](../plans/final-review-credit-and-cheap-shadow.md) §1.2 (cheap-gateway evidence).

@@ -63,6 +63,14 @@ const FAILURES = {
     code: 'wtpf/no-skill-md',
     remedy: 'skill directory has no SKILL.md',
   },
+  'reference-missing': {
+    code: 'wtpf/reference-missing',
+    remedy: 'the marker points at references/worktree-preflight.md — run `node scripts/sync-shared-audit-refs.mjs` to distribute it',
+  },
+  'reference-edited': {
+    code: 'wtpf/reference-edited',
+    remedy: 'references/worktree-preflight.md no longer carries CONSUMER_HYDRATE_NPM_SCRIPT verbatim — edit the canonical in docs/audit/shared-references/ and re-sync',
+  },
 };
 
 function main() {

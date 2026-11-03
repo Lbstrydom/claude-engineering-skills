@@ -53,10 +53,6 @@
   ],
   "ignoredCandidates": [
     {
-      "line": "> \"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\\\"\"",
-      "reason": "The worktree-preflight marker block's inlined `skills:hydrate` recipe. Every node one-liner carries `require` and `process.exit`, two ENFORCEMENT_VERBS, and no phrasing of a runnable recipe avoids them — the verbs are JavaScript here, not an enforcement claim about this skill. The recipe is inlined rather than cited because in an unadopted consumer both of the old pointers are dead at once (no `skills:hydrate` script yet, and `docs/runbooks/` is not synced), so a skill file is the only carrier that reaches the reader. Byte-identical across all 16 contracts by construction: it is generated from CONSUMER_HYDRATE_NPM_SCRIPT via MARKER_BLOCK, and `checkSkill` pins the block in every copy."
-    },
-    {
       "line": "same base (`not-an-ancestor`, hard fail), which is where the exit code is.",
       "reason": "Continuation of the same sentence; same disposition. \"hard fail\" describes /audit-code's behaviour, not a gate /cycle enforces."
     },
@@ -315,6 +311,46 @@
     {
       "line": "| `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Autonomous mode's consolidated Gemini gate — building the transcript, OR no `GEMINI_API_KEY` and the degradation ladder decides the substitute. |",
       "reason": "Reference-index row (the Summary column must byte-match the file's summary frontmatter). Verb match is the gate's NAME, not an enforcement claim."
+    },
+    {
+      "line": "`--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). **It does not reach Step 7** — a fully autonomous run still ends in the Step 7 blocked handoff.",
+      "reason": "Cluster B slim (2026-11-02) condensed the flag description. 'block' is the plan's §11 BLOCK (a document section), and the Step 7 handoff is the orchestration fact already dispositioned under preview-gate-halt-blocks-ship's class: /ship refuses programmatic calls via its own frontmatter, /cycle enforces nothing here."
+    },
+    {
+      "line": "**No §11 block + default (no `--autonomous`)** → `/cycle` **pauses here** for",
+      "reason": "Cluster B slim (2026-11-02) rewrap of the existing Step 3 pause bullet. 'block' names the plan's §11 section; the pause is the decision-table row above, agent flow with no /cycle exit code (same class as the 3C fix-gate ignoredCandidates entry)."
+    },
+    {
+      "line": "the human to implement; output the \"paused at implementation gate\" card below.",
+      "reason": "Continuation of the Step 3 pause bullet; 'gate' is the step's NAME (implementation gate), not an enforcement claim."
+    },
+    {
+      "line": "overwrite); one record per cluster with `gateStatus: pending|audited|gate-clear|stale`.",
+      "reason": "Cluster B slim (2026-11-02): resident summary of the cluster-state schema (full schema moved to references/clustered-execution.md). 'gate' matches the field value `gate-clear`, a state name, not an enforcement claim."
+    },
+    {
+      "line": "A `gate-clear` cluster flips to **`stale`** if any `derivedScope` file hash or its",
+      "reason": "Same state-record summary; 'gate' matches the state name `gate-clear`. The stale flip is model-performed bookkeeping, no /cycle exit code."
+    },
+    {
+      "line": "**4a. The gate scores IN-CLUSTER findings only — otherwise no cluster but the last can ever pass** (→ `references/clustered-execution.md` §4a — read when in-cluster scoring is challenged). Classify every finding by the cluster owning its cited file — the derived scopes are already computed, so this is mechanical, not a judgement call:",
+      "reason": "Cluster B slim (2026-11-02) of the already-dispositioned 4a line: the measurement moved to references/clustered-execution.md, the rule is unchanged. Same disposition as the original 4a ignoredCandidates entry — /cycle is a thin orchestrator; the convergence predicate is contracted in skills/audit-code/gate-contract.json."
+    },
+    {
+      "line": "**Convergence test scope — run the BROADEST suite, not unit-only (load-bearing for destructive clusters).** When \"iterate to green\" runs the project's tests at the cluster boundary, use the widest command the repo defines (`test:all` / `test:integration` / `test:e2e` — fall back to plain `test` / the full `node --test`), **never `test:unit` alone** (→ `references/clustered-execution.md` §Why the broadest test suite — read when a unit-only green is proposed). A cluster is \"green\" only when the integration tier passes; a `test:unit`-only green on a destructive cluster is a false-green and does **not** clear the fix-gate.",
+      "reason": "Cluster B slim (2026-11-02): the rationale sentence moved to references/clustered-execution.md; the instruction is unchanged. It tells the agent which test command to run — orchestration, no /cycle exit code (fix-gate convergence itself is contracted under fix-gate-convergence-before-next-cluster)."
+    },
+    {
+      "line": "| `references/clustered-execution.md` | Step 3C detail — cluster-state schema, author-tier hint, scope-flag incident, 4a measurement, round-2 rationale. | Step 3C — first read/write of `.audit/cycle-cluster-state.json`, an `author-tier:` hint, OR a cluster's scope, class or gate is contested. |",
+      "reason": "Reference-index row added by the Cluster B slim (2026-11-02). 'gate' names the fix-gate being contested, a read-when trigger, not an enforcement claim."
+    },
+    {
+      "line": "`--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). **It does not complete Step 7** — a fully autonomous run still stops at the Step 7 blocked-handoff card; only the human's `/ship` completes it.",
+      "reason": "Agent-facing description of the --autonomous flag reworded on 2026-11-02 (Cluster B audit R2 M2). It restates the Step 7 handoff that /ship's disable-model-invocation enforces; it makes no separate enforcement claim of this skill."
+    },
+    {
+      "line": "allowed-tools: Bash(node scripts/cross-skill.mjs preview-gate --format human)",
+      "reason": "A frontmatter key, not prose: the word 'gate' is part of the subcommand name preview-gate. The grant itself is validated by the allowed-tools rule in scripts/lib/skill-frontmatter-layout.mjs (exact read-only command)."
     }
   ]
 }

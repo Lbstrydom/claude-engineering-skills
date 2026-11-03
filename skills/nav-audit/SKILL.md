@@ -18,16 +18,9 @@ description: |
 > **Worktree preflight** — in a linked git worktree the synced tooling tree
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
 > does not populate it, and every command below that uses it dies on a bare
-> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first.
->
-> If this repo defines no such script, it has not adopted the remedy yet. Add
-> this entry to its `package.json` `scripts` and run it — it copies the tooling
-> tree in from the main checkout, and leans on nothing but node and git:
->
-> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
->
-> Rationale (source repo only — `docs/runbooks/` is not synced to consumers):
-> `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
+> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. If this repo defines
+> no such script, `references/worktree-preflight.md` holds the entry to add — ask
+> the user first, since it edits their `package.json`.
 
 ## Usage
 
@@ -44,6 +37,11 @@ Usage:
 ```
 
 # /nav-audit — Contract-backed Navigation Verifier (with static assists)
+
+> **This skill's last line is an end marker naming the skill between em-dashes, after
+> the Reference files table.** If that last line is not in your context (context
+> compaction keeps only the start of a skill), re-read
+> `.claude/skills/nav-audit/SKILL.md` in full before continuing — the later steps still apply.
 
 The third UX-quality lens. **persona-test is journey-first, click-test is
 page-first, nav-audit is system-first.**
@@ -71,21 +69,11 @@ page-first, nav-audit is system-first.**
    evidence. `--bootstrap --from-url <url>` drafts the contract's `navLayers` from
    the live app so you edit a smart baseline instead of a blank page.
 
-Static analysis cannot model arbitrary data-driven nav (`data-view="${x}"`,
-`switchView(el.dataset.view)`) — `--verify` is where the authority lives. The
-static engine is kept for what live can't do: the pre-deploy gate + completeness
-(orphans/unreachable a live crawl never clicks into). Its unit of analysis is the whole
-navigation graph — all entry points × all destinations — and it answers: *is
-the information architecture coherent — is what's offered what's needed, and
-is it sequenced right?* A finding here (e.g. "two nav models coexist") is
-literally invisible to a journey test; a journey finding ("this form is dense")
-is invisible to a structural map.
-
-It is **static / code-derived, not browser-driven** — for completeness (the
-code contains every entry point and destination, including the rarely-hit ones
-where orphans and redundancy hide), determinism, and near-zero cost. The static
-graph is a set of **hypotheses, not truth** (~80% recall); `--verify` (v1.1)
-raises confidence against the live app.
+Static analysis cannot model arbitrary data-driven nav — `--verify` is where the
+authority lives; the static engine is kept for the pre-deploy gate + completeness
+(orphans/unreachable a live crawl never clicks into), and its graph is a set of
+**hypotheses, not truth** (~80% recall). → `references/design-rationale.md` §Why a
+static engine at all — read when asked why static analysis is kept beside `--verify`.
 
 ## The two-artifact split (the core idea)
 
@@ -106,49 +94,24 @@ inferred entry marked `source:inferred` (lower CI authority until a human
 confirms). **Never a trusted baseline** — review it, fill in real persona
 intents + approved anchors, commit it.
 
-**Persona-reachability seeding (when `PERSONA_TEST_REPO_NAME` is set).** Bootstrap
-also seeds `personaIntents` from the REAL path each persona walked in `/persona-test`
-(the `click_path` evidence): it calls `get-reachability-evidence`, normalizes each
-reached URL to a destination, and emits intents with `source:"persona-test-evidence"`
-(a higher authority than `inferred`, still human-reviewable — confirm + set
-`requiredInLayer`). A URL that doesn't normalize is dropped (no false destination);
-any reader failure (cloud off, no evidence) just seeds nothing and bootstrap proceeds.
-The `--from-url` `navLayers` drafter prefers a sticky multi-target **bar** over a
-hamburger/drawer **toggle** for `primary` (a role-less JS-built bottom bar still wins).
-**Auth-gated apps: pass `--storage-state <auth.json>`.** An app whose primary nav renders
-only after login will draft from the logged-out shell and mis-pick `primary`. The run warns:
-generically when no auth state was given (`unauthenticatedDraft`), and **specifically when it
-detects an EMPTY visible nav container** (`emptyNavShells`, e.g. `#primary-nav` rendered with
-0 items) — that fires even WITH `--storage-state`, so an expired/invalid token is caught too.
-The drafted `navLayers` is always a hypothesis to review before committing, never trusted.
+With `PERSONA_TEST_REPO_NAME` set, bootstrap also seeds `personaIntents` from
+`/persona-test` click-path evidence (`source:"persona-test-evidence"`, still
+human-reviewable); a reader failure seeds nothing and bootstrap proceeds.
+**Auth-gated apps: pass `--storage-state <auth.json>`** — otherwise `--from-url`
+drafts from the logged-out shell and mis-picks `primary`. The drafted `navLayers`
+is always a hypothesis to review before committing, never trusted.
+→ `references/bootstrap-and-auth.md` §Persona-reachability seeding / §Auth-gated
+`--from-url` drafting — read when running `--bootstrap`, or a draft warned
+`unauthenticatedDraft` / `emptyNavShells`.
 
 #### Declare an `authSentinel` so `--verify` can prove the session is live
 
-`--storage-state` alone does **not** prove you captured an authenticated app. A
-committed `auth.json` expires, and an expired token yields a perfectly plausible
-scorecard of the **logged-out shell** — which was the normal failure mode before
-v1.5. Declare in `nav-contract.json` something that must be observable when a
-session is genuinely live:
-
-```json
-{
-  "version": 1,
-  "_comment": "authSentinel: proves --storage-state actually authenticated. Optional.",
-  "authSentinel": { "selector": "[data-testid=\"account-menu\"]", "expectText": "sign out" }
-}
-```
-
-- `selector` (required) — any CSS selector. `expectText` (optional) — a
-  substring, compared whitespace-collapsed and case-insensitively.
-- **A match only counts if it is actually RENDERED** — the same predicate
-  `/click-test` uses (`scripts/lib/browser/perceivable.mjs`). A `<template>`-resident,
-  `display:none`, `visibility:hidden`, `opacity:0` or `[inert]` match does **not**
-  qualify, so a stale account-menu left in the DOM cannot certify a dead session.
-- Observed in **every** captured state and after the activation pass — `live` if
-  it qualifies in any. That matters: the default breakpoints start with `mobile`,
-  where an account menu usually sits inside a collapsed drawer.
-- Pick something **only an authenticated user sees** (account menu, sign-out
-  control). A nav item that also renders logged-out proves nothing.
+`--storage-state` alone does **not** prove you captured an authenticated app — an
+expired token yields a plausible scorecard of the **logged-out shell**. Declare an
+`authSentinel` (`selector` + optional `expectText`) in `nav-contract.json`: something
+**only an authenticated user sees**, counted only if actually RENDERED.
+→ `references/bootstrap-and-auth.md` §Declare an `authSentinel` — read when using
+`--verify --storage-state`, or authoring/debugging the sentinel.
 
 Resulting `authLiveness`, and what it does:
 
@@ -217,17 +180,11 @@ error · `3` needs-bootstrap (no contract).
   HTML is recovered by scanning string/template literals. Recall is still
   hypotheses-not-truth (~80%) — `--verify` raises confidence.
 - Per-screen quality + feel are click-test's and persona-test's job.
-- **Coverage honesty, and what is deliberately not (yet) here**
-  (`references/verification-discipline.md` §7): two existing mechanisms are
-  already instances of the kernel's obligations — the `coverage-gap` finding
-  kind above (a surface the model can't confirm is reachable is *reported*,
-  not silently dropped) and the `authLiveness` degradation table (a run
-  without a live auth sentinel degrades authoritative `misplaced`/`missing`
-  verdicts to `unverified`, "rather than asserting a scorecard for the wrong
-  surface"). A full per-run subject-line and per-edge taxonomy-classified
-  rendering is **deferred, by name**: nav-audit's structured output is
-  rendered by `scripts/nav-audit.mjs`, not composed from this file, so
-  closing that gap is a code change outside this doc's own scope.
+- **Coverage honesty**: `coverage-gap` reports (never drops) an unconfirmable
+  surface, and `authLiveness` degrades unproven verdicts to `unverified`; a
+  per-run subject-line rendering is **deferred, by name**.
+  → `references/design-rationale.md` §Coverage honesty — read when asked which
+  §7 (`references/verification-discipline.md`) obligations are met or deferred.
 
 ## Reference files
 
@@ -236,6 +193,11 @@ error · `3` needs-bootstrap (no contract).
 | `references/extraction-and-adapters.md` | Affordance detection, the discovery-only adapter interface, destination normalization, and per-stack notes. | Phase 1 — adding a stack adapter or debugging why an affordance/route was missed. |
 | `references/finding-taxonomy.md` | The 10 finding classes with predicate, required evidence, FP guard, and gate-eligibility. | Phase 3 — interpreting a finding or tuning a false positive. |
 | `references/contract-and-bootstrap.md` | The two-artifact split — navMeta/docblock grammar, nav-contract.json schema, and the bootstrap review-queue. | Phase 0 — authoring or bootstrapping the contract and route metadata. |
+| `references/bootstrap-and-auth.md` | Bootstrap persona-reachability seeding, auth-gated --from-url drafting, and the authSentinel declaration rules. | Phase 0 — running `--bootstrap`, a draft warned `unauthenticatedDraft`/`emptyNavShells`, OR using `--verify --storage-state`. |
 | `references/ci-gate-and-verify.md` | Drift-only CI gating, changed-surface scoping, cloud-sourced aging, and the v1.1 --verify runtime mode. | Phase 4 — wiring CI or reasoning about what blocks vs advises. |
+| `references/design-rationale.md` | Why nav-audit keeps a static engine beside --verify, and which existing mechanisms already serve coverage honesty. | Asked why static analysis is kept beside `--verify`, OR which coverage-honesty obligations are met or deferred. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Reading the "Honest limits" section, to see which existing mechanisms already serve §7's obligations. |
 | `examples/example-report.md` | A sample /nav-audit run: findings, destination table, mermaid drilldown, and the gate-vs-advisory split. | Want to see the shape of the output before running it. |
+| `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
+
+— end of /nav-audit —

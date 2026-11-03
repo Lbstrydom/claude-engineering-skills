@@ -17,16 +17,9 @@ description: |
 > **Worktree preflight** — in a linked git worktree the synced tooling tree
 > `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
 > does not populate it, and every command below that uses it dies on a bare
-> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first.
->
-> If this repo defines no such script, it has not adopted the remedy yet. Add
-> this entry to its `package.json` `scripts` and run it — it copies the tooling
-> tree in from the main checkout, and leans on nothing but node and git:
->
-> "skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});const prune=(s,d)=>{if(!f.existsSync(d))return;for(const e of f.readdirSync(d,{withFileTypes:true})){const sp=p.join(s,e.name),dp=p.join(d,e.name);if(e.isDirectory()){if(!f.existsSync(sp)){f.rmSync(dp,{recursive:true,force:true});continue}prune(sp,dp);if(f.readdirSync(dp).length===0)f.rmSync(dp,{recursive:true,force:true})}else if(!f.existsSync(sp))f.rmSync(dp,{force:true})}};prune(src,dir);const man='scripts/.sync-manifest.json',ms=p.join(main,man),ok=f.existsSync(ms);if(ok){f.copyFileSync(ms,man)}console.log('[hydrate] copied '+(ok?2:1)+'/2 items from '+main+(ok?'':' - but NOT '+man+' (absent there): this tree has no bundle stamp'))\""
->
-> Rationale (source repo only — `docs/runbooks/` is not synced to consumers):
-> `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
+> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. If this repo defines
+> no such script, `references/worktree-preflight.md` holds the entry to add — ask
+> the user first, since it edits their `package.json`.
 
 ## Usage
 
@@ -149,6 +142,7 @@ situations — read them only when the trigger applies.
 | `references/chip-preamble.md` | The standard launch block for a chip prompt: authority, route, turn rule, claim, stop point, pre-authorised ship. | You write or paste a chip's launch prompt, or a chip asks what it may do alone. |
 | `references/coordination.md` | Coordinating without host messages — next, directives, unregistered work, and the numbered coordinator rules. | You coordinate sessions, post or read a directive, or dispatch chips. |
 | `references/coordination-rationale.md` | Why each coordinator rule exists, with the measurements, incidents and command detail the terse rules omit. | A coordinator rule needs its why, a measurement or exact detail. |
+| `references/coordinator-playbook.md` | Coordinator playbook — merging, stacks, archiving, fast-forwards and rebases when one session coordinates the others. | You are the coordinating session and are about to merge, archive, remove a worktree, fast-forward a shared checkout, or rebase onto a moved main. |
 | `references/ending-a-session.md` | Ending a session — release, archive-check, prune, archive, and stopping branch and worktree clutter. | You retire a session or prune a worktree or branch. |
 | `references/handover-winddown.md` | Wind-down before handover prepare — the directive, measured readiness, context file and safe-to-archive list. | You wind down before an account switch. |
 | `references/handover.md` | Moving to another Claude Code account — handover prepare and receive, the scheduler step, exit codes, follow-ups. | You move to another Claude Code account on this machine (`fleet handover`). |
@@ -158,3 +152,4 @@ situations — read them only when the trigger applies.
 | `references/hosts.md` | Which hosts run /fleet and how: VS Code harnesses, subagents vs sessions, a manual recipe. | You run fleet on VS Code, Copilot or Codex. |
 | `references/decision-ledger.md` | Own-model ledger — when to record a task, decision, correction or outcome. | You record a ledger event or purge one. |
 | `references/telemetry.md` | Usage telemetry — what each verb records, the weakness findings stats derives, and how to turn it off. | You want fleet's performance, a stats weakness, or what it sends. |
+| `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
