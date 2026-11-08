@@ -37,6 +37,7 @@ import { resolveModel } from './model-resolver.mjs';
 import { costForBudget, toEur } from './model-pricing.mjs';
 import { executionPlan } from './audit-arms.mjs';
 import { auditShadowConfig, PASS_REASONING, openaiConfig } from './config.mjs';
+import { capReasoning } from './reasoning-ceiling.mjs';
 import { assertEgressSafe } from './sensitive-egress-gate.mjs';
 import {
   modelAbSchemaReady, ensureArmSet, reserveSpend, reconcileSpend, releaseSpend, releaseOrphanedReservations,
@@ -183,7 +184,11 @@ function stageConfigFor(stageType) {
     passes: SHADOW_PASSES,
     systemFor: (passName) => PASS_PROMPTS[passName] || `Audit the code for ${passName} issues.`,
     userFor: (passName, planContent, subject) => buildPassUserPrompt(passName, planContent, subject),
-    reasoningFor: (passName) => PASS_REASONING[passName] ?? null,
+    // Same ceiling production applies in _callGPTOnce, or the parity control breaks.
+    reasoningFor: (passName) => {
+      const tier = PASS_REASONING[passName];
+      return tier ? capReasoning(tier, openaiConfig.reasoning) : null;
+    },
   };
 }
 

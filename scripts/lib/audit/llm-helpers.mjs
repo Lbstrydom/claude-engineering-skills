@@ -41,6 +41,7 @@ import { R2_ROUND_MODIFIER, buildRulingsBlock } from '../ledger.mjs';
 import { getActivePrompt, bootstrapFromConstants } from '../prompt-registry.mjs';
 import { PASS_PROMPTS } from '../prompt-seeds.mjs';
 import { openaiConfig, azureConfig } from '../config.mjs';
+import { capReasoning } from '../reasoning-ceiling.mjs';
 import { supportsReasoningEffort } from '../model-resolver.mjs';
 import { azureThrottle } from '../azure-throttle.mjs';
 import { classifyResponsesSupport } from '../openai-responses-capability.mjs';
@@ -244,7 +245,7 @@ const TIMEOUT_MS_CAP = openaiConfig.timeoutMsCap;
  */
 export async function _callGPTOnce(openai, opts) {
   const { schema, schemaName, reasoning, maxTokens, timeoutMs, passName } = opts;
-  const effort = reasoning ?? REASONING_EFFORT;
+  const effort = capReasoning(reasoning ?? REASONING_EFFORT, REASONING_EFFORT);
   const tokens = maxTokens ?? MAX_OUTPUT_TOKENS_CAP;
   const timeout = timeoutMs ?? TIMEOUT_MS_CAP;
 
@@ -513,7 +514,7 @@ export async function safeCallGPT(openai, opts, emptyResult) {
       // was made and failed — so recording it is a fact about what we asked
       // for, not a claim that it ran. Omitting it here would leave a failed
       // pass indistinguishable from one that never dispatched.
-      reasoningEffort: opts.reasoning ?? REASONING_EFFORT,
+      reasoningEffort: capReasoning(opts.reasoning ?? REASONING_EFFORT, REASONING_EFFORT),
       // Stamped on the degraded path for the same reason as `reasoningEffort`
       // directly above: the call WAS dispatched to this model and burned the
       // tokens reported above, so attributing them to it is a fact about what
