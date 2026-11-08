@@ -177,6 +177,14 @@
     {
       "line": "| `references/convergence-evidence.md` | Why the stop rules are what they are — acceptance-rate evidence, Gemini-cap rationale, outcome-recording fallback. | Step 3/6 — a stop decision is contested, OR a `[finalize] WARN` line appeared and Step 3.5b needs the manual fallback. |",
       "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
+    },
+    {
+      "line": "each problem it prints is a HIGH finding; exit 2 means it did not run — say so, never read it as complete.",
+      "reason": "Step 3 campaign rubric (docs/plans/test-campaign-controls.md §2.4): tells the AGENT how to read campaign-contract-check.mjs output. The checker's own exit contract (0 complete, 1 problems, 2 unreadable/bad usage) is enforced by tests/campaign-contract.test.mjs \"CLI exit codes\"; /audit-plan itself has no exit code for this line."
+    },
+    {
+      "line": "Status card after every phase; summarise, never dump raw JSON; show every plan edit",
+      "reason": "UX Rules, condensed from the former five-item list (skill size ratchet offset). Presentation guidance for the agent, not a gate; the previous wording was likewise undispositioned prose guidance."
     }
   ]
 }

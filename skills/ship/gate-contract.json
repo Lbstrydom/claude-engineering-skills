@@ -776,6 +776,22 @@
     {
       "line": "| `references/commit-provenance-deep-dive.md` | Step 6.2/6.3's AI-Gate and worktree-identity deep-dive — why each value/flag exists and the incidents behind them. | Debugging `--gate`/`--expect-head`/`--expect-branch`/`--path` behaviour, or before changing one. |",
       "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "and it **never blocks a ship**: every failure mode skips under `|| true`. →",
+      "reason": "Step 0.5c, condensed (skill size ratchet offset). Same negative guarantee as the existing \"This step is ALWAYS advisory — it never blocks a ship\" disposition it replaces; the failure matrix lives in references/architecture-and-dashboard-refresh.md."
+    },
+    {
+      "line": "Run it WITHOUT `|| true` — read the exit code, never mask it. It regenerates the",
+      "reason": "Step 0.5d, condensed from the former paragraph (skill size ratchet offset). An instruction to the agent to read build-dashboard.mjs's exit code; the step stays advisory (\"Never blocks the ship\" is already dispositioned)."
+    },
+    {
+      "line": "gitignored (Category A, never staged) `dashboard/index.html` + `telemetry.html`;",
+      "reason": "Restates category-a-never-staged for the dashboard pages (condensed Step 0.5d). The enforcement is the .gitignore entry, as for the existing Category A dispositions."
+    },
+    {
+      "line": "must trace to an artifact and carry `measured` / `derived` / `expected` with its",
+      "reason": "Step 1.5 close-out claims check (docs/plans/test-campaign-controls.md §2.3): applies the verification doctrine to a write-up. Agent-applied, no exit code; deliberately no new engine. The step's presence and wiring are guarded by tests/ship-claims-check-step.test.mjs."
     }
   ]
 }

@@ -111,6 +111,18 @@
     {
       "line": "> references to clear the threshold** — qualify the paths you genuinely touch.",
       "reason": "Continuation of the same callout sentence. 'threshold' is FUZZY_DISCOVERY_THRESHOLD in plan-paths.mjs, which /plan does not enforce — the report-only self-check exits 0 by design."
+    },
+    {
+      "line": "`node scripts/check-plan-status.mjs --check-deps <this-plan>` — a nudge, never a gate.",
+      "reason": "Phase 7 Depends-on read-back, condensed (detail moved to references/authoring-rationale.md §Phase 7 Depends-on read-back). Explicitly a non-gate: check-plan-status --check-deps always exits 0 by design."
+    },
+    {
+      "line": "`upsert-plan` fires arm-eval capture itself — never run `arm-eval-maybe-capture`",
+      "reason": "Phase 7.5, condensed (detail moved to references/authoring-rationale.md §Phase 7.5). An instruction not to double-capture; the capture dispatch lives in upsert-plan (scripts/lib/arm-eval/capture-trigger.mjs), no /plan exit code."
+    },
+    {
+      "line": "| `references/campaign.md` | Campaign mode — the C1-C12 contract an evaluation or test campaign plan must carry, and the dress-rehearsal gate. | `--campaign` was passed, OR the plan's output is a measurement (eval, test set, experiment). |",
+      "reason": "Reference-index row (summary byte-matches the reference frontmatter). The contract it names is enforced by scripts/campaign-contract-check.mjs, run by /audit-plan, and tested by tests/campaign-contract.test.mjs; the row itself is an index entry."
     }
   ]
 }

@@ -91,6 +91,14 @@
     {
       "line": "| `references/handover.md` | Moving to another Claude Code account — handover prepare and receive, the scheduler step, exit codes, follow-ups. | You move to another Claude Code account on this machine (`fleet handover`). |",
       "reason": "A reference-index row pointing at references/handover.md, whose subject is the handover CLI (prepare/receive exit codes are pinned by tests/fleet-handover.test.mjs). The row only says what the reference covers; it is not an enforcement claim about this skill file itself."
+    },
+    {
+      "line": "**Background runs** go under `node scripts/run-heartbeat.mjs run …`, with `watch` armed on Monitor; STALE or UNKNOWN is never healthy, an expired watcher is no verdict: `references/background-runs.md`.",
+      "reason": "Pointer to the background-run convention (docs/plans/test-campaign-controls.md §2.1). The verdict semantics it names (STALE/UNKNOWN exit 3, never RUNNING) are enforced in code and tested by tests/run-heartbeat.test.mjs, including a negative control; \"an expired watcher is no verdict\" is a statement about the host Monitor primitive, which /fleet does not control."
+    },
+    {
+      "line": "Never synced; read from the checkout you run in, so commit it. Every key is optional; keys, defaults, a monorepo example: `references/config.md`.",
+      "reason": "Config paragraph, condensed (skill size ratchet offset). States where .fleet.json is read from — a fact about the loader, not a gate; detail in references/config.md."
     }
   ]
 }
