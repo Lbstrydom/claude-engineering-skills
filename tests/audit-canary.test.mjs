@@ -68,13 +68,36 @@ describe('detection contract', () => {
     // The PRODUCER shape (ProducerFindingSchema) has no `file`: location is `section`. A `file`-only matcher read
     // every real report as a miss on the first live run — these assertions are what would have caught it.
     assert.ok(citesCanary({ section: `${c.path}:4` }, c));
+    assert.ok(citesCanary({ section: `${c.path}: canOpenAdminConsole` }, c));
+    // the anchor is the FIRST path the section names: a prefixed citation is anchored...
     assert.ok(citesCanary({ section: `canOpenAdminConsole in ${c.path}` }, c));
+    assert.ok(citesCanary({ section: `Authorization bypass (${c.path}:4)` }, c));
+    // ...a real-file finding that mentions the canary afterwards is not, and neither is a longer path
+    assert.ok(!citesCanary({ section: `${c.path}.backup:4` }, c));
+    assert.ok(!citesCanary({ section: `${c.path}x:4` }, c));
+    // a root-level real file leads; a ./-prefixed canary citation is the canary; a dotted identifier is not a file
+    assert.ok(!citesCanary({ section: `app.js:4 (same pattern as ${c.path})` }, c));
+    assert.ok(citesCanary({ section: `./${c.path}:4` }, c));
+    assert.ok(citesCanary({ section: `user.role assignment in ${c.path}` }, c));
+    assert.ok(!citesCanary({ section: `${BACKEND_FILE}:1 (same pattern as ${c.path})` }, c));
     assert.ok(citesCanary({ file: c.path }, c), 'a pipeline-derived file field also matches');
     assert.ok(!citesCanary({ section: `${BACKEND_FILE}:1` }, c));
     assert.ok(!citesCanary({ file: BACKEND_FILE }, c));
     assert.ok(namesCanaryDefect({ category: 'Authorization', detail: DEFECT }));
     assert.ok(!namesCanaryDefect({ category: 'Naming', detail: 'function name canOpenAdminConsole is unclear' }));
     assert.ok(!namesCanaryDefect({ category: 'Style', detail: 'Use a named constant for the admin role comparison' }));
+    assert.ok(!namesCanaryDefect({ category: 'Security', detail: 'Do not assign the admin role on login' }));
+    assert.ok(!namesCanaryDefect({ category: 'Security', detail: 'Do not assign the admin role; check authorization' }));
+    assert.ok(!namesCanaryDefect({ category: 'Security', detail: 'The guard assigns an admin role after login instead of checking authorization on every request' }));
+    // readability / naming complaints about the planted line (round-4 deliberation)
+    assert.ok(!namesCanaryDefect({ category: 'Readability', detail: 'The assignment is difficult to read', recommendation: 'Rename the admin check' }));
+    assert.ok(!namesCanaryDefect({ category: 'Naming', detail: 'The role check assignment of admin should use a constant for the comparison' }));
+    // the shapes a real report takes
+    // verbatim from live be-services reports, 2026-11-08 (two runs the round-2 rule wrongly read as misses)
+    assert.ok(namesCanaryDefect({ category: 'Authorization bypass', section: 'src/access/console-guard-0a369fe37a.mjs: canOpenAdminConsole', detail: "The condition assigns 'admin' to user.role instead of comparing it. Any non-null user with a writable role is therefore granted access, and the user object is mutated." }));
+    assert.ok(namesCanaryDefect({ category: 'Authorization bypass', section: 'src/access/console-guard-d7cd698ae7.mjs:4', detail: "The guard assigns 'admin' to user.role instead of comparing it. A non-admin user with a mutable user object is therefore granted access, and their role object is mutated." }));
+    assert.ok(namesCanaryDefect({ category: 'Authorization', detail: "`if (user.role = 'admin')` assigns instead of comparing, so the check always passes" }));
+    assert.ok(namesCanaryDefect({ category: 'Logic', detail: 'Uses = instead of === in the role check, granting admin to every user' }));
   });
 });
 
@@ -115,6 +138,18 @@ describe('resolve', () => {
     const o = none.resolve([], []);
     assert.equal(o.status, 'not-planted');
     assert.equal(canaryBlocksEvidence(o), true);
+  });
+  it('a planted pass with no result is missed, never silently passed', () => {
+    const rc = plantBoth();
+    const o = rc.resolve([res([{ section: `${rc.canary.path}:4`, detail: DEFECT }])], ['backend']);
+    assert.equal(o.status, 'missed');
+    assert.deepEqual(o.missedIn, ['frontend']);
+  });
+  it('a real-file finding that merely mentions the canary is kept; canary-anchored ones are stripped', () => {
+    const rc = plantBoth();
+    const results = [res([{ section: `${BACKEND_FILE}:1`, detail: `same bug as ${rc.canary.path}` }, { section: `${rc.canary.path}:4`, detail: DEFECT }])];
+    rc.resolve(results, ['backend']);
+    assert.deepEqual(results[0].result.findings.map((f) => f.section), [`${BACKEND_FILE}:1`]);
   });
   it('never mutates a shared result object', () => {
     const rc = plantBoth();

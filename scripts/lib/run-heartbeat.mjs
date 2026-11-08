@@ -32,6 +32,9 @@ export const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 export const FUTURE_SKEW_MS = 60_000;
 /** Ended journals older than this are left out of `list` (never deleted). */
 export const LIST_ENDED_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+/** The `run` wrapper beats at most once per this interval; a cadence shorter than 3x it would read a busy run STALE. */
+export const BEAT_THROTTLE_MS = 5000;
+export const MIN_STALE_AFTER_SEC = 15;
 export const STATES = Object.freeze(['RUNNING', 'STALE', 'ENDED_OK', 'ENDED_FAILED', 'UNKNOWN']);
 
 /** @returns {{ok:true}|{ok:false, reason:string}} */
@@ -53,13 +56,37 @@ export function resolveRunsDir(cwd = process.cwd(), { git = gitCommonDir } = {})
   return { dir: path.resolve(cwd, '.audit', 'runs'), shared: false };
 }
 
-function gitCommonDir(cwd) {
+function hasDotGitAncestor(cwd) {
+  let dir = path.resolve(cwd);
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.git'))) return true;
+    const up = path.dirname(dir);
+    if (up === dir) return false;
+    dir = up;
+  }
+}
+
+/**
+ * The git common dir, or null ONLY when git definitely says "not a git repository". Any other failure (git
+ * missing, a timeout, a dubious-ownership refusal) throws: reading it as "outside git" would silently pick a
+ * worktree-local dir and hide the run from every other checkout.
+ */
+export function gitCommonDir(cwd, { exec = execFileSync } = {}) {
+  let out;
   try {
-    const out = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
-      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
-    }).trim();
-    return out || null;
-  } catch { return null; }
+    out = String(exec('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000,
+    })).trim();
+  } catch (err) {
+    const stderr = String(err?.stderr ?? '');
+    // "not a git repository" is only "outside git" when no .git entry exists above cwd; with one (a linked worktree
+    // whose gitdir is gone, a corrupt repo) the repo is BROKEN, and a local fallback would hide the run.
+    if (err?.status === 128 && /not a git repository/i.test(stderr) && !hasDotGitAncestor(cwd)) return null;
+    const first = stderr.trim().split('\n')[0];
+    throw new Error(`cannot resolve the runs dir: git rev-parse failed (${err?.code || err?.status || err?.message}${first ? `: ${first}` : ''})`);
+  }
+  if (!out) throw new Error('cannot resolve the runs dir: git rev-parse printed nothing');
+  return out;
 }
 
 /**
@@ -87,12 +114,48 @@ function line(entry, now) {
   return `${JSON.stringify({ v: JOURNAL_VERSION, ts: new Date(now).toISOString(), ...entry })}\n`;
 }
 
+/** Append one line; if a crash left a torn last line (no trailing newline), start a fresh line so the two never merge. */
+function appendLine(p, text) {
+  let prefix = '';
+  const size = fs.statSync(p).size;
+  if (size > 0) {
+    const fd = fs.openSync(p, 'r');
+    try {
+      const b = Buffer.alloc(1);
+      fs.readSync(fd, b, 0, 1, size - 1);
+      if (b[0] !== 0x0a) prefix = '\n';
+    } finally { fs.closeSync(fd); }
+  }
+  fs.appendFileSync(p, prefix + text);
+}
+
+function buildEntry({ runId, kind, note, childPid, exitCode, signal }) {
+  const entry = { runId, kind };
+  if (note) entry.note = note;
+  if (Number.isInteger(childPid)) entry.childPid = childPid;
+  if (kind === 'end') {
+    entry.exitCode = Number.isInteger(exitCode) ? exitCode : null;
+    if (signal) entry.signal = signal;
+  }
+  return entry;
+}
+
+/**
+ * The append for a journal's OWN writer (the `run` wrapper, which created it and knows it has not ended): no
+ * re-read per beat, so a long run's beats stay O(1) instead of re-parsing the whole journal every time.
+ */
+export function appendOwnRun(journal, { now = Date.now(), ...fields }) {
+  appendLine(journal, line(buildEntry(fields), now));
+}
+
 /**
  * Create a journal with an exclusive create — a reused id (including two
  * concurrent launches) fails here, before anything is spawned.
  */
 export function startRun(dir, { runId, staleAfterSec, pid = process.pid, note, now = Date.now() }) {
-  if (!Number.isFinite(staleAfterSec) || staleAfterSec <= 0) throw new Error('stale-after must be a positive number of seconds');
+  if (!Number.isFinite(staleAfterSec) || staleAfterSec < MIN_STALE_AFTER_SEC) {
+    throw new Error(`stale-after must be at least ${MIN_STALE_AFTER_SEC} seconds (3x the ${BEAT_THROTTLE_MS / 1000}s beat throttle), got ${staleAfterSec}`);
+  }
   const p = journalPath(dir, runId);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   refuseSymlink(p);
@@ -116,20 +179,14 @@ export function appendRun(dir, { runId, kind, note, childPid, exitCode, signal, 
   const parsed = readJournal(p);
   if (!parsed.exists || !parsed.start) throw new Error(`run "${runId}" has no start record — call start first`);
   if (parsed.end) throw new Error(`run "${runId}" has already ended — a journal is never appended after its end`);
-  const entry = { runId, kind };
-  if (note) entry.note = note;
-  if (Number.isInteger(childPid)) entry.childPid = childPid;
-  if (kind === 'end') {
-    entry.exitCode = Number.isInteger(exitCode) ? exitCode : null;
-    if (signal) entry.signal = signal;
-  }
-  fs.appendFileSync(p, line(entry, now));
+  appendLine(p, line(buildEntry({ runId, kind, note, childPid, exitCode, signal }), now));
   return p;
 }
 
 /**
  * Parse a journal. The whole file is scanned (a tail window can lose the start or
- * the end record); size is bounded at the writer by the beat throttle.
+ * the end record). The beat throttle bounds the GROWTH RATE (at most one line per 5 s,
+ * about 2 MB per day of continuous output), not the total; there is no compaction in v1.
  * @returns {{exists:boolean, unreadable?:string, start:object|null, end:object|null,
  *   entries:object[], malformedLines:number, afterEnd:number}}
  */
@@ -194,7 +251,8 @@ export function assessJournal(parsed, { now = Date.now(), staleAfterSec, pidAliv
   const cadence = Number.isFinite(staleAfterSec) && staleAfterSec > 0 ? staleAfterSec : parsed.start.staleAfterSec;
   const times = parsed.entries.map((e) => Date.parse(e.ts));
   if (times.some((t) => Number.isNaN(t))) return unknown('unparseable timestamp', { runId });
-  const lastTs = Math.max(...times);
+  let lastTs = -Infinity;
+  for (const t of times) if (t > lastTs) lastTs = t; // a loop, not Math.max(...times): a long journal exceeds the argument limit
   if (lastTs > now + FUTURE_SKEW_MS) return unknown('timestamp in the future — clock skew or a hand edit', { runId, lastTs: new Date(lastTs).toISOString() });
   const childPid = [...parsed.entries].reverse().find((e) => Number.isInteger(e.childPid))?.childPid ?? null;
   const common = { runId, lastTs: new Date(lastTs).toISOString(), ageSec: Math.max(0, Math.round((now - lastTs) / 1000)), childPid, ...base };

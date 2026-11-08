@@ -35,8 +35,10 @@ import { normalizePath } from '../file-io.mjs';
 export const CANARY_DIR = 'src/access';
 /** The wave-2 correctness passes that receive the canary. Selected by NAME, never call order. */
 export const CANARY_ELIGIBLE_PASSES = Object.freeze(['backend', 'be-routes', 'be-services', 'frontend']);
-const ASSIGNMENT_RE = /\bassign|single\s*['"`]?=['"`]?|['"`]=['"`]\s*(?:instead of|rather than|vs\.?|versus)|instead of\s*['"`]?={2,3}/i;
+const ASSIGNMENT_RE = /\bassignment\b[^\n]{0,60}?\b(?:instead of|rather than|in place of|used as|as (?:a|the) (?:comparison|condition))|\bassign(?:s|ed|ing)?\b[^\n]{0,80}?\b(?:instead of|rather than)\b[^\n]{0,20}?\bcompar|single\s*['"`]?=['"`]?|['"`]=['"`]\s*(?:instead of|rather than|vs\.?|versus|not)|instead of\s*['"`]?={2,3}|role\s*=\s*['"`]admin/i;
 const SUBJECT_RE = /admin|role|authori[sz]/i;
+// The defect is an assignment USED AS a comparison/condition — "do not assign the admin role" names neither.
+const COMPARISON_RE = /compar|equal|===|==|condition|\bif\b|\bcheck/i;
 
 export function canaryEnabled(env = process.env) {
   return env.AUDIT_CANARY === '1';
@@ -71,16 +73,32 @@ function isPlantedUnit(unitLabel) {
  * every real canary report as a miss (docs/plans/test-campaign-controls.md §10).
  */
 export function citesCanary(finding, canary) {
-  if (finding?.file && normalizePath(String(finding.file)) === canary.normalisedPath) return true;
-  const where = [finding?.section, finding?.file].filter((s) => typeof s === 'string').join(' ').replace(/\\/g, '/').toLowerCase();
-  return where.includes(canary.path.toLowerCase()) || where.includes(`console-guard-${canary.id}`);
+  // The ANCHOR is the FIRST path the section names — live sections read "<path>:4" or "<path>: fn", and a prefixed
+  // "fn in <path>" is anchored too. A real-file finding that mentions the canary only after naming its own file is
+  // about that file and is kept. The match is whole-path: `<canary>.backup` is not the canary.
+  if (typeof finding?.file === 'string' && finding.file) return normalizePath(finding.file) === canary.normalisedPath;
+  const section = typeof finding?.section === 'string' ? finding.section.replace(/\\/g, '/') : '';
+  const first = section.match(PATH_TOKEN_RE);
+  return Boolean(first) && first[0].replace(/^(?:\.\/)+/, '').toLowerCase() === canary.path.toLowerCase();
 }
 
-/** Does this canary-file finding name the planted defect (an assignment in the auth check)? */
+// A path token ending at a boundary: either `/`-joined segments ending in a file with an extension
+// (`src/a/b.mjs`, `./src/a.mjs`), or a ROOT-level file with a code/doc extension (`app.js`) — the extension list keeps
+// a dotted identifier like `user.role` from reading as a file.
+const PATH_TOKEN_RE = /(?:(?:\.\/)*[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+|[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(?:m?[jt]sx?|cjs|cts|mts|py|rb|go|rs|java|kt|cs|php|vue|svelte|css|scss|html|md|json|ya?ml|sql|sh|ps1|toml))(?=$|[\s:,;)\]#'"`])/;
+
+const TEXT_FIELDS = ['category', 'section', 'file', 'detail', 'description', 'recommendation', 'risk'];
+const findingText = (f) => TEXT_FIELDS.map((k) => f?.[k]).filter((s) => typeof s === 'string').join(' \n ');
+
+/**
+ * Does this canary-file finding name the planted defect — an assignment used as the authorization comparison?
+ * Needs one SPECIFIC signal, not loose keywords: "assignment" as a noun, an explicit `=`-for-`===` statement, or the
+ * planted expression itself — plus comparison/condition wording and the guarded subject. "Do not assign the admin
+ * role; check authorization" has none of the specific signals. Still keyword evidence (stated limit, see header).
+ */
 export function namesCanaryDefect(finding) {
-  const text = [finding?.category, finding?.detail, finding?.description, finding?.recommendation, finding?.risk]
-    .filter((s) => typeof s === 'string').join(' \n ');
-  return ASSIGNMENT_RE.test(text) && SUBJECT_RE.test(text);
+  const text = findingText(finding);
+  return ASSIGNMENT_RE.test(text) && COMPARISON_RE.test(text) && SUBJECT_RE.test(text);
 }
 
 /**
@@ -116,20 +134,24 @@ export function createRoundCanary(env = process.env, { seed } = {}) {
     const detectedIn = [];
     const missedIn = [];
     const failedIn = [];
+    const seen = new Set();
     (results || []).forEach((r, i) => {
       const name = passNames[i];
       const findings = Array.isArray(r?.result?.findings) ? r.result.findings : [];
       const cited = findings.filter((f) => citesCanary(f, canary));
-      // Replace, never mutate: a skipped pass's `result` can be a shared EMPTY_* constant.
+      // Strip canary-ANCHORED findings only: one anchored to a real file is about that file even if its text mentions
+      // the canary, and is kept. Replace, never mutate — a skipped pass's `result` can be a shared EMPTY_* constant.
       if (cited.length > 0) r.result = { ...r.result, findings: findings.filter((f) => !citesCanary(f, canary)) };
       if (!planted.has(name)) return;
+      seen.add(name);
       const hit = cited.find(namesCanaryDefect);
       if (r?.failed) failedIn.push(name);
       else if (hit) detectedIn.push(name);
       else missedIn.push(name);
-      if (process.env.AUDIT_CANARY_DEBUG === '1') process.stderr.write(`  [canary] ${name}: ${JSON.stringify(cited)}\n`);
-      else process.stderr.write(`  [canary] ${name}: ${hit ? `detected (${hit.severity ?? '?'} "${String(hit.section ?? '').slice(0, 80)}")` : r?.failed ? 'pass failed' : `MISSED (${cited.length} finding(s) on the canary file, none naming the defect)`}\n`);
+      process.stderr.write(`  [canary] ${name}: ${hit ? `detected (${hit.severity ?? '?'} "${String(hit.section ?? '').slice(0, 80)}")` : r?.failed ? 'pass failed' : `MISSED (${cited.length} finding(s) on the canary file, none naming the defect${cited[0] ? `; first: "${findingText(cited[0]).replace(/\s+/g, ' ').slice(0, 300)}"` : ''})`}\n`);
     });
+    // A planted pass with no result to read was not measured — that is a miss, never a silent pass.
+    for (const name of planted) if (!seen.has(name)) { missedIn.push(name); process.stderr.write(`  [canary] ${name}: MISSED (no result returned for a planted pass)\n`); }
     let status;
     if (planted.size === 0) status = 'not-planted';
     else if (missedIn.length > 0) status = 'missed';

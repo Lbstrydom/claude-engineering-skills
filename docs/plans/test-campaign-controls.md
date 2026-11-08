@@ -411,6 +411,15 @@ Commands: `node --test tests/run-heartbeat.test.mjs`, `tests/audit-canary.test.m
    `OPENAI_AUDIT_REASONING=high`; every miss was a pass reporting zero findings). Renamed
    to a neutral `src/access/console-guard-<id>.mjs`: **6 of 6** detected (measured).
    Same lesson as C4: a known-answer item must be indistinguishable from a real one.
+3. **A tightened match rule rejected real reports.** `/audit-code` R2 asked for a rule
+   that "Do not assign the admin role; check authorization" cannot satisfy. The first
+   tightening (require the noun "assignment") read 3 of 6 live reports as misses; the
+   stderr excerpt showed the real wording — *"assigns 'admin' to user.role instead of
+   comparing it"*. The verb form (`assign… instead of/rather than compar…`) was added and
+   two of those live texts are now verbatim fixtures. Final rule: **4 of 4** live runs
+   detected (measured). Across all 16 neutral-path runs the pass anchored a finding on
+   the canary file every time (measured from the `[canary]` stderr lines); the misses
+   were the matcher's, not the auditor's.
 
 ### Canary token cost (measured, one-file scope, `--passes backend`, air-gapped store)
 
@@ -442,3 +451,29 @@ acceptance each round (productive, not rigor pressure); R3's items were
 small, concrete and fixed. **Gemini final gate** (`gemini-4-argon`, round 1):
 `APPROVE`, disposition `approve`, 0 blocking, 1 LOW (the `run` bullet still said
 `start` carries `childPid`) — fixed in place.
+
+### `/audit-code` — SID `audit-code-1794173720725-238204`, 2026-11-08 (base `38e171d8`)
+
+| Round | Verdict | H | M | Disposition |
+|---|---|---|---|---|
+| R1 (diff, 40 files) | SIGNIFICANT_ISSUES | 17 | 14 | ~19 distinct after cross-pass duplicates; 26 fixed, 5 dismissed (concurrent-append race: reader is order-defined; synced-path pointer: the sync rewrites it; 3 adjacency enumeration-cap notes) |
+| R2 | SIGNIFICANT_ISSUES | 6 | 2 | pid-record failure handling, canary rule tightening, anchor-only stripping (overrules R1-H15), size wording; 1 dismissed |
+| R3 | SIGNIFICANT_ISSUES | 5 | 2 | anchor at section start, `./` evidence paths, `watch --grace` documented, platform-true `childAlive` |
+| R4 | SIGNIFICANT_ISSUES | 3 | 5 | GPT deliberation: H3/M4 (self-check body, AGENTS.md non-finding) and M3 dismissed; H1, H2 → MEDIUM and M2 → LOW, all fixed; broken-worktree and close-out timing fixed |
+| R5 | SIGNIFICANT_ISSUES | 1 | 2 | anchor = first path token, whole-path match; keyword-limit re-raise dismissed as the R4 concern |
+| R6 | SIGNIFICANT_ISSUES | 1 | 2 | root-level file anchors, `./` citations, git-failure ≠ "not committed" — all fixed |
+
+Every new guard added in R1–R6 was proven by mutation: the guard removed, its test
+red, restored, green (scratchpad harnesses `mutate*.cjs`; 18 mutations, 18 red).
+
+**Stop decision (round 6, structural-or-stop card)**: 2 STRUCTURAL clusters, both the
+canary matcher in `canary.mjs` (a prose rule each round could probe with a new sentence),
+55 polish. Decision: **STOP** — the rule passes all 16 live neutral-path samples and every
+adversarial negative raised; the flag is opt-in and the keyword-evidence limit is
+documented. The structural fix (a structured detection field in the pass schema rather
+than matching prose) is the follow-up if `AUDIT_CANARY` is ever made default-on.
+
+**Gemini final gate** (`gemini-4-argon`, round 1, run `9ee137f8`): `APPROVE`, disposition
+`approve`, 0 blocking, 1 LOW (G1: `main(argv)` was half-honoured by the ambient flag
+helpers) — fixed. The review envelope reported `Code: PARTIAL, 1306 changed line(s) never
+shown`: the approval covers the examined files, not the whole 40-file change.

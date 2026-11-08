@@ -32,11 +32,10 @@ import { spawn } from 'node:child_process';
 import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import {
-  resolveRunsDir, startRun, appendRun, checkRun, listRuns, validateRunId,
+  resolveRunsDir, startRun, appendRun, appendOwnRun, checkRun, listRuns, validateRunId, BEAT_THROTTLE_MS,
 } from './lib/run-heartbeat.mjs';
 
 const KNOWN = ['--run-id', '--stale-after', '--note', '--exit', '--signal', '--json', '--poll', '--grace', '--dir', '--help'];
-const BEAT_THROTTLE_MS = 5000;
 
 export function exitCodeFor(state) {
   if (state === 'RUNNING' || state === 'ENDED_OK') return 0;
@@ -78,13 +77,19 @@ async function runWrapped(dir, runId, staleAfterSec, note, cmd) {
     let child;
     let ended = false;
     let lastBeat = 0;
-    const finish = (exitCode, signal) => {
+    let untracked = null;
+    const finish = (rawExit, signal) => {
       if (ended) return;
       ended = true;
-      try { appendRun(dir, { runId, kind: 'end', exitCode, signal }); } catch (err) {
-        process.stderr.write(`[run-heartbeat] could not write end record: ${err.message}\n`);
+      const exitCode = untracked && rawExit === 0 ? 1 : rawExit;
+      const code = Number.isInteger(exitCode) ? exitCode : 1;
+      try { appendOwnRun(journal, { runId, kind: 'end', exitCode, signal, ...(untracked ? { note: `child pid not recorded: ${untracked}` } : {}) }); } catch (err) {
+        // A run whose end is not durable reads STALE, never ENDED_OK — so the wrapper must not report success either.
+        process.stderr.write(`[run-heartbeat] could not write end record (${err.message}) — exiting non-zero\n`);
+        resolve(code === 0 ? 1 : code);
+        return;
       }
-      resolve(Number.isInteger(exitCode) ? exitCode : 1);
+      resolve(code);
     };
     try {
       child = spawn(cmd[0], cmd.slice(1), { stdio: ['inherit', 'pipe', 'pipe'] });
@@ -98,24 +103,30 @@ async function runWrapped(dir, runId, staleAfterSec, note, cmd) {
       finish(127, null);
     });
     child.on('spawn', () => {
-      try { appendRun(dir, { runId, kind: 'beat', childPid: child.pid, note: 'spawned' }); lastBeat = Date.now(); } catch (err) {
-        // No untracked child: if its pid cannot be recorded, it does not run.
+      try { appendOwnRun(journal, { runId, kind: 'beat', childPid: child.pid, note: 'spawned' }); lastBeat = Date.now(); } catch (err) {
+        // No untracked child: if its pid cannot be recorded, it does not run — and the run is a failure whatever
+        // the child exits with (a child that handles SIGTERM and exits 0 must not read as success).
+        untracked = err.message;
         process.stderr.write(`[run-heartbeat] could not record child pid (${err.message}) — stopping the child\n`);
         child.kill('SIGTERM');
+        setTimeout(() => { if (!ended) child.kill('SIGKILL'); }, 5000).unref();
       }
     });
-    const onOutput = (stream) => (chunk) => {
-      stream.write(chunk);
+    // Output is a LIVENESS signal (the child is producing something), not proof of progress — a job that should
+    // prove progress beats explicitly. pipe() carries backpressure; the data listener only stamps the beat.
+    const onOutput = () => {
       const t = Date.now();
       if (!ended && t - lastBeat >= BEAT_THROTTLE_MS) {
         lastBeat = t;
-        try { appendRun(dir, { runId, kind: 'beat' }); } catch (err) {
+        try { appendOwnRun(journal, { runId, kind: 'beat' }); } catch (err) {
           process.stderr.write(`[run-heartbeat] beat not written: ${err.message}\n`);
         }
       }
     };
-    child.stdout.on('data', onOutput(process.stdout));
-    child.stderr.on('data', onOutput(process.stderr));
+    child.stdout.on('data', onOutput);
+    child.stderr.on('data', onOutput);
+    child.stdout.pipe(process.stdout, { end: false });
+    child.stderr.pipe(process.stderr, { end: false });
     for (const sig of ['SIGINT', 'SIGTERM']) {
       process.on(sig, () => { if (child && !ended) child.kill(sig); });
     }
@@ -138,8 +149,12 @@ async function watch(dir, runId, pollSec, graceSec) {
   }
 }
 
-export async function main(argv = process.argv) {
-  if (argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+// Reads process.argv only: argOption/hasFlag (cli-io.mjs) read it ambiently, so an argv parameter would be half-honoured.
+export async function main() {
+  const argv = process.argv;
+  // Only the wrapper's own flags (before `--`): a child command's argv must never trigger the wrapper's self-check.
+  const ownArgs = argv.includes('--') ? argv.slice(0, argv.indexOf('--')) : argv;
+  if (ownArgs.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   assertKnownFlags(argv, KNOWN, { cli: 'run-heartbeat' });
   const sub = argv[2];
   if (!sub || sub === '--help' || hasFlag('help')) {

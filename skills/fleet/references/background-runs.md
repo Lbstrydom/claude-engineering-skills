@@ -22,7 +22,9 @@ ENDED_FAILED, exit 127 — never as RUNNING).
 
 - The journal is reserved BEFORE the command starts, so a reused id spawns nothing.
 - Every line of output is a heartbeat (at most one per 5 s). Pick `--stale-after` above
-  the job's longest silent stretch.
+  the job's longest silent stretch (minimum 15 s). Output proves **liveness**, not
+  progress: a job stuck in a loop that keeps printing reads RUNNING. A job that must prove
+  progress beats explicitly per unit of work (below) and prints nothing else.
 - The wrapper exits with the command's exit code and writes an `end` record.
 - Journals live in the git common dir (`<common-dir>/audit-loop/runs/`), so a run in a
   pinned fixture worktree is visible from every checkout. An unwritable dir is an error,
@@ -40,7 +42,9 @@ this session keeps working.
 node scripts/run-heartbeat.mjs watch --run-id adjudicate-2026-11-09 --poll 60
 ```
 
-`watch` prints one line per state change and **exits** on a terminal state — ENDED_OK,
+Start it after the launch (both can go out in the same turn): `watch` tolerates a
+missing journal for `--grace` seconds (default 60) while `run` reserves it, then reads
+UNKNOWN. `watch` prints one line per state change and **exits** on a terminal state — ENDED_OK,
 ENDED_FAILED, STALE or UNKNOWN. Arm it with Claude Code's `Monitor` tool (each exit is
 one notification that wakes this session), or as a Bash `run_in_background` command.
 
@@ -50,7 +54,8 @@ one notification that wakes this session), or as a Bash `run_in_background` comm
   re-arm it, or for an unattended night use a scheduled task that runs `check`.
   An expired watcher is not a verdict.
 - STALE means "no progress observed", not "stopped". A wrapper killed uncatchably
-  writes no `end`, and its child may still be running and spending. `check` reports the
+  writes no `end`, and on Linux/macOS its child may still be running and spending (on
+  Windows the child is killed with the wrapper). `check` reports the
   child pid and whether it is alive (pid reuse makes "alive" a hint — confirm the
   command line before stopping anything).
 

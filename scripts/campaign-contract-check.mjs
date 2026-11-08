@@ -20,7 +20,9 @@ import { checkCampaignContract, verifyEvidenceAtRevision } from './lib/campaign-
 
 const KNOWN = ['--json', '--closeout', '--rev', '--help'];
 
-export async function main(argv = process.argv) {
+// Reads process.argv only: argOption/hasFlag (cli-io.mjs) read it ambiently, so an argv parameter would be half-honoured.
+export async function main() {
+  const argv = process.argv;
   if (argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   assertKnownFlags(argv, KNOWN, { cli: 'campaign-contract-check' });
   const positional = argv.slice(2).filter((a, i, arr) => !a.startsWith('--') && arr[i - 1] !== '--rev');

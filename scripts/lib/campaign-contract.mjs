@@ -74,9 +74,20 @@ function isEmptyValue(v) {
   return t === '' || /^(tbd|todo|n\/a|-|\?)$/i.test(t);
 }
 
-/** Split an evidence value into paths (backticks stripped, comma-separated). */
+/**
+ * Split an evidence value into paths (backticks stripped, comma-separated), each canonicalised the way git names
+ * a tree entry — forward slashes, no `./` segments, no duplicate or trailing separators — so the presence check
+ * and the close-out tree lookup compare the same string.
+ */
 export function evidencePaths(value) {
-  return String(value ?? '').split(',').map((s) => s.trim().replace(/^`|`$/g, '').trim()).filter(Boolean);
+  return String(value ?? '').split(',').map((s) => s.trim().replace(/^`|`$/g, '').trim()).filter(Boolean).map(canonicalEvidencePath);
+}
+
+function canonicalEvidencePath(p) {
+  const fwd = p.replace(/\\/g, '/');
+  if (/^[A-Za-z]:/.test(fwd) || fwd.startsWith('/')) return fwd; // left as-is: containment rejects it
+  const norm = path.posix.normalize(fwd);
+  return norm.endsWith('/') && norm.length > 1 ? norm : norm.replace(/^\.\//, '');
 }
 
 /** Is `p` a repo-relative path that stays inside `repoRoot`? */
@@ -113,6 +124,12 @@ export function checkCampaignContract(markdown, { repoRoot = process.cwd() } = {
         if (!Number.isInteger(n) || n < MIN_REHEARSAL_ITEMS) problems.push({ id, field, why: `items must be an integer >= ${MIN_REHEARSAL_ITEMS}, got "${v}"` });
       }
       if (EVIDENCE_FIELDS.includes(field)) {
+        if (evidencePaths(v).length === 0) problems.push({ id, field, why: `"${v}" names no evidence path` });
+        // A literal `..` is refused BEFORE canonicalisation: the record should name the artifact, not a route to it.
+        if (String(v).split(/[,\\/]/).some((seg) => seg.trim().replace(/^`|`$/g, '') === '..')) {
+          problems.push({ id, field, why: `"${v}" contains a ".." segment — name the path directly` });
+          continue;
+        }
         for (const p of evidencePaths(v)) {
           if (!isContainedRelativePath(p, repoRoot)) problems.push({ id, field, why: `"${p}" is not a repo-relative path inside the repo` });
         }
@@ -143,11 +160,18 @@ export function verifyEvidenceAtRevision(markdown, { repoRoot = process.cwd(), r
       for (const p of evidencePaths(s.fields[field])) {
         if (!isContainedRelativePath(p, repoRoot)) continue; // already a presence problem
         const rel = p.replace(/\\/g, '/');
-        let entry = '';
-        try { entry = git(['ls-tree', oid, '--', rel], repoRoot).toString('utf-8').trim(); } catch { entry = ''; }
-        const m = entry.match(/^(\d{6})\s+(\w+)\s+([0-9a-f]+)\t/);
+        // A LITERAL pathspec (no glob/magic), --full-tree so the path is repo-root relative, and the returned path must
+        // equal the requested one — never "the first entry ls-tree printed".
+        let entries;
+        try { entries = git(['ls-tree', '-z', '--full-tree', oid, '--', `:(literal)${rel}`], repoRoot).toString('utf-8'); } catch (err) {
+          // git could not INSPECT the tree — never reported as "not committed", which would be a different claim.
+          const why = String(err?.stderr ?? err?.message ?? '').trim().split('\n')[0];
+          problems.push({ id: s.id, field, why: `git could not inspect "${rel}" at ${rev} (${why || 'ls-tree failed'}) — unverified, not absent` });
+          continue;
+        }
+        const m = entries.split('\0').map((e) => e.match(/^(\d{6}) (\w+) ([0-9a-f]+)\t(.*)$/s)).find((x) => x && x[4] === rel);
         if (!m) { problems.push({ id: s.id, field, why: `"${rel}" is not committed at ${rev} (${oid.slice(0, 10)})` }); continue; }
-        const [, mode, type, blob] = m;
+        const [, mode, type, blob] = m; // m[4] is the path, already checked equal to rel
         if (type !== 'blob' || !['100644', '100755'].includes(mode)) {
           problems.push({ id: s.id, field, why: `"${rel}" at ${rev} is mode ${mode} ${type}, not a regular file (a symlink's blob is its link text)` });
           continue;

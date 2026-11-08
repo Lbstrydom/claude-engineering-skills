@@ -550,7 +550,8 @@ doc, a `status.md` entry, a plan's status or audit trail with figures — every 
 must trace to an artifact and carry `measured` / `derived` / `expected` with its
 command; every line citation is pinned (`node scripts/check-doc-citations.mjs <doc>`).
 An untraceable figure is fixed, or settled with `/investigate`, before the commit.
-Procedure: `references/claims-check.md`. No write-up in the change → skip, and say so.
+Procedure: `references/claims-check.md`; repeat it over the status.md entry and plan
+update Steps 2 and 5 write. No write-up in the change → skip, and say so.
 
 ---
 

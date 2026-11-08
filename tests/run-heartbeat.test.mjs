@@ -11,6 +11,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
+  gitCommonDir, MIN_STALE_AFTER_SEC,
   validateRunId, journalPath, startRun, appendRun, readJournal, parseJournalText,
   assessJournal, checkRun, listRuns, summariseRuns, resolveRunsDir,
 } from '../scripts/lib/run-heartbeat.mjs';
@@ -170,7 +171,7 @@ describe('CLI — a real wrapper, really killed', () => {
 
   test('killed wrapper ⇒ no end record ⇒ STALE, child liveness reported', async () => {
     const d = tmp();
-    const wrapper = spawn(process.execPath, [CLI, 'run', '--run-id', 'killme', '--stale-after', '1', '--dir', d, '--',
+    const wrapper = spawn(process.execPath, [CLI, 'run', '--run-id', 'killme', '--stale-after', '15', '--dir', d, '--',
       process.execPath, '-e', 'setTimeout(()=>{}, 60000)'], { stdio: 'ignore' });
     let childPid = null;
     for (let i = 0; i < 100 && !childPid; i++) {
@@ -181,13 +182,13 @@ describe('CLI — a real wrapper, really killed', () => {
     wrapper.kill('SIGKILL');
     await new Promise((r) => wrapper.on('exit', r));
     try {
-      const v = checkRun(d, 'killme', { now: Date.now() + 10_000 });
+      const v = checkRun(d, 'killme', { now: Date.now() + 60_000 });
       assert.equal(v.state, 'STALE');
       assert.equal(v.childPid, childPid);
-      assert.ok([true, false, 'unknown'].includes(v.childAlive));
-      const check = cli(['check', '--run-id', 'killme', '--dir', d]);
-      // the real clock: stale-after is 1s, so by now (≥1s later) it is stale or about to be
-      if (check.status !== 0) assert.equal(check.status, 3);
+      // POSIX: a non-detached child outlives a SIGKILLed parent. Windows: libuv puts it in a kill-on-close job object,
+      // so it dies with the wrapper. The probe must report whichever is true on this platform.
+      if (process.platform !== 'win32') assert.equal(v.childAlive, true, 'the child outlives its killed wrapper');
+      else assert.equal(v.childAlive, false, 'on Windows the child dies with its wrapper');
     } finally {
       try { process.kill(childPid); } catch { /* already gone */ }
     }
@@ -195,7 +196,7 @@ describe('CLI — a real wrapper, really killed', () => {
 
   test('watch exits 3 on a stale run and 0 on a clean end', () => {
     const d = tmp();
-    startRun(d, { runId: 'w', staleAfterSec: 1, now: Date.now() - 10_000 });
+    startRun(d, { runId: 'w', staleAfterSec: 15, now: Date.now() - 60_000 });
     const r = cli(['watch', '--run-id', 'w', '--poll', '1', '--dir', d], { timeout: 20_000 });
     assert.equal(r.status, 3, r.stdout + r.stderr);
     assert.match(r.stdout, /STALE/);
@@ -208,5 +209,50 @@ describe('CLI — a real wrapper, really killed', () => {
   test('bad run id and unknown flag ⇒ usage exit 2', () => {
     assert.equal(cli(['check', '--run-id', '../x', '--dir', tmp()]).status, 2);
     assert.equal(cli(['check', '--run-id', 'x', '--bogus']).status, 2);
+  });
+});
+
+describe('round-1 audit fixes', () => {
+  const cli = (args, opts = {}) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf-8', ...opts });
+  test('a cadence below the beat throttle floor is refused', () => {
+    assert.throws(() => startRun(tmp(), { runId: 'r', staleAfterSec: MIN_STALE_AFTER_SEC - 1 }), /at least/);
+    assert.notEqual(cli(['start', '--run-id', 'r', '--stale-after', '5', '--dir', tmp()]).status, 0);
+  });
+  test('a torn last line does not swallow the next record', () => {
+    const d = tmp();
+    const p = startRun(d, { runId: 'torn', staleAfterSec: 60, now: T0 });
+    fs.appendFileSync(p, '{"v":1,"ts":"2026-11-08T10:00:01.000Z","kind":"be'); // crash mid-write, no newline
+    appendRun(d, { runId: 'torn', kind: 'end', exitCode: 0, now: T0 + 2000 });
+    const v = checkRun(d, 'torn', { now: T0 + 3000 });
+    assert.equal(v.state, 'ENDED_OK');
+    assert.equal(v.malformedLines, 1);
+  });
+  test('only "not a git repository" means outside git; any other git failure throws', () => {
+    const fail = (status, stderr, code) => () => { const e = new Error('x'); e.status = status; e.stderr = stderr; e.code = code; throw e; };
+    assert.equal(gitCommonDir(fs.mkdtempSync(path.join(os.tmpdir(), 'nogit-')), { exec: fail(128, 'fatal: not a git repository (or any parent)') }), null);
+    assert.throws(() => gitCommonDir('/x', { exec: fail(undefined, '', 'ENOENT') }), /cannot resolve the runs dir/);
+    assert.throws(() => gitCommonDir('/x', { exec: fail(128, 'fatal: detected dubious ownership') }), /dubious ownership/);
+    assert.throws(() => resolveRunsDir('/x', { git: () => { throw new Error('boom'); } }), /boom/);
+  });
+  test('a wrapper killed between spawn and recording the pid reads STALE with liveness unknown', () => {
+    const d = tmp();
+    startRun(d, { runId: 'nopid', staleAfterSec: 60, now: T0 });
+    const v = checkRun(d, 'nopid', { now: T0 + 5 * 60_000 });
+    assert.equal(v.state, 'STALE');
+    assert.equal(v.childPid, null);
+    assert.equal(v.childAlive, 'unknown');
+  });
+  test('not-a-git-repository under an existing .git entry is a broken repo, not "outside git"', () => {
+    const d = tmp();
+    fs.writeFileSync(path.join(d, '.git'), 'gitdir: /nowhere/.git/worktrees/gone\n');
+    const fail = () => { const e = new Error('x'); e.status = 128; e.stderr = 'fatal: not a git repository: /nowhere/.git/worktrees/gone'; throw e; };
+    assert.throws(() => gitCommonDir(d, { exec: fail }), /cannot resolve the runs dir/);
+  });
+  test('--selfcheck-relocation after -- belongs to the child, not the wrapper', () => {
+    const d = tmp();
+    const r = cli(['run', '--run-id', 'sc', '--stale-after', '60', '--dir', d, '--', process.execPath, '-e', 'console.log("child ran")', '--', '--selfcheck-relocation']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /child ran/);
+    assert.equal(checkRun(d, 'sc').state, 'ENDED_OK');
   });
 });

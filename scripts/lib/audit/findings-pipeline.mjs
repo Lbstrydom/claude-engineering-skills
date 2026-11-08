@@ -404,7 +404,8 @@ export function formatAuditSummaryLine({
   // produced output and the change may have been read, and the round is still blind.
   const canaryBlock = verdict === 'INCOMPLETE' ? describeCanaryBlock(canary) : null;
   if (canaryBlock) {
-    return `Verdict: INCOMPLETE — ${canaryBlock}. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}`;
+    const others = [failedPasses.length > 0 ? `${failedPasses.length} pass(es) also failed` : null, cov].filter(Boolean).join('; ');
+    return `Verdict: INCOMPLETE — ${canaryBlock}${others ? ` (${others})` : ''}. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}`;
   }
   if (verdict !== 'INCOMPLETE') {
     const base = `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${secs}`;

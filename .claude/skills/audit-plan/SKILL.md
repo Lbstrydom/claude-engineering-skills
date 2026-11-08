@@ -152,7 +152,8 @@ when its condition holds:**
   attached is a build-time spike, not evidence: flag it. Naming a source/field must
   also prove its semantics match the contract.
 - **Campaign** (plan header has `- **Mode**: campaign`) — run `node scripts/campaign-contract-check.mjs "$PLAN_FILE"`;
-  each problem it prints is a HIGH finding. It proves presence only: judge each control's adequacy yourself.
+  each problem it prints is a HIGH finding; exit 2 means it did not run — say so, never read it as complete.
+  It proves presence only: judge each control's adequacy yourself.
 - **§11 clustering** (plan has the block) — check partition, coupling soundness,
   fix-gate placement, contiguous ordering, derived scope; a malformed block that would
   make `/cycle` build on un-audited coupled code is HIGH. `author-tier:` is advisory —
@@ -240,9 +241,8 @@ node scripts/write-plan-outcomes.mjs --result ".audit/$SID-r$ROUND-result.json" 
 
 ## Execution order
 
-**Wait for rebuttal BEFORE editing the plan.** 1. send rebuttal (rebut HIGH/MEDIUM)
-→ 2. wait for the response → 3. write the ledger (3.5) → 4. outcomes (3.5b,
-automatic) → 5. edit the plan (Step 4) → 6. re-audit (Step 5).
+**Wait for rebuttal BEFORE editing the plan**: rebuttal → response → ledger (3.5) →
+edit (Step 4) → re-audit (Step 5).
 
 ---
 

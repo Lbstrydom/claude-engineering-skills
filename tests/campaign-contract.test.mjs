@@ -65,10 +65,11 @@ describe('presence check', () => {
     for (const bad of ['3', 'five', '5.5']) assert.deepEqual(ids(checkCampaignContract(fullPlan({ values: { 'C7.items': bad } }), { repoRoot: ROOT })), ['C7.items'], bad);
   });
   it('evidence must be a repo-relative path inside the repo', () => {
-    for (const bad of ['/etc/passwd', 'C:\\x\\y.md', '../outside.md', 'docs/../../x.md']) {
+    for (const bad of ['/etc/passwd', 'C:\\x\\y.md', '../outside.md', 'docs/../../x.md', 'docs/temp/../result.md']) {
       assert.deepEqual(ids(checkCampaignContract(fullPlan({ values: { 'C7.evidence': bad } }), { repoRoot: ROOT })), ['C7.evidence'], bad);
     }
     assert.equal(isContainedRelativePath('docs/x.md', ROOT), true);
+    for (const empty of [',', ' , , ', '``']) assert.deepEqual(ids(checkCampaignContract(fullPlan({ values: { 'C11.done-evidence': empty } }), { repoRoot: ROOT })), ['C11.done-evidence'], empty);
   });
   it('a duplicate section is reported', () => {
     assert.ok(ids(checkCampaignContract(fullPlan({ dup: 'C4' }), { repoRoot: ROOT })).includes('C4'));
@@ -140,6 +141,48 @@ describe('--closeout (temp git repo)', () => {
     const r = verifyEvidenceAtRevision(plan, { repoRoot: d, rev: 'main' });
     assert.equal(r.ok, false);
     assert.match(r.problems[0].why, /not a regular file/);
+  });
+  it('a ./-prefixed or doubled-separator path names the same committed file', () => {
+    const d = repo();
+    fs.writeFileSync(path.join(d, 'docs/evidence/r.md'), 'rehearsal\n');
+    sh(d, 'add', 'docs/evidence/r.md');
+    sh(d, 'commit', '-q', '-m', 'evidence');
+    const variants = fullPlan({ values: { 'C7.evidence': './docs/evidence/r.md', 'C8.evidence': 'docs//evidence/r.md', 'C11.done-evidence': String.raw`docs\evidence\r.md` } });
+    assert.deepEqual(checkCampaignContract(variants, { repoRoot: d }).problems, []);
+    const r = verifyEvidenceAtRevision(variants, { repoRoot: d, rev: 'main' });
+    assert.equal(r.ok, true, JSON.stringify(r.problems));
+    assert.equal(new Set(r.artifacts.map((a) => a.path)).size, 1);
+  });
+  it('a directory path is not evidence, even though ls-tree lists its children', () => {
+    const d = repo();
+    fs.writeFileSync(path.join(d, 'docs/evidence/r.md'), 'rehearsal\n');
+    sh(d, 'add', 'docs/evidence/r.md');
+    sh(d, 'commit', '-q', '-m', 'evidence');
+    const dirPlan = fullPlan({ values: { 'C7.evidence': 'docs/evidence/', 'C8.evidence': 'docs/evidence/r.md', 'C11.done-evidence': 'docs/evidence/r.md' } });
+    const r = verifyEvidenceAtRevision(dirPlan, { repoRoot: d, rev: 'main' });
+    assert.equal(r.ok, false, 'the returned entry (docs/evidence/r.md) is not the requested path');
+  });
+  it('a glob in an evidence path is literal, never a pathspec match', () => {
+    const d = repo();
+    fs.writeFileSync(path.join(d, 'docs/evidence/r.md'), 'rehearsal\n');
+    sh(d, 'add', 'docs/evidence/r.md');
+    sh(d, 'commit', '-q', '-m', 'evidence');
+    const globPlan = fullPlan({ values: { 'C7.evidence': 'docs/evidence/r*.md', 'C8.evidence': 'docs/evidence/r.md', 'C11.done-evidence': 'docs/evidence/r.md' } });
+    const r = verifyEvidenceAtRevision(globPlan, { repoRoot: d, rev: 'main' });
+    assert.equal(r.ok, false);
+    assert.match(r.problems[0].why, /r*.md/);
+  });
+  it('a git failure while inspecting the tree is "unverified", never "not committed"', () => {
+    const d = repo();
+    const oid = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: d, encoding: 'utf-8' }).trim();
+    // corrupt the commit's tree object so ls-tree fails after rev-parse succeeded
+    const tree = execFileSync('git', ['rev-parse', `${oid}^{tree}`], { cwd: d, encoding: 'utf-8' }).trim();
+    const obj = path.join(d, '.git', 'objects', tree.slice(0, 2), tree.slice(2));
+    fs.chmodSync(obj, 0o644);
+    fs.writeFileSync(obj, 'not a zlib object');
+    const r = verifyEvidenceAtRevision(plan, { repoRoot: d, rev: oid });
+    assert.equal(r.ok, false);
+    assert.ok(r.problems.some((x) => /could not inspect/.test(x.why)), JSON.stringify(r.problems));
   });
   it('an unresolvable rev ⇒ problem, never a pass', () => {
     assert.equal(verifyEvidenceAtRevision(plan, { repoRoot: repo(), rev: 'nope' }).ok, false);
