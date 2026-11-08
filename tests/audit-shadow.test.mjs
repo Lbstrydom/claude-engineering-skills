@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import { runGenerationShadow, SHADOW_PASSES, seededShuffle, classifyShadowFailure } from '../scripts/lib/audit-shadow.mjs';
 import { resolveArms } from '../scripts/lib/audit-arms.mjs';
+import { openaiConfig } from '../scripts/lib/config.mjs';
 import { applyModelAbAdjudication, reserveSpend } from '../scripts/lib/store/model-ab.mjs';
 
 const ARMS_BC = resolveArms({ AUDIT_MODEL_SHADOW: 'B,C' }).arms;
@@ -146,7 +147,12 @@ describe('runGenerationShadow — v2 execution DAG & attribution', () => {
     const structure = calls.model.find((c) => c.passName === 'structure');
     const backend = calls.model.find((c) => c.passName === 'backend');
     assert.equal(structure.reasoningEffort, 'low');
-    assert.equal(backend.reasoningEffort, 'high');
+    // backend's tier is `high`, clamped by the operator ceiling exactly as production
+    // clamps it. Literal table, deliberately NOT capReasoning: the expectation must not
+    // share code with the implementation. reasoning-ceiling.test.mjs reruns this test
+    // under ceiling=medium so the clamp is exercised, not just the ambient default.
+    const EXPECTED_BACKEND = { high: 'high', medium: 'medium', low: 'low' };
+    assert.equal(backend.reasoningEffort, EXPECTED_BACKEND[openaiConfig.reasoning]);
   });
 });
 
