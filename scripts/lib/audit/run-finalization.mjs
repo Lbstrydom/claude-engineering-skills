@@ -129,6 +129,8 @@ export async function finalizeRun(data, writeOutcomes) {
   // audit-loop, and (verbatim, via the transcript) the final reviewer — sees which changed files were and were
   // not audited. Absent means "not measured", never "clean".
   if (assembled.coverage) mergedResult._coverage = assembled.coverage;
+  // The known-answer canary's outcome (AUDIT_CANARY=1 only; absent = not asked, never "passed").
+  if (assembled.canary) mergedResult._canary = assembled.canary;
   // The code's own convergence verdict — the value that licenses `AI-Gate` — on the round JSON, so the skill's
   // "2 stable rounds" judgement can read it instead of re-deriving it from H/M/L (a PASS can carry
   // `changed-lines-unread`: docs/plans/audit-hunk-window-coverage.md D9).

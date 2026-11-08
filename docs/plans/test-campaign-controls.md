@@ -293,8 +293,8 @@ Close-out: `npm run skills:regenerate && npm run skills:check`, both size gates,
 ## 6. Back-test — every campaign item against a real incident
 
 **Rule**: an item that names no incident it would have caught is dropped.
-Sources: WCA `docs/capstone/e5-status-ledger-2026-11-08.md` (B1–B16) and
-`e5-protocol.md` Amendments 1–2 (A1.n / A2.n); CES AGENTS.md + docs as cited.
+Sources: `wine-cellar-app/docs/capstone/e5-status-ledger-2026-11-08.md` (B1–B16) and
+`wine-cellar-app/docs/capstone/e5-protocol.md` Amendments 1–2 (A1.n / A2.n); CES AGENTS.md + docs as cited.
 "Brief" = incident reported in the commissioning brief (2026-11-08) with no
 ledger number.
 
@@ -303,7 +303,7 @@ ledger number.
 | **C1** Decision + metric | The decision the result informs, the error costs, the metric derived from them; state the base where the metric is trivially satisfied | B9 ("100% vintage agreement" — all 37 NL/ZA inputs had no vintage); A1.3 (57 cases cannot certify 0.95 — the market question was not decidable as posed) |
 | **C2** Split, leakage, sealed test custody | Group-aware split by canonical identity; test set hash (proves identity, not secrecy) + an access record; "test once" = one recorded authorised run; a changed rule ⇒ fresh test set; post-hoc analysis labelled exploratory | A1.5c (cross-source twins: 495 of 683 same-name groups — same wine on both sides of a split); B5 (sensitivity rule written after the core errors were seen — post hoc for core); B12 (agreement report untimestamped, so "before adjudication" unprovable) |
 | **C3** Feasibility / power | Before pre-registration: can the declared rule produce a non-empty result? State the bound with its assumptions (e.g. 0 errors in 50 HITs ⇒ one-sided 95% lower bound on precision only ≈94.2%) | A1.5a (no feasibility check; ≥59 error-free HITs needed); B5 (rule empty under T null on both strata — knowable in advance); A2.7 (erratum: the floor's arithmetic was mis-explained) |
-| **C4** Instrument + controls over the WHOLE pipeline | Controls that exercise candidate generation, not only the decision; labellers sharing an input are not independent; ≥2 adjudicators or a stated limit | A1.5b (labelling index searched producer+wine words only — 14% of rows invisible to BOTH labellers); B8 (g305 NONE-NONE probably wrong); B7 (24 market NONE labels with no independent check); A2.6 (one adjudicator); B4 (different labeller model/prompt/index across strata — confounded comparison) |
+| **C4** Instrument + controls over the WHOLE pipeline | Controls that exercise candidate generation, not only the decision; labellers sharing an input are not independent; ≥2 adjudicators or a stated limit | A1.5b (labelling index searched producer+wine words only — 14% of rows invisible to BOTH labellers); B8 (g305 NONE-NONE probably wrong); B7 (24 market NONE labels with no independent check); A2.6 (one adjudicator); B4 (different labeller model/prompt/index across strata — confounded comparison); CES 2026-11-08 (this plan's own canary, skipped in 7 of 12 runs while its path announced it — §10) |
 | **C5** Declared telemetry + day-0 fill check | Every column the analysis reads is declared; day 0 checks each fills with a real value (a zero is a measurement only if something measured it) | B10 (Cohere reported-model field empty on all 57 calls); CES hardcoded telemetry zero (memory `feedback_fabricated_telemetry_zero`); CES reader matching 0 findings in 7 sessions (`severity` vs `code`, `docs/reference/testing-doctrine.md` §prose↔code seam) |
 | **C6** Operations | Pinned revision via `npm run fixture:create`; model identity recorded from the response; price review / quota / spend limit checked before the run; artifact hashes by tool; a heartbeat run id per run (§2.1) | B2 (labels from code not on main; model swapped after a 429); A2.2 (`command-a-plus` monthly cap on a production key); CES 2026-08-17 (~$13 lost: two spend runs killed by a rebase and a concurrent commit — AGENTS.md §pinned revision); B11 (adjudication files missing); Brief (overnight runs that silently died) |
 | **C7** Dress-rehearsal gate | Before the real run: N ≥ 5 items end to end through the real pipeline writing real artifacts, hashes verified, telemetry filled, canary detected | B13 (`SHA256SUMS` lists itself — a rehearsal hash check fails on day 0); A1.5b (an in-catalogue item with an empty `wine` field fails to surface); CES tiered-shadow window "met" at 100% `fallback_legacy` (`docs/plans/tiered-recall-audit-pipeline.md` addendum 2026-07-14) |
@@ -379,6 +379,53 @@ fails, then green:
 | Monitor expiry read as "healthy" | `watch` docs + `/fleet` reference: expiry is not a verdict; re-arm or `check` |
 | Journal in git common dir not writable | `start`/`run` exit non-zero naming the path — no silent local fallback |
 | Wrapper killed, child keeps spending | STALE + `childAlive` reported; docs give the identity-checked stop (`check` prints the child pid and command) |
+
+## 10. Implementation Log (2026-11-08)
+
+### Red-then-green, per new check (measured: mutate the check, run its test, restore)
+
+| Check | Mutation | Red | Green |
+|---|---|---|---|
+| Heartbeat STALE | stale branch `if (false)` | 5 of 21 fail (withheld beat, killed wrapper, > 1 MB journal, fleet line, `watch`) | 21 pass, 1 skip (symlink on Windows) |
+| Canary verdict | `canaryBlocked = false` | 2 of 15 fail (blind round, not-planted) | 15 pass |
+| Canary match rule | drop the assignment test | 1 fail ("named constant" accepted) | 15 pass |
+| Canary `section` match | `section` branch `return false` | 6 of 15 fail | 15 pass |
+| Contract C7 items / closeout mode | `n < 0`; mode check `if (false)` | 2 of 15 fail | 15 pass |
+| `/ship` Step 1.5 | (presence test only — guards the step's presence, not its execution) | — | 3 pass |
+
+Commands: `node --test tests/run-heartbeat.test.mjs`, `tests/audit-canary.test.mjs`,
+`tests/campaign-contract.test.mjs`, `tests/ship-claims-check-step.test.mjs`.
+
+### What the live runs caught that review did not
+
+1. **The canary matched on a field the producer never emits.** Producer findings
+   (`ProducerFindingSchema`) carry the location in `section`; `file` is derived later.
+   The first live run (flag on) printed `missed` with the model having reported the
+   defect — a `file`-only matcher reads every real report as a miss. The hand-written
+   fixtures used `file` and so encoded the same wrong assumption (AGENTS.md §prose↔code
+   seam). Fixed: `citesCanary` matches `section` or `file`; fixtures now use the producer
+   shape; a mutation of the `section` branch turns 6 tests red.
+2. **A plant that announces itself gets skipped.** With the virtual file at
+   `audit-canary/c<id>.mjs`, the `be-services` pass named the defect in **5 of 12** live
+   runs (measured: 4/8 at the medium reasoning ceiling, 1/4 with
+   `OPENAI_AUDIT_REASONING=high`; every miss was a pass reporting zero findings). Renamed
+   to a neutral `src/access/console-guard-<id>.mjs`: **6 of 6** detected (measured).
+   Same lesson as C4: a known-answer item must be indistinguishable from a real one.
+
+### Canary token cost (measured, one-file scope, `--passes backend`, air-gapped store)
+
+| Arm | Input tokens | Output tokens | costUsd |
+|---|---|---|---|
+| flag off | 9,721 | 87 | 0.0102 |
+| flag on, neutral path (6 runs) | 9,796–9,798 | 359–439 | 0.0116–0.0120 |
+
+Δ ≈ **+75 input tokens** (measured) and ≈ +270–350 output tokens (measured; the pass
+writes the canary finding), ≈ **+$0.0014–0.0018 per planted pass** (measured). On this
+tiny scope that is +14–18%; on a normal round (≈ 100k input tokens across 5 passes, 1–2
+planted) it is a fixed ≈ $0.002–0.004, i.e. under 1% (derived from the per-pass delta).
+Command: `AUDIT_CANARY=1 AUDIT_DB_URL= LEARNING_DISABLE=1 node scripts/openai-audit.mjs code docs/plans/test-campaign-controls.md --files scripts/lib/mechanical-waves.mjs --passes backend --no-tools --no-debt-ledger --out <file>`.
+Detection was measured on one scope and one model; it stays opt-in until a few real
+rounds confirm the rate.
 
 ## 9. Audit Trail
 

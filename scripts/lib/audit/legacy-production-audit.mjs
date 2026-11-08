@@ -51,6 +51,7 @@ import {
 import { readFilesAsAnnotatedContextDetailed } from '../diff-annotation.mjs';
 import { startCoverage, makeCoverageInput } from './file-coverage.mjs';
 import { admittedRequiredPaths, widenScopeWithRequired } from './required-subjects.mjs';
+import { createRoundCanary } from './canary.mjs';
 import {
   generateTopicId, populateFindingMetadata, jaccardSimilarity,
   suppressReRaises, buildRulingsBlock, R2_ROUND_MODIFIER, buildR2SystemPrompt,
@@ -810,9 +811,9 @@ async function runLegacyProductionAuditImpl(ctx) {
   } catch (err) {
     process.stderr.write(`  [requirements] skipped (non-blocking) — ${err.message}\n`);
   }
-  // Wrapper: thread the run-static requirements rubric into every pass
-  // prompt without repeating it at each call site.
-  const passPrompt = (opts) => buildCachePrompt({ ...opts, requirementsRubric });
+  // Wrapper: thread the requirements rubric into every pass prompt, and (AUDIT_CANARY=1 only) plant the known-answer canary.
+  const roundCanary = createRoundCanary(process.env, { seed: `${round || 1}:${Date.now()}` });
+  const passPrompt = (opts) => roundCanary.plant(buildCachePrompt({ ...opts, requirementsRubric }), opts);
 
   // When --files is specified, scope quality passes to those files + their shared deps
   // This enables delta-only auditing on Round 2+
@@ -1309,8 +1310,8 @@ async function runLegacyProductionAuditImpl(ctx) {
   if (wave2Promises.length === 0) {
     wave2Promises.push(Promise.resolve({ result: EMPTY_FINDINGS, usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 }, latencyMs: 0 }));
   }
-
   const wave2Results = await Promise.all(wave2Promises);
+  roundCanary.resolve(wave2Results, [...backendPassNames, 'frontend']); // strips canary findings BEFORE ledger suppression
   const backendResults = wave2Results.slice(0, backendPassNames.length);
   const frontendResult = wave2Results[backendPassNames.length] ?? { result: EMPTY_FINDINGS, usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 }, latencyMs: 0 };
   cacheWaveResults([...backendPassNames, 'frontend'], wave2Results);
@@ -1472,10 +1473,8 @@ async function runLegacyProductionAuditImpl(ctx) {
   // ── Phase 4 finalization (legacy-production-audit-decomposition) ────────
   // Delegates to finding-assembly.mjs (4b) -> run-telemetry.mjs (4d) ->
   // run-persistence.mjs (4c) via the thin run-finalization.mjs coordinator.
-  // `writeOutcomes` is the SAME tally object declared at the top of this
-  // function (:402) — pre-wave writes (audit.planLink, audit.diffComplexity)
-  // already accumulated into it before this point, and it must keep
-  // accumulating through 4d/4c, not be replaced by a fresh object.
+  // `writeOutcomes` is the SAME tally declared at the top of this function: pre-wave writes (audit.planLink,
+  // audit.diffComplexity) already accumulated into it and it keeps accumulating through 4d/4c — never a fresh object.
   const finalizationData = {
     ctx, round, planFile, planContent, strictLint, changedFiles, impactSet,
     totalLatency, diffLinesChanged, diffFilesChanged, sessionCacheHit, mapReducePasses,
@@ -1487,7 +1486,7 @@ async function runLegacyProductionAuditImpl(ctx) {
     frontendWillRun, frontendResult, runSustainability, sustainResult, runQuickfix, quickfixResult,
     runDuplication, duplicationResult, runAdjacency, adjacencyResult,
     archState, archResult, orphanState, orphanResult, eventWiringState, eventWiringResult,
-    isR2Plus, allowInfraScope,
+    isR2Plus, allowInfraScope, canary: roundCanary.outcome(),
     coverageInput: makeCoverageInput({ recorder: coverageRecorder, coverageChanged, changedFiles, fileFilter, coverageExcluded, diffMap, toolCapability, noTools, requiredSubjects }),
   };
   setChunkingObserver(null);

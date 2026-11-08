@@ -39,6 +39,7 @@ import { listRepoFiles } from '../repo-inventory.mjs';
 import { verifyExistenceFindings, effectiveSeverity, countsTowardVerdict, isRefuted } from './finding-verification.mjs';
 import { evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
 import { checkDetectors } from './detector.mjs';
+import { canaryBlocksEvidence, describeCanaryBlock } from './canary.mjs';
 import { runSuppressionPasses } from '../suppression-policy.mjs';
 import { reconcileRemediationProjection, markFindingsRemediation } from '../../learning-store.mjs';
 import { appendEvents, mergeLedgers as mergeLedgersForSuppression } from '../debt-memory.mjs';
@@ -873,6 +874,15 @@ export async function assembleFindings(data) {
     verdict = 'INCOMPLETE';
   }
 
+  // Known-answer canary (AUDIT_CANARY=1, docs/plans/test-campaign-controls.md §2.2): with the flag on, only a
+  // canary DETECTED in every planted pass is evidence — missed / not-planted is a blind round, not a clean one.
+  // Rides the existing INCOMPLETE path (exit 3, countFindings.failed); convergence is withheld below.
+  const canaryBlocked = canaryBlocksEvidence(data.canary);
+  if (canaryBlocked) {
+    process.stderr.write(`  [canary] ${describeCanaryBlock(data.canary)} — round is INCOMPLETE\n`);
+    verdict = 'INCOMPLETE';
+  }
+
   const totalUsage = {
     input_tokens: allResults.reduce((s, r) => s + (r.usage?.input_tokens ?? 0), 0),
     cached_tokens: allResults.reduce((s, r) => s + (r.usage?.cached_tokens ?? 0), 0),
@@ -959,7 +969,9 @@ export async function assembleFindings(data) {
   }
 
   return {
-    allFindings, passRegistry, allResults, failedPasses, coverage, verdict, high, medium, low, quickFix, convergence, reopenedSet,
+    allFindings, passRegistry, allResults, failedPasses, coverage, verdict, high, medium, low, quickFix, reopenedSet,
+    convergence: canaryBlocked ? { ...convergence, converged: false, reason: `canary-${data.canary.status}` } : convergence,
+    ...(data.canary ? { canary: data.canary } : {}),
     linterOverlapData, totalUsage, cacheMetrics, passTimings, summaryLines, fpPassSuppressedCount,
     ...(suppressionData !== undefined ? { suppressionData } : {}),
     ...(debtMemoryData !== undefined ? { debtMemoryData } : {}),

@@ -30,6 +30,7 @@ This is the list to read when asking "what is in flight?".
 | [Ship trains — batched, impact-based `/ship --train`](./ship-trains.md) | `Approved` |  |
 | [Align CES skills with Claude Code skill best practice](./skill-best-practice-alignment.md) | `Approved` |  |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
+| [Test-Campaign Controls — heartbeat, audit canary, close-out claims check, `/plan --campaign`](./test-campaign-controls.md) | `In Progress` |  |
 
 ## Parked
 

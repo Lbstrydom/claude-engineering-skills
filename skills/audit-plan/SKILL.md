@@ -151,6 +151,8 @@ when its condition holds:**
 - **Test-premise lint** — "tests already cover X" with no executed command + result
   attached is a build-time spike, not evidence: flag it. Naming a source/field must
   also prove its semantics match the contract.
+- **Campaign** (plan header has `- **Mode**: campaign`) — run `node scripts/campaign-contract-check.mjs "$PLAN_FILE"`;
+  each problem it prints is a HIGH finding. It proves presence only: judge each control's adequacy yourself.
 - **§11 clustering** (plan has the block) — check partition, coupling soundness,
   fix-gate placement, contiguous ordering, derived scope; a malformed block that would
   make `/cycle` build on un-audited coupled code is HIGH. `author-tier:` is advisory —
@@ -314,11 +316,8 @@ in the plan's audit trail. Deliberation protocol and category-error handling:
 
 ## UX Rules
 
-1. Status card after every phase
-2. Never dump raw JSON — parse and summarise
-3. Show every plan edit with file + line reference
-4. Cost tracking: `cost ≈ (input × 2.5 + output × 10) / 1M`
-5. Batch all user decisions into one prompt
+Status card after every phase; summarise, never dump raw JSON; show every plan edit
+with file + line; batch all user decisions into one prompt.
 
 ---
 

@@ -119,3 +119,18 @@ The user's own task text can
 contain an apostrophe (e.g. "the user's original task"), and an apostrophe
 inside a single-quoted shell string terminates the string early, corrupting
 the call (same defect class the `--triage` payload note above already covers).
+
+## Phase 7.5 — arm-eval capture
+
+`upsert-plan` fires capture itself: when the payload carries `taskText` and the
+per-repo `arm-eval-toggle` is on, it dispatches a detached, blinded A/B/C
+arm-eval session in the background (`scripts/lib/arm-eval/capture-trigger.mjs`).
+A separate `arm-eval-maybe-capture` command would double-capture. Toggle off →
+byte-identical no-op; the plan is unaffected.
+
+## Phase 7 `Depends on:` read-back
+
+`node scripts/check-plan-status.mjs --check-deps <this-plan>` reads each
+`Depends on` line against the referenced plan's own `Status:` line. An unmet
+dependency is reported, never blocked on, since only the operator knows whether
+it is still safe to proceed.

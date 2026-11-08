@@ -33,6 +33,7 @@ Usage: /plan <task description>                                  — auto-detect
 Usage: /plan <task> --scope=backend|frontend|full-stack          — explicit scope hint
 Usage: /plan <task> --no-diagram                                 — skip the architecture mermaid block
 Usage: /plan <task> --diagram=sequence|graph|er|state            — force a specific mermaid diagram type
+Usage: /plan <task> --campaign                                   — an evaluation/test campaign: adds the C1-C12 contract
 Triggers on: "plan", "design this", "architect this", "I want to add",
 "let's design", "plan the implementation", "how should we structure this".
 ```
@@ -581,11 +582,8 @@ structured line, not only in prose (→ `references/authoring-rationale.md`
 - **Depends on**: docs/plans/<other-plan>.md — <why, e.g. "wait for Cluster F to land first">
 ```
 
-One line per dependency. `node scripts/check-plan-status.mjs --check-deps
-<this-plan>` reads it back against the referenced plan's own `Status:` line
-(`/cycle` Step 0.5 runs this automatically) — it is a nudge, not a gate:
-an unmet dependency is reported, never blocked on, since only the operator
-knows whether it is still safe to proceed.
+One line per dependency; `/cycle` Step 0.5 reads it back with
+`node scripts/check-plan-status.mjs --check-deps <this-plan>` — a nudge, never a gate.
 
 Register in the cross-skill store so audit-plan/audit-code + ux-lock can link:
 
@@ -613,11 +611,8 @@ Update status as implementation progresses.
 
 ### Phase 7.5 — Arm-eval capture (AUTOMATIC — no action)
 
-`upsert-plan` fires capture itself: when the payload carries `taskText` and the
-per-repo `arm-eval-toggle` is on, it dispatches a detached, blinded A/B/C
-arm-eval session in the background (`scripts/lib/arm-eval/capture-trigger.mjs`).
-You do NOT run a separate `arm-eval-maybe-capture` command — doing so would
-double-capture. Toggle off → byte-identical no-op. Your plan is unaffected.
+`upsert-plan` fires arm-eval capture itself — never run `arm-eval-maybe-capture`
+too (→ `references/authoring-rationale.md` §Phase 7.5 — read when asked how capture works).
 
 ---
 
@@ -629,6 +624,7 @@ double-capture. Toggle off → byte-identical no-op. Your plan is unaffected.
 - **One document, one audit** — no merging child plans, no archive cruft
 - **Section 10 acceptance criteria are what `/ux-lock verify` grades** for frontend/full-stack — a **report, not a gate**: verify exits 0 even when criteria fail, and `/ship` does not read `plan_satisfaction`. Write them to be gradeable, not because they block a ship (they don't)
 - **Phase the work only when it's large** — §7b/§11 are conditional (Gate 1: ≥6 files / ≥2 subsystems / dep-chain; Gate 2: ≥2 clusters). Never emit a lone "Phase 1"; cluster coupled phases so the audit sees the seam
+- **A measurement is a campaign** — an eval, labelled test set or experiment takes `--campaign`: `- **Mode**: campaign`, the C1–C12 `## Campaign Contract`, a dress rehearsal before the real run (`references/campaign.md`)
 - **Show every state** — Empty/Loading/Error/Success for any component you design
 - **Wireframe before code** — ASCII layouts prevent expensive rework
 - **Accessibility is not optional** — baseline, not nice-to-have
@@ -653,6 +649,7 @@ in Phase 0 tells you which ones).
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Phase 6 §1 — writing the Code Trace, or any `file:line` citation, into the plan document. |
 | `references/context-callouts.md` | Render templates for the plan's context callouts — incident table, freshness and bootstrap warnings, persona issues. | Phase 0.5c returned records, a `freshnessWarning` or a `hint`, OR Phase 1 persona rows matched the feature. |
 | `references/authoring-rationale.md` | Why /plan's authoring rules exist — Code Trace, repo-relative paths, Mermaid checks, payload file, Depends on. | A rule is questioned, fewer than 5 plan paths resolve, OR a change repeats across ≥~5 similar sites. |
+| `references/campaign.md` | Campaign mode — the C1-C12 contract an evaluation or test campaign plan must carry, and the dress-rehearsal gate. | `--campaign` was passed, OR the plan's output is a measurement (eval, test set, experiment). |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
 
 — end of /plan —

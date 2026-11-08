@@ -1,0 +1,179 @@
+/**
+ * @fileoverview Known-answer canary for code-audit rounds (opt-in: `AUDIT_CANARY=1`).
+ *
+ * A round that reports nothing is only evidence of cleanliness if the auditor
+ * could have reported something. The canary plants one small virtual file with
+ * one unambiguous defect (an authorization check written as an assignment) into
+ * the code message of every wave-2 correctness pass. If a planted pass does not
+ * name that defect, the round is INCOMPLETE — blind, not clean — and rides the
+ * existing INCOMPLETE path (exit 3, `countFindings.failed`, no convergence).
+ *
+ * Fail closed when enabled: only `detected` in EVERY planted pass is evidence;
+ * `missed`, `not-planted` (no eligible pass ran) and `unsupported-pipeline`
+ * (tiered pipeline, v1) all make the round INCOMPLETE. Unset ⇒ byte-identical
+ * prompts and results (no `_canary` key).
+ *
+ * Not a wave: no `PASS_PROMPTS` entry and no model call of its own, so it does
+ * not belong in `MECHANICAL_WAVES` and the model shadow cannot enrol it.
+ *
+ * Detection reads each planted pass's RETURNED result (after safeCallGPT's own
+ * retries; for map-reduce, after REDUCE — a reduce that drops the canary is
+ * pipeline blindness) BEFORE ledger suppression, and every canary-cited finding
+ * is stripped so none reaches the ledger, store, debt capture or counts.
+ * Stated limit: keyword evidence that the defect was named, not proof the model
+ * understood it — a floor against a blind or truncated pass, not a recall estimate.
+ *
+ * Plan: docs/plans/test-campaign-controls.md §2.2.
+ *
+ * @module scripts/lib/audit/canary
+ */
+import crypto from 'node:crypto';
+import { normalizePath } from '../file-io.mjs';
+
+// A neutral location: a path that announces itself as a test plant invites the model to skip it (measured: see
+// docs/plans/test-campaign-controls.md §10). The id keeps it unique; it never exists on disk.
+export const CANARY_DIR = 'src/access';
+/** The wave-2 correctness passes that receive the canary. Selected by NAME, never call order. */
+export const CANARY_ELIGIBLE_PASSES = Object.freeze(['backend', 'be-routes', 'be-services', 'frontend']);
+const ASSIGNMENT_RE = /\bassign|single\s*['"`]?=['"`]?|['"`]=['"`]\s*(?:instead of|rather than|vs\.?|versus)|instead of\s*['"`]?={2,3}/i;
+const SUBJECT_RE = /admin|role|authori[sz]/i;
+
+export function canaryEnabled(env = process.env) {
+  return env.AUDIT_CANARY === '1';
+}
+
+/** The planted file for one round. `seed` varies it per round (path and names), never its defect. */
+export function createCanary({ seed = String(Date.now()) } = {}) {
+  const id = crypto.createHash('sha256').update(`audit-canary:${seed}`).digest('hex').slice(0, 10);
+  const relPath = `${CANARY_DIR}/console-guard-${id}.mjs`;
+  const source = [
+    `// Request guard for the admin console (build ${id}).`,
+    `export function canOpenAdminConsole(user) {`,
+    `  if (!user) return false;`,
+    `  if (user.role = 'admin') {`,
+    `    return true;`,
+    `  }`,
+    `  return false;`,
+    `}`,
+  ].join('\n');
+  const block = `\n\n### ${relPath}\n\`\`\`js\n${source}\n\`\`\`\n`;
+  return { id, path: relPath, normalisedPath: normalizePath(relPath), block, chars: block.length };
+}
+
+function isPlantedUnit(unitLabel) {
+  return !unitLabel || /^Audit Unit 1\//.test(unitLabel);
+}
+
+/**
+ * Does this finding cite the canary file? A PRODUCER finding (raw pass output, ProducerFindingSchema) has no
+ * `file` field — its location is `section` ("audit-canary/c<id>.mjs:4", or prose naming the path). `file` is
+ * derived later in the pipeline, so both are checked. Found by the first live run: a `file`-only match read
+ * every real canary report as a miss (docs/plans/test-campaign-controls.md §10).
+ */
+export function citesCanary(finding, canary) {
+  if (finding?.file && normalizePath(String(finding.file)) === canary.normalisedPath) return true;
+  const where = [finding?.section, finding?.file].filter((s) => typeof s === 'string').join(' ').replace(/\\/g, '/').toLowerCase();
+  return where.includes(canary.path.toLowerCase()) || where.includes(`console-guard-${canary.id}`);
+}
+
+/** Does this canary-file finding name the planted defect (an assignment in the auth check)? */
+export function namesCanaryDefect(finding) {
+  const text = [finding?.category, finding?.detail, finding?.description, finding?.recommendation, finding?.risk]
+    .filter((s) => typeof s === 'string').join(' \n ');
+  return ASSIGNMENT_RE.test(text) && SUBJECT_RE.test(text);
+}
+
+/**
+ * A per-round canary controller. Disabled ⇒ `plant` returns its input unchanged and
+ * `outcome()` is null.
+ */
+export function createRoundCanary(env = process.env, { seed } = {}) {
+  if (!canaryEnabled(env)) {
+    return { enabled: false, plant: (built) => built, resolve: () => null, outcome: () => null, markUnsupported: () => null };
+  }
+  const canary = createCanary({ seed });
+  const planted = new Set();
+  let outcome = null;
+
+  /** Append the canary file to the code (last) message of an eligible pass call. */
+  function plant(built, opts = {}) {
+    if (!CANARY_ELIGIBLE_PASSES.includes(opts.passName) || !isPlantedUnit(opts.unitLabel)) return built;
+    if (opts.unitLabel === 'probe') return built;
+    const messages = Array.isArray(built?.messages) ? built.messages : null;
+    if (!messages || messages.length === 0) return built;
+    planted.add(opts.passName);
+    const last = messages[messages.length - 1];
+    return { ...built, messages: [...messages.slice(0, -1), { ...last, content: `${last.content}${canary.block}` }] };
+  }
+
+  /**
+   * Strip every canary-cited finding from the given pass results (in place) and
+   * record which planted passes named the defect.
+   * @param {Array<{result?: {findings?: object[]}, failed?: boolean}>} results
+   * @param {string[]} passNames - same order as `results`
+   */
+  function resolve(results, passNames) {
+    const detectedIn = [];
+    const missedIn = [];
+    const failedIn = [];
+    (results || []).forEach((r, i) => {
+      const name = passNames[i];
+      const findings = Array.isArray(r?.result?.findings) ? r.result.findings : [];
+      const cited = findings.filter((f) => citesCanary(f, canary));
+      // Replace, never mutate: a skipped pass's `result` can be a shared EMPTY_* constant.
+      if (cited.length > 0) r.result = { ...r.result, findings: findings.filter((f) => !citesCanary(f, canary)) };
+      if (!planted.has(name)) return;
+      const hit = cited.find(namesCanaryDefect);
+      if (r?.failed) failedIn.push(name);
+      else if (hit) detectedIn.push(name);
+      else missedIn.push(name);
+      if (process.env.AUDIT_CANARY_DEBUG === '1') process.stderr.write(`  [canary] ${name}: ${JSON.stringify(cited)}\n`);
+      else process.stderr.write(`  [canary] ${name}: ${hit ? `detected (${hit.severity ?? '?'} "${String(hit.section ?? '').slice(0, 80)}")` : r?.failed ? 'pass failed' : `MISSED (${cited.length} finding(s) on the canary file, none naming the defect)`}\n`);
+    });
+    let status;
+    if (planted.size === 0) status = 'not-planted';
+    else if (missedIn.length > 0) status = 'missed';
+    else if (failedIn.length > 0) status = 'pass-failed';
+    else status = 'detected';
+    outcome = { status, planted: [...planted], detectedIn, missedIn, failedIn, chars: canary.chars, path: canary.path };
+    return outcome;
+  }
+
+  return {
+    enabled: true,
+    canary,
+    plant,
+    resolve,
+    outcome: () => outcome ?? { status: 'not-planted', planted: [...planted], detectedIn: [], missedIn: [], failedIn: [], chars: canary.chars, path: canary.path },
+  };
+}
+
+/** Is this canary outcome evidence? Only `detected` is; null (disabled) is "not asked". */
+export function canaryBlocksEvidence(outcome) {
+  return Boolean(outcome) && outcome.status !== 'detected';
+}
+
+/**
+ * The tiered pipeline has no canary in v1: with the flag on, its result is
+ * stamped `unsupported-pipeline` and made INCOMPLETE rather than passing unchecked.
+ * Returns the (mutated) result.
+ */
+export function applyCanaryToUnsupportedPipeline(result, env = process.env) {
+  if (!canaryEnabled(env) || !result || result._canary) return result;
+  result._canary = { status: 'unsupported-pipeline', planted: [], detectedIn: [], missedIn: [], failedIn: [], chars: 0, path: null };
+  result.verdict = 'INCOMPLETE';
+  result._convergence = { ...(result._convergence || {}), converged: false, reason: 'canary-unsupported-pipeline' };
+  process.stderr.write('  [canary] AUDIT_CANARY=1 but the tiered pipeline has no canary — round marked INCOMPLETE\n');
+  return result;
+}
+
+/** The summary-line clause for a canary that blocks evidence. */
+export function describeCanaryBlock(outcome) {
+  switch (outcome?.status) {
+    case 'missed': return `the planted canary defect was not reported by ${outcome.missedIn.join(', ')} (the auditor was blind this round)`;
+    case 'not-planted': return 'AUDIT_CANARY=1 but no eligible pass ran, so the canary was never planted';
+    case 'unsupported-pipeline': return 'AUDIT_CANARY=1 but this pipeline has no canary';
+    case 'pass-failed': return `the canary's pass failed (${outcome.failedIn.join(', ')})`;
+    default: return null;
+  }
+}

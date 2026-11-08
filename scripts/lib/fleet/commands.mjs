@@ -37,6 +37,7 @@ import {
 import { parseWaitingOn, splitPaths } from './argv.mjs';
 import { newDirectiveId, readDirectives, readHosts, writeDirective, writeHost } from './directives.mjs';
 import { planPrune } from './prune.mjs';
+import { listRuns, resolveRunsDir, summariseRuns } from '../run-heartbeat.mjs';
 import { PRUNE_STATUS_BUDGET_MS, invalidatePruneCache, pruneStatusLine, summarisePrune, writePruneCache } from './prune-summary.mjs';
 import { proposalsLine, readProposalsSummary } from './proposals.mjs';
 import { refreshUpstreamCache, renderUpstreamLine } from './upstream-count.mjs';
@@ -217,7 +218,9 @@ export function cmdStatus(ctx, flags = {}) {
   const upstream = refreshUpstreamCache({ fleetDir: unregisteredCacheDir(ctx.cwd), now: ctx.now ?? new Date() });
   if (upstream.warning) warnings.push(upstream.warning);
   const upstreamLine = upstream.applicable ? renderUpstreamLine({ state: 'ok', record: upstream.record }, ctx.now ?? new Date(), ctx.cmd) : null;
-  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now, all: Boolean(flags['--all']), unregistered }), prune.line, proposalsLine(proposals, ctx.cmd), ...(upstreamLine ? [upstreamLine] : [])];
+  // Background-run heartbeats (docs/plans/test-campaign-controls.md §2.1): absent dir says nothing, unreadable says UNMEASURED.
+  const runsLine = summariseRuns(listRuns(resolveRunsDir(ctx.cwd).dir, { now: ctx.now ? new Date(ctx.now).getTime() : Date.now() }));
+  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now, all: Boolean(flags['--all']), unregistered }), prune.line, proposalsLine(proposals, ctx.cmd), ...(upstreamLine ? [upstreamLine] : []), ...(runsLine ? [runsLine] : [])];
   lines.push('', ...renderUnregistered(unregistered, { groups: groupUnregistered(unregistered.items), all: Boolean(flags['--all']), tags: archiveTags }));
   if (general.length) lines.push('', 'checks:', ...general.map((f) => `  ${f.level}: ${f.message}`));
   const todo = renderOpenTrains(facts.trains, ctx.cmd);

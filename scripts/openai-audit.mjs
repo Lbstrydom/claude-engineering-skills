@@ -70,6 +70,7 @@ import { detectOrphansIntroduced } from './lib/audit/orphan-introduced.mjs';
 import { resolveDiffScope } from './lib/audit/diff-scope-resolver.mjs';
 import { partitionDiffScope, formatDiffScopeNotices } from './lib/diff-scope-admission.mjs';
 import { processFindings, formatAuditSummaryLine } from './lib/audit/findings-pipeline.mjs';
+import { applyCanaryToUnsupportedPipeline } from './lib/audit/canary.mjs';
 import { buildChangeRecord } from './lib/audit/change-record.mjs';
 import { emitOrphanRunMetrics } from './lib/audit/orphan-metrics.mjs';
 import { PlanFpTracker } from './lib/plan-fp-tracker.mjs';
@@ -382,15 +383,14 @@ function printAuditResult(mergedResult, { outFile, jsonMode }) {
   const {
     verdict, findings: allFindings = [], _pass_timings: passTimings = {},
     _usage: totalUsage = {}, _failed_passes: failedPasses = [],
-    _passes_total: passesTotal = null, _coverage: coverage = null,
+    _passes_total: passesTotal = null, _coverage: coverage = null, _canary: canary = null,
   } = mergedResult;
   const high = allFindings.filter(f => f.severity === 'HIGH').length;
   const medium = allFindings.filter(f => f.severity === 'MEDIUM').length;
   const low = allFindings.filter(f => f.severity === 'LOW').length;
   const totalLatencyMs = totalUsage.latency_ms ?? 0;
-
   const summaryLine = formatAuditSummaryLine({
-    verdict, high, medium, low, failedPasses, passesTotal, latencyMs: totalLatencyMs, coverage,
+    verdict, high, medium, low, failedPasses, passesTotal, latencyMs: totalLatencyMs, coverage, canary,
   });
   if (outFile) {
     writeOutput(mergedResult, outFile, summaryLine);
@@ -521,7 +521,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
   // only by the CLI's main(). Without it, a flipped flag routed fully-mocked
   // test harnesses into real multi-provider execution.
   if (tieredAuditConfig.pipelineEnabled && ctx.allowTiered) {
-    const mergedResult = stampAuditRound(await runTieredAuditPipeline(ctx), opts.round, opts.coverageChanged ? opts.auditBaseCommit : null);
+    const mergedResult = stampAuditRound(applyCanaryToUnsupportedPipeline(await runTieredAuditPipeline(ctx)), opts.round, opts.coverageChanged ? opts.auditBaseCommit : null);
     printAuditResult(mergedResult, { outFile, jsonMode });
     return mergedResult;
   }

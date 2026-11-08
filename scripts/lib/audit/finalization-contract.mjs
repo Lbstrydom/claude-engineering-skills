@@ -123,6 +123,9 @@ export const FinalizationDataSchema = z.object({
   // Whether this audit admitted the bundle's own modules (`isAuditInfraFile`); written to the round as `_infraScope` so the
   // final reviewer inherits it (fleet p-20261015065849-095b). Optional: a caller that predates it reads as "not admitted".
   allowInfraScope: z.boolean().optional(),
+  // Known-answer canary outcome (canary.mjs). null/absent when AUDIT_CANARY is unset ("not asked"); the shape is
+  // validated where it lands on the round (`AuditRunResultSchema._canary`).
+  canary: z.unknown().nullable().optional(),
 
   // R2+ flag — spine-computed, read by 4c/4d (isR2Plus does not itself
   // compute anything; it is already final by the time the coordinator runs).
@@ -151,6 +154,8 @@ export const AssembledFindingsSchema = z.object({
   // consumer fall back to a local recount — the defect this closes.
   quickFix: z.number().int(),
   convergence: z.object({ converged: z.boolean(), reason: z.string() }).strict(),
+  // Present only when AUDIT_CANARY=1 (canary.mjs); attached to the round as `_canary`.
+  canary: z.unknown().optional(),
   suppressionData: z.unknown().optional(),
   // The local+cloud FP-pass suppression total — DELIBERATELY separate from
   // `suppressionData.suppressedCount` (ledger-reraise-suppression only,

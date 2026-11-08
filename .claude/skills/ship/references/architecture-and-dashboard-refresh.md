@@ -86,3 +86,7 @@ node scripts/build-dashboard.mjs all         # reference + telemetry
 node scripts/build-dashboard.mjs serve       # build, then serve locally
 node scripts/build-dashboard.mjs --help      # every mode and flag
 ```
+
+## 0.5c — the drift sticky-issue
+
+The architecture-drift sticky-issue is updated only by the weekly GH workflow, never by `/ship` directly.
