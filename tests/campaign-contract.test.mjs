@@ -74,6 +74,15 @@ describe('presence check', () => {
   it('a duplicate section is reported', () => {
     assert.ok(ids(checkCampaignContract(fullPlan({ dup: 'C4' }), { repoRoot: ROOT })).includes('C4'));
   });
+  it('a repeated field is a problem, never silently dropped', () => {
+    const dup = fullPlan().replace('- **evidence**: docs/evidence/rehearsal.md', '- **evidence**: docs/evidence/rehearsal.md\n- **evidence**: /etc/passwd');
+    assert.ok(checkCampaignContract(dup, { repoRoot: ROOT }).problems.some((p) => p.id === 'C7' && p.field === 'evidence' && /more than once/.test(p.why)));
+  });
+  it('only the exact contract heading counts, not a "(draft)" prefix-match', () => {
+    const draft = fullPlan().replace('## Campaign Contract', '## Campaign Contract (draft)\n\nnothing here\n\n## Campaign Contract');
+    assert.deepEqual(checkCampaignContract(draft, { repoRoot: ROOT }).problems, []);
+    assert.deepEqual(ids(checkCampaignContract(fullPlan().replace('## Campaign Contract', '## Campaign Contract (draft)'), { repoRoot: ROOT })), ['contract']);
+  });
   it('fields outside the contract section are ignored', () => {
     // the Audit Trail's "- **decision**:" line must not satisfy C1
     assert.deepEqual(ids(checkCampaignContract(fullPlan({ dropField: 'C1.decision' }), { repoRoot: ROOT })), ['C1.decision']);
@@ -183,6 +192,21 @@ describe('--closeout (temp git repo)', () => {
     const r = verifyEvidenceAtRevision(plan, { repoRoot: d, rev: oid });
     assert.equal(r.ok, false);
     assert.ok(r.problems.some((x) => /could not inspect/.test(x.why)), JSON.stringify(r.problems));
+  });
+  it('an escaping evidence path outside the contract fields is reported by closeout, never skipped', () => {
+    const d = repo();
+    const extra = plan.replace('### C9 — Contract epoch', '### C9 — Contract epoch\n- **evidence**: /etc/passwd');
+    const r = verifyEvidenceAtRevision(extra, { repoRoot: d, rev: 'main' });
+    assert.ok(r.problems.some((p) => p.id === 'C9' && /not a repo-relative path/.test(p.why)), JSON.stringify(r.problems));
+  });
+  it('nothing to verify is never verified, and a .. evidence path is refused at closeout too', () => {
+    const d = repo();
+    assert.equal(verifyEvidenceAtRevision('# no contract\n', { repoRoot: d, rev: 'main' }).ok, false);
+    const dotdot = plan.replace('- **evidence**: docs/evidence/r.md', '- **evidence**: docs/x/../evidence/r.md');
+    assert.notEqual(dotdot, plan, 'fixture replacement applied');
+    const dupEv = plan.replace('- **evidence**: docs/evidence/r.md', '- **evidence**: docs/evidence/r.md\n- **evidence**: docs/evidence/absent.md');
+    assert.ok(verifyEvidenceAtRevision(dupEv, { repoRoot: d, rev: 'main' }).problems.some((p) => /more than once/.test(p.why)));
+    assert.ok(verifyEvidenceAtRevision(dotdot, { repoRoot: d, rev: 'main' }).problems.some((p) => /"\.\." segment/.test(p.why)));
   });
   it('an unresolvable rev ⇒ problem, never a pass', () => {
     assert.equal(verifyEvidenceAtRevision(plan, { repoRoot: repo(), rev: 'nope' }).ok, false);

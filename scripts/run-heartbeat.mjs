@@ -139,7 +139,9 @@ async function watch(dir, runId, pollSec, graceSec) {
   let prev = null;
   for (;;) {
     const v = checkRun(dir, runId);
-    const inGrace = v.state === 'UNKNOWN' && v.reason === 'no journal' && Date.now() - startedAt < graceSec * 1000;
+    // Grace covers a journal not yet created AND one caught between its exclusive create and its first line.
+    const starting = v.reason === 'no journal' || (v.reason === 'no start record' && !v.malformedLines);
+    const inGrace = v.state === 'UNKNOWN' && starting && Date.now() - startedAt < graceSec * 1000;
     if (!inGrace) {
       const key = `${v.state}`;
       if (key !== prev) { process.stdout.write(`${describe(v)}\n`); prev = key; }

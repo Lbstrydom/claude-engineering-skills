@@ -38,6 +38,17 @@ import { selectCampaignConfig } from './lib/campaign/config.mjs';
 import { createFixture, verifyFixture, removeFixture, resolveRevision } from './lib/pinned-worktree/manage.mjs';
 import { requiredCredentials, checkCredentials, formatMissing } from './lib/pinned-worktree/preflight.mjs';
 import { resolveMainRoot, defaultFixtureRoot, fixturePath } from './lib/pinned-worktree/paths.mjs';
+import { checkRun, resolveRunsDir, runBlocksRemoval } from './lib/run-heartbeat.mjs';
+
+/**
+ * The heartbeat verdict for the run launched in this fixture — by convention its run id IS the fixture name (the
+ * fixture-name grammar is a subset of the run-id grammar). A journal that cannot be read is UNKNOWN, never RUNNING.
+ */
+function fixtureRun(dir, name) {
+  try { return checkRun(resolveRunsDir(fs.existsSync(dir) ? dir : process.cwd()).dir, name); } catch (err) {
+    return { state: 'UNKNOWN', runId: name, reason: `heartbeat unreadable (${err.message})` };
+  }
+}
 
 const KNOWN_FLAGS = Object.freeze([
   '--name', '--rev', '--campaign', '--root', '--install', '--force',
@@ -48,7 +59,11 @@ const USAGE = `pinned-worktree — pin a repository revision for a spend-bearing
 
   create  --name <n> --rev <sha|ref> [--campaign <id>] [--root <dir>] [--install]
   verify  --name <n> [--campaign <id>] [--root <dir>]
-  remove  --name <n> [--root <dir>]
+  remove  --name <n> [--root <dir>] [--force]
+
+  A run launched in the fixture under \`run-heartbeat run --run-id <name>\` is
+  reported by verify, and remove refuses while it is RUNNING (or STALE with its
+  child alive) unless --force.
 
   --campaign <id>  run the credential preflight for that campaign's arms.
                    On create this is a REFUSAL gate: a missing provider key does
@@ -185,7 +200,10 @@ function main() {
       + '     gitignored, so it is absent here.\n'
       + '  2. The fixture writes its OWN .audit/bakeoff-log.jsonl. A `--progress` run\n'
       + '     here reads near-zero regardless of real campaign progress. Trust the\n'
-      + '     STORE, not the local log.\n');
+      + '     STORE, not the local log.\n\n'
+      + 'Launch the job under a heartbeat (run id = fixture name), and watch it from any checkout:\n'
+      + `  node scripts/run-heartbeat.mjs run --run-id ${name} --stale-after 900 -- node scripts/<job>.mjs ...\n`
+      + `  node scripts/run-heartbeat.mjs watch --run-id ${name} --poll 60\n`);
     return;
   }
 
@@ -193,10 +211,18 @@ function main() {
     const result = verifyFixture({ dir });
     const preflight = campaign && result.ok ? runPreflight(campaign, dir, cwd) : null;
     const local = localLogCount(dir);
-    const ok = result.ok && (!preflight || preflight.ok);
-    if (json) { emit({ ok, command: 'verify', ...result, preflight, localBakeoffLogEntries: local }); return; }
+    // A STALE run fails verify: no progress within its own cadence is the thing to act on. No journal is reported,
+    // never failed — the job may not have been launched yet.
+    const run = fixtureRun(dir, name);
+    // UNKNOWN with a journal present (unreadable, malformed) is "cannot tell", which also fails; only "no journal" passes.
+    const runFails = run.state === 'STALE' || (run.state === 'UNKNOWN' && run.reason !== 'no journal');
+    const ok = result.ok && (!preflight || preflight.ok) && !runFails;
+    // `ok` LAST: `...result` carries its own `ok` (fixture checks only) and must not overwrite the combined verdict.
+    if (json) { emit({ command: 'verify', ...result, preflight, run, localBakeoffLogEntries: local, ok }); return; }
     process.stdout.write(`\nFixture: ${dir}\n`);
     for (const c of result.checks) process.stdout.write(`  ${c.ok ? 'ok  ' : 'FAIL'} ${c.name.padEnd(13)} ${c.detail}\n`);
+    process.stdout.write(`  ${runFails ? 'FAIL' : run.state === 'UNKNOWN' ? '--  ' : 'ok  '} ${'heartbeat'.padEnd(13)} ${run.state} — ${run.reason}`
+      + `${run.state === 'STALE' && run.childPid ? ` [child pid ${run.childPid} alive: ${run.childAlive}]` : ''}\n`);
     if (preflight) {
       process.stdout.write(`  ${preflight.ok ? 'ok  ' : 'FAIL'} credentials   `
         + `${preflight.present.length}/${preflight.checked} present for ${preflight.campaignId}\n`);
@@ -210,6 +236,16 @@ function main() {
   }
 
   if (cmd === 'remove') {
+    // Deleting the worktree a live, spend-bearing run executes in kills it mid-evidence (2026-08-17's loss, by a
+    // different door). Refuse unless the operator says so.
+    const guard = runBlocksRemoval(fixtureRun(dir, name));
+    if (guard.block && !argv.includes('--force')) {
+      const msg = `refusing to remove ${dir}: ${guard.why}. Stop the run first, or pass --force.`;
+      if (json) { emit({ ok: false, command: 'remove', error: msg }); return; }
+      process.stderr.write(`${msg}\n`);
+      process.exitCode = 1;
+      return;
+    }
     const result = removeFixture({ dir, cwd });
     if (json) { emit({ ok: result.ok, command: 'remove', ...result }); return; }
     for (const s of result.steps) process.stdout.write(`  ${s}\n`);

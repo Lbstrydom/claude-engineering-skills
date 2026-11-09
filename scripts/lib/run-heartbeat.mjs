@@ -278,6 +278,25 @@ export function checkRun(dir, runId, opts = {}) {
 }
 
 /**
+ * Would deleting the place this run executes in pull the floor from under it? Fails CLOSED on "cannot tell":
+ * RUNNING, STALE unless its child is known gone, and UNKNOWN with a journal present all block; only an ended run or
+ * one never journalled does not. `--force` is the operator's override. Used by `pinned-worktree remove`.
+ * @returns {{block: boolean, why: string}}
+ */
+export function runBlocksRemoval(verdict) {
+  if (verdict?.state === 'RUNNING') return { block: true, why: `run ${verdict.runId} is RUNNING (${verdict.reason})` };
+  if (verdict?.state === 'STALE' && verdict.childAlive !== false) {
+    return { block: true, why: `run ${verdict.runId} is STALE and its child (pid ${verdict.childPid ?? 'unrecorded'}) is ${verdict.childAlive === true ? 'still alive' : 'of unknown liveness'} — it may still be spending` };
+  }
+  // UNKNOWN with a journal present (unreadable, malformed, no cadence) is "cannot tell" — fail closed. Only a run that
+  // was never journalled at all is safe to remove under.
+  if (verdict?.state === 'UNKNOWN' && verdict.reason !== 'no journal') {
+    return { block: true, why: `run ${verdict.runId}: UNKNOWN (${verdict.reason}) — cannot tell whether it is live` };
+  }
+  return { block: false, why: `run ${verdict?.runId ?? '?'}: ${verdict?.state ?? 'UNKNOWN'}` };
+}
+
+/**
  * Every journal in `dir` with its verdict. Dir absent ⇒ `{measured:true, runs:[]}`
  * (nothing launched); dir unreadable ⇒ `{measured:false, reason}` — never an
  * empty list that reads as "no runs".

@@ -248,6 +248,15 @@ describe('round-1 audit fixes', () => {
     const fail = () => { const e = new Error('x'); e.status = 128; e.stderr = 'fatal: not a git repository: /nowhere/.git/worktrees/gone'; throw e; };
     assert.throws(() => gitCommonDir(d, { exec: fail }), /cannot resolve the runs dir/);
   });
+  test('watch gives an empty, just-created journal the grace period instead of exiting at once', () => {
+    const d = tmp();
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'creating.jsonl'), '');
+    const t0 = Date.now();
+    const r = cli(['watch', '--run-id', 'creating', '--poll', '1', '--grace', '3', '--dir', d], { timeout: 20_000 });
+    assert.equal(r.status, 3);
+    assert.ok(Date.now() - t0 >= 2500, `waited out the grace (${Date.now() - t0}ms)`);
+  });
   test('--selfcheck-relocation after -- belongs to the child, not the wrapper', () => {
     const d = tmp();
     const r = cli(['run', '--run-id', 'sc', '--stale-after', '60', '--dir', d, '--', process.execPath, '-e', 'console.log("child ran")', '--', '--selfcheck-relocation']);

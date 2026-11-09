@@ -53,7 +53,8 @@ export function isCampaignPlan(markdown) {
 /** Split the `## Campaign Contract` section into `### C<n>` items with their fields. */
 export function parseCampaignContract(markdown) {
   const lines = String(markdown ?? '').split(/\r?\n/);
-  const start = lines.findIndex((l) => l.trim().startsWith(CONTRACT_HEADING));
+  // The exact heading (optionally `## Campaign Contract — <subtitle>`), never a prefix like "## Campaign Contract (draft)".
+  const start = lines.findIndex((l) => { const t = l.trim(); return t === CONTRACT_HEADING || t.startsWith(`${CONTRACT_HEADING} — `); });
   if (start < 0) return { found: false, sections: [] };
   const sections = [];
   let cur = null;
@@ -61,10 +62,12 @@ export function parseCampaignContract(markdown) {
     const l = lines[i];
     if (/^##\s/.test(l)) break; // next H2 ends the contract
     const s = l.match(SECTION_RE);
-    if (s) { cur = { id: s[1], fields: {} }; sections.push(cur); continue; }
+    if (s) { cur = { id: s[1], fields: {}, duplicateFields: [] }; sections.push(cur); continue; }
     if (!cur) continue;
     const f = l.match(FIELD_RE);
-    if (f && !(f[1] in cur.fields)) cur.fields[f[1]] = f[2].trim();
+    // A repeated field is recorded, never silently dropped: a second `evidence` line would otherwise escape every check.
+    if (f && f[1] in cur.fields) cur.duplicateFields.push(f[1]);
+    else if (f) cur.fields[f[1]] = f[2].trim();
   }
   return { found: true, sections };
 }
@@ -111,6 +114,7 @@ export function checkCampaignContract(markdown, { repoRoot = process.cwd() } = {
   for (const s of parsed.sections) {
     if (seen.has(s.id)) problems.push({ id: s.id, why: 'duplicate section' });
     else seen.set(s.id, s);
+    for (const f of s.duplicateFields) problems.push({ id: s.id, field: f, why: `"- **${f}**:" appears more than once — list several values in one line` });
   }
   for (const [id, spec] of Object.entries(CAMPAIGN_SECTIONS)) {
     const s = seen.get(id);
@@ -155,10 +159,22 @@ export function verifyEvidenceAtRevision(markdown, { repoRoot = process.cwd(), r
     return { ok: false, oid: null, problems: [{ id: 'closeout', why: `revision "${rev}" does not resolve to a commit` }], artifacts };
   }
   const parsed = parseCampaignContract(markdown);
+  // Nothing to verify is never "verified": a plan with no contract or no evidence field fails close-out.
+  if (!parsed.sections.some((s) => EVIDENCE_FIELDS.some((f) => evidencePaths(s.fields[f]).length > 0))) {
+    return { ok: false, oid, problems: [{ id: 'closeout', why: 'no evidence path to verify — the plan names none' }], artifacts };
+  }
   for (const s of parsed.sections) {
+    // A repeated evidence line was not parsed, so it cannot be verified: close-out fails rather than pass on line one.
+    for (const f of s.duplicateFields.filter((x) => EVIDENCE_FIELDS.includes(x))) {
+      problems.push({ id: s.id, field: f, why: `"- **${f}**:" appears more than once — the repeat is not verified; list several paths in one line` });
+    }
     for (const field of EVIDENCE_FIELDS) {
+      if (String(s.fields[field] ?? '').split(/[,\\/]/).some((seg) => seg.trim().replace(/^`|`$/g, '') === '..')) {
+        problems.push({ id: s.id, field, why: `"${s.fields[field]}" contains a ".." segment — not verified` });
+        continue;
+      }
       for (const p of evidencePaths(s.fields[field])) {
-        if (!isContainedRelativePath(p, repoRoot)) continue; // already a presence problem
+        if (!isContainedRelativePath(p, repoRoot)) { problems.push({ id: s.id, field, why: `"${p}" is not a repo-relative path inside the repo — not verified` }); continue; }
         const rel = p.replace(/\\/g, '/');
         // A LITERAL pathspec (no glob/magic), --full-tree so the path is repo-root relative, and the returned path must
         // equal the requested one — never "the first entry ls-tree printed".
@@ -176,7 +192,11 @@ export function verifyEvidenceAtRevision(markdown, { repoRoot = process.cwd(), r
           problems.push({ id: s.id, field, why: `"${rel}" at ${rev} is mode ${mode} ${type}, not a regular file (a symlink's blob is its link text)` });
           continue;
         }
-        const content = git(['cat-file', 'blob', blob], repoRoot);
+        let content;
+        try { content = git(['cat-file', 'blob', blob], repoRoot); } catch (err) {
+          problems.push({ id: s.id, field, why: `git could not read "${rel}" at ${rev} (${String(err?.message ?? '').split('\n')[0]}) — unverified, not absent` });
+          continue;
+        }
         if (content.length === 0) { problems.push({ id: s.id, field, why: `"${rel}" is empty at ${rev}` }); continue; }
         artifacts.push({ id: s.id, field, path: rel, sha256: crypto.createHash('sha256').update(content).digest('hex') });
       }
