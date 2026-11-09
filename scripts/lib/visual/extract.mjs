@@ -25,6 +25,7 @@
 import { stableNodeKey } from './node-key.mjs';
 import { resolveProvenance } from './provenance-resolver.mjs';
 import { playwrightInstallHint } from '../package-manager.mjs';
+import { buildPinInitScript, isDomFlip, readFlipState, probesDiffer } from './theme-flip.mjs';
 
 /** Computed properties collected per node (union of what the four tiers read). */
 export const COLLECTED_PROPS = [
@@ -93,6 +94,7 @@ export async function runExtract({ url, contract, devices, themeNames = null, st
 
   try {
     for (const device of devices) {
+      const flipProbes = [];
       for (const theme of effThemes) {
         const stateLabel = `${device.name}/${theme.name}`;
         const isMedia = theme.apply?.mode === 'media';
@@ -108,6 +110,9 @@ export async function runExtract({ url, contract, devices, themeNames = null, st
         const context = await browser.newContext(ctxOpts);
         // Animation freeze + localStorage theme must be set BEFORE app init.
         await context.addInitScript(ANIM_FREEZE_INIT);
+        // Pin an attribute/class flip from document-start so an app boot cannot revert it.
+        const pinScript = buildPinInitScript(theme.apply);
+        if (pinScript) await context.addInitScript(pinScript);
         if (theme.apply?.mode === 'localStorage') {
           // Backlog-triage fix — `localStorage.setItem` CAN throw (private
           // browsing, storage quota exceeded) and this used to swallow that
@@ -143,7 +148,20 @@ export async function runExtract({ url, contract, devices, themeNames = null, st
             warnings.push(`${stateLabel}: ${reason}`);
             missingStates.push({ device: device.name, theme: theme.name, reason });
           } else {
-            const { nodes, capturedSurfaces, fullDomStats } = await collectState(page, { surfaces, props: COLLECTED_PROPS, timeoutMs, fullDom, fullDomNodeBudget });
+            let flip = null;
+            const surfaceSels = surfaces.map((s) => s.selector);
+            const onSettled = async () => { flip = await reassertAndVerifyFlip(page, theme.apply, surfaceSels); };
+            const { nodes, capturedSurfaces, fullDomStats } = await collectState(page, { surfaces, props: COLLECTED_PROPS, timeoutMs, fullDom, fullDomNodeBudget, onSettled });
+            // Re-read AFTER the style collection: the flip must still be live at capture
+            // time, and the pin must not have given up on an app that keeps reverting it.
+            if (isDomFlip(theme.apply)) flip = { ...(await readFlipState(page, theme.apply, surfaceSels)), probe: flip?.probe };
+            if (flip && isDomFlip(theme.apply) && (!flip.live || flip.exhausted)) {
+              const reason = `theme "${theme.name}" flip was ${flip.live ? 'repeatedly reverted by the app (pin gave up)' : 'reverted by the app and could not be re-asserted'} — capture marked unverified, no theme findings emitted from it`;
+              warnings.push(`${stateLabel}: ${reason}`);
+              missingStates.push({ device: device.name, theme: theme.name, reason });
+              continue;
+            }
+            if (flip && flip.probe) flipProbes.push({ theme: theme.name, probe: flip.probe });
             // Capture honesty: a declared surface that never produced content is unverifiable.
             for (const s of surfaces) if (!capturedSurfaces.has(s.id)) unverifiable.add(s.id);
 
@@ -173,6 +191,20 @@ export async function runExtract({ url, contract, devices, themeNames = null, st
         } finally {
           await context.close().catch(() => {});
         }
+      }
+      // Cross-theme probe: a flip that changed no sampled computed colour means the
+      // captures are not a theme pair (empty/failed capture → unverified, never findings).
+      const verdict = probesDiffer(flipProbes);
+      if (!verdict.ok) {
+        const badNames = new Set(verdict.badThemes);
+        for (let i = perState.length - 1; i >= 0; i--) {
+          const st = perState[i];
+          if (st.device === device.name && badNames.has(st.theme)) {
+            perState.splice(i, 1);
+            missingStates.push({ device: device.name, theme: st.theme, reason: verdict.reason });
+          }
+        }
+        warnings.push(`${device.name}: ${verdict.reason}`);
       }
     }
   } finally {
@@ -239,17 +271,35 @@ async function applyTheme(page, apply) {
       s.textContent = css;
       (document.head || document.documentElement).appendChild(s);
     }
-    if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch { /* ignore */ } }
+    if (document.fonts && document.fonts.ready) { try { await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 3000))]); } catch { /* ignore */ } }
     void document.body.offsetWidth; // force synchronous style/layout recalc
   }, FREEZE_CSS);
   return applied;
 }
 
 /**
+ * Re-apply a DOM flip after load, freeze transitions AFTER it, await fonts, force a
+ * reflow, then read back (attribute/class live? + colour probe).
+ */
+async function reassertAndVerifyFlip(page, apply, surfaceSelectors) {
+  await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+  await page.evaluate(async ({ apply, css }) => {
+    const el = apply.target ? document.querySelector(apply.target) : null;
+    if (el && (apply.mode === 'attribute' || apply.mode === 'class')) { if (apply.mode === 'attribute') el.setAttribute(apply.attribute, apply.value); else el.classList.add(apply.value); }
+    let st = document.querySelector('style[data-va-freeze]');
+    if (!st) { st = document.createElement('style'); st.setAttribute('data-va-freeze', '1'); st.textContent = css; (document.head || document.documentElement).appendChild(st); }
+    // Bounded: a font request that never settles must not hang the capture.
+    if (document.fonts && document.fonts.ready) { try { await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 3000))]); } catch { /* ignore */ } }
+    void document.body.offsetWidth;
+  }, { apply, css: FREEZE_CSS });
+  return readFlipState(page, apply, surfaceSelectors);
+}
+
+/**
  * Batched in-browser collection: tag audited nodes, gather computed styles, rects,
  * scroll metrics, structural descriptors, and the background-stack ancestor walk.
  */
-async function collectState(page, { surfaces, props, timeoutMs, fullDom = false, fullDomNodeBudget = 4000 }) {
+async function collectState(page, { surfaces, props, timeoutMs, fullDom = false, fullDomNodeBudget = 4000, onSettled = null }) {
   // Wait for content presence per surface (not just container mount — G2-1).
   for (const s of surfaces) {
     await page.waitForFunction(
@@ -258,6 +308,10 @@ async function collectState(page, { surfaces, props, timeoutMs, fullDom = false,
       { timeout: Math.min(timeoutMs, 8000) },
     ).catch(() => { /* unverifiable surface — handled by capturedSurfaces */ });
   }
+
+  // Late app boot may have reverted a DOM flip while we waited for content: re-assert,
+  // freeze AFTER the flip, await fonts, then read the flip back — all before any style read.
+  if (onSettled) await onSettled();
 
   const raw = await page.evaluate(({ surfaces, props, fullDom, fullDomNodeBudget }) => {
     const UNRESOLVABLE = 'unresolvable';
@@ -310,6 +364,28 @@ async function collectState(page, { surfaces, props, timeoutMs, fullDom = false,
         cur = parent;
       }
       return chain;
+    };
+
+    // Opacity is not inherited: a leaf inside an opacity:0 wrapper reports 1 itself.
+    const effectiveOpacity = (el) => {
+      let o = 1;
+      for (let a = el, h = 0; a && h++ < 64; a = a.parentElement) o *= parseFloat(getComputedStyle(a).opacity);
+      return Number.isFinite(o) ? o : 1;
+    };
+
+    // Fully outside an ancestor's overflow-clipping box means never painted.
+    const isClipped = (el, r) => {
+      let a = el.parentElement;
+      let h = 0;
+      while (a && h++ < 32) {
+        const o = getComputedStyle(a);
+        const ar = a.getBoundingClientRect();
+        // Per axis: only an axis that actually clips can hide the box.
+        if (/(hidden|clip|auto|scroll)/.test(o.overflowX) && (r.right <= ar.left || r.left >= ar.right)) return true;
+        if (/(hidden|clip|auto|scroll)/.test(o.overflowY) && (r.bottom <= ar.top || r.top >= ar.bottom)) return true;
+        a = a.parentElement;
+      }
+      return false;
     };
 
     const FOCUSABLE = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'SUMMARY']);
@@ -368,6 +444,10 @@ async function collectState(page, { surfaces, props, timeoutMs, fullDom = false,
           role: el.getAttribute('role') || null,
           inputType: el.tagName === 'INPUT' ? (el.getAttribute('type') || 'text').toLowerCase() : null,
           hasText: !!(el.textContent && el.textContent.trim()) && el.children.length === 0,
+          // overlap guards: declared-invisible text is exempt from text-overlap checks
+          ariaHidden: !!el.closest('[aria-hidden="true"]'),
+          clipped: isClipped(el, rect),
+          effectiveOpacity: effectiveOpacity(el),
           // theme-safety: color-dependent content signal for the finding snippet
           // (form controls paint value/placeholder/option text even when empty).
           textSnippet: String(el.value || el.placeholder || (el.selectedOptions && el.selectedOptions[0] && el.selectedOptions[0].text) || el.textContent || '').trim().slice(0, 60),

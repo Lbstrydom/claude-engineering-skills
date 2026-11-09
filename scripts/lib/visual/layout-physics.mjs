@@ -11,6 +11,8 @@
  * @module scripts/lib/visual/layout-physics
  */
 
+import { isTileTextOverlap } from './overlap-text.mjs';
+
 const CLIP_ESCAPE_WRAP = new Set(['break-word', 'anywhere', 'break-all']);
 const SAFE_OBJECT_FIT = new Set(['contain', 'cover', 'scale-down']);
 // Below this, a box is collapsed/empty (e.g. an unauthenticated empty-state label
@@ -121,7 +123,9 @@ function detectOverlaps(nodes) {
         if (isAncestor(aId, bId) || isAncestor(bId, aId)) continue; // containment, not overlap
         // Different stacking layers (overlay subtree vs page behind) → intentional
         // cover, not an unexpected overlap (shakedown #2). Same-layer overlaps fire.
-        if (layerRoot(aId) !== layerRoot(bId)) continue;
+        // ...EXCEPT text-on-text inside one positioned tile (absolute badge over a
+        // static sibling): same containing block, not an overlay (overlap-text.mjs).
+        if (layerRoot(aId) !== layerRoot(bId) && !isTileTextOverlap(ev.n, other, { parentOf, byId })) continue;
         const pairKey = [String(aId), String(bId)].sort().join('::');
         if (seenPair.has(pairKey)) continue;
         seenPair.add(pairKey);
