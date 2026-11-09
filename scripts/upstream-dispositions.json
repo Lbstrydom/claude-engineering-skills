@@ -69,6 +69,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "14a7ef5a-fe77-4427-b895-0788279f7003",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/model-pricing-pool-coverage.test.mjs"
+      },
+      "recordedAt": "2026-11-09T20:09:46.342Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "15da01b6-d2ac-4c08-a6c3-e5e73d1a18dd",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
@@ -913,6 +924,17 @@
         "value": "tests/remediation-verification-selection.test.mjs"
       },
       "recordedAt": "2026-09-06T14:00:46.554Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "fa8cf7ed-7f55-4d07-9e00-de9c00bcba1f",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/model-pricing-pool-coverage.test.mjs"
+      },
+      "recordedAt": "2026-11-09T20:09:47.468Z"
     },
     {
       "schemaVersion": 1,
