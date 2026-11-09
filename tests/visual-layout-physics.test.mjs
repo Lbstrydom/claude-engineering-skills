@@ -76,3 +76,50 @@ test('distorting object-fit with mismatched aspect → image_distortion', () => 
   const safe = runLayoutPhysics([node({ nodeKey: 'img', auditInstanceId: 'img', isImage: true, naturalWidth: 100, naturalHeight: 100, rect: { x: 0, y: 0, width: 200, height: 50 }, scroll: {}, computed: { 'object-fit': 'cover' } })], {}, {});
   assert.equal(safe.filter((f) => f.class === 'image_distortion').length, 0);
 });
+
+// WCA report d9306fe9: absolute badge over a static sibling inside a relative tile
+const tileScene = (badgeOver = {}) => {
+  const tile = node({ nodeKey: 'tile', auditInstanceId: 'tile', parentInstanceId: null, rect: { x: 0, y: 0, width: 80, height: 60 }, scroll: {}, computed: { position: 'relative' } });
+  const year = node({ nodeKey: 'year', auditInstanceId: 'year', parentInstanceId: 'tile', hasText: true, rect: { x: 4, y: 4, width: 40, height: 14 }, scroll: {}, computed: { position: 'static', color: 'rgb(0,0,0)', opacity: '1' } });
+  const slot = node({ nodeKey: 'slot', auditInstanceId: 'slot', parentInstanceId: 'tile', hasText: true, rect: { x: 6, y: 6, width: 30, height: 12 }, scroll: {}, computed: { position: 'absolute', color: 'rgb(0,0,0)', opacity: '1' }, ...badgeOver });
+  return [tile, year, slot];
+};
+const overlaps = (ns) => runLayoutPhysics(ns, {}, {}).filter((f) => f.class === 'unexpected_overlap');
+
+test('absolute text over a static text sibling inside a relative tile IS flagged (WCA d9306fe9)', () => {
+  assert.equal(overlaps(tileScene()).length, 1);
+});
+
+test('negative controls: intentional overlays inside a tile are NOT flagged', () => {
+  const abs = (o) => ({ position: 'absolute', color: 'rgb(0,0,0)', opacity: '1', ...o });
+  assert.equal(overlaps(tileScene({ ariaHidden: true })).length, 0, 'aria-hidden');
+  assert.equal(overlaps(tileScene({ computed: abs({ opacity: '0' }) })).length, 0, 'opacity 0');
+  assert.equal(overlaps(tileScene({ computed: abs({ color: 'rgba(0,0,0,0)' }) })).length, 0, 'transparent text');
+  assert.equal(overlaps(tileScene({ clipped: true })).length, 0, 'clipped');
+  assert.equal(overlaps(tileScene({ hasText: false })).length, 0, 'decorative badge with no text');
+  assert.equal(overlaps(tileScene({ rect: { x: 50, y: 30, width: 20, height: 12 } })).length, 0, 'no geometric intersection');
+  assert.equal(overlaps(tileScene({ computed: abs({ position: 'fixed' }) })).length, 0, 'fixed overlay is a different layer');
+});
+
+test('negative control: static text inside a FIXED overlay under the tile is not a tile overlap (M1/H9)', () => {
+  const [tile, year, slot] = tileScene();
+  const overlay = node({ nodeKey: 'ov', auditInstanceId: 'ov', parentInstanceId: 'tile', rect: { x: 0, y: 0, width: 80, height: 60 }, scroll: {}, computed: { position: 'fixed' } });
+  const innerYear = { ...year, auditInstanceId: 'iy', nodeKey: 'iy', parentInstanceId: 'ov' };
+  assert.equal(overlaps([tile, overlay, innerYear, slot]).length, 0);
+});
+
+test('negative controls: ancestor opacity 0 and two absolute siblings are not tile overlaps (R2)', () => {
+  assert.equal(overlaps(tileScene({ effectiveOpacity: 0 })).length, 0, 'opacity:0 wrapper');
+  const [tile, year, slot] = tileScene();
+  const slot2 = { ...slot, auditInstanceId: 'slot2', nodeKey: 'slot2' };
+  const yearAbs = { ...year, computed: { ...year.computed, position: 'absolute' } };
+  assert.equal(overlaps([tile, yearAbs, slot2]).length, 0, 'two absolute layers');
+});
+
+test('absolute WRAPPER around a static text span over a static sibling is flagged (R3 H3)', () => {
+  const tile = node({ nodeKey: 'tile', auditInstanceId: 'tile', parentInstanceId: null, rect: { x: 0, y: 0, width: 80, height: 60 }, scroll: {}, computed: { position: 'relative' } });
+  const year = node({ nodeKey: 'year', auditInstanceId: 'year', parentInstanceId: 'tile', hasText: true, rect: { x: 4, y: 4, width: 40, height: 14 }, scroll: {}, computed: { position: 'static', color: 'rgb(0,0,0)' } });
+  const wrap = node({ nodeKey: 'wrap', auditInstanceId: 'wrap', parentInstanceId: 'tile', rect: { x: 6, y: 6, width: 30, height: 12 }, scroll: {}, computed: { position: 'absolute' } });
+  const span = node({ nodeKey: 'span', auditInstanceId: 'span', parentInstanceId: 'wrap', hasText: true, rect: { x: 6, y: 6, width: 30, height: 12 }, scroll: {}, computed: { position: 'static', color: 'rgb(0,0,0)' } });
+  assert.equal(overlaps([tile, year, wrap, span]).length, 1);
+});

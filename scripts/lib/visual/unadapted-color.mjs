@@ -42,7 +42,7 @@ function hasProvenanceEvidence(node) {
 }
 
 /** rgba(…,0) / transparent → not a visible paint. */
-function isTransparent(v) {
+export function isTransparent(v) {
   const s = String(v || '').trim().toLowerCase();
   if (!s || s === 'transparent') return true;
   const m = s.match(/^rgba?\(([^)]+)\)$/);

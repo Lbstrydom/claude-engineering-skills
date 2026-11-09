@@ -40409,7 +40409,7 @@
     },
     {
       "id": "REQ-correctness-7a064d9b",
-      "assertion": "Layout physics must suppress overlap findings for ancestor-descendant pairs, explicitly allowed overlaps, and nodes in different fixed or absolute stacking layers.",
+      "assertion": "Layout physics must suppress overlap findings for ancestor-descendant pairs, explicitly allowed overlaps, and nodes in different fixed/absolute layers, except absolute-vs-static text in one tile.",
       "kind": "correctness",
       "checkable": true,
       "provenance": [
