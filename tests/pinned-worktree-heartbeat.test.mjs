@@ -79,7 +79,10 @@ describe('pinned-worktree CLI reads the fixture run heartbeat', () => {
   it('verify fails on an unreadable journal (cannot tell), passes with none', () => {
     const f = createFixture({ name: 'hb-bad', rev: SHA, root: FIXTURES, cwd: REPO });
     try {
-      assert.equal(cli('verify', '--name', 'hb-bad').status, 0);
+      // The HEARTBEAT row is the subject (other fixture checks are pinned-worktree.test.mjs's): no journal is not a failure.
+      const before = cli('verify', '--name', 'hb-bad');
+      assert.match(before.stdout, /--\s+heartbeat\s+UNKNOWN — no journal/, before.stdout + before.stderr);
+      assert.doesNotMatch(before.stdout, /FAIL heartbeat/);
       fs.mkdirSync(runsDirOf(f.dir), { recursive: true });
       fs.writeFileSync(path.join(runsDirOf(f.dir), 'hb-bad.jsonl'), 'garbage\n');
       const r = cli('verify', '--name', 'hb-bad');
