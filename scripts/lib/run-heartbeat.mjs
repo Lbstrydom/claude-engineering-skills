@@ -278,6 +278,20 @@ export function checkRun(dir, runId, opts = {}) {
 }
 
 /**
+ * Would deleting the place this run executes in pull the floor from under it? RUNNING, or STALE with its child
+ * still alive (a hung or wrapper-orphaned run that may still be spending), blocks; everything else — ended, unknown,
+ * stale with the child gone or unknowable — does not. Used by `pinned-worktree remove`.
+ * @returns {{block: boolean, why: string}}
+ */
+export function runBlocksRemoval(verdict) {
+  if (verdict?.state === 'RUNNING') return { block: true, why: `run ${verdict.runId} is RUNNING (${verdict.reason})` };
+  if (verdict?.state === 'STALE' && verdict.childAlive === true) {
+    return { block: true, why: `run ${verdict.runId} is STALE but its child pid ${verdict.childPid} is still alive — it may still be spending` };
+  }
+  return { block: false, why: `run ${verdict?.runId ?? '?'}: ${verdict?.state ?? 'UNKNOWN'}` };
+}
+
+/**
  * Every journal in `dir` with its verdict. Dir absent ⇒ `{measured:true, runs:[]}`
  * (nothing launched); dir unreadable ⇒ `{measured:false, reason}` — never an
  * empty list that reads as "no runs".

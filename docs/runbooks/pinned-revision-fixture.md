@@ -110,6 +110,22 @@ remember is no longer in `.audit/`. `--transcript` takes any absolute path; the
 consumption contract is unchanged. Plan:
 [`audit-transcript-durability.md`](../plans/audit-transcript-durability.md).
 
+### Launch under a heartbeat — so a dead run says so
+
+A long run that dies overnight is otherwise silent until someone looks. Launch it
+under `run-heartbeat`, with the **fixture name as the run id**:
+
+```bash
+node scripts/run-heartbeat.mjs run --run-id bakeoff-2026q3 --stale-after 900 -- node scripts/bakeoff-collect.mjs --transcript C:/GIT/claude-engineering-skills/.audit/transcript.json --plan docs/plans/model-comparison-campaigns.md
+node scripts/run-heartbeat.mjs watch --run-id bakeoff-2026q3 --poll 60
+```
+
+The journal lives in the git common dir, so `watch`, `check` and `/fleet status`
+see it from the main checkout. With the run id matching, `fixture:verify` reports
+the run (a STALE run fails verify) and `fixture:remove` **refuses** while it is
+RUNNING, or STALE with its child still alive, unless `--force`. Convention and
+limits: the `/fleet` skill's `references/background-runs.md`.
+
 ### Progress — trust the STORE, not the local log
 
 **This one costs people an hour if they do not know it.** The bake-off log path
