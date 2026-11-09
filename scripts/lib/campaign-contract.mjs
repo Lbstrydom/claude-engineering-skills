@@ -158,7 +158,7 @@ export function verifyEvidenceAtRevision(markdown, { repoRoot = process.cwd(), r
   for (const s of parsed.sections) {
     for (const field of EVIDENCE_FIELDS) {
       for (const p of evidencePaths(s.fields[field])) {
-        if (!isContainedRelativePath(p, repoRoot)) continue; // already a presence problem
+        if (!isContainedRelativePath(p, repoRoot)) { problems.push({ id: s.id, field, why: `"${p}" is not a repo-relative path inside the repo — not verified` }); continue; }
         const rel = p.replace(/\\/g, '/');
         // A LITERAL pathspec (no glob/magic), --full-tree so the path is repo-root relative, and the returned path must
         // equal the requested one — never "the first entry ls-tree printed".

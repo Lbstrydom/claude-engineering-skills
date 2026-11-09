@@ -38,10 +38,12 @@ const cli = (...args) => spawnSync(process.execPath, [CLI, ...args, '--root', FI
 const runsDirOf = (dir) => resolveRunsDir(dir).dir;
 
 describe('runBlocksRemoval', () => {
-  it('blocks RUNNING and STALE-with-a-live-child only', () => {
+  it('fails closed on cannot-tell: blocks RUNNING, STALE unless the child is known gone, and UNKNOWN with a journal', () => {
     assert.equal(runBlocksRemoval({ state: 'RUNNING', runId: 'r', reason: 'x' }).block, true);
     assert.equal(runBlocksRemoval({ state: 'STALE', runId: 'r', childPid: 1, childAlive: true }).block, true);
-    for (const v of [{ state: 'STALE', childAlive: false }, { state: 'STALE', childAlive: 'unknown' }, { state: 'ENDED_OK' }, { state: 'ENDED_FAILED' }, { state: 'UNKNOWN' }, null]) {
+    assert.equal(runBlocksRemoval({ state: 'STALE', runId: 'r', childAlive: 'unknown' }).block, true);
+    assert.equal(runBlocksRemoval({ state: 'UNKNOWN', runId: 'r', reason: 'no declared stale-after cadence' }).block, true);
+    for (const v of [{ state: 'STALE', childAlive: false }, { state: 'ENDED_OK' }, { state: 'ENDED_FAILED' }, { state: 'UNKNOWN', reason: 'no journal' }]) {
       assert.equal(runBlocksRemoval(v).block, false, JSON.stringify(v));
     }
   });

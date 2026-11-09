@@ -219,7 +219,8 @@ export function cmdStatus(ctx, flags = {}) {
   if (upstream.warning) warnings.push(upstream.warning);
   const upstreamLine = upstream.applicable ? renderUpstreamLine({ state: 'ok', record: upstream.record }, ctx.now ?? new Date(), ctx.cmd) : null;
   // Background-run heartbeats (docs/plans/test-campaign-controls.md §2.1): absent dir says nothing, unreadable says UNMEASURED.
-  const runsLine = summariseRuns(listRuns(resolveRunsDir(ctx.cwd).dir, { now: ctx.now ? new Date(ctx.now).getTime() : Date.now() }));
+  let runsLine;
+  try { runsLine = summariseRuns(listRuns(resolveRunsDir(ctx.cwd).dir, { now: ctx.now ? new Date(ctx.now).getTime() : Date.now() })); } catch (err) { runsLine = `runs: UNMEASURED (${err.message})`; }
   const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now, all: Boolean(flags['--all']), unregistered }), prune.line, proposalsLine(proposals, ctx.cmd), ...(upstreamLine ? [upstreamLine] : []), ...(runsLine ? [runsLine] : [])];
   lines.push('', ...renderUnregistered(unregistered, { groups: groupUnregistered(unregistered.items), all: Boolean(flags['--all']), tags: archiveTags }));
   if (general.length) lines.push('', 'checks:', ...general.map((f) => `  ${f.level}: ${f.message}`));

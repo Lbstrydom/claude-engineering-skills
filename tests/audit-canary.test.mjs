@@ -75,6 +75,10 @@ describe('detection contract', () => {
     // ...a real-file finding that mentions the canary afterwards is not, and neither is a longer path
     assert.ok(!citesCanary({ section: `${c.path}.backup:4` }, c));
     assert.ok(!citesCanary({ section: `${c.path}x:4` }, c));
+    // bare, partial and absolute citations of the unique basename are the canary (review 2026-11-09)
+    const b = c.path.split('/').pop();
+    for (const s of [`${b}:4`, `access/${b}:4`, `C:/repo/src/access/${b}:4`]) assert.ok(citesCanary({ section: s }, c), s);
+    assert.ok(citesCanary({ file: b }, c));
     // a root-level real file leads; a ./-prefixed canary citation is the canary; a dotted identifier is not a file
     assert.ok(!citesCanary({ section: `app.js:4 (same pattern as ${c.path})` }, c));
     assert.ok(citesCanary({ section: `./${c.path}:4` }, c));
@@ -138,6 +142,12 @@ describe('resolve', () => {
     const o = none.resolve([], []);
     assert.equal(o.status, 'not-planted');
     assert.equal(canaryBlocksEvidence(o), true);
+  });
+  it('a planted map-reduce pass that lost units or skipped REDUCE is pass-failed, not blind', () => {
+    const rc = plantBoth();
+    const o = rc.resolve([res([], { _mapCompletionRate: 0.5 }), res([], { _reduceSkipped: true })], ['backend', 'frontend']);
+    assert.equal(o.status, 'pass-failed');
+    assert.deepEqual(o.failedIn, ['backend', 'frontend']);
   });
   it('a planted pass with no result is missed, never silently passed', () => {
     const rc = plantBoth();

@@ -184,6 +184,12 @@ describe('--closeout (temp git repo)', () => {
     assert.equal(r.ok, false);
     assert.ok(r.problems.some((x) => /could not inspect/.test(x.why)), JSON.stringify(r.problems));
   });
+  it('an escaping evidence path outside the contract fields is reported by closeout, never skipped', () => {
+    const d = repo();
+    const extra = plan.replace('### C9 — Contract epoch', '### C9 — Contract epoch\n- **evidence**: /etc/passwd');
+    const r = verifyEvidenceAtRevision(extra, { repoRoot: d, rev: 'main' });
+    assert.ok(r.problems.some((p) => p.id === 'C9' && /not a repo-relative path/.test(p.why)), JSON.stringify(r.problems));
+  });
   it('an unresolvable rev ⇒ problem, never a pass', () => {
     assert.equal(verifyEvidenceAtRevision(plan, { repoRoot: repo(), rev: 'nope' }).ok, false);
   });

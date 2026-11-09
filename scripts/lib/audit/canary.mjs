@@ -76,10 +76,15 @@ export function citesCanary(finding, canary) {
   // The ANCHOR is the FIRST path the section names — live sections read "<path>:4" or "<path>: fn", and a prefixed
   // "fn in <path>" is anchored too. A real-file finding that mentions the canary only after naming its own file is
   // about that file and is kept. The match is whole-path: `<canary>.backup` is not the canary.
-  if (typeof finding?.file === 'string' && finding.file) return normalizePath(finding.file) === canary.normalisedPath;
+  // Compared by BASENAME: `console-guard-<id>.mjs` is unique per round, so a bare, partial or absolute citation of it
+  // is still the canary (a whole-path compare let those leak into the counts as a finding on a file that does not
+  // exist — independent review 2026-11-09).
+  const base = (p) => String(p).replace(/\\/g, '/').split('/').pop().toLowerCase();
+  const canaryBase = base(canary.path);
+  if (typeof finding?.file === 'string' && finding.file) return base(finding.file) === canaryBase;
   const section = typeof finding?.section === 'string' ? finding.section.replace(/\\/g, '/') : '';
   const first = section.match(PATH_TOKEN_RE);
-  return Boolean(first) && first[0].replace(/^(?:\.\/)+/, '').toLowerCase() === canary.path.toLowerCase();
+  return Boolean(first) && base(first[0]) === canaryBase;
 }
 
 // A path token ending at a boundary: either `/`-joined segments ending in a file with an extension
@@ -145,7 +150,10 @@ export function createRoundCanary(env = process.env, { seed } = {}) {
       if (!planted.has(name)) return;
       seen.add(name);
       const hit = cited.find(namesCanaryDefect);
-      if (r?.failed) failedIn.push(name);
+      // A map-reduce pass whose units did not all complete (the planted unit 1 may be the one lost) or whose REDUCE was
+      // skipped did not fully read the canary: say pass-failed, not "blind". Both fail closed either way.
+      const partial = (r?._mapCompletionRate ?? 1) < 1 || r?._reduceSkipped === true;
+      if (r?.failed || (!hit && partial)) failedIn.push(name);
       else if (hit) detectedIn.push(name);
       else missedIn.push(name);
       process.stderr.write(`  [canary] ${name}: ${hit ? `detected (${hit.severity ?? '?'} "${String(hit.section ?? '').slice(0, 80)}")` : r?.failed ? 'pass failed' : `MISSED (${cited.length} finding(s) on the canary file, none naming the defect${cited[0] ? `; first: "${findingText(cited[0]).replace(/\s+/g, ' ').slice(0, 300)}"` : ''})`}\n`);
