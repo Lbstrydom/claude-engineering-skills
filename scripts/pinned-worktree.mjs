@@ -214,11 +214,14 @@ function main() {
     // A STALE run fails verify: no progress within its own cadence is the thing to act on. No journal is reported,
     // never failed — the job may not have been launched yet.
     const run = fixtureRun(dir, name);
-    const ok = result.ok && (!preflight || preflight.ok) && run.state !== 'STALE';
-    if (json) { emit({ ok, command: 'verify', ...result, preflight, run, localBakeoffLogEntries: local }); return; }
+    // UNKNOWN with a journal present (unreadable, malformed) is "cannot tell", which also fails; only "no journal" passes.
+    const runFails = run.state === 'STALE' || (run.state === 'UNKNOWN' && run.reason !== 'no journal');
+    const ok = result.ok && (!preflight || preflight.ok) && !runFails;
+    // `ok` LAST: `...result` carries its own `ok` (fixture checks only) and must not overwrite the combined verdict.
+    if (json) { emit({ command: 'verify', ...result, preflight, run, localBakeoffLogEntries: local, ok }); return; }
     process.stdout.write(`\nFixture: ${dir}\n`);
     for (const c of result.checks) process.stdout.write(`  ${c.ok ? 'ok  ' : 'FAIL'} ${c.name.padEnd(13)} ${c.detail}\n`);
-    process.stdout.write(`  ${run.state === 'STALE' ? 'FAIL' : run.state === 'UNKNOWN' ? '--  ' : 'ok  '} ${'heartbeat'.padEnd(13)} ${run.state} — ${run.reason}`
+    process.stdout.write(`  ${runFails ? 'FAIL' : run.state === 'UNKNOWN' ? '--  ' : 'ok  '} ${'heartbeat'.padEnd(13)} ${run.state} — ${run.reason}`
       + `${run.state === 'STALE' && run.childPid ? ` [child pid ${run.childPid} alive: ${run.childAlive}]` : ''}\n`);
     if (preflight) {
       process.stdout.write(`  ${preflight.ok ? 'ok  ' : 'FAIL'} credentials   `

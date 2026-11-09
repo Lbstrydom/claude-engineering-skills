@@ -76,6 +76,17 @@ describe('pinned-worktree CLI reads the fixture run heartbeat', () => {
     assert.equal(cli('remove', '--name', 'hb-none').status, 0);
   });
 
+  it('verify fails on an unreadable journal (cannot tell), passes with none', () => {
+    const f = createFixture({ name: 'hb-bad', rev: SHA, root: FIXTURES, cwd: REPO });
+    try {
+      assert.equal(cli('verify', '--name', 'hb-bad').status, 0);
+      fs.mkdirSync(runsDirOf(f.dir), { recursive: true });
+      fs.writeFileSync(path.join(runsDirOf(f.dir), 'hb-bad.jsonl'), 'garbage\n');
+      const r = cli('verify', '--name', 'hb-bad');
+      assert.match(r.stdout, /FAIL heartbeat\s+UNKNOWN/);
+      assert.equal(r.status, 1);
+    } finally { removeFixture({ dir: f.dir, cwd: REPO }); }
+  });
   it('verify reports the run, and a STALE run fails verify', () => {
     const f = createFixture({ name: 'hb-stale', rev: SHA, root: FIXTURES, cwd: REPO });
     try {
@@ -85,6 +96,10 @@ describe('pinned-worktree CLI reads the fixture run heartbeat', () => {
       const stale = cli('verify', '--name', 'hb-stale');
       assert.match(stale.stdout, /FAIL heartbeat\s+STALE/);
       assert.equal(stale.status, 1);
+      // --json must carry the COMBINED verdict, not the fixture-only ok from the spread result
+      const j = cli('verify', '--name', 'hb-stale', '--json');
+      assert.equal(JSON.parse(j.stdout).ok, false);
+      assert.notEqual(j.status, 0);
     } finally { removeFixture({ dir: f.dir, cwd: REPO }); }
   });
 });
