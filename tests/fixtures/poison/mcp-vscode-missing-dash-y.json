@@ -4,7 +4,7 @@
       "type": "stdio",
       "command": "npx",
       "args": [
-        "@playwright/mcp@latest",
+        "@playwright/mcp@0.0.84",
         "--headless"
       ]
     },
@@ -13,7 +13,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "mcp-mermaid@latest"
+        "mcp-mermaid@0.4.1"
       ]
     }
   }

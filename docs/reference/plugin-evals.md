@@ -75,6 +75,15 @@ claude plugin eval . --tag pilot --max-cost-usd 5 --ablation none
 claude plugin eval . --case explain-topic-question --ablation none
 ```
 
+Official docs: <https://code.claude.com/docs/en/plugin-evals.md> (flags such
+as `--threshold`, `--json`, `--trust-plugin` for CI).
+
+**`claude plugin validate .` fails on this manifest (measured 2026-11-09):**
+the name `claude-engineering-skills` is reserved (third-party plugin names may
+not start with `claude-`). That only matters if the plugin is ever published to
+a marketplace; the eval-only manifest works regardless. Renaming it would
+change the eval plugin id, so it is left as-is until distribution is wanted.
+
 Every run is a real, billed API call (the with-arm, the without-arm, and any
 `llm`-type grader's judge model). Always pass `--max-cost-usd` outside of a
 one-off smoke check.
