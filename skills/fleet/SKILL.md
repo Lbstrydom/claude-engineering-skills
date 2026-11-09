@@ -119,15 +119,14 @@ only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
   The machine lease line (slot holder, windows, peak hours) is information too.
 - Coordinating, not participating (chip authority, session-list cross-check, routing, ship-ready end state, consumer sync, titles,
   archive sweeps, push lanes): `references/coordination.md`; the why: `references/coordination-rationale.md`.
+- **Background runs** go under `node scripts/run-heartbeat.mjs run …`, with `watch` armed on Monitor; STALE or UNKNOWN is never healthy, an expired watcher is no verdict: `references/background-runs.md`.
 - pr-mode `land --approve` refuses a draft, or a required check that failed or was SKIPPED (a skipped check never ran), and prints WAIT above a merge whose required checks are missing or pending: relay those lines. A head that moved since `ready` reads `ready (stale)`: re-run `ready`. Interrupted `land`, `--serial`, `restack`: `references/landing.md`.
 
 ## Config — optional `.fleet.json` at the repo root
 
-Never synced; read from the checkout you run in, so commit it. Every key is optional: base branch, merge method, test command and tiers, collision `checks`, `hotFiles`, `archiveIgnore`. Keys, defaults and a monorepo example: `references/config.md`.
+Never synced; read from the checkout you run in, so commit it. Every key is optional; keys, defaults, a monorepo example: `references/config.md`.
 
-Every verb also records one usage event (counts and outcome classes only, never
-paths or prose) for the audit store; `FLEET_TELEMETRY=off` disables it. Performance and failures: `node scripts/cross-skill.mjs
-fleet-telemetry stats --format worksheet`; detail in `references/telemetry.md`.
+Every verb records one counts-only usage event; `FLEET_TELEMETRY=off` disables it (`references/telemetry.md`).
 
 ---
 
@@ -149,6 +148,7 @@ situations — read them only when the trigger applies.
 | `references/config.md` | The optional .fleet.json - base branch, merge method, test tiers, collision checks, hotFiles, archiveIgnore. | You read or write `.fleet.json`, or configure test tiers, collision checks or `hotFiles`. |
 | `references/landing.md` | Landing beyond one combined run — required checks that ran, serial landing, restack, append-only files. | You approve a train, land serially, restack, or set append-only files. |
 | `references/lease.md` | The machine lease - slot, windows, waiting and the journal. | You use or change `fleet lease`. |
+| `references/background-runs.md` | Background-run heartbeats — launch a long job under a journal, arm a stale-watch that wakes its session. | You launch or check a long background run, or `status` shows `runs:`. |
 | `references/hosts.md` | Which hosts run /fleet and how: VS Code harnesses, subagents vs sessions, a manual recipe. | You run fleet on VS Code, Copilot or Codex. |
 | `references/decision-ledger.md` | Own-model ledger — when to record a task, decision, correction or outcome. | You record a ledger event or purge one. |
 | `references/telemetry.md` | Usage telemetry — what each verb records, the weakness findings stats derives, and how to turn it off. | You want fleet's performance, a stats weakness, or what it sends. |

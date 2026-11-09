@@ -826,6 +826,10 @@
       "description": "Build the final-review transcript the mandatory Gemini/Opus gate reads.",
       "category": "audit"
     },
+    "scripts/campaign-contract-check.mjs": {
+      "description": "/audit-plan campaign contract presence check (C1-C12); --closeout verifies evidence is committed at a revision.",
+      "category": "plans"
+    },
     "scripts/campaign.mjs": {
       "description": "Scoped evaluation campaigns: declare, run, and read back adjudication queues.",
       "category": "learning"
@@ -853,6 +857,10 @@
     "scripts/persona-consistency-run.mjs": {
       "description": "Deterministic persona-consistency check over a /persona-test session.",
       "category": "audit"
+    },
+    "scripts/run-heartbeat.mjs": {
+      "description": "/fleet background-run heartbeat journals + stale-watch: run/start/beat/end/check/watch/list; STALE or UNKNOWN exits 3, never healthy.",
+      "category": "diagnostic"
     },
     "scripts/ship-commit.mjs": {
       "description": "The only writer of AI-* provenance trailers; /ship Step 6.3 commits through it.",

@@ -15,6 +15,7 @@ import { normalizePath } from '../file-io.mjs';
 import { semanticId } from '../findings.mjs';
 import { parseAcceptV1Markers } from './deferral-classifier.mjs';
 import { globMatch } from './glob-match.mjs';
+import { describeCanaryBlock } from './canary.mjs';
 import { formatCoverageSuffix, changedLinesUnreadTotal, requiredSubjectsNotFull, unreviewedUnrecognisedFiles } from '../coverage-format.mjs';
 
 /**
@@ -395,10 +396,17 @@ export function computeAuditVerdict(findings, { incomplete = false } = {}) {
  * @returns {string}
  */
 export function formatAuditSummaryLine({
-  verdict, high, medium, low, failedPasses = [], passesTotal = null, latencyMs = 0, coverage = null,
+  verdict, high, medium, low, failedPasses = [], passesTotal = null, latencyMs = 0, coverage = null, canary = null,
 }) {
   const secs = `${(Number(latencyMs || 0) / 1000).toFixed(0)}s`;
   const cov = formatCoverageSuffix(coverage);
+  // A canary that blocks evidence (AUDIT_CANARY=1, scripts/lib/audit/canary.mjs) names itself first: every pass may have
+  // produced output and the change may have been read, and the round is still blind.
+  const canaryBlock = verdict === 'INCOMPLETE' ? describeCanaryBlock(canary) : null;
+  if (canaryBlock) {
+    const others = [failedPasses.length > 0 ? `${failedPasses.length} pass(es) also failed` : null, cov].filter(Boolean).join('; ');
+    return `Verdict: INCOMPLETE — ${canaryBlock}${others ? ` (${others})` : ''}. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}`;
+  }
   if (verdict !== 'INCOMPLETE') {
     const base = `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${secs}`;
     // The verdict word counts FINDINGS; it does not say the change was read. Beside it, say when it was not

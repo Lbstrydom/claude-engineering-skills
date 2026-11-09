@@ -505,15 +505,9 @@ node scripts/symbol-index/render-mermaid.mjs || true
 # NOTE: do NOT `git add docs/architecture-map.md` — it is gitignored (Category A).
 ```
 
-**`docs/architecture-map.md` is Category A and is NEVER staged** — two renders of
-one commit differ. **This step is ALWAYS advisory — it never blocks a ship**:
-every failure mode (cloud off, legacy-only env, non-JS stack, HEAD not on the
-default branch, DB/embedding error) skips or exits non-zero under `|| true`; read
-the stderr line if the local map looks stale. → `references/architecture-and-dashboard-refresh.md`
-§0.5c — read when debugging this step's staging or a refresh that did not run.
-
-Nothing from this step is ever staged. The drift sticky-issue is only updated by
-the weekly GH workflow, never by /ship directly.
+**Nothing from this step is ever staged** (`docs/architecture-map.md` is Category A),
+and it **never blocks a ship**: every failure mode skips under `|| true`. →
+`references/architecture-and-dashboard-refresh.md` §0.5c — read when debugging it.
 
 ---
 
@@ -528,19 +522,9 @@ Skip silently in consumer repos (→ `references/architecture-and-dashboard-refr
 node scripts/build-dashboard.mjs reference 2>&1
 ```
 
-Run it WITHOUT `|| true` — the **exit code is the signal** and must be read,
-not masked. A non-zero exit must not abort the ship (this step is advisory):
-treat a failure as "skip staging, print a heads-up, continue".
-
-`reference` mode regenerates `dashboard/index.html` + `dashboard/telemetry.html`.
-The CLI exits non-zero on a **degraded** build (a source was invalid/errored).
-
-**Nothing here is ever staged** — both pages are gitignored Category A. The
-exit code is a **reporting** signal, not a staging one:
-
-- Exit 0 → the local page is current; say nothing.
-- Exit non-zero → print a one-line heads-up that the dashboard build degraded;
-  ship continues.
+Run it WITHOUT `|| true` — read the exit code, never mask it. It regenerates the
+gitignored (Category A, never staged) `dashboard/index.html` + `telemetry.html`;
+non-zero means a degraded build → print a one-line heads-up and continue.
 
 ---
 
@@ -556,6 +540,18 @@ Before updating docs, understand the current state:
 Build a mental model of: what features/fixes were implemented, which
 files were created vs modified, which area was affected, whether new
 patterns were established.
+
+---
+
+## Step 1.5 — Close-out claims check (write-ups and status reports)
+
+When the change carries a write-up or status report — `docs/research/**`, a results
+doc, a `status.md` entry, a plan's status or audit trail with figures — every figure
+must trace to an artifact and carry `measured` / `derived` / `expected` with its
+command; every line citation is pinned (`node scripts/check-doc-citations.mjs <doc>`).
+An untraceable figure is fixed, or settled with `/investigate`, before the commit.
+Procedure: `references/claims-check.md`; repeat it over the status.md entry and plan
+update Steps 2 and 5 write. No write-up in the change → skip, and say so.
 
 ---
 
@@ -1123,6 +1119,7 @@ situations — read them only when the trigger applies.
 | `references/train-mode.md` | /ship --train runbook — plan, land, verify, sync a batch of ship-ready PRs; refusals, overrides, recovery. | `/ship --train` was invoked, or the user asked to land several ready PRs together. |
 | `references/upstream-triage.md` | Step 0.5h — triaging a consumer's upstream report: the owning store, the FULL uuid, and the freshness check. | Step 0.5h's card lists a report you are about to `ack`, `fix` or `wont-fix`. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |
+| `references/claims-check.md` | Step 1.5 claims check — every figure in a write-up traces to an artifact and carries its provenance label. | Step 1.5 — the change carries a write-up, results doc or status report. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
 
 — end of /ship —

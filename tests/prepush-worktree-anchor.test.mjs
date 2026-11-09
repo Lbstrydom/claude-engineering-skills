@@ -360,6 +360,10 @@ describe('main-checkout derivation population', () => {
       'Needs the git COMMON DIRECTORY itself — the suite-run record is filed inside it so the pre-push sandbox\'s '
       + 'throwaway worktree and every linked worktree write the one place doctor reads — not the main checkout root. '
       + 'It is shared-lib, and reusing fleet/git-facts.mjs would add a shared-lib -> fleet import (an undeclared layering edge).'],
+    ['scripts/lib/run-heartbeat.mjs',
+      'Needs the git COMMON DIRECTORY itself (run journals live in <common-dir>/audit-loop/runs/ so a pinned-fixture worktree\'s '
+      + 'run is visible from every checkout), and must tell "outside git" (only then .audit/runs) from "git failed or the repo is '
+      + 'broken" (throws) — the existing common-dir helpers fold both into one null, which would silently hide the run.'],
     ['scripts/lib/test-evidence.mjs',
       'Needs the git COMMON DIRECTORY itself (records live in <common-dir>/test-evidence/, shared by every linked worktree), '
       + 'with an injectable env that the gitCommonDir in suite-run-record.mjs lacks, resolved in the same rev-parse pass as the '

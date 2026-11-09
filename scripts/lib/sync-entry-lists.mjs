@@ -28,6 +28,10 @@ export const CORE_ENTRY = [
   // it. Same reason as cycle-cluster-scope.mjs above: both synced SKILL.md
   // files name this command.
   'scripts/check-plan-status.mjs',
+  // /fleet's background-run heartbeat + stale-watch and /audit-plan's campaign contract check
+  // (docs/plans/test-campaign-controls.md). Same reason: synced SKILL.md files name both commands.
+  'scripts/run-heartbeat.mjs',
+  'scripts/campaign-contract-check.mjs',
   'scripts/gemini-review.mjs',
   'scripts/bandit.mjs',
   'scripts/learning-store.mjs',
