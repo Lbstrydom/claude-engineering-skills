@@ -33,5 +33,5 @@ test('the reference exists, its summary matches the SKILL.md index row, and it n
 
 test('campaign C12 points at the /ship claims check', () => {
   const c12 = read('skills/plan/references/campaign.md').split(/^### C12 — /m)[1];
-  assert.ok(c12 && c12.includes('claims-check.md'));
+  assert.ok(c12 && c12.includes('/ship') && c12.includes('Step 1.5'));
 });

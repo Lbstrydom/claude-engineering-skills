@@ -78,7 +78,7 @@ whether the declared control is adequate.
   review (an expired review or a monthly cap is found before the run, not during it).
 - **heartbeat**: the run id the job journals under —
   `node scripts/run-heartbeat.mjs run --run-id <id> --stale-after <sec> -- <cmd>`, watched
-  per `/fleet` `references/background-runs.md`. Artifact hashes are written by a tool.
+  per the `/fleet` skill's background-runs reference. Artifact hashes are written by a tool.
 
 ### C7 — Dress rehearsal
 - **items**: an integer >= 5 — items taken end to end through the REAL pipeline, writing
@@ -114,7 +114,7 @@ file's SHA-256 for the close-out record.
 ### C12 — Close-out claims check
 - **claims-check**: the write-up(s) the `/ship` close-out claims check runs over: every
   figure traces to an artifact and carries measured / derived / expected
-  (`/ship` `references/claims-check.md`).
+  (the `/ship` skill's Step 1.5).
 
 ## The dress-rehearsal gate
 
