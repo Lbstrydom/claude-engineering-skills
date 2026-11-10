@@ -498,6 +498,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "892b8e82-e584-404d-8496-8c3c837214c6",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/visual-theme-flip.test.mjs"
+      },
+      "recordedAt": "2026-11-09T20:52:47.096Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "897aa607-8808-458d-8188-5c1f38caef7f",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
@@ -803,6 +814,17 @@
         "value": "sync/fresh-clone-contract"
       },
       "recordedAt": "2026-08-22T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "issueId": "d9306fe9-5d9e-4982-b309-61dd5bcea61f",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/visual-layout-physics.test.mjs"
+      },
+      "recordedAt": "2026-11-09T20:52:47.671Z"
     },
     {
       "schemaVersion": 1,
