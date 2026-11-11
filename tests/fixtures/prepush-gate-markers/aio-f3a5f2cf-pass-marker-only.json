@@ -1,0 +1,11 @@
+{
+  "_provenance": "Trimmed copy of a real consumer pre-push report (ai-organiser worktree sweep-review-labels .audit/prepush/f3a5f2cfb015.report.json, 2026-11): verdict and each finding's severity/category/detail only, byte-identical in those fields.",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "MEDIUM",
+      "category": "[Adjacency] coverage incomplete — control did not fully run",
+      "detail": "ADJACENCY_INCOMPLETE (input-bound): unified diff failed: WORKING_TREE_UNREADABLE"
+    }
+  ]
+}

@@ -40,7 +40,7 @@ const rmrf = (p) => fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, 
 describe('classifyAuditOutcome - did the audit MEASURE anything?', () => {
   const PASS = { verdict: 'PASS', findings: [] };
   it('RAN CLEAN: exit 0 with a PASS envelope', () => {
-    assert.deepEqual(classifyAuditOutcome({ exitCode: 0, report: PASS }), { kind: 'clean', cause: null, verdict: 'PASS', counts: { high: 0, medium: 0, low: 0 } });
+    assert.deepEqual(classifyAuditOutcome({ exitCode: 0, report: PASS }), { kind: 'clean', cause: null, verdict: 'PASS', counts: { high: 0, medium: 0, low: 0 }, tooling: [] });
   });
   it('RAN WITH FINDINGS: exit 0 with NEEDS_FIXES / SIGNIFICANT_ISSUES - findings never change the exit code', () => {
     const r = classifyAuditOutcome({ exitCode: 0, report: { verdict: 'SIGNIFICANT_ISSUES', findings: [{ severity: 'HIGH' }, { severity: 'MEDIUM' }, { severity: 'LOW' }] } });
@@ -128,6 +128,76 @@ describe('decideAuditGate - the push decision', () => {
     const d = decideAuditGate({ outcome: clean, env: {} });
     assert.equal(d.allow, true);
     assert.match(d.lines.join('\n'), /ran clean/);
+  });
+});
+
+// ── A2. control-state markers are tooling status, not findings (consumer report 1d, 2026-11-11) ─────────────────────────────────────
+describe('control markers: a tooling notice is never counted as a finding, and never changes measured-vs-unmeasured', () => {
+  const FIXTURE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'prepush-gate-markers');
+  const real = (name) => JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, name), 'utf8'));
+  const MARKER = { severity: 'MEDIUM', category: '[Adjacency] coverage incomplete', detail: 'ADJACENCY_INCOMPLETE (input-bound): unified diff failed: WORKING_TREE_UNREADABLE' };
+
+  for (const name of ['aio-e7bade77-pass-marker-only.json', 'aio-f3a5f2cf-pass-marker-only.json']) {
+    it(`the real AIO report ${name} (PASS + marker only) is clean, M:0, with a tooling line - never the bare "ran clean"`, () => {
+      const outcome = classifyAuditOutcome({ exitCode: 0, report: real(name) });
+      assert.equal(outcome.kind, 'clean');
+      assert.deepEqual(outcome.counts, { high: 0, medium: 0, low: 0 });
+      assert.deepEqual(outcome.tooling, ['ADJACENCY_INCOMPLETE (input-bound): unified diff failed: WORKING_TREE_UNREADABLE']);
+      const d = decideAuditGate({ outcome, env: { AUDIT_PREPUSH_BLOCK: '1' } });
+      assert.equal(d.allow, true, 'a tooling notice cannot block, even under AUDIT_PREPUSH_BLOCK=1');
+      assert.match(d.lines[0], /ran clean, except: 1 tooling notice\(s\) below$/);
+      assert.equal(d.lines.filter((l) => l.startsWith('[prepush-hook] tooling: ADJACENCY_INCOMPLETE')).length, 1);
+      assert.doesNotMatch(d.lines.join('\n'), /found things to address/);
+    });
+  }
+  it('negative control: without the partition the same PASS read as findings (the defect) - the marker is MEDIUM by construction', () => {
+    assert.equal(MARKER.severity, 'MEDIUM');
+    const plain = { ...MARKER, detail: `see ${MARKER.detail}` }; // the prefix mid-text is NOT a marker
+    const r = classifyAuditOutcome({ exitCode: 0, report: { verdict: 'PASS', findings: [plain] } });
+    assert.equal(r.kind, 'findings');
+    assert.deepEqual(r.counts, { high: 0, medium: 1, low: 0 });
+    assert.deepEqual(r.tooling, []);
+  });
+  it('NEEDS_FIXES + a real MEDIUM + a marker is findings, M:1, and the marker is a tooling line', () => {
+    const r = classifyAuditOutcome({ exitCode: 0, report: { verdict: 'NEEDS_FIXES', findings: [{ severity: 'MEDIUM', detail: 'real defect' }, MARKER] } });
+    assert.equal(r.kind, 'findings');
+    assert.deepEqual(r.counts, { high: 0, medium: 1, low: 0 });
+    const lines = decideAuditGate({ outcome: r, env: {} }).lines;
+    assert.match(lines[0], /\(H:0 M:1 L:0\) - the audit RAN and found things to address/);
+    assert.ok(lines.some((l) => l.startsWith('[prepush-hook] tooling: ADJACENCY_INCOMPLETE')));
+  });
+  it('a NEEDS_FIXES produced by markers alone (no real HIGH/MEDIUM) is clean with tooling lines, and says which verdict counted them', () => {
+    const r = classifyAuditOutcome({ exitCode: 0, report: { verdict: 'NEEDS_FIXES', findings: [MARKER, MARKER, MARKER, { severity: 'LOW', detail: 'nit' }] } });
+    assert.equal(r.kind, 'clean');
+    assert.deepEqual(r.counts, { high: 0, medium: 0, low: 1 });
+    assert.equal(r.tooling.length, 3);
+    const d = decideAuditGate({ outcome: r, env: { AUDIT_PREPUSH_BLOCK: '1' } });
+    assert.equal(d.allow, true);
+    assert.match(d.lines[0], /ran clean, except: 3 tooling notice\(s\) below \(its NEEDS_FIXES verdict counted only these notices\)$/);
+  });
+  it('control: a NEEDS_FIXES with NO marker keeps trusting the verdict word (findings), even with an empty list', () => {
+    assert.equal(classifyAuditOutcome({ exitCode: 0, report: { verdict: 'NEEDS_FIXES', findings: [] } }).kind, 'findings');
+  });
+  it('INCOMPLETE + marker stays unmeasured, and a non-zero exit with a marker envelope stays unmeasured', () => {
+    assert.equal(classifyAuditOutcome({ exitCode: 0, report: { verdict: 'INCOMPLETE', findings: [MARKER] } }).kind, 'unmeasured');
+    assert.equal(classifyAuditOutcome({ exitCode: 3, report: { verdict: 'PASS', findings: [MARKER] } }).kind, 'unmeasured');
+    assert.equal(decideAuditGate({ outcome: classifyAuditOutcome({ exitCode: 0, report: { verdict: 'INCOMPLETE', findings: [MARKER] } }), env: {} }).allow, false);
+  });
+  it('a marker with a missing or unrecognised severity is a malformed envelope (unmeasured), never partitioned out as clean', () => {
+    for (const bad of [{ detail: MARKER.detail }, { ...MARKER, severity: 'CRITICAL' }, { ...MARKER, severity: 7 }]) {
+      const r = classifyAuditOutcome({ exitCode: 0, report: { verdict: 'PASS', findings: [bad] } });
+      assert.equal(r.kind, 'unmeasured', JSON.stringify(bad));
+      assert.match(r.cause, /no readable findings list/);
+    }
+  });
+  it('a marker does not rescue an unreadable entry beside it, and its detail is capped at 200 chars', () => {
+    assert.equal(classifyAuditOutcome({ exitCode: 0, report: { verdict: 'PASS', findings: [MARKER, { severity: 'CRITICAL' }] } }).kind, 'unmeasured');
+    const long = { ...MARKER, detail: `ADJACENCY_INCOMPLETE (x): ${'y'.repeat(500)}` };
+    assert.equal(classifyAuditOutcome({ exitCode: 0, report: { verdict: 'PASS', findings: [long] } }).tooling[0].length, 200);
+  });
+  it('a clean run without markers keeps the v16 wording exactly', () => {
+    const d = decideAuditGate({ outcome: classifyAuditOutcome({ exitCode: 0, report: { verdict: 'PASS', findings: [] } }), env: {} });
+    assert.deepEqual(d.lines, ['[prepush-hook] code audit: PASS (H:0 M:0 L:0) - ran clean']);
   });
 });
 

@@ -147,7 +147,7 @@ export function isSafeGitRevision(s) {
  * Centralised so call-site branches stay simple.
  *
  * @param {unknown} err - the thrown Error or a spawnSync result object
- * @param {{wantedRev?: string}} [ctx]
+ * @param {{wantedRev?: string, maxBuffer?: number}} [ctx] `maxBuffer` is the call's own limit, named in an overflow message
  * @returns {VcsError}
  */
 function classifyChildError(err, ctx = {}) {
@@ -156,6 +156,12 @@ function classifyChildError(err, ctx = {}) {
   const code = err && err.code;
   if (code === 'ENOENT') {
     return { code: 'GIT_BINARY_MISSING', message: 'git binary not found on PATH', cause: err };
+  }
+  // Output overflow (spawnSync's maxBuffer): the SAME code a caller already branches on, but named for what it is. Without this the
+  // overflow fell to the catch-all as "git command failed", read as an unreadable working tree (consumer report 1d, 2026-11-11).
+  if (code === 'ENOBUFS' || code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+    const limit = Number.isFinite(ctx.maxBuffer) && ctx.maxBuffer > 0 ? `the ${ctx.maxBuffer}-byte buffer` : 'its output buffer';
+    return { code: 'WORKING_TREE_UNREADABLE', message: `git output exceeded ${limit} (ENOBUFS)`, cause: err };
   }
   const stderrBuf = err && (err.stderr || (err.error && err.error.message));
   const stderr = stderrBuf ? String(stderrBuf) : '';
@@ -630,22 +636,24 @@ export function gitUnifiedDiffWithWorkingTree(cwd, sinceCommit, { maxBytes = nul
       error: { code: 'BAD_REVISION', message: `refusing unsafe revision: ${JSON.stringify(String(sinceCommit)).slice(0, 80)}` },
     };
   }
+  // Node's spawnSync default is 1 MiB; the ctx names whichever limit applied, so an overflow message carries the real number.
+  const ctx = { wantedRev: sinceCommit, maxBuffer: Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : 1024 * 1024 };
   let res;
   try {
     res = spawnSync('git', ['diff', '--unified=0', sinceCommit, ...pathspecArgs(pathspecs)], {
       cwd,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      ...(Number.isFinite(maxBytes) && maxBytes > 0 ? { maxBuffer: maxBytes } : {}),
+      maxBuffer: ctx.maxBuffer,
       ...(env ? { env } : {}),
     });
   } catch (err) {
-    return { ok: false, error: classifyChildError(err, { wantedRev: sinceCommit }) };
+    return { ok: false, error: classifyChildError(err, ctx) };
   }
-  if (res.error) return { ok: false, error: classifyChildError(res.error, { wantedRev: sinceCommit }) };
+  if (res.error) return { ok: false, error: classifyChildError(res.error, ctx) };
   if (res.status !== 0) {
     const synth = { stderr: res.stderr, status: res.status, signal: res.signal };
-    return { ok: false, error: classifyChildError(synth, { wantedRev: sinceCommit }) };
+    return { ok: false, error: classifyChildError(synth, ctx) };
   }
   return { ok: true, diffText: res.stdout || '', truncated: false };
 }
@@ -706,24 +714,25 @@ export function gitShowFileAtRevision(cwd, revision, filePath, opts = {}) {
       error: { code: 'BAD_REVISION', message: `refusing unsafe revision: ${JSON.stringify(revision).slice(0, 80)}` },
     };
   }
+  const ctx = { wantedRev: revision, maxBuffer: 20 * 1024 * 1024 };
   let res;
   try {
     res = spawnSync('git', ['show', `${revision}:${filePath}`], {
-      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 20 * 1024 * 1024,
+      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: ctx.maxBuffer,
       ...(opts.env ? { env: opts.env } : {}),
     });
   } catch (err) {
-    return { ok: false, error: classifyChildError(err, { wantedRev: revision }) };
+    return { ok: false, error: classifyChildError(err, ctx) };
   }
   if (res.error) {
-    return { ok: false, error: classifyChildError(res.error, { wantedRev: revision }) };
+    return { ok: false, error: classifyChildError(res.error, ctx) };
   }
   if (res.status !== 0) {
     // Non-zero here is overwhelmingly "path does not exist at this revision"
     // (a new file) — classify via the same BAD_REVISION/stderr heuristics
     // rather than a bespoke branch, so callers get one consistent error shape.
     const synth = { stderr: res.stderr, status: res.status, signal: res.signal };
-    const classified = classifyChildError(synth, { wantedRev: revision });
+    const classified = classifyChildError(synth, ctx);
     if (classified.code === 'WORKING_TREE_UNREADABLE' && /path .* (does not exist|exists on disk, but not in)/i.test(res.stderr || '')) {
       return { ok: false, error: { code: 'BAD_REVISION', message: `${filePath} does not exist at ${revision}`, cause: res } };
     }

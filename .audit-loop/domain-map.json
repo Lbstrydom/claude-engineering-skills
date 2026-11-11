@@ -126,6 +126,11 @@
       "domain": "findings"
     },
     {
+      "pattern": "scripts/lib/audit/control-markers.mjs",
+      "domain": "shared-lib",
+      "_why": "RETAG, not move (2026-11-11, prepush-gate-consumer-feedback-theme1 Cluster A, audit M4): the control-marker prefix list imports nothing and is now read by the shared-lib pre-push gate (prepush-audit-gate.mjs) as well as audit orchestration, so it is a dependency-neutral contract. Inbound edges from audit-orchestration and the cross-skill CLI become X -> shared-lib."
+    },
+    {
       "pattern": "scripts/lib/audit/**",
       "domain": "audit-orchestration"
     },
