@@ -61,7 +61,9 @@ import { log, toShellExitCode } from './lib/cli-io.mjs';
 import { dependencySetChanged } from './lib/dependency-identity.mjs';
 import { installedTreeStale } from './lib/installed-tree-identity.mjs';
 import { countTopLevelEntries, findNodeModules } from './lib/node-modules-resolver.mjs';
-import { GIT_LOCK_RETRY_DELAYS_MS, withGitLockRetry } from './lib/git-lock-retry.mjs';
+// `git worktree add/remove/prune` write the SHARED repo's metadata a concurrent session can hold locked: lib/prepush-snapshot.mjs owns
+// the one lock-retrying runner (and the create/remove order), shared with the consumer hook's audit snapshot.
+import { createSnapshot, removeSnapshot, gitWithLockRetry } from './lib/prepush-snapshot.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { runTieredChecks, sandboxTierSupport } from './lib/prepush-tier.mjs';
 import { resolveMainRoot } from './lib/pinned-worktree/paths.mjs';
@@ -69,35 +71,12 @@ import {
   PRESERVED_EVIDENCE_FILE,
   STALE_SANDBOX_AGE_MS,
   describeSweep,
-  removeSandboxDir,
   sweepStaleSandboxes,
 } from './lib/prepush-sandbox-cleanup.mjs';
 
 const IS_WIN = process.platform === 'win32';
 const NPM = IS_WIN ? 'npm.cmd' : 'npm';
 
-/**
- * `git worktree add/remove/prune` write to the SHARED repo's common
- * .git/config and .git/worktrees/ metadata — the exact resource a concurrent
- * process's own git activity can transiently lock (anthropics/claude-code
- * #34645/#55724 — see the core.bare incident note below). Wrap them in
- * lib/git-lock-retry's exponential backoff so a lock held for a few hundred
- * ms by a peer that's about to release it doesn't hard-fail the sandbox.
- * (Distinct from a stale/corrupted VALUE written mid-run, which the
- * worktree-scoped core.bare pin further down already closes — retrying
- * doesn't undo a bad value that's already durably on disk.)
- */
-function gitWithLockRetry(repoRoot, args, opts = {}) {
-  return withGitLockRetry(
-    () => execFileSync('git', args, { cwd: repoRoot, stdio: ['ignore', 'ignore', 'pipe'], ...opts }),
-    {
-      onRetry: (attempt, delayMs) => log(
-        `  ⚠ git ${args.join(' ')} hit lock contention (concurrent session?) — ` +
-        `retry ${attempt + 1}/${GIT_LOCK_RETRY_DELAYS_MS.length} in ${delayMs}ms`,
-      ),
-    },
-  );
-}
 
 /** Gitignored/untracked files that must be copied into the sandbox for a check
  *  to be meaningful.
@@ -465,16 +444,8 @@ function resolveLocalArtifactRoot(repoRoot) {
  * one command that would have surfaced it, then reports clean.
  */
 function removeWorktree(sandbox, repoRoot) {
-  let gitRemoveFailed = false;
-  try {
-    gitWithLockRetry(repoRoot, ['worktree', 'remove', '--force', sandbox]);
-  } catch {
-    // Metadata already gone, a file locked on Windows, or lock contention that
-    // outlasted the retry budget. Not decisive either way — the stat below is.
-    gitRemoveFailed = true;
-  }
-
-  const { removed, error } = removeSandboxDir(sandbox);
+  // lib/prepush-snapshot.mjs owns the remove-then-stat-then-prune order (shared with the consumer hook's snapshot); this keeps the logging.
+  const { removed, error } = removeSnapshot({ repoRoot, dir: sandbox, onRetry: log });
   if (!removed) {
     // Do NOT swallow. An unbounded silent leak teaches nobody anything until
     // the temp volume fills; the path on stderr costs one line and makes the
@@ -483,14 +454,6 @@ function removeWorktree(sandbox, repoRoot) {
     log(`    ${error?.code ? `${error.code}: ` : ''}${error?.message ?? 'unknown error'}`);
     log('    Delete it by hand to reclaim the space; a later push sweeps husks over '
       + `${STALE_SANDBOX_AGE_MS / 3_600_000}h old.`);
-  }
-
-  // Only touch shared worktree metadata when git's own removal didn't already
-  // do it — every write here contends with concurrent sessions on the same
-  // .git locks (the #34645/#55724 class), so an unconditional prune would add
-  // a shared-metadata write to every push to fix a path that rarely runs.
-  if (gitRemoveFailed) {
-    try { gitWithLockRetry(repoRoot, ['worktree', 'prune']); } catch { /* noop */ }
   }
 }
 
@@ -530,7 +493,7 @@ function main() {
     // is exactly when `git worktree list` needs pruning to stop showing a
     // corpse pointing into temp.
     if (sweep.swept.length) {
-      try { gitWithLockRetry(repoRoot, ['worktree', 'prune']); } catch { /* noop */ }
+      try { gitWithLockRetry(repoRoot, ['worktree', 'prune'], { onRetry: log }); } catch { /* noop */ }
     }
   } catch (err) {
     log(`  ⚠ stale-sandbox sweep failed (continuing): ${err.message}`);
@@ -568,35 +531,12 @@ function main() {
   }
 
   try {
-    try {
-      gitWithLockRetry(repoRoot, ['worktree', 'add', '--detach', '--quiet', sandbox, headSha]);
-    } catch (err) {
-      throw new Error(`could not create sandbox worktree: ${err.stderr?.toString().trim() || err.message}`);
-    }
+    // lib/prepush-snapshot.mjs: lock-retried `worktree add --detach`, then the worktree-scoped core.bare=false pin explained below.
+    const created = createSnapshot({ repoRoot, sha: headSha, dir: sandbox, onRetry: log });
+    if (!created.ok) throw new Error(created.error.replace('the snapshot worktree', 'sandbox worktree'));
 
-    // Pin a worktree-SCOPED core.bare=false so this sandbox survives a
-    // concurrent external write to the shared repo's common .git/config
-    // (2026-07-23 incident: a concurrent process — most likely another
-    // Claude Code session's own worktree/git activity racing on the same
-    // .git/config.lock, a documented class of bug in anthropics/claude-code
-    // issues #34645 and #55724 — was observed repeatedly flipping
-    // core.bare=true on the shared common config mid-run).
-    //
-    // This works, and is SAFE, in a way the two env-var approaches tried and
-    // rejected earlier were not: `git config --worktree` writes to a file
-    // scoped to THIS worktree (.git/worktrees/<name>/config.worktree), not a
-    // process-tree-wide environment variable — so it cannot leak into tests
-    // that spawn their OWN independent throwaway git repos (verified live:
-    // a nested `git init` inside this sandbox is completely unaffected).
-    // Requires extensions.worktreeConfig (already enabled on this repo,
-    // apparently by the harness itself when provisioning worktrees — without
-    // it, core.bare in the common config already applies to the main
-    // worktree only, per git-worktree(1), so this is a no-op-but-harmless
-    // defensive write either way). Best-effort: a failure here still leaves
-    // the run exactly as unprotected as it always was, never worse.
-    try {
-      execFileSync('git', ['config', '--worktree', 'core.bare', 'false'], { cwd: sandbox, stdio: 'ignore' });
-    } catch { /* best-effort hardening — see comment above */ }
+    // The worktree-scoped core.bare=false pin (2026-07-23 incident: a concurrent writer flipped core.bare=true in the shared
+    // .git/config mid-run) is applied inside createSnapshot; its rationale lives there.
 
     // Computed once, reused both for `npm ci` below (audit fix M1) and for
     // the `npm run check` env built further down — one sanitized-env call

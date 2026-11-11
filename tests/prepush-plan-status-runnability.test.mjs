@@ -88,7 +88,7 @@ function mainParentFragment() {
  */
 function planStatusFragment() {
   const lines = HOOK_BODY.split('\n');
-  const start = lines.findIndex(l => l.startsWith('if [ "$PLAN_STATUS_DISABLE" != "1" ]; then'));
+  const start = lines.findIndex(l => l.startsWith('if [ "$PLAN_STATUS_DISABLE" != "1" ] && [ -n "$PLANS_PRESENT" ]; then'));
   assert.ok(start >= 0, 'plan-status gate not found in HOOK_BODY');
   const end = lines.indexOf('fi', start);
   assert.ok(end > start, 'plan-status gate has no terminator');
@@ -97,7 +97,7 @@ function planStatusFragment() {
   assert.ok(fnStart >= 0, 'prepush_bounded not found in HOOK_BODY');
   const fn = lines.slice(fnStart, lines.indexOf('}', fnStart) + 1).join('\n');
   const stepCli = path.join(import.meta.dirname, '..', 'scripts', 'prepush-step.mjs').replace(/\\/g, '/');
-  return [`STEP_CLI="${stepCli}"`, 'STEP_BUDGET=60', 'PROGRESS_SEC=30', fn, 'STATUS_CLI="$1"', lines.slice(start, end + 1).join('\n'), 'echo "REACHED_END"', ''].join('\n');
+  return [`STEP_CLI="${stepCli}"`, 'STEP_BUDGET=60', 'PROGRESS_SEC=30', fn, 'STATUS_CLI="$1"', 'PLANS_PRESENT=1' /* v17: the gate runs when docs/plans exists in the checkout or the pushed commit */, lines.slice(start, end + 1).join('\n'), 'echo "REACHED_END"', ''].join('\n');
 }
 
 function runGate(cliPath, tmp) {

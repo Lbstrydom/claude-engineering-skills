@@ -222,7 +222,8 @@ describe('managed pre-push hook — exit-path population', () => {
     const bare = code.filter(l => /(^|[;&|]\s*)exit 0\b/.test(l));
     assert.deepEqual(
       bare.map(l => l.trim()),
-      ['[ "$AUDIT_PREPUSH_DISABLE" = "1" ] && exit 0'],
+      // v17: the kill switch logs its own invocation line first; it still exits without the local hook (it is the WHOLE-hook switch).
+      ['[ "$AUDIT_PREPUSH_DISABLE" = "1" ] && { prepush_log_invocation disabled; exit 0; }'],
       'a new `exit 0` bypasses the consumer extension point — use `finish`, or '
       + 'declare it here with the reason it must not run the local hook',
     );

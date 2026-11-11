@@ -69,6 +69,14 @@ export const PRESERVED_EVIDENCE_FILE = '.prepush-npm-ci.log';
 export const STALE_SANDBOX_AGE_MS = 6 * 60 * 60 * 1000;
 
 /**
+ * The consumer pre-push hook's audit snapshot (lib/prepush-snapshot.mjs, hook v17): a detached worktree of the pushed commit, removed on
+ * every exit path the hook can trap. A SIGKILL leaves a husk; this sweep removes it on a later push (dead owner at once, else by age).
+ * 24h, not 6h: a consumer audit is bounded at 45 min, and a consumer machine pushes far less often than this repo's own.
+ */
+export const CONSUMER_SNAPSHOT_PREFIX = 'ces-consumer-snap-';
+export const CONSUMER_SNAPSHOT_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
  * The pid of the process that created a sandbox: the digits after the LAST `-`
  * in `ces-prepush-<sha8>-<pid>` (the runner names it with `process.pid`).
  *
@@ -209,7 +217,8 @@ export const RETAINED_REASONS = Object.freeze([
  * @param {object} [opts]
  * @param {number} [opts.now] - injectable clock, so the age rule is testable
  * @param {number} [opts.maxAgeMs]
- * @param {string} [opts.prefix]
+ * @param {string} [opts.prefix] - survey ONLY this prefix (with `maxAgeMs`); omitted = both pre-push prefixes, each with its own age
+ * @param {number} [opts.consumerMaxAgeMs] - the age rule for {@link CONSUMER_SNAPSHOT_PREFIX} when both are surveyed
  * @param {(pid: number) => 'alive'|'dead'|'unknown'} [opts.probeOwner] - injectable liveness probe
  * @returns {{stale: string[], ownerDead: string[],
  *   young: Array<{dir: string, ageMs: number, retained: string}>,
@@ -223,9 +232,14 @@ export function surveySandboxes(tmpDir, opts = {}) {
   const {
     now = Date.now(),
     maxAgeMs = STALE_SANDBOX_AGE_MS,
-    prefix = SANDBOX_PREFIX,
+    prefix = null,
+    consumerMaxAgeMs = CONSUMER_SNAPSHOT_AGE_MS,
     probeOwner = probePidAlive,
   } = opts;
+  // Each prefix carries its own age rule. Prefix-scoped on purpose: %TEMP% is shared with every other tool on the machine.
+  const rules = prefix
+    ? [{ prefix, maxAgeMs }]
+    : [{ prefix: SANDBOX_PREFIX, maxAgeMs }, { prefix: CONSUMER_SNAPSHOT_PREFIX, maxAgeMs: consumerMaxAgeMs }];
 
   let entries;
   try {
@@ -244,14 +258,15 @@ export function surveySandboxes(tmpDir, opts = {}) {
     // Prefix-scoped on purpose: %TEMP% is shared with every other tool on the
     // machine, and with this repo's own test fixtures (ces-db-test-*,
     // ces-arch-gate-*) which have different owners and lifetimes.
-    if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue;
+    const rule = entry.isDirectory() ? rules.find((r) => entry.name.startsWith(r.prefix)) : null;
+    if (!rule) continue;
     const abs = path.join(tmpDir, entry.name);
     try {
       const ageMs = now - fs.statSync(abs).mtimeMs;
-      if (ageMs >= maxAgeMs) { stale.push(abs); continue; }
+      if (ageMs >= rule.maxAgeMs) { stale.push(abs); continue; }
 
       const retained = retentionReason(abs, entry.name, probeOwner);
-      if (retained === null) { stale.push(abs); ownerDead.push(abs); } else young.push({ dir: abs, ageMs, retained });
+      if (retained === null) { stale.push(abs); ownerDead.push(abs); } else young.push({ dir: abs, ageMs, retained, maxAgeMs: rule.maxAgeMs });
     } catch (error) {
       // A husk that vanished between readdir and stat is a benign race (another
       // push's sweep got there first). Anything else — permissions, I/O — means
@@ -343,8 +358,10 @@ export function describeSweep(result, tmpDir) {
     const oldestH = (Math.max(...young.map((h) => h.ageMs)) / 3_600_000).toFixed(1);
     const live = young.filter((h) => h.retained === 'owner-alive').length;
     const kept = young.length - live;
+    // Each husk is held to its own prefix's age rule; one shared threshold is named only when it is the one that applies to all.
+    const thresholds = [...new Set(young.map((h) => h.maxAgeMs ?? STALE_SANDBOX_AGE_MS))];
     lines.push(`  ${young.length} sandbox husk(s) present, none swept — oldest is ${oldestH}h old, `
-      + `under the ${STALE_SANDBOX_AGE_MS / 3_600_000}h threshold`
+      + (thresholds.length === 1 ? `under the ${thresholds[0] / 3_600_000}h threshold` : 'each under its own age threshold')
       + (live ? `; ${live} owned by a running push` : '')
       + (kept ? `; ${kept} kept because their owner could not be shown dead (evidence-preserved, no pid, or liveness unknown)` : ''));
   }

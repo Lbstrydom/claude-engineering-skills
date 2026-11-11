@@ -240,7 +240,7 @@ describe('the real hook - a push the plan selector resolved no plan for', () => 
       `if (a.includes('--select')) { ${selector === 'crash' ? "console.error('malformed Status'); process.exit(1);" : 'process.exit(0);'} }`,
       'process.exit(0);', '',
     ].join('\n'));
-    fs.writeFileSync(path.join(scripts, 'openai-audit.mjs'), "import fs from 'node:fs'; fs.writeFileSync('AUDIT_ARGV', 'called'); process.exit(0);\n");
+    fs.writeFileSync(path.join(scripts, 'openai-audit.mjs'), "import fs from 'node:fs'; import path from 'node:path'; { const o = process.argv.indexOf('--out'); if (o >= 0) process.chdir(path.resolve(process.argv[o + 1], '..', '..', '..')); } fs.writeFileSync('AUDIT_ARGV', 'called'); process.exit(0);\n");
     return root;
   }
   function consumer(ws) {
@@ -276,29 +276,28 @@ describe('the real hook - a push the plan selector resolved no plan for', () => 
     return { ...r, audited: fs.existsSync(path.join(local, 'AUDIT_ARGV')) };
   };
 
-  it('RED then GREEN: a CODE push with no plan is refused as UNMEASURED (v12 exited 0 having measured nothing)', (t) => {
+  // v13-v16 refused a no-plan CODE push as UNMEASURED; v17 measures it WITHOUT a plan instead (consumer feedback 2026-11-11, 1a).
+  // v12 exited 0 here having measured nothing - neither of those may come back. Full v17 contract: prepush-hook-v17.test.mjs.
+  it('a CODE push with no plan is never waved through: v17 audits it WITHOUT a plan (v12 exited 0 having measured nothing)', (t) => {
     if (!HAS_BASH) return t.skip('bash is required');
     const ws = tmpDir('hook-noplan-');
     try {
       const source = makeSource(ws);
       const c = consumer(ws);
       const got = run(c.local, source, c.push('src/app.mjs', 'x\n'));
-      assert.equal(got.status, 1, got.stderr);
-      assert.match(got.stderr, /UNMEASURED: no plan was selected for this push.*src\/app\.mjs/);
-      assert.match(got.stderr, /AUDIT_PREPUSH_ALLOW_UNMEASURED=1/);
-      assert.equal(got.audited, false);
+      assert.match(got.stderr, /auditing WITHOUT a plan/);
+      assert.equal(got.audited, true, 'the audit ran');
     } finally { rmrf(ws); }
   });
-  it('the named override lets the same push through, loudly, still without an audit', (t) => {
+  it('the unmeasured override does not stand in for a measurement a push can have: the plan-less audit still runs', (t) => {
     if (!HAS_BASH) return t.skip('bash is required');
     const ws = tmpDir('hook-noplan-ovr-');
     try {
       const source = makeSource(ws);
       const c = consumer(ws);
       const got = run(c.local, source, c.push('src/app.mjs', 'x\n'), { AUDIT_PREPUSH_ALLOW_UNMEASURED: '1' });
-      assert.equal(got.status, 0, got.stderr);
-      assert.match(got.stderr, /push ALLOWED UNMEASURED because AUDIT_PREPUSH_ALLOW_UNMEASURED=1/);
-      assert.equal(got.audited, false);
+      assert.doesNotMatch(got.stderr, /no plan was selected for this push.*push ALLOWED UNMEASURED/s);
+      assert.equal(got.audited, true);
     } finally { rmrf(ws); }
   });
   it('EXEMPT: a docs-only push and a sync-bookkeeping-only push pass with no plan, saying why', (t) => {
@@ -341,7 +340,7 @@ describe('the real hook - a push the plan selector resolved no plan for', () => 
       const c = consumer(ws);
       const got = run(c.local, source, c.push('src/app.mjs', 'x\n'));
       assert.equal(got.status, 1, got.stderr);
-      assert.match(got.stderr, /predates hook v13/);
+      assert.match(got.stderr, /predates hook v\d+/);
     } finally { rmrf(ws); }
   });
 });

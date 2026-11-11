@@ -290,7 +290,7 @@ describe('HOOK_BODY — delete-only skip, static shape', () => {
     const maintAt = HOOK_BODY.indexOf('# ── Opportunistic weekly local maintenance');
     const skipAt = HOOK_BODY.indexOf('if [ "$PUBLISHED_REFS" -eq 0 ] && [ "$DELETED_REFS" -gt 0 ]; then');
     const plansAt = HOOK_BODY.indexOf('PLANS_DIR="docs/plans"');
-    const gateAt = HOOK_BODY.indexOf('if [ "$PLAN_STATUS_DISABLE" != "1" ]; then');
+    const gateAt = HOOK_BODY.indexOf('if [ "$PLAN_STATUS_DISABLE" != "1" ] && [ -n "$PLANS_PRESENT" ]; then');
     assert.ok(maintAt > 0 && skipAt > 0 && plansAt > 0 && gateAt > 0);
     assert.ok(maintAt < skipAt, 'the maintenance block must run before any early exit');
     assert.ok(skipAt < plansAt && skipAt < gateAt);

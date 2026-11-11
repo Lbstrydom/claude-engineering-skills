@@ -27,7 +27,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
-  classifyAuditOutcome, decideAuditGate, decideAuditReuse, auditBudgetSec, parseNumstatZ, BUDGET, UNMEASURED_OVERRIDE_ENV,
+  classifyAuditOutcome, decideAuditGate, decideAuditReuse, auditBudgetSec, parseNumstatZ, BUDGET, UNMEASURED_OVERRIDE_ENV, classifyNoPlanPush,
 } from '../scripts/lib/prepush-audit-gate.mjs';
 import { auditOutcomeExit, auditReuseLine, auditBudgetLine } from '../scripts/prepush-step.mjs';
 import { git } from './lib/hook-test-helpers.mjs';
@@ -165,6 +165,14 @@ describe('control markers: a tooling notice is never counted as a finding, and n
     const lines = decideAuditGate({ outcome: r, env: {} }).lines;
     assert.match(lines[0], /\(H:0 M:1 L:0\) - the audit RAN and found things to address/);
     assert.ok(lines.some((l) => l.startsWith('[prepush-hook] tooling: ADJACENCY_INCOMPLETE')));
+  });
+  it('a build-input .txt (CMakeLists.txt, requirements*.txt) is CODE, never docs - since v17 an exempt push skips the audit', () => {
+    assert.equal(classifyNoPlanPush({ files: ['CMakeLists.txt'] }).exempt, false);
+    assert.equal(classifyNoPlanPush({ files: ['py/requirements-dev.txt'] }).exempt, false);
+    assert.equal(classifyNoPlanPush({ files: ['requirements/base.txt'] }).exempt, false, 'the pip requirements/ directory layout');
+    assert.equal(classifyNoPlanPush({ files: ['constraints/dev.txt'] }).exempt, false);
+    assert.equal(classifyNoPlanPush({ files: ['requirements/prod/base.txt'] }).exempt, false, 'at any depth');
+    assert.equal(classifyNoPlanPush({ files: ['notes/readme.txt'] }).exempt, true, 'prose .txt stays docs');
   });
   it('a NEEDS_FIXES produced by markers alone (no real HIGH/MEDIUM) is clean with tooling lines, and says which verdict counted them', () => {
     const r = classifyAuditOutcome({ exitCode: 0, report: { verdict: 'NEEDS_FIXES', findings: [MARKER, MARKER, MARKER, { severity: 'LOW', detail: 'nit' }] } });

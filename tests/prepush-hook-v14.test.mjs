@@ -41,7 +41,7 @@ function makeSource(ws) {
     'process.exit(0);', '',
   ].join('\n'));
   fs.writeFileSync(path.join(scripts, 'openai-audit.mjs'), [
-    "import fs from 'node:fs';",
+    "import fs from 'node:fs';", "import path from 'node:path';", "{ const o = process.argv.indexOf('--out'); if (o >= 0) process.chdir(path.resolve(process.argv[o + 1], '..', '..', '..')); } // v17: the audit's cwd is the snapshot; record in the checkout",
     "fs.writeFileSync('AUDIT_RAN', '1');",
     "fs.writeFileSync('AUDIT_ARGV', JSON.stringify(process.argv.slice(2)));",
     "fs.writeFileSync('AUDIT_RANGE_BASE', process.env.AUDIT_PUSH_RANGE_BASE || '');",
@@ -90,7 +90,7 @@ function runHook(local, source, stdin, env = {}) {
 }
 const kept = (c, suffix) => path.join(c.local, KEEP, `${c.tree}.${suffix}`);
 // v15's recurrence sidecar (<tree>.head) rides beside a kept report by design; these v14 assertions are about the report/output pair.
-const keptEntries = (c) => (fs.existsSync(path.join(c.local, KEEP)) ? fs.readdirSync(path.join(c.local, KEEP)).filter((f) => !f.endsWith('.head')) : []);
+const keptEntries = (c) => (fs.existsSync(path.join(c.local, KEEP)) ? fs.readdirSync(path.join(c.local, KEEP)).filter((f) => !f.endsWith('.head') && !f.startsWith('invocations.log')) : []); // v17's invocation log is not a kept audit file
 /** One scenario in a fresh workspace; the callback gets the consumer and the source. */
 function scenario(t, name, fn) {
   if (!HAS_BASH) return t.skip('bash is required');
