@@ -295,7 +295,7 @@ already gitignored):
 - **Plan-keyed stays primary**: a selected plan always wins, and plan-less is only the fallback.
 - **One snapshot implementation** serves both gates. A fix to its cleanup or lock behaviour lands once.
 - The hook body is at the size edge: `scripts/install-prepush-hook.mjs` is 998 lines (6598878d), and the ratchet applies
-  above 1000. The v1–v16 changelog comment block (lines ~40–185) moves to `docs/reference/prepush-hook-changelog.md` (planned),
+  above 1000. The v1–v16 changelog comment block (lines ~40–185) moves to `docs/reference/prepush-hook-changelog.md`,
   leaving a one-line pointer, so v17 does not create a new oversized file.
 
 ## 7. File-Level Plan
@@ -314,7 +314,7 @@ already gitignored):
 | `scripts/prepush-step.mjs` (modify) | `no-plan` prints `planless <intent-path>` or refuses; new `snapshot create|remove`; capabilities `planless`, `snapshot`. |
 | `scripts/install-prepush-hook.mjs` (modify) | Body v17: no-plans-dir → no-plan path; planless branch; audit inside the snapshot with trap-guarded removal; invocations log; changelog moved out. |
 | `scripts/lib/prepush-hook-version.mjs` (modify) | `PREPUSH_HOOK_VERSION = 17`. |
-| `docs/reference/prepush-hook-changelog.md` (planned) (create) | The v1–v17 changelog moved out of the installer. |
+| `docs/reference/prepush-hook-changelog.md` (create) | The v1–v17 changelog moved out of the installer. |
 | `docs/runbooks/consumer-adoption.md` (modify) | Plan-less audits, the snapshot, the invocations log and what `--no-verify` hides. |
 | `.audit-loop/domain-map.json` (modify) | Give `scripts/lib/prepush-snapshot.mjs` the same domain as `scripts/prepush-step.mjs` and `prepush-check.mjs`, then `npm run arch:refresh`. Retag both directions per AGENTS.md (`tests/arm-vocabulary-layering.test.mjs`). |
 | `tests/prepush-audit-gate.test.mjs` (modify) | Tooling partition; the three no-plan results. |
@@ -340,7 +340,7 @@ already gitignored):
 
 **Phase 4 — Hook v17 (D1 and D2 hook side, D4)**. Files: `scripts/prepush-step.mjs` (modify),
 `scripts/lib/prepush-audit-gate.mjs` (modify), `scripts/install-prepush-hook.mjs` (modify),
-`scripts/lib/prepush-hook-version.mjs` (modify), `docs/reference/prepush-hook-changelog.md` (planned) (create),
+`scripts/lib/prepush-hook-version.mjs` (modify), `docs/reference/prepush-hook-changelog.md` (create),
 `docs/runbooks/consumer-adoption.md` (modify), `tests/prepush-hook-v17.test.mjs` (create).
 
 **Close-out (not a phase)**: `npm run skills:check`, `npm run size:ratchet:gate`, `npm run stdout:flush:gate`, `npm run

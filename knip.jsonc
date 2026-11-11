@@ -40,6 +40,10 @@
     // records and refuses every outbound request — a flag on a spawn command line, not an import knip can follow.
     "tests/fixtures/no-network-preload.mjs",
 
+    // Same class: loaded by `node --import <file URL>` in the audit-snapshot input census
+    // (tests/prepush-snapshot-census.test.mjs) to record every path the real audit CLI reads from its cwd.
+    "tests/helpers/fs-trace.mjs",
+
     // Spawned as a child process by tests/audit-capture-db.test.mjs (a fresh process is the point: the column probes
     // cache per process, so the parent cannot observe a column it dropped). A spawn path is not an import knip follows.
     "tests/helpers/audit-capture-oldschema-child.mjs"

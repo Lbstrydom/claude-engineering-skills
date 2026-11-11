@@ -36,7 +36,7 @@ export const INTENT_CAP_BYTES = 8 * 1024;
  * The CLI door for `--planless`. Refusals happen before any read, store write or model call; the caller exits 2 on `error` (the hook
  * reads exit 2 as "the audit refused its arguments", i.e. UNMEASURED). Reading the intent file is the one read this performs.
  *
- * @param {string[]} args `process.argv.slice(2)`: `args[0]` is the mode, `args[1]` the positional plan when one was given
+ * @param {string[]} args the CLI arguments after the script path: `args[0]` is the mode, `args[1]` the positional plan when one was given
  * @param {{read?: (p: string) => string}} [deps]
  * @returns {{planless: false} | {planless: true, intentPath: string, planContent: string, redacted: string[]} | {error: string}}
  */

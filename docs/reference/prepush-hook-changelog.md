@@ -69,7 +69,7 @@ to pick it up.
 ## v7
 
 v7 (2026-09-08): a push whose ONLY changed files are the sync bookkeeping
-pair (.sync-receipt.json, scripts/.sync-owned.json — both written by this
+pair (.sync-receipt.json, the consumer's `.sync-owned.json` sidecar under `scripts/` — both written by this
 repo's own `npm run sync`, never hand-edited) still ran the full code audit
 against whatever plan the Status-aware selector fell back to picking, since
 selectAuditPlan's documented fallback ("a single active plan is still
