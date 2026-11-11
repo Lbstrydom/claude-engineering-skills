@@ -26,6 +26,7 @@ This is the list to read when asking "what is in flight?".
 | [Own-model telemetry PR 3 — §6.8 columns, null-rate coverage gate, transcript archive, dated baseline](./own-model-telemetry-pr3.md) | `In Progress` | plan audited: GPT 3 rounds, 10 findings accepted, Gemini APPROVE; code audited: GPT 4 rounds, Gemini APPROVE |
 | [Own-model telemetry slice 1 (H1 capture gaps)](./own-model-telemetry-slice-1.md) | `In Progress` | plan audited: GPT 2 rounds, 10 findings all accepted; Gemini final gate APPROVE |
 | [Pre-push convergence and scope honesty (cluster A)](./prepush-convergence-cluster-a.md) | `Approved` | audit-plan: GPT 2 rounds -> READY; Gemini 2 rounds -> APPROVE |
+| [Pre-push gate — stop teaching the bypass (consumer feedback 2026-11-11, theme 1)](./prepush-gate-consumer-feedback-theme1.md) | `Draft` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Ship trains — batched, impact-based `/ship --train`](./ship-trains.md) | `Approved` |  |
 | [Align CES skills with Claude Code skill best practice](./skill-best-practice-alignment.md) | `Approved` |  |
