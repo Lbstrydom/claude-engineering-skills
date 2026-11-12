@@ -86,6 +86,31 @@ describing the loop in prose. 2c is a separate, smaller item (a manual trigger o
   (`.sync-receipt.json` `recentSyncs[0]`) or a `chore(sync)` commit on the consumer's `origin/main` answers that.
   Coordinator practice: check before asking.
 
+## Theme 8 — lessons from Anthropic's own code review (external, 2026-11-12)
+
+**Source.** The Claude Code team's write-up of how it reviews code
+(`claude.dev/blog/solving-code-review-at-anthropic`), read 2026-11-12. These are claims made in that post, not
+measurements we took. The figures below are the ones the post reports.
+
+**Already in CES; the post backs it up.** A round cap that asks the author to rethink the approach after round 3 (our
+structural-or-stop card). Re-review of the diff only, with findings already posted never repeated (R2+ ledger
+suppression). Tracking each finding's outcome: fixed, rejected as wrong, intentional, or doesn't matter (our accepted,
+dismissed and deferred). Approvals bound to one commit (`--match-head-commit`). Their merge queue matches theme 2.
+
+| # | Item | Why it matters here | Status |
+|---|---|---|---|
+| 8a | **A pre-existing tag on findings.** Findings about code the change did not introduce are posted under a separate tag, so they don't count against the author or the gate, rather than dropped. | About 59% of what their reviewer kept flagging was code that predated its first pass. That is the same shape as 1c (AIO: 15 of 17 out-of-diff). A non-blocking tag is a smaller first step for 1c than changing what `buildAuditUnits` sends. | To plan, alongside 1c |
+| 8b | **Run the reviewer on known-clean changes.** Count how often it reports something on a PR known to be clean that would have led to a harmful change. | CES has no false-positive control on clean diffs. The model-eval harness runs only when a new model ships, and it measures recall. | To plan |
+| 8c | **Turn past incidents into an eval, and score every change to the prompts, tools or model against it.** | An edit to the `PASS_PROMPTS` seeds rolls out globally without any score. Reverted and fixed-forward PRs in the consumers are the seed set. Pairs with 8b (recall plus false positives). | To plan |
+| 8d | **Measure convergence.** Track the share of PRs that pass after one review-and-fix round, the share that need five or more rounds, and the mean reviews to pass. | Theirs went from 65% to 78% passing after one round, and from 8.9% to 1.5% needing five or more. `audit_runs` already has per-round rows, so both shares are a query plus a dashboard tile. | Cheap; to plan |
+| 8e | **Set review depth by risk, from what the change touches rather than who wrote it.** Their tiers are Quick, Standard and Deep. | The pre-push gate runs the same depth on every push. Docs-only and config-only pushes are the noise in theme 1. | Consider with theme 1 |
+| 8f | **A per-area review file**, written by code owners: what failure looks like in this area, paths to skip, a cap on nits, file-and-line evidence required, and a summary that starts with a count and says plainly when there is nothing to fix. | The requirements ledger covers the invariants but not this. | Consider |
+| 8g | **Fix a finding that keeps recurring at its source:** a lint rule, a skill edit or an instruction-file line, and **name the bug class** so the author fixes every instance. | `recurring_finding_clusters` already finds the recurrences, but nothing turns them into a source fix. | Consider |
+
+**Not adopted.** A group of verifier agents that votes on each finding before it is posted. It costs several times as
+much per audit, and the Gemini/Opus final gate already gives an independent check. Revisit if 8b shows a false-positive
+problem the gate does not catch.
+
 ## Keep — do not break
 
 - Red-without-fix plus negative control in `/audit-code` (WCA #1310, #1314, #1316): merging on a report is trustworthy.
@@ -105,3 +130,6 @@ describing the loop in prose. 2c is a separate, smaller item (a manual trigger o
 5. **4a–4d** — worktree `ship-commit`, the persona repo slug, generated files in consumer trees.
 6. **5a, 5b, 6a, 6b** — plan-audit scoping and the two workflow guides.
 7. **7a, 7b** — decide on the grep hook; document the second-account recipe.
+
+Theme 8 slots in by dependency, not by rank. **8a** goes with 1c, and **8e** with the rest of theme 1. **8d** is cheap
+and gives a baseline before any other change, so it goes first. **8b** and **8c** together are one eval campaign.
