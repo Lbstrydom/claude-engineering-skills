@@ -156,6 +156,13 @@ export function degradedScanNotesSoFar() {
   return [...degradedScanNotes];
 }
 
+/** Return the recorded notes and forget them: the stamp CONSUMES them, so a second audit in one process never inherits the first's. */
+export function takeDegradedScanNotes() {
+  const out = [...degradedScanNotes];
+  degradedScanNotes.clear();
+  return out;
+}
+
 /** For tests: forget recorded notes. */
 export function _resetDegradedScanNotes() {
   degradedScanNotes.clear();

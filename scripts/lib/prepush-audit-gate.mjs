@@ -197,12 +197,13 @@ const TITLE_CHARS = 150;
  */
 export function formatFindingTitles(findings, { cap = FINDING_TITLES_CAP } = {}) {
   if (!Array.isArray(findings)) return [];
-  const one = (v) => String(v ?? '').replaceAll(/\s+/g, ' ').trim();
+  // Control characters (ESC, CSI, BEL ...) are model- and file-name-controlled text bound for a terminal: they become spaces.
+  const one = (v) => String(v ?? '').replaceAll(/[\u0000-\u001f\u007f-\u009f\s]+/g, ' ').trim();
   const rows = [];
   for (const f of findings) {
     const sev = typeof f?.severity === 'string' ? f.severity.toUpperCase() : '';
     if ((sev !== 'HIGH' && sev !== 'MEDIUM') || isControlMarkerFinding(f)) continue;
-    const where = Array.isArray(f.affectedFiles) && f.affectedFiles.length > 0 ? f.affectedFiles[0] : (f.section ? one(f.section) : '');
+    const where = one(Array.isArray(f.affectedFiles) && f.affectedFiles.length > 0 ? f.affectedFiles[0] : f.section);
     const title = one(f.category) || one(f.detail);
     const detail = one(f.category) && one(f.detail) ? ` - ${one(f.detail)}` : '';
     const text = `${title}${detail}`;

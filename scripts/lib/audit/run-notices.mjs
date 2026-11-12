@@ -8,7 +8,7 @@
  *
  * @module scripts/lib/audit/run-notices
  */
-import { degradedScanNotesSoFar } from '../disowned-paths.mjs';
+import { takeDegradedScanNotes } from '../disowned-paths.mjs';
 
 /** The marker finding for one degraded scan. Mirrors the shape of the adjacency control marker so every consumer of `findings` reads it. */
 export function buildOwnershipUnverifiedFinding(why, index = 0) {
@@ -32,10 +32,10 @@ export function buildOwnershipUnverifiedFinding(why, index = 0) {
  * Append one marker per recorded degraded scan to `result.findings`. A run with none returns `result` unchanged (same object).
  * @template T
  * @param {T} result
- * @param {string[]} [notes] defaults to this process's recorded notes
+ * @param {string[]} [notes] defaults to this process's recorded notes, CONSUMED (cleared) by the call
  * @returns {T}
  */
-export function stampOwnershipUnverified(result, notes = degradedScanNotesSoFar()) {
+export function stampOwnershipUnverified(result, notes = takeDegradedScanNotes()) {
   if (!result || typeof result !== 'object' || notes.length === 0) return result;
   const findings = Array.isArray(result.findings) ? result.findings : [];
   return { ...result, findings: [...findings, ...notes.map((n, i) => buildOwnershipUnverifiedFinding(n, i))] };

@@ -125,10 +125,12 @@ prepush_log_invocation() {
 # Every other log this hook keeps is written when a step COMPLETES (the report and output.log are renamed to their tree-keyed names at the
 # end), so a push stopped mid-audit left .audit/prepush/ empty and nobody could say which step it was in (STO, 25+ minutes, 2026-11-12).
 # This file is APPENDED to as each step and phase starts and ends, with timestamps, so a stopped run shows its last line. It describes the
-# LATEST push only (truncated here, each line carries its pid); the runner appends the per-step start / heartbeat / end lines to it.
+# pushes (never truncated: a concurrent push would erase the other's trail; every line carries its pid; rotated to .1 past 256 KB); the runner
+# appends the per-step start / heartbeat / end lines to it.
 # Best effort: a trail that cannot be written never changes the exit.
 PREPUSH_TRAIL="$(pwd -W 2>/dev/null || pwd)/.audit/prepush/last-run.steps.log"
-mkdir -p .audit/prepush 2>/dev/null && : > "$PREPUSH_TRAIL" 2>/dev/null
+mkdir -p .audit/prepush 2>/dev/null
+[ "$(wc -c < "$PREPUSH_TRAIL" 2>/dev/null | tr -d ' ')" -gt 262144 ] 2>/dev/null && mv -f "$PREPUSH_TRAIL" "$PREPUSH_TRAIL.1" 2>/dev/null
 prepush_trail() { printf '%s [%s] %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null)" "$$" "$*" >> "$PREPUSH_TRAIL" 2>/dev/null; return 0; }
 prepush_trail "hook v${HOOK_VERSION} started"
 # Every later exit - success, refusal, a trapped signal (prepush_killed exits 1) - goes through here: the audit snapshot (v17) is

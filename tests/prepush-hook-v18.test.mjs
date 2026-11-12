@@ -100,6 +100,7 @@ describe('A - a degraded scan reaches the verdict', () => {
     noteDegradedScan('git exit   128');
     assert.deepEqual(degradedScanNotesSoFar(), ['git exit 128']);
     const out = stampOwnershipUnverified(r);
+    assert.equal(degradedScanNotesSoFar().length, 0, 'the stamp CONSUMES the notes: a second audit in one process starts clean');
     assert.equal(out.findings.length, 1);
     assert.match(out.findings[0].detail, /^OWNERSHIP_UNVERIFIED: git exit 128/);
     assert.equal(r.findings.length, 0, 'the input is not mutated');
@@ -153,6 +154,11 @@ describe('C - finding titles', () => {
     assert.match(lines.at(-1), /and 3 more/);
     assert.deepEqual(formatFindingTitles([F('LOW', 'x')]), []);
     assert.deepEqual(formatFindingTitles(undefined), []);
+  });
+  it('terminal control sequences in model- or file-controlled text never reach the terminal (audit R1)', () => {
+    const out = formatFindingTitles([{ severity: 'HIGH', category: 'a' + String.fromCharCode(27) + '[31mred', detail: 'x' + String.fromCharCode(7) + 'y', affectedFiles: ['f' + String.fromCharCode(27) + 'g.js'] }]).join('\n');
+    assert.doesNotMatch(out, /[\u0000-\u0008\u000b-\u001f\u007f]/);
+    assert.match(out, /a .31mred - x y/);
   });
 });
 
