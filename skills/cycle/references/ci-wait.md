@@ -8,8 +8,10 @@ After an autonomous run pushes a branch and opens its PR, nobody was waiting on 
 with CI still in progress. Run, by path:
 
 ```bash
-node scripts/ci-merge.mjs --pr <n> --wait-only --timeout-min 30
+node scripts/ci-merge.mjs --pr <n> --wait-only --head <pushed-sha> --timeout-min 30
 ```
+
+`--head` makes it refuse a PR whose head is a different commit than the one you pushed, so the verdict is never for another commit.
 
 It waits for EVERY check on the exact head sha (not one named check) and prints one envelope; paste its `report` field into the done report.
 

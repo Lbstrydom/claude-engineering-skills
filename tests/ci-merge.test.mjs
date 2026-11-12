@@ -15,17 +15,20 @@ const url = (n) => `https://github.com/o/r/pull/${n}`;
  * A fake `gh` driven by a script of PR views. `views` is consumed one entry per `pr view`; the last repeats.
  * Records every non-view call so a test can assert what was (not) done.
  */
-function fakeGh({ views, merge = { status: 0 }, update = { status: 0 }, api = null }) {
-  const calls = []; let i = 0;
+function fakeGh({ views, merge = { status: 0 }, update = { status: 0 }, api = null, parents = null }) {
+  const calls = []; let i = 0; const seen = [];
   const gh = (args) => {
     calls.push(args);
     if (args[0] === 'pr' && args[1] === 'view') {
-      const v = views[Math.min(i, views.length - 1)]; i += 1;
-      return { status: 0, stdout: JSON.stringify(typeof v === 'function' ? v() : v), stderr: '' };
+      const raw = views[Math.min(i, views.length - 1)]; i += 1;
+      const v = typeof raw === 'function' ? raw() : raw;
+      if (v.headRefOid && !seen.includes(v.headRefOid)) seen.push(v.headRefOid);
+      return { status: 0, stdout: JSON.stringify(v), stderr: '' };
     }
     if (args[0] === 'pr' && args[1] === 'merge') return { stdout: '', stderr: '', ...merge };
     if (args[0] === 'pr' && args[1] === 'update-branch') return { stdout: '', stderr: '', ...update };
-    if (args[0] === 'api') return api ? api(args) : { status: 0, stdout: JSON.stringify({ check_runs: [] }), stderr: '' };
+    if (args[0] === 'api' && /\/commits\/[0-9a-f]+$/.test(args[1])) return { status: 0, stdout: JSON.stringify(parents ?? seen), stderr: '' };
+    if (args[0] === 'api') return api ? api(args) : { status: 0, stdout: '', stderr: '' };
     return { status: 1, stdout: '', stderr: `unexpected ${args.join(' ')}` };
   };
   return { gh, calls, mergeCalls: () => calls.filter((c) => c[1] === 'merge'), updateCalls: () => calls.filter((c) => c[1] === 'update-branch') };
@@ -33,7 +36,7 @@ function fakeGh({ views, merge = { status: 0 }, update = { status: 0 }, api = nu
 const clock = () => { let t = 0; return { now: () => t, sleep: async (ms) => { t += ms; } }; };
 const view = (o = {}) => ({ number: 7, url: url(7), state: 'OPEN', isDraft: false, headRefOid: 'a'.repeat(40), mergeStateStatus: 'CLEAN', statusCheckRollup: [run('ci'), run('gitleaks')], mergeCommit: null, ...o });
 const merged = (o = {}) => view({ state: 'MERGED', mergeCommit: { oid: 'm'.repeat(40) }, ...o });
-const go = (f, opts = {}, ref = 7) => processPr(ref, { merge: true, ...opts }, { gh: f.gh, ...clock(), log: () => {} });
+const go = (f, opts = {}, ref = 7) => processPr(ref, { merge: true, settleMs: 0, ...opts }, { gh: f.gh, ...clock(), log: () => {} });
 
 describe('check classification', () => {
   test('pending, pass, fail for check runs and status contexts', () => {
@@ -223,6 +226,86 @@ describe('a head that changes mid-wait', () => {
   });
 });
 
+describe('audit fixes', () => {
+  const h1 = 'a'.repeat(40); const h2 = 'b'.repeat(40);
+  test('a slow workflow that registers late is not missed: green waits for the set of check names to hold still', async () => {
+    const f = fakeGh({ views: [view({ statusCheckRollup: [run('ci')] }), view({ statusCheckRollup: [run('ci')] }), view({ statusCheckRollup: [run('ci'), run('gitleaks', 'FAILURE')] }), view({ statusCheckRollup: [run('ci'), run('gitleaks', 'FAILURE')] })] });
+    const r = await go(f, { merge: false, settleMs: 60_000 });
+    assert.equal(r.verdict, 'failed');
+    assert.deepEqual(r.failures, ['gitleaks']);
+  });
+  test('--head refuses a PR whose head is a different commit than the one pushed', async () => {
+    const f = fakeGh({ views: [view({ headRefOid: h2 })] });
+    const r = await go(f, { merge: false, expectHead: h1.slice(0, 12) });
+    assert.equal(r.reason, 'head-mismatch');
+    const ok = await go(fakeGh({ views: [view({ headRefOid: h1 })] }), { merge: false, expectHead: h1.slice(0, 12) });
+    assert.equal(ok.verdict, 'green');
+  });
+  test('after update-branch, a new head that is NOT a child of the old head is a foreign push and is refused', async () => {
+    const f = fakeGh({ views: [view({ headRefOid: h1, mergeStateStatus: 'BEHIND' }), view({ headRefOid: h2 })], parents: ['f'.repeat(40), 'e'.repeat(40)] });
+    const r = await go(f);
+    assert.equal(r.reason, 'head-moved');
+    assert.equal(f.mergeCalls().length, 0);
+  });
+  test('a one-parent child of the old head (an ordinary push) is not an update-branch', async () => {
+    const f = fakeGh({ views: [view({ headRefOid: h1, mergeStateStatus: 'BEHIND' }), view({ headRefOid: h2 })], parents: [h1] });
+    assert.equal((await go(f)).reason, 'head-moved');
+  });
+  test('--head pins every read: a later head in report mode is refused, not followed', async () => {
+    const f = fakeGh({ views: [view({ headRefOid: h1, statusCheckRollup: [run('ci', null, 'IN_PROGRESS')] }), view({ headRefOid: h2 })] });
+    const r = await go(f, { merge: false, expectHead: h1.slice(0, 12) });
+    assert.equal(r.reason, 'head-mismatch');
+  });
+  test('a check that goes pending again restarts the settle window', async () => {
+    const done = [run('ci'), run('e2e')]; const rerun = [run('ci'), run('e2e', null, 'IN_PROGRESS')];
+    const f = fakeGh({ views: [view({ statusCheckRollup: done }), view({ statusCheckRollup: done }), view({ statusCheckRollup: rerun }), view({ statusCheckRollup: [run('ci'), run('e2e', 'FAILURE')] })] });
+    const r = await go(f, { merge: false, settleMs: 40_000 });
+    assert.equal(r.verdict, 'failed');
+  });
+  test('an unreadable parent lookup counts as NOT ours', async () => {
+    const f = fakeGh({ views: [view({ headRefOid: h1, mergeStateStatus: 'BEHIND' }), view({ headRefOid: h2 })] });
+    const base = f.gh;
+    f.gh = (a) => (a[0] === 'api' ? { status: 1, stdout: '', stderr: 'boom' } : base(a));
+    assert.equal((await go(f)).reason, 'head-moved');
+  });
+  test('merge succeeded but the read-back failed: NOT reported merged, exits 1', async () => {
+    let n = 0;
+    const gh = (a) => {
+      if (a[1] === 'view') { n += 1; return n === 1 ? { status: 0, stdout: JSON.stringify(view()), stderr: '' } : { status: 1, stdout: '', stderr: 'HTTP 502' }; }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+    const r = await processPr(7, { merge: true, settleMs: 0 }, { gh, ...clock(), log: () => {} });
+    assert.equal(r.verdict, 'merge-unconfirmed');
+    assert.equal(r.merged, false);
+    assert.equal(exitCodeFor([r]), 1);
+  });
+  test('an accepted update whose head never moves times out at the per-PR budget', async () => {
+    const f = fakeGh({ views: [view({ mergeStateStatus: 'BEHIND' })] });
+    const r = await go(f, { timeoutMs: 100_000, updateSettleMs: 10_000_000 });
+    assert.equal(r.verdict, 'timeout');
+  });
+  test('a timeout on the first queued PR exits 3, not 1', async () => {
+    const gh = () => ({ status: 0, stdout: JSON.stringify(view({ statusCheckRollup: [run('ci', null, 'IN_PROGRESS')] })), stderr: '' });
+    const res = await runQueue([1, 2], { merge: true, timeoutMs: 60_000 }, { gh, ...clock(), log: () => {} });
+    assert.deepEqual(res.map((x) => x.verdict), ['timeout', 'not-attempted']);
+    assert.equal(exitCodeFor(res), 3);
+  });
+  test('deploy lookup: persistent gh failure is unmeasured with the error, not "never appeared"', async () => {
+    const f = fakeGh({ views: [view(), merged()], api: () => ({ status: 1, stdout: '', stderr: 'HTTP 403: forbidden' }) });
+    const r = await go(f, { deployWait: 'deploy' });
+    assert.equal(r.deploy.state, 'unmeasured');
+    assert.match(r.deploy.reason, /403/);
+  });
+  test('boolean flags reject an equals value instead of discarding it', () => {
+    assert.throws(() => parseArgv(['--pr', '1', '--merge=false']), /takes no value/);
+    assert.throws(() => parseArgv(['--pr', '1', '--wait-only', '--follow-head=false']), /takes no value/);
+  });
+  test('--head needs one PR and a hex sha', () => {
+    assert.throws(() => buildOptions(parseArgv(['--pr', '1,2', '--wait-only', '--head', 'abcdef1'])), /exactly one/);
+    assert.throws(() => buildOptions(parseArgv(['--pr', '1', '--wait-only', '--head', 'zzz'])), /hex/);
+  });
+});
+
 describe('timeouts', () => {
   test('a timeout exits 3 and names what is still pending', async () => {
     const f = fakeGh({ views: [view({ statusCheckRollup: [run('ci'), run('e2e', null, 'IN_PROGRESS'), run('build', null, 'QUEUED')] })] });
@@ -242,12 +325,13 @@ describe('timeouts', () => {
 });
 
 describe('deploy wait', () => {
-  const api = (seq) => { let i = 0; return () => ({ status: 0, stdout: JSON.stringify({ check_runs: seq[Math.min(i++, seq.length - 1)] }), stderr: '' }); };
+  const api = (seq) => { let i = 0; return () => ({ status: 0, stdout: seq[Math.min(i++, seq.length - 1)].map((c) => JSON.stringify(c)).join('\n'), stderr: '' }); };
   test('waits for the named check run on the merge commit', async () => {
     const f = fakeGh({ views: [view(), merged()], api: api([[], [{ name: 'deploy', status: 'in_progress' }], [{ name: 'deploy', status: 'completed', conclusion: 'success' }]]) });
     const r = await go(f, { deployWait: 'deploy' });
     assert.equal(r.deploy.state, 'pass');
-    assert.equal(f.calls.at(-1)[1], `repos/o/r/commits/${'m'.repeat(40)}/check-runs`);
+    assert.ok(f.calls.at(-1).includes(`repos/o/r/commits/${'m'.repeat(40)}/check-runs?per_page=100`));
+    assert.ok(f.calls.at(-1).includes('--paginate'));
   });
   test('a failed deploy keeps merged:true and exits 1', async () => {
     const f = fakeGh({ views: [view(), merged()], api: api([[{ name: 'deploy', status: 'completed', conclusion: 'failure' }]]) });

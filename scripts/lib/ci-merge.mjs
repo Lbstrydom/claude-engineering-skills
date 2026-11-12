@@ -72,6 +72,8 @@ const VIEW_FIELDS = 'number,url,state,isDraft,headRefOid,mergeStateStatus,status
  * @property {Set<string>} [expect]       check names that must be present in the rollup before a verdict
  * @property {boolean} [failFast]         stop at the first disallowed failure instead of waiting for the rest
  * @property {boolean} [followHead]       merge mode: follow a head someone else moved instead of refusing
+ * @property {string|null} [expectHead]   the sha the caller pushed; a different head on the first read is refused (the checks would be for another commit)
+ * @property {number} [settleMs]          how long the set of check names must stay unchanged once all are terminal (a slower workflow may not have registered yet)
  * @property {string|null} [deployWait]   check-run name on the merge commit to wait for after merging
  * @property {number} [timeoutMs] @property {number} [pollMs] @property {number} [blockedGraceMs]
  * @property {number} [noChecksGraceMs] @property {number} [updateSettleMs] @property {number} [maxUpdates]
@@ -80,7 +82,7 @@ const VIEW_FIELDS = 'number,url,state,isDraft,headRefOid,mergeStateStatus,status
 
 export const DEFAULTS = Object.freeze({
   timeoutMs: 45 * 60_000, pollMs: 20_000, blockedGraceMs: 90_000, noChecksGraceMs: 120_000,
-  updateSettleMs: 90_000, maxUpdates: 3, deployTimeoutMs: 20 * 60_000,
+  updateSettleMs: 90_000, settleMs: 60_000, maxUpdates: 3, deployTimeoutMs: 20 * 60_000,
 });
 
 const prArgs = (ref, repo) => [...(ref === 'current' ? [] : [String(ref)]), ...(repo ? ['--repo', repo] : [])];
@@ -117,6 +119,9 @@ export async function processPr(ref, options, d) {
   let awaitSince = 0;
   let blockedSince = null;
   let noChecksSince = null;
+  let settleSig = null;
+  let pinned = o.expectHead ?? null; // moves only to a head our own verified update-branch produced
+  let settleSince = 0;
 
   for (;;) {
     const elapsed = d.now() - started;
@@ -130,9 +135,13 @@ export async function processPr(ref, options, d) {
 
     const head = v.headRefOid;
     out.head = head;
+    if (pinned && !String(head).startsWith(pinned) && !(ownMove && awaitingNewHeadFrom === expectedHead)) {
+      return finish('refused', 'head-mismatch', { head, detail: `the PR head is ${head}, not the pushed ${pinned}; its checks are for another commit` });
+    }
     if (expectedHead && head !== expectedHead) {
       out.headChanges.push({ from: expectedHead, to: head });
-      if (ownMove && awaitingNewHeadFrom === expectedHead) { ownMove = false; awaitingNewHeadFrom = null; }
+      settleSig = null;
+      if (ownMove && awaitingNewHeadFrom === expectedHead && isOwnUpdate(d, v.url ?? out.url, expectedHead, head)) { ownMove = false; awaitingNewHeadFrom = null; if (pinned) pinned = head; }
       else if (o.merge && !o.followHead) {
         return finish('refused', 'head-moved', { detail: `head moved ${expectedHead} -> ${head} while waiting; the merge decision covered ${expectedHead}` });
       }
@@ -167,6 +176,7 @@ export async function processPr(ref, options, d) {
       noChecksSince ??= d.now();
       if (d.now() - noChecksSince >= o.noChecksGraceMs) return finish('refused', 'no-checks-reported', { head, detail: 'nothing was measured; a PR with no checks is not green' });
     }
+    if (pendingChecks.length) settleSig = null; // a check running again restarts the settle window
     if (checks.length === 0 || pendingChecks.length || missing.length) {
       if (missing.length && checks.length && !pendingChecks.length) {
         noChecksSince ??= d.now();
@@ -179,6 +189,15 @@ export async function processPr(ref, options, d) {
     }
     if (bad.length) return finish('failed', 'check-failed', { head });
 
+    // Every reported check is terminal, but a slower workflow may not have registered yet: the SET of names must hold still.
+    const sig = checks.map((c) => c.name).sort().join('|');
+    if (sig !== settleSig) { settleSig = sig; settleSince = d.now(); }
+    if (d.now() - settleSince < o.settleMs) {
+      if (elapsed >= o.timeoutMs) return timedOut();
+      await d.sleep(o.pollMs);
+      continue;
+    }
+
     // Every check on this head is terminal, none disallowed-failing. Report mode stops here.
     if (!o.merge) {
       return finish('green', out.allowedFailures.length ? 'green-with-allowed-failures' : 'all-checks-passed', { head });
@@ -187,6 +206,7 @@ export async function processPr(ref, options, d) {
     const ms = v.mergeStateStatus;
     if (awaitingNewHeadFrom === head) { // update-branch accepted but the head has not moved yet
       if (d.now() - awaitSince > o.updateSettleMs) return finish('refused', 'update-branch-no-new-head', { head });
+      if (elapsed >= o.timeoutMs) return timedOut();
       await d.sleep(o.pollMs);
       continue;
     }
@@ -219,8 +239,9 @@ export async function processPr(ref, options, d) {
       return finish('refused', /head|match|expected/i.test(err) ? 'head-moved' : 'merge-rejected', { head, detail: err.split('\n')[0] });
     }
     const after = readView(ref, repo, d);
-    const mergeCommit = after.ok ? after.view.mergeCommit?.oid ?? null : null;
-    if (after.ok && after.view.state !== 'MERGED') {
+    if (!after.ok) return finish('merge-unconfirmed', 'merge-unconfirmed', { head, detail: `gh pr merge succeeded but the PR could not be read back (${after.error}); check its state before acting` });
+    const mergeCommit = after.view.mergeCommit?.oid ?? null;
+    if (after.view.state !== 'MERGED') {
       // auto-merge queues are not used here: a merge that did not land is not a merge
       return finish('refused', 'merge-not-confirmed', { head, detail: `state is ${after.view.state} after gh pr merge` });
     }
@@ -230,23 +251,41 @@ export async function processPr(ref, options, d) {
   }
 }
 
+/** True when `to` is a two-parent merge commit with `from` as a parent: the shape `update-branch` produces. Unverifiable counts as NOT ours. */
+function isOwnUpdate(d, url, from, to) {
+  const repo = repoFromUrl(url);
+  if (!repo) return false;
+  const r = d.gh(['api', `repos/${repo}/commits/${to}`, '--jq', '[.parents[].sha]']);
+  if (r.error || r.status !== 0) return false;
+  // update-branch merges the base into the PR branch: TWO parents, one of them the old head. A plain push has one.
+  try { const ps = JSON.parse(r.stdout); return ps.length >= 2 && ps.includes(from); } catch { return false; }
+}
+
 /** After a merge: wait for check run `o.deployWait` on the merge commit. Never changes whether the merge happened. */
 export async function waitForDeploy(out, url, o, d) {
   const repo = repoFromUrl(url);
   const sha = out.mergeCommit;
   if (!repo || !sha) return { name: o.deployWait, state: 'unmeasured', reason: 'no repo or merge commit to read check runs from' };
   const started = d.now();
+  let errors = 0; let lastError = '';
   for (;;) {
-    const r = d.gh(['api', `repos/${repo}/commits/${sha}/check-runs`]);
+    const r = d.gh(['api', '--paginate', `repos/${repo}/commits/${sha}/check-runs?per_page=100`, '--jq', '.check_runs[] | {name,status,conclusion}']);
     let run = null;
-    if (!r.error && r.status === 0) {
-      try { run = (JSON.parse(r.stdout).check_runs ?? []).find((c) => c.name === o.deployWait) ?? null; } catch { /* poll again */ }
+    if (r.error || r.status !== 0) {
+      errors += 1; lastError = String(r.stderr ?? r.error?.message ?? '').trim().split(/\r?\n/)[0] || `gh exited ${r.status}`;
+      if (errors >= MERGE_RE_READ_TRIES) return { name: o.deployWait, state: 'unmeasured', reason: `gh api failed ${errors}x: ${lastError}` };
+    } else {
+      errors = 0;
+      for (const line of String(r.stdout).split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        try { const c = JSON.parse(line); if (c.name === o.deployWait) run = c; } catch { lastError = 'unparseable check-run line'; }
+      }
     }
     if (run && run.status === 'completed') {
       return { name: o.deployWait, state: PASS.has(String(run.conclusion).toUpperCase()) ? 'pass' : 'fail', conclusion: run.conclusion };
     }
     if (d.now() - started >= o.deployTimeoutMs) {
-      return { name: o.deployWait, state: 'timeout', reason: run ? `still ${run.status}` : 'check run never appeared on the merge commit' };
+      return { name: o.deployWait, state: 'timeout', reason: run ? `still ${run.status}` : `check run never appeared on the merge commit${lastError ? ` (${lastError})` : ''}` };
     }
     await d.sleep(o.pollMs);
   }
@@ -271,7 +310,8 @@ export async function runQueue(refs, options, d) {
 
 /** Exit code for a result set: 1 any failed/refused/not-attempted, else 3 any timeout, else 0. A failed deploy is a 1. */
 export function exitCodeFor(results) {
-  const bad = (r) => !r.ok && r.verdict !== 'timeout' || r.deploy?.state === 'fail';
+  // not-attempted is a consequence of an earlier entry, which is counted on its own
+  const bad = (r) => (!r.ok && r.verdict !== 'timeout' && r.verdict !== 'not-attempted') || r.deploy?.state === 'fail';
   if (results.some(bad)) return 1;
   if (results.some((r) => r.verdict === 'timeout' || r.deploy?.state === 'timeout' || r.deploy?.state === 'unmeasured')) return 3;
   return 0;

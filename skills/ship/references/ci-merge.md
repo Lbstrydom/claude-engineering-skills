@@ -20,16 +20,18 @@ Use `--merge` only when the user has said to merge this PR; a `/cycle --autonomo
 
 | Situation | Result |
 |---|---|
+| Only some checks registered | all-terminal is not enough: the set of check names must hold still for `--settle-sec` (default 60) before a verdict. A heuristic: a workflow that registers later is missed, so name the checks you require with `--expect` for exactness |
+| `--head <sha>` given and the PR head is another commit | refused `head-mismatch` |
 | Any check still running, or an `--expect <name>` check not yet reported | keeps waiting; at the budget (`--timeout-min`, default 45) exits **3** and lists what is pending |
 | No checks reported at all | refused `no-checks-reported` after a grace period: nothing measured is not green |
 | A failing check whose exact name is not on `--allow-fail` | `failed`, exit 1, even when `mergeStateStatus` says UNSTABLE |
 | `UNSTABLE` with no failing check to explain it | refused `unstable-unexplained` |
-| `BEHIND` (merge mode) | `gh pr update-branch`, then re-waits on the NEW head; at most 3 updates |
+| `BEHIND` (merge mode) | `gh pr update-branch`, then re-waits on the NEW head (checked to be a two-parent merge commit on the old head, else treated as a foreign push; a concurrent push in the same instant cannot be told apart); at most 3 updates |
 | `DIRTY`, draft, not open, `BLOCKED` after every check finished | refused (the allow-list never overrides branch protection) |
 | The head moved while waiting and the script did not move it | refused `head-moved` in merge mode (the decision covered the old head); `--follow-head` opts in; report mode follows and records it |
 
 The merge is `gh pr merge <n> --squash --match-head-commit <sha>` with the sha the checks passed on, so a push after the wait is rejected
-by GitHub. A merge that did not reach `MERGED` is not reported as merged.
+by GitHub. A merge that did not reach `MERGED`, or whose read-back failed (`merge-unconfirmed`, exit 1), is not reported as merged.
 
 ## Other flags
 

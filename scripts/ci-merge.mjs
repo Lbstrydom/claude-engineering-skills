@@ -21,6 +21,8 @@
  *   --follow-head               with --merge: follow a head somebody else pushed (default: refuse, the decision covered the old head)
  *   --deploy-wait <check-name>  after merging, wait for that check run on the merge commit
  *   --timeout-min <n>           per-PR wait budget (default 45); --poll-sec <n> (default 20); --deploy-timeout-min <n> (default 20)
+ *   --head <sha>                the commit you pushed (one --pr only): refuse if the PR head is a different commit, so a verdict is never for another commit
+ *   --settle-sec <n>            the set of check names must hold still this long once all are done (default 60), so a slower workflow that has not registered yet is not missed
  *   --blocked-grace-sec <n>     how long to poll BLOCKED/UNKNOWN once every check is done (default 90)
  *   --no-checks-grace-sec <n>   how long to wait for the first check to register (default 120)
  *
@@ -37,7 +39,7 @@ import { ghEnvFor } from './lib/fleet/gh-account.mjs';
 import { DEFAULTS, exitCodeFor, parseNameList, renderReport, runQueue } from './lib/ci-merge.mjs';
 
 const VALUE_FLAGS = ['--pr', '--repo', '--gh-account', '--allow-fail', '--expect', '--deploy-wait', '--timeout-min', '--poll-sec',
-  '--deploy-timeout-min', '--blocked-grace-sec', '--no-checks-grace-sec', '--gh-bin'];
+  '--deploy-timeout-min', '--blocked-grace-sec', '--no-checks-grace-sec', '--gh-bin', '--head', '--settle-sec'];
 const BOOL_FLAGS = ['--wait-only', '--merge', '--fail-fast', '--follow-head', '--selfcheck-relocation'];
 const KNOWN = [...VALUE_FLAGS, ...BOOL_FLAGS];
 
@@ -49,7 +51,10 @@ export function parseArgv(argv) {
     if (!a.startsWith('--')) throw new ArgvError(`ci-merge: unexpected argument "${a}"`);
     const eq = a.indexOf('=');
     const name = eq === -1 ? a : a.slice(0, eq);
-    if (BOOL_FLAGS.includes(name)) { bools.add(name); continue; }
+    if (BOOL_FLAGS.includes(name)) {
+      if (eq !== -1) throw new ArgvError(`ci-merge: ${name} takes no value (got "${a}"); omit the flag to turn it off`);
+      bools.add(name); continue;
+    }
     const val = eq === -1 ? argv[++i] : a.slice(eq + 1);
     if (val === undefined || val.startsWith('--')) throw new ArgvError(`ci-merge: ${name} needs a value`);
     values.set(name, [...(values.get(name) ?? []), val]);
@@ -71,6 +76,9 @@ export function buildOptions({ values, bools }) {
   if (!prs.length) throw new ArgvError('ci-merge: --pr <n[,n...]|current> is required');
   for (const p of prs) if (p !== 'current' && !/^\d+$/.test(p)) throw new ArgvError(`ci-merge: "${p}" is not a PR number`);
   if (prs.includes('current') && prs.length > 1) throw new ArgvError('ci-merge: "current" cannot be combined with other PRs');
+  const head = values.get('--head')?.at(-1) ?? null;
+  if (head && !/^[0-9a-f]{7,40}$/i.test(head)) throw new ArgvError(`ci-merge: --head must be a hex commit sha, got "${head}"`);
+  if (head && prs.length !== 1) throw new ArgvError('ci-merge: --head names one commit, so it needs exactly one --pr');
   if (bools.has('--merge') && bools.has('--wait-only')) throw new ArgvError('ci-merge: --merge and --wait-only are mutually exclusive');
   if (!bools.has('--merge') && !bools.has('--wait-only')) throw new ArgvError('ci-merge: say what you want — --wait-only (report) or --merge (the explicit merge decision)');
   if (bools.has('--wait-only') && (bools.has('--follow-head') || values.has('--deploy-wait'))) throw new ArgvError('ci-merge: --follow-head and --deploy-wait apply only with --merge');
@@ -86,6 +94,8 @@ export function buildOptions({ values, bools }) {
       failFast: bools.has('--fail-fast'),
       followHead: bools.has('--follow-head'),
       deployWait: values.get('--deploy-wait')?.at(-1) ?? null,
+      expectHead: head,
+      settleMs: num(values, '--settle-sec', DEFAULTS.settleMs, { unit: 1000 }),
       timeoutMs: num(values, '--timeout-min', DEFAULTS.timeoutMs, { unit: 60_000 }),
       pollMs: num(values, '--poll-sec', DEFAULTS.pollMs, { unit: 1000 }),
       deployTimeoutMs: num(values, '--deploy-timeout-min', DEFAULTS.deployTimeoutMs, { unit: 60_000 }),
