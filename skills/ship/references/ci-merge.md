@@ -1,5 +1,5 @@
 ---
-summary: ci-merge.mjs - wait on every check of the pushed head, refuse red or UNSTABLE, update BEHIND, squash-merge.
+summary: ci-merge.mjs - wait on every check of the pushed head, reject red or UNSTABLE, update BEHIND, squash-merge.
 ---
 
 # `ci-merge` — CI on the exact pushed head, and the safe merge

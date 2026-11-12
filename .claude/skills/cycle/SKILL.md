@@ -129,7 +129,7 @@ Optional flags:
 - `--no-uxlock` — skip /ux-lock (use when no UI changes shipped)
 - `--no-ship` — stop after audit; don't commit or push
 - `--max-rounds N` — pass through to /audit-plan and /audit-code
-- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). It never completes Step 7: only the human's `/ship` does.
+- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). Step 7 stays the human's `/ship`.
 - `--cluster <ID>` — implement/audit a single declared cluster (human resume path).
 - `--baseline-ref <sha>` — audit baseline for a resume where no `clusterStartRef` was captured (work already committed).
 - `--authorize-stale-reaudit` — resume a halted autonomous run by re-processing exactly the `stale` clusters.
@@ -541,7 +541,7 @@ scope.
 > ANY programmatic call, including one made from inside `/cycle`'s own
 > orchestration; `--autonomous` does NOT authorize shipping (`references/orchestration-rationale.md` §Step 7).
 >
-> A pushed PR: first run `node scripts/ci-merge.mjs --pr <n> --wait-only`, paste its `report` into the done report, never `--merge` (`references/ci-wait.md`).
+> A pushed PR: first run `node scripts/ci-merge.mjs --pr <n> --wait-only`, paste its `report` into the done report, without `--merge` (`references/ci-wait.md`).
 >
 > So Step 7 always ends in a **blocked handoff**, never an "Invoke `/ship`."
 > Show this card and stop — name the plan path so the human never has to go
