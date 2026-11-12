@@ -10,6 +10,7 @@ import path from 'node:path';
 import {
   classifyFindingScope, stampFindingScopes, isPreExisting, isInDiff, PRE_EXISTING, IN_DIFF, PRE_EXISTING_WINDOW_LINES,
 } from '../scripts/lib/finding-scope.mjs';
+import { strictChunkRanges } from '../scripts/lib/finding-scope.mjs';
 import { selectChangedChunks, buildAuditUnits, chunkScopeMode } from '../scripts/lib/code-analysis.mjs';
 import { classifyAuditOutcome, decideAuditGate, formatFindingTitles } from '../scripts/lib/prepush-audit-gate.mjs';
 import { formatFindings } from '../scripts/lib/findings-format.mjs';
@@ -71,7 +72,7 @@ describe('classifyFindingScope - mechanical, fail closed', () => {
   });
 });
 
-describe('AIO #109 fixture - 17 findings, 15 about unchanged code', () => {
+describe('AIO #109 SHAPE (synthetic fixture, not the real findings) - 17 findings, 15 about unchanged code', () => {
   // 1 line in en.ts, 1 in types.ts, 6 in styles.css were changed; every finding was raised from a chunk of one of those files.
   const hunks = hunksFor({
     'en.ts': [{ startLine: 40, lineCount: 1 }],
@@ -184,5 +185,34 @@ describe('1c - selectChangedChunks / buildAuditUnits', () => {
       assert.ok(scoped.length >= 1 && scoped.length < unscoped.length, `${scoped.length} vs ${unscoped.length}`);
       assert.ok(scoped.every((u) => u.chunk && u.chunk.items.some((it) => it.startLine <= 1 + 40)));
     } finally { process.stderr.write = quiet; fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+});
+
+describe('audit round 1 fixes - partial and malformed evidence fail closed', () => {
+  const mk = (start, text) => ({ imports: '', items: [{ source: text, startLine: start }], tokens: 5 });
+  test('a chunk with ANY unlocatable item has no ranges, so scoping sends everything', () => {
+    assert.equal(strictChunkRanges({ items: [{ source: 'a', startLine: 1 }, { source: 'b' }] }), null);
+    assert.equal(strictChunkRanges({ items: [{ source: 'a', startLine: 0 }] }), null);
+    assert.deepEqual(strictChunkRanges({ items: [{ source: 'a\nb', startLine: 3 }] }), [[3, 4]]);
+    const chunks = [mk(1, 'x'), { imports: '', items: [{ source: 'y', startLine: 50 }, { source: 'z' }], tokens: 5 }];
+    assert.equal(selectChangedChunks(chunks, 'f.ts', { mode: 'overlap', hunksFor: () => [{ startLine: 1, lineCount: 1 }] }), chunks);
+  });
+  test('a hunk whose lineCount is missing, non-numeric, negative or fractional is malformed: in-diff / send everything', () => {
+    const f = fnd('M1', 'MEDIUM', { _scopeEvidence: ev('a.ts', 900, 950) });
+    for (const lineCount of [undefined, 'bad', -1, 1.5]) {
+      assert.equal(classifyFindingScope(f, { hunksFor: () => [{ startLine: 100, lineCount }] }).scope, IN_DIFF, String(lineCount));
+    }
+    const chunks = [mk(1, 'x'), mk(500, 'y')];
+    assert.equal(selectChangedChunks(chunks, 'f.ts', { mode: 'overlap', hunksFor: () => [{ startLine: 1, lineCount: 'bad' }] }), chunks);
+  });
+  test('referenced mode keeps a chunk that defines a METHOD the changed chunk calls', () => {
+    const chunks = [mk(1, 'class A {\n  helperMethod(x) {\n    return x;\n  }\n}'), mk(101, 'function changed() { return this.helperMethod(1); }'), mk(301, 'function other() {}')];
+    const got = selectChangedChunks(chunks, 'f.ts', { mode: 'referenced', hunksFor: () => [{ startLine: 101, lineCount: 1 }] });
+    assert.deepEqual(got.map((c) => c.items[0].startLine), [1, 101]);
+  });
+  test('a NEEDS_FIXES envelope whose only HIGH/MEDIUM findings are pre-existing is clean, with the count stated', () => {
+    const outcome = classifyAuditOutcome({ exitCode: 0, report: { verdict: 'NEEDS_FIXES', findings: [fnd('H1', 'HIGH', { scope: PRE_EXISTING })] } });
+    assert.equal(outcome.kind, 'clean');
+    assert.equal(outcome.preExisting, 1);
   });
 });

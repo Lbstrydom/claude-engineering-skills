@@ -28,14 +28,33 @@ export const isPreExisting = (f) => f?.scope === PRE_EXISTING;
 export const isInDiff = (f) => !isPreExisting(f);
 
 /** Does `[start, end]` touch any hunk widened by `window` lines? A deletion-only hunk (lineCount 0) is a point at its anchor. */
-function touchesHunks(start, end, hunks, window) {
+export function rangeTouchesHunks(start, end, hunks, window) {
   for (const h of hunks) {
-    if (!h || !Number.isInteger(h.startLine)) return true;       // a malformed hunk is no evidence of absence: fail closed
+    // A malformed hunk (no integer startLine >= 1, or a lineCount that is not a non-negative integer) is no evidence of absence: fail closed.
+    if (!h || !Number.isInteger(h.startLine) || h.startLine < 1 || !Number.isInteger(h.lineCount) || h.lineCount < 0) return true;
     const hs = h.startLine - window;
-    const he = h.startLine + Math.max(Number(h.lineCount) || 0, 1) - 1 + window;
+    const he = h.startLine + Math.max(h.lineCount, 1) - 1 + window;
     if (start <= he && end >= hs) return true;
   }
   return false;
+}
+const touchesHunks = rangeTouchesHunks;
+
+/**
+ * The line ranges a chunk's items span, or null when ANY item lacks a usable `startLine`/`source`: a partly known chunk is not
+ * evidence of where its content is, so the caller falls back to the fail-closed path. (The import block is not an item.)
+ * @param {{items?: Array<{startLine?: number, source?: string}>}|undefined|null} chunk
+ * @returns {Array<[number, number]>|null}
+ */
+export function strictChunkRanges(chunk) {
+  const items = chunk?.items;
+  if (!Array.isArray(items) || items.length === 0) return null;
+  const out = [];
+  for (const it of items) {
+    if (!it || !Number.isInteger(it.startLine) || it.startLine < 1 || typeof it.source !== 'string') return null;
+    out.push([it.startLine, it.startLine + it.source.split('\n').length - 1]);
+  }
+  return out;
 }
 
 /** One evidence item -> `{file, ranges}` or null when it does not name a file and a usable line range. */

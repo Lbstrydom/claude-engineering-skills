@@ -123,7 +123,7 @@ function classifyMeasurement({ exitCode, report }) {
     // The audit's verdict is a pure function of its HIGH/MEDIUM count (computeAuditVerdict), and it counts the MEDIUM markers. A
     // NEEDS_FIXES whose every HIGH/MEDIUM entry was a marker was produced by tooling notices alone: clean, with the notices named
     // (audit-code Cluster A R2 M1). With no marker present the verdict word is trusted exactly as before.
-    if (tooling.length > 0 && counts.high + counts.medium === 0) return { kind: 'clean', cause: null, verdict, counts, tooling, ...(preExisting > 0 ? { preExisting } : {}) };
+    if ((tooling.length > 0 || preExisting > 0) && counts.high + counts.medium === 0) return { kind: 'clean', cause: null, verdict, counts, tooling, ...(preExisting > 0 ? { preExisting } : {}) };
     return { kind: 'findings', cause: null, verdict, counts, tooling, ...(preExisting > 0 ? { preExisting } : {}) };
   }
   return { kind: 'unmeasured', cause: `the audit's envelope carries ${verdict === null ? 'no verdict' : `an unrecognised verdict "${verdict}"`}, so the hook cannot tell what it found`, verdict, counts, tooling, ...(preExisting > 0 ? { preExisting } : {}) };

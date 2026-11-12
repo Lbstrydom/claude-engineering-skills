@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizePath } from './file-io.mjs';
+import { rangeTouchesHunks, strictChunkRanges } from './finding-scope.mjs';
 import { getProfileForFile, getProfile } from './language-profiles.mjs';
 
 /**
@@ -222,13 +223,13 @@ export function chunkScopeMode(env = process.env) {
 }
 
 const DECLARED_NAME_RE = /(?:^|\n)\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|def|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
+// A class/object METHOD definition (`  name(args) {`), which DECLARED_NAME_RE cannot see. Control keywords are excluded; a call site that
+// looks like a method only RETAINS an extra chunk, which is the safe direction.
+const METHOD_NAME_RE = /^[ \t]+(?:static\s+|async\s+|get\s+|set\s+|\*\s*)*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/gm;
+const NOT_A_METHOD = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'with', 'else', 'do', 'try']);
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const chunkRanges = (chunk) => {
-  const items = (chunk.items ?? []).filter((it) => Number.isInteger(it.startLine) && typeof it.source === 'string');
-  if (items.length === 0) return null;
-  return items.map((it) => [it.startLine, it.startLine + it.source.split('\n').length - 1]);
-};
+const chunkRanges = strictChunkRanges;
 
 /**
  * Keep only the chunks of an oversized file that the change touches. Pure; returns `chunks` itself whenever scoping cannot be
@@ -245,18 +246,16 @@ export function selectChangedChunks(chunks, filePath, scope) {
   const ranges = chunks.map(chunkRanges);
   if (ranges.some((r) => r === null)) return chunks;
   const w = CHUNK_SCOPE_WINDOW_LINES;
-  const touches = (rs) => rs.some(([s, e]) => hunks.some((h) => {
-    if (!h || !Number.isInteger(h.startLine)) return true;   // a malformed hunk is no evidence of absence
-    return s <= h.startLine + Math.max(Number(h.lineCount) || 0, 1) - 1 + w && e >= h.startLine - w;
-  }));
+  const touches = (rs) => rs.some(([s, e]) => rangeTouchesHunks(s, e, hunks, w));
   const keep = chunks.map((_, i) => touches(ranges[i]));
   if (mode === 'referenced') {
     const keptText = chunks.filter((_, i) => keep[i]).map((c) => c.items.map((it) => it.source).join('\n')).join('\n');
     chunks.forEach((c, i) => {
       if (keep[i]) return;
       const src = c.items.map((it) => it.source).join('\n');
-      for (const m of src.matchAll(DECLARED_NAME_RE)) {
-        if (new RegExp(`(?<![\\w$])${escapeRe(m[1])}(?![\\w$])`).test(keptText)) { keep[i] = true; break; }
+      const names = [...src.matchAll(DECLARED_NAME_RE), ...src.matchAll(METHOD_NAME_RE)].map((m) => m[1]).filter((n) => !NOT_A_METHOD.has(n));
+      for (const name of names) {
+        if (new RegExp(`(?<![\\w$])${escapeRe(name)}(?![\\w$])`).test(keptText)) { keep[i] = true; break; }
       }
     });
   }

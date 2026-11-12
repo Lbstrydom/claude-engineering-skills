@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { ProducerFindingSchema, ReduceStatus, reduceStatusFromErrorCategory, buildExecutionMeta } from '../schemas.mjs';
 import { safeInt, normalizePath, readFilesAsContext } from '../file-io.mjs';
 import { buildAuditUnits, chunkScopeMode, measureContextChars, REDUCE_SYSTEM_PROMPT } from '../code-analysis.mjs';
-import { classifyFindingScope, PRE_EXISTING } from '../finding-scope.mjs';
+import { classifyFindingScope, PRE_EXISTING, strictChunkRanges } from '../finding-scope.mjs';
 import { callGPT, safeCallGPT } from './llm-helpers.mjs';
 import {
   buildReducePayload, MAX_REDUCE_JSON_CHARS, MAP_FAILURE_THRESHOLD, computePassLimits, addUsage,
@@ -211,9 +211,7 @@ export function chunkUnitReadStats(unit) {
 
 /** The line ranges a CHUNKED unit's items span (the same ranges `chunkUnitReadStats` credits). */
 export function chunkLineRanges(unit) {
-  return (unit.chunk?.items ?? [])
-    .filter((it) => Number.isInteger(it.startLine) && typeof it.source === 'string')
-    .map((it) => [it.startLine, it.startLine + it.source.split('\n').length - 1]);
+  return strictChunkRanges(unit.chunk);   // null when any item is unlocatable: no scope evidence is stamped (fail closed)
 }
 
 /**

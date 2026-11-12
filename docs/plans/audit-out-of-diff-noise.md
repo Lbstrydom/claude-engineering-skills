@@ -61,7 +61,7 @@ No hook-body change: the gate reads its counts through the library, so `HOOK_VER
 | ai-organiser | 58 / 80 | 765 | 286 (37.4%) | 345 (45.1%) |
 | wine-cellar-app | 12 / 80 | 99 | 47 (47.5%) | 49 (49.5%) |
 
-A push spans several commits, so its diff touches more chunks: these are **lower bounds on the share sent**. The AIO #109 fixture (`tests/finding-scope.test.mjs`) pins the 8a side: 17 findings → 15 tagged, gate counts 2.
+A push spans several commits, so its diff touches more chunks: these are **lower bounds on the share sent**. The AIO #109 SHAPE fixture (`tests/finding-scope.test.mjs`; synthetic, built from the reported counts, not the real findings) pins the 8a mechanics: 17 findings → 15 tagged, gate counts 2. It shows the plumbing, not the real tag rate; that is measured by the campaign.
 
 Convergence baseline (8d, `expected` source = the coordinator's brief, 2026-11-12; PR #342's CLI is not on this branch's base): code audits 29.8% first-round pass, 6.7% need 5+ rounds, mean 2.31 rounds.
 
@@ -121,6 +121,8 @@ Convergence baseline (8d, `expected` source = the coordinator's brief, 2026-11-1
 `tests/finding-scope.test.mjs` (24): classification truth table incl. every fail-closed path, window edges, deletion-only hunk, tiered anchors, prose-ignored, the AIO #109 fixture through the gate and `/audit-code` convergence, formatter/summary line, `selectChangedChunks`/`buildAuditUnits` including off = identical. Negative controls (seen to fail): removing the gate's partition → 2 fail; removing the overlap test → 6 fail.
 
 ## 6. Deviations / open items
+
+- **Residual risk of 8a (audit R1 H1/H5/H8, accepted by design).** A change can introduce a defect in an unchanged chunk (an unchanged caller of a function whose contract changed). Such a finding would be tagged pre-existing and not gate. Mitigations: it is still stored, listed under its own heading in every report, and counted in the gate output ("N pre-existing … NOT counted"); `referenced` scoping (1c) keeps the callee's definitions with the change, not callers. Not closed: caller-side blast radius needs the adjacency machinery, and is the campaign's recall question for the tag too (add 'tagged pre-existing but fixed in-diff' to the campaign's miss count).
 
 - 8a cannot tag legacy findings from a non-chunked file or from a file chunked while `AUDIT_CHUNK_SCOPE` is off **and** whose chunk the diff touched: they have no line evidence and stay in-diff. This is the fail-closed direction and is stated in the PR.
 - Single-pass (non map-reduce) legacy calls render whole files; scoping and the tag do not apply there.
