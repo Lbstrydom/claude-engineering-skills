@@ -183,6 +183,6 @@ describe('1c - selectChangedChunks / buildAuditUnits', () => {
       assert.deepEqual(off.map((u) => u.tokens), unscoped.map((u) => u.tokens));
       assert.ok(scoped.length >= 1 && scoped.length < unscoped.length, `${scoped.length} vs ${unscoped.length}`);
       assert.ok(scoped.every((u) => u.chunk && u.chunk.items.some((it) => it.startLine <= 1 + 40)));
-    } finally { process.stderr.write = quiet; fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { process.stderr.write = quiet; fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
