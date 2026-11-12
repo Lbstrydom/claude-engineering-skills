@@ -90,7 +90,7 @@ function runHook(local, source, stdin, env = {}) {
 }
 const kept = (c, suffix) => path.join(c.local, KEEP, `${c.tree}.${suffix}`);
 // v15's recurrence sidecar (<tree>.head) rides beside a kept report by design; these v14 assertions are about the report/output pair.
-const keptEntries = (c) => (fs.existsSync(path.join(c.local, KEEP)) ? fs.readdirSync(path.join(c.local, KEEP)).filter((f) => !f.endsWith('.head') && !f.startsWith('invocations.log')) : []); // v17's invocation log is not a kept audit file
+const keptEntries = (c) => (fs.existsSync(path.join(c.local, KEEP)) ? fs.readdirSync(path.join(c.local, KEEP)).filter((f) => !f.endsWith('.head') && !f.startsWith('invocations.log') && f !== 'last-run.steps.log') : []); // v17's invocation log is not a kept audit file
 /** One scenario in a fresh workspace; the callback gets the consumer and the source. */
 function scenario(t, name, fn) {
   if (!HAS_BASH) return t.skip('bash is required');

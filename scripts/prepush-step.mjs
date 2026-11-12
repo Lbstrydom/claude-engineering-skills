@@ -2,7 +2,7 @@
 /**
  * @fileoverview Helpers the consumer pre-push hook calls so no step of it can hang silently (see lib/prepush-step.mjs).
  *
- *   prepush-step.mjs run --step <name> --budget-sec <n> [--progress-sec <n>] [--out <file>] -- <cmd> [args...]
+ *   prepush-step.mjs run --step <name> --budget-sec <n> [--progress-sec <n>] [--out <file>] [--trail <file>] -- <cmd> [args...]
  *       Runs the command with a wall-clock budget and a heartbeat on stderr. The command's stdout is this process's stdout (the
  *       hook captures `--select` that way). Exit: the command's status, 124 when it outlived the budget (the hook refuses the push).
  *   prepush-step.mjs own-files
@@ -57,7 +57,7 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { resolvePushRange, branchOwnedChangedFiles } from './lib/push-range.mjs';
 import { runStep } from './lib/prepush-step.mjs';
 import {
-  classifyAuditOutcome, decideAuditGate, decideAuditReuse, auditBudgetSec, parseNumstatZ, decideNoPlanGate, UNMEASURED_OVERRIDE_ENV,
+  classifyAuditOutcome, decideAuditGate, formatFindingTitles, decideAuditReuse, auditBudgetSec, parseNumstatZ, decideNoPlanGate, UNMEASURED_OVERRIDE_ENV,
   classifyNoCodePush, buildNoCodeRecord, noCodeLine, codeLine, summariseRecurrence, formatRecurrenceLine,
 } from './lib/prepush-audit-gate.mjs';
 import { patchRangesEquivalent } from './lib/patch-equivalence.mjs';
@@ -72,10 +72,10 @@ const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'];
 const KNOWN_FLAGS = [
   '--step', '--budget-sec', '--progress-sec', '--out', '--default-ref', '--selfcheck-relocation',
   '--exit', '--report', '--files', '--cwd', '--selector-failed', '--head', '--destination',
-  '--planless', '--print-kind', '--dir', '--plan', '--owner-pid',
+  '--planless', '--print-kind', '--dir', '--plan', '--owner-pid', '--trail',
 ];
 /** What this runner can do. The hook asks before relying on a subcommand, because an older source checkout lacks the newer ones. */
-export const CAPABILITIES = Object.freeze(['run', 'own-files', 'audit-outcome', 'audit-reuse', 'audit-budget', 'no-plan', 'no-code', 'recurrence', 'landing', 'sync-lane', 'hook-version', 'planless', 'snapshot']);
+export const CAPABILITIES = Object.freeze(['run', 'own-files', 'audit-outcome', 'audit-reuse', 'audit-budget', 'no-plan', 'no-code', 'recurrence', 'landing', 'sync-lane', 'hook-version', 'planless', 'snapshot', 'trail']);
 /** A store lookup that outlives this is "unverifiable", i.e. a re-run - a reuse check must never be able to hang the hook. */
 const REUSE_LOOKUP_MS = 20_000;
 
@@ -114,6 +114,19 @@ function tailOf(file, n = 6, maxBytes = 64 * 1024) {
 }
 
 /**
+ * A progressive step trail (hook v18): `trail(line)` APPENDS one timestamped line to `file` the moment it is called, so a run that is killed or
+ * hangs leaves the last step it reached. The hook's other logs are written when a step COMPLETES (the kept report / output.log are renamed in
+ * at the end), which is why a v16 hook stopped after 25 minutes left `.audit/prepush/` empty (STO). Best effort by design: a trail that cannot
+ * be written never changes a step's outcome. No file given: a no-op.
+ * @param {string|null} file
+ * @returns {(line: string) => void}
+ */
+export function makeTrail(file, { now = () => new Date().toISOString(), pid = process.pid } = {}) {
+  if (!file) return () => {};
+  return (line) => { try { fs.appendFileSync(file, `${now()} [${pid}] ${line}\n`); } catch { /* the trail is diagnostic, never a gate */ } };
+}
+
+/**
  * `audit-outcome`: classify the audit step's exit + `--out` envelope, print the verdict for the operator, and return the hook's
  * exit (0 = let the push continue, 1 = refuse). A failure of THIS function is a refusal too - it can never turn into a pass.
  * @returns {number}
@@ -129,6 +142,11 @@ export function auditOutcomeExit({ exitArg, reportFile, captureFile, env = proce
     if (tail.length > 0) { write('[prepush-hook] the audit\'s last output lines:'); for (const l of tail) write(`   | ${l}`); }
   }
   for (const l of decision.lines) write(l);
+  // The findings themselves, not just their count and a path (STO 2026-11-12: H:1 M:3 sat unread in a report file).
+  if (outcome.kind === 'findings') {
+    const titles = formatFindingTitles(report?.findings);
+    if (titles.length > 0) { write('[prepush-hook] HIGH/MEDIUM findings (full detail in the kept report):'); for (const l of titles) write(l); }
+  }
   // The invocation log's outcome (hook v17): an override counts as exercised only when it decided the outcome.
   onKind?.(!decision.allow ? 'refused' : outcome.kind === 'unmeasured' ? 'allowed-unmeasured' : outcome.kind);
   return decision.allow ? 0 : 1;
@@ -443,6 +461,7 @@ async function main() {
     throw new ArgvError('prepush-step.mjs run: needs --step <name>, --budget-sec <n> > 0 and a command after `--`');
   }
   const outFile = flagValue(head, '--out');
+  const trail = makeTrail(flagValue(head, '--trail'));
   const fd = outFile ? fs.openSync(outFile, 'w') : null;
   const [cmd, ...args] = cmdv;
   // A stop request (the hook was interrupted) must reach the step's process tree, or the machine keeps burning after the push died.
@@ -450,11 +469,14 @@ async function main() {
   const stop = () => abort.abort();
   const wired = STOP_SIGNALS.filter((sig) => { try { process.on(sig, stop); return true; } catch { return false; } });
   let r;
+  trail(`step ${step}: start (budget ${budgetSec}s${outFile ? `, output streams to ${outFile}` : ''})`);
   try {
     r = await runStep({
       signal: abort.signal, step, cmd: cmd === 'node' ? process.execPath : cmd, args, budgetMs: budgetSec * 1000, progressMs: progressSec * 1000,
-      stdio: fd === null ? 'inherit' : ['ignore', fd, fd], log: (line) => process.stderr.write(`${line}\n`),
+      stdio: fd === null ? 'inherit' : ['ignore', fd, fd],
+      log: (line) => { process.stderr.write(`${line}\n`); trail(`${line.replace(/^\[prepush-hook\]\s*/, '').split('\n')[0]}`); },
     });
+    trail(`step ${step}: end exit=${r.code}${r.timedOut ? ' (budget exceeded)' : ''}${r.interrupted ? ' (interrupted)' : ''} after ${Math.round(r.elapsedMs / 1000)}s`);
   } finally {
     for (const sig of wired) process.off(sig, stop);
     if (fd !== null) fs.closeSync(fd);

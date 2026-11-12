@@ -124,7 +124,9 @@ export const PROVIDERS = {
         `(${azureConfig.claudeApiShape} shape, ${azureConfig.claudeDeployment}, ` +
         `auth ${route.authMode} from ${route.credentialVar}).\n`);
       if (azureConfig.claudeApiShape === 'anthropic') {
-        return createAnthropicClient({ azureRoute: route });
+        // `backend:'sdk'` PINNED (hook v18): the `cli` backend drops tools/tool_choice, which this reviewer's provider-side schema
+        // enforcement depends on (AGENTS.md "Anthropic Backend Routing"); on an Azure profile CLAUDE_BACKEND=cli is a normal ambient setting.
+        return createAnthropicClient({ backend: 'sdk', azureRoute: route });
       }
       return createOpenAIClient({ purpose: 'foundry-claude' });
     },
@@ -361,21 +363,18 @@ export function resolveOpenRouterCreds() {
  * Precedence (top wins):
  *   1. Explicit choice — the CLI `--provider` flag OR the persistent
  *      `FINAL_REVIEW_PROVIDER` per-repo setting (both arrive via `choice`).
- *   2. Auto-detect default stack — `GEMINI_API_KEY` present → Gemini.
- *   3. Active Azure profile → azure-claude.
+ *   2. Active Azure profile (`AZURE_OPENAI_ENDPOINT`) → azure-claude, or a loud ProviderNotReadyError - never Gemini (hook v18).
+ *   3. Auto-detect default stack — `GEMINI_API_KEY` present → Gemini.
  *   4. `ANTHROPIC_API_KEY` → public Claude Opus.
  *
- * The per-repo default is "GPT auditor + Gemini reviewer": Gemini is preferred
- * whenever its key is present, and a *configured* Azure profile no longer
- * silently hijacks the reviewer (a stray AZURE_OPENAI_ENDPOINT in the
- * environment used to reroute a private-repo review to Foundry Opus). To make
- * a repo use Azure permanently, set `FINAL_REVIEW_PROVIDER=azure-claude`
- * (`node scripts/gemini-review.mjs set-provider azure-claude`).
+ * Off the Azure profile the default is "GPT auditor + Gemini reviewer". ON it (hook v18) the work profile's rule wins: Foundry Claude.
+ * (Until v17 a Gemini key beat an active Azure profile, so a work-tenant diff reached Gemini; the reverse hijack - a stray
+ * AZURE_OPENAI_ENDPOINT rerouting a private repo - is what an explicit `FINAL_REVIEW_PROVIDER=gemini` is for.)
  *
  * @param {string|null} choice - explicit provider (flag or setting), or null
- * @param {{env?:object, azureActive?:boolean}} [deps] - injected for tests
+ * @param {{env?:object, azureActive?:boolean, assertAzure?:Function}} [deps] - injected for tests
  */
-export function selectProvider(choice, { env = process.env, azureActive = azureConfig.active } = {}) {
+export function selectProvider(choice, { env = process.env, azureActive = azureConfig.active, assertAzure = assertAzureClaudeReady } = {}) {
   // ── 1. Explicit choice (flag or FINAL_REVIEW_PROVIDER setting) — always wins.
   if (choice === 'anthropic' || choice === 'claude-opus') {
     if (!env.ANTHROPIC_API_KEY) {
@@ -404,14 +403,17 @@ export function selectProvider(choice, { env = process.env, azureActive = azureC
   if (choice) {
     throw new ProviderNotReadyError(`Unknown provider "${choice}". Use "gemini", "anthropic", "azure-claude", "openai-compatible", or "openrouter".`);
   }
-  // ── 2-4. Auto-detect. Gemini first (default reviewer); Azure only when no
-  // Gemini key AND the profile is active; public Opus last. NO fallback to a
-  // compatible/OpenRouter route (G1) — those require explicit selection.
-  if (env.GEMINI_API_KEY) return 'gemini';
+  // ── 2-4. Auto-detect. An ACTIVE Azure profile (AZURE_OPENAI_ENDPOINT set) is the work profile's rule: the final review is Azure Foundry
+  // Claude, whatever other keys are in the environment (a storyline worker with GEMINI_API_KEY set silently got a Gemini verdict, 2026-11-12).
+  // `assertAzureClaudeReady` THROWS when the route is not usable - there is deliberately no fall-through to Gemini or public Opus, because
+  // a work-tenant diff must not leave the tenant just because its route is down. A repo that wants Gemini on this profile says so with
+  // an explicit choice (above). Off Azure: Gemini first (default reviewer); public Opus last. NO fallback to a compatible/OpenRouter
+  // route (G1) - those require explicit selection.
   if (azureActive) {
-    assertAzureClaudeReady();
+    assertAzure();
     return 'azure-claude';
   }
+  if (env.GEMINI_API_KEY) return 'gemini';
   if (env.ANTHROPIC_API_KEY) return 'claude-opus';
   throw new ProviderNotReadyError(
     'Final review requires GEMINI_API_KEY, ANTHROPIC_API_KEY, or an active Azure profile.\n'

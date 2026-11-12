@@ -59,7 +59,7 @@ import { isInvokedAsScript } from '../lib/cli-entry.mjs';
  * `--files-from`/`--include-delegates`).
  */
 export const KNOWN_FLAGS = Object.freeze([
-  '--root', '--files', '--files-from', '--mode', '--include-delegates',
+  '--root', '--files', '--files-from', '--mode', '--include-delegates', '--materialised',
 ]);
 
 /** `--mode` is validated against this, not accepted free-form. */
@@ -119,7 +119,7 @@ function parseArgs(argv) {
   // incremental run to an unrestricted full walk (M2).
   assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'extract' });
 
-  const args = { root: process.cwd(), files: null, mode: 'full', includeDelegates: false };
+  const args = { root: process.cwd(), files: null, mode: 'full', includeDelegates: false, materialised: false };
   let filesInline = null;     // from --files
   let filesFromPath = null;   // from --files-from; read AFTER the loop, not during
 
@@ -220,6 +220,12 @@ function parseArgs(argv) {
         args.mode = value;
         break;
       }
+      case '--materialised':
+        // A scratch directory of file CONTENTS, not a work tree (duplication detector's base side): "which files does it own" is not asked.
+        claimOnce('--materialised');
+        if (inlineValue !== null) throw new Error(`--materialised does not take a value; got --materialised=${inlineValue}`);
+        args.materialised = true;
+        break;
       case '--include-delegates':
         claimOnce('--include-delegates');
         if (inlineValue !== null) throw new Error(`--include-delegates does not take a value; got --include-delegates=${inlineValue}`);
@@ -1148,10 +1154,10 @@ async function main() {
   // Cost: one unrestricted walk + a statSync per file, against a
   // dependency-cruise of the same tree that has already run. The walk is the
   // cheap half of a measurement that was being thrown away.
-  const universeWalk = coverageUniverse(
-    repoRoot, args.files, extractionWalk,
-    (root, restrict) => enumerateFilesWithOwnership(root, restrict),
-  );
+  const universeWalk = args.materialised ? extractionWalk : coverageUniverse(repoRoot, args.files, extractionWalk, (root, restrict) => enumerateFilesWithOwnership(root, restrict));
+  // The ownership verdict on the wire (stderr prose is parsed by nobody): a parent resting a judgement on this run must tell "verified" from "git could not be asked" (wine #1336).
+  const degradedWarning = [extractionWalk, universeWalk].find((w) => w.degraded)?.warning;
+  if (degradedWarning) emit({ type: 'ownership', degraded: true, warning: degradedWarning });
   const universeFiles = universeWalk.files;
   // §2.1.1's third clause: a file this pipeline refuses to read must not count
   // against the denominator. An unreadable file is excluded for the same

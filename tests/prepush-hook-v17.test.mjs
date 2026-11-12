@@ -343,7 +343,7 @@ describe('hook v17 - static shape', () => {
     assert.doesNotMatch(HOOK_BODY, /\[ ! -d "\$PLANS_DIR" \] && finish/);
   });
   it('a v17 body refuses a step runner without the planless and snapshot capabilities', () => {
-    assert.match(HOOK_BODY, /for cap in audit-outcome audit-reuse audit-budget no-plan planless snapshot; do/);
+    assert.match(HOOK_BODY, /for cap in audit-outcome audit-reuse audit-budget no-plan planless snapshot(?: trail)?; do/);
   });
   it('every exit after the kill switch runs the EXIT trap that removes the snapshot and logs the invocation (signals included: prepush_killed exits)', () => {
     const trapAt = HOOK_BODY.indexOf("trap 'prepush_on_exit $?' EXIT");

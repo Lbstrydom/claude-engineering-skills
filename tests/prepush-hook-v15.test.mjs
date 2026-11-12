@@ -40,7 +40,7 @@ function makeSource(ws, stepMode = 'real') {
       // `run -- node <step> no-code` is how the hook reaches the subcommand; intercept the wrapped command's tail.
       "const dd = a.indexOf('--'); const wrapped = dd >= 0 ? a.slice(dd + 1) : [];",
       "const isNoCode = wrapped[wrapped.length - 1] === 'no-code';",
-      "if (a[0] === 'capabilities' && mode === 'old') { console.log('run own-files audit-outcome audit-reuse audit-budget no-plan planless snapshot'); process.exit(0); }",
+      "if (a[0] === 'capabilities' && mode === 'old') { console.log('run own-files audit-outcome audit-reuse audit-budget no-plan planless snapshot trail'); process.exit(0); }",
       "if (isNoCode && mode === 'garbage') { console.log('no-code?? banana'); process.exit(0); }",
       "if (isNoCode && mode === 'norecord') { console.log('no-code 1 .audit/prepush/does-not-exist.no-code.json'); process.exit(0); }",
       "if (isNoCode && mode === 'rc1') { console.error('boom'); process.exit(1); }",

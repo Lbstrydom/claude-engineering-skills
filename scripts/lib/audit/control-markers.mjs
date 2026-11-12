@@ -23,6 +23,14 @@
 export const CONTROL_MARKER_PREFIXES = Object.freeze(['ADJACENCY_INCOMPLETE']);
 
 /**
+ * Markers that say a part of the audit's INPUT was never verified (hook v18): the run is not evidence about the change, so the pre-push
+ * gate classifies it `unmeasured`, not `clean`. They live in the audit's result envelope only - never in the learning store - so they are
+ * deliberately NOT in {@link CONTROL_MARKER_PREFIXES}, which mirrors the SQL metric exclusion list.
+ *  - `OWNERSHIP_UNVERIFIED`: `git check-ignore` could not say which files the repo owns (lib/disowned-paths.mjs `degraded`).
+ */
+export const MEASUREMENT_DEGRADING_MARKER_PREFIXES = Object.freeze(['OWNERSHIP_UNVERIFIED']);
+
+/**
  * Is `detailText` a control-state marker rather than a real finding?
  * Matched on the detail-text PREFIX, deliberately never the category — the
  * adjacency wave emits genuine findings under the same `[Adjacency]`-
@@ -33,7 +41,12 @@ export const CONTROL_MARKER_PREFIXES = Object.freeze(['ADJACENCY_INCOMPLETE']);
  */
 export function isControlMarkerDetail(detailText) {
   if (typeof detailText !== 'string' || !detailText) return false;
-  return CONTROL_MARKER_PREFIXES.some(prefix => detailText.startsWith(prefix));
+  return CONTROL_MARKER_PREFIXES.some(prefix => detailText.startsWith(prefix)) || isMeasurementDegradingDetail(detailText);
+}
+
+/** Is `detailText` a marker saying the audit's input went unverified (so the run is not a measurement)? A subset of the control markers. */
+export function isMeasurementDegradingDetail(detailText) {
+  return typeof detailText === 'string' && MEASUREMENT_DEGRADING_MARKER_PREFIXES.some(prefix => detailText.startsWith(prefix));
 }
 
 /**

@@ -12,6 +12,7 @@
  */
 import fs from 'node:fs';
 import { redactSecrets } from '../secret-patterns.mjs';
+import { stampOwnershipUnverified } from './run-notices.mjs';
 
 export const PLANLESS_FLAG = '--planless';
 
@@ -78,6 +79,14 @@ export function parsePlanlessArgs(args, { read = (p) => fs.readFileSync(p, 'utf8
  */
 export function stampPlanless(result, opts) {
   return opts?.planless === true && result && typeof result === 'object' ? { ...result, planless: true } : result;
+}
+
+/**
+ * Everything `runMultiPassCodeAudit` stamps on a finished result: the plan-less flag, then the degraded-scan markers
+ * (`stampOwnershipUnverified`, hook v18). One call site, so a new run-level notice is one edit here, not two in openai-audit.mjs.
+ */
+export function stampRunNotices(result, opts) {
+  return stampOwnershipUnverified(stampPlanless(result, opts));
 }
 
 /** Truncate to at most `cap` UTF-8 bytes without splitting a character. */

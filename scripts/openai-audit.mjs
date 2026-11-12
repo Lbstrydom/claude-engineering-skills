@@ -109,7 +109,7 @@ import { readFlagValue } from './lib/audit/round-cap.mjs';
 import { resolveAuditIdentity } from './lib/audit/audit-identity.mjs';
 import { stampPlanSourceModel } from './lib/audit/plan-audit-cloud.mjs';
 import { OPENAI_AUDIT_USAGE } from './lib/audit/openai-audit-usage.mjs';
-import { parsePlanlessArgs, stampPlanless } from './lib/audit/planless-intent.mjs';
+import { parsePlanlessArgs, stampRunNotices } from './lib/audit/planless-intent.mjs';
 
 /**
  * Print a one-line cost-estimate preflight to stderr so users see what
@@ -522,7 +522,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
   // only by the CLI's main(). Without it, a flipped flag routed fully-mocked
   // test harnesses into real multi-provider execution.
   if (tieredAuditConfig.pipelineEnabled && ctx.allowTiered) {
-    const mergedResult = stampPlanless(stampAuditRound(applyCanaryToUnsupportedPipeline(await runTieredAuditPipeline(ctx)), opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts);
+    const mergedResult = stampRunNotices(stampAuditRound(applyCanaryToUnsupportedPipeline(await runTieredAuditPipeline(ctx)), opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts);
     printAuditResult(mergedResult, { outFile, jsonMode });
     return mergedResult;
   }
@@ -532,7 +532,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
     ? runTieredShadowComparison({ ctx, legacyResultPromise, runTieredAuditPipeline }).catch(() => {})
     : null;
 
-  const mergedResult = stampPlanless(stampAuditRound(await legacyResultPromise, opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts);
+  const mergedResult = stampRunNotices(stampAuditRound(await legacyResultPromise, opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts);
   if (shadowTask) await shadowTask;
 
   printAuditResult(mergedResult, { outFile, jsonMode });
