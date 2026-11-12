@@ -225,7 +225,7 @@ export function chunkScopeMode(env = process.env) {
 const DECLARED_NAME_RE = /(?:^|\n)\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|def|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
 // A class/object METHOD definition (`  name(args) {`), which DECLARED_NAME_RE cannot see. Control keywords are excluded; a call site that
 // looks like a method only RETAINS an extra chunk, which is the safe direction.
-const METHOD_NAME_RE = /^[ \t]+(?:static\s+|async\s+|get\s+|set\s+|\*\s*)*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/gm;
+const METHOD_NAME_RE = /^[ \t]+(?:(?:static|async|get|set|public|private|protected|readonly|override|abstract)\s+|\*\s*)*([A-Za-z_$][\w$]*)\s*(?:<[^>\n]*>)?\s*\([^)]*\)\s*(?::\s*[^{\n]+)?\{/gm;
 const NOT_A_METHOD = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'with', 'else', 'do', 'try']);
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

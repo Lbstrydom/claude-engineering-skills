@@ -216,3 +216,19 @@ describe('audit round 1 fixes - partial and malformed evidence fail closed', () 
     assert.equal(outcome.preExisting, 1);
   });
 });
+
+describe('audit round 2 fixes - the shared import block, TS method modifiers', () => {
+  const mk = (start, text, imports = 'import a from "a";\nimport b from "b";') => ({ imports, items: [{ source: text, startLine: start }], tokens: 5 });
+  test('the import block is part of every chunk’s evidence: a changed import line keeps every chunk', () => {
+    const chunks = [mk(50, 'function a() {}'), mk(400, 'function b() {}'), mk(900, 'function c() {}')];
+    assert.deepEqual(strictChunkRanges(chunks[1]), [[400, 400], [1, 2]]);
+    assert.equal(selectChangedChunks(chunks, 'f.ts', { mode: 'overlap', hunksFor: () => [{ startLine: 2, lineCount: 1 }] }), chunks);
+    const f = fnd('M1', 'MEDIUM', { _scopeEvidence: { file: 'f.ts', ranges: strictChunkRanges(chunks[1]) } });
+    assert.equal(classifyFindingScope(f, { hunksFor: () => [{ startLine: 2, lineCount: 1 }] }).scope, IN_DIFF);
+  });
+  test('referenced mode sees TypeScript methods with modifiers and return types', () => {
+    const chunks = [mk(1, 'class A {\n  private helper(x: number): number {\n    return x;\n  }\n}'), mk(300, 'function changed() { return helper(1); }'), mk(600, 'function other() {}')];
+    const got = selectChangedChunks(chunks, 'f.ts', { mode: 'referenced', hunksFor: () => [{ startLine: 300, lineCount: 1 }] });
+    assert.deepEqual(got.map((c) => c.items[0].startLine), [1, 300]);
+  });
+});

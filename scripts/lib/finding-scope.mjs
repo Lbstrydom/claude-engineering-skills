@@ -54,6 +54,8 @@ export function strictChunkRanges(chunk) {
     if (!it || !Number.isInteger(it.startLine) || it.startLine < 1 || typeof it.source !== 'string') return null;
     out.push([it.startLine, it.startLine + it.source.split('\n').length - 1]);
   }
+  // The import block is shown with EVERY chunk (and starts at line 1), so a change to it is a change to what each chunk's model saw.
+  if (typeof chunk.imports === 'string' && chunk.imports.length > 0) out.push([1, chunk.imports.split('\n').length]);
   return out;
 }
 
