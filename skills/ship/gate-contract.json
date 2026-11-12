@@ -110,7 +110,7 @@
       "reason": "Phase 0a operator guidance. Describes SYNC's behaviour, not /ship's: the ownership manifest is gitignored, so a fresh worktree reads as an unowned repo and the sync aborts on collisions — and `--adopt-orphans`, the flag that clears the abort, does so by overwriting tracked files. The prohibition is about which recovery an agent reaches for; /ship emits no exit code for a command it is telling you not to run."
     },
     {
-      "line": "`post-commit-drift` it exits 1 and prints a recovery command: **do not push.**",
+      "line": "On `post-commit-drift` it exits 1 and prints a recovery command: **do not push.**",
       "reason": "Post-commit verification, and deliberately NOT contracted as executable: it DETECTS drift rather than preventing it, and \"do not push\" is an instruction to the AGENT about what to do with exit 1 — there is no further exit code for a recipe to assert. The exit-1 path is covered by tests/ship-commit-worktree-identity.test.mjs; the prevention half is docs/plans/ship-commit-transaction.md."
     },
     {
