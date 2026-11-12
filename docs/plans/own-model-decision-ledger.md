@@ -1,6 +1,6 @@
 # Plan: Own-model decision ledger and coordinator capture points (PR 2 of 3)
 - **Date**: 2026-10-26
-- **Status**: In Progress (plan audited: GPT 3 rounds, 15 findings all accepted, Gemini final gate APPROVE)
+- **Status**: Complete — shipped in #311 (f508ab1d); deferred items moved to own-model-telemetry-pr3.
 - **Author**: Claude + Louis
 - **Scope**: backend (store, CLI verbs, hooks; no UI)
 - **Depends on**: docs/plans/own-model-telemetry-slice-1.md — PR 304 must land first (this PR is stacked on it): it reserves `audit_runs.work_item_id`, ships `audit_repos.training_eligible`, `scripts/lib/store/training-eligibility.mjs` and the adjudication/diff writers this plan joins to.

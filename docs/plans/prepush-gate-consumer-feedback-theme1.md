@@ -1,6 +1,6 @@
 # Plan: Pre-push gate — stop teaching the bypass (consumer feedback 2026-11-11, theme 1)
 - **Date**: 2026-11-11
-- **Status**: Draft
+- **Status**: Complete — shipped as hook v17 (#338, fd19c356) and v18 (#339, dda8bab6). Item 1c (changed-chunk scoping) is split out to its own campaign plan.
 - **Author**: Claude + Louis
 - **Scope**: backend (consumer pre-push hook body, `scripts/lib/**`, `scripts/openai-audit.mjs` CLI entry) · stack `js-ts`
 - **Source**: [`docs/research/consumer-feedback-2026-11-11.md`](../research/consumer-feedback-2026-11-11.md) theme 1

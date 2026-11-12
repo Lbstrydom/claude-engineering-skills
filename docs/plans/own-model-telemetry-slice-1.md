@@ -1,6 +1,6 @@
 # Plan: Own-model telemetry slice 1 (H1 capture gaps)
 - **Date**: 2026-10-25
-- **Status**: In Progress (plan audited: GPT 2 rounds, 10 findings all accepted; Gemini final gate APPROVE)
+- **Status**: Complete — shipped in #304 (76b03788); PRs 2 and 3 followed in #311 and #312.
 - **Author**: Claude + Louis
 - **Scope**: backend (store writers, migration, CLI; no UI)
 - **Source**: [`docs/research/own-model-roadmap-2026-10.md`](../research/own-model-roadmap-2026-10.md) §2.1 (gap audit) and §6 (ledger spec), memo branch `docs/own-model-roadmap-2026-10`.

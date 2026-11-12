@@ -1,7 +1,7 @@
 # Plan: Test-Campaign Controls — heartbeat, audit canary, close-out claims check, `/plan --campaign`
 
 - **Date**: 2026-11-08
-- **Status**: In progress
+- **Status**: Complete — shipped in #329, #332 and #333 (canary 11/11). Optional: make `AUDIT_CANARY` on by default (needs a structured detection field first).
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend (CLI + skill prose)
 - **Stack**: `js-ts`

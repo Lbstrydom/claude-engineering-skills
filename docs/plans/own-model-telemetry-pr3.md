@@ -1,6 +1,6 @@
 # Own-model telemetry PR 3 — §6.8 columns, null-rate coverage gate, transcript archive, dated baseline
 
-- **Status**: In Progress (plan audited: GPT 3 rounds, 10 findings accepted, Gemini APPROVE; code audited: GPT 4 rounds, Gemini APPROVE)
+- **Status**: Complete — shipped in #312 (ff4e4627). Deferred and independent: git back-fill, transcript mining, randomised routing share.
 - **Scope**: backend (store + CLIs). Stack: js-ts.
 - **Source**: memo `docs/research/own-model-roadmap-2026-10.md` §6.8 (rows 1-14 and "Backfill-now actions"); `docs/plans/own-model-decision-ledger.md` decision 16 deferred exactly this to "PR 3".
 - **Depends on**: PR 304 (slice 1, main `76b03788`) and PR 311 (ledger, main `f508ab1d`). Both landed.

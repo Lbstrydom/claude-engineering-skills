@@ -1,6 +1,6 @@
 # Plan: Hook fidelity and the v15 field gaps (cluster C, hook v16)
 - **Date**: 2026-10-25
-- **Status**: Approved (audit-plan: GPT 3 rounds, H4 M2 -> H1 -> M1 -> 0; Gemini 2 rounds -> APPROVE)
+- **Status**: Complete — shipped as hook v16 in #309 (05edb337).
 - **Author**: Claude + Louis
 - **Scope**: backend (consumer pre-push hook, plan selection, sync:pr, small CLI/doc fixes; no UI)
 - **Fleet proposals**: 4146, ecff, 619c, fac2, 981b, a2b8 (+ test-helper duplication tail) · p-20261025170337-0927, p-20261025170756-2d68, plan-selection, rollout friction · brief: `docs/plans/backlog-triage-2026-10-25.md` §5-C
