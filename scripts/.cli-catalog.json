@@ -51,6 +51,10 @@
       "description": "Phase 1 of the audit-effectiveness experiment — read-only ledger decomposition (accepted value by round/stage + gate marginal value); a free kill-criterion diagnostic.",
       "category": "audit"
     },
+    "audit:convergence": {
+      "description": "How many review rounds a change needs before it passes: share passing at round 1, share needing 5+ rounds, mean rounds to pass, for code and plan audits, per repo, over a window (--days, default 30). Read-only over audit_runs; a change is a session of rounds (audit_session_id, else inferred from the round counter resetting). Zero eligible sessions reads UNMEASURED, never 0%.",
+      "category": "audit"
+    },
     "audit:bandit": {
       "description": "Print Thompson Sampling Beta posteriors per audit prompt variant.",
       "category": "audit"

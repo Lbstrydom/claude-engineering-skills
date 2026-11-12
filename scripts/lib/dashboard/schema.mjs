@@ -590,6 +590,34 @@ export const TelemetryDataSchema = z.object({
     precision: z.number().nullable(),
     recall: z.number().nullable(),
   }).optional(),
+  // Audit convergence (item 8d) — docs/plans/audit-convergence-metrics.md. Shares are null when unmeasured.
+  convergence: z.object({
+    cloud: z.boolean(),
+    windowDays: z.number(),
+    asOf: z.string(),
+    rows: z.array(z.object({
+      mode: z.string(),
+      repo: z.string(),
+      status: z.enum(['measured', 'unmeasured']),
+      reason: z.string().nullable(),
+      sessions: count,
+      passed: count,
+      unpassedSettled: count,
+      unpassedOpen: count,
+      unknownOutcome: count,
+      passedFirstRoundShare: z.number().nullable(),
+      fiveOrMoreShare: z.number().nullable(),
+      meanRoundsToPass: z.number().nullable(),
+      medianRoundsToPass: z.number().nullable(),
+      passRate: z.number().nullable(),
+    }).passthrough()),
+    excluded: z.object({
+      experimentRows: count,
+      notFinalisedRows: count,
+      truncatedHeadSessions: count,
+      outsideWindowSessions: count,
+    }),
+  }).optional(),
   // Skill-efficacy census — docs/plans/skill-efficacy-census.md Phase 3.
   skillCensus: z.object({
     cloud: z.boolean(),
