@@ -1,6 +1,6 @@
 # Plan: Audit telemetry capture — make dispute and model-quality questions plain queries
 - **Date**: 2026-10-29
-- **Status**: Approved
+- **Status**: Complete — shipped in #317 (4d66a87d). Open: confirm the capture-v1 migration reached the storyline Azure store (`--check-drift`).
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `stores`

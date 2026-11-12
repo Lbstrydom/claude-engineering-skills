@@ -1,6 +1,6 @@
 # Plan: Align CES skills with Claude Code skill best practice
 - **Date**: 2026-11-02
-- **Status**: Approved
+- **Status**: Complete — shipped in #326 (01943741). An optional follow-up for pre-existing prose defects is not started.
 - **Author**: Claude + Louis
 - **Scope**: backend (tooling + skill/docs prose; no UI) — stack `js-ts`
 - **Target domain(s)**: `skills-content`, `shared-lib`, `scripts`, `install`
