@@ -86,6 +86,7 @@ source comments that no docs linter sees — stays valid.
 | [Audit-Backlog-Triage Hardening (7-item punch list)](./audit-backlog-triage-hardening.md) | `Complete` | all 7 items implemented + tested (50+ new/updated tests), audit-code Gemini-gate-clear… |
 | [Plan — audit-clean.mjs traversal safety](./audit-cleanup-traversal-safety.md) | `Complete` |  |
 | [Duplication Audit Wave for /audit-code](./audit-code-duplication-wave.md) | `Complete` | shipped as commit `138dec8` (2026-07-14). Implemented via `/cycle --autonomous`… |
+| [Audit convergence metrics (item 8d)](./audit-convergence-metrics.md) | `Complete` | plan-audit 2 rounds, code-audit 3 rounds + Gemini final review APPROVE (2026-11-12) |
 | [Audit-Effectiveness Experiment — cheap credible traction on "what's the cost-effective, high-quality code-audit setup"](./audit-effectiveness-experiment.md) | `Complete` | every §12.6 CLI this plan specifies was built… |
 | [Audit read windows that cover the change (upstream 58f4e3a5)](./audit-hunk-window-coverage.md) | `Complete` |  |
 | [Audit-Loop Reliability & Intelligence Improvements](./audit-loop-improvements.md) | `Complete` | shipped — reliability + intelligence improvements landed across `scripts/openai-audit.mjs`… |

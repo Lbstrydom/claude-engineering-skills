@@ -38,6 +38,8 @@ import {
 import { SHADOW_LOG_PATH } from '../audit/tiered-shadow-compare.mjs';
 import { tieredAuditConfig } from '../config.mjs';
 import { censusAllSkills } from '../store/skill-census.mjs';
+import { readConvergenceRows } from '../store/convergence.mjs';
+import { buildReport, flattenReport } from '../audit/convergence-metrics.mjs';
 
 const DAYS = 30;
 const MAX_REQ_ITEMS = 200;
@@ -257,6 +259,29 @@ async function collectShipHealth(root) {
     };
   } catch (err) {
     return { data: empty, status: { status: 'unexpected-error', detail: redactSecrets(`ship events query failed: ${err.message}`) } };
+  }
+}
+
+/** Empty convergence shape (schema-valid). */
+function emptyConvergence() {
+  return { cloud: false, windowDays: DAYS, asOf: '', rows: [], excluded: { experimentRows: 0, notFinalisedRows: 0, truncatedHeadSessions: 0, outsideWindowSessions: 0 } };
+}
+
+/**
+ * Collect the "Convergence" panel (item 8d): rounds-to-pass for code and plan audits, project-wide
+ * (not scoped to the cwd repo). A failed query is `unexpected-error`, never an empty panel.
+ */
+async function collectConvergence() {
+  try {
+    const f = await readConvergenceRows({ days: DAYS });
+    if (!f.cloud) return { data: emptyConvergence(), status: { status: 'missing-optional', detail: 'convergence metrics need the cloud store' } };
+    const report = buildReport(f.rows, { windowStartMs: f.windowStartMs, fetchStartMs: f.fetchStartMs, nowMs: f.asOfMs });
+    const rows = flattenReport(report);
+    const data = { cloud: true, windowDays: DAYS, asOf: report.window.asOfIso, rows, excluded: report.excluded };
+    if (!rows.length) return { data, status: { status: 'missing-optional', detail: 'no audited sessions in the window' } };
+    return { data, status: { status: 'ok', detail: '' } };
+  } catch (err) {
+    return { data: emptyConvergence(), status: { status: 'unexpected-error', detail: redactSecrets(`convergence query failed: ${err.message}`) } };
   }
 }
 
@@ -835,7 +860,7 @@ export async function collectTelemetry(opts = {}) {
   // Scope the Audit Runs tab to this directory's canonical repo row when
   // resolvable; null → project-wide fallback (cloud off / never-audited repo).
   const auditRepoId = await canonicalRepoId(root);
-  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier, modelAb, tieredShadow, personaTests, skillCensus] = await Promise.all([
+  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier, modelAb, tieredShadow, personaTests, skillCensus, convergence] = await Promise.all([
     collectAuditRuns(auditRepoId),
     collectLearning(root),
     collectSecurity(root),
@@ -848,6 +873,7 @@ export async function collectTelemetry(opts = {}) {
     collectTieredShadow(root),
     collectPersonaTests(root),
     collectSkillCensus(root),
+    collectConvergence(),
   ]);
   const requirements = collectRequirements(root);
 
@@ -872,6 +898,7 @@ export async function collectTelemetry(opts = {}) {
       tieredShadow: tieredShadow.status,
       personaTests: personaTests.status,
       skillCensus: skillCensus.status,
+      convergence: convergence.status,
     },
     auditRuns: auditRuns.data,
     requirements: requirements.data,
@@ -886,6 +913,7 @@ export async function collectTelemetry(opts = {}) {
     tieredShadow: tieredShadow.data,
     personaTests: personaTests.data,
     skillCensus: skillCensus.data,
+    convergence: convergence.data,
   };
 }
 

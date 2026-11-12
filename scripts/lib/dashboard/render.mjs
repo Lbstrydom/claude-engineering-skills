@@ -44,6 +44,7 @@ import sectionTieredShadow from './sections/tiered-shadow.mjs';
 import sectionStartHere from './sections/start-here.mjs';
 import sectionHome from './sections/home.mjs';
 import sectionPersonaTests from './sections/persona-tests.mjs';
+import sectionConvergence from './sections/convergence.mjs';
 
 // Backward-compat: existing callers import these from render.mjs.
 export { escapeHtml, jsonScriptSafe };
@@ -71,6 +72,7 @@ const SLICERS = {
   personaTests: (d) => ({ src: d.sources.personaTests || { status: 'missing-optional', detail: '' }, personaTests: d.personaTests || { cloud: false, latestByPersona: [], trend: [], correlations: { total: 0, byType: [] } } }),
   auditEffectiveness:(d) => ({ src: d.sources.auditEffectiveness || { status: 'ok', detail: '' }, auditEffectiveness: d.auditEffectiveness || { cloud: false, confirmedHits: 0, auditMisses: 0, falsePositives: 0, severityUnderstated: 0, severityOverstated: 0, precision: null, recall: null } }),
   skillCensus:  (d) => ({ src: d.sources.skillCensus || { status: 'missing-optional', detail: '' }, skillCensus: d.skillCensus || { cloud: false, repoId: null, repoName: null, windowDays: 14, rows: [] } }),
+  convergence:  (d) => ({ src: d.sources.convergence || { status: 'missing-optional', detail: '' }, convergence: d.convergence || { cloud: false, windowDays: 30, asOf: '', rows: [], excluded: { experimentRows: 0, notFinalisedRows: 0, truncatedHeadSessions: 0, outsideWindowSessions: 0 } } }),
   authorTier:   (d) => ({ src: d.sources.authorTier || { status: 'ok', detail: '' }, authorTier: d.authorTier || { cloud: false, total: 0, bySuggestedTier: [], ladders: [], distinctProviderLadders: 0, diversityGateMet: false, agreement: { agree: 0, disagree: 0, declaredUnknown: 0 } } }),
   modelAb:      (d) => ({ src: d.sources.modelAb || { status: 'missing-optional', detail: '' }, modelAb: d.modelAb || { cloud: false, status: 'off', reason: '', distinctAssignments: 0, minAssignments: 12, spentEur: 0, capEur: null, pendingAdjudication: 0, arms: [] } }),
   security:     (d) => ({ src: d.sources.security || { status: 'ok', detail: '' }, security: d.security || { cloud: false, totalIncidents: 0, embedded: 0, byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [] } }),
@@ -122,6 +124,8 @@ const REGISTRY = {
       desc: 'Recent code/plan audit runs and how many findings each analysis pass raised vs. what a human accepted.' },
     { id: 'auditEffectiveness',title: 'Audit Effectiveness', group: 'Audit pipeline', build: sectionAuditEffectiveness, slice: SLICERS.auditEffectiveness,
       desc: 'Is the audit worth it? Precision and recall of audit findings measured against real user-visible impact.' },
+    { id: 'convergence',  title: 'Convergence',    group: 'Audit pipeline', build: sectionConvergence,  slice: SLICERS.convergence,
+      desc: 'How many review rounds a change needs before an audit passes: first-round pass share, 5+ round share, mean rounds.' },
     { id: 'skillCensus',  title: 'Skill Census',   group: 'Audit pipeline', build: sectionSkillCensus,  slice: SLICERS.skillCensus,
       desc: (d) => { const n = d.skillCensus?.rows?.length; return `Which of the ${n ? `${n} ` : ''}bundled skills actually get invoked, how often, and whether their findings get fixed.`; } },
     { id: 'promptVariants',title: 'Prompt Variants', group: 'Audit pipeline', build: sectionPromptVariants, slice: SLICERS.promptVariants,
@@ -210,7 +214,7 @@ export function renderDocument(data, kind, assets) {
     // would show the page-level "nothing yet" placeholder while that section
     // actually has data, hiding it entirely. (modelAb + tieredShadow added
     // 2026-07-13 — both had been omitted, the exact bug this comment warns of.)
-    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth', 'authorTier', 'modelAb', 'tieredShadow', 'personaTests', 'skillCensus']
+    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth', 'authorTier', 'modelAb', 'tieredShadow', 'personaTests', 'skillCensus', 'convergence']
       .every((n) => (validated.sources[n]?.status || 'ok') === 'missing-optional');
     if (allMissing) {
       pageLevelEmpty = emptyPanel('telemetry-empty',
