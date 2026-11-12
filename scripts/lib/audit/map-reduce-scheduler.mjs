@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { ProducerFindingSchema, ReduceStatus, reduceStatusFromErrorCategory, buildExecutionMeta } from '../schemas.mjs';
 import { safeInt, normalizePath, readFilesAsContext } from '../file-io.mjs';
 import { buildAuditUnits, chunkScopeMode, measureContextChars, REDUCE_SYSTEM_PROMPT } from '../code-analysis.mjs';
-import { classifyFindingScope, PRE_EXISTING } from './finding-scope.mjs';
+import { classifyFindingScope, PRE_EXISTING } from '../finding-scope.mjs';
 import { callGPT, safeCallGPT } from './llm-helpers.mjs';
 import {
   buildReducePayload, MAX_REDUCE_JSON_CHARS, MAP_FAILURE_THRESHOLD, computePassLimits, addUsage,

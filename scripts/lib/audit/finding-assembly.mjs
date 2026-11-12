@@ -37,7 +37,7 @@ import {
 import { normalizePath } from '../file-io.mjs';
 import { listRepoFiles } from '../repo-inventory.mjs';
 import { verifyExistenceFindings, effectiveSeverity, countsTowardVerdict, isRefuted } from './finding-verification.mjs';
-import { isInDiff } from './finding-scope.mjs';
+import { isInDiff } from '../finding-scope.mjs';
 import { evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
 import { checkDetectors } from './detector.mjs';
 import { canaryBlocksEvidence, describeCanaryBlock } from './canary.mjs';

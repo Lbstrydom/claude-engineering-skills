@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   classifyFindingScope, stampFindingScopes, isPreExisting, isInDiff, PRE_EXISTING, IN_DIFF, PRE_EXISTING_WINDOW_LINES,
-} from '../scripts/lib/audit/finding-scope.mjs';
+} from '../scripts/lib/finding-scope.mjs';
 import { selectChangedChunks, buildAuditUnits, chunkScopeMode } from '../scripts/lib/code-analysis.mjs';
 import { classifyAuditOutcome, decideAuditGate, formatFindingTitles } from '../scripts/lib/prepush-audit-gate.mjs';
 import { formatFindings } from '../scripts/lib/findings-format.mjs';

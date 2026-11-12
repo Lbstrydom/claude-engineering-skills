@@ -28,7 +28,7 @@
 
 ### D1 — Classification (8a)
 
-[`finding-scope.mjs`](../../scripts/lib/audit/finding-scope.mjs): `classifyFindingScope(finding, {hunksFor, window})`. Pre-existing **iff** the finding has line evidence **and** every item of it lies outside every hunk of its file widened by 15 lines. Fail closed on every other path: no `hunksFor`, no evidence, an unreadable or partly unreadable range, a file with no hunk entry, a malformed hunk, a throwing producer. The hunks come from the round's ONE hunk map (`buildHunkMap`, via `coverageRecorder.getHunkMap()`), so the tag and the coverage ledger agree on what the change is. Deletion-only hunks (`lineCount 0`) are a point. Model prose is never read.
+[`finding-scope.mjs`](../../scripts/lib/finding-scope.mjs): `classifyFindingScope(finding, {hunksFor, window})`. Pre-existing **iff** the finding has line evidence **and** every item of it lies outside every hunk of its file widened by 15 lines. Fail closed on every other path: no `hunksFor`, no evidence, an unreadable or partly unreadable range, a file with no hunk entry, a malformed hunk, a throwing producer. The hunks come from the round's ONE hunk map (`buildHunkMap`, via `coverageRecorder.getHunkMap()`), so the tag and the coverage ledger agree on what the change is. Deletion-only hunks (`lineCount 0`) are a point. Model prose is never read.
 
 ### D2 — Pre-existing findings skip REDUCE
 

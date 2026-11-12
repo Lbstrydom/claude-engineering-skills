@@ -70,7 +70,7 @@ import { detectOrphansIntroduced } from './lib/audit/orphan-introduced.mjs';
 import { resolveDiffScope } from './lib/audit/diff-scope-resolver.mjs';
 import { partitionDiffScope, formatDiffScopeNotices } from './lib/diff-scope-admission.mjs';
 import { processFindings, formatAuditSummaryLine } from './lib/audit/findings-pipeline.mjs';
-import { tallySeverities } from './lib/audit/finding-scope.mjs';
+import { tallySeverities } from './lib/finding-scope.mjs';
 import { applyCanaryToUnsupportedPipeline } from './lib/audit/canary.mjs';
 import { buildChangeRecord } from './lib/audit/change-record.mjs';
 import { emitOrphanRunMetrics } from './lib/audit/orphan-metrics.mjs';

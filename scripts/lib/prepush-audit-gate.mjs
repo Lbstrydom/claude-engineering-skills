@@ -27,7 +27,7 @@
  * @module scripts/lib/prepush-audit-gate
  */
 import { isControlMarkerFinding, isMeasurementDegradingDetail } from './audit/control-markers.mjs';
-import { isPreExisting } from './audit/finding-scope.mjs';
+import { isPreExisting } from './finding-scope.mjs';
 
 /** The one named override for an audit that did not run. Recorded in the hook's output whenever it is used. */
 export const UNMEASURED_OVERRIDE_ENV = 'AUDIT_PREPUSH_ALLOW_UNMEASURED';
@@ -56,7 +56,7 @@ const countBySeverity = (findings) => {
     // envelope - it must not be partitioned out and read as clean (audit-code Cluster A R1 H2).
     if (sev !== 'HIGH' && sev !== 'MEDIUM' && sev !== 'LOW') return null;
     if (isControlMarkerFinding(f)) { c.tooling.push(f.detail.slice(0, TOOLING_DETAIL_CHARS)); continue; }
-    // A finding about code the change did not touch (audit/finding-scope.mjs, 8a): stored and listed, but not the author's to fix, so it
+    // A finding about code the change did not touch (finding-scope.mjs, 8a): stored and listed, but not the author's to fix, so it
     // never reaches the tally the gate decides on.
     if (isPreExisting(f)) { c.preExisting += 1; continue; }
     if (sev === 'HIGH') c.high += 1; else if (sev === 'MEDIUM') c.medium += 1; else c.low += 1;

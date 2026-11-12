@@ -212,7 +212,7 @@ export function buildDependencyGraph(files, langContext = null) {
 
 // ── Changed-chunk scoping (1c) ───────────────────────────────────────────────
 
-/** Lines of slack either side of a hunk when deciding a chunk "overlaps the change" (the same slack as audit/finding-scope's). */
+/** Lines of slack either side of a hunk when deciding a chunk "overlaps the change" (the same slack as finding-scope's). */
 export const CHUNK_SCOPE_WINDOW_LINES = 15;
 
 /** `off` (default: every chunk, byte-identical), `overlap` (chunks the diff touches), `referenced` (those plus chunks defining a symbol they use). */

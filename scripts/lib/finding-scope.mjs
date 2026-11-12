@@ -12,7 +12,7 @@
  * Everything else - the legacy passes' findings carry no line field, deliberately (schemas.mjs `FindingBase`) - has no evidence and
  * is `in-diff`. FAIL CLOSED: a finding is pre-existing only when evidence exists AND every piece of it lies outside the diff.
  *
- * @module scripts/lib/audit/finding-scope
+ * @module scripts/lib/finding-scope
  */
 
 export const PRE_EXISTING = 'pre-existing';
