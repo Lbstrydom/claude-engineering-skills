@@ -109,6 +109,7 @@ import { readFlagValue } from './lib/audit/round-cap.mjs';
 import { resolveAuditIdentity } from './lib/audit/audit-identity.mjs';
 import { stampPlanSourceModel } from './lib/audit/plan-audit-cloud.mjs';
 import { OPENAI_AUDIT_USAGE } from './lib/audit/openai-audit-usage.mjs';
+import { parsePlanlessArgs, stampPlanless } from './lib/audit/planless-intent.mjs';
 
 /**
  * Print a one-line cost-estimate preflight to stderr so users see what
@@ -521,7 +522,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
   // only by the CLI's main(). Without it, a flipped flag routed fully-mocked
   // test harnesses into real multi-provider execution.
   if (tieredAuditConfig.pipelineEnabled && ctx.allowTiered) {
-    const mergedResult = stampAuditRound(applyCanaryToUnsupportedPipeline(await runTieredAuditPipeline(ctx)), opts.round, opts.coverageChanged ? opts.auditBaseCommit : null);
+    const mergedResult = stampPlanless(stampAuditRound(applyCanaryToUnsupportedPipeline(await runTieredAuditPipeline(ctx)), opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts);
     printAuditResult(mergedResult, { outFile, jsonMode });
     return mergedResult;
   }
@@ -531,7 +532,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
     ? runTieredShadowComparison({ ctx, legacyResultPromise, runTieredAuditPipeline }).catch(() => {})
     : null;
 
-  const mergedResult = stampAuditRound(await legacyResultPromise, opts.round, opts.coverageChanged ? opts.auditBaseCommit : null);
+  const mergedResult = stampPlanless(stampAuditRound(await legacyResultPromise, opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts);
   if (shadowTask) await shadowTask;
 
   printAuditResult(mergedResult, { outFile, jsonMode });
@@ -615,7 +616,10 @@ async function main() {
 
   const args = process.argv.slice(2);
   const mode = args[0];
-  const planFile = args[1];
+  // --planless <intent-file>: a code audit with NO plan (lib/audit/planless-intent.mjs). Refused at the door, exit 2, before any spend.
+  const planless = parsePlanlessArgs(args);
+  if (planless.error) { console.error(planless.error); process.exit(2); }
+  const planFile = planless.planless ? null : args[1];
   const rebuttalFile = mode === 'rebuttal' ? args[2] : null;
   const jsonMode = args.includes('--json');
 
@@ -666,12 +670,7 @@ async function main() {
   const changedIdx = args.indexOf('--changed');
   let changedFiles = changedIdx !== -1 && args[changedIdx + 1] ? args[changedIdx + 1].split(',').map(s => s.trim()) : [];
 
-  // --scope <mode>: audit scope for code mode.
-  //   'diff'   (DEFAULT for code mode): auto-detect changed files via `git diff --name-only <base>..HEAD`
-  //            then scope quality passes to those files. Most accurate for reviewing recent work.
-  //   'plan'   (LEGACY default): use ALL files referenced in the plan. Broadest scope.
-  //            Use when plan describes a large refactor touching many files.
-  //   'full'   : audit the entire repo. Slowest, most comprehensive. Use for codebase-wide audits.
+  // --scope <mode> (code mode): 'diff' (DEFAULT) = git-changed files; 'plan' = every plan-referenced file; 'full' = the whole repo.
   // When --files is explicitly provided, --scope is ignored.
   const scopeIdx = args.indexOf('--scope');
   const scopeMode = scopeIdx !== -1 && args[scopeIdx + 1] ? args[scopeIdx + 1] : 'diff';
@@ -729,7 +728,7 @@ async function main() {
     : (round >= 2 ? 5 : null);
 
   // A/B test: pipeline variant selection
-  if (!mode || !planFile || !['plan', 'code', 'rebuttal'].includes(mode)) {
+  if (!mode || !(planFile || planless.planless) || !['plan', 'code', 'rebuttal'].includes(mode)) {
     console.error(OPENAI_AUDIT_USAGE);
     process.exit(1);
   }
@@ -759,7 +758,7 @@ async function main() {
   if (schemaGate.message) process.stderr.write(schemaGate.message);
   if (!schemaGate.proceed) process.exit(1);
 
-  const planContent = readFileOrDie(planFile);
+  const planContent = planless.planless ? planless.planContent : readFileOrDie(planFile);
   // Session cache: reuse brief + profile from prior round in the same session.
   // First round writes the cache; subsequent rounds read it (skip ~10s of LLM work).
   const cacheHit = loadSessionCache(sessionCachePath);
@@ -941,7 +940,8 @@ async function main() {
       openaiConfig.reasoning === 'high' ? codeContextChars * 4 : 0);
     // allowTiered: true — main() is the ONE production CLI entrypoint allowed
     // to execute the tiered pipeline / shadow (see buildAuditRunContext).
-    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, coverageChanged, coverageExcluded, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, auditIdentity, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty, requiredSubjects: required.subjects });
+    if (planless.planless && !effectiveFileFilter?.length) { console.error('Error: --planless found no changed files to audit, and only a plan can supply plan scope'); process.exit(1); }
+    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { planless: planless.planless, passFilter, fileFilter: effectiveFileFilter, coverageChanged, coverageExcluded, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, auditIdentity, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty, requiredSubjects: required.subjects });
     // An INCOMPLETE run measured less than the change, and exiting 0 made that
     // indistinguishable from a pass to anything checking `$?` (2026-09-04
     // consumer report). 3, not 1: 1 already means "the CLI itself errored" on

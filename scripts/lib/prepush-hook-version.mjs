@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { GIT_LOCAL_ENV_VARS } from './git-env-sanitize.mjs';
 
-export const PREPUSH_HOOK_VERSION = 16;
+export const PREPUSH_HOOK_VERSION = 17;
 
 /** The marker the installer writes into every hook it owns (the installer imports it, so the two cannot drift). */
 export const HOOK_MARKER = '# managed-by: claude-engineering-skills install-prepush-hook.mjs';

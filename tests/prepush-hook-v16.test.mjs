@@ -57,7 +57,7 @@ function sourceRepo(ws, { lane = 'real' } = {}) {
     'process.exit(0);', '',
   ].join('\n'));
   fs.writeFileSync(path.join(scripts, 'openai-audit.mjs'), [
-    "import fs from 'node:fs';", "fs.writeFileSync('AUDIT_RAN', '1');",
+    "import fs from 'node:fs';", "import path from 'node:path';", "{ const o = process.argv.indexOf('--out'); if (o >= 0) process.chdir(path.resolve(process.argv[o + 1], '..', '..', '..')); } // v17: the audit's cwd is the snapshot; record in the checkout", "fs.writeFileSync('AUDIT_RAN', '1');",
     "const i = process.argv.indexOf('--out');",
     "if (i >= 0) fs.writeFileSync(process.argv[i + 1], JSON.stringify({ verdict: 'PASS', findings: [] }));",
     'process.exit(0);', '',
@@ -75,7 +75,8 @@ function consumer(ws, { plan = false } = {}) {
   git(['config', 'user.name', 'A'], local);
   fs.mkdirSync(path.join(local, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(local, 'docs', 'plans', plan ? 'active.md' : 'done.md'), `# Plan\n\n- **Status**: ${plan ? 'In Progress' : 'Complete'}\n`);
-  fs.writeFileSync(path.join(local, '.gitignore'), 'node_modules/\n');
+  // .audit/ is gitignored in every consumer (the hook keeps its reports and, since v17, its invocation log there).
+  fs.writeFileSync(path.join(local, '.gitignore'), 'node_modules/\n.audit/\n');
   fs.writeFileSync(path.join(local, 'scripts-owned-placeholder.txt'), 'x\n');
   git(['add', '.'], local);
   git(['commit', '-q', '-m', 'seed'], local);
@@ -113,19 +114,19 @@ const selected = (c) => fs.existsSync(path.join(c.local, 'SELECT_RAN'));
 const tagLine = (name, sha, remoteSha = ZERO) => `refs/tags/${name} ${sha} refs/tags/${name} ${remoteSha}\n`;
 
 describe('hook v16 - version', () => {
-  it('the installed body carries the v16 marker, and the version constant is the one place it lives', () => {
-    assert.equal(HOOK_VERSION_MARKER, '# hook-version: 16');
+  it('the installed body carries the CURRENT marker (v17 since 2026-11-11), and the version constant is the one place it lives', () => {
+    assert.equal(HOOK_VERSION_MARKER, '# hook-version: 17');
   });
   it('a stale install is named on every push, non-blocking, when the source expects a newer hook', (t) => {
     scenario(t, 'stale', { plan: true }, ({ c, source }) => {
       fs.writeFileSync(path.join(source, 'scripts', 'hook-version-override.txt'), '');
-      // Pretend this body is older than the source expects: the source says 17.
+      // Pretend this body is older than the source expects: the source says 18.
       const stub = path.join(source, 'scripts', 'prepush-step.mjs');
       const real = fs.readFileSync(stub, 'utf8');
-      fs.writeFileSync(stub, real.replace("const r = spawnSync(", "if (process.argv[2] === 'hook-version') { console.log('17'); process.exit(0); }\nconst r = spawnSync("));
+      fs.writeFileSync(stub, real.replace("const r = spawnSync(", "if (process.argv[2] === 'hook-version') { console.log('18'); process.exit(0); }\nconst r = spawnSync("));
       const head = c.commit({ 'src/a.mjs': 'export const a = 1;\n' }, 'work');
       const r = runHook(c, source, `refs/heads/main ${head} refs/heads/main ${c.base}\n`);
-      assert.match(r.stderr, /this installed hook is v16 but .* expects v17/);
+      assert.match(r.stderr, /this installed hook is v17 but .* expects v18/);
       assert.equal(r.status, 0, r.stderr);
     });
   });
@@ -239,7 +240,7 @@ describe('hook v16 - sanctioned sync lane (fleet 0927)', () => {
     '.claude/skills/demo/SKILL.md': '# demo skill\n',
     'scripts/.sync-owned.json': `${JSON.stringify(buildOwnedSidecar(OWNED), null, 2)}\n`,
     '.sync-receipt.json': `${JSON.stringify({ version: 2, recentSyncs: [buildReceiptEntry({ syncedAt: '2026-10-25T10:00:00.000Z', source: { repo: 'Lbstrydom/claude-engineering-skills', branch: 'main', commitSha: BUNDLE, sourceDirty: false } })] }, null, 2)}\n`,
-    '.gitignore': `node_modules/\n${BLOCK}`,
+    '.gitignore': `node_modules/\n.audit/\n${BLOCK}`,
     ...extra,
   });
   const MSG = (sha = BUNDLE) => `chore(sync): bundle sync from x ${sha.slice(0, 8)}\n\nbody\n\nSync-Bundle: ${sha}`;
@@ -258,44 +259,46 @@ describe('hook v16 - sanctioned sync lane (fleet 0927)', () => {
       assert.equal(audited(c), false);
     });
   });
-  it('NEGATIVE: the same repo and push shape WITHOUT the trailer is a code push with no plan: refused UNMEASURED', (t) => {
+  it('NEGATIVE: the same repo and push shape WITHOUT the trailer is a code push with no plan: not the lane - audited WITHOUT a plan (v17)', (t) => {
     scenario(t, 'sync-notrailer', { plan: false }, ({ c, source }) => {
       const head = syncCommit(c, syncFiles(), 'chore: looks like a sync but is not');
       const r = runHook(c, source, newBranchLine(head));
-      assert.equal(r.status, 1, r.stderr);
-      assert.match(r.stderr, /UNMEASURED/);
+      assert.doesNotMatch(r.stderr, /SANCTIONED SYNC LANE/);
+      assert.match(r.stderr, /auditing WITHOUT a plan/);
+      assert.equal(audited(c), true, 'v17: a no-plan code push is measured, never waved through');
     });
   });
   it('NEGATIVE: a hand-edited code file smuggled into a sync-shaped commit is NOT sanctioned', (t) => {
     scenario(t, 'sync-smuggle', { plan: false }, ({ c, source }) => {
       const head = syncCommit(c, syncFiles({ 'src/evil.mjs': 'export const x = 1;\n' }));
       const r = runHook(c, source, newBranchLine(head));
-      assert.equal(r.status, 1, r.stderr);
       assert.match(r.stderr, /src\/evil\.mjs is not owned by the sync/);
-      assert.match(r.stderr, /UNMEASURED/);
+      assert.doesNotMatch(r.stderr, /SANCTIONED SYNC LANE/);
+      assert.equal(audited(c), true, 'not sanctioned, so it is audited (plan-less since v17)');
     });
   });
   it('NEGATIVE: a .gitignore edit OUTSIDE the managed block is not sanctioned', (t) => {
     scenario(t, 'sync-gitignore', { plan: false }, ({ c, source }) => {
-      const head = syncCommit(c, syncFiles({ '.gitignore': `node_modules/\nsecrets/\n${BLOCK}` }));
+      const head = syncCommit(c, syncFiles({ '.gitignore': `node_modules/\n.audit/\nsecrets/\n${BLOCK}` }));
       const r = runHook(c, source, newBranchLine(head));
-      assert.equal(r.status, 1, r.stderr);
       assert.match(r.stderr, /\.gitignore changes outside the managed block/);
+      assert.equal(audited(c), true);
     });
   });
   it('NEGATIVE: a receipt that attests a different bundle than the trailer is not sanctioned', (t) => {
     scenario(t, 'sync-receipt', { plan: false }, ({ c, source }) => {
       const head = syncCommit(c, syncFiles(), MSG('c'.repeat(40)));
       const r = runHook(c, source, newBranchLine(head));
-      assert.equal(r.status, 1, r.stderr);
       assert.match(r.stderr, /receipt in the pushed tree does not attest/);
+      assert.equal(audited(c), true);
     });
   });
   it('NEGATIVE: a sync commit pushed together with a second ref is not sanctioned (the lane takes exactly one update)', (t) => {
     scenario(t, 'sync-two-refs', { plan: false }, ({ c, source }) => {
       const head = syncCommit(c, syncFiles());
       const r = runHook(c, source, `${newBranchLine(head)}refs/tags/vx ${head} refs/tags/vx ${ZERO}\n`);
-      assert.equal(r.status, 1, r.stderr);
+      assert.doesNotMatch(r.stderr, /SANCTIONED SYNC LANE/);
+      assert.equal(audited(c), true);
     });
   });
   it('END TO END: a real `git push` through the INSTALLED hook - new branch, then an update - passes with no override', (t) => {

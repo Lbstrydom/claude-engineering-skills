@@ -5,7 +5,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { CONTROL_MARKER_PREFIXES, isControlMarkerDetail } from '../scripts/lib/audit/control-markers.mjs';
+import { CONTROL_MARKER_PREFIXES, isControlMarkerDetail, isControlMarkerFinding } from '../scripts/lib/audit/control-markers.mjs';
 
 describe('isControlMarkerDetail', () => {
   it('matches the ADJACENCY_INCOMPLETE control-marker prefix', () => {
@@ -36,5 +36,15 @@ describe('isControlMarkerDetail', () => {
   it('CONTROL_MARKER_PREFIXES is frozen and currently exactly [ADJACENCY_INCOMPLETE]', () => {
     assert.deepEqual(CONTROL_MARKER_PREFIXES, ['ADJACENCY_INCOMPLETE']);
     assert.ok(Object.isFrozen(CONTROL_MARKER_PREFIXES));
+  });
+});
+
+describe('isControlMarkerFinding - the finding-level predicate the pre-push gate counts with', () => {
+  it('is the same prefix rule over finding.detail', () => {
+    assert.equal(isControlMarkerFinding({ severity: 'MEDIUM', detail: 'ADJACENCY_INCOMPLETE (input-bound): unified diff failed' }), true);
+    assert.equal(isControlMarkerFinding({ severity: 'MEDIUM', detail: 'see ADJACENCY_INCOMPLETE mid-text' }), false);
+  });
+  it('is false for anything without a string detail, never a throw', () => {
+    for (const f of [null, undefined, {}, { detail: 7 }, { detail: '' }, 'ADJACENCY_INCOMPLETE']) assert.equal(isControlMarkerFinding(f), false);
   });
 });

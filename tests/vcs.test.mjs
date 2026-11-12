@@ -19,6 +19,7 @@ import path from 'node:path';
 import {
   gitCommitSha,
   gitDiffWithWorkingTree,
+  gitUnifiedDiffWithWorkingTree,
   isSafeGitRevision,
   exitCodeFor,
   RETRYABLE_VCS_ERRORS,
@@ -143,6 +144,26 @@ describe('classifyChildError (via _internals)', () => {
     const r = classifyChildError({ status: 128, stderr: 'corrupt index' });
     assert.equal(r.code, 'WORKING_TREE_UNREADABLE');
     assert.match(r.message, /corrupt index/);
+  });
+  // Consumer report 1d (2026-11-11): an output overflow fell to the catch-all as "git command failed" and read as an unreadable tree.
+  it('ENOBUFS keeps WORKING_TREE_UNREADABLE but names the buffer from ctx', () => {
+    const r = classifyChildError({ code: 'ENOBUFS' }, { maxBuffer: 2097152 });
+    assert.equal(r.code, 'WORKING_TREE_UNREADABLE');
+    assert.equal(r.message, 'git output exceeded the 2097152-byte buffer (ENOBUFS)');
+  });
+  it('ERR_CHILD_PROCESS_STDIO_MAXBUFFER is the same overflow', () => {
+    const r = classifyChildError({ code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }, { maxBuffer: 10 });
+    assert.equal(r.message, 'git output exceeded the 10-byte buffer (ENOBUFS)');
+  });
+  it('an overflow with no known limit says so rather than inventing one', () => {
+    assert.equal(classifyChildError({ code: 'ENOBUFS' }).message, 'git output exceeded its output buffer (ENOBUFS)');
+  });
+  it('a non-overflow failure is byte-identical whether or not ctx names a buffer', () => {
+    const err = { status: 128, stderr: 'fatal: corrupt index\n' };
+    const withCtx = classifyChildError(err, { maxBuffer: 2097152, wantedRev: 'HEAD' });
+    const without = classifyChildError(err, { wantedRev: 'HEAD' });
+    assert.deepEqual({ code: withCtx.code, message: withCtx.message }, { code: without.code, message: without.message });
+    assert.equal(withCtx.message, 'fatal: corrupt index');
   });
   it('carries cause + truncates message', () => {
     const longStderr = 'fatal: ' + 'x'.repeat(500);
@@ -452,5 +473,28 @@ describe('gitDiffWithWorkingTree', () => {
         fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     });
+  });
+});
+
+describe('gitUnifiedDiffWithWorkingTree output overflow (real git)', () => {
+  it('a diff larger than maxBytes is WORKING_TREE_UNREADABLE naming that buffer, never "git command failed"', () => {
+    const dir = mkdtemp();
+    try {
+      gitInit(dir);
+      const env = gitFixtureEnv();
+      const sha = execSync('git rev-parse HEAD', { cwd: dir, env }).toString().trim();
+      fs.writeFileSync(path.join(dir, 'big.txt'), 'line\n'.repeat(2000));
+      execSync('git add big.txt', { cwd: dir, env });
+      const r = gitUnifiedDiffWithWorkingTree(dir, sha, { maxBytes: 1024, env });
+      assert.equal(r.ok, false);
+      assert.equal(r.error.code, 'WORKING_TREE_UNREADABLE');
+      assert.equal(r.error.message, 'git output exceeded the 1024-byte buffer (ENOBUFS)');
+      // Negative control: the same diff with room to spare succeeds, so the overflow - not the fixture - produced the error.
+      const ok = gitUnifiedDiffWithWorkingTree(dir, sha, { maxBytes: 1024 * 1024, env });
+      assert.equal(ok.ok, true);
+      assert.match(ok.diffText, /big\.txt/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
   });
 });

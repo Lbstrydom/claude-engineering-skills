@@ -11,7 +11,8 @@
  *       (an empty list means the branch owns nothing in the range), else `unscoped`.
  *   prepush-step.mjs capabilities
  *       Prints the subcommands this runner has. The hook asks before relying on one: a source checkout older than the hook lacks them.
- *   prepush-step.mjs audit-outcome --exit <n> --report <envelope.json> [--out <capture-file>]
+ *   prepush-step.mjs audit-outcome --exit <n> --report <envelope.json> [--out <capture-file>] [--print-kind]
+ *       --print-kind (hook v17): stdout is `outcome <clean|findings|refused|allowed-unmeasured>` for the invocation log.
  *       Classifies the code-audit step (lib/prepush-audit-gate.mjs): exit 0 = the push may continue, 1 = refuse. An audit that did not
  *       run to a verdict (crash, auth/config failure, INCOMPLETE exit 3, no envelope) REFUSES unless AUDIT_PREPUSH_ALLOW_UNMEASURED=1.
  *   prepush-step.mjs audit-reuse
@@ -36,9 +37,15 @@
  *       only paths the sync owns; else `not-sync <reason>`. Never an allowlist: ownership is the commit's own sidecar.
  *   prepush-step.mjs hook-version
  *       The consumer hook version this source checkout expects (the installed body warns when it is older).
- *   prepush-step.mjs no-plan
+ *   prepush-step.mjs no-plan [--selector-failed] [--planless]
  *       The plan selector resolved NO plan: exit 0 when the push carries nothing a code audit reads (docs / sync bookkeeping only) or
  *       AUDIT_PREPUSH_ALLOW_UNMEASURED=1 says so on purpose, exit 1 (UNMEASURED) otherwise - including when the file list is unknown.
+ *       With --planless (hook v17) a code push with a trusted range and a selection that succeeded is audited WITHOUT a plan: the
+ *       intent file (the branch's own commit messages) is written and stdout is `planless <intent-path>`; otherwise stdout is
+ *       `exempt`, `allowed-unmeasured` or empty. A failed git log or intent write refuses (exit 1) - it is never an empty intent.
+ *   prepush-step.mjs snapshot create --owner-pid <hook pid> [--head <rev>] | snapshot remove --dir <path> | snapshot plan --dir <path> --plan <path>
+ *       Hook v17: the detached worktree of the pushed commit the audit runs in (lib/prepush-planless-steps.mjs). `create` prints its
+ *       path (exit 1 = refused); `remove` verifies by stat and only warns; `plan` prints `relative <p>` or `checkout <abs>`.
  *
  * @module scripts/prepush-step
  */
@@ -50,21 +57,25 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { resolvePushRange, branchOwnedChangedFiles } from './lib/push-range.mjs';
 import { runStep } from './lib/prepush-step.mjs';
 import {
-  classifyAuditOutcome, decideAuditGate, decideAuditReuse, auditBudgetSec, parseNumstatZ, decideNoPlanGate,
+  classifyAuditOutcome, decideAuditGate, decideAuditReuse, auditBudgetSec, parseNumstatZ, decideNoPlanGate, UNMEASURED_OVERRIDE_ENV,
   classifyNoCodePush, buildNoCodeRecord, noCodeLine, codeLine, summariseRecurrence, formatRecurrenceLine,
 } from './lib/prepush-audit-gate.mjs';
 import { patchRangesEquivalent } from './lib/patch-equivalence.mjs';
 import { landingStepLine, syncLaneStepLine } from './lib/prepush-lane-steps.mjs';
 import { PREPUSH_HOOK_VERSION } from './lib/prepush-hook-version.mjs';
+import {
+  writePlanlessIntent, snapshotCreateStep, snapshotRemoveStep, snapshotPlanLine, writeAtomic, pruneKept,
+} from './lib/prepush-planless-steps.mjs';
 
 /** Signals that mean "stop": a terminal interrupt, a termination request, a hangup, and Ctrl+Break on Windows. */
 const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'];
 const KNOWN_FLAGS = [
   '--step', '--budget-sec', '--progress-sec', '--out', '--default-ref', '--selfcheck-relocation',
   '--exit', '--report', '--files', '--cwd', '--selector-failed', '--head', '--destination',
+  '--planless', '--print-kind', '--dir', '--plan', '--owner-pid',
 ];
 /** What this runner can do. The hook asks before relying on a subcommand, because an older source checkout lacks the newer ones. */
-export const CAPABILITIES = Object.freeze(['run', 'own-files', 'audit-outcome', 'audit-reuse', 'audit-budget', 'no-plan', 'no-code', 'recurrence', 'landing', 'sync-lane', 'hook-version']);
+export const CAPABILITIES = Object.freeze(['run', 'own-files', 'audit-outcome', 'audit-reuse', 'audit-budget', 'no-plan', 'no-code', 'recurrence', 'landing', 'sync-lane', 'hook-version', 'planless', 'snapshot']);
 /** A store lookup that outlives this is "unverifiable", i.e. a re-run - a reuse check must never be able to hang the hook. */
 const REUSE_LOOKUP_MS = 20_000;
 
@@ -107,7 +118,7 @@ function tailOf(file, n = 6, maxBytes = 64 * 1024) {
  * exit (0 = let the push continue, 1 = refuse). A failure of THIS function is a refusal too - it can never turn into a pass.
  * @returns {number}
  */
-export function auditOutcomeExit({ exitArg, reportFile, captureFile, env = process.env, write = (l) => process.stderr.write(`${l}\n`) }) {
+export function auditOutcomeExit({ exitArg, reportFile, captureFile, env = process.env, write = (l) => process.stderr.write(`${l}\n`), onKind = null }) {
   const exitCode = exitArg === null || exitArg === '' || !Number.isInteger(Number(exitArg)) ? null : Number(exitArg);
   let report = null;
   if (reportFile) { try { report = JSON.parse(fs.readFileSync(reportFile, 'utf8')); } catch { report = null; } }
@@ -118,6 +129,8 @@ export function auditOutcomeExit({ exitArg, reportFile, captureFile, env = proce
     if (tail.length > 0) { write('[prepush-hook] the audit\'s last output lines:'); for (const l of tail) write(`   | ${l}`); }
   }
   for (const l of decision.lines) write(l);
+  // The invocation log's outcome (hook v17): an override counts as exercised only when it decided the outcome.
+  onKind?.(!decision.allow ? 'refused' : outcome.kind === 'unmeasured' ? 'allowed-unmeasured' : outcome.kind);
   return decision.allow ? 0 : 1;
 }
 
@@ -126,43 +139,50 @@ export function auditOutcomeExit({ exitArg, reportFile, captureFile, env = proce
  * inferred one: an unknown range cannot be shown to be docs-only). Returns the hook's exit (0 = continue, 1 = refuse).
  * @returns {number}
  */
-export function noPlanExit({ env = process.env, cwd = process.cwd(), gitFn = git, selectorFailed = false, write = (l) => process.stderr.write(`${l}
-`) } = {}) {
+export function noPlanExit(opts = {}) {
+  return noPlanStep(opts).code;
+}
+
+/**
+ * `no-plan` with its protocol line. `planless` (hook v17) lets a code push with a trusted range and a selection that succeeded become a
+ * plan-less audit instead of a refusal; without it the answer is v16's, because an older hook reads exit 0 as "nothing to audit".
+ * @returns {{code: number, line: string}}
+ */
+export function noPlanStep({ env = process.env, cwd = process.cwd(), gitFn = git, selectorFailed = false, planless = false, write = (l) => process.stderr.write(`${l}\n`) } = {}) {
   let files = null;
+  let range = null;
   try {
-    const range = resolvePushRange({ env, run: runIn(cwd, gitFn) });
+    range = resolvePushRange({ env, run: runIn(cwd, gitFn) });
     if (range.ok && range.trusted) {
       files = gitFn(cwd, ['diff', '--name-only', '--no-renames', '-z', `${range.base}..${range.head}`]).split('\0').filter(Boolean);
     }
   } catch { files = null; }
-  const decision = decideNoPlanGate({ files, env, selectorFailed, exists: (p) => fs.existsSync(path.resolve(cwd, p)) });
+  const decision = decideNoPlanGate({ files, env, selectorFailed, exists: (p) => fs.existsSync(path.resolve(cwd, p)), planlessAllowed: planless });
   for (const l of decision.lines) write(l);
-  return decision.allow ? 0 : 1;
+  if (decision.kind === 'planless') {
+    const intent = writePlanlessIntent({ range, cwd, gitFn, env });
+    if (!intent.ok) {
+      // Not an empty intent: nothing about the change was measured, and the push is UNMEASURED like any audit that did not run.
+      const head = `UNMEASURED: no plan was selected, and the plan-less audit could not start - ${intent.why}.`;
+      if (env[UNMEASURED_OVERRIDE_ENV] === '1') {
+        write(`⚠  [prepush-hook] ${head}`);
+        write(`⚠  [prepush-hook] push ALLOWED UNMEASURED because ${UNMEASURED_OVERRIDE_ENV}=1 is set - nothing about this change was checked by the audit.`);
+        return { code: 0, line: 'allowed-unmeasured' };
+      }
+      write(`✗  [prepush-hook] ${head} Push BLOCKED: fix the cause, or push it UNMEASURED on purpose with ${UNMEASURED_OVERRIDE_ENV}=1.`);
+      return { code: 1, line: '' };
+    }
+    write(`[prepush-hook] no plan selected (none matched this push) - auditing WITHOUT a plan: intent = ${intent.count} commit message(s) (${intent.path}); plan conformance is NOT checked`);
+    return { code: 0, line: `planless ${intent.path}` };
+  }
+  return { code: decision.allow ? 0 : 1, line: decision.kind === 'exempt' || decision.kind === 'allowed-unmeasured' ? decision.kind : '' };
 }
 
 /** Where the kept audit files live, relative to the repo (the hook's AUDIT_KEEP_DIR). */
 const KEEP_REL = '.audit/prepush';
 const KEEP_DIR = path.join('.audit', 'prepush');
 
-/** Atomic write: a temp file in the SAME directory (exclusive create), then a rename, so a reader sees all of the record or none of it. */
-function writeAtomic(file, text) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    fs.writeFileSync(tmp, text, { flag: 'wx' });
-    fs.renameSync(tmp, file);
-  } catch (e) { try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } throw e; }
-}
 
-/** Keep the newest N no-code records (the hook's AUDIT_PREPUSH_KEEP_REPORTS policy: a positive integer of at most 6 digits, else 20), never the one just written. */
-function pruneNoCodeRecords(dir, protect, keepArg) {
-  const n = /^[1-9][0-9]{0,5}$/.test(String(keepArg ?? '')) ? Number(keepArg) : 20;
-  try {
-    fs.readdirSync(dir).filter((e) => e.endsWith('.no-code.json') && e !== protect)
-      .map((e) => ({ e, m: fs.statSync(path.join(dir, e)).mtimeMs })).sort((a, b) => b.m - a.m).slice(Math.max(0, n - 1))
-      .forEach((x) => fs.rmSync(path.join(dir, x.e), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
-  } catch { /* retention is housekeeping: it never changes the outcome */ }
-}
 
 /** The audit's own predicates, loaded only by the subcommand that needs them (~190ms of imports the other subcommands do not pay). */
 async function loadNoCodeDeps() {
@@ -196,7 +216,7 @@ export async function noCodeStepLine({ env = process.env, cwd = process.cwd(), g
     if (!OID_RE.test(tree)) return codeLine('the pushed tree could not be resolved');
     const rel = `${KEEP_REL}/${tree}.no-code.json`; // a protocol string: forward slashes on every platform
     try { writeAtomic(path.join(cwd, rel), `${JSON.stringify(buildNoCodeRecord({ tree, base: range.base, head: range.head, files: c.files }), null, 2)}\n`); } catch (e) { return codeLine(`the no-code record could not be written (${e?.code || 'error'})`); }
-    pruneNoCodeRecords(path.join(cwd, KEEP_DIR), path.basename(rel), env.AUDIT_PREPUSH_KEEP_REPORTS);
+    pruneKept(path.join(cwd, KEEP_DIR), { suffix: '.no-code.json', protect: path.basename(rel), keepArg: env.AUDIT_PREPUSH_KEEP_REPORTS });
     return noCodeLine(c.files.length, rel);
   } catch (e) { return codeLine(`the no-code step failed (${e?.message || 'error'})`); }
 }
@@ -349,7 +369,8 @@ async function main() {
     return;
   }
   if (sub === 'audit-outcome') {
-    const code = auditOutcomeExit({ exitArg: flagValue(head, '--exit'), reportFile: flagValue(head, '--report'), captureFile: flagValue(head, '--out') });
+    const onKind = head.includes('--print-kind') ? (k) => process.stdout.write(`outcome ${k}\n`) : null;
+    const code = auditOutcomeExit({ exitArg: flagValue(head, '--exit'), reportFile: flagValue(head, '--report'), captureFile: flagValue(head, '--out'), onKind });
     await finishAndExit(code);
     return;
   }
@@ -384,7 +405,27 @@ async function main() {
     return;
   }
   if (sub === 'no-plan') {
-    await finishAndExit(noPlanExit({ selectorFailed: head.includes('--selector-failed') }));
+    const r = noPlanStep({ selectorFailed: head.includes('--selector-failed'), planless: head.includes('--planless') });
+    if (r.line) process.stdout.write(`${r.line}\n`);
+    await finishAndExit(r.code);
+    return;
+  }
+  if (sub === 'snapshot') {
+    const write = (l) => process.stderr.write(`${l}\n`);
+    const action = head[1];
+    const cwd = process.cwd();
+    if (action === 'create') {
+      const r = snapshotCreateStep({ cwd, headArg: flagValue(head, '--head'), ownerPid: Number(flagValue(head, '--owner-pid')), gitFn: git, write });
+      if (r.line) process.stdout.write(`${r.line}\n`);
+      await finishAndExit(r.code);
+    } else if (action === 'remove') {
+      await finishAndExit(snapshotRemoveStep({ cwd, dir: flagValue(head, '--dir'), write }).code);
+    } else if (action === 'plan') {
+      process.stdout.write(`${snapshotPlanLine({ cwd, snapshotDir: flagValue(head, '--dir'), plan: flagValue(head, '--plan') })}\n`);
+      await finishAndExit(0);
+    } else {
+      throw new ArgvError('prepush-step.mjs snapshot: expected create --owner-pid <pid> [--head <rev>], remove --dir <path> or plan --dir <path> --plan <path>');
+    }
     return;
   }
   if (sub === 'audit-reuse') {
@@ -392,7 +433,7 @@ async function main() {
     await finishAndExit(0);
     return;
   }
-  if (sub !== 'run') throw new ArgvError('prepush-step.mjs: expected `run`, `own-files`, `audit-outcome`, `audit-reuse`, `audit-budget`, `no-plan`, `no-code`, `recurrence`, `landing`, `sync-lane`, `hook-version` or `capabilities`');
+  if (sub !== 'run') throw new ArgvError('prepush-step.mjs: expected `run`, `own-files`, `audit-outcome`, `audit-reuse`, `audit-budget`, `no-plan`, `no-code`, `recurrence`, `landing`, `sync-lane`, `hook-version`, `snapshot` or `capabilities`');
 
   const step = flagValue(head, '--step');
   const budgetSec = Number(flagValue(head, '--budget-sec'));

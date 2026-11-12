@@ -62,7 +62,7 @@ function makeSourceRepo(workspace) {
   fs.writeFileSync(path.join(scripts, 'sync-to-repos.mjs'), '// fixture\n');
   writeStepRunnerStub(scripts);
   fs.writeFileSync(path.join(scripts, 'openai-audit.mjs'), [
-    "import fs from 'node:fs';",
+    "import fs from 'node:fs';", "import path from 'node:path';", "{ const o = process.argv.indexOf('--out'); if (o >= 0) process.chdir(path.resolve(process.argv[o + 1], '..', '..', '..')); } // v17: the audit's cwd is the snapshot; record in the checkout",
     "fs.writeFileSync('AUDIT_WAS_CALLED', 'yes\\n');",
     "process.exit(0);",
     '',
@@ -144,7 +144,7 @@ describe('sync-bookkeeping-only short-circuit — static shape', () => {
   it('sits after PLAN_FILE selection and before the audit invocation', () => {
     const selectAt = HOOK_BODY.indexOf('if [ -z "$PLAN_FILE" ]; then');
     const shortCircuitAt = HOOK_BODY.indexOf('NON_BOOKKEEPING_FILES=');
-    const auditAt = HOOK_BODY.indexOf('auditing $PLAN_FILE');
+    const auditAt = HOOK_BODY.indexOf('auditing $AUDIT_WHAT');
     assert.ok(selectAt > 0 && shortCircuitAt > 0 && auditAt > 0);
     assert.ok(selectAt < shortCircuitAt, 'short-circuit must run after plan selection');
     assert.ok(shortCircuitAt < auditAt, 'short-circuit must run before the audit invocation');

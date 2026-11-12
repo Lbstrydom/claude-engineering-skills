@@ -23,6 +23,9 @@ import { spawnSync } from 'node:child_process';
 const REPO = process.cwd();
 const RUNNER = path.join(REPO, 'scripts', 'prepush-check.mjs');
 const runnerSrc = fs.readFileSync(RUNNER, 'utf-8');
+// Since hook v17 the create/remove mechanics live in ONE module shared with the consumer hook's audit snapshot
+// (docs/plans/prepush-gate-consumer-feedback-theme1.md D2): the wiring below is pinned there, and the runner is pinned to use it.
+const snapSrc = fs.readFileSync(path.join(REPO, 'scripts', 'lib', 'prepush-snapshot.mjs'), 'utf-8');
 
 describe('the sandbox forbids the silent-skip paths', () => {
   it('forces drift gates to use the real push range instead of inferring one', () => {
@@ -63,7 +66,8 @@ describe('the sandbox forbids the silent-skip paths', () => {
   });
 
   it('always removes its worktree, including on signals', () => {
-    assert.match(runnerSrc, /worktree', 'remove'/);
+    assert.match(snapSrc, /worktree', 'remove'/);
+    assert.match(runnerSrc, /removeSnapshot\(\{ repoRoot, dir: sandbox/, 'the runner removes through the shared module');
     assert.match(runnerSrc, /SIGINT/, 'a killed hook must not leak worktrees');
     assert.match(runnerSrc, /finally\s*\{\s*cleanup\(\);/);
   });
@@ -75,9 +79,10 @@ describe('the sandbox forbids the silent-skip paths', () => {
     // CATCH of that call, so it never ran, and one husk leaked per push with
     // no signal whatsoever. The behavioural proof lives in
     // tests/prepush-sandbox-cleanup.test.mjs; this pins the wiring.
-    assert.match(runnerSrc, /from '\.\/lib\/prepush-sandbox-cleanup\.mjs'/);
-    assert.match(runnerSrc, /removeSandboxDir\(sandbox\)/,
+    assert.match(snapSrc, /from '\.\/prepush-sandbox-cleanup\.mjs'/);
+    assert.match(snapSrc, /removeSandboxDir\(dir\)/,
       'removal must be stat-verified, not inferred from a subprocess exit code');
+    assert.match(runnerSrc, /from '\.\/lib\/prepush-snapshot\.mjs'/);
     assert.doesNotMatch(
       runnerSrc, /catch\s*\{\s*\/\* noop \*\/\s*\}\s*\n\s*\/\/ Windows holds handles/,
       'the pre-2026-08-01 swallow-and-leak shape must not return',
@@ -96,8 +101,8 @@ describe('the sandbox forbids the silent-skip paths', () => {
     // Pruning first deregisters the worktree while its directory may still be
     // present, turning a visible husk into an invisible one — `git worktree
     // list`, the one command that would have surfaced it, then reads clean.
-    const removeIdx = runnerSrc.indexOf('removeSandboxDir(sandbox)');
-    const pruneIdx = runnerSrc.indexOf("'worktree', 'prune'", removeIdx);
+    const removeIdx = snapSrc.indexOf('removeSandboxDir(dir)');
+    const pruneIdx = snapSrc.indexOf("'worktree', 'prune'", removeIdx);
     assert.ok(removeIdx !== -1 && pruneIdx !== -1);
     assert.ok(pruneIdx > removeIdx,
       'the fallback prune must follow the directory removal, not precede it');
@@ -152,11 +157,12 @@ describe('the sandbox forbids the silent-skip paths', () => {
     // env var was tried and rejected: it leaks into tests that spawn their
     // own throwaway git repos (see the incident note in .githooks/pre-push).
     assert.match(
-      runnerSrc, /config', '--worktree', 'core\.bare', 'false'/,
+      snapSrc, /config', '--worktree', 'core\.bare', 'false'/,
       'the sandbox must get its own worktree-scoped core.bare override, not a process-wide env var',
     );
-    const addIdx = runnerSrc.indexOf("'worktree', 'add'");
-    const pinIdx = runnerSrc.indexOf("'--worktree', 'core.bare'");
+    assert.match(runnerSrc, /createSnapshot\(\{ repoRoot, sha: headSha, dir: sandbox/, 'the runner creates through the shared module');
+    const addIdx = snapSrc.indexOf("'worktree', 'add'");
+    const pinIdx = snapSrc.indexOf("'--worktree', 'core.bare'");
     assert.ok(addIdx !== -1 && pinIdx !== -1 && addIdx < pinIdx,
       'the worktree-scoped pin must be applied AFTER the sandbox is created, not before');
   });
@@ -376,11 +382,11 @@ describe('the sandbox forbids the silent-skip paths', () => {
     // from a corrupted value, and needs retry rather than an override. A raw
     // execFileSync('git', ['worktree', ...]) here would silently regress to
     // hard-failing on the very contention this session's incident reproduced.
-    assert.match(runnerSrc, /from '\.\/lib\/git-lock-retry\.mjs'/);
+    assert.match(snapSrc, /from '\.\/git-lock-retry\.mjs'/);
     for (const call of ["'worktree', 'add'", "'worktree', 'remove'", "'worktree', 'prune'"]) {
-      const idx = runnerSrc.indexOf(call);
+      const idx = snapSrc.indexOf(call);
       assert.ok(idx !== -1, `expected to find a ${call} call`);
-      const line = runnerSrc.slice(runnerSrc.lastIndexOf('\n', idx), runnerSrc.indexOf('\n', idx));
+      const line = snapSrc.slice(snapSrc.lastIndexOf('\n', idx), snapSrc.indexOf('\n', idx));
       assert.match(line, /gitWithLockRetry\(/, `${call} must go through the lock-retry wrapper, not a raw execFileSync`);
     }
   });

@@ -188,7 +188,7 @@ describe('HOOK_BODY threads git\'s own stdin push range through — static shape
 
   it('positions the stdin read before the plan-status gate and before STATUS_CLI is ever invoked', () => {
     const exportAt = HOOK_BODY.indexOf('export AUDIT_PUSH_RANGE_HEAD="$PUSH_HEAD"');
-    const gateAt = HOOK_BODY.indexOf('if [ "$PLAN_STATUS_DISABLE" != "1" ]; then');
+    const gateAt = HOOK_BODY.indexOf('if [ "$PLAN_STATUS_DISABLE" != "1" ] && [ -n "$PLANS_PRESENT" ]; then');
     const firstStatusCliCallAt = HOOK_BODY.indexOf('node "$STATUS_CLI"');
     assert.ok(exportAt > 0 && gateAt > 0 && firstStatusCliCallAt > 0);
     assert.ok(exportAt < gateAt, 'stdin range must be exported before the plan-status gate');
@@ -197,7 +197,7 @@ describe('HOOK_BODY threads git\'s own stdin push range through — static shape
 
   it('positions the stdin read before it could be starved by any other read of stdin', () => {
     // The kill switch is the only thing allowed ahead of it.
-    const disableAt = HOOK_BODY.indexOf('[ "$AUDIT_PREPUSH_DISABLE" = "1" ] && exit 0');
+    const disableAt = HOOK_BODY.indexOf('[ "$AUDIT_PREPUSH_DISABLE" = "1" ] && { prepush_log_invocation disabled; exit 0; }');
     const readAt = HOOK_BODY.indexOf('while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA');
     assert.ok(disableAt > 0 && readAt > disableAt);
   });

@@ -20,8 +20,13 @@
  *  4. {@link classifyNoPlanPush} - a push the plan selector resolved NO plan for (hook v13): docs-only and sync-bookkeeping-only
  *     pushes have nothing to audit; anything else would have passed with nothing measured, so it is UNMEASURED.
  *
+ * Control-state markers (`ADJACENCY_INCOMPLETE`, lib/audit/control-markers.mjs) are a wave's notice about its OWN execution, never a
+ * defect in the change: they are partitioned out of the H/M/L counts and returned as `tooling` lines (consumer report 1d, 2026-11-11 - a
+ * PASS whose only entry was the marker read as "found things to address"). They never move an outcome between measured and unmeasured.
+ *
  * @module scripts/lib/prepush-audit-gate
  */
+import { isControlMarkerFinding } from './audit/control-markers.mjs';
 
 /** The one named override for an audit that did not run. Recorded in the hook's output whenever it is used. */
 export const UNMEASURED_OVERRIDE_ENV = 'AUDIT_PREPUSH_ALLOW_UNMEASURED';
@@ -33,17 +38,24 @@ const FINDING_VERDICTS = Object.freeze(['NEEDS_FIXES', 'SIGNIFICANT_ISSUES']);
 /** A git tree/commit object id (sha-1 or sha-256), the same shape the evidence marker's reader accepts. */
 const OBJECT_ID_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
+/** How much of a marker's own `detail` a tooling line carries. The marker text is the message: no per-prefix template exists to drift. */
+const TOOLING_DETAIL_CHARS = 200;
+
 /**
  * Count findings by severity, or null when the collection is not readable evidence: a missing/non-array `findings`, or an entry whose
  * severity is not one of the three the audit emits. Substituting zero for an unreadable envelope would read as a clean run.
+ * Control markers are not counted; their `detail` is returned in `tooling` instead.
  */
 const countBySeverity = (findings) => {
   if (!Array.isArray(findings)) return null;
-  const c = { high: 0, medium: 0, low: 0 };
+  const c = { high: 0, medium: 0, low: 0, tooling: [] };
   for (const f of findings) {
     const sev = typeof f?.severity === 'string' ? f.severity.toUpperCase() : '';
-    if (sev === 'HIGH') c.high += 1; else if (sev === 'MEDIUM') c.medium += 1; else if (sev === 'LOW') c.low += 1;
-    else return null;
+    // Shape first, for every entry: a marker is still an entry the audit emitted, and one with no readable severity is a malformed
+    // envelope - it must not be partitioned out and read as clean (audit-code Cluster A R1 H2).
+    if (sev !== 'HIGH' && sev !== 'MEDIUM' && sev !== 'LOW') return null;
+    if (isControlMarkerFinding(f)) { c.tooling.push(f.detail.slice(0, TOOLING_DETAIL_CHARS)); continue; }
+    if (sev === 'HIGH') c.high += 1; else if (sev === 'MEDIUM') c.medium += 1; else c.low += 1;
   }
   return c;
 };
@@ -59,7 +71,8 @@ function causeForExit(exitCode) {
 }
 
 /**
- * @typedef {{kind: 'clean'|'findings'|'unmeasured', cause: string|null, verdict: string|null, counts: {high: number, medium: number, low: number}}} AuditOutcome
+ * @typedef {{kind: 'clean'|'findings'|'unmeasured', cause: string|null, verdict: string|null, counts: {high: number, medium: number, low: number}, tooling: string[]}} AuditOutcome
+ *   `tooling`: the control-state markers the envelope carried (each a marker's own detail), excluded from `counts`
  */
 
 /**
@@ -68,29 +81,42 @@ function causeForExit(exitCode) {
  * @returns {AuditOutcome}
  */
 export function classifyAuditOutcome({ exitCode, report } = {}) {
+  const outcome = classifyMeasurement({ exitCode, report });
+  // A plan-less run (hook v17) says so in its own envelope; its verdict line is labelled, so it is never read as plan-keyed evidence.
+  return report && typeof report === 'object' && report.planless === true ? { ...outcome, planless: true } : outcome;
+}
+
+function classifyMeasurement({ exitCode, report }) {
   const none = { high: 0, medium: 0, low: 0 };
-  if (exitCode !== 0) return { kind: 'unmeasured', cause: causeForExit(exitCode), verdict: null, counts: none };
+  if (exitCode !== 0) return { kind: 'unmeasured', cause: causeForExit(exitCode), verdict: null, counts: none, tooling: [] };
   if (!report || typeof report !== 'object') {
-    return { kind: 'unmeasured', cause: 'the audit exited 0 but left no result envelope (--out file missing or unparseable), so nothing it concluded can be read', verdict: null, counts: none };
+    return { kind: 'unmeasured', cause: 'the audit exited 0 but left no result envelope (--out file missing or unparseable), so nothing it concluded can be read', verdict: null, counts: none, tooling: [] };
   }
   const verdict = typeof report.verdict === 'string' ? report.verdict : null;
-  const counts = countBySeverity(report.findings);
-  if (counts === null) {
-    return { kind: 'unmeasured', cause: `the audit's envelope (verdict ${verdict ?? 'none'}) has no readable findings list, so the hook cannot tell what it found`, verdict, counts: none };
+  const tallied = countBySeverity(report.findings);
+  if (tallied === null) {
+    return { kind: 'unmeasured', cause: `the audit's envelope (verdict ${verdict ?? 'none'}) has no readable findings list, so the hook cannot tell what it found`, verdict, counts: none, tooling: [] };
   }
+  const { tooling, ...counts } = tallied;
   if (verdict === 'INCOMPLETE') {
-    return { kind: 'unmeasured', cause: 'the audit reported verdict INCOMPLETE: it measured less than the change, so it is not evidence about it', verdict, counts };
+    return { kind: 'unmeasured', cause: 'the audit reported verdict INCOMPLETE: it measured less than the change, so it is not evidence about it', verdict, counts, tooling };
   }
   if (CLEAN_VERDICTS.includes(verdict)) {
     // POLICY: "clean" means the audit's own PASS with nothing at HIGH or MEDIUM. PASS tolerates up to two MEDIUMs (NEEDS_FIXES starts
     // above that), which are still findings to surface; LOW-only is below the audit's own convergence bar, so it neither gates under
     // AUDIT_PREPUSH_BLOCK=1 nor reads as findings - the counts are printed either way.
     return counts.high + counts.medium > 0
-      ? { kind: 'findings', cause: null, verdict, counts }
-      : { kind: 'clean', cause: null, verdict, counts };
+      ? { kind: 'findings', cause: null, verdict, counts, tooling }
+      : { kind: 'clean', cause: null, verdict, counts, tooling };
   }
-  if (FINDING_VERDICTS.includes(verdict)) return { kind: 'findings', cause: null, verdict, counts };
-  return { kind: 'unmeasured', cause: `the audit's envelope carries ${verdict === null ? 'no verdict' : `an unrecognised verdict "${verdict}"`}, so the hook cannot tell what it found`, verdict, counts };
+  if (FINDING_VERDICTS.includes(verdict)) {
+    // The audit's verdict is a pure function of its HIGH/MEDIUM count (computeAuditVerdict), and it counts the MEDIUM markers. A
+    // NEEDS_FIXES whose every HIGH/MEDIUM entry was a marker was produced by tooling notices alone: clean, with the notices named
+    // (audit-code Cluster A R2 M1). With no marker present the verdict word is trusted exactly as before.
+    if (tooling.length > 0 && counts.high + counts.medium === 0) return { kind: 'clean', cause: null, verdict, counts, tooling };
+    return { kind: 'findings', cause: null, verdict, counts, tooling };
+  }
+  return { kind: 'unmeasured', cause: `the audit's envelope carries ${verdict === null ? 'no verdict' : `an unrecognised verdict "${verdict}"`}, so the hook cannot tell what it found`, verdict, counts, tooling };
 }
 
 /**
@@ -100,14 +126,25 @@ export function classifyAuditOutcome({ exitCode, report } = {}) {
  */
 export function decideAuditGate({ outcome, env = {} }) {
   const { kind, cause, verdict, counts } = outcome;
+  const tooling = Array.isArray(outcome.tooling) ? outcome.tooling : [];
   const tally = `H:${counts.high} M:${counts.medium} L:${counts.low}`;
-  if (kind === 'clean') return { allow: true, lines: [`[prepush-hook] code audit: ${verdict} (${tally}) - ran clean`] };
+  const label = outcome.planless === true ? 'code audit (plan-less)' : 'code audit';
+  // One line per marker, so each names what part of the audit measured nothing. Never folded into the tally.
+  const toolingLines = tooling.map((t) => `[prepush-hook] tooling: ${t} - that part of the audit measured nothing (a notice, not a finding)`);
+  if (kind === 'clean') {
+    const counted = verdict === 'PASS' ? '' : ` (its ${verdict} verdict counted only these notices)`;
+    const head = tooling.length > 0
+      ? `[prepush-hook] ${label}: ${verdict} (${tally}) - ran clean, except: ${tooling.length} tooling notice(s) below${counted}`
+      : `[prepush-hook] ${label}: ${verdict} (${tally}) - ran clean`;
+    return { allow: true, lines: [head, ...toolingLines] };
+  }
   if (kind === 'findings') {
     const block = env.AUDIT_PREPUSH_BLOCK === '1';
     return {
       allow: !block,
       lines: [
-        `[prepush-hook] code audit: ${verdict} (${tally}) - the audit RAN and found things to address`,
+        `[prepush-hook] ${label}: ${verdict} (${tally}) - the audit RAN and found things to address`,
+        ...toolingLines,
         block ? '[prepush-hook] push BLOCKED: AUDIT_PREPUSH_BLOCK=1 gates on findings' : '[prepush-hook] advisory (set AUDIT_PREPUSH_BLOCK=1 to gate on findings)',
       ],
     };
@@ -129,8 +166,9 @@ export function decideAuditGate({ outcome, env = {} }) {
       '',
       `✗  [prepush-hook] ${head}`,
       '   This is NOT a finding about your change and NOT a clean run: no evidence was produced. A gate that did not run is not a pass.',
-      `   Fix the cause above and push again, or push this one UNMEASURED on purpose: ${UNMEASURED_OVERRIDE_ENV}=1 git push (recorded in the output),`,
-      '   or skip every hook step: git push --no-verify.',
+      // v17 (audit B R1 M3): the recorded override is the one way out named here. \`--no-verify\` leaves no trace in the invocation log, and
+      // a refusal that advertises it teaches the bypass the consumer feedback was about.
+      `   Fix the cause above and push again, or push this one UNMEASURED on purpose: ${UNMEASURED_OVERRIDE_ENV}=1 git push (recorded in the output).`,
       '',
     ],
   };
@@ -224,13 +262,15 @@ export function parseNumstatZ(numstatZ) {
 export const SYNC_BOOKKEEPING_FILES = Object.freeze(['.sync-receipt.json', 'scripts/.sync-owned.json']);
 /** Prose, never executed: nothing for a CODE audit to read. By extension only - a `docs/` JSON or script is still code. */
 const DOCS_EXTENSION_RE = /\.(md|mdx|markdown|txt|rst)$/i;
+/** `.txt` files that are build or dependency input, not prose: never documentation (audit B R1 H5 - since v17 "exempt" skips an audit). */
+const NOT_DOCS_RE = /(^|\/)(CMakeLists\.txt|(requirements|constraints)[^/]*\.txt)$|(^|\/)(requirements|constraints)\/(.+\/)?[^/]+\.txt$/i;
+const isDocs = (f) => DOCS_EXTENSION_RE.test(f) && !NOT_DOCS_RE.test(f);
 
 /**
  * A push for which the plan selector resolved NO plan (none touched among >1 active, or none active). The hook used to `finish`
  * there with only "[plan-status] no active plan to audit": a code push passed with nothing measured and was never reported
- * UNMEASURED (storyline #431, 2026-10-24). The audit is plan-keyed (`openai-audit.mjs code <plan-file>`), so it cannot run
- * plan-less; the honest answer is UNMEASURED, refused unless the one named override is set - except for pushes that carry nothing
- * a code audit reads.
+ * UNMEASURED (storyline #431, 2026-10-24). Hook v13-v16 refused such a code push as UNMEASURED; hook v17 audits it WITHOUT a plan
+ * (`openai-audit.mjs code --planless <intent>`, {@link decideNoPlanGate}). Pushes that carry nothing a code audit reads are exempt.
  *
  * @param {{files: string[]|null}} input `null` = the pushed file list could not be established (an unknown range is never "nothing changed")
  * @returns {{exempt: true, why: string} | {exempt: false, codeFiles: string[]|null}}
@@ -239,27 +279,43 @@ export function classifyNoPlanPush({ files } = {}) {
   if (!Array.isArray(files)) return { exempt: false, codeFiles: null };
   if (files.length === 0) return { exempt: true, why: 'the push changes no files' };
   if (files.every((f) => SYNC_BOOKKEEPING_FILES.includes(f))) return { exempt: true, why: `only sync bookkeeping (${files.join(', ')})` };
-  const codeFiles = files.filter((f) => !SYNC_BOOKKEEPING_FILES.includes(f) && !DOCS_EXTENSION_RE.test(f));
+  const codeFiles = files.filter((f) => !SYNC_BOOKKEEPING_FILES.includes(f) && !isDocs(f));
   if (codeFiles.length === 0) return { exempt: true, why: `only documentation and sync bookkeeping (${files.length} file(s))` };
   return { exempt: false, codeFiles };
 }
 
-/**
- * The hook's decision for a plan-less push, as `{allow, lines}` (same shape as {@link decideAuditGate}).
- * @param {{files: string[]|null, env?: Record<string, string|undefined>, selectorFailed?: boolean}} input `selectorFailed`: the plan
- *   selector itself errored (e.g. a malformed Status), which is no plan selected for a different reason and is named as such
- */
+/** The named plan override. Resolved by the selector (check-plan-status.mjs --select), never by this module. */
 export const PLAN_OVERRIDE_ENV = 'AUDIT_PREPUSH_PLAN';
 
-export function decideNoPlanGate({ files, env = {}, selectorFailed = false, exists = () => true }) {
+/**
+ * The hook's decision for a push the plan selector resolved NO plan for, as `{allow, lines, kind}` (same shape as {@link decideAuditGate}).
+ *
+ * `kind` (hook v17, docs/plans/prepush-gate-consumer-feedback-theme1.md D1):
+ *  - `exempt` - the push carries nothing a code audit reads (docs / sync bookkeeping only).
+ *  - `planless` - code files, a TRUSTED range, a selection that SUCCEEDED with no match, and no override: audit it without a plan.
+ *    Only when the caller asked (`planlessAllowed`): an older hook reads exit 0 as "done", so it must keep getting v16's answer.
+ *  - `refuse` - UNMEASURED: the range is unknown, the selector FAILED (it has not established that no plan applies), or the override
+ *    names a file that does not exist (a typo must not quietly become a plan-less audit).
+ *  - `allowed-unmeasured` - a refusal the one named override let through, loudly.
+ *
+ * @param {{files: string[]|null, env?: Record<string, string|undefined>, selectorFailed?: boolean, exists?: (p: string) => boolean,
+ *   planlessAllowed?: boolean}} input
+ * @returns {{allow: boolean, lines: string[], kind: 'exempt'|'planless'|'refuse'|'allowed-unmeasured', codeFiles?: string[]}}
+ */
+export function decideNoPlanGate({ files, env = {}, selectorFailed = false, exists = () => true, planlessAllowed = false }) {
   const c = classifyNoPlanPush({ files });
-  if (c.exempt) return { allow: true, lines: [`[prepush-hook] no plan to audit, and the push carries nothing a code audit reads: ${c.why} - code audit skipped`] };
+  if (c.exempt) return { allow: true, kind: 'exempt', lines: [`[prepush-hook] no plan to audit, and the push carries nothing a code audit reads: ${c.why} - code audit skipped`] };
+  const override = String(env[PLAN_OVERRIDE_ENV] ?? '').trim();
+  // A plan-less audit replaces a refusal only when nothing is in doubt: git handed over the range, the selector ran and matched nothing,
+  // and no override was named. A failed selector has not shown that no plan applies, so it never downgrades to plan-less.
+  if (planlessAllowed && c.codeFiles !== null && !selectorFailed && !override) {
+    return { allow: true, kind: 'planless', lines: [], codeFiles: c.codeFiles };
+  }
   const shown = c.codeFiles === null
     ? 'the pushed file list could not be established (no push range from git), so it cannot be shown to be docs or bookkeeping'
     : `${c.codeFiles.length} code file(s) in the push (${c.codeFiles.slice(0, 5).join(', ')}${c.codeFiles.length > 5 ? ', ...' : ''})`;
   // The override is read in exactly one place (check-plan-status.mjs --select) and a missing file selects NOTHING, so name that
   // case: telling the operator "none changed among several active" when they HAD set the override sends them hunting.
-  const override = String(env[PLAN_OVERRIDE_ENV] ?? '').trim();
   const why = selectorFailed ? 'the plan selector failed (its error is above)'
     : override && !exists(override) ? `${PLAN_OVERRIDE_ENV}=${override} does not exist`
       : 'no single active plan could be chosen: none is active, or several are and the push does not single one out';
@@ -267,6 +323,7 @@ export function decideNoPlanGate({ files, env = {}, selectorFailed = false, exis
   if (env[UNMEASURED_OVERRIDE_ENV] === '1') {
     return {
       allow: true,
+      kind: 'allowed-unmeasured',
       lines: [
         `⚠  [prepush-hook] ${head}`,
         `⚠  [prepush-hook] push ALLOWED UNMEASURED because ${UNMEASURED_OVERRIDE_ENV}=1 is set - nothing about this change was checked by the audit.`,
@@ -275,13 +332,16 @@ export function decideNoPlanGate({ files, env = {}, selectorFailed = false, exis
   }
   return {
     allow: false,
+    kind: 'refuse',
     lines: [
       '',
       `✗  [prepush-hook] ${head}`,
-      '   The code audit is keyed to a plan in docs/plans/. A gate that did not run is not a pass.',
+      planlessAllowed
+        ? '   A plan-less audit needs a push range from git and a plan selection that succeeded; this push has not established both. A gate that did not run is not a pass.'
+        : '   The code audit is keyed to a plan in docs/plans/. A gate that did not run is not a pass.',
       `   Name the plan this work belongs to - an explicit override always wins: ${PLAN_OVERRIDE_ENV}=docs/plans/<plan>.md git push`,
       '   or touch that plan in the push (or leave exactly one plan with an active Status), so the selector can pick it,',
-      `   or push this one UNMEASURED on purpose: ${UNMEASURED_OVERRIDE_ENV}=1 git push (recorded in the output), or skip every hook step: git push --no-verify.`,
+      `   or push this one UNMEASURED on purpose: ${UNMEASURED_OVERRIDE_ENV}=1 git push (recorded in the output).`,
       '',
     ],
   };

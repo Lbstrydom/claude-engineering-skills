@@ -252,7 +252,7 @@ function makeSourceRepo(ws) {
   // audit's exit contract: exit 0 with a result envelope in --out for ANY completed run (findings never change the exit code),
   // `exit3` = INCOMPLETE, `crash` = an uncaught error (exit 1, no envelope), `noenvelope` = exit 0 having written nothing.
   fs.writeFileSync(path.join(scripts, 'openai-audit.mjs'), [
-    "import fs from 'node:fs';",
+    "import fs from 'node:fs';", "import path from 'node:path';", "{ const o = process.argv.indexOf('--out'); if (o >= 0) process.chdir(path.resolve(process.argv[o + 1], '..', '..', '..')); } // v17: the audit's cwd is the snapshot; record in the checkout",
     "import { spawn } from 'node:child_process';",
     "fs.writeFileSync('AUDIT_ARGV', JSON.stringify(process.argv.slice(2)));",
     "const mode = process.env.AUDIT_STUB || 'pass';",
@@ -630,7 +630,7 @@ describe('the real hook - an audit that did not run is UNMEASURED and refuses th
       const got = runHook(c.local, source, stdinOf(p), { ...clear });
       assert.equal(got.status, 1, got.stderr);
       assert.match(got.stderr, /step runner CANNOT RUN/);
-      assert.match(got.stderr, /predates hook v13/);
+      assert.match(got.stderr, /predates hook v\d+/);
       assert.equal(got.audited, false, 'the audit must not run when its outcome could not be classified');
     } finally { rmrf(ws); }
   });

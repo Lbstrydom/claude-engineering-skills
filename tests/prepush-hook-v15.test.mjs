@@ -40,7 +40,7 @@ function makeSource(ws, stepMode = 'real') {
       // `run -- node <step> no-code` is how the hook reaches the subcommand; intercept the wrapped command's tail.
       "const dd = a.indexOf('--'); const wrapped = dd >= 0 ? a.slice(dd + 1) : [];",
       "const isNoCode = wrapped[wrapped.length - 1] === 'no-code';",
-      "if (a[0] === 'capabilities' && mode === 'old') { console.log('run own-files audit-outcome audit-reuse audit-budget no-plan'); process.exit(0); }",
+      "if (a[0] === 'capabilities' && mode === 'old') { console.log('run own-files audit-outcome audit-reuse audit-budget no-plan planless snapshot'); process.exit(0); }",
       "if (isNoCode && mode === 'garbage') { console.log('no-code?? banana'); process.exit(0); }",
       "if (isNoCode && mode === 'norecord') { console.log('no-code 1 .audit/prepush/does-not-exist.no-code.json'); process.exit(0); }",
       "if (isNoCode && mode === 'rc1') { console.error('boom'); process.exit(1); }",
@@ -57,7 +57,7 @@ function makeSource(ws, stepMode = 'real') {
     'process.exit(0);', '',
   ].join('\n'));
   fs.writeFileSync(path.join(scripts, 'openai-audit.mjs'), [
-    "import fs from 'node:fs';",
+    "import fs from 'node:fs';", "import path from 'node:path';", "{ const o = process.argv.indexOf('--out'); if (o >= 0) process.chdir(path.resolve(process.argv[o + 1], '..', '..', '..')); } // v17: the audit's cwd is the snapshot; record in the checkout",
     "fs.writeFileSync('AUDIT_RAN', '1');",
     "const i = process.argv.indexOf('--out');",
     // The real audit derives a ledger beside --out: .tmp.XXXX -> .tmp-ledger.XXXX. Do the same so the hook has something to clean.

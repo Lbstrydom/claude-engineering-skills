@@ -625,6 +625,52 @@ via `check-plan-status.mjs --select` — only an *active* plan
 (`Draft`/`Approved`/`In Progress`) is ever audited. A consumer that never
 re-installs keeps the old behaviour — a strict improvement, never a regression.
 
+The full version history is [`docs/reference/prepush-hook-changelog.md`](../reference/prepush-hook-changelog.md).
+
+### Pre-push hook v17: plan-less audits, the snapshot, the invocation log (2026-11)
+
+From the 2026-11-11 consumer feedback (theme 1). Re-install after the sync that
+brings it (`npm run hooks:install -- --target <your-alias>`); the source checkout
+must offer the `planless` and `snapshot` step capabilities, or the hook refuses.
+
+- **No plan no longer means "refused" (or "skipped").** A code push the plan
+  selector resolves no plan for — your `docs/plans/` is untracked, there is no
+  `docs/plans/` directory in this worktree, or several plans are active and the
+  push touches none — is audited **without a plan**: the pushed branch's own
+  commit messages (secret-redacted, capped at 8 KB) are the stated intent, kept at
+  `.audit/prepush/<tree12>-<base12>-<head12>-<pid>.intent.md`. The output says
+  `auditing WITHOUT a plan … plan conformance is NOT checked`, and the verdict line
+  reads `code audit (plan-less): …`. Write commit messages that say what the
+  change is for: they are what the auditor reads as intent. An explicit
+  `AUDIT_PREPUSH_PLAN=docs/plans/<plan>.md` still wins.
+- **Still refused UNMEASURED**: the plan selector *failed* (it has not shown that
+  no plan applies), `AUDIT_PREPUSH_PLAN` names a file that does not exist, or git
+  handed the hook no push range. `AUDIT_PREPUSH_ALLOW_UNMEASURED=1` remains the
+  one override.
+- **The audit reads the pushed commit, not your working tree.** It runs in a
+  detached worktree of the pushed head (`$TMP/ces-consumer-snap-<tree>-<pid>`),
+  removed on every exit path; a husk left by a killed push is swept by a later
+  push. Uncommitted edits and untracked files are invisible to it, with exactly two
+  declared exceptions: an untracked `.auditignore` is copied in (it only narrows
+  what is read), and an untracked `.audit/tech-debt.json` is read read-only from
+  the checkout (it only suppresses). A plan named by `AUDIT_PREPUSH_PLAN` that is
+  untracked or edited locally is also read from the checkout, and the hook prints
+  `plan read from the checkout, not the pushed commit`. Other local `.audit/` learning state is not copied,
+  so a hook audit never overwrites the `.audit/last-audit-run.json` marker your
+  `/audit-code` loop left.
+- **Tooling notices are not findings.** An `ADJACENCY_INCOMPLETE` marker prints as
+  `[prepush-hook] tooling: …` and is not counted in H/M/L; a git output overflow
+  names its buffer size.
+- **Invocation log.** Each run appends one line to
+  `.audit/prepush/invocations.log`: time, pushed head, outcome (`disabled`,
+  `allowed-unmeasured`, `clean`, `findings`, `refused`, `no-code`, `exempt`, `lane`,
+  `reused`, `skipped`), and the override variables that were **set**
+  (`allowed-unmeasured` is recorded only when that override decided the outcome).
+  Past 256 KB it rotates to `invocations.log.1`; two hooks racing on the rotation
+  can lose a few lines. `git push --no-verify` never runs the hook, so it is **not**
+  observed here — this measures disabled and allowed-unmeasured pushes as a share
+  of hook invocations, not a bypass rate.
+
 ### Tech-debt ledger: one file per entry (2026-10)
 
 The debt ledger moved from one file (`.audit/tech-debt.json`) to one file per

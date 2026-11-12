@@ -35,3 +35,14 @@ export function isControlMarkerDetail(detailText) {
   if (typeof detailText !== 'string' || !detailText) return false;
   return CONTROL_MARKER_PREFIXES.some(prefix => detailText.startsWith(prefix));
 }
+
+/**
+ * Is this audit FINDING a control-state marker? The one predicate a finding-list consumer (the pre-push gate's severity count) uses:
+ * the same prefix rule over the finding's `detail`, so a marker can never be counted as a defect in one place and excluded in another.
+ *
+ * @param {{detail?: unknown}|null|undefined} finding
+ * @returns {boolean}
+ */
+export function isControlMarkerFinding(finding) {
+  return isControlMarkerDetail(finding?.detail);
+}
