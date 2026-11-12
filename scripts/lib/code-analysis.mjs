@@ -210,6 +210,62 @@ export function buildDependencyGraph(files, langContext = null) {
   return graph;
 }
 
+// ── Changed-chunk scoping (1c) ───────────────────────────────────────────────
+
+/** Lines of slack either side of a hunk when deciding a chunk "overlaps the change" (the same slack as audit/finding-scope's). */
+export const CHUNK_SCOPE_WINDOW_LINES = 15;
+
+/** `off` (default: every chunk, byte-identical), `overlap` (chunks the diff touches), `referenced` (those plus chunks defining a symbol they use). */
+export function chunkScopeMode(env = process.env) {
+  const v = String(env.AUDIT_CHUNK_SCOPE ?? '').trim().toLowerCase();
+  return v === 'overlap' || v === 'referenced' ? v : 'off';
+}
+
+const DECLARED_NAME_RE = /(?:^|\n)\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|def|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const chunkRanges = (chunk) => {
+  const items = (chunk.items ?? []).filter((it) => Number.isInteger(it.startLine) && typeof it.source === 'string');
+  if (items.length === 0) return null;
+  return items.map((it) => [it.startLine, it.startLine + it.source.split('\n').length - 1]);
+};
+
+/**
+ * Keep only the chunks of an oversized file that the change touches. Pure; returns `chunks` itself whenever scoping cannot be
+ * decided honestly: mode off, no hunk evidence (`null`: not a changed file, or the map is unavailable), a chunk without a line
+ * range, or nothing would be dropped / nothing would survive. FAIL CLOSED to "send everything": the cost of sending too much is
+ * noise, of sending too little a missed defect.
+ */
+export function selectChangedChunks(chunks, filePath, scope) {
+  const mode = scope?.mode ?? 'off';
+  if (mode === 'off' || typeof scope?.hunksFor !== 'function' || chunks.length <= 1) return chunks;
+  let hunks;
+  try { hunks = scope.hunksFor(filePath); } catch { hunks = null; }
+  if (!Array.isArray(hunks) || hunks.length === 0) return chunks;
+  const ranges = chunks.map(chunkRanges);
+  if (ranges.some((r) => r === null)) return chunks;
+  const w = CHUNK_SCOPE_WINDOW_LINES;
+  const touches = (rs) => rs.some(([s, e]) => hunks.some((h) => {
+    if (!h || !Number.isInteger(h.startLine)) return true;   // a malformed hunk is no evidence of absence
+    return s <= h.startLine + Math.max(Number(h.lineCount) || 0, 1) - 1 + w && e >= h.startLine - w;
+  }));
+  const keep = chunks.map((_, i) => touches(ranges[i]));
+  if (mode === 'referenced') {
+    const keptText = chunks.filter((_, i) => keep[i]).map((c) => c.items.map((it) => it.source).join('\n')).join('\n');
+    chunks.forEach((c, i) => {
+      if (keep[i]) return;
+      const src = c.items.map((it) => it.source).join('\n');
+      for (const m of src.matchAll(DECLARED_NAME_RE)) {
+        if (new RegExp(`(?<![\\w$])${escapeRe(m[1])}(?![\\w$])`).test(keptText)) { keep[i] = true; break; }
+      }
+    });
+  }
+  const kept = chunks.filter((_, i) => keep[i]);
+  if (kept.length === 0 || kept.length === chunks.length) return chunks;
+  process.stderr.write(`  [map-reduce] ${filePath}: ${kept.length}/${chunks.length} chunks overlap the change (scope=${mode})\n`);
+  return kept;
+}
+
 // ── Audit Units ──────────────────────────────────────────────────────────────
 
 /**
@@ -219,9 +275,11 @@ export function buildDependencyGraph(files, langContext = null) {
  * @param {string[]} files - File paths to group
  * @param {number} [maxTokensPerUnit=30000] - Maximum tokens per audit unit
  * @param {number} [maxFilesPerUnit=Infinity] - Maximum files per audit unit (additive cap on top of token limit)
+ * @param {{hunksFor?: ((p: string) => Array<{startLine: number, lineCount: number}>|null)|null, mode?: string}} [scope]
+ *   Changed-chunk scoping (docs/plans/audit-out-of-diff-noise.md, item 1c). Absent or `mode: 'off'` the result is byte-identical.
  * @returns {Array<{files: string[], tokens: number, chunk?: object, strategy?: string}>}
  */
-export function buildAuditUnits(files, maxTokensPerUnit = 30000, maxFilesPerUnit = Infinity) {
+export function buildAuditUnits(files, maxTokensPerUnit = 30000, maxFilesPerUnit = Infinity, scope = null) {
   // Score and sort files
   const scored = files.map(f => {
     const absPath = path.resolve(f);
@@ -244,7 +302,8 @@ export function buildAuditUnits(files, maxTokensPerUnit = 30000, maxFilesPerUnit
       const absPath = path.resolve(file.path);
       if (fs.existsSync(absPath)) {
         const source = fs.readFileSync(absPath, 'utf-8');
-        const chunks = chunkLargeFile(source, file.path, Math.floor(maxTokensPerUnit * 0.8));
+        const allChunks = chunkLargeFile(source, file.path, Math.floor(maxTokensPerUnit * 0.8));
+        const chunks = selectChangedChunks(allChunks, file.path, scope);
         for (const chunk of chunks) {
           units.push({ files: [file.path], tokens: chunk.tokens, chunk, strategy: 'chunked' });
         }

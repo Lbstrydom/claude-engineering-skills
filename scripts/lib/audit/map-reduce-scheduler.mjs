@@ -18,7 +18,8 @@ import fs from 'node:fs';
 import { z } from 'zod';
 import { ProducerFindingSchema, ReduceStatus, reduceStatusFromErrorCategory, buildExecutionMeta } from '../schemas.mjs';
 import { safeInt, normalizePath, readFilesAsContext } from '../file-io.mjs';
-import { buildAuditUnits, measureContextChars, REDUCE_SYSTEM_PROMPT } from '../code-analysis.mjs';
+import { buildAuditUnits, chunkScopeMode, measureContextChars, REDUCE_SYSTEM_PROMPT } from '../code-analysis.mjs';
+import { classifyFindingScope, PRE_EXISTING } from './finding-scope.mjs';
 import { callGPT, safeCallGPT } from './llm-helpers.mjs';
 import {
   buildReducePayload, MAX_REDUCE_JSON_CHARS, MAP_FAILURE_THRESHOLD, computePassLimits, addUsage,
@@ -208,6 +209,13 @@ export function chunkUnitReadStats(unit) {
   };
 }
 
+/** The line ranges a CHUNKED unit's items span (the same ranges `chunkUnitReadStats` credits). */
+export function chunkLineRanges(unit) {
+  return (unit.chunk?.items ?? [])
+    .filter((it) => Number.isInteger(it.startLine) && typeof it.source === 'string')
+    .map((it) => [it.startLine, it.startLine + it.source.split('\n').length - 1]);
+}
+
 /**
  * Run one map-reduce unit.
  *
@@ -252,7 +260,9 @@ export async function runOneMapUnit(openai, unit, i, totalUnits, passName, build
 }
 
 export async function runMapReducePass(openai, files, passName, buildPromptForUnit, maxFilesPerUnit = Infinity, { changedFileSet = null, renderFor = null, coverageRecorder = null } = {}) {
-  const units = buildAuditUnits(files, 30000, maxFilesPerUnit);
+  // 1c: with AUDIT_CHUNK_SCOPE set, an oversized changed file sends only the chunks the diff touches (code-analysis.mjs).
+  const scopeHunkMap = coverageRecorder?.getHunkMap?.();
+  const units = buildAuditUnits(files, 30000, maxFilesPerUnit, { mode: chunkScopeMode(), hunksFor: scopeHunkMap?.applicable ? scopeHunkMap.hunksFor : null });
   // Unit reads go through the measured seam when the orchestrator supplies it (see runOneMapUnit).
   const coverage = renderFor || coverageRecorder ? { renderFor, coverageRecorder } : null;
 
@@ -310,7 +320,7 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
   }
 
   // Collect findings + aggregate usage (including failed units)
-  const allFindings = [];
+  let allFindings = [];
   const mapUsage = { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0 };
   // The model that actually served this pass, for `audit_pass_stats.source_model`.
   // Taken from the units themselves rather than re-read from `wireModel()` at
@@ -334,8 +344,12 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
       if (!val?.result || !Array.isArray(val.result.findings)) {
         effectiveFailures++;
       } else {
+        const chunkRanges = units[i].chunk ? chunkLineRanges(units[i]) : null;
         for (const f of val.result.findings) {
           f._mapUnit = i;
+          // Scope evidence (finding-scope.mjs): the model of a CHUNKED unit saw only this chunk's lines, so those ranges are
+          // the only line evidence a legacy finding ever has.
+          if (chunkRanges && chunkRanges.length > 0) f._scopeEvidence = { file: units[i].files[0], ranges: chunkRanges };
           allFindings.push(f);
         }
       }
@@ -350,6 +364,25 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
       process.stderr.write(`  [map-${passName}-${i}] FAILED: ${results[i].reason?.message || 'unknown'}\n`);
     }
   }
+
+  // 8a (finding-scope.mjs): a MAP finding from a chunk the diff does not touch is PRE-EXISTING. It is kept and reported, but it
+  // skips REDUCE (reduce rewrites findings and would drop the provenance) and is appended unchanged on every return path below.
+  const hm = coverageRecorder?.getHunkMap?.();
+  const hunksFor = hm?.applicable ? hm.hunksFor : null;
+  const preExisting = [];
+  if (hunksFor) {
+    const inDiff = [];
+    for (const f of allFindings) {
+      if (classifyFindingScope(f, { hunksFor }).scope === PRE_EXISTING) { f.scope = PRE_EXISTING; preExisting.push(f); } else inDiff.push(f);
+    }
+    allFindings = inDiff;
+    if (preExisting.length > 0) process.stderr.write(`  [${passName}] ${preExisting.length} pre-existing finding(s) (outside the change) kept out of REDUCE\n`);
+  }
+  const withPre = (ret) => {
+    if (preExisting.length === 0 || !ret?.result) return ret;
+    ret.result.findings = [...(ret.result.findings ?? []), ...normalizeFindingsForOutput(preExisting)];
+    return ret;
+  };
 
   const mapCompletionRate = units.length > 0 ? (units.length - effectiveFailures) / units.length : 1;
   process.stderr.write(`  [${passName}] MAP done: ${allFindings.length} findings from ${units.length - effectiveFailures}/${units.length} units (${((Date.now() - mapStart) / 1000).toFixed(1)}s, completion: ${(mapCompletionRate * 100).toFixed(0)}%)\n`);
@@ -369,12 +402,12 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
   const unitsFailed = effectiveFailures;
 
   if (allFindings.length === 0) {
-    return {
+    return withPre({
       result: { pass_name: passName, findings: [], quick_fix_warnings: [], summary: `Map-reduce: ${units.length} units, 0 findings. ${effectiveFailures} units failed.` },
       usage: mapUsage,
       latencyMs: Date.now() - mapStart,
       mapUnitStatus, unitsAttempted, unitsFailed, model: dispatchedModel,
-    };
+    });
   }
 
   // MAP failure threshold — skip REDUCE when majority failed
@@ -382,7 +415,7 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
   if (failureRate > MAP_FAILURE_THRESHOLD && allFindings.length > 0) {
     process.stderr.write(`  [${passName}] ${effectiveFailures}/${units.length} MAP units failed (${(failureRate * 100).toFixed(0)}%) — skipping REDUCE, returning normalized raw findings\n`);
     const normalized = normalizeFindingsForOutput(allFindings);
-    return {
+    return withPre({
       result: { pass_name: passName, findings: normalized, quick_fix_warnings: [],
         summary: `Map-reduce: ${effectiveFailures}/${units.length} units failed. Returning ${normalized.length} raw findings (REDUCE skipped).`,
         // REDUCE was deliberately not attempted — that is `skipped`, not a
@@ -395,7 +428,7 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
       _mapFailureRate: failureRate,
       _reduceSkipped: true,
       mapUnitStatus, unitsAttempted, unitsFailed, model: dispatchedModel,
-    };
+    });
   }
 
   // REDUCE phase: single synthesis call
@@ -405,7 +438,7 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
   const payload = buildReducePayload(allFindings);
   if (payload.degraded) {
     process.stderr.write(`  [${passName}] REDUCE payload could not fit budget — skipping REDUCE\n`);
-    return {
+    return withPre({
       result: { pass_name: passName, findings: normalizeFindingsForOutput(allFindings), quick_fix_warnings: [],
         summary: `REDUCE skipped: findings exceeded budget after normalization.`,
         // The findings could not be made to fit the REDUCE payload budget —
@@ -414,7 +447,7 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
         _executionMeta: buildExecutionMeta({ reduceStatus: ReduceStatus.BUDGET_EXCEEDED, reduceSkipped: true }) },
       usage: mapUsage, latencyMs: Date.now() - mapStart, _reduceSkipped: true,
       mapUnitStatus, unitsAttempted, unitsFailed, model: dispatchedModel,
-    };
+    });
   }
   const { json: findingsJson, includedCount, totalCount } = payload;
   if (includedCount < totalCount) {
@@ -451,7 +484,7 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
   if (reduceStatus !== ReduceStatus.OK && allFindings.length > 0) {
     process.stderr.write(`  [${passName}] REDUCE failed (${reduceStatus}) — preserving ${allFindings.length} raw MAP findings\n`);
     const totalLatency = Date.now() - mapStart;
-    return {
+    return withPre({
       result: {
         pass_name: passName,
         findings: normalizeFindingsForOutput(allFindings),
@@ -467,11 +500,11 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
       usage: { ...addUsage(mapUsage, reduceResult?.usage ?? {}), latency_ms: totalLatency },
       latencyMs: totalLatency,
       mapUnitStatus, unitsAttempted, unitsFailed, model: dispatchedModel,
-    };
+    });
   }
 
   const totalLatency = Date.now() - mapStart;
-  return {
+  return withPre({
     result: reduceResult.result,
     // Sum MAP + REDUCE token usage — the success path previously hard-coded
     // zeros, dropping the entire pass's spend (the failed-REDUCE path above
@@ -493,5 +526,5 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
     latencyMs: totalLatency,
     _mapCompletionRate: mapCompletionRate,
     mapUnitStatus, unitsAttempted, unitsFailed, model: dispatchedModel,
-  };
+  });
 }

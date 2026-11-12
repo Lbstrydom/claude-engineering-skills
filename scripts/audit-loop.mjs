@@ -78,7 +78,8 @@ function parseResults(outFile) {
 
 function countFindings(results) {
   if (!results) return { high: 0, medium: 0, low: 0, total: 0, failed: true };
-  const findings = results.findings || [];
+  // 8a: pre-existing findings (outside the change) are reported, not counted - they cannot hold a round open.
+  const findings = (results.findings || []).filter((f) => f?.scope !== 'pre-existing');
   const high = findings.filter(f => f.severity === 'HIGH').length;
   const medium = findings.filter(f => f.severity === 'MEDIUM').length;
   const low = findings.filter(f => f.severity === 'LOW').length;

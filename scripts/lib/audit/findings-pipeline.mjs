@@ -396,7 +396,7 @@ export function computeAuditVerdict(findings, { incomplete = false } = {}) {
  * @returns {string}
  */
 export function formatAuditSummaryLine({
-  verdict, high, medium, low, failedPasses = [], passesTotal = null, latencyMs = 0, coverage = null, canary = null,
+  verdict, high, medium, low, failedPasses = [], passesTotal = null, latencyMs = 0, coverage = null, canary = null, preExisting = 0,
 }) {
   const secs = `${(Number(latencyMs || 0) / 1000).toFixed(0)}s`;
   const cov = formatCoverageSuffix(coverage);
@@ -408,7 +408,8 @@ export function formatAuditSummaryLine({
     return `Verdict: INCOMPLETE — ${canaryBlock}${others ? ` (${others})` : ''}. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}`;
   }
   if (verdict !== 'INCOMPLETE') {
-    const base = `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${secs}`;
+    // `pre-existing:N` rides AFTER the seconds so the leading `Verdict: X | H:a M:b L:c | Ns` shape consumers parse is unchanged.
+    const base = `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${secs}${preExisting > 0 ? ` | pre-existing:${preExisting} (not counted)` : ''}`;
     // The verdict word counts FINDINGS; it does not say the change was read. Beside it, say when it was not
     // (upstream 58f4e3a5: a round converged on PASS with 844 changed lines unread) — the same count that blocks convergence.
     // Same for a changed file of an unrecognised type that no pass was sent (upstream 57bd3de9): the suffix names it, this says what it means.

@@ -500,8 +500,8 @@ export async function runPersistence(data, assembled, mergedResult, persistenceS
           decision_key: decisionKey,
           outcome: {
             totalFindings: allFindings.length,
-            highKept: allFindings.filter(f => f.severity === 'HIGH' && f.adjudicationOutcome !== 'dismissed').length,
-            mediumKept: allFindings.filter(f => f.severity === 'MEDIUM' && f.adjudicationOutcome !== 'dismissed').length,
+            highKept: allFindings.filter(f => f.severity === 'HIGH' && f.adjudicationOutcome !== 'dismissed' && f.scope !== 'pre-existing').length,
+            mediumKept: allFindings.filter(f => f.severity === 'MEDIUM' && f.adjudicationOutcome !== 'dismissed' && f.scope !== 'pre-existing').length,
             dismissed: allFindings.filter(f => f.adjudicationOutcome === 'dismissed').length,
             durationMs: totalLatency,
           },
