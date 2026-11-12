@@ -289,3 +289,27 @@ describe('the real hook', () => {
     assert.match(trail, /^\d{4}-\d{2}-\d{2}T[\d:.]+Z \[\d+\] /m, 'timestamped, with a pid');
   });
 });
+
+describe('E - first write to a fresh .audit/prepush (WCA first v17 push)', () => {
+  it('RED instrument: the old shape prints the redirect error on a missing file; the guarded shape does not', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const dir = tmpDir('v18-wc-');
+    try {
+      const run = (cmd) => spawnSync('bash', ['-c', cmd], { cwd: dir, encoding: 'utf8' });
+      assert.match(run('x="$(wc -c < nofile 2>/dev/null | tr -d " ")"').stderr, /No such file/, 'the instrument can see the bug');
+      assert.equal(run('x=0; [ -f nofile ] && x="$(wc -c < nofile 2>/dev/null | tr -d " ")"').stderr, '');
+    } finally { rmrf(dir); }
+  });
+  it('the first invocation-log write is silent and the record lands (kill-switch path, no prior file)', (t) => {
+    if (!HAS_BASH) return t.skip('bash is required');
+    const dir = tmpDir('v18-first-');
+    try {
+      const script = path.join(dir, 'h.sh');
+      fs.writeFileSync(script, HOOK_BODY);
+      const r = spawnSync('bash', [script, 'origin', 'x'], { cwd: dir, encoding: 'utf8', input: '', env: { ...process.env, AUDIT_PREPUSH_DISABLE: '1' } });
+      assert.equal(r.status, 0);
+      assert.equal(r.stderr, '', 'no redirect noise on the first write');
+      assert.match(fs.readFileSync(path.join(dir, '.audit', 'prepush', 'invocations.log'), 'utf8'), /outcome=disabled/);
+    } finally { rmrf(dir); }
+  });
+});

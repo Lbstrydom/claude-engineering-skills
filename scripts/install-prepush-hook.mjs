@@ -108,7 +108,7 @@ SNAP_DIR=""
 prepush_log_invocation() {
   pli_file=".audit/prepush/invocations.log"
   mkdir -p .audit/prepush 2>/dev/null || return 0
-  pli_size="$(wc -c < "$pli_file" 2>/dev/null | tr -d ' ')"
+  pli_size=0; [ -f "$pli_file" ] && pli_size="$(wc -c < "$pli_file" 2>/dev/null | tr -d ' ')"
   case "$pli_size" in ''|*[!0-9]*) pli_size=0 ;; esac
   [ "$pli_size" -gt 262144 ] && mv -f "$pli_file" "$pli_file.1" 2>/dev/null
   pli_head="$(printf '%.12s' "$PUSH_HEAD")"; [ -n "$pli_head" ] || pli_head="-"
@@ -130,7 +130,9 @@ prepush_log_invocation() {
 # Best effort: a trail that cannot be written never changes the exit.
 PREPUSH_TRAIL="$(pwd -W 2>/dev/null || pwd)/.audit/prepush/last-run.steps.log"
 mkdir -p .audit/prepush 2>/dev/null
-[ "$(wc -c < "$PREPUSH_TRAIL" 2>/dev/null | tr -d ' ')" -gt 262144 ] 2>/dev/null && mv -f "$PREPUSH_TRAIL" "$PREPUSH_TRAIL.1" 2>/dev/null
+trail_size=0; [ -f "$PREPUSH_TRAIL" ] && trail_size="$(wc -c < "$PREPUSH_TRAIL" 2>/dev/null | tr -d ' ')"
+case "$trail_size" in ""|*[!0-9]*) trail_size=0 ;; esac
+[ "$trail_size" -gt 262144 ] && mv -f "$PREPUSH_TRAIL" "$PREPUSH_TRAIL.1" 2>/dev/null
 prepush_trail() { printf '%s [%s] %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null)" "$$" "$*" >> "$PREPUSH_TRAIL" 2>/dev/null; return 0; }
 prepush_trail "hook v${HOOK_VERSION} started"
 # Every later exit - success, refusal, a trapped signal (prepush_killed exits 1) - goes through here: the audit snapshot (v17) is
