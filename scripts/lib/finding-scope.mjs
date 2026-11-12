@@ -46,7 +46,7 @@ const touchesHunks = rangeTouchesHunks;
  * @param {{items?: Array<{startLine?: number, source?: string}>}|undefined|null} chunk
  * @returns {Array<[number, number]>|null}
  */
-export function strictChunkRanges(chunk) {
+export function strictChunkRanges(chunk, { withImports = true } = {}) {
   const items = chunk?.items;
   if (!Array.isArray(items) || items.length === 0) return null;
   const out = [];
@@ -55,7 +55,7 @@ export function strictChunkRanges(chunk) {
     out.push([it.startLine, it.startLine + it.source.split('\n').length - 1]);
   }
   // The import block is shown with EVERY chunk (and starts at line 1), so a change to it is a change to what each chunk's model saw.
-  if (typeof chunk.imports === 'string' && chunk.imports.length > 0) out.push([1, chunk.imports.split('\n').length]);
+  if (withImports && typeof chunk.imports === 'string' && chunk.imports.length > 0) out.push([1, chunk.imports.split('\n').length]);
   return out;
 }
 

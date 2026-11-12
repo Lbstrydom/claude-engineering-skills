@@ -229,7 +229,9 @@ const METHOD_NAME_RE = /^[ \t]+(?:(?:static|async|get|set|public|private|protect
 const NOT_A_METHOD = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'with', 'else', 'do', 'try']);
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const chunkRanges = strictChunkRanges;
+// Selection counts the shared import block on the FIRST chunk only: an import edit is audited once, not by resending the whole file.
+// (finding-scope's classification keeps the import range on every chunk, the fail-closed direction for the tag.)
+const chunkRanges = (chunk, i) => strictChunkRanges(chunk, { withImports: i === 0 });
 
 /**
  * Keep only the chunks of an oversized file that the change touches. Pure; returns `chunks` itself whenever scoping cannot be

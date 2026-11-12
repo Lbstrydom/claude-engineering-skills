@@ -219,10 +219,11 @@ describe('audit round 1 fixes - partial and malformed evidence fail closed', () 
 
 describe('audit round 2 fixes - the shared import block, TS method modifiers', () => {
   const mk = (start, text, imports = 'import a from "a";\nimport b from "b";') => ({ imports, items: [{ source: text, startLine: start }], tokens: 5 });
-  test('the import block is part of every chunk’s evidence: a changed import line keeps every chunk', () => {
+  test('the import block is every chunk’s scope EVIDENCE (a changed import line is in-diff for all), and selection keeps the first chunk', () => {
     const chunks = [mk(50, 'function a() {}'), mk(400, 'function b() {}'), mk(900, 'function c() {}')];
     assert.deepEqual(strictChunkRanges(chunks[1]), [[400, 400], [1, 2]]);
-    assert.equal(selectChangedChunks(chunks, 'f.ts', { mode: 'overlap', hunksFor: () => [{ startLine: 2, lineCount: 1 }] }), chunks);
+    // selection: an import edit is audited once, by the first chunk (not by resending the whole file)
+    assert.deepEqual(selectChangedChunks(chunks, 'f.ts', { mode: 'overlap', hunksFor: () => [{ startLine: 2, lineCount: 1 }] }).map((c) => c.items[0].startLine), [50]);
     const f = fnd('M1', 'MEDIUM', { _scopeEvidence: { file: 'f.ts', ranges: strictChunkRanges(chunks[1]) } });
     assert.equal(classifyFindingScope(f, { hunksFor: () => [{ startLine: 2, lineCount: 1 }] }).scope, IN_DIFF);
   });
