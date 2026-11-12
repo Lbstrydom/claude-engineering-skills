@@ -850,14 +850,7 @@ deleted directory. (Why, and the TOCTOU reasoning behind `--path`:
 `references/commit-provenance-deep-dive.md` §Step 6.3 scoping detail — read
 when a `--path` refusal surprises you.)
 
-**After a successful commit, `ship-commit` re-verifies that the new commit's
-parent and branch are the ones it checked.** On `post-commit-drift` it exits 1
-and prints a recovery command: **do not push.** The commit exists but was not
-built on the base you verified; an unpushed wrong-parent commit is recoverable
-in seconds.
-
-(Consumer repos: the synced copy of this file already carries the
-rewritten `scripts/.claude-skills/ship-commit.mjs` path.)
+**On `post-commit-drift`** (the new commit's parent or branch is not the one `ship-commit` verified) it exits 1 with a recovery command: **do not push.**
 
 Exit contract: `0` = committed (trailers appended). `2` = input rejected —
 fix exactly what the `AGENT FIX:` stderr lines say and re-invoke (max 2
@@ -869,6 +862,8 @@ run sync)`.
 
 If push fails (behind remote, etc.), inform the user and suggest the
 fix. Do NOT force push.
+
+**CI on the pushed head**: `node scripts/ci-merge.mjs --pr <n> --wait-only` reports every check; add `--merge` only when the user said to merge (`references/ci-merge.md`).
 
 **Continuing work in the same worktree after a squash merge: rebase, never
 merge** — check mergeability before assuming a CI trigger is broken. Why, and
@@ -1119,6 +1114,7 @@ situations — read them only when the trigger applies.
 | `references/train-mode.md` | /ship --train runbook — plan, land, verify, sync a batch of ship-ready PRs; refusals, overrides, recovery. | `/ship --train` was invoked, or the user asked to land several ready PRs together. |
 | `references/upstream-triage.md` | Step 0.5h — triaging a consumer's upstream report: the owning store, the FULL uuid, and the freshness check. | Step 0.5h's card lists a report you are about to `ack`, `fix` or `wont-fix`. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |
+| `references/ci-merge.md` | ci-merge.mjs - wait on every check of the pushed head, refuse red or UNSTABLE, update BEHIND, squash-merge. | A push opened or updated a PR: waiting on CI, or merging. |
 | `references/claims-check.md` | Step 1.5 claims check — every figure in a write-up traces to an artifact and carries its provenance label. | Step 1.5 — the change carries a write-up, results doc or status report. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
 

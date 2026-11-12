@@ -862,6 +862,10 @@
       "description": "/fleet background-run heartbeat journals + stale-watch: run/start/beat/end/check/watch/list; STALE or UNKNOWN exits 3, never healthy.",
       "category": "diagnostic"
     },
+    "scripts/ci-merge.mjs": {
+      "description": "Wait for every check on the exact PR head, report a verdict per check (--wait-only), and squash-merge safely with --match-head-commit (--merge). Refuses red/UNSTABLE, updates BEHIND, optional deploy-wait and serial queue.",
+      "category": "skills"
+    },
     "scripts/ship-commit.mjs": {
       "description": "The only writer of AI-* provenance trailers; /ship Step 6.3 commits through it.",
       "category": "hooks"

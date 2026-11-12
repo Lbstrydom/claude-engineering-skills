@@ -1,0 +1,8 @@
+## 2026-11-12 — synced `ci-merge.mjs`: wait for CI on the exact pushed head, merge safely (consumer feedback theme 2, 2a/2b)
+
+**Why.** WCA rebuilt the merge-when-green loop by hand about ten times a day (one version merged with gitleaks red, #1278; one tracked a single check and ended early, #1261), and STO's `/cycle --autonomous` never waited for or reported CI on the pushed head (#523, #526).
+
+- **Script** (`scripts/ci-merge.mjs`, logic in `scripts/lib/ci-merge.mjs`, shipped via `CORE_ENTRY`): `--wait-only` waits for EVERY check on the head and gives a verdict per check; `--merge` is the caller's explicit decision. Red checks refuse unless named by `--allow-fail`; UNSTABLE needs every failure allowed and an explaining failure; zero checks is refused, not green; BEHIND runs `update-branch` and re-waits on the new head; the merge is `--squash --match-head-commit <sha>`. Optional `--deploy-wait`, serial `--pr 1,2` queue (stops at the first non-merge), `--repo`, `--gh-account` (reuses `fleet/gh-account.mjs`). Timeout exits 3 and names what is pending; red or refused exits 1; one `emit` envelope with a pasteable `report`.
+- **Wiring**: `/ship` Step 6 and `/cycle` Step 7 call it by path (`references/ci-merge.md`, `references/ci-wait.md`); `/cycle` only ever uses `--wait-only` (autonomous does not authorize merging). SKILL.md growth stayed inside the size ratchet.
+- **Not done**: 2c (on-demand drift-sweep confirm).
+- **Evidence**: `tests/ci-merge.test.mjs`, 38 tests on a fake `gh` (BEHIND, UNSTABLE, allowed failures, head moved mid-wait, timeouts, deploy wait, queue); negative control (allow-list ignored) turned 6 red.

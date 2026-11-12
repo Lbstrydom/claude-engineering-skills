@@ -129,7 +129,7 @@ Optional flags:
 - `--no-uxlock` — skip /ux-lock (use when no UI changes shipped)
 - `--no-ship` — stop after audit; don't commit or push
 - `--max-rounds N` — pass through to /audit-plan and /audit-code
-- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). **It does not complete Step 7** — a fully autonomous run still stops at the Step 7 blocked-handoff card; only the human's `/ship` completes it.
+- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). It never completes Step 7: only the human's `/ship` does.
 - `--cluster <ID>` — implement/audit a single declared cluster (human resume path).
 - `--baseline-ref <sha>` — audit baseline for a resume where no `clusterStartRef` was captured (work already committed).
 - `--authorize-stale-reaudit` — resume a halted autonomous run by re-processing exactly the `stale` clusters.
@@ -539,8 +539,9 @@ scope.
 > **`/ship` cannot actually be invoked from here — by design, every time.**
 > `/ship`'s frontmatter carries `disable-model-invocation: true`, which refuses
 > ANY programmatic call, including one made from inside `/cycle`'s own
-> orchestration; `--autonomous` does NOT authorize shipping.
-> → `references/orchestration-rationale.md` §Step 7 — read when asked to ship from /cycle.
+> orchestration; `--autonomous` does NOT authorize shipping (`references/orchestration-rationale.md` §Step 7).
+>
+> A pushed PR: first run `node scripts/ci-merge.mjs --pr <n> --wait-only`, paste its `report` into the done report, never `--merge` (`references/ci-wait.md`).
 >
 > So Step 7 always ends in a **blocked handoff**, never an "Invoke `/ship`."
 > Show this card and stop — name the plan path so the human never has to go
@@ -618,6 +619,7 @@ situations — read them only when the trigger applies.
 | `references/remediate-mode.md` | REMEDIATE mode — fix triaged post-ship findings against an accepted plan without replaying the full cycle. | The mode is REMEDIATE (Step R), OR the user asks to skip /audit-plan because the plan is already accepted. |
 | `references/clustered-execution.md` | Step 3C detail — cluster-state schema, author-tier hint, scope-flag incident, 4a measurement, round-2 rationale. | Step 3C — first read/write of `.audit/cycle-cluster-state.json`, an `author-tier:` hint, OR a cluster's scope, class or gate is contested. |
 | `references/orchestration-rationale.md` | Why /cycle's linear steps are shaped as they are — inline dispatch, plan deps, empty-diff guard, persona URL, ship. | A linear step's rule (Steps 0–7, outside 3C) is questioned or looks safe to skip. |
+| `references/ci-wait.md` | Step 7 CI wait - every check on the pushed head, into the done report; no merging. | Step 7 - a PR was pushed; before the done report. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
 
 — end of /cycle —
