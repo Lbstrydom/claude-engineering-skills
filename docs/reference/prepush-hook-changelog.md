@@ -1,5 +1,5 @@
 ---
-summary: The consumer pre-push hook's version history (v2-v17), moved out of scripts/install-prepush-hook.mjs so the installer stays under the size ratchet.
+summary: The consumer pre-push hook's version history (v2-v18), moved out of scripts/install-prepush-hook.mjs so the installer stays under the size ratchet.
 ---
 
 # Consumer pre-push hook — changelog
@@ -8,7 +8,7 @@ The generated hook body lives in `HOOK_BODY` in [`scripts/install-prepush-hook.m
 version is `PREPUSH_HOOK_VERSION` in [`scripts/lib/prepush-hook-version.mjs`](../../scripts/lib/prepush-hook-version.mjs). Bump it when the
 body changes in a way a consumer must re-install to pick up. A stale body is detectable by its `# hook-version:` line; re-install with
 `npm run hooks:install -- --target <name>` (after the consumer's sync). Moved here verbatim from the installer's comment block on
-2026-11-11 (hook v17), newest last.
+2026-11-11 (hook v18), newest last.
 
 ## v2
 
@@ -216,3 +216,20 @@ the same bytes, else by the checkout's absolute path, said out loud. Shared with
 rotated to `.1` past 256 KB. The kill switch writes `disabled` with head `-`; `git push --no-verify` is not observed.
 The runner must offer the `planless` and `snapshot` capabilities, or the hook refuses as for any runner that predates it.
 Re-install: `npm run hooks:install -- --target <name>` (after the consumer's sync).
+
+## v18
+Four fixes from the 2026-11-12 consumer field reports (WCA #1336, STO), shipped as one hook version.
+(1) A DEGRADED OWNERSHIP SCAN IS NOT A PASS (wine #1336). The duplication wave extracts the base-revision side of a modified file in a
+scratch directory that is not a work tree, so its `git check-ignore` exited 128 and `ignoredUntrackedPaths` returned `degraded:true` -
+which reached stderr as prose and nothing else: the push printed `PASS (H:0 M:0 L:0)` with no `tooling:` line. Cause: not the snapshot
+(the same warning is in pre-v17 logs); a scratch root has no ownership question, so `extract.mjs --materialised` does not ask it. Carry:
+`extract.mjs` now emits `{type:'ownership', degraded:true}`, the duplication detector records it (`noteDegradedScan`), the run's result
+envelope is stamped with an `OWNERSHIP_UNVERIFIED` marker (`lib/audit/run-notices.mjs`), and `classifyAuditOutcome` reads that marker
+as UNMEASURED (a `tooling:` line, refused unless `AUDIT_PREPUSH_ALLOW_UNMEASURED=1`), never clean.
+(2) FINAL REVIEW ON THE AZURE WORK PROFILE (STO). With `AZURE_OPENAI_ENDPOINT` set, `selectProvider` now picks Azure Foundry Claude
+BEFORE a Gemini key, pins the `sdk` backend (the `cli` backend drops tools/tool_choice), and throws `ProviderNotReadyError` when the route is
+unusable - there is no fall-through to Gemini or public Opus. Off Azure nothing changes. An explicit `FINAL_REVIEW_PROVIDER=gemini` still wins.
+(3) FINDINGS ARE PRINTED. A findings outcome lists up to 10 HIGH/MEDIUM finding titles (HIGH first) in the push output, with the count of the rest.
+(4) A KILLED RUN LEAVES A TRAIL. `.audit/prepush/last-run.steps.log` is appended to as each step and phase starts, heartbeats and ends
+(timestamped, with the pid), so a push stopped mid-audit shows its last step and where the audit's live output file is.
+The runner must offer the `trail` capability. Re-install: `npm run hooks:install -- --target <name>`.

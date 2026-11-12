@@ -115,18 +115,18 @@ const tagLine = (name, sha, remoteSha = ZERO) => `refs/tags/${name} ${sha} refs/
 
 describe('hook v16 - version', () => {
   it('the installed body carries the CURRENT marker (v17 since 2026-11-11), and the version constant is the one place it lives', () => {
-    assert.equal(HOOK_VERSION_MARKER, '# hook-version: 17');
+    assert.equal(HOOK_VERSION_MARKER, '# hook-version: 18');
   });
   it('a stale install is named on every push, non-blocking, when the source expects a newer hook', (t) => {
     scenario(t, 'stale', { plan: true }, ({ c, source }) => {
       fs.writeFileSync(path.join(source, 'scripts', 'hook-version-override.txt'), '');
-      // Pretend this body is older than the source expects: the source says 18.
+      // Pretend this body is older than the source expects: the source says 19.
       const stub = path.join(source, 'scripts', 'prepush-step.mjs');
       const real = fs.readFileSync(stub, 'utf8');
-      fs.writeFileSync(stub, real.replace("const r = spawnSync(", "if (process.argv[2] === 'hook-version') { console.log('18'); process.exit(0); }\nconst r = spawnSync("));
+      fs.writeFileSync(stub, real.replace("const r = spawnSync(", "if (process.argv[2] === 'hook-version') { console.log('19'); process.exit(0); }\nconst r = spawnSync("));
       const head = c.commit({ 'src/a.mjs': 'export const a = 1;\n' }, 'work');
       const r = runHook(c, source, `refs/heads/main ${head} refs/heads/main ${c.base}\n`);
-      assert.match(r.stderr, /this installed hook is v17 but .* expects v18/);
+      assert.match(r.stderr, /this installed hook is v18 but .* expects v19/);
       assert.equal(r.status, 0, r.stderr);
     });
   });

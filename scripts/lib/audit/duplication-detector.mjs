@@ -35,6 +35,7 @@ import { compose } from '../symbol-index.mjs';
 import { generateIntentEmbedding } from '../neighbourhood-query.mjs';
 import { isDuplicationQueryExcluded } from './duplication-report.mjs';
 import { PRAGMA_RE } from '../duplicate-justification-pragma.mjs';
+import { noteDegradedScan } from '../disowned-paths.mjs';
 import {
   initLearningStore,
   isCloudEnabled,
@@ -63,8 +64,8 @@ function log(msg) { process.stderr.write(`  [duplication-detector] ${msg}\n`); }
 /** Build the real (non-injected) adapters bundle. Separated so tests can override individual pieces without re-wiring the whole default set. */
 function defaultAdapters() {
   return {
-    async extractSymbolsForFiles(repoRoot, files) {
-      return extractViaSubprocess(repoRoot, files);
+    async extractSymbolsForFiles(repoRoot, files, opts) {
+      return extractViaSubprocess(repoRoot, files, opts);
     },
     async gitShowAtRevision(repoRoot, revision, filePath) {
       return gitShowFileAtRevision(repoRoot, revision, filePath);
@@ -101,7 +102,7 @@ function defaultAdapters() {
  * Windows ENAMETOOLONG on a large changeset). Returns only `type:'symbol'`
  * records.
  */
-async function extractViaSubprocess(root, files) {
+async function extractViaSubprocess(root, files, { materialised = false } = {}) {
   if (files.length === 0) return [];
   // Both the NUL framing AND the private-temp-directory handling come from
   // files-manifest.mjs, which owns the whole parent→child transport. This file
@@ -111,8 +112,10 @@ async function extractViaSubprocess(root, files) {
   const manifestPath = writeFilesManifest(files, 'duplication-extract-');
   try {
     const extracted = await runJsonLinesAsyncStrict('node', [
-      EXTRACT_MJS, '--root', root, '--mode', 'full', '--files-from', manifestPath,
+      EXTRACT_MJS, '--root', root, '--mode', 'full', '--files-from', manifestPath, ...(materialised ? ['--materialised'] : []),
     ], { stage: 'duplication-extract' });
+    // The child's ownership scan could not be verified: this analysis rests on an unverified file set, and the audit's verdict must say so.
+    for (const r of extracted) if (r.type === 'ownership' && r.degraded) noteDegradedScan(r.warning);
     return extracted.filter((r) => r.type === 'symbol');
   } finally {
     removeFilesManifest(manifestPath);
@@ -209,7 +212,7 @@ export async function runDuplicationAnalysis({ repoRoot, changedFiles, auditBase
           writeTempSource(tempRoot, basePath, shown.content);
           baseRelPaths.push(basePath);
         }
-        const baseSymbolsRaw = baseRelPaths.length > 0 ? await a.extractSymbolsForFiles(tempRoot, baseRelPaths) : [];
+        const baseSymbolsRaw = baseRelPaths.length > 0 ? await a.extractSymbolsForFiles(tempRoot, baseRelPaths, { materialised: true }) : [];
         for (const entry of needsBaseSide) {
           const basePath = entry.previousPath || entry.currentPath;
           const syms = baseSymbolsRaw.filter((s) => s.filePath === basePath);

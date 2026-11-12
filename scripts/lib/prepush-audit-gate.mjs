@@ -26,7 +26,7 @@
  *
  * @module scripts/lib/prepush-audit-gate
  */
-import { isControlMarkerFinding } from './audit/control-markers.mjs';
+import { isControlMarkerFinding, isMeasurementDegradingDetail } from './audit/control-markers.mjs';
 
 /** The one named override for an audit that did not run. Recorded in the hook's output whenever it is used. */
 export const UNMEASURED_OVERRIDE_ENV = 'AUDIT_PREPUSH_ALLOW_UNMEASURED';
@@ -101,6 +101,12 @@ function classifyMeasurement({ exitCode, report }) {
   if (verdict === 'INCOMPLETE') {
     return { kind: 'unmeasured', cause: 'the audit reported verdict INCOMPLETE: it measured less than the change, so it is not evidence about it', verdict, counts, tooling };
   }
+  // A marker saying part of the audit's INPUT went unverified (hook v18, wine #1336: an ownership scan git could not answer) makes the run
+  // not-a-measurement whatever verdict word it carries - a PASS over an unverified file set is the clean-looking round this gate refuses.
+  const degrading = tooling.filter(isMeasurementDegradingDetail);
+  if (degrading.length > 0) {
+    return { kind: 'unmeasured', cause: `the audit ran on an UNVERIFIED input (${degrading[0]}), so its ${verdict ?? 'verdict'} is not evidence about the change`, verdict, counts, tooling };
+  }
   if (CLEAN_VERDICTS.includes(verdict)) {
     // POLICY: "clean" means the audit's own PASS with nothing at HIGH or MEDIUM. PASS tolerates up to two MEDIUMs (NEEDS_FIXES starts
     // above that), which are still findings to surface; LOW-only is below the audit's own convergence bar, so it neither gates under
@@ -151,12 +157,15 @@ export function decideAuditGate({ outcome, env = {} }) {
   }
   // unmeasured
   const head = `UNMEASURED: the code audit did NOT run to a verdict - ${cause}.`;
+  // Notices the run carried stay visible on a refusal too (the degraded-scan marker IS the cause of one).
+  const noticeLines = toolingLines.map((l) => `   ${l}`);
   if (env[UNMEASURED_OVERRIDE_ENV] === '1') {
     return {
       allow: true,
       lines: [
         `⚠  [prepush-hook] ${head}`,
         `⚠  [prepush-hook] push ALLOWED UNMEASURED because ${UNMEASURED_OVERRIDE_ENV}=1 is set - nothing about this change was checked by the audit.`,
+        ...noticeLines,
       ],
     };
   }
@@ -165,6 +174,7 @@ export function decideAuditGate({ outcome, env = {} }) {
     lines: [
       '',
       `✗  [prepush-hook] ${head}`,
+      ...noticeLines,
       '   This is NOT a finding about your change and NOT a clean run: no evidence was produced. A gate that did not run is not a pass.',
       // v17 (audit B R1 M3): the recorded override is the one way out named here. \`--no-verify\` leaves no trace in the invocation log, and
       // a refusal that advertises it teaches the bypass the consumer feedback was about.
@@ -172,6 +182,37 @@ export function decideAuditGate({ outcome, env = {} }) {
       '',
     ],
   };
+}
+
+/** How many HIGH/MEDIUM finding titles the push output lists; the rest are counted, not shown. */
+export const FINDING_TITLES_CAP = 10;
+const TITLE_CHARS = 150;
+
+/**
+ * The HIGH and MEDIUM findings of a completed audit as one line each, HIGH first, capped at {@link FINDING_TITLES_CAP}. A 12-minute plan
+ * audit returned SIGNIFICANT_ISSUES (H:1 M:3) into a report file and the push printed only the path, so nobody read it (STO, 2026-11-12).
+ * Control markers are not findings (they are the `tooling:` lines) and LOW is below the gate's bar. Pure; display only - nothing decides from it.
+ * @param {unknown} findings the envelope's `findings`
+ * @returns {string[]} lines (empty when there is nothing to show)
+ */
+export function formatFindingTitles(findings, { cap = FINDING_TITLES_CAP } = {}) {
+  if (!Array.isArray(findings)) return [];
+  // Control characters (ESC, CSI, BEL ...) are model- and file-name-controlled text bound for a terminal: they become spaces.
+  const one = (v) => String(v ?? '').replaceAll(/[\u0000-\u001f\u007f-\u009f\s]+/g, ' ').trim();
+  const rows = [];
+  for (const f of findings) {
+    const sev = typeof f?.severity === 'string' ? f.severity.toUpperCase() : '';
+    if ((sev !== 'HIGH' && sev !== 'MEDIUM') || isControlMarkerFinding(f)) continue;
+    const where = one(Array.isArray(f.affectedFiles) && f.affectedFiles.length > 0 ? f.affectedFiles[0] : f.section);
+    const title = one(f.category) || one(f.detail);
+    const detail = one(f.category) && one(f.detail) ? ` - ${one(f.detail)}` : '';
+    const text = `${title}${detail}`;
+    rows.push({ rank: sev === 'HIGH' ? 0 : 1, line: `   ${sev === 'HIGH' ? 'H' : 'M'}  ${text.length > TITLE_CHARS ? `${text.slice(0, TITLE_CHARS - 3)}...` : text}${where ? `  [${where}]` : ''}` });
+  }
+  rows.sort((a, b) => a.rank - b.rank); // stable: audit order within a severity
+  const shown = rows.slice(0, cap).map((r) => r.line);
+  if (rows.length > cap) shown.push(`   ... and ${rows.length - cap} more HIGH/MEDIUM finding(s) in the kept report`);
+  return shown;
 }
 
 /**

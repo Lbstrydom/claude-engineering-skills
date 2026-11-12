@@ -2,9 +2,8 @@
  * @fileoverview Final-review provider selection precedence.
  *
  * Deterministic seam (Tier 1) — the per-repo default stack is "GPT auditor +
- * Gemini reviewer", and a stray AZURE_OPENAI_ENDPOINT must NOT silently hijack
- * the reviewer. These tests pin the precedence so that regression can't quietly
- * reroute a private-repo final review to Azure Foundry.
+ * Gemini reviewer" off the Azure profile; ON it (AZURE_OPENAI_ENDPOINT set, hook v18) the final review is Foundry Claude and never
+ * quietly Gemini. A repo that wants Gemini there makes an explicit choice. These tests pin the precedence.
  *
  * `selectProvider` accepts injected `{env, azureActive}` so we can assert the
  * decision points without touching real credentials or the frozen azureConfig
@@ -13,6 +12,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectProvider, applyProviderSetting } from '../scripts/gemini-review.mjs';
+import { ProviderNotReadyError } from '../scripts/lib/final-review/providers.mjs';
 
 describe('selectProvider precedence', () => {
   test('auto-detect prefers Gemini when GEMINI_API_KEY is present', () => {
@@ -20,11 +20,23 @@ describe('selectProvider precedence', () => {
     assert.equal(selectProvider(null, { env, azureActive: false }), 'gemini');
   });
 
-  test('Gemini wins over an active Azure profile (no silent hijack)', () => {
-    // The core fix: even with the Azure work profile active, a present Gemini
-    // key keeps the reviewer on Gemini unless explicitly overridden.
-    const env = { GEMINI_API_KEY: 'g' };
-    assert.equal(selectProvider(null, { env, azureActive: true }), 'gemini');
+  test('an active Azure profile selects Azure Claude even when GEMINI_API_KEY is set (hook v18)', () => {
+    // 2026-11-12 (STO): a work-profile worker with a Gemini key in its environment got a Gemini final verdict. The work profile's rule is
+    // Foundry Claude; Gemini on that profile now needs an EXPLICIT choice (next test).
+    const env = { GEMINI_API_KEY: 'g', ANTHROPIC_API_KEY: 'a' };
+    assert.equal(selectProvider(null, { env, azureActive: true, assertAzure: () => {} }), 'azure-claude');
+  });
+
+  test('an active Azure profile whose route is unusable FAILS LOUDLY - it never falls through to Gemini or public Opus', () => {
+    const env = { GEMINI_API_KEY: 'g', ANTHROPIC_API_KEY: 'a' };
+    const assertAzure = () => { throw new ProviderNotReadyError('azure route unreachable'); };
+    assert.throws(() => selectProvider(null, { env, azureActive: true, assertAzure }), (e) => e instanceof ProviderNotReadyError && /azure route unreachable/.test(e.message));
+  });
+
+  test('the public path is unchanged: azure inactive never consults the Azure readiness check', () => {
+    const assertAzure = () => { throw new Error('must not be called'); };
+    assert.equal(selectProvider(null, { env: { GEMINI_API_KEY: 'g' }, azureActive: false, assertAzure }), 'gemini');
+    assert.equal(selectProvider(null, { env: { ANTHROPIC_API_KEY: 'a' }, azureActive: false, assertAzure }), 'claude-opus');
   });
 
   test('explicit "gemini" setting is honoured when its key exists', () => {

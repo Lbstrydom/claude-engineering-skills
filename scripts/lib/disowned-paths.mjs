@@ -136,3 +136,34 @@ export function ignoredUntrackedPaths(repoRoot, candidates, { warnOnDegraded = t
     warning: null,
   };
 }
+
+/**
+ * Degraded scans that a JUDGEMENT on this process's result rests on (hook v18). `ignoredUntrackedPaths` returns `degraded:true` to its caller, but
+ * a caller several layers down (a child process whose stderr nobody parses) had no way to hand that to the audit's verdict: the push printed
+ * `PASS (H:0 M:0 L:0)` over a scan that verified nothing (wine #1336). A call site that feeds the audit records the degradation here and
+ * `lib/audit/run-notices.mjs` stamps it into the result envelope as an `OWNERSHIP_UNVERIFIED` marker the pre-push gate classifies `unmeasured`.
+ * Process-scoped on purpose: one CLI invocation is one audit.
+ */
+const degradedScanNotes = new Set();
+
+/** Record that an ownership scan this audit rests on could not be verified. `why` is the scan's own warning text (deduplicated). */
+export function noteDegradedScan(why) {
+  degradedScanNotes.add(String(why || 'ownership scan degraded (no reason given)').replaceAll(/\s+/g, ' ').slice(0, 300));
+}
+
+/** The degraded-scan notes recorded so far, oldest first. */
+export function degradedScanNotesSoFar() {
+  return [...degradedScanNotes];
+}
+
+/** Return the recorded notes and forget them: the stamp CONSUMES them, so a second audit in one process never inherits the first's. */
+export function takeDegradedScanNotes() {
+  const out = [...degradedScanNotes];
+  degradedScanNotes.clear();
+  return out;
+}
+
+/** For tests: forget recorded notes. */
+export function _resetDegradedScanNotes() {
+  degradedScanNotes.clear();
+}

@@ -108,7 +108,7 @@ SNAP_DIR=""
 prepush_log_invocation() {
   pli_file=".audit/prepush/invocations.log"
   mkdir -p .audit/prepush 2>/dev/null || return 0
-  pli_size="$(wc -c < "$pli_file" 2>/dev/null | tr -d ' ')"
+  pli_size=0; [ -f "$pli_file" ] && pli_size="$(wc -c < "$pli_file" 2>/dev/null | tr -d ' ')"
   case "$pli_size" in ''|*[!0-9]*) pli_size=0 ;; esac
   [ "$pli_size" -gt 262144 ] && mv -f "$pli_file" "$pli_file.1" 2>/dev/null
   pli_head="$(printf '%.12s' "$PUSH_HEAD")"; [ -n "$pli_head" ] || pli_head="-"
@@ -121,6 +121,20 @@ prepush_log_invocation() {
 }
 # The disable line is the only work done on that path. Stdin has not been read, so the head is "-" by design.
 [ "$AUDIT_PREPUSH_DISABLE" = "1" ] && { prepush_log_invocation disabled; exit 0; }
+# ── Step trail (v18) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# Every other log this hook keeps is written when a step COMPLETES (the report and output.log are renamed to their tree-keyed names at the
+# end), so a push stopped mid-audit left .audit/prepush/ empty and nobody could say which step it was in (STO, 25+ minutes, 2026-11-12).
+# This file is APPENDED to as each step and phase starts and ends, with timestamps, so a stopped run shows its last line. It describes the
+# pushes (never truncated: a concurrent push would erase the other's trail; every line carries its pid; rotated to .1 past 256 KB); the runner
+# appends the per-step start / heartbeat / end lines to it.
+# Best effort: a trail that cannot be written never changes the exit.
+PREPUSH_TRAIL="$(pwd -W 2>/dev/null || pwd)/.audit/prepush/last-run.steps.log"
+mkdir -p .audit/prepush 2>/dev/null
+trail_size=0; [ -f "$PREPUSH_TRAIL" ] && trail_size="$(wc -c < "$PREPUSH_TRAIL" 2>/dev/null | tr -d ' ')"
+case "$trail_size" in ""|*[!0-9]*) trail_size=0 ;; esac
+[ "$trail_size" -gt 262144 ] && mv -f "$PREPUSH_TRAIL" "$PREPUSH_TRAIL.1" 2>/dev/null
+prepush_trail() { printf '%s [%s] %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null)" "$$" "$*" >> "$PREPUSH_TRAIL" 2>/dev/null; return 0; }
+prepush_trail "hook v${HOOK_VERSION} started"
 # Every later exit - success, refusal, a trapped signal (prepush_killed exits 1) - goes through here: the audit snapshot (v17) is
 # removed and verified, and the invocation is logged. A non-zero status is "refused" whatever outcome was recorded before it.
 prepush_snapshot_remove() {
@@ -131,6 +145,7 @@ prepush_snapshot_remove() {
 }
 prepush_on_exit() {
   pe_rc="$1"
+  prepush_trail "hook exit rc=$pe_rc outcome=\${PREPUSH_OUTCOME:--}"
   prepush_snapshot_remove
   if [ "$pe_rc" -ne 0 ]; then prepush_log_invocation refused; else prepush_log_invocation "\${PREPUSH_OUTCOME:-pass}"; fi
 }
@@ -411,7 +426,7 @@ esac
 STEP_CLI_OK=1
 # v17 needs \`planless\` (a no-plan push is audited without a plan) and \`snapshot\` (the audit reads the pushed commit): a runner without
 # them would decide a no-plan push by v16's rules and audit the working tree, so it is refused like any runner that predates the hook.
-for cap in audit-outcome audit-reuse audit-budget no-plan planless snapshot; do
+for cap in audit-outcome audit-reuse audit-budget no-plan planless snapshot trail; do
   case "$STEP_CAPS" in *" $cap "*) ;; *) STEP_CLI_OK="" ;; esac
 done
 if [ "$(node "$STEP_CLI" --selfcheck-relocation 2>/dev/null)" != "OK" ] || [ -z "$STEP_CLI_OK" ]; then
@@ -425,7 +440,7 @@ fi
 # prepush_bounded <step> <budget-sec> <cmd...>: the command's own status, 124 on timeout (the runner has already said why).
 prepush_bounded() {
   prepush_step_name="$1"; prepush_step_budget="$2"; shift 2
-  node "$STEP_CLI" run --step "$prepush_step_name" --budget-sec "$prepush_step_budget" --progress-sec "$PROGRESS_SEC" -- "$@"
+  node "$STEP_CLI" run --step "$prepush_step_name" --budget-sec "$prepush_step_budget" --progress-sec "$PROGRESS_SEC" --trail "$PREPUSH_TRAIL" -- "$@"
 }
 
 # prepush_no_code (v15): 0 ONLY when the step proves the push has no file the code audit would read AND left its record. Every other
@@ -680,7 +695,7 @@ prepush_audit() {
   # v17: cwd is the SNAPSHOT of the pushed commit (a subshell, so this hook's own cwd is untouched): every reader sees the pushed bytes.
   # GIT_DIR & co. are UNSET first (git exports them into a hook; from a linked worktree GIT_DIR names the checkout's git dir): inherited,
   # every git call the audit makes would read the CHECKOUT from inside the snapshot. The list is evaluated before the unset runs.
-  ( unset $GIT_LOCAL_ENV_BASELINE $(git rev-parse --local-env-vars 2>/dev/null); cd "$SNAP_DIR" && AUDIT_ALLOW_FOREIGN_CWD=1 node "$STEP_CLI" run --step code-audit --budget-sec "$AUDIT_BUDGET" --progress-sec "$PROGRESS_SEC" --out "$AUDIT_OUT_ARG" -- node "$AUDIT_SCRIPT" "$@" --out "$AUDIT_REPORT_ARG" )
+  ( unset $GIT_LOCAL_ENV_BASELINE $(git rev-parse --local-env-vars 2>/dev/null); cd "$SNAP_DIR" && AUDIT_ALLOW_FOREIGN_CWD=1 node "$STEP_CLI" run --step code-audit --budget-sec "$AUDIT_BUDGET" --progress-sec "$PROGRESS_SEC" --trail "$PREPUSH_TRAIL" --out "$AUDIT_OUT_ARG" -- node "$AUDIT_SCRIPT" "$@" --out "$AUDIT_REPORT_ARG" )
 }
 
 # ── Reuse an audit that already covered this exact tree (v12) ────────────────
@@ -821,8 +836,10 @@ if [ "$AUDIT_REUSED" != "1" ]; then
   }
   if [ -n "$PLANLESS_INTENT" ]; then AUDIT_WHAT="the push WITHOUT a plan (intent: $PLANLESS_INTENT)"; else AUDIT_WHAT="$PLAN_FILE"; fi
   echo "[prepush-hook] ▸ auditing $AUDIT_WHAT via $AUDIT_LOOP_DIR (budget \${AUDIT_BUDGET}s, $AUDIT_BUDGET_BASIS; \${AUDIT_OWN_FILES:+branch-own files only, }report will be kept at $AUDIT_KEEP_BASE.report.json)" >&2
+  prepush_trail "audit starting: snapshot $SNAP_DIR, budget \${AUDIT_BUDGET}s; the audit's live output is $AUDIT_OUT_ARG"
   prepush_audit
   EXIT=$?
+  prepush_trail "audit finished exit=$EXIT"
   # The snapshot has served its purpose; free it now rather than after the consumer's local hook (the EXIT trap is the backstop).
   prepush_snapshot_remove
   # 124: the budget ran out. The runner has said which step, how long and who holds the lease; this REFUSES the push - a gate that
@@ -834,6 +851,7 @@ if [ "$AUDIT_REUSED" != "1" ]; then
   OUTCOME_KIND="$(prepush_bounded audit-outcome "$STEP_BUDGET" node "$STEP_CLI" audit-outcome --exit "$EXIT" --report "$AUDIT_REPORT_ARG" --out "$AUDIT_OUT_ARG" --print-kind)"
   OUTCOME_RC=$?
   case "$OUTCOME_KIND" in "outcome "?*) PREPUSH_OUTCOME="\${OUTCOME_KIND#outcome }" ;; esac
+  prepush_trail "audit outcome: \${PREPUSH_OUTCOME:-unknown} (classifier rc=$OUTCOME_RC)"
   prepush_keep_audit
   # v15: informational only - it can neither gate nor suppress, so its failure is ignored by design (stdout is the one line; stderr stays visible).
   case "$STEP_CAPS" in *" recurrence "*) [ -n "$keep_prot_report" ] && { prepush_bounded recurrence "$STEP_BUDGET" node "$STEP_CLI" recurrence --report "$keep_prot_report" --head "\${PUSH_HEAD:-HEAD}" | sed 's/^/[prepush-hook] ▸ /' >&2; } ;; esac
