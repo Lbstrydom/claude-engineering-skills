@@ -203,13 +203,13 @@ export async function getUnlockedFixes(scope, opts = {}) {
     // exact failure those floors exist to make visible, one notch under them.
     if (opts?.allAges) {
       return await many(
-        `SELECT *, fixed_at::text AS fixed_at_cursor FROM unlocked_fixes_all${where} ORDER BY fixed_at DESC, audit_finding_id ` +
+        `SELECT *, ${EFFECTIVE_MODE_SQL} AS effective_mode, fixed_at::text AS fixed_at_cursor FROM unlocked_fixes_all${where} ORDER BY fixed_at DESC, audit_finding_id ` +
         `LIMIT $${params.length - 1} OFFSET $${params.length}`,
         params
       );
     }
     return await many(
-      `SELECT *, fixed_at::text AS fixed_at_cursor FROM unlocked_fixes${where} ORDER BY fixed_at DESC, audit_finding_id ` +
+      `SELECT *, ${EFFECTIVE_MODE_SQL} AS effective_mode, fixed_at::text AS fixed_at_cursor FROM unlocked_fixes${where} ORDER BY fixed_at DESC, audit_finding_id ` +
       `LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
@@ -496,7 +496,7 @@ export async function getUnremediatedAcceptances(scope, opts = {}) {
     if (opts?.allAges) {
       if (!allRepos) {
         return await many(
-          `SELECT *, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances_all ` +
+          `SELECT *, ${EFFECTIVE_MODE_SQL} AS effective_mode, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances_all ` +
           `WHERE repo_id = $1 AND is_open_disposition ` +
           `AND ($4::int IS NULL OR (CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at, audit_finding_id) ` +
           `> ($4::int, $5::timestamptz, $6::uuid)) ` +
@@ -506,7 +506,7 @@ export async function getUnremediatedAcceptances(scope, opts = {}) {
         );
       }
       return await many(
-        `SELECT *, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances_all ` +
+        `SELECT *, ${EFFECTIVE_MODE_SQL} AS effective_mode, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances_all ` +
         `WHERE is_open_disposition ` +
         `AND ($3::int IS NULL OR (CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at, audit_finding_id) ` +
         `> ($3::int, $4::timestamptz, $5::uuid)) ` +
@@ -517,7 +517,7 @@ export async function getUnremediatedAcceptances(scope, opts = {}) {
     }
     if (!allRepos) {
       return await many(
-        `SELECT *, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances WHERE repo_id = $1 ` +
+        `SELECT *, ${EFFECTIVE_MODE_SQL} AS effective_mode, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances WHERE repo_id = $1 ` +
         `AND ($4::int IS NULL OR (CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at, audit_finding_id) ` +
         `> ($4::int, $5::timestamptz, $6::uuid)) ` +
         `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +
@@ -526,7 +526,7 @@ export async function getUnremediatedAcceptances(scope, opts = {}) {
       );
     }
     return await many(
-      `SELECT *, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances ` +
+      `SELECT *, ${EFFECTIVE_MODE_SQL} AS effective_mode, accepted_at::text AS accepted_at_cursor FROM unremediated_acceptances ` +
       `WHERE ($3::int IS NULL OR (CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at, audit_finding_id) ` +
       `> ($3::int, $4::timestamptz, $5::uuid)) ` +
       `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +

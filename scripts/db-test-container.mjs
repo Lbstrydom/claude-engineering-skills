@@ -152,6 +152,12 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // only real Postgres can show it. Two edits, always — this list AND
   // postgres-parity.yml.
   'tests/ship-nudge-keyset-db.test.mjs',
+  // Enrolled 2026-11-13 with the effective-mode row projection. Seeds a finding
+  // recorded `audit_mode = 'code'` whose `primary_file` is prose, and proves the
+  // listing folds to the card's own `byMode` counts — a property of
+  // EFFECTIVE_MODE_SQL running in the view query, so only real Postgres can show
+  // it. Two edits, always — this list AND postgres-parity.yml.
+  'tests/nudge-row-effective-mode-db.test.mjs',
   // Enrolled 2026-10-02 with close-finding (by-id discharge of one finding).
   // Seeds an owned run + findings and proves each disposition (fixed / dismissed /
   // accepted-permanent) leaves the open set while final-review-record-fix cannot,
