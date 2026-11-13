@@ -103,7 +103,11 @@ export async function finalReviewAdjudicateCmd(ctx) {
   if (action !== 'accepted' && action !== 'dismissed') {
     throw new CommandError('BAD_INPUT', `--action must be 'accepted' or 'dismissed', got '${action}'`);
   }
-  const res = await ctx.deps.adjudicateFinalReviewFinding(runId, fingerprint, action, bucketOpt(ctx));
+  const note = ctx.flag('note');
+  const res = await ctx.deps.adjudicateFinalReviewFinding(runId, fingerprint, action, {
+    ...bucketOpt(ctx),
+    ...(note ? { rationale: note } : {}),
+  });
   if (!res.ok) {
     const hint = bucketHint(res, 'no-match-in-bucket',
       ` — no row in that bucket; present in [${(res.buckets || []).map((b) => b ?? 'primary').join(', ')}]`);

@@ -247,7 +247,11 @@ export const REGISTRY = Object.freeze([
   },
   {
     name: 'final-review-adjudicate',
-    flags: ['run-id', 'fingerprint', 'action', 'bucket'],
+    // `note` is the grounds, recorded on the ledger row this write now leaves.
+    // Without it the row says who closed the finding and when but not why — the
+    // half of "who closed these and on what grounds" that the 2026-09-14 sweep
+    // could not answer either way (docs/plans/standing-queue-burndown.md §7.2).
+    flags: ['run-id', 'fingerprint', 'action', 'bucket', 'note'],
     positionals: 'none', payload: 'none',
     scope: 'none', kind: 'write', cloud: 'degrade-noop',
     // Frozen quirk: cloud-off emits {ok:false, cloud:false, updated:0} at exit 0.

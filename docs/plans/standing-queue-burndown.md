@@ -695,3 +695,65 @@ returns 5/5 green.
 - Nothing records *when* a Q1/Q2 row left its window, so the cohort arithmetic
   in §7.1 has to be reconstructed from `created_at` each time. A recorded
   `aged_out_at`, or a snapshot of each measurement, would make it a lookup.
+
+## 8. The credit route now leaves a ledger row (shipped 2026-11-13)
+
+**Depends on §7.2**, which established the gap. `adjudicateFinalReviewFinding`
+wrote `audit_findings.user_action`, `.adjudication_outcome` and `.decided_at`
+and recorded no `finding_adjudication_events` row, so a close left no trace
+outside the row it changed. It now writes the disposition and its ledger row in
+ONE transaction (`applyFinalReviewDisposition`,
+`scripts/lib/store/adjudication-events.mjs`), and the CLI takes `--note` so the
+grounds land on the row.
+
+The ledger row carries `event_origin = 'audit'` with `adjudicator_kind =
+'human'` — **not a new origin**. Origin names the owning workflow and there are
+two (the audit-loop tooling's own path; the comparison campaigns', whose rows
+always carry `method`); a credit disposition comes through the first. What
+separates it from a pipeline ruling is *who decided*, which the `kind` axis
+already carries. A third origin value would need a CHECK-widening migration
+plus a constraint probe for consumer stores that have not run it, to express
+what the existing `(origin, kind)` pair already expresses.
+
+`ruling` stays NULL deliberately: `sustain`/`overrule` are rulings on an
+auditor's claim and are read by the R2+ rulings injection, and writing one from
+a queue disposition would silently widen suppression.
+
+**Failure mode — atomic and loud, not `durableWrite`.** A failed event INSERT
+rolls the disposition back and the caller gets its existing `{ok:false, reason:
+'db-error: …'}`. The tradeoff is real: a store that can take the UPDATE but not
+the INSERT now fails where it used to succeed. It is the right way round — this
+is an explicit operator CLI action, retried in seconds, never a push gate, so a
+loud refusal costs one retry where the old behaviour cost an untraceable close.
+The spill/lost vocabulary exists for the audit run's fire-and-forget telemetry,
+where losing a write must not kill a long paid run; there is no long run here
+and no spill to reconcile.
+
+Pinned by four cases in `tests/final-review-adjudicate.test.mjs` (disposable
+Postgres; the suite is already enrolled in `scripts/db-test-container.mjs` and
+`.github/workflows/postgres-parity.yml`, so no new enrolment was needed):
+exactly one row with the right axes and grounds; re-adjudication replaces this
+workflow's row and leaves pipeline provenance alone; the remediation axis is
+carried forward and an out-of-vocabulary finding value is coerced rather than
+raising `23514`; and a fault-injected event failure leaves the finding exactly
+as it was, with a vacuous-pass guard that the same call succeeds once the
+injected fault is removed. **Proven red**: reverting the call site fails all
+four; restoring it returns 19/19 green.
+
+### 8.1 The ~460 historical rows are NOT backfilled
+
+The 435 closes of 2026-09-14 (plus 4 on 09-15 and 23 on 09-16) stay without
+ledger rows. Their grounds are not recoverable from the store: the route
+recorded nothing but an outcome and a timestamp, and no transcript ties a
+`decided_at` to a reason. Manufacturing events for them would put invented
+grounds into the table that audit evidence is read from — the one failure mode
+worse than the gap itself.
+
+What IS recoverable, and is recorded here as prose rather than as rows: those
+findings were closed through `adjudicateFinalReviewFinding` by an operator
+working the shadow-only credit queue over roughly thirteen hours on 2026-09-14,
+282 `dismissed` and 153 `accepted-permanent`, with a tail of 27 over the two
+following days. A reader asking "who closed these and on what grounds" should
+be told that the first half is answerable (an operator, through the credit
+queue) and the second is not, and should not expect `finding_adjudication_events`
+to answer either for a close before 2026-11-13.
