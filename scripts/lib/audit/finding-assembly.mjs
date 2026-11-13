@@ -37,6 +37,7 @@ import {
 import { normalizePath } from '../file-io.mjs';
 import { listRepoFiles } from '../repo-inventory.mjs';
 import { verifyExistenceFindings, effectiveSeverity, countsTowardVerdict, isRefuted } from './finding-verification.mjs';
+import { isInDiff } from '../finding-scope.mjs';
 import { evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
 import { checkDetectors } from './detector.mjs';
 import { canaryBlocksEvidence, describeCanaryBlock } from './canary.mjs';
@@ -820,7 +821,10 @@ export async function assembleFindings(data) {
   // spelling of a rule the consumer SKILL.md never learned at all.
   const effSeverity = effectiveSeverity;
   const countFor = (strictLint ? allFindings : allFindings.filter(f => !isToolFinding(f)))
-    .filter(countsTowardVerdict);
+    .filter(countsTowardVerdict)
+    // 8a: a PRE-EXISTING finding (outside the change; finding-scope.mjs) is stored and reported but is not the author's to fix, so it
+    // moves neither the verdict nor convergence.
+    .filter(isInDiff);
   const high = countFor.filter(f => effSeverity(f) === 'HIGH').length;
   const medium = countFor.filter(f => effSeverity(f) === 'MEDIUM').length;
   const low = countFor.filter(f => effSeverity(f) === 'LOW').length;
@@ -838,7 +842,7 @@ export async function assembleFindings(data) {
   // `quickFix` deliberately counts ALL findings (the gate's population, as
   // run-persistence.mjs has always counted it), not `countFor`. Changing the
   // gate's population is a different decision from making telemetry equal it.
-  const quickFix = allFindings.filter((f) => f.is_quick_fix).length;
+  const quickFix = allFindings.filter((f) => f.is_quick_fix && isInDiff(f)).length;
   // `resolveDetectorResultForRound` is where "ledger present" is kept apart
   // from "detectors absent": an R2+ round whose ledger is missing/corrupt
   // (`suppressionUnavailable`) resolves to `detector-not-run`, never to a

@@ -9,7 +9,22 @@
  * @param {object[]} findings
  * @returns {string}
  */
+import { isInDiff, isPreExisting } from './finding-scope.mjs';
+
 export function formatFindings(findings) {
+  // Pre-existing findings (outside the change; finding-scope.mjs) get their own heading and never sit among the author's own.
+  const preExisting = findings.filter(isPreExisting);
+  if (preExisting.length > 0) {
+    const own = formatFindings(findings.filter(isInDiff));
+    const rest = formatFindingsGrouped(preExisting);
+    return `${own}
+### Pre-existing (not counted: about code this change did not touch)
+${rest}`;
+  }
+  return formatFindingsGrouped(findings);
+}
+
+function formatFindingsGrouped(findings) {
   const groups = { HIGH: [], MEDIUM: [], LOW: [] };
   for (const f of findings) (groups[f.severity] ?? groups.LOW).push(f);
 

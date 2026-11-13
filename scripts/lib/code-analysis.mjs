@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizePath } from './file-io.mjs';
+import { rangeTouchesHunks, strictChunkRanges } from './finding-scope.mjs';
 import { getProfileForFile, getProfile } from './language-profiles.mjs';
 
 /**
@@ -210,6 +211,62 @@ export function buildDependencyGraph(files, langContext = null) {
   return graph;
 }
 
+// ── Changed-chunk scoping (1c) ───────────────────────────────────────────────
+
+/** Lines of slack either side of a hunk when deciding a chunk "overlaps the change" (the same slack as finding-scope's). */
+export const CHUNK_SCOPE_WINDOW_LINES = 15;
+
+/** `off` (default: every chunk, byte-identical), `overlap` (chunks the diff touches), `referenced` (those plus chunks defining a symbol they use). */
+export function chunkScopeMode(env = process.env) {
+  const v = String(env.AUDIT_CHUNK_SCOPE ?? '').trim().toLowerCase();
+  return v === 'overlap' || v === 'referenced' ? v : 'off';
+}
+
+const DECLARED_NAME_RE = /(?:^|\n)\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|def|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
+// A class/object METHOD definition (`  name(args) {`), which DECLARED_NAME_RE cannot see. Control keywords are excluded; a call site that
+// looks like a method only RETAINS an extra chunk, which is the safe direction.
+const METHOD_NAME_RE = /^[ \t]+(?:(?:static|async|get|set|public|private|protected|readonly|override|abstract)\s+|\*\s*)*([A-Za-z_$][\w$]*)\s*(?:<[^>\n]*>)?\s*\([^)]*\)\s*(?::\s*[^{\n]+)?\{/gm;
+const NOT_A_METHOD = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'with', 'else', 'do', 'try']);
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Selection counts the shared import block on the FIRST chunk only: an import edit is audited once, not by resending the whole file.
+// (finding-scope's classification keeps the import range on every chunk, the fail-closed direction for the tag.)
+const chunkRanges = (chunk, i) => strictChunkRanges(chunk, { withImports: i === 0 });
+
+/**
+ * Keep only the chunks of an oversized file that the change touches. Pure; returns `chunks` itself whenever scoping cannot be
+ * decided honestly: mode off, no hunk evidence (`null`: not a changed file, or the map is unavailable), a chunk without a line
+ * range, or nothing would be dropped / nothing would survive. FAIL CLOSED to "send everything": the cost of sending too much is
+ * noise, of sending too little a missed defect.
+ */
+export function selectChangedChunks(chunks, filePath, scope) {
+  const mode = scope?.mode ?? 'off';
+  if (mode === 'off' || typeof scope?.hunksFor !== 'function' || chunks.length <= 1) return chunks;
+  let hunks;
+  try { hunks = scope.hunksFor(filePath); } catch { hunks = null; }
+  if (!Array.isArray(hunks) || hunks.length === 0) return chunks;
+  const ranges = chunks.map(chunkRanges);
+  if (ranges.some((r) => r === null)) return chunks;
+  const w = CHUNK_SCOPE_WINDOW_LINES;
+  const touches = (rs) => rs.some(([s, e]) => rangeTouchesHunks(s, e, hunks, w));
+  const keep = chunks.map((_, i) => touches(ranges[i]));
+  if (mode === 'referenced') {
+    const keptText = chunks.filter((_, i) => keep[i]).map((c) => c.items.map((it) => it.source).join('\n')).join('\n');
+    chunks.forEach((c, i) => {
+      if (keep[i]) return;
+      const src = c.items.map((it) => it.source).join('\n');
+      const names = [...src.matchAll(DECLARED_NAME_RE), ...src.matchAll(METHOD_NAME_RE)].map((m) => m[1]).filter((n) => !NOT_A_METHOD.has(n));
+      for (const name of names) {
+        if (new RegExp(`(?<![\\w$])${escapeRe(name)}(?![\\w$])`).test(keptText)) { keep[i] = true; break; }
+      }
+    });
+  }
+  const kept = chunks.filter((_, i) => keep[i]);
+  if (kept.length === 0 || kept.length === chunks.length) return chunks;
+  process.stderr.write(`  [map-reduce] ${filePath}: ${kept.length}/${chunks.length} chunks overlap the change (scope=${mode})\n`);
+  return kept;
+}
+
 // ── Audit Units ──────────────────────────────────────────────────────────────
 
 /**
@@ -219,9 +276,11 @@ export function buildDependencyGraph(files, langContext = null) {
  * @param {string[]} files - File paths to group
  * @param {number} [maxTokensPerUnit=30000] - Maximum tokens per audit unit
  * @param {number} [maxFilesPerUnit=Infinity] - Maximum files per audit unit (additive cap on top of token limit)
+ * @param {{hunksFor?: ((p: string) => Array<{startLine: number, lineCount: number}>|null)|null, mode?: string}} [scope]
+ *   Changed-chunk scoping (docs/plans/audit-out-of-diff-noise.md, item 1c). Absent or `mode: 'off'` the result is byte-identical.
  * @returns {Array<{files: string[], tokens: number, chunk?: object, strategy?: string}>}
  */
-export function buildAuditUnits(files, maxTokensPerUnit = 30000, maxFilesPerUnit = Infinity) {
+export function buildAuditUnits(files, maxTokensPerUnit = 30000, maxFilesPerUnit = Infinity, scope = null) {
   // Score and sort files
   const scored = files.map(f => {
     const absPath = path.resolve(f);
@@ -244,7 +303,8 @@ export function buildAuditUnits(files, maxTokensPerUnit = 30000, maxFilesPerUnit
       const absPath = path.resolve(file.path);
       if (fs.existsSync(absPath)) {
         const source = fs.readFileSync(absPath, 'utf-8');
-        const chunks = chunkLargeFile(source, file.path, Math.floor(maxTokensPerUnit * 0.8));
+        const allChunks = chunkLargeFile(source, file.path, Math.floor(maxTokensPerUnit * 0.8));
+        const chunks = selectChangedChunks(allChunks, file.path, scope);
         for (const chunk of chunks) {
           units.push({ files: [file.path], tokens: chunk.tokens, chunk, strategy: 'chunked' });
         }

@@ -27,6 +27,7 @@ import { setupPostgresCommand } from '../db/schema-realization.mjs';
 import { insertLearningDecision, backfillLearningOutcome, isCloudEnabled } from '../../learning-store.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, buildDecisionKey as _learningBuildKey } from '../learning/decision-logger.mjs';
 import { validateFinalizationData, validateAssembledFindings, validatePersistenceServices } from './finalization-contract.mjs';
+import { isInDiff, isPreExisting } from '../finding-scope.mjs';
 
 /**
  * Validates an R2+ ledger file for suppression input. Round < 2 is always
@@ -500,8 +501,9 @@ export async function runPersistence(data, assembled, mergedResult, persistenceS
           decision_key: decisionKey,
           outcome: {
             totalFindings: allFindings.length,
-            highKept: allFindings.filter(f => f.severity === 'HIGH' && f.adjudicationOutcome !== 'dismissed').length,
-            mediumKept: allFindings.filter(f => f.severity === 'MEDIUM' && f.adjudicationOutcome !== 'dismissed').length,
+            preExisting: allFindings.filter(isPreExisting).length,
+            highKept: allFindings.filter(f => f.severity === 'HIGH' && f.adjudicationOutcome !== 'dismissed' && isInDiff(f)).length,
+            mediumKept: allFindings.filter(f => f.severity === 'MEDIUM' && f.adjudicationOutcome !== 'dismissed' && isInDiff(f)).length,
             dismissed: allFindings.filter(f => f.adjudicationOutcome === 'dismissed').length,
             durationMs: totalLatency,
           },
