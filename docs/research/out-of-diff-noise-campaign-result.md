@@ -10,7 +10,7 @@ Replay: each audit's stored diff applied file-by-file onto its audited sha in a 
 
 ## Results
 
-Cost: **USD 38.82 measured** over 26 runs (sum of each run's `_usage.costUsd`), against a USD 15 cap and then USD 30. The preflight estimate (~USD 0.19/run) was ~8x low and spend was not watched during the batch. The over-run is the operator's error.
+Cost: **USD 38.82 measured** over 26 runs (sum of each run's `_usage.costUsd`), against a USD 15 cap and then USD 30. Measured about USD 1.50 per run (38.82 / 26) against a preflight estimate of about USD 0.19 per run (~8x low); spend was not watched during the batch. Louis accepted the over-run (2026-11-13).
 
 | Audit | `off` (counted + pre-existing, USD) | `overlap` | `referenced` |
 |---|---|---|---|
