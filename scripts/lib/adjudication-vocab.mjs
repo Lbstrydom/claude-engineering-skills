@@ -19,6 +19,20 @@ export const ADJUDICATOR_KINDS = Object.freeze(['agent', 'human', 'pipeline', 'r
 export const EVENT_ORIGINS = Object.freeze(['audit', 'campaign']);
 
 /**
+ * The `finding_adjudication_events.remediation_state` CHECK (migration
+ * 20260330063355), which is NOT NULL and therefore admits no "unknown".
+ *
+ * `audit_findings.remediation_state` is plain unconstrained TEXT (added by
+ * 20260417120000 with no CHECK), so the two columns are NOT the same
+ * vocabulary: a finding value outside this list copied straight into an event
+ * is a `23514` at INSERT time, not a lenient store. Writers coerce through
+ * `isRemediationState` before binding.
+ */
+export const REMEDIATION_STATES = Object.freeze(['pending', 'planned', 'fixed', 'verified', 'regressed']);
+
+export const isRemediationState = (v) => REMEDIATION_STATES.includes(v);
+
+/**
  * Why a finding was dismissed. `unclassified` is the explicit "the producer
  * supplied no class" value: NULL must keep meaning "not captured", and `other`
  * must keep meaning "a considered reason outside the vocabulary".

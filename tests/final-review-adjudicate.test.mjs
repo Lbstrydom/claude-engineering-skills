@@ -266,6 +266,101 @@ describe('adjudicateFinalReviewFinding — bucket resolution (integration)', { s
     assert.equal(row.remediation_state, null, 'a fix must never be recorded on a finding dismissed before the write committed');
   });
 
+  // ── a disposition must leave a ledger row (standing-queue-burndown §7.2) ──
+  //
+  // On 2026-09-14 this route closed 435 shadow-only findings in CES one at a
+  // time and `finding_adjudication_events` recorded NONE of them, so "who
+  // closed these and on what grounds" was unanswerable from the ledger
+  // AGENTS.md presents as the record. These cases pin the row it now leaves.
+
+  const eventsFor = (id) => q.many(
+    `SELECT adjudication_outcome ao, remediation_state rs, round, ruling,
+            ruling_rationale rr, event_origin, adjudicator_kind
+       FROM finding_adjudication_events WHERE finding_id = $1`, [id]);
+
+  it('a close leaves EXACTLY ONE ledger row, on both axes, with its grounds', async () => {
+    const { id } = await insRow('fpledger', 'final-review', 'shadow-only');
+    await q.query('UPDATE audit_findings SET round_raised = 3 WHERE id = $1', [id]);
+    const res = await mod.adjudicateFinalReviewFinding(
+      runId, 'fpledger', 'dismissed', { bucket: 'shadow-only', rationale: 'stale: path no longer exists' });
+    assert.equal(res.ok, true);
+
+    const evs = await eventsFor(id);
+    assert.equal(evs.length, 1, 'exactly one event — the whole point of the change');
+    const [ev] = evs;
+    assert.equal(ev.ao, 'dismissed', 'the adjudication axis');
+    assert.equal(ev.rs, 'pending', 'the remediation axis as it STOOD: this route does not fix anything');
+    assert.equal(ev.round, 3, 'round is NOT NULL with no default here — it must carry the finding\'s own');
+    assert.equal(ev.ruling, null, 'no ruling: a credit disposition is not a ruling on the auditor\'s claim');
+    assert.match(ev.rr, /stale: path no longer exists/, '--note is the grounds');
+    assert.equal(ev.event_origin, 'audit');
+    assert.equal(ev.adjudicator_kind, 'human', 'WHO decided is the axis that separates this from a pipeline ruling');
+    // Negative control: the finding's own columns must still be written too —
+    // an event alone would be a different bug wearing this fix's clothes.
+    const row = await q.one('SELECT user_action ua, adjudication_outcome ao FROM audit_findings WHERE id = $1', [id]);
+    assert.deepEqual(row, { ua: 'dismissed', ao: 'dismissed' });
+  });
+
+  it('re-adjudicating REPLACES this workflow\'s row and leaves other provenance alone', async () => {
+    const { id } = await insRow('fprepeat', 'final-review', 'shadow-only');
+    await q.query(
+      `INSERT INTO finding_adjudication_events
+         (finding_id, adjudication_outcome, remediation_state, round, event_origin, adjudicator_kind)
+       VALUES ($1, 'accepted', 'pending', 1, 'audit', 'pipeline')`, [id]);
+
+    await mod.adjudicateFinalReviewFinding(runId, 'fprepeat', 'dismissed', { bucket: 'shadow-only' });
+    await mod.adjudicateFinalReviewFinding(runId, 'fprepeat', 'accepted', { bucket: 'shadow-only' });
+
+    const evs = await eventsFor(id);
+    assert.equal(evs.length, 2, 'one human row (replaced, not accumulated) + the pipeline ruling');
+    const human = evs.filter((e) => e.adjudicator_kind === 'human');
+    assert.equal(human.length, 1);
+    assert.equal(human[0].ao, 'accepted', 'the latest disposition, not the first');
+    assert.equal(evs.filter((e) => e.adjudicator_kind === 'pipeline').length, 1,
+      'the pipeline\'s own ruling is separate provenance and must survive');
+  });
+
+  it('carries a terminal remediation_state forward, and coerces an out-of-vocabulary one', async () => {
+    // `audit_findings.remediation_state` is unconstrained TEXT; the event
+    // column is a closed 5-value CHECK. Copying straight across is a 23514.
+    const { id: fixed } = await insRow('fpfixed0', 'final-review', 'shadow-only');
+    await q.query(`UPDATE audit_findings SET remediation_state = 'fixed' WHERE id = $1`, [fixed]);
+    await mod.adjudicateFinalReviewFinding(runId, 'fpfixed0', 'accepted', { bucket: 'shadow-only' });
+    assert.equal((await eventsFor(fixed))[0].rs, 'fixed');
+
+    const { id: bogus } = await insRow('fpbogus0', 'final-review', 'shadow-only');
+    await q.query(`UPDATE audit_findings SET remediation_state = 'not-a-state' WHERE id = $1`, [bogus]);
+    const res = await mod.adjudicateFinalReviewFinding(runId, 'fpbogus0', 'accepted', { bucket: 'shadow-only' });
+    assert.equal(res.ok, true, 'an unconstrained finding value must not break the write');
+    assert.equal((await eventsFor(bogus))[0].rs, 'pending');
+  });
+
+  it('a failed event write ROLLS BACK the disposition — never a closed finding with no record', async () => {
+    // Fault injection, because the failure mode is the design decision: the two
+    // writes share a transaction, so the bad state this closes is unreachable.
+    const { id } = await insRow('fprollbk', 'final-review', 'shadow-only');
+    await q.query(`CREATE OR REPLACE FUNCTION test_fae_refuse() RETURNS trigger AS $$
+                   BEGIN RAISE EXCEPTION 'injected'; END; $$ LANGUAGE plpgsql`);
+    await q.query(`CREATE TRIGGER test_fae_refuse_trg BEFORE INSERT ON finding_adjudication_events
+                   FOR EACH ROW EXECUTE FUNCTION test_fae_refuse()`);
+    try {
+      const res = await mod.adjudicateFinalReviewFinding(runId, 'fprollbk', 'dismissed', { bucket: 'shadow-only' });
+      assert.equal(res.ok, false, 'the caller must be told, loudly');
+      assert.match(res.reason, /db-error/);
+    } finally {
+      await q.query('DROP TRIGGER IF EXISTS test_fae_refuse_trg ON finding_adjudication_events');
+      await q.query('DROP FUNCTION IF EXISTS test_fae_refuse()');
+    }
+    const row = await q.one('SELECT user_action ua, decided_at da FROM audit_findings WHERE id = $1', [id]);
+    assert.deepEqual(row, { ua: null, da: null }, 'the finding must be exactly as it was');
+    assert.equal((await eventsFor(id)).length, 0);
+    // Vacuous-pass guard: the same call succeeds once the trigger is gone, so
+    // the assertion above measures the rollback and not a broken fixture.
+    const ok = await mod.adjudicateFinalReviewFinding(runId, 'fprollbk', 'dismissed', { bucket: 'shadow-only' });
+    assert.equal(ok.ok, true);
+    assert.equal((await eventsFor(id)).length, 1);
+  });
+
   // Deliberately NOT adding an "adjudicate then replay" case here (plan
   // deviation, noted): this suite's fixture hardcodes pass_name='final-review'
   // for every row regardless of bucket (see `ins()` above), which is not the

@@ -27,6 +27,7 @@ import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 import { findingKeyString, selectFindingRow } from './finding-identity.mjs';
 import { applyFindingWrite } from './finding-write.mjs';
+import { applyFinalReviewDisposition } from './adjudication-events.mjs';
 import { captureIdentityColumns } from './capture-identity.mjs';
 import { detectClassificationColumns, detectPassStatsRoundColumn, probeColumnExistence, columnExists, strictColumnExists } from './column-probes.mjs';
 export { _resetClassificationColumnCache, _resetPassStatsRoundColumnCache, _resetRunReadColumnCache } from './column-probes.mjs';
@@ -1345,13 +1346,10 @@ export async function adjudicateFinalReviewFinding(runId, fingerprint, action, o
     // 4) — never by re-deriving a `(run_id, fingerprint, bucket)` predicate a
     // second time, which leaves a TOCTOU window between "which row did we
     // mean" and "which row did we actually update".
-    const res = await query(
-      `UPDATE audit_findings
-          SET user_action = $2, adjudication_outcome = $3, decided_at = NOW()
-        WHERE id = $1`,
-      [resolved.id, userAction, outcome]
-    );
-    const updated = res.rowCount ?? 0;
+    // Disposition + ledger row in ONE transaction (applyFinalReviewDisposition):
+    // a close that leaves no `finding_adjudication_events` row is what made the
+    // 2026-09-14 sweep of 435 findings unreconstructable — plan §7.2.
+    const updated = await applyFinalReviewDisposition(resolved.id, { userAction, outcome, rationale: opts.rationale });
     if (updated === 0) {
       // Reachable only on a concurrent delete between the probe and the write.
       return { ok: false, updated: 0, cloud: true, reason: 'no-rows-affected' };
@@ -2265,6 +2263,9 @@ export async function recordSuppressionEvents(runId, suppressionResult) {
 
 // ── finding_adjudication_events ────────────────────────────────────────────
 // Moved to ./adjudication-events.mjs (own-model telemetry slice 1; this file may not grow).
+// `applyFinalReviewDisposition`/`buildCreditLedgerRow` are deliberately NOT re-exported:
+// they are adjudicateFinalReviewFinding's own collaborators, not public store API, and
+// this line is inside learning-store.mjs's `export *` reach (tests/learning-store-exports).
 export { buildFindingAdjudicationPatch, adjudicationEventRefusal, recordAdjudicationEvent } from './adjudication-events.mjs';
 
 // ── Fix-lifecycle projection (docs/plans/remediation-state-fix-lifecycle.md) ──

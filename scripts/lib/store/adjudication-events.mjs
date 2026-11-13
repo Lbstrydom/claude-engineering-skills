@@ -13,7 +13,126 @@ import { isCloudEnabled } from './repo.mjs';
 import { selectFindingRow } from './finding-identity.mjs';
 import { strictColumnExists } from './column-probes.mjs';
 import { captureV1Present, redactAndCapText } from './capture-identity.mjs';
-import { isAdjudicatorKind, isDismissReasonClass, fixOrderFlag, isTerminalFixState } from '../adjudication-vocab.mjs';
+import { isAdjudicatorKind, isDismissReasonClass, fixOrderFlag, isTerminalFixState, isRemediationState } from '../adjudication-vocab.mjs';
+
+/**
+ * The ledger row a final-review credit disposition leaves behind, as a pure
+ * function of the finding's pre-state and the disposition. Exported so the
+ * column-level contract (which NOT NULL columns are filled, and with what) is
+ * testable without a database.
+ *
+ * **Why each field is what it is.**
+ * - `remediation_state` is **NOT NULL with no default** on this table, so an
+ *   omitted field is a `23502`, never a silent no-op. The honest value is the
+ *   remediation axis AS IT STOOD when the disposition was taken — this route
+ *   does not touch that axis — coerced to `'pending'` when the finding carries
+ *   nothing valid, because `audit_findings.remediation_state` is unconstrained
+ *   TEXT and this column is a closed 5-value CHECK.
+ * - `round` is likewise NOT NULL with no default here, while
+ *   `audit_findings.round_raised` is NOT NULL DEFAULT 1 — the finding's value
+ *   always exists, so carry it.
+ * - `ruling` stays NULL **deliberately**. `sustain`/`overrule` are rulings on an
+ *   auditor's claim and are read by the R2+ rulings injection; a credit-queue
+ *   disposition establishes who closed the finding, not that a claim was
+ *   adjudicated on its merits, and writing one would silently widen suppression.
+ * - `created_at` is NOT NULL **with** `DEFAULT NOW()` — the one column here
+ *   where omission IS a silent no-op, and the wanted one: it takes the same
+ *   server clock as the finding's `decided_at = NOW()` in the same transaction.
+ *
+ * @param {{remediation_state?: string|null, round_raised?: number|null}} pre
+ * @param {{outcome: string, rationale?: string|null}} disposition
+ * @returns {Record<string, unknown>}
+ */
+export function buildCreditLedgerRow(pre, { outcome, rationale }) {
+  return {
+    adjudication_outcome: outcome,
+    remediation_state: isRemediationState(pre?.remediation_state) ? pre.remediation_state : 'pending',
+    round: pre?.round_raised ?? 1,
+    ruling: null,
+    ruling_rationale: redactAndCapText(rationale || `final-review credit queue: ${outcome}`),
+  };
+}
+
+/**
+ * Apply a final-review credit disposition to one finding AND record its ledger
+ * row, in ONE transaction.
+ *
+ * **Why this exists.** `adjudicateFinalReviewFinding` wrote the finding's
+ * columns and nothing else, so a close left no trace outside the row it
+ * changed. On 2026-09-14 that route closed 435 shadow-only findings in this
+ * repo one at a time (435 distinct `decided_at` values over thirteen hours) and
+ * `finding_adjudication_events` holds nothing for any of them — "who closed
+ * these and on what grounds" was unanswerable from the ledger AGENTS.md
+ * presents as the record (docs/plans/standing-queue-burndown.md §7.2).
+ *
+ * **`event_origin: 'audit'`, `adjudicator_kind: 'human'` — not a new origin.**
+ * The origin names the WORKFLOW that owns the row, and there are two:
+ * the audit-loop tooling's own path and the comparison campaigns' (campaign
+ * rows always carry `method`). A credit disposition comes through the first.
+ * What distinguishes it from a pipeline ruling is WHO decided, and the `kind`
+ * axis already carries that — `'human'` is exactly an operator working the
+ * worksheet. A third origin value would need a CHECK-widening migration plus a
+ * constraint probe for consumer stores that have not run it, to express
+ * something the existing `(origin, kind)` pair already expresses.
+ *
+ * **Failure mode: atomic, loud, not `durableWrite`.** Both writes are one
+ * logical fact, so they share a transaction: a failed event INSERT rolls the
+ * disposition back and the caller gets its existing `{ok:false, reason:
+ * 'db-error: …'}`. The tradeoff is real — a store that can take the UPDATE but
+ * not the INSERT now fails where it used to succeed. It is the right way round:
+ * this is an explicit operator CLI action, retried in seconds, never a push
+ * gate, so a loud refusal costs one retry while the old behaviour cost an
+ * untraceable close. The spill/lost vocabulary is for the audit run's
+ * fire-and-forget telemetry, where losing a write must not kill a long paid
+ * run; there is no long run here and nothing to reconcile later.
+ *
+ * Idempotent: re-adjudicating replaces this workflow's own prior row
+ * (`event_origin = 'audit'` AND `adjudicator_kind = 'human'`), leaving campaign
+ * provenance and the pipeline's own rulings untouched.
+ *
+ * @param {string} findingId
+ * @param {{userAction: string, outcome: string, rationale?: string|null}} disposition
+ * @returns {Promise<number>} rows updated (0 = the finding vanished under us)
+ */
+export async function applyFinalReviewDisposition(findingId, { userAction, outcome, rationale = null }) {
+  // Probed separately (cached): `adjudicator_kind` landed 20260811, `event_origin`
+  // 20261026, so a store can legitimately have the first and not the second. On a
+  // store with neither there is NO discriminator, and this route then appends
+  // rather than replacing — a duplicate ledger row is ugly, where the delete-all
+  // the legacy path would need is lossy, and lossy is the thing being fixed.
+  const hasKind = await strictColumnExists('finding_adjudication_events', 'adjudicator_kind', many, isCloudEnabled);
+  const hasOrigin = await strictColumnExists('finding_adjudication_events', 'event_origin', many, isCloudEnabled);
+  return withTx(async () => {
+    // audit_findings FIRST, then the event — the lock order every other writer
+    // here takes (the reverse deadlocked against the remediation projection).
+    const pre = await one(
+      'SELECT remediation_state, round_raised FROM audit_findings WHERE id = $1 FOR UPDATE', [findingId]);
+    if (!pre) return 0;
+    const res = await query(
+      `UPDATE audit_findings
+          SET user_action = $2, adjudication_outcome = $3, decided_at = NOW()
+        WHERE id = $1`,
+      [findingId, userAction, outcome]
+    );
+    const updated = res.rowCount ?? 0;
+    if (updated === 0) return 0;
+    if (hasKind) {
+      // Scoped to this workflow's own rows. The pipeline's rulings
+      // (`adjudicator_kind` 'pipeline' or legacy NULL) and campaign provenance
+      // (`event_origin = 'campaign'`) are separate records and survive.
+      await query(`DELETE FROM finding_adjudication_events
+                    WHERE finding_id = $1 AND adjudicator_kind = 'human'
+                      AND (${hasOrigin ? "event_origin = 'audit'" : 'method IS NULL'})`, [findingId]);
+    }
+    await insertReturning('finding_adjudication_events', {
+      finding_id: findingId,
+      ...buildCreditLedgerRow(pre, { outcome, rationale }),
+      ...(hasKind ? { adjudicator_kind: 'human' } : {}),
+      ...(hasOrigin ? { event_origin: 'audit' } : {}),
+    });
+    return updated;
+  });
+}
 
 /**
  * Build the denormalised `audit_findings` patch for an adjudication event.
