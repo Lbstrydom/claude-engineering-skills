@@ -14,6 +14,13 @@
   pre-burndown 2026-08-28 levels (Q1 95, Q2 91). Q2's out-of-band reconciler
   (`node scripts/remediation-reconcile.mjs`, dry run) examined **2** of 640
   eligible rows: it fetches 200, and 192 of those cite no diffable file.
+- **Re-measured 2026-11-13** (each queue's own command, measured, `scope.mode:
+  repo`; Q3 reports `state: ready`): Q1 **82 code** / 26 plan (+1012 aged) before
+  pass 3 and **65 code** / 26 plan after it; Q2 **47 code** / 36 plan
+  (`total` 83, 54 accepted-permanent); Q3 **35** actionable (0 unadjudicated,
+  35 accepted-unfixed). Q1 and Q2 code halves are both *below* the 2026-10-11
+  figures (95, 116) — ordinary work and an unrecorded Q2/Q3 adjudication
+  closed rows between measurements; this pass did not touch Q2/Q3.
 - **A fourth queue is now measurable and is NOT tracked here** (see §5): the
   local-vs-store debt divergence, closed 2026-09-04 by
   `docs/plans/backlog-and-drift-reduction.md`. It had **37 debt entries existing
@@ -158,11 +165,63 @@ the writer refuses a missing path or an empty rationale.
 burndown pass in between, so ordinary work is closing a few; the aged-out
 population grew 185→190 over the same window.
 
+**Burndown pass 3, 2026-11-13** (one session, bounded at 25 rows). Re-measured
+first: `byMode.total` **108** — **82 code**, 26 plan (the CLI's `byMode.code` is
+the count; the 20-row pages listed 83 code rows — one more than the count, not
+reconciled: read the count field, do not add up pages). The queue had re-grown 26→82 since 2026-09-04. All 83 listed code rows
+are `HIGH` and were fixed between 2026-11-02 and 2026-11-13 (34 on 11-02, 29 on
+11-08, 8 on 11-09, 11 on 11-11, 1 on 11-13) — i.e. the whole count sits inside
+the 14-day nudge window, so it is a flow of recent fixes, not an old backlog; the
+old backlog is the separate `agedOutByMode` population (code 610, plan 402).
+Worked **25 rows** — all 13 on `scripts/lib/audit/canary.mjs` and all 12 on the
+two run-heartbeat files (`scripts/run-heartbeat.mjs`, `scripts/lib/run-heartbeat.mjs`),
+chosen because each pair has one colocated test file written with the fix. The
+other 57 code rows were **not examined** (bound reached, not a verdict).
+
+- **17 locked** via `lock-with-test` (12 canary → `tests/audit-canary.test.mjs`,
+  5 heartbeat → `tests/run-heartbeat.test.mjs`). Before locking, each claim was
+  checked three ways: the test body was read and the asserting line identified;
+  the test file was run green (47 tests, 0 fail); and a **negative control** was
+  run per behavior — the fix was reverted in the source (one mutation each, 10
+  in all, restored with the tree clean) and the cited test had to fail, which it
+  did every time. The mutation script is not committed; it is a one-shot
+  instrument, not a promoted check.
+- **8 left open**, each for a stated reason:
+  - `0467782f` (`Math.max(...times)` over a long journal) — the code **is** fixed
+    (a loop, with a comment), but no test pins it. The >1 MB journal test has
+    ~18,000 entries, well under the argument limit, and reverting the loop to
+    `Math.max(...times)` **leaves the suite green** (mutation H5). A same-named
+    test that cannot fail is not a lock. Needs a >130k-entry journal, or a
+    test of `assessJournal` on a synthetic array.
+  - `555a5400`, `e35fb293`, `eb199896`, `d231020c`, `d276e881` — the
+    `run` wrapper's failure paths (pid not recorded → child killed and exit
+    forced non-zero; end record not durable → exit forced non-zero) are fixed in
+    the code (`untracked`, `finish`) but **no test injects an append failure**.
+    A small test is feasible (a child that removes its own journal) and is the
+    natural next step; it was out of this pass's scope as written.
+  - `0be0d59e` — backpressure is now handled by `pipe()`; nothing tests it.
+  - `a64b461f` — **not a lock candidate, and arguably wrong as a finding**: it
+    asks that a finding citing the canary path only in `detail`/`recommendation`
+    be stripped, while the adopted design (and `c165e79e`, locked above) keeps
+    real-file findings that merely mention the canary. The two findings
+    contradict; the test asserts the latter. This is a declined-on-the-merits
+    candidate, left as such because the queue still has no writer for it.
+- **Not examined** (57 by the count; the paged listing showed 83 code rows
+  against a count of 82 and the extra row was not reconciled): prepush
+  snapshot/audit-gate/installer cluster 11, `campaign-contract` 7,
+  `skills/audit-plan/SKILL.md` 7, `skill-frontmatter-layout` 5,
+  `pinned-worktree` 4, `ci-verdict` 4, `check-setup` 4, `azure-doctor` 3, and
+  singletons. Several are skill-prose rows (SKILL.md / reference docs), which
+  `lock-with-test` fits poorly; that is a question for the next pass.
+- **Post-pass**: `byMode.code` **65** (82→65, −17), `byMode.total` 91, re-read
+  with the same command after the locks were recorded.
+
 **Exit criterion**: `byMode.code` reaches 0, or each remaining row carries a
 recorded lock or an explicit declined-on-the-merits note. Plan rows are
-excluded from the criterion by construction. **Not met** — **26 code rows** at
-the 2026-09-04 re-measure (95→33→28→26); the queue also grows between passes as
-new audits land, so 0 is a moving target, not a one-time close-out.
+excluded from the criterion by construction. **Not met** — **65 code rows** at
+the 2026-11-13 re-measure (95→33→28→26→82→65); the queue also grows between
+passes as new audits land (26→82 in ten weeks), so 0 is a moving target, not a
+one-time close-out.
 
 > **The `declined-on-the-merits` outcome this criterion names has no writer.**
 > `lock-with-test` records a lock; nothing records a reasoned decline, so the
@@ -259,6 +318,10 @@ in-flight, not forgotten; drop it from the list.
 plan; `byDisposition.acceptedPermanent` **50**; `agedOut` 17 (HIGH 3, MEDIUM
 14); `notYetDue` 75. The code half fell 90→80 since 2026-08-28.
 
+**Re-measured 2026-11-13**: `total` **83** open — `byMode` **47 code** / 36
+plan; `byDisposition.acceptedPermanent` **54**; `agedOut` 740; `notYetDue` 19.
+Code half 80 (09-04) → 116 (10-11) → 47. Not worked in pass 3.
+
 **Exit criterion**: the reader reports a true total, and that total reaches 0
 or every remaining row is `planned` against a live plan. **Not met** — **80
 code rows** at the 2026-09-04 re-measure (94→91→90→80).
@@ -322,6 +385,12 @@ Bake-Off plan that inherited it is Complete. It returns here.
 for an unadjudicated finding, `record-fix` for an accepted-but-unfixed one, and
 the Bake-Off's `final-review-stats --repo <name> --worksheet --bucket
 shadow-only` worksheet remains the ergonomic way to work a batch.
+
+**Re-measured 2026-11-13**: `counts.totalActionable` **35** (`state: ready`) —
+0 unadjudicated, 35 accepted-unfixed, 0 fixed-unlabelled, 0 regressed
+(486 at re-adoption, 449 of them unadjudicated). The unadjudicated half was
+adjudicated between 2026-09-04 and now; who and how was not investigated here.
+Not worked in pass 3.
 
 **Exit criterion**: `counts.totalActionable` reaches 0, or each remaining row
 carries a recorded adjudication. **Not met** — 486 actionable at re-adoption
