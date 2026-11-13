@@ -788,6 +788,14 @@
       "description": "Drift gate for un-drained stdout exits (part of `npm run check`). On Windows a piped process.stdout is async — npm run, | tee and every CI capture are pipes — so process.exit() discards whatever has not flushed; the fix is await finishAndExit(code) from lib/cli-io.mjs. A detector-first census on 2026-09-04 found 221 reachable sites across 100 files, 108 carrying a JSON envelope a caller parses, where truncation reads as a parse error in the wrong place. Fails on a NET-NEW site and on an unrecorded shrink. stderr writes and the --selfcheck-relocation smoke contract are deliberately not findings. Baseline: .stdout-flush-baseline.json.",
       "category": "diagnostic"
     },
+    "windowed-views": {
+      "description": "List every store view the migrations define and whether it is TIME-WINDOWED — its result depends on now(), directly or through a view it reads. Report-only (exit 0). Windowedness propagates: unremediated_acceptances names no clock at all, it reads `FROM unremediated_acceptances_all WHERE is_recent`, which is why a literal grep calls it stable.",
+      "category": "diagnostic"
+    },
+    "windowed-views:gate": {
+      "description": "Every windowed store view must declare its window in .windowed-views.json, with what a caller may compare across time instead (part of `npm run check`). A count over a rolling window is a snapshot of a rotating cohort: measured 2026-11-13, unremediated_acceptances fell 116 → 47 code rows over five weeks while the two windows shared 0 rows and 110 of the 116 were still open — both figures reproduced exactly. Fails on an undeclared windowed view AND on a declaration for a view that is no longer windowed.",
+      "category": "diagnostic"
+    },
     "stdout:flush:report": {
       "description": "The full stdout-flush census, triaged by payload: envelope (a JSON.stringify/emit body a caller parses — truncation misattributes the error) before text (a report whose tail is merely lost). Report-only ordering; the gate itself is triage-blind, because a net-new site is drift whichever payload it carries.",
       "category": "diagnostic"

@@ -88,6 +88,14 @@ export const ARCHIVE_LANE_CHECK_CLASSIFICATION = Object.freeze({
   'cli:flags:gate': S('drift-only ratchet'),
   'emit:exit:gate': S('drift-only ratchet'),
   'stdout:flush:gate': S('drift-only ratchet'),
+  // Not P: it reads only tracked `supabase/migrations/**` and the committed
+  // `.windowed-views.json` and judges whether a declaration is complete — it never
+  // inspects the content being pushed, so nothing it can find is a reason the
+  // commits must not become public. Probe measured 2026-11-13 against 3c0afc4e:
+  // the same six views classify as windowed there, and the manifest predates the
+  // branch, so the gate exits 2 (missing declaration) — the pre-declaration state,
+  // not a defect in the archived commits.
+  'windowed-views:gate': S('windowed store views declare their window', 'FAIL'),
   'knip:gate': S('drift-only ratchet'),
   'size:ratchet:gate': S('drift-only ratchet'),
   'skills:size:gate': S('drift-only ratchet'),

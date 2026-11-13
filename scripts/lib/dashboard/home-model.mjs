@@ -159,10 +159,25 @@ const FMT = {
   'queue-upstream': (v) => `${v.total}${v.partial ? '+' : ''}`,
 };
 
-/** Queue chip: ok = measured and <= previous; warn = grew; no previous line = neutral. */
+/**
+ * Queue chip: ok = measured and <= previous; warn = grew; no previous line = neutral.
+ *
+ * A WINDOWED queue never compares. Its view is a rolling window on
+ * `audit_runs.created_at`, so rows leave it by aging out and a fall between two
+ * `Backlog` lines is not closure — measured 2026-11-13, the two Q2 windows shared
+ * 0 rows while 110 of the 116 in the older one were still open
+ * (`docs/plans/standing-queue-burndown.md` §7). The collector withholds `previous`
+ * for those; this branch says WHY, so the chip does not read as "no baseline yet".
+ */
 function gradeQueue(m) {
   const value = FMT[m.id](m.value);
   const prev = m.previous;
+  if (m.windowed === 'yes') {
+    return { state: 'neutral', value, detail: 'a rolling time window: rows age out, so a change since the previous line is not progress — compare the cohort (.windowed-views.json names what is comparable)' };
+  }
+  if (m.windowed === 'unknown') {
+    return { state: 'neutral', value, detail: 'could not read .windowed-views.json, so whether this queue is a rolling window is unknown and no comparison is claimed' };
+  }
   if (!prev || !Number.isFinite(prev.total)) {
     return { state: 'neutral', value, detail: 'no previous Backlog line in status.md to compare with' };
   }

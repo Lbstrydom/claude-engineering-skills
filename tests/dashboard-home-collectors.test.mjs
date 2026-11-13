@@ -100,13 +100,38 @@ describe('collectQueues', () => {
     assert.equal(byId(card, 'queue-upstream').value.oldestAt, '2026-08-01T00:00:00.000Z');
   });
 
-  test('trend comes from the newest Backlog line in status.md', async () => {
-    const statusText = '## 2026-10-06 — x\nBacklog 2026-10-06T04:56Z: Q1 20c/5p (+3 aged) · Q2 89c/42p (54 perm) · Q3 35 · debt unmeasured · upstream 1\n';
-    const card = await collectQueues(tmp(), { run: okRun, repo: 'owner/repo', statusText, now: NOW });
-    assert.deepEqual(byId(card, 'queue-q1').previous, { total: 25, code: 20, partial: false });
-    assert.equal(byId(card, 'queue-q1').previousAt, '2026-10-06T04:56:00Z');
+  const STATUS_LINE = '## 2026-10-06 — x\nBacklog 2026-10-06T04:56Z: Q1 20c/5p (+3 aged) · Q2 89c/42p (54 perm) · Q3 35 · debt unmeasured · upstream 1\n';
+
+  test('trend comes from the newest Backlog line in status.md (for the queues that are comparable)', async () => {
+    const card = await collectQueues(tmp(), { run: okRun, repo: 'owner/repo', statusText: STATUS_LINE, now: NOW });
     assert.equal(byId(card, 'queue-q3').previous.total, 35);
+    assert.equal(byId(card, 'queue-q3').previousAt, '2026-10-06T04:56:00Z');
     assert.equal(byId(card, 'queue-debt').previous, null, 'a queue that was unmeasured then has no baseline');
+  });
+
+  // A rolling window rotates its rows, so two Backlog lines weeks apart are disjoint
+  // cohorts: Q2 fell 116 -> 47 over five weeks with 0 rows shared and 110 of the 116
+  // still open (docs/plans/standing-queue-burndown.md §7). The delta must not exist.
+  test('a WINDOWED queue carries no previous value, however good the Backlog line is', async () => {
+    const card = await collectQueues(tmp(), { run: okRun, repo: 'owner/repo', statusText: STATUS_LINE, now: NOW });
+    for (const id of ['queue-q1', 'queue-q2']) {
+      assert.equal(byId(card, id).windowed, 'yes', id);
+      assert.equal(byId(card, id).previous, null, `${id}: aging out is not closure, so there is nothing to compare`);
+      assert.equal(byId(card, id).previousAt, null, id);
+    }
+    assert.equal(byId(card, 'queue-q3').windowed, 'no');
+  });
+
+  test('the windowed set is the committed .windowed-views.json, not a constant here', async () => {
+    const card = await collectQueues(tmp(), {
+      run: okRun, repo: 'owner/repo', statusText: STATUS_LINE, now: NOW, manifestRoot: tmp(),
+    });
+    // No manifest where we pointed it: "which queues rotate" is UNKNOWN, and an
+    // unasked question must not render as a comparison.
+    for (const id of ['queue-q1', 'queue-q2', 'queue-q3']) {
+      assert.equal(byId(card, id).windowed, 'unknown', id);
+      assert.equal(byId(card, id).previous, null, id);
+    }
   });
 
   test('the store unreachable (REAL capture replayed): every queue missing-optional, kind store-unreachable, none a zero', async () => {
@@ -144,13 +169,13 @@ describe('collectQueues', () => {
     const statusText = 'Backlog 2026-10-06T04:56Z: Q1 20c/5p · Q2 89c/42p · Q3 35 · debt unmeasured · upstream 5+\n';
     const card = await collectQueues(tmp(), { run: okRun, repo: 'owner/repo', statusText, now: NOW });
     assert.deepEqual(byId(card, 'queue-upstream').previous, { total: 5, partial: true });
-    assert.equal(byId(card, 'queue-q1').previous.partial, false);
+    assert.equal(byId(card, 'queue-upstream').windowed, 'no');
   });
 
   test('H6c: a truncated status.md head is a prefix: its cut final line is not parsed as the latest Backlog line', async () => {
     const full = 'Backlog 2026-10-06T04:56Z: Q1 20c/5p · Q2 89c/42p · Q3 35 · debt unmeasured · upstream 1';
     const card = await collectQueues(tmp(), { run: okRun, repo: 'owner/repo', statusText: `${full.slice(0, 40)}`, statusCapped: true, now: NOW });
-    assert.equal(byId(card, 'queue-q1').previous, null);
+    assert.equal(byId(card, 'queue-q3').previous, null);
   });
 
   test('no valid repo slug: Q3 is not asked and is unmeasured', async () => {

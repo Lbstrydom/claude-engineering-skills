@@ -4,9 +4,10 @@ summary: Verification discipline — pinned citations, figure provenance, two-di
 
 # Verification Discipline
 
-Seven rules, each led by its measurement, because the measurement is the
-argument. Six outlived the engagement that produced them; §7 was added later,
-from the lens-coverage-honesty work. Field report:
+Eight rules, each led by its measurement, because the measurement is the
+argument. Six outlived the engagement that produced them; §7 came from the
+lens-coverage-honesty work and §4a from a queue that fell without being worked.
+Field report:
 `wine-cellar-app/docs/upstream-issues/claude-engineering-skills-feedback-2026-08-07.md`; design + audit trail:
 [`docs/plans/verification-discipline-cluster.md`](../../plans/verification-discipline-cluster.md).
 
@@ -342,6 +343,37 @@ artefact that misleads.
 **Chronological proximity is not causation** — and the reverse trap is just as
 live: in the same engagement a campaign credited with enabling a migration began
 **ninety minutes after** the migration merged.
+
+---
+
+### 4a. Reproducing a figure twice is not a trend — the population must be stable
+
+> **Measured**: a queue reported **116** code rows on 2026-10-11 and **47** on
+> 2026-11-13, and the fall was reported as a backlog being worked down. The two
+> reads share **0 rows**, and **110 of the 116 are still open and unremediated**.
+> Its sibling queue is the same shape: of **95** rows reported, **96** are still
+> unlocked — one *more*, not fewer.
+
+Both figures were right. An independent SQL cross-check reproduced the 47 exactly
+and the positive control passed. §4 asks whether a delta's *cause* is what you
+credited; **this asks whether there is a delta at all** — two counts over a
+rotating population can describe disjoint cohorts.
+
+**The mechanical test**: *does the reader's result depend on `now()`?* If the
+source filters on a clock — `created_at > now() - interval '14 days'`, "last 30
+days", "open this sprint" — rows leave it by **aging**, and a fall is not closure.
+Ask it of the LIVE definition (`pg_views`, not the migration that introduced it)
+and ask it **transitively**: the view at the centre of the measured case names no
+clock at all — `SELECT * FROM <parent>_all WHERE is_recent` — so a literal grep
+called it stable.
+
+**Then say which you have.** Stable → a delta is a trend. Windowed → name the
+cohort (a date range both reads share), or compare a quantity aging cannot reduce
+(here, `count + agedOut`), and label the raw count windowed. Cannot tell →
+`unverified`, never "flat" or "improved".
+
+**The tell** is a delta nobody worked for. Ask of any improvement you did not do:
+*which rows left, and where did they go?*
 
 ---
 

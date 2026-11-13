@@ -486,6 +486,14 @@ const MANDATORY = {
   // between depths — 47 links were dead in the generated copies and in every
   // consumer while resolving perfectly from the file their author had open.
   'docs:synced-links:gate': ['docs-synced-links-gate-rejects-a-relative-link-that-leaves-the-closure'],
+  // Added 2026-11-13 with the gate itself. Post-2026-07-31, so a pill is
+  // mandatory. The defect it closes is not a broken reader but a correct one:
+  // `unremediated_acceptances` fell 116 -> 47 over five weeks and both the CLI
+  // and an independent SQL cross-check reproduced the 47 exactly — while the two
+  // windows shared 0 rows and 110 of the 116 were still open. The pill drops
+  // that view from the declaration, and it is the view whose own body names no
+  // clock, so a gate that only grepped the migrations would pass the fixture.
+  'windowed-views:gate': ['windowed-views-gate-rejects-an-undeclared-windowed-view'],
 };
 
 test('every gate the plan made mandatory is contracted — not quietly exempted', () => {
