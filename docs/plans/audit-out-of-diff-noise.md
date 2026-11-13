@@ -110,11 +110,11 @@ Convergence baseline (8d, `expected` source = the coordinator's brief, 2026-11-1
 - **ledger**: `docs/plans/audit-out-of-diff-noise.md` §6 (below), reported to the CES coordinator before merge.
 
 ### C11 — Done means artifact
-- **done-evidence**: `docs/research/out-of-diff-noise-campaign-result.md` (planned)
+- **done-evidence**: `docs/research/out-of-diff-noise-campaign-result.md`
 - (Per-arm tables, the corpus hash and the access record are committed with it; the PR for 8a + the mechanism is not "done" for 1c's default.)
 
 ### C12 — Close-out claims check
-- **claims-check**: `docs/research/out-of-diff-noise-campaign-result.md` (planned)
+- **claims-check**: `docs/research/out-of-diff-noise-campaign-result.md`
 
 ## 5. Verification
 
