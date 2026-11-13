@@ -405,6 +405,45 @@ A terminal stop never auto-retries.
 
 **Not yet audited.** This section was added after the plan's GPT cap (5 rounds) and Gemini cap (2 rounds) were used. Its train-side half (Phase 8) gets a focused `/audit-plan` when it is scheduled. No audit now (coordinator ruling): Cluster A ships first.
 
+#### 2.10a The thinness metric, specified (Cluster D, 2026-11-13)
+
+*Prerequisites, checked against the code at `70621fea`:* Cluster B is on main (fleet records each pre-land tier as `train.tierResults[] = {name, result, logPath, reran?}`, `scripts/lib/fleet/train.mjs:465`). The gate-cost plan has published the selection query (`docs/plans/gate-cost-slice-2.md` §2.6): `node scripts/test-tier.mjs select --head <sha> --base <sha> --json`, exit 0 with `measured:true` and `skipped[]`, exit 3 with `{measured:false, reason}`. Its predicate is `thin(T) = r.measured && r.skipped.includes(T)`. `run-tests.mjs` already prints one machine line on every failing run, `run-tests/v1 failed-files: <JSON array> | unknown` (`scripts/lib/failed-files-marker.mjs`), so the failing test files need no new record.
+
+**Inputs, all owned by someone else, none persisted here (§2.8):**
+1. **What the combined run failed on.** For each pre-land tier in `train.tierResults`, the attempts that failed: a `red` result's attempts, and attempt 1 of a `green-after-rerun`. Fleet's tier log (`logPath`) separates attempts with its own `--- fleet: tier <name> attempt <n> at … ---` header. Within a failed attempt's section, the **last** `run-tests/v1 failed-files:` line names its failing files.
+2. **What the branch tier would have skipped**, per train source, at the head the train tested (`sources[].oid`). The base is that head's **fork point from the train's base**, `git merge-base <train.baseOid> <oid>`. The gate-cost plan said "Cluster D passes the train's base", but `select` refuses a base that is not an ancestor of the head, and a PR forked before the train's base never descends from it. The fork point is the base `select` itself defaults to (D4).
+
+**What `select` fixes, and what it reads from where (R1 M2).** `select` reads the tree and `.test-tiers.json` (policy and heavy list) from git objects **at the head**, and judges the list's age at the head's committer time. It reads nothing from the working tree, so the policy and test inventory are the source's own. The one input from the querying checkout is the **selector code**, and `select` refuses (`measured:false`) when that code's blob shas at the head differ from the checkout's. So a measured answer is reproducible from `(head, base)` by construction, and an old head after a selector change reads `unmeasured`. The metric carries each answer's `selector` and `manifest` identity into its output, and it is labelled a **counterfactual**: what the branch tier would select for that head, not what a particular push ran.
+
+**Per (failing file `T`, source `s`) classification (R1 H2).** Absence from `skipped[]` is not proof of selection, so each pair is classified explicitly:
+- `skipped`: the selection is measured and `T ∈ skipped[]`.
+- `absent`: `T` does not exist in `s`'s head tree (`git cat-file -e <oid>:<T>` fails). `s`'s branch push could not have run it. This is not applicable, neither skipped nor selected; a test added by another source is the common case.
+- `selected`: the selection is measured, `T` exists at the head, and `T ∉ skipped[]`. `run-tests` runs every existing test file the envelope does not skip, and `validateEnvelopeAgainstList` guarantees that `skipped[]` names only heavy files.
+- `unmeasured` (with a reason): the selection is unmeasured or errored, or the existence check could not answer.
+
+**Verdicts, one per train: an ordered table, first match wins (R1 H1), never a zero standing in for "not asked".**
+1. `unmeasured`: there are no `tierResults`; a tier result is not one of fleet's known results; or a failed attempt's failing files cannot be named. That covers a missing log section, no marker, an `unknown` or malformed marker, a marker naming **no** file (`[]` on a failed attempt: it failed, but on nothing `run-tests` could name, R2 H1), a tier that is not `run-tests`, an unreadable or oversized log, and an exhausted budget. If the failures cannot be named, nothing below can be judged.
+2. `thin`: some pair is `skipped`.
+3. `unmeasured`: some pair is `unmeasured`, or some failing file is `absent` from **every** source (no source can speak for it).
+4. `not-thin`: there is at least one failure, and every pair is `selected` or `absent`.
+5. `no-failures`: every recorded pre-land tier is `green` on its first attempt. There was nothing for a branch tier to miss. This is its own word, not "0 thin", and no selection is asked.
+
+**Reading `thin` (R1 M1).** `thin` is a counterfactual **observation** about each listed source, not proof that its branch tier caused anything. A combined-run failure can come from an interaction that no single source's push could have seen. Each failure is reported with `skippedBy`, `selectedBy`, `absentFrom` and `unmeasuredFor` source lists. `skippedByAll` is the strong signal, and it is **complete or false** (R2 M1): true only when **no** pair for `T` is `unmeasured` (that includes a source whose existence check could not answer, R3 M1), at least one source is applicable (`T` exists at its head), and every applicable source `skipped` it. The response is to investigate whether the heavy file's `reach` missed a real edge (the gate-cost plan's remedy), never to drop the train's run.
+
+**Reported, never gating, and never failing (R1 H3).** The metric goes into `verify`'s JSON (`thinness`) and its pending-note line. It does **not** enter `publicationClearance`: it measures the branch tier, not this train. *(As built: `sync` re-runs `verifyTrain` and `publicationClearance` directly, not `runVerify`, so it never computes the metric at all.)* The metric still has a total error boundary, because `verify` must never fail on it:
+- every log read, git call, parse and child process inside it is caught and becomes an `unmeasured` result with the reason;
+- the metric has **one overall budget** (5 min, R2 H2). The `select` children run one at a time, each with a deadline of `min(120 s, the budget left)`, and each is killed on expiry, with its stdout bounded. A source not asked before the budget runs out is an `unmeasured` pair ("budget exhausted"). The existence checks (`git cat-file -e`) and merge-bases run through the same deadline-bounded child spawner, never an unbounded call;
+- a log is opened **once**. The open handle must be a regular file (`fstat`), and at most the bound plus one byte (64 MiB + 1) is read through it. A log that is not a regular file, or reaches past the bound, is `unmeasured`, never a truncated read. A path swapped between a check and a read cannot matter, because there is no second open (R3 H1). The read is a synchronous read of a file in fleet's own log directory on local disk, so it is not made cancellable. The overall budget is checked before and after it.
+
+A metric failure therefore never changes `verify`'s other fields, `sync`'s clearance, or its exit code.
+
+**Seams.**
+- The marker grammar gets one parser, `parseFailedFilesPayload` in `scripts/lib/failed-files-marker.mjs` (dependency-free). `scripts/lib/ci-flake-rerun.mjs`'s `parseFailedFilesMarkers` calls it instead of its inline copy, and keeps its exact contract (R1 M3): `unknown` → `{kind:'unknown'}`; a JSON array of non-empty strings → `{kind:'files'}`, the empty array included; anything else → `{kind:'malformed', raw}`. The parser gets direct tests, and the existing `tests/ci-flake-rerun.test.mjs` is the regression suite for the migrated reader. One grammar, one reader.
+- `verify.mjs` gains the pure `failedAttempts({tierResults, readLog})` and `judgeThinness({failures, selections})`.
+- `commands.mjs` gathers them over two new context members: `ctx.readFile(path)`, and `ctx.selectBranchTier({head, base})`. The second spawns `scripts/test-tier.mjs select` from this checkout as a child process (argv array, no shell). That is the published interface, and it adds no `ship → test-tier` import edge. The CLI owns the wiring. A selection is asked once per source, and only when there is a failure to judge.
+
+**Right-sizing.** *Band-aid*: report `thin: 0` whenever a selection cannot be read. *Over-built*: persist per-push tier envelopes so the actual push-time selection can be replayed (the gate-cost plan's R1 H1 already ruled that not reconstructible). *Chosen*: the counterfactual query the gate-cost plan published, plus the marker `run-tests` already prints.
+
 ---
 
 ## 6. Sustainability Notes
@@ -479,7 +518,26 @@ A terminal stop never auto-retries.
   - Until that selection exists, the field reads `unmeasured`, never zero.
   - The branch tier itself is the gate-cost plan's, not built here.
 
-  Files: `scripts/lib/ship-train/verify.mjs` (modify), `scripts/lib/ship-train/commands.mjs` (modify), `tests/ship-train-verify.test.mjs` (modify).
+  - Specified in §2.10a. The selection exists (`scripts/test-tier.mjs select`), so `unmeasured` is now per source and per failure, never the whole metric by default.
+  - Tests cover every row of the verdict table, in both directions:
+    - an `unknown`, missing or malformed marker reads `unmeasured`, never `not-thin`;
+    - a `select` error, timeout or spawn failure is an unmeasured pair;
+    - `thin` outranks a partial `unmeasured`;
+    - a partial measurement with no skip is `unmeasured` (R1 H1);
+    - a test added by one source is `absent` for the others, and is never `selected` (R1 H2);
+    - a file absent from every source is `unmeasured`;
+    - a green-after-rerun's first attempt counts;
+    - an unknown tier result is `unmeasured`;
+    - a failed attempt whose marker is `[]` is `unmeasured`, both as a red attempt and as a green-after-rerun's first attempt (R2 H1);
+    - `skippedByAll` is false with an unmeasured applicable source, false when one source's existence check fails, and false with no applicable source (R2 M1, R3 M1);
+    - a log that is not a regular file, or one past the bound, is `unmeasured` (R3 H1);
+    - an exhausted budget makes the remaining pairs `unmeasured`, and an oversized log is never read (R2 H2);
+    - a `no-failures` train asks no selection;
+    - a throwing context member never escapes `runVerify`, and the metric never changes `publicationClearance` (R1 H3).
+  - Parser tests cover `unknown`, `[]`, files, a non-string entry and non-JSON; the CI-log reader's own suite stays green (R1 M3).
+
+  Files: `scripts/lib/ship-train/verify.mjs` (modify), `scripts/lib/ship-train/commands.mjs` (modify), `scripts/ship-train.mjs` (modify: wire `readFile` + `selectBranchTier`), `scripts/lib/failed-files-marker.mjs` (modify: `parseFailedFilesPayload`), `scripts/lib/ci-flake-rerun.mjs` (modify: call it), `tests/ship-train-thinness.test.mjs` (create), `tests/failed-files-marker.test.mjs` (create).
+  - *Amended during implementation:* the metric's tests got their own file, `tests/ship-train-thinness.test.mjs`, instead of growing `tests/ship-train-verify.test.mjs`. `tests/ship-train-cli.test.mjs` needed no change: its fake context lacks the new members, so `verify` there reads `unmeasured` ("this context provides no log reader or selection query"), and every existing assertion holds. Red-then-green: three mutations each turned the suite red, then were restored. They were treating an unasked existence check as `selected`, dropping the partial-measurement row, and accepting a `[]` marker on a failed attempt.
 
 **Close-out (not a phase)**: `npm run skills:regenerate`, `npm run skills:check`, `npm run bundle:deps`, `npm run plans:index`, then `npm test`. The shared generated files in `.fleet.json` `hotFiles` are regenerated at rebase, never claimed.
 
@@ -608,7 +666,8 @@ A terminal stop never auto-retries.
 - **Cluster C** — Phases 6–7 — fix-gate: final
   - Coupling: the human-facing surface and the invariant docs. They describe A+B and must agree with the CLI as built. **Unblocked 2026-10-12**: the keyset PR (#218, 44c4bbda) merged and released `skills/ship/SKILL.md`, and the fleet claim on `skills/fleet/**` was released with #216.
 - **Cluster D** — Phase 8 — fix-gate: yes
-  - Coupling: the metric reads fleet's combined-run record (needs Cluster B) and the branch tier's selection (needs the gate-cost plan), so it lands after both. **Proposed**: built only after a focused `/audit-plan` of §2.10's train side.
+  - Coupling: the metric reads fleet's combined-run record (needs Cluster B) and the branch tier's selection (needs the gate-cost plan), so it lands after both.
+  - **Built 2026-11-13** on `claude/ship-trains-d`, after a focused `/audit-plan` of §2.10's train side (§2.10a, Audit Trail). Both prerequisites were met: Cluster B is on main, and the gate-cost plan published `test-tier select`.
 - **Final gate**: the mandatory consolidated Gemini review over the union diff of A+B+C (+D when built).
 
 ## Audit Trail
@@ -640,3 +699,20 @@ A terminal stop never auto-retries.
   - Every fix was proven red, then green. That includes the held real-Postgres suite (6/6), where removing the repo-scope clause turns its new `findCodeRunForRepo` test red.
   - Deferred-declared (not gating A): `tests/ship-train-recovery.test.mjs` (Cluster B), `skills/ship/references/train-mode.md` (Cluster C), and the DB suite's two-list enrolment (held for the keyset PR).
 - **Cluster A final gate** (Gemini `latest-pro`, stateless code): **APPROVE**, round 1. Disposition `approve`, 0 blocking, 0 debt, 0 new, 0 wrongly dismissed. Its envelope reported `Code: PARTIAL, changed lines unmeasured for 6 file(s)`, so the APPROVE covers what it examined.
+- **Cluster D focused `/audit-plan`** (2026-11-13, SID `audit-plan-1794548828260-128892`). It was run over a verbatim excerpt of §2.10, §2.10a, Phase 8 and §11's Cluster D, because the rest of the plan was already at its caps and built.
+  - R1 (run `4ab2e008`), H3 M3, 6/6 accepted: an exhaustive verdict table; explicit per-pair classification with `absent`; a total error boundary; `thin` read as an observation; selector identity documented; a regression suite for the shared parser.
+  - R2 (`d3599301`), H2 M1, 3/3 accepted: `[]` on a failed attempt; one overall budget; `skippedByAll` complete-or-false.
+  - R3 (`89d6beda`), H1 M1, 2/2 accepted: a single-open bounded log read; an existence-check failure blocks `skippedByAll`.
+  - Stopped at the 3-round default, with the count falling 6 → 3 → 2 and acceptance at 100% in every round.
+- **Cluster D plan final gate** (Gemini `latest-pro` → `gemini-4-argon`, `--mode plan`): **APPROVE**, round 1. Disposition `approve`, 0 blocking, 0 debt, 0 new, 0 wrongly dismissed.
+- **Cluster D `/audit-code`** (SID `audit-code-1794549846111-58212`, `--scope diff` against `70621fea`, 8 files), five GPT rounds:
+  - R1, H1 M9: 8 accepted, covering three distinct defects.
+    - A FIFO tier log could block the open → non-blocking open, then `fstat`.
+    - `cat-file` exit codes conflated "absent" with "unreadable" → `git ls-tree` + `readExistence`.
+    - Only-post-merge tier records read as clean → `unmeasured`.
+    - Two were dismissed: a stale `receipt.mjs` finding (removed by the stateless amendment) and the adjacency control marker.
+  - R2, M2: both dismissed as invalid, with a measurement. `git ls-tree` does not glob its paths: `'tests/ship-train-c?i.test.mjs'` matches nothing.
+  - R3, M1 L1: both accepted. Attempt sections are now anchored to the recorded run, and the fixture's literal NUL/TAB bytes were removed.
+  - R4 and R5: **PASS, H:0 M:0 L:0**, coverage COMPLETE. Converged.
+  - Every fix was proven red, then green.
+- **Cluster D final gate** (Gemini `latest-pro`, run `758fc09b`): **APPROVE**, round 1. Disposition `approve`, 0 blocking, 0 debt, 0 new, 0 wrongly dismissed. Its envelope reported `Code: PARTIAL, 265 of 707 changed line(s) never shown` (3 files head-cut), so the APPROVE covers what it examined.

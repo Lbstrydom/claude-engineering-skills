@@ -29,7 +29,7 @@ import path from 'node:path';
 import { runJson, runText } from './ci-verdict.mjs';
 import { atomicWriteFileSync } from './file-io.mjs';
 import { withFileLock } from './file-lock.mjs';
-import { FAILED_FILES_MARKER } from './failed-files-marker.mjs';
+import { FAILED_FILES_MARKER, parseFailedFilesPayload } from './failed-files-marker.mjs';
 import { globMatch } from './glob-match.mjs';
 import { SELECTOR_DEPENDENCIES, SELECTOR_IDENTITY_FILES, SHARED_ENVIRONMENT, computeReach, entryReached } from './test-tier.mjs';
 
@@ -53,15 +53,7 @@ export function parseFailedFilesMarkers(logText) {
     const at = line.indexOf(FAILED_FILES_MARKER);
     if (at < 0) continue;
     const job = line.split('\t')[0];
-    const payload = line.slice(at + FAILED_FILES_MARKER.length).trim();
-    let marker;
-    if (payload === 'unknown') marker = { kind: 'unknown' };
-    else {
-      try {
-        const v = JSON.parse(payload);
-        marker = Array.isArray(v) && v.every((f) => typeof f === 'string' && f) ? { kind: 'files', files: v } : { kind: 'malformed', raw: payload.slice(0, 80) };
-      } catch { marker = { kind: 'malformed', raw: payload.slice(0, 80) }; }
-    }
+    const marker = parseFailedFilesPayload(line.slice(at + FAILED_FILES_MARKER.length));
     if (!byJob.has(job)) byJob.set(job, []);
     byJob.get(job).push(marker);
   }

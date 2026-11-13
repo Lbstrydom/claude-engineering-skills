@@ -229,3 +229,188 @@ export function publicationClearance(v, { acceptInterleaved = false, acceptProve
   }
   return { clear: blocks.length === 0, blocks };
 }
+
+// ── Train-run thinness (plan §2.10a) ────────────────────────────────────────
+//
+// Did the train's combined run fail on a test the branch tier would NOT have
+// selected for a source's head? A counterfactual observation about the branch
+// tier, reported by `verify` and never gating (it is not about this train).
+// Every function below is pure; the gathering, with its budget and error
+// boundary, lives in commands.mjs.
+
+/** The fleet tier results this metric knows how to read (fleet registry.mjs RESULTS). */
+const KNOWN_TIER_RESULTS = new Set(['green', 'green-after-rerun', 'red', 'dirty', 'none']);
+/** A log is read only up to this many bytes; a longer one is unmeasured, never truncated. */
+export const THINNESS_MAX_LOG_BYTES = 64 * 1024 * 1024;
+const ATTEMPT_HEADER = /^--- fleet: tier (.+) attempt (\d+) at .* ---$/;
+
+/**
+ * Which attempts of a tier failed, by fleet's own record. `null` when the
+ * result says nothing about a test run (`dirty`, `none`).
+ * @returns {number[]|null}
+ */
+function failedAttemptNumbers(t) {
+  if (t.result === 'green') return [];
+  if (t.result === 'green-after-rerun') return [1];
+  if (t.result === 'red') return t.reran ? [1, 2] : [1];
+  return null;
+}
+
+/**
+ * The section of a fleet tier log for one attempt OF THE RECORDED RUN. A tier
+ * interrupted and re-run on resume appends a whole new run to the same log,
+ * starting at a new "attempt 1", so the recorded run begins at the LAST
+ * "attempt 1" header; attempt n is the first header for n at or after it
+ * (an older run's attempt 2 is never read for a newer run, code R3 M1).
+ * The section runs up to the next header.
+ * @returns {string|null}
+ */
+export function attemptSection(logText, tierName, attempt) {
+  const lines = String(logText).split(/\r?\n/);
+  const headerAt = (i) => { const m = ATTEMPT_HEADER.exec(lines[i]); return m && m[1] === tierName ? Number(m[2]) : null; };
+  let runStart = -1;
+  for (let i = 0; i < lines.length; i++) if (headerAt(i) === 1) runStart = i;
+  if (runStart < 0) return null;
+  let start = -1;
+  for (let i = runStart; i < lines.length; i++) if (headerAt(i) === attempt) { start = i; break; }
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) if (ATTEMPT_HEADER.test(lines[i])) { end = i; break; }
+  return lines.slice(start + 1, end).join('\n');
+}
+
+/**
+ * What the combined run failed on, from fleet's tier record and its logs.
+ *
+ * @param {object} input
+ * @param {Array<{name: string, result: string, reran?: boolean, stage?: string}>|undefined} input.tierResults
+ * @param {(tier: object) => ({ok: true, text: string}|{ok: false, reason: string})} input.readLog
+ * @param {(payload: string) => {kind: string, files?: string[]}} input.parsePayload  failed-files-marker's one reader
+ * @param {string} input.marker  the marker prefix
+ * @returns {{ok: true, failures: Array<{tier: string, attempt: number, files: string[]}>}|{ok: false, reason: string}}
+ */
+export function failedAttempts({ tierResults, readLog, parsePayload, marker }) {
+  if (!Array.isArray(tierResults) || tierResults.length === 0) return { ok: false, reason: 'the train has no recorded combined run (no tierResults)' };
+  const preLand = tierResults.filter((t) => (t.stage ?? 'pre-land') === 'pre-land');
+  // Only post-merge records is "no combined run examined", never a clean one (code R1 M3/M8).
+  if (preLand.length === 0) return { ok: false, reason: 'the train records no pre-land tier result' };
+  const failures = [];
+  for (const t of preLand) {
+    if (!KNOWN_TIER_RESULTS.has(t.result)) return { ok: false, reason: `tier ${t.name}: result ${JSON.stringify(t.result)} is not one fleet records` };
+    const attempts = failedAttemptNumbers(t);
+    if (attempts === null) return { ok: false, reason: `tier ${t.name} is ${t.result}: not a test verdict` };
+    if (attempts.length === 0) continue;
+    const log = readLog(t);
+    if (!log.ok) return { ok: false, reason: `tier ${t.name}: ${log.reason}` };
+    for (const attempt of attempts) {
+      const section = attemptSection(log.text, t.name, attempt);
+      if (section === null) return { ok: false, reason: `tier ${t.name}: its log has no section for attempt ${attempt}` };
+      const markerLines = section.split('\n').filter((l) => l.includes(marker));
+      if (!markerLines.length) return { ok: false, reason: `tier ${t.name} attempt ${attempt}: no failed-files line (a timeout, a tier that is not run-tests, or a run that died)` };
+      const last = markerLines[markerLines.length - 1];
+      const parsed = parsePayload(last.slice(last.indexOf(marker) + marker.length));
+      if (parsed.kind === 'unknown') return { ok: false, reason: `tier ${t.name} attempt ${attempt}: run-tests could not name its failing files (unknown)` };
+      if (parsed.kind !== 'files') return { ok: false, reason: `tier ${t.name} attempt ${attempt}: malformed failed-files line` };
+      if (parsed.files.length === 0) return { ok: false, reason: `tier ${t.name} attempt ${attempt}: it failed, but its failed-files line names no file` };
+      failures.push({ tier: t.name, attempt, files: [...parsed.files].sort() });
+    }
+  }
+  return { ok: true, failures };
+}
+
+/**
+ * Validate one `test-tier select --json` answer. Anything that is not a
+ * measured envelope for exactly this head, with a string `skipped[]`, is
+ * unmeasured: absence of a skip list never reads as "skipped nothing".
+ *
+ * @param {{status: number|null, stdout: string, stderr?: string, error?: string|null}} r
+ * @param {string} head
+ * @returns {{measured: true, skipped: string[], selector: object|null, manifest: string|null}|{measured: false, reason: string}}
+ */
+export function parseSelection(r, head) {
+  if (r.error) return { measured: false, reason: `the selection query did not run (${r.error})` };
+  if (r.status !== 0 && r.status !== 3) {
+    const tail = r.stderr ? `: ${String(r.stderr).trim().split('\n').pop().slice(0, 200)}` : '';
+    return { measured: false, reason: `the selection query exited ${r.status ?? 'without a status'}${tail}` };
+  }
+  let env;
+  try { env = JSON.parse(r.stdout); } catch { return { measured: false, reason: 'the selection query printed unparseable output' }; }
+  if (env?.measured === false) return { measured: false, reason: String(env.reason ?? 'unmeasured, no reason given') };
+  if (r.status !== 0 || env?.measured !== true) return { measured: false, reason: 'the selection query did not say it measured' };
+  if (env.head !== head) return { measured: false, reason: `the selection answered for ${String(env.head).slice(0, 12)}, not ${head.slice(0, 12)}` };
+  if (!Array.isArray(env.skipped) || !env.skipped.every((f) => typeof f === 'string' && f)) return { measured: false, reason: 'the selection carries no valid skipped[]' };
+  return { measured: true, skipped: env.skipped, selector: env.selector ?? null, manifest: env.manifest ?? null };
+}
+
+/**
+ * Does `file` exist at a head, from `git ls-tree -z --full-tree <oid> -- <file>`? Exit 0 with a blob record for
+ * exactly that path is present; exit 0 with no output is absent; anything else (a non-zero exit, a record that is
+ * not a blob of that path, an unterminated stream) cannot say, and is never read as absent.
+ * @param {{status: number|null, stdout: string}} r
+ * @param {string} file
+ * @returns {{known: true, exists: boolean}|{known: false, reason: string}}
+ */
+export function readExistence(r, file) {
+  if (r.status !== 0) return { known: false, reason: `git ls-tree exited ${r.status ?? 'without a status'}` };
+  const out = String(r.stdout ?? '');
+  if (out === '') return { known: true, exists: false };
+  if (!out.endsWith('\0')) return { known: false, reason: 'git ls-tree output is not NUL-terminated' };
+  const records = out.slice(0, -1).split('\0');
+  const m = records.length === 1 ? /^\d+ (\w+) [0-9a-f]+\t(.*)$/s.exec(records[0]) : null;
+  if (!m || m[2] !== file) return { known: false, reason: 'git ls-tree returned an unexpected record' };
+  return m[1] === 'blob' ? { known: true, exists: true } : { known: false, reason: `${file} is a ${m[1]} at this head, not a file` };
+}
+
+/**
+ * Classify one (failing file, source) pair (plan §2.10a).
+ * @param {object} a
+ * @param {{measured: boolean, skipped?: string[], reason?: string}} a.selection
+ * @param {{known: true, exists: boolean}|{known: false, reason: string}|null} a.existence  null when not asked
+ * @param {string} a.file
+ * @returns {{class: 'skipped'|'selected'|'absent'|'unmeasured', reason?: string}}
+ */
+export function classifyPair({ selection, existence, file }) {
+  if (!selection.measured) return { class: 'unmeasured', reason: selection.reason };
+  if (selection.skipped.includes(file)) return { class: 'skipped' };
+  if (!existence) return { class: 'unmeasured', reason: 'whether the file exists at this head was not asked' };
+  if (!existence.known) return { class: 'unmeasured', reason: existence.reason };
+  return existence.exists ? { class: 'selected' } : { class: 'absent' };
+}
+
+/**
+ * The train's thinness verdict: an ordered table, first match wins (plan §2.10a).
+ *
+ * @param {object} input
+ * @param {{ok: true, failures: Array<{tier: string, attempt: number, files: string[]}>}|{ok: false, reason: string}} input.attempts
+ * @param {Array<{file: string, pairs: Array<{pr: number, class: string, reason?: string}>}>} input.files
+ *   one entry per distinct failing file, with a pair for every source
+ * @returns {{verdict: 'unmeasured'|'thin'|'not-thin'|'no-failures', reason: string|null, failures: object[]}}
+ */
+export function judgeThinness({ attempts, files }) {
+  if (!attempts.ok) return { verdict: 'unmeasured', reason: attempts.reason, failures: [] };
+  if (attempts.failures.length === 0) return { verdict: 'no-failures', reason: null, failures: [] };
+  const byFile = new Map(files.map((f) => [f.file, f.pairs]));
+  const failures = [];
+  for (const a of attempts.failures) {
+    for (const file of a.files) {
+      const pairs = byFile.get(file) ?? [];
+      const of = (c) => pairs.filter((p) => p.class === c).map((p) => p.pr);
+      const unmeasuredFor = pairs.filter((p) => p.class === 'unmeasured').map((p) => ({ pr: p.pr, reason: p.reason ?? null }));
+      const applicable = pairs.filter((p) => p.class !== 'absent');
+      failures.push({
+        tier: a.tier, attempt: a.attempt, file,
+        skippedBy: of('skipped'), selectedBy: of('selected'), absentFrom: of('absent'), unmeasuredFor,
+        // Complete or false: no unmeasured pair, at least one applicable source, every one of them skipped.
+        skippedByAll: unmeasuredFor.length === 0 && applicable.length > 0 && applicable.every((p) => p.class === 'skipped'),
+      });
+    }
+  }
+  if (failures.some((f) => f.skippedBy.length)) return { verdict: 'thin', reason: null, failures };
+  const unasked = failures.find((f) => f.skippedBy.length + f.selectedBy.length + f.absentFrom.length + f.unmeasuredFor.length === 0);
+  if (unasked) return { verdict: 'unmeasured', reason: `${unasked.file}: no source was asked about it`, failures };
+  const partial = failures.find((f) => f.unmeasuredFor.length);
+  if (partial) return { verdict: 'unmeasured', reason: `${partial.file}: unmeasured for ${partial.unmeasuredFor.map((u) => `#${u.pr}`).join(', ')}`, failures };
+  const orphan = failures.find((f) => f.selectedBy.length === 0);
+  if (orphan) return { verdict: 'unmeasured', reason: `${orphan.file} exists at no source's head, so no source can speak for it`, failures };
+  return { verdict: 'not-thin', reason: null, failures };
+}

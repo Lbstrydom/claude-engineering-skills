@@ -15,7 +15,11 @@
 import { ArgvError } from '../cli-io.mjs';
 import { classifyPrImpact, isTrainDue, parseNameStatusZ } from './impact.mjs';
 import { bindAuditRun, decideTrainGate, modelsFromRun, composeSquashMessage } from './provenance.mjs';
-import { verifyTrain, publicationClearance, judgeSourceIdentity, readAiTrailers, MAX_UPDATE_LINKS } from './verify.mjs';
+import {
+  verifyTrain, publicationClearance, judgeSourceIdentity, readAiTrailers, MAX_UPDATE_LINKS,
+  failedAttempts, parseSelection, classifyPair, judgeThinness, readExistence, THINNESS_MAX_LOG_BYTES,
+} from './verify.mjs';
+import { FAILED_FILES_MARKER, parseFailedFilesPayload } from '../failed-files-marker.mjs';
 
 export class TrainRefusal extends Error {
   constructor(message, details = {}) {
@@ -393,7 +397,94 @@ export async function gatherTrainFacts(ctx, trainId) {
   }
   const chain = lines(ctx.git(['log', '--first-parent', '--reverse', '--format=%H%x09%s', `${train.baseOid}..${tip}`]))
     .map((l) => { const i = l.indexOf('\t'); return { oid: l.slice(0, i), subject: l.slice(i + 1) }; });
-  return { trainId, repo, branch, tip, storeState: repoRow.ok ? 'ok' : repoRow.reason, sources, chain };
+  return { trainId, repo, branch, tip, storeState: repoRow.ok ? 'ok' : repoRow.reason, sources, chain, train };
+}
+
+// ── thinness (plan §2.10a) ──────────────────────────────────────────────────
+
+/** The whole metric's budget, and one selection child's ceiling within it. */
+export const THINNESS_BUDGET_MS = 5 * 60 * 1000;
+export const THINNESS_CHILD_TIMEOUT_MS = 120 * 1000;
+const SHA = /^[0-9a-f]{40,64}$/;
+
+/**
+ * Gather and judge the train-run thinness metric. Never throws and never
+ * blocks: every failure inside becomes an `unmeasured` answer with its reason,
+ * because `sync` recomputes `verify` and a metric about the branch tier must
+ * not decide whether THIS train publishes.
+ *
+ * Context members (the CLI wires them; a context without them reads unmeasured):
+ *   readLog(path, maxBytes) → {ok, text} | {ok:false, reason}
+ *   gitBounded(args, timeoutMs) → {status, stdout, stderr, error}
+ *   selectBranchTier({head, base, timeoutMs}) → {status, stdout, stderr, error}
+ */
+export function gatherThinness(ctx, train) {
+  const unmeasured = (reason) => ({ verdict: 'unmeasured', reason, failures: [], selections: [], counterfactual: true });
+  try {
+    if (typeof ctx.readLog !== 'function' || typeof ctx.gitBounded !== 'function' || typeof ctx.selectBranchTier !== 'function') {
+      return unmeasured('this context provides no log reader or selection query');
+    }
+    const startedAt = +ctx.now();
+    const left = () => THINNESS_BUDGET_MS - (+ctx.now() - startedAt);
+    const attempts = failedAttempts({
+      tierResults: train.tierResults,
+      readLog: (t) => (t.logPath ? ctx.readLog(t.logPath, THINNESS_MAX_LOG_BYTES) : { ok: false, reason: 'no log path recorded' }),
+      parsePayload: parseFailedFilesPayload,
+      marker: FAILED_FILES_MARKER,
+    });
+    if (!attempts.ok || attempts.failures.length === 0) return { ...judgeThinness({ attempts, files: [] }), selections: [], counterfactual: true };
+    if (left() <= 0) return unmeasured('budget exhausted before any selection was asked');
+
+    const git = (args) => {
+      const ms = Math.min(THINNESS_CHILD_TIMEOUT_MS, left());
+      if (ms <= 0) return { ok: false, reason: 'budget exhausted' };
+      const r = ctx.gitBounded(args, ms);
+      if (r.error) return { ok: false, reason: `git ${args[0]} did not complete (${r.error})` };
+      return { ok: true, status: r.status, stdout: String(r.stdout ?? '') };
+    };
+    const files = [...new Set(attempts.failures.flatMap((a) => a.files))].sort();
+    const selections = [];
+    const pairsByFile = new Map(files.map((f) => [f, []]));
+    for (const s of train.sources) {
+      const pr = s.prNumber ?? s.id;
+      let selection;
+      let base = null;
+      const mb = git(['merge-base', train.baseOid, s.oid]);
+      if (!mb.ok) selection = { measured: false, reason: mb.reason };
+      else if (mb.status !== 0 || !SHA.test(mb.stdout.trim())) selection = { measured: false, reason: `no fork point between the train base and ${String(s.oid).slice(0, 12)}` };
+      else {
+        base = mb.stdout.trim();
+        const ms = Math.min(THINNESS_CHILD_TIMEOUT_MS, left());
+        selection = ms <= 0 ? { measured: false, reason: 'budget exhausted' } : parseSelection(ctx.selectBranchTier({ head: s.oid, base, timeoutMs: ms }), s.oid);
+      }
+      selections.push({ pr, head: s.oid, base, measured: selection.measured, ...(selection.measured ? { selector: selection.selector, manifest: selection.manifest } : { reason: selection.reason }) });
+      for (const file of files) {
+        let existence = null;
+        if (selection.measured && !selection.skipped.includes(file)) {
+          // ls-tree separates "the tree was read and has no such path" (exit 0, no record) from "git
+          // could not read it" (non-zero): an exit code alone cannot (code R1 M2/M5/M7).
+          const r = git(['ls-tree', '-z', '--full-tree', s.oid, '--', file]);
+          existence = !r.ok ? { known: false, reason: r.reason } : readExistence(r, file);
+        }
+        pairsByFile.get(file).push({ pr, ...classifyPair({ selection, existence, file }) });
+      }
+    }
+    const judged = judgeThinness({ attempts, files: files.map((file) => ({ file, pairs: pairsByFile.get(file) })) });
+    return { ...judged, selections, counterfactual: true };
+  } catch (e) {
+    return unmeasured(`the metric failed: ${e?.message ?? String(e)}`);
+  }
+}
+
+/** One line for the pending-note and the text renderer. */
+export function thinnessLine(t) {
+  const head = `Thinness (counterfactual, branch tier): ${t.verdict}`;
+  if (t.verdict === 'unmeasured') return `${head} (${t.reason})`;
+  if (t.verdict === 'thin') {
+    return `${head} (${t.failures.filter((f) => f.skippedBy.length).map((f) => `${f.file} skipped for ${f.skippedBy.map((p) => `#${p}`).join(', ')}${f.skippedByAll ? ' [by all]' : ''}`).join('; ')})`;
+  }
+  if (t.verdict === 'not-thin') return `${head} (${t.failures.length} failure(s), each selected by an applicable source)`;
+  return head;
 }
 
 /**
@@ -418,6 +509,8 @@ export async function runVerify(ctx, { train, writeNote = false, acks = {} }) {
     ...(v.interleaved.length ? [`${v.interleaved.length} foreign commit(s) before ${v.finalMergeOid.slice(0, 12)}: ${v.interleaved.map((c) => c.oid.slice(0, 12)).join(', ')}`] : []),
   ];
   const notes = Object.entries(v.perPr).flatMap(([pr, p]) => (p.claim?.notes ?? []).map((n) => `#${pr}: ${n}`));
+  // Reported, never gating: it measures the branch tier, not this train (plan §2.10a).
+  const thinness = gatherThinness(ctx, facts.train);
   let pendingNote = null;
   if (writeNote) {
     pendingNote = ctx.writePendingNote(v.finalMergeOid ?? facts.tip, [
@@ -425,11 +518,12 @@ export async function runVerify(ctx, { train, writeNote = false, acks = {} }) {
       `Actual gates: ${Object.entries(v.actualGates).map(([pr, g]) => `#${pr} ${g}`).join(', ') || 'none'}`,
       ...deviations.map((d) => `- ${d}`),
       ...notes.map((n) => `- note: ${n}`),
+      `- ${thinnessLine(thinness)}`,
     ].join('\n'));
   }
   return {
     ok: true, verb: 'verify', trainId: train, storeState: facts.storeState,
-    finalMergeOid: v.finalMergeOid, actualGates: v.actualGates, deviations, notes, clearance, pendingNote,
+    finalMergeOid: v.finalMergeOid, actualGates: v.actualGates, deviations, notes, clearance, thinness, pendingNote,
   };
 }
 
