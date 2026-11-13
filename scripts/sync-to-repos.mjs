@@ -292,6 +292,13 @@ const CORE_ASSETS = [
   // The bundle's npm-dependency declaration (generate-bundle-deps.mjs). JSON
   // fs-read by check-setup, so the import walker cannot discover it.
   'scripts/lib/bundle-deps.json',
+  // Which audit-store views are time-windowed — same fs-read blind spot as the two
+  // above (`lib/store/windowed-views.mjs` reads it). Without it the Home dashboard
+  // reads every queue as `windowed: 'unknown'` and all five chips lose their delta,
+  // Q3/debt/upstream included, which are not windowed. It describes the SHARED
+  // store's views, so it is one declaration everywhere, not per-repo config; root
+  // rather than `.audit-loop/`, whose isolation guards against `supabase db push`.
+  '.windowed-views.json',
   // postgres-parity M4 — setup-postgres.mjs reads compat-bootstrap.sql via
   // fs (the import-graph walker can't follow fs reads). Migrations are
   // similarly fs-read; ship the whole directory so `--migrate` works on
