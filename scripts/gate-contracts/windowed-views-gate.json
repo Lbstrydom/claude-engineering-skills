@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "gate": "windowed-views:gate",
+  "guards": ".windowed-views.json — every store view whose result depends on now() declares the window it carries and what a caller may compare across time instead",
+  "gates": [
+    {
+      "id": "windowed-views-gate-rejects-an-undeclared-windowed-view",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "A figure compared over time is a trend only if the population is stable.",
+      "implementation": "scripts/check-windowed-views.mjs",
+      "tests": [
+        "tests/windowed-views.test.mjs",
+        "tests/gate-poison-pills.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/check-windowed-views.mjs"
+        ],
+        "overlay": {
+          ".windowed-views.json": "tests/fixtures/poison/windowed-views-undeclared.json"
+        },
+        "expectExit": 1,
+        "expectStderr": "windowed view must declare its window",
+        "why": "The declaration file with `unremediated_acceptances` removed — the state the repo was actually in on 2026-11-13, when its 116 -> 47 fall over five weeks was reported as a backlog being worked down. The two windows shared 0 rows and 110 of the 116 were still open. The pill drops the view whose own body names no clock (it inherits the window from `unremediated_acceptances_all`), so a gate that only grepped the migrations for now() would pass this fixture."
+      }
+    }
+  ]
+}

@@ -80,6 +80,19 @@ describe('HEALTH_RULES — every row, both ways', () => {
     assert.equal(chip([up({ total: 5, partial: false }, { total: 3, partial: false })], 'queue-upstream').state, 'warn', 'exact vs exact still compares');
   });
 
+  // docs/plans/standing-queue-burndown.md §7: Q2's view is a 7-30 day window, so its
+  // 116 -> 47 fall was rows aging out (0 shared rows; 110 of the 116 still open), not work.
+  test('a WINDOWED queue is neutral and says why — a fall must not read as progress', () => {
+    const win = (state) => q('queue-q2', Q2(4), { total: 116, code: 116 }, '2026-10-11T10:00:00Z', { windowed: state });
+    assert.equal(chip([win('yes')], 'queue-q2').state, 'neutral', 'never ok: aging out is not closure');
+    assert.match(chip([win('yes')], 'queue-q2').detail, /rolling time window/);
+    assert.equal(chip([win('unknown')], 'queue-q2').state, 'neutral', 'an unreadable manifest is not a comparison');
+    assert.match(chip([win('unknown')], 'queue-q2').detail, /unknown/);
+    // Growth must not read as ok either, and the comparable case is untouched.
+    assert.equal(chip([q('queue-q2', Q2(200), { total: 116, code: 116 }, '2026-10-11T10:00:00Z', { windowed: 'yes' })], 'queue-q2').state, 'neutral');
+    assert.equal(chip([q('queue-q2', Q2(4), { total: 116, code: 116 }, '2026-10-11T10:00:00Z', { windowed: 'no' })], 'queue-q2').state, 'ok');
+  });
+
   test('queue chips never reach bad (no threshold without a baseline)', () => {
     for (const cur of [0, 5, 10_000]) assert.notEqual(chip([q('queue-q3', { total: cur }, { total: 1 })], 'queue-q3').state, 'bad');
   });

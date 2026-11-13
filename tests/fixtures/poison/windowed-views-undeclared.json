@@ -1,0 +1,29 @@
+{
+  "_description": "POISON FIXTURE (tests/fixtures/poison): the declaration file with unremediated_acceptances removed — the shape the repo had before 2026-11-13, when a 116 -> 47 fall over a 7-30 day window was reported as a backlog being worked down while 110 of the 116 rows were still open. The gate must name it UNDECLARED.",
+  "views": {
+    "unlocked_fixes": {
+      "window": "rows only: unlocked_fixes_all WHERE is_recent, i.e. audit_runs.created_at > now() - 14 days",
+      "comparable": "byMode.code + agedOutByMode.code, which aging cannot reduce; or name the cohort explicitly with a fixed date range against unlocked_fixes_all",
+      "queues": [
+        "q1"
+      ]
+    },
+    "unlocked_fixes_all": {
+      "window": "columns only: is_recent carries the 14-day test; rows are NOT filtered, so a count over this view is stable and a count over is_recent is not",
+      "comparable": "the unfiltered count, or a fixed `fixed_at` range"
+    },
+    "unremediated_acceptances_all": {
+      "window": "columns only: days_open, is_mature and is_recent are clock-derived; rows are NOT filtered",
+      "comparable": "the unfiltered count filtered on is_open_disposition alone"
+    },
+    "persona_density_per_repo": {
+      "window": "column only: density_30d counts persona_test_sessions from the last 30 days; the row set (one per repo) is stable",
+      "comparable": "a count over persona_test_sessions with a fixed created_at range"
+    },
+    "persona_dashboard": {
+      "window": "column only: days_since_last_test is measured from now(); the row set (one per persona) is stable",
+      "comparable": "last_tested_at itself, which is an instant and does not drift"
+    }
+  },
+  "exemptions": {}
+}

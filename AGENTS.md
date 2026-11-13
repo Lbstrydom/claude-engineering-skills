@@ -99,6 +99,18 @@
 > smoke contract's exact two-statement body.
 > [Census](docs/reference/ratchet-gates.md) · [Plan](docs/plans/stdout-flush-drain-gate.md)
 >
+> **A figure compared over time is a trend only if the population is stable.**
+> `unremediated_acceptances` is a 7–30 day window on `audit_runs.created_at` and
+> `unlocked_fixes` a 14-day one, so its 116 → 47 fall over five weeks was rows
+> **aging out**: the two windows shared **0** rows and **110 of the 116** were still
+> open. Both figures reproduced exactly — reproducing a figure cannot detect that
+> the population under it rotated. The mechanical test is whether the reader's
+> result depends on `now()`. Every such view is derived from the migrations
+> (windowedness **propagates**: the view at the centre of this names no clock at
+> all) and must declare its window in `.windowed-views.json`, gated drift-only by
+> `npm run windowed-views:gate`. [§7](docs/plans/standing-queue-burndown.md) ·
+> [discipline](docs/audit/shared-references/verification-discipline.md) §4a.
+>
 > **Oversized files may not grow.** `npm run size:ratchet:gate` ratchets every
 > `scripts/**` file already over 1000 lines against `.file-size-baseline.json`,
 > drift-only in knip-gate's shape. **A shrink fails too** — asking you to

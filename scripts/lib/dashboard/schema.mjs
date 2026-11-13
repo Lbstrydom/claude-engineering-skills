@@ -267,6 +267,9 @@ const HomeMeasurementSchema = z.strictObject({
   detail: z.string(),
   // Queue measurements only.
   kind: z.string().optional(),
+  // 'yes' when the queue's view is a rolling time window (so `previous` is withheld:
+  // aging is not closure), 'unknown' when .windowed-views.json could not be read.
+  windowed: z.enum(['yes', 'no', 'unknown']).optional(),
   previous: z.strictObject({ total: z.number(), code: z.number().optional(), partial: z.boolean().optional() }).nullable().optional(),
   previousAt: iso.optional(),
   repo: z.string().nullable().optional(),

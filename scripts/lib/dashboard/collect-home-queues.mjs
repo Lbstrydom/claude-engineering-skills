@@ -11,6 +11,17 @@
  * Trend: the previous value comes from the newest `Backlog …` line in `status.md`
  * (`/ship` pastes it), parsed by `parseBacklogLine`.
  *
+ * **A windowed queue carries NO previous value.** Q1 and Q2 read views that are
+ * rolling windows on `audit_runs.created_at` (14 days; a 7–30 day band), so two
+ * `Backlog` lines weeks apart describe disjoint cohorts and the fall between them
+ * is aging, not closure. Measured 2026-11-13: the two Q2 windows shared 0 rows
+ * while 110 of the 116 rows in the older one were still open
+ * (`docs/plans/standing-queue-burndown.md` §7). Which queues those are is NOT
+ * hardcoded here — it is `.windowed-views.json`'s `queues` field, the same
+ * declaration `npm run windowed-views:gate` holds against the migrations. An
+ * unreadable manifest suppresses EVERY queue's trend (`windowed: 'unknown'`): an
+ * unasked question must not render as good news.
+ *
  * Plan: docs/plans/dashboard-home-summary.md §2 (Card contract, Health strip).
  *
  * @module scripts/lib/dashboard/collect-home-queues
@@ -19,6 +30,16 @@ import { gatherBacklogEnvelopes, KIND_TO_STATUS } from '../store/backlog-gather.
 import { parseBacklogLine } from '../store/backlog-snapshot.mjs';
 import { latestBacklogLine } from './status-entries.mjs';
 import { makeMeasurement, isRepoSlug } from './home-model.mjs';
+import { readManifest, windowedQueueKeys } from '../store/windowed-views.mjs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Where `.windowed-views.json` is read from: THIS repo, never the `root` being
+ * reported on. The declaration describes the audit store's own views, which is a
+ * property of the tooling, not of the checkout the dashboard is pointed at.
+ */
+const SELF_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 const num = Number.isFinite;
 
@@ -85,12 +106,15 @@ function previousOf(key, p) {
  * @param {number} [opts.timeoutMs=20000] - per-read cap
  * @param {AbortSignal} [opts.signal]
  * @param {Date} [opts.now]
+ * @param {string} [opts.manifestRoot] - where to read `.windowed-views.json` (default: this repo)
  * @returns {Promise<{card: 'queues', measurements: object[]}>}
  */
-export async function collectQueues(root, { statusText = null, statusCapped, repo, run, timeoutMs = 20_000, signal, now = new Date() } = {}) {
+export async function collectQueues(root, { statusText = null, statusCapped, repo, run, timeoutMs = 20_000, signal, now = new Date(), manifestRoot = SELF_REPO } = {}) {
   const candidate = repo ?? process.env.LEARNING_REPO_NAME ?? '';
   const slug = isRepoSlug(candidate) ? candidate : '';
   const { envelopes, outcomes } = await gatherBacklogEnvelopes({ repo: slug, cwd: root, run, timeoutMs, signal });
+  const manifest = readManifest(manifestRoot);
+  const windowedKeys = manifest.kind === 'ok' ? windowedQueueKeys(manifest) : null;
   const line = statusText ? latestBacklogLine(statusText, { capped: statusCapped }) : null;
   const prev = line ? parseBacklogLine(line) : null;
   const asOf = now.toISOString();
@@ -105,11 +129,14 @@ export async function collectQueues(root, { statusText = null, statusCapped, rep
       value = extractValue(key, envelopes[key]);
       if (!value) { status = 'unexpected-error'; detail = 'answer lacks the count fields (malformed envelope)'; }
     }
+    const windowed = windowedKeys === null ? 'unknown' : (windowedKeys.has(key) ? 'yes' : 'no');
+    const comparable = windowed === 'no';
     return makeMeasurement({
       id, label, card: 'queues', value, status, asOf, source, detail: status === 'ok' ? '' : detail,
       kind: outcome.kind,
-      previous: status === 'ok' ? previousOf(key, prev) : null,
-      previousAt: status === 'ok' && prev ? `${prev.at.slice(0, -1)}:00Z` : null,
+      windowed,
+      previous: status === 'ok' && comparable ? previousOf(key, prev) : null,
+      previousAt: status === 'ok' && comparable && prev ? `${prev.at.slice(0, -1)}:00Z` : null,
       ...(key === 'q3' ? { repo: slug || null } : {}),
     });
   });
