@@ -46,7 +46,7 @@ import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { withFileLock, LockTimeoutError } from './lib/file-lock.mjs';
 import {
   TrainRefusal, parsePrList, flagValue, hasOption, githubSlugFromUrl, messageChildArgv,
-  runPlan, runMessage, runVerify, runLand, runSync,
+  runPlan, runMessage, runVerify, runLand, runSync, thinnessLine,
 } from './lib/ship-train/commands.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { recordTrainLandings } from './lib/fleet/ledger-hook.mjs';
@@ -114,6 +114,13 @@ async function realContext(cwd) {
     cwd: childCwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, windowsHide: true, env: ghEnv(), timeout,
   });
   const timedOut = (r) => r.error?.code === 'ETIMEDOUT';
+  // A child with a deadline and bounded output, never a throw: the thinness metric turns every
+  // outcome into an answer (plan §2.10a). The timeout kills the child (SIGTERM).
+  const boundedChild = (cmd, args, timeout, env) => {
+    const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, windowsHide: true, env, timeout, stdio: ['ignore', 'pipe', 'pipe'] });
+    const error = timedOut(r) ? `timed out after ${Math.round(timeout / 1000)}s` : (r.error ? (r.error.code ?? r.error.message) : null);
+    return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error };
+  };
   return {
     cwd,
     git,
@@ -170,6 +177,29 @@ async function realContext(cwd) {
       verify: ({ dir, expectedSha }) => pinned.verifyFixture({ dir, expectedSha }),
       remove: ({ dir }) => pinned.removeFixture({ dir, cwd }),
     },
+    // Thinness (plan §2.10a): fleet's tier log, read through ONE handle and never past the bound.
+    readLog: (logPath, maxBytes) => {
+      let fd;
+      try {
+        // O_NONBLOCK where the platform has it: opening a FIFO with no writer must not hang before
+        // the regular-file check below can refuse it (code R1 H1/M4). A regular file reads as usual.
+        fd = fs.openSync(logPath, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+        if (!fs.fstatSync(fd).isFile()) return { ok: false, reason: `${logPath} is not a regular file` };
+        const buf = Buffer.alloc(maxBytes + 1);
+        let n = 0;
+        for (let got; n < buf.length && (got = fs.readSync(fd, buf, n, buf.length - n, n)) > 0;) n += got;
+        if (n > maxBytes) return { ok: false, reason: `the tier log is over ${maxBytes} bytes; not read` };
+        return { ok: true, text: buf.subarray(0, n).toString('utf8') };
+      } catch (e) {
+        return { ok: false, reason: `the tier log could not be read (${e.code ?? e.message})` };
+      } finally {
+        if (fd !== undefined) try { fs.closeSync(fd); } catch { /* already closed */ }
+      }
+    },
+    gitBounded: (args, timeoutMs) => boundedChild('git', args, timeoutMs, sanitizeGitEnv(cwd)),
+    // The gate-cost plan's published counterfactual query (docs/plans/gate-cost-slice-2.md §2.6), as a child.
+    selectBranchTier: ({ head, base, timeoutMs }) => boundedChild(process.execPath,
+      [path.join(SCRIPT_DIR, 'test-tier.mjs'), 'select', '--head', head, '--base', base, '--json'], timeoutMs, process.env),
     writePendingNote: (sha, text) => writePendingNote(resolveMainCheckout((c, a) => run(c, a, cwd)), sha, text),
     now: () => new Date(),
   };
@@ -198,6 +228,7 @@ function renderText(env) {
     for (const n of env.notes) out.push(`  · ${n}`);
     out.push(env.clearance.clear ? 'publication: clear'
       : `publication: BLOCKED — ${env.clearance.blocks.map((b) => `${b.reason}${b.flag ? ` [${b.flag}]` : ' [no override]'}`).join('; ')}`);
+    if (env.thinness) out.push(thinnessLine(env.thinness));
     if (env.pendingNote) out.push(`pending-note: ${env.pendingNote}`);
     return out.join('\n');
   }

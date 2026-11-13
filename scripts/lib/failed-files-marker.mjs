@@ -9,3 +9,20 @@
  * @module scripts/lib/failed-files-marker
  */
 export const FAILED_FILES_MARKER = 'run-tests/v1 failed-files:';
+
+/**
+ * Parse the payload after the marker: the ONE reader of this grammar (the CI flake classifier and ship-train's
+ * thinness metric both call it). `unknown` → `{kind:'unknown'}`; a JSON array of non-empty strings (the empty array
+ * included) → `{kind:'files', files}`; anything else → `{kind:'malformed', raw}` with the first 80 characters.
+ * @param {string} payload the text after `FAILED_FILES_MARKER`, untrimmed is fine
+ * @returns {{kind: 'files', files: string[]}|{kind: 'unknown'}|{kind: 'malformed', raw: string}}
+ */
+export function parseFailedFilesPayload(payload) {
+  const p = String(payload ?? '').trim();
+  if (p === 'unknown') return { kind: 'unknown' };
+  try {
+    const v = JSON.parse(p);
+    if (Array.isArray(v) && v.every((f) => typeof f === 'string' && f)) return { kind: 'files', files: v };
+  } catch { /* malformed below */ }
+  return { kind: 'malformed', raw: p.slice(0, 80) };
+}
