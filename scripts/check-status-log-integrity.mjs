@@ -22,6 +22,21 @@
  * repo's single range resolver, and AGENTS.md's rule is explicit: gates must
  * not re-infer a base from working-tree state.
  *
+ * **AN EMPTY COMMIT RANGE IS NOT AN EMPTY COMPARISON (fixed 2026-11-13).**
+ * `curr` is read from the WORKING TREE, `prev` from git. So when the resolved
+ * base equals HEAD — a fully-pushed branch, or a fresh worktree branched at the
+ * default-branch tip — `base..HEAD` spans no commits, but the working tree can
+ * still hold a delta, and PR #87's own defect class (a partial Read then a
+ * whole-file Write) is a working-tree event. This gate used to refuse on the
+ * PROXY `base == HEAD`, which made it blind to exactly that, on 6 of 17 live
+ * worktrees. It now refuses on the REAL condition — the two states are
+ * identical — asked after both have been read. Fail-closed is unchanged:
+ * nothing to compare is still exit 2, never a "conserved" that read nothing.
+ * A run that compared only the working tree says so in its summary and sets
+ * `comparedWorkingTreeOnly` in `--json`, so a green is never read as covering
+ * a span of commits it never saw.
+ * Measurement: docs/research/status-integrity-gate-base-measurement-2026-11-13.md
+ *
  * Exit codes: 0 conserved · 1 history lost · 2 cannot verify (fail-closed).
  *
  * Usage:
@@ -122,18 +137,25 @@ function parseManifest(text) {
  * Resolve a caller-supplied `--base` to an immutable commit, and refuse the
  * ranges that cannot detect anything.
  *
- * An unvalidated `--base` is a gate bypass: `--base HEAD` on a clean tree makes
- * the previous and current states IDENTICAL, so conservation holds vacuously
- * and any loss already committed is invisible. A ref that is not an ancestor of
- * HEAD describes a range this push did not make. Both are refusals, not
- * warnings — the same fail-closed rule the unresolvable-base path already
+ * A ref that is not an ancestor of HEAD describes a range this push did not
+ * make, and an unresolvable one cannot be diffed at all. Both are refusals,
+ * not warnings — the same fail-closed rule the unresolvable-base path already
  * follows, and AGENTS.md's "an unresolvable explicit base fails hard, never
  * demotes to inference".
  *
- * @returns {string} the resolved OID
+ * `base == HEAD` is NOT refused here, and that is the 2026-11-13 fix. It used
+ * to be, on the stated grounds that "the previous and current states would be
+ * identical" — but that is a PROXY for the real condition, and it is false
+ * whenever the tree is dirty, because `curr` is read from DISK and `prev` from
+ * git. The caller therefore gets `emptyRange: true` and must decide AFTER
+ * reading both states, which is the only point at which "there is nothing to
+ * compare" can be known rather than assumed. See `refuseIfNothingToCompare`.
+ *
+ * @returns {{oid: string, emptyRange: boolean}} the resolved OID, and whether
+ *   `base..HEAD` spans no commits (so only the working tree can supply a delta)
  * @throws {Error} with an operator-facing message
  */
-function validateExplicitBase(explicit) {
+function validateExplicitBase(explicit, rangeNote = null) {
   let oid;
   try {
     oid = git(['rev-parse', '--verify', `${explicit}^{commit}`]).trim();
@@ -141,12 +163,7 @@ function validateExplicitBase(explicit) {
     throw new Error(`--base "${explicit}" does not resolve to a commit.`);
   }
   const head = git(['rev-parse', 'HEAD']).trim();
-  if (oid === head) {
-    throw new Error(
-      `--base "${explicit}" resolves to HEAD (${oid.slice(0, 8)}). The previous and current `
-      + 'states would be identical, so conservation would hold having compared nothing.',
-    );
-  }
+  if (oid === head) return { oid, emptyRange: true, rangeNote, explicit };
   try {
     git(['merge-base', '--is-ancestor', oid, head]);
   } catch {
@@ -154,18 +171,94 @@ function validateExplicitBase(explicit) {
       `--base "${explicit}" (${oid.slice(0, 8)}) is not an ancestor of HEAD — that range is not this push.`,
     );
   }
-  return oid;
+  return { oid, emptyRange: false, rangeNote, explicit };
+}
+
+/**
+ * Canonical bytes of a comparable state, so key ORDER can never fake a
+ * difference. `prev` is built from `git ls-tree` / `git show` and `curr` from
+ * `readdirSync` / `readFileSync`: the same content arrives through two
+ * different enumerations, so a plain `JSON.stringify` of either would compare
+ * orderings rather than content — which on this gate would mean claiming a
+ * delta exists when none does, and running the laws on a vacuous pair.
+ *
+ * Only the fields `checkConservation` actually reads are included. A field it
+ * ignores cannot make a comparison substantive.
+ */
+function canonicalState(s) {
+  const sortedMap = (m) => Object.keys(m ?? {}).sort().map((k) => [k, m[k]]);
+  const sortedJson = (v) => (v === null || v === undefined
+    ? null
+    : JSON.stringify(v, (_k, val) => (
+      val && typeof val === 'object' && !Array.isArray(val)
+        ? Object.fromEntries(Object.keys(val).sort().map((k) => [k, val[k]]))
+        : val
+    )));
+  return JSON.stringify({
+    root: s.root ?? '',
+    archives: sortedMap(s.archives),
+    manifest: sortedJson(s.manifest),
+    marker: s.marker ?? null,
+    entries: sortedMap(s.entries),
+    strays: [...(s.strays ?? [])].sort(),
+  });
+}
+
+/**
+ * The empty-range refusal, moved to where the answer is KNOWN.
+ *
+ * Failing closed on an empty range is correct and stays correct: a gate that
+ * reports "conserved" having compared nothing is this gate's whole reason for
+ * existing. What was wrong is WHEN the question was asked. `base == HEAD` means
+ * `base..HEAD` spans no commits; it does NOT mean there is nothing to compare,
+ * because this gate's `curr` is the WORKING TREE. With a status-log delta on
+ * disk the comparison is substantive — measured: with the old refusal removed,
+ * a disk-only truncation at `base == HEAD` reported 3 x `entry-vanished`, the
+ * exact PR #87 class, which is itself a working-tree event (a partial Read then
+ * a whole-file Write).
+ *
+ * So: refuse when the two states are genuinely IDENTICAL, which is the real
+ * condition, and only in the empty-range case. Outside it, `prev == curr` is
+ * the ordinary and legal "this range did not touch the log" — refusing there
+ * would block almost every push.
+ *
+ * docs/research/status-integrity-gate-base-measurement-2026-11-13.md
+ *
+ * @returns {string|null} an operator-facing message, or `null` to proceed
+ */
+function refuseIfNothingToCompare(base, prev, curr) {
+  if (!base.emptyRange) return null;
+  if (canonicalState(prev) !== canonicalState(curr)) return null; // a real delta: the working tree's
+  const { rangeNote, explicit, oid } = base;
+  return `the base resolves to HEAD (${oid.slice(0, 8)})`
+    + `${rangeNote ? `, via ${rangeNote}` : ` — from --base "${explicit}"`}`
+    + ': the range is EMPTY and the working tree is identical to it, so there is '
+    + 'genuinely nothing to compare.\n'
+    + '  Expected on a fully-pushed branch with a clean tree, and on a fresh worktree '
+    + 'branched at the default-branch tip (no upstream, so the base is merge-base = HEAD).\n'
+    + '  Failing closed rather than reporting "conserved" having read nothing. With '
+    + 'uncommitted status-log changes this same run checks them; to check a span of '
+    + 'commits, pass --base <ref>. The authoritative run is the pre-push hook, which '
+    + 'supplies the pushed range itself.';
 }
 
 async function resolveBase(explicit) {
   if (explicit !== null && explicit !== undefined) return validateExplicitBase(explicit);
   let base = null;
+  let note = null;
   try {
     const mod = await import('./lib/push-range.mjs');
     const resolver = mod.resolvePushRange || mod.default;
     if (typeof resolver === 'function') {
       const r = await resolver({ repoRoot: REPO });
       base = r?.base || r?.baseSha || r?.from || null;
+      // The resolver reports WHICH rung produced the base precisely so a gate
+      // can say so (push-range.mjs's honesty invariant). Reading only `base`
+      // discarded it, which left an operator in the fresh-worktree case told
+      // about a bare sha with no way to see the fork-point path was taken.
+      if (base && typeof mod.describePushRange === 'function') {
+        try { note = mod.describePushRange(r); } catch { note = null; }
+      }
     }
   } catch { /* fall through to the honest failure below */ }
   if (!base) return null;
@@ -173,7 +266,7 @@ async function resolveBase(explicit) {
   // only the explicit path left the default — the path CI actually takes —
   // unvalidated, so a resolver returning HEAD or a non-ancestor would produce
   // a vacuous or wrong comparison with no refusal. Same rule, both doors.
-  return validateExplicitBase(base);
+  return validateExplicitBase(base, note);
 }
 
 async function main() {
@@ -233,21 +326,22 @@ async function main() {
   // false-green class this plan exists to remove, reproduced in the guard
   // written to prevent it. A check must never be able to go green having
   // checked nothing.
-  const prevRootText = showAt(base, ROOT_LOG);
+  const oid = base.oid;
+  const prevRootText = showAt(oid, ROOT_LOG);
   if (prevRootText === null) {
-    const msg = `status-log-integrity: CANNOT VERIFY — no ${ROOT_LOG} at base "${base}" `
+    const msg = `status-log-integrity: CANNOT VERIFY — no ${ROOT_LOG} at base "${oid}" `
       + '(unresolvable ref, or a shallow clone).\n'
       + '  Failing closed: an empty baseline would make any truncation look conserved.\n';
-    if (jsonMode) process.stdout.write(`${JSON.stringify({ ok: false, verdict: 'cannot-verify', base })}\n`);
+    if (jsonMode) process.stdout.write(`${JSON.stringify({ ok: false, verdict: 'cannot-verify', base: oid })}\n`);
     else process.stderr.write(msg);
     process.exit(2);
   }
 
   const prev = {
     root: prevRootText,
-    archives: archivesAt(base),
-    manifest: parseManifest(showAt(base, MANIFEST)),
-    ...entryStateAt(base),
+    archives: archivesAt(oid),
+    manifest: parseManifest(showAt(oid, MANIFEST)),
+    ...entryStateAt(oid),
   };
   const curr = {
     root: fs.existsSync(path.join(REPO, ROOT_LOG)) ? fs.readFileSync(path.join(REPO, ROOT_LOG), 'utf-8') : '',
@@ -258,14 +352,36 @@ async function main() {
     ...entryStateOnDisk(REPO),
   };
 
+  // The empty-range refusal, asked now that BOTH states are in hand — the only
+  // point at which "there is nothing to compare" is known rather than assumed.
+  // Still fail-closed, still exit 2, still `bad-base`.
+  const nothingToCompare = refuseIfNothingToCompare(base, prev, curr);
+  if (nothingToCompare) {
+    if (jsonMode) process.stdout.write(`${JSON.stringify({ ok: false, verdict: 'bad-base', base: oid, error: nothingToCompare })}\n`);
+    else process.stderr.write(`status-log-integrity: ${nothingToCompare}\n`);
+    // `await finishAndExit`, not `process.exit`: on Windows a piped stdout is
+    // async, so exiting here would truncate the JSON envelope a caller parses
+    // — and this gate's envelope is the evidence that it refused rather than
+    // crashed. We are inside the async `main()`, so it can be awaited.
+    await finishAndExit(2);
+    return;
+  }
+
   const { ok, violations } = checkConservation(prev, curr);
+  // An empty range that DID have a delta compared the working tree, not a span
+  // of commits. Say which, so a green is never read as covering more than it did.
+  const against = base.emptyRange
+    ? `the working tree vs ${oid.slice(0, 8)} (empty commit range)`
+    : oid.slice(0, 8);
 
   if (jsonMode) {
-    process.stdout.write(`${JSON.stringify({ ok, base, violations })}\n`);
+    process.stdout.write(`${JSON.stringify({
+      ok, base: oid, emptyRange: base.emptyRange, comparedWorkingTreeOnly: base.emptyRange, violations,
+    })}\n`);
   } else if (ok) {
-    process.stdout.write(`status-log-integrity: conserved against ${base.slice(0, 8)}.\n`);
+    process.stdout.write(`status-log-integrity: conserved against ${against}.\n`);
   } else {
-    process.stdout.write(`status-log-integrity: ${violations.length} violation(s) against ${base.slice(0, 8)}\n`);
+    process.stdout.write(`status-log-integrity: ${violations.length} violation(s) against ${against}\n`);
     for (const v of violations) process.stdout.write(`  ${v.kind}: ${v.detail}\n`);
     process.stdout.write('\n  status.md is append-only; once docs/status/entries/README.md exists it takes no NEW entry (add a file there).\n');
     process.stdout.write('  To archive a month, use `npm run status:rotate`,\n');
