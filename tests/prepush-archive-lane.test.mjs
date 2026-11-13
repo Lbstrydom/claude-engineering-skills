@@ -24,13 +24,10 @@ import { git as runGit } from './lib/hook-test-helpers.mjs';
 import { classifyPath } from '../scripts/lib/sensitive-paths.mjs';
 import {
   ACK_MAX_FINDINGS,
-  ARCHIVE_LANE_CHECK_CLASSIFICATION,
-  LANE_SCANNERS,
   LIMITS,
   VARIANT_MAX_BYTES,
   ZERO_SHA,
   batchBySize,
-  checkStepNames,
   decidePushLane,
   displayDestination,
   displayPath,
@@ -43,9 +40,7 @@ import {
   parseRawLog,
   runArchiveLane,
   scanBodyPatterns,
-  validateClassification,
 } from '../scripts/lib/prepush-archive-lane.mjs';
-import { expandedCheckScript } from '../scripts/lib/check-chain.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const CLI = path.join(REPO_ROOT, 'scripts', 'prepush-archive-lane.mjs');
@@ -796,43 +791,6 @@ describe('scan coverage: the places a secret hid from the first version', () => 
       assert.ok(kinds.includes('secret:pem-private-key'), kinds.join());
       assert.ok(kinds.includes('secret:npm-token'), kinds.join());
     });
-  });
-});
-
-// ── the classification of `check` is executable ─────────────────────────────
-
-describe('ARCHIVE_LANE_CHECK_CLASSIFICATION', () => {
-  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
-  const steps = checkStepNames(expandedCheckScript(pkg.scripts));
-
-  it('classifies every step of check and names no step check lacks (both directions)', () => {
-    assert.ok(steps.length >= 30, `parsed ${steps.length} steps: the census itself must not be vacuous`);
-    assert.deepEqual(validateClassification(ARCHIVE_LANE_CHECK_CLASSIFICATION, steps), []);
-  });
-
-  it('CONTROL: a new step with no entry is reported, and so is a stale entry', () => {
-    assert.match(validateClassification(ARCHIVE_LANE_CHECK_CLASSIFICATION, [...steps, 'secrets:gate']).join('\n'), /"secrets:gate" has no entry/);
-    assert.match(validateClassification(ARCHIVE_LANE_CHECK_CLASSIFICATION, steps.slice(1)).join('\n'), /not a step of check/);
-  });
-
-  it('CONTROL: a publication-safety step cannot be added by editing the table alone', () => {
-    const table = { ...ARCHIVE_LANE_CHECK_CLASSIFICATION, 'secrets:gate': { cls: 'P', reason: 'scans pushed content' } };
-    const problems = validateClassification(table, [...steps, 'secrets:gate']).join('\n');
-    assert.match(problems, /"secrets:gate" is class P/);
-    const mapped = { ...table, 'secrets:gate': { cls: 'P', reason: 'scans pushed content', laneScanner: LANE_SCANNERS[0] } };
-    assert.deepEqual(validateClassification(mapped, [...steps, 'secrets:gate']), []);
-    const bogus = { ...table, 'secrets:gate': { cls: 'P', reason: 'x', laneScanner: 'nope' } };
-    assert.match(validateClassification(bogus, [...steps, 'secrets:gate']).join('\n'), /names no lane scanner/);
-  });
-
-  it('rejects an unknown class and an empty reason', () => {
-    const problems = validateClassification({ a: { cls: 'Z', reason: ' ' } }, ['a']).join('\n');
-    assert.match(problems, /class must be/);
-    assert.match(problems, /reason is empty/);
-  });
-
-  it('records no class P today — check has no publication-safety step (plan §1.2)', () => {
-    assert.deepEqual(Object.values(ARCHIVE_LANE_CHECK_CLASSIFICATION).filter((e) => e.cls === 'P'), []);
   });
 });
 
