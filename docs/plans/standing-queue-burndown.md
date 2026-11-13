@@ -18,9 +18,17 @@
   repo`; Q3 reports `state: ready`): Q1 **82 code** / 26 plan (+1012 aged) before
   pass 3 and **65 code** / 26 plan after it; Q2 **47 code** / 36 plan
   (`total` 83, 54 accepted-permanent); Q3 **35** actionable (0 unadjudicated,
-  35 accepted-unfixed). Q1 and Q2 code halves are both *below* the 2026-10-11
-  figures (95, 116) — ordinary work and an unrecorded Q2/Q3 adjudication
-  closed rows between measurements; this pass did not touch Q2/Q3.
+  35 accepted-unfixed). Q1 and Q2 code halves both read *below* the 2026-10-11
+  figures (95, 116); this pass did not touch Q2/Q3.
+- **Correction, same day (§7) — that "below" is NOT a burndown, and the
+  attribution above was wrong.** Q1 and Q2 are windowed views over
+  `audit_runs.created_at` (Q1 14 days, Q2 7–30 days), so two measurements five
+  weeks apart describe **disjoint cohorts of runs** — measured overlap between
+  the 10-11 and 11-13 Q2 windows: **0 rows**. Of the 116 Q2 code rows reported
+  on 10-11, **110 are still open and unremediated today**; of the 95 Q1 code
+  rows, **96 are still unlocked**. Essentially nothing closed; the rows aged
+  out. Q3's 449→0 *is* real (435 single-row adjudications on 2026-09-14). §7
+  carries each measurement.
 - **A fourth queue is now measurable and is NOT tracked here** (see §5): the
   local-vs-store debt divergence, closed 2026-09-04 by
   `docs/plans/backlog-and-drift-reduction.md`. It had **37 debt entries existing
@@ -167,8 +175,15 @@ population grew 185→190 over the same window.
 
 **Burndown pass 3, 2026-11-13** (one session, bounded at 25 rows). Re-measured
 first: `byMode.total` **108** — **82 code**, 26 plan (the CLI's `byMode.code` is
-the count; the 20-row pages listed 83 code rows — one more than the count, not
-reconciled: read the count field, do not add up pages). The queue had re-grown 26→82 since 2026-09-04. All 83 listed code rows
+the count; the 20-row pages listed 83 code rows — one more than the count.
+**Reconciled 2026-11-13 (§7.3): an instrument defect, now fixed.** The views
+project the RECORDED `audit_mode`; the counts bucket by `EFFECTIVE_MODE_SQL`,
+which demotes an `audit_mode='code'` row whose `primary_file` is prose to
+`plan`. One such row was in the page, so folding the listing by `audit_mode`
+gave count+1. `getUnlockedFixes`/`getUnremediatedAcceptances` now project
+`effective_mode`, so the listing folds to the count. Read the count field;
+where you must fold a listing, fold by `effective_mode`.)
+The queue had re-grown 26→82 since 2026-09-04. All 83 listed code rows
 are `HIGH` and were fixed between 2026-11-02 and 2026-11-13 (34 on 11-02, 29 on
 11-08, 8 on 11-09, 11 on 11-11, 1 on 11-13) — i.e. the whole count sits inside
 the 14-day nudge window, so it is a flow of recent fixes, not an old backlog; the
@@ -206,8 +221,9 @@ other 57 code rows were **not examined** (bound reached, not a verdict).
     real-file findings that merely mention the canary. The two findings
     contradict; the test asserts the latter. This is a declined-on-the-merits
     candidate, left as such because the queue still has no writer for it.
-- **Not examined** (57 by the count; the paged listing showed 83 code rows
-  against a count of 82 and the extra row was not reconciled): prepush
+- **Not examined** (57 by the count; the 83-vs-82 discrepancy is reconciled in
+  §7.3 — the 83rd row is `2e68fc2f`, recorded `code` with a prose
+  `primary_file`, and is effectively a plan row): prepush
   snapshot/audit-gate/installer cluster 11, `campaign-contract` 7,
   `skills/audit-plan/SKILL.md` 7, `skill-frontmatter-layout` 5,
   `pinned-worktree` 4, `ci-verdict` 4, `check-setup` 4, `azure-doctor` 3, and
@@ -322,6 +338,16 @@ plan; `byDisposition.acceptedPermanent` **50**; `agedOut` 17 (HIGH 3, MEDIUM
 plan; `byDisposition.acceptedPermanent` **54**; `agedOut` 740; `notYetDue` 19.
 Code half 80 (09-04) → 116 (10-11) → 47. Not worked in pass 3.
 
+> **116 → 47 is window rotation, not closure (measured 2026-11-13, §7.1).**
+> `unremediated_acceptances` is `…_all WHERE is_mature AND is_recent AND
+> is_open_disposition` — a rolling **7–30 day** window on
+> `audit_runs.created_at`. The 10-11 window (runs created 09-11…10-04) and the
+> 11-13 window (10-14…11-06) share **0 rows**. Of the 116 code rows reported on
+> 10-11, **110 are still open and unremediated now**; at most 6 closed in five
+> weeks. The queue did not shrink — the view moved. `agedOut` 740 is where they
+> went. **Never read a fall in this number as progress without naming the
+> cohort.**
+
 **Exit criterion**: the reader reports a true total, and that total reaches 0
 or every remaining row is `planned` against a live plan. **Not met** — **80
 code rows** at the 2026-09-04 re-measure (94→91→90→80).
@@ -388,9 +414,18 @@ shadow-only` worksheet remains the ergonomic way to work a batch.
 
 **Re-measured 2026-11-13**: `counts.totalActionable` **35** (`state: ready`) —
 0 unadjudicated, 35 accepted-unfixed, 0 fixed-unlabelled, 0 regressed
-(486 at re-adoption, 449 of them unadjudicated). The unadjudicated half was
-adjudicated between 2026-09-04 and now; who and how was not investigated here.
-Not worked in pass 3.
+(486 at re-adoption, 449 of them unadjudicated). Not worked in pass 3.
+
+> **The 449 → 0 is REAL, and §7.2 names what closed it.** On **2026-09-14**,
+> 435 shadow-only findings were adjudicated — 282 `dismissed`, 153
+> `accepted-permanent` — with **435 distinct `decided_at` values** spread
+> 07:17–20:15 UTC, i.e. 435 separate single-row writes through
+> `adjudicateFinalReviewFinding`, not one bulk `UPDATE`. A further 4 landed on
+> 09-15 and 23 on 09-16. The shadow-only population is **still 536 rows** —
+> nothing was pruned or deleted — and **0** of them now lack a ruling on both
+> axes. That route writes no `finding_adjudication_events` row, which is why
+> the event table shows nothing that day and why the sweep left no trace
+> anywhere but the findings themselves.
 
 **Exit criterion**: `counts.totalActionable` reaches 0, or each remaining row
 carries a recorded adjudication. **Not met** — 486 actionable at re-adoption
@@ -453,3 +488,210 @@ was implemented as part of this pass; both are out of this plan's scope
 
 Nothing here blocks a ship, by design. A gate that fires on state the current
 commit cannot change is the cried-wolf shape that earns `--no-verify`.
+
+## 7. Reconciliation of the 2026-11-13 figures (investigation, 2026-11-13)
+
+Pass 3 (§2) reported three numbers it could not account for and correctly left
+them unreconciled. This section settles all three. Every figure below is
+**measured**; each carries the command that produced it. Store
+`d5a9d07b91225a93` (`audit_loop`), repo id
+`6461a693-6690-4bf3-98ee-14c0385cc357`, slug
+`Lbstrydom/claude-engineering-skills`. Source read at `d16039bf`.
+
+> **Falsified first, before anything else.** `audit_repos` holds exactly ONE
+> row named `Lbstrydom/claude-engineering-skills`
+> (`select id, repo_uuid, name from audit_repos order by name`), so the
+> two-repo-ids false-zero shape is not present in this store and explains none
+> of the three. No reader returned `measured: false`; every one reported
+> `scope.mode: repo` with the id above.
+
+### 7.1 Q2 116 → 47 — the figure is real, the ATTRIBUTION was false
+
+**Verdict: real reading, wrong story.** Nothing was burned down. The rows aged
+out of a rolling window, and the obligations are still open.
+
+`unremediated_acceptances` is `unremediated_acceptances_all WHERE is_mature AND
+is_recent AND is_open_disposition`, where `is_mature` is
+`created_at < now() - 7 days` and `is_recent` is `created_at > now() - 30 days`
+— read from `pg_views` on the live store, not from a migration file. The view
+is therefore a **7–30 day window on `audit_runs.created_at`**, and two reads
+five weeks apart cannot describe the same rows.
+
+| Question | Measured |
+|---|---|
+| Rows shared by the 2026-10-11 and 2026-11-13 Q2 windows | **0** |
+| Code rows of the 10-11 cohort still open + unremediated today | **110** (116 reported then) |
+| Code rows in the current window | **47** |
+| `agedOut` reported by the same reader | **740** |
+
+```sql
+-- overlap between the two windows: 0
+select count(*) from audit_findings f join audit_runs r on r.id = f.run_id
+ where r.repo_id = :repo
+   and r.created_at <  timestamptz '2026-10-11' - interval '7 days'
+   and r.created_at >  timestamptz '2026-10-11' - interval '30 days'
+   and r.created_at <  now() - interval '7 days'
+   and r.created_at >  now() - interval '30 days';
+
+-- the 10-11 cohort, still open today: 110
+select count(*) from unremediated_acceptances_all a
+ where a.repo_id = :repo and a.is_open_disposition
+   and a.audit_mode = 'code'
+   and a.primary_file ~ '^[A-Za-z0-9_./-]+\.[A-Za-z0-9]+$'
+   and a.accepted_at < timestamptz '2026-10-11' - interval '7 days'
+   and a.accepted_at > timestamptz '2026-10-11' - interval '30 days';
+```
+
+So at most **6** of the 116 were genuinely closed in five weeks; **110 (95%)
+are still open** and merely left the view.
+
+**Q1 behaves the same way** (its window is 14 days): of the 95 code rows
+reported on 2026-10-11, **96 are still unlocked today** — one *more*, not
+fewer. None were locked.
+
+```sql
+select count(*) from unlocked_fixes_all u
+ where u.repo_id = :repo and u.audit_mode = 'code'
+   and u.primary_file ~ '^[A-Za-z0-9_./-]+\.[A-Za-z0-9]+$'
+   and u.fixed_at >  timestamptz '2026-10-11' - interval '14 days'
+   and u.fixed_at <= timestamptz '2026-10-11';   -- 96
+```
+
+**Independent cross-check.** The pass-3 figures came from the CLI; these come
+from SQL against the same store:
+`select count(*) from unremediated_acceptances where repo_id = :repo and
+audit_mode = 'code' and primary_file ~ '<code-path pattern>'` → **47**, equal to
+`list-unremediated-acceptances`'s `byMode.code`. The same shape over
+`unlocked_fixes` → **65**, equal to `list-unlocked-fixes`'s `byMode.code`.
+
+**Positive control.** Both readers return non-zero on this scope, and the
+110-row cohort query returns rows the window excludes — the instrument can still
+see what the view hides, so the 47 is a measurement and not an empty read.
+
+**Operational consequence.** A fall in Q1's or Q2's code half is **not** evidence
+of work. Name the cohort, or compare `byMode.code + agedOutByMode.code`, which
+aging cannot reduce.
+
+### 7.2 Q3 449 unadjudicated → 0 — real, and here is what closed it
+
+**Verdict: real.** A genuine adjudication sweep, done one row at a time.
+
+| Question | Measured |
+|---|---|
+| Shadow-only rows in this repo today | **536** (532 censused 2026-08-28 — nothing pruned) |
+| Of those, with no ruling on either axis | **0** |
+| Rows adjudicated on 2026-09-14 | **435** — 282 `dismissed`, 153 `accepted-permanent` |
+| Distinct `decided_at` values among those 435 | **435** |
+| `decided_at` span that day | 07:17:03 → 20:15:15 UTC |
+| Tail | 4 on 09-15, 23 on 09-16 |
+
+435 rows carrying 435 distinct timestamps over thirteen hours is not a bulk
+`UPDATE` — it is 435 separate single-row writes through
+`adjudicateFinalReviewFinding` (`scripts/lib/store/runs-findings.mjs` at
+`d16039bf`), the route §4 names. That writer touches
+`audit_findings.user_action`, `.adjudication_outcome` and `.decided_at` and
+records **no `finding_adjudication_events` row**, which is why the event table
+shows nothing for shadow-only findings after 2026-08-24 and why the sweep left
+no trace outside the findings themselves. No migration ran on 2026-09-14.
+
+**Hypotheses tested and falsified**: *pruning* — the population is still 536
+rows, so `UNRULED_WHERE`'s prune path did not delete them; *predicate change* —
+the credit-population predicates widened on 2026-09-04 and 2026-09-14, but
+widening cannot empty a class, and the shadow branch
+(`CREDIT_BRANCH_SHADOW_WHERE` = `r.repo_id = $1 AND f.bucket = 'shadow-only'`)
+carries **no disposition filter at all**, so no unadjudicated row can be
+excluded before counting; *schema fault rendered as empty* —
+`getFinalReviewStats` returns `{ok:false, error}` on a failed query and the
+reader reported `state: ready`, `ok: true`.
+
+**Independent cross-check.** Running `actionablePairs`'s own SQL directly and
+folding it through `summariseCounts` reproduces the CLI exactly:
+
+```
+population size: 536
+  accepted-permanent/accepted/fixed = 171 -> closed
+  accepted-permanent/accepted/null  =  35 -> accepted-unfixed
+  dismissed/dismissed/fixed         =   2 -> closed
+  dismissed/dismissed/null          = 328 -> closed
+counts: {unadjudicated: 0, fixedUnlabelled: 0, acceptedUnfixed: 35, totalActionable: 35}
+```
+
+**Positive control.** Injecting one synthetic `NULL/NULL/NULL` group with `n: 7`
+into the same fold yields `{unadjudicated: 7, acceptedUnfixed: 35,
+totalActionable: 42}`. The class is live; the 0 is a measurement, not a dead
+branch. (`classifyFinalReviewOutcome({user_action: null,
+adjudication_outcome: null, remediation_state: null})` → `'unadjudicated'`,
+actionable.)
+
+A store-level positive control by flipping one real row was **not** run: that is
+a write to the shared production store, and the structural argument above is
+stronger — a population with no disposition filter cannot hide a row.
+
+### 7.3 Q1 "83 listed vs a count of 82" — an instrument defect, fixed here
+
+**Verdict: instrument defect.** Reproduced the same day, fixed, and pinned with
+a test proven red by reverting the fix.
+
+Paging the whole listing today gives the same shape:
+
+```bash
+for o in 0 20 40 60 80; do node scripts/cross-skill.mjs list-unlocked-fixes --limit 20 --offset $o; done
+# rows listed: 91   distinct ids: 91
+# rows with audit_mode === 'code' : 66
+# byMode reported                 : {"total":91,"code":65,"plan":26}
+```
+
+**Not a paging artifact**: 91 rows, 91 distinct `audit_finding_id`s, and 91 is
+exactly `byMode.total`. Nothing was duplicated or skipped.
+
+The cause is a mode disagreement the row could not express. `countUnlockedFixes`
+buckets by `EFFECTIVE_MODE_SQL` (`scripts/lib/store/finding-mode.mjs` at
+`d16039bf`) — a read-side correction that demotes an `audit_mode = 'code'` row
+whose `primary_file` does not match `^[A-Za-z0-9_./-]+\.[A-Za-z0-9]+$` to
+`plan`. The view projects only the **recorded** `audit_mode`, and the readers
+passed it through, so a consumer folding the listing had the wrong column and no
+way to know it.
+
+```sql
+select audit_mode,
+       case when audit_mode = 'code'
+             and primary_file ~ '^[A-Za-z0-9_./-]+\.[A-Za-z0-9]+$'
+            then 'code' else 'plan' end as effective_mode,
+       count(*) from unlocked_fixes where repo_id = :repo group by 1, 2;
+-- code/code 65 | code/plan 1 | plan/plan 25
+```
+
+The one disagreeing row is `2e68fc2f-6a81-47cc-bb22-cb83935bdfdf`, HIGH, fixed
+2026-11-02, `primary_file` = a comma-and-em-dash prose phrase naming six skills.
+It was inside the 14-day window on 2026-11-13, which is exactly the 83rd row
+pass 3 could not place.
+
+`ship-nudges.mjs` already warned that the count and the `--mode` FILTER "must
+move together or not at all". The row PROJECTION was the third place and was
+left behind — and the CLI exposes no `--mode` flag, so the projection is the
+*only* axis a CLI consumer has.
+
+**Fix**: `getUnlockedFixes` and `getUnremediatedAcceptances` now project
+`${EFFECTIVE_MODE_SQL} AS effective_mode` (six SQL literals, one oracle).
+Verified against the live store: folding the listing by `effective_mode` gives
+**65**, equal to `byMode.code`.
+
+**Test**: `tests/nudge-row-effective-mode-db.test.mjs` (disposable Postgres,
+enrolled in `db-test-container.mjs` AND `postgres-parity.yml`). It seeds a
+prose-`primary_file` row beside a real-path one and asserts the listing folds to
+the card's counts, for both readers and both age windows. Each case carries a
+negative control — the seeded row must still read `audit_mode === 'code'`, and
+folding by that column must NOT reconcile — so a fixture whose columns happened
+to agree cannot pass vacuously. **Proven red**: reverting the six projections
+fails all 5 cases (`every row projects an effective_mode`); restoring them
+returns 5/5 green.
+
+### 7.4 Follow-ups found but not taken here
+
+- `upsertRepoByUuid` renders a connection fault (`The server does not support
+  SSL connections`) as `null`, i.e. the same value as "no repo" — the
+  `catch { return null }` shape AGENTS.md names. Out of this investigation's
+  bound; not fixed.
+- Nothing records *when* a Q1/Q2 row left its window, so the cohort arithmetic
+  in §7.1 has to be reconstructed from `created_at` each time. A recorded
+  `aged_out_at`, or a snapshot of each measurement, would make it a lookup.
