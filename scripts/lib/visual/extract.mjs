@@ -388,6 +388,42 @@ async function collectState(page, { surfaces, props, timeoutMs, fullDom = false,
       return false;
     };
 
+    // Ancestor clip box: intersection of the padding boxes of every ancestor that
+    // CLIPS (overflow hidden|clip) on an axis. auto|scroll axes are scrollable —
+    // content stays reachable, so they are not a clip. Ancestors ABOVE the
+    // contracted root are walked on purpose: a clipping modal body is usually not
+    // in the captured subtree, so an element wider than it has sw === cw itself.
+    // position:fixed escapes every ancestor clip; position:absolute is clipped only
+    // from its containing block upward. Pure evidence — layout-physics decides.
+    const describeEl = (a) => `${a.tagName.toLowerCase()}${a.id ? `#${a.id}` : ''}${a.classList.length ? `.${a.classList[0]}` : ''}`;
+    const clipBoxOf = (el, cs) => {
+      if (cs.position === 'fixed') return null;
+      let escaping = cs.position === 'absolute';
+      let left = null; let right = null; let top = null; let bottom = null;
+      const owner = {};
+      for (let a = el.parentElement, h = 0; a && h++ < 64; a = a.parentElement) {
+        if (a === document.body || a === document.documentElement) break; // viewport propagation: layout_overflow's domain
+        const o = getComputedStyle(a);
+        if (escaping) {
+          if (o.position === 'static' && o.transform === 'none') continue; // not the containing block yet
+          escaping = false;
+        }
+        const ar = a.getBoundingClientRect();
+        if (/(hidden|clip)/.test(o.overflowX)) {
+          const l = ar.left + a.clientLeft; const r = l + a.clientWidth;
+          if (left === null || l > left) { left = l; owner.left = describeEl(a); }
+          if (right === null || r < right) { right = r; owner.right = describeEl(a); }
+        }
+        if (/(hidden|clip)/.test(o.overflowY)) {
+          const t = ar.top + a.clientTop; const b = t + a.clientHeight;
+          if (top === null || t > top) { top = t; owner.top = describeEl(a); }
+          if (bottom === null || b < bottom) { bottom = b; owner.bottom = describeEl(a); }
+        }
+      }
+      if (left === null && right === null && top === null && bottom === null) return null;
+      return { left, right, top, bottom, owner };
+    };
+
     const FOCUSABLE = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'SUMMARY']);
     const isInteractive = (el) => FOCUSABLE.has(el.tagName) || ['button', 'link', 'tab', 'menuitem', 'checkbox', 'radio', 'switch'].includes(el.getAttribute('role')) || el.hasAttribute('onclick');
     const isFocusable = (el) => {
@@ -447,6 +483,7 @@ async function collectState(page, { surfaces, props, timeoutMs, fullDom = false,
           // overlap guards: declared-invisible text is exempt from text-overlap checks
           ariaHidden: !!el.closest('[aria-hidden="true"]'),
           clipped: isClipped(el, rect),
+          clipBox: clipBoxOf(el, cs),
           effectiveOpacity: effectiveOpacity(el),
           // theme-safety: color-dependent content signal for the finding snippet
           // (form controls paint value/placeholder/option text even when empty).

@@ -22,6 +22,7 @@ export const SEVERITY_BY_CLASS = {
   contrast_failure: 'P1',
   layout_overflow: 'P2',
   content_clipping: 'P1',
+  clipped_by_ancestor: 'P1',
   unexpected_overlap: 'P2',
   image_distortion: 'P2',
   missing_visible_focus: 'P1',

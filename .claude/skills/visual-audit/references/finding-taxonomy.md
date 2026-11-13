@@ -1,5 +1,5 @@
 ---
-summary: The 18 finding classes — severity, gate-eligibility, guards that prevent false positives.
+summary: The 19 finding classes — severity, gate-eligibility, guards that prevent false positives.
 ---
 
 # Finding taxonomy
@@ -17,6 +17,7 @@ expected, actual, evidence, gateEligible, source}`. Severity defaults live in
 | `contrast_failure` | P1 | ✅ | only fires over a **resolved opaque** backdrop (gradient/image/unresolvable → `unverified`, no finding) |
 | `layout_overflow` | P2 | ✅ | needs the viewport width; 1px tolerance |
 | `content_clipping` | P1 | ✅ | `scrollWidth>clientWidth`, no ellipsis/wrap/scroll escape, AND box ≥4px (a collapsed/empty 1px label is a visibility concern, not text-overflow) |
+| `clipped_by_ancestor` | P1 | ✅ | border box vs the **box** of the nearest `overflow:hidden\|clip` ancestor (walked above the surface root; `scrollWidth` is blind — clipped content doesn't scroll). Quiet on: ≤1px overhang (sub-pixel layout; the field case was 314px in 313.5px), fully-outside boxes (off-canvas/sr-only), <4px boxes, opacity 0, `overflow:auto\|scroll` axes (intended scroll), `position:fixed`, abs-positioned past a static clipper, `allowOverlapWith`; child skipped when its captured parent overhangs as far (one root cause). Out of scope: `clip-path`, `contain:paint`, left/top clip of scroll containers |
 | `unexpected_overlap` | P2 | ✅ | excludes ancestor-descendant containment AND cross-stacking-layer pairs (a fixed/absolute overlay covering page content is intentional — layer read from the surface's overlay ancestor); `allowOverlapWith` respected |
 | `image_distortion` | P2 | ✅ | only with a distorting `object-fit` (`fill`/`none`) and >2% aspect mismatch |
 | `missing_visible_focus` | P1 | ✅ | any visible focus indicator passes (outline OR box-shadow ring OR border OR bg) — not just `outline` |

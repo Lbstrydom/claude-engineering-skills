@@ -3,6 +3,7 @@
  * Pure rect/scroll math over extract.mjs evidence for ONE device×theme:
  *   - layout_overflow   : a node's right edge exceeds the viewport width
  *   - content_clipping  : scrollWidth>clientWidth with no wrap/ellipsis/scroll escape
+ *   - clipped_by_ancestor: border box past a clipping (overflow hidden|clip) ancestor's box
  *   - unexpected_overlap: two NON-containment nodes' boxes intersect (sweep-line
  *                         over x-intervals; ancestor-descendant pairs excluded —
  *                         a child rect always intersects its parent)
@@ -58,8 +59,64 @@ export function runLayoutPhysics(nodes, contract, { viewportWidth = null } = {})
     }
   }
 
+  // ── ancestor clipping (box vs clipping-ancestor box; blind to scrollWidth) ──
+  out.push(...detectAncestorClipping(list));
+
   // ── overlap (sweep-line over x-intervals, ancestor-descendant excluded) ──
   out.push(...detectOverlaps(list));
+  return out;
+}
+
+// Sub-pixel layout rounding (a real field case read 314px inside 313.5px) must stay
+// quiet; 1px matches the tolerance the two checks above already use. A genuine
+// clip loses a visible chunk (the field incident lost ~15px), far above this.
+const CLIP_TOLERANCE_PX = 1;
+
+/**
+ * `clipped_by_ancestor`: an element's border box extends past the box of an
+ * ancestor that clips it (overflow hidden|clip) — the overhang is painted nowhere.
+ * Clipped content does not scroll, so `scrollWidth === clientWidth` on the element
+ * AND on a clipping ancestor outside the captured subtree; only comparing boxes
+ * sees it. Pure geometry — needs no knowledge of what the page is for.
+ *
+ * Quiet by construction: fully-outside boxes (off-canvas drawers, sr-only),
+ * collapsed boxes (<MIN_CLIP_DIM), invisible nodes, `overlapAllowed` nodes, and
+ * overflow:auto|scroll axes (intended scroll; extract.mjs never puts them in the
+ * clipBox) are skipped. A child is not re-reported when its captured parent
+ * already overhangs the same side at least as far (one root cause, one finding).
+ */
+function detectAncestorClipping(nodes) {
+  const byId = new Map();
+  for (const n of nodes) if (n.auditInstanceId) byId.set(n.auditInstanceId, n);
+  const overhangs = (n) => {
+    const cb = n.clipBox;
+    const r = n.rect;
+    if (!cb || !r) return null;
+    if (n.clipped || n.overlapAllowed || n.effectiveOpacity === 0) return null;
+    if (r.width < MIN_CLIP_DIM || r.height < MIN_CLIP_DIM) return null;
+    const sides = {};
+    const check = (side, px, extent) => {
+      // px >= extent ⇒ entirely outside the clip box: deliberately hidden, not clipped.
+      if (px > CLIP_TOLERANCE_PX && px < extent) sides[side] = px;
+    };
+    if (cb.left != null) check('left', cb.left - r.x, r.width);
+    if (cb.right != null) check('right', r.x + r.width - cb.right, r.width);
+    if (cb.top != null) check('top', cb.top - r.y, r.height);
+    if (cb.bottom != null) check('bottom', r.y + r.height - cb.bottom, r.height);
+    return Object.keys(sides).length ? sides : null;
+  };
+  const out = [];
+  for (const n of nodes) {
+    const sides = overhangs(n);
+    if (!sides) continue;
+    const parent = n.parentInstanceId ? byId.get(n.parentInstanceId) : null;
+    const parentSides = parent ? overhangs(parent) : null;
+    for (const [side, px] of Object.entries(sides)) {
+      if (parentSides && parentSides[side] != null && px <= parentSides[side] + CLIP_TOLERANCE_PX) continue;
+      const owner = n.clipBox.owner?.[side] || 'an ancestor';
+      out.push(mk('ancestor-clip', 'clipped_by_ancestor', n, side, `within ${owner}'s clip box`, `${side} edge ${px.toFixed(1)}px past ${owner} (overflow clips it; scrollWidth cannot see this)`));
+    }
+  }
   return out;
 }
 
