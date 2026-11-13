@@ -132,6 +132,9 @@ const CORE_ASSETS = [
   // `--adopt`'s schema contract, fs-read by setup-postgres.mjs. Authoritative
   // list is sync-to-repos.mjs; keep in lock-step.
   'tests/fixtures/expected-schema.json',
+  // The windowed-view declaration, fs-read by lib/store/windowed-views.mjs for
+  // the Home dashboard. Authoritative list is sync-to-repos.mjs; keep in lock-step.
+  '.windowed-views.json',
 ];
 
 function buildFileUniverse() {
