@@ -31,15 +31,25 @@ import { parseBacklogLine } from '../store/backlog-snapshot.mjs';
 import { latestBacklogLine } from './status-entries.mjs';
 import { makeMeasurement, isRepoSlug } from './home-model.mjs';
 import { readManifest, windowedQueueKeys } from '../store/windowed-views.mjs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { findRepoRootFromScript } from '../assert-repo-root.mjs';
 
 /**
- * Where `.windowed-views.json` is read from: THIS repo, never the `root` being
- * reported on. The declaration describes the audit store's own views, which is a
- * property of the tooling, not of the checkout the dashboard is pointed at.
+ * Where `.windowed-views.json` is read from: the repo THIS MODULE lives in, never
+ * the `root` being reported on. The declaration describes the audit store's own
+ * views, which is a property of the tooling, not of the checkout the dashboard is
+ * pointed at.
+ *
+ * Resolved by `findRepoRootFromScript`, not by counting `..` upwards. This module
+ * is synced into consumers at `scripts/.claude-skills/lib/dashboard/`, one level
+ * deeper than it sits here, so a fixed three-level climb lands on
+ * `<consumer>/scripts` and every queue would read `windowed: 'unknown'` — the
+ * relative-path-resolves-where-the-file-LANDS shape AGENTS.md lists among the
+ * recurring consumer reports. The oracle climbs to the `scripts/` ancestor
+ * instead, which is correct in both layouts (measured 2026-11-13: both
+ * `scripts/lib/dashboard/` and `scripts/.claude-skills/lib/dashboard/` resolve to
+ * the repo root). Null outside a `scripts/` ancestor ⇒ treated as unreadable.
  */
-const SELF_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const SELF_REPO = findRepoRootFromScript(import.meta.url);
 
 const num = Number.isFinite;
 
@@ -113,7 +123,9 @@ export async function collectQueues(root, { statusText = null, statusCapped, rep
   const candidate = repo ?? process.env.LEARNING_REPO_NAME ?? '';
   const slug = isRepoSlug(candidate) ? candidate : '';
   const { envelopes, outcomes } = await gatherBacklogEnvelopes({ repo: slug, cwd: root, run, timeoutMs, signal });
-  const manifest = readManifest(manifestRoot);
+  // A null root (this module outside any `scripts/` ancestor) is an unanswerable
+  // question, not an absent manifest — both land on `unknown`, which claims nothing.
+  const manifest = manifestRoot ? readManifest(manifestRoot) : { kind: 'missing' };
   const windowedKeys = manifest.kind === 'ok' ? windowedQueueKeys(manifest) : null;
   const line = statusText ? latestBacklogLine(statusText, { capped: statusCapped }) : null;
   const prev = line ? parseBacklogLine(line) : null;
