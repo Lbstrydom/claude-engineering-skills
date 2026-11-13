@@ -23,6 +23,9 @@ export const CORE_ENTRY = [
   // that names it is synced: a documented command whose tooling is absent where
   // it runs is the shape AGENTS.md records as defect class (4).
   'scripts/cycle-cluster-scope.mjs',
+  // /cycle Step 7 and /ship Step 6 wait for CI on the pushed head and merge through it (theme 2, consumer feedback 2026-11-11);
+  // both synced SKILL.md files name the command, so a consumer must have it.
+  'scripts/ci-merge.mjs',
   // /cycle Step 0.5's cross-plan coordination check (`--check-deps`, upstream
   // report f5ac366f) and /plan Phase 7's documented convention for declaring
   // it. Same reason as cycle-cluster-scope.mjs above: both synced SKILL.md
