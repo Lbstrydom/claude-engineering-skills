@@ -54,5 +54,14 @@
       "stated": "A VLM\n  is advisory-only and never gates."
     }
   ],
-  "ignoredCandidates": []
+  "ignoredCandidates": [
+    {
+      "line": "**Layout physics**. `layout_overflow` / `content_clipping` / `clipped_by_ancestor` (box vs clipping-ancestor box — clipped content never scrolls, so scrollWidth can't see it) / `unexpected_overlap` (excludes",
+      "reason": "Tier-list description of which layout checks exist, not a stated gate. The behaviour it names is exercised by tests/visual-clipped-by-ancestor.test.mjs (real-browser positive control plus clean twins) and tests/visual-layout-physics.test.mjs; the CI exit is the already-contracted drift-only gate."
+    },
+    {
+      "line": "| `references/finding-taxonomy.md` | The 19 finding classes — severity, gate-eligibility, guards that prevent false positives. | Triaging a finding, or deciding if a check is in-scope. |",
+      "reason": "Reference-index row; a count-bearing summary byte-matched to finding-taxonomy.md by skills:check. Describes the taxonomy document, asserts no gate."
+    }
+  ]
 }
