@@ -57,7 +57,7 @@ second flag `--allow-external-screenshot`.
    *both* themes — a `display:none`-in-one-theme element is intentional). MAY-DIFFER colors are
    allowed when tokened; an untokened literal identical across themes → `theme_unmapped_token`.
    Contrast is a byproduct over the resolved opaque backdrop → `contrast_failure`.
-3. **Layout physics**. `layout_overflow` / `content_clipping` / `unexpected_overlap` (excludes
+3. **Layout physics**. `layout_overflow` / `content_clipping` / `clipped_by_ancestor` (box vs clipping-ancestor box — clipped content never scrolls, so scrollWidth can't see it) / `unexpected_overlap` (excludes
    ancestor-descendant containment) / `image_distortion`.
 4. **Signifier matrix** (affordances via math). `missing_visible_focus` (any visible focus
    indicator — outline OR ring OR border OR bg, ≥3:1) / `state_has_no_visual_delta` (no hover
@@ -107,7 +107,7 @@ Exit codes: `0` clean/advisory · `1` gate-blocking divergence (`--gate`) · `2`
 ## Finding taxonomy (gate-eligible vs report-only)
 
 `token_violation`, `theme_geometry_drift`, `theme_unmapped_token`, `contrast_failure`,
-`layout_overflow`, `content_clipping`, `unexpected_overlap`, `image_distortion`,
+`layout_overflow`, `content_clipping`, `clipped_by_ancestor`, `unexpected_overlap`, `image_distortion`,
 `missing_visible_focus`, `disabled_not_signified` are **gate-eligible**.
 `state_has_no_visual_delta`, `component_inconsistency`, `contrast_parity_delta`,
 inferred-cluster outliers, and the `token_unreferenced` / `token_undefined_reference` /
@@ -141,7 +141,7 @@ gate-promotion of all three classes and modal `activate`-reach remain v1.1
 | File | Summary | Read when |
 |---|---|---|
 | `references/token-extraction-and-adapters.md` | Token-source adapters (Tailwind/CSS-vars/JSON), allowed-set normalization, inferred-cluster fallback. | Adding/​debugging a token source, or a value reconciles wrong. |
-| `references/finding-taxonomy.md` | The 18 finding classes — severity, gate-eligibility, guards that prevent false positives. | Triaging a finding, or deciding if a check is in-scope. |
+| `references/finding-taxonomy.md` | The 19 finding classes — severity, gate-eligibility, guards that prevent false positives. | Triaging a finding, or deciding if a check is in-scope. |
 | `references/contract-and-bootstrap.md` | `visual-contract.json` schema + `--bootstrap` recipe, `data-visual-id` opt-in, theme-apply protocol. | Authoring/​editing the contract, or theme capture misbehaves. |
 | `references/ci-gate-and-verify.md` | Drift-only changed-surface gate, the `ChangedScopeResolver` rules, capture-honesty, exit codes. | Wiring CI, or a finding gates/​doesn't-gate unexpectedly. |
 | `examples/example-report.md` | A sample human + JSON visual-audit report for reference. | Want to see the output shape before running. |
