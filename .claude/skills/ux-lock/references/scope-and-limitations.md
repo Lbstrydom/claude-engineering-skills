@@ -115,10 +115,14 @@ Both modes expect:
 
 If these don't exist in the target repo, bootstrap from the template:
 
+The templates ship with the bundle, and `cp` is not a `node` invocation, so the sync's
+rewriter never corrects these paths the way it corrects a documented command. The paths
+below are a consumer's. (In the source repo the directory is `scripts/templates/`.)
+
 ```bash
-cp scripts/templates/playwright-config.js playwright.config.js
+cp scripts/.claude-skills/templates/playwright-config.js playwright.config.js
 mkdir -p tests/e2e/helpers
-cp scripts/templates/e2e-helpers/* tests/e2e/helpers/
+cp scripts/.claude-skills/templates/e2e-helpers/* tests/e2e/helpers/
 npm install -D @playwright/test axe-core @axe-core/playwright
 npx playwright install chromium
 ```

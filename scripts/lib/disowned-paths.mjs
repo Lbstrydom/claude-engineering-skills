@@ -98,6 +98,31 @@ export const OWNERSHIP_RULE_EPOCH = 'ignored-untracked-v1';
  * judgement being reported (the file scanner, the doctor): there, silence about
  * an unverified scan is the defect the warning exists to prevent.
  */
+/**
+ * Why `check-ignore` could not answer — the CAUSE, not the symptom of reporting it.
+ *
+ * `git check-ignore --stdin` in a non-work-tree prints `fatal: not a git repository` and exits **without reading stdin**, while
+ * `spawnSync` is still writing the candidate list into that pipe. So the parent can observe `EPIPE` instead of the exit status,
+ * and which one it sees is a RACE between git's exit and the parent's write — decided by platform and load, not by anything about
+ * the repository. Measured 2026-11-14: identical on Windows (`git exit 128` every time) and on a loaded ubuntu CI runner
+ * (`EPIPE`), from one commit, and a test pinning the cause string failed on the runner alone.
+ *
+ * An `EPIPE` writing to a child that has ALREADY exited carries no information the status does not, so a non-zero status wins. A
+ * write error alongside a status of 0 or 1 is different and keeps its own code: there the child answered, and the error means the
+ * answer may be truncated — which is still degraded, and is not "git exit 0".
+ *
+ * PURE.
+ *
+ * @param {{status: number|null, error?: {code?: string, message?: string}}} r
+ * @returns {string}
+ */
+export function describeCheckIgnoreFailure(r) {
+  const status = r?.status;
+  const statusExplains = typeof status === 'number' && status !== 0 && status !== 1;
+  if (statusExplains) return `git exit ${status}`;
+  return r?.error ? (r.error.code || r.error.message) : `git exit ${status}`;
+}
+
 export function ignoredUntrackedPaths(repoRoot, candidates, { warnOnDegraded = true } = {}) {
   const paths = [...new Set(candidates.map((p) => p.replaceAll(/\\/g, '/')))];
   if (paths.length === 0) return { paths: new Set(), degraded: false, warning: null };
@@ -122,7 +147,7 @@ export function ignoredUntrackedPaths(repoRoot, candidates, { warnOnDegraded = t
   const ign = git(['check-ignore', '-z', '--stdin'], nulList);
   if (ign.error || (ign.status !== 0 && ign.status !== 1)) {
     const warning = '[disowned-paths] WARN: could not determine gitignore status '
-      + `(${ign.error ? ign.error.code || ign.error.message : `git exit ${ign.status}`}) — `
+      + `(${describeCheckIgnoreFailure(ign)}) — `
       + 'ownership was NOT verified; treating every candidate as owned by default, but this result is unverified, not a confirmed clean scan.';
     if (warnOnDegraded) process.stderr.write(`${warning}\n`);
     return { paths: new Set(), degraded: true, warning };

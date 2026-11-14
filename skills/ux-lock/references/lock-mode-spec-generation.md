@@ -96,7 +96,7 @@ Examples: `r18-quality-gate.spec.js`, `fix-modal-close.spec.js`,
 
 ## Persistence — run + record in ONE deterministic call
 
-`scripts/ux-lock-run.mjs spec` (SKILL Step 3) runs the authored spec, parses
+`node scripts/ux-lock-run.mjs spec` (SKILL Step 3) runs the authored spec, parses
 the JSON report, and writes BOTH the `regression_specs` row (auto-registered by
 `repo_id` + `spec_path`) and the `regression_spec_runs` outcome itself — no
 separate `record-regression-spec` / `record-regression-spec-run` calls, no

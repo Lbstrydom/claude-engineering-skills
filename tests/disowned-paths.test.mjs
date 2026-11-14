@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import { ignoredUntrackedPaths } from '../scripts/lib/disowned-paths.mjs';
+import { ignoredUntrackedPaths, describeCheckIgnoreFailure } from '../scripts/lib/disowned-paths.mjs';
 
 let repo;
 
@@ -181,6 +181,39 @@ describe('ignoredUntrackedPaths', () => {
       assert.equal(result.degraded, true);
       assert.match(result.warning, /WARN/);
       assert.match(warned, /WARN/);
+    } finally {
+      fs.rmSync(notARepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+// `git check-ignore --stdin` in a non-work-tree exits WITHOUT reading stdin, while spawnSync is still writing the candidate list
+// into that pipe — so the parent sees either the exit status or EPIPE, decided by a race, not by the repository. Measured
+// 2026-11-14 from ONE commit: `git exit 128` on Windows every time, `EPIPE` on a loaded ubuntu CI runner, which failed a test
+// pinning the cause string while the behaviour under test (degrade loudly, never a clean scan) held in both.
+describe('describeCheckIgnoreFailure - the CAUSE, not the symptom of reporting it', () => {
+  it('the race: a non-zero status wins over an EPIPE from writing to the child that already exited', () => {
+    assert.equal(describeCheckIgnoreFailure({ status: 128, error: { code: 'EPIPE' } }), 'git exit 128');
+    assert.equal(describeCheckIgnoreFailure({ status: 128 }), 'git exit 128');
+  });
+  it('an error with NO status keeps its own code — nothing else explains it', () => {
+    assert.equal(describeCheckIgnoreFailure({ status: null, error: { code: 'EPIPE' } }), 'EPIPE');
+    assert.equal(describeCheckIgnoreFailure({ status: null, error: { code: 'ENOENT' } }), 'ENOENT');
+    assert.equal(describeCheckIgnoreFailure({ status: null, error: { message: 'boom' } }), 'boom');
+  });
+  it('NEGATIVE CONTROL: git ANSWERED (0 or 1) and the write failed — the error stands, never "git exit 0"', () => {
+    // A different condition: the child answered, so the write error means the answer may be TRUNCATED. Still degraded, and
+    // collapsing it to the status would name a success as the cause of a failure.
+    assert.equal(describeCheckIgnoreFailure({ status: 0, error: { code: 'EPIPE' } }), 'EPIPE');
+    assert.equal(describeCheckIgnoreFailure({ status: 1, error: { code: 'EPIPE' } }), 'EPIPE');
+  });
+  it('a real non-git root reports the status deterministically, whichever side of the race wins', () => {
+    const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'dis-cause-'));
+    try {
+      const r = ignoredUntrackedPaths(notARepo, ['a.js'], { warnOnDegraded: false });
+      assert.equal(r.degraded, true, 'a non-work-tree is never a clean scan');
+      assert.match(r.warning, /git exit 128/, r.warning);
+      assert.doesNotMatch(r.warning, /EPIPE/, 'EPIPE is the symptom of reporting the exit, not the cause');
     } finally {
       fs.rmSync(notARepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }

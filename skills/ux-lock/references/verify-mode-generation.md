@@ -77,7 +77,7 @@ test.describe('Plan verify: <plan-slug>', () => {
   <for each criterion c, emit>
   test(`[${c.severity}] [${c.category}] ${c.description}`, {
     tag: [`@${c.severity}`, `@${c.category}`, '@plan-verify'],
-    // REQUIRED — the deterministic runner (scripts/ux-lock-run.mjs verify) maps
+    // REQUIRED — the deterministic runner (node scripts/ux-lock-run.mjs verify) maps
     // each test result back to its plan criterion by this annotation. Naming the
     // test by prose is NOT enough: the hash can't be recovered from the title.
     // `<c.hash>` is the parser's criterion_hash (sha256(SEVERITY|category|description)[:16]).
@@ -145,7 +145,7 @@ Capture `specId`.
 
 ## Step V4–V5 — Run + record in ONE deterministic call
 
-`scripts/ux-lock-run.mjs verify` runs the spec, re-parses the plan's criteria
+`node scripts/ux-lock-run.mjs verify` runs the spec, re-parses the plan's criteria
 (so the `criterion_hash` set matches the authored spec's annotations exactly),
 maps each test result back to its criterion via the `criterion_hash`
 annotation, and writes BOTH `plan_verification_runs` (totals) and

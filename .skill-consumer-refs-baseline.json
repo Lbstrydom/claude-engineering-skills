@@ -1,6 +1,6 @@
 {
-  "$comment": "Declared unreachable pointers in SYNCED content — skill markdown and the non-implementation assets the sync ships. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; a --update placeholder reason is rejected.",
-  "totalSites": 272,
+  "$comment": "Declared unreachable pointers in SYNCED content — skill markdown and the non-implementation assets the sync ships. See scripts/check-skill-consumer-refs.mjs. Three kinds: `doc` (a docs/ path outside the sync closure), `npm` (any npm run alias — the sync never merges npm scripts), `path` (a BARE upstream path in a tree the sync relocates; `node <path>` is excluded because the sync's rewriter maps exactly that form). Every entry needs a disposition and a real reason; a --update placeholder reason is rejected.",
+  "totalSites": 375,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -301,6 +301,281 @@
       "disposition": "source-repo-only",
       "reason": "Fans out over every consumer store; only the source repo has that registry.",
       "sites": 1
+    },
+    "path scripts/bandit.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/bandit.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/campaign.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/campaign.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/check-context-drift.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/check-context-drift.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/check-docs-refs.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/check-docs-refs.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 10
+    },
+    "path scripts/cross-skill.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/cross-skill.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 3
+    },
+    "path scripts/cycle-cluster-scope.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/cycle-cluster-scope.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/debt-capture-trail-check.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/debt-capture-trail-check.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/debt-health-check.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/debt-health-check.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/explain-history.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/explain-history.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 2
+    },
+    "path scripts/fleet.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/fleet.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/foo.mjs": {
+      "disposition": "illustrative",
+      "reason": "A placeholder in /ship's `--path` example; it names no real file in either repo, so there is nothing for a consumer to resolve.",
+      "sites": 1
+    },
+    "path scripts/gemini-review.mjs": {
+      "disposition": "illustrative",
+      "reason": "An example `CHANGED=` value showing how to add a dependent to an audit scope; not a file the reader opens.",
+      "sites": 1
+    },
+    "path scripts/generate-bundle-deps.mjs": {
+      "disposition": "source-repo-only",
+      "reason": "The sentence citing it says so itself: the generator is upstream-only and the sync does not ship it, so a consumer receives bundle-deps.json and never regenerates it.",
+      "sites": 1
+    },
+    "path scripts/lib/arm-eval/capture-trigger.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/arm-eval/capture-trigger.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 2
+    },
+    "path scripts/lib/audit-shadow.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/audit-shadow.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/audit/convergence.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/audit/convergence.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/audit/plan-audit-cloud.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/audit/plan-audit-cloud.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/browser/perceivable.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/browser/perceivable.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 3
+    },
+    "path scripts/lib/context.mjs": {
+      "disposition": "source-repo-only",
+      "reason": "The canonical-flip recipe is a SOURCE-repo procedure — it edits this repo's own AGENTS.md/CLAUDE.md detector — so its `git add`/`git diff` paths are deliberately the upstream spellings.",
+      "sites": 5
+    },
+    "path scripts/lib/db/client.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/db/client.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/debt-ledger.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/debt-ledger.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/device-presets.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/device-presets.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 2
+    },
+    "path scripts/lib/findings.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/findings.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/linter.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/linter.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/nav/contract.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/nav/contract.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/nav/extract.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/nav/extract.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/nav/findings.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/nav/findings.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/nav/normalize.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/nav/normalize.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/nav/schema.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/nav/schema.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/persona-test/canary.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/persona-test/canary.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/persona-test/consistency.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/persona-test/consistency.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/persona-test/ledger.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/persona-test/ledger.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/persona-test/schemas.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/persona-test/schemas.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 4
+    },
+    "path scripts/lib/persona/audit-correlator.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/persona/audit-correlator.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 2
+    },
+    "path scripts/lib/plan-criteria-parser.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/plan-criteria-parser.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/prompt-seeds.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/prompt-seeds.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/redact.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/redact.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 4
+    },
+    "path scripts/lib/sensitive-paths.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/sensitive-paths.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/skill-refs-parser.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/skill-refs-parser.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 10
+    },
+    "path scripts/lib/store/plans-ship.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/store/plans-ship.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/ux-lock/capture.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/ux-lock/capture.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 2
+    },
+    "path scripts/lib/visual/changed-scope.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/visual/changed-scope.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/visual/drift.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/visual/drift.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/visual/schema.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/visual/schema.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/lib/visual/tokens.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/lib/visual/tokens.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/maintenance-checks.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/maintenance-checks.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/nav-audit.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/nav-audit.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/openai-audit.mjs": {
+      "disposition": "illustrative",
+      "reason": "Appears only as an example VALUE — a `CHANGED=` list and /explain's argument table — illustrating the shape of an argument, not a file the reader opens.",
+      "sites": 5
+    },
+    "path scripts/persona-consistency-run.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/persona-consistency-run.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 4
+    },
+    "path scripts/setup-postgres.mjs": {
+      "disposition": "source-repo-only",
+      "reason": "One site labels it explicitly as the SOURCE-repo spelling of a command documented at the consumer path; the other quotes it as a style example of writing paths repo-relative.",
+      "sites": 2
+    },
+    "path scripts/shared.mjs": {
+      "disposition": "illustrative",
+      "reason": "An example `CHANGED=` value, and a quoted import specifier in a worked explanation of why a ledger import is invisible to a tool; neither is a file the reader opens.",
+      "sites": 3
+    },
+    "path scripts/symbol-index/refresh.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/symbol-index/refresh.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/sync-to-repos.mjs": {
+      "disposition": "source-repo-only",
+      "reason": "Cites the sync itself, which only ever runs in this repo; a consumer has no sync to invoke.",
+      "sites": 1
+    },
+    "path scripts/test-evidence.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/test-evidence.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 1
+    },
+    "path scripts/ux-lock-run.mjs": {
+      "disposition": "provenance",
+      "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/ux-lock-run.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
+      "sites": 2
     }
   }
 }
