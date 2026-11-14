@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  scanFile, tally, adjudicate, subjectFiles, blankUrls,
+  scanFile, tally, adjudicate, subjectFiles, blankUrls, DISPOSITIONS,
 } from '../scripts/check-skill-consumer-refs.mjs';
 import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
 
@@ -151,6 +151,74 @@ test('NEGATIVE CONTROL — the committed asset, named by path, is quiet', () => 
   );
 });
 
+// ── Kind `path`: a BARE upstream script path in consumer-facing content ───
+// PR #358 corrected `.windowed-views.json`'s description to name its gate by path instead of
+// as an npm alias, and shipped the subject-set widening above — while the SAME sentence went
+// on naming the generator at `scripts/lib/store/windowed-views.mjs`, bare. The gate could not
+// tell: it knew `npm run X` and `docs/…`, and an upstream script path was not in its
+// vocabulary at all. Found by the storyline consumer after the merge, 2026-11-14.
+//
+// The control below is an instance of THAT class — an upstream script path in a synced asset's
+// own description — not merely a malformed file. A control proving the gate can fail at all
+// does not prove it can fail for the reason it was built for, which is how #358 shipped.
+
+test('POSITIVE CONTROL — the bare upstream path #358 left in .windowed-views.json fails the gate', () => {
+  const closure = new Set(getSyncClosure().files.map((f) => f.replace(/\\/g, '/')));
+  // #358's sentence, verbatim in shape: the gate it names is rewritten, the generator is not.
+  const asItShipped = '{\n  "_description": "Derived from the cumulative migrations by '
+    + 'scripts/lib/store/windowed-views.mjs and gated by `node scripts/check-windowed-views.mjs`."\n}\n';
+  const sites = scanFile('.windowed-views.json', asItShipped, closure);
+  assert.deepEqual(
+    sites.map((s) => `${s.kind} ${s.ref}`), ['path scripts/lib/store/windowed-views.mjs'],
+    'the BARE generator path must register, and the `node `-prefixed gate path must not',
+  );
+  const v = adjudicate(tally(sites), { refs: {} });
+  assert.deepEqual(v.undeclared, [{ ref: 'path scripts/lib/store/windowed-views.mjs', count: 1 }]);
+});
+
+test('NEGATIVE CONTROL — the committed asset no longer carries a bare upstream path', () => {
+  const closure = new Set(getSyncClosure().files.map((f) => f.replace(/\\/g, '/')));
+  const content = fs.readFileSync(path.join(REPO, '.windowed-views.json'), 'utf-8');
+  assert.deepEqual(
+    scanFile('.windowed-views.json', content, closure).filter((s) => s.kind === 'path'), [],
+    'the description must name the generator by its upstream URL, which resolves from either repo',
+  );
+});
+
+test('NEGATIVE CONTROL — `node scripts/x.mjs` is NOT a site: the sync rewrites exactly that form', () => {
+  // The direction the gate must not fire in. AGENTS.md's own remedy for this defect shape is
+  // "name synced tooling BY PATH"; flagging the remedy would push the next author back to an
+  // npm alias, which is strictly worse.
+  assert.deepEqual(scanFile('f.md', 'Run `node scripts/check-setup.mjs --json`.\n', new Set()), []);
+  assert.deepEqual(scanFile('f.md', 'Run `node scripts/lib/nav/extract.mjs`.\n', new Set()), []);
+});
+
+test('NEGATIVE CONTROL — a path already in the CONSUMER layout is not a site', () => {
+  assert.deepEqual(scanFile('f.md', 'see scripts/.claude-skills/lib/nav/extract.mjs\n', new Set()), []);
+});
+
+test('NEGATIVE CONTROL — a path the sync delivers at its OWN spelling is not a site', () => {
+  // `.claude/hooks/**` and `tests/**` are not relocated, so citing them is reachable (or simply
+  // not this gate's business). The oracle decides, never a prefix list in the scanner.
+  assert.deepEqual(scanFile('f.md', 'see .claude/hooks/quickfix-scan.mjs and tests/foo.test.mjs\n', new Set()), []);
+});
+
+test('a bare path and a `node `-prefixed one on the SAME line: only the bare one registers', () => {
+  // Blanked rather than skipped, for the same reason blankUrls blanks: a line carrying both
+  // forms must still report the unreachable half.
+  const sites = scanFile('f.md', 'node scripts/ux-lock-run.mjs spec reads scripts/lib/plan-criteria-parser.mjs\n', new Set());
+  assert.deepEqual(sites.map((s) => s.ref), ['scripts/lib/plan-criteria-parser.mjs']);
+});
+
+test('the relocated non-scripts trees are in vocabulary too — asked of sourceRelToDestRel', () => {
+  // A migration and the adopt fixture both land somewhere else in a consumer.
+  assert.deepEqual(
+    scanFile('f.md', 'see supabase/migrations/20260101000000_x.sql and tests/fixtures/expected-schema.json\n', new Set())
+      .map((s) => s.ref),
+    ['supabase/migrations/20260101000000_x.sql', 'tests/fixtures/expected-schema.json'],
+  );
+});
+
 test('a --update placeholder reason is rejected, as this gate has always claimed', () => {
   // The module header promised "a TODO reason that the gate rejects"; the length
   // test alone passed the 70-character placeholder, so a re-baseline could ship an
@@ -243,7 +311,9 @@ test('a shrink is reported but does not fail — fixing sites must never block a
 
 test('the committed baseline declares a disposition and a real reason for every entry', () => {
   const baseline = JSON.parse(fs.readFileSync(path.join(REPO, '.skill-consumer-refs-baseline.json'), 'utf-8'));
-  const allowed = new Set(['source-repo-only', 'consumer-authored', 'provenance', 'consumer-wired']);
+  // The gate's own set, imported — a second hand-typed list here is the duplicate oracle this
+  // repo keeps paying for: it went stale the moment a disposition was added (2026-11-14).
+  const allowed = DISPOSITIONS;
   const entries = Object.entries(baseline.refs);
   assert.ok(entries.length > 0, 'baseline must not be empty — an empty ratchet ratchets nothing');
   for (const [key, e] of entries) {

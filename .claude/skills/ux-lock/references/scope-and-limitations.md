@@ -115,10 +115,16 @@ Both modes expect:
 
 If these don't exist in the target repo, bootstrap from the template:
 
+The templates ship with the bundle, so their directory depends on the layout:
+`scripts/templates/` in claude-engineering-skills itself, `scripts/.claude-skills/templates/`
+in a consumer. `cp` is not a `node` invocation, so the sync's rewriter never touches these
+lines — resolve the directory first rather than hard-coding either spelling.
+
 ```bash
-cp scripts/templates/playwright-config.js playwright.config.js
+TPL=scripts/.claude-skills/templates; [ -d "$TPL" ] || TPL=scripts/templates
+cp "$TPL/playwright-config.js" playwright.config.js
 mkdir -p tests/e2e/helpers
-cp scripts/templates/e2e-helpers/* tests/e2e/helpers/
+cp "$TPL"/e2e-helpers/* tests/e2e/helpers/
 npm install -D @playwright/test axe-core @axe-core/playwright
 npx playwright install chromium
 ```
