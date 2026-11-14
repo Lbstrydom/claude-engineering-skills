@@ -97,7 +97,12 @@ export function buildBundleDeps(inventories, optional = OPTIONAL_DEPS, specPacka
     importers: [...importers.get(name)].sort(),
   }));
   return {
-    _generated: 'GENERATED FILE — do not edit. Regenerate: npm run bundle:deps',
+    // The pointer names an alias and a generator the sync does NOT ship, so it has to
+    // say so: this file lands in every consumer, where `npm run bundle:deps` is an alias
+    // nobody has over a script nobody received. Same defect class as `.windowed-views.json`
+    // (2026-11-14) — a synced asset whose own description promises something the repo
+    // reading it cannot do. Declared `source-repo-only` in the consumer-refs baseline.
+    _generated: 'GENERATED FILE — do not edit. Regenerated UPSTREAM ONLY, in claude-engineering-skills (`npm run bundle:deps`, over scripts/generate-bundle-deps.mjs, which the sync does not ship). A consumer receives this file from the sync and never regenerates it.',
     _why: 'Every npm package the synced bundle imports, derived from its own import graph. '
       + 'Read by check-setup.mjs so a consumer can verify its install, and by consumers building '
       + 'a knip/depcheck ignore list — a dead-code tool cannot see the importers, because the '

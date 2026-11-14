@@ -319,8 +319,12 @@ consumer instead of the named one. Verified 2026-07-20.)
 > am I iterating, and what is unrepresentable from it?** · *(4)* a documented
 > command whose tooling cannot reach a linked worktree (only TRACKED content
 > does, so a remedy rides on `package.json`; Gate: `npm run worktree:preflight:gate`)
-> · *(5)* a synced SKILL.md naming an `npm run` alias or an out-of-closure
-> `docs/` file — name synced tooling BY PATH (`npm run skills:consumer-refs:gate`)
+> · *(5)* synced content — a SKILL.md **or a data asset's own `_description`** —
+> naming an `npm run` alias or an out-of-closure `docs/` file; name synced tooling
+> BY PATH and the sync rewrites it to the consumer layout
+> (`npm run skills:consumer-refs:gate`, which judges every non-`.mjs`/`.sql`
+> file in the closure since 2026-11-14 — markdown-only let `.windowed-views.json`
+> ship an alias in its own description)
 > · *(6)* a **relative link** in synced markdown, whose href resolves where the
 > file LANDS (`npm run docs:synced-links:gate`) · *(7)* a synced SKILL.md
 > resolving its own subject through the **shell** — the host loads neither `.env`

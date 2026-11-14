@@ -61,6 +61,19 @@ export const CORE_ENTRY = [
   // its scope-exclusions (docs/plans, docs/research, status.md) apply verbatim
   // in a consumer. Import closure is ./lib/cli-io.mjs, already synced above.
   'scripts/check-npm-run-args.mjs',
+  // Fourth in the same family, and the same failure one layer over: PR #355
+  // shipped `.windowed-views.json` as a CORE_ASSET — the DECLARATION side of
+  // "which store views depend on now()" — while the gate that holds it against
+  // the migrations stayed source-repo-only. A consumer received a file whose
+  // own `_description` promised a verification that repo could not perform, and
+  // held it uncommitted rather than commit that claim (storyline, 2026-11-14).
+  // The declaration is only worth having where it can be checked, and a
+  // consumer's copy is NOT a copy of ours to trust: it is a claim about the
+  // migrations THAT repo actually has, which drift on a partial or stale sync.
+  // Layout-aware by construction (repo root via findRepoRootFromScript,
+  // migrations dir via lib/tooling-layout.mjs) and in CLI_SMOKE_SET, so gate 4
+  // runs it from its landed path in every consumer.
+  'scripts/check-windowed-views.mjs',
   // Third in the same family, and the same failure: TWO synced skills instruct
   // `npm run context:check` — /ship Step 4 and every mode of
   // /ai-context-management — while the script implementing it stayed

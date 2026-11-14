@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * @fileoverview Delivery gate for pointers inside SYNCED skill content.
+ * @fileoverview Delivery gate for pointers inside SYNCED content.
  *
- * A SKILL.md is read in a consumer repo, where the only things that exist are
- * what the sync put there. Two kinds of pointer routinely name something that
- * cannot be there:
+ * A SKILL.md — or a synced data asset's own description — is read in a consumer
+ * repo, where the only things that exist are what the sync put there. Two kinds
+ * of pointer routinely name something that cannot be there:
  *
  *   - a `docs/…md` path — the sync closure carries almost no `docs/`, so a
  *     citation to `docs/plans/<name>.md` resolves here and nowhere else;
@@ -148,8 +148,40 @@ function listOwnedSkillMarkdown(repoRoot) {
 }
 
 /**
+ * Extensions this gate treats as IMPLEMENTATION rather than as content a
+ * consumer reads for instruction — excluded from the scan, with the measurement
+ * that makes the boundary a judgement rather than a convenience.
+ *
+ * Measured 2026-11-14 over the whole closure: 1,106 pointer sites sit outside
+ * markdown, and 1,094 of them are in `.mjs` module headers and `.sql` migration
+ * comments — `@fileoverview … Plan: docs/plans/<x>.md` and its DDL equivalent,
+ * repeated across 776 modules and 144 migrations. Those are provenance for a
+ * maintainer of THIS repo, and the sync banner tells a consumer the file is
+ * upstream-owned and not theirs to act on. Enrolling them would add roughly
+ * 1,100 baseline entries whose disposition is uniformly `provenance`, which
+ * converts a ratchet into a formality — the baseline stops being a list anyone
+ * reads, and the next real instance hides in it.
+ *
+ * The remaining 12 sites are in 7 DATA and CONFIG assets, whose whole job is to
+ * be read: `.windowed-views.json`'s `_description` told a consumer to run
+ * `npm run windowed-views:gate`, and `bundle-deps.json`'s `$comment` names
+ * `npm run bundle:deps`. That is this gate's own defect class, one file-type
+ * over. See the PR for the full census.
+ */
+const IMPLEMENTATION_EXTENSIONS = new Set(['.mjs', '.sql']);
+
+/**
  * The files this gate judges: owned markdown under `skills/`, PLUS every other
- * markdown file the sync actually ships.
+ * NON-IMPLEMENTATION file the sync actually ships.
+ *
+ * **Markdown was the wrong input, for the second time.** The header above
+ * records that reading the literal `skills/` directory was a proxy for "synced
+ * content" that stopped being true; `rel.endsWith('.md')` was the same mistake
+ * one level down, and it is why PR #355 could ship `.windowed-views.json` with
+ * `npm run windowed-views:gate` in its own description past a green `check`.
+ * The predicate this gate implements — "can a consumer resolve this pointer?" —
+ * never had anything to do with the file's extension. Found by the storyline
+ * consumer, 2026-11-14.
  *
  * **Why the literal directory was the wrong input** (upstream 63552e8b,
  * wine-cellar-app, 2026-09-04). This gate exists to catch a pointer a CONSUMER
@@ -176,7 +208,7 @@ function listOwnedSkillMarkdown(repoRoot) {
 export function subjectFiles(owned, closure) {
   const out = new Set(owned);
   for (const rel of closure) {
-    if (!rel.endsWith('.md')) continue;
+    if (IMPLEMENTATION_EXTENSIONS.has(path.extname(rel).toLowerCase())) continue;
     if (rel.startsWith('skills/') || rel.startsWith('.claude/skills/')) continue;
     out.add(rel);
   }
@@ -276,6 +308,13 @@ export function adjudicate(counts, baseline) {
     }
     if (typeof entry.reason !== 'string' || entry.reason.trim().length < 12) {
       malformed.push({ ref: key, problem: 'reason missing or too short to be a reason' });
+    } else if (/^todo\b/i.test(entry.reason.trim())) {
+      // `--update` seeds new entries with a TODO placeholder, and this module's own
+      // header has always claimed "a TODO reason that the gate rejects". It did not:
+      // the length test alone passes the 70-character placeholder, so a re-baseline
+      // could ship an unreasoned exemption past a green gate. Found 2026-11-14 while
+      // widening the subject set, which added five such entries at once.
+      malformed.push({ ref: key, problem: 'reason is still the --update placeholder — write why a consumer cannot need this, and what it does instead' });
     }
     if (n > entry.sites) grown.push({ ref: key, was: entry.sites, now: n });
   }
@@ -343,7 +382,7 @@ function main() {
         : { disposition: 'source-repo-only', reason: 'TODO: state why a consumer cannot need this, and what it does instead.', sites: n };
     }
     fs.writeFileSync(BASELINE_PATH, `${JSON.stringify({
-      $comment: 'Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.',
+      $comment: 'Declared unreachable pointers in SYNCED content — skill markdown and the non-implementation assets the sync ships. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; a --update placeholder reason is rejected.',
       totalSites: sites.length,
       refs,
     }, null, 2)}\n`);
@@ -386,8 +425,9 @@ function main() {
   for (const s of verdict.stale) process.stderr.write(`${R}STALE${X}      ${s.ref}: declared ${s.was} site(s), now absent — drop it from the baseline\n`);
   for (const m of verdict.malformed) process.stderr.write(`${R}MALFORMED${X}  ${m.ref}: ${m.problem}\n`);
   process.stderr.write(
-    `\nA synced SKILL.md is read in a consumer repo. A \`docs/…\` path outside the\n` +
-    `sync closure, or ANY \`npm run\` alias, cannot resolve there.\n` +
+    `\nSynced content — a SKILL.md, or a data asset's own description — is read in a\n` +
+    `consumer repo. A \`docs/…\` path outside the sync closure, or ANY \`npm run\`\n` +
+    `alias, cannot resolve there.\n` +
     `  Best fix:  name the synced script by path (\`node scripts/x.mjs\`) — the sync\n` +
     `             rewrites it to \`scripts/.claude-skills/x.mjs\` for the consumer.\n` +
     `  Otherwise: declare it in ${path.relative(REPO, BASELINE_PATH)} with a disposition\n` +
