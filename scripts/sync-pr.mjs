@@ -47,7 +47,8 @@ import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { resolveTargets, consumerAliases } from './lib/consumer-repos.mjs';
 import { MANIFEST_RELATIVE_PATH } from './lib/sync-manifest.mjs';
 import { classifyRepo } from './sync-status.mjs';
-import { planConsumerPr, runConsumerPr, gatherConsumerFacts, gatherSourceFacts, gatherGitignoreTransition, retrySupersession, supersessionRetryTarget, spawnRunner } from './lib/sync-pr.mjs';
+import { planConsumerPr, runConsumerPr, gatherConsumerFacts, gatherSourceFacts, createManagedBlockTransitionReader, retrySupersession, supersessionRetryTarget, spawnRunner } from './lib/sync-pr.mjs';
+import { MANAGED_BLOCK_FILES } from './lib/sync-path-map.mjs';
 import { scratchPath } from './lib/temp-paths.mjs';
 import { repoIdentity } from './lib/fleet/lease-cmd.mjs';
 import { LeaseConfigError, machineDir } from './lib/fleet/lease.mjs';
@@ -212,7 +213,12 @@ export async function main(argv = process.argv, out = process.stdout, deps = {})
     }
     const { baseBranch } = facts;
     const plan = planConsumerPr({
-      consumerName: t.name, classified, manifest, ...facts, ...sourceFacts, gitignoreTransition: gatherGitignoreTransition(run, repoRoot, facts.baseSha),
+      consumerName: t.name, classified, manifest, ...facts, ...sourceFacts,
+      // BOTH files the sync mutates by managed block, asked by the one reader. With `.gitignore` alone, a sync that wrote four
+      // files to a consumer committed three and left the `.gitattributes` EOL rule uncommitted on main (2026-11-14).
+      managedBlockTransitions: Object.fromEntries(MANAGED_BLOCK_FILES.map((f) => [
+        f, createManagedBlockTransitionReader({ run, repoRoot, baseSha: facts.baseSha })(f),
+      ])),
     });
 
     if (plan.action === 'skip') {

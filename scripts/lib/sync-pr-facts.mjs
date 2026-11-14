@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ok } from './sync-base-lag.mjs';
 import { classifyGitignoreTransition } from './sync-gitignore.mjs';
-import { isManagedBlockFile, LAYOUT_CONSTANTS } from './sync-path-map.mjs';
+import { isManagedBlockFile, MANAGED_BLOCK_FILES, LAYOUT_CONSTANTS } from './sync-path-map.mjs';
 
 /** @typedef {import('./sync-base-lag.mjs').Runner} Runner */
 
@@ -108,4 +108,18 @@ export function createManagedBlockTransitionReader({ run, repoRoot, baseSha }) {
   return (relPath) => (isManagedBlockFile(relPath)
     ? gatherGitignoreTransition(run, repoRoot, baseSha, relPath)
     : 'unverified');
+}
+
+/**
+ * The managed-block files whose edit this sync could NOT prove was the block alone, so they stay uncommitted. `unchanged` and
+ * `block-only` are not held back; an ABSENT entry was never asked about, which is not the same as clean and is likewise not a
+ * hold — the caller decides what it asked.
+ *
+ * @param {Record<string, string>} transitions
+ * @returns {Array<{file: string, state: string}>}
+ */
+export function heldBackManagedBlocks(transitions) {
+  return MANAGED_BLOCK_FILES
+    .filter((f) => transitions?.[f] && transitions[f] !== 'unchanged' && transitions[f] !== GITIGNORE_PATH_STATE.BLOCK_ONLY)
+    .map((f) => ({ file: f, state: transitions[f] }));
 }

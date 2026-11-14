@@ -84,8 +84,9 @@ import { OVERRIDES_PATH } from './sync-overrides.mjs';
 import { comparisonKey, isUpstreamOwned, isUsableSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './sync-owned-sidecar.mjs';
 import { pathspecsForCommit } from './sync-status.mjs';
 import { SYNC_BRANCH_PREFIX } from './sync-divergence.mjs';
-import { classifyBundleFreshness, gatherSourceFacts, gatherGitignoreTransition, GITIGNORE_PATH, GITIGNORE_PATH_STATE, GITIGNORE_LEFT_BEHIND_REASON } from './sync-pr-facts.mjs';
-export { classifyBundleFreshness, gatherSourceFacts, gatherGitignoreTransition };
+import { classifyBundleFreshness, gatherSourceFacts, gatherGitignoreTransition, createManagedBlockTransitionReader, heldBackManagedBlocks, GITIGNORE_PATH, GITIGNORE_PATH_STATE, GITIGNORE_LEFT_BEHIND_REASON } from './sync-pr-facts.mjs';
+import { MANAGED_BLOCK_FILES } from './sync-path-map.mjs';
+export { classifyBundleFreshness, gatherSourceFacts, gatherGitignoreTransition, createManagedBlockTransitionReader };
 import { createGitAncestry } from './sync-rollback-guard.mjs';
 import { SYNC_BUNDLE_TRAILER } from './prepush-lanes.mjs';
 // The base-lag oracle (and the runner / git helpers it shares with this module) lives in sync-base-lag.mjs, which the sync asks BEFORE
@@ -187,7 +188,9 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
  *   branchExists: boolean,
  *   sourceSha?: string,            — the SOURCE repo HEAD (40-hex); absent => a clean skip is "unverified"
  *   sourceDirty?: boolean,         — the SOURCE working tree has uncommitted changes
- *   gitignoreTransition?: 'unchanged'|'block-only'|'mixed'|'invalid'|'unverified' — what the sync did to the consumer's .gitignore
+ *   gitignoreTransition?: 'unchanged'|'block-only'|'mixed'|'invalid'|'unverified' — legacy single-file form of the next field
+ *   managedBlockTransitions?: Record<string, 'unchanged'|'block-only'|'mixed'|'invalid'|'unverified'> — what the sync did to EACH
+ *     managed-block file it writes (`MANAGED_BLOCK_FILES`: `.gitignore` AND `.gitattributes`)
  * }} input
  * @returns {{action:'skip', reason:string, detail?:string}
  *   | {action:'pr', branch:string, bundleSha:string, repo:string, startPoint:string, behindCount:number, addPaths:string[],
@@ -195,16 +198,22 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
  */
 function planConsumerPrCore({
   consumerName, classified, manifest, baseBranch, baseSha, currentBranch, aheadCount, behindCount, upstreamChanged = [], branchExists,
-  sourceSha, sourceDirty, gitignoreTransition,
+  sourceSha, sourceDirty, gitignoreTransition, managedBlockTransitions,
 }) {
   if (!classified || !classified.ok) {
     return { action: 'skip', reason: SKIP_REASON.UNCLASSIFIABLE, detail: classified?.error ?? 'no classification' };
   }
-  // a5ce: the managed .gitignore block is sync output in a file the consumer owns. It rides in the PR only when the edit is the block
-  // and nothing else (classifyGitignoreTransition); any other dirty state of that file is named under leftBehind, never swept in.
-  const gitignoreRides = gitignoreTransition === GITIGNORE_PATH_STATE.BLOCK_ONLY;
-  // A skip must not hide a held-back .gitignore: that note is added to EVERY skip by the planConsumerPr wrapper (audit R1 M1/M10, R4 M1, R5 M1).
-  if ((classified.clean || classified.syncOwned.length === 0) && !gitignoreRides) {
+  // a5ce: a managed block is sync output in a file the consumer owns. It rides in the PR only when the edit is the block and
+  // nothing else (classifyGitignoreTransition); any other dirty state of that file is named under leftBehind, never swept in.
+  //
+  // Asked of BOTH files the sync mutates this way, not just `.gitignore` (2026-11-14). With only `.gitignore` considered, a sync
+  // that wrote four files to a consumer committed three and left the `.gitattributes` EOL rule behind on main — the asset landed
+  // without its rule, and the rule sat uncommitted until somebody stashed it as unexplained drift. Measured in a consumer: 1,085
+  // sidecar entries, zero matches for `gitattributes`, while the sync adds a line to the file on every run.
+  const transitions = managedBlockTransitions ?? (gitignoreTransition ? { [GITIGNORE_PATH]: gitignoreTransition } : {});
+  const rides = MANAGED_BLOCK_FILES.filter((f) => transitions[f] === GITIGNORE_PATH_STATE.BLOCK_ONLY);
+  // A skip must not hide a held-back managed-block file: that note is added to EVERY skip by the planConsumerPr wrapper (audit R1 M1/M10, R4 M1, R5 M1).
+  if ((classified.clean || classified.syncOwned.length === 0) && rides.length === 0) {
     // 'clean' compared nothing against the source: say whether the bundle is actually current (da9a).
     const freshness = classifyBundleFreshness({ stamp: manifest?.commitSha, sourceSha, sourceDirty });
     if (freshness === 'different') {
@@ -229,7 +238,7 @@ function planConsumerPrCore({
   if (typeof commitSha !== 'string' || commitSha.length < 8) {
     return { action: 'skip', reason: SKIP_REASON.NO_MANIFEST, detail: 'scripts/.sync-manifest.json has no commitSha' };
   }
-  const addPaths = [...new Set([...classified.syncOwned.map((e) => e.path), ...(gitignoreRides ? [GITIGNORE_PATH] : [])])].sort();
+  const addPaths = [...new Set([...classified.syncOwned.map((e) => e.path), ...rides])].sort();
   const surface = addPaths.filter((p) => comparisonKey(p) !== RECEIPT_KEY);
   if (surface.length === 0) {
     return { action: 'skip', reason: SKIP_REASON.RECEIPT_ONLY };
@@ -244,7 +253,7 @@ function planConsumerPrCore({
       detail: aheadCount > 0 ? `${aheadCount} local commit(s) not on origin/${baseBranch}` : `could not compare against origin/${baseBranch}`,
     };
   }
-  const commitPathspecs = [...new Set([...pathspecsForCommit(classified.syncOwned), ...(gitignoreRides ? [GITIGNORE_PATH] : [])])].sort();
+  const commitPathspecs = [...new Set([...pathspecsForCommit(classified.syncOwned), ...rides])].sort();
   if (classifyBaseLag({ baseBranch, baseSha, currentBranch, aheadCount, behindCount }) === 'behind') {
     // Header rule 3: the working tree may ride onto origin's head only if
     // origin left every path the sync wrote (and the overrides it honoured)
@@ -266,7 +275,7 @@ function planConsumerPrCore({
   }
   const leftBehind = [
     ...classified.needsReview.map((e) => e.path),
-    ...(gitignoreTransition && !gitignoreRides && gitignoreTransition !== 'unchanged' ? [`${GITIGNORE_PATH} (${GITIGNORE_LEFT_BEHIND_REASON[gitignoreTransition] ?? 'could not be verified as managed-block-only'})`] : []),
+    ...heldBackManagedBlocks(transitions).map(({ file, state }) => `${file} (${GITIGNORE_LEFT_BEHIND_REASON[state] ?? 'could not be verified as managed-block-only'})`),
   ].sort();
   const repo = manifest.repo ?? DEFAULT_REPO;
   const text = buildPrText({ repo, commitSha, surface, leftBehind, consumerName });
@@ -294,11 +303,16 @@ function planConsumerPrCore({
  */
 export function planConsumerPr(input) {
   const plan = planConsumerPrCore(input);
-  const state = input.gitignoreTransition;
-  if (plan.action !== 'skip' || !state || state === 'unchanged' || state === GITIGNORE_PATH_STATE.BLOCK_ONLY) return plan;
-  const note = `${GITIGNORE_PATH} left uncommitted: ${GITIGNORE_LEFT_BEHIND_REASON[state] ?? 'could not be verified as managed-block-only'}`;
-  if (plan.detail?.includes(note)) return plan;
-  return { ...plan, detail: plan.detail ? `${plan.detail}; ${note}` : note };
+  if (plan.action !== 'skip') return plan;
+  const held = heldBackManagedBlocks(input.managedBlockTransitions
+    ?? (input.gitignoreTransition ? { [GITIGNORE_PATH]: input.gitignoreTransition } : {}));
+  let detail = plan.detail;
+  for (const { file, state } of held) {
+    const note = `${file} left uncommitted: ${GITIGNORE_LEFT_BEHIND_REASON[state] ?? 'could not be verified as managed-block-only'}`;
+    if (detail?.includes(note)) continue;
+    detail = detail ? `${detail}; ${note}` : note;
+  }
+  return detail === plan.detail ? plan : { ...plan, detail };
 }
 
 /**
