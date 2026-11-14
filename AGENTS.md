@@ -1106,7 +1106,8 @@ codes: [`docs/reference/sensitive-paths-and-vcs.md`](docs/reference/sensitive-pa
 
 ## Verification discipline (cross-skill)
 
-Seven rules from a 2026-08-07 field report, each led by its measurement. Canonical:
+Eight rules, each led by its measurement — six from a 2026-08-07 field report,
+plus §7 and §4a. Canonical:
 [`docs/audit/shared-references/verification-discipline.md`](docs/audit/shared-references/verification-discipline.md),
 synced into ten skills' `references/` by `sync-shared-audit-refs.mjs` and
 byte-checked in `npm run check`. **Edit the canonical, never a copy.**
