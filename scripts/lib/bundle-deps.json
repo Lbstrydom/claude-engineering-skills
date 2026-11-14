@@ -1,5 +1,5 @@
 {
-  "_generated": "GENERATED FILE — do not edit. Regenerate: npm run bundle:deps",
+  "_generated": "GENERATED FILE — do not edit. Regenerated UPSTREAM ONLY, in claude-engineering-skills (`npm run bundle:deps`, over scripts/generate-bundle-deps.mjs, which the sync does not ship). A consumer receives this file from the sync and never regenerates it.",
   "_why": "Every npm package the synced bundle imports, derived from its own import graph. Read by check-setup.mjs so a consumer can verify its install, and by consumers building a knip/depcheck ignore list — a dead-code tool cannot see the importers, because the tooling tree is gitignored.",
   "installAs": "devDependencies",
   "packages": [

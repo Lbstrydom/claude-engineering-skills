@@ -44,6 +44,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { resolveMigrationsLayout } from './lib/tooling-layout.mjs';
 import {
   MANIFEST_PATH,
   collectViewDefinitions,
@@ -52,7 +54,18 @@ import {
   diffAgainstManifest,
 } from './lib/store/windowed-views.mjs';
 
-const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// Repo root, resolved by climbing to the `scripts/` ancestor rather than
+// counting `..`. This CLI lands at `scripts/.claude-skills/check-windowed-views.mjs`
+// in a consumer, one level deeper than it sits here, so `path.resolve(__dirname, '..')`
+// resolves to `<consumer>/scripts` — the relative-path-resolves-where-the-file-LANDS
+// shape AGENTS.md lists among the recurring consumer reports. Correct in both layouts.
+const HERE = fileURLToPath(import.meta.url);
+const REPO = findRepoRootFromScript(import.meta.url) || path.resolve(path.dirname(HERE), '..');
+// And the migrations directory is chosen BY LAYOUT, never by first-existing: a consumer
+// has `supabase/migrations/` too, holding its OWN app schema, and classifying that against
+// the audit-loop declaration would report every one of a consumer's views as undeclared
+// drift. See lib/tooling-layout.mjs.
+const { dir: MIGRATIONS_DIR, layout: LAYOUT } = resolveMigrationsLayout(REPO, HERE);
 
 /** The phrase every undeclared-window failure prints; the poison pill matches it. */
 export const UNDECLARED_PHRASE = 'windowed view must declare its window';
@@ -85,10 +98,10 @@ Exit codes: 0=clean, 1=drift, 2=missing/invalid manifest or bad flag
 
   let classified;
   try {
-    classified = classifyWindowedViews(collectViewDefinitions(REPO));
+    classified = classifyWindowedViews(collectViewDefinitions(REPO, { dir: MIGRATIONS_DIR }));
   } catch (err) {
     // An unreadable corpus is a FAILURE, never "no windowed views".
-    process.stderr.write(`check-windowed-views: cannot classify the store views — ${err.message}\n`);
+    process.stderr.write(`check-windowed-views: cannot classify the store views (${LAYOUT} layout) — ${err.message}\n`);
     await finishAndExit(reportOnly ? 0 : 1); return;
   }
 

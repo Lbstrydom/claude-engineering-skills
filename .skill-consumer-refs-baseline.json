@@ -1,6 +1,6 @@
 {
-  "$comment": "Declared unreachable pointers in synced skill content. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; new entries default to a TODO reason that the gate rejects.",
-  "totalSites": 261,
+  "$comment": "Declared unreachable pointers in SYNCED content — skill markdown and the non-implementation assets the sync ships. See scripts/check-skill-consumer-refs.mjs. Every entry needs a disposition and a real reason; a --update placeholder reason is rejected.",
+  "totalSites": 272,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -67,6 +67,16 @@
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
       "sites": 1
     },
+    "doc docs/plans/dashboard-audit-run-viewer.md": {
+      "disposition": "provenance",
+      "reason": "Design-rationale citation in the dashboard CSS/JS assets, which the sync ships but docs/plans/ it does not. Reads as provenance for an upstream maintainer; the asset works without it.",
+      "sites": 2
+    },
+    "doc docs/plans/dashboard-home-summary.md": {
+      "disposition": "provenance",
+      "reason": "Same shape as the audit-run-viewer citation above: a plan reference in a shipped dashboard asset, recording why the markup is as it is. Nothing instructs a consumer to open it.",
+      "sites": 2
+    },
     "doc docs/plans/final-review-credit-projection.md": {
       "disposition": "provenance",
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
@@ -90,12 +100,17 @@
     "doc docs/plans/local-dashboard.md": {
       "disposition": "provenance",
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
-      "sites": 1
+      "sites": 4
     },
     "doc docs/plans/model-tier-observation.md": {
       "disposition": "provenance",
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
       "sites": 2
+    },
+    "doc docs/plans/oss-call-reliability-hardening.md": {
+      "disposition": "provenance",
+      "reason": "Plan citation in oss-call-policy.json, the tiered-pipeline call-budget asset. Provenance for the numbers in the file; a consumer reads the budgets, never the plan.",
+      "sites": 1
     },
     "doc docs/plans/persona-test-consistency-mode.md": {
       "disposition": "source-repo-only",
@@ -121,6 +136,11 @@
       "disposition": "provenance",
       "reason": "Design-rationale citation under docs/plans/, which the sync closure does not carry. Read as provenance; the skill step beside it stands alone.",
       "sites": 2
+    },
+    "doc docs/plans/standing-queue-burndown.md": {
+      "disposition": "provenance",
+      "reason": "The measurement behind .windowed-views.json: the 2026-11-13 finding that two reads of a windowed view five weeks apart shared 0 rows. Cited as evidence for the declaration, not as something to go and read.",
+      "sites": 1
     },
     "doc docs/plans/verification-discipline-cluster.md": {
       "disposition": "provenance",
@@ -180,7 +200,7 @@
     "npm arch:refresh": {
       "disposition": "consumer-wired",
       "reason": "Adoption runbook Step 7 has the consumer add arch:* aliases; storyline has them. The underlying symbol-index/refresh.mjs is synced, so the path form always works.",
-      "sites": 2
+      "sites": 3
     },
     "npm audit:clean": {
       "disposition": "source-repo-only",
@@ -190,6 +210,11 @@
     "npm build": {
       "disposition": "source-repo-only",
       "reason": "Illustrative example of a consumer script name inside a doc snippet, not a command this bundle offers.",
+      "sites": 1
+    },
+    "npm bundle:deps": {
+      "disposition": "source-repo-only",
+      "reason": "bundle-deps.json is regenerated UPSTREAM ONLY, by scripts/generate-bundle-deps.mjs, which the sync deliberately does not ship. Its _generated line now says so explicitly, so a consumer is told it receives the file rather than rebuilds it.",
       "sites": 1
     },
     "npm check": {

@@ -86,6 +86,7 @@ const CLI_SMOKE_SET = [
   'doctor.mjs', // consumer-friction doctor — the single door; must survive the scripts/.claude-skills relocation, declared in sync-to-repos.mjs
   'setup-postgres.mjs', // layout-aware repo-root resolution — must survive the scripts/.claude-skills relocation
   'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import
+  'check-windowed-views.mjs', // windowed-view declaration gate — relocation-sensitive twice over (repo root AND migrations dir resolve by layout, and a consumer has both candidate dirs); declared in sync-entry-lists.mjs CORE_ENTRY, verified before adding
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
   'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
   'test-evidence.mjs', // hash-bound test-evidence record/check; declared in sync-to-repos.mjs

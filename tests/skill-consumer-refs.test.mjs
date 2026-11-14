@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import {
   scanFile, tally, adjudicate, subjectFiles, blankUrls,
 } from '../scripts/check-skill-consumer-refs.mjs';
+import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLOSURE = new Set(['docs/reference/consistency-contract.md', 'scripts/openai-audit.mjs']);
@@ -77,12 +78,90 @@ test('subjectFiles adds a synced doc outside skills/, and excludes the generated
     'skills/a/SKILL.md',
     '.claude/skills/a/SKILL.md',              // generated FROM skills/a — double-counting
     'docs/reference/consistency-contract.md', // the one real addition
-    'scripts/x.mjs',                          // not markdown
+    'scripts/x.mjs',                          // implementation, not content a consumer acts on
   ]);
   assert.deepEqual(subjectFiles(['skills/a/SKILL.md'], closure), [
     'docs/reference/consistency-contract.md',
     'skills/a/SKILL.md',
   ]);
+});
+
+// ── A synced DATA ASSET is content a consumer reads ───────────────────────
+// `rel.endsWith('.md')` was the same proxy-for-synced-content mistake the block
+// above records, one level down: PR #355 shipped `.windowed-views.json` whose
+// own `_description` told a consumer to run `npm run windowed-views:gate`, past
+// a green `check`, because a JSON asset was outside this gate by construction.
+// Found by the storyline consumer, 2026-11-14.
+
+test('subjectFiles enrols the non-implementation assets the sync ships', () => {
+  const closure = new Set([
+    '.windowed-views.json',                        // the asset that motivated this
+    'scripts/lib/bundle-deps.json',                // carried the same defect
+    '.claude/hooks/arch-memory-check.sh',          // a hook a consumer runs
+    'scripts/lib/dashboard/assets/dashboard.css',
+    'scripts/lib/sync-inventory.mjs',              // implementation — excluded
+    'supabase/migrations/20260101000000_x.sql',    // implementation — excluded
+  ]);
+  assert.deepEqual(subjectFiles([], closure), [
+    '.claude/hooks/arch-memory-check.sh',
+    '.windowed-views.json',
+    'scripts/lib/bundle-deps.json',
+    'scripts/lib/dashboard/assets/dashboard.css',
+  ]);
+});
+
+test('the IMPLEMENTATION exclusion is case-insensitive on the extension', () => {
+  // `.MJS` would otherwise slip into the subject set and move the counts on a
+  // case-preserving filesystem only — a verdict that depends on whose disk it ran on.
+  assert.deepEqual(subjectFiles([], new Set(['scripts/X.MJS', 'a/b.SQL'])), []);
+});
+
+// ── Positive control: the exact bug this change closes ────────────────────
+// A gate that cannot be shown to FAIL is indistinguishable from one that is not
+// running, which is how PR #355's unverifiable declaration shipped. These two
+// run the real subject-set + scan + adjudicate path over the REAL sync closure.
+
+test('POSITIVE CONTROL — an npm alias in a synced JSON asset fails the gate', () => {
+  const closure = new Set(getSyncClosure().files.map((f) => f.replace(/\\/g, '/')));
+  const subjects = subjectFiles([], closure);
+  assert.ok(
+    subjects.includes('.windowed-views.json'),
+    '.windowed-views.json must be in the subject set — it is the asset whose description shipped an unrunnable command',
+  );
+
+  // The description as PR #355 shipped it, verbatim in shape.
+  const bad = '{\n  "_description": "… gated by `npm run windowed-views:gate`; this file is the DECLARATION side."\n}\n';
+  const sites = scanFile('.windowed-views.json', bad, closure);
+  assert.deepEqual(
+    sites.map((s) => `${s.kind} ${s.ref}`), ['npm windowed-views:gate'],
+    'the npm alias in a JSON asset must register as a site',
+  );
+  const v = adjudicate(tally(sites), { refs: {} });
+  assert.deepEqual(v.undeclared, [{ ref: 'npm windowed-views:gate', count: 1 }]);
+});
+
+test('NEGATIVE CONTROL — the committed asset, named by path, is quiet', () => {
+  const closure = new Set(getSyncClosure().files.map((f) => f.replace(/\\/g, '/')));
+  const content = fs.readFileSync(path.join(REPO, '.windowed-views.json'), 'utf-8');
+  const npmSites = scanFile('.windowed-views.json', content, closure)
+    .filter((s) => s.kind === 'npm');
+  assert.deepEqual(
+    npmSites, [],
+    'the declaration must name its gate by path (`node scripts/check-windowed-views.mjs`), which the sync rewrites to the consumer layout',
+  );
+});
+
+test('a --update placeholder reason is rejected, as this gate has always claimed', () => {
+  // The module header promised "a TODO reason that the gate rejects"; the length
+  // test alone passed the 70-character placeholder, so a re-baseline could ship an
+  // unreasoned exemption past a green gate. Measured 2026-11-14: widening the
+  // subject set seeded five such entries at once.
+  const counts = tally(scanFile('f.md', 'npm run check\n', CLOSURE));
+  const placeholder = 'TODO: state why a consumer cannot need this, and what it does instead.';
+  assert.ok(placeholder.trim().length >= 12, 'the placeholder must be long enough that the LENGTH test alone lets it through');
+  const v = adjudicate(counts, { refs: { 'npm check': decl(1, { reason: placeholder }) } });
+  assert.equal(v.malformed.length, 1);
+  assert.match(v.malformed[0].problem, /placeholder/);
 });
 
 test('subjectFiles keeps owned skills markdown the closure has not seen yet', () => {

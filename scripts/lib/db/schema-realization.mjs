@@ -26,6 +26,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import {
+  MIGRATION_DIR_BY_LAYOUT,
+  CONSUMER_TOOLING_SEGMENT,
+  detectLayout as detectLayoutOf,
+} from '../tooling-layout.mjs';
 import { effectiveDbTarget } from './client.mjs';
 
 /** Thrown when the DB is provably missing migrations this bundle ships. */
@@ -34,50 +39,29 @@ export const ERR_SCHEMA_BEHIND = 'ERR_SCHEMA_BEHIND';
 /**
  * The migrations directory, **per layout — not a candidate list**.
  *
- * `supabase/migrations/` in this source repo; `.audit-loop/migrations/` in a consumer
- * (`LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX`). Duplicated as literals rather than importing
- * sync-path-map, which is `install`-domain — this module is `shared-lib` and is imported by
- * the DB write path, so it must not drag the installer's dependency graph into every query.
- * The literals are pinned by a test that reads them FROM `sync-path-map`, so a rename there
- * fails here loudly rather than silently resolving to nothing.
- *
- * **These are two different databases' schemas, so first-existing-wins is not a fallback —
- * it is a coin flip.** An ordered candidate list was correct in exactly one place: this
- * repo, the only one where just one of them exists. Every consumer has BOTH —
- * `.audit-loop/migrations/` is the synced audit-loop schema that matches the ledger this
- * module reads, and `supabase/migrations/` is the consumer's OWN app schema, unrelated by
- * design. Picking by existence there compared a consumer's app migrations against the
- * audit-loop ledger, reported all of them permanently missing, and printed a remediation
- * (`setup-postgres --migrate`) that would apply the app's DDL — including its `DROP`s —
- * to the shared audit-loop store holding every repo's findings. Found in a consumer
- * before this shipped; see `docs/plans/green-but-unrealized.md`.
+ * Re-exported from `lib/tooling-layout.mjs`, the one oracle, which carries the
+ * coin-flip rationale and the measured incident. This module held the only copy until
+ * 2026-11-14, when `check-windowed-views.mjs` needed the same answer — and a second
+ * implementation of "which layout am I installed under" is the duplicate-classifier shape
+ * AGENTS.md forbids. Re-exported rather than relocated so every existing importer and the
+ * pinning test in `tests/schema-realization.test.mjs` keep working unchanged.
  */
-export const MIGRATION_DIR_BY_LAYOUT = Object.freeze({
-  source: 'supabase/migrations',
-  consumer: '.audit-loop/migrations',
-});
-
-/** Consumer tooling lives here (`LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR`) — pinned by test. */
-const CONSUMER_TOOLING_SEGMENT = 'scripts/.claude-skills/';
+export { MIGRATION_DIR_BY_LAYOUT };
 
 /**
  * Which layout is THIS file installed under?
  *
- * Read off the module's own path, which is the fact that *determines* the answer rather
- * than a proxy for it: the sync maps `scripts/<rest>` → `scripts/.claude-skills/<rest>`, so
- * a copy under that segment is by construction the synced audit-loop bundle and its
- * migrations are `.audit-loop/migrations/`. Probing the filesystem instead asks a question
- * whose two answers are both "yes" in a consumer.
+ * Thin binding of the shared `detectLayout` to this module's own path, which is the
+ * default callers rely on. The parameter stays injectable so a test can assert both
+ * layouts without relocating the file — the failure is invisible in this repo, which is
+ * the only place the old first-existing ordering happened to be right, and that is exactly
+ * why it shipped.
  *
- * @param {string} [moduleFilePath] injectable so a test can assert both layouts without
- *   relocating the file — the failure is invisible in this repo, which is the only place
- *   the old ordering happened to be right, and that is exactly why it shipped.
+ * @param {string} [moduleFilePath]
  * @returns {'source'|'consumer'}
  */
 export function detectLayout(moduleFilePath = fileURLToPath(import.meta.url)) {
-  return String(moduleFilePath).replace(/\\/g, '/').includes(CONSUMER_TOOLING_SEGMENT)
-    ? 'consumer'
-    : 'source';
+  return detectLayoutOf(moduleFilePath);
 }
 
 /**
