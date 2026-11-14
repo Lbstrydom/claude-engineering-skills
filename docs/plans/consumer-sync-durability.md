@@ -348,3 +348,114 @@ the uuid boundary (4/9), and the store partition twice — disabled (7/21) and
 over-applied so every entry reads foreign (6/21). The second of that pair is the
 one that matters: a partition that swallowed genuinely stale entries would look
 identical to a working one from a green suite alone.
+
+---
+
+## 6. The manifest does not record intended writes — and the hold's staleness signal was one-shot (2026-11-14)
+
+Opened by a report from `storyline`'s coordinator: *the sync writes the hash of
+what it INTENDED to write into `scripts/.sync-manifest.json`, including for
+paths it refused as diverged, so each refusal re-asserts a false base and the
+set of frozen files can only grow.* It also held that
+`verify-sync-invariants` never compares the manifest to the tree.
+
+**Both halves of that are false, and the measurement that was offered is
+consistent with the design.** The evidence cited was
+`.vscode/mcp.json` at `29ec5697` in the manifest and `d884e509` on disk for a
+refused path — read as "the manifest holds upstream's intent". `manifest ≠ disk`
+is equally consistent with "the manifest holds our last real write and the
+consumer has edited the file since", which is what the mechanism is *for*, and
+nothing in the measurement separates the two.
+
+### What the reproduction showed
+
+A disposable consumer, the real `sync-to-repos.mjs` CLI, the hash captured after
+sync 1 so the three candidate values are distinguishable:
+
+| after | `.claude/skills/plan/SKILL.md` | `.vscode/mcp.json` |
+|---|---|---|
+| sync 1 (wrote) | manifest == disk | manifest == disk |
+| sync 2 (refused both) | manifest == **the sync-1 write**, ≠ disk | manifest == **the sync-1 write**, ≠ disk |
+| sync 3 (refused both) | unchanged | unchanged |
+
+So the manifest carries the last ACTUAL write forward and omits a path it has
+never written — the behaviour `0088db7c` installed on 2026-08-29. The refusal
+repeats because the divergence is real and undeclared, not because the base is
+phantom; the documented way out is `.sync-overrides.json`, and taking it turns
+the refusal into a green hold.
+
+And the verifier does compare: gate 2B walks `manifest.files`, hashes each
+destination and FAILS on a mismatch (gate 2C walks the other direction), with a
+positive control that has been in `tests/sync-isolation-held-overrides.test.mjs`
+since 2026-08-30 — *"FAILS on an undeclared mismatch"*. A consumer showing 8/8
+green while the manifest disagrees with disk on 11 paths is a consumer whose 11
+paths are DECLARED: 2B reports them under `details.held`, which is the
+difference between a blind check and one that is answering.
+
+### How long the reported defect existed: never, in that direction
+
+Its mirror image did, for **1 h 44 min** in CES `main` — `9d8c9660`
+(2026-08-29 19:11:10 +0200) shipped the divergence gate rebuilding the manifest
+from the bytes on disk, so a refused path recorded the CONSUMER's content as our
+base; `0088db7c` (2026-08-29 20:55:56 +0200) fixed it. It reached `storyline`
+inside that window and cost 16 `SKILL.md`, restored from that consumer's HEAD.
+Nothing since has been able to write a base the sync did not produce:
+`sync-to-repos.mjs` is the only writer of a consumer manifest, and the two
+branches that set an entry are "hash what we just wrote" and "carry the prior
+entry, if the file is still there".
+
+### The defect that WAS there
+
+`sync-receipt.mjs` has stated the requirement since the same commit: *an
+override freezes a path; it must not also freeze the consumer's knowledge that
+upstream has since changed it.* The implementation satisfied it for one run. The
+question was asked of the **previous receipt**, which every sync rewrites with
+the current hash:
+
+| run | upstream | prior receipt | `upstreamMoved` | warning |
+|-----|----------|---------------|-----------------|---------|
+| B   | v1       | —             | false           | silent  |
+| C   | **v2**   | v1            | **true**        | printed |
+| D   | v2       | v2            | false           | silent  |
+| E   | v2       | v2            | false           | silent  |
+
+From run D the consumer holds v1 against a v2 upstream with nothing saying so —
+the condition outliving the only signal for it, the same shape as the refusal
+that erased its own base. Age: since `9d8c9660`, 2026-08-29 → 2026-11-14, **77
+days**. It is the mechanism by which a held shared reference doc goes quietly
+two versions behind across ten skills while every sync reports green.
+
+`classifyHeldStaleness` (`lib/sync-divergence.mjs`) now asks the **manifest
+base**, which a hold never moves, so the verdict is standing and retroactive.
+The two deep-merged JSON configs keep the prior-receipt question — their base
+carries the consumer's own keys, so a base comparison would fire for ever on a
+difference the consumer made — and the receipt records `upstreamMovedBasis` so a
+reader can see which question was answerable instead of reading the weaker
+answer as the strong one. No base and no record is `null`: undetermined, never
+"no".
+
+### What else changed, and what deliberately did not
+
+- The e2e control for the carry-forward asserted `manifest !== disk`. That
+  passes for a phantom third value too — it could not have detected the defect
+  as reported. It is now an EQUALITY against the sync-1 write; injecting a
+  phantom base fails it while the old assertion sails through.
+- **The refused-path entry stays "the last hash actually written".** Rejected:
+  *the disk hash at refusal* (that is `0088db7c`'s defect — it makes the next
+  run read PRISTINE and overwrite); *no entry at all* (loses the base, so the
+  path reads NO_BASE and is written freely, converting a refusal into an
+  overwrite one run later); *an entry marked refused* (`files` is a
+  `path → sha256:<hex>` map validated by `SyncManifestSchema` and consumed by
+  `compareToUpstream`, gates 2B/2C and `classifyAgainstBase` — widening its value
+  type breaks every reader, including already-published upstream manifests, to
+  carry a fact `.sync-receipt.json` already records durably, in-repo, under
+  `divergenceRefused`). The pair (manifest base, receipt) already answers "why
+  does this disagree with disk"; the runbook names the three cases.
+- No mass-reconciliation tool. Setting a base from anything other than a real
+  write is the 2026-08-29 defect with a friendlier name.
+
+Guarded by the six `classifyHeldStaleness` cases in `tests/sync-divergence.test.mjs`
+and four e2e tests in `tests/sync-consumer-divergence-e2e.test.mjs`. Verified
+RED-then-green by neutering the fix (3 unit, 4 e2e fail) and, separately, by
+injecting a phantom base to prove the strengthened equality assertion catches
+what the inequality could not.

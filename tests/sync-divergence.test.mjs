@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 
 import {
   BASE_STATE, ACTION, classifyAgainstBase, decideAction, describeReason, eolInsensitiveEqual,
-  findUnabsorbedSyncBase, formatRefusalReport,
+  findUnabsorbedSyncBase, formatRefusalReport, classifyHeldStaleness,
 } from '../scripts/lib/sync-divergence.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -375,5 +375,61 @@ describe('formatRefusalReport', () => {
     ], ctx).join('\n');
     assert.match(text, /1 of these are this checkout lagging/);
     assert.match(text, /Resolve the rest/);
+  });
+});
+
+describe('classifyHeldStaleness — a held path must not freeze its own staleness', () => {
+  // The predicate that was wrong. Measured 2026-11-14 against a disposable
+  // consumer: the old code asked the PREVIOUS RECEIPT, which every run
+  // overwrites with the current hash, so run C (upstream v1→v2) warned and runs
+  // D onward were silent while the consumer still held v1. The red control is
+  // `the prior receipt already agrees` below: that is run D exactly, and the
+  // old predicate returned false for it.
+  const base = (o) => classifyHeldStaleness({ outboundDependsOnDisk: false, ...o });
+
+  test('base differs from the outbound bytes ⇒ moved, naming the base', () => {
+    const r = base({ baseHash: `sha256:${HASH_A}`, outboundHash: HASH_B });
+    assert.deepEqual(r, { basis: 'base', moved: true, movedFrom: HASH_A });
+  });
+
+  test('the prior receipt already agrees, and the base still does not ⇒ STILL moved', () => {
+    // Run D. The condition has not changed; only the record of it had.
+    const r = base({ baseHash: HASH_A, priorHeldSha: HASH_B, outboundHash: HASH_B });
+    assert.equal(r.moved, true, 'the one-shot warning is back: this is the run that used to go silent');
+    assert.equal(r.movedFrom, HASH_A);
+  });
+
+  test('base equals the outbound bytes ⇒ not moved (the direction it must NOT fire)', () => {
+    // A held path that is byte-identical to what upstream would write is not
+    // stale, and a warning here would fire on every hold in every consumer.
+    assert.equal(base({ baseHash: `sha256:${HASH_A}`, outboundHash: HASH_A }).moved, false);
+  });
+
+  test('no base and no prior record ⇒ undetermined, never "no"', () => {
+    const r = base({ baseHash: null, outboundHash: HASH_A });
+    assert.equal(r.moved, null);
+    assert.equal(r.movedFrom, null);
+  });
+
+  test('a disk-merged destination asks the RECEIPT, and says so', () => {
+    // The deep-merged JSON configs: their base carries the consumer's own keys,
+    // so a base comparison would report "upstream moved" for ever on a
+    // difference the consumer made.
+    const r = classifyHeldStaleness({
+      outboundDependsOnDisk: true,
+      baseHash: HASH_A, priorHeldSha: HASH_A, outboundHash: HASH_B,
+    });
+    assert.deepEqual(r, { basis: 'receipt', moved: true, movedFrom: HASH_A });
+  });
+
+  test('a disk-merged destination does NOT read its base as upstream content', () => {
+    // The cried-wolf direction. Base ≠ outbound is the normal, permanent state
+    // of a merged config whose consumer added a key; with no prior receipt the
+    // honest answer is undetermined, not "moved".
+    const r = classifyHeldStaleness({
+      outboundDependsOnDisk: true,
+      baseHash: HASH_A, priorHeldSha: null, outboundHash: HASH_B,
+    });
+    assert.equal(r.moved, null, 'the base was read as a statement about upstream');
   });
 });

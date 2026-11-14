@@ -191,6 +191,85 @@ export function classifyAgainstBase({ baseHash, diskHash }) {
 }
 
 /**
+ * Has upstream moved past a HELD path, and against what did we ask?
+ *
+ * ## The defect this closes
+ *
+ * An override freezes a path. `sync-receipt.mjs` states the companion
+ * requirement outright — *"it must not also freeze the consumer's knowledge
+ * that upstream has since changed it"* — and the implementation satisfied it
+ * for exactly one run.
+ *
+ * The question was asked of the PREVIOUS RECEIPT's recorded hash, and every
+ * sync rewrites that record with the hash of the current run. Measured
+ * 2026-11-14 against a disposable consumer, four consecutive syncs with a
+ * declared override:
+ *
+ * | run | upstream | prior receipt | `upstreamMoved` | warning |
+ * |-----|----------|---------------|-----------------|---------|
+ * | B   | v1       | —             | false           | silent  |
+ * | C   | **v2**   | v1            | **true**        | printed |
+ * | D   | v2       | v2            | false           | silent  |
+ * | E   | v2       | v2            | false           | silent  |
+ *
+ * From run D on, the consumer holds v1 content against a v2 upstream and
+ * nothing says so — the condition persists while the only signal for it has
+ * been overwritten by the run that raised it. That is the same shape as the
+ * refusal which recorded the consumer's bytes as its own base (`0088db7c`): it
+ * fires once and then erases the evidence that it fired.
+ *
+ * ## The standing comparand
+ *
+ * The manifest base — the hash of what we LAST ACTUALLY WROTE to that
+ * destination. A held path is never written, and `sync-to-repos.mjs` carries
+ * its base forward untouched, so the base does not move while the hold stands.
+ * `base !== upstream's current outbound form` therefore stays true on every run
+ * until the operator lifts the override or upstream comes back to it. It is
+ * also RETROACTIVE: it needs no record of any previous run, so a consumer whose
+ * hold went stale months ago is reported on the first sync after this ships.
+ *
+ * ## Why one case still asks the receipt
+ *
+ * The base is upstream's content only where the outbound bytes are a function
+ * of upstream alone. The two co-owned JSON configs (`.vscode/mcp.json`,
+ * `.claude/settings.json`) are deep-merged with the consumer's own file when it
+ * exists, so their base carries the consumer's keys too, and a base comparison
+ * would report "upstream moved" for ever on a difference the CONSUMER made —
+ * the cried-wolf shape that earns a gate a bypass. Those keep the prior-receipt
+ * question, unchanged and still one-shot, and say so: `basis` is reported so a
+ * reader can see which question was answerable rather than reading a weaker
+ * answer as the strong one.
+ *
+ * `moved: null` is "undetermined", never "no" — no base and no prior record
+ * means we have never had a comparand, the same fail-honest rule
+ * `classifyAgainstBase` applies to a missing base.
+ *
+ * PURE. The `sha256:` prefix the manifest uses is tolerated on any input.
+ *
+ * @param {object} input
+ * @param {string|null|undefined} input.baseHash — the consumer manifest's entry
+ *   for this destination: what we last actually wrote there.
+ * @param {string|null|undefined} input.priorHeldSha — `upstreamSha` from the
+ *   previous receipt's `overridesHeld` entry, if any.
+ * @param {string|null|undefined} input.outboundHash — the hash of the bytes
+ *   this run would write.
+ * @param {boolean} input.outboundDependsOnDisk — true when those bytes were
+ *   merged with the consumer's existing file, which disqualifies the base as a
+ *   statement about upstream.
+ * @returns {{basis: 'base'|'receipt', moved: boolean|null, movedFrom: string|null}}
+ */
+export function classifyHeldStaleness({
+  baseHash, priorHeldSha, outboundHash, outboundDependsOnDisk,
+}) {
+  const strip = (h) => (typeof h === 'string' && h ? h.replace(/^sha256:/, '') : null);
+  const basis = outboundDependsOnDisk ? 'receipt' : 'base';
+  const comparand = basis === 'base' ? strip(baseHash) : strip(priorHeldSha);
+  const now = strip(outboundHash);
+  if (!comparand || !now) return { basis, moved: null, movedFrom: null };
+  return { basis, moved: comparand !== now, movedFrom: comparand };
+}
+
+/**
  * Decide what to do with one intended write.
  *
  * PURE — every git fact arrives as an argument. Ordered precedence; first match

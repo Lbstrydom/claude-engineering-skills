@@ -39,7 +39,7 @@ import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mj
 import {
   BASE_STATE, ACTION, classifyAgainstBase, decideAction, describeReason, readDivergenceVcs, createPriorUpstreamResolver,
   eolInsensitiveEqual, formatRefusalReport,
-  isSyncBookkeeping,
+  isSyncBookkeeping, classifyHeldStaleness,
 } from './lib/sync-divergence.mjs';
 import {
   OVERRIDES_PATH, loadOverrides, matchOverride, renderGitignoreExtras,
@@ -1690,20 +1690,20 @@ async function main() {
       });
 
       if (decision.action === ACTION.HOLD) {
-        const priorHeld = priorReceiptHeld.get(dstRel);
-        const upstreamMoved = Boolean(priorHeld && priorHeld.upstreamSha
-          && priorHeld.upstreamSha !== srcHash);
-        receiptOverridesHeld.push({
-          path: dstRel, reason: override.reason, upstreamSha: srcHash, upstreamMoved,
+        // An override freezes a path; it must never also freeze the consumer's
+        // knowledge that upstream moved on. Asked of the MANIFEST BASE, which a
+        // hold never moves, so the verdict is STANDING rather than the one-shot
+        // the previous receipt gave; `upstreamMoved: null` is undetermined,
+        // never "not moved", and one destination class must still ask that
+        // receipt. Why, and the measured four-run table: `classifyHeldStaleness`.
+        const staleness = classifyHeldStaleness({
+          baseHash, priorHeldSha: priorReceiptHeld.get(dstRel)?.upstreamSha,
+          outboundHash: srcHash, outboundDependsOnDisk: isJson && dstExists,
         });
+        receiptOverridesHeld.push({ path: dstRel, reason: override.reason, upstreamSha: srcHash,
+          upstreamMoved: staleness.moved, upstreamMovedBasis: staleness.basis });
         console.log(`  ${D}hold${X}  ${dstRel} ${D}(${describeReason(decision.reason)}: ${override.reason})${X}`);
-        if (upstreamMoved) {
-          // An override freezes a path. It must never also freeze the
-          // consumer's knowledge that upstream has moved on — a silently stale
-          // override is the same class of invisible drift as the silent
-          // overwrite this whole change exists to end.
-          console.log(`    ${Y}upstream content for this path CHANGED since your last sync${X} ${D}(${priorHeld.upstreamSha.slice(0, 7)} → ${srcHash.slice(0, 7)}); review whether the override still applies${X}`);
-        }
+        if (staleness.moved) console.log(`    ${Y}upstream content for this path has CHANGED since we last wrote it${X} ${D}(${staleness.movedFrom.slice(0, 7)} → ${srcHash.slice(0, 7)}); review whether the override still applies${X}`);
         continue;
       }
 
