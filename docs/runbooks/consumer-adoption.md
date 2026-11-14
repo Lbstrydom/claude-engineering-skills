@@ -1303,10 +1303,19 @@ sync after this ships, with no history needed.
 
 ### Reconciling a manifest with the tree
 
-`scripts/.sync-manifest.json` records **what the sync last wrote** to each
-destination, never what it intended to write. So `manifest !== disk` is not
-corruption and is not repairable by rewriting the manifest — it is the signal the
-three-way comparison is built on, and it has exactly three causes:
+`scripts/.sync-manifest.json` is meant to record **what the sync last wrote** to
+each destination. For a path refused as diverged that is what it does — verified
+2026-11-14 through the real CLI, across three consecutive syncs. So
+`manifest !== disk` is not by itself corruption, and is never repairable by
+rewriting the manifest: it is the signal the three-way comparison is built on.
+
+> **OPEN (2026-11-14).** `storyline` holds 11 paths whose manifest entries are
+> the CURRENT upstream hashes while disk holds other content — a state the
+> refusal path does not produce, and which is not yet explained. Do not read the
+> table below as a complete list of causes until that is measured; see
+> `docs/plans/consumer-sync-durability.md` §6a.
+
+Known causes:
 
 | manifest ≠ disk, and… | what it is | what to do |
 |---|---|---|
