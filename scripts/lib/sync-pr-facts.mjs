@@ -9,10 +9,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ok } from './sync-base-lag.mjs';
 import { classifyGitignoreTransition } from './sync-gitignore.mjs';
+import { isManagedBlockFile, LAYOUT_CONSTANTS } from './sync-path-map.mjs';
 
 /** @typedef {import('./sync-base-lag.mjs').Runner} Runner */
 
-export const GITIGNORE_PATH = '.gitignore';
+export const GITIGNORE_PATH = LAYOUT_CONSTANTS.GITIGNORE_PATH;
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 /** `block-only` is the one state that rides in the PR; the rest are named under leftBehind. */
@@ -67,26 +68,44 @@ export function gatherSourceFacts(run, sourceRoot) {
  * HEAD - that is the stale-base lesson of header rule 3). IMPURE; never throws. "The path is absent at the base" and "git could not
  * answer" are different outcomes: the first is a legitimate new file, the second is `unverified` and the file is left behind.
  *
+ * `relPath` is any of `MANAGED_BLOCK_FILES`: the sync writes a managed block into `.gitattributes` too (EOL pins), and that file had
+ * no oracle at all until 2026-11-14 — the same question, asked of one of the two files the sync mutates this way. The marker
+ * sentinels and the block machinery are content-agnostic, so nothing here is `.gitignore`-specific but the default.
+ *
  * @param {Runner} run
  * @param {string} repoRoot
  * @param {string|null} baseSha
+ * @param {string} [relPath]
  * @returns {'unchanged'|'block-only'|'mixed'|'invalid'|'unverified'}
  */
-export function gatherGitignoreTransition(run, repoRoot, baseSha) {
+export function gatherGitignoreTransition(run, repoRoot, baseSha, relPath = GITIGNORE_PATH) {
   if (typeof baseSha !== 'string' || !baseSha) return 'unverified';
   let work;
   try {
-    work = fs.readFileSync(path.join(repoRoot, '.gitignore'), 'utf-8');
+    work = fs.readFileSync(path.join(repoRoot, relPath), 'utf-8');
   } catch (e) {
     return e && e.code === 'ENOENT' ? 'unchanged' : 'unverified';
   }
-  const tree = run('git', ['ls-tree', baseSha, '--', '.gitignore'], { cwd: repoRoot });
+  const tree = run('git', ['ls-tree', baseSha, '--', relPath], { cwd: repoRoot });
   if (!ok(tree)) return 'unverified';
   let head = null;
   if (tree.stdout.trim()) {
-    const shown = run('git', ['show', `${baseSha}:.gitignore`], { cwd: repoRoot });
+    const shown = run('git', ['show', `${baseSha}:${relPath}`], { cwd: repoRoot });
     if (!ok(shown)) return 'unverified';
     head = shown.stdout;
   }
   return classifyGitignoreTransition(head, work);
+}
+
+/**
+ * The managed-block transition reader `planBaseLag` injects: `(relPath) => outcome`, bound to one consumer and one base sha.
+ * Anything that is not a managed-block file is `unverified` — an unasked question, never a clean answer.
+ *
+ * @param {{run: Runner, repoRoot: string, baseSha: string|null}} input
+ * @returns {(relPath: string) => 'unchanged'|'block-only'|'mixed'|'invalid'|'unverified'}
+ */
+export function createManagedBlockTransitionReader({ run, repoRoot, baseSha }) {
+  return (relPath) => (isManagedBlockFile(relPath)
+    ? gatherGitignoreTransition(run, repoRoot, baseSha, relPath)
+    : 'unverified');
 }

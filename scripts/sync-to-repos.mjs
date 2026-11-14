@@ -920,6 +920,10 @@ async function main() {
   // can distinguish "synced, nothing to change" from "reached nothing at all" —
   // see the coverage line at the end of main().
   let totalSkipped = 0;
+  // Targets whose base lag could NOT be established (stale, diverged, dirty beyond sync output, or unreachable origin). Their
+  // counts are read against a base that is not the one a real sync would write onto, so the summary names them as UNMEASURED —
+  // the distinction a report has to keep, since "nothing to change" and "could not look" print the same zeros otherwise.
+  const unmeasuredTargets = [];
   // 2221: one resolver for the whole run - its blob cache and total budget are shared across every consumer and path.
   const priorUpstream = createPriorUpstreamResolver({ sourceRoot: SOURCE_ROOT });
   const undeclaredDeps = []; // per-consumer `name: packages` lines for the end-of-run summary
@@ -1061,7 +1065,14 @@ async function main() {
     const skippedWrites = new Set();  // source absent: likewise carried, but not a reason to keep the journal
 
     console.log(`${B}→ ${repo.name}${X} (${repo.path})`);
-    if (!await (await import('./lib/sync-base-lag.mjs')).enforceBaseLagForTarget(repo, { dryRun: DRY_RUN, allowStale: process.argv.includes('--allow-stale-base') })) { totalErrors++; console.log(''); continue; }
+    // `measured: false` never stops the run — it is carried into the summary, because a consumer whose state could not be
+    // established against the base it will be compared with must not be counted among the clean ones (2026-11-14: a dry run
+    // REFUSED a consumer whose base was stale and then printed `Would create: 0 update: 0 unchanged: 0`, having examined nothing).
+    const baseLag = await (await import('./lib/sync-base-lag.mjs')).enforceBaseLagForTarget(repo, { dryRun: DRY_RUN, allowStale: process.argv.includes('--allow-stale-base') });
+    if (!baseLag.proceed) { totalErrors++; console.log(''); continue; }
+    // Only a target this run went on to PROCESS can be miscounted as clean. A refusal already stops the run non-zero and names
+    // itself, so listing it here as well would say "written without establishing its base lag" about a consumer nothing wrote to.
+    if (!baseLag.measured) unmeasuredTargets.push({ name: repo.name, outcome: baseLag.outcome });
 
     // ── Pre-flight: stale .github/skills/ shadow detection ────────────────
     // Runs unconditionally (including --dry-run) since it uses the INTENDED
@@ -2188,8 +2199,18 @@ async function main() {
   }
 
   if (DRY_RUN) {
-    console.log(`${Y}DRY RUN complete${X} — no files written`);
+    // NOT the plain line when something could not be measured. A dry run no longer refuses a stale base (it writes nothing, so
+    // there is nothing to protect), but its counts for such a consumer are a reading of a tree that is behind — and zeros from a
+    // base nobody could compare are indistinguishable from zeros meaning "clean" unless the verdict says so here.
+    if (unmeasuredTargets.length > 0) {
+      console.log(`${Y}DRY RUN complete — UNMEASURED for ${unmeasuredTargets.length} of ${targetRepos.length} target(s)${X} — no files written`);
+    } else {
+      console.log(`${Y}DRY RUN complete${X} — no files written`);
+    }
     console.log(`  Would create: ${totalNew}  update: ${totalUpdated}  unchanged: ${totalUnchanged}`);
+    for (const t of unmeasuredTargets) {
+      console.log(`  ${Y}unmeasured${X} ${t.name} ${D}(${t.outcome})${X} — its counts above are read against a base this run could not establish`);
+    }
     if (totalNew + totalUpdated > 0) {
       console.log(`\nRun without --dry-run to apply.`);
     }
@@ -2207,6 +2228,11 @@ async function main() {
       console.log(`${Y}Sync reached no consumer${X} — ${totalSkipped} target(s) skipped, nothing propagated`);
     } else {
       console.log(`${G}Sync complete${X}`);
+    }
+    // Same rule as the dry-run branch: `--allow-stale-base` and an unreachable origin both leave a consumer written onto a base
+    // nobody compared, and the green line alone would not say so.
+    for (const t of unmeasuredTargets) {
+      console.log(`  ${Y}unmeasured${X} ${t.name} ${D}(${t.outcome})${X} — written without establishing its base lag`);
     }
     console.log(
       `  Targets: ${reached}/${targetRepos.length} reached`

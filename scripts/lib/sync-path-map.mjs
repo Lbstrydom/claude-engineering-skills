@@ -34,6 +34,8 @@ export const LAYOUT_CONSTANTS = Object.freeze({
   MANIFEST_PATH: 'scripts/.sync-manifest.json',
   MARKER_BEGIN: '# managed-by:claude-engineering-skills-sync — DO NOT EDIT INSIDE',
   MARKER_END: '# /managed-by:claude-engineering-skills-sync',
+  GITIGNORE_PATH: '.gitignore',
+  GITATTRIBUTES_PATH: '.gitattributes',
   IN_PROGRESS_JOURNAL: 'scripts/.sync-in-progress.json',
   // High-water mark of the last ownership record we wrote. Deliberately lives
   // INSIDE the tooling dir, which is gitignored in every consumer: the manifest
@@ -47,6 +49,44 @@ export const LAYOUT_CONSTANTS = Object.freeze({
   // See docs/plans/sync-ownership-from-content.md.
   OWNERSHIP_WATERMARK: 'scripts/.claude-skills/.sync-watermark.json',
 });
+
+/**
+ * The consumer-owned files into which the sync writes a MANAGED BLOCK, rather
+ * than copying a destination.
+ *
+ * Both are tracked in a consumer and neither is a sync destination, so NEITHER
+ * source of `createUpstreamOwnershipOracle` (git-ignore state ∪ the committed
+ * `scripts/.sync-owned.json`) can see them — the same structural hole
+ * `EXTRA_SYNC_ARTIFACTS` closes for the receipt and the sidecar. Measured
+ * 2026-11-14: `classifyRepo` reported a sync-written `.gitattributes` and
+ * `.gitignore` as "changes that are not sync output", and `planBaseLag` read
+ * that as the human's own work and refused the consumer — two independent
+ * holds deadlocking a sync that itself rewrites both files.
+ *
+ * Ownership of the PATH is not ownership of the BYTES: everything outside the
+ * markers is the consumer's. The narrow question — is the diff from the base
+ * confined to the managed block? — is `classifyGitignoreTransition`
+ * (`sync-gitignore.mjs`), which already existed for `.gitignore` alone and is
+ * now asked of both. Listed here, from the module that owns the layout, so the
+ * two spellings cannot drift apart in the writers and the readers.
+ */
+export const MANAGED_BLOCK_FILES = Object.freeze([
+  LAYOUT_CONSTANTS.GITIGNORE_PATH,
+  LAYOUT_CONSTANTS.GITATTRIBUTES_PATH,
+]);
+
+/**
+ * Is this consumer-relative path one the sync mutates by managed block?
+ * Compared case-insensitively on normalised separators, the same comparison
+ * contract the ownership sidecar advertises.
+ *
+ * @param {string} relPath
+ * @returns {boolean}
+ */
+export function isManagedBlockFile(relPath) {
+  const key = String(relPath ?? '').split('\\').join('/').replace(/^\.\//, '').toLowerCase();
+  return MANAGED_BLOCK_FILES.some((p) => p.toLowerCase() === key);
+}
 
 const STAYS_AT_CANONICAL_PATH_PREFIXES = [
   '.claude/skills/',

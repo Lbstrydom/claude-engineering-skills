@@ -22,6 +22,7 @@
  * @module scripts/lib/sync-base-lag
  */
 import { spawnSync } from 'node:child_process';
+import { isManagedBlockFile } from './sync-path-map.mjs';
 
 /** @typedef {(cmd: string, args: string[], opts?: {cwd?: string, input?: string, timeoutMs?: number, env?: Record<string, string>}) => {status: number|null, stdout: string, stderr: string, error?: Error}} Runner */
 
@@ -133,13 +134,24 @@ const restorable = (e) => e.status !== '??';
  */
 
 /**
+ * Transitions of a managed-block file that this sync can rewrite losslessly, so the file is sync OUTPUT rather than the human's
+ * work. `mixed` (edited beyond the block), `invalid` (malformed markers) and `unverified` (not compared) all stay the human's:
+ * an unasked question is not a clean answer.
+ */
+const RESTORABLE_BLOCK_TRANSITIONS = new Set(['block-only', 'unchanged']);
+
+/**
  * @param {{
  *   repoRoot: string, baseBranch: string, lag: ReturnType<typeof classifyBaseLag>, behindCount: number|null, aheadCount: number|null,
  *   classified: ReturnType<typeof import('../sync-status.mjs').classifyRepo>|null, allowStale?: boolean, why?: string|null,
+ *   managedBlockTransition?: (relPath: string) => string,
  * }} input `classified` is only read for a checkout that is behind
  * @returns {BaseLagPlan}
  */
-export function planBaseLag({ repoRoot, baseBranch, lag, behindCount, aheadCount, classified, allowStale = false, why = null }) {
+export function planBaseLag({
+  repoRoot, baseBranch, lag, behindCount, aheadCount, classified, allowStale = false, why = null,
+  managedBlockTransition = () => 'unverified',
+}) {
   if (lag === 'current' || lag === 'off-base') return { action: 'proceed' };
   if (lag === 'unknown') return { action: 'unchecked', detail: why ?? 'the base could not be compared' };
   const origin = `origin/${baseBranch}`;
@@ -160,7 +172,19 @@ export function planBaseLag({ repoRoot, baseBranch, lag, behindCount, aheadCount
   // A staged rename/copy cannot be restored by path (and the recovery snapshot would then cover more than the restore does), and the
   // sync does not produce one: treat it as the human's, not as regenerable output.
   const renamed = classified.syncOwned.filter((e) => e.origPath || /[RC]/.test(e.status));
-  const own = [...classified.needsReview, ...classified.other, ...renamed];
+  // `.gitignore` / `.gitattributes` are consumer-TRACKED files the sync mutates by managed block, so neither the ownership sidecar
+  // nor git-ignore state can see them and `classifyRepo` calls both "not sync output" (measured 2026-11-14: two independent holds
+  // deadlocked every sync of two consumers). Ownership of the path is not ownership of the bytes, so each is reclaimed only when
+  // the diff from the base is CONFINED to the block — asked of the one marker oracle, and failing closed to the human otherwise.
+  const blockRewritten = [];
+  const unattributed = [...classified.needsReview, ...classified.other].filter((e) => {
+    if (e.origPath || /[RC]/.test(e.status)) return true;
+    if (!isManagedBlockFile(e.path)) return true;
+    if (!RESTORABLE_BLOCK_TRANSITIONS.has(managedBlockTransition(e.path))) return true;
+    blockRewritten.push(e);
+    return false;
+  });
+  const own = [...unattributed, ...renamed];
   if (classified.degraded || own.length > 0) {
     const what = classified.degraded
       ? 'its ownership could not be established, so none of its changes can be shown to be sync output'
@@ -170,40 +194,77 @@ export function planBaseLag({ repoRoot, baseBranch, lag, behindCount, aheadCount
       remedy: `commit or stash those changes, then git -C ${q(repoRoot)} pull --ff-only, then re-run the sync (or --allow-stale-base to write onto the stale base on purpose)`,
     };
   }
-  return { action: 'fast-forward', discard: classified.syncOwned.filter(restorable).map((e) => e.path), behindCount };
+  return {
+    action: 'fast-forward',
+    discard: [...classified.syncOwned, ...blockRewritten].filter(restorable).map((e) => e.path),
+    behindCount,
+  };
 }
 
 /**
  * Check one consumer's base lag and, where it is safe, fix it. Never throws: every failure is a refusal or a loud "unchecked".
  *
+ * A DRY RUN never refuses. A refusal protects the base from being WRITTEN onto, and a dry run writes nothing — so the same verdict
+ * that is a safeguard for a real sync is, for a report, a decline to look that reads as a result (measured 2026-11-14: `sync:dry
+ * --target wine` printed the refusal and then `Would create: 0  update: 0  unchanged: 0`, having examined nothing; it was the only
+ * read-only way to ask whether a consumer carried the staleness #357 had just made visible, and it refused exactly when asking
+ * mattered). Instead the report proceeds and is LABELLED `stale-base-unmeasured`: the base it compared against is not the base a
+ * real sync would write onto, so its counts are a reading of a tree that is behind — a consumer that could not be fully assessed
+ * must never read as clean.
+ *
  * @param {{
  *   repoRoot: string, run: Runner, classify: (repoRoot: string) => ReturnType<typeof import('../sync-status.mjs').classifyRepo>,
  *   dryRun?: boolean, allowStale?: boolean,
+ *   managedBlockReader?: (input: {run: Runner, repoRoot: string, baseSha: string|null}) => ((relPath: string) => string),
  * }} input
- * @returns {{ok: boolean, outcome: 'current'|'unchecked'|'stale-accepted'|'fast-forwarded'|'would-fast-forward'|'refused', lines: string[]}}
+ * @returns {{ok: boolean, measured: boolean, outcome: 'current'|'unchecked'|'stale-accepted'|'fast-forwarded'|'would-fast-forward'|'refused'|'stale-base-unmeasured', lines: string[]}}
  */
-export function enforceBaseLag({ repoRoot, run, classify, dryRun = false, allowStale = false }) {
+export function enforceBaseLag({ repoRoot, run, classify, dryRun = false, allowStale = false, managedBlockReader }) {
   const git = (args) => run('git', ['-C', repoRoot, ...args]);
   const facts = gatherBaseFacts(run, repoRoot);
   if (!facts.ok) {
-    return { ok: true, outcome: 'unchecked', lines: [`base lag NOT CHECKED (${facts.step}: ${facts.error.split('\n')[0]}) - writing without knowing whether this checkout is behind origin`] };
+    return { ok: true, measured: false, outcome: 'unchecked', lines: [`base lag NOT CHECKED (${facts.step}: ${facts.error.split('\n')[0]}) - ${dryRun ? 'reporting' : 'writing'} without knowing whether this checkout is behind origin`] };
   }
   const lag = classifyBaseLag(facts);
   let classified = null;
   if (lag === 'behind' && !allowStale) {
     try { classified = classify(repoRoot); } catch (e) { classified = { ok: false, error: e?.message || 'classification threw' }; }
   }
-  const plan = planBaseLag({ repoRoot, baseBranch: facts.baseBranch, lag, behindCount: facts.behindCount, aheadCount: facts.aheadCount, classified, allowStale });
+  const managedBlockTransition = managedBlockReader
+    ? managedBlockReader({ run, repoRoot, baseSha: facts.baseSha })
+    : undefined;
+  const plan = planBaseLag({ repoRoot, baseBranch: facts.baseBranch, lag, behindCount: facts.behindCount, aheadCount: facts.aheadCount, classified, allowStale, managedBlockTransition });
   switch (plan.action) {
-    case 'proceed': return { ok: true, outcome: 'current', lines: [] };
-    case 'unchecked': return { ok: true, outcome: 'unchecked', lines: [`base lag NOT CHECKED (${plan.detail})`] };
-    case 'proceed-stale': return { ok: true, outcome: 'stale-accepted', lines: [`stale base ACCEPTED (--allow-stale-base): ${plan.detail}; sync:pr will still refuse it if origin changed a path this sync writes`] };
-    case 'refuse': return { ok: false, outcome: 'refused', lines: [`REFUSED: ${plan.detail}.`, `remedy: ${plan.remedy}`] };
+    case 'proceed': return { ok: true, measured: true, outcome: 'current', lines: [] };
+    case 'unchecked': return { ok: true, measured: false, outcome: 'unchecked', lines: [`base lag NOT CHECKED (${plan.detail})`] };
+    case 'proceed-stale': return { ok: true, measured: false, outcome: 'stale-accepted', lines: [`stale base ACCEPTED (--allow-stale-base): ${plan.detail}; sync:pr will still refuse it if origin changed a path this sync writes`] };
+    case 'refuse':
+      if (dryRun) {
+        return {
+          ok: true, measured: false, outcome: 'stale-base-unmeasured',
+          lines: [
+            `base is STALE and this report could not be fully measured: ${plan.detail}.`,
+            `the counts below are read against that stale base, NOT against the base a real sync would write onto — treat this consumer as UNMEASURED, not clean.`,
+            `to measure it: ${plan.remedy.replace(/re-run the sync/g, 're-run the dry run')}`,
+          ],
+        };
+      }
+      return { ok: false, measured: false, outcome: 'refused', lines: [`REFUSED: ${plan.detail}.`, `remedy: ${plan.remedy}`] };
     default: break;
   }
   const target = `origin/${facts.baseBranch}`;
   const note = plan.discard.length > 0 ? `restore ${plan.discard.length} sync-written file(s) to HEAD (this sync rewrites them), then ` : '';
-  if (dryRun) return { ok: true, outcome: 'would-fast-forward', lines: [`would ${note}fast-forward ${plan.behindCount} commit(s) to ${target} (dry run: nothing changed)`] };
+  // A dry run reports the fast-forward it WOULD do and does not perform it, so the counts that follow are read against the stale
+  // base just as in the refusal branch above: reported, and not measured.
+  if (dryRun) {
+    return {
+      ok: true, measured: false, outcome: 'would-fast-forward',
+      lines: [
+        `would ${note}fast-forward ${plan.behindCount} commit(s) to ${target} (dry run: nothing changed)`,
+        `the counts below are read against the stale base, so treat this consumer as UNMEASURED, not clean`,
+      ],
+    };
+  }
   // The restore is the only destructive step, so it is made RECOVERABLE first: `git stash create` writes a commit of the tracked
   // changes (index and worktree) WITHOUT touching refs or the tree, and a failed fast-forward re-applies it. If the snapshot cannot
   // be taken, nothing is restored and the consumer is refused.
@@ -217,7 +278,7 @@ export function enforceBaseLag({ repoRoot, run, classify, dryRun = false, allowS
   }
   const merged = git(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', facts.baseSha]);
   if (merged.error || merged.status !== 0) return failedAfterRestore(git, repoRoot, target, snapshot, firstLine(merged));
-  return { ok: true, outcome: 'fast-forwarded', lines: [`fast-forwarded ${plan.behindCount} commit(s) to ${target} ${facts.baseSha.slice(0, 8)}${plan.discard.length > 0 ? ` (restored ${plan.discard.length} sync-written file(s) first; this sync rewrites them${snapshot ? `; snapshot ${snapshot.slice(0, 8)} kept until git gc` : ''})` : ''}`] };
+  return { ok: true, measured: true, outcome: 'fast-forwarded', lines: [`fast-forwarded ${plan.behindCount} commit(s) to ${target} ${facts.baseSha.slice(0, 8)}${plan.discard.length > 0 ? ` (restored ${plan.discard.length} sync-written file(s) first; this sync rewrites them${snapshot ? `; snapshot ${snapshot.slice(0, 8)} kept until git gc` : ''})` : ''}`] };
 }
 
 const firstLine = (r) => (r.error?.message || `${r.stderr || ''}${r.stdout || ''}`.trim() || `exit ${r.status}`).split('\n')[0];
@@ -236,7 +297,7 @@ function failedAfterRestore(git, repoRoot, target, snapshot, because) {
 
 function refusedFastForward(repoRoot, target, because, recovery = '') {
   return {
-    ok: false, outcome: 'refused',
+    ok: false, measured: false, outcome: 'refused',
     lines: [`REFUSED: the fast-forward to ${target} failed in ${repoRoot} (${because}).${recovery}`, `remedy: git -C ${q(repoRoot)} status, resolve what it shows, then git -C ${q(repoRoot)} pull --ff-only and re-run the sync`],
   };
 }
@@ -246,15 +307,20 @@ const REMOTE_CALL_MS = 60_000;
 const C = { R: '\x1b[31m', Y: '\x1b[33m', G: '\x1b[32m', D: '\x1b[2m', X: '\x1b[0m' };
 
 /**
- * The sync's one call: check (and where safe fix) one consumer's base lag and PRINT the result. `false` = refuse this consumer.
+ * The sync's one call: check (and where safe fix) one consumer's base lag and PRINT the result. `proceed: false` = refuse this
+ * consumer (never in a dry run — see `enforceBaseLag`). `measured: false` says the consumer's state could not be established
+ * against the base it will actually be compared with: the CALLER must carry that into its own verdict rather than letting the
+ * counts stand alone, which is the whole defect this returns a shape instead of a boolean for.
+ *
  * `classifyRepo` is the one provenance pipeline `sync:pr` uses; it lives in a CLI module, so it is loaded only when a checkout is
- * actually behind (the rare case), never on the way to "current".
+ * actually behind (the rare case), never on the way to "current". The managed-block transition reader is loaded on the same
+ * branch and for the same reason.
  *
  * @param {{name: string, path: string}} repo
- * @param {{dryRun?: boolean, allowStale?: boolean, run?: Runner, classify?: Function, write?: (line: string) => void}} [opts]
- * @returns {Promise<boolean>}
+ * @param {{dryRun?: boolean, allowStale?: boolean, run?: Runner, classify?: Function, managedBlockReader?: Function, write?: (line: string) => void}} [opts]
+ * @returns {Promise<{proceed: boolean, measured: boolean, outcome: string}>}
  */
-export async function enforceBaseLagForTarget(repo, { dryRun = false, allowStale = false, run, classify, write = (l) => console.log(l) } = {}) {
+export async function enforceBaseLagForTarget(repo, { dryRun = false, allowStale = false, run, classify, managedBlockReader, write = (l) => console.log(l) } = {}) {
   // Every git call here is local or one short network round trip: bound it, and never let git prompt for credentials in a sync.
   // Only the NETWORK calls are bounded (killing a local merge / restore / stash halfway would leave locks and half-applied state).
   const runner = run ?? ((cmd, args, o) => spawnRunner(cmd, args, { ...o, env: { GIT_TERMINAL_PROMPT: '0' }, ...(args.some((a) => a === 'ls-remote' || a === 'fetch') ? { timeoutMs: REMOTE_CALL_MS } : {}) }));
@@ -263,8 +329,13 @@ export async function enforceBaseLagForTarget(repo, { dryRun = false, allowStale
     const { classifyRepo } = await import('../sync-status.mjs');
     classifier = classifyRepo;
   }
-  const r = enforceBaseLag({ repoRoot: repo.path, run: runner, classify: classifier, dryRun, allowStale });
-  const colour = r.ok ? (r.outcome === 'current' ? C.D : r.outcome === 'fast-forwarded' || r.outcome === 'would-fast-forward' ? C.G : C.Y) : C.R;
+  let blockReader = managedBlockReader;
+  if (!blockReader) {
+    const { createManagedBlockTransitionReader } = await import('./sync-pr-facts.mjs');
+    blockReader = createManagedBlockTransitionReader;
+  }
+  const r = enforceBaseLag({ repoRoot: repo.path, run: runner, classify: classifier, dryRun, allowStale, managedBlockReader: blockReader });
+  const colour = r.ok ? (r.outcome === 'current' ? C.D : r.outcome === 'fast-forwarded' ? C.G : C.Y) : C.R;
   for (const line of r.lines) write(`  ${colour}base-lag${C.X} ${line}`);
-  return r.ok;
+  return { proceed: r.ok, measured: r.measured, outcome: r.outcome };
 }
