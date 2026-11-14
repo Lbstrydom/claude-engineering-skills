@@ -1273,10 +1273,62 @@ Create `.sync-overrides.json` at the consumer's repo root and **commit it**:
 ### When an overridden file also changes upstream
 
 The sync holds your version and says so on every run. When upstream's bytes for
-that path have MOVED since your last sync, it says that too, with both shas, and
-records `upstreamMoved: true` in `.sync-receipt.json`. An override freezes a
+that path have MOVED since we last wrote it, it says that too, with both shas,
+and records `upstreamMoved: true` in `.sync-receipt.json`. An override freezes a
 path; it must never also freeze your knowledge that upstream moved on — review
 periodically whether the divergence still applies.
+
+**That paragraph was a DECLARED behaviour, not a holding one, until 2026-11-14.**
+The question used to be asked of the previous receipt, which every run rewrites
+with the current hash — so the warning fired on the single run where upstream
+moved and was silent for ever after, while the hold went on being behind.
+Measured across four consecutive syncs of a disposable consumer: run C (upstream
+v1→v2) warned, runs D and E did not, and the consumer still held v1. That is how
+a shared reference doc can sit two versions behind in ten skills' `references/`
+with every sync green.
+
+It now asks the **manifest base** — the hash of what the sync last actually
+wrote there, which a hold never moves — so `upstreamMoved: true` is restated on
+every run until you lift the override or upstream comes back to your form. It is
+also retroactive: a hold that went stale months ago is reported on the first
+sync after this ships, with no history needed.
+
+`upstreamMovedBasis` names which comparand answered:
+
+| basis | when | strength |
+|---|---|---|
+| `base` | every path whose outbound bytes are a function of upstream alone | exact, standing, retroactive |
+| `receipt` | the deep-merged JSON configs (`.vscode/mcp.json`, `.claude/settings.json`) when the destination exists — their base carries YOUR keys too, so it is not a statement about upstream | one-shot, as before |
+| `upstreamMoved: null` | no base and no prior record: we have never written that path and hold no comparand | undetermined, never "no" |
+
+### Reconciling a manifest with the tree
+
+`scripts/.sync-manifest.json` is meant to record **what the sync last wrote** to
+each destination. For a path refused as diverged that is what it does — verified
+2026-11-14 through the real CLI, across three consecutive syncs. So
+`manifest !== disk` is not by itself corruption, and is never repairable by
+rewriting the manifest: it is the signal the three-way comparison is built on.
+
+> **OPEN (2026-11-14).** `storyline` holds 11 paths whose manifest entries are
+> the CURRENT upstream hashes while disk holds other content — a state the
+> refusal path does not produce, and which is not yet explained. Do not read the
+> table below as a complete list of causes until that is measured; see
+> `docs/plans/consumer-sync-durability.md` §6a.
+
+Known causes:
+
+| manifest ≠ disk, and… | what it is | what to do |
+|---|---|---|
+| the path is in `.sync-overrides.json` | a declared hold. `verify-sync-invariants` gate 2B reports it under `held` and passes | nothing; review the hold when `upstreamMoved` says upstream has moved past it |
+| the last sync listed it under `divergenceRefused` in `.sync-receipt.json` | an undeclared divergence. The sync exits non-zero and names it | declare it, or discard it deliberately — never by editing the manifest |
+| neither | an out-of-band edit of an upstream-owned file, or a hydration fault. Gate 2B FAILS on it | fix upstream and re-sync; `npm run sync -- --target <name>` rewrites the base from what it actually writes |
+
+**There is no mass reconciliation, and that is deliberate.** A tool that
+rewrote bases to match disk would adopt the consumer's content as upstream's
+base — precisely the defect of 2026-08-29 (`0088db7c`), where a refusal recorded
+the consumer's bytes and the next sync overwrote 16 `SKILL.md` as an ordinary
+update. The base must only ever be set by an actual write. Any repair is
+therefore either a declaration you make (`.sync-overrides.json`) or a real sync.
 
 ### Discarding a divergence on purpose
 

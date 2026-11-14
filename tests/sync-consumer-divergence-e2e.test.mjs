@@ -42,6 +42,8 @@ const MCP = '.vscode/mcp.json';
 
 let tmp;
 let consumer;
+/** The hash of what sync 1 ACTUALLY wrote to SUBJECT — the only honest base. */
+let writtenBySync1;
 
 async function sync(extra = [], root = consumer) {
   return runSyncCli(['--target-path', root, '--no-prompt', ...extra]);
@@ -152,6 +154,11 @@ describe('a consumer diverges on a tracked synced file, and commits it', () => {
     git(['add', '-A'], consumer);
     git(['commit', '-m', 'adopt bundle', '--no-gpg-sign'], consumer);
     const original = read(SUBJECT);
+    // Captured BEFORE the divergence, off a file that is clean at HEAD: this is
+    // what sync 1 wrote, and the assertion below needs the real value rather
+    // than "something that is not the consumer's bytes".
+    writtenBySync1 = `sha256:${createHash('sha256')
+      .update(fs.readFileSync(path.join(consumer, SUBJECT))).digest('hex')}`;
     write(SUBJECT, original.replace(
       /> \*\*Worktree preflight\*\*/,
       '> **Worktree preflight** — CONSUMER FORM, deliberately condensed.\n> <!-- was: -->\n> **Worktree preflight**',
@@ -211,10 +218,22 @@ describe('the refusal SURVIVES a second sync (it did not, and that shipped)', ()
   it('the manifest still records OUR last write, not the consumer bytes', async () => {
     // The mechanism, asserted directly rather than only through its symptom:
     // recording the consumer's hash is what makes the next run read PRISTINE.
+    //
+    // Asserted as an EQUALITY against the sync-1 write, not merely as "≠ the
+    // bytes on disk". A storyline report on 2026-11-13 read a refused path's
+    // `manifest !== disk` as evidence that the manifest records the hash the
+    // sync INTENDED to write — a third value, neither our last write nor the
+    // consumer's content, which would make the base a phantom and freeze the
+    // path for ever. The inequality this test used to assert cannot tell the
+    // two apart: both are ≠ disk. Reproduced 2026-11-14 and the carry-forward
+    // is honest — so the assertion is now the one that could have said so.
     const manifest = JSON.parse(read('scripts/.sync-manifest.json'));
     const onDisk = `sha256:${createHash('sha256').update(fs.readFileSync(path.join(consumer, SUBJECT))).digest('hex')}`;
     assert.notEqual(manifest.files[SUBJECT], onDisk,
       'the manifest adopted the consumer content as our base — the refusal erased its own evidence');
+    assert.equal(manifest.files[SUBJECT], writtenBySync1,
+      'the manifest records neither our last write nor the disk — a base we never wrote, '
+      + 'which the next sync compares against and can never satisfy');
   });
 
   it('and a THIRD run is still refusing — the state is stable, not merely delayed', async () => {
@@ -259,6 +278,63 @@ describe('the consumer declares the divergence', () => {
     assert.equal(again.code, 0, whySyncFailed(again));
     assert.equal(git(['status', '--porcelain', '--', '.sync-receipt.json'], consumer).trim(), '',
       'a no-op sync re-dirtied the receipt');
+  });
+});
+
+describe('a HELD path that upstream has moved past says so on EVERY run', () => {
+  // SUBJECT is held by the override declared above, so the sync writes nothing
+  // to it and carries its base forward untouched. Moving that base is therefore
+  // the same state as upstream having moved on since our last write to it —
+  // produced here without perturbing the source tree, which concurrent suites
+  // are reading.
+  //
+  // The defect, measured 2026-11-14 across four syncs: the question used to be
+  // asked of the PREVIOUS RECEIPT, which every run rewrites with the current
+  // hash. So it answered true on the single run where upstream moved and false
+  // for ever after, while the consumer went on holding the older content. Under
+  // the old predicate BOTH runs below are silent — the receipt already agrees
+  // with the current outbound bytes, which is exactly the post-warning state.
+  const manifestPath = () => path.join(consumer, 'scripts', '.sync-manifest.json');
+  const heldEntry = () => (lastSync().overridesHeld || []).find((h) => h.path === SUBJECT);
+  let firstRun;
+  let secondRun;
+
+  it('warns on the run after the base moved', async () => {
+    const m = JSON.parse(fs.readFileSync(manifestPath(), 'utf-8'));
+    m.files[SUBJECT] = `sha256:${'0'.repeat(64)}`;   // a write that is not upstream's current form
+    fs.writeFileSync(manifestPath(), `${JSON.stringify(m, null, 2)}\n`);
+
+    firstRun = await sync();
+    assert.equal(firstRun.code, 0, whySyncFailed(firstRun));
+    assert.match(stripAnsi(firstRun.out), /upstream content for this path has CHANGED since we last wrote it/);
+    assert.ok(firstRun.out.includes(SUBJECT), 'the warning did not name the held path');
+  });
+
+  it('records the verdict and WHICH comparand answered', () => {
+    const held = heldEntry();
+    assert.ok(held, 'the hold vanished from the receipt');
+    assert.equal(held.upstreamMoved, true);
+    assert.equal(held.upstreamMovedBasis, 'base',
+      'a non-merged path must be judged against the base, not the receipt it is about to overwrite');
+  });
+
+  it('warns AGAIN on the next run — the condition outlives the run that found it', async () => {
+    // Commit the receipt the previous run legitimately changed (the verdict
+    // flipped), so the churn check below is about THIS run and not that one.
+    git(['add', '--', '.sync-receipt.json'], consumer);
+    git(['commit', '-m', 'receipt: standing staleness verdict', '--no-gpg-sign', '--', '.sync-receipt.json'], consumer);
+    secondRun = await sync();
+    assert.equal(secondRun.code, 0, whySyncFailed(secondRun));
+    assert.match(stripAnsi(secondRun.out), /upstream content for this path has CHANGED since we last wrote it/,
+      'the warning went silent while the hold was still behind upstream — one-shot again');
+    assert.equal(heldEntry().upstreamMoved, true);
+  });
+
+  it('and the standing verdict does not churn the receipt', () => {
+    // A signal restated every run must still be idempotent, or it trades one
+    // invisible state for a permanently dirty tracked file.
+    assert.equal(git(['status', '--porcelain', '--', '.sync-receipt.json'], consumer).trim(), '',
+      'the standing staleness verdict re-dirties the receipt on every sync');
   });
 });
 

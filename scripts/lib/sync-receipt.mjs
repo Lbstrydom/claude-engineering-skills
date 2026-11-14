@@ -62,7 +62,14 @@
  *    so it reaches linked worktrees, which the gitignored manifest never does.
  * 3. `overridesHeld[].upstreamMoved` makes a STALE override visible. An override
  *    freezes a path; it must not also freeze the consumer's knowledge that
- *    upstream has since changed it.
+ *    upstream has since changed it. It is a STANDING verdict: `true` is
+ *    restated on every run while the hold is behind upstream, because the
+ *    question is asked of the manifest base rather than of this file — asking
+ *    this file made the answer true for exactly the one run that wrote it.
+ *    `upstreamMovedBasis` names which comparand answered (`base`, exact and
+ *    retroactive; `receipt`, one-shot, for the deep-merged JSON configs whose
+ *    base is not upstream's content), and `null` is undetermined, never "no".
+ *    See `classifyHeldStaleness` in lib/sync-divergence.mjs.
  *
  * ## Deliberately NOT in it
  *
@@ -113,7 +120,8 @@ const NOTE = 'Written by the claude-engineering-skills sync. Committed on purpos
  * @param {string[]} input.created
  * @param {string[]} input.updated
  * @param {string[]} input.gcDeleted
- * @param {Array<{path: string, reason: string, upstreamMoved: boolean}>} input.overridesHeld
+ * @param {Array<{path: string, reason: string, upstreamSha: string,
+ *   upstreamMoved: boolean|null, upstreamMovedBasis: 'base'|'receipt'}>} input.overridesHeld
  * @param {Array<{path: string, reason: string}>} input.divergedOverwritten
  * @param {Array<{path: string, reason: string}>} input.divergenceRefused
  * @param {Array<{path: string, action: 'remove-block'|'delete-file'}>} [input.legacyRetired]
