@@ -109,12 +109,40 @@ The refusal set and why each member is in it:
 | `tools` | dropped — the adapter always spawns `--tools ''` | §"Forced tool-calling" below: 20/20 tiered-recall runs fell back for a whole shadow window |
 | `tool_choice` | dropped, no error | same |
 
-`max_tokens` is deliberately **not** in the set. It is equally unenforced on
-cli, but *every* caller sets it, so refusing on it would refuse every call —
-collapsing this into "ambient cli always means sdk", which voids an operator's
-explicit transport choice and moves all spend off the credit. It keeps its own
-once-per-session warning instead, reworded to say the ceiling is **accepted and
-ignored**, not merely unenforceable.
+`max_tokens` is deliberately **not** in the set by default. It is equally
+unenforced on cli, but *every* caller sets it (the Messages API requires it), so
+refusing on it would refuse every call — collapsing this into "ambient cli
+always means sdk", which voids an operator's explicit transport choice and moves
+all spend off the credit. It keeps its own once-per-session warning instead,
+reworded to say the ceiling is **accepted and ignored**, not merely
+unenforceable.
+
+**The membership test, for any new param:** does the param being unmet change
+the ANSWER the caller receives? `system` unmet gives a different KIND of answer;
+`tools`/`tool_choice` unmet gives the wrong SHAPE; `max_tokens` unmet gives the
+answer that was asked for, possibly more of it than budgeted — the content is
+not wrong.
+
+### `CLAUDE_CLI_STRICT_MAX_TOKENS` — the operator's side of that trade
+
+Adjudicated 2026-11-14 (round-1 audit H2/H4, GPT ruling `compromise`, HIGH →
+MEDIUM). The audit was right that an accepted-and-ignored ceiling is the same
+*class* of defect this rule closes, and that a once-per-session warning gives
+nobody control over the cost/runaway risk. Its recommendation as written —
+refuse whenever `max_tokens` is supplied — was arithmetically "always sdk", for
+the reason above. The landing is an operator-level opt-in:
+
+| `CLAUDE_CLI_STRICT_MAX_TOKENS` | a `max_tokens` call under ambient `cli` |
+|---|---|
+| unset / `0` / anything unrecognised (**default**) | stays on cli, keeps the credit; the ceiling is unenforced and the once-per-session warning says so |
+| `1` / `true` | unserviceable → routed to sdk, which honours the ceiling (the caller's `max_tokens` survives the routing) |
+
+Default off so billing is untouched unless the operator chooses otherwise. An
+unrecognised value reads as OFF rather than throwing — unlike `CLAUDE_BACKEND`,
+where a typo misroutes billing, the safe reading here is "leave the operator's
+billing as it is", since turning strictness ON by accident is what moves spend.
+A per-call `requireMaxTokens` option was rejected as an abstraction no current
+call site needs; if one ever does, it belongs in the same oracle.
 
 The `BILLING PIN` test in
 [tests/anthropic-cli-faithfulness.test.mjs](../../tests/anthropic-cli-faithfulness.test.mjs)

@@ -23,6 +23,7 @@ Azure work-profile variables are documented separately in
 | `ANTHROPIC_API_KEY` | No | — | Claude Haiku fallback for brief generation (sdk backend only) |
 | `CLAUDE_BACKEND` | No | `sdk` | Routing for Claude calls: `sdk` (raw API) or `cli` (`claude -p` headless — draws from Max 20x Agent SDK $200/mo credit from 2026-06-15). See AGENTS.md "Anthropic Backend Routing". |
 | `CLAUDE_BIN` | No | `claude` | Path/name of the `claude` CLI (cli backend only) |
+| `CLAUDE_CLI_STRICT_MAX_TOKENS` | No | unset (off) | `1`/`true` makes an output ceiling a routing condition: a `max_tokens` call becomes unserviceable on the `cli` backend (which accepts the ceiling and ignores it — measured 2254–2784 output tokens against a 200 ceiling) and is routed to the backend that honours it. **Default off, so billing is unchanged**; opting in moves those calls from the Max 20x credit to the `ANTHROPIC_API_KEY` meter, which is why it is the operator's choice and not the default. An unrecognised value reads as OFF rather than throwing — turning strictness on by accident is what would move spend. See AGENTS.md "Anthropic Backend Routing". |
 | `CLAUDE_FINAL_REVIEW_MODEL` | No | `latest-opus` | Claude Opus override (Step 7 fallback) |
 | `BRIEF_MODEL_GEMINI` | No | `latest-flash` | Brief-generation Gemini model |
 | `BRIEF_MODEL_CLAUDE` | No | `latest-haiku` | Brief-generation Claude model |

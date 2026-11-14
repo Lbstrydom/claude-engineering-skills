@@ -34,6 +34,7 @@ const AMBIENT_PROVIDER_ENV = [
   'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL',
   'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT',
   'AWS_REGION', 'AWS_DEFAULT_REGION',
+  'CLAUDE_CLI_STRICT_MAX_TOKENS',
 ];
 
 let tmpDir;
@@ -318,5 +319,116 @@ describe('cliFaithfulnessVerdict: the precedence rule', () => {
     const v = cliFaithfulnessVerdict({ tool_choice: { type: 'any' } }, { backendWasExplicit: true });
     assert.match(v.message, /cannot honour `tool_choice`/);
     assert.match(v.message, /backend:'sdk'/);
+  });
+});
+
+// ── the max_tokens exemption, and the operator's opt-out of it ──────────────
+//
+// Adjudicated 2026-11-14 (GPT ruling `compromise`, HIGH -> MEDIUM). The audit
+// was right that an accepted-and-ignored `max_tokens` is the same CLASS of
+// defect this change closes; the recommendation it shipped with ("refuse when
+// max_tokens is supplied") was arithmetically "ambient cli always means sdk",
+// because the Messages API requires max_tokens and all 17 ambient call sites
+// set it. The landing is an OPERATOR-level strict path: default off so billing
+// is untouched, opt in and the ceiling is honoured by routing.
+describe('max_tokens: unenforced by default, strict on request', () => {
+  it('DEFAULT: `max_tokens` alone is serviceable — refusing it would refuse every call', () => {
+    delete process.env.CLAUDE_CLI_STRICT_MAX_TOKENS;
+    assert.equal(unserviceableCliParams({ max_tokens: 100 }), null);
+    assert.equal(cliFaithfulnessVerdict({ max_tokens: 100 }, {}), null);
+  });
+
+  it('STRICT: the operator opt-in makes an unenforceable ceiling unserviceable', () => {
+    process.env.CLAUDE_CLI_STRICT_MAX_TOKENS = '1';
+    const v = unserviceableCliParams({ max_tokens: 100 });
+    assert.equal(v.param, 'max_tokens');
+    assert.match(v.why, /CLAUDE_CLI_STRICT_MAX_TOKENS/);
+    assert.match(v.why, /2254/, 'the reason carries the measurement, not just an assertion');
+  });
+
+  it('STRICT routes an ambient-cli call to the backend that honours the ceiling', async () => {
+    process.env.CLAUDE_BACKEND = 'cli';
+    process.env.CLAUDE_CLI_STRICT_MAX_TOKENS = '1';
+    process.env.ANTHROPIC_API_KEY = 'sk-test';
+    process.env.CLAUDE_BIN = writeFakeCli('from-cli');
+    const { calls, fetchImpl } = sdkSpy();
+    const client = await createAnthropicClient({ fetch: fetchImpl, fresh: true });
+    const resp = await client.messages.create({
+      model: 'claude-haiku-4-5', max_tokens: 64,
+      messages: [{ role: 'user', content: 'ping' }],
+    });
+    assert.equal(calls.length, 1, 'strict mode must route, not warn-and-proceed');
+    assert.equal(calls[0].body.max_tokens, 64, 'the ceiling the caller asked for must survive the routing');
+    assert.equal(resp.content[0].text, 'from-sdk');
+  });
+
+  // MUST NOT FIRE. The whole point of the default is that an operator who has
+  // not opted in keeps the Max 20x credit for calls cli serves correctly.
+  it('BILLING PIN: without the opt-in, a max_tokens call STAYS on cli', async () => {
+    process.env.CLAUDE_BACKEND = 'cli';
+    delete process.env.CLAUDE_CLI_STRICT_MAX_TOKENS;
+    process.env.ANTHROPIC_API_KEY = 'sk-test';
+    const { calls, fetchImpl } = sdkSpy();
+    const client = await createAnthropicClient({
+      claudeBin: writeFakeCli('stayed-on-cli'), fetch: fetchImpl, fresh: true,
+    });
+    const resp = await client.messages.create({
+      model: 'claude-haiku-4-5', max_tokens: 64,
+      messages: [{ role: 'user', content: 'ping' }],
+    });
+    assert.equal(resp.content[0].text, 'stayed-on-cli');
+    assert.equal(calls.length, 0);
+  });
+
+  it('only 1/true enable it — an unrecognised value reads as OFF, never throws', () => {
+    for (const val of ['0', 'false', 'yes', 'on', '', '  ', 'TRUE ']) {
+      process.env.CLAUDE_CLI_STRICT_MAX_TOKENS = val;
+      const v = unserviceableCliParams({ max_tokens: 100 });
+      const expectOn = val.trim().toLowerCase() === 'true';
+      assert.equal(
+        v === null, !expectOn,
+        `${JSON.stringify(val)}: turning strictness on by accident is what moves the operator's spend`,
+      );
+    }
+  });
+
+  it('an answer-changing param is diagnosed ahead of the cost guard', () => {
+    process.env.CLAUDE_CLI_STRICT_MAX_TOKENS = '1';
+    const v = unserviceableCliParams({ max_tokens: 100, system: 'be brief' });
+    assert.equal(v.param, 'system', 'the ceiling must not shadow the reason the answer would be wrong');
+  });
+
+  // The gap conceded in the rebuttal: an overlong cli response must come back
+  // intact and be visible AS overlong, never silently presented as if the
+  // ceiling had bound it. Documenting the missing guard is not the guard — the
+  // guard is the strict opt-in above; this pins the honest default behaviour.
+  it('DEFAULT: an overlong cli response is returned intact, not misrepresented as bounded', async () => {
+    const long = 'x'.repeat(5000);
+    const client = await createAnthropicClient({
+      backend: 'cli', claudeBin: writeFakeCli(long), fresh: true,
+    });
+    const resp = await client.messages.create({
+      model: 'claude-haiku-4-5', max_tokens: 10,
+      messages: [{ role: 'user', content: 'ping' }],
+    });
+    assert.equal(resp.content[0].text.length, 5000,
+      'the response must not be silently truncated to look like the ceiling held');
+    assert.ok(resp.content[0].text.length > 10 * 10,
+      'and it is plainly over the requested budget — the caller can see that');
+  });
+
+  it('STRICT + explicit backend:cli throws rather than routing', async () => {
+    process.env.CLAUDE_CLI_STRICT_MAX_TOKENS = '1';
+    process.env.ANTHROPIC_API_KEY = 'sk-test';
+    const client = await createAnthropicClient({
+      backend: 'cli', claudeBin: writeFakeCli('from-cli'), fresh: true,
+    });
+    await assert.rejects(
+      () => client.messages.create({
+        model: 'claude-haiku-4-5', max_tokens: 64,
+        messages: [{ role: 'user', content: 'ping' }],
+      }),
+      (e) => /cannot honour `max_tokens`/.test(e.message) && /backend:'sdk'/.test(e.message),
+    );
   });
 });

@@ -362,6 +362,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 
 | Plan | Notes |
 |---|---|
+| [Audit summary — anthropic-cli-faithfulness-routing](./anthropic-cli-faithfulness-routing-audit-summary.md) |  |
 | [Audit Summary — Architecture-Intent PR-B (Python & Java Adapters)](./arch-intent-pr-b-audit-summary.md) |  |
 | [Audit Summary — Architecture-Intent PR-C (Postgres Adapter)](./arch-intent-pr-c-audit-summary.md) |  |
 | [Audit Summary: audit-target-identity-commit-sha-correction](./audit-target-identity-commit-sha-correction-audit-summary.md) |  |

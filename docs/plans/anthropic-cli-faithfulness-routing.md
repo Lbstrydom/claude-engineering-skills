@@ -297,18 +297,30 @@ tokens emitted, not for the ceiling. Measured output for a 10-symbol batch was
 
 So the change here buys no measured spend reduction, and the plan says so
 rather than claiming one. What it buys is a ceiling that is a function of the
-request, behind a **function boundary** (`summaryMaxTokens`) rather than an
+request, behind a **function boundary** (`summaryMaxTokens`, 256 tokens/symbol
+— see §6.A for why not 192) rather than an
 inline expression — a contract with no function boundary cannot be tested
 except by grepping the source, and a static scan over an interpolated
 expression is exactly the guard shape AGENTS.md records as defeated. At the
 configured default batch of 50 it returns 4096 — **production is
 byte-identical**, pinned by a test — and it only bites on the small batches
-where the ceiling was three orders of magnitude off. 192/symbol against a
-measured ~102/symbol leaves ~88% headroom, because truncation here is a
-silent-data-loss hazard: a cut numbered list yields `null` summaries for the
-tail symbols, which `summariseBatch` already folds into its `summarised=X/Y`
-log without failing. Degenerate inputs fail **open** to 4096, never to a tiny
-ceiling that would truncate every answer.
+where the ceiling was three orders of magnitude off. 256/symbol keeps ~2x
+headroom over the worst of five observations (1308 for a 10-symbol batch).
+Degenerate inputs fail **open** to 4096, never to a tiny ceiling that would
+truncate every answer.
+
+**And truncation is now DETECTED, not merely made unlikely.**
+`assessBatchCompleteness` reads two independent signals — `stop_reason ===
+'max_tokens'`, and a missing entry for any requested index — and
+`summariseBatch` logs a named `INCOMPLETE batch` line naming the missing
+indices, while `main()` carries `counts.missing` and `complete` in its stdout
+envelope. The count check is deliberately NOT conditional on `stop_reason`,
+because on the cli backend the ceiling is unenforced and so `stop_reason`
+cannot be relied on to report a cut. This closes the round-1 audit's H1/H3/H5:
+the plan named truncation as silent data loss and the change then tightened the
+ceiling without adding the detection. A retry at a larger ceiling is
+deliberately not attempted — on cli it would change nothing while doubling the
+spend.
 
 ### 5.3 `summarise.mjs` had no entry guard — found by this change, fixed here
 
@@ -337,55 +349,163 @@ All figures **measured** 2026-11-14 in worktree
 `visual-audit-clipping-check-2de96f` @ `f48d9863`, model `claude-haiku-5-5`,
 harnesses replicating the production call shapes verbatim. Commands in §6.C.
 
-### 6.A Summariser shape (`summariseBatch`, no `system`), fixed 9,669-char prompt, n=4/backend
+### 6.A Summariser shape (`summariseBatch`, no `system`), fixed 9,669-char prompt, n=5/backend
 
 | | sdk | cli |
 |---|---|---|
-| output tokens | 916 / 943 / 991 / 1146 | 1266 / 1323 / 1386 / 1452 |
+| output tokens | 916 / 943 / 991 / 1146 / **1308** | 1266 / 1323 / 1386 / 1452 / **1582** |
 | input tokens | 4285 (identical every run) | 2 |
 | cache create / read | 0 / 0 | 168679/0, 174863/0 (cold) · 4063/164611 (warm) |
 | latency | 4.4 / 4.9 / 5.0 / 5.5 s | 12.2 / 13.9 / 14.1 / 14.2 s |
 | self-reported cost | — (computed ~$0.0098) | $0.1719 / $0.1785 (cold) · $0.0158 (warm) |
 | numbered lines parsed | 10/10 every run | 10/10 every run |
 
-### 6.B `normalize-intent` shape (`system` + `max_tokens: 200`), n=1/backend
+**The 5th sample arrived last and changed a conclusion.** Re-running the probe
+after committing it (§5.2) returned **1308** sdk output tokens, 14% above the
+previous maximum of 1146 — so the round-1 audit's H5 ("four samples do not
+establish that every batch fits") was right on this plan's own figures, and the
+per-symbol budget went from 192 to **256** in response. Recorded here rather
+than quietly re-fitted: a range that one further sample broke is the strongest
+available argument for the truncation DETECTION that now sits beside it.
+
+### 6.B `normalize-intent` shape (`system` + `max_tokens: 200`)
+
+sdk n=2 through the seam; cli n=1 through the seam plus **n=3 re-measured below
+the seam** by raw `claude -p` with the identical argv the adapter builds — the
+seam now refuses this shape, so the live path can no longer produce the cli leg.
+Model pinned `claude-haiku-5-5` on both sides.
 
 | | sdk | cli |
 |---|---|---|
-| output tokens | 29 | 1995 |
-| latency | 1.29 s | 40.03 s |
-| self-reported cost | — (~$0.0003) | $0.8165 |
-| lines | 1 | 12 |
-| answer | one-line purpose sentence | first-person Claude Code session reply citing AGENTS.md |
+| output tokens | 29, 43 | 1995 · **2254, 2784, 2248** |
+| latency | 1.07, 1.29 s | 40.0 s · **25.5, 31.9, 31.4 s** |
+| self-reported cost | — (~$0.0003) | $0.8165 · **$0.301, $0.201, $0.155** |
+| lines | 1, 1 | 12 · **16, 38, 41** |
+| answer | one-line purpose sentence | every run opens *"I haven't changed anything"* / *"I couldn't make the change"* and reports on tool availability — it reads the normalize prompt as a TASK TO PERFORM and answers as an agent |
+
+So **52–96× the output tokens, ~24× the latency, ~500–1000× the cost**, and the
+answer is unusable as an embedding input. The 2026-07-19 comment is confirmed.
+
+**Variance finding, and it strengthens the case rather than weakening it.** A
+*shortened* 3-sentence replica of the same instruction, same model, same argv,
+returned a correct **one-line** answer 3/3 (89–95 chars) — while still burning
+466, 673 and 636 output tokens to do it, against sdk's 43. So whether `cli`
+honours a given `system` is **not predictable from the instruction**: the real
+602-char prompt fails 4/4, a terser variant passes 3/3, and both cost an order
+of magnitude more than sdk. That is precisely why the refusal is **mechanical on
+the param** rather than a per-prompt judgement at each call site — there is no
+rule a future author could apply by reading their own prompt.
 
 ### 6.C Reproduce
 
+Run from the repo root. The harness is **committed**, with its prerequisites,
+its spend and the figures above recorded beside it:
+[`docs/research/anthropic-cli-transport-cost/`](../research/anthropic-cli-transport-cost/README.md).
+
 ```bash
-node C:/tmp/bkmeas/measure.mjs "<repo-root>" 2        # §6.A, 2 runs/backend
-node C:/tmp/bkmeas/probe-system.mjs "<repo-root>"     # §6.B
-node C:/tmp/bkmeas/raw-bare.mjs --bare                # §2.5
+node docs/research/anthropic-cli-transport-cost/measure.mjs summariser 3   # §6.A
+node docs/research/anthropic-cli-transport-cost/measure.mjs system 3       # §6.B
+node docs/research/anthropic-cli-transport-cost/measure.mjs prefix 3       # §2.4
+node docs/research/anthropic-cli-transport-cost/measure.mjs bare           # §2.5
 ```
 
-The harnesses are scratch, not committed — §7.3 lands the durable form as a
-test asserting the routing decision, which is the part that must not regress.
+Committed in response to the round-1 audit's M1, and it was right: §6.D's revert
+triggers are stated in terms of these numbers, so pointing them at a `C:/tmp`
+path made them unfalsifiable by anyone but their author. The `system` mode runs
+its cli leg **below the seam** by design — the seam now refuses that shape, so
+the live path cannot produce it. §7.3 additionally lands the routing DECISION as
+a test, which is the part that must not regress.
 The dollar figures are `claude -p`'s own `total_cost_usd`, i.e. the CLI's
 self-report, which AGENTS.md already names as the only available meter for the
 scripted cli backend (`claude-trace` cannot meter it).
 
 ### 6.D What would make me revert
 
-- A run showing an ambient-`cli` call with `system` set that **does** honour
-  it (terse, within `max_tokens`) on the current `claude` CLI version. §6.B is
-  n=1 per backend; the sdk side is stable across 4 runs in §6.A but the cli
-  essay is a single observation. The §7.3 test asserts the *routing decision*,
-  not the model's prose, so it stays valid either way — but the plan's
-  justification would not.
+- A run showing an ambient-`cli` call with `system` set that honours it
+  **both** in shape (terse, within `max_tokens`) **and** in cost (output tokens
+  within ~2× of sdk's). Note that a shape-only pass is NOT a revert trigger:
+  §6.B already found one (the shortened replica, 3/3 one-line answers) and it
+  still burned 11–16× the output tokens. The §7.3 tests assert the *routing
+  decision*, never the model's prose, so they stay valid either way — but this
+  plan's justification would not.
 - Evidence that a moved site's API-meter cost exceeds what it replaces. §4's
   per-site figures are the claim to check; `arm-eval/judge.mjs` on Opus is the
   one with real downside if its call volume is higher than "per judging call".
 - A `claude -p` release that honours `system` as a system prompt, or exposes a
   flag that strips the project-context prefix **without** forcing API-key auth.
   Either falsifies §2.3 or §2.5 and the refusal set should shrink accordingly.
+
+---
+
+## 6.E A filled slot is not a finished one
+
+The round-2 audit raised the Silent-Data-Loss concern a **second** time, against
+the fix for its first raising, and was right both times. The §5.2 fix computed
+`complete` from missing entries alone, so a response the provider stopped at
+`max_tokens` counted as complete whenever every numbered slot held a non-empty
+string — and **the test asserted exactly that**, in a case written as "stop_reason
+max_tokens on a COMPLETE list is not an incompleteness".
+
+A summary can be cut mid-sentence and still be a non-empty string. "Every slot
+filled" is evidence that every slot is *present*, never that every slot is
+*finished*.
+
+The generalisable form, and the reason it is recorded here rather than left in
+the ledger: **a check that agrees with the thing it was meant to check
+independently has stopped being a check.** The implementation decided
+"complete" one way, the test restated that same decision rather than deriving it
+from the defect, and both passed. The negative control is what separates them —
+reverting `complete` to the old rule now fails 2 of 16 tests by name
+(`stop_reason max_tokens is incomplete EVEN with every entry present`,
+`distinguishes a skipped entry from a provider cut`), where before the reversal
+it failed none.
+
+`complete` is now `missing.length === 0 && !truncated`, the two signals are
+reported separately so a skipped entry is distinguishable from a provider cut
+(different remedies: reword the prompt vs raise the budget), and the
+`INCOMPLETE batch` log names which case it is rather than printing a misleading
+"0 symbols have no summary".
+
+---
+
+## 6.F Four rounds on one concern, and what each round's fix missed
+
+Worth recording in full, because the sequence is more instructive than any one
+finding, and because the last raise was about the TEST rather than the code.
+
+| round | what was wrong | what the fix missed |
+|---|---|---|
+| R1 | `summariseBatch` read neither `stop_reason` nor the entry count | — (the concern's first statement) |
+| R2 | the new oracle treated a full slate of non-empty entries as clearing a `max_tokens` stop, **and the test asserted that** | a populated slot is not a *finished* one |
+| R3 | the verdict was correct and then DISCARDED: `summariseBatch` logged it and returned only the strings, so `main()` re-derived `complete` from a null count | two places computing one answer — the single-oracle rule |
+| R4 | the propagation tests exercised only `assessBatchCompleteness`, never `summariseBatch` or `main()` | **the guard's stated subject was a layer it never touched** |
+
+R4's finding was accurate and the measurement is damning: reverting `main()` to
+the null count left **all 19** unit tests green. My own negative control for
+that fix had been a hand-run `node -e` comparison rather than the suite, so it
+never exposed the gap — the control tested the oracle, which was never the part
+in doubt.
+
+Closed by `tests/symbol-index-summarise-propagation.test.mjs`, which drives the
+real CLI end to end (stdin records → stdout envelope) with a fake `claude`
+binary via the cli backend, whose `normaliseCliOutput` carries `stop_reason`
+through. Nothing inside `summarise.mjs` is stubbed, so the return shape and
+`main()`'s aggregation are both on the measured path. Two controls, both run:
+
+- `main()` recomputing `complete` from the null count → integration suite
+  **fails**, unit suite still passes 19/19 (the asymmetry R4 predicted).
+- the `incompleteBatches++` increment removed → integration suite fails 2.
+
+The overclaiming comment in the unit suite now states its scope instead: it
+pins the oracle, it does **not** detect a caller that recomputes, and it names
+the file that does.
+
+**The generalisable rule, which is the same one in both directions:** a check
+that agrees with the thing it was meant to check independently has stopped
+being a check. R2 was the implementation and its test agreeing; R4 was a test
+suite whose comment claimed a layer it never executed. Both passed. Only a
+revert-and-watch-it-go-red at the **right layer** separates them, which is why
+§4.5's discipline specifies reverting the fix rather than inspecting it.
 
 ---
 
