@@ -703,14 +703,29 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
 
 All Claude API calls go through one seam,
 [`scripts/lib/anthropic-client.mjs`](scripts/lib/anthropic-client.mjs);
-`CLAUDE_BACKEND` switches transport without touching call sites. `sdk`
-(default) is the direct `@anthropic-ai/sdk` API billing `ANTHROPIC_API_KEY`;
+`CLAUDE_BACKEND` switches transport without touching call sites — for the calls
+that transport can serve faithfully (see the refusal rule below). `sdk` (the
+committed default, and what an unset `CLAUDE_BACKEND` resolves to) is the
+direct `@anthropic-ai/sdk` API billing `ANTHROPIC_API_KEY`;
 `cli` spawns `claude -p --output-format json` and draws on the Max 20x Agent
 SDK credit. **Local status: `cli`** (in the gitignored `.env`; the committed
 default stays `sdk` for CI without the `claude` CLI). Call sites use
 `createAnthropicClient()`, never `new Anthropic()` — regression-guarded by
 [tests/anthropic-client-migration.test.mjs](tests/anthropic-client-migration.test.mjs).
 Smoke test: `npm run anthropic:ping`.
+
+> **A BACKEND MUST NOT ACCEPT A CALL IT CANNOT HONOUR — `cli` accepted three.**
+> It refused what it cannot REPRESENT or TARGET, but `system`, `tools` and
+> `tool_choice` were accepted then dropped or outranked, surfacing one layer up
+> as a MODEL failure. `unserviceableCliParams` is the single oracle, decided
+> from the PARAMS; precedence mirrors `reconcileBackendWithBaseUrl` — **ambient
+> `cli` → route that call to sdk, warn once; explicit `backend:'cli'` → throw.**
+> Serviceable calls stay on cli and keep the credit (`BILLING PIN` is that
+> control). **And `cli`'s cost does not depend on your prompt**: a ~164K-token
+> prefix per call, so no prompt change fixes a `cli` cost problem and `--bare`
+> strips the prefix and the OAuth credit together. Measured 2026-11-14 —
+> [reference](docs/reference/anthropic-backend-routing.md) ·
+> [plan](docs/plans/anthropic-cli-faithfulness-routing.md).
 
 **Load-bearing gotchas** (operational depth in the reference below):
 
@@ -722,9 +737,17 @@ Smoke test: `npm run anthropic:ping`.
   broke the tiered-recall pipeline's discovery generator for a whole shadow
   window (20/20 runs fell back to legacy). Any call site forcing `tool_choice`
   must pass `createAnthropicClient({backend:'sdk'})` — never the ambient env.
+  Since 2026-11-14 the seam refuses it mechanically too, so the drop is no
+  longer silent; the explicit pin stays the documented intent.
+- **`max_tokens` is UNENFORCED on `cli`** — accepted and ignored, not merely
+  unenforceable, so it is never a bound for cost or for parse safety.
 - **Availability is `isClaudeAvailable()`, not `process.env.ANTHROPIC_API_KEY`.**
   The cli backend authenticates via the `claude` CLI and needs no key, so a raw
-  env check silently skips a fully-available backend.
+  env check silently skips a fully-available backend. Fourth instance found
+  2026-11-14 in [summarise.mjs](scripts/symbol-index/summarise.mjs), the
+  highest-volume Claude call site here: under `CLAUDE_BACKEND=cli` with no key
+  it emitted **null summaries for the whole symbol corpus**, stripping every
+  `purposeSummary` from the arch-memory index.
 - **`claude-trace` cannot meter the scripted cli backend** (it corrupts the JSON
   envelope on stdout). Use the backend's own self-reported `cost_usd`.
 

@@ -83,6 +83,91 @@ remains outside the factory itself — regression-guarded by a `grep` in
 **Smoke test**: `npm run anthropic:ping` invokes a tiny prompt through whichever
 backend the env resolves to.
 
+## The faithfulness refusal: `cli` must not accept a call it cannot honour (2026-11-14)
+
+`cli` already refused what it cannot **represent** (multi-turn histories,
+assistant roles, non-text blocks — `assertOneShotTextMessages`) and what it
+cannot **target** (a `baseURL` — `reconcileBackendWithBaseUrl`). Both throw.
+Three params were the silent third category: accepted, then dropped or
+outranked, so the failure surfaced one layer up as a *model* failure.
+
+`unserviceableCliParams` is the single oracle, decided from the params at
+`messages.create()` time (the params are not known at construction time).
+Precedence mirrors `reconcileBackendWithBaseUrl` exactly, because the situation
+is the same shape — the caller's stated intent against an ambient env choice:
+
+| | ambient `CLAUDE_BACKEND=cli` | explicit `backend:'cli'` |
+|---|---|---|
+| serviceable params | stays on cli, keeps the credit | stays on cli |
+| `system` / `tools` / `tool_choice` | **routed to sdk**, warned once per reason | **throws**, naming the param and the remedy |
+
+The refusal set and why each member is in it:
+
+| param | what cli does | measured consequence |
+|---|---|---|
+| `system` | passed as `--system-prompt`, then outranked by the `claude -p` agent persona and its injected project context | 1995 output tokens in 40.0s against `max_tokens: 200`; a first-person Claude Code reply citing AGENTS.md, where sdk returned the requested one-line sentence in 29 tokens / 1.3s |
+| `tools` | dropped — the adapter always spawns `--tools ''` | §"Forced tool-calling" below: 20/20 tiered-recall runs fell back for a whole shadow window |
+| `tool_choice` | dropped, no error | same |
+
+`max_tokens` is deliberately **not** in the set. It is equally unenforced on
+cli, but *every* caller sets it, so refusing on it would refuse every call —
+collapsing this into "ambient cli always means sdk", which voids an operator's
+explicit transport choice and moves all spend off the credit. It keeps its own
+once-per-session warning instead, reworded to say the ceiling is **accepted and
+ignored**, not merely unenforceable.
+
+The `BILLING PIN` test in
+[tests/anthropic-cli-faithfulness.test.mjs](../../tests/anthropic-cli-faithfulness.test.mjs)
+is the positive control that this did not become "always sdk": a serviceable
+call under ambient cli must make **zero** sdk calls. Neutering the oracle fails
+10 of the 15 tests in that file and leaves exactly the 5 must-not-fire cases
+green.
+
+The `--system-prompt` plumbing in the adapter is **retained though currently
+unreachable**: the oracle is the single place that decides, and a `claude -p`
+release that honours `system` is a named revert trigger — keeping the plumbing
+makes that revert a one-line change rather than a re-implementation.
+
+## `cli`'s cost does not depend on your prompt (measured 2026-11-14)
+
+`claude -p` injects a **~164,000-token** Claude Code system prompt plus
+auto-discovered project context on every call, as a 1-hour ephemeral cache
+block. The prompt you wrote is a rounding error against it, so **no prompt
+change can fix a `cli` cost problem**.
+
+One Haiku summariser call, 9,669-char prompt, identical on both backends
+(n=4 each, `claude-haiku-5-5`):
+
+| | sdk | cli |
+|---|---|---|
+| input tokens | 4,285 (identical every run) | 2 |
+| cache create / read | 0 / 0 | 168,679–174,863 / 0 **cold** · ~4,063 / 164,611 **warm** |
+| output tokens | 916–1,146 | 1,266–1,452 |
+| latency | 4.4–5.5 s | 12.2–14.2 s |
+| cost | ~$0.0098 (computed) | **$0.172–0.178 cold · $0.0158 warm** (self-reported) |
+
+17× cold, 1.6× warm, 2.7× latency. `"Reply with exactly the word: pong"` →
+`"pong"` costs **$0.654**.
+
+**The output is not the mechanism.** On this shape cli emits only +33% tokens
+and obeyed "EXACTLY ONE LINE" 10/10 on both backends. The circumspect-output
+complaint is real only where `system` carries the terseness instruction — which
+is now refused.
+
+**`--bare` is not the escape hatch.** It skips CLAUDE.md auto-discovery and
+would strip the prefix, but per its own `--help` it makes Anthropic auth
+"strictly `ANTHROPIC_API_KEY` or apiKeyHelper (OAuth and keychain are never
+read)". Measured: it returns `"Not logged in · Please run /login"`, cost $0.
+**The only flag that removes the prefix also removes the credit** — a working
+`--bare` would bill the API key, i.e. it *is* the sdk backend at 2.7× the
+latency. This is why the fix is routing, not flags.
+
+Reproduce: see
+[the plan](../plans/anthropic-cli-faithfulness-routing.md#6-measurements) §6.C.
+The dollar figures are `claude -p`'s own `total_cost_usd` — the only available
+meter for the scripted cli backend, since `claude-trace` corrupts its stdout
+envelope.
+
 ## Forced tool-calling silently degrades on `cli` (found 2026-07-14)
 
 The `cli` backend's `messages.create()` reads only

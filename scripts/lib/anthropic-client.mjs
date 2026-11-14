@@ -46,6 +46,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { resolveClaudeRouteFromEnv } from './azure-claude-route.mjs';
+import { cliFaithfulnessVerdict } from './anthropic-cli-faithfulness.mjs';
 
 /** Short, non-reversible token for cache keys — never store raw key material. */
 function keyDigest(k) {
@@ -126,6 +127,9 @@ const _clientCache = new Map();
 
 /** Once-per-session tracking for warnings. */
 let _warnedMaxTokensCli = false;
+
+/** Once-per-reason tracking for the cli→sdk faithfulness routing warning. */
+const _warnedUnserviceableCli = new Set();
 
 /**
  * Resolve the backend from env. **Throws** on invalid values — the backend
@@ -447,6 +451,15 @@ export async function createAnthropicClient(options = {}) {
       claudeBin: effectiveClaudeBin,
       timeoutMs: effectiveTimeoutMs,
       redactor: effectiveRedactor,
+      backendWasExplicit: options.backend === 'cli',
+      // Lazy, and built from the CALLER's own options with the backend
+      // overridden — so the fallback resolves its credential, route and
+      // redactor by exactly the rules the sdk backend already documents,
+      // rather than a second set invented here. Recursion terminates:
+      // `backend:'sdk'` cannot reach this branch. The fallback client is
+      // cached under its own sdk cache key, so repeated unserviceable calls
+      // construct it once.
+      sdkFallback: () => createAnthropicClient({ ...options, backend: 'sdk' }),
     });
   } else if (backend === 'bedrock') {
     const awsRegion = resolveAwsRegion();
@@ -629,6 +642,8 @@ function applyRedactor(params, redactor) {
 export function _resetClientCache() {
   _clientCache.clear();
   _warnedMaxTokensCli = false;
+  _warnedBaseUrlForcedSdk = false;
+  _warnedUnserviceableCli.clear();
 }
 
 /**
@@ -638,13 +653,22 @@ export function _resetClientCache() {
  * on multi-turn / non-text content rather than silently flattening. Pass
  * `redactor` to enforce egress redaction on `system` and text content.
  *
- * @param {{claudeBin?: string, timeoutMs?: number, redactor?: (s: string) => string}} opts
+ * @param {{claudeBin?: string, timeoutMs?: number, redactor?: (s: string) => string,
+ *   sdkFallback?: () => Promise<object>, backendWasExplicit?: boolean}} opts
+ *   `sdkFallback` builds an sdk-backed twin of this client, invoked ONLY when a
+ *   call carries params cli cannot honour (`unserviceableCliParams`). It is
+ *   lazy, so the common path never constructs an sdk client — and a process
+ *   whose every call is serviceable never needs an `ANTHROPIC_API_KEY`.
+ *   `backendWasExplicit` is true when the caller passed `backend:'cli'` itself,
+ *   which turns the routing into a throw (the caller contradicted itself).
  * @returns {{messages: {create: (params: object, requestOptions?: object) => Promise<object>}}}
  */
 function createCliAdapter(opts = {}) {
   const claudeBin = opts.claudeBin || process.env.CLAUDE_BIN || 'claude';
   const defaultTimeoutMs = resolveTimeoutMs(opts.timeoutMs);
   const redactor = typeof opts.redactor === 'function' ? opts.redactor : null;
+  const sdkFallback = typeof opts.sdkFallback === 'function' ? opts.sdkFallback : null;
+  const backendWasExplicit = opts.backendWasExplicit === true;
 
   return {
     messages: {
@@ -664,11 +688,42 @@ function createCliAdapter(opts = {}) {
 
         assertOneShotTextMessages(messages);
 
+        // FAITHFULNESS PRECONDITION: a backend must not accept a call whose
+        // params it cannot honour. The decision AND its precedence live in
+        // `anthropic-cli-faithfulness.mjs` — one import carries the whole
+        // policy, so a call site cannot adopt half of it. Here only the
+        // mechanics: throw, or hand the call to the sdk twin.
+        //
+        // Why at call time and not at construction: the params are only known
+        // now. Why not "ambient cli always means sdk": that voids an
+        // operator's explicit transport choice for the calls cli serves
+        // correctly — the high-volume half of the census — and moves their
+        // spend off the Max credit for no measured benefit.
+        // docs/plans/anthropic-cli-faithfulness-routing.md §3.
+        const verdict = cliFaithfulnessVerdict(params, { backendWasExplicit });
+        if (verdict) {
+          if (verdict.action === 'throw') throw new Error(verdict.message);
+          if (!sdkFallback) {
+            throw new Error(
+              `[anthropic-client] the cli backend cannot honour \`${verdict.param}\` and no ` +
+              `sdk fallback was supplied to this adapter, so the call cannot be served ` +
+              `faithfully. Build the client via createAnthropicClient().`,
+            );
+          }
+          if (!_warnedUnserviceableCli.has(verdict.param)) {
+            _warnedUnserviceableCli.add(verdict.param);
+            process.stderr.write(verdict.message);
+          }
+          return (await sdkFallback()).messages.create(params, requestOptions);
+        }
+
         if (max_tokens !== undefined && !_warnedMaxTokensCli) {
           _warnedMaxTokensCli = true;
           process.stderr.write(
-            `  [anthropic-client] WARNING: max_tokens is not enforceable on the cli backend ` +
-            `(claude -p has no equivalent flag). The model's own output limit applies.\n`,
+            `  [anthropic-client] WARNING: max_tokens is UNENFORCED on the cli backend ` +
+            `(claude -p has no equivalent flag) — the ceiling is accepted and ignored, not ` +
+            `merely unenforceable. The model's own output limit applies. Measured ` +
+            `2026-11-14: 1995 output tokens returned against max_tokens: 200.\n`,
           );
         }
 

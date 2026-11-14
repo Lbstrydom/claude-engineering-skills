@@ -301,21 +301,31 @@ describe('createAnthropicClient (cli backend)', () => {
     assert.equal(resp._meta.cost_usd, 0.00042);
   });
 
-  it('passes --system-prompt, --model, --max-turns, --tools "" and pipes prompt via stdin', async () => {
+  // `system` is no longer reachable on this backend — it is refused by
+  // `unserviceableCliParams` (see the faithfulness-routing describe block
+  // below), because `claude -p` accepts `--system-prompt` and then lets its own
+  // agent persona outrank it. The arg-construction contract for everything
+  // ELSE still matters, so this asserts the serviceable shape.
+  //
+  // The `--system-prompt` plumbing in the adapter is deliberately RETAINED
+  // though currently unreachable: `unserviceableCliParams` is the single oracle
+  // for what cli cannot honour, and a `claude -p` release that honours `system`
+  // is a named revert trigger in the plan. Keeping the plumbing makes that
+  // revert a one-line change to the oracle rather than a re-implementation.
+  it('passes --model, --max-turns, --tools "" and pipes prompt via stdin', async () => {
     const dumpPath = path.join(tmpDir, 'cli-dump.json');
     const bin = writeFakeCliBinary({ dumpStdinTo: dumpPath });
     const client = await createAnthropicClient({ backend: 'cli', claudeBin: bin, fresh: true });
     await client.messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 100,
-      system: 'be brief',
       messages: [{ role: 'user', content: 'ping' }],
     });
     const dump = JSON.parse(fs.readFileSync(dumpPath, 'utf-8'));
     assert.deepEqual(
       dump.argv,
       ['-p', '--output-format', 'json', '--max-turns', '6', '--tools', '',
-        '--system-prompt', 'be brief', '--model', 'claude-haiku-4-5'],
+        '--model', 'claude-haiku-4-5'],
     );
     assert.equal(dump.stdin, 'ping');
   });
@@ -421,7 +431,7 @@ describe('cli adapter input guards', () => {
       await client.messages.create({
         max_tokens: 200, messages: [{ role: 'user', content: 'hi' }],
       });
-      const warnings = captured.filter(s => s.includes('max_tokens is not enforceable'));
+      const warnings = captured.filter(s => s.includes('max_tokens is UNENFORCED'));
       assert.equal(warnings.length, 1, 'max_tokens warning must fire only once per session');
     } finally {
       process.stderr.write = originalWrite;
@@ -446,15 +456,48 @@ describe('cli adapter redactor', () => {
     const redactor = s => s.replace(/SECRET/g, '[REDACTED]');
     const client = await createAnthropicClient({ backend: 'cli', claudeBin: bin, redactor, fresh: true });
     await client.messages.create({
-      system: 'system contains SECRET value',
       messages: [{ role: 'user', content: 'user prompt with SECRET too' }],
     });
     const dump = JSON.parse(fs.readFileSync(dumpPath, 'utf-8'));
     assert.ok(!dump.stdin.includes('SECRET'), `stdin must be redacted, got: ${dump.stdin}`);
     assert.ok(dump.stdin.includes('[REDACTED]'));
-    const systemIdx = dump.argv.indexOf('--system-prompt');
-    assert.ok(systemIdx >= 0);
-    assert.ok(!dump.argv[systemIdx + 1].includes('SECRET'), 'system arg must be redacted');
+  });
+
+  // `system` no longer reaches the cli spawn — it is refused and routed to sdk
+  // (tests/anthropic-cli-faithfulness.test.mjs). The egress assertion it used
+  // to make here is NOT dropped: it is relocated to the transport that now
+  // carries `system`, below. Deleting it outright would have lost coverage on
+  // a sensitive-path egress seam, which AGENTS.md makes non-negotiable.
+  it('EGRESS: a system prompt routed cli→sdk is still redacted before it leaves', async () => {
+    process.env.CLAUDE_BACKEND = 'cli';
+    process.env.ANTHROPIC_API_KEY = 'sk-test';
+    // No CLAUDE_BIN needed: the routing means `claude -p` is never spawned.
+    // If this test ever starts failing with a spawn error, the routing has
+    // stopped firing and the egress assertion below is no longer about sdk.
+    let sent = null;
+    const fetchImpl = async (_url, init) => {
+      sent = JSON.parse(init.body);
+      return new Response(JSON.stringify({
+        id: 'm', type: 'message', role: 'assistant', model: 'claude-haiku-4-5',
+        content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const client = await createAnthropicClient({
+      redactor: s => s.replace(/SECRET/g, '[REDACTED]'),
+      fetch: fetchImpl,
+      fresh: true,
+    });
+    await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 10,
+      system: 'system contains SECRET value',
+      messages: [{ role: 'user', content: 'user prompt with SECRET too' }],
+    });
+    assert.ok(sent, 'the call must have left via the sdk transport');
+    assert.ok(!JSON.stringify(sent).includes('SECRET'), 'routing must not bypass the egress redactor');
+    assert.match(sent.system, /\[REDACTED\]/);
+    assert.match(sent.messages[0].content, /\[REDACTED\]/);
   });
 });
 
@@ -553,48 +596,70 @@ describe('default redactor and cache hygiene', () => {
 // ── applyRedactor structured-system traversal (R2-H2 fix) ──────────────────
 
 describe('applyRedactor structured system', () => {
-  it('redacts text in array-form system blocks via sdk wrapper', async () => {
-    let captured = null;
-    const fakeAnthropic = {
-      messages: { create: async (params) => { captured = params; return { content: [{ type: 'text', text: '' }], usage: {} }; } },
+  // Rewritten 2026-11-14. The previous version tested this through the CLI
+  // adapter and said so in its own comments ("a structured-block form would be
+  // redacted by applyRedactor in the sdk-wrap path; the cli adapter receives
+  // `params.system` as a string from this test") — so its stated subject,
+  // array-form system blocks, was never actually exercised. Now that `system`
+  // is refused on the cli backend the workaround cannot run at all, which is
+  // the right moment to test the claim directly: an injected transport
+  // observes exactly what the INSTALLED sdk puts on the wire.
+  const sdkCapture = () => {
+    const seen = [];
+    const fetchImpl = async (_url, init) => {
+      seen.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({
+        id: 'm', type: 'message', role: 'assistant', model: 'claude-haiku-4-5',
+        content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
-    // Bypass real SDK: directly invoke wrapSdkWithRedactor via _internals?
-    // No internal export; instead, exercise via sdk backend with mocked module.
-    // Simplest: call applyRedactor directly through factory's redactor option
-    // and a captured-params fake (the wrap is module-internal). Acceptable
-    // alternative: test via the cli adapter, which already runs applyRedactor
-    // through the same code path (the cli path runs system arg through redactor
-    // explicitly).
-    //
-    // Direct unit test by importing applyRedactor would require exporting it;
-    // we instead validate behaviour indirectly by checking that the cli adapter
-    // applies the redactor to BOTH string and structured-block system inputs.
-    const redactor = s => s.replace(/SECRET/g, '[X]');
-    const dumpPath = path.join(tmpDir, 'sys-dump.json');
-    const scriptPath = path.join(tmpDir, 'sys.mjs');
-    fs.writeFileSync(
-      scriptPath,
-      `import fs from 'node:fs';let stdin='';process.stdin.on('data',d=>stdin+=d);process.stdin.on('end',()=>{fs.writeFileSync(${JSON.stringify(dumpPath)}, JSON.stringify({argv: process.argv.slice(2), stdin}));process.stdout.write(${JSON.stringify(JSON.stringify({ result: 'ok', usage: {} }))});});\n`,
-    );
-    const bin = process.platform === 'win32'
-      ? (() => { const p = path.join(tmpDir, 'sys.cmd'); fs.writeFileSync(p, `@echo off\r\nnode "${scriptPath}" %*\r\n`); return p; })()
-      : (() => { const p = path.join(tmpDir, 'sys.sh'); fs.writeFileSync(p, `#!/bin/sh\nexec node "${scriptPath}" "$@"\n`, { mode: 0o755 }); return p; })();
-    const client = await createAnthropicClient({ backend: 'cli', claudeBin: bin, redactor, fresh: true });
-    // String-form system — already covered earlier; ensure cli adapter at
-    // least carries the redacted string into the args. (Structured-block
-    // form `system: [{type:'text',...}]` would be redacted by applyRedactor
-    // in the sdk-wrap path; the cli adapter receives `params.system` as a
-    // string from this test.)
-    await client.messages.create({
-      system: 'sys with SECRET',
-      messages: [{ role: 'user', content: 'user prompt' }],
+    return { seen, fetchImpl };
+  };
+
+  it('redacts text in array-form system blocks on the wire', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-test';
+    const { seen, fetchImpl } = sdkCapture();
+    const client = await createAnthropicClient({
+      backend: 'sdk',
+      redactor: s => s.replace(/SECRET/g, '[X]'),
+      fetch: fetchImpl,
+      fresh: true,
     });
-    const dump = JSON.parse(fs.readFileSync(dumpPath, 'utf-8'));
-    const sysIdx = dump.argv.indexOf('--system-prompt');
-    assert.ok(sysIdx >= 0, 'system-prompt arg present');
-    assert.ok(!dump.argv[sysIdx + 1].includes('SECRET'), 'system value redacted');
-    // Silence the captured variable lint
-    void captured; void fakeAnthropic;
+    await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 10,
+      system: [
+        { type: 'text', text: 'block one has SECRET' },
+        { type: 'text', text: 'block two is clean' },
+      ],
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'prompt with SECRET' }] }],
+    });
+    assert.equal(seen.length, 1);
+    assert.ok(!JSON.stringify(seen[0]).includes('SECRET'), 'no block may carry the secret');
+    assert.equal(seen[0].system[0].text, 'block one has [X]');
+    assert.equal(seen[0].system[1].text, 'block two is clean', 'a clean block passes through byte-identical');
+    assert.equal(seen[0].messages[0].content[0].text, 'prompt with [X]');
+  });
+
+  it('leaves a non-text block untouched rather than guessing at its shape', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-test';
+    const { seen, fetchImpl } = sdkCapture();
+    const client = await createAnthropicClient({
+      backend: 'sdk',
+      redactor: s => s.replace(/SECRET/g, '[X]'),
+      fetch: fetchImpl,
+      fresh: true,
+    });
+    await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 10,
+      system: [{ type: 'text', text: 'SECRET' }, { type: 'other', payload: 'SECRET' }],
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    assert.equal(seen[0].system[0].text, '[X]');
+    assert.equal(seen[0].system[1].payload, 'SECRET',
+      'an unknown block shape is passed through unchanged — the redactor only claims the text blocks it understands');
   });
 });
 
