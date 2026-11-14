@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { classifyBaseLag, planBaseLag, enforceBaseLag, enforceBaseLagForTarget } from '../scripts/lib/sync-base-lag.mjs';
+import { classifyBaseLag, planBaseLag, enforceBaseLag, enforceBaseLagForTarget, describeUnmeasuredTargets } from '../scripts/lib/sync-base-lag.mjs';
+import { describeRunSummary } from '../scripts/lib/sync-run-summary.mjs';
 import { planConsumerPr, classifyBaseLag as classifyFromSyncPr, SKIP_REASON } from '../scripts/lib/sync-pr.mjs';
 import { spawnRunner } from '../scripts/lib/sync-pr.mjs';
 import { spawnRunner as spawnRunnerDirect } from '../scripts/lib/sync-base-lag.mjs';
@@ -98,6 +99,86 @@ describe('planBaseLag', () => {
     assert.equal(planBaseLag({ ...base, lag: 'behind', classified: null, allowStale: true }).action, 'proceed-stale');
     assert.equal(planBaseLag({ ...base, aheadCount: 1, lag: 'diverged', classified: null, allowStale: true }).action, 'proceed-stale');
     assert.equal(planBaseLag({ ...base, lag: 'current', classified: null, allowStale: true }).action, 'proceed');
+  });
+
+  // `.gitignore` / `.gitattributes` are tracked in a consumer and are NOT sync destinations, so neither half of the ownership
+  // oracle can see them and `classifyRepo` buckets them as `other` — "not sync output" about files the sync itself writes.
+  // Measured 2026-11-14 against a disposable consumer: two independent holds deadlocked the sync.
+  describe('the two managed-block files the sync writes into a consumer-owned file', () => {
+    const behind = (entries, transition) => planBaseLag({
+      ...base, lag: 'behind', classified: { ...clean, clean: false, other: entries },
+      managedBlockTransition: () => transition,
+    });
+    it('a block-only edit is sync output: restored and rewritten, not a refusal', () => {
+      for (const p of ['.gitattributes', '.gitignore']) {
+        const r = behind(own(p), 'block-only');
+        assert.equal(r.action, 'fast-forward', `${p}: ${JSON.stringify(r)}`);
+        assert.deepEqual(r.discard, [p]);
+      }
+    });
+    it('an UNCHANGED managed-block file is likewise nothing of the human\'s', () => {
+      assert.equal(behind(own('.gitattributes'), 'unchanged').action, 'fast-forward');
+    });
+    it('NEGATIVE CONTROL: mixed / invalid / unverified all stay the human\'s and REFUSE — an unasked question is not a clean answer', () => {
+      for (const t of ['mixed', 'invalid', 'unverified']) {
+        const r = behind(own('.gitattributes'), t);
+        assert.equal(r.action, 'refuse', `${t} must not be reclaimed`);
+        assert.match(r.detail, /not sync output: \.gitattributes/);
+      }
+    });
+    it('NEGATIVE CONTROL: the reclaim is scoped to those two paths — any other file is untouched by it', () => {
+      const r = behind(own('src/mine.js'), 'block-only');
+      assert.equal(r.action, 'refuse');
+      assert.match(r.detail, /not sync output: src\/mine\.js/);
+    });
+    it('NEGATIVE CONTROL: a RENAME onto a managed-block path is the human\'s — a rename cannot be restored by path', () => {
+      const r = planBaseLag({
+        ...base, lag: 'behind',
+        classified: { ...clean, clean: false, other: [{ status: 'R ', path: '.gitattributes', origPath: 'old-attrs' }] },
+        managedBlockTransition: () => 'block-only',
+      });
+      assert.equal(r.action, 'refuse');
+    });
+    it('with NO transition reader injected the default is `unverified`, so nothing is reclaimed by accident', () => {
+      const r = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, other: own('.gitattributes') } });
+      assert.equal(r.action, 'refuse');
+    });
+  });
+});
+
+// The verdict, as lines. Pure, so the branches that must NOT read as success are assertable without running a sync.
+describe('describeRunSummary / describeUnmeasuredTargets', () => {
+  const base = { targetCount: 1, totalSkipped: 0, totalErrors: 0, totalNew: 0, totalUpdated: 2, totalUnchanged: 9 };
+  const un = (list, dryRun) => describeUnmeasuredTargets(list, { dryRun, targetCount: 1 });
+  it('everything measured: no label, and the plain verdict', () => {
+    assert.deepEqual(un([], true), { verdict: null, lines: [] });
+    const dry = describeRunSummary({ ...base, dryRun: true, unmeasured: un([], true) });
+    assert.match(dry[0], /^DRY RUN complete — no files written$/);
+    assert.equal(dry.filter((l) => /unmeasured/i.test(l)).length, 0);
+  });
+  it('an unmeasured target renames the dry-run verdict and names itself', () => {
+    const u = un([{ name: 'wine', outcome: 'stale-base-unmeasured' }], true);
+    assert.match(u.verdict, /UNMEASURED for 1 of 1 target\(s\)/);
+    const dry = describeRunSummary({ ...base, dryRun: true, unmeasured: u });
+    assert.match(dry[0], /UNMEASURED for 1 of 1/);
+    assert.match(dry.join('\n'), /unmeasured wine \(stale-base-unmeasured\) — its counts above are read against a base this run could not establish/);
+  });
+  it('a real sync says WRITTEN without establishing the base, and keeps its own verdict line', () => {
+    const u = un([{ name: 'wine', outcome: 'stale-accepted' }], false);
+    assert.equal(u.verdict, null, 'the dry-run rename must not leak into a real sync');
+    const wet = describeRunSummary({ ...base, dryRun: false, unmeasured: u });
+    assert.match(wet[0], /Sync complete/);
+    assert.match(wet.join('\n'), /unmeasured wine \(stale-accepted\) — written without establishing its base lag/);
+  });
+  it('NEGATIVE CONTROL: the two verdicts that must not read as success', () => {
+    assert.match(describeRunSummary({ ...base, dryRun: false, totalErrors: 1, unmeasured: un([], false) })[0], /Sync completed with errors/);
+    assert.match(describeRunSummary({ ...base, dryRun: false, totalSkipped: 1, unmeasured: un([], false) })[0], /Sync reached no consumer/);
+  });
+  it('the hook reminder rides only a real sync, and each hook line is prefixed', () => {
+    const wet = describeRunSummary({ ...base, dryRun: false, unmeasured: un([], false), hookLines: ['c: stale'] });
+    assert.match(wet.join('\n'), /hook {2}c: stale/);
+    assert.match(wet.join('\n'), /npm run hooks:install -- --target/);
+    assert.doesNotMatch(describeRunSummary({ ...base, dryRun: true, unmeasured: un([], true) }).join('\n'), /hooks:install/);
   });
 });
 
@@ -190,6 +271,83 @@ describe('enforceBaseLag - real git', () => {
       assert.equal(w.head(), before);
     } finally { w.rm(); }
   });
+  // A refusal protects the base from being WRITTEN onto. A dry run writes nothing, so the same verdict becomes a decline to look
+  // that reads as a result: `sync:dry --target wine` printed the refusal and then `Would create: 0 update: 0 unchanged: 0` having
+  // examined nothing (measured 2026-11-14), and it was the only read-only way to ask whether a consumer carried the held-path
+  // staleness #357 had just made visible.
+  describe('a DRY RUN reports and labels; it never refuses', () => {
+    it('the dirty-and-stale case: ok, outcome `stale-base-unmeasured`, nothing moved, and the label says UNMEASURED not clean', () => {
+      const w = world();
+      try {
+        w.advance('app.js', 'two\n');
+        fs.writeFileSync(path.join(w.consumer, 'app.js'), 'my unfinished edit\n');
+        const before = w.head();
+        const classify = () => ({ ok: true, clean: false, syncOwned: [], needsReview: [], other: [{ status: ' M', path: 'app.js', origPath: null }], degraded: false });
+        const dry = enforceBaseLag({ repoRoot: w.consumer, run, classify, dryRun: true });
+        assert.deepEqual([dry.ok, dry.measured, dry.outcome], [true, false, 'stale-base-unmeasured']);
+        const text = dry.lines.join('\n');
+        assert.match(text, /base is STALE and this report could not be fully measured/);
+        assert.match(text, /UNMEASURED, not clean/);
+        assert.match(text, /to measure it: commit or stash those changes/);
+        assert.doesNotMatch(text, /REFUSED/);
+        // The remedy is the dry run's own, not a copy telling the reader to re-run a sync they did not ask for.
+        assert.match(text, /re-run the dry run/);
+        assert.equal(w.head(), before, 'a dry run moves nothing');
+        assert.equal(fs.readFileSync(path.join(w.consumer, 'app.js'), 'utf8'), 'my unfinished edit\n');
+      } finally { w.rm(); }
+    });
+    it('NEGATIVE CONTROL: the SAME state without --dry-run still refuses — the softening is scoped to the report', () => {
+      const w = world();
+      try {
+        w.advance('app.js', 'two\n');
+        fs.writeFileSync(path.join(w.consumer, 'app.js'), 'my unfinished edit\n');
+        const classify = () => ({ ok: true, clean: false, syncOwned: [], needsReview: [], other: [{ status: ' M', path: 'app.js', origPath: null }], degraded: false });
+        const wet = enforceBaseLag({ repoRoot: w.consumer, run, classify, dryRun: false });
+        assert.deepEqual([wet.ok, wet.measured, wet.outcome], [false, false, 'refused']);
+      } finally { w.rm(); }
+    });
+    it('NEGATIVE CONTROL: a dry run of a CURRENT base is `measured` — the flag does not blanket-mark reports unmeasured', () => {
+      const w = world();
+      try {
+        const dry = enforceBaseLag({ repoRoot: w.consumer, run, classify: cleanClassify, dryRun: true });
+        assert.deepEqual([dry.ok, dry.measured, dry.outcome], [true, true, 'current']);
+      } finally { w.rm(); }
+    });
+    it('a would-fast-forward is reported AND labelled unmeasured: its counts are read against the stale base', () => {
+      const w = world();
+      try {
+        w.advance('app.js', 'two\n');
+        const dry = enforceBaseLag({ repoRoot: w.consumer, run, classify: cleanClassify, dryRun: true });
+        assert.deepEqual([dry.ok, dry.measured, dry.outcome], [true, false, 'would-fast-forward']);
+        assert.match(dry.lines.join('\n'), /UNMEASURED, not clean/);
+      } finally { w.rm(); }
+    });
+  });
+
+  it('the managed-block reader asks REAL git: a sync-written .gitattributes block on a stale base fast-forwards instead of refusing', async () => {
+    const w = world();
+    try {
+      const gaPath = path.join(w.consumer, '.gitattributes');
+      fs.writeFileSync(gaPath, '* text=auto\n');
+      git(['add', '.gitattributes'], w.consumer); git(['commit', '-q', '-m', 'own attrs'], w.consumer); git(['push', '-q', 'origin', 'main'], w.consumer);
+      w.advance('app.js', 'two\n');
+      // Exactly what the sync writes: the managed block appended to a file whose other lines are the consumer's.
+      const { updateManagedBlock } = await import('../scripts/lib/sync-gitignore.mjs');
+      fs.writeFileSync(gaPath, updateManagedBlock(fs.readFileSync(gaPath, 'utf8'), ['.claude/skills/** text eol=lf']).content);
+      const classify = () => ({ ok: true, clean: false, syncOwned: [], needsReview: [], other: [{ status: ' M', path: '.gitattributes', origPath: null }], degraded: false });
+      const r = enforceBaseLag({ repoRoot: w.consumer, run, classify, managedBlockReader: (await import('../scripts/lib/sync-pr-facts.mjs')).createManagedBlockTransitionReader });
+      assert.deepEqual([r.ok, r.outcome], [true, 'fast-forwarded'], r.lines.join('\n'));
+      assert.equal(w.head(), w.originHead());
+
+      // NEGATIVE CONTROL, same repo: an edit OUTSIDE the block is the human's and must refuse.
+      w.advance('more.js', 'x\n');
+      fs.writeFileSync(gaPath, `${fs.readFileSync(gaPath, 'utf8')}*.psd binary\n`);
+      const mixed = enforceBaseLag({ repoRoot: w.consumer, run, classify, managedBlockReader: (await import('../scripts/lib/sync-pr-facts.mjs')).createManagedBlockTransitionReader });
+      assert.deepEqual([mixed.ok, mixed.outcome], [false, 'refused'], mixed.lines.join('\n'));
+      assert.match(mixed.lines.join('\n'), /not sync output: \.gitattributes/);
+    } finally { w.rm(); }
+  });
+
   it('an origin that cannot be reached is "NOT CHECKED", loudly - an unasked question is not a clean answer - and does not block the sync', () => {
     const ws = tmpDir('base-lag-noremote-');
     try {
@@ -272,8 +430,8 @@ describe('enforceBaseLag - real git', () => {
       w.advance('app.js', 'two\n');
       fs.writeFileSync(path.join(w.consumer, 'scratch.txt'), 'untracked human file\n');
       const lines = [];
-      const ok = await enforceBaseLagForTarget({ name: 'c', path: w.consumer }, { write: (l) => lines.push(stripAnsi(l)) });
-      assert.equal(ok, false);
+      const verdict = await enforceBaseLagForTarget({ name: 'c', path: w.consumer }, { write: (l) => lines.push(stripAnsi(l)) });
+      assert.deepEqual([verdict.proceed, verdict.measured], [false, false]);
       assert.match(lines.join('\n'), /base-lag REFUSED: .*scratch\.txt/);
       assert.equal(fs.existsSync(path.join(w.consumer, 'scratch.txt')), true);
     } finally { w.rm(); }
@@ -363,6 +521,35 @@ describe('sync-to-repos.mjs CLI - the lag is asked before the first write', { ti
       const stale = await runSyncCli(['--target-path', w.consumer, '--no-prompt', '--dry-run', '--allow-stale-base']);
       assert.equal(stale.code, 0, whySyncFailed(stale));
       assert.match(stripAnsi(stale.out), /stale base ACCEPTED/);
+    } finally { w.rm(); }
+  });
+  it('a DRY RUN of the REFUSED state reports what it would do and is labelled UNMEASURED — the whole defect, end to end', async () => {
+    const w = staleConsumer({ dirty: true });
+    try {
+      const before = w.head();
+      const r = await runSyncCli(['--target-path', w.consumer, '--no-prompt', '--dry-run']);
+      const out = stripAnsi(r.out);
+      assert.equal(r.code, 0, whySyncFailed(r));
+      assert.doesNotMatch(out, /base-lag REFUSED/, 'a report has nothing to protect against a stale base');
+      assert.match(out, /base is STALE and this report could not be fully measured/);
+      // It EXAMINED the bundle rather than reporting zeros for a consumer it declined to look at.
+      assert.match(out, /Would create: (?!0\b)\d+/);
+      // And the verdict distinguishes unmeasured from clean, by name.
+      assert.match(out, /DRY RUN complete — UNMEASURED for 1 of 1 target\(s\)/);
+      assert.match(out, /unmeasured \S+ \(stale-base-unmeasured\)/);
+      assert.equal(w.head(), before, 'still a dry run');
+      assert.equal(fs.existsSync(path.join(w.consumer, '.sync-receipt.json')), false, 'nothing written');
+      assert.equal(fs.readFileSync(path.join(w.consumer, 'app.js'), 'utf8'), 'my unfinished edit\n');
+    } finally { w.rm(); }
+  });
+  it('NEGATIVE CONTROL: a dry run of a CURRENT consumer carries no unmeasured label — the verdict is not printed unconditionally', async () => {
+    const w = staleConsumer({ dirty: false });
+    try {
+      git(['pull', '-q', '--ff-only', 'origin', 'main'], w.consumer);
+      const out = stripAnsi((await runSyncCli(['--target-path', w.consumer, '--no-prompt', '--dry-run'])).out);
+      assert.doesNotMatch(out, /UNMEASURED/);
+      assert.doesNotMatch(out, /unmeasured /);
+      assert.match(out, /DRY RUN complete\u001B?.* — no files written|DRY RUN complete — no files written/);
     } finally { w.rm(); }
   });
 });

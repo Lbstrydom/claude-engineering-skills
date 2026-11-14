@@ -60,6 +60,9 @@ import { fileURLToPath } from 'node:url';
 import { emit, hasFlag, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { getSyncClosure } from './lib/sync-inventory.mjs';
+import { sourceRelToDestRel } from './lib/sync-path-map.mjs';
+import { COMMAND_REGEX } from './lib/sync-rewriter.mjs';
+import { isSyncBookkeeping } from './lib/sync-divergence.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--json', '--list', '--update', '--selfcheck-relocation', '--help'];
@@ -71,7 +74,7 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BASELINE_PATH = path.join(REPO, '.skill-consumer-refs-baseline.json');
 
 /** Dispositions a baseline entry may declare. Anything else is rejected. */
-const DISPOSITIONS = new Set([
+export const DISPOSITIONS = new Set([
   // The pointer names something only the source repo has, and the surrounding
   // text says so. Legal; the reason must say what a consumer does instead.
   'source-repo-only',
@@ -85,6 +88,11 @@ const DISPOSITIONS = new Set([
   // (arch:*, debt:*, skills:hydrate). Still not delivered by the sync, so the
   // skill text must survive its absence — but naming it is not a mistake.
   'consumer-wired',
+  // A PLACEHOLDER inside a worked example — `--path scripts/foo.mjs` in /ship's
+  // commit recipe names no real file in either repo, so "can a consumer resolve
+  // it" does not apply. Legal, but only where the surrounding text makes the
+  // path's illustrative role obvious.
+  'illustrative',
 ]);
 
 // A markdown path under docs/. Bounded to a single line by the caller.
@@ -93,6 +101,9 @@ const DOC_RE = /(docs\/[A-Za-z0-9_.\/-]+\.md)/g;
 // and end alphanumerically so trailing prose punctuation ("run npm run audit.")
 // is not captured as part of the name.
 const NPM_RE = /\bnpm\s+run\s+([A-Za-z0-9_@][A-Za-z0-9_:.\-/@]*[A-Za-z0-9_/@]|[A-Za-z0-9_@])/g;
+// A repo-relative path to a FILE, in any of the trees the sync relocates. The regex only proposes candidates; whether a candidate
+// is unreachable is decided by `sourceRelToDestRel`, the one oracle that owns the consumer layout — never by a prefix list here.
+const PATH_RE = /\b((?:scripts|supabase|tests)\/[A-Za-z0-9_.\/-]*[A-Za-z0-9_-]\.[A-Za-z0-9]{1,5})\b/g;
 
 /**
  * Markdown under `skills/` that the repo OWNS — tracked, plus untracked files
@@ -210,6 +221,11 @@ export function subjectFiles(owned, closure) {
   for (const rel of closure) {
     if (IMPLEMENTATION_EXTENSIONS.has(path.extname(rel).toLowerCase())) continue;
     if (rel.startsWith('skills/') || rel.startsWith('.claude/skills/')) continue;
+    // The sync's OWN bookkeeping is not content anyone reads for instruction — it is the RECORD of what a sync did, and
+    // `scripts/.sync-manifest.json` is a source→destination map, so every upstream path in it is its DATA. Measured 2026-11-14:
+    // enrolling it contributed 907 of 914 `path` sites, every one of them a manifest key. Asked of `isSyncBookkeeping`, the one
+    // predicate that owns this set (`sync-divergence.mjs`), rather than a second list of filenames here.
+    if (isSyncBookkeeping(rel)) continue;
     out.add(rel);
   }
   return [...out].sort();
@@ -240,6 +256,30 @@ export function blankUrls(line) {
 }
 
 /**
+ * Blank the path citations the SYNC ITSELF REWRITES on delivery, preserving length.
+ *
+ * AGENTS.md's remedy for defect shape (5) is "name synced tooling BY PATH and the sync rewrites it to the consumer layout" — and
+ * the rewriter that makes that true matches `COMMAND_REGEX`, which requires a literal `node ` in front of the path
+ * (`scripts/lib/sync-rewriter.mjs`). A BARE citation of the same file gets no such help: nothing rewrites it, and the path it names
+ * does not exist in a consumer.
+ *
+ * That is the vocabulary this gate did not have. PR #358 corrected
+ * `.windowed-views.json`'s own `_description` to name its gate by path instead of as an npm alias, and shipped a gate that judges
+ * synced data assets — while the SAME sentence went on naming the generator at `scripts/lib/store/windowed-views.mjs`, bare, which
+ * lands at `scripts/.claude-skills/lib/store/windowed-views.mjs`. The gate could not tell: it knew `npm run X` aliases and
+ * `docs/…` paths, and an upstream script path was not in its vocabulary at all. Found by the storyline consumer after the merge,
+ * 2026-11-14.
+ *
+ * Blanked rather than skipped so a line carrying both forms still reports the bare one.
+ *
+ * @param {string} line
+ * @returns {string}
+ */
+export function blankRewrittenInvocations(line) {
+  return String(line).replace(COMMAND_REGEX, (m) => ' '.repeat(m.length));
+}
+
+/**
  * Scan one markdown file for pointers that a consumer cannot resolve.
  *
  * Fenced code blocks are scanned like any other text: a command inside a
@@ -249,12 +289,23 @@ export function blankUrls(line) {
  * @param {string} rel repo-relative path
  * @param {string} content
  * @param {Set<string>} closure source-relative paths the sync ships
- * @returns {{kind: 'doc'|'npm', ref: string, file: string, line: number}[]}
+ * @returns {{kind: 'doc'|'npm'|'path', ref: string, file: string, line: number}[]}
  */
 export function scanFile(rel, content, closure) {
   const out = [];
   const lines = content.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
+    // Kind `path`: a BARE citation of a file in a tree the sync relocates. `node scripts/x.mjs` is blanked first because the sync
+    // rewrites exactly that form to the consumer layout — see blankRewrittenInvocations for why the bare form gets no such help.
+    const P = blankRewrittenInvocations(blankUrls(lines[i]));
+    let pm;
+    PATH_RE.lastIndex = 0;
+    while ((pm = PATH_RE.exec(P)) !== null) {
+      // The oracle decides, not the prefix: a path the sync delivers at its own spelling is reachable, and a `.claude-skills/`
+      // spelling is already the consumer's.
+      if (sourceRelToDestRel(pm[1]) === pm[1]) continue;
+      out.push({ kind: 'path', ref: pm[1], file: rel, line: i + 1 });
+    }
     // A pointer INSIDE an absolute URL is reachable by construction — see
     // blankUrls. Blanked rather than skipped so a line carrying both a URL and
     // a bare unreachable path still reports the bare one.
