@@ -302,6 +302,31 @@ function refusedFastForward(repoRoot, target, because, recovery = '') {
   };
 }
 
+/**
+ * The summary's unmeasured verdict and its per-target lines. Lives here rather than inline in `sync-to-repos.mjs` — that file is
+ * already over the file-size ratchet's governed limit, the same reason `describeSafeToCommit` sits in `lib/sync-status.mjs`.
+ *
+ * NOT the plain verdict when something could not be measured. A dry run no longer refuses a stale base (it writes nothing, so
+ * there is nothing to protect), but its counts for such a consumer are a reading of a tree that is behind — and zeros from a base
+ * nobody could compare are indistinguishable from zeros meaning "clean" unless the verdict says so. The same holds for a real
+ * sync: `--allow-stale-base` and an unreachable origin both leave a consumer written onto a base nobody compared.
+ *
+ * @param {Array<{name: string, outcome: string}>} unmeasured
+ * @param {{dryRun: boolean, targetCount: number}} run
+ * @param {{Y?: string, D?: string, X?: string}} [colors] — ANSI codes, caller's own
+ * @returns {{verdict: string|null, lines: string[]}} `verdict` is null when everything was measured
+ */
+export function describeUnmeasuredTargets(unmeasured, { dryRun, targetCount }, { Y = '', D = '', X = '' } = {}) {
+  if (!unmeasured?.length) return { verdict: null, lines: [] };
+  const why = dryRun
+    ? 'its counts above are read against a base this run could not establish'
+    : 'written without establishing its base lag';
+  return {
+    verdict: dryRun ? `${Y}DRY RUN complete — UNMEASURED for ${unmeasured.length} of ${targetCount} target(s)${X} — no files written` : null,
+    lines: unmeasured.map((t) => `  ${Y}unmeasured${X} ${t.name} ${D}(${t.outcome})${X} — ${why}`),
+  };
+}
+
 /** One network git call (ls-remote, fetch) outliving this is a failure, which the lag check reads as "not checked"/"refused". */
 const REMOTE_CALL_MS = 60_000;
 const C = { R: '\x1b[31m', Y: '\x1b[33m', G: '\x1b[32m', D: '\x1b[2m', X: '\x1b[0m' };

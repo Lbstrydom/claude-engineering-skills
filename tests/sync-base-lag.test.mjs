@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { classifyBaseLag, planBaseLag, enforceBaseLag, enforceBaseLagForTarget } from '../scripts/lib/sync-base-lag.mjs';
+import { classifyBaseLag, planBaseLag, enforceBaseLag, enforceBaseLagForTarget, describeUnmeasuredTargets } from '../scripts/lib/sync-base-lag.mjs';
+import { describeRunSummary } from '../scripts/lib/sync-run-summary.mjs';
 import { planConsumerPr, classifyBaseLag as classifyFromSyncPr, SKIP_REASON } from '../scripts/lib/sync-pr.mjs';
 import { spawnRunner } from '../scripts/lib/sync-pr.mjs';
 import { spawnRunner as spawnRunnerDirect } from '../scripts/lib/sync-base-lag.mjs';
@@ -142,6 +143,42 @@ describe('planBaseLag', () => {
       const r = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, other: own('.gitattributes') } });
       assert.equal(r.action, 'refuse');
     });
+  });
+});
+
+// The verdict, as lines. Pure, so the branches that must NOT read as success are assertable without running a sync.
+describe('describeRunSummary / describeUnmeasuredTargets', () => {
+  const base = { targetCount: 1, totalSkipped: 0, totalErrors: 0, totalNew: 0, totalUpdated: 2, totalUnchanged: 9 };
+  const un = (list, dryRun) => describeUnmeasuredTargets(list, { dryRun, targetCount: 1 });
+  it('everything measured: no label, and the plain verdict', () => {
+    assert.deepEqual(un([], true), { verdict: null, lines: [] });
+    const dry = describeRunSummary({ ...base, dryRun: true, unmeasured: un([], true) });
+    assert.match(dry[0], /^DRY RUN complete — no files written$/);
+    assert.equal(dry.filter((l) => /unmeasured/i.test(l)).length, 0);
+  });
+  it('an unmeasured target renames the dry-run verdict and names itself', () => {
+    const u = un([{ name: 'wine', outcome: 'stale-base-unmeasured' }], true);
+    assert.match(u.verdict, /UNMEASURED for 1 of 1 target\(s\)/);
+    const dry = describeRunSummary({ ...base, dryRun: true, unmeasured: u });
+    assert.match(dry[0], /UNMEASURED for 1 of 1/);
+    assert.match(dry.join('\n'), /unmeasured wine \(stale-base-unmeasured\) — its counts above are read against a base this run could not establish/);
+  });
+  it('a real sync says WRITTEN without establishing the base, and keeps its own verdict line', () => {
+    const u = un([{ name: 'wine', outcome: 'stale-accepted' }], false);
+    assert.equal(u.verdict, null, 'the dry-run rename must not leak into a real sync');
+    const wet = describeRunSummary({ ...base, dryRun: false, unmeasured: u });
+    assert.match(wet[0], /Sync complete/);
+    assert.match(wet.join('\n'), /unmeasured wine \(stale-accepted\) — written without establishing its base lag/);
+  });
+  it('NEGATIVE CONTROL: the two verdicts that must not read as success', () => {
+    assert.match(describeRunSummary({ ...base, dryRun: false, totalErrors: 1, unmeasured: un([], false) })[0], /Sync completed with errors/);
+    assert.match(describeRunSummary({ ...base, dryRun: false, totalSkipped: 1, unmeasured: un([], false) })[0], /Sync reached no consumer/);
+  });
+  it('the hook reminder rides only a real sync, and each hook line is prefixed', () => {
+    const wet = describeRunSummary({ ...base, dryRun: false, unmeasured: un([], false), hookLines: ['c: stale'] });
+    assert.match(wet.join('\n'), /hook {2}c: stale/);
+    assert.match(wet.join('\n'), /npm run hooks:install -- --target/);
+    assert.doesNotMatch(describeRunSummary({ ...base, dryRun: true, unmeasured: un([], true) }).join('\n'), /hooks:install/);
   });
 });
 
