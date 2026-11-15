@@ -124,10 +124,10 @@ export function branchNameFor(commitSha) {
 /**
  * Commit title/message + PR body for one consumer. Pure text.
  *
- * @param {{repo: string, commitSha: string, surface: string[], leftBehind: string[], consumerName: string}} input
+ * @param {{repo: string, commitSha: string, surface: string[], leftBehind: string[], consumerName: string, autoMerge?: boolean}} input — `autoMerge: false`: never claim it is armed
  * @returns {{title: string, message: string, body: string}}
  */
-export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName }) {
+export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName, autoMerge = true }) {
   const short = String(commitSha).slice(0, 8);
   const title = `chore(sync): bundle sync from ${repo} ${short}`;
   const fileList = surface.map((p) => `- \`${p}\``).join('\n');
@@ -160,7 +160,7 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
         '',
       ]
       : []),
-    '_Opened by `npm run sync:pr` from the upstream repo. Squash auto-merge is armed; it lands when the required checks pass._',
+    `_Opened by \`npm run sync:pr\` from the upstream repo. ${autoMerge ? 'Squash auto-merge is armed; it lands when the required checks pass.' : 'Auto-merge is NOT armed: merge it by hand once the checks pass.'}_`,
     '',
     // A mechanical sync has no model author. Consumers that gate PRs on an
     // AI-Models declaration (wine-cellar-app's `AI-Models trailer` check, which
@@ -198,7 +198,7 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
  */
 function planConsumerPrCore({
   consumerName, classified, manifest, baseBranch, baseSha, currentBranch, aheadCount, behindCount, upstreamChanged = [], branchExists,
-  sourceSha, sourceDirty, gitignoreTransition, managedBlockTransitions,
+  sourceSha, sourceDirty, gitignoreTransition, managedBlockTransitions, autoMerge = true,
 }) {
   if (!classified || !classified.ok) {
     return { action: 'skip', reason: SKIP_REASON.UNCLASSIFIABLE, detail: classified?.error ?? 'no classification' };
@@ -278,7 +278,7 @@ function planConsumerPrCore({
     ...heldBackManagedBlocks(transitions).map(({ file, state }) => `${file} (${GITIGNORE_LEFT_BEHIND_REASON[state] ?? 'could not be verified as managed-block-only'})`),
   ].sort();
   const repo = manifest.repo ?? DEFAULT_REPO;
-  const text = buildPrText({ repo, commitSha, surface, leftBehind, consumerName });
+  const text = buildPrText({ repo, commitSha, surface, leftBehind, consumerName, autoMerge });
   return {
     action: 'pr',
     branch,

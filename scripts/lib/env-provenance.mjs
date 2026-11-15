@@ -20,6 +20,7 @@
  * @module scripts/lib/env-provenance
  */
 import { redactSecrets } from './secret-patterns.mjs';
+import { parseBackendName } from './claude-backend-name.mjs';
 
 /** Human names for the three layers, in precedence order. */
 export const LAYER_LABELS = Object.freeze({
@@ -185,6 +186,31 @@ export function credentialSource(name, layers, opts = {}) {
   return v.source === 'unset' || v.value === '' ? null : sourceLabel(v);
 }
 
+/**
+ * The Claude backend in effect and the layer that decided it — one line, so nobody has to trace the launch env,
+ * the repo `.env` and `~/.audit-loop.env` by hand to learn that `CLAUDE_BACKEND=cli` was set (wine, 2026-11-15).
+ * Read through `parseBackendName`, the runtime's own reading. Only a recognised backend NAME is ever printed:
+ * an unrecognised value is withheld, since whatever was typed there is not ours to echo.
+ *
+ * @param {{inherited: object, local: object, shared: object}} layers
+ * @param {{sharedActive?: boolean}} [opts]
+ * @returns {{backend: 'sdk'|'cli'|'bedrock'|null, source: string, line: string}}
+ */
+export function claudeBackendProvenance(layers, opts = {}) {
+  const v = resolveVariable('CLAUDE_BACKEND', layers, opts);
+  const backend = parseBackendName(v.value);
+  if (v.source === 'unset') return { backend, source: 'default', line: `Claude backend: ${backend} — default (CLAUDE_BACKEND is not set in any layer)` };
+  const from = sourceLabel(v);
+  if (backend === null) {
+    return { backend, source: v.source, line: `Claude backend: INVALID — CLAUDE_BACKEND from ${from} is not a known backend (value withheld); every Claude call will refuse to start` };
+  }
+  const empty = v.value === '' ? ' (set but empty, which reads as the default)' : '';
+  const lost = v.shadowed.length
+    ? `; overrides ${v.shadowed.map((s) => `${LAYER_LABELS[s.source]} (${parseBackendName(s.value) ?? 'an invalid value'})`).join(', ')}`
+    : '';
+  return { backend, source: v.source, line: `Claude backend: ${backend} — from ${from}${empty}${lost}` };
+}
+
 /** Credentials reported by PRESENCE and layer only — a value is never printed. */
 export const PROVENANCE_CREDENTIALS = Object.freeze([
   'AZURE_OPENAI_API_KEY', 'AZURE_AI_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY',
@@ -208,6 +234,9 @@ export function reportEnvProvenance(report, { layers, errors = [] }) {
   // No second disable decision here: `readEnvLayers` already left a disabled shared
   // layer empty, deciding exactly as the runtime does (a flag INSIDE the shared file
   // does not stop the runtime applying that file, so it must not stop this either).
+  const cb = claudeBackendProvenance(layers);
+  if (cb.backend === null) report.warn(cb.line, 'Valid values: sdk, cli, bedrock. Unset CLAUDE_BACKEND to use the default "sdk".');
+  else report.pass(cb.line);
   for (const name of PROVENANCE_CREDENTIALS) {
     const from = credentialSource(name, layers);
     if (from) report.pass(`${name} present`, `from ${from}`);

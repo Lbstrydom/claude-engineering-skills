@@ -125,6 +125,7 @@ source comments that no docs linter sees — stays valid.
 | [Consumer friction doctor + upstream-report ratchet](./consumer-friction-doctor.md) | `Complete` | audited 3 GPT plan rounds (18/18 findings accepted) + 2 Gemini plan rounds (4/4 addressed); implemented via… |
 | [Degradation Disclosure — Debate Skip + Audit Prerequisite Ladder](./consumer-report-degradation-disclosure.md) | `Complete` | both changes shipped (`c2f9f068` brainstorm, `30445802` audit family) and audited over 6 GPT rounds plus the… |
 | [Consumer sync durability — making deliberate divergence survive](./consumer-sync-durability.md) | `Complete` | 2026-08-29 |
+| [Four consumer-sync operator-UX fixes (wine coordinator report, 2026-11-15)](./consumer-sync-operator-ux-fixes.md) | `Complete` | audit-code: 6 GPT rounds (cap reached, structural card 0 structural / 30 polish), Gemini final gate APPROVE… |
 | [Audit Context Brief Generator](./context-brief.md) | `Complete` | shipped — `scripts/lib/context.mjs`… |
 | [VS Code GitHub Copilot compatibility audit + fixes](./copilot-compat-audit.md) | `Complete` | audited + fixed 2026-07-21 (one Gemini-caught regression resolved; pre-existing sync debt deferred). |
 | [Copilot consumer feedback, item 4: required-subject coverage, a final-review provenance fact, and hash-bound test evidence](./copilot-feedback-item4.md) | `Complete` | shipped in #271 (plan), A #275, B #277, C #278 (status reconciled against merged PRs 2026-10-25) |
@@ -370,6 +371,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Audit Summary — brainstorm-arch-context](./brainstorm-arch-context-audit-summary.md) |  |
 | [Audit summary: cli-entry-guard-migration](./cli-entry-guard-migration-audit-summary.md) |  |
 | [`/audit-code` summary — `machine/git-autocrlf` probe (8620cfe8)](./consumer-friction-doctor-audit-summary.md) |  |
+| [Audit Summary: consumer-sync-operator-ux-fixes](./consumer-sync-operator-ux-fixes-audit-summary.md) |  |
 | [Audit convergence summary — debt readers ask the store](./debt-readers-ask-store-audit-summary.md) |  |
 | [Audit Summary — discovery-portfolio-secret-redaction](./discovery-portfolio-secret-redaction-audit-summary.md) |  |
 | [Audit Summary — fleet hooks-path removal guard](./fleet-hooks-path-removal-guard-audit-summary.md) |  |

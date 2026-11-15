@@ -76,7 +76,7 @@ const ClaudeCliErrorEnvelope = z.object({
   result: z.string().optional(),
 }).passthrough();
 
-const VALID_BACKENDS = new Set(['sdk', 'cli', 'bedrock']);
+import { VALID_BACKENDS, parseBackendName } from './claude-backend-name.mjs';
 
 /**
  * AWS Bedrock serves Claude through its own SDK and its own credential chain.
@@ -138,7 +138,7 @@ let _warnedMaxTokensCli = false;
  */
 export function resolveBackend() {
   const raw = (process.env.CLAUDE_BACKEND || 'sdk').toLowerCase();
-  if (!VALID_BACKENDS.has(raw)) {
+  if (parseBackendName(raw) === null) {
     // Hard-fail on invalid values. The backend choice affects billing (API
     // meter vs Agent SDK credit), so a typo like `CLAUDE_BACKEND=cil` must
     // not silently route to a paid path — fail at config load instead.

@@ -835,7 +835,10 @@ runs that same classification against every registered consumer and, for the
 sync-owned group only, creates a `chore/sync-<upstream-sha>` branch, commits by
 pathspec, pushes (your pre-push hook still runs), opens the PR and arms squash
 auto-merge — so the artifacts land once your required checks pass, without a
-ruleset bypass. Rules to know: a receipt-only change opens no PR (the receipt
+ruleset bypass. A consumer whose registry entry (`scripts/lib/consumer-repos.mjs`)
+sets `merge: 'manual'` — wine, whose coordinator merges its own sync PRs — gets
+no auto-merge by default; `--merge` / `--no-merge` override the registry, and
+each consumer's output names which source decided. Rules to know: a receipt-only change opens no PR (the receipt
 changes on every run), and a checkout that is off its base branch or ahead of
 `origin/<base>` is skipped with a named reason rather than forked from. The
 branch always forks from a **freshly fetched** `origin/<base>` (the base is

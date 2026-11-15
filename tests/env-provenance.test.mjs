@@ -362,3 +362,34 @@ describe('the spawned CLI: a launch-environment key passes setup (scrubbed env)'
     }
   });
 });
+
+describe('check-setup names the Claude backend in effect and the layer that set it (wine, 2026-11-15)', () => {
+  const backendItems = (r) => r.items.filter((i) => /^Claude backend:/.test(i.label));
+  const run = (inherited, localLines, sharedLines) => {
+    write(envFile, localLines);
+    if (sharedLines) write(sharedFile, sharedLines);
+    return evaluateEnvProvenance(null, dir, { inherited, localEnvPath: envFile, sharedPath: sharedLines ? sharedFile : NO_SHARED() });
+  };
+
+  it('a .env CLAUDE_BACKEND=cli is reported with its layer, and the overridden shared value by backend name only', () => {
+    const r = run({}, ['CLAUDE_BACKEND=cli', `OPENAI_API_KEY=${SECRET_FILE}`], ['CLAUDE_BACKEND=sdk']);
+    const items = backendItems(r);
+    assert.equal(items.length, 1, 'exactly one backend line');
+    assert.equal(items[0].label, 'Claude backend: cli — from .env; overrides ~/.audit-loop.env (sdk)');
+    assert.ok(!JSON.stringify(r.items).includes(SECRET_FILE), 'no other value from the file is printed');
+  });
+
+  it('each layer is named: launch environment, ~/.audit-loop.env, and the default when no layer sets it', () => {
+    assert.match(backendItems(run({ CLAUDE_BACKEND: 'sdk' }, ['X=1']))[0].label, /^Claude backend: sdk — from launch environment$/);
+    assert.match(backendItems(run({}, ['X=1'], ['CLAUDE_BACKEND=cli']))[0].label, /^Claude backend: cli — from ~\/\.audit-loop\.env$/);
+    assert.match(backendItems(run({}, ['X=1']))[0].label, /^Claude backend: sdk — default/);
+  });
+
+  it('an unrecognised value WARNs and is withheld, never echoed', () => {
+    const r = run({}, [`CLAUDE_BACKEND=${SECRET_FILE}`]);
+    const [item] = backendItems(r);
+    assert.equal(item.status, 'WARN');
+    assert.match(item.label, /INVALID .* from \.env/);
+    assert.ok(!JSON.stringify(r.items).includes(SECRET_FILE));
+  });
+});
