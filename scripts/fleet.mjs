@@ -66,7 +66,7 @@ import { recordInvocation } from './lib/fleet/telemetry.mjs';
 import { recordFleetDecision } from './lib/fleet/ledger-hook.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
-const EXIT = { ok: 0, error: 1, argv: 2, refused: 3, pending: 3 };
+const EXIT = { ok: 0, error: 1, argv: 2, refused: 3, pending: 3, red: 4 };
 const USAGE = `usage: fleet <verb> [flags]\nverbs: ${Object.keys(VERBS).join(', ')}\n`;
 
 /** How this CLI is invoked, for the commands it prints (relative when inside the repo). */

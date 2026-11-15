@@ -27,6 +27,12 @@ it on draft-time checks), and on a green, CLEAN, auto-merge-armed PR still
 unmerged after 15 minutes (re-arm it). Limit: checks are matched by name; `gh`
 does not say which app produced an observed check.
 
+## A red train (exit 4)
+
+A train whose tiers RAN and went red exits **4**, never 3 (3 means nothing ran or it was not allowed), and `land` prints
+each red tier's failure summary: pytest's `short test summary info` block, else the last FAILED / ERROR / `not ok` lines,
+else the log's last lines. The full log stays at the path the tier line names. `--approve` of a red train is still refused (3).
+
 ## A failed CI run the diff cannot have caused (rule 8)
 
 Source-repo-gated: this repo only, where `full-suite` runs in GitHub Actions. Run

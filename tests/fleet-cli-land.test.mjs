@@ -135,10 +135,16 @@ describe('land (direct-squash against a bare origin)', () => {
   });
 
   it('persistent red: the train is built, NOT approvable, and approve is refused naming the state', () => {
-    const s = twoReady({ tiers: [{ name: 'default', command: ['node', '-e', 'process.exit(1)'] }] });
+    // The tier prints a pytest-shaped summary: land must show it, and exit 4 ("ran and red"), not 3 ("blocked/refused").
+    const pytest = "console.log('tests/test_a.py::test_x PASSED\\n=========================== short test summary info ============================\\nFAILED tests/test_b.py::test_y - AssertionError: 1 != 2\\nERROR tests/test_c.py::test_z - ImportError\\n========================= 1 failed, 1 error in 0.12s ========================='); process.exit(1)";
+    const s = twoReady({ tiers: [{ name: 'default', command: ['node', '-e', pytest] }] });
     const r = land(s);
-    assert.equal(r.status, 3);
+    assert.equal(r.status, 4, r.stdout + r.stderr);
+    assert.equal(r.json.code, 'red');
     assert.equal(r.json.train.result, 'red');
+    const text = { stdout: r.json.text };
+    assert.match(text.stdout, /tier default failed — pytest short test summary:\n {4}FAILED tests\/test_b\.py::test_y - AssertionError: 1 != 2\n {4}ERROR tests\/test_c\.py::test_z - ImportError/);
+    assert.doesNotMatch(text.stdout, /test_x PASSED/);
     const ap = s.f(['land', '--approve', r.json.train.trainId, '--json']);
     assert.equal(ap.status, 3);
     assert.match(ap.json.reason, /red/);
