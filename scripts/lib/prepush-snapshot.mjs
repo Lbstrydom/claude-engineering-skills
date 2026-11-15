@@ -134,7 +134,8 @@ export function installedMatchesPushed(modules, pushedRoot) {
 /**
  * Package entries anywhere in the `modules` tree that are links resolving OUTSIDE it: each `node_modules` level (top, `@scope/`, and
  * every nested `<pkg>/node_modules`) is walked, links are never followed, and an entry that cannot be resolved counts as outside (it
- * cannot be shown to be inside). npm's install record is asked too - it marks every link it made, at any depth, `"link": true`.
+ * cannot be shown to be inside). Dot-directories are walked too - pnpm's `.pnpm` store is where its nested links live - except
+ * `.bin` and `.cache`, which hold no packages. A nested `node_modules` that is itself a link is classified, never walked into.
  *
  * `complete` is false when part of the tree could not be read or the walk hit its entry budget: a partial scan is never reported
  * as a clean one. `links` is capped (the caller prints a sample, not an inventory); `count` is how many were found.
@@ -155,7 +156,7 @@ export function findLocalLinks(modules, { cap = 50, maxEntries = 200_000 } = {})
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { complete = false; continue; }
     for (const e of entries) {
       if (++seen > maxEntries) { complete = false; queue.length = 0; break; }
-      if (e.name.startsWith('.')) continue;
+      if (e.name === '.bin' || e.name === '.cache') continue;
       const full = path.join(dir, e.name);
       const name = `${prefix}${e.name}`;
       if (e.isSymbolicLink()) {
@@ -167,17 +168,20 @@ export function findLocalLinks(modules, { cap = 50, maxEntries = 200_000 } = {})
       if (!e.isDirectory()) continue;
       // A scope directory sits directly in a node_modules level; inside it are packages, never another scope.
       const atLevel = prefix === '' || prefix.endsWith('node_modules/');
-      if (atLevel && e.name.startsWith('@')) { queue.push([full, `${name}/`]); continue; }
+      // pnpm's store is a directory of `<pkg>@<version>/node_modules/` trees: its entries are walked like packages.
+      if (atLevel && (e.name.startsWith('@') || e.name === '.pnpm')) { queue.push([full, `${name}/`]); continue; }
       const nested = path.join(full, 'node_modules');
-      if (fs.existsSync(nested)) queue.push([nested, `${name}/node_modules/`]);
+      let st = null;
+      try { st = fs.lstatSync(nested); } catch (err) { if (err?.code !== 'ENOENT') complete = false; }
+      if (st?.isSymbolicLink()) {
+        let target = null;
+        try { target = fs.realpathSync.native(nested); } catch { target = null; }
+        if (!target || !inside(target)) found.add(`${name}/node_modules`);
+      } else if (st?.isDirectory()) {
+        queue.push([nested, `${name}/node_modules/`]);
+      }
     }
   }
-  try {
-    const record = JSON.parse(fs.readFileSync(path.join(root, '.package-lock.json'), 'utf8'))?.packages ?? {};
-    for (const [location, entry] of Object.entries(record)) {
-      if (entry && entry.link === true) found.add(location.replace(/^node_modules\//, ''));
-    }
-  } catch { /* no npm record (another package manager, or none yet): the walk above stands alone */ }
   const all = [...found].sort();
   return { links: all.slice(0, cap), count: all.length, complete };
 }

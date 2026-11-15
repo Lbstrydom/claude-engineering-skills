@@ -453,9 +453,15 @@ describe("snapshotCreateStep makes the checkout's node_modules resolvable from t
       assert.deepEqual(r.links, ['@scope/out', '@scope/pkg/node_modules/@deep/x', 'host/node_modules/nested-out', 'out-top']);
       assert.equal(r.count, 4);
       assert.equal(r.complete, true);
-      // npm's install record names links the walk cannot see (here: one recorded but not on disk).
-      fs.writeFileSync(path.join(mods, '.package-lock.json'), JSON.stringify({ packages: { 'node_modules/recorded': { resolved: '../x', link: true } } }));
-      assert.ok(findLocalLinks(mods).links.includes('recorded'));
+      // pnpm's store is walked: a link inside .pnpm that leaves the tree is found; a nested node_modules that IS a link is classified.
+      fs.mkdirSync(path.join(mods, '.pnpm', 'dep@1.0.0', 'node_modules'), { recursive: true });
+      fs.symlinkSync(outside, path.join(mods, '.pnpm', 'dep@1.0.0', 'node_modules', 'ws-pkg'), 'junction');
+      fs.mkdirSync(path.join(mods, 'linked-nm'));
+      fs.symlinkSync(outside, path.join(mods, 'linked-nm', 'node_modules'), 'junction');
+      const r2 = findLocalLinks(mods);
+      assert.ok(r2.links.includes('.pnpm/dep@1.0.0/node_modules/ws-pkg'), r2.links.join());
+      assert.ok(r2.links.includes('linked-nm/node_modules'), r2.links.join());
+      assert.ok(!r2.links.includes('inside-link'), 'a pnpm link into .pnpm stays inside the tree');
       // A walk that hits its budget is never reported complete.
       assert.equal(findLocalLinks(mods, { maxEntries: 2 }).complete, false);
     } finally { rmrf(mods); rmrf(outside); }
