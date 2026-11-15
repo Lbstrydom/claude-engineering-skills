@@ -205,7 +205,10 @@ export async function normalizeIntentToPurpose(safeIntent, opts = {}) {
   try {
     const mod = await import('../anthropic-client.mjs');
     createClient = createClient || mod.createAnthropicClient;
-    isAvailable = isAvailable || mod.isClaudeAvailable;
+    // `isClaudeAvailableFor('sdk')`, bound: the call below is pinned to sdk
+    // (it passes `system: NORMALIZE_PROMPT`), so the ambient answer is wrong on
+    // a keyless cli install — it would report available and then throw.
+    isAvailable = isAvailable || (() => mod.isClaudeAvailableFor('sdk'));
     const { symbolIndexConfig } = await import('../config.mjs');
     normalizerId = symbolIndexConfig?.summariseModel || 'unknown';
   } catch (err) {

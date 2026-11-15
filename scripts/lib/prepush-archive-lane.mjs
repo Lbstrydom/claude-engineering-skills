@@ -88,6 +88,15 @@ export const ARCHIVE_LANE_CHECK_CLASSIFICATION = Object.freeze({
   'cli:flags:gate': S('drift-only ratchet'),
   'emit:exit:gate': S('drift-only ratchet'),
   'stdout:flush:gate': S('drift-only ratchet'),
+  // Not P: it reads tracked `scripts/**/*.mjs` and the committed
+  // `.anthropic-pin-census.json` and judges whether every unpinned Anthropic-client
+  // construction is declared — it never inspects the content being pushed for
+  // anything that would make the commits unsafe to publish. Probe reasoned, not
+  // measured, 2026-11-15: the baseline file does not exist on
+  // archive/queue-burndown-2026-10-02, so the gate exits 2 (missing baseline) there
+  // — the pre-declaration state, exactly as windowed-views:gate does below, not a
+  // defect in the archived commits.
+  'anthropic:pin:gate': S('Anthropic-seam backend pins declared vs the committed census', 'FAIL'),
   // Not P: it reads only tracked `supabase/migrations/**` and the committed
   // `.windowed-views.json` and judges whether a declaration is complete — it never
   // inspects the content being pushed, so nothing it can find is a reason the

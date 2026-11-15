@@ -70,6 +70,7 @@ source comments that no docs linter sees — stays valid.
 | [AI Context Sync — Reconcile Drift, Detect Drift, Copilot Slash-Command Parity](./ai-context-sync.md) | `Complete` | all 6 phases shipped 2026-04-26 / 2026-04-27 |
 | [allowTiered — per-call execution gate for tiered pipeline / shadow](./allow-tiered-callsite-gate.md) | `Complete` | audited (`/audit-code`, 1 GPT round + Gemini APPROVE, 0 new findings), shipped, verified via direct repro +… |
 | [Anthropic Backend Routing (Agent SDK credit prep)](./anthropic-backend-routing.md) | `Complete` | implemented + audited (R1→R3 + Gemini) |
+| [the cli backend must refuse a call it cannot faithfully serve](./anthropic-cli-faithfulness-routing.md) | `Complete` | implemented 2026-11-14, then reshaped from route-or-throw to THROW AND PIN on Louis's decision (§3.2a).… |
 | [Arch-Memory & Audit-Pipeline Observability Hardening (13-item punch list)](./arch-audit-pipeline-observability-hardening.md) | `Complete` | all 13 items implemented + tested (74 new/updated tests across 8 test files), audit-code Gemini-gate-clear… |
 | [Architectural-Drift Duplication Cleanup — Consolidate Real Dupes + Exclusion Mechanism](./arch-drift-duplication-cleanup.md) | `Complete` | implemented… |
 | [The drift report says how far the active index trails the default branch](./arch-index-freshness.md) | `Complete` | shipped in #195 (status reconciled against merged PRs 2026-10-25) |
@@ -361,6 +362,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 
 | Plan | Notes |
 |---|---|
+| [Audit summary — anthropic-cli-faithfulness-routing (THROW AND PIN rework)](./anthropic-cli-faithfulness-routing-audit-summary.md) |  |
 | [Audit Summary — Architecture-Intent PR-B (Python & Java Adapters)](./arch-intent-pr-b-audit-summary.md) |  |
 | [Audit Summary — Architecture-Intent PR-C (Postgres Adapter)](./arch-intent-pr-c-audit-summary.md) |  |
 | [Audit Summary: audit-target-identity-commit-sha-correction](./audit-target-identity-commit-sha-correction-audit-summary.md) |  |

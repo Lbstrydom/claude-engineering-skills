@@ -149,6 +149,37 @@ export function coveredCommits(runs) {
 }
 
 /**
+ * A RESUME INHERITS THE EARLIER RUN'S TRANSPORT, AND THE TRANSPORT IS PART OF
+ * THE MEASUREMENT.
+ *
+ * Rows produced through `claude -p` and rows produced through the API differ in
+ * prompt prefix, in whether `max_tokens` bound (accepted-and-ignored vs
+ * enforced) and in which meter paid. `solo-control-audit`'s client construction
+ * is now unconditionally pinned to sdk, so resuming an arm whose
+ * `provenance.backend` says `cli` appends sdk rows to cli rows in one file —
+ * and the arm file is the thing compared ACROSS arms, where nothing downstream
+ * can separate them again.
+ *
+ * Refused, not warned: a warning on a long run is read after the spend. An arm
+ * with NO recorded provenance still resumes — an unknown transport is not a
+ * known-different one, and refusing on absence would strand every arm written
+ * before `provenance` existed.
+ *
+ * @param {object|null} prior - the parsed arm file, or null
+ * @param {string|null} backend - the transport this run will use, in the same
+ *   spelling `provenance.backend` records
+ * @param {boolean} force - --force starts the arm over, so no mixing occurs
+ * @throws {Error} naming both transports and the two ways forward
+ */
+export function assertResumableBackend(prior, backend, force) {
+  const was = prior?.provenance?.backend;
+  if (force || !backend || !was || was === backend) return;
+  throw new Error(`this arm file was produced with backend "${was}" and this run uses "${backend}" — `
+    + 'resuming would mix two transports into one arm, and the rows are compared across arms. '
+    + 'Re-run with --force to start the arm over, or keep the old file and run the new transport under its own --label.');
+}
+
+/**
  * The output object a resumed run appends to. `fresh` under --force or with no
  * prior file; otherwise a copy of the prior file minus the findings of the
  * commits about to be re-run (an unmeasured commit kept its upstream findings,

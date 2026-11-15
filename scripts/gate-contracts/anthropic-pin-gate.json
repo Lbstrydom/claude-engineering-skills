@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "gate": "anthropic:pin:gate",
+  "guards": "every construction of a Claude client that sends `system`, `tools` or `tool_choice` carries a `{backend:'sdk'}` pin, or is enumerated in the committed `.anthropic-pin-census.json` with a reason",
+  "gates": [
+    {
+      "id": "anthropic-pin-gate-detects-an-unpinned-system-call",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "npm run anthropic:pin:gate",
+      "implementation": "scripts/check-anthropic-pins.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": ["scripts/check-anthropic-pins.mjs"],
+        "overlay": {
+          "scripts/anthropic-ping.mjs": "tests/fixtures/poison/anthropic-unpinned-system-call.mjs.txt"
+        },
+        "expectExit": 1,
+        "expectStderr": "UNPINNED+PARAM",
+        "why": "An ordinary helper that builds a Claude client with no backend pin and sends `system`. This gate exists because the refusal it enforces CANNOT FIRE IN CI: the cli backend throws on `system`, CI runs the committed `sdk` default, so an unpinned call is green on every runner and throws only where `CLAUDE_BACKEND=cli` is set — the operator's machine. The break therefore ships, and surfaces one layer up as a model failure rather than a transport one. A merge-time scanner is the only thing that can see it, and a scanner that silently matched nothing would print `clean` over the whole repo and read exactly like a real pass, which is why the decision needs a pill rather than an exemption. The overlay lands on an existing TRACKED script (scripts/anthropic-ping.mjs, itself a declared unpinned site, so the corpus already contains it) rather than a new path, because the harness overlays onto tracked files and because the likelier route in is an existing module growing a Claude call nobody pins. `expectStderr` is the Rule A line specifically: the pill must fail for the UNDECLARED+PARAM reason, not merely exit non-zero — this file is also undeclared once overlaid, and a bare exit check could not tell the two apart. `needsGit` because the corpus is `git ls-files`, not a filesystem walk: the repo, not the disk, decides what this gate reads.",
+        "needsGit": true
+      }
+    }
+  ]
+}

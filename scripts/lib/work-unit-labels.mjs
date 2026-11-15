@@ -118,6 +118,9 @@ export function sanitizeLabel(raw) {
  *
  * @param {Array<object>} units - from `clusterWorkUnits`
  * @param {object} [opts]
+ * @param {Function} [opts.labellerProvider] - `async () => labeller|null`, called
+ *   at most once and only after a cache MISS. Takes precedence over
+ *   `opts.labeller`; without either, `defaultLabeller` is the provider.
  * @param {string} [opts.repoRoot] - cache location root (default cwd)
  * @param {(unit: object) => Promise<string|null>} [opts.labeller] - injected for
  *   tests; defaults to a small Claude call
@@ -129,11 +132,76 @@ export async function labelWorkUnits(units, opts = {}) {
   if (!Array.isArray(units) || units.length === 0) return out;
   if (opts.enabled === false) return { ...out, reason: 'disabled' };
 
-  const labeller = opts.labeller || await defaultLabeller();
-  if (!labeller) return { ...out, reason: 'labeller-unavailable' };
-
   const { join } = await import('node:path');
   const cacheFile = join(opts.repoRoot || process.cwd(), CACHE_REL);
+
+  // LAZY, and resolved at most once. Constructing the labeller up-front made a
+  // cached label depend on provider availability: on a keyless
+  // `CLAUDE_BACKEND=cli` install `defaultLabeller()` now returns null (it is
+  // pinned to sdk), so this function returned `labeller-unavailable` and served
+  // NONE of the labels already on disk. That is strictly worse than before the
+  // pin for exactly the population the pin was written for. A cache hit needs
+  // no provider, so nothing may be resolved before the first miss.
+  //
+  // `opts.labeller` (an already-built labeller) and `opts.labellerProvider` (an
+  // async thunk returning one, or null) are both accepted; the provider form is
+  // what lets a caller — or a test — see WHEN resolution happens.
+  // The PROMISE is memoised, not a resolved flag. `Promise.all` below runs the
+  // units concurrently, so a flag set before the await would let every other
+  // unit read `labeller` while it is still undefined and conclude the provider
+  // is unavailable — one construction becomes "unavailable" for all but one
+  // unit. Memoising the promise makes every caller await the same resolution.
+  // `labellerProvider` is the seam that makes laziness OBSERVABLE: an async
+  // thunk the module calls AT MOST ONCE, and only after a cache miss. A test
+  // that counts provider calls is then testing the laziness itself rather than
+  // a proxy for it — the first version counted a labeller built before this
+  // function was even entered, which could not observe resolution at all.
+  const provider = opts.labellerProvider
+    || (opts.labeller ? async () => opts.labeller : defaultLabeller);
+  let labellerPromise = null;
+  let sawUnavailable = false;
+  let providerThrew = false;
+  let providerError = '';
+  const getLabeller = async () => {
+    // The PROMISE is memoised, not a resolved flag: `Promise.all` below runs the
+    // units concurrently, so a flag set before the await would let every other
+    // unit read an unresolved value and conclude the provider is unavailable.
+    //
+    // A THROWN provider is not the same thing as an absent one. The first cut
+    // folded every rejection into `null`, so a programming error or a broken
+    // configuration was indistinguishable from "no credential here" — the
+    // absence-is-not-evidence shape, with the diagnostic discarded. It still
+    // degrades (labelling is advisory and must never crash a backlog listing),
+    // but the reason is kept and reported.
+    labellerPromise ??= Promise.resolve().then(provider).catch((err) => {
+      // The FLAG is what distinguishes a throw from an absence; the text is
+      // only a diagnostic. A promise can reject with anything — `''`, `null`,
+      // `0` — and keying the distinction on the message's truthiness collapsed
+      // those back into "unavailable", which is the very conflation this exists
+      // to end.
+      // ONE mechanism, not two. A `|| '(no message)'` fallback here would make
+      // `providerError` always truthy after a throw, so the flag below could be
+      // keyed on either and a negative control could not tell them apart — two
+      // ways to answer one question, which is how a redundant guard goes
+      // untested. The FLAG is the decision; the text is only a diagnostic and
+      // may legitimately be empty.
+      providerThrew = true;
+      // `String(err)` THROWS for a value with no `toString` — `Object.create(null)`
+      // is the plain case — so formatting the diagnostic could throw out of the
+      // very catch that exists to contain the rejection. The flag is set FIRST,
+      // before anything that can fail, and the text is best-effort.
+      try {
+        const raw = err instanceof Error ? err.message : String(err);
+        providerError = String(raw ?? '').slice(0, 200);
+      } catch {
+        providerError = '(unprintable rejection value)';
+      }
+      return null;
+    });
+    const fn = await labellerPromise;
+    if (!fn) sawUnavailable = true;
+    return fn;
+  };
 
   const relabelled = await Promise.all(units.map(async (u) => {
     // Singletons keep their category: their `detail` IS the description, and a
@@ -143,7 +211,9 @@ export async function labelWorkUnits(units, opts = {}) {
     try {
       const hit = getCached(cacheFile, cacheKey, CACHE_TTL_MS);
       if (hit) { out.cached++; return { ...u, label: hit, labelSource: 'llm-cached' }; }
-      const raw = await labeller(u);
+      const fn = await getLabeller();
+      if (!fn) { out.failed++; return { ...u, labelSource: 'underived' }; }
+      const raw = await fn(u);
       const label = sanitizeLabel(raw);
       if (!label) { out.failed++; return { ...u, labelSource: 'underived' }; }
       putCached(cacheFile, cacheKey, label, CACHE_TTL_MS);   // successes only (C10)
@@ -157,6 +227,15 @@ export async function labelWorkUnits(units, opts = {}) {
     }
   }));
 
+  // `labeller-unavailable` still reported, but now only when the provider was
+  // actually NEEDED and absent — a run served entirely from cache is not an
+  // unavailability, and reporting it as one is what made the keyless case look
+  // like a failure instead of a cache hit.
+  if (sawUnavailable && !out.reason) {
+    out.reason = providerThrew
+      ? `labeller-error: ${providerError || '(no message)'}`
+      : 'labeller-unavailable';
+  }
   return { ...out, units: relabelled };
 }
 
@@ -171,23 +250,63 @@ export async function labelWorkUnits(units, opts = {}) {
  * working backend (AGENTS.md, Anthropic Backend Routing).
  */
 async function defaultLabeller() {
-  try {
-    const { createAnthropicClient, isClaudeAvailable } = await import('./anthropic-client.mjs');
-    if (typeof isClaudeAvailable === 'function' && !(await isClaudeAvailable())) return null;
+  {
+    // NO `try { … } catch { return null }` HERE, DELIBERATELY.
+    //
+    // It used to wrap this whole body, which made every failure arrive as the
+    // same value as "this install has no credential" — and `getLabeller`'s
+    // `providerThrew` flag, the thing that exists to tell those apart, could
+    // never see a rejection because nothing ever escaped. The distinction was
+    // real in the caller and unreachable in practice.
+    //
+    // It matters most for the shape found in the same round:
+    // `isClaudeAvailableFor('sdk')` THROWS on an Azure profile whose endpoint is
+    // set but whose credential is missing (asserted in
+    // tests/anthropic-pin-on-azure.test.mjs). Swallowed, a misconfigured tenant
+    // reported `labeller-unavailable` — the one message that tells an operator
+    // nothing is wrong. Now it propagates, `getLabeller` catches it, and the
+    // reason reads `labeller-error: AZURE_OPENAI_API_KEY is missing …`.
+    //
+    // ABSENCE still returns null below. Only a FAILURE throws, and labelling
+    // still never crashes a backlog listing — `getLabeller` contains it.
+    const { createAnthropicClient, isClaudeAvailableFor, textFromResponse } = await import('./anthropic-client.mjs');
+    // `isClaudeAvailableFor('sdk')`, not the ambient `isClaudeAvailable()`: this
+    // call passes `system`, so it is pinned below, and the ambient answer is
+    // `true` under a KEYLESS `CLAUDE_BACKEND=cli` install — the gate would pass
+    // and the pinned construction would then throw `ANTHROPIC_API_KEY required`
+    // for a backend nobody selected. Labelling is optional, so skip cleanly.
+    if (typeof isClaudeAvailableFor === 'function' && !(await isClaudeAvailableFor('sdk'))) return null;
     const { resolveModel } = await import('./model-resolver.mjs');
     const model = resolveModel(process.env.WORK_UNIT_LABEL_MODEL || 'latest-haiku');
-    const client = await createAnthropicClient();
+    // PINNED `backend:'sdk'` — see the gate note above.
+    const client = await createAnthropicClient({ backend: 'sdk' });
     return async (unit) => {
       const res = await client.messages.create({
         model,
-        max_tokens: 64,
+        // 1000, not 64 — and this is the sharpest consequence of pinning to sdk.
+        // On `cli` the cap was ACCEPTED AND IGNORED, so 64 never bound; on sdk it
+        // is ENFORCED to the token, and `claude-haiku-5-5` thinks by default.
+        // MEASURED 2026-11-15 on this exact prompt: at 64 the response is ONE
+        // thinking block, `stop_reason: max_tokens`, thinking_tokens 64, and NO
+        // text block — i.e. every label underived. At 200 the text is truncated
+        // ("Unlab"). At 600 and 1000 it is `end_turn` with thinking 149–183 and
+        // a complete label. 1000 leaves ~5x headroom over the measured worst
+        // case; `MAX_LABEL_CHARS` bounds what is actually kept, so a generous
+        // cap costs a few cents of thinking, never a long label.
+        max_tokens: 1000,
         system: SYSTEM,
         messages: [{ role: 'user', content: buildPrompt(unit) }],
       });
-      return res?.content?.[0]?.text ?? null;
+      // A CAP THAT WAS HIT IS NOT AN ANSWER. Raising 64 → 1000 fixed the
+      // measured sample, but a cap is a ceiling, not a guarantee: a response
+      // that stopped AT it is truncated by definition, and a truncated label is
+      // worse than none — it is short, plausible, and cached for the TTL. The
+      // cap and this check are the two halves of one fix; the cap alone would
+      // leave the failure silent at some longer input.
+      if (res?.stop_reason === 'max_tokens') return null;
+      // The first TEXT block, never `content[0]` — which is the thinking block.
+      return textFromResponse(res) || null;
     };
-  } catch {
-    return null;
   }
 }
 

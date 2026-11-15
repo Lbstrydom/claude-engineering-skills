@@ -207,3 +207,65 @@ describe('judge rubric — right_sizing gets an explicit concision definition', 
     assert.deepEqual(Object.keys(RUBRIC_GUIDANCE), ['right_sizing']);
   });
 });
+
+// ── UNAVAILABLE is not NON-CONFORMANT (2026-11-15) ─────────────────────────
+//
+// `callJudgeDefault`'s catch returned `{ conformant: false, error }` for EVERY
+// throw except the egress gate. So a missing credential, a refused route or the
+// new seam refusal all arrived as a judgement about the judge's OUTPUT — "the
+// judge failed to conform" — which is the same conflation (a transport failure
+// wearing a result's clothes) that the throw-and-pin change exists to end one
+// layer down. Pinning these sites to the sdk backend makes it reachable on a
+// keyless install, so it is load-bearing for that change, not adjacent to it.
+//
+// `conformant` stays false either way, so every existing consumer still fails
+// closed; `unavailable` is what lets a reader tell the two apart.
+describe('judgeSession: a judge that never ran is distinguishable', () => {
+  const unavailableJudge = (calls) => async (args) => {
+    calls.push(args);
+    return { conformant: false, unavailable: true, result: null, error: 'ANTHROPIC_API_KEY required', latencyMs: 1 };
+  };
+  const badJsonJudge = (calls) => async (args) => {
+    calls.push(args);
+    return { conformant: false, result: null, error: 'judge returned no JSON', latencyMs: 1 };
+  };
+
+  it('an UNAVAILABLE judge propagates the flag', async () => {
+    const calls = [];
+    const r = await judgeSession({
+      experimentType: 'plan-authoring', outputs: OUTPUTS, contextPack: 'INTENT', seed: 1,
+      deps: { callJudge: unavailableJudge(calls) },
+    });
+    assert.equal(r.conformant, false, 'still fails closed for every existing consumer');
+    assert.equal(r.unavailable, true, 'and a reader can tell no answer was obtained');
+    assert.match(r.error, /ANTHROPIC_API_KEY/);
+  });
+
+  // The corrective retry exists for a model that omitted a rubric dimension. It
+  // is pointless — and doubles the spend — when no answer was obtained: a
+  // missing credential does not become present because the prompt was reworded.
+  it('an UNAVAILABLE judge is NOT retried with a corrective prompt', async () => {
+    const calls = [];
+    await judgeSession({
+      experimentType: 'plan-authoring', outputs: OUTPUTS, contextPack: 'INTENT', seed: 1,
+      deps: { callJudge: unavailableJudge(calls) },
+    });
+    assert.equal(calls.length, 1, 'one attempt, not two');
+    assert.ok(!calls.some((c) => c.retry), 'and none of them a retry');
+  });
+
+  // POSITIVE CONTROL for the line above: a genuinely non-conformant judge MUST
+  // still get its retry, or this change would have removed the recovery path it
+  // was only meant to skip.
+  it('a NON-CONFORMANT judge still gets exactly one corrective retry', async () => {
+    const calls = [];
+    const r = await judgeSession({
+      experimentType: 'plan-authoring', outputs: OUTPUTS, contextPack: 'INTENT', seed: 1,
+      deps: { callJudge: badJsonJudge(calls) },
+    });
+    assert.equal(calls.length, 2, 'the corrective retry is intact');
+    assert.equal(calls[1].retry, true);
+    assert.equal(r.conformant, false);
+    assert.ok(!('unavailable' in r), 'and it is NOT labelled unavailable — the judge answered, badly');
+  });
+});
