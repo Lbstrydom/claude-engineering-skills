@@ -207,6 +207,8 @@ describe('--batch is a known review flag', () => {
   });
   test('a value flag followed by another flag refuses instead of swallowing it', () => {
     assert.throws(() => parseReviewArgs(['review', 'p.md', 't.json', '--out', '--batch']), /--out needs a value, got the flag "--batch"/);
+    // A TRAILING value flag used to read as absent: `--round` with nothing after it ran an uncapped review.
+    assert.throws(() => parseReviewArgs(['review', 'p.md', 't.json', '--round']), /--round needs a value, got nothing/);
     assert.equal(parseReviewArgs(['review', 'p.md', 't.json', '--out', 'r.json', '--batch']).outFile, 'r.json');
   });
 });

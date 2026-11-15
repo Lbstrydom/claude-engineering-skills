@@ -516,13 +516,17 @@ function assertAzureClaudeReady({ azure = azureConfig, env = process.env } = {})
  * @returns {string|null}
  */
 /**
- * A path made safe to paste into a suggested command: double-quoted when it carries whitespace or a character a POSIX
- * shell or PowerShell would act on, with `"` / `` ` `` / `$` escaped. A plain path is shown bare, as before.
+ * A path made safe to paste into a suggested command. SINGLE quotes, because they are literal in BOTH a POSIX shell
+ * and PowerShell (no `$` expansion, no escape character), which double quotes are not: inside them PowerShell expands
+ * `$` and escapes with a backtick, so a backslash escape is not portable. An embedded `'` is doubled, PowerShell's
+ * escape; a POSIX shell reads `'a''b'` as `ab`, so such a path is flagged as PowerShell-only rather than mis-shown.
+ * A plain path is shown bare, as before.
  * @param {string} p
  * @returns {string}
  */
 export function quoteForDisplay(p) {
-  return /[\s"'`$&|;<>(){}*?!#]/.test(p) ? `"${p.replace(/(["`$\\])/g, '\\$1')}"` : p;
+  if (!/[\s"'`$&|;<>(){}*?!#,@%^~[\]=]/.test(p)) return p;
+  return p.includes("'") ? `'${p.replaceAll("'", "''")}' (PowerShell quoting)` : `'${p}'`;
 }
 
 export function describeAzureClaudeGap(azure, env = {}) {

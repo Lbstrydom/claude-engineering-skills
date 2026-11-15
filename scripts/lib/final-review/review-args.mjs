@@ -19,8 +19,10 @@ const flagValue = (args, name) => {
   const i = args.indexOf(name);
   if (i === -1) return null;
   const v = args[i + 1];
-  if (typeof v === 'string' && v.startsWith('--')) throw new Error(`${name} needs a value, got the flag "${v}"`);
-  return v || null;
+  // A trailing value flag is the same malformation: `--round` with nothing after it read as "no round", i.e. uncapped.
+  if (v === undefined || v === '') throw new Error(`${name} needs a value, got nothing`);
+  if (v.startsWith('--')) throw new Error(`${name} needs a value, got the flag "${v}"`);
+  return v;
 };
 
 /**

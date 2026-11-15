@@ -134,9 +134,14 @@ describe('half-configured Azure profile: refuse loudly, with a remedy that keeps
 
 describe('quoteForDisplay — a suggested command stays pasteable', () => {
   test('a plain path is shown bare', () => assert.equal(quoteForDisplay('scripts/azure-doctor.mjs'), 'scripts/azure-doctor.mjs'));
-  test('a path with a space or a shell metacharacter is quoted, with " ` $ escaped', () => {
-    assert.equal(quoteForDisplay('my repo/scripts/x.mjs'), '"my repo/scripts/x.mjs"');
-    assert.equal(quoteForDisplay('a$b/x.mjs'), '"a\\$b/x.mjs"');
-    assert.equal(quoteForDisplay('a&b/x.mjs'), '"a&b/x.mjs"');
+  test('a path with a space or a shell metacharacter is SINGLE-quoted (literal in POSIX shells and PowerShell alike)', () => {
+    assert.equal(quoteForDisplay('my repo/scripts/x.mjs'), "'my repo/scripts/x.mjs'");
+    // Inside double quotes PowerShell expands $ and its escape is a backtick, so a backslash escape is not portable.
+    assert.equal(quoteForDisplay('a$b/x.mjs'), "'a$b/x.mjs'");
+    assert.equal(quoteForDisplay('a`b/x.mjs'), "'a`b/x.mjs'");
+    assert.equal(quoteForDisplay('a&b/x.mjs'), "'a&b/x.mjs'");
+  });
+  test('an embedded single quote cannot be quoted portably, so the output says which shell it is for', () => {
+    assert.equal(quoteForDisplay("o'brien/x.mjs"), "'o''brien/x.mjs' (PowerShell quoting)");
   });
 });
