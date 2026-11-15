@@ -61,7 +61,9 @@ export const GUARD_TESTS = Object.freeze([
   Object.freeze({ file: 'tests/extension-list-drift.test.mjs', why: 'no hand-kept code-extension list; blocked a full gate on #243\'s first push' }),
   Object.freeze({ file: 'tests/skill-command-portability.test.mjs', why: 'SKILL.md commands resolve in a consumer; blocked a full gate on #243\'s first push' }),
   Object.freeze({ file: 'tests/prepush-worktree-anchor.test.mjs', why: 'scans scripts/ for an undeclared main-checkout / common-dir derivation; failed #266 full-suite after a green preflight (2026-10-16)' }),
+  Object.freeze({ file: 'tests/anthropic-pin-census.test.mjs', why: "the pin scanner's POSITIVE CONTROL — a planted unpinned+`system` source must read as a violation. The gate itself is a `check` step, but a scanner that silently matched nothing would print clean over the whole repo, and only the planted cases can tell. Pure, ~1 s" }),
   Object.freeze({ file: 'tests/check-step-classification-census.test.mjs', why: 'every step of `check` needs an ARCHIVE_LANE_CHECK_CLASSIFICATION row; a new step without one failed #351 full-suite after a green preflight (2026-11-13). Pure, ~1 s; the lane\'s 58 s git tests stay out' }),
+  Object.freeze({ file: 'tests/anthropic-pin-on-azure.test.mjs', why: 'asserts on the EMITTED request that a `{backend:\'sdk\'}` pin still reaches a tenant on an Azure install (consumer `storyline`). It failed #360 full-suite after a green preflight (2026-11-15) because the suite left `OPENAI_AUDIT_MODEL` unscrubbed and the repo .env supplied it — the class of break only a clean runner sees, which is exactly what a preflight that runs it catches 14 minutes earlier. Pure, ~1 s' }),
 ]);
 
 /**

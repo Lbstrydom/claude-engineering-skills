@@ -819,6 +819,10 @@
     "own-model:coverage": {
       "description": "Live null-rate coverage check of the own-model capture columns against the store (exit 0 ok, 1 drift or below floor, 3 unmeasured).",
       "category": "diagnostic"
+    },
+    "anthropic:pin:gate": {
+      "description": "Gate for Anthropic-seam backend pins (part of `npm run check`). The cli backend THROWS on a call passing system/tools/tool_choice, which it accepts and then cannot honour — but CI runs the committed `sdk` default, so that throw never fires there and a new unpinned call site ships green, breaking only where CLAUDE_BACKEND=cli is set. Rule A (hard): a file that constructs an unpinned client AND passes an unserviceable param literal. Rule B (drift-only): every unpinned construction is declared with a reason in .anthropic-pin-census.json, because a client HANDED to another module whose call passes `system` is invisible to a file-local scan. `indirectPins` is the one escape and is verified by re-reading the named options function for the literal. --list shows every construction site; --report exits 0.",
+      "category": "diagnostic"
     }
   },
   "entryPoints": {

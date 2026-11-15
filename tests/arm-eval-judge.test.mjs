@@ -208,36 +208,36 @@ describe('judge rubric — right_sizing gets an explicit concision definition', 
   });
 });
 
-// ── Judge transport failure is UNMEASURED, never a quality failure ────────────
+// ── Judge transport failure is UNAVAILABLE + classified retry (fable-vs-opus §2.1) ────────────
 // docs/plans/fable-vs-opus-decision-eval.md §2.1. At 809a615e callJudgeDefault's
 // catch returned {conformant:false} for every error but [egress-gate], so an
 // outage (ECONNRESET, 5xx, timeout) read exactly like a judge that answered
 // badly — and judgeSession fed the transport error text back to the model as a
 // "your previous response was REJECTED" schema correction.
-describe('judge — transport failure is unmeasured, not non-conformant', () => {
-  it('callJudgeDefault: a thrown client error → unmeasured:true, reason judge-transport', async () => {
+describe('judge — transport failure is unavailable, and only a retryable one is retried', () => {
+  it('callJudgeDefault: a thrown client error → unavailable:true, reason judge-transport', async () => {
     const { _internals } = await import('../scripts/lib/arm-eval/judge.mjs');
     const createClient = async () => ({ messages: { create: async () => { throw new Error('ECONNRESET socket hang up'); } } });
     const res = await _internals.callJudgeDefault({ prompt: 'score these', schema: judgePassSchema(['output-1'], ['correctness']) }, { createClient });
-    assert.equal(res.unmeasured, true, 'a transport failure must be marked unmeasured');
+    assert.equal(res.unavailable, true, 'a transport failure must be marked unavailable');
     assert.equal(res.reason, 'judge-transport');
     assert.equal(res.conformant, false);
     assert.equal(res.result, null);
   });
 
-  it('callJudgeDefault: a parsed-but-invalid answer stays a judge-quality failure (unmeasured:false)', async () => {
+  it('callJudgeDefault: a parsed-but-invalid answer stays a judge-quality failure (not unavailable)', async () => {
     const { _internals } = await import('../scripts/lib/arm-eval/judge.mjs');
     const createClient = async () => ({ messages: { create: async () => ({ content: [{ type: 'text', text: '{"scores":[]}' }] }) } });
     const res = await _internals.callJudgeDefault({ prompt: 'score these', schema: judgePassSchema(['output-1'], ['correctness']) }, { createClient });
     assert.equal(res.conformant, false);
-    assert.equal(res.unmeasured, false, 'a bad answer is measured — the judge answered, badly');
+    assert.ok(!res.unavailable, 'a bad answer is not unavailable — the judge answered, badly');
   });
 
-  it('judgeSession: persistent transport failure → unmeasured result, plain retry (no corrective nudge)', async () => {
+  it('judgeSession: persistent RETRYABLE transport failure → unavailable, one plain retry (no corrective nudge)', async () => {
     const prompts = [];
-    const callJudge = async ({ prompt }) => { prompts.push(prompt); return { conformant: false, unmeasured: true, reason: 'judge-transport', result: null, error: 'ECONNRESET socket hang up' }; };
+    const callJudge = async ({ prompt }) => { prompts.push(prompt); return { conformant: false, unavailable: true, retryable: true, reason: 'judge-transport', result: null, error: 'ECONNRESET socket hang up' }; };
     const r = await judgeSession({ experimentType: 'brainstorm', outputs: OUTPUTS, contextPack: null, seed: 1, deps: { callJudge } });
-    assert.equal(r.unmeasured, true, 'the session reports the judge as unmeasured');
+    assert.equal(r.unavailable, true, 'the session reports the judge as unavailable');
     assert.equal(r.conformant, false);
     assert.equal(r.passes.length, 0, 'nothing scored');
     assert.equal(prompts.length, 2, 'exactly one retry');
@@ -245,25 +245,87 @@ describe('judge — transport failure is unmeasured, not non-conformant', () => 
     assert.ok(!prompts[1].includes('ECONNRESET'), 'the transport error text never reaches the model');
   });
 
-  it('a non-429 4xx (auth) is unmeasured and NOT retried', async () => {
+  it('a non-429 4xx (auth) is unavailable and NOT retried', async () => {
     const { _internals } = await import('../scripts/lib/arm-eval/judge.mjs');
     const createClient = async () => ({ messages: { create: async () => { throw Object.assign(new Error('invalid x-api-key'), { status: 401 }); } } });
     const res = await _internals.callJudgeDefault({ prompt: 'p', schema: judgePassSchema(['output-1'], ['correctness']) }, { createClient });
-    assert.equal(res.unmeasured, true);
+    assert.equal(res.unavailable, true);
     assert.equal(res.retryable, false);
     let calls = 0;
     const r = await judgeSession({ experimentType: 'brainstorm', outputs: OUTPUTS, contextPack: null, seed: 1, deps: { callJudge: async () => { calls++; return res; } } });
-    assert.equal(r.unmeasured, true);
+    assert.equal(r.unavailable, true);
     assert.equal(calls, 1, 'a 401 is not retried');
   });
 
   it('judgeSession: a transient transport failure recovers on the plain retry', async () => {
     let n = 0;
     const ok = fakeJudge([]);
-    const callJudge = async (args) => { n++; if (n === 1) return { conformant: false, unmeasured: true, reason: 'judge-transport', result: null, error: 'HTTP 503' }; return ok(args); };
+    const callJudge = async (args) => { n++; if (n === 1) return { conformant: false, unavailable: true, retryable: true, reason: 'judge-transport', result: null, error: 'HTTP 503' }; return ok(args); };
     const r = await judgeSession({ experimentType: 'brainstorm', outputs: OUTPUTS, contextPack: null, seed: 1, deps: { callJudge } });
     assert.equal(r.conformant, true);
-    assert.equal(r.unmeasured, false);
+    assert.ok(!r.unavailable);
     assert.equal(r.passes.length, 2);
+  });
+});
+
+// ── UNAVAILABLE is not NON-CONFORMANT (2026-11-15) ─────────────────────────
+//
+// `callJudgeDefault`'s catch returned `{ conformant: false, error }` for EVERY
+// throw except the egress gate. So a missing credential, a refused route or the
+// new seam refusal all arrived as a judgement about the judge's OUTPUT — "the
+// judge failed to conform" — which is the same conflation (a transport failure
+// wearing a result's clothes) that the throw-and-pin change exists to end one
+// layer down. Pinning these sites to the sdk backend makes it reachable on a
+// keyless install, so it is load-bearing for that change, not adjacent to it.
+//
+// `conformant` stays false either way, so every existing consumer still fails
+// closed; `unavailable` is what lets a reader tell the two apart.
+describe('judgeSession: a judge that never ran is distinguishable', () => {
+  const unavailableJudge = (calls) => async (args) => {
+    calls.push(args);
+    return { conformant: false, unavailable: true, result: null, error: 'ANTHROPIC_API_KEY required', latencyMs: 1 };
+  };
+  const badJsonJudge = (calls) => async (args) => {
+    calls.push(args);
+    return { conformant: false, result: null, error: 'judge returned no JSON', latencyMs: 1 };
+  };
+
+  it('an UNAVAILABLE judge propagates the flag', async () => {
+    const calls = [];
+    const r = await judgeSession({
+      experimentType: 'plan-authoring', outputs: OUTPUTS, contextPack: 'INTENT', seed: 1,
+      deps: { callJudge: unavailableJudge(calls) },
+    });
+    assert.equal(r.conformant, false, 'still fails closed for every existing consumer');
+    assert.equal(r.unavailable, true, 'and a reader can tell no answer was obtained');
+    assert.match(r.error, /ANTHROPIC_API_KEY/);
+  });
+
+  // The corrective retry exists for a model that omitted a rubric dimension. It
+  // is pointless — and doubles the spend — when no answer was obtained: a
+  // missing credential does not become present because the prompt was reworded.
+  it('an UNAVAILABLE judge is NOT retried with a corrective prompt', async () => {
+    const calls = [];
+    await judgeSession({
+      experimentType: 'plan-authoring', outputs: OUTPUTS, contextPack: 'INTENT', seed: 1,
+      deps: { callJudge: unavailableJudge(calls) },
+    });
+    assert.equal(calls.length, 1, 'one attempt, not two');
+    assert.ok(!calls.some((c) => c.retry), 'and none of them a retry');
+  });
+
+  // POSITIVE CONTROL for the line above: a genuinely non-conformant judge MUST
+  // still get its retry, or this change would have removed the recovery path it
+  // was only meant to skip.
+  it('a NON-CONFORMANT judge still gets exactly one corrective retry', async () => {
+    const calls = [];
+    const r = await judgeSession({
+      experimentType: 'plan-authoring', outputs: OUTPUTS, contextPack: 'INTENT', seed: 1,
+      deps: { callJudge: badJsonJudge(calls) },
+    });
+    assert.equal(calls.length, 2, 'the corrective retry is intact');
+    assert.equal(calls[1].retry, true);
+    assert.equal(r.conformant, false);
+    assert.ok(!('unavailable' in r), 'and it is NOT labelled unavailable — the judge answered, badly');
   });
 });

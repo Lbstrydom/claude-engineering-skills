@@ -27,7 +27,7 @@ import {
 } from './lib/prompt-registry.mjs';
 import { AppendOnlyStore, MutexFileStore } from './lib/file-store.mjs';
 import { createLearningAdapter } from './lib/llm-wrappers.mjs';
-import { createAnthropicClient, isClaudeAvailable } from './lib/anthropic-client.mjs';
+import { createAnthropicClient, claudeAvailability } from './lib/anthropic-client.mjs';
 import { zodToGeminiSchema } from './lib/schemas.mjs';
 import { PASS_NAMES, GLOBAL_CONTEXT_BUCKET, learningConfig } from './lib/config.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
@@ -391,8 +391,21 @@ async function main() {
       const { GoogleGenAI } = await import('@google/genai');
       providers.gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     }
-    if (isClaudeAvailable()) {
-      providers.anthropic = await createAnthropicClient();
+    // PINNED `backend:'sdk'`, and gated on that same backend. This client is
+    // handed to `createLearningAdapter`, whose `callClaude` passes
+    // `system: systemPrompt` (llm-wrappers.mjs) — an unserviceable param one
+    // module away, which is exactly the handoff a file-local scan cannot see,
+    // so this site is listed in `.anthropic-pin-census.json` by name.
+    // `claudeAvailability`, not the bare oracle: `isClaudeAvailableFor` THROWS
+    // on an Azure profile whose endpoint is set but whose credential is missing
+    // (pinned in tests/anthropic-pin-on-azure.test.mjs). This is an OPTIONAL
+    // capability inside no try block, so on such an install the broken tenant
+    // took the whole command down. Degrades with the reason named — never a
+    // silent false, which would report a misconfigured route as an absent one.
+    const claude = claudeAvailability('sdk');
+    if (claude.error) process.stderr.write(`  [evolve] Claude route unusable: ${claude.error}\n`);
+    if (claude.available) {
+      providers.anthropic = await createAnthropicClient({ backend: 'sdk' });
     }
 
     const adapter = createLearningAdapter(providers);

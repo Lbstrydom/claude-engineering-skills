@@ -83,6 +83,212 @@ remains outside the factory itself — regression-guarded by a `grep` in
 **Smoke test**: `npm run anthropic:ping` invokes a tiny prompt through whichever
 backend the env resolves to.
 
+## The faithfulness refusal: `cli` must not accept a call it cannot honour (2026-11-14, reshaped 2026-11-15)
+
+`cli` already refused what it cannot **represent** (multi-turn histories,
+assistant roles, non-text blocks — `assertOneShotTextMessages`) and what it
+cannot **target** (a `baseURL` — `reconcileBackendWithBaseUrl`). Both throw.
+Three params were the silent third category: accepted, then dropped or
+outranked, so the failure surfaced one layer up as a *model* failure.
+
+**Say it precisely.** `cli` does **not** ignore `system` — it passes the string
+as `--system-prompt`, and a simple instruction is obeyed. What it cannot promise
+is that the instruction *wins*: the agent persona and its injected project
+context outrank it on a structured-output contract, and the ~164K-token prefix
+is on the bill whatever the prompt asks. "Sometimes honoured" is why `system` is
+refused rather than merely warned about — a seam cannot tell a simple
+instruction from a contract by looking at the params, and the consumer that
+parses the answer cannot either. `tools` and `tool_choice` are the stronger
+case: those are genuinely dropped.
+
+`unserviceableCliParams` is the single oracle, decided from the params at
+`messages.create()` time (the params are not known at construction time).
+
+**THROW AND PIN, never route.**
+
+| | ambient `CLAUDE_BACKEND=cli` | explicit `backend:'cli'` |
+|---|---|---|
+| serviceable params | stays on cli, keeps the credit | stays on cli |
+| `system` / `tools` / `tool_choice` | **throws**, naming the param and the pin | **throws**, same message |
+
+The first implementation (2026-11-14) routed an ambient-cli call to sdk with a
+once-per-param warning, mirroring `reconcileBackendWithBaseUrl`'s
+ambient-coerces / explicit-throws precedence. That symmetry was the wrong one to
+copy: **a `baseURL` names a DESTINATION the operator chose, so coercing the
+transport still reaches it, whereas `system` names a billable contract the call
+site never made a transport decision about.** Routing on it would let a param
+decide which meter a call bills, with nothing committed recording which sites
+had moved. A pin is declared, greppable, visible in a diff, and gated.
+
+**The pin is enforced before merge, not at run time.** The throw cannot fire in
+CI, which runs the committed `sdk` default — so a new unpinned
+`system`-passing site would ship green and break only where
+`CLAUDE_BACKEND=cli` is set. `npm run anthropic:pin:gate`
+([check-anthropic-pins.mjs](../../scripts/check-anthropic-pins.mjs)) is the
+guard, in `check:static`. Two rules, because one cannot see both shapes:
+
+- **Rule A** — a file that constructs an unpinned client AND passes an
+  unserviceable param literal. Hard failure, no declaration accepted.
+- **Rule B** — every unpinned construction is enumerated in the committed
+  `.anthropic-pin-census.json` with a reason. Drift-only (a new one fails; a
+  stale one fails and asks for a re-baseline), because Rule A is blind to the
+  HANDOFF: `evolve-prompts.mjs` hands its client to `llm-wrappers.callClaude`,
+  whose call passes `system`, and both halves read clean file-locally. That
+  handoff is one of the two sites the census found which a by-hand list missed.
+- The one escape from Rule A is `indirectPins`, and it is **verified, not
+  trusted**: an entry naming a `via` function (`azure-claude-adapter.mjs`'s
+  `clientOptions()`) is checked by re-reading that function for the literal AND
+  by confirming every unpinned construction in the file passes it, so the
+  declaration cannot outlive the pin it claims nor describe a factory nothing
+  calls.
+- **It PARSES.** Three versions of this gate were regular expressions and three
+  consecutive audit rounds each found a different fail-open shape they could not
+  see — shorthand `{ system }`, a spread after the literal, a duplicate key
+  where the last wins, a shorthand `{ backend }` that wins at runtime, a nested
+  `metadata:{backend:'sdk'}` read as top-level, and a construction two nesting
+  levels deep that the construction regex missed **entirely**. Each fix was
+  right about the shape it was shown and blind to the next. The module now uses
+  the shared [`ast.mjs`](../../scripts/lib/ast.mjs), as five other gates here
+  already do.
+- **The effective backend is the last TOP-LEVEL `backend`, resolved from the
+  argument node**, with three verdicts: `pinned` (a literal `sdk`/`bedrock`,
+  last, no spread after it), `cli` (explicitly the transport that cannot honour
+  the params — never coverable by a census entry), `unresolved` (absent, a
+  non-literal value, a computed key, or a spread after the winner). The
+  fail-closed bucket is deliberately large.
+- **An unparseable file is UNKNOWN, not clean** — `parsed: false`, and the audit
+  fails on it. Otherwise the gate's strongest claim would evaporate on exactly
+  the file most likely to be mid-edit.
+- **Anything that assigns the key counts**: a computed property (a string
+  literal resolves, an expression is unresolved), a getter and a method named
+  `backend` all override a literal that came before them. An **aliased** import
+  (`createAnthropicClient as mk`, static or destructured from a dynamic
+  `import()`) is a construction — a site the enumeration cannot see is absent
+  from Rule A *and* Rule B at once, which is the worst failure available to this
+  gate.
+- **An `indirectPins` claim rests on what the factory RETURNS**, and on every
+  return being pinned. A pinned object elsewhere in the function body is a dead
+  object vouching for a live override.
+- A **dynamic** request key might be `system`, so it fails Rule A — but only in
+  a file that also constructs an unpinned client, which is Rule A's own
+  condition. Failing closed therefore costs nothing where a pin already exists.
+- Every one of those shapes has a planted RED case in
+  `tests/anthropic-pin-census.test.mjs`, and each fix has a negative control.
+- A Rule B declaration carries the **COUNT** of unpinned constructions and an
+  **`argsDigest`** of their arguments, not just the file. The count alone let a
+  declaration clear every construction added later; the count plus the digest
+  also catches a REPLACEMENT, which preserves the total while the declared
+  reason goes stale. Growth, an unrecorded shrink and a changed shape all fail.
+  The digest folds formatting without touching string contents, so
+  `mode === 'use cli'` and `mode === 'usecli'` keep different digests — they can
+  select different backends. Two structurally identical constructions still
+  share a digest, by design: for this gate they are the same shape.
+- Every verdict category is **printed**. Two of the seven were counted in `ok`
+  and never reported, so the gate could exit 1 with no line saying why — worse
+  than no gate. A test reads the CLI's own source to keep that true.
+
+**A pinned site must also change its availability gate.** `isClaudeAvailable()`
+answers for the AMBIENT backend, and on a keyless `CLAUDE_BACKEND=cli` install
+that answer is `true` — so a pinned site passed the gate and then threw
+`ANTHROPIC_API_KEY required` for a backend the operator never selected. Use
+**`isClaudeAvailableFor('sdk')`** (same oracle; `isClaudeAvailable()` is now a
+thin ambient-resolving wrapper over it). A named backend deliberately does not
+re-validate `CLAUDE_BACKEND`, since a pinned call never reads it.
+
+The refusal set and why each member is in it:
+
+| param | what cli does | measured consequence |
+|---|---|---|
+| `system` | **passed** as `--system-prompt` — obeyed for a simple instruction, **outranked** by the `claude -p` agent persona and its ~164K-token injected project context on a structured-output contract, and the prefix is charged either way | the REAL `NORMALIZE_PROMPT`: 1995–2784 output tokens in ~40s against `max_tokens: 200`, a first-person Claude Code reply citing AGENTS.md, where sdk returned the requested one-line sentence in 29–43 tokens / 1.3s. A **shortened** variant of that same prompt: a correct one-line answer **3/3**, still 466–673 output tokens |
+| `tools` | dropped — the adapter always spawns `--tools ''` | §"Forced tool-calling" below: 20/20 tiered-recall runs fell back for a whole shadow window |
+| `tool_choice` | dropped, no error | same |
+
+`max_tokens` is deliberately **not** in the set. It is equally unenforced on
+cli, but *every* caller sets it (the Messages API requires it), so refusing on
+it would refuse every call — collapsing this into "cli is never usable", which
+voids an operator's transport choice and moves all spend off the credit. It
+keeps its own once-per-session warning instead, reworded to say the ceiling is
+**accepted and ignored**, not merely unenforceable. What covers the real risk is
+a consumer that NOTICES truncation: `assessBatchCompleteness`
+([summarise.mjs](../../scripts/symbol-index/summarise.mjs)) reads `stop_reason`
+and reports an incomplete batch rather than a silently short answer.
+
+**The membership test, for any new param:** does the param being unmet change
+the ANSWER the caller receives? `system` unmet gives a different KIND of answer;
+`tools`/`tool_choice` unmet gives the wrong SHAPE; `max_tokens` unmet gives the
+answer that was asked for, possibly more of it than budgeted — the content is
+not wrong.
+
+### `CLAUDE_CLI_STRICT_MAX_TOKENS` — implemented 2026-11-14, REMOVED 2026-11-15
+
+It made a `max_tokens` call unserviceable on cli, routing it to the backend that
+honours the ceiling; default off. It was adjudicated out of a round-1 HIGH
+(GPT ruling `compromise`) whose own recommendation — refuse whenever
+`max_tokens` is supplied — was arithmetically "always sdk".
+
+It is gone, for two reasons the reshape made plain. It was a **second routing
+dial** for a param whose being unmet does not change the answer, so it sat on
+the wrong side of this rule's own membership test; and once routing itself was
+replaced by throw-and-pin, "strict" would have meant *throwing on every cli
+call*, which is not a trade an env var should express. No call site ever asked
+for it. `tests/anthropic-cli-faithfulness.test.mjs` carries the negative control
+for the removal: a stale `CLAUDE_CLI_STRICT_MAX_TOKENS=1` in an operator's shell
+must now change nothing, end to end — a removal that left the read in place
+would otherwise be invisible.
+
+The `BILLING PIN` test in
+[tests/anthropic-cli-faithfulness.test.mjs](../../tests/anthropic-cli-faithfulness.test.mjs)
+is the positive control that this did not become "cli is never usable": a
+serviceable call under ambient cli must make **zero** sdk calls. Every throw
+test asserts zero sdk calls too — without that half, the suite would pass under
+the rejected routing design as well, since that design also threw on the
+explicit-cli case.
+
+The `--system-prompt` plumbing in the adapter is **retained though currently
+unreachable**: the oracle is the single place that decides, and a `claude -p`
+release that honours `system` is a named revert trigger — keeping the plumbing
+makes that revert a one-line change rather than a re-implementation.
+
+## `cli`'s cost does not depend on your prompt (measured 2026-11-14)
+
+`claude -p` injects a **~164,000-token** Claude Code system prompt plus
+auto-discovered project context on every call, as a 1-hour ephemeral cache
+block. The prompt you wrote is a rounding error against it, so **no prompt
+change can fix a `cli` cost problem**.
+
+One Haiku summariser call, 9,669-char prompt, identical on both backends
+(n=4 each, `claude-haiku-5-5`):
+
+| | sdk | cli |
+|---|---|---|
+| input tokens | 4,285 (identical every run) | 2 |
+| cache create / read | 0 / 0 | 168,679–174,863 / 0 **cold** · ~4,063 / 164,611 **warm** |
+| output tokens | 916–1,146 | 1,266–1,452 |
+| latency | 4.4–5.5 s | 12.2–14.2 s |
+| cost | ~$0.0098 (computed) | **$0.172–0.178 cold · $0.0158 warm** (self-reported) |
+
+17× cold, 1.6× warm, 2.7× latency. `"Reply with exactly the word: pong"` →
+`"pong"` costs **$0.654**.
+
+**The output is not the mechanism.** On this shape cli emits only +33% tokens
+and obeyed "EXACTLY ONE LINE" 10/10 on both backends. The circumspect-output
+complaint is real only where `system` carries the terseness instruction — which
+is now refused.
+
+**`--bare` is not the escape hatch.** It skips CLAUDE.md auto-discovery and
+would strip the prefix, but per its own `--help` it makes Anthropic auth
+"strictly `ANTHROPIC_API_KEY` or apiKeyHelper (OAuth and keychain are never
+read)". Measured: it returns `"Not logged in · Please run /login"`, cost $0.
+**The only flag that removes the prefix also removes the credit** — a working
+`--bare` would bill the API key, i.e. it *is* the sdk backend at 2.7× the
+latency. This is why the fix is routing, not flags.
+
+Reproduce: see
+[the plan](../plans/anthropic-cli-faithfulness-routing.md#6-measurements) §6.C.
+The dollar figures are `claude -p`'s own `total_cost_usd` — the only available
+meter for the scripted cli backend, since `claude-trace` corrupts its stdout
+envelope.
+
 ## Forced tool-calling silently degrades on `cli` (found 2026-07-14)
 
 The `cli` backend's `messages.create()` reads only

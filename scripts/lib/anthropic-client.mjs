@@ -46,6 +46,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { resolveClaudeRouteFromEnv } from './azure-claude-route.mjs';
+import { cliFaithfulnessVerdict } from './anthropic-cli-faithfulness.mjs';
 
 /** Short, non-reversible token for cache keys — never store raw key material. */
 function keyDigest(k) {
@@ -164,6 +165,30 @@ function resolveAwsRegion() {
 }
 
 /**
+ * The TEXT a response carries, joined across every text block.
+ *
+ * **`content[0].text` is not the answer.** A thinking-capable model puts a
+ * `thinking` block first, which has no `.text`, so the index-0 read returns
+ * `undefined` from a perfectly good response. Three call sites here had that
+ * bug independently — `context.mjs`'s brief (dead in every audit run),
+ * `work-unit-labels`' labeller and `refine-prompts` — which is three spellings
+ * of one question, so it gets one answer at the seam.
+ *
+ * Returns `''` when the response carries no text block at all. A caller that
+ * needs to know WHY (a `max_tokens` stop, a thinking-only response) reads
+ * `stop_reason` itself: an empty string is the content, not the diagnosis.
+ *
+ * @param {{content?: Array<{type?: string, text?: string}>}} response
+ * @returns {string}
+ */
+export function textFromResponse(response) {
+  return (response?.content || [])
+    .filter((b) => b?.type === 'text')
+    .map((b) => b?.text || '')
+    .join('');
+}
+
+/**
  * Is a Claude client usable right now without throwing at construction?
  *
  * The cli backend authenticates via the `claude` CLI (subscription / Agent SDK
@@ -179,7 +204,37 @@ function resolveAwsRegion() {
  * @returns {boolean}
  */
 export function isClaudeAvailable() {
-  const backend = resolveBackend();
+  return isClaudeAvailableFor(resolveBackend());
+}
+
+/**
+ * Is Claude usable **on the backend this call site will actually use**?
+ *
+ * `isClaudeAvailable()` answers for the AMBIENT backend, which is the right
+ * question only for a call site that lets the ambient backend serve it. A site
+ * pinned to `{backend:'sdk'}` — every site that passes `system`, `tools` or
+ * `tool_choice` must be, since the cli backend now throws on those — asks a
+ * different question, and the ambient answer is wrong in exactly the
+ * configuration the pins exist for: under `CLAUDE_BACKEND=cli` with no
+ * `ANTHROPIC_API_KEY`, `isClaudeAvailable()` is `true` (cli needs no key), the
+ * pinned site passes its gate, and `createAnthropicClient({backend:'sdk'})`
+ * then throws `ANTHROPIC_API_KEY required`. A keyless cli install must SKIP
+ * such a feature cleanly, not attempt it and report a credential error for a
+ * backend the operator never selected.
+ *
+ * So the gate takes the backend as an argument. This is the same oracle, not a
+ * second one — `isClaudeAvailable()` is now a thin ambient-resolving wrapper
+ * over it, so there is one place where "available" is decided.
+ *
+ * A named backend deliberately does NOT re-validate `CLAUDE_BACKEND`: a pinned
+ * site does not read the ambient value, so a typo in it cannot affect that
+ * call, and surfacing it here would make an unrelated env typo disable a
+ * feature that would have worked. The ambient wrapper above still throws on it.
+ *
+ * @param {'sdk'|'cli'|'bedrock'} backend - the backend the call site will pin
+ * @returns {boolean}
+ */
+export function isClaudeAvailableFor(backend) {
   if (backend === 'cli') return true;
   // Bedrock authenticates through the AWS credential chain, so ANTHROPIC_API_KEY
   // is irrelevant to it — gating on that key would skip a fully-available
@@ -196,6 +251,38 @@ export function isClaudeAvailable() {
   // 2026-08-30: azureConfig.active true, live APIM Claude call succeeding, and
   // this function returning false.
   return Boolean(process.env.ANTHROPIC_API_KEY) || Boolean(resolveClaudeRouteFromEnv());
+}
+
+/**
+ * The same answer, for a caller that must not be CRASHED by a broken profile.
+ *
+ * `isClaudeAvailableFor` THROWS on a half-configured Azure profile — endpoint
+ * set, credential missing — and that refusal is correct: it is the difference
+ * between "no route here" and "a route is declared and broken", and demoting a
+ * broken tenant to the public endpoint would be worse than failing. But most
+ * call sites ask this question about an OPTIONAL capability (a label, a brief,
+ * a refinement) inside no try block, so on such an install the whole command
+ * died rather than the optional feature.
+ *
+ * Not a second oracle and not a silent `false` — it calls the one above and
+ * REPORTS what happened, so the caller degrades with the reason in hand instead
+ * of rendering a configuration fault as an absent credential. A caller that
+ * wants the throw keeps calling `isClaudeAvailableFor` directly.
+ *
+ * @param {'sdk'|'cli'|'bedrock'} backend
+ * @returns {{available: boolean, error: string|null}} `error` is non-null only
+ *   when the question itself could not be answered — never for a clean "no".
+ */
+export function claudeAvailability(backend) {
+  try {
+    return { available: isClaudeAvailableFor(backend), error: null };
+  } catch (err) {
+    // Best-effort text: a thrown value need not be an Error, and `String(err)`
+    // itself throws for an object with a null prototype.
+    let message = 'the configured Claude route could not be resolved';
+    try { message = err?.message || String(err) || message; } catch { /* keep the default */ }
+    return { available: false, error: message };
+  }
 }
 
 /**
@@ -629,6 +716,7 @@ function applyRedactor(params, redactor) {
 export function _resetClientCache() {
   _clientCache.clear();
   _warnedMaxTokensCli = false;
+  _warnedBaseUrlForcedSdk = false;
 }
 
 /**
@@ -664,11 +752,29 @@ function createCliAdapter(opts = {}) {
 
         assertOneShotTextMessages(messages);
 
+        // FAITHFULNESS PRECONDITION: a backend must not accept a call whose
+        // params it cannot honour. The decision lives in
+        // `anthropic-cli-faithfulness.mjs` — one importable home, so a second
+        // implementation cannot appear beside it. THROW AND PIN: the remedy is
+        // a `{backend:'sdk'}` pin at the call site, never a silent swap here.
+        //
+        // Why at call time and not at construction: the params are only known
+        // now. Why not route ambient-cli calls to sdk instead of throwing:
+        // which meter a call bills would then be decided by a param the call
+        // site never connected to billing, and nothing committed would record
+        // which sites had moved. A pin is declared, greppable, and gated
+        // (`npm run anthropic:pin:gate`).
+        // docs/plans/anthropic-cli-faithfulness-routing.md §3.
+        const verdict = cliFaithfulnessVerdict(params);
+        if (verdict) throw new Error(verdict.message);
+
         if (max_tokens !== undefined && !_warnedMaxTokensCli) {
           _warnedMaxTokensCli = true;
           process.stderr.write(
-            `  [anthropic-client] WARNING: max_tokens is not enforceable on the cli backend ` +
-            `(claude -p has no equivalent flag). The model's own output limit applies.\n`,
+            `  [anthropic-client] WARNING: max_tokens is UNENFORCED on the cli backend ` +
+            `(claude -p has no equivalent flag) — the ceiling is accepted and ignored, not ` +
+            `merely unenforceable. The model's own output limit applies. Measured ` +
+            `2026-11-14: 1995 output tokens returned against max_tokens: 200.\n`,
           );
         }
 

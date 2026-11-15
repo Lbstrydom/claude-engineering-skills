@@ -792,3 +792,45 @@ test('commitsCompleteForAllArms: the denominator is per (commit, ARM) — a x3 a
   assert.deepEqual(r2.kept, []);
   assert.equal(r2.dropped[0].causes[0].reason, 'no-expected-cell-count');
 });
+
+// ── A RESUME INHERITS THE TRANSPORT, AND THE TRANSPORT IS PART OF THE
+// MEASUREMENT (2026-11-15) ────────────────────────────────────────────────
+//
+// The client construction in this file is now unconditionally pinned to the
+// sdk backend. An arm file produced earlier under `cli` records that in
+// `provenance.backend`, and resuming it would append sdk rows to cli rows in
+// one file — two prompt prefixes, two `max_tokens` semantics (enforced vs
+// accepted-and-ignored) and two meters, in a file whose whole purpose is to be
+// compared against another arm. Nothing downstream can separate them
+// afterwards, which is why this refuses rather than warns.
+test('planIncrementalRun: resuming an arm recorded under another backend is REFUSED', () => {
+  const prior = { perCommit: [{ sha: 'a', unitKey: 'a', state: 'ran' }], provenance: { backend: 'cli' } };
+  assert.throws(
+    () => soloCtl.planIncrementalRun({ units: [unit('a'), unit('b')], prior, force: false, resume: true, backend: 'sdk' }),
+    /backend "cli".*uses "sdk"/s,
+  );
+});
+
+test('planIncrementalRun: --force starts the arm over, so the mismatch is not an obstacle', () => {
+  const prior = { perCommit: [{ sha: 'a', unitKey: 'a', state: 'ran' }], provenance: { backend: 'cli' } };
+  const { commits } = soloCtl.planIncrementalRun({ units: [unit('a')], prior, force: true, resume: false, backend: 'sdk' });
+  assert.deepEqual(commits.map((u) => u.resumeKey), ['a'], 'force re-runs everything, so no mixing occurs');
+});
+
+// POSITIVE CONTROL. The guard must not fire on the normal case, or every
+// resume breaks and the flag that exists to continue an interrupted run becomes
+// unusable — the failure mode that gets a gate deleted rather than fixed.
+test('planIncrementalRun: a MATCHING backend resumes exactly as before', () => {
+  const prior = { perCommit: [{ sha: 'a', unitKey: 'a', state: 'ran' }], provenance: { backend: 'sdk' } };
+  const { commits } = soloCtl.planIncrementalRun({ units: [unit('a'), unit('b')], prior, force: false, resume: true, backend: 'sdk' });
+  assert.deepEqual(commits.map((u) => u.resumeKey), ['b']);
+});
+
+// And an arm file written before `provenance` existed has nothing to compare,
+// so it must stay resumable: an unknown transport is not a known-different one,
+// and refusing on absence would strand every historical arm.
+test('planIncrementalRun: an arm with no recorded provenance still resumes', () => {
+  const prior = { perCommit: [{ sha: 'a', unitKey: 'a', state: 'ran' }] };
+  const { commits } = soloCtl.planIncrementalRun({ units: [unit('a'), unit('b')], prior, force: false, resume: true, backend: 'sdk' });
+  assert.deepEqual(commits.map((u) => u.resumeKey), ['b']);
+});

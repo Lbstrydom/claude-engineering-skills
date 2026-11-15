@@ -91,9 +91,12 @@ export function buildJudgePrompt({ experimentType, blindOutputs, dims, contextPa
  * }} input
  * @returns {Promise<{ presentationOrder:string[], labelToArm:Record<string,string>,
  *   dims:string[], intentDims:'scored'|'unscored', passes:Array<Record<string,Record<string,number>>>,
- *   conformant:boolean, unmeasured:boolean, error:string|null }>}
- * `unmeasured:true` ⇒ the judge was never reached (transport failure): nothing was
- * scored, and a caller must exclude + count the session, never score it.
+ *   conformant:boolean, unavailable?:boolean, error:string|null }>}
+ *   `unavailable: true` means NO ANSWER WAS OBTAINED — a transport, credential
+ *   or seam refusal — as opposed to an answer that failed the rubric contract.
+ *   `conformant` is false either way, so existing consumers still fail closed;
+ *   the flag is what lets a reader tell a bad judgement from a dead config.
+ *   An unavailable session scored nothing: exclude + count it, never score it.
  */
 export async function judgeSession({ experimentType, outputs, contextPack = null, intentScorable = null, seed = 1, deps = {} }) {
   if (!Array.isArray(outputs) || outputs.length < 2) {
@@ -121,30 +124,42 @@ export async function judgeSession({ experimentType, outputs, contextPack = null
     //    rubric dims on a large prompt → a strict-schema reject): feed the exact
     //    validation error back and demand the complete object (honest — never
     //    fabricates a score);
-    //  - the judge was never REACHED (`unmeasured`: network, 5xx, timeout): retry
-    //    the ORIGINAL prompt. A transport error is not a schema rejection, and its
-    //    text must never reach the model as one (fable-vs-opus-decision-eval §2.1).
-    // A non-retryable transport failure (non-429 4xx) is unmeasured at once.
-    if (res?.unmeasured && res.retryable === false) {
-      return { presentationOrder, labelToArm, dims, intentDims: scorable ? 'scored' : 'unscored', passes, conformant: false, unmeasured: true, error: res.error };
+    //  - the judge was UNAVAILABLE (no answer obtained): the corrective retry is
+    //    pointless — a missing credential does not become present because the
+    //    prompt was reworded — and the error text must never reach the model as a
+    //    schema rejection. Only a RETRYABLE transient (429/5xx/network, per the
+    //    shared classifier) gets one retry of the ORIGINAL prompt; a credential,
+    //    seam refusal or non-429 4xx gets none (fable-vs-opus-decision-eval §2.1).
+    if (!res || !res.conformant || !res.result) {
+      if (!res?.unavailable) {
+        const correctivePrompt = buildJudgePrompt({ experimentType, blindOutputs, dims, contextPack: scorable ? contextPack : null, corrective: res?.error || 'the prior JSON was incomplete or invalid' });
+        res = await d.callJudge({ prompt: correctivePrompt, schema, labels, dims, pass, retry: true });
+      } else if (res.retryable === true) {
+        res = await d.callJudge({ prompt, schema, labels, dims, pass, retry: true });
+      }
     }
     if (!res || !res.conformant || !res.result) {
-      const retryPrompt = res?.unmeasured
-        ? prompt
-        : buildJudgePrompt({ experimentType, blindOutputs, dims, contextPack: scorable ? contextPack : null, corrective: res?.error || 'the prior JSON was incomplete or invalid' });
-      res = await d.callJudge({ prompt: retryPrompt, schema, labels, dims, pass, retry: true });
-    }
-    if (!res || !res.conformant || !res.result) {
-      // Fail closed either way, but say WHICH: an unmeasured judge scored nothing,
-      // so the caller must exclude + count the session, never read it as a verdict.
-      return { presentationOrder, labelToArm, dims, intentDims: scorable ? 'scored' : 'unscored', passes, conformant: false, unmeasured: Boolean(res?.unmeasured), error: res?.error || `judge pass ${pass} non-conformant` };
+      // `unavailable` PROPAGATES, so a reader of the session can tell a judge
+      // that scored badly from one that never ran. Without it both arrive as
+      // `conformant: false` with a prose `error`, and only the prose
+      // distinguishes them — which is not a field anything can key on.
+      return {
+        presentationOrder,
+        labelToArm,
+        dims,
+        intentDims: scorable ? 'scored' : 'unscored',
+        passes,
+        conformant: false,
+        ...(res?.unavailable ? { unavailable: true } : {}),
+        error: res?.error || `judge pass ${pass} non-conformant`,
+      };
     }
     // Fold into label→dims→score.
     const byLabel = {};
     for (const row of res.result.scores) byLabel[row.label] = row.dims;
     passes.push(byLabel);
   }
-  return { presentationOrder, labelToArm, dims, intentDims: scorable ? 'scored' : 'unscored', passes, conformant: true, unmeasured: false, error: null };
+  return { presentationOrder, labelToArm, dims, intentDims: scorable ? 'scored' : 'unscored', passes, conformant: true, error: null };
 }
 
 /** Extract the first BALANCED top-level JSON object from a model response
@@ -185,9 +200,9 @@ async function getShapeRedactor() {
  *
  * Three outcomes, kept distinct (docs/plans/fable-vs-opus-decision-eval.md §2.1):
  *  - `conformant:true` — scored;
- *  - `conformant:false, unmeasured:false` — the judge ANSWERED, but with no or
+ *  - `conformant:false` — the judge ANSWERED, but with no or
  *    invalid JSON (a judge-quality failure; eligible for the corrective retry);
- *  - `conformant:false, unmeasured:true, reason:'judge-transport'` — the wire call
+ *  - `conformant:false, unavailable:true, reason:'judge-transport'` — the wire call
  *    itself failed (network, 5xx, timeout, auth). Nothing was judged; never a score.
  * `deps.createClient` is injectable for tests (default: createAnthropicClient). */
 async function callJudgeDefault({ prompt, schema }, deps = {}) {
@@ -211,15 +226,22 @@ async function callJudgeDefault({ prompt, schema }, deps = {}) {
     // (found on the first live calibration run). `assertEgressSafe` above is the
     // real secret gate (hard-throws); this shape redactor is defense-in-depth
     // that won't corrupt identifiers.
+    // PINNED `backend:'sdk'` (2026-11-15): this call passes `system`, which the
+    // cli backend accepts and then outranks with its own agent persona — so the
+    // judge was scoring its own transport failures as `conformant: false`
+    // whenever CLAUDE_BACKEND=cli was ambient. The seam now throws rather than
+    // answer off-contract; the pin is the declared transport decision.
     const makeClient = deps.createClient || createAnthropicClient;
-    client = await makeClient({ redactor: await getShapeRedactor() });
+    client = await makeClient({ backend: 'sdk', redactor: await getShapeRedactor() });
     model = resolveModel('latest-opus', { silent: true });
   } catch (err) {
     // An egress-gate refusal MUST surface loudly — never degrade a secret-carrying
     // payload into a benign "non-conformant" result (mirrors the shadow's rule).
     if (err && typeof err.message === 'string' && err.message.includes('[egress-gate]')) throw err;
-    // Client construction failed before any call: the judge was not reached.
-    return { conformant: false, unmeasured: true, reason: 'judge-transport', result: null, error: `judge client unavailable: ${err?.message ?? String(err)}`, latencyMs: Date.now() - start };
+    // UNAVAILABLE is not NON-CONFORMANT: client construction failed (missing
+    // credential, refused route) before any call — no answer was obtained, and
+    // rewording the prompt will not change that, so it is not retryable.
+    return { conformant: false, unavailable: true, retryable: false, reason: 'judge-transport', result: null, error: err.message, latencyMs: Date.now() - start };
   }
   let resp;
   try {
@@ -232,23 +254,23 @@ async function callJudgeDefault({ prompt, schema }, deps = {}) {
   } catch (err) {
     // The wire call failed: the judge was never reached. UNMEASURED, not a verdict.
     // `retryable` comes from the shared classifier: a non-429 4xx (auth, bad
-    // request) is never retried — it is still unmeasured, but retrying it only
+    // request) is never retried — it is still unavailable, but retrying it only
     // repeats the refusal (AGENTS.md: do NOT retry 404/4xx).
     const { classifyLlmError } = await import('../robustness.mjs');
     const { retryable, category } = classifyLlmError(err || {});
-    return { conformant: false, unmeasured: true, reason: 'judge-transport', retryable, errorCategory: category, result: null, error: `judge transport failure (${category}): ${err?.message ?? String(err)}`, latencyMs: Date.now() - start };
+    return { conformant: false, unavailable: true, reason: 'judge-transport', retryable, errorCategory: category, result: null, error: `judge transport failure (${category}): ${err?.message ?? String(err)}`, latencyMs: Date.now() - start };
   }
   // From here the judge ANSWERED: any failure is a judge-quality failure (measured).
   const text = (resp?.content || []).map((b) => b.text || '').join('');
   const jsonStr = extractJsonObject(text);
-  if (!jsonStr) return { conformant: false, unmeasured: false, result: null, error: 'judge returned no JSON', latencyMs: Date.now() - start };
+  if (!jsonStr) return { conformant: false, result: null, error: 'judge returned no JSON', latencyMs: Date.now() - start };
   let parsed;
   try { parsed = JSON.parse(jsonStr); } catch (err) {
-    return { conformant: false, unmeasured: false, result: null, error: `judge JSON unparseable: ${err.message}`, latencyMs: Date.now() - start };
+    return { conformant: false, result: null, error: `judge JSON unparseable: ${err.message}`, latencyMs: Date.now() - start };
   }
   const v = schema.safeParse(parsed);
-  if (!v.success) return { conformant: false, unmeasured: false, result: null, error: `judge JSON invalid: ${v.error.issues.slice(0, 2).map((i) => i.message).join('; ')}`, latencyMs: Date.now() - start };
-  return { conformant: true, unmeasured: false, result: v.data, error: null, latencyMs: Date.now() - start };
+  if (!v.success) return { conformant: false, result: null, error: `judge JSON invalid: ${v.error.issues.slice(0, 2).map((i) => i.message).join('; ')}`, latencyMs: Date.now() - start };
+  return { conformant: true, result: v.data, error: null, latencyMs: Date.now() - start };
 }
 
 /** Test seam (mirrors the file-io / anthropic-client `_internals` pattern). */
