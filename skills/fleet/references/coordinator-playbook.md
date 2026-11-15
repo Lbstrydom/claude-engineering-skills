@@ -50,6 +50,12 @@ or merge without `--delete-branch`. After a squash merge, rebasing the rest of t
 and force-pushing can be refused by a pre-push gate that compares against the remote's
 old sha; expect that refusal and resolve it rather than bypassing the hook.
 
+Better still, avoid the stack: tell each session to branch off `main`, never off another
+session's branch, even when its work reads as a continuation. A branch cut from a
+sibling's pre-squash commit is guaranteed a conflict once that sibling lands as a squash
+(the shared file comes back as an add/add conflict). The repair is to cherry-pick the
+branch's own commits onto `main`.
+
 ## 3. Before archiving a session or removing a worktree
 
 A session's working directory is not proof that it owns the worktree, and archiving can
@@ -75,7 +81,13 @@ EVERY store the consumers use before fast-forwarding; otherwise the next consume
 fails its schema precondition. If you fast-forwarded too early, roll back with
 `git reset --keep <previous-sha>` and migrate first.
 
-## 5. Before rebasing onto a moved main: look for competing implementations
+## 5. Before updating a branch from a moved main: look for competing implementations
+
+**Merge `main` into the branch by default; rebase only as the exception.** A host's
+auto-fix mode can forbid rebase and force-push on its PR. A session told to rebase there
+must either break that rule or improvise, so ask for a merge of `origin/main`. Its tests
+must then cover the merged tree, not the pre-merge one. The squash merge
+flattens the merge commit anyway.
 
 A concurrent session can implement the SAME feature and land it on main while you work —
 worse than a conflict, because both sides may apply cleanly into duplicate code. Before
