@@ -83,7 +83,7 @@ remains outside the factory itself — regression-guarded by a `grep` in
 **Smoke test**: `npm run anthropic:ping` invokes a tiny prompt through whichever
 backend the env resolves to.
 
-## The faithfulness refusal: `cli` must not accept a call it cannot honour (2026-11-14)
+## The faithfulness refusal: `cli` must not accept a call it cannot honour (2026-11-14, reshaped 2026-11-15)
 
 `cli` already refused what it cannot **represent** (multi-turn histories,
 assistant roles, non-text blocks — `assertOneShotTextMessages`) and what it
@@ -93,13 +93,50 @@ outranked, so the failure surfaced one layer up as a *model* failure.
 
 `unserviceableCliParams` is the single oracle, decided from the params at
 `messages.create()` time (the params are not known at construction time).
-Precedence mirrors `reconcileBackendWithBaseUrl` exactly, because the situation
-is the same shape — the caller's stated intent against an ambient env choice:
+
+**THROW AND PIN, never route.**
 
 | | ambient `CLAUDE_BACKEND=cli` | explicit `backend:'cli'` |
 |---|---|---|
 | serviceable params | stays on cli, keeps the credit | stays on cli |
-| `system` / `tools` / `tool_choice` | **routed to sdk**, warned once per reason | **throws**, naming the param and the remedy |
+| `system` / `tools` / `tool_choice` | **throws**, naming the param and the pin | **throws**, same message |
+
+The first implementation (2026-11-14) routed an ambient-cli call to sdk with a
+once-per-param warning, mirroring `reconcileBackendWithBaseUrl`'s
+ambient-coerces / explicit-throws precedence. That symmetry was the wrong one to
+copy: **a `baseURL` names a DESTINATION the operator chose, so coercing the
+transport still reaches it, whereas `system` names a billable contract the call
+site never made a transport decision about.** Routing on it would let a param
+decide which meter a call bills, with nothing committed recording which sites
+had moved. A pin is declared, greppable, visible in a diff, and gated.
+
+**The pin is enforced before merge, not at run time.** The throw cannot fire in
+CI, which runs the committed `sdk` default — so a new unpinned
+`system`-passing site would ship green and break only where
+`CLAUDE_BACKEND=cli` is set. `npm run anthropic:pin:gate`
+([check-anthropic-pins.mjs](../../scripts/check-anthropic-pins.mjs)) is the
+guard, in `check:static`. Two rules, because one cannot see both shapes:
+
+- **Rule A** — a file that constructs an unpinned client AND passes an
+  unserviceable param literal. Hard failure, no declaration accepted.
+- **Rule B** — every unpinned construction is enumerated in the committed
+  `.anthropic-pin-census.json` with a reason. Drift-only (a new one fails; a
+  stale one fails and asks for a re-baseline), because Rule A is blind to the
+  HANDOFF: `evolve-prompts.mjs` hands its client to `llm-wrappers.callClaude`,
+  whose call passes `system`, and both halves read clean file-locally. That
+  handoff is one of the two sites the census found which a by-hand list missed.
+- The one escape from Rule A is `indirectPins`, and it is **verified, not
+  trusted**: an entry naming a `via` function (`azure-claude-adapter.mjs`'s
+  `clientOptions()`) is checked by re-reading that function for the literal, so
+  the declaration cannot outlive the pin it claims.
+
+**A pinned site must also change its availability gate.** `isClaudeAvailable()`
+answers for the AMBIENT backend, and on a keyless `CLAUDE_BACKEND=cli` install
+that answer is `true` — so a pinned site passed the gate and then threw
+`ANTHROPIC_API_KEY required` for a backend the operator never selected. Use
+**`isClaudeAvailableFor('sdk')`** (same oracle; `isClaudeAvailable()` is now a
+thin ambient-resolving wrapper over it). A named backend deliberately does not
+re-validate `CLAUDE_BACKEND`, since a pinned call never reads it.
 
 The refusal set and why each member is in it:
 
@@ -109,13 +146,15 @@ The refusal set and why each member is in it:
 | `tools` | dropped — the adapter always spawns `--tools ''` | §"Forced tool-calling" below: 20/20 tiered-recall runs fell back for a whole shadow window |
 | `tool_choice` | dropped, no error | same |
 
-`max_tokens` is deliberately **not** in the set by default. It is equally
-unenforced on cli, but *every* caller sets it (the Messages API requires it), so
-refusing on it would refuse every call — collapsing this into "ambient cli
-always means sdk", which voids an operator's explicit transport choice and moves
-all spend off the credit. It keeps its own once-per-session warning instead,
-reworded to say the ceiling is **accepted and ignored**, not merely
-unenforceable.
+`max_tokens` is deliberately **not** in the set. It is equally unenforced on
+cli, but *every* caller sets it (the Messages API requires it), so refusing on
+it would refuse every call — collapsing this into "cli is never usable", which
+voids an operator's transport choice and moves all spend off the credit. It
+keeps its own once-per-session warning instead, reworded to say the ceiling is
+**accepted and ignored**, not merely unenforceable. What covers the real risk is
+a consumer that NOTICES truncation: `assessBatchCompleteness`
+([summarise.mjs](../../scripts/symbol-index/summarise.mjs)) reads `stop_reason`
+and reports an incomplete batch rather than a silently short answer.
 
 **The membership test, for any new param:** does the param being unmet change
 the ANSWER the caller receives? `system` unmet gives a different KIND of answer;
@@ -123,33 +162,30 @@ the ANSWER the caller receives? `system` unmet gives a different KIND of answer;
 answer that was asked for, possibly more of it than budgeted — the content is
 not wrong.
 
-### `CLAUDE_CLI_STRICT_MAX_TOKENS` — the operator's side of that trade
+### `CLAUDE_CLI_STRICT_MAX_TOKENS` — implemented 2026-11-14, REMOVED 2026-11-15
 
-Adjudicated 2026-11-14 (round-1 audit H2/H4, GPT ruling `compromise`, HIGH →
-MEDIUM). The audit was right that an accepted-and-ignored ceiling is the same
-*class* of defect this rule closes, and that a once-per-session warning gives
-nobody control over the cost/runaway risk. Its recommendation as written —
-refuse whenever `max_tokens` is supplied — was arithmetically "always sdk", for
-the reason above. The landing is an operator-level opt-in:
+It made a `max_tokens` call unserviceable on cli, routing it to the backend that
+honours the ceiling; default off. It was adjudicated out of a round-1 HIGH
+(GPT ruling `compromise`) whose own recommendation — refuse whenever
+`max_tokens` is supplied — was arithmetically "always sdk".
 
-| `CLAUDE_CLI_STRICT_MAX_TOKENS` | a `max_tokens` call under ambient `cli` |
-|---|---|
-| unset / `0` / anything unrecognised (**default**) | stays on cli, keeps the credit; the ceiling is unenforced and the once-per-session warning says so |
-| `1` / `true` | unserviceable → routed to sdk, which honours the ceiling (the caller's `max_tokens` survives the routing) |
-
-Default off so billing is untouched unless the operator chooses otherwise. An
-unrecognised value reads as OFF rather than throwing — unlike `CLAUDE_BACKEND`,
-where a typo misroutes billing, the safe reading here is "leave the operator's
-billing as it is", since turning strictness ON by accident is what moves spend.
-A per-call `requireMaxTokens` option was rejected as an abstraction no current
-call site needs; if one ever does, it belongs in the same oracle.
+It is gone, for two reasons the reshape made plain. It was a **second routing
+dial** for a param whose being unmet does not change the answer, so it sat on
+the wrong side of this rule's own membership test; and once routing itself was
+replaced by throw-and-pin, "strict" would have meant *throwing on every cli
+call*, which is not a trade an env var should express. No call site ever asked
+for it. `tests/anthropic-cli-faithfulness.test.mjs` carries the negative control
+for the removal: a stale `CLAUDE_CLI_STRICT_MAX_TOKENS=1` in an operator's shell
+must now change nothing, end to end — a removal that left the read in place
+would otherwise be invisible.
 
 The `BILLING PIN` test in
 [tests/anthropic-cli-faithfulness.test.mjs](../../tests/anthropic-cli-faithfulness.test.mjs)
-is the positive control that this did not become "always sdk": a serviceable
-call under ambient cli must make **zero** sdk calls. Neutering the oracle fails
-10 of the 15 tests in that file and leaves exactly the 5 must-not-fire cases
-green.
+is the positive control that this did not become "cli is never usable": a
+serviceable call under ambient cli must make **zero** sdk calls. Every throw
+test asserts zero sdk calls too — without that half, the suite would pass under
+the rejected routing design as well, since that design also threw on the
+explicit-cli case.
 
 The `--system-prompt` plumbing in the adapter is **retained though currently
 unreachable**: the oracle is the single place that decides, and a `claude -p`

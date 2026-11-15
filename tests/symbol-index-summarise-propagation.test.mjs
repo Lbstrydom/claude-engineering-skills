@@ -105,7 +105,6 @@ function runSummariser({ result, stopReason, symbols = 2 }) {
       ANTHROPIC_API_KEY: '',
       AZURE_OPENAI_ENDPOINT: '',
       ARCH_INDEX_BATCH_SIZE: String(symbols),
-      CLAUDE_CLI_STRICT_MAX_TOKENS: '',
       LEARNING_DISABLE: '1',
       AUDIT_DB_URL: '',
       MODEL_CATALOG_REFRESH: 'skip',

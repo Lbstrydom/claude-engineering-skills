@@ -736,7 +736,9 @@ async function cmdRun() {
   // 'diff-too-large', listed in perCommit — never silently dropped) so scoring can
   // report the defect as unscored-by-refusal rather than missed.
   const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
-  const useSdk = hasFlag('sdk'); // force the fast SDK backend for x1 runs too (real API spend)
+  // NO-OP since 2026-11-15 (cmdRun is always sdk). Still read so assertKnownFlags
+  // keeps accepting it, and logged so a run that passed it knows it was inert.
+  const useSdk = hasFlag('sdk');
   const budgetUsd = Number.parseFloat(argOption('budget-usd', '350')); // plan §8 ceiling, experiment-wide
 
   // exp-5: preflight-load the recipient policy ALWAYS (Security Considerations
@@ -843,15 +845,22 @@ async function cmdRun() {
   // ── recipient-specific client construction (AFTER the policy preflight
   // above, BEFORE any per-commit dispatch — no client for a refused recipient
   // is ever constructed) ─────────────────────────────────────────────────────
-  // sdk backend is needed for temperature AND for output_config.effort (the cli
-  // backend reads only {model,max_tokens,system,messages} and drops the rest
-  // silently — AGENTS.md "Anthropic Backend Routing"); opt-in via --sdk for speed.
-  const backend = (repeats > 1 || useSdk || reasoningEffort) ? 'sdk' : undefined;
+  // ALWAYS `sdk` since 2026-11-15: every pass passes `system`, which cli accepts
+  // and then outranks with its own agent persona, so the former `undefined`
+  // default recorded conformance misses that were transport failures — on a
+  // spend-bearing harness whose rows are compared ACROSS arms. The seam now
+  // throws on `system`. Cost: these runs bill ANTHROPIC_API_KEY instead of
+  // Max-20x credit; accepted, since an arm answering off-contract has no value
+  // at any price. `--sdk` survives as a logged no-op.
+  const backend = 'sdk';
   let anthropicClient = null, deepseekClient = null;
   if (recipient === 'anthropic') {
-    try { anthropicClient = await createAnthropicClient(backend ? { backend } : {}); }
+    // LITERAL, not forwarded through `backend`: anthropic:pin:gate cannot check
+    // a variable, so accepting `{ backend }` would be accepting a bare claim.
+    try { anthropicClient = await createAnthropicClient({ backend: 'sdk' }); }
     catch (err) {
-      log(`FATAL: cannot create ${backend || 'default'} client${backend === 'sdk' ? ' (repeats>1 / --reasoning-effort need ANTHROPIC_API_KEY for the SDK backend — cli claude -p cannot set temperature or effort)' : ''}: ${err.message}`);
+      log(`FATAL: cannot create the sdk client: ${err.message}`);
+      log('  This arm is sdk-only (every pass sends `system`, which cli cannot honour), so ANTHROPIC_API_KEY or an Azure Claude route is required.');
       process.exit(2);
     }
   } else if (recipient === 'deepseek') {
@@ -863,14 +872,14 @@ async function cmdRun() {
     log(`FATAL: recipient "${recipient}" has no cold-dispatch adapter wired in cmdRun yet (only anthropic/deepseek today).`);
     process.exit(2);
   }
-  log(`Solo control — arm=${label} · model=${model} (${modelArg}) · recipient=${recipient}, ${commits.length} new commit(s)${covered.size ? ` (${covered.size} already covered)` : ''}${repeats > 1 ? ` · repeats=${repeats} temp=${effectiveTemperature ?? 'n/a'}` : ''}${reasoningEffort ? ` · effort=${reasoningEffort}` : ''}${backend === 'sdk' ? ' · backend=sdk' : ''} · budget=$${budgetUsd}, stage=${STAGE_TYPE}`);
+  log(`Solo control — arm=${label} · model=${model} (${modelArg}) · recipient=${recipient}, ${commits.length} new commit(s)${covered.size ? ` (${covered.size} already covered)` : ''}${repeats > 1 ? ` · repeats=${repeats} temp=${effectiveTemperature ?? 'n/a'}` : ''}${reasoningEffort ? ` · effort=${reasoningEffort}` : ''}${useSdk ? ' · --sdk (no-op: always sdk)' : ''} · backend=sdk · budget=$${budgetUsd}, stage=${STAGE_TYPE}`);
 
   // Provenance (§12.5): pin what actually ran so the experiment is reproducible + fair.
   out.provenance = {
     repeats, temperature: effectiveTemperature,
     temperatureNote: repeats > 1 ? `${recipient} takes no temperature; variance is the model's own stochastic decoding (see samplingDegenerate)` : null,
     reasoningEffort: reasoningEffort ?? null,
-    backend: recipient === 'anthropic' ? (backend || 'cli(default)') : recipient, maxChars, resolvedModel: model, budgetUsd,
+    backend: recipient === 'anthropic' ? backend : recipient, maxChars, resolvedModel: model, budgetUsd,
   };
   let totalIn = 0, totalOut = 0, samplingVariedUnits = 0, samplingTotalUnits = 0;
 

@@ -463,17 +463,16 @@ describe('cli adapter redactor', () => {
     assert.ok(dump.stdin.includes('[REDACTED]'));
   });
 
-  // `system` no longer reaches the cli spawn — it is refused and routed to sdk
-  // (tests/anthropic-cli-faithfulness.test.mjs). The egress assertion it used
-  // to make here is NOT dropped: it is relocated to the transport that now
-  // carries `system`, below. Deleting it outright would have lost coverage on
-  // a sensitive-path egress seam, which AGENTS.md makes non-negotiable.
-  it('EGRESS: a system prompt routed cli→sdk is still redacted before it leaves', async () => {
-    process.env.CLAUDE_BACKEND = 'cli';
+  // `system` no longer reaches the cli spawn at all — the cli backend THROWS on
+  // it (tests/anthropic-cli-faithfulness.test.mjs), so the only transport that
+  // can carry a system prompt is a PINNED sdk client. The egress assertion this
+  // suite used to make against the cli spawn is therefore relocated here rather
+  // than dropped: deleting it would have lost coverage on a sensitive-path
+  // egress seam, which AGENTS.md makes non-negotiable, and the pin is now the
+  // documented route for every `system`-passing call site in the repo.
+  it('EGRESS: a system prompt on a PINNED sdk client is redacted before it leaves', async () => {
+    process.env.CLAUDE_BACKEND = 'cli'; // ambient cli, pinned call site
     process.env.ANTHROPIC_API_KEY = 'sk-test';
-    // No CLAUDE_BIN needed: the routing means `claude -p` is never spawned.
-    // If this test ever starts failing with a spawn error, the routing has
-    // stopped firing and the egress assertion below is no longer about sdk.
     let sent = null;
     const fetchImpl = async (_url, init) => {
       sent = JSON.parse(init.body);
@@ -484,6 +483,7 @@ describe('cli adapter redactor', () => {
       }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
     const client = await createAnthropicClient({
+      backend: 'sdk',
       redactor: s => s.replace(/SECRET/g, '[REDACTED]'),
       fetch: fetchImpl,
       fresh: true,
@@ -495,7 +495,7 @@ describe('cli adapter redactor', () => {
       messages: [{ role: 'user', content: 'user prompt with SECRET too' }],
     });
     assert.ok(sent, 'the call must have left via the sdk transport');
-    assert.ok(!JSON.stringify(sent).includes('SECRET'), 'routing must not bypass the egress redactor');
+    assert.ok(!JSON.stringify(sent).includes('SECRET'), 'the pin must not bypass the egress redactor');
     assert.match(sent.system, /\[REDACTED\]/);
     assert.match(sent.messages[0].content, /\[REDACTED\]/);
   });

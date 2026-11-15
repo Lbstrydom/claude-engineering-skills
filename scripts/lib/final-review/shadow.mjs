@@ -134,7 +134,13 @@ export async function buildShadowClient(canonicalProvider) {
   }
   if (canonicalProvider === 'azure-claude') {
     if (azureConfig.claudeApiShape === 'anthropic') {
-      return createAnthropicClient({ azureRoute: azureConfig.claudeRoute });
+      // `backend:'sdk'` PINNED, like the claude-opus arm below. The shadow's
+      // transport passes `system` and (when tool mode is on) `tools`, both
+      // unserviceable on cli. An `azureRoute` already coerces ambient cli to
+      // sdk via `reconcileBackendWithBaseUrl`, so this changes no behaviour
+      // today — it states the requirement at the site that has it, instead of
+      // leaving it to depend on a route being present.
+      return createAnthropicClient({ backend: 'sdk', azureRoute: azureConfig.claudeRoute });
     }
     return createOpenAIClient({ purpose: 'foundry-claude' });
   }

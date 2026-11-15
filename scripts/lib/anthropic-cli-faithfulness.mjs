@@ -10,6 +10,15 @@
  * the silent third category: accepted, then dropped or outranked, so the
  * failure surfaced one layer up as a MODEL failure rather than a transport one.
  *
+ * **THROW AND PIN, never route.** An unserviceable call throws, whether `cli`
+ * was explicit or ambient, and the remedy is a `{backend:'sdk'}` pin AT THE
+ * CALL SITE. The rejected alternative was a lazy sdk fallback that silently
+ * served ambient-cli calls on the sdk: it is quieter, and that is the problem —
+ * the transport a call runs on, and therefore which meter it bills, would be
+ * decided by a param the call site never connected to billing, and nothing in
+ * the repo would record which sites had moved. A pin is declared, greppable,
+ * reviewable in a diff, and enforced by `npm run anthropic:pin:gate`.
+ *
  * Its own module, not a helper inside
  * [anthropic-client.mjs](anthropic-client.mjs), for two reasons. The repo's
  * single-oracle pattern (`classifySelector`, `sensitive-paths.mjs`) gives each
@@ -53,22 +62,18 @@
  *   - `max_tokens` unmet → **the answer the caller asked for**, possibly more
  *     of it than was budgeted. The content is not wrong.
  *
- * So `max_tokens` is not in the refusal set by default. It is equally
- * unenforced on cli — accepted and ignored, measured above — but *every* caller
- * sets it (the Messages API requires it), so refusing on it would refuse every
- * call, collapsing the routing into "ambient cli always means sdk". That would
- * void an operator's explicit transport choice for the calls cli serves
- * correctly and move all of their spend off the Max 20x credit.
- *
- * **`CLAUDE_CLI_STRICT_MAX_TOKENS=1` is the operator's opt-in to the other
- * side of that trade** (adjudicated 2026-11-14, GPT ruling `compromise`): an
- * unenforced ceiling IS a real cost/runaway risk even when it is not a semantic
- * contract, and a once-per-session warning gives nobody control over it. Set
- * it and a `max_tokens` call becomes unserviceable on cli, routing to the
- * backend that honours it. Default off, so billing is unchanged unless the
- * operator chooses otherwise — the choice is theirs, not this module's. A
- * per-call `requireMaxTokens` option was rejected as an abstraction no current
- * call site needs; if one ever does, it belongs here, beside this.
+ * So `max_tokens` is NOT in the refusal set. It is equally unenforced on cli —
+ * accepted and ignored, measured above, and the adapter warns once per session —
+ * but *every* caller sets it (the Messages API requires it), so refusing on it
+ * would refuse every call, collapsing the routing into "cli is never usable".
+ * That would void an operator's transport choice for the calls cli serves
+ * correctly and move all of their spend off the Max 20x credit. What covers the
+ * real risk an unenforced ceiling carries is a consumer that NOTICES truncation:
+ * `assessBatchCompleteness` in scripts/symbol-index/summarise.mjs reads
+ * `stop_reason` and reports an incomplete batch rather than a silently short
+ * answer. A `CLAUDE_CLI_STRICT_MAX_TOKENS` env opt-in was implemented and then
+ * removed (2026-11-15): it was a second routing dial for a param whose being
+ * unmet does not change the answer, and no call site asked for it.
  *
  * @param {object} params - the `messages.create()` params
  * @returns {{param: string, why: string}|null} null when cli can serve the call
@@ -103,76 +108,39 @@ export function unserviceableCliParams(params) {
         + 'forcing `tool_choice` gets a text block back and no error',
     };
   }
-  // Checked LAST, so the diagnostics for the three answer-changing params are
-  // never shadowed by the opt-in cost guard.
-  if (params?.max_tokens !== undefined && strictMaxTokensRequested()) {
-    return {
-      param: 'max_tokens',
-      why: 'CLAUDE_CLI_STRICT_MAX_TOKENS is set, and the cli backend does not '
-        + 'enforce an output ceiling — it accepts `max_tokens` and ignores it '
-        + '(measured: 2254-2784 output tokens against a 200 ceiling), so the '
-        + 'budget this call asked for can only be honoured by the sdk backend',
-    };
-  }
   return null;
 }
 
 /**
- * Has the operator opted into treating an unenforceable output ceiling as
- * unserviceable? Read per call, not cached at module load, so a test (and a
- * long-lived process whose env changes) sees the current value.
+ * The error a cli-backed `messages.create()` must raise for an unserviceable
+ * call, or `null` when the call may proceed on cli.
  *
- * Only `1` and `true` enable it. An unrecognised value reads as OFF rather than
- * throwing: unlike `CLAUDE_BACKEND`, where a typo silently routes billing to
- * the wrong meter, the safe reading here is "leave the operator's billing as it
- * is" — turning strictness ON by accident is what would move their spend.
- */
-function strictMaxTokensRequested() {
-  const raw = String(process.env.CLAUDE_CLI_STRICT_MAX_TOKENS || '').trim().toLowerCase();
-  return raw === '1' || raw === 'true';
-}
-
-/**
- * What the cli adapter must DO about an unserviceable call — the precedence
- * rule, kept in the same module as the decision so one import carries the whole
- * policy and a call site cannot adopt half of it.
+ * **One verdict, not two.** The earlier version branched on whether `cli` was
+ * explicit (throw) or ambient (route to sdk with a once-per-param warning),
+ * mirroring `reconcileBackendWithBaseUrl`. That symmetry was the wrong one to
+ * copy: a baseURL names a DESTINATION the operator chose, so coercing the
+ * transport still reaches it, whereas `system` names a BILLABLE contract the
+ * call site never made a transport decision about. Both cases now throw, and
+ * the message carries the same remedy, because the remedy is the same: pin the
+ * call site.
  *
- * Precedence mirrors `reconcileBackendWithBaseUrl` exactly, because the
- * situation is the same shape — the caller's stated intent against an ambient
- * env choice:
- *
- *   - **explicit `backend:'cli'`** → `throw`. The caller contradicted itself,
- *     just as with an explicit `cli` plus a custom `baseURL`.
- *   - **ambient `CLAUDE_BACKEND=cli`** → `route` the call to sdk and name the
- *     reason once. The caller never asked for this transport, and an operator's
- *     env default is not a licence to return an answer that fails the call's
- *     own contract.
- *   - **serviceable** → `null`, i.e. spawn `claude -p` unchanged. This is the
- *     high-volume half of the call-site census and it keeps the Max 20x
- *     credit; the `BILLING PIN` test is the control that it stayed that way.
+ * Message shape is deliberate — the param, the measured reason, and the exact
+ * code change — so the throw is actionable from a log line alone, without
+ * reading this module.
  *
  * @param {object} params - the `messages.create()` params
- * @param {{backendWasExplicit?: boolean}} [opts]
- * @returns {{action: 'throw'|'route', param: string, message: string}|null}
- *   null when the call may proceed on cli.
+ * @returns {{param: string, message: string}|null}
  */
-export function cliFaithfulnessVerdict(params, opts = {}) {
+export function cliFaithfulnessVerdict(params) {
   const unserviceable = unserviceableCliParams(params);
   if (!unserviceable) return null;
   const { param, why } = unserviceable;
-  if (opts.backendWasExplicit) {
-    return {
-      action: 'throw',
-      param,
-      message: `[anthropic-client] backend:'cli' cannot honour \`${param}\` — ${why}. `
-        + `Use backend:'sdk' for this call, or drop \`${param}\`.`,
-    };
-  }
   return {
-    action: 'route',
     param,
-    message: `  [anthropic-client] \`${param}\` set → using the sdk backend despite `
-      + `CLAUDE_BACKEND=cli. ${why}. Honouring the ambient backend would return `
-      + `an answer that does not meet the call's contract.\n`,
+    message: `[anthropic-client] the cli backend cannot honour \`${param}\` — ${why}. `
+      + `Pin this call site with createAnthropicClient({ backend: 'sdk' }), or drop `
+      + `\`${param}\`. The cli backend is never chosen implicitly for a call it `
+      + `would answer off-contract, and it is not silently swapped for sdk either: `
+      + `which meter a call bills is a decision the call site declares.`,
   };
 }

@@ -292,13 +292,22 @@ async function _llmCondense(content) {
   // ANTHROPIC_API_KEY, so the old raw-key test skipped this branch outright on a
   // corporate tenant and the brief silently degraded to Gemini (AGENTS.md,
   // "An availability gate must ask whether a ROUTE exists").
-  const { isClaudeAvailable } = await import('./anthropic-client.mjs');
-  if (isClaudeAvailable()) {
+  const { isClaudeAvailableFor } = await import('./anthropic-client.mjs');
+  // `'sdk'`, not the ambient backend: the Claude leg is pinned to sdk (it
+  // passes `system`), so the ambient answer would be `true` on a keyless cli
+  // install and this leg would raise a credential error instead of letting the
+  // Gemini leg below serve the brief.
+  if (isClaudeAvailableFor('sdk')) {
     const budget = budgetFor('Claude');
     if (budget) {
       try {
         const { createAnthropicClient } = await import('./anthropic-client.mjs');
-        const anthropic = await createAnthropicClient();
+        // PINNED `backend:'sdk'` (2026-11-15): `system` is BRIEF_SYSTEM_PROMPT,
+        // the entire output contract for this brief, and the cli backend does
+        // not honour it. The seam throws on it, and the gate above was switched
+        // to `isClaudeAvailableFor('sdk')` so a keyless cli install falls
+        // through to the Gemini leg instead of raising a credential error.
+        const anthropic = await createAnthropicClient({ backend: 'sdk' });
         const model = briefConfig.claudeModel;
         process.stderr.write(`  [brief] Generating via ${model}...\n`);
         const startMs = Date.now();

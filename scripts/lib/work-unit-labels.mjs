@@ -172,11 +172,17 @@ export async function labelWorkUnits(units, opts = {}) {
  */
 async function defaultLabeller() {
   try {
-    const { createAnthropicClient, isClaudeAvailable } = await import('./anthropic-client.mjs');
-    if (typeof isClaudeAvailable === 'function' && !(await isClaudeAvailable())) return null;
+    const { createAnthropicClient, isClaudeAvailableFor } = await import('./anthropic-client.mjs');
+    // `isClaudeAvailableFor('sdk')`, not the ambient `isClaudeAvailable()`: this
+    // call passes `system`, so it is pinned below, and the ambient answer is
+    // `true` under a KEYLESS `CLAUDE_BACKEND=cli` install — the gate would pass
+    // and the pinned construction would then throw `ANTHROPIC_API_KEY required`
+    // for a backend nobody selected. Labelling is optional, so skip cleanly.
+    if (typeof isClaudeAvailableFor === 'function' && !(await isClaudeAvailableFor('sdk'))) return null;
     const { resolveModel } = await import('./model-resolver.mjs');
     const model = resolveModel(process.env.WORK_UNIT_LABEL_MODEL || 'latest-haiku');
-    const client = await createAnthropicClient();
+    // PINNED `backend:'sdk'` — see the gate note above.
+    const client = await createAnthropicClient({ backend: 'sdk' });
     return async (unit) => {
       const res = await client.messages.create({
         model,

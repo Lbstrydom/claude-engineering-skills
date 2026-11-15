@@ -187,7 +187,12 @@ async function callJudgeDefault({ prompt, schema }) {
     // (found on the first live calibration run). `assertEgressSafe` above is the
     // real secret gate (hard-throws); this shape redactor is defense-in-depth
     // that won't corrupt identifiers.
-    const client = await createAnthropicClient({ redactor: await getShapeRedactor() });
+    // PINNED `backend:'sdk'` (2026-11-15): this call passes `system`, which the
+    // cli backend accepts and then outranks with its own agent persona — so the
+    // judge was scoring its own transport failures as `conformant: false`
+    // whenever CLAUDE_BACKEND=cli was ambient. The seam now throws rather than
+    // answer off-contract; the pin is the declared transport decision.
+    const client = await createAnthropicClient({ backend: 'sdk', redactor: await getShapeRedactor() });
     const resp = await client.messages.create({
       model: resolveModel('latest-opus', { silent: true }),
       max_tokens: 4000,

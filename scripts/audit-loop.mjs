@@ -20,7 +20,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildAuditTranscript, readRoundResult } from './lib/audit/transcript.mjs';
-import { isClaudeAvailable } from './lib/anthropic-client.mjs';
+import { isClaudeAvailableFor } from './lib/anthropic-client.mjs';
 import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib/audit/transcript-archive.mjs';
 import { formatCoverageSuffix, coverageMissingNote } from './lib/coverage-format.mjs';
 import { COVERAGE_CONVERGENCE_REASONS } from './lib/audit/convergence.mjs';
@@ -517,7 +517,12 @@ ${R}Round ${round} stopped at the round cap${X} — read the structural-or-stop 
     // ROUTE, not key: on an Azure work profile Claude is reachable through the
     // tenant's own endpoint with no ANTHROPIC_API_KEY set, and gating the
     // MANDATORY final review on the public var skipped it outright there.
-    const hasClaude = isClaudeAvailable();
+    // `'sdk'`: the Claude final-review transport passes `system` AND `tools`,
+    // so `final-review/providers.mjs` pins `backend:'sdk'` on both its routes.
+    // The ambient gate said `true` on a keyless cli install, so the MANDATORY
+    // review was attempted and failed on a missing ANTHROPIC_API_KEY instead of
+    // reporting honestly that no reviewer route existed.
+    const hasClaude = isClaudeAvailableFor('sdk');
 
     if (hasGemini || hasClaude) {
       banner('STEP 7 — Final Review (Gemini/Claude Opus)');

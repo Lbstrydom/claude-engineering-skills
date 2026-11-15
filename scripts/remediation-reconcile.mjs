@@ -29,7 +29,7 @@ import { assertKnownFlags, emit, arg } from './lib/cli-io.mjs';
 import { isCloudEnabled, resolveRepoForStore } from './lib/store/repo.mjs';
 import { getStaleAcceptedFindingsForVerification, countStaleAcceptedFindingsForVerification } from './lib/store/plans-ship.mjs';
 import { applyRemediationVerificationResults, initLearningStore } from './learning-store.mjs';
-import { createAnthropicClient, isClaudeAvailable } from './lib/anthropic-client.mjs';
+import { createAnthropicClient, isClaudeAvailableFor } from './lib/anthropic-client.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';
 import { gitCommitSha } from './lib/vcs.mjs';
 import {
@@ -130,7 +130,10 @@ async function main() {
   let resolvedCount = 0, stillPresentCount = 0, uncertainCount = 0, providerFailures = 0, skippedNoCredential = false;
 
   if (grouped.length > 0) {
-    if (!await isClaudeAvailable()) {
+    // `'sdk'`: the verifier below is pinned there (forced `tool_choice`), so
+    // the ambient gate would pass on a keyless cli install and the pinned
+    // construction would then throw. Skipping is already a supported outcome.
+    if (!await isClaudeAvailableFor('sdk')) {
       skippedNoCredential = true;
       log(`  ${Y}no Claude credential available — skipping ${grouped.length} file(s) needing LLM verification${X}`);
     } else {

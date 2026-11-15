@@ -1,16 +1,27 @@
 # Plan: the cli backend must refuse a call it cannot faithfully serve
 
-- **Date**: 2026-11-14
-- **Status**: Complete — implemented 2026-11-14; written alongside the change
-  as the spec `/audit-code` audits the diff against. Every claim is checkable
-  against the commit; figures carry their command (§6).
+- **Date**: 2026-11-14, **reshaped 2026-11-15**
+- **Status**: Complete — implemented 2026-11-14, then **reshaped from
+  route-or-throw to THROW AND PIN on Louis's decision (§3.2a)**. Written
+  alongside the change as the spec `/audit-code` audits the diff against. Every
+  claim is checkable against the commit; figures carry their command (§6).
 - **Author**: Claude + Louis
-- **Scope**: backend (one transport seam + two call-site fixes + AGENTS.md; no UI)
+- **Scope**: backend (one transport seam + 6 call-site pins + 7 availability
+  gates + a merge-time gate + AGENTS.md; no UI)
 
 > **Target domain(s)**: `shared-lib`, `symbol-index`
-> - ⚠ **Cross-domain** — the routing decision lands once in `shared-lib`
->   (`anthropic-client.mjs`); `symbol-index` gets two call-site fixes that the
->   seam cannot make for it.
+> - ⚠ **Cross-domain** — the refusal lands once in `shared-lib`
+>   (`anthropic-client.mjs` + `anthropic-cli-faithfulness.mjs`); `symbol-index`
+>   gets two call-site fixes that the seam cannot make for it, and the pins
+>   touch `audit`, `experiments` and `brief` call sites that the seam can only
+>   refuse, not fix.
+
+> **What changed on 2026-11-15, in one line**: an unserviceable call now THROWS
+> whether `cli` was ambient or explicit; the `sdkFallback` routing and the
+> `CLAUDE_CLI_STRICT_MAX_TOKENS` opt-in are gone; 6 sites are pinned (two found
+> by a mechanical census the by-hand list missed, §2.6a); 7 availability gates
+> became `isClaudeAvailableFor('sdk')`; and `npm run anthropic:pin:gate` makes
+> the pin enforceable at merge time, which the runtime throw cannot be (§7.3).
 
 ---
 
@@ -147,7 +158,7 @@ the one flag that removes the prefix also removes the Max credit — a working
 latency. This closes off the narrower alternative and is why the fix has to be
 about routing, not flags.
 
-### 2.6 The measured defect is live and unpinned at four sites
+### 2.6 The measured defect is live and unpinned at four sites (six — see §2.6a)
 
 Four ambient sites pass `system`. Three have a tight output contract, so the
 §2.3 failure is not hypothetical for them:
@@ -163,15 +174,47 @@ Four ambient sites pass `system`. Three have a tight output contract, so the
 feed arm-eval, and on the ambient `cli` backend it records calibration
 failures that are entirely the transport's.
 
+### 2.6a Re-censused 2026-11-15: SIX sites, not four — and the two extra are the interesting ones
+
+The four above were found by reading the files that pass `system` next to the
+files that construct a client. That method is blind to two shapes, and a
+mechanical re-census (`node scripts/check-anthropic-pins.mjs --list`, over
+TRACKED `scripts/**/*.mjs`) found one of each:
+
+| site | shape | why a by-hand read missed it |
+|---|---|---|
+| [evolve-prompts.mjs:395](../../scripts/evolve-prompts.mjs#L395) | **HANDOFF** | It constructs the client and passes it to `createLearningAdapter`, whose `callClaude` ([llm-wrappers.mjs](../../scripts/lib/llm-wrappers.mjs)) sends `system: systemPrompt`. Neither file is a violation on its own: one constructs and passes no param, the other passes a param and constructs nothing |
+| [solo-control-audit.mjs:852](../../scripts/solo-control-audit.mjs#L852) | **FORWARDED VARIABLE** | `createAnthropicClient(backend ? { backend } : {})`, where `backend` was `'sdk'` only when `repeats > 1 \|\| --sdk \|\| --reasoning-effort`. The default path was ambient, and `runPass` passes `system` on every pass — on a **spend-bearing** experiment harness whose rows are compared across arms |
+
+`solo-control-audit.mjs` is the worse of the two for the same reason
+`judge.mjs` was: it RECORDS the result. An arm whose passes answered off-contract
+was scored against arms that did not, and `out.provenance.backend` wrote
+`'cli(default)'`, so the rows say which transport they ran on and nothing says
+the transport could not serve them. Both are now pinned, and
+`solo-control-audit` is sdk-only (`--sdk` kept as a logged no-op).
+
+**The generalisable point, and the reason the gate has a Rule B.** A by-hand
+census of "who passes `system`" is a census of SYNTAX; what matters is who
+passes a *client* to something that passes `system`. The handoff crosses a
+module boundary as a value, sometimes through an options bag, so no file-local
+scan can see it — which is why every unpinned construction is enumerated in
+`.anthropic-pin-census.json` with a stated reason rather than left to a pattern.
+
 ---
 
 ## 3. Design
 
 ### 3.1 Why not the three obvious alternatives
 
-**Band-aid — pin the 17 ambient sites.** Makes correctness a property of 17
-call sites, which is the state we are in: 13 sites already pinned, one burn at
-a time, and site 18 arrives unpinned. This file already contains the verdict
+**Band-aid — pin the ambient sites and stop there.** Makes correctness a
+property of the call sites, which is the state we are in: 13 sites already
+pinned, one burn at a time, and site 18 arrives unpinned. Note what the shipped
+design keeps and what it rejects: it DOES pin the sites (§7.2), because a
+transport decision belongs where it can be read — but the pin is not the
+mechanism. The seam refuses the unfaithful call whether or not anyone
+remembered, and `anthropic:pin:gate` refuses the next unpinned site at merge
+time (§7.3). "Pin the sites" is a band-aid only when pinning is the *whole*
+answer, which is how sites 14 through 17 arrived. This file already contains the verdict
 on that approach, written after the identical failure with Azure routes
 (`anthropic-client.mjs`, the "Why the default flipped" comment): *"Requiring
 every call site to pass the route made correctness a property of 30-odd call
@@ -212,15 +255,52 @@ So the fix extends the mechanism that is already there, rather than adding a
 new one. It is decided **from the params**, mechanically — no per-site
 judgement, no new config, nothing for a future author to remember.
 
-Precedence mirrors `reconcileBackendWithBaseUrl` exactly, because the
-situation is the same shape (the caller's intent vs an ambient env choice):
+**THROW AND PIN** (decided 2026-11-15; §3.2a records what it replaced):
 
-- **ambient `cli`** + unserviceable params → **route this call to `sdk`**, warn
-  once per reason, naming the param and the measurement.
-- **explicit `backend:'cli'`** + unserviceable params → **throw**. The caller
-  contradicted itself, exactly as with an explicit `cli` + `baseURL`.
+- **unserviceable params** → **throw**, whether `cli` was ambient or explicit.
+  One verdict, one message, naming the param, the measured reason, and the
+  remedy: `createAnthropicClient({ backend: 'sdk' })` at the call site.
 - **serviceable params** → unchanged. The call stays on `cli` and keeps the
   credit.
+
+### 3.2a What throw-and-pin replaced, and why the first shape was wrong
+
+The first implementation mirrored `reconcileBackendWithBaseUrl`'s precedence —
+ambient `cli` ROUTED the call to sdk with a once-per-param warning, explicit
+`cli` threw — on the reasoning that both are "the caller's intent vs an ambient
+env choice". That reasoning was the defect.
+
+**A `baseURL` names a DESTINATION the operator chose, so coercing the transport
+still reaches it. `system` names a billable CONTRACT the call site never made a
+transport decision about.** Routing on it meant a param decided which meter a
+call bills — quietly, at run time, with nothing committed recording which sites
+had moved. The quietness was the whole appeal and the whole problem: a reader of
+`evolve-prompts.mjs` could not tell that its calls had left the Max credit.
+
+Three consequences of the throw shape that the routing shape could not have:
+
+1. **The decision is in the diff.** 6 pins, reviewable, greppable, and each with
+   the measured reason beside it. "Which sites bill the API meter" is answerable
+   from `git grep`, not from reasoning about params at run time.
+2. **It is enforceable before merge.** A runtime throw cannot fire in CI, which
+   runs the committed `sdk` default — so the routing shape's guard was, in
+   effect, "an operator with `CLAUDE_BACKEND=cli` notices". `npm run
+   anthropic:pin:gate` is a real guard: Rule A (file-local, mechanical) plus
+   Rule B (a declared census, because a client HANDED to another module is
+   invisible to a file-local scan — see §2.6a).
+3. **The keyless case stops lying.** The routing shape had no sdk credential to
+   fall back to on a keyless `cli` install, so the failure surfaced as
+   `ANTHROPIC_API_KEY required` — a credential error for a backend the operator
+   never selected. The throw names the param instead, and the pinned sites' gate
+   became `isClaudeAvailableFor('sdk')` so such an install skips the feature
+   cleanly rather than attempting it.
+
+The cost of the throw shape, stated honestly: an operator who sets
+`CLAUDE_BACKEND=cli` and then calls an UNPINNED seam site with `system` gets an
+error where they previously got an answer. That is the intended trade — the
+answer they previously got did not meet the call's contract (§2.3) — but it is a
+behaviour change for anyone running a patched or forked call site, and the pin
+gate is what keeps the in-repo population at zero.
 
 ### 3.3 Which params are unserviceable
 
@@ -230,16 +310,28 @@ Refuse on `system` (non-empty), `tools`, or `tool_choice`.
 so refusing on it would refuse every call and collapse this into the
 as-proposed variant by the back door. The existing once-per-session warning
 stays, reworded to say the limit is *unenforced* rather than merely
-"not enforceable".
+"not enforceable". What covers the real risk an unenforced ceiling carries is a
+consumer that NOTICES truncation — `assessBatchCompleteness` (§5.2, §6.E) reads
+`stop_reason` — not a second routing dial.
+
+A `CLAUDE_CLI_STRICT_MAX_TOKENS` env opt-in was implemented on 2026-11-14,
+adjudicated out of a round-1 HIGH, and **removed on 2026-11-15**. Two reasons,
+both visible only once routing was gone: it was a second routing dial for a
+param whose being unmet does not change the answer, so it failed this section's
+own membership test; and under throw-and-pin "strict" would mean *throwing on
+every cli call*, which is not a trade an env var should express. No call site
+ever asked for it. The removal carries its own negative control — a stale
+`CLAUDE_CLI_STRICT_MAX_TOKENS=1` must now change nothing, end to end — because
+a removal that left the read in place would be invisible.
 
 ### 3.4 Placement
 
 The params are known at `messages.create()` time, not at client-construction
-time, so the decision lives in the cli adapter. `createAnthropicClient` passes
-the adapter a lazily-invoked `sdkFallback` closure over the options already
-resolved for the sdk path; the adapter calls it only when it refuses a call,
-so the common path constructs nothing extra and the sdk client is never built
-for a process that never needs one.
+time, so the decision lives in the cli adapter — which now needs nothing from
+the factory beyond what it already had. The `sdkFallback` closure the routing
+shape required is gone with it, and with it the one piece of the earlier design
+that was genuinely hard to reason about: a cli client that could silently
+construct and bill a second client.
 
 ---
 
@@ -249,7 +341,8 @@ for a process that never needs one.
 `ANTHROPIC_API_KEY`. Any call this change moves to `sdk` moves spend from the
 subscription to the API meter. Named per site, so the trade is explicit:
 
-**Moves to the API meter** (the four `system`-passing ambient sites, §2.6):
+**Moves to the API meter** (the `system`-passing ambient sites — four from
+§2.6 plus the two the mechanical census found, §2.6a):
 
 | site | volume | API cost after | subscription cost today |
 |---|---|---|---|
@@ -258,18 +351,29 @@ subscription to the API meter. Named per site, so the trade is explicit:
 | `refine-prompts.mjs` | manual, rare | negligible | — |
 | `context.mjs` `_llmCondense` | per brief generation | ≈$0.002/call | ~$0.05+/call |
 
+| `evolve-prompts.mjs` (§2.6a, handoff) | manual, rare | negligible | — |
+| `solo-control-audit.mjs` (§2.6a, forwarded var) | **spend-bearing**: 5 passes × N commits × `--repeats`, Sonnet/Opus, `max_tokens` 8000 | real and already budgeted (`--budget`) | the same calls, answering off-contract and recorded as arm results |
+
+`solo-control-audit` is the one site where the move is a genuine new API-meter
+line rather than a replacement of waste: its default path previously ran on the
+subscription. It is still the right trade — an arm whose passes do not meet the
+prompt's contract has no value at any price, and the harness already caps spend
+with `--budget` — but it is the one line here an operator could be surprised by,
+so it is called out rather than folded into "replacing failures".
+
 **Stays on the subscription**: the summariser and `summarise-domains` (no
-`system`), `neighbourhood-query`, `visual/explain`, `anthropic-ping`,
-`evolve-prompts`, `solo-control-audit:852`, the brainstorm adapter,
-`azure-limits`, `final-review/shadow:137`. That is the high-volume half of the
-census, and it is the half `cli` serves correctly.
+`system`), `neighbourhood-query`, `visual/explain`, `anthropic-ping`. That is
+the high-volume half of the census, and it is the half `cli` serves correctly.
+Each is enumerated in `.anthropic-pin-census.json` with the reason it is
+serviceable, so the claim is committed rather than inferred.
 
 **The trade is favourable on the measurements, not merely acceptable.** Three
-of the four moved sites are paying 5–3000× the sdk price *for an answer their
+of the six moved sites are paying 5–3000× the sdk price *for an answer their
 own parser rejects or truncates*. Moving them reduces total spend across both
-meters while fixing the output. The honest caveat: `arm-eval/judge.mjs` runs
+meters while fixing the output. Two honest caveats: `arm-eval/judge.mjs` runs
 Opus, so its API-meter line will be visible where today it is invisible — but
-today's invisible spend is buying `conformant:false`.
+today's invisible spend is buying `conformant:false`; and
+`solo-control-audit.mjs` is a real new line, as above.
 
 **What this change does NOT do**: it leaves the ~164K-token prefix tax in
 place on every call that stays on `cli` (§2.4 — 1.6× warm, 17× cold, 2.7×
@@ -413,8 +517,8 @@ Committed in response to the round-1 audit's M1, and it was right: §6.D's rever
 triggers are stated in terms of these numbers, so pointing them at a `C:/tmp`
 path made them unfalsifiable by anyone but their author. The `system` mode runs
 its cli leg **below the seam** by design — the seam now refuses that shape, so
-the live path cannot produce it. §7.3 additionally lands the routing DECISION as
-a test, which is the part that must not regress.
+the live path cannot produce it. §7.4 additionally lands the REFUSAL as a test,
+which is the part that must not regress.
 The dollar figures are `claude -p`'s own `total_cost_usd`, i.e. the CLI's
 self-report, which AGENTS.md already names as the only available meter for the
 scripted cli backend (`claude-trace` cannot meter it).
@@ -425,9 +529,12 @@ scripted cli backend (`claude-trace` cannot meter it).
   **both** in shape (terse, within `max_tokens`) **and** in cost (output tokens
   within ~2× of sdk's). Note that a shape-only pass is NOT a revert trigger:
   §6.B already found one (the shortened replica, 3/3 one-line answers) and it
-  still burned 11–16× the output tokens. The §7.3 tests assert the *routing
-  decision*, never the model's prose, so they stay valid either way — but this
-  plan's justification would not.
+  still burned 11–16× the output tokens. The §7.4 tests assert the *refusal*,
+  never the model's prose, so they stay valid either way — but this plan's
+  justification would not. A revert would mean removing `system` from
+  `unserviceableCliParams` and its entries from the pin census; the
+  `--system-prompt` plumbing in the adapter is retained though currently
+  unreachable, so that is a small change rather than a re-implementation.
 - Evidence that a moved site's API-meter cost exceeds what it replaces. §4's
   per-site figures are the claim to check; `arm-eval/judge.mjs` on Opus is the
   one with real downside if its call volume is higher than "per judging call".
@@ -509,82 +616,106 @@ revert-and-watch-it-go-red at the **right layer** separates them, which is why
 
 ---
 
-## 7. Implementation
+## 7. Implementation (as shipped 2026-11-15 — throw-and-pin)
 
-### 7.1 `scripts/lib/anthropic-client.mjs`
+### 7.1 The seam
 
-1. `unserviceableCliParams(params)` → `null | {param, why}`. Checks `system`
-   (non-empty string), `tools`, `tool_choice`. One oracle, exported on
-   `_internals` for the test.
-2. `createCliAdapter` gains `opts.sdkFallback` and `opts.backendWasExplicit`.
-   In `create()`, after `assertOneShotTextMessages`: if
-   `unserviceableCliParams(params)` returns a reason —
-   - `backendWasExplicit` → throw, naming the param, the measurement and the
-     `backend:'sdk'` remedy;
-   - else → warn once per reason on stderr, then
-     `return (await sdkFallback()).messages.create(params, requestOptions)`.
-3. `createAnthropicClient` passes `sdkFallback` (a closure building the sdk
-   client from the already-resolved effective values) and
-   `backendWasExplicit`. A fallback-routed call must not be cached under the
-   cli cache key.
-4. Reword the `max_tokens` warning: unenforced, not "not enforceable".
-5. `_resetClientCache` clears the new once-per-reason flags.
+- **`scripts/lib/anthropic-cli-faithfulness.mjs`** — `unserviceableCliParams`
+  (`null | {param, why}`; `system` non-empty, `tools`, `tool_choice`) and
+  `cliFaithfulnessVerdict` (`null | {param, message}`). Its own module: the
+  single-oracle pattern wants one importable home, and
+  `anthropic-client.mjs` is past the `size:ratchet:gate` limit, where the
+  gate's instruction is to split rather than justify growth.
+- **`createCliAdapter`** — after `assertOneShotTextMessages`, a non-null verdict
+  THROWS. No `sdkFallback`, no `backendWasExplicit`, no once-per-param warning
+  state; the adapter takes `{claudeBin, timeoutMs, redactor}` as it did before
+  this change. `cliFaithfulnessVerdict` takes the params alone.
+- **`isClaudeAvailableFor(backend)`** — the availability oracle, taking the
+  backend as an argument; `isClaudeAvailable()` becomes a thin
+  ambient-resolving wrapper over it, so there is still one definition of
+  "available". A named backend deliberately does not re-validate
+  `CLAUDE_BACKEND`, since a pinned call never reads it.
+- The `max_tokens` warning stays, worded *unenforced*, not "not enforceable".
 
-### 7.2 Call sites
+### 7.2 Call sites — 6 pins, and 5 gates that were asking the wrong question
 
-- `summarise.mjs`: availability gate → `isClaudeAvailable()`; `max_tokens` →
-  `summaryMaxTokens(batch.length)`; the missing entry guard (§5.3).
-- No other call-site edits. That is the point of §3.2.
+Pinned `{backend:'sdk'}`, each with the reason beside it: `arm-eval/judge.mjs`,
+`work-unit-labels.mjs`, `refine-prompts.mjs`, `context.mjs`,
+`evolve-prompts.mjs` (§2.6a handoff), `solo-control-audit.mjs` (§2.6a forwarded
+variable, now unconditionally sdk with `--sdk` kept as a logged no-op).
+`final-review/shadow.mjs`'s azure-claude arm is pinned too — behaviour-neutral,
+since an `azureRoute` already coerces ambient cli, but it states the
+requirement at the site that has it instead of leaving it to depend on a route.
 
-### 7.3 Tests
+Gates moved to `isClaudeAvailableFor('sdk')` where the site they guard is
+pinned: `work-unit-labels`, `refine-prompts`, `context.mjs`, `evolve-prompts`,
+`audit-loop.mjs` (the MANDATORY final review), `remediation-reconcile.mjs`,
+`normalize-intent.mjs`. Left ambient where the site is ambient:
+`anthropic-ping`, `neighbourhood-query`, `summarise.mjs`.
 
-**New: `tests/anthropic-cli-faithfulness.test.mjs`** (15 tests). Its own file
-rather than an append to the 905-line `anthropic-client.test.mjs`, so the
-suite's subject is legible from its name.
+Also in scope and unchanged from the first implementation: `summarise.mjs`'s
+availability gate (§5.1), `summaryMaxTokens` (§5.2), its missing entry guard
+(§5.3), and the completeness verdict (§6.E).
 
-- Each of `system` / `tools` / `tool_choice` + ambient `cli` → the call leaves
-  via the **sdk transport**, observed through an injected `fetch` (the sdk
-  binds its transport at construction, so this is the only vantage point that
-  can prove which transport was used).
-- The routed call reaches the sdk with `system` and `max_tokens` **intact** —
-  stripping `system` to make the call fit would reproduce the defect on the
-  other backend.
-- **`BILLING PIN` (positive control)**: an ambient-`cli` call with serviceable
-  params makes **zero** sdk calls. Without this, the change could silently
-  have become "always sdk", voiding an operator's transport choice and moving
-  every call's spend off the Max credit.
-- An empty / whitespace `system` is serviceable — it carries no instruction.
-- Each param on an explicit `backend:'cli'` → throws, naming the param **and**
-  the remedy.
-- The warning fires **once per reason**, not once per call, and names
-  `CLAUDE_BACKEND=cli`.
-- `unserviceableCliParams` truth table, including that `max_tokens` is
-  explicitly not a trigger and that every refusal carries a non-empty reason.
+### 7.3 The gate — because the throw cannot fire in CI
 
-**Negative control, run before claiming green**: neutering the oracle to
-`return null` fails **10 of 15** and leaves green exactly the 5 must-not-fire
-cases (billing pin, whitespace `system`, serviceable-explicit-cli, and the two
-serviceable truth-table rows). A gate not seen to fail is not evidence.
+`npm run anthropic:pin:gate`
+([`check-anthropic-pins.mjs`](../../scripts/check-anthropic-pins.mjs) +
+[`lib/anthropic-pin-census.mjs`](../../scripts/lib/anthropic-pin-census.mjs)),
+in `check:static`. **This is the load-bearing half of the change.** CI runs the
+committed `sdk` default, so a new unpinned `system`-passing site ships green and
+breaks only where `CLAUDE_BACKEND=cli` is set — which is where this repo is
+used. A runtime refusal no CI run can reach is not a guard.
 
-**New: `tests/symbol-index-summary-budget.test.mjs`** (6 tests) — the
-production pin at batch 50 → 4096, the cap at every size, the scaling below it,
-≥50% headroom over the measured worst case, fail-open on degenerate input.
+- **Rule A** (file-local, mechanical, no declaration accepted): a file that
+  constructs an unpinned client AND passes an unserviceable param literal.
+- **Rule B** (drift-only, declared): every unpinned construction enumerated in
+  the committed `.anthropic-pin-census.json` with a reason. A new one fails; a
+  **stale one fails too**, asking for a re-baseline, in `size:ratchet:gate`'s
+  shape — an entry for a file that no longer constructs an unpinned client is a
+  claim about nothing, and leaving it makes the list look like coverage.
+- **`indirectPins`** — the one escape from Rule A, and it is verified rather
+  than trusted: an entry names the `via` function that holds the literal
+  (`azure-claude-adapter.mjs`'s `clientOptions()`), and the gate re-reads that
+  function, brace-scoped, to confirm the pin is still there.
+- Corpus: TRACKED `scripts/**/*.mjs`, asked of git. Tracked is the right
+  question for a merge gate — it judges what the commit ships, and it is what
+  the pre-push sandbox (a clean worktree at the commit being pushed) contains at
+  all. It keeps the gitignored `scripts/.claude-skills/**` out, which is
+  upstream's own content indexed twice.
+- A corpus of **zero** exits 2 rather than printing clean: the seam's own module
+  names the factory, so an empty set means the enumeration broke.
 
-**Relocated, not deleted** (`tests/anthropic-client.test.mjs`): two tests
-asserted egress redaction of `system` **through the cli adapter**, which is now
-unreachable. The assertions moved to the transport that carries `system`:
+### 7.4 Tests
 
-- `EGRESS: a system prompt routed cli→sdk is still redacted before it leaves` —
-  proves the routing does not bypass the redactor. Dropping this instead of
-  relocating it would have lost coverage on a sensitive-path egress seam, which
-  AGENTS.md makes non-negotiable.
-- `applyRedactor structured system` previously said in its own comments that
-  its stated subject — array-form system blocks — was *not* exercised ("the cli
-  adapter receives `params.system` as a string from this test"). Rewritten to
-  test the claim directly via an injected transport, plus a case proving an
-  unknown block shape passes through untouched rather than being guessed at.
-- The `max_tokens` warn-once test matches the reworded string; the cli
-  arg-construction test no longer passes `system`.
+**`tests/anthropic-cli-faithfulness.test.mjs`** (27). Each of `system` /
+`tools` / `tool_choice`, ambient AND explicit → throws, naming the param and
+the pin. **Every throw test also asserts ZERO sdk calls**, observed through an
+injected `fetch` — without that half the suite would pass under the rejected
+routing design too, since that design also threw on the explicit-cli case.
+Plus: the keyless-ambient-cli case names the param and NOT `ANTHROPIC_API_KEY`;
+a pinned sdk client carries `system`/`tools`/`tool_choice` intact; the removed
+`CLAUDE_CLI_STRICT_MAX_TOKENS` is no longer read at any value, end to end;
+`isClaudeAvailableFor` disagrees with `isClaudeAvailable()` exactly where it
+must. **`BILLING PIN` (positive control)**: a serviceable ambient-cli call makes
+zero sdk calls, so this never silently becomes "cli is never usable".
+
+**`tests/anthropic-pin-census.test.mjs`** (27). The scanner's positive control:
+`classifyPinningInSource` is pure, so planted sources prove it is not inert —
+unpinned+`system` must come back RED, a literal pin GREEN, a forwarded
+`{ backend }` RED (the gate cannot check a variable), a param named only in a
+comment GREEN. Then the drift rules (undeclared / stale / reasonless /
+Rule-A-is-not-declarable-away / broken and stale `indirectPins`), then the real
+repo asserted clean against its committed baseline, with the 6 pinned sites
+asserted BY NAME and a scan proving no file still reads the removed env var.
+
+**Relocated, not deleted** (`tests/anthropic-client.test.mjs`): the egress
+assertion for a redacted `system` prompt. It previously went through the cli
+adapter, then briefly through the cli→sdk routing; both are gone, so it now runs
+against a PINNED sdk client under ambient cli — which is the documented route
+for every `system`-passing site in the repo. Dropping it instead of relocating
+it would have lost coverage on a sensitive-path egress seam, which AGENTS.md
+makes non-negotiable.
 
 ---
 
@@ -594,17 +725,23 @@ unreachable. The assertions moved to the transport that carries `system`:
    number and is untouched here. The options are all policy, not correctness:
    drop `cli` entirely, or accept 1.6×/2.7× on the free meter for the
    `system`-less calls. Louis's call.
-2. **`arm-eval` calibration results recorded under ambient `cli`** are
-   suspect: §2.6 shows the judge scoring its own transport failures as
-   `conformant:false`. Any stored arm-eval verdict produced on `cli` with
-   `system` set may be measuring the transport. Worth a dated query before any
-   of those numbers is quoted again.
-3. **The 13 existing `{backend:'sdk'}` pins** become partly redundant once the
-   seam refuses unserviceably. Leave them: they are explicit, they document
-   real incidents, and removing a pin to rely on an inferred refusal trades a
-   stated intent for a derived one.
-4. **AGENTS.md has 321 characters of headroom** against its 79,000 cap after
-   this change (two new invariants, net +990). The gate's own message is the
+2. **`arm-eval` AND `solo-control-audit` results recorded under ambient `cli`**
+   are suspect: §2.6 shows the judge scoring its own transport failures as
+   `conformant:false`, and §2.6a found `solo-control-audit`'s default path doing
+   the same for every pass while recording `provenance.backend: 'cli(default)'`.
+   Any stored verdict produced on `cli` with `system` set may be measuring the
+   transport. Worth a dated query before any of those numbers is quoted again —
+   and the solo-control rows are the ones compared ACROSS arms, so a mixed
+   population is worse there than a uniformly bad one.
+3. **The 13 existing `{backend:'sdk'}` pins are now load-bearing, not
+   redundant.** Under the first (routing) shape they were belt-and-braces over
+   an automatic coercion; under throw-and-pin they ARE the mechanism by which
+   those calls reach a transport that can serve them. Removing one would now
+   break the call, not merely make its intent implicit. `anthropic:pin:gate`
+   enforces that they stay.
+4. **AGENTS.md has 309 characters of headroom** against its 79,000 cap after
+   this change (the reshape itself was net +12 chars, having reworded in place
+   rather than adding). The gate's own message is the
    finding: *"the next invariant will not fit, and shaving words to squeeze
    under the cap is how a file stays permanently full."* The prescribed remedy
    is condensing a dossier-grade section to a what-it-is / when-you-need-it /

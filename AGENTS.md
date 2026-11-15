@@ -714,40 +714,41 @@ default stays `sdk` for CI without the `claude` CLI). Call sites use
 [tests/anthropic-client-migration.test.mjs](tests/anthropic-client-migration.test.mjs).
 Smoke test: `npm run anthropic:ping`.
 
-> **A BACKEND MUST NOT ACCEPT A CALL IT CANNOT HONOUR — `cli` accepted three.**
-> It refused what it cannot REPRESENT or TARGET, but `system`, `tools` and
-> `tool_choice` were accepted then dropped or outranked, surfacing one layer up
-> as a MODEL failure. `unserviceableCliParams` is the single oracle, decided
-> from the PARAMS; precedence mirrors `reconcileBackendWithBaseUrl` — **ambient
-> `cli` → route that call to sdk, warn once; explicit `backend:'cli'` → throw.**
-> Serviceable calls stay on cli and keep the credit (`BILLING PIN` is that
-> control). **And `cli`'s cost does not depend on your prompt**: a ~164K-token
-> prefix per call, so no prompt change fixes a `cli` cost problem and `--bare`
-> strips the prefix and the OAuth credit together. Measured 2026-11-14 —
+> **A BACKEND MUST NOT ACCEPT A CALL IT CANNOT HONOUR — THROW AND PIN.**
+> `cli` refused what it cannot REPRESENT or TARGET, but `system`, `tools` and
+> `tool_choice` were accepted then dropped, surfacing as a MODEL failure.
+> `unserviceableCliParams` is the single oracle, decided from the PARAMS, and
+> `cli` now **THROWS** on them, ambient or explicit alike — never routed to
+> sdk, which would let a param pick the meter. The fix is a declared
+> `{backend:'sdk'}` pin gated on **`isClaudeAvailableFor('sdk')`**. The throw
+> cannot fire in CI (which runs the `sdk` default), so
+> `npm run anthropic:pin:gate` is the guard. Serviceable calls stay on cli
+> and keep the credit (`BILLING PIN` is that control). **And `cli`'s cost does
+> not depend on your prompt**: a ~164K-token prefix per call, so no prompt
+> change fixes a `cli` cost problem and `--bare` strips the prefix and the OAuth
+> credit together. Measured 2026-11-14 —
 > [reference](docs/reference/anthropic-backend-routing.md) ·
 > [plan](docs/plans/anthropic-cli-faithfulness-routing.md).
 
 **Load-bearing gotchas** (operational depth in the reference below):
 
 - **Forced tool-calling needs `{backend:'sdk'}` explicitly (found 2026-07-14).**
-  The `cli` backend reads only `{model, max_tokens, system, messages}` and
-  **silently drops** `tools`/`tool_choice` — it always spawns
-  `claude -p --tools ''`. A caller forcing `tool_choice` gets a plain `text`
-  block back with **no error**, so the failure surfaces one layer up. This
-  broke the tiered-recall pipeline's discovery generator for a whole shadow
-  window (20/20 runs fell back to legacy). Any call site forcing `tool_choice`
-  must pass `createAnthropicClient({backend:'sdk'})` — never the ambient env.
-  Since 2026-11-14 the seam refuses it mechanically too, so the drop is no
-  longer silent; the explicit pin stays the documented intent.
+  `cli` always spawns `claude -p --tools ''`, so a caller forcing `tool_choice`
+  got a plain `text` block with **no error** — which cost the tiered-recall
+  discovery generator a whole shadow window (20/20 runs fell back to legacy).
+  Since 2026-11-15 the seam THROWS instead: the drop is no longer silent, and
+  the pin is the fix, not merely the intent.
 - **`max_tokens` is UNENFORCED on `cli`** — accepted and ignored, not merely
   unenforceable, so it is never a bound for cost or for parse safety.
-- **Availability is `isClaudeAvailable()`, not `process.env.ANTHROPIC_API_KEY`.**
-  The cli backend authenticates via the `claude` CLI and needs no key, so a raw
-  env check silently skips a fully-available backend. Fourth instance found
+- **Availability is the backend's own answer, never `process.env.ANTHROPIC_API_KEY`.**
+  A raw env check skips a fully-available backend — fourth instance found
   2026-11-14 in [summarise.mjs](scripts/symbol-index/summarise.mjs), the
-  highest-volume Claude call site here: under `CLAUDE_BACKEND=cli` with no key
-  it emitted **null summaries for the whole symbol corpus**, stripping every
-  `purposeSummary` from the arch-memory index.
+  highest-volume Claude call site here, which under `CLAUDE_BACKEND=cli` with no
+  key emitted **null summaries for the whole symbol corpus**. Ask
+  `isClaudeAvailable()` where the ambient backend will serve the call, and
+  `isClaudeAvailableFor('sdk')` at a PINNED site — the ambient answer is `true`
+  on a keyless `cli` install, so a pinned site passed its gate and then threw
+  `ANTHROPIC_API_KEY required` for a backend nobody selected.
 - **`claude-trace` cannot meter the scripted cli backend** (it corrupts the JSON
   envelope on stdout). Use the backend's own self-reported `cost_usd`.
 

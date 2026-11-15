@@ -13,7 +13,7 @@ import { reservoirSample } from './lib/rng.mjs';
 import { PASS_NAMES, learningConfig, briefConfig } from './lib/config.mjs';
 import { refreshModelCatalog } from './lib/model-resolver.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
-import { createAnthropicClient, isClaudeAvailable } from './lib/anthropic-client.mjs';
+import { createAnthropicClient, isClaudeAvailableFor } from './lib/anthropic-client.mjs';
 
 const MIN_EXAMPLES_THRESHOLD = learningConfig.minExamplesThreshold;
 
@@ -147,9 +147,15 @@ async function suggestRefinements(passName, outcomesPath) {
 
   let suggestion = null;
 
-  if (isClaudeAvailable()) {
+  // `isClaudeAvailableFor('sdk')`: the call below passes `system`, so it is
+  // pinned, and the ambient gate says `true` on a keyless cli install — which
+  // would turn an optional refinement into an ANTHROPIC_API_KEY error.
+  if (isClaudeAvailableFor('sdk')) {
     try {
-      const anthropic = await createAnthropicClient();
+      // PINNED `backend:'sdk'` — `system` carries the whole refinement contract
+      // and the cli backend does not honour it (it answers as the Claude Code
+      // agent instead). The seam throws on it now.
+      const anthropic = await createAnthropicClient({ backend: 'sdk' });
       const response = await anthropic.messages.create({
         model: briefConfig.claudeModel,
         max_tokens: 2000,

@@ -128,9 +128,6 @@ const _clientCache = new Map();
 /** Once-per-session tracking for warnings. */
 let _warnedMaxTokensCli = false;
 
-/** Once-per-reason tracking for the cli→sdk faithfulness routing warning. */
-const _warnedUnserviceableCli = new Set();
-
 /**
  * Resolve the backend from env. **Throws** on invalid values — the backend
  * choice affects billing, so a typo like `CLAUDE_BACKEND=cil` must surface
@@ -183,7 +180,37 @@ function resolveAwsRegion() {
  * @returns {boolean}
  */
 export function isClaudeAvailable() {
-  const backend = resolveBackend();
+  return isClaudeAvailableFor(resolveBackend());
+}
+
+/**
+ * Is Claude usable **on the backend this call site will actually use**?
+ *
+ * `isClaudeAvailable()` answers for the AMBIENT backend, which is the right
+ * question only for a call site that lets the ambient backend serve it. A site
+ * pinned to `{backend:'sdk'}` — every site that passes `system`, `tools` or
+ * `tool_choice` must be, since the cli backend now throws on those — asks a
+ * different question, and the ambient answer is wrong in exactly the
+ * configuration the pins exist for: under `CLAUDE_BACKEND=cli` with no
+ * `ANTHROPIC_API_KEY`, `isClaudeAvailable()` is `true` (cli needs no key), the
+ * pinned site passes its gate, and `createAnthropicClient({backend:'sdk'})`
+ * then throws `ANTHROPIC_API_KEY required`. A keyless cli install must SKIP
+ * such a feature cleanly, not attempt it and report a credential error for a
+ * backend the operator never selected.
+ *
+ * So the gate takes the backend as an argument. This is the same oracle, not a
+ * second one — `isClaudeAvailable()` is now a thin ambient-resolving wrapper
+ * over it, so there is one place where "available" is decided.
+ *
+ * A named backend deliberately does NOT re-validate `CLAUDE_BACKEND`: a pinned
+ * site does not read the ambient value, so a typo in it cannot affect that
+ * call, and surfacing it here would make an unrelated env typo disable a
+ * feature that would have worked. The ambient wrapper above still throws on it.
+ *
+ * @param {'sdk'|'cli'|'bedrock'} backend - the backend the call site will pin
+ * @returns {boolean}
+ */
+export function isClaudeAvailableFor(backend) {
   if (backend === 'cli') return true;
   // Bedrock authenticates through the AWS credential chain, so ANTHROPIC_API_KEY
   // is irrelevant to it — gating on that key would skip a fully-available
@@ -451,15 +478,6 @@ export async function createAnthropicClient(options = {}) {
       claudeBin: effectiveClaudeBin,
       timeoutMs: effectiveTimeoutMs,
       redactor: effectiveRedactor,
-      backendWasExplicit: options.backend === 'cli',
-      // Lazy, and built from the CALLER's own options with the backend
-      // overridden — so the fallback resolves its credential, route and
-      // redactor by exactly the rules the sdk backend already documents,
-      // rather than a second set invented here. Recursion terminates:
-      // `backend:'sdk'` cannot reach this branch. The fallback client is
-      // cached under its own sdk cache key, so repeated unserviceable calls
-      // construct it once.
-      sdkFallback: () => createAnthropicClient({ ...options, backend: 'sdk' }),
     });
   } else if (backend === 'bedrock') {
     const awsRegion = resolveAwsRegion();
@@ -643,7 +661,6 @@ export function _resetClientCache() {
   _clientCache.clear();
   _warnedMaxTokensCli = false;
   _warnedBaseUrlForcedSdk = false;
-  _warnedUnserviceableCli.clear();
 }
 
 /**
@@ -653,22 +670,13 @@ export function _resetClientCache() {
  * on multi-turn / non-text content rather than silently flattening. Pass
  * `redactor` to enforce egress redaction on `system` and text content.
  *
- * @param {{claudeBin?: string, timeoutMs?: number, redactor?: (s: string) => string,
- *   sdkFallback?: () => Promise<object>, backendWasExplicit?: boolean}} opts
- *   `sdkFallback` builds an sdk-backed twin of this client, invoked ONLY when a
- *   call carries params cli cannot honour (`unserviceableCliParams`). It is
- *   lazy, so the common path never constructs an sdk client — and a process
- *   whose every call is serviceable never needs an `ANTHROPIC_API_KEY`.
- *   `backendWasExplicit` is true when the caller passed `backend:'cli'` itself,
- *   which turns the routing into a throw (the caller contradicted itself).
+ * @param {{claudeBin?: string, timeoutMs?: number, redactor?: (s: string) => string}} opts
  * @returns {{messages: {create: (params: object, requestOptions?: object) => Promise<object>}}}
  */
 function createCliAdapter(opts = {}) {
   const claudeBin = opts.claudeBin || process.env.CLAUDE_BIN || 'claude';
   const defaultTimeoutMs = resolveTimeoutMs(opts.timeoutMs);
   const redactor = typeof opts.redactor === 'function' ? opts.redactor : null;
-  const sdkFallback = typeof opts.sdkFallback === 'function' ? opts.sdkFallback : null;
-  const backendWasExplicit = opts.backendWasExplicit === true;
 
   return {
     messages: {
@@ -689,33 +697,20 @@ function createCliAdapter(opts = {}) {
         assertOneShotTextMessages(messages);
 
         // FAITHFULNESS PRECONDITION: a backend must not accept a call whose
-        // params it cannot honour. The decision AND its precedence live in
-        // `anthropic-cli-faithfulness.mjs` — one import carries the whole
-        // policy, so a call site cannot adopt half of it. Here only the
-        // mechanics: throw, or hand the call to the sdk twin.
+        // params it cannot honour. The decision lives in
+        // `anthropic-cli-faithfulness.mjs` — one importable home, so a second
+        // implementation cannot appear beside it. THROW AND PIN: the remedy is
+        // a `{backend:'sdk'}` pin at the call site, never a silent swap here.
         //
         // Why at call time and not at construction: the params are only known
-        // now. Why not "ambient cli always means sdk": that voids an
-        // operator's explicit transport choice for the calls cli serves
-        // correctly — the high-volume half of the census — and moves their
-        // spend off the Max credit for no measured benefit.
+        // now. Why not route ambient-cli calls to sdk instead of throwing:
+        // which meter a call bills would then be decided by a param the call
+        // site never connected to billing, and nothing committed would record
+        // which sites had moved. A pin is declared, greppable, and gated
+        // (`npm run anthropic:pin:gate`).
         // docs/plans/anthropic-cli-faithfulness-routing.md §3.
-        const verdict = cliFaithfulnessVerdict(params, { backendWasExplicit });
-        if (verdict) {
-          if (verdict.action === 'throw') throw new Error(verdict.message);
-          if (!sdkFallback) {
-            throw new Error(
-              `[anthropic-client] the cli backend cannot honour \`${verdict.param}\` and no ` +
-              `sdk fallback was supplied to this adapter, so the call cannot be served ` +
-              `faithfully. Build the client via createAnthropicClient().`,
-            );
-          }
-          if (!_warnedUnserviceableCli.has(verdict.param)) {
-            _warnedUnserviceableCli.add(verdict.param);
-            process.stderr.write(verdict.message);
-          }
-          return (await sdkFallback()).messages.create(params, requestOptions);
-        }
+        const verdict = cliFaithfulnessVerdict(params);
+        if (verdict) throw new Error(verdict.message);
 
         if (max_tokens !== undefined && !_warnedMaxTokensCli) {
           _warnedMaxTokensCli = true;
