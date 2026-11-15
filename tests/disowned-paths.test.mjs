@@ -14,9 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import {
-  ignoredUntrackedPaths, describeOwnershipProbeFailure,
-} from '../scripts/lib/disowned-paths.mjs';
+import { ignoredUntrackedPaths, describeCheckIgnoreFailure } from '../scripts/lib/disowned-paths.mjs';
 
 let repo;
 
@@ -189,60 +187,35 @@ describe('ignoredUntrackedPaths', () => {
   });
 });
 
-// ── The reported CAUSE must not be a property of the scheduler ──────────────
-//
-// Outside a work tree `git check-ignore --stdin` exits 128 WITHOUT reading
-// stdin, so whether the parent's write lands first decides what spawnSync
-// reports: `status: 128` or `error.code: 'EPIPE'`. Measured 2026-11-15 — the
-// same assertion read `git exit 128` on Windows and `EPIPE` on an ubuntu
-// runner, which failed `tests/prepush-hook-v18.test.mjs` in CI on a PR that
-// touched none of this. The verdict was `degraded` in both, correctly; only
-// the operator-facing reason flipped.
-//
-// The race cannot be scheduled on demand, so it is the DECISION about it that
-// is asserted here, with the probe injected.
-describe('describeOwnershipProbeFailure: EPIPE is a race, not a cause', () => {
-  const never = () => { throw new Error('must not re-probe: the first result was not racy'); };
-
-  it('an EPIPE first result is re-asked, and the real status is reported', () => {
-    assert.equal(
-      describeOwnershipProbeFailure({ error: { code: 'EPIPE' } }, () => ({ status: 128 })),
-      'git exit 128',
-    );
+// `git check-ignore --stdin` in a non-work-tree exits WITHOUT reading stdin, while spawnSync is still writing the candidate list
+// into that pipe — so the parent sees either the exit status or EPIPE, decided by a race, not by the repository. Measured
+// 2026-11-14 from ONE commit: `git exit 128` on Windows every time, `EPIPE` on a loaded ubuntu CI runner, which failed a test
+// pinning the cause string while the behaviour under test (degrade loudly, never a clean scan) held in both.
+describe('describeCheckIgnoreFailure - the CAUSE, not the symptom of reporting it', () => {
+  it('the race: a non-zero status wins over an EPIPE from writing to the child that already exited', () => {
+    assert.equal(describeCheckIgnoreFailure({ status: 128, error: { code: 'EPIPE' } }), 'git exit 128');
+    assert.equal(describeCheckIgnoreFailure({ status: 128 }), 'git exit 128');
   });
-
-  it('a decisive first result is reported as-is, and NOT re-probed', () => {
-    assert.equal(describeOwnershipProbeFailure({ status: 128 }, never), 'git exit 128');
-    assert.equal(describeOwnershipProbeFailure({ error: { code: 'ENOENT' } }, never), 'ENOENT');
-    assert.equal(describeOwnershipProbeFailure({ status: 129 }, never), 'git exit 129');
+  it('an error with NO status keeps its own code — nothing else explains it', () => {
+    assert.equal(describeCheckIgnoreFailure({ status: null, error: { code: 'EPIPE' } }), 'EPIPE');
+    assert.equal(describeCheckIgnoreFailure({ status: null, error: { code: 'ENOENT' } }), 'ENOENT');
+    assert.equal(describeCheckIgnoreFailure({ status: null, error: { message: 'boom' } }), 'boom');
   });
-
-  // Not a cover-up: if the pipe breaks with nothing to write either, the pipe
-  // IS the story, and saying so beats inventing a status git never returned.
-  it('an EPIPE that survives the re-probe is still reported as EPIPE', () => {
-    assert.equal(
-      describeOwnershipProbeFailure({ error: { code: 'EPIPE' } }, () => ({ error: { code: 'EPIPE' } })),
-      'EPIPE',
-    );
+  it('NEGATIVE CONTROL: git ANSWERED (0 or 1) and the write failed — the error stands, never "git exit 0"', () => {
+    // A different condition: the child answered, so the write error means the answer may be TRUNCATED. Still degraded, and
+    // collapsing it to the status would name a success as the cause of a failure.
+    assert.equal(describeCheckIgnoreFailure({ status: 0, error: { code: 'EPIPE' } }), 'EPIPE');
+    assert.equal(describeCheckIgnoreFailure({ status: 1, error: { code: 'EPIPE' } }), 'EPIPE');
   });
-
-  it('a spawn error with no code falls back to its message', () => {
-    assert.equal(describeOwnershipProbeFailure({ error: { message: 'spawn failed' } }, never), 'spawn failed');
-  });
-});
-
-// END-TO-END on a real non-git directory: whatever this platform's scheduler
-// does, the warning must name the repository defect. This is the assertion
-// prepush-hook-v18 makes through the extractor, asserted here at the source.
-describe('a non-git root degrades loudly, naming the repository defect', () => {
-  it('names `git exit 128`, on either side of the race', () => {
-    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'disowned-nongit-'));
+  it('a real non-git root reports the status deterministically, whichever side of the race wins', () => {
+    const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'dis-cause-'));
     try {
-      const r = ignoredUntrackedPaths(scratch, ['a.js', 'b.js'], { warnOnDegraded: false });
-      assert.equal(r.degraded, true, 'an unasked question must never read as a clean scan');
+      const r = ignoredUntrackedPaths(notARepo, ['a.js'], { warnOnDegraded: false });
+      assert.equal(r.degraded, true, 'a non-work-tree is never a clean scan');
       assert.match(r.warning, /git exit 128/, r.warning);
+      assert.doesNotMatch(r.warning, /EPIPE/, 'EPIPE is the symptom of reporting the exit, not the cause');
     } finally {
-      fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(notARepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

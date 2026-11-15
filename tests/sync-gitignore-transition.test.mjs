@@ -12,7 +12,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { classifyGitignoreTransition, updateManagedBlock } from '../scripts/lib/sync-gitignore.mjs';
-import { planConsumerPr, gatherGitignoreTransition, SKIP_REASON } from '../scripts/lib/sync-pr.mjs';
+import { planConsumerPr, gatherGitignoreTransition, createManagedBlockTransitionReader, SKIP_REASON } from '../scripts/lib/sync-pr.mjs';
 import { spawnRunner } from '../scripts/lib/sync-base-lag.mjs';
 import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
 
@@ -101,6 +101,52 @@ describe('planConsumerPr - the .gitignore block rides only when it is the block 
   });
 });
 
+// The sync writes a managed block into TWO files, and `planConsumerPr` asked about one. Measured 2026-11-14 in a consumer: the
+// ownership sidecar held 1,085 entries and zero matches for `gitattributes`, while the sync adds a line to that file on every run
+// — so a sync that wrote four files committed three and left the `.gitattributes` EOL rule uncommitted on main. The asset lands
+// without its rule, the rule reads as unexplained drift, and the next session stashes it. The cycle restarts itself.
+describe('planConsumerPr - BOTH managed-block files, not just .gitignore', () => {
+  const owned = classified([RECEIPT_PATH, '.claude/skills/plan/SKILL.md']);
+  it('POSITIVE CONTROL: a block-only .gitattributes rides the PR — the partial commit that left the EOL rule behind', () => {
+    const p = planConsumerPr({ ...baseFacts, classified: owned, managedBlockTransitions: { '.gitattributes': 'block-only' } });
+    assert.equal(p.action, 'pr');
+    assert.ok(p.addPaths.includes('.gitattributes'), `addPaths: ${p.addPaths}`);
+    assert.ok(p.commitPathspecs.includes('.gitattributes'), `pathspecs: ${p.commitPathspecs}`);
+    assert.ok(p.surface.includes('.gitattributes'), `surface: ${p.surface}`);
+  });
+  it('both files ride together, and the order is the declared one', () => {
+    const p = planConsumerPr({ ...baseFacts, classified: owned, managedBlockTransitions: { '.gitignore': 'block-only', '.gitattributes': 'block-only' } });
+    assert.ok(['.gitignore', '.gitattributes'].every((f) => p.addPaths.includes(f)), `addPaths: ${p.addPaths}`);
+  });
+  it('a block-only .gitattributes ALONE earns a PR — nothing else needs to be dirty', () => {
+    const p = planConsumerPr({ ...baseFacts, classified: classified([RECEIPT_PATH]), managedBlockTransitions: { '.gitattributes': 'block-only' } });
+    assert.equal(p.action, 'pr');
+    assert.deepEqual(p.surface, ['.gitattributes']);
+  });
+  it('NEGATIVE CONTROL: mixed / invalid / unverified .gitattributes is held back and NAMED, never swept in', () => {
+    for (const state of ['mixed', 'invalid', 'unverified']) {
+      const p = planConsumerPr({ ...baseFacts, classified: owned, managedBlockTransitions: { '.gitattributes': state } });
+      assert.ok(!p.addPaths.includes('.gitattributes'), state);
+      assert.ok(p.leftBehind.some((l) => l.startsWith('.gitattributes (')), `${state}: ${p.leftBehind}`);
+    }
+  });
+  it('a SKIP names every held-back managed-block file, not just the first', () => {
+    const p = planConsumerPr({ ...baseFacts, classified: classified([]), managedBlockTransitions: { '.gitignore': 'mixed', '.gitattributes': 'invalid' } });
+    assert.equal(p.action, 'skip');
+    assert.match(p.detail, /\.gitignore left uncommitted/);
+    assert.match(p.detail, /\.gitattributes left uncommitted/);
+  });
+  it('an ABSENT entry was never asked about: not a hold, and not clean either', () => {
+    const p = planConsumerPr({ ...baseFacts, classified: classified([]), managedBlockTransitions: {} });
+    assert.equal(p.action, 'skip');
+    assert.ok(!/left uncommitted/.test(p.detail ?? ''), p.detail);
+  });
+  it('the legacy single-file input still means .gitignore and nothing else', () => {
+    const p = planConsumerPr({ ...baseFacts, classified: owned, gitignoreTransition: 'block-only' });
+    assert.ok(p.addPaths.includes('.gitignore') && !p.addPaths.includes('.gitattributes'));
+  });
+});
+
 describe('gatherGitignoreTransition - on a real repository', () => {
   const git = (cwd, ...args) => {
     const r = spawnSync('git', args, { cwd, encoding: 'utf-8' });
@@ -144,6 +190,27 @@ describe('gatherGitignoreTransition - on a real repository', () => {
     fs.writeFileSync(path.join(dir, '.gitignore'), insert('a/\n', 'b/'));
     assert.equal(gatherGitignoreTransition(spawnRunner, dir, 'f'.repeat(40)), 'unverified');
     assert.equal(gatherGitignoreTransition(spawnRunner, dir, null), 'unverified');
+  });
+
+  // The same question, asked of the OTHER file the sync mutates this way. Nothing here is `.gitignore`-specific but the default:
+  // the markers and the block machinery are content-agnostic, and `.gitattributes` had no oracle at all until 2026-11-14.
+  it('the reader answers for .gitattributes too, with the same transition table', () => {
+    const { dir, sha } = repo('a/\n');
+    const gaPath = path.join(dir, '.gitattributes');
+    const read = createManagedBlockTransitionReader({ run: spawnRunner, repoRoot: dir, baseSha: sha });
+    // Absent at the base and on disk: nothing was written, which is `unchanged`, never a fabricated hold.
+    assert.equal(read('.gitattributes'), 'unchanged');
+    fs.writeFileSync(gaPath, block('.claude/skills/** text eol=lf'));
+    assert.equal(read('.gitattributes'), 'block-only', 'the block alone, in a file the base did not have');
+    fs.writeFileSync(gaPath, `${block('.claude/skills/** text eol=lf')}*.psd binary\n`);
+    assert.equal(read('.gitattributes'), 'mixed', 'a consumer line beside the block is theirs');
+  });
+
+  it('a path that is NOT a managed-block file is `unverified` — an unasked question, never a clean answer', () => {
+    const { dir, sha } = repo('a/\n');
+    const read = createManagedBlockTransitionReader({ run: spawnRunner, repoRoot: dir, baseSha: sha });
+    assert.equal(read('README.md'), 'unverified');
+    assert.equal(read('package.json'), 'unverified');
   });
 });
 

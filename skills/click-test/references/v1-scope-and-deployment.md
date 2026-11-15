@@ -11,7 +11,7 @@ can surface P0s as pre-push warnings) is **deferred to v2**. The v1 skill
 is authoritative purely from its local report — print, read, fix, re-run.
 
 Why deferred:
-- The required `scripts/cross-skill.mjs record-click-test` subcommand
+- The required `node scripts/cross-skill.mjs record-click-test` subcommand
   doesn't exist yet, nor does the typed payload schema, table mapping,
   or `/ship` read path.
 - Declaring "graceful no-op when subcommand missing" would ship a dead

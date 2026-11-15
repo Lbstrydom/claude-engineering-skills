@@ -47,7 +47,7 @@ the user types it in THIS session, and only when the session is idle (mid-turn t
 and the user has to type it again). You never invoke it, and no relay can. [rule 4]
 
 [PRE-AUTHORISED SHIP. Include only when the user approved it at launch. Run the ship steps by hand: the status.md entry, the
-plan's Implementation Log, scripts/ship-commit.mjs --preauthorised, the push. First run
+plan's Implementation Log, node scripts/ship-commit.mjs --preauthorised, the push. First run
 node scripts/ship-commit.mjs --check-preauthorised. Ship ONLY if every condition holds: the effective gate is passed or
 converged (never waived or not-run, never --no-tests); the audit converged per the store; the final review APPROVED the
 audited tree and round with result approve (not approve-with-debt, not blocked); the PR changes no sensitive path (scripts/lib/sensitive-paths.mjs), no database migration and no

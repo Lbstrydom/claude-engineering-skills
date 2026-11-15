@@ -99,38 +99,28 @@ export const OWNERSHIP_RULE_EPOCH = 'ignored-untracked-v1';
  * an unverified scan is the defect the warning exists to prevent.
  */
 /**
- * Why did the ownership probe fail — the CAUSE, not the race that surfaced it.
+ * Why `check-ignore` could not answer — the CAUSE, not the symptom of reporting it.
  *
- * Outside a work tree `git check-ignore --stdin` exits 128 **without reading
- * stdin**, so whether the parent's write lands before that exit decides what
- * `spawnSync` reports: `status: 128` when the write wins, `error.code:
- * 'EPIPE'` when it loses. Both describe the same repository. Measured on
- * 2026-11-15: the same test file reported `git exit 128` on Windows and
- * `EPIPE` on an ubuntu runner, which is how a deterministic assertion about a
- * non-git root turned into a cross-platform flake.
+ * `git check-ignore --stdin` in a non-work-tree prints `fatal: not a git repository` and exits **without reading stdin**, while
+ * `spawnSync` is still writing the candidate list into that pipe. So the parent can observe `EPIPE` instead of the exit status,
+ * and which one it sees is a RACE between git's exit and the parent's write — decided by platform and load, not by anything about
+ * the repository. Measured 2026-11-14: identical on Windows (`git exit 128` every time) and on a loaded ubuntu CI runner
+ * (`EPIPE`), from one commit, and a test pinning the cause string failed on the runner alone.
  *
- * The verdict is `degraded` either way — that half was never in doubt, and it
- * is what makes this fail open and loud. Only the REASON printed was a
- * property of the scheduler.
+ * An `EPIPE` writing to a child that has ALREADY exited carries no information the status does not, so a non-zero status wins. A
+ * write error alongside a status of 0 or 1 is different and keeps its own code: there the child answered, and the error means the
+ * answer may be truncated — which is still degraded, and is not "git exit 0".
  *
- * Split out as a pure function so the decision is testable without being able
- * to provoke an EPIPE on demand: the race cannot be scheduled, the decision
- * about it can be asserted.
+ * PURE.
  *
- * @param {{error?: {code?: string, message?: string}, status?: number}} first
- *   the first probe's spawnSync result
- * @param {() => {error?: {code?: string, message?: string}, status?: number}} reprobe
- *   re-runs the same question with nothing to race against; called ONLY for the
- *   racy result
- * @returns {string} a cause suitable for the operator-facing warning
+ * @param {{status: number|null, error?: {code?: string, message?: string}}} r
+ * @returns {string}
  */
-export function describeOwnershipProbeFailure(first, reprobe) {
-  const describe = (r) => (r?.error ? r.error.code || r.error.message : `git exit ${r?.status}`);
-  if (first?.error?.code !== 'EPIPE') return describe(first);
-  const again = reprobe();
-  // If the re-probe is ALSO EPIPE, the pipe is the real story after all, and
-  // saying so beats inventing a status it never returned.
-  return describe(again);
+export function describeCheckIgnoreFailure(r) {
+  const status = r?.status;
+  const statusExplains = typeof status === 'number' && status !== 0 && status !== 1;
+  if (statusExplains) return `git exit ${status}`;
+  return r?.error ? (r.error.code || r.error.message) : `git exit ${status}`;
 }
 
 export function ignoredUntrackedPaths(repoRoot, candidates, { warnOnDegraded = true } = {}) {
@@ -156,22 +146,8 @@ export function ignoredUntrackedPaths(repoRoot, candidates, { warnOnDegraded = t
   // tree, spawn error) means we could not determine ownership.
   const ign = git(['check-ignore', '-z', '--stdin'], nulList);
   if (ign.error || (ign.status !== 0 && ign.status !== 1)) {
-    // EPIPE IS A RACE, NOT A CAUSE. Outside a work tree `check-ignore` exits
-    // 128 WITHOUT reading stdin, so whether the parent's write lands before
-    // that exit decides what spawnSync reports: `status: 128` if it won,
-    // `error.code: 'EPIPE'` if it lost. The verdict is `degraded` either way —
-    // correct, and the reason this fails open and loud — but the REASON we
-    // print flipped between runs, and the CI failure it produced named EPIPE
-    // on a tree whose real defect was that it is not a repository. Ask the
-    // question again in a form that cannot race, and report THAT.
-    const cause = describeOwnershipProbeFailure(
-      ign,
-      // Lazy: only asked when the first result is the racy one, and asked with
-      // an EMPTY stdin so there is nothing left to race against.
-      () => git(['check-ignore', '-z', '--stdin'], ''),
-    );
     const warning = '[disowned-paths] WARN: could not determine gitignore status '
-      + `(${cause}) — `
+      + `(${describeCheckIgnoreFailure(ign)}) — `
       + 'ownership was NOT verified; treating every candidate as owned by default, but this result is unverified, not a confirmed clean scan.';
     if (warnOnDegraded) process.stderr.write(`${warning}\n`);
     return { paths: new Set(), degraded: true, warning };
