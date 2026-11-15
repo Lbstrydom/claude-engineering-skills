@@ -154,7 +154,9 @@ export async function gradeOnce({ client, model, c, outputText, reasoningEffort 
     // measured usage, or charges the worst case when none came back.
     // Bound = the WHOLE serialized request (instructions + input + the json-schema
     // format block + reasoning), not only the two strings (audit R1 H16).
-    if (hooks.before) await hooks.before({ attempt, inputTokensMax: Buffer.byteLength(JSON.stringify(params), 'utf8'), maxOutputTokens });
+    // A swapped transport sends a DIFFERENT request: it bounds its own wire request (focused audit H8).
+    const inputTokensMax = typeof call.inputBound === 'function' ? call.inputBound(params, { schema }) : Buffer.byteLength(JSON.stringify(params), 'utf8');
+    if (hooks.before) await hooks.before({ attempt, inputTokensMax, maxOutputTokens });
     const start = now();
     let resp;
     try {

@@ -70,6 +70,8 @@ export const CaseSchema = z.object({
   if (kd) ctx.addIssue({ code: 'custom', path: ['rubric', 'keyPoints'], message: `duplicate key point id ${kd}` });
   const td = dup(c.rubric.traps.map((t) => t.id));
   if (td) ctx.addIssue({ code: 'custom', path: ['rubric', 'traps'], message: `duplicate trap id ${td}` });
+  // trap1 is the MAIN trap: the trap control is written to fall into it and both control checks key on it.
+  if (!c.rubric.traps.some((t) => t.id === 'trap1')) ctx.addIssue({ code: 'custom', path: ['rubric', 'traps'], message: 'rubric must define trap1 (the main trap the trap control falls into)' });
 });
 
 export class CorpusIntegrityError extends Error {
@@ -119,16 +121,23 @@ function parseCaseFile(dir, file) {
  * @param {{ promptHashes: Record<string,string> }} opts - arm/judge prompt template hashes
  */
 export function buildManifest(dir, { promptHashes }) {
+  return readCorpus(dir, { promptHashes }).manifest;
+}
+
+/** One read of every case file: the manifest AND the parsed cases come from the same bytes. */
+function readCorpus(dir, { promptHashes }) {
   const files = listCaseFiles(dir);
   if (files.length === 0) throw new CorpusIntegrityError('empty', `no case files in ${dir}`);
   const cases = {};
+  const parsed = [];
   for (const f of files) {
     const { case: c, sha256 } = parseCaseFile(dir, f);
     cases[c.id] = { file: f, role: c.role, sha256 };
+    parsed.push(c);
   }
   const corpusSha256 = sha256Canonical(Object.keys(cases).sort().map((id) => `${id}:${cases[id].sha256}`).join('\n'));
   const sortedPrompts = Object.fromEntries(Object.keys(promptHashes).sort().map((k) => [k, promptHashes[k]]));
-  return { contractEpoch: DECISION_EVAL_CONTRACT_EPOCH, corpusSha256, promptHashes: sortedPrompts, cases };
+  return { manifest: { contractEpoch: DECISION_EVAL_CONTRACT_EPOCH, corpusSha256, promptHashes: sortedPrompts, cases }, parsed };
 }
 
 /** Write the manifest (deterministic bytes, trailing newline). */
@@ -149,7 +158,8 @@ export function loadCorpus(dir, { promptHashes }) {
   const mPath = path.join(dir, MANIFEST_FILE);
   if (!fs.existsSync(mPath)) throw new CorpusIntegrityError('no-manifest', `${mPath} missing — run \`freeze\` first`);
   const frozen = JSON.parse(canonicalizeEol(fs.readFileSync(mPath)).toString('utf8'));
-  const current = buildManifest(dir, { promptHashes });
+  // Verified and returned from ONE read — a re-read after verification could load bytes that were never checked.
+  const { manifest: current, parsed } = readCorpus(dir, { promptHashes });
   if (frozen.contractEpoch !== current.contractEpoch) {
     throw new CorpusIntegrityError('epoch', `manifest epoch ${frozen.contractEpoch} ≠ code epoch ${current.contractEpoch}`);
   }
@@ -168,6 +178,5 @@ export function loadCorpus(dir, { promptHashes }) {
     }
   }
   if (frozen.corpusSha256 !== current.corpusSha256) throw new CorpusIntegrityError('hash-mismatch', 'corpus hash mismatch');
-  const cases = Object.values(current.cases).map((e) => parseCaseFile(dir, e.file).case);
-  return { manifest: frozen, cases };
+  return { manifest: frozen, cases: parsed };
 }

@@ -41,18 +41,19 @@ export const GEMINI_MAX_OUTPUT_TOKENS = GEMINI_THINKING_BUDGET + 6000;
  * judge-malformed, never as a score.
  */
 export function makeGeminiInvoker({ genai, toGeminiSchema }) {
-  return async (params, { schema }) => {
-    const resp = await genai.models.generateContent({
-      model: params.model,
-      contents: params.input,
-      config: {
-        systemInstruction: params.instructions,
-        responseMimeType: 'application/json',
-        responseSchema: toGeminiSchema(schema),
-        maxOutputTokens: params.max_output_tokens,
-        thinkingConfig: { thinkingBudget: GEMINI_THINKING_BUDGET },
-      },
-    });
+  const buildRequest = (params, schema) => ({
+    model: params.model,
+    contents: params.input,
+    config: {
+      systemInstruction: params.instructions,
+      responseMimeType: 'application/json',
+      responseSchema: toGeminiSchema(schema),
+      maxOutputTokens: params.max_output_tokens,
+      thinkingConfig: { thinkingBudget: GEMINI_THINKING_BUDGET },
+    },
+  });
+  const invoke = async (params, { schema }) => {
+    const resp = await genai.models.generateContent(buildRequest(params, schema));
     const g = normalizeGeminiUsage(resp?.usageMetadata);
     // Unmeterable usage is UNKNOWN, never zero: null ⇒ the meter charges the worst case.
     const usage = g.usageMissing ? null : { input_tokens: g.input_tokens, output_tokens: g.output_tokens };
@@ -65,11 +66,16 @@ export function makeGeminiInvoker({ genai, toGeminiSchema }) {
     try { parsed = text ? JSON.parse(text) : null; } catch (err) { err.usage = usage; throw err; }
     return { output_parsed: parsed, output_text: text, usage, model: resp?.modelVersion ?? params.model };
   };
+  // Reservation bound = bytes of the request ACTUALLY sent (same builder), never the OpenAI-shaped
+  // params. Bytes ≥ tokens; maxOutputTokens caps candidates + thoughts, which is what is billed.
+  invoke.inputBound = (params, { schema }) => Buffer.byteLength(JSON.stringify(buildRequest(params, schema)), 'utf8');
+  return invoke;
 }
 
 /** Single-pass control verdict, the primary checkpoint's definition applied to one grade. */
 export function controlPassesSingle(kind, score, grade, rule = CROSS_GRADE_RULE) {
-  if (!score) return false;
+  // A quote-voided grade (q null) is unmeasured, and unmeasured never passes a control.
+  if (!score || !Number.isFinite(score.q)) return false;
   if (/gold$/.test(kind)) return score.correct === true && (score.coverage ?? 0) >= rule.controlCoverageMin;
   return score.correct === false && grade?.traps?.find((t) => t.id === 'trap1')?.fell === true;
 }
@@ -97,14 +103,17 @@ export async function runCrossGrade(o) {
       zodTextFormat: o.zodTextFormat, assertEgressSafe: o.assertEgressSafe, now: o.now,
       hooks: {
         before: ({ attempt, inputTokensMax, maxOutputTokens }) => o.meter.reserve({ label: `${label}:a${attempt}`, model: gr.model, inputTokensMax, maxOutputTokens }),
-        after: ({ usageRaw, served }) => {
-          if (!served || !usageRaw) o.meter.chargeWorstCase({ meta: { grader: gr.name, gradeId: it.gradeId, note: served ? 'usage missing' : 'transport failure' } });
-          else o.meter.settle({ usage: usageRaw, provider: 'openai', responseModel: gr.model, meta: { grader: gr.name, gradeId: it.gradeId } });
+        after: ({ usageRaw, served, responseModel }) => {
+          // Priced at the requested model (a served alias may be unpriced); the served id is recorded beside it.
+          const meta = { grader: gr.name, gradeId: it.gradeId, servedModel: responseModel ?? null };
+          if (!served || !usageRaw) o.meter.chargeWorstCase({ meta: { ...meta, note: served ? 'usage missing' : 'transport failure' } });
+          else o.meter.settle({ usage: usageRaw, provider: 'openai', responseModel: gr.model, meta });
         },
       },
     });
     const score = res.status === 'scored' ? scoreGrade(c, res.grade) : null;
-    const row = { contractEpoch: o.epoch, runId: o.runId, grader: gr.name, graderModel: gr.model, role, gradeId: it.gradeId, kind: it.kind ?? 'arm', caseId: it.caseId, status: res.status, reason: res.reason, grade: res.grade, score, attempts: res.attempts };
+    const servedModel = [...(res.attempts ?? [])].reverse().find((a) => a.responseModel)?.responseModel ?? null;
+    const row = { contractEpoch: o.epoch, runId: o.runId, grader: gr.name, graderModel: gr.model, servedModel, role, gradeId: it.gradeId, kind: it.kind ?? 'arm', caseId: it.caseId, status: res.status, reason: res.reason, grade: res.grade, score, attempts: res.attempts };
     if (role === 'control') row.controlPassed = controlPassesSingle(row.kind, score, res.grade);
     rows.push(row); o.sink(row);
     return row;
@@ -127,13 +136,19 @@ export async function runCrossGrade(o) {
 
 /**
  * Pure verdict over persisted rows.
- * @param {{ rows: object[], primaryGrades: object[], sampleIds: string[], graders: string[], controlsExpected: number, rule?: object }} a
+ * @param {{ rows: object[], primaryGrades: object[], sampleIds: string[], graders: string[], controlIds: string[], rule?: object }} a
  */
-export function evaluateCrossGrade({ rows, primaryGrades, sampleIds, graders, controlsExpected, rule = CROSS_GRADE_RULE }) {
+export function evaluateCrossGrade({ rows, primaryGrades, sampleIds, graders, controlIds, rule = CROSS_GRADE_RULE }) {
+  if (!Array.isArray(controlIds)) throw new TypeError('evaluateCrossGrade: controlIds (the expected control gradeIds) is required');
+  const expected = new Set(controlIds);
   const graderControls = Object.fromEntries(graders.map((g) => {
     const cs = rows.filter((r) => r.grader === g && r.role === 'control');
-    const passed = cs.filter((r) => r.controlPassed).length;
-    return [g, { graded: cs.length, passed, ok: cs.length === controlsExpected && passed === controlsExpected }];
+    // By IDENTITY, not count: every expected control graded exactly once and passed; an empty set never passes.
+    const ids = cs.map((r) => r.gradeId);
+    const passedIds = new Set(cs.filter((r) => r.controlPassed).map((r) => r.gradeId));
+    const ok = expected.size > 0 && ids.length === expected.size && new Set(ids).size === ids.length
+      && [...expected].every((id) => passedIds.has(id));
+    return [g, { graded: cs.length, passed: [...passedIds].filter((id) => expected.has(id)).length, ok }];
   }));
   const allControlsOk = graders.every((g) => graderControls[g].ok);
   const items = sampleIds.map((gid) => {

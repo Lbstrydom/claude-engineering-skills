@@ -4,6 +4,27 @@ Plan: [`docs/plans/fable-vs-opus-decision-eval.md`](../../plans/fable-vs-opus-de
 Anything off-contract, outstanding, or differing from the plan is recorded here
 **before** merge and raised to Louis in the PR description. Newest first.
 
+## 2026-11-15 — focused code audit of the post-audit delta (after the experiment)
+
+The last code-audit round ran on the tree just before `d5d83b8f`. Three later code commits had not been
+audited: `60c848f3` (epoch 2), `c72a1d69` (egress pre-check) and `6b18b17d` (cross-grade). A focused
+`/audit-code` covered them. Fixes:
+- `cross-grade` refuses a budget scope other than the main run's.
+- `report` and `cross-grade` refuse a run produced under a different corpus hash, epoch or prompt hashes.
+- The existence check is repeated under the scope lock.
+- `loadCorpus` verifies and returns cases from one read.
+- Cross-grade controls are checked by identity.
+- `CaseSchema` requires `trap1`.
+- The Gemini reservation is bounded by the request actually sent.
+- The served model id is persisted.
+
+**Control rule tightened for future runs:** a control now passes only with a measured q, both in the
+primary `controlOutcomes` and in the cross-grade check. This closes the weakness recorded in the
+next entry. **No persisted result changes.**
+- `report --run-id main` reproduces `summary.json` and `cross-grade.json` byte-identically.
+- The persisted cross-grade `controlPassed` flags are kept as graded. Under the tightened rule,
+  Gemini's controls would fail, which gives the same outcome: not certified under the rule.
+
 ## 2026-11-15 — spot sample: CERTIFIED BY OVERRIDE (Louis)
 
 - **Louis's ruling**, relayed verbatim by the coordinator: "as for certify, if I read this correctly it

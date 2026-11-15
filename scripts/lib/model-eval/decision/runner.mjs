@@ -221,7 +221,8 @@ export async function runDecisionEval(o) {
 export function controlOutcomes(items, grades) {
   const out = { total: 0, passed: 0, failures: [] };
   for (const it of items.filter((i) => i.kind !== 'arm')) {
-    const scored = grades.filter((g) => g.gradeId === it.gradeId && g.status === 'scored');
+    // Measured only: a quote-voided grade (q null) is unmeasured, never a control pass.
+    const scored = grades.filter((g) => g.gradeId === it.gradeId && g.status === 'scored' && Number.isFinite(g.score?.q));
     if (scored.length < 2) continue;
     out.total += 1;
     const ok = /gold$/.test(it.kind)

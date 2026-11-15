@@ -103,6 +103,13 @@ describe('decision-eval corpus — frozen, hashed, leak-scanned', () => {
     assert.equal(CaseSchema.safeParse(freshCase()).success, true);
     assert.equal(CaseSchema.safeParse({ ...freshCase(), extra: 1 }).success, false);
   });
+  it('CaseSchema requires trap1, the main trap both control checks key on (audit H6)', () => {
+    const c = freshCase();
+    c.rubric.traps = c.rubric.traps.map((t) => ({ ...t, id: t.id === 'trap1' ? 'trap9' : t.id }));
+    const v = CaseSchema.safeParse(c);
+    assert.equal(v.success, false);
+    assert.match(v.error.issues.map((i) => i.message).join(' '), /trap1/);
+  });
   it('leakScan finds a leak term in arm-visible text (case-insensitive)', () => {
     assert.deepEqual(leakScan(freshCase()), []);
     assert.deepEqual(leakScan(freshCase({ question: 'Does DESCRIBECHECKIGNOREFAILURE help?' })), ['describeCheckIgnoreFailure']);
@@ -627,6 +634,37 @@ describe('decision-eval CLI — budget scope and run identity', () => {
     const ok = await runCli(['run', '--phase', 'variance', '--cap-usd', '10', '--budget-scope', 'autonomous', '--root', fs.mkdtempSync(path.join(os.tmpdir(), 'dec-cli-'))]);
     assert.ok(!/--budget-scope/.test(ok.err), 'control: with a scope the run gets past this check (and stops at the missing manifest)');
     assert.match(ok.err, /manifest/);
+  });
+  it('cross-grade refuses a scope other than the main run scope, and a run produced under another corpus (focused audit H1/H3)', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dec-xg-'));
+    fs.mkdirSync(path.join(root, 'corpus'));
+    const c = freshCase();
+    fs.writeFileSync(path.join(root, 'corpus', `${c.id}.json`), JSON.stringify(c, null, 2) + '\n');
+    assert.equal((await runCli(['freeze', '--root', root])).code, 0);
+    const m = JSON.parse(fs.readFileSync(path.join(root, 'corpus', 'manifest.json'), 'utf8'));
+    fs.mkdirSync(path.join(root, 'runs', 'main'), { recursive: true });
+    const writeSummary = (over) => fs.writeFileSync(path.join(root, 'runs', 'main', 'summary.json'), JSON.stringify({
+      phase: 'main', runId: 'main', spotSampleIds: ['g1'], spend: { budgetScope: 'main', capUsd: 25 },
+      corpusSha256: m.corpusSha256, contractEpoch: m.contractEpoch, promptHashes: m.promptHashes, ...over }));
+    const xg = (scope) => runCli(['cross-grade', '--run-id', 'main', '--cap-usd', '25', '--budget-scope', scope, '--confirm-cross-grade', '--root', root]);
+    // Hermetic: no calls.jsonl exists, so every path stops at a preflight BEFORE credentials or clients,
+    // whatever keys the developer's environment holds.
+    {
+      writeSummary({});
+      assert.match((await xg('elsewhere')).err, /not the main run's scope/);
+      writeSummary({ corpusSha256: 'f'.repeat(64) });
+      assert.match((await xg('main')).err, /different corpus/);
+      writeSummary({ contractEpoch: 1 });
+      assert.match((await xg('main')).err, /different corpus/);
+      writeSummary({});
+      const ok = await xg('main');
+      assert.ok(!/different corpus|not the main run/.test(ok.err), 'positive control: matching scope + corpus gets past both checks');
+      assert.match(ok.err, /no persisted arm output/, 'and stops at the sample preflight, before credentials or any spend');
+      assert.match((await runCli(['cross-grade', '--run-id', 'main', '--cap-usd', '40', '--budget-scope', 'main', '--confirm-cross-grade', '--root', root])).err, /approved cap/, 'a fresh cap is refused');
+      assert.ok(!fs.existsSync(path.join(root, 'runs', 'main', 'cross-grades.jsonl')), 'nothing was graded');
+      writeSummary({ corpusSha256: 'f'.repeat(64) });
+      assert.match((await runCli(['report', '--run-id', 'main', '--root', root])).err, /different corpus/, 'report refuses too');
+    }
   });
   it('a run id or scope that is not a plain name is refused before anything is written (audit R2 H1)', async () => {
     for (const bad of ['../escaped', 'a/b', '..', 'a\\b']) {

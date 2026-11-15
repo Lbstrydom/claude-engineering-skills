@@ -38,11 +38,12 @@ const prim = (gradeId, q1, c1, q2 = q1, c2 = c1) => [
 const xrow = (grader, gradeId, q, correct, status = 'scored') => ({ grader, role: 'sample', gradeId, status, score: status === 'scored' ? { q, correct } : null, reason: status === 'scored' ? null : 'judge-transport' });
 const ctlRows = (grader, n, passed = n) => Array.from({ length: n }, (_, i) => ({ grader, role: 'control', gradeId: `c${i}`, controlPassed: i < passed }));
 const G = ['gpt', 'gemini'];
+const CIDS = (n) => Array.from({ length: n }, (_, i) => `c${i}`);
 
 describe('evaluateCrossGrade (pre-registered rule)', () => {
   const base = (sampleRows, primaries, ids, { ctlPassedGpt = 4 } = {}) => evaluateCrossGrade({
     rows: [...ctlRows('gpt', 4, ctlPassedGpt), ...ctlRows('gemini', 4), ...sampleRows],
-    primaryGrades: primaries, sampleIds: ids, graders: G, controlsExpected: 4,
+    primaryGrades: primaries, sampleIds: ids, graders: G, controlIds: CIDS(4),
   });
 
   it('certifies when both graders agree with the primary', () => {
@@ -96,18 +97,32 @@ describe('evaluateCrossGrade (pre-registered rule)', () => {
   });
 
   it('a grader with too few control rows is not ok (incomplete ≠ passed)', () => {
-    const ev = evaluateCrossGrade({ rows: [...ctlRows('gpt', 3), ...ctlRows('gemini', 4)], primaryGrades: [], sampleIds: [], graders: G, controlsExpected: 4 });
+    const ev = evaluateCrossGrade({ rows: [...ctlRows('gpt', 3), ...ctlRows('gemini', 4)], primaryGrades: [], sampleIds: [], graders: G, controlIds: CIDS(4) });
     assert.equal(ev.graderControls.gpt.ok, false);
     assert.equal(ev.certified, false);
+  });
+
+  it('controls count by IDENTITY: a duplicated passing row cannot stand in for a missing control', () => {
+    const dup = [{ grader: 'gpt', role: 'control', gradeId: 'c0', controlPassed: true }, { grader: 'gpt', role: 'control', gradeId: 'c0', controlPassed: true }];
+    const ev = evaluateCrossGrade({ rows: [...dup, ...ctlRows('gemini', 2)], primaryGrades: [], sampleIds: [], graders: G, controlIds: CIDS(2) });
+    assert.equal(ev.graderControls.gpt.ok, false, 'c1 never graded');
+    assert.equal(ev.graderControls.gemini.ok, true, 'positive control: the complete set passes');
+  });
+
+  it('an empty expected control set never passes', () => {
+    const ev = evaluateCrossGrade({ rows: [], primaryGrades: [], sampleIds: [], graders: G, controlIds: [] });
+    assert.equal(ev.allControlsOk, false);
+    assert.throws(() => evaluateCrossGrade({ rows: [], primaryGrades: [], sampleIds: [], graders: G }), /controlIds/);
   });
 });
 
 describe('controlPassesSingle', () => {
   it('gold needs correct and coverage ≥ 0.8; trap needs incorrect and trap1 fell', () => {
-    assert.equal(controlPassesSingle('control-gold', { correct: true, coverage: 0.8 }, null), true);
-    assert.equal(controlPassesSingle('control-gold', { correct: true, coverage: 0.79 }, null), false);
-    assert.equal(controlPassesSingle('control-trap', { correct: false }, { traps: [{ id: 'trap1', fell: true }] }), true);
-    assert.equal(controlPassesSingle('control-trap', { correct: false }, { traps: [{ id: 'trap1', fell: false }] }), false);
+    assert.equal(controlPassesSingle('control-gold', { q: 0.9, correct: true, coverage: 0.8 }, null), true);
+    assert.equal(controlPassesSingle('control-gold', { q: 0.9, correct: true, coverage: 0.79 }, null), false);
+    assert.equal(controlPassesSingle('control-trap', { q: 0.1, correct: false }, { traps: [{ id: 'trap1', fell: true }] }), true);
+    assert.equal(controlPassesSingle('control-trap', { q: 0.1, correct: false }, { traps: [{ id: 'trap1', fell: false }] }), false);
+    assert.equal(controlPassesSingle('control-gold', { q: null, correct: true, coverage: 1 }, null), false, 'a quote-voided grade (q null) is unmeasured, never a pass');
     assert.equal(controlPassesSingle('control-gold', null, null), false, 'unmeasured never passes');
   });
 });
@@ -131,6 +146,16 @@ describe('makeGeminiInvoker + gradeOnce', () => {
     assert.equal(genai.calls[0].config.systemInstruction.length > 50, true);
     assert.equal(genai.calls[0].config.maxOutputTokens, 14192);
     assert.deepEqual(settled[0].usageRaw, { input_tokens: 4000, output_tokens: 1500 });
+  });
+
+  it('reserves against the Gemini request ACTUALLY sent, not the OpenAI-shaped params (focused audit H8)', async () => {
+    const genai = fakeGenai([geminiReply(goodGrade)]);
+    const bigSchema = () => ({ type: 'object', description: 'x'.repeat(200_000) });
+    const reserved = [];
+    await gradeOnce({ invoke: makeGeminiInvoker({ genai, toGeminiSchema: bigSchema }), model: 'g', c: CASE, outputText: GOOD_TEXT, maxOutputTokens: 14192, reasoningEffort: null, zodTextFormat: fakeZodTextFormat, assertEgressSafe: noEgress, hooks: { before: (a) => reserved.push(a) } });
+    const sentBytes = Buffer.byteLength(JSON.stringify(genai.calls[0]), 'utf8');
+    assert.ok(reserved[0].inputTokensMax >= sentBytes, `bound ${reserved[0].inputTokensMax} must cover the ${sentBytes} bytes sent`);
+    assert.equal(reserved[0].maxOutputTokens, genai.calls[0].config.maxOutputTokens, 'output cap reserved = output cap sent');
   });
 
   it('non-JSON twice → unmeasured judge-malformed, never a score', async () => {

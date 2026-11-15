@@ -97,6 +97,18 @@ export function scanArtifacts(runDir, scan, env = process.env) {
  * dead run's open reservation (already charged at worst case by
  * sumScopeSpend) and removed the lock. Shared by `run` and `cross-grade`.
  */
+/**
+ * Persisted run evidence may only be (re)evaluated against the corpus it was produced under:
+ * same corpus hash, contract epoch and prompt hashes. Refuses otherwise.
+ */
+function assertRunMatchesCorpus(summary, manifest) {
+  const bad = [];
+  if (summary.corpusSha256 !== manifest.corpusSha256) bad.push(`corpus ${String(summary.corpusSha256).slice(0, 12)} ≠ current ${manifest.corpusSha256.slice(0, 12)}`);
+  if (summary.contractEpoch !== manifest.contractEpoch) bad.push(`epoch ${summary.contractEpoch} ≠ current ${manifest.contractEpoch}`);
+  if (JSON.stringify(summary.promptHashes ?? null) !== JSON.stringify(manifest.promptHashes)) bad.push('prompt hashes differ');
+  if (bad.length) throw new RunPreflightError('corpus_mismatch', `run ${summary.runId} was produced under a different corpus (${bad.join('; ')}) — reproduce it at its own revision`);
+}
+
 async function withScopeLock(root, budgetScope, runId, fn) {
   fs.mkdirSync(path.join(root, 'runs'), { recursive: true });
   const lockPath = path.join(root, 'runs', `.budget-${budgetScope}.lock`);
@@ -214,6 +226,7 @@ async function cmdReport(argv, root) {
   const runDir = path.join(root, 'runs', runId);
   const prior = JSON.parse(fs.readFileSync(path.join(runDir, 'summary.json'), 'utf8'));
   const { manifest, cases } = loadCorpus(path.join(root, 'corpus'), { promptHashes: promptHashes() });
+  assertRunMatchesCorpus(prior, manifest);
   const calls = readJsonl(path.join(runDir, 'calls.jsonl'));
   const grades = readJsonl(path.join(runDir, 'grades.jsonl'));
   const ledger = readJsonl(path.join(runDir, 'ledger.jsonl'));
@@ -270,7 +283,7 @@ function crossControls(cases) {
 function crossEvaluation(runDir, summary, grades, cases) {
   const ev = evaluateCrossGrade({
     rows: readJsonl(path.join(runDir, 'cross-grades.jsonl')), primaryGrades: grades.filter((g) => g.kind === 'arm'),
-    sampleIds: summary.spotSampleIds, graders: CROSS_GRADERS, controlsExpected: crossControls(cases).length,
+    sampleIds: summary.spotSampleIds, graders: CROSS_GRADERS, controlIds: crossControls(cases).map((c) => c.gradeId),
   });
   const prev = fs.existsSync(path.join(runDir, 'cross-grade.json')) ? JSON.parse(fs.readFileSync(path.join(runDir, 'cross-grade.json'), 'utf8')) : {};
   // Spend, stop and the artifact scan are written by the spending run; a recompute keeps them.
@@ -296,9 +309,18 @@ async function cmdCrossGrade(argv, root) {
   const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
   if (summary.phase !== 'main') throw new RunPreflightError('bad_arg', 'cross-grade is pre-registered for the main run only');
   if (!Array.isArray(summary.spotSampleIds) || summary.spotSampleIds.length === 0) throw new RunPreflightError('bad_arg', 'summary has no spot sample');
+  // Pre-registered: metered under the MAIN run's scope and cap, never a fresh scope with its own budget.
+  if (budgetScope !== summary.spend?.budgetScope) throw new RunPreflightError('bad_arg', `--budget-scope "${budgetScope}" is not the main run's scope "${summary.spend?.budgetScope}"`);
   const outPath = path.join(runDir, 'cross-grades.jsonl');
   if (fs.existsSync(outPath)) throw new RunPreflightError('run_exists', `${outPath} exists — evidence is append-only`);
-  const { cases } = loadCorpus(path.join(root, 'corpus'), { promptHashes: promptHashes() });
+  const { manifest, cases } = loadCorpus(path.join(root, 'corpus'), { promptHashes: promptHashes() });
+  assertRunMatchesCorpus(summary, manifest);
+  // The cap is the MAIN run's approved cap, never a fresh one supplied here (focused audit R2 H1).
+  if (capUsd !== summary.spend?.capUsd) throw new RunPreflightError('bad_arg', `--cap-usd ${capUsd} is not the main run's approved cap ${summary.spend?.capUsd}`);
+  // Every sampled item must resolve to a persisted arm output BEFORE any credential or client is touched.
+  const calls = readJsonl(path.join(runDir, 'calls.jsonl'));
+  const unresolved = summary.spotSampleIds.filter((gid) => !calls.some((x) => x.gradeId === gid && typeof x.text === 'string'));
+  if (unresolved.length) throw new RunPreflightError('bad_arg', `spot-sample item(s) ${unresolved.join(', ')} have no persisted arm output in calls.jsonl`);
   const missing = ['OPENAI_API_KEY', 'GEMINI_API_KEY'].filter((k) => !process.env[k]);
   if (missing.length) throw new RunPreflightError('missing_credentials', `missing ${missing.join(', ')} — nothing was spent`);
 
@@ -312,12 +334,13 @@ async function cmdCrossGrade(argv, root) {
     { name: 'gpt', model: resolveModel('latest-gpt', { silent: true }), client: await createOpenAIClient({ purpose: 'gpt' }), maxOutputTokens: DEFAULT_JUDGE_MAX_OUTPUT_TOKENS },
     { name: 'gemini', model: resolveModel('latest-pro', { silent: true }), invoke: makeGeminiInvoker({ genai: new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }), toGeminiSchema: zodToGeminiSchema }), maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS, reasoningEffort: null },
   ];
-  const calls = readJsonl(path.join(runDir, 'calls.jsonl'));
   const sample = summary.spotSampleIds.map((gid) => { const r = calls.find((x) => x.gradeId === gid); return { gradeId: gid, kind: 'arm', caseId: r.caseId, text: r.text }; });
   const caseById = Object.fromEntries(cases.map((c) => [c.id, c]));
   const xRunId = `${runId}-xgrade`;
 
   return withScopeLock(root, budgetScope, xRunId, async () => {
+    // Re-checked UNDER the lock: two invocations can both pass the pre-check above.
+    if (fs.existsSync(outPath)) throw new RunPreflightError('run_exists', `${outPath} exists — evidence is append-only`);
     const initialSpentUsd = sumScopeSpend(allLedgerRows(root), budgetScope);
     if (initialSpentUsd >= capUsd) throw new RunPreflightError('budget_exhausted', `budget scope "${budgetScope}" already spent ${initialSpentUsd.toFixed(4)} of ${capUsd}`);
     const meter = createMeter({ capUsd, initialSpentUsd, contractEpoch: DECISION_EVAL_CONTRACT_EPOCH,
