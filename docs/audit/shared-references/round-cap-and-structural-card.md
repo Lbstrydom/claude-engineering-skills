@@ -74,6 +74,24 @@ the plan's audit trail:
 2. **STRUCTURAL** — plan the shared primitive first (`/plan`, `node scripts/fleet.mjs propose …`), then return.
 3. **CONTINUE** — one more round with `--past-cap "<reason>"`; not available past the absolute cap.
 
+### Do not create a NEW file after the last round
+
+Measured 2026-11-15 (PR #361): splitting a module late in the loop — to satisfy `size:ratchet:gate`, whose
+own instruction is to split — made the final gate unsatisfiable. The reviewer's envelope is built from the
+files the audit **rounds** examined, so a file that exists in none of them is dropped before the reviewer:
+coverage `NONE`, gate `blocked`, *"not selected for the envelope"*. That is correct — no reviewer has seen
+that file at that sha, and "it is only a move" is an argument, not evidence.
+
+The only mechanical route out is a round past the cap to make it an audited subject, i.e. `--past-cap`. **Do
+not reach for it here.** A cap override exists for a round that will converge, not for clearing a gate that is
+accurately reporting unaudited code; in a permissioned host it is refused as an oversight bypass, and rightly.
+
+So: **split a file BEFORE the loop, or after the PR lands — never between the last round and the gate.** If a
+size ratchet trips mid-loop, the cheaper remedy is to condense the audit narrative the rounds just added to
+that file: it belongs in the plan and the audit summary, where it already is, not duplicated at length in the
+module. Generalises: **when a guard blocks you, check whether the thing it protects against is the thing you
+just did.**
+
 An agent may recommend; the call is the operator's. A `past_cap_reason` on a run whose card showed
 `structural > 0` is the signal a coordinator reviews.
 
