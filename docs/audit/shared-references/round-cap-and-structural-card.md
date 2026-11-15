@@ -74,6 +74,31 @@ the plan's audit trail:
 2. **STRUCTURAL** — plan the shared primitive first (`/plan`, `node scripts/fleet.mjs propose …`), then return.
 3. **CONTINUE** — one more round with `--past-cap "<reason>"`; not available past the absolute cap.
 
+### PARTIAL final-gate coverage: reach FULL with disjoint batches
+
+An `APPROVE` whose summary says `Code: PARTIAL, N changed line(s) never shown` is an approve **of the examined
+files only**. It is not release-blocking, and it is not a clean approve either — never report it as one. The
+cause is budget: the envelope renders whole files until it runs out, then windows or drops the rest.
+
+Reaching FULL needs smaller transcripts, not a bigger budget. Split the changed code files into **disjoint
+batches** and review each as its own `--round 1` (the 2-round cap is per review, so this does not evade it):
+
+```bash
+node scripts/build-audit-transcript.mjs --sid "$SID" --changed "<batch files>" --out ".audit/$SID-batch-A.json"
+node scripts/gemini-review.mjs review "$PLAN_FILE" ".audit/$SID-batch-A.json" --round 1 --run-id "$RUN_ID" --out ".audit/$SID-gemini-batch-A.json"
+```
+
+One large file per batch is usually enough; `FULL` includes *windowed with every changed line shown*, so a
+batch need not render whole. Keep splitting any batch that still reports PARTIAL, and **re-run every batch
+after any code change** — otherwise the FULL claim describes bytes you no longer ship.
+
+**Check completeness BOTH ways, mechanically, from `git diff` — never from a file list you are holding in your
+head.** Forward: every changed code file appears in exactly one batch. Backward: every batch member is a
+changed file, no extras. Plus pairwise disjoint. Measured 2026-11-15 (#361): that check is what caught a
+changed file sitting in **no** batch, because the batches had been built from a narrowing used earlier in the
+session rather than from the diff. Asserting the union "looks right" is how a file goes unreviewed under a
+FULL claim.
+
 ### Do not create a NEW file after the last round
 
 Measured 2026-11-15 (PR #361): splitting a module late in the loop — to satisfy `size:ratchet:gate`, whose
