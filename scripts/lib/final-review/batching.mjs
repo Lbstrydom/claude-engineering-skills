@@ -34,11 +34,12 @@ import { COVERAGE_STATES } from './code-coverage.mjs';
 const defaultSizeOf = (p) => { try { return statSync(p).size; } catch { return 0; } };
 
 /**
- * Path IDENTITY for planning and the completeness check: separators unified, case KEPT. Not `normalizePath`, whose
+ * Path IDENTITY for planning and the completeness check: the path EXACTLY as git reported it. Not `normalizePath`, whose
  * lowercasing is a Windows matching key: on a case-sensitive checkout `A.mjs` and `a.mjs` are two changed files, and
  * folding them would drop one from every batch while the check, using the same fold, still reported the partition whole.
+ * Separators are not folded either: git emits `/`, and on POSIX a backslash is a legal filename character.
  */
-const pathKey = (p) => p.replaceAll('\\', '/');
+const pathKey = (p) => p;
 
 /**
  * Pack the changed files into disjoint batches, in diff order (first fit).
@@ -56,7 +57,9 @@ export function planDisjointBatches(changedFiles, { sizeOf = defaultSizeOf, budg
     .filter((p) => { const k = pathKey(p); if (seen.has(k)) return false; seen.add(k); return true; });
   const batches = [];
   for (const file of files) {
-    const cost = Math.min(Math.max(0, sizeOf(file) | 0), perFileCap);
+    // No `| 0`: it wraps a size over 2 GiB to a negative number, which would then be charged nothing.
+    const size = Number(sizeOf(file));
+    const cost = Math.min(Number.isFinite(size) && size > 0 ? size : 0, perFileCap);
     const open = batches.find((b) => b.used + cost <= budget);
     if (open) { open.files.push(file); open.used += cost; } else batches.push({ files: [file], used: cost });
   }
@@ -197,9 +200,14 @@ export function foldBatchResults(parts, provider) {
   };
 }
 
-/** Content fingerprint of a path; an absent file (a deletion) has a stable fingerprint of its own. */
+/** Content fingerprint of a path: sha256 of its bytes, `absent` for a deleted file; any other read error throws. */
 function defaultFingerprint(p) {
-  try { return createHash('sha256').update(readFileSync(p)).digest('hex'); } catch (e) { return `absent:${e?.code ?? 'error'}`; }
+  try { return createHash('sha256').update(readFileSync(p)).digest('hex'); } catch (e) {
+    // A deleted file has a stable fingerprint of its own. Any OTHER read failure means the bytes cannot be verified, and
+    // an unverifiable file must stop the run rather than read as an unchanged one.
+    if (e?.code === 'ENOENT') return 'absent';
+    throw new Error(`[final-review] cannot fingerprint ${p} for the batched review (${e?.code ?? e?.message}) — no verdict recorded`);
+  }
 }
 
 /** Sum two usage records key by key (numeric fields only; a non-numeric field keeps the first value seen). */

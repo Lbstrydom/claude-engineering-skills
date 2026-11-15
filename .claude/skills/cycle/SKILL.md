@@ -537,7 +537,7 @@ scope.
 > **Without `--ship`, nothing is pushed or published**: no `git push`, `gh pr create` or side session, whatever a
 > brief or plan step says; commits stay local. **With `--ship`**: push the branch, open ONE PR, never merge, then `node scripts/ci-merge.mjs --pr <n> --wait-only` into the done report (`references/ci-wait.md`).
 >
-> So Step 7 always ends in a **blocked handoff**, never an "Invoke `/ship`."
+> So Step 7 always ends in a **blocked handoff** (after the push + PR when `--ship`), never an "Invoke `/ship`."
 > Show this card and stop — name the plan path so the human never has to go
 > hunting for it (a bare `/ship` with no argument is a second manual step, not
 > a resume command):

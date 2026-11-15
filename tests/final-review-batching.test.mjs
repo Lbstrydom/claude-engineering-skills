@@ -51,6 +51,19 @@ describe('planDisjointBatches packs to the renderer budget', () => {
   });
 });
 
+describe('planDisjointBatches — sizes and identities that used to collapse', () => {
+  test('a file over 2 GiB is charged the per-file cap, not wrapped negative to zero', () => {
+    const files = Array.from({ length: 4 }, (_, i) => `big${i}`);
+    const batches = planDisjointBatches(files, { sizeOf: () => 3 * 1024 ** 3 });
+    assert.equal(batches.flat().length, 4);
+    assert.ok(batches.length > 1, 'four capped files cannot share one 100K envelope');
+  });
+  test('a backslash is part of a POSIX filename, not a separator', () => {
+    const b = planDisjointBatches(['src/a\\b.mjs', 'src/a/b.mjs'], { sizeOf: () => 1 });
+    assert.deepEqual(b.flat(), ['src/a\\b.mjs', 'src/a/b.mjs']);
+  });
+});
+
 describe('checkBatchCompleteness — forward, backward, disjoint', () => {
   test('a changed file in NO batch is caught (the #361 miss)', () => {
     const r = checkBatchCompleteness([['a'], ['b']], ['a', 'b', 'c']);
@@ -171,6 +184,13 @@ describe('reviewBatches refuses a tree that moved between batches', () => {
     let n = 0;
     const fp = (p) => { if (p === 'b') n += 1; return p === 'b' && n === 3 ? 'transient' : `orig:${p}`; };
     await assert.rejects(reviewBatches(plan, reviewOne, opts(fp)), /after batch 2\/3\): b/);
+  });
+
+  test('a file that cannot be READ (not merely absent) stops the run rather than reading as unchanged', async () => {
+    // The default fingerprint over a real directory: EISDIR, not ENOENT.
+    const dirPlan = { batches: [['tests']], transcripts: ['t'] };
+    await assert.rejects(reviewBatches({ ...dirPlan, batches: [['tests'], ['scripts']], transcripts: ['t1', 't2'] }, reviewOne,
+      { provider: 'gemini', stamp: () => {}, log: () => {} }), /cannot fingerprint tests/);
   });
 
   test('a stable tree folds normally', async () => {

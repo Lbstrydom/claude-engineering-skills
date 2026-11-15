@@ -36,8 +36,10 @@ for (const file of [CANONICAL, GENERATED]) {
 
     test('Step 7 forbids push, PR creation and side sessions by name when --ship is absent', () => {
       const body = step7(s);
-      assert.match(body, /Without `--ship`, nothing is pushed or published/);
-      for (const action of ['`git push`', '`gh pr create`', 'side session']) assert.ok(body.includes(action), `Step 7 must name ${action}`);
+      // The three actions must sit INSIDE the prohibition sentence, not merely somewhere in Step 7.
+      assert.match(body, /Without `--ship`, nothing is pushed or published\*\*: no `git push`, `gh pr create` or side session/);
+      // ...and the handoff still ends the step in BOTH cases, so --ship never reads as "shipping is now autonomous".
+      assert.match(body, /always ends in a \*\*blocked handoff\*\* \(after the push \+ PR when `--ship`\)/);
       assert.match(body, /With `--ship`\*\*: push the branch, open ONE PR, never merge/);
     });
 

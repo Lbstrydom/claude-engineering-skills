@@ -88,4 +88,5 @@ From the end of Step 3C.2:
 > fix-gate, close-out, consolidated Gemini gate — completed without a human.
 > Step 7 still stops it: `/ship` cannot be invoked programmatically (see Step 7
 > below), so even a fully autonomous, fully converged run ends in a blocked
-> handoff naming `/ship docs/plans/<name>.md`, never a pushed commit.
+> handoff naming `/ship docs/plans/<name>.md`: never a pushed commit, unless `--ship` was passed (then one pushed
+> branch and one open PR, still unmerged, and the same handoff).
