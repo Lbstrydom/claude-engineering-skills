@@ -4,6 +4,14 @@ Plan: [`docs/plans/fable-vs-opus-decision-eval.md`](../../plans/fable-vs-opus-de
 Anything off-contract, outstanding, or differing from the plan is recorded here
 **before** merge and raised to Louis in the PR description. Newest first.
 
+## 2026-11-15 — main-run budget
+
+- **Main-run hard cap: $25, confirmed by Louis directly in this session** ("Yes cap 25").
+  Earlier relays via the coordinator said "$13, up to $20 if needed" and then "cap 25 is fine".
+  The direct confirmation is the authority. Projection at n = 3: $12.01, high band $15.10
+  (estimated). The cap is enforced per call by worst-case reservation in a fresh budget scope,
+  `main`.
+
 ## 2026-11-15 — epoch 2 (10-case corpus)
 
 - **Corpus enlarged on Louis's call ("enlarge corpus first").** 5 new cases: 3 design-fork,
