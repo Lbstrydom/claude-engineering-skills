@@ -7,6 +7,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { describeFinalGate, WEAKER_CHECK_SENTENCE } from '../scripts/lib/final-review/gate-label.mjs';
 
@@ -40,18 +42,35 @@ describe('describeFinalGate', () => {
     assert.ok(g.independenceNote.includes(WEAKER_CHECK_SENTENCE));
   });
 
+  test('an author model that cannot be classified is named as such, not as undeclared', () => {
+    const h = describeFinalGate({ provider: 'azure-claude', model: 'x', authorModel: '/' });
+    assert.equal(h.sameFamilyAsAuthor, null);
+    assert.match(h.independenceNote, /author model "\/" unclassified/);
+  });
+
   test('undeclared author + Gemini reviewer → no note', () => {
     assert.equal(describeFinalGate({ provider: 'gemini', model: 'gemini-3.1-pro-preview' }).independenceNote, null);
   });
 });
 
 describe('the surfaces a human reads use the label', () => {
-  test('gemini-review stamps _gate on the result and the --out summary line', () => {
-    const src = read('scripts/gemini-review.mjs');
-    assert.match(src, /data\._gate = gateOf\(provider, data\._model\)/);
-    assert.match(src, /\| \$\{data\._gate\.label\}/);
-    assert.doesNotMatch(src, /— Independent Final Review`/, 'the human title names the gate by role');
+  test('gemini-review stamps _gate on the --out result and names it on the summary line (real CLI, fixture provider)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-label-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'plan.md'), '# plan\n');
+      fs.writeFileSync(path.join(dir, 't.json'), JSON.stringify({ changed_files: ['src/a.mjs'], rounds: [] }));
+      const out = path.join(dir, 'r.json');
+      const r = spawnSync(process.execPath, [path.join(REPO, 'scripts', 'gemini-review.mjs'), 'review', path.join(dir, 'plan.md'), path.join(dir, 't.json'), '--provider', 'fixture', '--out', out], {
+        cwd: REPO, encoding: 'utf-8',
+        env: { ...process.env, NODE_ENV: 'test', AUDIT_DB_URL: '', GEMINI_API_KEY: '', ANTHROPIC_API_KEY: '', AUDIT_AUTHOR_TIER_HINT: '' },
+      });
+      assert.equal(r.status, 0, r.stderr);
+      const data = JSON.parse(fs.readFileSync(out, 'utf8'));
+      assert.equal(data._gate.label, 'final gate (fixture / fixture)');
+      assert.match(r.stdout, /\| final gate \(fixture \/ fixture\)/);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
+
   test('the shared gemini-gate reference says to name it by role', () => {
     const ref = read('docs/audit/shared-references/gemini-gate.md');
     assert.match(ref, /\*\*Name it\s+by role\*\*/);

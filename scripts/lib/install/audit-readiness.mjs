@@ -27,7 +27,7 @@
  * @module scripts/lib/install/audit-readiness
  */
 import { buildAzureConfig } from '../config.mjs';
-import { resolveProviderAvailability } from '../brainstorm/provider-availability.mjs';
+import { resolveProviderAvailability } from '../provider-availability.mjs';
 import { probeEolHazard, EOL_FIX } from '../eol-hazard.mjs';
 
 /** The repo policy flag: `1` forbids offering a degraded (substitute) audit. */

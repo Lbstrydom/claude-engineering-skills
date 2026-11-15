@@ -67,6 +67,10 @@ export function assessCapProductivity({ rounds, ledgerEntries, ledgerUnmeasured 
   const last = ledgerEntries.filter((e) => e?.resolvedRound === lastRound)
     .map((e) => ({ outcome: e.adjudicationOutcome, ruling: e.ruling }));
   if (last.length === 0) return { ...base, unmeasured: `round ${lastRound} has no rulings in the ledger (not triaged)` };
+  // A half-triaged round would yield a rate over a subset of its findings. Ledger entries are one per concern, so
+  // fewer rulings than findings reads as partial — failing toward UNMEASURED, never toward a confident rate.
+  const found = (sorted[sorted.length - 1].findings || []).length;
+  if (last.length < found) return { ...base, ruled: last.length, unmeasured: `round ${lastRound} partially triaged (${last.length} of ${found} findings ruled)` };
   const a = roundAcceptance(last);
   return { ...base, acceptanceRate: a.acceptanceRate, ruled: a.ruled, stillProductive: a.acceptanceRate >= PRODUCTIVE_ACCEPTANCE, unmeasured: null };
 }
@@ -89,32 +93,45 @@ export function readLedgerEntries({ sid, auditDir }) {
 }
 
 /**
- * The card line. Says plainly when the cap, not convergence, stopped the run.
+ * The card line. Claims the CAP only when the card is for a round past the soft
+ * cap — a card built earlier says what the last round measured and nothing about
+ * a stop. It never claims the telemetry was written: `recordCapStop` reports its
+ * own outcome where it runs.
  * @param {ReturnType<typeof assessCapProductivity>|null} p
+ * @param {{round?: number|null, caps?: {soft: number}|null}} [at] - the card's requested round and caps
  * @returns {string|null}
  */
-export function renderCapProductivity(p) {
+export function renderCapProductivity(p, { round = null, caps = null } = {}) {
   if (!p) return null;
   const trend = p.highByRound.length ? `HIGH ${p.highByRound.join('→')}` : 'HIGH n/a';
   if (p.stillProductive === null) return `Last round acceptance: UNMEASURED (${p.unmeasured}) · ${trend}`;
   const pct = `${Math.round(p.acceptanceRate * 100)}%`;
+  const measured = `round ${p.lastRound} acceptance ${pct} of ${p.ruled} ruled · ${trend}`;
+  if (!atCap({ round, caps })) return `Last round: ${measured}${p.stillProductive ? ' (productive)' : ''}.`;
   if (p.stillProductive) {
-    return `⚠ CAPPED WHILE PRODUCTIVE — round ${p.lastRound} acceptance ${pct} of ${p.ruled} ruled · ${trend}: `
-      + 'the cap stopped this run, not convergence. Recorded as round_cap_stop telemetry; the cap policy is unchanged.';
+    return `⚠ AT THE CAP WHILE PRODUCTIVE — ${measured}: if the run stops here, the cap stopped it, not convergence. `
+      + 'Say so in the final report. The cap policy is unchanged.';
   }
-  return `Last round: acceptance ${pct} of ${p.ruled} ruled · ${trend} — below the productive line; the cap and the loop agree.`;
+  return `Last round: ${measured} — below the productive line; the cap and the loop agree.`;
+}
+
+/** Is this card for a round past the soft cap? */
+export function atCap({ round, caps }) {
+  return Number.isInteger(round) && Number.isInteger(caps?.soft) && round > caps.soft;
 }
 
 /**
- * Record the cap stop as an observation-only learning decision and flush it.
- * Best-effort: never throws, and reports what it did.
+ * Record the cap stop as an observation-only learning decision and flush it
+ * (to the cloud store, or the learning outbox when it is off). Only for a round
+ * past the soft cap. Best-effort: never throws, and reports what it did.
  * @param {{sid: string|null, mode: string, round: number, caps: {soft: number, absolute: number}|null,
- *   productivity: ReturnType<typeof assessCapProductivity>, runId?: string|null}} input
+ *   productivity: ReturnType<typeof assessCapProductivity>, runId?: string|null, trigger?: 'refused'|'on-demand'}} input
  * @param {{record?: Function, flush?: Function}} [deps] - test seams
  * @returns {Promise<{recorded: boolean, reason: string|null}>}
  */
-export async function recordCapStop({ sid, mode, round, caps, productivity, runId = null }, deps = {}) {
+export async function recordCapStop({ sid, mode, round, caps, productivity, runId = null, trigger = 'refused' }, deps = {}) {
   try {
+    if (!atCap({ round, caps })) return { recorded: false, reason: `round ${round} is within the soft cap — no cap stop to record` };
     const keyOk = (v) => typeof v === 'string' && v.trim() !== '' && !v.includes(':');
     const bound = keyOk(runId) ? { auditRunId: runId, round, sequence: 0 }
       : keyOk(sid) ? { externalId: `${sid}-r${round}-cap` } : null;
@@ -124,11 +141,12 @@ export async function recordCapStop({ sid, mode, round, caps, productivity, runI
       decisionType: CAP_STOP_DECISION_TYPE,
       ...bound,
       context: {
-        mode, requestedRound: round, softCap: caps?.soft ?? null, absoluteCap: caps?.absolute ?? null,
+        mode, trigger, requestedRound: round, softCap: caps?.soft ?? null, absoluteCap: caps?.absolute ?? null,
         lastRound: productivity.lastRound, acceptanceRate: productivity.acceptanceRate, ruled: productivity.ruled,
         highByRound: productivity.highByRound, unmeasured: productivity.unmeasured,
       },
-      choice: { chose: 'stop_at_cap', stillProductive: productivity.stillProductive },
+      // `trigger`: 'refused' (openai-audit refused the round) or 'on-demand' (card read at the cap; the operator may still CONTINUE).
+      choice: { chose: 'card_at_cap', stillProductive: productivity.stillProductive },
       outcome: null,
     });
     if (!key) return { recorded: false, reason: 'not admitted (LEARNING_DISABLE=1 or back-pressure)' };

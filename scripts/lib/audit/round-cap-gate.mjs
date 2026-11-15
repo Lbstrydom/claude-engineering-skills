@@ -38,15 +38,16 @@ export function sessionIdFromArgv(argv, env = process.env) {
   return parseResultPath(out).sid ?? (env.AUDIT_SESSION_ID || null);
 }
 
-async function emitCard({ argv, sid, mode, round, caps, auditDir, cwd, env, write, build, recordCap }) {
+async function emitCard({ argv, sid, mode, round, caps, auditDir, cwd, env, write, build, recordCap }, { recordStop = false } = {}) {
   try {
     const { card, text } = await build({ sid, mode, round, planFile: argv[1] || null, caps, auditDir, cwd, env });
     const file = writeCardFile(auditDir, cardFileName(sid, round), card);
     write(`\n${text}\n\n  card written: ${path.relative(cwd, file) || file}\n`);
-    if (card?.productivity) {
-      // Observation-only: capped-while-productive is data for the cap policy, never a reason to admit the round.
-      const rec = await recordCap({ sid, mode, round, caps, productivity: card.productivity, runId: card.productivity.lastRunId });
-      if (!rec.recorded) write(`  [round-cap] cap-stop telemetry not recorded (${rec.reason})\n`);
+    if (recordStop && card?.productivity) {
+      // Observation-only, and only for a REFUSED round (never --past-cap's missing-card case, which is an operator
+      // continuing): capped-while-productive is data for the cap policy, never a reason to admit the round.
+      const rec = await recordCap({ sid, mode, round, caps, productivity: card.productivity, runId: card.productivity.lastRunId, trigger: 'refused' });
+      write(rec.recorded ? '  [round-cap] cap stop recorded (round_cap_stop)\n' : `  [round-cap] cap-stop telemetry not recorded (${rec.reason})\n`);
     }
     return card;
   } catch (err) {
@@ -90,7 +91,7 @@ export async function gateRoundCap(argv, {
   const ctx = { argv, sid, mode, round, caps: v.caps, auditDir, cwd, env, write, build, recordCap };
 
   if (!v.ok) {
-    if (v.needsCard) await emitCard(ctx);
+    if (v.needsCard) await emitCard(ctx, { recordStop: true });
     write(`Error [${v.code}]: ${v.error}\n`);
     return { ok: false, exitCode: v.exitCode, code: v.code };
   }
@@ -100,9 +101,11 @@ export async function gateRoundCap(argv, {
     const found = readMatchingCard(auditDir, cardFileName(sid, round), { round, mode, planFile: argv[1] || null });
     if (!found.ok) {
       // A past-cap round needs the card for THIS (session, round) computed first — the evidence existed at the decision.
-      await emitCard(ctx);
+      const built = await emitCard(ctx);
       write(`Error [CARD_REQUIRED]: --past-cap is accepted only after the structural-or-stop card for ${mode} round ${round} has been built (${found.reason}). `
-        + 'It is printed above and written to the audit directory — read it, then re-run the same command.\n');
+        + (built
+          ? 'It is printed above and written to the audit directory — read it, then re-run the same command.\n'
+          : 'Building it failed (reason above), so a re-run is refused the same way until the card can be built.\n'));
       return { ok: false, exitCode: EXIT_CAPPED, code: 'CARD_REQUIRED' };
     }
     cardSummary = found.card.summary ?? null;

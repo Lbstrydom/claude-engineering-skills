@@ -38,21 +38,28 @@ export const EOL_FIX = 'add `* text=auto eol=lf` to .gitattributes (then `git ad
 
 /**
  * Does `.gitattributes` text pin EVERY path's working-tree line ending?
- * Only a rule whose pattern is `*` counts: a per-extension rule leaves the rest
+ * Only a rule whose pattern is `*` can pin: a per-extension rule leaves the rest
  * of the tree to autocrlf, which is exactly the "not a full .gitattributes" case.
+ * Rules are read IN ORDER, as git applies them (a later line overrides only the
+ * attributes it names). An explicit `eol=crlf` (e.g. `*.cmd`) is a deliberate pin, not
+ * autocrlf's doing, so it keeps the pin; ANY later rule that unsets `eol` (`!eol`, `-eol`) hands those paths
+ * back to autocrlf. Nested `.gitattributes` files are not read; the repo-root
+ * file is what a fresh checkout's whole tree is governed by in the reported case.
  * @param {string|null} text
  * @returns {boolean}
  */
 export function gitattributesPinsEol(text) {
   if (!text) return false;
+  let pinned = false;
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.replace(/#.*/, '').trim();
     if (!line) continue;
     const [pattern, ...attrs] = line.split(/\s+/);
-    if (pattern !== '*') continue;
-    if (attrs.some((a) => a === 'eol=lf' || a === '-text' || a === 'binary')) return true;
+    const unsetsEol = attrs.some((a) => a === '!eol' || a === '-eol');
+    if (unsetsEol) pinned = false;
+    else if (pattern === '*' && attrs.some((a) => a === 'eol=lf' || a === 'eol=crlf' || a === '-text' || a === 'binary')) pinned = true;
   }
-  return false;
+  return pinned;
 }
 
 /**
@@ -88,8 +95,12 @@ export function probeEolHazard(repoRoot, io = {}) {
   } catch {
     return { measured: false, hazard: false, reason: 'not a git checkout' };
   }
-  // `git config --get` exits 1 when the key is unset — that is "unset", not a failure.
-  try { autocrlf = run(['config', '--get', 'core.autocrlf'], top).trim() || null; } catch { autocrlf = null; }
+  // `git config --get` exits 1 when the key is unset — that is "unset", not a
+  // failure. Any other failure could not be measured and must not read as "unset".
+  try { autocrlf = run(['config', '--get', 'core.autocrlf'], top).trim() || null; } catch (err) {
+    if (err?.status !== 1) return { measured: false, hazard: false, reason: `could not read core.autocrlf (${err?.message || err})` };
+    autocrlf = null;
+  }
   let gitattributes = null;
   try { gitattributes = fs.readFileSync(path.join(top, '.gitattributes'), 'utf8'); } catch { gitattributes = null; }
   return { measured: true, ...assessEolHazard({ autocrlf, gitattributes }) };

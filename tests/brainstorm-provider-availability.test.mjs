@@ -21,7 +21,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { resolveProviderAvailability, defaultProviders } from '../scripts/lib/brainstorm/provider-availability.mjs';
+import { resolveProviderAvailability, defaultProviders } from '../scripts/lib/provider-availability.mjs';
 import { BRAINSTORM_PROVIDERS, ProviderResultSchema } from '../scripts/lib/brainstorm/schemas.mjs';
 import { PROVIDER_INPUT_CEILING_TOKENS } from '../scripts/lib/brainstorm/provider-limits.mjs';
 

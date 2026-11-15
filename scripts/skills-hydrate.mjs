@@ -341,7 +341,7 @@ export function hydrationNotes(plan, eol) {
   const notes = [];
   if (eol?.hazard) notes.push(`[hydrate] WARN line endings: ${eol.reason}. Fix: ${EOL_FIX}`);
   if (plan?.action === 'copy') {
-    notes.push('[hydrate] keys are not copied: the audit route comes from ~/.audit-loop.env (per-user, every worktree). '
+    notes.push('[hydrate] keys are not copied: put them in ~/.audit-loop.env (per-user; every worktree reads it). '
       + 'Run node scripts/check-setup.mjs and read its `audit route:` line before any spend.');
   }
   return notes;

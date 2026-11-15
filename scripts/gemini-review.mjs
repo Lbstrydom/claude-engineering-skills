@@ -735,6 +735,8 @@ export async function runAdjudicatorOnlyReview(provider, client, planContent, tr
 }
 
 const gateOf = (provider, model) => describeFinalGate({ provider, model, authorModel: process.env.AUDIT_AUTHOR_TIER_HINT || null });
+/** The summary-line segment naming the gate by role — ONE spelling for the live and fixture paths. */
+const gateSegment = (gate) => ` | ${gate.label}${gate.independenceNote ? ` — ${gate.independenceNote}` : ''}`;
 
 function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile, gateSummary) {
   if (jsonMode || outFile) {
@@ -744,7 +746,7 @@ function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile,
       const newCount = result.new_findings?.length ?? 0;
       const dismissedCount = result.wrongly_dismissed?.length ?? 0;
       const codeSeg = formatCodeCoverageSegment(result._envelope?.codeCoverage);
-      const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${newCount} | Wrongly dismissed: ${dismissedCount} | ${(latencyMs / 1000).toFixed(0)}s${codeSeg ? ` | ${codeSeg}` : ''} | ${data._gate.label}${data._gate.independenceNote ? ` — ${data._gate.independenceNote}` : ''}`;
+      const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${newCount} | Wrongly dismissed: ${dismissedCount} | ${(latencyMs / 1000).toFixed(0)}s${codeSeg ? ` | ${codeSeg}` : ''}${gateSegment(data._gate)}`;
       writeOutput(data, outFile, summaryLine);
     } else {
       console.log(JSON.stringify(data, null, 2));
@@ -801,7 +803,8 @@ function runFixtureReview({ transcriptFile, outFile, jsonMode, round = null, pri
   addSemanticIds(result, 'gemini');
   const gateSummary = stampGateDisposition(result, round);
   const data = { ...result, _model: 'fixture', _provider: 'fixture', _usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0 } };
-  const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${result.new_findings.length} | Wrongly dismissed: ${result.wrongly_dismissed.length} | fixture (no live call)`;
+  data._gate = gateOf('fixture', 'fixture');
+  const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${result.new_findings.length} | Wrongly dismissed: ${result.wrongly_dismissed.length} | fixture (no live call)${gateSegment(data._gate)}`;
   if (outFile) {
     writeOutput(data, outFile, summaryLine);
   } else if (jsonMode) {

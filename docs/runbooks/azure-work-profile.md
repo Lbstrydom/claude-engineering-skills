@@ -45,7 +45,7 @@ back in if you really do hold a key.
 > there: the OpenAI adapter had been Azure-aware since 2026-07-14, but the dispatch
 > gate short-circuited on the public env var before reaching it. The tell in the
 > envelope is `latencyMs: 0` — no call was attempted. Availability oracle:
-> [`provider-availability.mjs`](../../scripts/lib/brainstorm/provider-availability.mjs);
+> [`provider-availability.mjs`](../../scripts/lib/provider-availability.mjs);
 > the second voice: [`azure-claude-adapter.mjs`](../../scripts/lib/brainstorm/azure-claude-adapter.mjs).
 
 **Adding a voice is a multi-table change.** A provider id must be declared in
@@ -443,7 +443,7 @@ The two gateway routes (`openai-compatible`, `openrouter`) are **explicit-select
 > case (naming the missing var and exiting non-zero), but the guess meant
 > `azureConfig.claudeDeployment` was never falsy while Azure was active, so
 > that check — and the equivalent ones in
-> [`provider-availability.mjs`](../../scripts/lib/brainstorm/provider-availability.mjs)
+> [`provider-availability.mjs`](../../scripts/lib/provider-availability.mjs)
 > and `azure-doctor.mjs`'s "configured" probe — was permanently dead code.
 > The fallback is now gone: an unconfigured deployment resolves to `null`,
 > and those existing checks fire for real.
@@ -666,7 +666,7 @@ incidents and opt-out lists are in the guide):
   exactly the installs it was written for, and the tell is a **failure with zero
   latency**: nothing was called. **Grep the whole path a call site takes for the
   public key name**, let ONE oracle answer
-  (`lib/brainstorm/provider-availability.mjs`), and use **`isClaudeAvailable()`,
+  (`lib/provider-availability.mjs`), and use **`isClaudeAvailable()`,
   never `ANTHROPIC_API_KEY`**. An **omitted `azureRoute` ADOPTS the tenant's
   route**; pass `azureRoute: null` only where an id *means* the public service.
   Tests spawning such a CLI must scrub `AZURE_*`, or they pass — or spend — by

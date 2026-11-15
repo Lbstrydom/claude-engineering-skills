@@ -45,9 +45,10 @@ async function main() {
   const { card, text } = await buildStructuralCard({ sid, mode, round: roundRes.value, planFile, caps, auditDir });
   if (!argv.includes('--no-write')) writeCardFile(auditDir, cardFileName(sid, roundRes.value), card);
   if (card.productivity && !argv.includes('--no-write')) {
-    // Same decision key as the round-cap refusal for this round, so the two paths record ONE stop.
-    const rec = await recordCapStop({ sid, mode, round: roundRes.value, caps, productivity: card.productivity, runId: card.productivity.lastRunId });
-    if (!rec.recorded) process.stderr.write(`  [round-cap] cap-stop telemetry not recorded (${rec.reason})\n`);
+    // Recorded only past the soft cap (recordCapStop refuses otherwise), as `on-demand`: the operator may still CONTINUE.
+    // Same decision key as a later refusal of this round, so the two paths record ONE row.
+    const rec = await recordCapStop({ sid, mode, round: roundRes.value, caps, productivity: card.productivity, runId: card.productivity.lastRunId, trigger: 'on-demand' });
+    process.stderr.write(rec.recorded ? '  [round-cap] cap reached, recorded (round_cap_stop, on-demand)\n' : `  [round-cap] cap-stop telemetry not recorded (${rec.reason})\n`);
   }
   if (argv.includes('--json')) console.log(JSON.stringify(card, null, 2)); else console.log(text);
 }

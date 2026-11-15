@@ -28,8 +28,8 @@ physics, and affordance signifiers — deterministically, over computed-style ev
 > so every command below that uses it dies on `MODULE_NOT_FOUND`. Run
 > `npm run skills:hydrate` first; if no such script exists,
 > `references/worktree-preflight.md` holds the entry to add (ask the user first:
-> it edits `package.json`). Keys are not copied — the audit route comes from
-> `~/.audit-loop.env`.
+> it edits `package.json`). Keys are not copied: put them in
+> `~/.audit-loop.env`, which every worktree reads.
 
 ## Static-primary? No — verify-primary (read this first)
 

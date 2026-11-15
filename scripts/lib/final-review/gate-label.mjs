@@ -41,7 +41,8 @@ export function describeFinalGate({ provider, model, authorModel = null }) {
     sameFamilyAsAuthor = authorFamily === reviewerFamily;
     if (sameFamilyAsAuthor) independenceNote = `${WEAKER_CHECK_SENTENCE} (author ${authorModel})`;
   } else if (reviewerFamily === 'anthropic') {
-    independenceNote = `author model undeclared (AUDIT_AUTHOR_TIER_HINT unset); if Claude authored this change, the reviewer is the ${WEAKER_CHECK_SENTENCE}`;
+    const why = authorModel ? `author model "${authorModel}" unclassified` : 'author model undeclared (AUDIT_AUTHOR_TIER_HINT unset)';
+    independenceNote = `${why}; if Claude authored this change, the reviewer is the ${WEAKER_CHECK_SENTENCE}`;
   }
   return {
     label: `final gate (${provider} / ${model ?? 'unresolved'})`,

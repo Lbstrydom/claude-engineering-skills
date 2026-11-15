@@ -72,8 +72,8 @@ Full contract: `references/input-acquisition.md`.
 > so every command below that uses it dies on `MODULE_NOT_FOUND`. Run
 > `npm run skills:hydrate` first; if no such script exists,
 > `references/worktree-preflight.md` holds the entry to add (ask the user first:
-> it edits `package.json`). Keys are not copied — the audit route comes from
-> `~/.audit-loop.env`.
+> it edits `package.json`). Keys are not copied: put them in
+> `~/.audit-loop.env`, which every worktree reads.
 
 **Ship-specific, because here the wrong answer is silent instead of loud**: do not
 reach the tooling by `cd`-ing to the main checkout. `ship-commit.mjs` and

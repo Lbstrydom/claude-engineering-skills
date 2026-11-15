@@ -79,6 +79,7 @@ describe('AUDIT_FORBID_DEGRADED repo policy', () => {
 describe('~/.audit-loop.env is named where a worktree flow starts', () => {
   test('the worktree preflight marker names it', () => {
     assert.ok(MARKER_BLOCK.includes('`~/.audit-loop.env`'));
+    assert.doesNotMatch(MARKER_BLOCK, /route comes from/, 'the file is one place keys can live, not THE source of the route');
   });
   test('/cycle Step 0 names it and the check-setup route line', () => {
     const step0 = read('skills/cycle/SKILL.md').split('## Step 0 — Parse Input')[1].split('| Input shape')[0];
@@ -107,6 +108,12 @@ describe('CRLF hazard — autocrlf=true AND no repo-wide eol=lf rule', () => {
     assert.equal(gitattributesPinsEol('# * text=auto eol=lf\n'), false);
     assert.equal(gitattributesPinsEol('* -text\n'), true);
   });
+  test('rules apply in order: a later eol UNSET re-opens the pin; an explicit eol=crlf subset does not', () => {
+    assert.equal(gitattributesPinsEol('* text=auto eol=lf\n*.md !eol\n'), false);
+    assert.equal(gitattributesPinsEol('* text=auto eol=lf\n*.cmd text eol=crlf\n'), true, 'a deliberate CRLF subset is pinned, not autocrlf');
+    assert.equal(gitattributesPinsEol('*.md -eol\n* text=auto eol=lf\n'), true, 'a later repo-wide pin wins');
+    assert.equal(gitattributesPinsEol('* text=auto eol=lf\n*.md text\n'), true, 'a later rule naming no eol leaves it set');
+  });
   test('probe reads git\'s effective value and the repo-root file; a git failure is "not measured"', () => {
     const run = (args) => {
       if (args[0] === 'rev-parse') return `${REPO}\n`;
@@ -117,6 +124,14 @@ describe('CRLF hazard — autocrlf=true AND no repo-wide eol=lf rule', () => {
     assert.equal(probeEolHazard(REPO, { run }).hazard, false);
     const r = probeEolHazard(REPO, { run: () => { throw new Error('not a repo'); } });
     assert.deepEqual([r.measured, r.hazard], [false, false]);
+    const fail = (status) => (args) => {
+      if (args[0] === 'rev-parse') return `${REPO}\n`;
+      throw Object.assign(new Error('git config failed'), { status });
+    };
+    assert.equal(probeEolHazard(REPO, { run: fail(1) }).measured, true, 'exit 1 is "unset": measured');
+    const broken = probeEolHazard(REPO, { run: fail(128) });
+    assert.equal(broken.measured, false, 'any other failure is not measured, never "unset"');
+    assert.match(broken.reason, /could not read core\.autocrlf/);
   });
   test('check-setup warns with the fix; hydrate prints the warning and the keys note', () => {
     const r = new Report();

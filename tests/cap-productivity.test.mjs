@@ -29,15 +29,20 @@ describe('assessCapProductivity', () => {
     assert.equal(p.lastRunId, 'run-3');
     assert.equal(p.acceptanceRate, 1);
     assert.equal(p.stillProductive, true);
-    const line = renderCapProductivity(p);
-    assert.match(line, /CAPPED WHILE PRODUCTIVE — round 3 acceptance 100% of 5 ruled · HIGH 7→5→5/);
-    assert.match(line, /the cap policy is unchanged/);
+    const line = renderCapProductivity(p, { round: 4, caps: { soft: 3 } });
+    assert.match(line, /AT THE CAP WHILE PRODUCTIVE — round 3 acceptance 100% of 5 ruled · HIGH 7→5→5/);
+    assert.match(line, /The cap policy is unchanged/);
+    assert.doesNotMatch(line, /recorded/i, 'the card never claims the telemetry write; the recorder reports its own outcome');
+    // A card for a round within the soft cap makes no claim about a stop.
+    const early = renderCapProductivity(p, { round: 2, caps: { soft: 3 } });
+    assert.doesNotMatch(early, /CAP/);
+    assert.match(early, /acceptance 100%.*\(productive\)/);
   });
 
   test('a low-acceptance last round is not productive', () => {
-    const p = assessCapProductivity({ rounds: consumerRounds, ledgerEntries: ruledAt(3, ['dismissed', 'dismissed', 'accepted']) });
+    const p = assessCapProductivity({ rounds: consumerRounds, ledgerEntries: ruledAt(3, ['dismissed', 'dismissed', 'dismissed', 'accepted', 'accepted']) });
     assert.equal(p.stillProductive, false);
-    assert.doesNotMatch(renderCapProductivity(p), /CAPPED WHILE PRODUCTIVE/);
+    assert.doesNotMatch(renderCapProductivity(p, { round: 4, caps: { soft: 3 } }), /WHILE PRODUCTIVE/);
   });
 
   test('no ledger / untriaged last round is UNMEASURED, never "not productive"', () => {
@@ -47,6 +52,12 @@ describe('assessCapProductivity', () => {
     const b = assessCapProductivity({ rounds: consumerRounds, ledgerEntries: ruledAt(2, ['accepted']) });
     assert.equal(b.stillProductive, null);
     assert.match(b.unmeasured, /round 3 has no rulings/);
+  });
+
+  test('a partially triaged last round is UNMEASURED, not a rate over a subset', () => {
+    const p = assessCapProductivity({ rounds: consumerRounds, ledgerEntries: ruledAt(3, ['accepted', 'accepted']) });
+    assert.equal(p.stillProductive, null);
+    assert.match(p.unmeasured, /partially triaged \(2 of 5 findings ruled\)/);
   });
 
   test('one acceptance formula: defer is never acceptance; threshold is the convergence table\'s ⅔', () => {
@@ -71,7 +82,7 @@ describe('the card carries it', () => {
       },
     });
     assert.equal(card.productivity.stillProductive, true);
-    assert.match(text, /CAPPED WHILE PRODUCTIVE/);
+    assert.match(text, /AT THE CAP WHILE PRODUCTIVE/);
   });
 
   test('readLedgerEntries reads <sid>-ledger.json and names an absent one', () => {
@@ -103,6 +114,16 @@ describe('telemetry: round_cap_stop', () => {
     assert.equal(calls[0].round, 4);
     assert.equal(calls[0].choice.stillProductive, true);
     assert.deepEqual(calls[0].context.highByRound, [7, 5, 5]);
+    assert.equal(calls[0].context.trigger, 'refused');
+  });
+
+  test('recordCapStop refuses a round within the soft cap (no cap stop happened)', async () => {
+    let called = 0;
+    const p = assessCapProductivity({ rounds: consumerRounds, ledgerEntries: ruledAt(3, Array(5).fill('accepted')) });
+    const res = await recordCapStop({ sid: 's', mode: 'plan', round: 3, caps: { soft: 3, absolute: 5 }, productivity: p, runId: 'run-3' },
+      { record: () => { called++; return 'k'; }, flush: async () => {} });
+    assert.equal(res.recorded, false);
+    assert.equal(called, 0);
   });
 
   test('a refused round-4 plan audit records the stop (and still refuses)', async () => {
@@ -111,12 +132,45 @@ describe('telemetry: round_cap_stop', () => {
       const recorded = [];
       const res = await gateRoundCap(['plan', 'plan.md', '--round', '4', '--out', path.join(dir, 's-r4-result.json')], {
         cwd: dir, auditDir: dir, env: {}, write: () => {},
-        build: async () => ({ card: { productivity: assessCapProductivity({ rounds: consumerRounds, ledgerEntries: ruledAt(3, ['accepted']) }) }, text: 'card' }),
+        build: async () => ({ card: { productivity: assessCapProductivity({ rounds: consumerRounds, ledgerEntries: ruledAt(3, Array(5).fill('accepted')) }) }, text: 'card' }),
         recordCap: async (x) => { recorded.push(x); return { recorded: true, reason: null }; },
       });
       assert.equal(res.ok, false, 'the cap policy is unchanged');
       assert.equal(recorded.length, 1);
       assert.equal(recorded[0].productivity.stillProductive, true);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('--past-cap with a missing card is an operator continuing: no cap stop is recorded', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-gate-'));
+    try {
+      const recorded = [];
+      const lines = [];
+      const res = await gateRoundCap(['plan', 'plan.md', '--round', '4', '--past-cap', 'one more round will converge the last cluster', '--out', path.join(dir, 's-r4-result.json')], {
+        cwd: dir, auditDir: dir, env: {}, write: (l) => lines.push(l),
+        build: async () => { throw new Error('store down'); },
+        recordCap: async (x) => { recorded.push(x); return { recorded: true, reason: null }; },
+      });
+      assert.equal(res.code, 'CARD_REQUIRED');
+      assert.equal(recorded.length, 0);
+      const out = lines.join('');
+      assert.match(out, /Building it failed/, 'never says the card was written when building it failed');
+      assert.doesNotMatch(out, /It is printed above and written/);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('--past-cap with a missing card that DOES build still records nothing (the record path is reachable here)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-gate-'));
+    try {
+      const recorded = [];
+      const productivity = assessCapProductivity({ rounds: consumerRounds, ledgerEntries: ruledAt(3, Array(5).fill('accepted')) });
+      const res = await gateRoundCap(['plan', 'plan.md', '--round', '4', '--past-cap', 'one more round will converge the last cluster', '--out', path.join(dir, 's-r4-result.json')], {
+        cwd: dir, auditDir: dir, env: {}, write: () => {},
+        build: async () => ({ card: { productivity }, text: 'card' }),
+        recordCap: async (x) => { recorded.push(x); return { recorded: true, reason: null }; },
+      });
+      assert.equal(res.code, 'CARD_REQUIRED');
+      assert.equal(recorded.length, 0);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

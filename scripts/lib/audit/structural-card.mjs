@@ -319,7 +319,7 @@ export function renderStructuralCard(card) {
   } else {
     L.push(`This audit: UNMEASURED (${card.auditUnmeasured || 'no round results found'})`);
   }
-  const prod = renderCapProductivity(card.productivity);
+  const prod = renderCapProductivity(card.productivity, { round: card.round, caps });
   if (prod) L.push(prod);
   const srcText = Object.entries(card.sources).map(([n, s]) =>
     s.status === 'measured' ? `${n} ok(${s.count})` : s.status === 'partial' ? `${n} PARTIAL(${s.count}; ${s.detail})` : `${n} ${s.detail ? `unreadable (${s.detail})` : s.status}`).join(' · ');
