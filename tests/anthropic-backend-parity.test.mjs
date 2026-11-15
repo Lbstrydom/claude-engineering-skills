@@ -130,8 +130,12 @@ async function emitViaCli(params) {
   }
 }
 
+// A SENTINEL, not a concrete id (AGENTS.md: never pin a concrete model id in
+// new code). Both transports here are fakes, so this string is only ever
+// compared against what the adapters emitted — but a concrete id in a test is
+// how one gets copied into live code later.
 const BASE = Object.freeze({
-  model: 'claude-opus-5-5',
+  model: 'latest-opus',
   max_tokens: 64,
   messages: [{ role: 'user', content: 'hi' }],
 });
@@ -220,6 +224,104 @@ describe('cross-backend contract: both serve, or cli throws', () => {
     assert.match(cli.error.message, /refusal to guess/);
     assert.ok(!/cannot honour `/.test(cli.error.message),
       'it must NOT borrow the named-param wording — that is the collapse this test exists to stop');
+  });
+
+  // THE DIVERGENCE OWN-KEYS COULD NOT SEE, asserted on BOTH emitted requests.
+  //
+  // The round-1 audit of this change raised it and the first rebuttal written
+  // got it wrong: `JSON.stringify` omits inherited properties, which is true
+  // of the sdk arm and says nothing about cli, because `createCliAdapter` does
+  // `const { system } = params` and DESTRUCTURING WALKS THE PROTOTYPE CHAIN.
+  // Measured on the real objects: sdk emits no `system`, cli reads
+  // `'INHERITED'` and would push `--system-prompt` — the exact cross-backend
+  // divergence this module exists to refuse, declared serviceable by
+  // `Reflect.ownKeys` alone.
+  //
+  // A test checking only the sdk body and "cli served it" would have passed
+  // over it, which is why both arms are asserted here.
+  it('an INHERITED unserviceable param is refused — sdk drops it, cli\'s destructure would read it', async () => {
+    const withProto = () => {
+      const p = Object.create({ system: 'INHERITED' });
+      Object.assign(p, BASE);
+      return p;
+    };
+
+    // sdk: the inherited key is NOT on the wire.
+    const body = await emitViaSdk(withProto());
+    assert.ok(!Object.keys(body).includes('system'),
+      'sdk serialises own enumerable properties only — if this fails the premise has changed');
+
+    // cli: refused, naming `system`. Were it not refused, the adapter's
+    // destructure would hand `claude -p` a system prompt the sdk never sent.
+    const cli = await emitViaCli(withProto());
+    assert.equal(cli.served, false,
+      'cli must refuse: its destructure reads the prototype chain, so serving this '
+      + 'call would send a param the sdk arm does not');
+    assert.match(cli.error.message, /`system`/);
+  });
+
+  // THIS CASE ASSERTED THE WRONG THING, and the round-3 audit caught it.
+  // It read "an inherited SERVICEABLE param is still served", on the reasoning
+  // that the fix should refuse divergence rather than inheritance. But an
+  // inherited `max_tokens` IS a divergence: measured, sdk sends
+  // `{"model":"m"}` — which the Messages API rejects for a missing required
+  // param — while cli's destructure reads 64 and serves the call happily. The
+  // test was pinning the defect as desirable, which is worse than not having
+  // the test.
+  it('an inherited ALLOWLISTED param is refused: sdk would not send it, cli would read it', async () => {
+    const p = Object.create({ max_tokens: 64, messages: BASE.messages });
+    p.model = BASE.model;
+
+    const body = await emitViaSdk(p);
+    assert.deepEqual(Object.keys(body), ['model'],
+      'sdk sends own enumerable properties only — the inherited ones are simply gone');
+
+    const cli = await emitViaCli(p);
+    assert.equal(cli.served, false, 'so cli must refuse rather than answer a call sdk could not make');
+    assert.match(cli.error.message, /would reach the cli backend but NOT the sdk backend/);
+  });
+
+  it('`Object.prototype` pollution is caught, not whitelisted', async () => {
+    // An `Object.getOwnPropertyNames(Object.prototype)` exclusion list had
+    // whitelisted exactly this: the polluted key is in that list, so it was
+    // skipped, while the destructure reads it and the sdk does not send it.
+    Object.prototype.system = 'POLLUTED';
+    try {
+      const cli = await emitViaCli({ ...BASE });
+      assert.equal(cli.served, false);
+      assert.match(cli.error.message, /`system`/);
+    } finally {
+      delete Object.prototype.system;
+    }
+  });
+
+  it('a prototype chain that does not terminate is `unresolvable`, not an infinite loop', async () => {
+    // A Proxy returns whatever its `getPrototypeOf` trap says, including
+    // itself. The first prototype walk written here claimed a cycle was
+    // impossible because `Object.setPrototypeOf` refuses to make one; that is
+    // true of plain objects and false of a Proxy, and the walk hung.
+    const target = { ...BASE };
+    const hostile = new Proxy(target, { getPrototypeOf() { return hostile; } });
+    const cli = await emitViaCli(hostile);
+    assert.equal(cli.served, false);
+    assert.match(cli.error.message, /did not terminate/);
+  });
+
+  // `max_tokens` IS NOT PART OF THE PARITY CONTRACT, and saying so here is the
+  // round-1 audit's accepted LOW: the claim "both serve or cli throws" is about
+  // the KIND and SHAPE of the answer, not about every numeric bound being
+  // honoured. cli accepts `max_tokens` and ignores it, measured, and that is
+  // the one deliberate exception. Pinned as a test so a reader does not infer
+  // a stronger contract than this suite checks.
+  it('DECLARED EXCEPTION: `max_tokens` is accepted by both and enforced only by sdk', async () => {
+    const body = await emitViaSdk({ ...BASE });
+    assert.equal(body.max_tokens, BASE.max_tokens, 'sdk carries the ceiling to the wire');
+
+    const cli = await emitViaCli({ ...BASE });
+    assert.equal(cli.served, true, 'cli serves it rather than refusing — refusing would refuse every call');
+    assert.ok(!cli.argv.some((a) => String(a).includes('max_tokens')),
+      'and there is no argv equivalent: the ceiling is accepted and dropped, which is why '
+      + 'a cli-eligible caller must not rely on it as a hard bound');
   });
 
   // NEGATIVE CONTROL. A suite that only ever asserts "cli refuses" would pass

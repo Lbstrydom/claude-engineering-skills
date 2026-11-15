@@ -1494,3 +1494,96 @@ doing something different from the other.
   `metadata` and `stop_sequences` turns 6 of the 12 cases red and the oracle's
   own suite stays green — so the parity suite, and only the parity suite, is
   what measures the flip.
+
+### 9.7 Round-1 audit of the allowlist (2026-11-15) — two real defects
+
+`SIGNIFICANT_ISSUES | H:6 M:3 L:2`, coverage `complete`, audited against
+`origin/main`. Eleven findings, four concerns. Two were real and the rebuttal
+written for one of them was **wrong**, which is worth recording rather than
+smoothing over.
+
+**The inherited-property divergence — the audit was right, the rebuttal was not.**
+`Reflect.ownKeys(params)` sees own keys only, so `Object.create({system:'x'})`
+passed the allowlist. The first rebuttal argued this was harmless because
+`JSON.stringify` omits inherited properties — true of the **sdk** arm, and
+irrelevant to **cli**, whose adapter does `const { system } = params`, and
+**destructuring walks the prototype chain**. Measured on the real objects: sdk
+emits no `system`; cli reads `'INHERITED'` and would push `--system-prompt`.
+That is precisely the cross-backend divergence this module exists to refuse,
+and the oracle declared it serviceable. The enumeration is now own ∪ `for…in`.
+
+The deliberation also named the test this would have needed: a case checking
+only the sdk body and "cli served it" passes straight over the defect. Both
+arms are now asserted. **Generalises: a claim about what a transport does is
+settled against the transport, not against the serialization format it happens
+to use** — and when two adapters read the same object by different mechanisms,
+"what does this object contain" has two answers.
+
+**The staged request escaped the gate.** `const req = { model, max_tokens,
+messages, temperature: 0.2 }; client.messages.create(req)` is not an argument
+to `.create`, so the scoped allowlist rule could not see it, and the file-wide
+rule knew only four named params — `temperature` passed a gate that described
+itself as an allowlist. Closed by **shape**: an object literal carrying
+`messages` plus `model` or `max_tokens` is a request, judged by the allowlist
+wherever it sits. Shape rather than dataflow because it needs no variable
+chasing and cannot be defeated by an extra assignment; measured, it flags zero
+additional files in this repo. A `messages` key alone is deliberately not
+enough — prompt builders and fixtures carry one and send nothing.
+
+**`max_tokens`: deliberation compromised to MEDIUM/LOW, not dismissed.** The
+reviewer accepted that refusing every call deletes the backend, and still held
+that an unenforced required param is not harmless for every consumer. Its ask
+was concrete and is done: each of the five unpinned cli-eligible sites was
+audited for reliance on `max_tokens` as a HARD bound, the per-site answer is
+recorded in `.anthropic-pin-census.json`, and none relies on one (a probe with
+no output contract; a cost budget rather than a correctness constraint;
+advisory prose that degrades to `''`; and two summarisers where
+`assessBatchCompleteness` reads `stop_reason`, which is the enforcement that
+matters). The parity claim is now qualified in both the reference doc and the
+suite: `max_tokens` is the **declared exception to parity** — the contract is
+about the KIND and SHAPE of the answer, not every numeric bound.
+
+Also fixed: the gate contract's `guards` sentence conflated Rule A (a hard
+failure no entry excuses) with Rule B (the declared-unpinned record), and the
+parity suite pinned a concrete model id where the house rule wants a sentinel.
+
+### 9.8 Six audit rounds, and what the loop was actually for
+
+Full numbers, the pass census and the final-gate verdicts are in
+[`…-audit-summary.md`](anthropic-cli-faithfulness-routing-audit-summary.md).
+Three things belong here because they are reusable, not bookkeeping.
+
+**The audit found two defects in the change and four in its own fixes.** Rounds
+1–3 each patched the key ENUMERATION — own keys, then `for…in`, then the
+prototype chain — and each time the next round found a layer the patch could
+not see. That is the signature of fixing instances rather than the invariant.
+Round 3's pivot was to ask the invariant instead: **what sdk will SEND (own
+enumerable) versus what cli can READ (a destructure, which walks the prototype
+chain and ignores enumerability)**, and refuse any key in the difference,
+whatever its name. Three rounds of specific keys collapsed into one rule.
+
+**Then round 4 corrected the direction, which is the half that is easy to
+miss.** The invariant as first written was too broad: an inherited key the
+adapter never destructures — `temperature`, say — is read by NEITHER backend, so
+flagging it was a false positive, not caution. The oracle now mirrors the
+adapter's actual destructure (`CLI_READ_PARAMS`), and the duplication is
+CHECKED: a test parses `createCliAdapter`'s own pattern and asserts set
+equality, because a field added to the adapter and not to the list would be
+invisible to the divergence check and nothing else reads both sides.
+
+**Two of my own tests asserted the defect as desirable**, and both were caught
+by a later round rather than by review. One said "an inherited SERVICEABLE param
+is still served" — but an inherited `max_tokens` makes sdk send `{"model":"m"}`,
+which the Messages API rejects, while cli serves it happily: a divergence,
+pinned as correct. The other used a prototype getter for `tools`, encoding the
+over-broad rule round 4 removed. **A test written in the same sitting as the
+fix inherits the fix's blind spot**, which is the argument for the adversarial
+round rather than for more care.
+
+**One rebuttal was wrong, and the deliberation said why.** Round 1's rebuttal
+argued the inherited-property finding was harmless because `JSON.stringify`
+omits inherited properties. True of the sdk arm; irrelevant to cli, which
+destructures. The deliberation also named the test the fix would need — one
+checking only the sdk body and "cli served it" passes straight over the defect.
+**A claim about what a transport does is settled against the transport, not
+against the serialization format it happens to use.**

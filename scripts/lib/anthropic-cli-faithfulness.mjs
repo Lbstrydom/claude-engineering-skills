@@ -112,6 +112,10 @@ const UNREPRESENTABLE_REASONS = Object.freeze({
   stream: 'the cli backend has no streaming mode — `claude -p --output-format json` '
     + 'returns a single final message, so `stream: true` is accepted and the caller '
     + 'is handed a response of a different SHAPE than the one it asked for',
+  output_config: 'the cli backend has no reasoning-effort control — `claude -p` takes '
+    + 'no such flag, so the effort tier is accepted and dropped and the call runs at '
+    + 'whatever the agent decides, which is the dial a caller comparing arms is '
+    + 'explicitly trying to hold still',
 });
 
 /**
@@ -145,6 +149,40 @@ function genericReason(param) {
 }
 
 /**
+ * Is this key backed by an ACCESSOR anywhere on the prototype chain?
+ *
+ * The emptiness exemption below is the oracle's only value read, and the
+ * adapter reads the same object again afterwards — so a getter can return
+ * blank to the check and a real prompt to `claude -p`, and the value that gets
+ * sent is the one nobody validated. Round-6 audit (a TOCTOU, correctly).
+ *
+ * Rather than widen the contract so the adapter consumes a validated snapshot
+ * — a change to the adapter's signature, and too large to bolt onto an audit
+ * round — the window is closed by refusing to read an accessor at all: an own,
+ * non-accessor DATA property cannot differ between two reads, and anything
+ * else is treated as PRESENT without being read. No ordinary caller is
+ * affected (measured: no call site in this repo passes a blank `system`, and
+ * none passes one through a getter).
+ *
+ * @param {object} obj
+ * @param {string} key
+ * @returns {boolean} true when the value must not be trusted to a second read
+ */
+function isAccessorBacked(obj, key) {
+  let cur = obj;
+  const seen = new Set();
+  let depth = 0;
+  while (cur && !seen.has(cur) && depth < MAX_PROTOTYPE_DEPTH) {
+    seen.add(cur);
+    depth += 1;
+    const d = Object.getOwnPropertyDescriptor(cur, key);
+    if (d) return typeof d.get === 'function' || typeof d.set === 'function';
+    cur = Object.getPrototypeOf(cur);
+  }
+  return false;
+}
+
+/**
  * Is this param ABSENT for the adapter's purposes?
  *
  * `undefined` is absent everywhere: the SDK omits such a key from the wire, so
@@ -168,6 +206,117 @@ function isAbsent(param, value) {
   if (typeof value === 'string') return value.trim() === '';
   if (Array.isArray(value)) return value.length === 0;
   return false;
+}
+
+/**
+ * `Object.prototype`'s standard members, hardcoded.
+ *
+ * Read from `Object.getOwnPropertyNames(Object.prototype)` at first, which was
+ * wrong in the one case that matters: a polluted `Object.prototype.system`
+ * would be in that list and so excluded, while `const { system } = params`
+ * reads it and `JSON.stringify` does not serialise it — measured, the exact
+ * divergence this module refuses. A fixed list excludes the real members and
+ * nothing else, so prototype pollution is caught rather than whitelisted.
+ */
+const OBJECT_PROTOTYPE_MEMBERS = Object.freeze(new Set([
+  'constructor', 'toString', 'toLocaleString', 'valueOf', 'hasOwnProperty',
+  'isPrototypeOf', 'propertyIsEnumerable', '__proto__',
+  '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
+]));
+
+/** Depth at which a prototype chain is treated as unenumerable rather than walked. */
+const MAX_PROTOTYPE_DEPTH = 100;
+
+/**
+ * The params the cli adapter actually DESTRUCTURES — `const { model,
+ * max_tokens, system, messages } = params` (anthropic-client.mjs:774).
+ *
+ * This is the set the divergence check applies to, and narrowing it to this is
+ * the round-4 correction. Divergence means "cli reads it and sdk will not send
+ * it", and cli can only read what it destructures: an inherited `temperature`
+ * is read by NEITHER backend — sdk does not serialise it and the adapter never
+ * names it — so flagging it was a false positive, not caution. An inherited
+ * `system` or `messages` is a different thing entirely, and still refused.
+ *
+ * Read off the adapter, so it is a superset of `SERVICEABLE_CLI_PARAMS`:
+ * `system` is destructured and delivered, and still unserviceable.
+ *
+ * **Duplicated from the adapter, and the duplication is CHECKED rather than
+ * trusted** (round-6 audit): adding a field to the adapter's destructure
+ * without adding it here would make inherited or non-enumerable values for
+ * that field invisible to the divergence check — silently, since nothing else
+ * reads both. `tests/anthropic-cli-faithfulness.test.mjs` parses
+ * `createCliAdapter`'s own destructuring pattern and asserts the two sets are
+ * equal, which is the repo's prose-to-code answer applied to code-to-code: one
+ * side cannot drift without the test saying so.
+ */
+export const CLI_READ_PARAMS = Object.freeze(['model', 'max_tokens', 'system', 'messages']);
+
+/**
+ * Every key a DESTRUCTURE could read off this object.
+ *
+ * The question is not "what would serialize" but "what can each adapter get
+ * at", because the two adapters reach into the object by different mechanisms:
+ *
+ *   - sdk sends `JSON.stringify` / spread → **own enumerable** only.
+ *   - cli does `const { system } = params` → the whole prototype chain, and
+ *     **destructuring does not care about enumerability**.
+ *
+ * So the union has to be own ∪ inherited ∪ non-enumerable. Two rounds of audit
+ * walked this down one layer at a time and both layers were real, measured on
+ * the objects rather than argued:
+ *   - `Reflect.ownKeys` alone missed `Object.create({ system })` — enumerable,
+ *     inherited; sdk omits it, cli reads it.
+ *   - adding `for…in` still missed a NON-ENUMERABLE inherited `system`
+ *     (`Object.defineProperty(proto, 'system', { enumerable: false })`) — for…in
+ *     does not see it, `JSON.stringify` does not either, and the destructure
+ *     reads it all the same.
+ *
+ * `Object.prototype`'s own names are excluded: a plain object's chain ends
+ * there, and counting `constructor`/`toString`/`valueOf` as request params
+ * would refuse every call. A class instance's own prototype IS walked, and its
+ * `constructor` is excluded by the same list.
+ *
+ * @param {object} params
+ * @returns {Set<string|symbol>}
+ */
+function destructurableKeys(params) {
+  const keys = new Set(Reflect.ownKeys(params));
+  const seen = new Set([params]);
+  let proto = Object.getPrototypeOf(params);
+  let depth = 0;
+  // BOUNDED, and the first version's docstring was wrong about why it did not
+  // need to be: it claimed a cyclic chain is impossible because
+  // `Object.setPrototypeOf` refuses to create one. A **Proxy** returns whatever
+  // its `getPrototypeOf` trap says, including itself, and that loops forever —
+  // measured. `null` here means "cannot enumerate", and the caller fails
+  // closed on it, which is the honest answer for an object whose own shape is
+  // adversarial.
+  while (proto) {
+    if (seen.has(proto) || depth >= MAX_PROTOTYPE_DEPTH) return null;
+    seen.add(proto);
+    depth += 1;
+    for (const k of Reflect.ownKeys(proto)) {
+      if (typeof k === 'string' && OBJECT_PROTOTYPE_MEMBERS.has(k)) continue;
+      keys.add(k);
+    }
+    proto = Object.getPrototypeOf(proto);
+  }
+  return keys;
+}
+
+/**
+ * The keys the **sdk** backend will actually put on the wire.
+ *
+ * `JSON.stringify` and object spread copy OWN ENUMERABLE properties, so this
+ * is the whole of what the sdk arm sends — and the comparison that matters is
+ * against `destructurableKeys`, not against the allowlist.
+ *
+ * @param {object} params
+ * @returns {Set<string>}
+ */
+function sdkVisibleKeys(params) {
+  return new Set(Object.keys(params));
 }
 
 /**
@@ -217,24 +366,150 @@ export function unserviceableCliParams(params) {
         + 'enumerated and the allowlist cannot be applied to them',
     };
   }
-  let keys;
+  let readable;
+  let sent;
   try {
-    keys = Reflect.ownKeys(params);
+    // TWO QUESTIONS, NOT ONE, because the two adapters reach into the object
+    // by different mechanisms and three audit rounds each found a new key that
+    // one could see and the other could not. Patching the enumeration a third
+    // time would have found a fourth; this asks the invariant instead:
+    //
+    //   `sent`     — what sdk puts on the wire: OWN ENUMERABLE keys.
+    //   `readable` — what cli's `const { system } = params` can reach: own,
+    //                inherited, and non-enumerable, anywhere on the chain.
+    //
+    // A key in `readable` but not in `sent` is a DIVERGENCE whatever its name:
+    // cli answers a call sdk never made. Measured 2026-11-15, all three on the
+    // real objects: `Object.create({ system })` (enumerable, inherited); a
+    // non-enumerable inherited `system` (invisible to `for…in` as well);
+    // `Object.prototype.system = …` (prototype pollution, which an
+    // `Object.getOwnPropertyNames(Object.prototype)` exclusion had whitelisted).
+    // And the direction the first two fixes got backwards: an inherited
+    // ALLOWLISTED param — `Object.create({ max_tokens: 64, messages: [...] })`
+    // — makes sdk send `{"model":"m"}`, which the Messages API rejects for a
+    // missing required param, while cli serves it happily. An earlier test here
+    // asserted that as CORRECT. It was a divergence, and it is now refused.
+    readable = destructurableKeys(params);
+    sent = sdkVisibleKeys(params);
   } catch {
-    // A Proxy's ownKeys trap may throw. Unknowable is not clean.
+    // A Proxy's ownKeys trap, or a throwing prototype getter, may fail here.
+    // Unknowable is not clean.
     return {
       param: '(params)',
       kind: 'unresolvable',
       why: 'enumerating the params threw, so which params this call carries is unknown',
     };
   }
+  if (readable === null) {
+    return {
+      param: '(params)',
+      kind: 'unresolvable',
+      why: 'the prototype chain did not terminate (a Proxy may return itself from its '
+        + '`getPrototypeOf` trap), so which params this call carries cannot be established',
+    };
+  }
+  // A `toJSON` ANYWHERE ON THE CHAIN makes the sdk's wire shape undecidable
+  // from the keys: `JSON.stringify` calls it and sends WHATEVER IT RETURNS, so
+  // `sent` is a fiction. Measured 2026-11-15 — a params object with a `toJSON`
+  // returning `{ system: 'SNEAKY', … }` puts `system` on the sdk wire while
+  // none of the keys say so. Not refused as a param (it is not one); refused
+  // because this oracle cannot answer, which is the `unresolvable` verdict's
+  // whole purpose. Raised by the round-5 audit.
+  //
+  // CALLABILITY, not merely the name: `JSON.stringify` invokes a resolved
+  // `toJSON` only if it is a function. Measured 2026-11-15 —
+  // `{ x: 1, toJSON: null }` serialises as `{"x":1,"toJSON":null}`, and an own
+  // `toJSON: undefined` shadowing an inherited method serialises ordinarily.
+  // The first cut keyed on the key's presence and refused both, which is a
+  // false positive on a request with a perfectly ordinary wire shape
+  // (round-6 audit).
+  if (readable.has('toJSON')) {
+    let toJson;
+    try {
+      toJson = params.toJSON;
+    } catch {
+      return {
+        param: 'toJSON',
+        kind: 'unresolvable',
+        why: 'reading `toJSON` off the params threw, so whether the sdk backend will serialise '
+          + 'this object or whatever that hook returns cannot be established',
+      };
+    }
+    if (typeof toJson === 'function') {
+      return {
+        param: 'toJSON',
+        kind: 'unresolvable',
+        why: 'the params carry a callable `toJSON`, so what the sdk backend serialises is '
+          + 'whatever that method returns rather than the keys on this object — the two '
+          + 'backends cannot be compared from the params at all',
+      };
+    }
+  }
+  const divergent = [];
   const offending = [];
-  for (const key of keys) {
+  for (const key of readable) {
     // A symbol key never reaches the wire and cannot be named in a remedy.
     if (typeof key === 'symbol') continue;
+    // MEMBERSHIP BEFORE VALUE. The previous order read `params[key]` first, so
+    // an inherited getter for a key NEITHER backend reads — a `temperature`
+    // getter, say — was invoked anyway: it could throw (measured: the oracle
+    // crashed instead of returning a verdict) or run a side effect for a key
+    // about to be ignored. Round-5 audit. A check that can be turned into an
+    // exception by the object it is checking is not a check.
+    const isSent = sent.has(key);
+    const isRead = CLI_READ_PARAMS.includes(key);
+    if (!isSent && !isRead) continue;
+    // AN ACCESSOR IS NOT READ. Its value is whatever it returns on the NEXT
+    // read, which is the adapter's, so a check based on this read would be
+    // validating a different call from the one that gets sent.
+    if (isAccessorBacked(params, key)) {
+      if (!isSent) { divergent.push(key); continue; }
+      if (SERVICEABLE_CLI_PARAMS.includes(key)) continue;
+      offending.push(key);
+      continue;
+    }
+    let value;
+    try {
+      value = params[key];
+    } catch {
+      // A getter that throws leaves this call's shape unknown. Fail closed,
+      // and say which key could not be read rather than guessing past it.
+      return {
+        param: key,
+        kind: 'unresolvable',
+        why: `reading \`${key}\` off the params threw, so what this call carries cannot be `
+          + 'established — a getter on the request (or on its prototype) decides the answer',
+      };
+    }
+    if (isAbsent(key, value)) continue;
+    // DIVERGENCE FIRST, for any key the cli adapter actually DESTRUCTURES,
+    // allowlisted ones included: a param cli reads and sdk will not send is
+    // the two backends answering different calls, which is the thing this
+    // module is for. Reported before the allowlist so the message names the
+    // real defect rather than the param's name.
+    //
+    // Scoped to `CLI_READ_PARAMS` after round 4: an inherited key the adapter
+    // never names — `temperature`, say — is read by NEITHER backend, so
+    // flagging it was a false positive. A key that is not sent AND not read is
+    // simply not part of this call.
+    if (!isSent) { divergent.push(key); continue; }
     if (SERVICEABLE_CLI_PARAMS.includes(key)) continue;
-    if (isAbsent(key, params[key])) continue;
     offending.push(key);
+  }
+  if (divergent.length) {
+    divergent.sort();
+    const param = divergent[0];
+    const rest = divergent.slice(1);
+    const base = 'the cli backend can READ this param and the sdk backend will not SEND it — '
+      + '`claude -p` is driven by a destructure, which walks the prototype chain and ignores '
+      + 'enumerability, while the sdk serialises own enumerable properties only. So the two '
+      + 'backends would answer different calls, which is the divergence this seam exists to '
+      + 'refuse. Make it an own enumerable property of the params object';
+    return {
+      param,
+      kind: 'divergent',
+      why: rest.length ? `${base} (same for \`${rest.join('`, `')}\`)` : base,
+    };
   }
   if (offending.length === 0) return null;
   // Deterministic order: the named params first, in their documented order, so
@@ -280,6 +555,18 @@ export function cliFaithfulnessVerdict(params) {
   const unserviceable = unserviceableCliParams(params);
   if (!unserviceable) return null;
   const { param, why, kind } = unserviceable;
+  if (kind === 'divergent') {
+    return {
+      param,
+      kind,
+      message: `[anthropic-client] \`${param}\` would reach the cli backend but NOT the sdk `
+        + `backend — ${why}. This is not a report that cli cannot honour the param: the two `
+        + 'transports would answer different calls, which is worse, because the one that '
+        + 'silently answers the wrong call is whichever the operator happens to be on. Pin '
+        + "this call site with createAnthropicClient({ backend: 'sdk' }) if you want the sdk's "
+        + 'reading, or assign the param directly onto the params object so both see it.',
+    };
+  }
   if (kind === 'unresolvable') {
     return {
       param,

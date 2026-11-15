@@ -86,6 +86,28 @@ import { SERVICEABLE_CLI_PARAMS, UNSERVICEABLE_NAMED_PARAMS } from './anthropic-
  *
  * Both lists come from the oracle, never re-spelled here: a second spelling of
  * the policy is the exact defect the single-oracle rule forbids.
+ *
+ * **STATED LIMIT — over-matching is the chosen direction, not an oversight.**
+ * Raised three rounds running by the audit of this change, and the answer is
+ * the same each time, so it is recorded here rather than re-argued: neither the
+ * request-SHAPE rule nor the member-ASSIGNMENT rule ties its subject to a
+ * particular `.create` call, because doing so is the dataflow this gate
+ * declares it will not do (see `isMessagesCreateCallee`). Three things bound
+ * the cost, and they are what makes the trade-off acceptable rather than
+ * merely cheap:
+ *   1. the shape is narrow — `messages` AND (`model` or `max_tokens`), never a
+ *      bare `messages` key, so prompt builders and fixtures are not matched;
+ *   2. the assignment rule fires only in a file that contains a
+ *      `messages.create` call at all;
+ *   3. either rule only MATTERS in a file that also constructs an unpinned
+ *      client, which is Rule A's own condition — and measured 2026-11-15, both
+ *      together flag 0 additional files in this repo.
+ * The failure direction is therefore a demand for a pin or a declared census
+ * entry on a file that constructs an unpinned Anthropic client and contains an
+ * Anthropic-request-shaped object — never a silent pass. The residual
+ * false-positive case (an unrelated request-shaped object, or an unrelated
+ * `.system =`, in a file that does make a Messages API call) is answerable
+ * with exactly those two mechanisms.
  */
 const UNSERVICEABLE_PARAM_KEYS = UNSERVICEABLE_NAMED_PARAMS;
 
@@ -119,6 +141,31 @@ function propertyKeyName(prop) {
 /** Is this an `ObjectExpression` property that assigns a value (not a method)? */
 function isValueProperty(node) {
   return node?.type === 'ObjectProperty';
+}
+
+/**
+ * Is this object literal a Messages API REQUEST, judged by shape alone?
+ *
+ * `messages` plus `model` or `max_tokens`. That trio is what every request in
+ * this repo carries and what no configuration object does, so it identifies a
+ * staged request — `const req = {…}` later passed to `.create(req)` — without
+ * the dataflow this gate refuses to grow into.
+ *
+ * Deliberately NOT "has a `messages` key": a `messages` array appears in test
+ * fixtures and prompt builders that are not requests, and flagging those would
+ * fail the gate for files that send nothing.
+ *
+ * @param {object} node - an ObjectExpression
+ * @returns {boolean}
+ */
+function isRequestShaped(node) {
+  const names = new Set();
+  for (const p of node.properties || []) {
+    if (p.type === 'SpreadElement') continue;
+    const k = propertyKeyName(p) ?? (p.computed && p.key?.type === 'StringLiteral' ? p.key.value : null);
+    if (k) names.add(k);
+  }
+  return names.has('messages') && (names.has('model') || names.has('max_tokens'));
 }
 
 /**
@@ -164,6 +211,15 @@ function paramsInSource(source) {
   if (!ast) return { params: [], dynamicKeys: false };
   const found = new Set();
   let dynamicKeys = false;
+  // Does this file make a Messages API call at all? The assignment rule below
+  // is only meaningful where one exists; computed in a first pass because
+  // `walk` reaches the assignment before the call just as often as after.
+  let callsMessagesCreate = false;
+  walk(ast, (node) => {
+    if (node?.type === 'CallExpression' && isMessagesCreateCallee(node.callee)) {
+      callsMessagesCreate = true;
+    }
+  });
   walk(ast, (node) => {
     // A SPREAD into a request object can carry `system`:
     // `messages.create({ ...request })` hides every param from this scan.
@@ -195,6 +251,69 @@ function paramsInSource(source) {
           if (!SERVICEABLE_CLI_PARAMS.includes(key)) found.add(key);
         }
       }
+      return;
+    }
+    // A REQUEST-SHAPED LITERAL ANYWHERE IN THE FILE gets the allowlist too.
+    // The staged request — `const req = { model, max_tokens, messages,
+    // temperature: 0.2 }; client.messages.create(req)` — is not an argument to
+    // `.create`, so the scoped rule above cannot see it, and the named rule
+    // below only knows four spellings: `temperature` escaped the gate while
+    // the census described itself as an allowlist. Raised by the round-1 audit
+    // of this very change ("Fail-Open Merge Gate").
+    //
+    // Recognised by SHAPE, not by dataflow: an object literal carrying
+    // `messages` AND (`model` or `max_tokens`) is a Messages API request, and
+    // no unrelated config object in this repo carries that trio (measured
+    // 2026-11-15: the rule flags 0 additional files). Shape is the right
+    // instrument here because the alternative — following the variable to its
+    // `.create` call — is the dataflow this gate deliberately does not do, and
+    // a shape test cannot be defeated by an extra assignment in between.
+    if (node?.type === 'ObjectExpression' && isRequestShaped(node)) {
+      for (const p of node.properties || []) {
+        if (p.type === 'SpreadElement') { dynamicKeys = true; continue; }
+        if (p.computed && p.key?.type !== 'StringLiteral') { dynamicKeys = true; continue; }
+        const key = propertyKeyName(p) ?? (p.computed ? p.key?.value : null);
+        if (!key) { dynamicKeys = true; continue; }
+        if (!SERVICEABLE_CLI_PARAMS.includes(key)) found.add(key);
+      }
+      return;
+    }
+    // A REQUEST ASSEMBLED BY MEMBER ASSIGNMENT — `req.tool_choice = {...}`,
+    // `params.output_config = {...}`. Every rule above and below looks at
+    // object PROPERTIES, so an assignment was invisible to the whole gate,
+    // before this change as well as after it: a file could stage
+    // `const req = { model, max_tokens, messages }` (clean) and then add
+    // `req.system = SYSTEM` on the next line. Raised by the round-2 audit of
+    // this change.
+    //
+    // Scoped to the NAMED params, not the allowlist: `obj.foo = 1` is every
+    // assignment in the repo, and the allowlist question is only answerable
+    // where a whole key set is visible. Measured 2026-11-15 — 9 member
+    // assignments of a named param exist in tracked `scripts/**`, every one in
+    // a file that pins or is indirect-pinned, so this rule flags 0 additional
+    // files today.
+    // STATED LIMIT, and the first cut got it wrong: a COMPUTED member
+    // assignment is NOT folded into `dynamicKeys`. `out[idx] = …` is an array
+    // index write, and treating one as an unreadable request key failed the
+    // gate on summarise.mjs:185 — a line that has nothing to do with params.
+    // A computed assignment says nothing about this file's requests unless we
+    // know the object is one, which is the dataflow this gate does not do; the
+    // declaration (Rule B) is the mechanism for it, as it is for a staged
+    // request. Failing closed is only honest where the thing failed closed on
+    // is in fact a candidate.
+    if (node?.type === 'AssignmentExpression' && node.left?.type === 'MemberExpression') {
+      if (node.left.computed && node.left.property?.type !== 'StringLiteral') return;
+      // ONLY IN A FILE THAT ACTUALLY CALLS `messages.create`. Without that
+      // condition an unrelated `stats.system = …` in a file that happens to
+      // construct a client read as a request param — named by the round-3
+      // audit. File-level co-occurrence is not dataflow and does not pretend
+      // to be: it removes the false positive wherever no Messages API call
+      // exists at all, and the residual case (an unrelated `.system =` in a
+      // file that does make such a call) is stated in the module docstring and
+      // answerable with a pin or a declaration.
+      if (!callsMessagesCreate) return;
+      const key = memberNameOf(node.left);
+      if (key && UNSERVICEABLE_PARAM_KEYS.includes(key)) found.add(key);
       return;
     }
     if (node?.type !== 'ObjectProperty' && node?.type !== 'ObjectMethod') return;

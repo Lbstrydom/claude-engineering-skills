@@ -112,7 +112,12 @@ silently. The denylist it replaced named three params and had already been
 outrun by two: `stream`, passed at one real call site and refused by nothing,
 and `output_config`, which did not exist when the three were chosen.
 `max_tokens` is the one allowlist entry argued for rather than read off the
-adapter — see the membership test below. Params the oracle cannot enumerate
+adapter — see the membership test below. It is also the one **declared exception to
+parity**: the cross-backend contract is about the KIND and SHAPE of the answer,
+not about every numeric bound being honoured, so a cli-eligible caller must not
+rely on `max_tokens` as a hard bound. Every unpinned site was audited against
+that on 2026-11-15 and none does; the finding is recorded per entry in
+`.anthropic-pin-census.json`. Params the oracle cannot enumerate
 (not a plain object; a `Proxy` that refuses its own keys) get their own verdict
 kind and their own wording: *"I cannot tell what this call passes"* is a
 different fact from *"this call passes something I cannot honour"*, and one
