@@ -130,6 +130,20 @@ function paramsInSource(source) {
   const found = new Set();
   let dynamicKeys = false;
   walk(ast, (node) => {
+    // A SPREAD into a request object can carry `system`:
+    // `messages.create({ ...request })` hides every param from this scan.
+    // Scoped to a `.create(...)` argument rather than to every object literal:
+    // measured 2026-11-15, the broad rule would flag 3 of the 6 unpinned files
+    // — including the summariser, the highest-volume deliberately-cli site —
+    // and move their spend off the Max credit to guard a hypothesis. The narrow
+    // rule flags 0 today, so it costs nothing and still closes the shape.
+    if (node?.type === 'CallExpression' && memberNameOf(node.callee) === 'create') {
+      for (const arg of node.arguments || []) {
+        if (arg?.type !== 'ObjectExpression') continue;
+        if ((arg.properties || []).some((p) => p.type === 'SpreadElement')) dynamicKeys = true;
+      }
+      return;
+    }
     if (node?.type !== 'ObjectProperty' && node?.type !== 'ObjectMethod') return;
     if (node.computed && node.key?.type !== 'StringLiteral') { dynamicKeys = true; return; }
     const name = propertyKeyName(node) ?? (node.computed ? node.key?.value : null);
@@ -223,14 +237,49 @@ function constructionsIn(ast) {
     if (node?.type !== 'CallExpression') return;
     const callee = node.callee;
     const isFactory = (callee?.type === 'Identifier' && names.has(callee.name))
-      // `mod.createAnthropicClient(...)` after a dynamic import.
-      || (callee?.type === 'MemberExpression' && !callee.computed
-        && callee.property?.type === 'Identifier' && callee.property.name === FACTORY_NAME);
+      // `mod.createAnthropicClient(...)` after a dynamic import, and the
+      // bracketed spelling `mod['createAnthropicClient']()`, which the
+      // non-computed test excluded. A computed property whose key is NOT a
+      // string literal is a different matter — see the module note on limits.
+      || (callee?.type === 'MemberExpression' && memberNameOf(callee) === FACTORY_NAME);
     if (!isFactory) return;
     const argNode = (node.arguments || [])[0];
     out.push({ verdict: resolveBackendOfArg(argNode), argNode });
   });
   return out;
+}
+
+/**
+ * Is this initializer an `import()` of the seam module?
+ *
+ * Covers `await import('…/anthropic-client.mjs')` and the bare
+ * `import('…/anthropic-client.mjs')`. Anything else — a function call, a
+ * variable — is not provenance this gate can establish, so an alias from it is
+ * not recorded.
+ */
+function isSeamImportInit(init) {
+  const node = init?.type === 'AwaitExpression' ? init.argument : init;
+  // Babel 8 models `import(x)` as its own `ImportExpression` with a `source`,
+  // NOT as a CallExpression whose callee is `Import` (which is how Babel 7 and
+  // most online examples show it). Probed against the real parser rather than
+  // assumed — the assumed shape matched nothing and the provenance check was
+  // silently rejecting every genuine alias.
+  const source = node?.type === 'ImportExpression'
+    ? node.source
+    : (node?.type === 'CallExpression' && node.callee?.type === 'Import'
+      ? (node.arguments || [])[0]
+      : null);
+  return source?.type === 'StringLiteral' && SEAM_MODULE_RE.test(source.value || '');
+}
+
+/**
+ * A member expression's statically known property name, bracketed or dotted.
+ * `obj.x` and `obj['x']` both yield `'x'`; `obj[expr]` yields null.
+ */
+function memberNameOf(callee) {
+  const prop = callee?.property;
+  if (!callee?.computed) return prop?.type === 'Identifier' ? prop.name : null;
+  return prop?.type === 'StringLiteral' ? prop.value : null;
 }
 
 /**
@@ -260,7 +309,13 @@ function factoryLocalNames(ast) {
       return;
     }
     // Dynamic: const { createAnthropicClient: mk } = await import('...')
+    //
+    // PROVENANCE CHECKED. Recording an alias for any object with a
+    // `createAnthropicClient` property would count an unrelated factory of the
+    // same name as this seam's — a false construction, which fails the gate
+    // for the wrong reason and teaches the next author to distrust it.
     if (node?.type === 'VariableDeclarator' && node.id?.type === 'ObjectPattern') {
+      if (!isSeamImportInit(node.init)) return;
       for (const prop of node.id.properties || []) {
         if (prop.type !== 'ObjectProperty') continue;
         if (propertyKeyName(prop) !== FACTORY_NAME) continue;
@@ -458,6 +513,14 @@ function returnedObjectsOf(fnNode) {
   if (!body) return [];
   if (body.type === 'ObjectExpression') return [body];       // () => ({...})
   if (body.type !== 'BlockStatement') return [];
+  // IMPLICIT FALLTHROUGH. If the last statement of the body is not a `return`,
+  // some path reaches the end and returns undefined — `function opts() { if (x)
+  // return { backend: 'sdk' }; }` is the shape. A full completion analysis is
+  // not needed to be SOUND here, only conservative: a body that does not end in
+  // a return has an unresolvable path, full stop.
+  const statements = body.body || [];
+  const last = statements[statements.length - 1];
+  const endsInReturn = last?.type === 'ReturnStatement';
   const out = [];
   const visit = (node) => {
     if (!node || typeof node !== 'object') return;
@@ -465,8 +528,11 @@ function returnedObjectsOf(fnNode) {
     // Do not cross into a nested function: its `return` is not ours.
     if (node !== body && /Function(Declaration|Expression)$|ArrowFunctionExpression/.test(node.type || '')) return;
     if (node.type === 'ReturnStatement') {
+      // A BARE `return;` returns undefined — not an object, and certainly not a
+      // pinned one. Pushing nothing made it invisible, so a function with one
+      // pinned return and one bare return counted as pinned.
       if (node.argument?.type === 'ObjectExpression') out.push(node.argument);
-      else if (node.argument) out.push({ type: 'Unresolvable' });
+      else out.push({ type: 'Unresolvable' });
       return;
     }
     for (const key of Object.keys(node)) {
@@ -475,6 +541,7 @@ function returnedObjectsOf(fnNode) {
     }
   };
   visit(body);
+  if (!endsInReturn) out.push({ type: 'Unresolvable' });
   return out;
 }
 

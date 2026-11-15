@@ -157,6 +157,9 @@ describe('labelWorkUnits: the cache is independent of provider availability', ()
     ['a bare empty string', ''],
     ['null', null],
     ['zero', 0],
+    // `String(err)` THROWS for this, so formatting the diagnostic could throw
+    // out of the very catch that exists to contain the rejection.
+    ['a value with no toString', Object.create(null)],
   ]) {
     test(`a provider rejecting with ${label} is still an ERROR`, async (t) => {
       const res = await labelWorkUnits([unit(`k-${label.replace(/\W+/g, '')}`)], {

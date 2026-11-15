@@ -987,6 +987,44 @@ has a twin, and a redundant pair is how both go untested.
 
 ---
 
+## 7.9 Round 5: control flow, spellings, provenance — and one cost measured before choosing
+
+| # | defect | fix |
+|---|---|---|
+| 1 | a BARE `return;` and an IMPLICIT fallthrough were invisible, so `function opts(){ if(x) return {backend:'sdk'}; }` counted as pinned | every path out must return a pinned object; a body not ending in `return` has an unresolvable path |
+| 2 | `mod['createAnthropicClient']()` was excluded by the non-computed test | `memberNameOf` reads a bracketed name too; a DYNAMIC computed member is a stated limit, since flagging every `obj[x]()` would make the gate useless |
+| 3 | a SPREAD into a `.create()` argument hides every param from Rule A | flagged — see §7.9a |
+| 4 | an alias was recorded for ANY object with a `createAnthropicClient` property | provenance checked: the initializer must be an `import()` of the seam module |
+| 5 | `String(err)` THROWS for a value with no `toString`, so formatting the diagnostic could throw out of the catch that exists to contain the rejection | the flag is set first, the text is best-effort inside its own try |
+
+### 7.9a The spread rule: measured before choosing, because the broad version had a price
+
+The obvious fix — treat any object spread in a file as hiding a param — would
+have flagged **3 of the 6** unpinned files, the SUMMARISER among them. That is
+the highest-volume deliberately-cli site in the repo, and forcing it to pin
+would move its spend off the Max 20x credit to guard a hypothesis. Measured
+2026-11-15 before deciding; the narrow rule (a spread inside a `.create()`
+argument, which is where a request object actually is) flags **0** today, so it
+costs nothing and still closes the shape.
+
+**A fail-closed rule has a price, and the price is measurable.** "Fail closed"
+was the right instinct in four earlier rounds precisely because its cost there
+was zero; here the broad version's cost was the thing the whole design exists to
+protect. Measure the blast radius before widening a guard.
+
+### 7.9b `import()` is an ImportExpression, not a CallExpression
+
+The provenance check's first version tested
+`node.callee?.type === 'Import'`, which is the Babel 7 shape most examples
+show. Babel 8 models `import(x)` as its own `ImportExpression` with a `source`.
+That shape matched nothing, so the check was silently rejecting EVERY genuine
+alias — fail-closed, and therefore harmless here, but only by luck of which
+direction the mistake fell. Caught by probing the real parser rather than
+asserting the node shape; a one-line `parseSource` probe is cheaper than
+either reading the changelog or being wrong.
+
+---
+
 ## 8. Follow-ups (not this change)
 
 1. **The ~164K prefix tax on every remaining `cli` call** (§2.4) is the larger

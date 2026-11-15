@@ -719,6 +719,110 @@ describe('the digest folds a trailing comma only in CODE', () => {
   });
 });
 
+// ── round 5: control flow, spellings and provenance ────────────────────────
+describe('a factory must be pinned on EVERY path out', () => {
+  const held = (body) => indirectPinHolds(
+    `function opts() { ${body} }\nawait createAnthropicClient(opts());`, 'opts',
+  ).pinned;
+
+  it('RED: an IMPLICIT fallthrough — the body does not end in a return', () => {
+    assert.equal(held("if (x) return { backend: 'sdk' };"), false,
+      'when x is false the function returns undefined and the backend is whatever the seam resolves');
+  });
+
+  it('RED: a BARE `return;`', () => {
+    assert.equal(held("if (x) return { backend: 'sdk' }; return;"), false);
+  });
+
+  it('RED: one pinned return and one unresolvable one', () => {
+    assert.equal(held("if (x) return { backend: 'sdk' }; return buildOptions();"), false);
+  });
+
+  it('GREEN: every path returns a pinned object', () => {
+    assert.equal(held("if (x) return { backend: 'sdk' }; return { backend: 'bedrock' };"), true);
+  });
+
+  it('GREEN: a single trailing return', () => {
+    assert.equal(held("const r = { backend: 'sdk' }; return r && { backend: 'sdk' };"), false,
+      'an expression is not an ObjectExpression — unresolvable, so not a pin');
+    assert.equal(held("return { backend: 'sdk' };"), true);
+  });
+});
+
+describe('every spelling of the construction counts', () => {
+  const unpinned = (src) => classifyPinningInSource(src).unpinned;
+
+  it("a BRACKETED member call — `mod['createAnthropicClient']()`", () => {
+    assert.equal(unpinned("const c = await mod['createAnthropicClient']();"), 1,
+      'the non-computed test excluded this spelling entirely');
+  });
+
+  it('a bracketed member call can be pinned too', () => {
+    assert.equal(unpinned("const c = await mod['createAnthropicClient']({ backend: 'sdk' });"), 0);
+  });
+
+  it('a DYNAMIC computed member call is not claimed either way', () => {
+    assert.equal(classifyPinningInSource('const c = await mod[whichever]();').constructions, 0,
+      'a stated limit: flagging every `obj[x]()` in the repo would make the gate useless');
+  });
+});
+
+// Recording an alias for any object with a `createAnthropicClient` property
+// would count an unrelated factory of the same name — a false construction,
+// which fails the gate for the wrong reason and teaches the next author to
+// distrust it.
+describe('an alias is recorded only with provenance', () => {
+  it('GREEN: destructured from a dynamic import of the seam', () => {
+    const src = "const { createAnthropicClient: mk } = await import('./anthropic-client.mjs');\n"
+      + 'const c = await mk();';
+    assert.equal(classifyPinningInSource(src).unpinned, 1);
+  });
+
+  it('RED: destructured from something else entirely', () => {
+    const src = 'const { createAnthropicClient: mk } = someUnrelatedFactoryBag;\nconst c = await mk();';
+    assert.equal(classifyPinningInSource(src).constructions, 0,
+      'same property name, different module — not this seam');
+  });
+
+  it('RED: destructured from an import of a DIFFERENT module', () => {
+    const src = "const { createAnthropicClient: mk } = await import('./other-client.mjs');\n"
+      + 'const c = await mk();';
+    assert.equal(classifyPinningInSource(src).constructions, 0);
+  });
+
+  it('a static import of a different module is not an alias either', () => {
+    const src = "import { createAnthropicClient as mk } from './other.mjs';\nconst c = await mk();";
+    assert.equal(classifyPinningInSource(src).constructions, 0);
+  });
+});
+
+// `messages.create({ ...request })` hides every param from the scan. Scoped to
+// a `.create()` argument rather than every object literal: measured
+// 2026-11-15, the broad rule would flag 3 of the 6 unpinned files — the
+// summariser among them — and move their spend off the Max credit to guard a
+// hypothesis. The narrow rule flags 0 today.
+describe('a spread into a .create() argument can hide a param', () => {
+  it('RED: it fails Rule A in a file with an unpinned construction', () => {
+    const src = 'await createAnthropicClient();\nawait client.messages.create({ ...request });';
+    const c = classifyPinningInSource(src);
+    assert.equal(c.dynamicKeys, true);
+    assert.equal(c.ruleAViolation, true);
+  });
+
+  it('GREEN: harmless where the construction is pinned', () => {
+    const src = "await createAnthropicClient({ backend: 'sdk' });\n"
+      + 'await client.messages.create({ ...request });';
+    assert.equal(classifyPinningInSource(src).ruleAViolation, false);
+  });
+
+  it('a spread OUTSIDE a .create() argument is not flagged', () => {
+    const src = 'await createAnthropicClient();\nconst merged = { ...defaults, a: 1 };';
+    const c = classifyPinningInSource(src);
+    assert.equal(c.dynamicKeys, false, 'the broad rule would have cost the summariser its credit');
+    assert.equal(c.ruleAViolation, false);
+  });
+});
+
 describe('the REPO is clean against its committed baseline', () => {
   it('the corpus is non-empty — an empty one is a broken enumeration, not a pass', () => {
     const sources = repoSources();

@@ -186,8 +186,16 @@ export async function labelWorkUnits(units, opts = {}) {
       // untested. The FLAG is the decision; the text is only a diagnostic and
       // may legitimately be empty.
       providerThrew = true;
-      const raw = err instanceof Error ? err.message : String(err);
-      providerError = String(raw ?? '').slice(0, 200);
+      // `String(err)` THROWS for a value with no `toString` — `Object.create(null)`
+      // is the plain case — so formatting the diagnostic could throw out of the
+      // very catch that exists to contain the rejection. The flag is set FIRST,
+      // before anything that can fail, and the text is best-effort.
+      try {
+        const raw = err instanceof Error ? err.message : String(err);
+        providerError = String(raw ?? '').slice(0, 200);
+      } catch {
+        providerError = '(unprintable rejection value)';
+      }
       return null;
     });
     const fn = await labellerPromise;
