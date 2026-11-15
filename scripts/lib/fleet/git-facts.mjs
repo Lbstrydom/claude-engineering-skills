@@ -165,7 +165,23 @@ export function parsePatchId(text) {
 /** @returns {{ok: boolean, dir?: string, reason?: string}} */
 export function gitCommonDir(cwd) {
   const r = runGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
-  return r.ok ? { ok: true, dir: r.stdout.trim() } : { ok: false, reason: r.reason };
+  if (r.ok) return { ok: true, dir: r.stdout.trim() };
+  const dubious = dubiousOwnership(r.stderr);
+  return dubious ? { ok: false, code: 'DUBIOUS_OWNERSHIP', reason: dubious } : { ok: false, reason: r.reason };
+}
+
+/**
+ * git's `safe.directory` refusal, passed through WHOLE with its remedy, or null. `runGit`'s reason keeps only stderr's first
+ * line, and git puts the remedy (`git config --global --add safe.directory …`) on a later one, so a refusal used to surface
+ * as "cannot locate the git common dir" with nothing to act on (consumer report 2026-11-15).
+ */
+export function dubiousOwnership(stderr) {
+  const text = String(stderr ?? '');
+  if (!/dubious ownership/i.test(text)) return null;
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const fix = lines.find((l) => /git config --global --add safe\.directory/.test(l));
+  const head = (lines.find((l) => /dubious ownership/i.test(l)) ?? 'detected dubious ownership').replace(/^fatal:\s*/, '');
+  return `git refuses this repository: ${head}. To trust it, run: ${fix ?? 'git config --global --add safe.directory <the repository path>'} (only if you trust the folder's owner)`;
 }
 
 const commonDirs = new Map();

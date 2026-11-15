@@ -149,6 +149,7 @@ export function storageKey(id) {
 /** The registry directory for the repo containing `cwd`. Throws when not in a git repo. */
 export function fleetDir(cwd) {
   const r = gitCommonDir(cwd);
+  if (!r.ok && r.code === 'DUBIOUS_OWNERSHIP') throw new RegistryError('DUBIOUS_OWNERSHIP', r.reason);
   if (!r.ok) throw new RegistryError('NOT_A_REPO', `cannot locate the git common dir: ${r.reason}`);
   return path.join(r.dir, 'fleet');
 }
