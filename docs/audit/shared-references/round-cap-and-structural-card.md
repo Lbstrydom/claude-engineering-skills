@@ -97,8 +97,11 @@ node scripts/gemini-review.mjs review "$PLAN_FILE" ".audit/$SID-transcript.json"
 ```
 
 The folded `_batches[]` lists each batch's files, verdict and coverage. A batch still `PARTIAL` (one file
-whose changed lines exceed the window budget) is reported, not hidden. Splitting by hand (`build-audit-transcript.mjs --changed "<batch files>"`, one
-review each) is the fallback, and the rules below are what `--batch` does for you:
+whose changed lines exceed the window budget) is reported, not hidden. **`--batch` partitions the transcript's `changed_files`, the same set an unbatched
+review covers, so that set must itself come from the diff:** build the transcript with
+`--changed "$(git diff --name-only "$BASE" | paste -sd, -)"`, never from a remembered list. Splitting by hand
+(`build-audit-transcript.mjs --changed "<batch files>"`, one review each) is the fallback, and there the
+rules below are yours to apply:
 
 One large file per batch is usually enough; `FULL` includes *windowed with every changed line shown*, so a
 batch need not render whole. Keep splitting any batch that still reports PARTIAL, and **re-run every batch
