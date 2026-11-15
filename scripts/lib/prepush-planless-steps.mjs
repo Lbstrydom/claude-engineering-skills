@@ -158,12 +158,12 @@ export function snapshotCreateStep({ cwd, headArg = null, ownerPid = null, gitFn
   if (!modules.linked) {
     write(`⚠ [prepush-hook] audit snapshot: the checkout's node_modules is NOT linked in (${modules.reason}) - the lint, typecheck and layering lanes cannot resolve this repo's tools from the snapshot and will read UNMEASURED`);
   } else {
-    if (modules.lock !== 'same') {
-      const why = modules.lock === 'differs' ? 'the pushed package-lock.json differs from the one that tree was installed from' : 'whether the pushed package-lock.json matches the installed tree could not be read';
-      write(`[prepush-hook] ▸ audit snapshot: tools resolve from ${forShell(modules.modules)}; ${why}, so they run with the checkout's installed tree, not the pushed one`);
+    if (!modules.installed.matches) {
+      write(`[prepush-hook] ▸ audit snapshot: tools resolve from ${forShell(modules.modules)}, whose installed tree does not match the pushed package-lock.json (${modules.installed.reason}) - they run with the checkout's installed tree, not the pushed one`);
     }
-    if (modules.workspaces) {
-      write(`⚠ [prepush-hook] audit snapshot: this package declares workspaces - their package links in ${forShell(modules.modules)} resolve to the CHECKOUT's working copy, so a tool following an import into a workspace package reads that copy, not the pushed one`);
+    if (modules.localLinks.length) {
+      const sample = modules.localLinks.slice(0, 5).join(', ');
+      write(`⚠ [prepush-hook] audit snapshot: ${modules.localLinks.length} package(s) in ${forShell(modules.modules)} link OUTSIDE the installed tree (${sample}${modules.localLinks.length > 5 ? ', ...' : ''}) - a tool following an import into one reads the checkout's working copy, not the pushed bytes`);
     }
   }
   write(`[prepush-hook] ▸ audit snapshot: ${forShell(dir)} - a detached worktree of ${sha.slice(0, 12)}; the audit reads the pushed commit, not the working tree`);
@@ -173,6 +173,10 @@ export function snapshotCreateStep({ cwd, headArg = null, ownerPid = null, gitFn
 /**
  * Is `dir` exactly a snapshot this hook makes: the `tree/` worktree of a wrapper carrying the snapshot NAME, directly under the temp root
  * (canonical paths)? The wrapper itself is not accepted: what `snapshot create` prints, and so what `remove` is handed, is the worktree.
+ *
+ * Neither the wrapper nor the tree may be a LINK, checked by lstat: only the temp root above them is canonicalised, so a correctly
+ * named link under it would otherwise aim the removal (and its recursive fallback) at whatever it points to. A path that does not
+ * exist passes the shape test alone - there is nothing there to redirect.
  */
 export function isConsumerSnapshotPath(dir, tmpDir = os.tmpdir()) {
   if (!dir) return false;
@@ -181,8 +185,10 @@ export function isConsumerSnapshotPath(dir, tmpDir = os.tmpdir()) {
   const wrapper = path.dirname(abs);
   // Case-folded only where the filesystem is (Windows); on a case-sensitive one /tmp/A and /tmp/a are different roots (audit B R2 H4).
   const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const isLink = (p) => { try { return fs.lstatSync(p).isSymbolicLink(); } catch (e) { return e?.code !== 'ENOENT'; } };
   return path.basename(abs) === SNAPSHOT_TREE_DIR && SNAPSHOT_NAME_RE.test(path.basename(wrapper))
-    && fold(canon(path.dirname(wrapper))) === fold(canon(tmpDir));
+    && fold(canon(path.dirname(wrapper))) === fold(canon(tmpDir))
+    && !isLink(wrapper) && !isLink(abs);
 }
 
 /**

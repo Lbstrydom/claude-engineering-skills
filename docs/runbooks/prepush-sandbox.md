@@ -142,10 +142,13 @@ needed one, and `node_modules/` matches a junction on Git for Windows but not a
 POSIX symlink. Every recursive removal (`removeSandboxDir`, so the sweep too)
 detaches a `node_modules` link first and **refuses** if it cannot. The bytes
 audited are still the pushed commit's; the **tools** are the checkout's installed
-tree, and the hook prints a line when the pushed `package-lock.json` is not the
-one that tree came from, or when the package declares workspaces (whose links
-resolve into the checkout's working copy) — an install per push would not fit
-the audit budget. Creating the snapshot *inside* the checkout was rejected: every
+tree, and the hook prints a line when npm's install record
+(`node_modules/.package-lock.json`, via `installed-tree-identity.mjs`) does not
+match the pushed `package-lock.json`, or when packages in the tree link
+**outside** it (workspace, `file:` and `npm link` dependencies, whose imports read
+the checkout's working copy) — an install per push would not fit the audit
+budget. The remove guard also refuses a correctly named wrapper or `tree/` that
+is itself a link. Creating the snapshot *inside* the checkout was rejected: every
 checkout-rooted walker would then read a second copy of the tree. The same report's eslint/tsc `no_tool` had a
 **second, independent cause**: `npx` is `npx.cmd` on Windows and the linter's
 `execFile` could not start it from any cwd. It now goes through `resolveSpawnTarget`

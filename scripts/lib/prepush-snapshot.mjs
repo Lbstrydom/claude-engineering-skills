@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
+import { installedTreeStale } from './installed-tree-identity.mjs';
 import { withGitLockRetry, GIT_LOCK_RETRY_DELAYS_MS } from './git-lock-retry.mjs';
 import { sanitizeGitEnv } from './git-env-sanitize.mjs';
 import { removeSandboxDir, detachNodeModulesLink, CONSUMER_SNAPSHOT_PREFIX } from './prepush-sandbox-cleanup.mjs';
@@ -89,17 +89,21 @@ export function createSnapshot({ repoRoot, sha, dir, onRetry = null }) {
  * `git check-ignore` also consults local and global excludes the pushed commit does not carry. Beside it, git never sees it. Creating
  * the snapshot inside the checkout was rejected for the opposite reason: every checkout-rooted walker would read a second tree.
  *
- * The bytes the tools read are still the pushed commit's; the TOOLS are the checkout's installed tree. `lock` says whether the pushed
- * package-lock.json is the one that tree was installed from (the modules OWNER's, as prepush-check compares - in a linked worktree
- * that is the main checkout, not `checkoutRoot`): `same`, `differs`, or `unknown` when either side could not be read. `workspaces`
- * says the pushed package.json declares workspaces, whose package links resolve into the CHECKOUT's working copy, not the snapshot.
- * Installing per push is a cost the audit budget cannot carry, so the caller says these out loud instead.
+ * The bytes the tools read are still the pushed commit's; the TOOLS are the checkout's installed tree, and two things can make that
+ * tree disagree with the pushed commit, which the caller says out loud (installing per push is a cost the audit budget cannot carry):
+ *  - `installed`: does the installed tree match the PUSHED package-lock.json? Asked of npm's own install record
+ *    (`node_modules/.package-lock.json`) by lib/installed-tree-identity.mjs - the record of what was installed, not the lockfile that
+ *    happens to sit beside it now, which can have been edited or pulled since. Any doubt reads as a mismatch, with its reason.
+ *  - `localLinks`: package entries in the tree that are links resolving OUTSIDE it (workspace packages, `file:` and `npm link`
+ *    dependencies). A tool following an import into one reads the checkout's WORKING COPY, not the pushed bytes. pnpm's own links
+ *    stay inside the tree (`.pnpm`), so they are not counted.
  *
  * Refuses, removing its own link and never throwing, when the link does not RESOLVE: on Windows a junction to a missing target is
  * created without error (docs/runbooks/prepush-sandbox.md §2.2).
  *
  * @param {{checkoutRoot: string, intoDir: string, pushedRoot: string}} input
- * @returns {{linked: true, modules: string, lock: 'same'|'differs'|'unknown', workspaces: boolean} | {linked: false, reason: string}}
+ * @returns {{linked: true, modules: string, installed: {matches: boolean, reason: string}, localLinks: string[]}
+ *   | {linked: false, reason: string}}
  */
 export function linkCheckoutNodeModules({ checkoutRoot, intoDir, pushedRoot }) {
   const modules = findNodeModules(checkoutRoot);
@@ -114,41 +118,44 @@ export function linkCheckoutNodeModules({ checkoutRoot, intoDir, pushedRoot }) {
     const d = detachNodeModulesLink(intoDir);
     return { linked: false, reason: `the link to ${modules} does not resolve${d.state === 'failed' ? ' (and could not be removed)' : ''}` };
   }
-  return { linked: true, modules, lock: compareLockfiles(path.dirname(modules), pushedRoot), workspaces: declaresWorkspaces(pushedRoot) };
+  return { linked: true, modules, installed: installedMatchesPushed(modules, pushedRoot), localLinks: findLocalLinks(modules) };
 }
 
-/** Read a file, distinguishing absent (null) from unreadable (throws). */
-function readOrAbsent(file) {
-  try { return fs.readFileSync(file); } catch (err) {
-    if (err?.code === 'ENOENT') return null;
-    throw err;
-  }
+/** Does npm's record of what is installed in `modules` match the pushed package-lock.json? Fails toward "no", with a reason. */
+export function installedMatchesPushed(modules, pushedRoot) {
+  const read = (file) => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } };
+  const pushed = read(path.join(pushedRoot, 'package-lock.json'));
+  if (pushed === null) return { matches: false, reason: 'the pushed commit has no readable package-lock.json to compare with' };
+  const verdict = installedTreeStale(pushed, read(path.join(modules, '.package-lock.json')));
+  return { matches: !verdict.stale, reason: verdict.reason };
 }
 
 /**
- * `same` only when both sides were READ and parse to the same JSON, or both are provably absent; `unknown` when either side could not be
- * read or parsed. Compared as parsed JSON, not bytes: line endings and formatting are not dependency identity, and parsing needs no
- * import of lib/file-io.mjs, whose barrel would put this module (and every pre-push test that reaches it) downstream of half the repo.
+ * Package entries of `modules` (top level and one `@scope/` down) that are links resolving outside it. An entry that cannot be
+ * resolved counts as outside: it cannot be shown to be inside. Capped, because the caller prints a sample, not an inventory.
+ * @returns {string[]} package names
  */
-export function compareLockfiles(installedRoot, pushedRoot) {
-  let a; let b;
-  try {
-    a = readOrAbsent(path.join(installedRoot, 'package-lock.json'));
-    b = readOrAbsent(path.join(pushedRoot, 'package-lock.json'));
-  } catch { return 'unknown'; }
-  if (a === null && b === null) return 'same';
-  if (a === null || b === null) return 'differs';
-  let ja; let jb;
-  try { ja = JSON.parse(a.toString('utf8')); jb = JSON.parse(b.toString('utf8')); } catch { return 'unknown'; }
-  return isDeepStrictEqual(ja, jb) ? 'same' : 'differs';
-}
-
-/** Does the pushed package.json declare workspaces? Unreadable or unparseable reads as no: it is a warning, never a gate. */
-function declaresWorkspaces(root) {
-  try {
-    const w = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))?.workspaces;
-    return Array.isArray(w) ? w.length > 0 : Boolean(w && typeof w === 'object');
-  } catch { return false; }
+export function findLocalLinks(modules, { cap = 50 } = {}) {
+  let root;
+  try { root = fs.realpathSync.native(modules); } catch { return []; }
+  const inside = (p) => { const rel = path.relative(root, p); return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel); };
+  const found = [];
+  const visit = (dir, prefix) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (found.length >= cap) return;
+      if (e.name.startsWith('.')) continue;
+      const full = path.join(dir, e.name);
+      if (!prefix && e.name.startsWith('@') && e.isDirectory()) { visit(full, `${e.name}/`); continue; }
+      if (!e.isSymbolicLink()) continue;
+      let target = null;
+      try { target = fs.realpathSync.native(full); } catch { target = null; }
+      if (!target || !inside(target)) found.push(`${prefix}${e.name}`);
+    }
+  };
+  visit(root, '');
+  return found;
 }
 
 /**
