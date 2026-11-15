@@ -223,11 +223,34 @@ describe("cli faithfulness: explicit backend:'cli' throws identically", () => {
   // coerces, explicit throws); that symmetry was the wrong one to copy, because
   // a baseURL names a DESTINATION the operator chose, while `system` names a
   // billable contract the call site never made a transport decision about.
-  it('the ambient and explicit messages are byte-identical for the same param', async () => {
-    const ambientVerdict = cliFaithfulnessVerdict({ system: 'be brief' });
-    const explicitVerdict = cliFaithfulnessVerdict({ system: 'be brief' });
-    assert.equal(ambientVerdict.message, explicitVerdict.message);
-    assert.ok(!('action' in ambientVerdict), 'there is no longer a route action to choose');
+  // THE CLAIM IS ABOUT TWO CLIENTS, SO IT IS ASSERTED ON TWO CLIENTS. The first
+  // version of this called `cliFaithfulnessVerdict` twice with identical
+  // arguments and compared the results — a tautology that passes for a pure
+  // function whatever the adapters do, which is the one thing it was meant to
+  // check. The messages must match where they are actually RAISED: once with
+  // cli chosen ambiently through `CLAUDE_BACKEND`, once with it named at the
+  // call site.
+  it('the ambient and explicit THROWS carry byte-identical messages', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-test';
+    const bin = writeFakeCli('from-cli');
+
+    process.env.CLAUDE_BACKEND = 'cli';
+    const ambient = await createAnthropicClient({ claudeBin: bin, fresh: true });
+    const explicit = await createAnthropicClient({ backend: 'cli', claudeBin: bin, fresh: true });
+
+    const raised = [];
+    for (const client of [ambient, explicit]) {
+      // eslint-disable-next-line no-await-in-loop
+      await assert.rejects(
+        () => client.messages.create({ ...BASE_PARAMS, system: 'be brief' }),
+        (e) => { raised.push(e.message); return true; },
+      );
+    }
+    assert.equal(raised.length, 2, 'both clients must actually have thrown');
+    assert.equal(raised[0], raised[1], 'one verdict, whichever way cli was chosen');
+    assert.match(raised[0], /cannot honour `system`/);
+    assert.ok(!('action' in cliFaithfulnessVerdict({ system: 'be brief' })),
+      'and there is no longer a route action to choose');
   });
 
   it('serviceable params on an explicit cli backend still run on cli', async () => {

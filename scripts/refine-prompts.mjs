@@ -13,7 +13,7 @@ import { reservoirSample } from './lib/rng.mjs';
 import { PASS_NAMES, learningConfig, briefConfig } from './lib/config.mjs';
 import { refreshModelCatalog } from './lib/model-resolver.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
-import { createAnthropicClient, isClaudeAvailableFor, textFromResponse } from './lib/anthropic-client.mjs';
+import { createAnthropicClient, claudeAvailability, textFromResponse } from './lib/anthropic-client.mjs';
 
 const MIN_EXAMPLES_THRESHOLD = learningConfig.minExamplesThreshold;
 
@@ -150,7 +150,15 @@ async function suggestRefinements(passName, outcomesPath) {
   // `isClaudeAvailableFor('sdk')`: the call below passes `system`, so it is
   // pinned, and the ambient gate says `true` on a keyless cli install — which
   // would turn an optional refinement into an ANTHROPIC_API_KEY error.
-  if (isClaudeAvailableFor('sdk')) {
+  // `claudeAvailability`, not the bare oracle: `isClaudeAvailableFor` THROWS
+  // on an Azure profile whose endpoint is set but whose credential is missing
+  // (pinned in tests/anthropic-pin-on-azure.test.mjs). This is an OPTIONAL
+  // capability inside no try block, so on such an install the broken tenant
+  // took the whole command down. Degrades with the reason named — never a
+  // silent false, which would report a misconfigured route as an absent one.
+  const claude = claudeAvailability('sdk');
+  if (claude.error) process.stderr.write(`  [refine] Claude route unusable: ${claude.error}\n`);
+  if (claude.available) {
     try {
       // PINNED `backend:'sdk'` — `system` carries the whole refinement contract
       // and the cli backend does not honour it (it answers as the Claude Code
@@ -171,7 +179,16 @@ async function suggestRefinements(passName, outcomesPath) {
       // The first TEXT block, never `content[0]`: that is the thinking block on
       // a thinking-capable model, so this read returned `undefined` from a good
       // response and the refinement silently produced nothing.
-      suggestion = textFromResponse(response) || undefined;
+      // A CAP IS A CEILING, NOT A GUARANTEE. Raising 2000 -> 4000 fixed the
+      // measured sample; it cannot fix a longer one, and a suggestion cut
+      // mid-sentence is worse than none here — it is written into the prompt
+      // seed, where a half-sentence instruction is indistinguishable from a
+      // deliberate one. The cap and this check are two halves of one fix.
+      if (response?.stop_reason === 'max_tokens') {
+        console.log(`Haiku hit the ${4000}-token ceiling — discarding a truncated suggestion`);
+      } else {
+        suggestion = textFromResponse(response) || undefined;
+      }
     } catch (err) {
       console.log(`Haiku failed: ${err.message}`);
     }

@@ -29,7 +29,7 @@ import { assertKnownFlags, emit, arg } from './lib/cli-io.mjs';
 import { isCloudEnabled, resolveRepoForStore } from './lib/store/repo.mjs';
 import { getStaleAcceptedFindingsForVerification, countStaleAcceptedFindingsForVerification } from './lib/store/plans-ship.mjs';
 import { applyRemediationVerificationResults, initLearningStore } from './learning-store.mjs';
-import { createAnthropicClient, isClaudeAvailableFor } from './lib/anthropic-client.mjs';
+import { createAnthropicClient, claudeAvailability } from './lib/anthropic-client.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';
 import { gitCommitSha } from './lib/vcs.mjs';
 import {
@@ -133,9 +133,16 @@ async function main() {
     // `'sdk'`: the verifier below is pinned there (forced `tool_choice`), so
     // the ambient gate would pass on a keyless cli install and the pinned
     // construction would then throw. Skipping is already a supported outcome.
-    if (!await isClaudeAvailableFor('sdk')) {
+    // `claudeAvailability`, not the bare oracle: `isClaudeAvailableFor` THROWS
+    // on an Azure profile whose endpoint is set but whose credential is missing
+    // (pinned in tests/anthropic-pin-on-azure.test.mjs). This is an OPTIONAL
+    // capability inside no try block, so on such an install the broken tenant
+    // took the whole command down. Degrades with the reason named — never a
+    // silent false, which would report a misconfigured route as an absent one.
+    const claude = claudeAvailability('sdk');
+    if (!claude.available) {
       skippedNoCredential = true;
-      log(`  ${Y}no Claude credential available — skipping ${grouped.length} file(s) needing LLM verification${X}`);
+      log(`  ${Y}${claude.error ? `Claude route unusable (${claude.error})` : 'no Claude credential available'} — skipping ${grouped.length} file(s) needing LLM verification${X}`);
     } else {
       const client = await createAnthropicClient({ backend: 'sdk' }); // pinned: forced tool_choice needs 'sdk', never the ambient CLAUDE_BACKEND
       for (const { file, findings } of grouped) {

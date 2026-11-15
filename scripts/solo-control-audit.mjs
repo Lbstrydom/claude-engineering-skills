@@ -107,7 +107,7 @@ import { canonicaliseRemoteUrl } from './lib/repo-identity.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
 import { normalizeGeminiUsage } from './lib/gemini-usage.mjs';
 import { readLedger, aggregateBudgetSpent, aggregateCostForArm, sharedPassCreditRows } from './lib/solo-control/ledger.mjs';
-import { commitsCompleteForAllArms, coveredCommits, gateCellState, resumeArmFile, runMeasuredReview, reviewCommitState, unmeasuredCommits } from './lib/solo-control/completion.mjs';
+import { assertResumableBackend, commitsCompleteForAllArms, coveredCommits, gateCellState, resumeArmFile, runMeasuredReview, reviewCommitState, unmeasuredCommits } from './lib/solo-control/completion.mjs';
 import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
@@ -705,8 +705,11 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
  * the resume key). --force ignores prior coverage entirely; --resume is
  * documented sugar for the (already-incremental) default and additionally
  * refuses to combine with --force (starting over and resuming are opposites). */
-function planIncrementalRun({ units, prior, force, resume }) {
+function planIncrementalRun({ units, prior, force, resume, backend = null }) {
   if (force && resume) throw new Error('--force and --resume are mutually exclusive (start over vs continue from checkpoint)');
+  // The transport is part of the measurement; the rule lives beside the other
+  // resume decisions in `solo-control/completion.mjs`.
+  assertResumableBackend(prior, backend, force);
   const covered = new Set(force || !prior ? [] : prior.perCommit.filter((c) => c.state === 'ran').map((c) => c.unitKey || c.sha));
   return { commits: units.filter((u) => !covered.has(u.resumeKey)), covered };
 }
@@ -830,7 +833,11 @@ async function cmdRun() {
   // the "continuing an interrupted run" case (mutually exclusive with --force).
   const prior = fs.existsSync(dest) ? JSON.parse(fs.readFileSync(dest, 'utf8')) : null;
   let plan;
-  try { plan = planIncrementalRun({ units, prior, force, resume }); }
+  // The transport this run will use, in the same spelling `provenance.backend`
+  // records, so the guard compares like with like rather than a normalised
+  // form that would silently agree.
+  const plannedBackend = recipient === 'anthropic' ? 'sdk' : recipient;
+  try { plan = planIncrementalRun({ units, prior, force, resume, backend: plannedBackend }); }
   catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
   const { commits, covered } = plan;
   const requestedCommitShas = units.map((u) => u.commitSha);
@@ -2204,7 +2211,15 @@ async function cmdMerge() {
   // subprocess-spawn overhead entirely (a real HTTPS call per batch, no CLI
   // process startup), and the progress line below removes the silence — the
   // two together are the fix, not either alone.
-  const client = await createAnthropicClient({ backend: 'sdk' }).catch(() => null);
+  // `.catch(() => null)` DISCARDED THE REASON, so a broken sdk credential and
+  // a deliberate no-Claude run produced the same silent degradation: clustering
+  // just stopped being model-assisted and nothing said why. Still degrades —
+  // clustering is advisory — but the reason is reported. The pin itself stays:
+  // this call passes `system`, which the cli backend cannot honour.
+  const client = await createAnthropicClient({ backend: 'sdk' }).catch((err) => {
+    log(`  clustering will run unassisted — the sdk client could not be built: ${err?.message || err}`);
+    return null;
+  });
   const rowsByCommit = new Map();
   rows.forEach((r, i) => {
     if (!rowsByCommit.has(r.commit)) rowsByCommit.set(r.commit, []);

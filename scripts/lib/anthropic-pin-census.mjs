@@ -369,6 +369,20 @@ function factoryBindings(ast) {
     // `createAnthropicClient` property would count an unrelated factory of the
     // same name as this seam's — a false construction, which fails the gate
     // for the wrong reason and teaches the next author to distrust it.
+    // Member alias: `const makeClient = anthropic.createAnthropicClient;`
+    // The namespace call `anthropic.createAnthropicClient(...)` was already a
+    // recognised construction, but LIFTING the member into a plain identifier
+    // first was not — so every call through `makeClient` escaped both rules,
+    // and a missed alias is invisible to the whole gate rather than merely
+    // mis-attributed. Provenance is checked the same way as the destructuring
+    // form below: the object must be a seam namespace, never any object that
+    // happens to carry a property of this name.
+    if (node?.type === 'VariableDeclarator' && node.id?.type === 'Identifier'
+      && node.init?.type === 'MemberExpression' && !node.init.computed
+      && memberNameOf(node.init) === FACTORY_NAME
+      && node.init.object?.type === 'Identifier' && seamNamespaces.has(node.init.object.name)) {
+      names.add(node.id.name);
+    }
     if (node?.type === 'VariableDeclarator' && node.id?.type === 'ObjectPattern') {
       const fromSeam = isSeamImportInit(node.init)
         || (node.init?.type === 'Identifier' && seamNamespaces.has(node.init.name));
@@ -424,7 +438,17 @@ export function unpinnedArgsDigest(source) {
  *
  * Walks the text once, tracking whether it sits inside a quote, and collapses
  * whitespace only outside one. Escapes are consumed in pairs so a `\'` cannot
- * be read as the closing quote.
+ * be read as the closing quote. Whitespace that SEPARATES TWO WORD CHARACTERS
+ * becomes one space rather than nothing, because there it is a token boundary,
+ * not formatting.
+ *
+ * **Known limit, stated rather than engineered around.** A regular-expression
+ * literal is not tracked: `/a  b/` folds to `/a b/`, which is a different
+ * pattern. Distinguishing a regex literal from division needs the parser's own
+ * token stream, and this runs on a client-construction ARGUMENT — an options
+ * object — where a multi-space regex does not occur. The failure direction is a
+ * shared digest (a missed drift), never a false alarm, and the token-boundary
+ * rule above already closes every merge that was actually reachable.
  *
  * @param {string} text
  * @returns {string}
@@ -441,7 +465,23 @@ export function normaliseArgText(text) {
       continue;
     }
     if (ch === "'" || ch === '"' || ch === '`') { quote = ch; parts.push({ code: false, ch }); continue; }
-    if (/\s/.test(ch)) continue;              // formatting, outside a literal
+    if (/\s/.test(ch)) {
+      // WHITESPACE BETWEEN TWO WORD CHARACTERS IS NOT FORMATTING, IT IS A
+      // TOKEN BOUNDARY. Dropping it outright merged distinct programs into one
+      // digest — `typeof x` and `typeofx`, `new Foo` and `newFoo`, `a in b` and
+      // `ainb` — so two arguments that select different backends could share a
+      // digest and the drift rule would see nothing. Collapsed to ONE space
+      // where it separates tokens, and dropped everywhere else.
+      const prev = parts.length ? parts[parts.length - 1] : null;
+      let j = i;
+      while (j < text.length && /\s/.test(text[j])) j += 1;
+      const next = text[j];
+      if (prev?.code && /[\w$]/.test(prev.ch) && next && /[\w$]/.test(next)) {
+        parts.push({ code: true, ch: ' ' });
+      }
+      i = j - 1;
+      continue;
+    }
     parts.push({ code: true, ch });
   }
   // A trailing comma is formatting ONLY in code. Running the fold over the
@@ -586,13 +626,25 @@ function alwaysReturns(node) {
       // that an options factory doing it should be read by a human.
       return Boolean(node.handler)
         && alwaysReturns(node.block) && alwaysReturns(node.handler.body);
-    case 'SwitchStatement':
-      // Only with a `default`, and only if every case terminates. A case that
-      // falls through to the next is not handled here and reads as
-      // non-terminating, which is the safe direction.
-      return (node.cases || []).some((c) => !c.test)
-        && (node.cases || []).every((c) => (c.consequent || []).length === 0
-          || c.consequent.some((st) => alwaysReturns(st)));
+    case 'SwitchStatement': {
+      // Only with a `default`, and only if every case terminates.
+      //
+      // An EMPTY consequent is a fall-through to the NEXT case, so it
+      // terminates only if something after it does. The earlier `length === 0
+      // || …` treated every empty consequent as terminating, which made
+      // `switch (x) { case 1: return a; default: }` read as always-returning
+      // although the default falls out with no value — a fail-open in the one
+      // direction that matters, since the whole point of this analysis is to
+      // refuse a pin that is absent on some path.
+      const cases = node.cases || [];
+      if (!cases.some((c) => !c.test)) return false;
+      const lastIndex = cases.length - 1;
+      return cases.every((c, i) => {
+        const body = c.consequent || [];
+        if (body.length === 0) return i < lastIndex;        // falls through to a case checked below
+        return body.some((st) => alwaysReturns(st));
+      });
+    }
     default:
       return false;
   }
@@ -672,7 +724,13 @@ function argRestsOnFactory(argNode, fnName) {
       // Any OTHER spread can carry `backend`; it is an unresolved override.
       return false;
     }
-    if (!isValueProperty(prop)) continue;
+    // A GETTER OR METHOD IS NOT "NOT A PROPERTY", IT IS AN UNRESOLVED ONE.
+    // `isValueProperty` is false for an ObjectMethod, and `continue` then
+    // SKIPPED it — so `{ ...opts(), get backend() { return 'cli'; } }` was
+    // certified as resting on a factory that pins sdk. `resolveBackendOfArg`
+    // already calls this shape unresolved; this function did not, which is two
+    // answers to one question inside one module. Same verdict in both now.
+    if (!isValueProperty(prop)) return false;
     if (prop.computed) return false;                       // a computed key could be 'backend'
     if (propertyKeyName(prop) === 'backend') return false;
   }

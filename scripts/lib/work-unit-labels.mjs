@@ -250,7 +250,25 @@ export async function labelWorkUnits(units, opts = {}) {
  * working backend (AGENTS.md, Anthropic Backend Routing).
  */
 async function defaultLabeller() {
-  try {
+  {
+    // NO `try { … } catch { return null }` HERE, DELIBERATELY.
+    //
+    // It used to wrap this whole body, which made every failure arrive as the
+    // same value as "this install has no credential" — and `getLabeller`'s
+    // `providerThrew` flag, the thing that exists to tell those apart, could
+    // never see a rejection because nothing ever escaped. The distinction was
+    // real in the caller and unreachable in practice.
+    //
+    // It matters most for the shape found in the same round:
+    // `isClaudeAvailableFor('sdk')` THROWS on an Azure profile whose endpoint is
+    // set but whose credential is missing (asserted in
+    // tests/anthropic-pin-on-azure.test.mjs). Swallowed, a misconfigured tenant
+    // reported `labeller-unavailable` — the one message that tells an operator
+    // nothing is wrong. Now it propagates, `getLabeller` catches it, and the
+    // reason reads `labeller-error: AZURE_OPENAI_API_KEY is missing …`.
+    //
+    // ABSENCE still returns null below. Only a FAILURE throws, and labelling
+    // still never crashes a backlog listing — `getLabeller` contains it.
     const { createAnthropicClient, isClaudeAvailableFor, textFromResponse } = await import('./anthropic-client.mjs');
     // `isClaudeAvailableFor('sdk')`, not the ambient `isClaudeAvailable()`: this
     // call passes `system`, so it is pinned below, and the ambient answer is
@@ -279,11 +297,16 @@ async function defaultLabeller() {
         system: SYSTEM,
         messages: [{ role: 'user', content: buildPrompt(unit) }],
       });
+      // A CAP THAT WAS HIT IS NOT AN ANSWER. Raising 64 → 1000 fixed the
+      // measured sample, but a cap is a ceiling, not a guarantee: a response
+      // that stopped AT it is truncated by definition, and a truncated label is
+      // worse than none — it is short, plausible, and cached for the TTL. The
+      // cap and this check are the two halves of one fix; the cap alone would
+      // leave the failure silent at some longer input.
+      if (res?.stop_reason === 'max_tokens') return null;
       // The first TEXT block, never `content[0]` — which is the thinking block.
       return textFromResponse(res) || null;
     };
-  } catch {
-    return null;
   }
 }
 

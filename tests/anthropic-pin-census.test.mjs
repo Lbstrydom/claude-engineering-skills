@@ -1004,3 +1004,100 @@ describe('the REPO is clean against its committed baseline', () => {
     assert.deepEqual(offenders, [], 'the strict path was removed; a live read of it is a leftover dial');
   });
 });
+
+// ── Round-7 fail-opens: three shapes the gate CERTIFIED (2026-11-15) ───────
+//
+// Each of these made the census answer "pinned" or "no construction here" for
+// code that is neither. They are grouped because they are one class — the
+// analysis recognising a shape and then being too generous about it — and
+// because a fail-open in a MERGE gate is worse than a gap: it does not merely
+// miss a site, it states that the site was checked.
+describe('the census does not certify what it cannot actually see', () => {
+  const SEAM = "import { createAnthropicClient } from './anthropic-client.mjs';";
+
+  // H2. `argRestsOnFactory` skipped any non-ObjectProperty, so a GETTER named
+  // `backend` sitting after the factory spread was invisible — while
+  // `resolveBackendOfArg` has always called that shape unresolved. Two answers
+  // to one question, inside one module.
+  it('a GETTER overriding the factory spread breaks the indirect-pin claim', () => {
+    const src = `${SEAM}
+function clientOptions() { return { backend: 'sdk', timeout: 1 }; }
+export async function make() {
+  return createAnthropicClient({ ...clientOptions(), get backend() { return 'cli'; } });
+}`;
+    const held = indirectPinHolds(src, 'clientOptions');
+    assert.equal(held.found, true);
+    assert.equal(held.pinned, true, 'the factory itself does pin');
+    assert.equal(held.used, false,
+      'but this construction overrides it — certifying it would let the gate approve a cli call');
+  });
+
+  // POSITIVE CONTROL: the honest spread must still pass, or the fix above would
+  // have closed the hole by refusing the one shape the escape hatch exists for.
+  it('the plain factory spread still holds', () => {
+    const src = `${SEAM}
+function clientOptions() { return { backend: 'sdk' }; }
+export async function make() { return createAnthropicClient({ ...clientOptions(), timeout: 5 }); }`;
+    assert.equal(indirectPinHolds(src, 'clientOptions').used, true);
+  });
+
+  // H3. `alwaysReturns` read an EMPTY consequent as terminating, so an empty
+  // `default:` — the path that falls out with no value at all — counted as a
+  // return. The pin is then claimed on a function that returns undefined.
+  it('a switch whose DEFAULT is empty does not count as always returning', () => {
+    const src = `${SEAM}
+function clientOptions(kind) {
+  switch (kind) {
+    case 'a': return { backend: 'sdk' };
+    default:
+  }
+}
+export async function make(k) { return createAnthropicClient(clientOptions(k)); }`;
+    assert.equal(indirectPinHolds(src, 'clientOptions').pinned, false,
+      'the default path returns undefined, so the pin is absent on it');
+  });
+
+  // POSITIVE CONTROL for the same edit: stacked fall-through case labels are
+  // the shape the `length === 0` allowance was written for, and must still work.
+  it('stacked fall-through case labels still count as returning', () => {
+    const src = `${SEAM}
+function clientOptions(kind) {
+  switch (kind) {
+    case 'a':
+    case 'b': return { backend: 'sdk' };
+    default: return { backend: 'sdk' };
+  }
+}
+export async function make(k) { return createAnthropicClient(clientOptions(k)); }`;
+    assert.equal(indirectPinHolds(src, 'clientOptions').pinned, true);
+  });
+
+  // H4. A factory LIFTED off a seam namespace into a plain identifier was not
+  // recorded as a binding, so calls through it were not constructions at all —
+  // invisible to Rule A and Rule B alike, which is the worst outcome available:
+  // the file reads as having no client in it.
+  it('a factory aliased off a seam namespace is still a construction', () => {
+    const src = `import * as anthropic from './anthropic-client.mjs';
+const makeClient = anthropic.createAnthropicClient;
+export async function go() {
+  const c = await makeClient({});
+  return c.messages.create({ model: 'm', max_tokens: 10, system: 'be brief', messages: [] });
+}`;
+    const c = classifyPinningInSource(src);
+    assert.equal(c.parsed, true);
+    assert.equal(c.unpinned, 1, 'the alias constructs a client, and it is not pinned');
+    assert.equal(c.ruleAViolation, true, 'and it passes `system`, so Rule A must fire');
+  });
+
+  // NEGATIVE CONTROL for the alias rule: provenance is checked, so an unrelated
+  // object with a property of the same name must NOT become a construction.
+  // Without this the fix would fail the gate for the wrong reason, which is how
+  // a gate teaches the next author to stop believing it.
+  it('a same-named property on an UNRELATED object is not a factory', () => {
+    const src = `import * as helpers from './unrelated-module.mjs';
+const makeClient = helpers.createAnthropicClient;
+export async function go() { return makeClient({ system: 'x' }); }`;
+    const c = classifyPinningInSource(src);
+    assert.equal(c.unpinned, 0, 'not this seam, so not this gate\u2019s business');
+  });
+});

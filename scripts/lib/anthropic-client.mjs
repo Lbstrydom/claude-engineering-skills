@@ -254,6 +254,38 @@ export function isClaudeAvailableFor(backend) {
 }
 
 /**
+ * The same answer, for a caller that must not be CRASHED by a broken profile.
+ *
+ * `isClaudeAvailableFor` THROWS on a half-configured Azure profile — endpoint
+ * set, credential missing — and that refusal is correct: it is the difference
+ * between "no route here" and "a route is declared and broken", and demoting a
+ * broken tenant to the public endpoint would be worse than failing. But most
+ * call sites ask this question about an OPTIONAL capability (a label, a brief,
+ * a refinement) inside no try block, so on such an install the whole command
+ * died rather than the optional feature.
+ *
+ * Not a second oracle and not a silent `false` — it calls the one above and
+ * REPORTS what happened, so the caller degrades with the reason in hand instead
+ * of rendering a configuration fault as an absent credential. A caller that
+ * wants the throw keeps calling `isClaudeAvailableFor` directly.
+ *
+ * @param {'sdk'|'cli'|'bedrock'} backend
+ * @returns {{available: boolean, error: string|null}} `error` is non-null only
+ *   when the question itself could not be answered — never for a clean "no".
+ */
+export function claudeAvailability(backend) {
+  try {
+    return { available: isClaudeAvailableFor(backend), error: null };
+  } catch (err) {
+    // Best-effort text: a thrown value need not be an Error, and `String(err)`
+    // itself throws for an object with a null prototype.
+    let message = 'the configured Claude route could not be resolved';
+    try { message = err?.message || String(err) || message; } catch { /* keep the default */ }
+    return { available: false, error: message };
+  }
+}
+
+/**
  * The SDK's own default endpoint. A baseURL that normalises to this value is
  * semantically ABSENT — it expresses no custom-endpoint intent, because it
  * names exactly the service every backend targets when no baseURL is set.

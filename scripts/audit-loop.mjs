@@ -20,7 +20,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildAuditTranscript, readRoundResult } from './lib/audit/transcript.mjs';
-import { isClaudeAvailableFor } from './lib/anthropic-client.mjs';
+import { claudeAvailability } from './lib/anthropic-client.mjs';
 import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib/audit/transcript-archive.mjs';
 import { formatCoverageSuffix, coverageMissingNote } from './lib/coverage-format.mjs';
 import { COVERAGE_CONVERGENCE_REASONS } from './lib/audit/convergence.mjs';
@@ -522,7 +522,15 @@ ${R}Round ${round} stopped at the round cap${X} — read the structural-or-stop 
     // The ambient gate said `true` on a keyless cli install, so the MANDATORY
     // review was attempted and failed on a missing ANTHROPIC_API_KEY instead of
     // reporting honestly that no reviewer route existed.
-    const hasClaude = isClaudeAvailableFor('sdk');
+    // `claudeAvailability`, not the bare oracle: `isClaudeAvailableFor` THROWS
+    // on an Azure profile whose endpoint is set but whose credential is missing
+    // (pinned in tests/anthropic-pin-on-azure.test.mjs). This is an OPTIONAL
+    // capability inside no try block, so on such an install the broken tenant
+    // took the whole command down. Degrades with the reason named — never a
+    // silent false, which would report a misconfigured route as an absent one.
+    const claudeRoute = claudeAvailability('sdk');
+    if (claudeRoute.error) process.stderr.write(`  [final-review] Claude route unusable: ${claudeRoute.error}\n`);
+    const hasClaude = claudeRoute.available;
 
     if (hasGemini || hasClaude) {
       banner('STEP 7 — Final Review (Gemini/Claude Opus)');

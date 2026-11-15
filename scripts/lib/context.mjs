@@ -292,12 +292,20 @@ async function _llmCondense(content) {
   // ANTHROPIC_API_KEY, so the old raw-key test skipped this branch outright on a
   // corporate tenant and the brief silently degraded to Gemini (AGENTS.md,
   // "An availability gate must ask whether a ROUTE exists").
-  const { isClaudeAvailableFor } = await import('./anthropic-client.mjs');
+  const { claudeAvailability } = await import('./anthropic-client.mjs');
   // `'sdk'`, not the ambient backend: the Claude leg is pinned to sdk (it
   // passes `system`), so the ambient answer would be `true` on a keyless cli
   // install and this leg would raise a credential error instead of letting the
   // Gemini leg below serve the brief.
-  if (isClaudeAvailableFor('sdk')) {
+  // `claudeAvailability`, not the bare oracle: `isClaudeAvailableFor` THROWS
+  // on an Azure profile whose endpoint is set but whose credential is missing
+  // (pinned in tests/anthropic-pin-on-azure.test.mjs). This is an OPTIONAL
+  // capability inside no try block, so on such an install the broken tenant
+  // took the whole command down. Degrades with the reason named — never a
+  // silent false, which would report a misconfigured route as an absent one.
+  const claudeRoute = claudeAvailability('sdk');
+  if (claudeRoute.error) process.stderr.write(`  [brief] Claude route unusable: ${claudeRoute.error}\n`);
+  if (claudeRoute.available) {
     const budget = budgetFor('Claude');
     if (budget) {
       try {

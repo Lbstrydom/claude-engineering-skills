@@ -24,7 +24,26 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const MODE = process.argv[2];
-const RUNS = Number(process.argv[3] || 1);
+/**
+ * How many samples per mode. VALIDATED AND CAPPED, because every iteration is a
+ * paid API call: `Number('')` is 0 (a silent no-op run that reports nothing and
+ * looks like a clean result), `Number('Infinity')` is Infinity (an unbounded
+ * spend loop), and `Number('3x')` is NaN, which makes `i < RUNS` false
+ * immediately — three different wrong answers from one unguarded conversion, two
+ * of them expensive and one of them indistinguishable from "it worked". The cap
+ * is a measurement harness's cap, not a policy: 20 samples of the real prompt is
+ * already well past the point where the effect here is visible.
+ */
+const RUNS = (() => {
+  const raw = process.argv[3];
+  if (raw === undefined) return 1;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 20) {
+    process.stderr.write(`measure: runs must be an integer in 1..20, got "${raw}" — refusing rather than spending.\n`);
+    process.exit(2);
+  }
+  return n;
+})();
 const REPO = process.cwd();
 
 const load = p => import(pathToFileURL(path.join(REPO, p)).href);
@@ -108,6 +127,19 @@ function rawClaude({ system, prompt, model }) {
   // a real measurement (round-2 audit, M1).
   if (j.is_error === true) {
     return { error: `claude -p reported an error: ${String(j.result || '(no detail)').slice(0, 300)}`, ms };
+  }
+  // A NON-ZERO EXIT IS AN ERROR EVEN WHEN STDOUT PARSES. The `is_error` check
+  // above covers the envelope the CLI writes deliberately; it does not cover a
+  // crash that happened to leave valid JSON behind, and folding that into the
+  // figures as a real measurement is exactly what this harness must not do.
+  if (r.status !== 0) {
+    return { error: `status ${r.status} with parseable output: ${(r.stderr || '').slice(0, 300)}`, ms };
+  }
+  // And an envelope with NO `result` is not an empty answer — it is a shape
+  // this harness does not understand, which would otherwise be averaged in as
+  // a zero-length reply and drag every mean toward it.
+  if (typeof j.result !== 'string') {
+    return { error: `envelope carries no string \`result\` (keys: ${Object.keys(j).join(',') || 'none'})`, ms };
   }
   const u = j.usage || {};
   return {

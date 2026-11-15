@@ -139,23 +139,52 @@ describe('the labeller survives a thinking-first response', () => {
 describe('the pinned caps are sized to the answer PLUS the thinking', () => {
   const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
 
+  /**
+   * The cap on the REQUEST, not the first `max_tokens` in the file.
+   *
+   * The first version matched `/max_tokens:\s*(\d+)/` over the raw source. Every
+   * one of these call sites now carries a long comment explaining the measured
+   * figure — and those comments say `max_tokens: 200`, `max_tokens: 64`: the
+   * very numbers the regression was about. A comment edit could therefore turn
+   * these assertions red, or green, with the request unchanged — the test would
+   * be reading the prose it was written to outlive. Comments are stripped, and
+   * the match is anchored to the property as the request object spells it.
+   */
+  const capIn = (rel) => {
+    const code = read(rel)
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    const matches = [...code.matchAll(/\bmax_tokens:\s*(\d+)\s*,/g)].map((m) => Number(m[1]));
+    assert.equal(matches.length, 1,
+      `${rel}: expected exactly one max_tokens in CODE, found ${matches.length} (${matches.join(', ')}) `
+      + '— with more than one, "the cap" is ambiguous and this assertion would silently pick a side');
+    return matches[0];
+  };
+
   it('work-unit-labels asks for far more than the 64 that returned nothing', () => {
-    const src = read('scripts/lib/work-unit-labels.mjs');
-    const m = src.match(/max_tokens:\s*(\d+)/);
-    assert.ok(m, 'the labeller still sets a cap');
-    assert.ok(Number(m[1]) >= 600, `measured: 64 → no text block, 200 → truncated, 600 → complete; got ${m[1]}`);
+    const cap = capIn('scripts/lib/work-unit-labels.mjs');
+    assert.ok(cap >= 600, `measured: 64 → no text block, 200 → truncated, 600 → complete; got ${cap}`);
   });
 
   it('refine-prompts asks for more than the 2000 that truncated', () => {
-    const m = read('scripts/refine-prompts.mjs').match(/max_tokens:\s*(\d+)/);
-    assert.ok(m);
-    assert.ok(Number(m[1]) > 2000, `measured: 2000 → stop_reason max_tokens mid-sentence; got ${m[1]}`);
+    const cap = capIn('scripts/refine-prompts.mjs');
+    assert.ok(cap > 2000, `measured: 2000 → stop_reason max_tokens mid-sentence; got ${cap}`);
   });
 
-  it("the brief asks for more than the 2000 that returned only thinking", () => {
-    const m = read('scripts/lib/context.mjs').match(/max_tokens:\s*(\d+)/);
-    assert.ok(m);
-    assert.ok(Number(m[1]) >= 4000, `measured: 2000 → thinking_tokens 2000, zero text blocks; got ${m[1]}`);
+  it('the brief asks for more than the 2000 that returned only thinking', () => {
+    const cap = capIn('scripts/lib/context.mjs');
+    assert.ok(cap >= 4000, `measured: 2000 → thinking_tokens 2000, zero text blocks; got ${cap}`);
+  });
+
+  // THE CAP IS HALF THE FIX. A bigger number cannot make a longer answer fit,
+  // and a response that stopped AT the ceiling is truncated by definition — so
+  // a raised cap with no `stop_reason` check is the band-aid version of this
+  // fix, green on the measured sample and silent on the next one. Asserted
+  // rather than trusted.
+  it('each raised cap is paired with a stop_reason check', () => {
+    for (const rel of ['scripts/lib/work-unit-labels.mjs', 'scripts/refine-prompts.mjs', 'scripts/lib/context.mjs']) {
+      assert.match(read(rel), /stop_reason/, `${rel} raised its ceiling but never looks at whether it was hit`);
+    }
   });
 
   it('no pinned site still reads `content[0].text`', () => {
