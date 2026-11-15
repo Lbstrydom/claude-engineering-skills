@@ -50,7 +50,7 @@ describe('the slot is shared between repos', () => {
     assert.equal(w.runA(['lease', 'acquire', '--for', '30', '--note', 'full gate']).status, 0);
     const next = w.runB(['next']);
     assert.equal(next.status, 0, next.stderr);
-    assert.match(next.stdout, /machine lease: heavy slot: HELD by main \(.*\) for gate until 20:30Z \(in 30m\) — full gate — `.*lease status`/);
+    assert.match(next.stdout, /machine lease: heavy slot: HELD by main \(.*\) for gate until 20:30Z \(in 30m\) — full gate \(note from 20:00Z\) — `.*lease status`/);
     const json = w.runB(['next', '--json']).json;
     assert.equal(json.lease.heavy.state, 'held'); assert.equal(json.lease.holder.holder, 'main');
     assert.equal('events' in json.lease, false);

@@ -1,34 +1,24 @@
 /**
- * @fileoverview CPU time used so far by a process AND its descendants: the measurement that tells a lease holder whose pid is
- * alive but IDLE from one that is still working (consumer report 2026-11-15: an expired holder alive but idle refused every
- * waiter with `expired-pid-alive` for 38+ minutes, 343 refusals for one waiter).
+ * @fileoverview The process TREE under a lease holder's recorded pid: who is in it (launcher first, then its descendants), when
+ * each started (UTC), and the CPU time the whole tree has used. `lease run`'s heartbeat records the tree's CPU so an idle run
+ * stops renewing; `lease status` prints the tree and its CPU so a PERSON can judge a stuck slot (consumer reports 2026-11-15).
  *
- * The TREE, not the pid: the pid `lease run` records is the job it spawned, and on Windows that is usually a wrapper
- * (`npm.cmd` -> `cmd.exe` -> `node`) whose own CPU stays flat while a descendant does the work. Reading the recorded pid alone
- * would call a working job idle; summing the tree cannot, and a tree that has grown an unrelated subtree through pid reuse only
- * reads as busier, the safe side.
+ * The TREE, never the pid alone: the recorded pid is usually a launcher (`npm.cmd` -> `cmd.exe` -> `node` -> `python`) whose own
+ * CPU stays flat while a descendant works — one consumer's launcher read 0.41 s while a python grandchild used 1-2 s every 5 s.
+ * Start times are UTC at the source (PowerShell `ToUniversalTime()`; `ps` elapsed time subtracted from the reading's clock),
+ * because comparing a local-time start with a UTC expiry once "proved" a pid reuse that was not one.
  *
- * One process-table read per call: `Get-CimInstance Win32_Process` on Windows (100 ns units), `ps -A -o pid=,ppid=,time=`
- * elsewhere (whole seconds). Any failure is `null` — unmeasured, never "idle". Never throws.
+ * Nothing here decides anything: it measures. Reclaiming a slot stays a human action. Any failure is `null` — unmeasured, never
+ * "idle". Never throws.
  *
  * @module scripts/lib/fleet/lease-cpu
  */
 import cp from 'node:child_process';
 
 const TIMEOUT_MS = 15_000;
-const WIN_SCRIPT = "Get-CimInstance Win32_Process | ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, ($_.KernelModeTime + $_.UserModeTime) }";
+const WIN_SCRIPT = "Get-CimInstance Win32_Process | ForEach-Object { $s = if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') } else { '-' }; '{0} {1} {2} {3} {4}' -f $_.ProcessId, $_.ParentProcessId, ($_.KernelModeTime + $_.UserModeTime), $s, $_.Name }";
 
-const rowsOf = (text, cpuOf) => String(text).split(/\r?\n/).flatMap((line) => {
-  const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*$/.exec(line);
-  if (!m) return [];
-  const cpuMs = cpuOf(m[3]);
-  return cpuMs === null ? [] : [{ pid: Number(m[1]), ppid: Number(m[2]), cpuMs }];
-});
-
-/** `pid ppid kernel+user` lines (100 ns units) -> rows. */
-export const parseWinTable = (text) => rowsOf(text, (v) => (/^\d+$/.test(v) ? Math.floor(Number(v) / 10_000) : null));
-
-/** `ps` cumulative time `[[dd-]hh:]mm:ss[.cc]` -> milliseconds, or null. */
+/** `ps` time `[[dd-]hh:]mm:ss[.cc]` -> milliseconds, or null. Used for both cumulative CPU and elapsed time. */
 export function psTimeMs(v) {
   const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(String(v));
   if (!m) return null;
@@ -36,52 +26,92 @@ export function psTimeMs(v) {
   return Math.round((((Number(d) * 24 + Number(h)) * 60 + Number(mi)) * 60 + Number(s)) * 1000);
 }
 
-/** `pid ppid time` lines from `ps` -> rows. */
-export const parsePsTable = (text) => rowsOf(text, psTimeMs);
+/** `pid ppid cpu100ns startUTC|- name` lines -> rows. */
+export function parseWinTable(text) {
+  return String(text).split(/\r?\n/).flatMap((line) => {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/.exec(line);
+    if (!m) return [];
+    const startedAt = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(m[4]) ? m[4] : null;
+    return [{ pid: Number(m[1]), ppid: Number(m[2]), cpuMs: Math.floor(Number(m[3]) / 10_000), startedAt, name: m[5].trim() || '?' }];
+  });
+}
 
-/** Total CPU of `root` and every descendant; null when `root` is not in the table. Cycle-safe. */
-export function treeCpuMs(rows, root) {
-  if (!rows.some((r) => r.pid === root)) return null;
-  const kids = new Map();
-  for (const r of rows) { if (!kids.has(r.ppid)) kids.set(r.ppid, []); kids.get(r.ppid).push(r); }
-  const byPid = new Map(rows.map((r) => [r.pid, r]));
-  const seen = new Set(); const stack = [root]; let total = 0;
-  while (stack.length) {
-    const pid = stack.pop();
-    if (seen.has(pid)) continue;
-    seen.add(pid);
-    total += byPid.get(pid)?.cpuMs ?? 0;
-    for (const k of kids.get(pid) ?? []) if (k.pid !== pid) stack.push(k.pid);
-  }
-  return total;
+/** `pid ppid time etime comm` lines from `ps` -> rows; the start is the reading's clock minus the elapsed time. */
+export function parsePsTable(text, nowMs = Date.now()) {
+  return String(text).split(/\r?\n/).flatMap((line) => {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*(.*)$/.exec(line);
+    if (!m) return [];
+    const cpuMs = psTimeMs(m[3]);
+    if (cpuMs === null) return [];
+    const el = psTimeMs(m[4]);
+    const startedAt = el === null ? null : new Date(Math.floor((nowMs - el) / 1000) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    return [{ pid: Number(m[1]), ppid: Number(m[2]), cpuMs, startedAt, name: m[5].trim() || '?' }];
+  });
 }
 
 /**
- * CPU milliseconds used by `pid`'s process tree, or null when it cannot be measured.
- * @param {number} pid
- * @param {{platform?: string, spawnSync?: typeof cp.spawnSync}} [deps]
+ * `root` and its descendants, root first then depth-first, each with its depth; null when `root` is not in the table.
+ * Cycle-safe (a reused parent pid can make the table claim one).
  */
-export function processTreeCpuMs(pid, { platform = process.platform, spawnSync = cp.spawnSync } = {}) {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
+export function treeOf(rows, root) {
+  const byPid = new Map(rows.map((r) => [r.pid, r]));
+  if (!byPid.has(root)) return null;
+  const kids = new Map();
+  for (const r of rows) if (r.pid !== r.ppid) { if (!kids.has(r.ppid)) kids.set(r.ppid, []); kids.get(r.ppid).push(r); }
+  const out = []; const seen = new Set(); const stack = [[root, 0]];
+  while (stack.length) {
+    const [pid, depth] = stack.pop();
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    out.push({ ...byPid.get(pid), depth });
+    for (const k of [...(kids.get(pid) ?? [])].sort((a, b) => b.pid - a.pid)) stack.push([k.pid, depth + 1]);
+  }
+  return out;
+}
+
+/** Total CPU of a tree (from `treeOf`), or null. */
+export const treeCpuMs = (rows, root) => { const t = treeOf(rows, root); return t ? t.reduce((a, r) => a + r.cpuMs, 0) : null; };
+
+/**
+ * One read of the machine's process table, or null.
+ * @param {{platform?: string, spawnSync?: typeof cp.spawnSync, now?: () => number}} [deps]
+ */
+export function readProcessTable({ platform = process.platform, spawnSync = cp.spawnSync, now = Date.now } = {}) {
   const win = platform === 'win32';
   let r;
   try {
     r = win
       ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN_SCRIPT], { encoding: 'utf8', timeout: TIMEOUT_MS, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
-      : spawnSync('ps', ['-A', '-o', 'pid=,ppid=,time='], { encoding: 'utf8', timeout: TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] });
+      : spawnSync('ps', ['-A', '-o', 'pid=,ppid=,time=,etime=,comm='], { encoding: 'utf8', timeout: TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] });
   } catch { return null; }
   if (!r || r.error || r.status !== 0) return null;
-  return treeCpuMs(win ? parseWinTable(r.stdout) : parsePsTable(r.stdout), pid);
+  const rows = win ? parseWinTable(r.stdout) : parsePsTable(r.stdout, now());
+  return rows.length ? rows : null;
 }
 
-/** `processTreeCpuMs` memoised per pid for `ttlMs`: one decision asks the same question several times. */
-export function memoCpuOf({ ttlMs = 5_000, clock = Date.now, measure = processTreeCpuMs } = {}) {
-  const cache = new Map();
-  return (pid) => {
-    const hit = cache.get(pid);
-    if (hit && clock() - hit.at < ttlMs) return hit.value;
-    const value = measure(pid);
-    cache.set(pid, { at: clock(), value });
-    return value;
-  };
+/** CPU ms used so far by `pid`'s whole tree, or null when it cannot be measured. */
+export function processTreeCpuMs(pid, deps) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  const rows = readProcessTable(deps);
+  return rows ? treeCpuMs(rows, pid) : null;
+}
+
+/**
+ * The tree under `pid` and the CPU it used over a live `sampleMs` window (two table reads), for `lease status`.
+ * @returns {Promise<{measured: false, reason: string} | {measured: true, tree: object[], cpuMs: number, windowMs: number}>}
+ */
+export async function sampleTree(pid, { sampleMs = 5_000, read = readProcessTable, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), clock = Date.now } = {}) {
+  const a = read();
+  const t0 = clock();
+  const first = a ? treeOf(a, pid) : null;
+  if (!a) return { measured: false, reason: 'the process table could not be read' };
+  if (!first) return { measured: false, reason: `pid ${pid} is not running` };
+  await sleep(sampleMs);
+  const b = read();
+  const second = b ? treeOf(b, pid) : null;
+  if (!second) return { measured: false, reason: b ? `pid ${pid} exited during the sample` : 'the process table could not be read a second time' };
+  // Per-process delta, so a worker that started during the window counts from zero and one that exited is not negative.
+  const before = new Map(first.map((r) => [r.pid, r.cpuMs]));
+  const cpuMs = second.reduce((acc, r) => acc + Math.max(0, r.cpuMs - (before.get(r.pid) ?? 0)), 0);
+  return { measured: true, tree: second, cpuMs, windowMs: Math.max(1, clock() - t0) };
 }

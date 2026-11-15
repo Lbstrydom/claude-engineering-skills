@@ -11,17 +11,26 @@
  *  4. release on every CATCHABLE exit (returns, throws, SIGINT/SIGTERM/SIGHUP/SIGBREAK) with the token, as a plain release, a
  *     release that yields the turn (`endTurn`), or the atomic release-to-CI-window when the job may have reached a remote.
  *
- * SIGKILL and power loss cannot be caught: the lease expires and the recorded pid decides takeover (#243 D4). There is no
- * renewal heartbeat: a job running past `forMin` leaves an expired lease whose recorded pid is alive, which admission already
- * treats as held.
+ * SIGKILL and power loss cannot be caught: the lease expires and the recorded pid decides takeover (#243 D4). While the job
+ * runs, a HEARTBEAT (`decideHeartbeat`, every `heartbeatMs`) renews the lease up to the run's ceiling (`ceilingMin`, else
+ * `LIMITS.heartbeatMaxMs`), so a long run never reads EXPIRED (consumer report 2026-11-15: a live 2-hour suite read expired and
+ * was nearly forced). Each beat records the job's process-TREE CPU; a tree idle for `LIMITS.treeIdleMs` stops renewing, so the
+ * lease expires and a person can judge it. Nothing here, or anywhere, takes a slot from a live holder automatically.
  *
  * Every effect is injected (clock, sleep, probe, signals, transact, exit) so the protocol is tested without processes.
  *
  * @module scripts/lib/fleet/lease-run
  */
 import {
-  decideAcquire, decideAttach, decideRelease, decideReleaseToCiWindow, defaultProbe, transactLease, turnKeptText,
+  LIMITS, decideAcquire, decideAttach, decideHeartbeat, decideRelease, decideReleaseToCiWindow, defaultProbe, transactLease, turnKeptText,
 } from './lease.mjs';
+import { processTreeCpuMs } from './lease-cpu.mjs';
+
+/** Interval timers for the heartbeat, unref'd so a beat can never keep the process alive after its job. */
+export const realTimers = {
+  every(ms, fn) { const t = setInterval(fn, ms); t.unref?.(); return t; },
+  cancel(t) { clearInterval(t); },
+};
 
 /** Signals that mean "stop": a terminal interrupt, a termination request, a hangup, and Ctrl+Break on Windows. */
 export const STOP_SIGNALS = Object.freeze(['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']);
@@ -99,6 +108,7 @@ export async function runUnderLease(opts, job) {
     endTurn = false, releaseToCiWindow = 0, windowRepo, cmdName = 'fleet', now = () => new Date(), random = Math.random,
     probe = defaultProbe(), signals = processSignals, transact = transactLease, log = () => {},
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)), forceExit = (code) => process.exit(code),
+    heartbeatMs = LIMITS.heartbeatMs, ceilingMin, cpuOf = (p) => processTreeCpuMs(p), timers = realTimers,
   } = opts;
   const startedAt = now().getTime();
   const deadline = startedAt + Math.max(0, waitMin) * 60_000;
@@ -131,12 +141,29 @@ export async function runUnderLease(opts, job) {
     signalled = sig;
     abort.abort();
   });
-  const attach = async (childPid) => {
-    const out = runDecision(transact, dir, (lease) => decideAttach(lease, { identity, pid: childPid, token }, now(), probe));
-    return out.status === 'decided' && out.decision.ok === true;
+  let childPid = null;
+  const attach = async (pid0) => {
+    const out = runDecision(transact, dir, (lease) => decideAttach(lease, { identity, pid: pid0, token }, now(), probe));
+    const okAttach = out.status === 'decided' && out.decision.ok === true;
+    if (okAttach) childPid = pid0;
+    return okAttach;
   };
+  // Heartbeat: renew while the job's process tree is alive and not idle, up to the ceiling, so a long run never reads EXPIRED.
+  const ceilingAt = new Date(now().getTime() + (ceilingMin ? ceilingMin * 60_000 : LIMITS.heartbeatMaxMs));
+  let beating = heartbeatMs > 0;
+  const beat = () => {
+    if (!beating) return;
+    const cpuMs = childPid ? cpuOf(childPid) : cpuOf(pid);
+    const out = runDecision(transact, dir, (lease) => decideHeartbeat(lease, { identity, token, cpuMs }, now(), { ceilingAt }));
+    if (out.status === 'decided' && !out.decision.ok) { beating = false; log(`heartbeat stopped: ${out.decision.reason}`); return; }
+    if (out.status === 'decided' && !out.decision.renewing && !stoppedSaid) { stoppedSaid = true; log(`the job's process tree has used no CPU for ${Math.round(LIMITS.treeIdleMs / 60_000)} minutes: the lease is no longer renewed and will expire; it keeps running`); }
+  };
+  let stoppedSaid = false;
+  const timer = heartbeatMs > 0 ? timers.every(heartbeatMs, beat) : null;
   let result; let threw = false; let thrown;
   try { result = await job({ token, attach, signal: abort.signal }); } catch (e) { threw = true; thrown = e; }
+  beating = false;
+  if (timer) timers.cancel(timer);
 
   // 4. Release on every catchable exit. A failed release never changes the job's outcome; it says how to finish by hand. The
   //    stop-signal handlers stay installed until the release has finished: a signal DURING the release must not skip it.

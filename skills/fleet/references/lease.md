@@ -44,8 +44,9 @@ REFUSED acquire and ran the command anyway (2026-10-14), and a `timeout` wrapper
 - It releases on **every catchable exit**: the command finishing, failing, timing out (`--timeout`), or the runner receiving
   SIGINT/SIGTERM/SIGHUP/SIGBREAK. A stop kills the command's whole **process tree** (POSIX process group; Windows `taskkill /T /F`, forced in one call because descendants cannot be found once the root has exited),
   then the slot is released. SIGKILL and power loss cannot be caught: the lease expires and the recorded pid decides takeover.
-  A command that runs past `--for` is not cut: its expired lease with a live pid still reads as held, unless its process
-  tree used no CPU for 10 minutes of continuous watching (`pid-idle`): then a waiter takes it over, journaled.
+  A heartbeat renews the lease while the job runs (to `--timeout`, else 12 h), so a long run never reads EXPIRED; a job
+  whose whole process tree used no CPU for 30 min stops renewing. `lease status` shows the tree (UTC starts) and its CPU.
+  No waiter ever takes a live holder's slot: forcing one is a person's call.
 - `--end-turn` yields the repo's turn on release (use it when nothing further is ready); with another job of the same repo waiting it keeps the turn and logs why.
 - The command owns stdout, so `--json` is refused; the lease speaks on stderr, prefixed `fleet lease run:`.
 - The argv is spawned verbatim with `shell: false`. On Windows `npm`/`npx` are `.cmd` shims that cannot be spawned that way, so a bare `npm`/`npx` is run as `node <node dir>/node_modules/npm/bin/npm-cli.js` (or `npx-cli.js`); other shims (`pnpm`, `yarn`) need `node <entry-point>.js` spelled out. A start failure prints the resolved argv and cwd (never the environment).

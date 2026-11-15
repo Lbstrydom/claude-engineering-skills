@@ -126,7 +126,7 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
   const rotated = Boolean(cur && mine && req.token === undefined);
   const fresh = {
     holder: req.identity.holder, repoKey: req.identity.repoKey, repo: req.repo, kind,
-    ...(req.note !== undefined ? { note: req.note } : {}),
+    ...(req.note !== undefined ? { note: req.note, noteAt: now.toISOString() } : {}),
     scope: probe.scope, ...(req.pid !== undefined ? { pid: req.pid } : {}),
     token: req.newToken ?? crypto.randomBytes(8).toString('hex'),
     startedAt: now.toISOString(), expiresAt: grantEnd.toISOString(),
@@ -136,7 +136,7 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
   const heavy = renewed
     ? {
       ...cur, expiresAt: grantEnd.toISOString(), ...(req.repo !== undefined ? { repo: req.repo } : {}),
-      ...(req.kind !== undefined ? { kind } : {}), ...(req.note !== undefined ? { note: req.note } : {}),
+      ...(req.kind !== undefined ? { kind } : {}), ...(req.note !== undefined ? { note: req.note, noteAt: now.toISOString() } : {}),
       ...(req.pid !== undefined ? { pid: req.pid, scope: probe.scope } : {}),
     }
     : fresh;
@@ -581,9 +581,73 @@ const heavyLine = (s, now, mineKey) => {
   const h = s.holder;
   const who = h ? `${h.holder} (${h.repo})${mineKey && h.repoKey === mineKey ? ' [this repo]' : ''}` : '';
   if (s.heavy.state === 'free') return 'heavy slot: FREE';
-  if (s.heavy.state === 'held') return `heavy slot: HELD by ${who} for ${h.kind} until ${hhmmOf(new Date(h.expiresAt))} (${inMin(h.expiresAt, now)})${h.note ? ` — ${h.note}` : ''}`;
-  return `heavy slot: EXPIRED at ${hhmmOf(new Date(h.expiresAt))} (${inMin(h.expiresAt, now)}), held by ${who} — ${s.heavy.verdict}: ${s.heavy.reason}`;
+  const noteText = h.note ? ` — ${h.note} (note from ${hhmmOf(new Date(h.noteAt ?? h.startedAt))})` : '';
+  const beat = beatText(h, now);
+  if (s.heavy.state === 'held') return `heavy slot: HELD by ${who} for ${h.kind} until ${hhmmOf(new Date(h.expiresAt))} (${inMin(h.expiresAt, now)})${beat}${noteText}`;
+  return `heavy slot: EXPIRED at ${hhmmOf(new Date(h.expiresAt))} (${inMin(h.expiresAt, now)}), held by ${who} — ${s.heavy.verdict}: ${s.heavy.reason}${beat}${noteText}`;
 };
+
+/**
+ * The holder's process tree as `lease status` sampled it (`lease-cpu.mjs:sampleTree`): launcher first, descendants indented,
+ * each start time UTC, then the tree's CPU over the sample window. Nothing when not sampled.
+ */
+export function treeLines(tree) {
+  if (!tree) return [];
+  if (!tree.measured) return [`  process tree: not measured (${tree.reason})`];
+  const secs = (x) => (x / 1000).toFixed(1);
+  return [
+    '  process tree (start times UTC):',
+    ...tree.tree.map((r) => `    ${'  '.repeat(r.depth)}pid ${r.pid} ${r.name}  started ${r.startedAt ? `${r.startedAt.slice(11, 19)}Z ${r.startedAt.slice(0, 10)}` : 'unknown'}  cpu ${secs(r.cpuMs)} s`),
+    `  tree CPU: ${tree.cpuMs > 0 ? `busy: ${secs(tree.cpuMs)} s CPU / ${secs(tree.windowMs)} s` : `no CPU in the last ${secs(tree.windowMs)} s`}`,
+  ];
+}
+
+/** What the last heartbeat said, for the slot line: renewing, or stopped because the tree went idle. Empty without one. */
+const beatText = (h, now) => {
+  if (!h.beat) return '';
+  const idle = treeIdleMs(h, now);
+  const idleTxt = idle !== null && idle >= MIN ? `, tree idle ${Math.round(idle / MIN)} min` : '';
+  return h.beat.renewing ? ` [lease run heartbeat ${inMin(h.beat.at, now)}${idleTxt}]` : ` [heartbeat stopped renewing: process tree idle ${Math.round((idle ?? 0) / MIN)} min]`;
+};
+
+/**
+ * How long the holder's process tree has used no CPU, per its `lease run` heartbeats (ms), or null when nothing measured it:
+ * no heartbeat, or CPU never read. The idle clock runs from the last beat that saw CPU move; past the last beat it is not
+ * extended (a runner that stopped beating proves nothing about its tree).
+ */
+export function treeIdleMs(heavy, now) {
+  const b = heavy?.beat;
+  if (!b || !b.cpuMovedAt) return null;
+  return Math.max(0, Math.min(now.getTime(), ms(b.at)) - ms(b.cpuMovedAt));
+}
+
+/**
+ * `lease run`'s heartbeat (fenced by token): record the job tree's CPU and, while the tree is not idle for `treeIdleMs`,
+ * renew the lease to now + `heartbeatRenewMs`, never past `ceilingAt`. A long run therefore never reads EXPIRED; a run whose
+ * whole tree has gone quiet stops renewing and expires, where a PERSON can judge it (`lease status`). Never takes or frees the
+ * slot, never journals: one entry a minute would flood the ring.
+ * @param {{identity: object, token: string, cpuMs?: number|null}} req
+ * @param {Date} now
+ * @param {{ceilingAt: Date}} opts
+ */
+export function decideHeartbeat(lease, req, now, { ceilingAt }) {
+  const cur = lease.heavy;
+  if (!cur) return refuse('free', 'nothing is held');
+  if (!sameIdentity(cur, req.identity)) return refuse('not-holder', `the slot is held by ${cur.holder} (${cur.repo}), not by this run`);
+  if (req.token !== cur.token) return refuse('stale-token', 'this run\'s token is no longer the slot\'s (it was released or forced)');
+  const at = now.toISOString();
+  const prev = cur.beat;
+  const cpu = Number.isFinite(req.cpuMs) ? req.cpuMs : undefined;
+  const moved = cpu !== undefined && (prev?.cpuMs === undefined || cpu > prev.cpuMs);
+  const cpuMovedAt = moved ? at : prev?.cpuMovedAt;
+  const beat = { at, ...(cpu !== undefined ? { cpuMs: cpu } : {}), ...(cpuMovedAt ? { cpuMovedAt } : {}), renewing: true };
+  const idle = treeIdleMs({ beat }, now);
+  beat.renewing = !(idle !== null && idle >= LIMITS.treeIdleMs);
+  const want = Math.min(now.getTime() + LIMITS.heartbeatRenewMs, ceilingAt.getTime());
+  const expiresAt = beat.renewing && want > ms(cur.expiresAt) ? new Date(want).toISOString() : cur.expiresAt;
+  const heavy = { ...cur, expiresAt, beat };
+  return { ok: true, lease: { ...lease, heavy }, heavy, renewed: expiresAt !== cur.expiresAt, renewing: beat.renewing };
+}
 
 const describeEntry = (e) => {
   const t = (iso) => hhmmOf(new Date(iso));
@@ -613,10 +677,12 @@ export function renderLog(journal, { limit = 50 } = {}) {
 }
 
 /** The lines of `fleet lease status`. */
-export function renderStatus(s, { dir, now, repoKey, cmd = 'fleet' }) {
+export function renderStatus(s, { dir, now, repoKey, cmd = 'fleet', tree = null }) {
   const head = `machine lease (${dir}):`;
   if (!s.measured) return [head, `  UNMEASURED: ${s.reason}`];
-  const lines = [head, `  ${heavyLine(s, now, repoKey)}`];
+  const lines = [head, `  ${heavyLine(s, now, repoKey)}`, ...treeLines(tree)];
+  const force = forceSuggestion(s, { cmd });
+  if (force) lines.push(`  idle: ${force}`);
   if (s.windows.length) {
     for (const w of s.windows) lines.push(`  window ${w.id}: ${w.kind} for ${w.repo}, ${hhmmOf(new Date(w.from))} to ${hhmmOf(new Date(w.until))}${w.note ? ` — ${w.note}` : ''}`);
   } else lines.push('  windows: none announced');
@@ -651,10 +717,22 @@ export function nextLines(read, now, { cmd = 'fleet', repoKey, probe = defaultPr
 }
 
 /**
- * A slot that has expired but cannot be taken (pid alive, or unverifiable) while a waiter has been refused at least
- * `LIMITS.stuckRefusals` times: name the holder and the by-hand remedy, so a stuck machine is visible without reading the
- * journal (consumer report 2026-11-15: 343 refusals for one waiter, 38+ minutes, nothing said who). Information for the
- * user/coordinator — `--force` is a person's decision, never this session's.
+ * The by-hand remedy for an expired slot, or null. Suggested ONLY when the holder's whole process tree is measured idle for
+ * `treeIdleMs` (its heartbeats said so); a live pid with no such measurement is never called stuck, because a launcher's own
+ * flat CPU once nearly got a working 2-hour suite forced (consumer report 2026-11-15). The decision stays a person's.
+ */
+export function forceSuggestion(s, { cmd = 'fleet' } = {}) {
+  if (!s?.measured || s.heavy.state !== 'expired' || s.heavy.verdict === 'pid-dead') return null;
+  const idle = treeIdleMs(s.holder, new Date(s.holder.beat?.at ?? 0));
+  if (idle === null || idle < LIMITS.treeIdleMs) return null;
+  return `its whole process tree used no CPU for ${Math.round(idle / MIN)} min (\`${cmd} lease status\` shows the tree). If a person confirms it is hung: \`${cmd} lease release --force --reason "<why>"\``;
+}
+
+/**
+ * A slot that has expired but cannot be taken while a waiter has been refused at least `LIMITS.stuckRefusals` times: name the
+ * holder, so a stuck machine is visible without reading the journal (consumer report 2026-11-15: 343 refusals for one waiter,
+ * 38+ minutes, nothing said who). The force remedy rides along only per `forceSuggestion`; otherwise it points at
+ * `lease status`. Information for the user/coordinator — never an action for this session.
  * @param {ReturnType<typeof summarise>} s
  */
 export function stuckLines(s, { cmd = 'fleet' } = {}) {
@@ -663,5 +741,7 @@ export function stuckLines(s, { cmd = 'fleet' } = {}) {
   if (refusals < LIMITS.stuckRefusals) return [];
   const h = s.holder;
   const longest = s.waiters.reduce((a, w) => ((w.refusals ?? 0) > (a.refusals ?? 0) ? w : a), s.waiters[0]);
-  return [`FYI for the user/coordinator, not an action for this session: the heavy slot looks STUCK — ${h.holder} (${h.repo}) expired at ${hhmmOf(new Date(h.expiresAt))}${h.pid !== undefined ? `, pid ${h.pid}` : ''} (${s.heavy.reason}); ${longest.repo} has been refused ${refusals} times since ${hhmmOf(new Date(longest.since))}. If a person confirms that job is gone or hung: \`${cmd} lease release --force --reason "<why>"\``];
+  const force = forceSuggestion(s, { cmd });
+  const tail = force ?? `whether it is still working is not measured here — \`${cmd} lease status\` shows its process tree and CPU`;
+  return [`FYI for the user/coordinator, not an action for this session: the heavy slot is blocked — ${h.holder} (${h.repo}) expired at ${hhmmOf(new Date(h.expiresAt))}${h.pid !== undefined ? `, pid ${h.pid}` : ''} (${s.heavy.reason}); ${longest.repo} has been refused ${refusals} times since ${hhmmOf(new Date(longest.since))}; ${tail}`];
 }

@@ -1,13 +1,21 @@
 /**
- * @fileoverview An expired holder whose pid is ALIVE but IDLE is reclaimable (consumer report 2026-11-15: such a holder
- * refused every waiter with `expired-pid-alive` for 38+ minutes, 343 refusals for one waiter). Idle means the holder's
- * process TREE used no CPU for `idleGraceMs`, watched continuously; a live holder whose CPU moves, or cannot be read, keeps
- * the slot exactly as before. Past `stuckRefusals` refusals, `next` names the holder and `lease release --force`.
+ * @fileoverview A long `lease run` never reads EXPIRED, and a stuck slot is shown to a PERSON — never taken automatically
+ * (consumer reports 2026-11-15). One consumer's expired holder, alive but idle, refused a waiter 343 times over 38+ minutes;
+ * another's recorded pid was a launcher using 0.41 s CPU while a python grandchild worked, so reading the pid alone (or a
+ * local-time start time against a UTC expiry) nearly forced a live 2-hour suite.
+ *
+ *  - `lease run` heartbeats renew the lease while the job's process TREE is not idle, up to a ceiling;
+ *  - a tree idle for `treeIdleMs` stops renewing, so the lease expires — and waiters are STILL refused;
+ *  - `lease status` prints the tree (UTC start times) and its CPU; the force remedy is suggested only for a measured-idle tree.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIMITS, classifyHeavy, decideAcquire, emptyLease, nextLines, stuckLines, summarise } from '../scripts/lib/fleet/lease.mjs';
-import { memoCpuOf, parsePsTable, parseWinTable, processTreeCpuMs, psTimeMs, treeCpuMs } from '../scripts/lib/fleet/lease-cpu.mjs';
+import {
+  LIMITS, classifyHeavy, decideAcquire, decideHeartbeat, emptyLease, forceSuggestion, nextLines, renderStatus, stuckLines, summarise, treeLines,
+} from '../scripts/lib/fleet/lease.mjs';
+import { parsePsTable, parseWinTable, processTreeCpuMs, psTimeMs, sampleTree, treeCpuMs, treeOf } from '../scripts/lib/fleet/lease-cpu.mjs';
+import { runUnderLease } from '../scripts/lib/fleet/lease-run.mjs';
+import { holderTree } from '../scripts/lib/fleet/lease-cmd.mjs';
 
 const NOW = new Date('2026-11-15T10:00:00.000Z');
 const at = (min) => new Date(NOW.getTime() + min * 60_000);
@@ -15,111 +23,180 @@ const A = { repoKey: 'aaaaaaaaaaaa', holder: 'chip-a' };
 const B = { repoKey: 'bbbbbbbbbbbb', holder: 'chip-b' };
 const SCOPE = 'win32:box';
 const T1 = '1111111111111111';
+const probe = { scope: SCOPE, isPidAlive: (p) => p === 42 };
 
-/** A slot A took 31 minutes before NOW for 30 minutes: it expired at NOW-1m, pid 42. */
-const expired = () => ({
+/** A slot A took at NOW for 30 minutes (the default `--for`), pid 42. */
+const granted = (extra = {}) => ({
   ...emptyLease(),
-  heavy: { holder: A.holder, repoKey: A.repoKey, repo: 'o/a', kind: 'gate', scope: SCOPE, pid: 42, token: T1, startedAt: at(-31).toISOString(), expiresAt: at(-1).toISOString() },
+  heavy: { holder: A.holder, repoKey: A.repoKey, repo: 'o/a', kind: 'test', scope: SCOPE, pid: 42, token: T1, startedAt: NOW.toISOString(), expiresAt: at(30).toISOString(), ...extra },
 });
-const probeWith = (cpuAt) => ({ scope: SCOPE, isPidAlive: (p) => p === 42, cpuOf: (p) => (p === 42 ? cpuAt() : null) });
 
-/** B asks once a minute for `minutes` minutes, persisting each decision's lease like `lease run` does. */
-function poll(lease, probe, minutes, { clock = (m) => at(m) } = {}) {
-  let cur = lease; const out = [];
-  for (let m = 0; m <= minutes; m += 1) {
-    const d = decideAcquire(cur, { identity: B, repo: 'o/b', kind: 'gate', forMin: 30, pid: 77 }, clock(m), probe.at ? probe.at(m) : probe);
-    out.push({ m, d });
-    if (d.lease) cur = d.lease;
-    if (d.ok) break;
+/** Beat once a minute for `minutes`, CPU from `cpuAt(m)`; returns each minute's classification and the last lease. */
+function beatFor(minutes, cpuAt, { ceilingAt = at(12 * 60) } = {}) {
+  let lease = granted(); const seen = [];
+  for (let m = 1; m <= minutes; m += 1) {
+    const d = decideHeartbeat(lease, { identity: A, token: T1, cpuMs: cpuAt(m) }, at(m), { ceilingAt });
+    assert.equal(d.ok, true, d.reason);
+    lease = d.lease;
+    seen.push({ m, state: classifyHeavy(lease.heavy, at(m), probe).state, renewing: d.renewing });
   }
-  return { out, lease: cur };
+  return { lease, seen };
 }
 
-describe('an expired, live but IDLE holder is reclaimed after the grace period', () => {
-  it('flat CPU, watched every minute: refused until idleGraceMs, then taken over and journaled', () => {
-    const { out } = poll(expired(), probeWith(() => 1234), 15);
-    const grant = out.find((x) => x.d.ok);
-    assert.ok(grant, 'never granted');
-    assert.equal(grant.m, LIMITS.idleGraceMs / 60_000);
-    for (const x of out.filter((y) => !y.d.ok)) assert.equal(x.d.code, 'expired-pid-alive');
-    assert.equal(grant.d.event.kind, 'taken-over');
-    assert.match(grant.d.event.reason, /pid 42 is running but its process tree has used no CPU for 10 minutes/);
-    const j = grant.d.lease.journal.at(-1);
-    assert.equal(j.kind, 'acquired');
-    assert.equal(j.mode, 'taken-over');
+describe('the heartbeat keeps a working run from ever reading EXPIRED', () => {
+  it('a 2-hour run with no --for, its tree busy throughout, is HELD at every minute', () => {
+    const { seen, lease } = beatFor(120, (m) => m * 1300);
+    assert.ok(seen.every((x) => x.state === 'held' && x.renewing), JSON.stringify(seen.find((x) => x.state !== 'held')));
+    assert.equal(lease.heavy.expiresAt, at(130).toISOString());
   });
 
-  it('a WORKING holder (CPU moving) is never reclaimed — the conservative default', () => {
-    let cpu = 0;
-    const { out } = poll(expired(), { scope: SCOPE, isPidAlive: (p) => p === 42, cpuOf: () => (cpu += 50) }, 40);
-    assert.ok(out.every((x) => !x.d.ok && x.d.code === 'expired-pid-alive'));
+  it('busy means the TREE: a flat launcher with a working grandchild counts as busy', () => {
+    const rows = (m) => [{ pid: 42, ppid: 1, cpuMs: 410 }, { pid: 43, ppid: 42, cpuMs: 30 }, { pid: 44, ppid: 43, cpuMs: 1000 + m * 1500 }];
+    const { seen } = beatFor(60, (m) => treeCpuMs(rows(m), 42));
+    assert.ok(seen.every((x) => x.state === 'held'));
   });
 
-  it('unreadable CPU, or a probe without cpuOf, never reads idle', () => {
-    assert.ok(poll(expired(), probeWith(() => null), 40).out.every((x) => !x.d.ok));
-    assert.ok(poll(expired(), { scope: SCOPE, isPidAlive: (p) => p === 42 }, 40).out.every((x) => !x.d.ok));
+  it('never renews past the ceiling (--timeout)', () => {
+    const { lease } = beatFor(90, (m) => m * 100, { ceilingAt: at(60) });
+    assert.equal(lease.heavy.expiresAt, at(60).toISOString());
   });
 
-  it('an observation gap longer than idleObserveGapMs restarts the watch (a sleeping laptop is not idleness)', () => {
-    // Polls at 0..4, then nothing until 30 (asleep), then every minute: the grant comes 10 minutes after the wake, not at once.
-    const times = [0, 1, 2, 3, 4, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41];
-    const { out } = poll(expired(), probeWith(() => 1234), times.length - 1, { clock: (i) => at(times[i]) });
-    const grant = out.find((x) => x.d.ok);
-    assert.equal(times[grant.m], 40);
+  it('is fenced: a beat with another token, or from another holder, is refused and changes nothing', () => {
+    assert.equal(decideHeartbeat(granted(), { identity: A, token: '2222222222222222', cpuMs: 5 }, at(1), { ceilingAt: at(60) }).code, 'stale-token');
+    assert.equal(decideHeartbeat(granted(), { identity: B, token: T1, cpuMs: 5 }, at(1), { ceilingAt: at(60) }).code, 'not-holder');
+    assert.equal(decideHeartbeat(emptyLease(), { identity: A, token: T1 }, at(1), { ceilingAt: at(60) }).code, 'free');
   });
 
-  it('classifyHeavy alone (a read-only summarise) never turns a fresh watch into idle', () => {
-    const cls = classifyHeavy(expired().heavy, at(30), probeWith(() => 1234));
-    assert.equal(cls.verdict, 'pid-alive');
+  it('unreadable CPU keeps renewing (unmeasured is never idle)', () => {
+    const { seen } = beatFor(90, () => null);
+    assert.ok(seen.every((x) => x.state === 'held' && x.renewing));
   });
 });
 
-describe('a stuck slot is named, with the remedy, past stuckRefusals', () => {
-  const withWaiter = (refusals) => ({
-    ...expired(),
-    waiters: [{ repoKey: B.repoKey, repo: 'o/b', by: 'chip-b@o/b', since: at(0).toISOString(), forMin: 30, refusals }],
+describe('an idle tree stops renewing; the slot is shown, never stolen', () => {
+  // Busy for 10 minutes, then flat: the beat at minute 40 (30 idle) stops renewing; minute 39's renewal expires at 49.
+  const idleRun = () => beatFor(70, (m) => Math.min(m, 10) * 1000);
+
+  it('stops renewing after treeIdleMs of no CPU, then expires', () => {
+    const { seen } = idleRun();
+    assert.equal(seen.find((x) => !x.renewing).m, 10 + LIMITS.treeIdleMs / 60_000);
+    assert.equal(seen.find((x) => x.state === 'expired').m, 49);
   });
-  const alive = { scope: SCOPE, isPidAlive: (p) => p === 42 };
-  it('names holder, pid, refusals and `lease release --force` in next', () => {
-    const lines = nextLines({ state: 'ok', lease: withWaiter(LIMITS.stuckRefusals) }, at(5), { cmd: 'fleet', probe: alive });
-    const stuck = lines.find((l) => /STUCK/.test(l));
-    assert.ok(stuck, lines.join('\n'));
-    assert.match(stuck, /chip-a \(o\/a\) expired at 09:59Z, pid 42/);
-    assert.match(stuck, /o\/b has been refused 20 times/);
-    assert.match(stuck, /`fleet lease release --force --reason "<why>"`/);
+
+  it('a waiter is STILL refused (expired-pid-alive): reclaim is a human action', () => {
+    const { lease } = idleRun();
+    const d = decideAcquire(lease, { identity: B, repo: 'o/b', kind: 'test', forMin: 30, pid: 77 }, at(70), probe);
+    assert.equal(d.ok, false);
+    assert.equal(d.code, 'expired-pid-alive');
   });
-  it('is silent below the threshold, and when the slot is merely held', () => {
-    assert.deepEqual(stuckLines(summarise({ state: 'ok', lease: withWaiter(LIMITS.stuckRefusals - 1) }, at(5), alive)), []);
-    const live = { ...withWaiter(500), heavy: { ...expired().heavy, expiresAt: at(60).toISOString() } };
-    assert.deepEqual(stuckLines(summarise({ state: 'ok', lease: live }, at(5), alive)), []);
+
+  it('lease status shows "idle" and suggests the force remedy', () => {
+    const { lease } = idleRun();
+    const s = summarise({ state: 'ok', lease }, at(70), probe);
+    const text = renderStatus(s, { dir: 'D', now: at(70), cmd: 'fleet' }).join('\n');
+    assert.match(text, /heartbeat stopped renewing: process tree idle 60 min/);
+    assert.match(text, /idle: its whole process tree used no CPU for 60 min .*`fleet lease release --force --reason "<why>"`/);
+  });
+
+  it('past stuckRefusals, next names the holder WITH the remedy for a measured-idle tree', () => {
+    const { lease } = idleRun();
+    const l = { ...lease, waiters: [{ repoKey: B.repoKey, repo: 'o/b', by: 'chip-b@o/b', since: at(50).toISOString(), forMin: 30, refusals: LIMITS.stuckRefusals }] };
+    const line = nextLines({ state: 'ok', lease: l }, at(70), { cmd: 'fleet', probe }).find((x) => /heavy slot is blocked/.test(x));
+    assert.match(line, /chip-a \(o\/a\) expired at 10:49Z, pid 42/);
+    assert.match(line, /o\/b has been refused 20 times/);
+    assert.match(line, /lease release --force/);
   });
 });
 
-describe('process-tree CPU (lease-cpu.mjs)', () => {
-  it('sums the TREE: a wrapper whose own CPU is flat still reads busy through its child', () => {
-    const rows = parseWinTable(['10 1 100000', '42 10 0', '43 42 250000000', '44 43 50000000', '99 1 999999999', 'junk'].join('\r\n'));
-    assert.equal(treeCpuMs(rows, 42), 30_000);
-    assert.equal(treeCpuMs(rows, 7), null);
+describe('without a measured-idle tree, nothing suggests forcing', () => {
+  const noBeat = { ...granted({ expiresAt: at(-1).toISOString() }), waiters: [{ repoKey: B.repoKey, repo: 'o/b', by: 'chip-b@o/b', since: at(0).toISOString(), forMin: 30, refusals: 500 }] };
+  it('an expired live holder with no heartbeat: named, pointed at lease status, no --force', () => {
+    const s = summarise({ state: 'ok', lease: noBeat }, at(40), probe);
+    assert.equal(forceSuggestion(s), null);
+    const [line] = stuckLines(s, { cmd: 'fleet' });
+    assert.match(line, /not measured here — `fleet lease status` shows its process tree and CPU/);
+    assert.doesNotMatch(line, /--force/);
+  });
+  it('a held slot, or one below the refusal threshold, says nothing', () => {
+    assert.deepEqual(stuckLines(summarise({ state: 'ok', lease: { ...noBeat, waiters: [{ ...noBeat.waiters[0], refusals: LIMITS.stuckRefusals - 1 }] } }, at(40), probe)), []);
+    assert.deepEqual(stuckLines(summarise({ state: 'ok', lease: { ...noBeat, heavy: { ...noBeat.heavy, expiresAt: at(90).toISOString() } } }, at(40), probe)), []);
+  });
+});
+
+describe('notes carry their write time', () => {
+  it('an acquire with --note shows "(note from HH:MMZ)"', () => {
+    const d = decideAcquire(emptyLease(), { identity: A, repo: 'o/a', kind: 'test', forMin: 30, note: 'full suite' }, at(5), probe);
+    const text = renderStatus(summarise({ state: 'ok', lease: d.lease }, at(20), probe), { dir: 'D', now: at(20) }).join('\n');
+    assert.match(text, /— full suite \(note from 10:05Z\)/);
+  });
+});
+
+describe('runUnderLease beats while the job runs, and stops with it', () => {
+  it('calls decideHeartbeat on its timer with the CHILD tree, and cancels the timer after the job', async () => {
+    let lease = emptyLease();
+    const transact = (_d, fn) => { const r = fn({ state: 'ok', lease }); if (r.write) lease = r.write; return { ok: true, value: r.value }; };
+    let tick = null; let cancelled = false;
+    const timers = { every: (_ms, fn) => { tick = fn; return 1; }, cancel: () => { cancelled = true; } };
+    const cpuFor = []; let clock = NOW.getTime();
+    const res = await runUnderLease({
+      dir: 'D', identity: A, repo: 'o/a', kind: 'test', pid: 4000, probe, transact, timers, signals: { install: () => () => {} },
+      now: () => new Date(clock), cpuOf: (p) => { cpuFor.push(p); return clock; }, heartbeatMs: 60_000,
+    }, async ({ attach }) => {
+      await attach(42);
+      for (let m = 1; m <= 120; m += 1) { clock = at(m).getTime(); tick(); assert.equal(classifyHeavy(lease.heavy, at(m), probe).state, 'held', `minute ${m}`); }
+      return 0;
+    });
+    assert.equal(res.ran, true);
+    assert.ok(cpuFor.length >= 120 && cpuFor.every((p) => p === 42));
+    assert.equal(cancelled, true);
+    assert.equal(lease.heavy, null);
+  });
+});
+
+describe('process tree (lease-cpu.mjs)', () => {
+  const WIN = ['10 1 100000 2026-11-15T09:00:00Z explorer.exe', '42 10 4100000 2026-11-15T10:00:01Z node.exe', '43 42 300000 2026-11-15T10:00:02Z cmd.exe',
+    '44 43 250000000 2026-11-15T10:00:03Z python.exe', '99 1 999999999 - System Idle Process', 'junk'].join('\r\n');
+  it('parses the Windows table (UTC starts, names with spaces) and orders the tree launcher-first', () => {
+    const rows = parseWinTable(WIN);
+    assert.equal(rows.find((r) => r.pid === 99).name, 'System Idle Process');
+    assert.equal(rows.find((r) => r.pid === 99).startedAt, null);
+    const t = treeOf(rows, 42);
+    assert.deepEqual(t.map((r) => [r.pid, r.depth, r.name]), [[42, 0, 'node.exe'], [43, 1, 'cmd.exe'], [44, 2, 'python.exe']]);
+    assert.equal(treeCpuMs(rows, 42), 410 + 30 + 25_000);
+    assert.equal(treeOf(rows, 7), null);
+  });
+  it('ps: CPU and elapsed time, start = reading clock minus elapsed (UTC)', () => {
+    assert.equal(psTimeMs('1-02:00:00'), 26 * 3_600_000);
+    assert.equal(psTimeMs('3:04.50'), 184_500);
+    const [r] = parsePsTable('  42     1 00:00:03 01:00:00 python3 -m pytest\n', Date.parse('2026-11-15T12:00:00Z'));
+    assert.deepEqual(r, { pid: 42, ppid: 1, cpuMs: 3000, startedAt: '2026-11-15T11:00:00Z', name: 'python3 -m pytest' });
   });
   it('is cycle-safe', () => {
     assert.equal(treeCpuMs([{ pid: 1, ppid: 2, cpuMs: 5 }, { pid: 2, ppid: 1, cpuMs: 7 }], 1), 12);
   });
-  it('parses ps cumulative time', () => {
-    assert.equal(psTimeMs('00:01:02'), 62_000);
-    assert.equal(psTimeMs('1-02:00:00'), 26 * 3_600_000);
-    assert.equal(psTimeMs('3:04.50'), 184_500);
-    assert.equal(psTimeMs('x'), null);
-    assert.deepEqual(parsePsTable('  42     1 00:00:03\n'), [{ pid: 42, ppid: 1, cpuMs: 3000 }]);
-  });
-  it('a failed process-table read is null, never 0', () => {
+  it('a failed table read is null, never 0', () => {
     assert.equal(processTreeCpuMs(42, { platform: 'linux', spawnSync: () => ({ status: 1, stdout: '' }) }), null);
     assert.equal(processTreeCpuMs(42, { platform: 'win32', spawnSync: () => { throw new Error('no powershell'); } }), null);
     assert.equal(processTreeCpuMs(0), null);
   });
-  it('memoises per pid within the ttl', () => {
-    let calls = 0; let t = 0;
-    const f = memoCpuOf({ ttlMs: 1000, clock: () => t, measure: () => { calls += 1; return 5; } });
-    f(1); f(1); t = 2000; f(1);
-    assert.equal(calls, 2);
+  it('sampleTree measures the tree over a window; status renders busy or no CPU', async () => {
+    const reads = [parseWinTable(WIN), parseWinTable(WIN.replace('250000000', '263000000'))];
+    let t = 0;
+    const s = await sampleTree(42, { sampleMs: 5000, read: () => reads.shift(), sleep: async () => { t += 5000; }, clock: () => t });
+    assert.equal(s.cpuMs, 1300);
+    const text = treeLines(s).join('\n');
+    assert.match(text, /pid 42 node\.exe {2}started 10:00:01Z 2026-11-15/);
+    assert.match(text, / {6}pid 44 python\.exe/);
+    assert.match(text, /tree CPU: busy: 1\.3 s CPU \/ 5\.0 s/);
+    const flat = await sampleTree(42, { read: () => parseWinTable(WIN), sleep: async () => { t += 5000; }, clock: () => t });
+    assert.match(treeLines(flat).join('\n'), /no CPU in the last 5\.0 s/);
+    assert.equal((await sampleTree(7, { read: () => parseWinTable(WIN), sleep: async () => {} })).measured, false);
+  });
+  it('lease status samples only a pid in this process scope, and FLEET_LEASE_SAMPLE_MS=0 turns it off', async () => {
+    const s = summarise({ state: 'ok', lease: granted() }, at(5), probe);
+    const sample = async () => ({ measured: true, tree: [], cpuMs: 0, windowMs: 1 });
+    assert.equal(await holderTree(s, { ...probe, scope: 'linux:other' }, {}, { sample }), null);
+    assert.equal(await holderTree(s, probe, { FLEET_LEASE_SAMPLE_MS: '0' }, { sample }), null);
+    assert.equal((await holderTree(s, probe, {}, { sample })).measured, true);
   });
 });

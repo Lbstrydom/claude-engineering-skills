@@ -13,7 +13,7 @@
  * @module scripts/lib/fleet/lease-turns
  */
 import {
-  LIMITS, admissionCheck, appendJournal, classifyHeavy, conflictingWindows, defaultProbe, hhmmOf, markIdle, ms, uniqueEpisode, waitEndedEntry,
+  LIMITS, admissionCheck, appendJournal, classifyHeavy, conflictingWindows, defaultProbe, hhmmOf, ms, uniqueEpisode, waitEndedEntry,
 } from './lease-model.mjs';
 
 export const turnMinOf = (lease) => lease.turnMin ?? LIMITS.defaultTurnMin;
@@ -141,7 +141,6 @@ export function settleQueue(lease, now, probe = defaultProbe()) {
     next = { ...next, waiters: next.waiters.filter((w) => !stale.includes(w)) };
     for (const w of stale) next = appendJournal(next, waitEndedEntry(w, 'expired', now, 'settle'));
   }
-  next = markIdle(next, now, probe); // first: every rule below that classifies the slot reads the advanced idle watch
   next = settleTurn(next, now, probe);
   next = settleOffers(next, now, probe);
   return next;

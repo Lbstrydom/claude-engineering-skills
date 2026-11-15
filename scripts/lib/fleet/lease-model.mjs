@@ -15,7 +15,6 @@ import path from 'node:path';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { isPidAlive, withFileLockSync } from '../file-lock.mjs';
-import { memoCpuOf } from './lease-cpu.mjs';
 
 export const LEASE_SCHEMA_VERSION = 1;
 export const LEASE_FILE = 'lease.json';
@@ -43,10 +42,11 @@ export const LIMITS = Object.freeze({
   claimMs: 15 * MIN,
   /** `fleet next` mentions a window that is active or starts within this long. */
   nextHorizonMs: 4 * HOUR,
-  /** An EXPIRED holder whose pid is alive is reclaimable only once its process tree used no CPU for this long, watched with no
-   *  gap longer than `idleObserveGapMs` (a sleeping laptop resets the watch: CPU time does not advance while it sleeps). */
-  idleGraceMs: 10 * MIN, idleObserveGapMs: 3 * MIN,
-  /** Past this many refusals of one waiter on an expired slot, `fleet next` and the checkpoint footer name the holder and the remedy. */
+  /** `lease run`'s heartbeat: every `heartbeatMs` while its job runs, the lease is renewed to now + `heartbeatRenewMs`, never past
+   *  the run's ceiling (`--timeout`, else `heartbeatMaxMs`). A tree idle for `treeIdleMs` stops renewing, so only a lost or hung run
+   *  ever expires — and a person, never a waiter, decides to force it. */
+  heartbeatMs: MIN, heartbeatRenewMs: 10 * MIN, heartbeatMaxMs: 12 * HOUR, treeIdleMs: 30 * MIN,
+  /** Past this many refusals of one waiter on an expired slot, `fleet next` and the checkpoint footer name the holder. */
   stuckRefusals: 20,
 });
 
@@ -109,7 +109,9 @@ export const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM
 const HeavySchema = z.object({
   holder: label, repoKey: hex(12), repo: label, kind: z.enum(KINDS), note: note.optional(),
   scope: name, pid: z.number().int().positive().optional(), token: hex(16), startedAt: iso, expiresAt: iso,
-  idle: z.object({ since: iso, seenAt: iso, cpuMs: z.number().nonnegative() }).passthrough().optional(),
+  noteAt: iso.optional(),
+  /** The last `lease run` heartbeat: when, the tree's CPU then, and when that CPU last moved (absent = never measured). */
+  beat: z.object({ at: iso, cpuMs: z.number().nonnegative().optional(), cpuMovedAt: iso.optional(), renewing: z.boolean() }).passthrough().optional(),
 }).passthrough().refine((h) => Date.parse(h.startedAt) <= Date.parse(h.expiresAt), { message: 'startedAt is after expiresAt' });
 const GapSchema = z.object({ from: iso, until: iso, toRepoKey: hex(12).optional(), toRepo: label.optional(), grantedAt: iso, by: name }).passthrough()
   .refine((g) => Date.parse(g.from) < Date.parse(g.until), { message: 'gap from is not before until' })
@@ -261,11 +263,8 @@ export const sameIdentity = (h, id) => h.repoKey === id.repoKey && h.holder === 
  * What state is the slot in, and — when it has expired — can anyone prove its process is gone?
  * @param {object|null} heavy
  * @param {Date} now
- * @param {{scope: string, isPidAlive: (pid: number) => boolean, cpuOf?: (pid: number) => number|null}} probe - `cpuOf` (CPU ms of the
- *   pid's process tree) enables `pid-idle`; a probe without it never reads a live pid as idle
- * @returns {{state: 'free'}|{state: 'held', expiresAt: string}|{state: 'expired', verdict: 'pid-alive'|'pid-idle'|'pid-dead'|'unverifiable', reason: string}}
- *   `pid-idle`: alive, but its tree's CPU time has not moved for `idleGraceMs` of continuous watching (`markIdle`) — reclaimable
- *   like `pid-dead`. A live pid whose CPU is moving, or cannot be read, is never idle: the conservative default stands.
+ * @param {{scope: string, isPidAlive: (pid: number) => boolean}} probe
+ * @returns {{state: 'free'}|{state: 'held', expiresAt: string}|{state: 'expired', verdict: 'pid-alive'|'pid-dead'|'unverifiable', reason: string}}
  */
 export function classifyHeavy(heavy, now, probe) {
   if (!heavy) return { state: 'free' };
@@ -274,45 +273,12 @@ export function classifyHeavy(heavy, now, probe) {
   if (heavy.scope !== probe.scope) {
     return { state: 'expired', verdict: 'unverifiable', reason: `its pid ${heavy.pid} belongs to ${heavy.scope}, not this process scope (${probe.scope})` };
   }
-  if (!probe.isPidAlive(heavy.pid)) return { state: 'expired', verdict: 'pid-dead', reason: `the recorded pid ${heavy.pid} is no longer running` };
-  const idle = idleFor(heavy, now, probe);
-  if (idle !== null) {
-    return { state: 'expired', verdict: 'pid-idle', reason: `the recorded pid ${heavy.pid} is running but its process tree has used no CPU for ${Math.round(idle / MIN)} minutes (watched since ${hhmmOf(new Date(heavy.idle.since))}, after the lease expired)` };
-  }
-  return { state: 'expired', verdict: 'pid-alive', reason: `the recorded pid ${heavy.pid} is still running` };
+  return probe.isPidAlive(heavy.pid)
+    ? { state: 'expired', verdict: 'pid-alive', reason: `the recorded pid ${heavy.pid} is still running` }
+    : { state: 'expired', verdict: 'pid-dead', reason: `the recorded pid ${heavy.pid} is no longer running` };
 }
 
-/** How long an expired, live holder has been watched idle (ms), or null when it is not (yet) idle. Pure but for `probe.cpuOf`. */
-function idleFor(heavy, now, probe) {
-  const w = heavy.idle;
-  if (!w || typeof probe.cpuOf !== 'function') return null;
-  const t = now.getTime();
-  if (ms(w.since) < ms(heavy.expiresAt) || t - ms(w.seenAt) > LIMITS.idleObserveGapMs || t - ms(w.since) < LIMITS.idleGraceMs) return null;
-  const cpu = probe.cpuOf(heavy.pid);
-  return Number.isFinite(cpu) && cpu === w.cpuMs ? t - ms(w.since) : null;
-}
-
-/**
- * Advance the idle WATCH on an expired holder (settle-time state, written with whatever decision persists the lease): the watch
- * records when the holder's tree CPU was first seen at its current value, and when it was last seen. Any CPU movement, an
- * observation gap over `idleObserveGapMs`, an unreadable CPU, a live (unexpired) lease or another process scope drops or
- * restarts it, so only CONTINUOUS flatness counts toward `pid-idle`.
- */
-export function markIdle(lease, now, probe) {
-  const h = lease?.heavy;
-  if (!h) return lease;
-  const drop = () => { if (!h.idle) return lease; const { idle, ...rest } = h; return { ...lease, heavy: rest }; };
-  if (typeof probe.cpuOf !== 'function' || h.pid === undefined || h.scope !== probe.scope || now.getTime() < ms(h.expiresAt)) return drop();
-  if (!probe.isPidAlive(h.pid)) return drop();
-  const cpu = probe.cpuOf(h.pid);
-  if (!Number.isFinite(cpu)) return drop();
-  const at = now.toISOString();
-  const w = h.idle;
-  const continuing = w && w.cpuMs === cpu && now.getTime() - ms(w.seenAt) <= LIMITS.idleObserveGapMs && ms(w.since) >= ms(h.expiresAt);
-  return { ...lease, heavy: { ...h, idle: continuing ? { ...w, seenAt: at } : { since: at, seenAt: at, cpuMs: cpu } } };
-}
-
-export const defaultProbe = () => ({ scope: currentScope(), isPidAlive, cpuOf: memoCpuOf() });
+export const defaultProbe = () => ({ scope: currentScope(), isPidAlive });
 
 export const refuse = (code, reason) => ({ ok: false, code, reason });
 /** Every generated event text goes through here: it can never exceed the schema's limit and turn a decision into a write error. */
