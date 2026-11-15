@@ -18,9 +18,21 @@ import {
   createAnthropicClient, isClaudeAvailableFor, isClaudeAvailable, _resetClientCache,
 } from '../scripts/lib/anthropic-client.mjs';
 
+// SCRUBBED, not merely saved: this suite's verdict must be a function of the
+// repo, never of the operator's shell.
+//
+// `AZURE_OPENAI_GPT_DEPLOYMENT` and `OPENAI_AUDIT_MODEL` were missing from this
+// list, and that is how the suite passed on this machine and failed in CI
+// (full-suite, 2026-11-15, 3 of 8). Setting `AZURE_OPENAI_ENDPOINT` activates
+// the WHOLE Azure work profile, and `buildAzureConfig` then requires a GPT
+// deployment or a concrete `OPENAI_AUDIT_MODEL`. The local `.env` supplies the
+// latter, so `createAnthropicClient` resolved; a clean runner has neither file,
+// so it threw about a GPT deployment — in a test about a CLAUDE route, which is
+// why the message looked unrelated to what the test was checking.
 const AMBIENT = [
   'CLAUDE_BACKEND', 'CLAUDE_BIN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL',
   'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT', 'AZURE_AI_ENDPOINT',
+  'AZURE_OPENAI_GPT_DEPLOYMENT', 'OPENAI_AUDIT_MODEL',
   'AWS_REGION', 'AWS_DEFAULT_REGION',
 ];
 
@@ -78,13 +90,29 @@ function writeFakeCli() {
 
 const AZURE_ENDPOINT = 'https://tenant.openai.azure.com';
 
+/**
+ * Activate the tenant the way a real Azure install does.
+ *
+ * The endpoint alone is NOT a working profile: it switches the whole work
+ * profile on, and `buildAzureConfig` then demands a GPT deployment. Every test
+ * here is about the CLAUDE route, so the GPT deployment is scaffolding — but
+ * omitting it does not isolate the Claude route, it makes config construction
+ * throw about something else entirely, which is the shape of the CI failure
+ * this helper exists to prevent recurring one env var at a time.
+ */
+function activateTenant({ credential = 'azure-secret' } = {}) {
+  process.env.AZURE_OPENAI_ENDPOINT = AZURE_ENDPOINT;
+  process.env.AZURE_OPENAI_GPT_DEPLOYMENT = 'gpt-deployment-for-this-tenant';
+  if (credential === null) delete process.env.AZURE_OPENAI_API_KEY;
+  else process.env.AZURE_OPENAI_API_KEY = credential;
+}
+
 describe("the sdk pin is served by Foundry on a keyless-for-public Azure install", () => {
   // THE DEFINING CASE. An omitted `azureRoute` ADOPTS the tenant route
   // (AGENTS.md), so a site pinned to sdk with no public ANTHROPIC_API_KEY is
   // still served — the pin is not a blocker for an Azure consumer.
   it('reaches the TENANT endpoint with the AZURE credential, and keeps `system`', async () => {
-    process.env.AZURE_OPENAI_ENDPOINT = AZURE_ENDPOINT;
-    process.env.AZURE_OPENAI_API_KEY = 'azure-secret';
+    activateTenant();
     delete process.env.ANTHROPIC_API_KEY;
 
     const { sent, fetchImpl } = captor();
@@ -105,8 +133,7 @@ describe("the sdk pin is served by Foundry on a keyless-for-public Azure install
   // The 2026-08-13 cross-service-credential rule, asserted on the wire: no env
   // state may put a public key on a corporate host.
   it('a stray public key is NOT sent to the tenant endpoint', async () => {
-    process.env.AZURE_OPENAI_ENDPOINT = AZURE_ENDPOINT;
-    process.env.AZURE_OPENAI_API_KEY = 'azure-secret';
+    activateTenant();
     process.env.ANTHROPIC_API_KEY = 'sk-public-should-never-leave';
 
     const { sent, fetchImpl } = captor();
@@ -119,8 +146,7 @@ describe("the sdk pin is served by Foundry on a keyless-for-public Azure install
   });
 
   it('availability on that install asks whether a ROUTE exists, not whether a key is set', () => {
-    process.env.AZURE_OPENAI_ENDPOINT = AZURE_ENDPOINT;
-    process.env.AZURE_OPENAI_API_KEY = 'azure-secret';
+    activateTenant();
     delete process.env.ANTHROPIC_API_KEY;
     assert.equal(isClaudeAvailableFor('sdk'), true,
       'a key test alone reported a fully-working backend as unavailable — the defect this oracle exists to prevent');
@@ -134,8 +160,7 @@ describe("the sdk pin is served by Foundry on a keyless-for-public Azure install
 // answers it reaches.
 describe('a misconfigured Azure profile refuses rather than demoting', () => {
   it('BOTH availability oracles throw, and name the remedy', () => {
-    process.env.AZURE_OPENAI_ENDPOINT = AZURE_ENDPOINT;
-    delete process.env.AZURE_OPENAI_API_KEY;
+    activateTenant({ credential: null });
     delete process.env.ANTHROPIC_API_KEY;
 
     for (const [label, fn] of [
@@ -147,8 +172,7 @@ describe('a misconfigured Azure profile refuses rather than demoting', () => {
   });
 
   it('the backend-aware oracle did NOT introduce this — the ambient one always threw', () => {
-    process.env.AZURE_OPENAI_ENDPOINT = AZURE_ENDPOINT;
-    delete process.env.AZURE_OPENAI_API_KEY;
+    activateTenant({ credential: null });
     // Stated as a test so the behaviour is recorded rather than assumed: the
     // throw predates the pin, so a pinned site is no worse off than before.
     assert.throws(() => isClaudeAvailable(), /AZURE_OPENAI_API_KEY is missing/);
@@ -163,8 +187,7 @@ describe('a misconfigured Azure profile refuses rather than demoting', () => {
 // pinned here so the next reader finds the fact rather than inferring it.
 describe('precedence today: ambient cli wins over an active Azure route', () => {
   it('a SERVICEABLE call on an Azure tenant with cli set is spawned, not routed', async () => {
-    process.env.AZURE_OPENAI_ENDPOINT = AZURE_ENDPOINT;
-    process.env.AZURE_OPENAI_API_KEY = 'azure-secret';
+    activateTenant();
     process.env.CLAUDE_BACKEND = 'cli';
     process.env.CLAUDE_BIN = writeFakeCli();
 
@@ -179,8 +202,7 @@ describe('precedence today: ambient cli wins over an active Azure route', () => 
   });
 
   it('an UNSERVICEABLE call on that same install throws, naming the param', async () => {
-    process.env.AZURE_OPENAI_ENDPOINT = AZURE_ENDPOINT;
-    process.env.AZURE_OPENAI_API_KEY = 'azure-secret';
+    activateTenant();
     process.env.CLAUDE_BACKEND = 'cli';
     process.env.CLAUDE_BIN = writeFakeCli();
 
@@ -199,8 +221,7 @@ describe('precedence today: ambient cli wins over an active Azure route', () => 
   // A PINNED site on that install does reach Foundry — which is the point of
   // the pin, and the reason the precedence above is survivable today.
   it('a PINNED site on that same install reaches Foundry', async () => {
-    process.env.AZURE_OPENAI_ENDPOINT = AZURE_ENDPOINT;
-    process.env.AZURE_OPENAI_API_KEY = 'azure-secret';
+    activateTenant();
     process.env.CLAUDE_BACKEND = 'cli';
     process.env.CLAUDE_BIN = writeFakeCli();
 
