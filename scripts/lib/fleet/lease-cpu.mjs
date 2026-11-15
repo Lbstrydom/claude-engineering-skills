@@ -81,13 +81,13 @@ const winCmd = () => ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Comm
 const psCmd = () => ['ps', ['-A', '-o', 'pid=,ppid=,time=,etime=,comm=']];
 
 /**
- * Parse one table read, and drop THIS process's own sampler (`powershell.exe` / `ps` spawned by `selfPid`): when the monitored
- * root is the runner itself (a job that never attached a child), the sampler is a fresh descendant at every read and would make
- * the tree look busy forever (audit R2 H2).
+ * Parse one table read, and drop the sampler process that produced it — by its exact pid (`samplerPid`), never by name: when
+ * the monitored root is the runner itself (a job that never attached a child), the sampler is a fresh descendant at every read
+ * and would make the tree look busy forever (audit R2 H2), but a JOB that is itself powershell must stay in (audit R3 H2).
  */
-export function tableFrom(stdout, { win, nowMs = Date.now(), selfPid = process.pid }) {
+export function tableFrom(stdout, { win, nowMs = Date.now(), samplerPid = null }) {
   const rows = (win ? parseWinTable(stdout) : parsePsTable(stdout, nowMs))
-    .filter((r) => !(r.ppid === selfPid && /^(powershell(\.exe)?|ps)$/i.test(r.name)));
+    .filter((r) => samplerPid === null || r.pid !== samplerPid);
   return rows.length ? rows : null;
 }
 
@@ -102,7 +102,7 @@ export function readProcessTable({ platform = process.platform, spawnSync = cp.s
   let r;
   try { r = spawnSync(file, args, { encoding: 'utf8', timeout: TIMEOUT_MS, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; }
   if (!r || r.error || r.status !== 0) return null;
-  return tableFrom(r.stdout, { win, nowMs: now() });
+  return tableFrom(r.stdout, { win, nowMs: now(), samplerPid: Number.isInteger(r.pid) ? r.pid : null });
 }
 
 /** `readProcessTable`, asynchronously (bounded by the same timeout); resolves null on any failure. Never rejects. */
@@ -111,8 +111,8 @@ export function readProcessTableAsync({ platform = process.platform, execFile = 
   const [file, args] = win ? winCmd() : psCmd();
   return new Promise((resolve) => {
     try {
-      execFile(file, args, { encoding: 'utf8', timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) => {
-        resolve(err ? null : tableFrom(stdout, { win, nowMs: now() }));
+      const child = execFile(file, args, { encoding: 'utf8', timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) => {
+        resolve(err ? null : tableFrom(stdout, { win, nowMs: now(), samplerPid: Number.isInteger(child?.pid) ? child.pid : null }));
       });
     } catch { resolve(null); }
   });

@@ -188,7 +188,8 @@ export function dubiousOwnership(stderr) {
   // The path: git's own remedy line holds it whole (an apostrophe in it, e.g. O'Brien, survives); else the quoted span of the
   // refusal, greedily to its LAST quote. Every command printed is quoted by the one shell quoter.
   const where = fix?.replace(/^.*safe\.directory\s+/, '').trim().replace(/^(['"])(.*)\1$/, '$2') || /at '(.*)'/.exec(head)?.[1] || null;
-  const trust = fix ?? (where ? renderCommand(['git', 'config', '--global', '--add', 'safe.directory', where]) : 'git config --global --add safe.directory <the repository folder>');
+  // Both remedies are rendered by the one shell quoter from the unwrapped path, never copied from git's advice text (audit R3 M3).
+  const trust = where ? renderCommand(['git', 'config', '--global', '--add', 'safe.directory', where]) : 'git config --global --add safe.directory <the repository folder>';
   const own = where ? renderCommand(['takeown', '/F', where, '/R', '/D', 'Y'], 'win32') : 'takeown /F <the repository folder> /R /D Y';
   return `git refuses this repository: ${head}. Cause: the folder is owned by another account, or this process runs under a `
     + `different (sandboxed or elevated) token than the folder's owner. Remedies, a person's choice (fleet changes nothing): `

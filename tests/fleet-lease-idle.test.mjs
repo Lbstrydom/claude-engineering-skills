@@ -276,8 +276,10 @@ describe('audit R2: sampling gaps, process identity, self-observation', () => {
 
   it('this process\'s own sampler is dropped from the table (H2): a runner sampling itself is not "busy" forever', async () => {
     const { tableFrom } = await import('../scripts/lib/fleet/lease-cpu.mjs');
-    const rows = tableFrom(['100 1 5 2026-11-15T10:00:00Z node.exe', '200 100 1 2026-11-15T10:05:00Z powershell.exe', '300 100 1 2026-11-15T10:05:00Z python.exe'].join('\n'), { win: true, selfPid: 100 });
-    assert.deepEqual(treeOf(rows, 100).map((r) => r.pid), [100, 300]);
+    const table = ['100 1 5 2026-11-15T10:00:00Z node.exe', '200 100 1 2026-11-15T10:05:00Z powershell.exe', '250 100 9 2026-11-15T10:01:00Z powershell.exe', '300 100 1 2026-11-15T10:05:00Z python.exe'].join('\n');
+    // Only the sampler (pid 200) goes; a JOB that is itself powershell (pid 250) stays in (audit R3 H2).
+    const rows = tableFrom(table, { win: true, samplerPid: 200 });
+    assert.deepEqual(treeOf(rows, 100).map((r) => r.pid), [100, 250, 300]);
   });
 
   it('processTreeActivity is asynchronous and reads through the injected table (M3)', async () => {

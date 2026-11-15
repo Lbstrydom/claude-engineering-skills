@@ -669,7 +669,8 @@ export function decideHeartbeat(lease, req, now, { ceilingAt }) {
   // "first seen" and restart the idle clock, so a run whose sampling flickers could never be judged idle.
   const sampled = Number.isFinite(req.cpuMs);
   if (!sampled && prev) {
-    const beat = { ...prev, at, renewing: prev.renewing };
+    // `sampledAt` pinned to the last sampled beat (falling back to that beat's own time), so the idle clock never advances here.
+    const beat = { ...prev, at, sampledAt: prev.sampledAt ?? prev.at, renewing: prev.renewing };
     const want = Math.min(now.getTime() + LIMITS.heartbeatRenewMs, ceilingAt.getTime());
     const expiresAt = beat.renewing && want > ms(cur.expiresAt) ? new Date(want).toISOString() : cur.expiresAt;
     return { ok: true, lease: { ...lease, heavy: { ...cur, expiresAt, beat } }, heavy: { ...cur, expiresAt, beat }, renewed: expiresAt !== cur.expiresAt, renewing: beat.renewing };
