@@ -1,0 +1,345 @@
+{
+  "contractEpoch": 2,
+  "phase": "main",
+  "runId": "main",
+  "gitSha": "f51bc7b302f2700b1bcaaf12cbd3a7022726e281",
+  "corpusSha256": "5eb0beae27988f5e78ebf8f3eeded1bfdcfdfb4a4fe1fae42698c98ef834ff3e",
+  "promptHashes": {
+    "arm": "515f60d257f3de7ee6401e427e676116c478faecf05d61df9aae49f065904e2c",
+    "judge": "e05083686bac56bd9506d80c6e854e0b7f626556d427c2e50e29d1591d9f696a"
+  },
+  "design": {
+    "arms": [
+      "claude-opus-5-5",
+      "claude-fable-5-2"
+    ],
+    "reps": 3,
+    "cases": 10,
+    "seed": 20261115,
+    "effort": "high",
+    "maxTokens": 16000,
+    "judgeModel": "gpt-6.1-terra",
+    "judgeReasoning": "medium",
+    "rule": {
+      "deltaFloor": 0.1,
+      "costRatioMax": 3,
+      "unmeasuredMax": 0.1,
+      "judgeNoiseFactor": 0.5,
+      "spotAgreementMin": 0.8,
+      "powerZ": 2.8,
+      "minMeasuredPerCase": 2,
+      "minMeasuredFraction": 0.75,
+      "armErrorRateMax": 0.1,
+      "repsMin": 3,
+      "repsMax": 10,
+      "bootstrapB": 10000
+    }
+  },
+  "status": "completed",
+  "spend": {
+    "runSpentUsd": 14.3174,
+    "scopeSpentUsd": 14.3174,
+    "scopeSpentBeforeUsd": 0,
+    "budgetScope": "main",
+    "capUsd": 25,
+    "basis": "derived: measured tokens × published price (model-pricing-table.mjs)"
+  },
+  "stop": null,
+  "instrument": {
+    "controls": {
+      "total": 80,
+      "passed": 80,
+      "failures": []
+    },
+    "unmeasuredGrades": 0,
+    "totalGrades": 280,
+    "unmeasuredRate": 0,
+    "unverifiedItems": 0,
+    "correctDisagreements": 6,
+    "modelMismatches": 0,
+    "judgeNoise": 0.0767,
+    "credible": false,
+    "gateFailures": [
+      "spot-sample agreement 0 < 0.8"
+    ]
+  },
+  "perArm": {
+    "claude-opus-5-5": {
+      "outputs": 30,
+      "meanQ": 0.6351,
+      "correct": 18,
+      "sw": 0.1569,
+      "perCase": {
+        "consumer-prepush-schema-behind-refusal": {
+          "n": 3,
+          "mean": 0.0926,
+          "min": 0.0389,
+          "max": 0.15,
+          "range": 0.1111
+        },
+        "check-ignore-ci-cause-string": {
+          "n": 3,
+          "mean": 0.675,
+          "min": 0.25,
+          "max": 0.9,
+          "range": 0.65
+        },
+        "cli-system-honour-claim": {
+          "n": 3,
+          "mean": 0.8667,
+          "min": 0.85,
+          "max": 0.9,
+          "range": 0.05
+        },
+        "windowed-views-consumer-path-review": {
+          "n": 3,
+          "mean": 0.8667,
+          "min": 0.8667,
+          "max": 0.8667,
+          "range": 0
+        },
+        "sync-manifest-ratchet-report": {
+          "n": 3,
+          "mean": 0.35,
+          "min": 0.25,
+          "max": 0.5,
+          "range": 0.25
+        },
+        "disposable-db-guard-predicate": {
+          "n": 3,
+          "mean": 0.2815,
+          "min": 0.2222,
+          "max": 0.3111,
+          "range": 0.0889
+        },
+        "stale-override-four-sites": {
+          "n": 3,
+          "mean": 0.925,
+          "min": 0.9,
+          "max": 0.95,
+          "range": 0.05
+        },
+        "skills-manifest-commit-or-ignore": {
+          "n": 3,
+          "mean": 0.7435,
+          "min": 0.5417,
+          "max": 0.8667,
+          "range": 0.325
+        },
+        "sdk-pin-max-tokens-review": {
+          "n": 3,
+          "mean": 0.7333,
+          "min": 0.7,
+          "max": 0.775,
+          "range": 0.075
+        },
+        "prepush-check-target-tree": {
+          "n": 3,
+          "mean": 0.8167,
+          "min": 0.55,
+          "max": 0.95,
+          "range": 0.4
+        }
+      },
+      "statuses": {
+        "ok": 30
+      }
+    },
+    "claude-fable-5-2": {
+      "outputs": 30,
+      "meanQ": 0.6594,
+      "correct": 19,
+      "sw": 0.1715,
+      "perCase": {
+        "consumer-prepush-schema-behind-refusal": {
+          "n": 3,
+          "mean": 0.1278,
+          "min": 0.1278,
+          "max": 0.1278,
+          "range": 0
+        },
+        "check-ignore-ci-cause-string": {
+          "n": 3,
+          "mean": 0.8167,
+          "min": 0.55,
+          "max": 1,
+          "range": 0.45
+        },
+        "cli-system-honour-claim": {
+          "n": 3,
+          "mean": 0.9,
+          "min": 0.85,
+          "max": 0.95,
+          "range": 0.1
+        },
+        "windowed-views-consumer-path-review": {
+          "n": 3,
+          "mean": 0.9407,
+          "min": 0.9111,
+          "max": 0.9556,
+          "range": 0.0444
+        },
+        "sync-manifest-ratchet-report": {
+          "n": 3,
+          "mean": 0.3833,
+          "min": 0.3,
+          "max": 0.55,
+          "range": 0.25
+        },
+        "disposable-db-guard-predicate": {
+          "n": 3,
+          "mean": 0.537,
+          "min": 0.3111,
+          "max": 0.7333,
+          "range": 0.4222
+        },
+        "stale-override-four-sites": {
+          "n": 3,
+          "mean": 0.5,
+          "min": 0.25,
+          "max": 0.95,
+          "range": 0.7
+        },
+        "skills-manifest-commit-or-ignore": {
+          "n": 3,
+          "mean": 0.763,
+          "min": 0.6444,
+          "max": 0.8222,
+          "range": 0.1778
+        },
+        "sdk-pin-max-tokens-review": {
+          "n": 3,
+          "mean": 0.7583,
+          "min": 0.75,
+          "max": 0.775,
+          "range": 0.025
+        },
+        "prepush-check-target-tree": {
+          "n": 3,
+          "mean": 0.8667,
+          "min": 0.8,
+          "max": 0.95,
+          "range": 0.15
+        }
+      },
+      "statuses": {
+        "ok": 30
+      }
+    }
+  },
+  "cost": {
+    "claude-opus-5-5": {
+      "calls": 30,
+      "pricedCalls": 30,
+      "totalUsd": 3.7033,
+      "correct": 18,
+      "inputTokens": 143328,
+      "outputTokens": 156501,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "thinkingTokens": 69480,
+      "thinkingReportedCalls": 30,
+      "usdPerCall": 0.1234,
+      "usdPerCorrect": 0.2057,
+      "latencyMedianMs": 49602
+    },
+    "claude-fable-5-2": {
+      "calls": 30,
+      "pricedCalls": 30,
+      "totalUsd": 9.4046,
+      "correct": 19,
+      "inputTokens": 143328,
+      "outputTokens": 206450,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "thinkingTokens": 141237,
+      "thinkingReportedCalls": 30,
+      "usdPerCall": 0.3135,
+      "usdPerCorrect": 0.495,
+      "latencyMedianMs": 66806
+    }
+  },
+  "fillCheck": {
+    "ok": true,
+    "problems": [],
+    "thinkingTokensReportedOnCalls": 60,
+    "thinkingNote": null
+  },
+  "verdict": {
+    "unpairedCaseReps": [],
+    "underpowered": false,
+    "repsNeededAtObservedSpread": {
+      "reps": 3,
+      "deltaTarget": 0.1715,
+      "raw": 2,
+      "infeasible": false,
+      "reason": null
+    },
+    "pooled": {
+      "boot": {
+        "delta": 0.0243,
+        "lo": -0.1111,
+        "hi": 0.1357,
+        "cases": 10
+      },
+      "costRatio": 2.4064,
+      "verdict": "not-credible"
+    },
+    "byRole": {
+      "review": {
+        "boot": {
+          "delta": 0.0802,
+          "lo": -0.0509,
+          "hi": 0.2556,
+          "cases": 3
+        },
+        "verdict": "not-credible"
+      },
+      "design-fork": {
+        "boot": {
+          "delta": 0.0896,
+          "lo": -0.0269,
+          "hi": 0.2287,
+          "cases": 4
+        },
+        "verdict": "not-credible"
+      },
+      "cross-repo": {
+        "boot": {
+          "delta": -0.1188,
+          "lo": -0.425,
+          "hi": 0.0889,
+          "cases": 3
+        },
+        "verdict": "not-credible"
+      }
+    }
+  },
+  "spotSampleIds": [
+    "7a5f91ef",
+    "4692d66e",
+    "9133744a",
+    "64dc31fb",
+    "350d14b4",
+    "b3455ebe",
+    "08fe9566",
+    "284d3e1d",
+    "ca169519",
+    "fe4ee2c2",
+    "c4a60856",
+    "9a4eaeb0"
+  ],
+  "spotAgreement": {
+    "source": "cross-grade",
+    "agreement": 0,
+    "certified": false,
+    "exceptions": 12,
+    "sampleSize": 12
+  },
+  "artifactScan": {
+    "secretFindings": [],
+    "privateTermHits": 0,
+    "privacyTermsConfigured": true,
+    "safeToCommit": true
+  }
+}

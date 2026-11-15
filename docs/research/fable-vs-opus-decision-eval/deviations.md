@@ -4,6 +4,23 @@ Plan: [`docs/plans/fable-vs-opus-decision-eval.md`](../../plans/fable-vs-opus-de
 Anything off-contract, outstanding, or differing from the plan is recorded here
 **before** merge and raised to Louis in the PR description. Newest first.
 
+## 2026-11-15 — spot-sample outcome: exception (awaiting Louis)
+
+- Cross-grade ran as pre-registered (fixture `fable-opus-xgrade` at `6b18b17d`, $0.80, scope `main` now
+  $15.12 of $25). Both graders passed 20/20 controls.
+- **Gemini voided all 12 sample grades.** Its "verbatim" quotes are paraphrased or `...`-elided, and the
+  mechanical quote check refused them. That makes 12/12 items E3, so the verdict is **not certified**.
+  GPT agrees with the primary on 12/12. Gemini's decision call agrees on 7/9, and its 2 disagreements are
+  lenient, one per arm.
+- **Not done:** re-running Gemini with a relaxed quote check. That would change a pre-registered
+  instrument after seeing its output.
+- **Known weakness, recorded and not changed after the fact:** the single-pass control definition
+  (copied from the primary checkpoint) checks `correct` and coverage but not `q`. So a gold control
+  whose grade carried an unverified quote still counts as passed. 5 of Gemini's 10 gold controls were
+  like that. Had controls required a measured q, Gemini would have failed its controls, which is the
+  same outcome: not certified.
+- Options and recommendation: [`verdict.md`](verdict.md) §4.
+
 ## 2026-11-15T15:52Z — spot sample: two cross-vendor graders replace the human marks (pre-registered)
 
 Louis changed the protocol, relayed by the coordinator: "why don't we use Gemini and GPT from our

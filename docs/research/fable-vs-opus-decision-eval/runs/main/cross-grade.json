@@ -1,0 +1,328 @@
+{
+  "rule": {
+    "qDelta": 0.25,
+    "maxExceptionRate": 0.2,
+    "controlCoverageMin": 0.8
+  },
+  "graders": [
+    "gpt",
+    "gemini"
+  ],
+  "graderControls": {
+    "gpt": {
+      "graded": 20,
+      "passed": 20,
+      "ok": true
+    },
+    "gemini": {
+      "graded": 20,
+      "passed": 20,
+      "ok": true
+    }
+  },
+  "allControlsOk": true,
+  "sampleSize": 12,
+  "exceptions": 12,
+  "exceptionRate": 1,
+  "spotAgreement": 0,
+  "correctAgreement": {
+    "gpt": null,
+    "gemini": null
+  },
+  "meanAbsQDiff": {
+    "gpt": null,
+    "gemini": null
+  },
+  "certified": false,
+  "items": [
+    {
+      "gradeId": "7a5f91ef",
+      "primary": {
+        "correct": false,
+        "q": 0.3111111111111111,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.3111111111111111,
+          "correct": false
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    },
+    {
+      "gradeId": "4692d66e",
+      "primary": {
+        "correct": true,
+        "q": 0.9555555555555555,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.9555555555555555,
+          "correct": true
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    },
+    {
+      "gradeId": "9133744a",
+      "primary": {
+        "correct": true,
+        "q": 0.9,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.9,
+          "correct": true
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    },
+    {
+      "gradeId": "64dc31fb",
+      "primary": {
+        "correct": false,
+        "q": 0.25,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.30000000000000004,
+          "correct": false
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    },
+    {
+      "gradeId": "350d14b4",
+      "primary": {
+        "correct": true,
+        "q": 0.75,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.75,
+          "correct": true
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    },
+    {
+      "gradeId": "b3455ebe",
+      "primary": {
+        "correct": true,
+        "q": 0.6444444444444444,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.6888888888888889,
+          "correct": true
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    },
+    {
+      "gradeId": "08fe9566",
+      "primary": {
+        "correct": true,
+        "q": 0.75,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.75,
+          "correct": true
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    },
+    {
+      "gradeId": "284d3e1d",
+      "primary": {
+        "correct": true,
+        "q": 0.95,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.95,
+          "correct": true
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    },
+    {
+      "gradeId": "ca169519",
+      "primary": {
+        "correct": false,
+        "q": 0.30000000000000004,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.30000000000000004,
+          "correct": false
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    },
+    {
+      "gradeId": "fe4ee2c2",
+      "primary": {
+        "correct": false,
+        "q": 0.30000000000000004,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.30000000000000004,
+          "correct": false
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    },
+    {
+      "gradeId": "c4a60856",
+      "primary": {
+        "correct": false,
+        "q": 0.12777777777777777,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.12777777777777777,
+          "correct": false
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    },
+    {
+      "gradeId": "9a4eaeb0",
+      "primary": {
+        "correct": false,
+        "q": 0.25,
+        "split": false
+      },
+      "cross": {
+        "gpt": {
+          "q": 0.25,
+          "correct": false
+        },
+        "gemini": {
+          "q": null,
+          "correct": null,
+          "unmeasured": "quote-voided"
+        }
+      },
+      "exception": true,
+      "reasons": [
+        "E3: a cross-grader grade is unmeasured"
+      ]
+    }
+  ],
+  "spend": {
+    "runSpentUsd": 0.8005,
+    "scopeSpentUsd": 15.1179,
+    "capUsd": 25,
+    "budgetScope": "main"
+  },
+  "stop": null,
+  "artifactScan": {
+    "secretFindings": [],
+    "privateTermHits": 0,
+    "privacyTermsConfigured": true,
+    "safeToCommit": true
+  }
+}
