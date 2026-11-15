@@ -7,6 +7,57 @@
 - **Corpus**: 5 cases, `corpusSha256` `7c9f62cff2d8…`, contract epoch 1
 - **Evidence**: [`runs/rehearsal/`](runs/rehearsal/summary.json) and [`runs/variance/`](runs/variance/summary.json). Each holds the raw arm outputs (`calls.jsonl`), the raw judge outputs (`grades.jsonl`), every reservation and settlement (`ledger.jsonl`), and `summary.json`.
 
+## Epoch 2 (current): 10 cases, 3 reps — run `variance-e2c`
+
+Louis chose "enlarge corpus first". Epoch 2 adds 3 design forks, 1 review and 1 cross-repo case.
+The 10 cases split 3 review, 3 cross-repo and 4 design-fork, so a per-role verdict is possible
+for every role. Corpus `5eb0beae2798`, pinned fixture `fable-opus-e2c` at `c72a1d69`. Two
+earlier epoch-2 attempts stopped before producing data: `variance-e2`, at the control
+checkpoint, and `variance-e2b`, at the egress gate. Both are kept as evidence; see
+[`deviations.md`](deviations.md).
+
+| Figure | Value | Label |
+|---|---|---|
+| Opus mean q | **0.60** | measured grades |
+| Within-case spread s_w | **0.20** | derived |
+| Correct decisions | **16 / 30** (correct requires a measured output) | measured |
+| Judge controls | 79 / 79 passed (1 of 220 grades unmeasured) | measured |
+| Judge noise s_j | 0.09 (gate ≤ 0.10) | derived |
+| Opus per call | **$0.122** (4.8 K in, 5.1 K out, of which 2.3 K thinking) | derived / measured |
+| Opus per correct decision | **$0.229** | derived |
+| This run | **$4.47** (arms $3.66, judge $0.80) | derived |
+| Budget scope `autonomous`, all runs | **$8.06 of $10** | derived |
+
+Per case (Opus, 3 reps):
+
+| Case | Role | Correct | Mean q | q range |
+|---|---|---|---|---|
+| `consumer-prepush-schema-behind-refusal` | cross-repo | 0/3 | 0.11 | 0.09–0.13 |
+| `sync-manifest-ratchet-report` | cross-repo | 0/3 | 0.38 | 0.25–0.60 |
+| `stale-override-four-sites` | cross-repo | 1/3 | 0.52 | 0.30–0.90 |
+| `check-ignore-ci-cause-string` | review | 0/3 | 0.46 | 0.25–0.58 |
+| `windowed-views-consumer-path-review` | review | 3/3 | 0.88 | 0.87–0.91 |
+| `sdk-pin-max-tokens-review` | review | 3/3 | 0.70 | 0.70 |
+| `disposable-db-guard-predicate` | design-fork | 1/3 | 0.47 | 0.22–0.96 |
+| `cli-system-honour-claim` | design-fork | 3/3 | 0.88 | 0.85–0.90 |
+| `skills-manifest-commit-or-ignore` | design-fork | 3/3 | 0.76 | 0.69–0.82 |
+| `prepush-check-target-tree` | design-fork | 2/3 | 0.82 | 0.65–0.95 |
+
+**Reading.** The cross-repo diagnoses are where Opus is weakest: 1 of 9 correct. Two cases are
+consistently wrong rather than noisy. Design forks are mostly right. There is headroom
+(Opus 0.60 < the ceiling line of 1 − 0.20 = 0.80).
+
+**n for the main run:** `proposeReps` gives r = 3 (raw 2, clamped to the minimum 3) at
+Δ_target = 0.20. So 30 Fable and 30 Opus calls plus about 280 judge grades.
+**Projected cost (estimated): $12.01**, or **$15.10** if Fable emits 1.5× the output.
+The Fable per-call cost is still an estimate ($0.24–0.35), because no Fable call has been
+made. The approved cap is $13, with Louis's quote "fine if it goes up to 20 (if needed)".
+The high band exceeds $13, so the cap choice is put to Louis before any main-run spend.
+
+The epoch-1 sections below are kept for the record (5 cases, superseded).
+
+---
+
 Labels: **measured** means a provider-reported count or a timing; **derived** means measured tokens × the published price (`scripts/lib/model-pricing-table.mjs`, reviewed 2026-11-15); **estimated** means a projection.
 
 ## 1. Result in one paragraph
