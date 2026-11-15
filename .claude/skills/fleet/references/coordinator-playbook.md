@@ -50,6 +50,12 @@ or merge without `--delete-branch`. After a squash merge, rebasing the rest of t
 and force-pushing can be refused by a pre-push gate that compares against the remote's
 old sha; expect that refusal and resolve it rather than bypassing the hook.
 
+Better still, avoid the stack: tell each session to branch off `main`, never off another
+session's branch, even when its work reads as a continuation. A branch cut from a
+sibling's pre-squash commit is guaranteed a conflict once that sibling lands as a squash
+(the shared file comes back as an add/add conflict). The repair is to cherry-pick the
+branch's own commits onto `main`.
+
 ## 3. Before archiving a session or removing a worktree
 
 A session's working directory is not proof that it owns the worktree, and archiving can

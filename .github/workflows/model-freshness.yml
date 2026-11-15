@@ -151,3 +151,18 @@ jobs:
         run: |
           echo "::error::model-freshness script failed with unexpected exit code"
           exit 1
+
+      # The steps above branch on `status`. If it comes back as anything outside
+      # the four values they handle (an empty string included), none of them
+      # fires and the job goes green having handled nothing. That is the shape
+      # of a red check reading as green. Fail the job instead. Membership, not
+      # non-emptiness: an unexpected non-empty value is the same hole.
+      # tests/model-freshness-workflow.test.mjs pins this step, because a runtime
+      # guard can be skipped by a cancelled run and a static test cannot.
+      - name: Fail on an unhandled status
+        if: always() && steps.keys.outputs.skip != 'true' && !contains(fromJSON('["green","triggered","insufficient_data","error"]'), steps.freshness.outputs.status)
+        env:
+          STATUS: ${{ steps.freshness.outputs.status }}
+        run: |
+          echo "::error::model-freshness produced status '${STATUS}', which no step handles. This run measured nothing; read the step log above."
+          exit 1
