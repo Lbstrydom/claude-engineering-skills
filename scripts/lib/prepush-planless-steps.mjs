@@ -161,9 +161,13 @@ export function snapshotCreateStep({ cwd, headArg = null, ownerPid = null, gitFn
     if (!modules.installed.matches) {
       write(`[prepush-hook] ▸ audit snapshot: tools resolve from ${forShell(modules.modules)}, whose installed tree does not match the pushed package-lock.json (${modules.installed.reason}) - they run with the checkout's installed tree, not the pushed one`);
     }
-    if (modules.localLinks.length) {
-      const sample = modules.localLinks.slice(0, 5).join(', ');
-      write(`⚠ [prepush-hook] audit snapshot: ${modules.localLinks.length} package(s) in ${forShell(modules.modules)} link OUTSIDE the installed tree (${sample}${modules.localLinks.length > 5 ? ', ...' : ''}) - a tool following an import into one reads the checkout's working copy, not the pushed bytes`);
+    const { links, count, complete } = modules.localLinks;
+    if (count) {
+      const sample = links.slice(0, 5).join(', ');
+      write(`⚠ [prepush-hook] audit snapshot: ${count} package(s) in ${forShell(modules.modules)} link OUTSIDE the installed tree (${sample}${count > 5 ? ', ...' : ''}) - a tool following an import into one reads the checkout's working copy, not the pushed bytes`);
+    }
+    if (!complete) {
+      write(`⚠ [prepush-hook] audit snapshot: ${forShell(modules.modules)} could not be fully scanned for package links outside it, so whether any tool reads the checkout's working copy through one is UNKNOWN`);
     }
   }
   write(`[prepush-hook] ▸ audit snapshot: ${forShell(dir)} - a detached worktree of ${sha.slice(0, 12)}; the audit reads the pushed commit, not the working tree`);

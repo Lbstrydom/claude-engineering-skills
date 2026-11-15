@@ -435,7 +435,7 @@ describe("snapshotCreateStep makes the checkout's node_modules resolvable from t
     } finally { rmrf(mods); rmrf(pushed); }
   });
 
-  it('findLocalLinks counts links resolving outside the tree (top level and @scope/), never links that stay inside (pnpm .pnpm)', () => {
+  it('findLocalLinks counts links resolving outside the tree at every node_modules level, never links that stay inside (pnpm .pnpm); a partial walk is not complete', () => {
     const mods = tmpDir('links-mods-');
     const outside = tmpDir('links-outside-');
     try {
@@ -445,7 +445,19 @@ describe("snapshotCreateStep makes the checkout's node_modules resolvable from t
       fs.mkdirSync(path.join(mods, '@scope'));
       fs.symlinkSync(outside, path.join(mods, '@scope', 'out'), 'junction');
       fs.symlinkSync(outside, path.join(mods, 'out-top'), 'junction');
-      assert.deepEqual(findLocalLinks(mods).sort(), ['@scope/out', 'out-top']);
+      fs.mkdirSync(path.join(mods, 'host', 'node_modules'), { recursive: true });
+      fs.symlinkSync(outside, path.join(mods, 'host', 'node_modules', 'nested-out'), 'junction');
+      fs.mkdirSync(path.join(mods, '@scope', 'pkg', 'node_modules', '@deep'), { recursive: true });
+      fs.symlinkSync(outside, path.join(mods, '@scope', 'pkg', 'node_modules', '@deep', 'x'), 'junction');
+      const r = findLocalLinks(mods);
+      assert.deepEqual(r.links, ['@scope/out', '@scope/pkg/node_modules/@deep/x', 'host/node_modules/nested-out', 'out-top']);
+      assert.equal(r.count, 4);
+      assert.equal(r.complete, true);
+      // npm's install record names links the walk cannot see (here: one recorded but not on disk).
+      fs.writeFileSync(path.join(mods, '.package-lock.json'), JSON.stringify({ packages: { 'node_modules/recorded': { resolved: '../x', link: true } } }));
+      assert.ok(findLocalLinks(mods).links.includes('recorded'));
+      // A walk that hits its budget is never reported complete.
+      assert.equal(findLocalLinks(mods, { maxEntries: 2 }).complete, false);
     } finally { rmrf(mods); rmrf(outside); }
   });
 

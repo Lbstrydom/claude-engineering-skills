@@ -94,15 +94,16 @@ export function createSnapshot({ repoRoot, sha, dir, onRetry = null }) {
  *  - `installed`: does the installed tree match the PUSHED package-lock.json? Asked of npm's own install record
  *    (`node_modules/.package-lock.json`) by lib/installed-tree-identity.mjs - the record of what was installed, not the lockfile that
  *    happens to sit beside it now, which can have been edited or pulled since. Any doubt reads as a mismatch, with its reason.
- *  - `localLinks`: package entries in the tree that are links resolving OUTSIDE it (workspace packages, `file:` and `npm link`
- *    dependencies). A tool following an import into one reads the checkout's WORKING COPY, not the pushed bytes. pnpm's own links
- *    stay inside the tree (`.pnpm`), so they are not counted.
+ *  - `localLinks`: package entries anywhere in the tree that are links resolving OUTSIDE it (workspace packages, `file:` and
+ *    `npm link` dependencies; see findLocalLinks). A tool following an import into one reads the checkout's WORKING COPY, not the
+ *    pushed bytes. pnpm's own links stay inside the tree (`.pnpm`), so they are not counted.
  *
  * Refuses, removing its own link and never throwing, when the link does not RESOLVE: on Windows a junction to a missing target is
  * created without error (docs/runbooks/prepush-sandbox.md §2.2).
  *
  * @param {{checkoutRoot: string, intoDir: string, pushedRoot: string}} input
- * @returns {{linked: true, modules: string, installed: {matches: boolean, reason: string}, localLinks: string[]}
+ * @returns {{linked: true, modules: string, installed: {matches: boolean, reason: string},
+ *   localLinks: {links: string[], count: number, complete: boolean}}
  *   | {linked: false, reason: string}}
  */
 export function linkCheckoutNodeModules({ checkoutRoot, intoDir, pushedRoot }) {
@@ -131,31 +132,54 @@ export function installedMatchesPushed(modules, pushedRoot) {
 }
 
 /**
- * Package entries of `modules` (top level and one `@scope/` down) that are links resolving outside it. An entry that cannot be
- * resolved counts as outside: it cannot be shown to be inside. Capped, because the caller prints a sample, not an inventory.
- * @returns {string[]} package names
+ * Package entries anywhere in the `modules` tree that are links resolving OUTSIDE it: each `node_modules` level (top, `@scope/`, and
+ * every nested `<pkg>/node_modules`) is walked, links are never followed, and an entry that cannot be resolved counts as outside (it
+ * cannot be shown to be inside). npm's install record is asked too - it marks every link it made, at any depth, `"link": true`.
+ *
+ * `complete` is false when part of the tree could not be read or the walk hit its entry budget: a partial scan is never reported
+ * as a clean one. `links` is capped (the caller prints a sample, not an inventory); `count` is how many were found.
+ *
+ * @returns {{links: string[], count: number, complete: boolean}} package locations relative to `modules`, forward slashes
  */
-export function findLocalLinks(modules, { cap = 50 } = {}) {
+export function findLocalLinks(modules, { cap = 50, maxEntries = 200_000 } = {}) {
   let root;
-  try { root = fs.realpathSync.native(modules); } catch { return []; }
+  try { root = fs.realpathSync.native(modules); } catch { return { links: [], count: 0, complete: false }; }
   const inside = (p) => { const rel = path.relative(root, p); return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel); };
-  const found = [];
-  const visit = (dir, prefix) => {
+  const found = new Set();
+  let complete = true;
+  let seen = 0;
+  const queue = [[root, '']];
+  while (queue.length) {
+    const [dir, prefix] = queue.shift();
     let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { complete = false; continue; }
     for (const e of entries) {
-      if (found.length >= cap) return;
+      if (++seen > maxEntries) { complete = false; queue.length = 0; break; }
       if (e.name.startsWith('.')) continue;
       const full = path.join(dir, e.name);
-      if (!prefix && e.name.startsWith('@') && e.isDirectory()) { visit(full, `${e.name}/`); continue; }
-      if (!e.isSymbolicLink()) continue;
-      let target = null;
-      try { target = fs.realpathSync.native(full); } catch { target = null; }
-      if (!target || !inside(target)) found.push(`${prefix}${e.name}`);
+      const name = `${prefix}${e.name}`;
+      if (e.isSymbolicLink()) {
+        let target = null;
+        try { target = fs.realpathSync.native(full); } catch { target = null; }
+        if (!target || !inside(target)) found.add(name);
+        continue;
+      }
+      if (!e.isDirectory()) continue;
+      // A scope directory sits directly in a node_modules level; inside it are packages, never another scope.
+      const atLevel = prefix === '' || prefix.endsWith('node_modules/');
+      if (atLevel && e.name.startsWith('@')) { queue.push([full, `${name}/`]); continue; }
+      const nested = path.join(full, 'node_modules');
+      if (fs.existsSync(nested)) queue.push([nested, `${name}/node_modules/`]);
     }
-  };
-  visit(root, '');
-  return found;
+  }
+  try {
+    const record = JSON.parse(fs.readFileSync(path.join(root, '.package-lock.json'), 'utf8'))?.packages ?? {};
+    for (const [location, entry] of Object.entries(record)) {
+      if (entry && entry.link === true) found.add(location.replace(/^node_modules\//, ''));
+    }
+  } catch { /* no npm record (another package manager, or none yet): the walk above stands alone */ }
+  const all = [...found].sort();
+  return { links: all.slice(0, cap), count: all.length, complete };
 }
 
 /**
