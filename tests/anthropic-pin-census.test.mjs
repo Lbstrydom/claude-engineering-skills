@@ -24,13 +24,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   classifyPinningInSource,
+  unserviceableParamsInSource,
   indirectPinHolds,
   unpinnedArgsDigest,
   normaliseArgText,
   auditPinCensus,
 } from '../scripts/lib/anthropic-pin-census.mjs';
-// Split out of the census on 2026-11-15 (size:ratchet:gate); same rules, new home.
-import { unserviceableParamsInSource } from '../scripts/lib/anthropic-pin-params.mjs';
 import { trackedScriptFiles } from '../scripts/check-anthropic-pins.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -1436,14 +1435,17 @@ describe('the assignment rule needs a Messages API call in the file', () => {
   });
 });
 
-// Raised by the batched final review and NOT changed: the file-wide property
-// branch sets `dynamicKeys` for ANY computed key, so `{ [someKey]: v }` in an
-// unrelated lookup table fails Rule A for a file that sends nothing of the
-// sort. That is #360's deliberate fail-closed choice, with its own two tests
-// above; narrowing it would trade the false positive for a false NEGATIVE (a
-// request built entirely from computed keys is not request-shaped and would
-// escape). Recorded as debt rather than overturned here. These cases pin the
-// behaviour as it stands, so a later change to it is a visible decision.
+// Flagged by the batched final review and deliberately NOT changed: the
+// file-wide property branch sets `dynamicKeys` for ANY computed key, so
+// `{ [someKey]: v }` in an unrelated lookup table fails Rule A for a file that
+// sends nothing of the sort. That is #360's fail-closed choice (its own two
+// cases are above), and narrowing it to request-shaped objects would trade the
+// false positive for a false NEGATIVE: a request built entirely from computed
+// keys is not request-shaped and would escape. I narrowed it, saw those two
+// cases go red, and reverted — overturning another change's tested decision on
+// one reviewer comment, inside a PR about something else, is scope expansion.
+// Captured as debt. These cases PIN the behaviour so a later change to it is a
+// visible decision rather than a silent one.
 describe('a computed key fails closed file-wide (#360 behaviour, pinned)', () => {
   const file = (body) => `
     import { createAnthropicClient } from './lib/anthropic-client.mjs';
@@ -1456,7 +1458,7 @@ describe('a computed key fails closed file-wide (#360 behaviour, pinned)', () =>
       const lookup = { [someKey]: 'value' };
       await client.messages.create({ model: 'm', max_tokens: 1, messages: [] });
     `));
-    assert.equal(c.dynamicKeys, true, 'broad by design; see the module note');
+    assert.equal(c.dynamicKeys, true, 'broad by design — see the note at the branch');
     assert.deepEqual(c.unserviceable, [], 'and never CLAIMED to be a named param');
   });
 

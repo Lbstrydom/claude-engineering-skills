@@ -1587,3 +1587,39 @@ destructures. The deliberation also named the test the fix would need — one
 checking only the sdk body and "cli served it" passes straight over the defect.
 **A claim about what a transport does is settled against the transport, not
 against the serialization format it happens to use.**
+
+### 9.9 The batched final gate, and two things it taught
+
+The gate's first two runs approved over **PARTIAL** coverage — 197 of 1556
+changed lines never shown — so it was re-run as **disjoint batches** over the
+code files until every changed line had been rendered. Per-batch verdicts and
+the combined coverage are in the audit summary.
+
+**A new file is not covered by the rounds that audited its old home.** The
+first attempt to fix the census's line count split it into
+`anthropic-pin-params.mjs`. The move changed no rule — and the final gate
+refused it anyway: coverage `NONE`, gate `blocked`, *"all 1 changed file(s)
+were dropped before the reviewer … not selected for the envelope"*. The
+envelope is built from the files the AUDIT ROUNDS examined, and a file created
+after round 6 appears in none of them. The gate was right: no reviewer had seen
+that file at that sha, and "it is only a move" is an argument, not evidence.
+
+Making it an audited subject needs a round past the soft cap, and **the
+cap-override was correctly refused** — `--past-cap` is an oversight bypass, and
+reaching for one to clear a gate that is accurately reporting an unaudited file
+is the wrong direction. So the cause was removed instead: the split is reverted,
+and the census is back under the limit by condensing the audit narrative in its
+own comments, which belongs in this plan (where it already is) rather than
+duplicated at length in the module. **Generalises: when a guard blocks you,
+check whether the thing it is protecting against is the thing you just did.**
+
+**A finding can be correct and still not yours to act on.** The same review
+flagged the census's file-wide computed-key fail-closed: `{ [someKey]: v }` in
+an unrelated lookup table fails Rule A for a file that sends nothing of the
+sort. True, and verified on a planted source. It is also #360's deliberate
+choice with two tests encoding it, and narrowing it trades that false positive
+for a false NEGATIVE — a request built entirely from computed keys is not
+request-shaped and would escape. I narrowed it, saw those two tests go red, and
+reverted. Captured as debt, with four cases pinning the behaviour so the next
+change to it is a visible decision. The reviewer's own disposition said the
+same: `approve_with_debt` means capture and list, not re-litigate.
