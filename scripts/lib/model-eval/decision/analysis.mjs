@@ -66,7 +66,10 @@ export function combinePasses(scores) {
   const cs = scores.map((s) => s.correct);
   return {
     q: qs.length === 2 ? mean(qs) : null,
-    correct: cs.length === 2 && cs.every((x) => x === true),
+    // Epoch 2 (deviations.md, variance phase): `correct` requires a MEASURED
+    // output too — an output excluded from meanQ / s_w must not still count
+    // toward cost per correct decision.
+    correct: qs.length === 2 && cs.length === 2 && cs.every((x) => x === true),
     correctDisagree: cs.length === 2 && cs[0] != null && cs[1] != null && cs[0] !== cs[1],
     judgeDelta: qs.length === 2 ? Math.abs(qs[0] - qs[1]) : null,
     passesScored: qs.length,

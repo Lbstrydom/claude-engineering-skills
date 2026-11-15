@@ -357,6 +357,11 @@ describe('decision-eval analysis — score, spread, n, rule', () => {
     assert.equal(s.unverified, 1);
     assert.equal(s.q, null);
   });
+  it('epoch 2: an unmeasured output never counts as correct, even when both passes said correct', () => {
+    const c = combinePasses([{ q: 0.95, correct: true }, { q: null, correct: true }]);
+    assert.equal(c.q, null);
+    assert.equal(c.correct, false);
+  });
   it('an output with only one scored pass is unmeasured (q null), not a one-pass score', () => {
     assert.equal(combinePasses([{ q: 0.9, correct: true }]).q, null);
     assert.equal(combinePasses([{ q: 0.9, correct: true }, { q: null, correct: null }]).q, null);

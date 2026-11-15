@@ -22,7 +22,9 @@ import { canonicalizeEol } from '../../file-io.mjs';
 /** Every calls/grades/ledger row and the manifest carry this. Bump on any
  * rubric, prompt, scoring or judge change; rows from another epoch are
  * ineligible (plan §C9). */
-export const DECISION_EVAL_CONTRACT_EPOCH = 1;
+// Epoch history: 1 = 5-case corpus, variance run 2026-11-15 (pinned at ce49e42c,
+// reproducible there); 2 = 10-case corpus + `correct` requires a measured output.
+export const DECISION_EVAL_CONTRACT_EPOCH = 2;
 
 export const MANIFEST_FILE = 'manifest.json';
 
