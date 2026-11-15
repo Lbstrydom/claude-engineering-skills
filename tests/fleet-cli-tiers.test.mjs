@@ -44,7 +44,7 @@ describe('tiers', () => {
     assert.equal(ran(dir, 'full'), 2, 'rerun once on red');
     assert.equal(ran(dir, 'last'), 0, 'never reached');
     assert.equal(t.result, 'red');
-    assert.equal(r.status, 3);
+    assert.equal(r.status, 4, 'a train that ran red exits 4');
     assert.equal(s.f(['land', '--approve', t.trainId]).status, 3);
   });
 

@@ -44,7 +44,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ArgvError, assertKnownFlags, emit, finishAndExit } from './lib/cli-io.mjs';
-import { VERBS, knownFlagsFor, parseVerbArgs } from './lib/fleet/argv.mjs';
+import { VERBS, knownFlagsFor, parseVerbArgs, verbHelp } from './lib/fleet/argv.mjs';
 import { ConfigError, resolveConfig } from './lib/fleet/config.mjs';
 import {
   GitUnavailableError, cmdAdd, cmdClaim, cmdHold, cmdReady, cmdRepair, cmdStart, cmdStatus, cmdTouch,
@@ -60,13 +60,13 @@ import { cmdHandover } from './lib/fleet/handover.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
 import { cmdPropose, cmdProposal, cmdProposals } from './lib/fleet/proposals-cmd.mjs';
-import { cmdLease } from './lib/fleet/lease-cmd.mjs';
+import { ALLOWED as LEASE_FLAGS, SUBS as LEASE_SUBS, cmdLease } from './lib/fleet/lease-cmd.mjs';
 import { fleetDir, RegistryError } from './lib/fleet/registry.mjs';
 import { recordInvocation } from './lib/fleet/telemetry.mjs';
 import { recordFleetDecision } from './lib/fleet/ledger-hook.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
-const EXIT = { ok: 0, error: 1, argv: 2, refused: 3, pending: 3 };
+const EXIT = { ok: 0, error: 1, argv: 2, refused: 3, pending: 3, red: 4 };
 const USAGE = `usage: fleet <verb> [flags]\nverbs: ${Object.keys(VERBS).join(', ')}\n`;
 
 /** How this CLI is invoked, for the commands it prints (relative when inside the repo). */
@@ -105,6 +105,18 @@ async function main() {
     // An unknown verb is the classic symptom of stale tooling (`release` was missing in one): name the remedy.
     process.stderr.write(`fleet: unknown verb ${JSON.stringify(verb)}${staleHint ? ` — this worktree's tooling may be stale; run ${HYDRATE_HINT}` : ''}\n${USAGE}`);
     return finishAndExit(2);
+  }
+  // `fleet <verb> --help` (or -h) before the verb's own flags are checked; never an argument after `--` (lease run's command).
+  const own = process.argv.slice(3);
+  const head = own.includes('--') ? own.slice(0, own.indexOf('--')) : own;
+  if (head.includes('--help') || head.includes('-h')) {
+    const sub = verb === 'lease' ? head.find((a) => LEASE_SUBS.includes(a)) : undefined;
+    const only = sub ? ['--json', ...LEASE_FLAGS[sub]] : null;
+    const extra = verb !== 'lease' ? null
+      : sub ? `sub-command ${sub} accepts: ${only.join(', ')}${sub === 'run' ? ' — then -- <command> [args...]' : ''}`
+        : `sub-commands: ${LEASE_SUBS.join(', ')} (fleet lease <sub> --help for one)`;
+    process.stdout.write(verbHelp(verb, { extra, only, sub }));
+    return finishAndExit(0);
   }
 
   let result;

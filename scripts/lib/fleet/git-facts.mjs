@@ -26,6 +26,7 @@ import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 import { resolveBaseFreshness } from '../git-freshness.mjs';
 import { OID_PATTERN, OID_RE, isOid } from './contracts.mjs';
 import { VALID, memoPure } from './oid-cache.mjs';
+import { renderCommand } from './shell-quote.mjs';
 
 const LOCAL_TIMEOUT_MS = 15_000;
 const REMOTE_TIMEOUT_MS = 30_000;
@@ -165,7 +166,55 @@ export function parsePatchId(text) {
 /** @returns {{ok: boolean, dir?: string, reason?: string}} */
 export function gitCommonDir(cwd) {
   const r = runGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
-  return r.ok ? { ok: true, dir: r.stdout.trim() } : { ok: false, reason: r.reason };
+  if (r.ok) return { ok: true, dir: r.stdout.trim() };
+  const dubious = dubiousOwnership(r.stderr);
+  return dubious ? { ok: false, code: 'DUBIOUS_OWNERSHIP', reason: dubious } : { ok: false, reason: r.reason };
+}
+
+/**
+ * git's `safe.directory` refusal, passed through WHOLE with its remedy, or null. `runGit`'s reason keeps only stderr's first
+ * line, and git puts the remedy (`git config --global --add safe.directory …`) on a later one, so a refusal used to surface
+ * as "cannot locate the git common dir" with nothing to act on (consumer reports 2026-11-15). Two causes produce it — the
+ * folder belongs to another account, or THIS process runs under a different (sandboxed or elevated) token than the one that
+ * owns it, as an app-launched session on Windows can — and each has its remedy. Both are a person's security decision:
+ * fleet names them and changes nothing. (Its doc sits here; `unquoteShellArg`, its helper, is defined first.)
+ */
+/**
+ * One POSIX-shell argument back to its value: `'…'` segments are literal, `"…"` segments drop backslash-escapes of `"`, `\`,
+ * `$` and backtick, and a bare `\x` is `x` — so git's `'O'\''Brien'` decodes to `O'Brien`. Unbalanced quoting returns null.
+ */
+export function unquoteShellArg(s) {
+  let out = ''; let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "'") { const j = s.indexOf("'", i + 1); if (j === -1) return null; out += s.slice(i + 1, j); i = j + 1; }
+    else if (c === '"') {
+      i += 1;
+      while (i < s.length && s[i] !== '"') { if (s[i] === '\\' && /["\\$`]/.test(s[i + 1] ?? '')) { out += s[i + 1]; i += 2; } else { out += s[i]; i += 1; } }
+      if (i >= s.length) return null;
+      i += 1;
+    } else if (c === '\\' && i + 1 < s.length) { out += s[i + 1]; i += 2; }
+    else { out += c; i += 1; }
+  }
+  return out;
+}
+
+export function dubiousOwnership(stderr) {
+  const text = String(stderr ?? '');
+  if (!/dubious ownership/i.test(text)) return null;
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const fix = lines.find((l) => /git config --global --add safe\.directory/.test(l));
+  const head = (lines.find((l) => /dubious ownership/i.test(l)) ?? 'detected dubious ownership').replace(/^fatal:\s*/, '');
+  // The path. The refusal line prints it RAW between single quotes (`at '%s'`), so greedily to the last quote it is exact, an
+  // apostrophe (O'Brien) included. git's advice line shell-quotes it instead (`'O'\''Brien'`), so it is only the fallback, and
+  // is decoded properly (audit R4 H1/M1). Every command printed is re-quoted by the one shell quoter.
+  const where = /at '(.*)'/.exec(head)?.[1] || (fix ? unquoteShellArg(fix.replace(/^.*safe\.directory\s+/, '').trim()) : null) || null;
+  // Both remedies are rendered by the one shell quoter from the unwrapped path, never copied from git's advice text (audit R3 M3).
+  const trust = where ? renderCommand(['git', 'config', '--global', '--add', 'safe.directory', where]) : 'git config --global --add safe.directory <the repository folder>';
+  const own = where ? renderCommand(['takeown', '/F', where, '/R', '/D', 'Y'], 'win32') : 'takeown /F <the repository folder> /R /D Y';
+  return `git refuses this repository: ${head}. Cause: the folder is owned by another account, or this process runs under a `
+    + `different (sandboxed or elevated) token than the folder's owner. Remedies, a person's choice (fleet changes nothing): `
+    + `trust the folder for git — ${trust} — or take ownership of it (Windows: ${own}). Only if you trust the folder's contents.`;
 }
 
 const commonDirs = new Map();

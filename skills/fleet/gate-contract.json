@@ -17,7 +17,7 @@
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
     {
-      "line": "only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,",
+      "line": "only spawning chips is Claude-Code specific. Exit codes: 0 ok, 1 error, 2 bad",
       "reason": "Describes behaviour of the fleet CLI (pinned by tests/fleet-cli.test.mjs) or is an instruction to the AGENT; the closed oracle registry has no recipe that builds a multi-session git repo, so no gate can be bound — see the contract-level reason. Not an enforcement claim about this skill file itself."
     },
     {

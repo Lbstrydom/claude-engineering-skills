@@ -16,18 +16,19 @@ import path from 'node:path';
 import { ArgvError } from '../cli-io.mjs';
 import { exitCodeForSignal, runUnderLease } from './lease-run.mjs';
 import { runChild, describeSpawnFailure } from './lease-spawn.mjs';
+import { sampleTree } from './lease-cpu.mjs';
 import { failed, ok, refused, selfId } from './commands.mjs';
 import { gitCommonDir, runGit } from './git-facts.mjs';
 import {
   LIMITS, LeaseConfigError, measureSlotWaits, repoLabel, decideAcquire, decideAnnounce, decideAttach, decideClearWindow, decideGrant, decideRelease, decideTurnConfig, decideWait, defaultProbe,
-  formatPeakRange, machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable, renderLog, renderStatus, repoKeyOf, summarise,
+  formatPeakRange, machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable, renderLog, renderStatus, repoKeyOf, stuckLines, summarise,
   transactLease, turnKeptText,
 } from './lease.mjs';
 
 export const SUBS = Object.freeze(['acquire', 'attach', 'release', 'status', 'announce', 'peak', 'wait', 'log', 'grant', 'turn', 'run']);
 
 /** The flags each sub-command accepts (besides `--json`); anything else is an argument error, never ignored. */
-const ALLOWED = Object.freeze({
+export const ALLOWED = Object.freeze({
   acquire: ['--kind', '--for', '--pid', '--token', '--note', '--id'],
   attach: ['--pid', '--token', '--id'],
   release: ['--token', '--id', '--force', '--reason', '--end-turn'],
@@ -108,7 +109,7 @@ async function cmdRun(ctx, flags, positionals, { dir, repo }) {
   const t0 = ctx.now.getTime(); const r0 = Date.now();
   const res = await runUnderLease({
     dir, identity: { repoKey: repo.repoKey, holder: String(selfId(ctx, flags)) }, repo: repo.repo, kind: text(flags['--kind']), forMin,
-    note: text(flags['--note']), waitMin, endTurn: flags['--end-turn'] === true, cmdName: ctx.cmd, log: say,
+    note: text(flags['--note']), waitMin, ceilingMin: timeoutMin, endTurn: flags['--end-turn'] === true, cmdName: ctx.cmd, log: say,
     pollMs: Number(ctx.env.FLEET_LEASE_POLL_MS) > 0 ? Number(ctx.env.FLEET_LEASE_POLL_MS) : undefined, // a test seam for the wait loop's interval only
     now: () => new Date(t0 + (Date.now() - r0)),
   }, ({ attach, signal }) => runChild({ cmd, args, signal, timeoutMs: timeoutMin ? timeoutMin * 60_000 : undefined, onSpawn: attach }));
@@ -181,10 +182,12 @@ export function cmdLease(ctx, flags, positionals) {
   if (sub === 'status') {
     const read = readLease(dir);
     const s = summarise(read, ctx.now, probe);
-    const lines = renderStatus(s, { dir, now: ctx.now, repoKey: repo.repoKey, cmd: ctx.cmd });
     // An unreadable or newer-version lease was not measured: a script reading the exit code must not take that for "free".
-    if (!s.measured) return failed(lines.join('\n'), { sub, dir, lease: s });
-    return ok({ sub, dir, lease: s, text: lines.join('\n') });
+    if (!s.measured) return failed(renderStatus(s, { dir, now: ctx.now, repoKey: repo.repoKey, cmd: ctx.cmd }).join('\n'), { sub, dir, lease: s });
+    return holderTree(s, probe, ctx.env).then((tree) => {
+      const lines = renderStatus(s, { dir, now: ctx.now, repoKey: repo.repoKey, cmd: ctx.cmd, tree });
+      return ok({ sub, dir, lease: s, ...(tree ? { tree } : {}), text: lines.join('\n') });
+    });
   }
 
   // `peak` is machine-wide config and attributes nothing to a session, so it needs no session identity (and takes no --id).
@@ -359,4 +362,26 @@ export function leaseForNext(ctx) {
       lease: { state: 'unreadable', measured: false, reason },
     };
   }
+}
+
+/** The checkpoint footer's lease line: ONLY a stuck slot (`stuckLines`); silent otherwise and on any error (a footer never fails a verb). */
+export function leaseStuckFooter(ctx) {
+  try {
+    const read = readLease(machineDir(ctx.env));
+    return stuckLines(summarise(read, ctx.now, defaultProbe()), { cmd: ctx.cmd });
+  } catch { return []; }
+}
+
+/**
+ * `lease status`'s view of the holder's process tree, sampled live over `FLEET_LEASE_SAMPLE_MS` (default 5000; 0 skips it).
+ * Only a held or expired slot with a pid recorded in THIS process scope is sampled: another scope's pid names some other
+ * machine's (or WSL's) process. null = not sampled (nothing printed).
+ */
+export async function holderTree(s, probe, env = process.env, { sample = sampleTree } = {}) {
+  const h = s.holder;
+  if (!h || s.heavy.state === 'free' || h.pid === undefined || h.scope !== probe.scope) return null;
+  const raw = env.FLEET_LEASE_SAMPLE_MS;
+  const sampleMs = raw === undefined ? 5_000 : Number(raw);
+  if (!Number.isFinite(sampleMs) || sampleMs <= 0) return null;
+  try { return await sample(h.pid, { sampleMs }); } catch (e) { return { measured: false, reason: e.message }; }
 }

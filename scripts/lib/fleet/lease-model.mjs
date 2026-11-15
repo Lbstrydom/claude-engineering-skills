@@ -42,6 +42,12 @@ export const LIMITS = Object.freeze({
   claimMs: 15 * MIN,
   /** `fleet next` mentions a window that is active or starts within this long. */
   nextHorizonMs: 4 * HOUR,
+  /** `lease run`'s heartbeat: every `heartbeatMs` while its job runs, the lease is renewed to now + `heartbeatRenewMs`, never past
+   *  the run's ceiling (`--timeout`, else `heartbeatMaxMs`). A tree idle for `treeIdleMs` stops renewing, so only a lost or hung run
+   *  ever expires — and a person, never a waiter, decides to force it. */
+  heartbeatMs: MIN, heartbeatRenewMs: 10 * MIN, heartbeatMaxMs: 12 * HOUR, treeIdleMs: 30 * MIN,
+  /** Past this many refusals of one waiter on an expired slot, `fleet next` and the checkpoint footer name the holder. */
+  stuckRefusals: 20,
 });
 
 export class LeaseConfigError extends Error {
@@ -103,6 +109,9 @@ export const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM
 const HeavySchema = z.object({
   holder: label, repoKey: hex(12), repo: label, kind: z.enum(KINDS), note: note.optional(),
   scope: name, pid: z.number().int().positive().optional(), token: hex(16), startedAt: iso, expiresAt: iso,
+  noteAt: iso.optional(),
+  /** The last `lease run` heartbeat: when, the tree's CPU then, and when that CPU last moved (absent = never measured). */
+  beat: z.object({ at: iso, cpuMs: z.number().nonnegative().optional(), procs: z.string().max(64).optional(), sampledAt: iso.optional(), cpuMovedAt: iso.optional(), renewing: z.boolean() }).passthrough().optional(),
 }).passthrough().refine((h) => Date.parse(h.startedAt) <= Date.parse(h.expiresAt), { message: 'startedAt is after expiresAt' });
 const GapSchema = z.object({ from: iso, until: iso, toRepoKey: hex(12).optional(), toRepo: label.optional(), grantedAt: iso, by: name }).passthrough()
   .refine((g) => Date.parse(g.from) < Date.parse(g.until), { message: 'gap from is not before until' })

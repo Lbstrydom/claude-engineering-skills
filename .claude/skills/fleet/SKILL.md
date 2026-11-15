@@ -67,8 +67,8 @@ committed. Anything not queried (no `gh`, offline) is printed as `not queried
 
 Run the CLI as `node scripts/fleet.mjs <verb> ...` (a consumer repo's sync
 relocates it under `scripts/.claude-skills/`). It works the same on every host;
-only spawning chips below is Claude-Code specific. Exit codes: 0 ok, 1 error,
-2 bad arguments, 3 blocked or refused. Add `--json` to parse results.
+only spawning chips is Claude-Code specific. Exit codes: 0 ok, 1 error, 2 bad
+args, 3 blocked/refused, 4 a train ran red (land). `--json` to parse.
 
 ## The morning journey
 

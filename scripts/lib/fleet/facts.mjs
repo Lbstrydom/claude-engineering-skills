@@ -20,7 +20,7 @@ import { ghBatch } from './gh-batch.mjs';
 import { ConfigError } from './config.mjs';
 import { fleetDir, readSessions, readHold, listTrains } from './registry.mjs';
 import {
-  DEFAULT_LEASE_MS, buildStatus, checkBlocksApproval, idleMsFrom, isIdleTip, liveness,
+  DEFAULT_LEASE_MS, buildStatus, checkBlocksApproval, idleMsFrom, isIdleTip, liveness, mergedDone, workRemainingIn, worktreeOf,
 } from './overlap.mjs';
 import { buildCheckPayload, resultsToFindings, runChecks } from './checks.mjs';
 import { CLEAN_PROBE, probeWorktrees, uncommittedPaths, worktreeStatus } from './worktree-status.mjs';
@@ -463,6 +463,13 @@ export function evidenceKey(session, facts) {
 /**
  * The `others` argument of `decideClaim`: each non-self session with its
  * liveness (lease OR observed branch activity) and observed changed files.
+ *
+ * A session whose committed work is MERGED and whose worktree is proven clean (`mergedDone`, the predicate
+ * `status` uses to show it `[done]`) is not live work, whatever its lease says: it reads `live:false` with
+ * `finished` naming why, so a merged-but-unreleased claim never blocks a new one (consumer report 2026-11-15:
+ * BLOCKED until a manual `release`, while `status` showed it done). Merged but dirty or uninspected stays live
+ * and carries `mergedNote`, so the BLOCKED text can say so. Needs `facts.merged.evidence` for the branch
+ * (see `withMergedEvidence`); without it nothing changes.
  */
 export function othersFor(facts, selfId, now, sessions = facts.registry.sessions) {
   const tipOf = new Map((facts.branches?.branches ?? []).map((b) => [b.name, b.tipTime]));
@@ -471,9 +478,27 @@ export function othersFor(facts, selfId, now, sessions = facts.registry.sessions
     const k = evidenceKey(s, facts);
     const live = liveness(s, { now, leaseMs: facts.leaseMs, tipCommitAt: b ? tipOf.get(b) ?? null : null }).live;
     const u = b ? facts.uncommitted?.[b] : undefined;
+    const merged = b ? facts.merged?.evidence?.[b] : undefined;
+    const wt = facts.worktrees?.queried ? worktreeOf(facts.worktrees.worktrees ?? [], s.worktree, b) : null;
+    const md = merged?.merged ? mergedDone(merged, workRemainingIn(facts, b ?? null, wt)) : null;
     return {
-      session: s, live, changedFiles: k && facts.changed?.[k]?.queried ? facts.changed[k].files : [],
+      session: s, live: live && !md?.done, changedFiles: k && facts.changed?.[k]?.queried ? facts.changed[k].files : [],
       uncommittedFiles: u?.queried ? u.files : [], ...(u && !u.queried ? { uncommittedUnknown: u.reason } : {}),
+      ...(live && md?.done ? { finished: md.note } : {}), ...(md && !md.done ? { mergedNote: md.note } : {}),
     };
   });
+}
+
+/**
+ * `facts` with merged evidence for the named branches added (`gatherMerged`, the same evidence `status` reads). A
+ * session-only verb asks it only for the branches it needs — `claim` for the holders of a blocking overlap — so the
+ * common no-conflict path makes no `gh` call. Branches already judged are kept. An unreachable source is not an error here
+ * (`gatherMerged` records it as `known:false`, and the holder stays live); a programming error propagates, never swallowed.
+ */
+export function withMergedEvidence(facts, { cwd, env, names }) {
+  const want = [...new Set(names.filter(Boolean))].filter((n) => !facts.merged?.evidence?.[n]);
+  if (!want.length) return facts;
+  const baseRev = facts.base?.measure?.ok ? facts.base.measure.oid : facts.base?.name;
+  const got = gatherMerged({ cwd, base: facts.base?.name, baseRev, names: want, branches: facts.branches, patchIds: facts.patchIds, env });
+  return { ...facts, merged: { ...(facts.merged ?? {}), ...got, evidence: { ...(facts.merged?.evidence ?? {}), ...got.evidence } } };
 }

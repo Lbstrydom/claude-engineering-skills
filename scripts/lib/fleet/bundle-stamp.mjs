@@ -53,3 +53,17 @@ export function staleBundleWarning({ scriptDir }, { top = repoToplevel, common =
   if (mine.at !== null && theirs.at !== null && mine.at >= theirs.at) return null; // newer or equal here
   return `fleet: this worktree's synced tooling (${String(mine.commitSha ?? '?').slice(0, 12)}) is older than the main checkout's (${String(theirs.commitSha ?? '?').slice(0, 12)}) — run ${HYDRATE_HINT}`;
 }
+
+/**
+ * A claim bound to a worktree that has NO synced tooling, in a consumer layout (this CLI runs as `scripts/.claude-skills/fleet.mjs`):
+ * the tree is gitignored, so `git worktree add` never populates it and the session's first `node scripts/.claude-skills/...`
+ * dies on MODULE_NOT_FOUND (consumer report 2026-11-15). The exact command, or null. A warning, not a refusal: the claim is
+ * still the coordination record the fleet needs, and hydrating changes the worktree, which is the session's to do.
+ * @param {{scriptDir: string, worktree: string|null}} a
+ */
+export function missingToolingWarning({ scriptDir, worktree }, { exists = fs.existsSync } = {}) {
+  const dir = path.resolve(scriptDir);
+  if (!worktree || path.basename(dir) !== SYNCED_DIR || path.basename(path.dirname(dir)) !== 'scripts') return null;
+  if (exists(path.join(worktree, 'scripts', SYNCED_DIR, 'fleet.mjs'))) return null;
+  return `${worktree} has no synced tooling (scripts/${SYNCED_DIR}/ is gitignored, so a new worktree lacks it): run \`${HYDRATE_HINT}\` in that worktree before any other fleet or audit command`;
+}

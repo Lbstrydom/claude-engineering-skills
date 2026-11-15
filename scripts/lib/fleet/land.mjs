@@ -14,6 +14,7 @@ import { buildStatusFrom, gatherFacts, payloadFromStatus } from './facts.mjs';
 import { abandonTrain, branchOfRef, buildTrain, defaultDeps, resumeTrain, withTrainLock } from './train.mjs';
 import { approveTrain, confirmTrain, reconcileTrain } from './train-approve.mjs';
 import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
+import { redTierLines } from './tier-failure.mjs';
 import {
   renderAbandon, renderApprove, renderBuilt, renderConfirm, renderDryRun, renderReconcile, renderSerial,
 } from './render-train.mjs';
@@ -98,10 +99,16 @@ export function parseSelect(v) {
   return ids;
 }
 
+/**
+ * A built (or resumed) train's verb result. A train whose tiers RAN and went red is its own outcome, `red` (exit 4), with the
+ * runner's failure summary printed — never folded into `refused` (exit 3), which means nothing ran or it was not allowed.
+ */
 function finishBuilt(r, cmd) {
-  const text = renderBuilt({ train: r.train, approvability: r.approvability, cmd });
+  const red = r.train.result === 'red';
+  const text = [renderBuilt({ train: r.train, approvability: r.approvability, cmd }), ...(red ? redTierLines(r.train) : [])].join('\n');
   const usable = r.approvability.ok || r.approvability.needsAcceptRerun === true;
-  return { ...r, ok: usable, code: usable ? 'ok' : 'refused', reason: usable ? undefined : r.approvability.reason, trainId: r.train.trainId, text };
+  const code = usable ? 'ok' : red ? 'red' : 'refused';
+  return { ...r, ok: usable, code, reason: usable ? undefined : r.approvability.reason, trainId: r.train.trainId, text };
 }
 
 function build(ctx, flags, deps) {
