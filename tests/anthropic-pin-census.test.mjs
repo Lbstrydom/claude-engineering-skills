@@ -1145,3 +1145,63 @@ export async function go(req) {
       'so the message must branch on it rather than interpolate an empty list');
   });
 });
+
+// ── The final review's dismissals, PROVEN rather than argued (2026-11-15) ──
+//
+// The gate's last pass raised two fail-open claims against `indirectPinHolds`
+// and `argRestsOnFactory`. Both were dismissed — but a dismissal written as
+// prose is a claim about code that nothing re-checks, and this module has
+// already had four rounds of "the analysis looks right". So each dismissal is
+// a probe here instead. If one of them ever becomes true, this suite says so
+// rather than a future reader having to re-derive the argument.
+describe('the claimed indirect-pin fail-opens, as probes', () => {
+  const SEAM = "import { createAnthropicClient } from './anthropic-client.mjs';";
+  const sdk = 'function o() { return { backend: \'sdk\' }; }';
+
+  it('a factory that returns `cli` is NOT a pin', () => {
+    const src = `${SEAM}\nfunction o() { return { backend: 'cli' }; }\nexport const f = () => createAnthropicClient(o());`;
+    assert.equal(indirectPinHolds(src, 'o').pinned, false,
+      "`pinned` means the literal sdk backend, not merely a resolvable one");
+  });
+
+  it('an explicit cli construction BESIDE the factory breaks the claim', () => {
+    const src = `${SEAM}\n${sdk}\nexport const a = () => createAnthropicClient(o());`
+      + "\nexport const b = () => createAnthropicClient({ backend: 'cli' });";
+    assert.equal(indirectPinHolds(src, 'o').used, false,
+      'every unpinned construction in the file must rest on the factory, not just one');
+  });
+
+  it('a `backend` key BEFORE the spread disqualifies it, exactly as after', () => {
+    const src = `${SEAM}\n${sdk}\nexport const f = () => createAnthropicClient({ backend: 'cli', ...o() });`;
+    assert.equal(indirectPinHolds(src, 'o').used, false,
+      'position is irrelevant — ANY backend property disqualifies, so there is no ordering hole');
+  });
+
+  // POSITIVE CONTROL: spreading the same pinned factory twice is harmless and
+  // must still hold, or the three above would be passing because the claim is
+  // never satisfiable.
+  it('spreading the SAME pinned factory twice still holds', () => {
+    const src = `${SEAM}\n${sdk}\nexport const f = () => createAnthropicClient({ ...o(), ...o() });`;
+    const held = indirectPinHolds(src, 'o');
+    assert.equal(held.pinned, true);
+    assert.equal(held.used, true);
+  });
+
+  // And the corpus pre-filter: `check-anthropic-pins.mjs` skips a file that does
+  // not contain the literal `createAnthropicClient`, which the review twice
+  // called a gap for namespace imports. Every binding form the census
+  // recognises derives from that literal APPEARING, so the filter cannot hide
+  // one — asserted over the shapes rather than asserted in a comment.
+  it('every recognised binding form contains the literal the pre-filter looks for', () => {
+    const shapes = [
+      "import * as ns from './anthropic-client.mjs';\nexport const f = () => ns.createAnthropicClient({});",
+      "import { createAnthropicClient as mk } from './anthropic-client.mjs';\nexport const f = () => mk({});",
+      "const { createAnthropicClient: mk } = await import('./anthropic-client.mjs');\nexport const f = () => mk({});",
+      "import * as ns from './anthropic-client.mjs';\nconst mk = ns.createAnthropicClient;\nexport const f = () => mk({});",
+    ];
+    for (const src of shapes) {
+      assert.ok(src.includes('createAnthropicClient'),
+        'the pre-filter would skip this file, and the census would never see it');
+    }
+  });
+});

@@ -23,9 +23,9 @@ time, so the count went UP.
 | Findings total | 135 across 7 rounds |
 | File coverage | `complete` every round |
 | R7 adjudication | 20 accepted · 7 dismissed · 5 deferred · 32/32 ledgered · 5/5 deferrals captured |
-| Final gate | **7 disjoint batches over all 41 changed files** — 4 APPROVE, 3 CONCERNS (`approve_with_debt`), **0 blocking**, 5 new findings, 0 wrongly dismissed |
-| Gate code coverage | **FULL on 6 of 7 batches** (see below) |
-| Local gate | `guards:preflight` PASS, 36 steps, 2731 tests |
+| Final gate | **8 disjoint batches over all 41 changed files** — 7 APPROVE, 1 CONCERNS (`approve_with_debt`), **0 blocking**, 0 wrongly dismissed |
+| Gate code coverage | **FULL on all 8 batches** — no changed line went unshown |
+| Local gate | `guards:preflight` PASS, 36 steps, 2733 tests |
 
 ### Why the final review is seven calls, not one
 
@@ -71,6 +71,43 @@ What changed across the rounds is the argument for stopping:
   needs dataflow and is now declared rather than patched.
 
 The defect CLASS is converging even though the count is not.
+
+## What the final gate found, and what was done with it
+
+First pass, 7 batches: 5 new findings, 0 blocking. One batch (the census pair)
+came back PARTIAL at 926 unshown lines — the same budget arithmetic one level
+down — so it was split and re-run. Second pass of the four affected batches:
+**FULL coverage everywhere, 0 blocking.**
+
+**Fixed** — four, of which one was a genuine silent failure:
+
+| | |
+|---|---|
+| `verdict.unparsed` never printed | `auditPinCensus` sets `ok: false` on it, so the gate exited 1 with **nothing on stderr explaining itself**, on exactly the file most likely to be mid-edit. Now reported, and asserted MECHANICALLY from the verdict's own keys — a hand-written list would be maintained by whoever forgot the loop |
+| Rule A's empty `params` | fires on a spread or computed key, and the message interpolated the empty list: ``passes ``,``, naming nothing, for the case a reader most needs told apart |
+| `summarise.mjs` exits after stdout | `process.exit(1)` after `emit()` discards unflushed bytes on a piped stdout. `stdout:flush:gate` reported "at baseline" over a corpus that walks `scripts/*.mjs` and **never descends into `scripts/symbol-index/`** |
+| stale round-6 claims | the plan and this summary still said the audit stopped at R6 and the post-R6 fixes were unaudited — true when written, false after R7 |
+
+**Dismissed — and the dismissals are PROBES, not prose.** A dismissal written as
+an argument is a claim about code that nothing re-checks, and this module has
+already had four rounds of "the analysis looks right". Each is now a test
+([anthropic-pin-census.test.mjs](../../tests/anthropic-pin-census.test.mjs)), so
+if one ever becomes true the suite says so:
+
+- a factory returning `backend: 'cli'` is not a pin (`pinned: false`)
+- an explicit cli construction beside the factory breaks the claim (`used: false`)
+- a `backend` key BEFORE the spread disqualifies it exactly as after — there is
+  no ordering hole, because any occurrence disqualifies
+- the corpus pre-filter cannot hide a namespace import: every binding form the
+  census recognises derives from the literal `createAnthropicClient` appearing
+  in the file (raised twice, dismissed twice, now asserted over all four shapes)
+
+**Deferred, LOW**: `normaliseArgText` tracks quote state with one variable, so a
+nested template literal (`` `${`x`}` ``) closes the outer quote early and inverts
+the state for the rest of the span. Real, and its only effect is a digest
+collision — a MISSED drift, never a false alarm — in an options object where
+nested templates do not occur. Proper handling needs the parser's token stream,
+which is the same answer as the regex-literal limit recorded in §7.13.
 
 ## Not verified / stated plainly
 
