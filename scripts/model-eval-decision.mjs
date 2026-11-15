@@ -11,6 +11,7 @@
  *   node scripts/model-eval-decision.mjs run --phase main --reps 4 --cap-usd 40 --confirm-main
  *   node scripts/model-eval-decision.mjs report --run-id variance
  *   node scripts/model-eval-decision.mjs spot-agree --run-id main
+ *   node scripts/model-eval-decision.mjs cross-grade --run-id main --cap-usd 25 --budget-scope main --confirm-cross-grade
  *
  * Every arm call goes through createAnthropicClient({backend:'sdk'}) — passed
  * explicitly, never the ambient CLAUDE_BACKEND (the cli backend drops options
@@ -33,10 +34,13 @@ import { armPromptHash } from './lib/model-eval/decision/arm.mjs';
 import { judgePromptHash } from './lib/model-eval/decision/judge.mjs';
 import { runDecisionEval, buildSummary, PHASES } from './lib/model-eval/decision/runner.mjs';
 import { renderSpotSample, parseSpotAgreement } from './lib/model-eval/decision/spot-sample.mjs';
-import { sumScopeSpend } from './lib/model-eval/decision/meter.mjs';
+import { sumScopeSpend, createMeter } from './lib/model-eval/decision/meter.mjs';
+import { DECISION_EVAL_CONTRACT_EPOCH } from './lib/model-eval/decision/corpus.mjs';
+import { runCrossGrade, evaluateCrossGrade, makeGeminiInvoker, GEMINI_MAX_OUTPUT_TOKENS } from './lib/model-eval/decision/cross-grade.mjs';
+import { DEFAULT_JUDGE_MAX_OUTPUT_TOKENS } from './lib/model-eval/decision/judge.mjs';
 
 export const DEFAULT_ROOT = path.join('docs', 'research', 'fable-vs-opus-decision-eval');
-const KNOWN_FLAGS = ['--budget-scope', '--phase', '--cap-usd', '--reps', '--seed', '--run-id', '--root', '--confirm-main', '--judge-reasoning'];
+const KNOWN_FLAGS = ['--confirm-cross-grade', '--budget-scope', '--phase', '--cap-usd', '--reps', '--seed', '--run-id', '--root', '--confirm-main', '--judge-reasoning'];
 
 function flag(argv, name) { const i = argv.indexOf(name); if (i < 0) return undefined; const v = argv[i + 1]; return v && !v.startsWith('--') ? v : ''; }
 function has(argv, name) { return argv.includes(name); }
@@ -86,6 +90,26 @@ export function scanArtifacts(runDir, scan, env = process.env) {
   return { secretFindings, privateTermHits, privacyTermsConfigured, safeToCommit: privacyTermsConfigured && secretFindings.length === 0 && privateTermHits === 0 };
 }
 
+/**
+ * One process per budget scope (plan audit R3 H2): an exclusive lock file,
+ * released on any exit this process controls. A KILLED process leaves it
+ * behind on purpose — the next run refuses until a human has reconciled the
+ * dead run's open reservation (already charged at worst case by
+ * sumScopeSpend) and removed the lock. Shared by `run` and `cross-grade`.
+ */
+async function withScopeLock(root, budgetScope, runId, fn) {
+  fs.mkdirSync(path.join(root, 'runs'), { recursive: true });
+  const lockPath = path.join(root, 'runs', `.budget-${budgetScope}.lock`);
+  let lockFd;
+  try { lockFd = fs.openSync(lockPath, 'wx'); } catch (err) {
+    if (err.code === 'EEXIST') throw new RunPreflightError('scope_locked', `${lockPath} exists — another run holds budget scope "${budgetScope}", or one crashed; reconcile its open reservation, then delete the lock`);
+    throw err;
+  }
+  fs.writeSync(lockFd, JSON.stringify({ runId, pid: process.pid }));
+  fs.closeSync(lockFd);
+  try { return await fn(); } finally { fs.unlinkSync(lockPath); }
+}
+
 async function cmdFreeze(root) {
   const m = freezeManifest(path.join(root, 'corpus'), { promptHashes: promptHashes() });
   process.stdout.write(`frozen ${Object.keys(m.cases).length} case(s), corpus ${m.corpusSha256.slice(0, 12)}, epoch ${m.contractEpoch}\n`);
@@ -132,20 +156,7 @@ async function cmdRun(argv, root) {
   // behind on purpose — the next run refuses until a human has reconciled the
   // dead run's open reservation (already charged at worst case by
   // sumScopeSpend) and removed the lock.
-  fs.mkdirSync(path.join(root, 'runs'), { recursive: true });
-  const lockPath = path.join(root, 'runs', `.budget-${budgetScope}.lock`);
-  let lockFd;
-  try { lockFd = fs.openSync(lockPath, 'wx'); } catch (err) {
-    if (err.code === 'EEXIST') throw new RunPreflightError('scope_locked', `${lockPath} exists — another run holds budget scope "${budgetScope}", or one crashed; reconcile its open reservation, then delete the lock`);
-    throw err;
-  }
-  fs.writeSync(lockFd, JSON.stringify({ runId, pid: process.pid }));
-  fs.closeSync(lockFd);
-  try {
-    return await runLocked();
-  } finally {
-    fs.unlinkSync(lockPath);
-  }
+  return withScopeLock(root, budgetScope, runId, runLocked);
 
   async function runLocked() {
   // Everything that reads shared state happens UNDER the lock: reading the ledger
@@ -206,16 +217,21 @@ async function cmdReport(argv, root) {
   const calls = readJsonl(path.join(runDir, 'calls.jsonl'));
   const grades = readJsonl(path.join(runDir, 'grades.jsonl'));
   const ledger = readJsonl(path.join(runDir, 'ledger.jsonl'));
+  // cross-grade appends its own rows (runId `<runId>-xgrade`) to this ledger: the run's spend is its own rows only.
+  const ownLedger = ledger.filter((r) => r.runId === runId);
   const items = [
     ...calls.filter((r) => r.gradeId).map((r) => ({ gradeId: r.gradeId, kind: 'arm', caseId: r.caseId, rep: r.rep })),
     ...[...new Map(grades.filter((g) => g.kind !== 'arm').map((g) => [g.gradeId, { gradeId: g.gradeId, kind: g.kind, caseId: g.caseId, rep: g.rep }])).values()],
   ];
-  const spot = fs.existsSync(path.join(runDir, 'spot-sample.md')) ? parseSpotAgreement(fs.readFileSync(path.join(runDir, 'spot-sample.md'), 'utf8'), { expectedIds: prior.spotSampleIds }) : null;
+  // Pre-registered 2026-11-15T15:52Z: the two cross-vendor graders replace the human marks.
+  const cross = fs.existsSync(path.join(runDir, 'cross-grades.jsonl')) ? crossEvaluation(runDir, prior, grades, cases) : null;
+  const spot = cross ? { source: 'cross-grade', agreement: cross.spotAgreement, certified: cross.certified, exceptions: cross.exceptions, sampleSize: cross.sampleSize }
+    : fs.existsSync(path.join(runDir, 'spot-sample.md')) ? parseSpotAgreement(fs.readFileSync(path.join(runDir, 'spot-sample.md'), 'utf8'), { expectedIds: prior.spotSampleIds }) : null;
   const d = prior.design;
   const summary = buildSummary({
     phase: prior.phase, runId, manifest, cases, arms: d.arms, reps: d.reps, seed: d.seed, effort: d.effort, maxTokens: d.maxTokens,
     judgeModel: d.judgeModel, judgeReasoning: d.judgeReasoning, gitSha: prior.gitSha, calls, grades, items,
-    spentUsd: ledger.length ? ledger[ledger.length - 1].spentUsd : (prior.spend.scopeSpentBeforeUsd ?? 0), capUsd: prior.spend.capUsd, stop: prior.stop,
+    spentUsd: ownLedger.length ? ownLedger[ownLedger.length - 1].spentUsd : (prior.spend.scopeSpentBeforeUsd ?? 0), capUsd: prior.spend.capUsd, stop: prior.stop,
     budgetScope: prior.spend.budgetScope ?? null, scopeSpentBeforeUsd: prior.spend.scopeSpentBeforeUsd ?? 0,
     spotAgreement: spot?.agreement ?? undefined,
   });
@@ -241,6 +257,89 @@ async function cmdSpotAgree(argv, root) {
   return 0;
 }
 
+const CROSS_GRADERS = ['gpt', 'gemini'];
+
+/** Cross-grader controls: every case's frozen gold and trap answers. */
+function crossControls(cases) {
+  return cases.flatMap((c) => [
+    { gradeId: `xc-${c.id}-gold`, kind: 'control-gold', caseId: c.id, text: c.controls.gold },
+    { gradeId: `xc-${c.id}-trap`, kind: 'control-trap', caseId: c.id, text: c.controls.trap },
+  ]);
+}
+
+function crossEvaluation(runDir, summary, grades, cases) {
+  const ev = evaluateCrossGrade({
+    rows: readJsonl(path.join(runDir, 'cross-grades.jsonl')), primaryGrades: grades.filter((g) => g.kind === 'arm'),
+    sampleIds: summary.spotSampleIds, graders: CROSS_GRADERS, controlsExpected: crossControls(cases).length,
+  });
+  const prev = fs.existsSync(path.join(runDir, 'cross-grade.json')) ? JSON.parse(fs.readFileSync(path.join(runDir, 'cross-grade.json'), 'utf8')) : {};
+  // Spend, stop and the artifact scan are written by the spending run; a recompute keeps them.
+  for (const k of ['spend', 'stop', 'artifactScan']) if (prev[k] !== undefined) ev[k] = prev[k];
+  fs.writeFileSync(path.join(runDir, 'cross-grade.json'), JSON.stringify(ev, null, 2) + '\n');
+  return ev;
+}
+
+/** Re-grade the main run's persisted spot sample with GPT + Gemini (pre-registered 2026-11-15T15:52Z). */
+async function cmdCrossGrade(argv, root) {
+  const runId = flag(argv, '--run-id');
+  if (!runId) throw new RunPreflightError('bad_arg', '--run-id required');
+  assertSafeName('--run-id', runId);
+  const capUsd = Number(flag(argv, '--cap-usd'));
+  if (!Number.isFinite(capUsd) || capUsd <= 0) throw new RunPreflightError('bad_arg', '--cap-usd <positive USD> is required');
+  const budgetScope = flag(argv, '--budget-scope');
+  if (!budgetScope) throw new RunPreflightError('bad_arg', '--budget-scope required (the scope of the main run)');
+  assertSafeName('--budget-scope', budgetScope);
+  if (!has(argv, '--confirm-cross-grade')) throw new RunPreflightError('bad_arg', 'cross-grade spends: pass --confirm-cross-grade');
+  const runDir = path.join(root, 'runs', runId);
+  const summaryPath = path.join(runDir, 'summary.json');
+  if (!fs.existsSync(summaryPath)) throw new RunPreflightError('bad_arg', `${summaryPath} missing — finish the run first`);
+  const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+  if (summary.phase !== 'main') throw new RunPreflightError('bad_arg', 'cross-grade is pre-registered for the main run only');
+  if (!Array.isArray(summary.spotSampleIds) || summary.spotSampleIds.length === 0) throw new RunPreflightError('bad_arg', 'summary has no spot sample');
+  const outPath = path.join(runDir, 'cross-grades.jsonl');
+  if (fs.existsSync(outPath)) throw new RunPreflightError('run_exists', `${outPath} exists — evidence is append-only`);
+  const { cases } = loadCorpus(path.join(root, 'corpus'), { promptHashes: promptHashes() });
+  const missing = ['OPENAI_API_KEY', 'GEMINI_API_KEY'].filter((k) => !process.env[k]);
+  if (missing.length) throw new RunPreflightError('missing_credentials', `missing ${missing.join(', ')} — nothing was spent`);
+
+  const { createOpenAIClient } = await import('./lib/openai-client.mjs');
+  const { resolveModel } = await import('./lib/model-resolver.mjs');
+  const { assertEgressSafe, scanEgressPayload } = await import('./lib/sensitive-egress-gate.mjs');
+  const { zodTextFormat } = await import('openai/helpers/zod');
+  const { GoogleGenAI } = await import('@google/genai');
+  const { zodToGeminiSchema } = await import('./lib/schemas.mjs');
+  const graders = [
+    { name: 'gpt', model: resolveModel('latest-gpt', { silent: true }), client: await createOpenAIClient({ purpose: 'gpt' }), maxOutputTokens: DEFAULT_JUDGE_MAX_OUTPUT_TOKENS },
+    { name: 'gemini', model: resolveModel('latest-pro', { silent: true }), invoke: makeGeminiInvoker({ genai: new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }), toGeminiSchema: zodToGeminiSchema }), maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS, reasoningEffort: null },
+  ];
+  const calls = readJsonl(path.join(runDir, 'calls.jsonl'));
+  const sample = summary.spotSampleIds.map((gid) => { const r = calls.find((x) => x.gradeId === gid); return { gradeId: gid, kind: 'arm', caseId: r.caseId, text: r.text }; });
+  const caseById = Object.fromEntries(cases.map((c) => [c.id, c]));
+  const xRunId = `${runId}-xgrade`;
+
+  return withScopeLock(root, budgetScope, xRunId, async () => {
+    const initialSpentUsd = sumScopeSpend(allLedgerRows(root), budgetScope);
+    if (initialSpentUsd >= capUsd) throw new RunPreflightError('budget_exhausted', `budget scope "${budgetScope}" already spent ${initialSpentUsd.toFixed(4)} of ${capUsd}`);
+    const meter = createMeter({ capUsd, initialSpentUsd, contractEpoch: DECISION_EVAL_CONTRACT_EPOCH,
+      append: (row) => fs.appendFileSync(path.join(runDir, 'ledger.jsonl'), JSON.stringify({ runId: xRunId, budgetScope, ...row }) + '\n') });
+    const { stop } = await runCrossGrade({
+      graders, controls: crossControls(cases), sample, caseById, meter, epoch: DECISION_EVAL_CONTRACT_EPOCH, runId: xRunId,
+      zodTextFormat, assertEgressSafe, sink: (row) => fs.appendFileSync(outPath, JSON.stringify(row) + '\n'),
+      log: (m) => process.stderr.write(`  [decision-eval:xgrade] ${m}\n`),
+    });
+    const grades = readJsonl(path.join(runDir, 'grades.jsonl'));
+    const ev = crossEvaluation(runDir, summary, grades, cases);
+    ev.spend = { runSpentUsd: +(meter.spentUsd - initialSpentUsd).toFixed(4), scopeSpentUsd: +meter.spentUsd.toFixed(4), capUsd, budgetScope };
+    ev.stop = stop;
+    fs.writeFileSync(path.join(runDir, 'cross-grade.json'), JSON.stringify(ev, null, 2) + '\n');
+    ev.artifactScan = scanArtifacts(runDir, scanEgressPayload);
+    fs.writeFileSync(path.join(runDir, 'cross-grade.json'), JSON.stringify(ev, null, 2) + '\n');
+    const ctl = CROSS_GRADERS.map((g) => `${g} ${ev.graderControls[g].passed}/${ev.graderControls[g].graded}`).join(', ');
+    process.stdout.write(`[decision-eval:xgrade] ${runId}: controls ${ctl}; exceptions ${ev.exceptions}/${ev.sampleSize}; certified=${ev.certified}; spent ${ev.spend.runSpentUsd} (scope ${ev.spend.scopeSpentUsd} / ${capUsd})${stop ? `; STOP ${stop.kind}: ${stop.message}` : ''}\n`);
+    return stop?.kind === 'BudgetStop' ? BUDGET_STOPPED_EXIT_CODE : (stop ? 1 : 0);
+  });
+}
+
 export async function main(argv = process.argv) {
   const sub = argv[2];
   const root = flag(argv, '--root') || DEFAULT_ROOT;
@@ -250,7 +349,8 @@ export async function main(argv = process.argv) {
     if (sub === 'run') return await cmdRun(argv, root);
     if (sub === 'report') return await cmdReport(argv, root);
     if (sub === 'spot-agree') return await cmdSpotAgree(argv, root);
-    throw new RunPreflightError('bad_arg', 'usage: model-eval-decision <freeze|run|report|spot-agree> [flags]');
+    if (sub === 'cross-grade') return await cmdCrossGrade(argv, root);
+    throw new RunPreflightError('bad_arg', 'usage: model-eval-decision <freeze|run|report|spot-agree|cross-grade> [flags]');
   } catch (err) {
     if (err instanceof RunPreflightError || err?.name === 'CorpusIntegrityError' || err?.name === 'ArgvError') {
       process.stderr.write(`[decision-eval] preflight: ${err.message}\n`);

@@ -132,7 +132,11 @@ export function verifyQuotes(grade, outputText) {
  * @returns {Promise<{status:'scored'|'unmeasured', reason:string|null, grade:object|null,
  *   attempts: Array<{usageRaw:object|null, latencyMs:number, error:string|null, rawText:string|null, served:boolean}>}>}
  */
-export async function gradeOnce({ client, model, c, outputText, reasoningEffort = DEFAULT_JUDGE_REASONING, maxOutputTokens = DEFAULT_JUDGE_MAX_OUTPUT_TOKENS, zodTextFormat, assertEgressSafe, now = () => Date.now(), hooks = {} }) {
+export async function gradeOnce({ client, model, c, outputText, reasoningEffort = DEFAULT_JUDGE_REASONING, maxOutputTokens = DEFAULT_JUDGE_MAX_OUTPUT_TOKENS, zodTextFormat, assertEgressSafe, now = () => Date.now(), hooks = {}, invoke = null }) {
+  // `invoke` swaps the transport (a non-OpenAI cross-grader) while keeping ONE grading
+  // loop: same prompt, schema, coverage check, quote check and failure taxonomy. It takes
+  // the OpenAI-shaped params and returns { output_parsed, output_text, usage, model }.
+  const call = invoke ?? ((p) => client.responses.parse(p));
   const input = buildJudgeInput({ c, outputText });
   // Egress gate BEFORE the wire: a refusal propagates (it is a stop, not a grade).
   assertEgressSafe(`${JUDGE_SYSTEM}\n${input}`, { label: 'decision-eval:judge' });
@@ -154,7 +158,7 @@ export async function gradeOnce({ client, model, c, outputText, reasoningEffort 
     const start = now();
     let resp;
     try {
-      resp = await client.responses.parse(params);
+      resp = await call(params, { schema });
     } catch (err) {
       // The SDK's own parse/finish-reason errors mean the judge ANSWERED badly
       // (truncated, filtered, unparseable): malformed, not transport.
