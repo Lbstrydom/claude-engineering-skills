@@ -170,6 +170,8 @@ export function findLocalLinks(modules, { cap = 50, maxEntries = 200_000 } = {})
       const atLevel = prefix === '' || prefix.endsWith('node_modules/');
       // pnpm's store is a directory of `<pkg>@<version>/node_modules/` trees: its entries are walked like packages.
       if (atLevel && (e.name.startsWith('@') || e.name === '.pnpm')) { queue.push([full, `${name}/`]); continue; }
+      // A directory NAMED node_modules is a level, not a package (pnpm's hoisted `.pnpm/node_modules`).
+      if (e.name === 'node_modules') { queue.push([full, `${name}/`]); continue; }
       const nested = path.join(full, 'node_modules');
       let st = null;
       try { st = fs.lstatSync(nested); } catch (err) { if (err?.code !== 'ENOENT') complete = false; }
