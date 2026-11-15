@@ -623,7 +623,9 @@ export function treeLines(tree) {
   return [
     '  process tree (start times UTC):',
     ...tree.tree.map((r) => `    ${'  '.repeat(r.depth)}pid ${r.pid} ${r.name}  started ${r.startedAt ? `${r.startedAt.slice(11, 19)}Z ${r.startedAt.slice(0, 10)}` : 'unknown'}  cpu ${secs(r.cpuMs)} s`),
-    `  tree CPU: ${tree.cpuMs > 0 ? `busy: ${secs(tree.cpuMs)} s CPU / ${secs(tree.windowMs)} s` : `no CPU in the last ${secs(tree.windowMs)} s`}`,
+    `  tree CPU: ${tree.cpuMs > 0 ? `busy: ${secs(tree.cpuMs)} s CPU / ${secs(tree.windowMs)} s`
+      : tree.started || tree.exited ? `busy: processes started (${tree.started ?? 0}) or exited (${tree.exited ?? 0}) in the last ${secs(tree.windowMs)} s`
+        : `no CPU in the last ${secs(tree.windowMs)} s`}`,
   ];
 }
 
@@ -663,9 +665,12 @@ export function decideHeartbeat(lease, req, now, { ceilingAt }) {
   const at = now.toISOString();
   const prev = cur.beat;
   const cpu = Number.isFinite(req.cpuMs) ? req.cpuMs : undefined;
-  const moved = cpu !== undefined && (prev?.cpuMs === undefined || cpu > prev.cpuMs);
+  const procs = typeof req.procs === 'string' ? req.procs : undefined;
+  // Activity is CPU that grew OR a tree whose membership changed: a worker that starts and exits between two beats takes its CPU
+  // out of the total with it (the total can even fall), but it changes the set of processes (audit R1 H7/H10).
+  const moved = cpu !== undefined && (prev?.cpuMs === undefined || cpu > prev.cpuMs || (procs !== undefined && procs !== prev.procs));
   const cpuMovedAt = moved ? at : prev?.cpuMovedAt;
-  const beat = { at, ...(cpu !== undefined ? { cpuMs: cpu } : {}), ...(cpuMovedAt ? { cpuMovedAt } : {}), renewing: true };
+  const beat = { at, ...(cpu !== undefined ? { cpuMs: cpu } : {}), ...(procs !== undefined ? { procs } : {}), ...(cpuMovedAt ? { cpuMovedAt } : {}), renewing: true };
   const idle = treeIdleMs({ beat }, now);
   beat.renewing = !(idle !== null && idle >= LIMITS.treeIdleMs);
   const want = Math.min(now.getTime() + LIMITS.heartbeatRenewMs, ceilingAt.getTime());

@@ -165,6 +165,48 @@ describe('runUnderLease beats while the job runs, and stops with it', () => {
   });
 });
 
+describe('heartbeat robustness (audit R1 H5/H6/H7)', () => {
+  const harness = (cpuOf, transactOverride) => {
+    let lease = emptyLease();
+    const real = (_d, fn) => { const r = fn({ state: 'ok', lease }); if (r.write) lease = r.write; return { ok: true, value: r.value }; };
+    let beatsLeft = 0;
+    const transact = (d, fn) => (transactOverride && beatsLeft-- > 0 ? transactOverride(d, fn) : real(d, fn));
+    let tick = null;
+    const logs = [];
+    const run = runUnderLease({
+      dir: 'D', identity: A, repo: 'o/a', kind: 'test', pid: 4000, probe, transact, signals: { install: () => () => {} },
+      timers: { every: (_ms, fn) => { tick = fn; return 1; }, cancel: () => {} }, now: () => NOW, cpuOf, heartbeatMs: 60_000, log: (l) => logs.push(l),
+    }, async ({ attach }) => { await attach(42); beatsLeft = 3; tick(); tick(); tick(); tick(); return 0; });
+    return { run, logs, lease: () => lease };
+  };
+  it('a throwing CPU probe never escapes the timer: the job finishes, the slot is released, and it is said once', async () => {
+    const h = harness(() => { throw new Error('powershell gone'); });
+    const res = await h.run;
+    assert.equal(res.ran, true);
+    assert.equal(h.lease().heavy, null);
+    assert.equal(h.logs.filter((l) => /heartbeat failed \(powershell gone\)/.test(l)).length, 1);
+  });
+  it('lock contention is said once per streak, then recovery is said', async () => {
+    const h = harness(() => ({ cpuMs: 5, procs: 'x' }), () => ({ ok: false }));
+    await h.run;
+    assert.equal(h.logs.filter((l) => /heartbeat not recorded \(could not take the lease lock/.test(l)).length, 1);
+    assert.ok(h.logs.includes('heartbeat recorded again'));
+  });
+  it('flat CPU but a changing process set counts as activity: a run of short-lived workers keeps renewing', () => {
+    let lease = granted();
+    for (let m = 1; m <= 60; m += 1) {
+      const d = decideHeartbeat(lease, { identity: A, token: T1, cpuMs: 500, procs: `gen-${m}` }, at(m), { ceilingAt: at(600) });
+      lease = d.lease;
+      assert.equal(d.renewing, true, `minute ${m}`);
+    }
+  });
+  it('a status sample in which processes came and went never says "no CPU"', () => {
+    const text = treeLines({ measured: true, tree: [{ pid: 42, name: 'node', startedAt: null, cpuMs: 1, depth: 0 }], cpuMs: 0, windowMs: 5000, started: 2, exited: 2 }).join('\n');
+    assert.match(text, /busy: processes started \(2\) or exited \(2\) in the last 5\.0 s/);
+    assert.doesNotMatch(text, /no CPU/);
+  });
+});
+
 describe('process tree (lease-cpu.mjs)', () => {
   const WIN = ['10 1 100000 2026-11-15T09:00:00Z explorer.exe', '42 10 4100000 2026-11-15T10:00:01Z node.exe', '43 42 300000 2026-11-15T10:00:02Z cmd.exe',
     '44 43 250000000 2026-11-15T10:00:03Z python.exe', '99 1 999999999 - System Idle Process', 'junk'].join('\r\n');

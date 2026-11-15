@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots, writeFile, addBranch } from './helpers/fleet-repo.mjs';
 import { setup } from './helpers/fleet-cli-harness.mjs';
-import { sharedFilesHint } from '../scripts/lib/fleet/render.mjs';
+import { renderClaimVerdict, sharedFilesHint } from '../scripts/lib/fleet/render.mjs';
 
 after(cleanupFleetRoots);
 
@@ -56,6 +56,16 @@ describe('claim: a merged, clean holder no longer blocks', () => {
     assert.doesNotMatch(r.stdout, /merged/);
     // No hotFiles/appendOnlyGlobs in this repo: the first such conflict says they exist (finding 5).
     assert.match(r.stdout, /hint \(for the user\/coordinator\): this repo's \.fleet\.json sets no hotFiles or appendOnlyGlobs/);
+  });
+});
+
+describe('the release remedy is a quoted command (audit R1 H3/M3)', () => {
+  it('a holder id with shell metacharacters is quoted, never spliced raw', () => {
+    const v = { verdict: 'blocked', conflicts: [{ with: 'chip;id', via: ['paths'], paths: [['a/**', 'a/**']], files: [], known: false, holderMerged: 'PR #1 merged — worktree has uncommitted changes' }],
+      finished: [{ with: 'x y', note: 'derived done (PR #2 merged)' }] };
+    const text = renderClaimVerdict(v, { id: 'me', cmd: 'node fleet.mjs' });
+    assert.ok(text.includes("`node fleet.mjs release --id 'chip;id'`"), text);
+    assert.ok(text.includes("`node fleet.mjs release --id 'x y'`"), text);
   });
 });
 

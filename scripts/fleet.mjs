@@ -111,10 +111,11 @@ async function main() {
   const head = own.includes('--') ? own.slice(0, own.indexOf('--')) : own;
   if (head.includes('--help') || head.includes('-h')) {
     const sub = verb === 'lease' ? head.find((a) => LEASE_SUBS.includes(a)) : undefined;
+    const only = sub ? ['--json', ...LEASE_FLAGS[sub]] : null;
     const extra = verb !== 'lease' ? null
-      : sub ? `sub-command ${sub} accepts: ${['--json', ...LEASE_FLAGS[sub]].join(', ')}${sub === 'run' ? ' — then -- <command> [args...]' : ''}`
+      : sub ? `sub-command ${sub} accepts: ${only.join(', ')}${sub === 'run' ? ' — then -- <command> [args...]' : ''}`
         : `sub-commands: ${LEASE_SUBS.join(', ')} (fleet lease <sub> --help for one)`;
-    process.stdout.write(verbHelp(verb, { extra }));
+    process.stdout.write(verbHelp(verb, { extra, only, sub }));
     return finishAndExit(0);
   }
 

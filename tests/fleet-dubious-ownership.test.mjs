@@ -19,9 +19,15 @@ describe('dubious ownership', () => {
     assert.match(r, /git config --global --add safe\.directory C:\/w\/repo/);
     // Both causes, both remedies, and that fleet itself changes nothing (second consumer report).
     assert.match(r, /owned by another account, or this process runs under a different \(sandboxed or elevated\) token/);
-    assert.match(r, /takeown \/F "C:\/w\/repo" \/R \/D Y/);
+    assert.match(r, /takeown \/F C:\/w\/repo \/R \/D Y/);
     assert.match(r, /fleet changes nothing/);
     assert.equal(dubiousOwnership('fatal: not a git repository (or any of the parent directories): .git'), null);
+  });
+
+  it('a path with an apostrophe and a space is taken whole and quoted, never truncated (audit R1 H4)', () => {
+    const r = dubiousOwnership("fatal: detected dubious ownership in repository at 'C:/w/O'Brien repo'\nTo add an exception for this directory, call:\n\n\tgit config --global --add safe.directory \"C:/w/O'Brien repo\"\n");
+    assert.ok(r.includes("takeown /F 'C:/w/O''Brien repo' /R /D Y"), r);
+    assert.doesNotMatch(r, /takeown \/F 'C:\/w\/O' /);
   });
 
   it('gitCommonDir reports it with its own code (real git refusal)', () => {

@@ -111,7 +111,7 @@ const HeavySchema = z.object({
   scope: name, pid: z.number().int().positive().optional(), token: hex(16), startedAt: iso, expiresAt: iso,
   noteAt: iso.optional(),
   /** The last `lease run` heartbeat: when, the tree's CPU then, and when that CPU last moved (absent = never measured). */
-  beat: z.object({ at: iso, cpuMs: z.number().nonnegative().optional(), cpuMovedAt: iso.optional(), renewing: z.boolean() }).passthrough().optional(),
+  beat: z.object({ at: iso, cpuMs: z.number().nonnegative().optional(), procs: z.string().max(64).optional(), cpuMovedAt: iso.optional(), renewing: z.boolean() }).passthrough().optional(),
 }).passthrough().refine((h) => Date.parse(h.startedAt) <= Date.parse(h.expiresAt), { message: 'startedAt is after expiresAt' });
 const GapSchema = z.object({ from: iso, until: iso, toRepoKey: hex(12).optional(), toRepo: label.optional(), grantedAt: iso, by: name }).passthrough()
   .refine((g) => Date.parse(g.from) < Date.parse(g.until), { message: 'gap from is not before until' })

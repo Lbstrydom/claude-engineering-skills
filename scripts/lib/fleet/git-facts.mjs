@@ -26,6 +26,7 @@ import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 import { resolveBaseFreshness } from '../git-freshness.mjs';
 import { OID_PATTERN, OID_RE, isOid } from './contracts.mjs';
 import { VALID, memoPure } from './oid-cache.mjs';
+import { renderCommand } from './shell-quote.mjs';
 
 const LOCAL_TIMEOUT_MS = 15_000;
 const REMOTE_TIMEOUT_MS = 30_000;
@@ -184,11 +185,14 @@ export function dubiousOwnership(stderr) {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const fix = lines.find((l) => /git config --global --add safe\.directory/.test(l));
   const head = (lines.find((l) => /dubious ownership/i.test(l)) ?? 'detected dubious ownership').replace(/^fatal:\s*/, '');
-  const where = /at '([^']+)'/.exec(head)?.[1] ?? 'the repository folder';
+  // The path: git's own remedy line holds it whole (an apostrophe in it, e.g. O'Brien, survives); else the quoted span of the
+  // refusal, greedily to its LAST quote. Every command printed is quoted by the one shell quoter.
+  const where = fix?.replace(/^.*safe\.directory\s+/, '').trim().replace(/^"(.*)"$/, '$1') || /at '(.*)'/.exec(head)?.[1] || null;
+  const trust = fix ?? (where ? renderCommand(['git', 'config', '--global', '--add', 'safe.directory', where]) : 'git config --global --add safe.directory <the repository folder>');
+  const own = where ? renderCommand(['takeown', '/F', where, '/R', '/D', 'Y'], 'win32') : 'takeown /F <the repository folder> /R /D Y';
   return `git refuses this repository: ${head}. Cause: the folder is owned by another account, or this process runs under a `
     + `different (sandboxed or elevated) token than the folder's owner. Remedies, a person's choice (fleet changes nothing): `
-    + `trust the folder for git — ${fix ?? `git config --global --add safe.directory ${where}`} — or take ownership of it `
-    + `(Windows: takeown /F "${where}" /R /D Y). Only if you trust the folder's contents.`;
+    + `trust the folder for git — ${trust} — or take ownership of it (Windows: ${own}). Only if you trust the folder's contents.`;
 }
 
 const commonDirs = new Map();

@@ -157,15 +157,17 @@ export const VERB_SUMMARY = Object.freeze({
  * `fleet <verb> --help`: the verb's line and every flag it accepts, from the SAME spec the parser enforces (so the help cannot
  * advertise a flag the CLI would refuse). `extra` lists sub-commands (lease).
  */
-export function verbHelp(verb, { extra = null } = {}) {
+export function verbHelp(verb, { extra = null, only = null, sub = null } = {}) {
   const spec = VERBS[verb];
   if (!spec) return null;
   const [min, max] = spec.positionals ?? [0, 0];
-  const pos = max === 0 ? '' : min === 0 ? ' [arg]' : ' <arg>';
+  const pos = sub ? ` ${sub}` : max === 0 ? '' : min === 0 ? ' [arg]' : ' <arg>';
+  // `only` (a sub-command's accepted flags) narrows the list, so `lease run --help` never advertises a flag `run` refuses.
+  const keep = (f) => !only || only.includes(f);
   const flags = [
-    ...spec.bool.map((f) => `  ${f}`),
-    ...spec.value.map((f) => `  ${f} <value>`),
-    ...spec.repeat.map((f) => `  ${f} <value>   (repeatable)`),
+    ...spec.bool.filter(keep).map((f) => `  ${f}`),
+    ...spec.value.filter(keep).map((f) => `  ${f} <value>`),
+    ...spec.repeat.filter(keep).map((f) => `  ${f} <value>   (repeatable)`),
   ];
   return [`usage: fleet ${verb}${pos} [flags]`, `  ${VERB_SUMMARY[verb] ?? ''}`, ...(extra ? [extra] : []), 'flags:', ...flags, ''].join('\n');
 }

@@ -24,7 +24,7 @@
 import {
   LIMITS, decideAcquire, decideAttach, decideHeartbeat, decideRelease, decideReleaseToCiWindow, defaultProbe, transactLease, turnKeptText,
 } from './lease.mjs';
-import { processTreeCpuMs } from './lease-cpu.mjs';
+import { processTreeActivity } from './lease-cpu.mjs';
 
 /** Interval timers for the heartbeat, unref'd so a beat can never keep the process alive after its job. */
 export const realTimers = {
@@ -108,7 +108,7 @@ export async function runUnderLease(opts, job) {
     endTurn = false, releaseToCiWindow = 0, windowRepo, cmdName = 'fleet', now = () => new Date(), random = Math.random,
     probe = defaultProbe(), signals = processSignals, transact = transactLease, log = () => {},
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)), forceExit = (code) => process.exit(code),
-    heartbeatMs = LIMITS.heartbeatMs, ceilingMin, cpuOf = (p) => processTreeCpuMs(p), timers = realTimers,
+    heartbeatMs = LIMITS.heartbeatMs, ceilingMin, cpuOf = (p) => processTreeActivity(p), timers = realTimers,
   } = opts;
   const startedAt = now().getTime();
   const deadline = startedAt + Math.max(0, waitMin) * 60_000;
@@ -151,14 +151,27 @@ export async function runUnderLease(opts, job) {
   // Heartbeat: renew while the job's process tree is alive and not idle, up to the ceiling, so a long run never reads EXPIRED.
   const ceilingAt = new Date(now().getTime() + (ceilingMin ? ceilingMin * 60_000 : LIMITS.heartbeatMaxMs));
   let beating = heartbeatMs > 0;
+  let stoppedSaid = false;
+  let failing = false; // one line per streak of failed beats, not one a minute
+  // Every outcome is handled, and nothing escapes the timer callback (audit R1 H5/H6): a refused beat (released, forced, another
+  // holder) stops beating; an error (lock contention, an unreadable lease, a throw) is said once and retried on the next tick —
+  // the lease simply is not renewed meanwhile, which is the safe direction. The job itself is never affected.
   const beat = () => {
     if (!beating) return;
-    const cpuMs = childPid ? cpuOf(childPid) : cpuOf(pid);
-    const out = runDecision(transact, dir, (lease) => decideHeartbeat(lease, { identity, token, cpuMs }, now(), { ceilingAt }));
-    if (out.status === 'decided' && !out.decision.ok) { beating = false; log(`heartbeat stopped: ${out.decision.reason}`); return; }
-    if (out.status === 'decided' && !out.decision.renewing && !stoppedSaid) { stoppedSaid = true; log(`the job's process tree has used no CPU for ${Math.round(LIMITS.treeIdleMs / 60_000)} minutes: the lease is no longer renewed and will expire; it keeps running`); }
+    try {
+      const act = cpuOf(childPid ?? pid);
+      const activity = typeof act === 'number' ? { cpuMs: act } : act ?? {};
+      const out = runDecision(transact, dir, (lease) => decideHeartbeat(lease, { identity, token, cpuMs: activity.cpuMs, procs: activity.procs }, now(), { ceilingAt }));
+      if (out.status !== 'decided') { if (!failing) log(`heartbeat not recorded (${out.reason}); retrying each minute`); failing = true; return; }
+      if (!out.decision.ok) { beating = false; log(`heartbeat stopped: ${out.decision.reason}`); return; }
+      if (failing) log('heartbeat recorded again');
+      failing = false;
+      if (!out.decision.renewing && !stoppedSaid) { stoppedSaid = true; log(`the job's process tree has used no CPU for ${Math.round(LIMITS.treeIdleMs / 60_000)} minutes: the lease is no longer renewed and will expire (it may be blocked on I/O or a lock); the job keeps running`); }
+    } catch (e) {
+      if (!failing) log(`heartbeat failed (${e?.message ?? e}); retrying each minute`);
+      failing = true;
+    }
   };
-  let stoppedSaid = false;
   const timer = heartbeatMs > 0 ? timers.every(heartbeatMs, beat) : null;
   let result; let threw = false; let thrown;
   try { result = await job({ token, attach, signal: abort.signal }); } catch (e) { threw = true; thrown = e; }

@@ -36,6 +36,10 @@ describe('per-verb --help', () => {
     const r = run(['lease', 'run', '--help']);
     assert.equal(r.status, 0);
     assert.match(r.stdout, /sub-command run accepts: --json, --kind, --for, --wait, --timeout/);
+    // The flag list is run's own: no flag of another sub-command (audit R1 M7).
+    assert.match(r.stdout, /^usage: fleet lease run \[flags\]/);
+    assert.doesNotMatch(r.stdout, /^ {2}--force$/m);
+    assert.doesNotMatch(r.stdout, /^ {2}--pid <value>$/m);
     const passthrough = run(['lease', 'run', '--json', '--', 'node', '--help']);
     assert.equal(passthrough.status, 2, 'the run is refused for --json, not answered with help');
     assert.doesNotMatch(passthrough.stdout, /^usage:/);

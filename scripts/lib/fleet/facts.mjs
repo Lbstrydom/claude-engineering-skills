@@ -20,7 +20,7 @@ import { ghBatch } from './gh-batch.mjs';
 import { ConfigError } from './config.mjs';
 import { fleetDir, readSessions, readHold, listTrains } from './registry.mjs';
 import {
-  DEFAULT_LEASE_MS, buildStatus, checkBlocksApproval, idleMsFrom, isIdleTip, liveness, mergedDone,
+  DEFAULT_LEASE_MS, buildStatus, checkBlocksApproval, idleMsFrom, isIdleTip, liveness, mergedDone, workRemainingIn, worktreeOf,
 } from './overlap.mjs';
 import { buildCheckPayload, resultsToFindings, runChecks } from './checks.mjs';
 import { CLEAN_PROBE, probeWorktrees, uncommittedPaths, worktreeStatus } from './worktree-status.mjs';
@@ -479,7 +479,8 @@ export function othersFor(facts, selfId, now, sessions = facts.registry.sessions
     const live = liveness(s, { now, leaseMs: facts.leaseMs, tipCommitAt: b ? tipOf.get(b) ?? null : null }).live;
     const u = b ? facts.uncommitted?.[b] : undefined;
     const merged = b ? facts.merged?.evidence?.[b] : undefined;
-    const md = merged?.merged ? mergedDone(merged, workRemainingOf(facts, s, u)) : null;
+    const wt = facts.worktrees?.queried ? worktreeOf(facts.worktrees.worktrees ?? [], s.worktree, b) : null;
+    const md = merged?.merged ? mergedDone(merged, workRemainingIn(facts, b ?? null, wt)) : null;
     return {
       session: s, live: live && !md?.done, changedFiles: k && facts.changed?.[k]?.queried ? facts.changed[k].files : [],
       uncommittedFiles: u?.queried ? u.files : [], ...(u && !u.queried ? { uncommittedUnknown: u.reason } : {}),
@@ -488,25 +489,16 @@ export function othersFor(facts, selfId, now, sessions = facts.registry.sessions
   });
 }
 
-/** Does a session's worktree hold work history does not show? true / false (probed clean, or no worktree) / null (unknown). */
-function workRemainingOf(facts, s, u) {
-  if (u) return u.queried ? u.files.length > 0 : null;
-  if (!facts.worktrees?.queried) return null;
-  const b = s.source?.branch;
-  const wt = (facts.worktrees.worktrees ?? []).find((w) => !w.bare && (w.branch === b || (s.worktree && samePathLoose(w.path, s.worktree))));
-  return wt && !wt.missing ? null : false;
-}
-
 /**
  * `facts` with merged evidence for the named branches added (`gatherMerged`, the same evidence `status` reads). A
  * session-only verb asks it only for the branches it needs — `claim` for the holders of a blocking overlap — so the
- * common no-conflict path makes no `gh` call. Branches already judged are kept; never throws.
+ * common no-conflict path makes no `gh` call. Branches already judged are kept. An unreachable source is not an error here
+ * (`gatherMerged` records it as `known:false`, and the holder stays live); a programming error propagates, never swallowed.
  */
 export function withMergedEvidence(facts, { cwd, env, names }) {
   const want = [...new Set(names.filter(Boolean))].filter((n) => !facts.merged?.evidence?.[n]);
   if (!want.length) return facts;
   const baseRev = facts.base?.measure?.ok ? facts.base.measure.oid : facts.base?.name;
-  let got;
-  try { got = gatherMerged({ cwd, base: facts.base?.name, baseRev, names: want, branches: facts.branches, patchIds: facts.patchIds, env }); } catch { return facts; }
+  const got = gatherMerged({ cwd, base: facts.base?.name, baseRev, names: want, branches: facts.branches, patchIds: facts.patchIds, env });
   return { ...facts, merged: { ...(facts.merged ?? {}), ...got, evidence: { ...(facts.merged?.evidence ?? {}), ...got.evidence } } };
 }

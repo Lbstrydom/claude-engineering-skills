@@ -518,6 +518,27 @@ const samePath = (a, b) => a && b && String(a).replace(/\\/g, '/').replace(/\/+$
   === String(b).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
 /**
+ * Does a session's worktree hold work history does not show? true / false (no worktree, or probed clean) / null (unknown).
+ * The ONE predicate behind `mergedDone`'s `workRemaining`, for `status` (which shows the session `[done]`) and `claim` (which
+ * then stops counting it): two spellings could disagree about the same session. A worktree whose directory is gone holds
+ * nothing (its uncommitted files went with it); one listed but not probed is unknown.
+ * @param {object} facts `gatherFacts` output
+ * @param {string|null} branch the session's branch
+ * @param {object|null|undefined} wt the session's worktree entry (`worktreeOf`)
+ */
+export function workRemainingIn(facts, branch, wt) {
+  const u = branch ? facts.uncommitted?.[branch] : undefined;
+  if (u) return u.queried ? u.files.length > 0 : null;
+  if (facts.worktrees?.queried && (!wt || wt.missing)) return false;
+  return null;
+}
+
+/** A session's worktree entry: the recorded path first, else the worktree that has its branch checked out. */
+export function worktreeOf(worktrees, path, branch) {
+  return worktrees.find((w) => samePath(w.path, path)) ?? (branch ? worktrees.find((w) => w.branch === branch) : undefined) ?? null;
+}
+
+/**
  * Is the session finished? A record already cached as `done` is terminal on its
  * own. Otherwise, derived on read from EITHER
  *  - a `landed` train: the train's `sources` contain `(id, gen)`; the session's
@@ -624,19 +645,12 @@ export function buildStatus(facts) {
   const baseName = facts.base?.name;
   const byId = new Map(sessions.map((s) => [s.id, s]));
 
-  const wtFor = (path, branch) => worktrees.find((w) => samePath(w.path, path))
-    ?? (branch ? worktrees.find((w) => w.branch === branch) : undefined) ?? null;
+  const wtFor = (path, branch) => worktreeOf(worktrees, path, branch);
   const wtState = (w) => (!w ? null : w.missing ? 'missing' : w.prunable ? 'prunable' : 'present');
   const prFor = (src, branch) => prs.find((p) => (src?.prNumber && p.number === src.prNumber && (!src.repo || p.repo === src.repo)))
     ?? prs.find((p) => !p.isCrossRepository && p.headRef === branch) ?? null;
 
-  // Does the worktree hold work history does not show? true / false (no worktree, or probed clean) / null (unknown).
-  const workRemainingFor = (branch, wt) => {
-    const u = branch ? facts.uncommitted?.[branch] : undefined;
-    if (u) return u.queried ? u.files.length > 0 : null;
-    if (facts.worktrees?.queried && (!wt || wt.missing)) return false;
-    return null;
-  };
+  const workRemainingFor = (branch, wt) => workRemainingIn(facts, branch, wt);
 
   const items = [];
   const claimedBranches = new Set();

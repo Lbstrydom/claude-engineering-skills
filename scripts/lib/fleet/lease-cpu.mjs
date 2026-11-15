@@ -14,6 +14,7 @@
  * @module scripts/lib/fleet/lease-cpu
  */
 import cp from 'node:child_process';
+import crypto from 'node:crypto';
 
 const TIMEOUT_MS = 15_000;
 const WIN_SCRIPT = "Get-CimInstance Win32_Process | ForEach-Object { $s = if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') } else { '-' }; '{0} {1} {2} {3} {4}' -f $_.ProcessId, $_.ParentProcessId, ($_.KernelModeTime + $_.UserModeTime), $s, $_.Name }";
@@ -91,9 +92,26 @@ export function readProcessTable({ platform = process.platform, spawnSync = cp.s
 
 /** CPU ms used so far by `pid`'s whole tree, or null when it cannot be measured. */
 export function processTreeCpuMs(pid, deps) {
+  return processTreeActivity(pid, deps)?.cpuMs ?? null;
+}
+
+/**
+ * What a heartbeat records of the tree: its CPU so far AND a short digest of its membership (pid + start time of each process).
+ * A worker that starts and exits between two readings is gone from the CPU total, but it changed the membership, so the
+ * heartbeat still sees activity. null when it cannot be measured.
+ * @returns {{cpuMs: number, procs: string}|null}
+ */
+export function processTreeActivity(pid, deps) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   const rows = readProcessTable(deps);
-  return rows ? treeCpuMs(rows, pid) : null;
+  const tree = rows ? treeOf(rows, pid) : null;
+  return tree ? { cpuMs: tree.reduce((a, r) => a + r.cpuMs, 0), procs: membershipDigest(tree) } : null;
+}
+
+/** Stable 16-hex digest of a tree's membership (order-free). */
+export function membershipDigest(tree) {
+  const key = tree.map((r) => `${r.pid}@${r.startedAt ?? '?'}`).sort().join(',');
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
 }
 
 /**
@@ -113,5 +131,10 @@ export async function sampleTree(pid, { sampleMs = 5_000, read = readProcessTabl
   // Per-process delta, so a worker that started during the window counts from zero and one that exited is not negative.
   const before = new Map(first.map((r) => [r.pid, r.cpuMs]));
   const cpuMs = second.reduce((acc, r) => acc + Math.max(0, r.cpuMs - (before.get(r.pid) ?? 0)), 0);
-  return { measured: true, tree: second, cpuMs, windowMs: Math.max(1, clock() - t0) };
+  // A worker that came and went inside the window took its CPU with it: say the tree changed, so "no CPU" is never claimed
+  // over a window in which processes started or exited.
+  const now2 = new Set(second.map((r) => r.pid));
+  const started = second.filter((r) => !before.has(r.pid)).length;
+  const exited = first.filter((r) => !now2.has(r.pid)).length;
+  return { measured: true, tree: second, cpuMs, windowMs: Math.max(1, clock() - t0), started, exited };
 }
