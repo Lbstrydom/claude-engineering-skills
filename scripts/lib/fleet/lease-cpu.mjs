@@ -77,40 +77,74 @@ export const treeCpuMs = (rows, root) => { const t = treeOf(rows, root); return 
  * One read of the machine's process table, or null.
  * @param {{platform?: string, spawnSync?: typeof cp.spawnSync, now?: () => number}} [deps]
  */
+const winCmd = () => ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN_SCRIPT]];
+const psCmd = () => ['ps', ['-A', '-o', 'pid=,ppid=,time=,etime=,comm=']];
+
+/**
+ * Parse one table read, and drop THIS process's own sampler (`powershell.exe` / `ps` spawned by `selfPid`): when the monitored
+ * root is the runner itself (a job that never attached a child), the sampler is a fresh descendant at every read and would make
+ * the tree look busy forever (audit R2 H2).
+ */
+export function tableFrom(stdout, { win, nowMs = Date.now(), selfPid = process.pid }) {
+  const rows = (win ? parseWinTable(stdout) : parsePsTable(stdout, nowMs))
+    .filter((r) => !(r.ppid === selfPid && /^(powershell(\.exe)?|ps)$/i.test(r.name)));
+  return rows.length ? rows : null;
+}
+
+/**
+ * One read of the machine's process table, or null. SYNCHRONOUS — for `lease status` (a one-shot command); the heartbeat uses
+ * `readProcessTableAsync` so a slow read never blocks the runner's event loop.
+ * @param {{platform?: string, spawnSync?: typeof cp.spawnSync, now?: () => number}} [deps]
+ */
 export function readProcessTable({ platform = process.platform, spawnSync = cp.spawnSync, now = Date.now } = {}) {
   const win = platform === 'win32';
+  const [file, args] = win ? winCmd() : psCmd();
   let r;
-  try {
-    r = win
-      ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN_SCRIPT], { encoding: 'utf8', timeout: TIMEOUT_MS, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
-      : spawnSync('ps', ['-A', '-o', 'pid=,ppid=,time=,etime=,comm='], { encoding: 'utf8', timeout: TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch { return null; }
+  try { r = spawnSync(file, args, { encoding: 'utf8', timeout: TIMEOUT_MS, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; }
   if (!r || r.error || r.status !== 0) return null;
-  const rows = win ? parseWinTable(r.stdout) : parsePsTable(r.stdout, now());
-  return rows.length ? rows : null;
+  return tableFrom(r.stdout, { win, nowMs: now() });
+}
+
+/** `readProcessTable`, asynchronously (bounded by the same timeout); resolves null on any failure. Never rejects. */
+export function readProcessTableAsync({ platform = process.platform, execFile = cp.execFile, now = Date.now } = {}) {
+  const win = platform === 'win32';
+  const [file, args] = win ? winCmd() : psCmd();
+  return new Promise((resolve) => {
+    try {
+      execFile(file, args, { encoding: 'utf8', timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) => {
+        resolve(err ? null : tableFrom(stdout, { win, nowMs: now() }));
+      });
+    } catch { resolve(null); }
+  });
 }
 
 /** CPU ms used so far by `pid`'s whole tree, or null when it cannot be measured. */
 export function processTreeCpuMs(pid, deps) {
-  return processTreeActivity(pid, deps)?.cpuMs ?? null;
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  const rows = readProcessTable(deps);
+  return rows ? treeCpuMs(rows, pid) : null;
 }
 
 /**
- * What a heartbeat records of the tree: its CPU so far AND a short digest of its membership (pid + start time of each process).
- * A worker that starts and exits between two readings is gone from the CPU total, but it changed the membership, so the
- * heartbeat still sees activity. null when it cannot be measured.
- * @returns {{cpuMs: number, procs: string}|null}
+ * What a heartbeat records of the tree: its CPU so far AND a digest of its membership. A worker present at one read and gone
+ * (or new) at the next changes the membership even when its CPU left the total with it. A worker that starts AND exits entirely
+ * between two reads is invisible to both — sampling cannot see it, and nothing here claims otherwise. That costs at most a
+ * stopped RENEWAL (a person then reads `lease status`); it never takes the slot. null when it cannot be measured.
+ * @returns {Promise<{cpuMs: number, procs: string}|null>}
  */
-export function processTreeActivity(pid, deps) {
+export async function processTreeActivity(pid, { read = readProcessTableAsync } = {}) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
-  const rows = readProcessTable(deps);
+  const rows = await read();
   const tree = rows ? treeOf(rows, pid) : null;
   return tree ? { cpuMs: tree.reduce((a, r) => a + r.cpuMs, 0), procs: membershipDigest(tree) } : null;
 }
 
-/** Stable 16-hex digest of a tree's membership (order-free). */
+/**
+ * Stable 16-hex digest of a tree's membership (order-free): pid and name only. Never a reconstructed start time — on `ps` that
+ * is the reading's clock minus a whole-second elapsed time, which differs between reads of the same process (audit R2 H3).
+ */
 export function membershipDigest(tree) {
-  const key = tree.map((r) => `${r.pid}@${r.startedAt ?? '?'}`).sort().join(',');
+  const key = tree.map((r) => `${r.pid}:${r.name}`).sort().join(',');
   return crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
 }
 

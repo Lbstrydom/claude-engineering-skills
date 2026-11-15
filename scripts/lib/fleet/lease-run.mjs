@@ -156,10 +156,13 @@ export async function runUnderLease(opts, job) {
   // Every outcome is handled, and nothing escapes the timer callback (audit R1 H5/H6): a refused beat (released, forced, another
   // holder) stops beating; an error (lock contention, an unreadable lease, a throw) is said once and retried on the next tick —
   // the lease simply is not renewed meanwhile, which is the safe direction. The job itself is never affected.
-  const beat = () => {
-    if (!beating) return;
+  let inFlight = false; // a slow table read never stacks a second beat behind it
+  const beat = async () => {
+    if (!beating || inFlight) return;
+    inFlight = true;
     try {
-      const act = cpuOf(childPid ?? pid);
+      const act = await cpuOf(childPid ?? pid);
+      if (!beating) return; // the job ended while the table was being read
       const activity = typeof act === 'number' ? { cpuMs: act } : act ?? {};
       const out = runDecision(transact, dir, (lease) => decideHeartbeat(lease, { identity, token, cpuMs: activity.cpuMs, procs: activity.procs }, now(), { ceilingAt }));
       if (out.status !== 'decided') { if (!failing) log(`heartbeat not recorded (${out.reason}); retrying each minute`); failing = true; return; }
@@ -170,7 +173,7 @@ export async function runUnderLease(opts, job) {
     } catch (e) {
       if (!failing) log(`heartbeat failed (${e?.message ?? e}); retrying each minute`);
       failing = true;
-    }
+    } finally { inFlight = false; }
   };
   const timer = heartbeatMs > 0 ? timers.every(heartbeatMs, beat) : null;
   let result; let threw = false; let thrown;

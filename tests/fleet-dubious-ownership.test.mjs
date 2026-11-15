@@ -28,6 +28,9 @@ describe('dubious ownership', () => {
     const r = dubiousOwnership("fatal: detected dubious ownership in repository at 'C:/w/O'Brien repo'\nTo add an exception for this directory, call:\n\n\tgit config --global --add safe.directory \"C:/w/O'Brien repo\"\n");
     assert.ok(r.includes("takeown /F 'C:/w/O''Brien repo' /R /D Y"), r);
     assert.doesNotMatch(r, /takeown \/F 'C:\/w\/O' /);
+    // A single-quoted suggestion is unwrapped the same way (audit R2 M1).
+    const single = dubiousOwnership("fatal: detected dubious ownership in repository at 'C:/my repo'\n\tgit config --global --add safe.directory 'C:/my repo'\n");
+    assert.ok(single.includes("takeown /F 'C:/my repo' /R /D Y"), single);
   });
 
   it('gitCommonDir reports it with its own code (real git refusal)', () => {

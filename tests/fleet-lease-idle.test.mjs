@@ -155,7 +155,7 @@ describe('runUnderLease beats while the job runs, and stops with it', () => {
       now: () => new Date(clock), cpuOf: (p) => { cpuFor.push(p); return clock; }, heartbeatMs: 60_000,
     }, async ({ attach }) => {
       await attach(42);
-      for (let m = 1; m <= 120; m += 1) { clock = at(m).getTime(); tick(); assert.equal(classifyHeavy(lease.heavy, at(m), probe).state, 'held', `minute ${m}`); }
+      for (let m = 1; m <= 120; m += 1) { clock = at(m).getTime(); await tick(); assert.equal(classifyHeavy(lease.heavy, at(m), probe).state, 'held', `minute ${m}`); }
       return 0;
     });
     assert.equal(res.ran, true);
@@ -176,7 +176,7 @@ describe('heartbeat robustness (audit R1 H5/H6/H7)', () => {
     const run = runUnderLease({
       dir: 'D', identity: A, repo: 'o/a', kind: 'test', pid: 4000, probe, transact, signals: { install: () => () => {} },
       timers: { every: (_ms, fn) => { tick = fn; return 1; }, cancel: () => {} }, now: () => NOW, cpuOf, heartbeatMs: 60_000, log: (l) => logs.push(l),
-    }, async ({ attach }) => { await attach(42); beatsLeft = 3; tick(); tick(); tick(); tick(); return 0; });
+    }, async ({ attach }) => { await attach(42); beatsLeft = 3; await tick(); await tick(); await tick(); await tick(); return 0; });
     return { run, logs, lease: () => lease };
   };
   it('a throwing CPU probe never escapes the timer: the job finishes, the slot is released, and it is said once', async () => {
@@ -252,5 +252,39 @@ describe('process tree (lease-cpu.mjs)', () => {
     assert.equal(await holderTree(s, { ...probe, scope: 'linux:other' }, {}, { sample }), null);
     assert.equal(await holderTree(s, probe, { FLEET_LEASE_SAMPLE_MS: '0' }, { sample }), null);
     assert.equal((await holderTree(s, probe, {}, { sample })).measured, true);
+  });
+});
+
+describe('audit R2: sampling gaps, process identity, self-observation', () => {
+  it('a beat whose sample failed keeps the last good one: flicker neither restarts nor advances the idle clock (M4)', () => {
+    let lease = granted();
+    const beatAt = (m, cpuMs) => { const d = decideHeartbeat(lease, { identity: A, token: T1, cpuMs, procs: 'same' }, at(m), { ceilingAt: at(600) }); lease = d.lease; return d; };
+    beatAt(1, 100);
+    for (let m = 2; m <= 40; m += 1) assert.equal(beatAt(m, null).renewing, true, `minute ${m}: unmeasured is never idle`);
+    assert.equal(lease.heavy.beat.cpuMs, 100);
+    // The next good sample shows no growth since minute 1: idle is measured from there, so renewal stops at once.
+    assert.equal(beatAt(41, 100).renewing, false);
+  });
+
+  it('the membership digest ignores reconstructed start times (H3): two ps reads a second apart agree', async () => {
+    const { membershipDigest, parsePsTable: parse } = await import('../scripts/lib/fleet/lease-cpu.mjs');
+    const text = '  42     1 00:00:03 01:00:00 python\n  43    42 00:00:01 00:59:59 worker\n';
+    const a = treeOf(parse(text, Date.parse('2026-11-15T12:00:00.400Z')), 42);
+    const b = treeOf(parse(text.replace('01:00:00', '01:00:01'), Date.parse('2026-11-15T12:00:01.600Z')), 42);
+    assert.equal(membershipDigest(a), membershipDigest(b));
+  });
+
+  it('this process\'s own sampler is dropped from the table (H2): a runner sampling itself is not "busy" forever', async () => {
+    const { tableFrom } = await import('../scripts/lib/fleet/lease-cpu.mjs');
+    const rows = tableFrom(['100 1 5 2026-11-15T10:00:00Z node.exe', '200 100 1 2026-11-15T10:05:00Z powershell.exe', '300 100 1 2026-11-15T10:05:00Z python.exe'].join('\n'), { win: true, selfPid: 100 });
+    assert.deepEqual(treeOf(rows, 100).map((r) => r.pid), [100, 300]);
+  });
+
+  it('processTreeActivity is asynchronous and reads through the injected table (M3)', async () => {
+    const { processTreeActivity } = await import('../scripts/lib/fleet/lease-cpu.mjs');
+    const act = await processTreeActivity(42, { read: async () => parseWinTable('42 1 20000 2026-11-15T10:00:00Z node.exe\n43 42 30000 - py.exe') });
+    assert.equal(act.cpuMs, 5);
+    assert.match(act.procs, /^[0-9a-f]{16}$/);
+    assert.equal(await processTreeActivity(42, { read: async () => null }), null);
   });
 });

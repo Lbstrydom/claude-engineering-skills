@@ -634,7 +634,7 @@ const beatText = (h, now) => {
   if (!h.beat) return '';
   const idle = treeIdleMs(h, now);
   const idleTxt = idle !== null && idle >= MIN ? `, tree idle ${Math.round(idle / MIN)} min` : '';
-  return h.beat.renewing ? ` [lease run heartbeat ${inMin(h.beat.at, now)}${idleTxt}]` : ` [renewal stopped: tree idle ${Math.round((idle ?? 0) / MIN)} min]`;
+  return h.beat.renewing ? ` [last lease run heartbeat ${hhmmOf(new Date(h.beat.at))}${idleTxt}]` : ` [renewal stopped: tree idle ${Math.round((idle ?? 0) / MIN)} min]`;
 };
 
 /**
@@ -645,7 +645,8 @@ const beatText = (h, now) => {
 export function treeIdleMs(heavy, now) {
   const b = heavy?.beat;
   if (!b || !b.cpuMovedAt) return null;
-  return Math.max(0, Math.min(now.getTime(), ms(b.at)) - ms(b.cpuMovedAt));
+  // Measured up to the last beat that actually SAMPLED the tree: a beat whose sample failed proves nothing about idleness.
+  return Math.max(0, Math.min(now.getTime(), ms(b.sampledAt ?? b.at)) - ms(b.cpuMovedAt));
 }
 
 /**
@@ -664,13 +665,22 @@ export function decideHeartbeat(lease, req, now, { ceilingAt }) {
   if (req.token !== cur.token) return refuse('stale-token', 'this run\'s token is no longer the slot\'s (it was released or forced)');
   const at = now.toISOString();
   const prev = cur.beat;
-  const cpu = Number.isFinite(req.cpuMs) ? req.cpuMs : undefined;
+  // A beat whose sample failed keeps the last GOOD sample (audit R2 M4): dropping it would make the next good sample read as
+  // "first seen" and restart the idle clock, so a run whose sampling flickers could never be judged idle.
+  const sampled = Number.isFinite(req.cpuMs);
+  if (!sampled && prev) {
+    const beat = { ...prev, at, renewing: prev.renewing };
+    const want = Math.min(now.getTime() + LIMITS.heartbeatRenewMs, ceilingAt.getTime());
+    const expiresAt = beat.renewing && want > ms(cur.expiresAt) ? new Date(want).toISOString() : cur.expiresAt;
+    return { ok: true, lease: { ...lease, heavy: { ...cur, expiresAt, beat } }, heavy: { ...cur, expiresAt, beat }, renewed: expiresAt !== cur.expiresAt, renewing: beat.renewing };
+  }
+  const cpu = sampled ? req.cpuMs : undefined;
   const procs = typeof req.procs === 'string' ? req.procs : undefined;
   // Activity is CPU that grew OR a tree whose membership changed: a worker that starts and exits between two beats takes its CPU
   // out of the total with it (the total can even fall), but it changes the set of processes (audit R1 H7/H10).
   const moved = cpu !== undefined && (prev?.cpuMs === undefined || cpu > prev.cpuMs || (procs !== undefined && procs !== prev.procs));
   const cpuMovedAt = moved ? at : prev?.cpuMovedAt;
-  const beat = { at, ...(cpu !== undefined ? { cpuMs: cpu } : {}), ...(procs !== undefined ? { procs } : {}), ...(cpuMovedAt ? { cpuMovedAt } : {}), renewing: true };
+  const beat = { at, ...(cpu !== undefined ? { cpuMs: cpu, sampledAt: at } : {}), ...(procs !== undefined ? { procs } : {}), ...(cpuMovedAt ? { cpuMovedAt } : {}), renewing: true };
   const idle = treeIdleMs({ beat }, now);
   beat.renewing = !(idle !== null && idle >= LIMITS.treeIdleMs);
   const want = Math.min(now.getTime() + LIMITS.heartbeatRenewMs, ceilingAt.getTime());
