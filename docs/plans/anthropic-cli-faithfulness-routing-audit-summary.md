@@ -109,6 +109,39 @@ collision — a MISSED drift, never a false alarm — in an options object where
 nested templates do not occur. Proper handling needs the parser's token stream,
 which is the same answer as the regex-literal limit recorded in §7.13.
 
+## Round 8 — the delta between the audited head and the PR head (2026-11-15)
+
+A merge needs the PR head to EQUAL the audited sha, and it did not: the final
+gate in round 7 ran at `0f14b999`, while the PR head had moved to `d9b936a5`.
+Two commits sat in between, both written in response to CI rather than to an
+audit, and a green `full-suite` is not an audit:
+
+| commit | what |
+|---|---|
+| `913b2590` | the Azure suite was not hermetic — it inherited `OPENAI_AUDIT_MODEL` from this machine's `.env`, so it passed here and failed on a clean runner |
+| `d9b936a5` | `anthropic:pin:gate` carried no poison pill, so nothing had ever asked whether the gate can fail |
+
+**Round 8, scoped to those 5 files (112 lines), 4 passes: `PASS` — H:0 M:0 L:0.**
+Final review over the same delta: **APPROVE, 0 blocking, 0 debt, code coverage
+FULL.** Round 8 is the ABSOLUTE cap; there is no round 9.
+
+**Audited sha: `d9b936a5`, which is the PR head.**
+
+One honest note on coverage rather than a clean number: 4 of the 5 files were
+audited and the fifth, `tests/fixtures/poison/anthropic-unpinned-system-call.mjs.txt`,
+was `not-admitted` as non-code — a `.txt` is not source. It is not unexamined,
+though, and the distinction matters: that fixture is the poison pill's payload,
+and `gates:poison` EXECUTES it, reporting the pill as `verified` only when the
+gate actually fails against the poisoned tree. Machine-checked by execution is
+stronger evidence than a reviewer reading it, which is why this is recorded as a
+classification rather than a gap.
+
+The structural card at this cap reports **9 structural clusters of 115**, with
+`anthropic-pin-census.mjs` raised in 7 of the 8 rounds, `work-unit-labels.mjs`
+in 5 and `check-anthropic-pins.mjs` in 3. That is the same cluster every round
+named, and it is the standing argument that the census's control-flow analysis
+is what a future change should restructure rather than keep patching.
+
 ## Not verified / stated plainly
 
 - **Round 7 did not converge either** (H:11 M:18 vs `H==0 && M<=2`), and the
