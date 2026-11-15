@@ -86,8 +86,12 @@ export async function runArmEvalSession({ experimentType, task, repoId = null, p
 
   // ── Judge the conformant outputs (blinded, double-pass) ─────────────────────
   let judged = false;
+  // An UNMEASURED judge (transport failure) scored nothing: surfaced distinctly so
+  // a caller counts it as an outage, never as a judge-quality or arm-quality result.
+  let judgeUnmeasured = false;
   if (outputs.length >= 2) {
     const jr = await d.judgeSession({ experimentType, outputs, contextPack: intent.pack, intentScorable: intent.intentScorable, seed: runSeed, deps: d.judgeDeps });
+    judgeUnmeasured = Boolean(jr.unmeasured);
     if (jr.conformant) {
       judged = true;
       for (let pass = 0; pass < jr.passes.length; pass++) {
@@ -118,7 +122,7 @@ export async function runArmEvalSession({ experimentType, task, repoId = null, p
     process.stderr.write(`  [arm-eval] archive export failed (non-fatal): ${err.message}\n`);
   }
 
-  return { state: 'ran', sessionId, arms: exp.arms.map((a) => a.id), judged, conformance, seed: runSeed, archived };
+  return { state: 'ran', sessionId, arms: exp.arms.map((a) => a.id), judged, judgeUnmeasured, conformance, seed: runSeed, archived };
 }
 
 /** Stable task-id: a normalized content hash (whitespace/case) — the diversity unit. */

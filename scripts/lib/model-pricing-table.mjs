@@ -106,6 +106,11 @@ export const modelPricing = Object.freeze({
   // 0.05x (pricing page footnote 2, measured 2026-10-20), carried as a real
   // `cachedInput` rate so costFromUsage uses it over the multiplier.
   // Fable 5.1 cache read is $0.25 (0.025x); Fable 5's is $1 (0.10x). Source: platform.claude.com pricing, read 2026-10-25.
+  // Fable 5.2: $8/$40, 5-min cache write $10 (1.25x), cache read $0.20 (0.025x).
+  // Source: bundled claude-api skill (model table cached 2026-11-03 + model-migration
+  // "Migrating to Claude Fable 5.2"), read 2026-11-15. Without this row
+  // priceFor('claude-fable-5-2') was null (docs/plans/fable-vs-opus-decision-eval.md §2.1).
+  'claude-fable-5-2':  { input: 8, output: 40, cachedInput: 0.20 },
   'claude-fable-5-1':  { input: 10, output: 50, cachedInput: 0.25 },
   'claude-fable-5':    { input: 10, output: 50, cachedInput: 1 },
   'claude-opus-5-5':   { input: 4, output: 20, cachedInput: 0.20 },
