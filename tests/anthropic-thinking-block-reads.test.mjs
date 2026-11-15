@@ -25,7 +25,7 @@
  *
  * @module tests/anthropic-thinking-block-reads
  */
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -91,11 +91,26 @@ describe('textFromResponse: the answer is the TEXT block, wherever it sits', () 
 });
 
 describe('the labeller survives a thinking-first response', () => {
+  // `labelWorkUnits` writes its cache under `<repoRoot>/.audit`, so each case
+  // needs its own root. Tracked and removed rather than left behind: these are
+  // real directories in the repo's own gitignored `.audit/`, and a suite that
+  // leaks one per run accumulates them invisibly (the first version of this
+  // file left two per `npm test`).
+  const roots = [];
+  const freshRoot = () => {
+    const dir = fs.mkdtempSync(path.join(REPO_ROOT, '.audit', 'wul-think-'));
+    roots.push(dir);
+    return dir;
+  };
+  after(() => {
+    for (const dir of roots) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
   it('a thinking-only response yields NO label, and says so', async () => {
     const res = await labelWorkUnits(
       [{ key: 'k1', size: 3, category: 'cat', detail: 'd', members: [{}, {}, {}] }],
       {
-        repoRoot: fs.mkdtempSync(path.join(REPO_ROOT, '.audit', 'wul-think-')),
+        repoRoot: freshRoot(),
         // The labeller contract is `(unit) => string|null`; the seam's reader
         // has already turned a thinking-only response into ''.
         labellerProvider: async () => async () => textFromResponse(THINKING_ONLY) || null,
@@ -109,7 +124,7 @@ describe('the labeller survives a thinking-first response', () => {
     const res = await labelWorkUnits(
       [{ key: 'k2', size: 3, category: 'cat', detail: 'd', members: [{}, {}, {}] }],
       {
-        repoRoot: fs.mkdtempSync(path.join(REPO_ROOT, '.audit', 'wul-think-')),
+        repoRoot: freshRoot(),
         labellerProvider: async () => async () => textFromResponse(THINKING_THEN_TEXT) || null,
       },
     );
