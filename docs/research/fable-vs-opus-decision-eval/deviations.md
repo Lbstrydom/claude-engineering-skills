@@ -4,6 +4,46 @@ Plan: [`docs/plans/fable-vs-opus-decision-eval.md`](../../plans/fable-vs-opus-de
 Anything off-contract, outstanding, or differing from the plan is recorded here
 **before** merge and raised to Louis in the PR description. Newest first.
 
+## 2026-11-15T15:52Z — spot sample: two cross-vendor graders replace the human marks (pre-registered)
+
+Louis changed the protocol, relayed by the coordinator: "why don't we use Gemini and GPT from our
+brainstorm to do the grading - then only if there is an exception you can bring that to me with
+your recommendation". **This entry is written while the main run is still in progress. No
+main-run arm output, grade or summary has been read.** The rule below is fixed now and is not
+changed after the main run's results are seen.
+
+- **Sample.** The main run's own persisted draw, `summary.spotSampleIds` (seeded, ⌈0.2·n⌉, min 4;
+  at 60 calls that is 12 items). Variance runs are not regraded.
+- **Graders.** S1 = GPT (`latest-gpt`), S2 = Gemini (`latest-pro`). Both use the providers
+  `/brainstorm` uses. Each grades every sampled item **once, independently**. A grader sees the
+  same blinded, model-name-scrubbed judge input and frozen rubric the primary judge saw. It never
+  sees the primary's grade, the other grader's grade, or which arm wrote the output. Each grade
+  goes through the same schema and the same mechanical quote check; an unverified positive quote
+  voids that grade.
+- **Positive control first.** Each grader grades every case's frozen gold and trap answers,
+  20 per grader, under the same pass/fail definition the primary judge's control checkpoint uses.
+  A grader that fails **any** control contributes no spot-sample grades. The sample then cannot
+  certify and goes to Louis as an exception.
+- **Primary reference per item.** `correct_p` is the judge label used everywhere else: correct
+  only when both primary passes say correct. `q_p` is the mean of the two primary passes.
+- **Item exception** if any of these holds:
+  - **E1:** both S1 and S2 disagree with `correct_p` on correct vs. incorrect.
+  - **E2:** |mean(q_S1, q_S2) − q_p| > **0.25**. That is larger than Δ_target (0.20): a
+    disagreement bigger than the effect the experiment is built to detect is material.
+  - **E3:** either grader's grade is unmeasured (transport, malformed, or quote-voided). Unchecked
+    is not agreement.
+- **Sample-level rule.** The verdict **certifies only if** both graders pass every control **and**
+  the exception rate is **≤ 0.20** (≤ 2 of 12). This matches the former human-agreement gate
+  (≥ 0.8). The existing credibility gate receives `spotAgreement = 1 − exceptionRate` and keeps
+  its 0.8 threshold unchanged.
+- **Cost.** Metered per call in the same ledger, under the existing budget scope `main` and its
+  $25 cap.
+- **Escalation.** Louis sees only the exceptions. Each comes with the item, the three grades and a
+  recommendation. With no exceptions, the report states "certified" plus the agreement figures.
+- **Limitation, stated in the verdict.** Both graders are LLMs and may share biases. S1 is the
+  **same model** as the primary judge: its independence is a fresh, blind call, not a different
+  model. Only S2 is a different vendor. This is not equivalent to human review.
+
 ## 2026-11-15 — main-run budget
 
 - **Main-run hard cap: $25, confirmed by Louis directly in this session** ("Yes cap 25").
