@@ -35,7 +35,9 @@ import os from 'node:os';
 import {
   createAnthropicClient, _resetClientCache, isClaudeAvailable, isClaudeAvailableFor,
 } from '../scripts/lib/anthropic-client.mjs';
-import { unserviceableCliParams, cliFaithfulnessVerdict } from '../scripts/lib/anthropic-cli-faithfulness.mjs';
+import {
+  unserviceableCliParams, cliFaithfulnessVerdict, SERVICEABLE_CLI_PARAMS,
+} from '../scripts/lib/anthropic-cli-faithfulness.mjs';
 
 // Every env var the factory resolves ambiently. SCRUBBED, not merely saved:
 // this suite's verdict must be a function of the repo, never of the operator's
@@ -335,6 +337,70 @@ describe('unserviceableCliParams: the unit truth table', () => {
   it('serviceable params return null from the verdict too', () => {
     assert.equal(cliFaithfulnessVerdict({ max_tokens: 100 }), null);
     assert.equal(cliFaithfulnessVerdict({}), null);
+  });
+});
+
+// ── ALLOWLIST, not denylist (2026-11-15) ───────────────────────────────────
+//
+// The oracle used to name three params to refuse and pass everything else. A
+// denylist is only as complete as the last person who thought to add a name,
+// and two params had already slipped past it: `stream`, passed at a real call
+// site and dropped by the adapter, and `output_config`, which did not exist
+// when the list was written. These cases all PASS under a denylist, so they are
+// what separates the two implementations.
+describe('the allowlist refuses params nobody named', () => {
+  const u = unserviceableCliParams;
+
+  it('`stream` — the measured blind spot', () => {
+    const v = u({ model: 'm', max_tokens: 1, messages: [], stream: true });
+    assert.equal(v.param, 'stream');
+    assert.equal(v.kind, 'unrepresentable');
+    assert.match(v.why, /no streaming mode/);
+  });
+
+  it('a param the oracle has never heard of is refused with the generic reason', () => {
+    for (const extra of [{ temperature: 0.2 }, { metadata: { user_id: 'u' } },
+      { output_config: { effort: 'high' } }, { a_param_shipped_next_year: 1 }]) {
+      const v = u({ model: 'm', max_tokens: 1, messages: [], ...extra });
+      const name = Object.keys(extra)[0];
+      assert.equal(v?.param, name, `${name} must be refused by the allowlist`);
+      assert.match(v.why, /accepted and\s+dropped|accepted and dropped/);
+    }
+  });
+
+  it('EVERY offending param is named, not only the first', () => {
+    const v = u({ model: 'm', messages: [], system: 's', temperature: 0, stream: true });
+    assert.equal(v.param, 'system', 'the named params sort first, so the message is stable');
+    assert.match(v.why, /also passes `stream`, `temperature`/);
+  });
+
+  it('the allowlist itself is exactly {model, max_tokens, messages}', () => {
+    assert.deepEqual([...SERVICEABLE_CLI_PARAMS].sort(), ['max_tokens', 'messages', 'model']);
+    assert.equal(u({ model: 'm', max_tokens: 1, messages: [{ role: 'user', content: 'x' }] }), null);
+  });
+
+  it('an explicitly-undefined param is ABSENT — the SDK never puts it on the wire', () => {
+    assert.equal(u({ model: 'm', messages: [], tools: undefined, stream: undefined }), null);
+  });
+
+  // FAIL CLOSED, IN ITS OWN WORDS. "This call passes a param cli cannot honour"
+  // and "I cannot tell what this call passes" are different facts; one string
+  // for both teaches the next reader to dismiss the second as noise.
+  it('params that cannot be enumerated are `unresolvable`, worded distinctly', () => {
+    for (const bad of [null, undefined, 'a string', 42, ['an', 'array']]) {
+      const v = u(bad);
+      assert.equal(v?.kind, 'unresolvable', `${JSON.stringify(bad)} must fail closed`);
+      const msg = cliFaithfulnessVerdict(bad).message;
+      assert.match(msg, /cannot establish which params/);
+      assert.match(msg, /refusal to guess/);
+      assert.ok(!/cannot honour `/.test(msg),
+        'the unresolvable verdict must NOT borrow the named-param wording');
+    }
+  });
+
+  it('a Proxy whose ownKeys trap throws is unresolvable, not clean', () => {
+    const hostile = new Proxy({}, { ownKeys() { throw new Error('nope'); } });
+    assert.equal(u(hostile)?.kind, 'unresolvable');
   });
 });
 

@@ -88,8 +88,8 @@ backend the env resolves to.
 `cli` already refused what it cannot **represent** (multi-turn histories,
 assistant roles, non-text blocks — `assertOneShotTextMessages`) and what it
 cannot **target** (a `baseURL` — `reconcileBackendWithBaseUrl`). Both throw.
-Three params were the silent third category: accepted, then dropped or
-outranked, so the failure surfaced one layer up as a *model* failure.
+Params it accepts and then drops or outranks were the silent third category:
+the failure surfaced one layer up as a *model* failure.
 
 **Say it precisely.** `cli` does **not** ignore `system` — it passes the string
 as `--system-prompt`, and a simple instruction is obeyed. What it cannot promise
@@ -104,12 +104,27 @@ case: those are genuinely dropped.
 `unserviceableCliParams` is the single oracle, decided from the params at
 `messages.create()` time (the params are not known at construction time).
 
+**It is an ALLOWLIST, not a denylist (2026-11-15).** It asks *"is every param on
+this call one `cli` can serve?"*, and the serviceable set is exactly
+`model`, `max_tokens`, `messages`. Everything else throws, named or not — so a
+param the Messages API gains next month is refused on arrival instead of dropped
+silently. The denylist it replaced named three params and had already been
+outrun by two: `stream`, passed at one real call site and refused by nothing,
+and `output_config`, which did not exist when the three were chosen.
+`max_tokens` is the one allowlist entry argued for rather than read off the
+adapter — see the membership test below. Params the oracle cannot enumerate
+(not a plain object; a `Proxy` that refuses its own keys) get their own verdict
+kind and their own wording: *"I cannot tell what this call passes"* is a
+different fact from *"this call passes something I cannot honour"*, and one
+string for both teaches the reader to dismiss the second.
+
 **THROW AND PIN, never route.**
 
 | | ambient `CLAUDE_BACKEND=cli` | explicit `backend:'cli'` |
 |---|---|---|
 | serviceable params | stays on cli, keeps the credit | stays on cli |
-| `system` / `tools` / `tool_choice` | **throws**, naming the param and the pin | **throws**, same message |
+| any other param (`system`, `tools`, `tool_choice`, `stream`, anything unlisted) | **throws**, naming the param and the pin | **throws**, same message |
+| params that cannot be enumerated | **throws**, saying the keys are unknown | **throws**, same message |
 
 The first implementation (2026-11-14) routed an ambient-cli call to sdk with a
 once-per-param warning, mirroring `reconcileBackendWithBaseUrl`'s
@@ -128,7 +143,15 @@ CI, which runs the committed `sdk` default — so a new unpinned
 guard, in `check:static`. Two rules, because one cannot see both shapes:
 
 - **Rule A** — a file that constructs an unpinned client AND passes an
-  unserviceable param literal. Hard failure, no declaration accepted.
+  unserviceable param literal. Hard failure, no declaration accepted. The param
+  question is the oracle's, in two scopes, because a static scan can only ask
+  the ALLOWLIST question where it can see a request's WHOLE key set: inside a
+  literal `messages.create({…})` **first argument**, every key outside
+  `model`/`max_tokens`/`messages` counts, named or not; anywhere else in the
+  file only a NAMED unserviceable param (`system`, `tools`, `tool_choice`,
+  `stream`) counts, which is what still covers a request staged into a variable
+  before the call. Applied file-wide the allowlist would flag every object
+  literal in the repo.
 - **Rule B** — every unpinned construction is enumerated in the committed
   `.anthropic-pin-census.json` with a reason. Drift-only (a new one fails; a
   stale one fails and asks for a re-baseline), because Rule A is blind to the
@@ -169,9 +192,17 @@ guard, in `check:static`. Two rules, because one cannot see both shapes:
 - **An `indirectPins` claim rests on what the factory RETURNS**, and on every
   return being pinned. A pinned object elsewhere in the function body is a dead
   object vouching for a live override.
-- A **dynamic** request key might be `system`, so it fails Rule A — but only in
-  a file that also constructs an unpinned client, which is Rule A's own
+- A **dynamic** request key cannot be read, so it fails Rule A — but only in a
+  file that also constructs an unpinned client, which is Rule A's own
   condition. Failing closed therefore costs nothing where a pin already exists.
+  Its message is worded as a refusal to guess, never as a claim about a named
+  param, matching the oracle's `unresolvable` verdict.
+- **Argument 0 only.** `create(params, requestOptions)`'s second argument is
+  transport options (`{signal}`, `{timeoutMs}`), which `cli` honours. Scanning
+  every argument was harmless while the question was "does any key spell
+  `system`"; the allowlist made it read `{ signal: ctrl.signal }` as an
+  unserviceable param and fail the gate on a correct call. **When a rule's
+  question gets stricter, its subject has to get correspondingly exact.**
 - Every one of those shapes has a planted RED case in
   `tests/anthropic-pin-census.test.mjs`, and each fix has a negative control.
 - A Rule B declaration carries the **COUNT** of unpinned constructions and an
@@ -195,13 +226,16 @@ that answer is `true` — so a pinned site passed the gate and then threw
 thin ambient-resolving wrapper over it). A named backend deliberately does not
 re-validate `CLAUDE_BACKEND`, since a pinned call never reads it.
 
-The refusal set and why each member is in it:
+The params with a MEASURED reason of their own. Every other param is refused
+too — by the allowlist, with a generic reason naming the serviceable set — so
+this table is what the oracle can say more about, not the extent of the refusal:
 
 | param | what cli does | measured consequence |
 |---|---|---|
 | `system` | **passed** as `--system-prompt` — obeyed for a simple instruction, **outranked** by the `claude -p` agent persona and its ~164K-token injected project context on a structured-output contract, and the prefix is charged either way | the REAL `NORMALIZE_PROMPT`: 1995–2784 output tokens in ~40s against `max_tokens: 200`, a first-person Claude Code reply citing AGENTS.md, where sdk returned the requested one-line sentence in 29–43 tokens / 1.3s. A **shortened** variant of that same prompt: a correct one-line answer **3/3**, still 466–673 output tokens |
 | `tools` | dropped — the adapter always spawns `--tools ''` | §"Forced tool-calling" below: 20/20 tiered-recall runs fell back for a whole shadow window |
 | `tool_choice` | dropped, no error | same |
+| `stream` | accepted and ignored — `claude -p --output-format json` emits one final message, so the caller gets a different response SHAPE | one real call site (`streamAnthropicMessage`, `final-review/transport.mjs`); it never broke because that helper guards for a non-iterable response and falls back, which is also why nothing noticed the seam was refusing nothing |
 
 `max_tokens` is deliberately **not** in the set. It is equally unenforced on
 cli, but *every* caller sets it (the Messages API requires it), so refusing on

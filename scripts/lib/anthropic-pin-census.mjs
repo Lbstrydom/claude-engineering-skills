@@ -62,9 +62,32 @@
  */
 import { createHash } from 'node:crypto';
 import { parseSource, walk } from './ast.mjs';
+import { SERVICEABLE_CLI_PARAMS, UNSERVICEABLE_NAMED_PARAMS } from './anthropic-cli-faithfulness.mjs';
 
-/** The params `unserviceableCliParams` refuses, as object keys. */
-const UNSERVICEABLE_PARAM_KEYS = Object.freeze(['system', 'tools', 'tool_choice']);
+/**
+ * The two questions this gate asks about params, and why it is two.
+ *
+ * The runtime oracle is an ALLOWLIST: every key not in `SERVICEABLE_CLI_PARAMS`
+ * is refused. A static scan can ask that same question only where it can see
+ * the WHOLE key set of a request — i.e. a literal object argument to
+ * `messages.create(…)`. Everywhere else it sees object properties without
+ * knowing which object is a request, so "every key not on the allowlist" would
+ * flag every object literal in the repo.
+ *
+ *   - `ALLOWLIST`, scoped to a literal `.messages.create({…})` argument: ANY
+ *     key outside `SERVICEABLE_CLI_PARAMS` is unserviceable, named or not. This
+ *     is the rule that sees a param nobody listed — `stream` was passed at one
+ *     site, dropped by the cli adapter, and refused by nothing (measured
+ *     2026-11-15).
+ *   - `NAMED`, file-wide: a known-unserviceable key appearing as a property
+ *     ANYWHERE in the file. This is what still covers the STAGED request
+ *     (`const req = { system }; client.messages.create(req)`), which the scoped
+ *     rule cannot see and which Rule B's declaration exists for.
+ *
+ * Both lists come from the oracle, never re-spelled here: a second spelling of
+ * the policy is the exact defect the single-oracle rule forbids.
+ */
+const UNSERVICEABLE_PARAM_KEYS = UNSERVICEABLE_NAMED_PARAMS;
 
 /** The factory every seam call site constructs its client through. */
 const FACTORY_NAME = 'createAnthropicClient';
@@ -107,11 +130,15 @@ function isValueProperty(node) {
  * needed a comment-stripper and two regexes to approximate that, and still
  * missed shorthand.
  *
- * Deliberately NOT restricted to `messages.create` calls: a param may be built
- * into a request object several statements earlier, and narrowing to the call
- * expression would reintroduce a fail-open for exactly that shape. A file that
- * mentions `system` as an object property anywhere is treated as sending it,
- * which errs toward requiring a pin.
+ * TWO rules, because the allowlist question is only answerable where the whole
+ * key set is visible (see the note beside `UNSERVICEABLE_PARAM_KEYS`). Inside a
+ * literal `messages.create({…})` argument, every key outside
+ * `SERVICEABLE_CLI_PARAMS` counts. Elsewhere in the file, only a NAMED
+ * unserviceable key counts — deliberately not restricted to the call
+ * expression, because a param may be built into a request object several
+ * statements earlier, and narrowing to the call would reintroduce a fail-open
+ * for exactly that shape. A file that mentions `system` as an object property
+ * anywhere is treated as sending it, which errs toward requiring a pin.
  *
  * @param {string} source
  * @returns {string[]} matched param names, in UNSERVICEABLE_PARAM_KEYS order
@@ -146,9 +173,27 @@ function paramsInSource(source) {
     // and move their spend off the Max credit to guard a hypothesis. The narrow
     // rule flags 0 today, so it costs nothing and still closes the shape.
     if (node?.type === 'CallExpression' && isMessagesCreateCallee(node.callee)) {
-      for (const arg of node.arguments || []) {
-        if (arg?.type !== 'ObjectExpression') continue;
-        if ((arg.properties || []).some((p) => p.type === 'SpreadElement')) dynamicKeys = true;
+      // ARGUMENT 0 ONLY. `create(params, requestOptions)` — the second argument
+      // is transport options (`{signal}`, `{timeoutMs}`), not params, and the
+      // cli adapter honours both. Scanning every argument was harmless while
+      // the question was "does any key spell `system`"; under the allowlist it
+      // read `{ signal: ctrl.signal }` at summarise-domains.mjs:91 as an
+      // unserviceable param and failed the gate on a call cli serves correctly.
+      // A rule that asks a stricter question needs a correspondingly exact
+      // subject.
+      const arg = (node.arguments || [])[0];
+      if (arg?.type === 'ObjectExpression') {
+        for (const p of arg.properties || []) {
+          if (p.type === 'SpreadElement') { dynamicKeys = true; continue; }
+          // THE ALLOWLIST QUESTION, asked where the whole key set is visible.
+          // A computed key that is not a string literal is unknowable: it might
+          // be serviceable and it might be `stream`, so it fails closed through
+          // `dynamicKeys` rather than being claimed as a named param.
+          if (p.computed && p.key?.type !== 'StringLiteral') { dynamicKeys = true; continue; }
+          const key = propertyKeyName(p) ?? (p.computed ? p.key?.value : null);
+          if (!key) { dynamicKeys = true; continue; }
+          if (!SERVICEABLE_CLI_PARAMS.includes(key)) found.add(key);
+        }
       }
       return;
     }
@@ -157,7 +202,14 @@ function paramsInSource(source) {
     const name = propertyKeyName(node) ?? (node.computed ? node.key?.value : null);
     if (name && UNSERVICEABLE_PARAM_KEYS.includes(name)) found.add(name);
   });
-  return { params: UNSERVICEABLE_PARAM_KEYS.filter((k) => found.has(k)), dynamicKeys };
+  // Named params first, in the oracle's documented order, then anything the
+  // ALLOWLIST rule caught — alphabetically, so the gate's output is stable.
+  // Filtering to the named list here was the denylist's last hiding place: a
+  // key the allowlist rule had just caught would be collected and then dropped
+  // on the way out, leaving the gate green about a param it HAD seen.
+  const named = UNSERVICEABLE_PARAM_KEYS.filter((k) => found.has(k));
+  const rest = [...found].filter((k) => !UNSERVICEABLE_PARAM_KEYS.includes(k)).sort();
+  return { params: [...named, ...rest], dynamicKeys };
 }
 
 /**

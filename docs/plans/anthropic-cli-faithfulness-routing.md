@@ -1366,15 +1366,8 @@ changes a ratchet population repo-wide and is not a round-7 change.
    is the same shape of contradiction one level up. It would be a THROW under
    throw-and-pin, not a coercion, and would need the same per-site pin census
    this PR did for `system`.
-8. **The refusal set is a DENYLIST; make it an ALLOWLIST** — "is every key on
-   this call one cli can represent", throwing on the first it cannot, so a new
-   SDK parameter is refused by default. Census in §7.11d: `stream` is dropped
-   silently today, and `output_config` is invisible to a literal-key scan. Flips
-   the seam's refusal semantics for every future key, so it wants its own audit;
-   the cross-backend contract test (one call carrying `system`, `tools`,
-   `tool_choice`, `max_tokens` and an unknown key, asserting per backend that
-   each is either in the emitted request or a named error, never silently
-   absent) belongs with it.
+8. ~~**The refusal set is a DENYLIST; make it an ALLOWLIST**~~ — **SHIPPED
+   2026-11-15, as its own PR.** See §9.
 9. **AGENTS.md has 238 characters of headroom** against its 79,000 cap after
    this change (the reshape itself was net +12 chars, having reworded in place
    rather than adding). The gate's own message is the
@@ -1387,3 +1380,117 @@ changes a ratchet population repo-wide and is not a round-7 change.
    resident. Not done here: it is unrelated to this change, and quietly
    rewriting three other sections inside a backend-routing PR is the scope
    expansion AGENTS.md's own scope-discipline rule forbids.
+
+---
+
+## 9. Addendum 4 — the refusal set became an ALLOWLIST (shipped 2026-11-15)
+
+§8 item 8, deferred out of the parent PR deliberately because it changes
+refusal semantics for every future param. Its own change, its own review.
+
+### 9.1 What the oracle now asks
+
+`unserviceableCliParams` asked *"is this call carrying one of these three
+params?"* It now asks *"is every param on this call one the cli backend can
+serve?"* The serviceable set is `SERVICEABLE_CLI_PARAMS` —
+`{model, max_tokens, messages}` — and anything else throws with the same
+throw-and-pin remedy.
+
+Two things the allowlist had to get right, or it is worse than the denylist it
+replaced:
+
+- **`max_tokens` stays serviceable.** It is as unenforced on cli as `system`
+  is unhonoured, but the membership test settled in the parent PR is whether
+  the param being unmet changes the ANSWER the caller receives, and an unmet
+  ceiling gives the answer that was asked for, possibly more of it. Refusing on
+  it would refuse every call (every caller sets it — the Messages API requires
+  it), collapsing the routing into "cli is never usable" and moving all of the
+  operator's spend off the Max 20x credit. The module's docstring carries that
+  reasoning next to the list it justifies.
+- **A key the scan cannot resolve fails CLOSED, in its own words.** "This call
+  passes a param cli cannot honour" and "I cannot tell what this call passes"
+  are different facts. The oracle returns `kind: 'unrepresentable' |
+  'unresolvable'` and the two verdicts share no wording; the gate's
+  spread/computed-key message says the same thing. Collapsing them into one
+  string is how a true positive gets dismissed as noise.
+
+### 9.2 The census, re-measured on this branch
+
+Re-derived by AST over every tracked `scripts/**/*.mjs` (`messages.create`
+argument 0, 2026-11-15). It reproduces §7.11d exactly:
+
+| key | literal call sites | under the allowlist |
+|---|---|---|
+| `model` / `max_tokens` / `messages` | 19 each | serviceable |
+| `system` | 10 | refused (was refused) |
+| `tools` / `tool_choice` | 3 | refused (was refused) |
+| `stream` | 1 | **refused (was SERVED)** |
+| spread into the argument | 1 | unresolvable → fails closed |
+
+26 `messages.create` call sites in all; 19 pass a literal object, 7 pass a
+staged request variable (the declared dataflow limit, unchanged). `output_config`
+is assigned onto a request variable at three sites and appears in no literal, so
+a key-scan cannot see it at all — which is the second half of the argument for
+an allowlist: a denylist can only refuse what someone thought to name, and these
+are params that did not exist when the names were chosen.
+
+### 9.3 Blast radius: zero new pins
+
+`npm run anthropic:pin:gate` is clean with the baseline unchanged. All five
+declared-unpinned files — `anthropic-ping.mjs`, `neighbourhood-query.mjs`,
+`visual/explain.mjs`, `symbol-index/summarise.mjs`,
+`symbol-index/summarise-domains.mjs` — send exactly `{model, max_tokens,
+messages}`, which is the allowlist. **The summariser, the highest-volume
+deliberately-cli site, is untouched**, so no spend moves off the Max credit.
+
+`stream`'s one site is `streamAnthropicMessage` in
+`lib/final-review/transport.mjs`, and every client reaching it is already pinned
+`{backend:'sdk'}` by `final-review/providers.mjs` and `final-review/shadow.mjs`.
+Decided on the code at the site rather than assumed: the runtime refusal is
+unreachable there today, and the value of naming `stream` is that the NEXT
+caller of that helper cannot reach it from an ambient-cli client silently.
+
+### 9.4 What the flip found: a gate asking a stricter question needs an exacter subject
+
+The first clean-looking run of the gate failed on
+`symbol-index/summarise-domains.mjs:91` for passing `signal` — which is
+`create(params, requestOptions)`'s SECOND argument, transport options the cli
+adapter honours. The census had always looped over every argument of the call;
+under the denylist that was harmless, because argument 1 never spells `system`.
+The allowlist made the sloppiness load-bearing in one step, and it would have
+pinned a deliberately-cli site for a param that is not a param.
+
+Generalises: **when a rule's question gets stricter, its SUBJECT has to get
+correspondingly exact.** Recorded as a `GREEN:` case in
+`tests/anthropic-pin-census.test.mjs` — the direction the gate must not fire.
+
+### 9.5 Ordering: the faithfulness verdict now runs FIRST
+
+`createCliAdapter`'s `create()` destructured params and ran
+`assertOneShotTextMessages` before consulting the oracle. With an `unresolvable`
+verdict in play that order answered "I cannot enumerate this call's params" with
+`cli backend requires a non-empty messages array` — a true sentence about the
+wrong problem, which would send a reader to inspect their messages array. The
+verdict is now the first statement in the method.
+
+### 9.6 The cross-backend contract test
+
+`tests/anthropic-backend-parity.test.mjs`: for one set of params, `sdk` and
+`cli` either both serve the call or the cli path throws — never one quietly
+doing something different from the other.
+
+- Asserted on the **emitted request** both sides: the sdk arm reads the captured
+  fetch BODY, the cli arm reads the ARGV the `claude` binary was spawned with
+  (its transport's equivalent of a request). Asserting on client config is how a
+  misroute passes review.
+- Each refused param is asserted to be **honoured by sdk on the wire** first.
+  Without that half the test could pass on a param neither backend supports,
+  which demonstrates no divergence at all.
+- Every ambient var the factory reads is scrubbed, for the reason recorded in
+  §7.11c: `anthropic-pin-on-azure` passed locally and failed in CI (3 of 8) on
+  exactly that.
+- **Negative control, run before claiming green**: widening
+  `SERVICEABLE_CLI_PARAMS` to include `stream`, `output_config`, `temperature`,
+  `metadata` and `stop_sequences` turns 6 of the 12 cases red and the oracle's
+  own suite stays green — so the parity suite, and only the parity suite, is
+  what measures the flip.

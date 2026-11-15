@@ -129,8 +129,9 @@ async function main() {
       ? `  UNPINNED+PARAM  ${v.file} — constructs an unpinned client and passes `
         + `\`${v.params.join('`, `')}\`, which the cli backend cannot honour.\n`
       : `  UNPINNED+PARAM  ${v.file} — constructs an unpinned client and builds its request with a `
-        + 'spread or a computed key, so whether it passes `system`/`tools`/`tool_choice` cannot be '
-        + 'read statically. Fails closed: pin it, or write the keys literally.\n');
+        + 'spread or a computed key, so WHICH params it passes cannot be read statically. This is '
+        + 'not a report that a named param is unserviceable; it is a refusal to guess. Fails '
+        + 'closed: pin it, or write the keys literally.\n');
   }
   for (const f of verdict.undeclared) {
     process.stderr.write(`  UNDECLARED      ${f} — constructs a client with no literal backend pin.\n`);
@@ -160,8 +161,10 @@ async function main() {
   process.stderr.write('\n');
   if (verdict.ruleA.length) {
     process.stderr.write(
-      '  Rule A: add `backend: \'sdk\'` to that construction. The cli backend THROWS on\n'
-      + '  `system`/`tools`/`tool_choice` (lib/anthropic-cli-faithfulness.mjs), and CI runs\n'
+      '  Rule A: add `backend: \'sdk\'` to that construction. The cli backend serves\n'
+      + '  `model`/`max_tokens`/`messages` and THROWS on every other param — an ALLOWLIST,\n'
+      + '  so a param added to the Messages API later is refused on arrival rather than\n'
+      + '  dropped silently (lib/anthropic-cli-faithfulness.mjs). CI runs\n'
       + '  the sdk default, so without the pin the break ships and fires only where\n'
       + '  CLAUDE_BACKEND=cli is set. Gate the site on `isClaudeAvailableFor(\'sdk\')` too —\n'
       + '  the ambient check says available on a keyless cli install.\n');

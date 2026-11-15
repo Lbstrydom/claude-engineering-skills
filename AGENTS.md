@@ -715,13 +715,15 @@ default stays `sdk` for CI without the `claude` CLI). Call sites use
 Smoke test: `npm run anthropic:ping`.
 
 > **A BACKEND MUST NOT ACCEPT A CALL IT CANNOT HONOUR — THROW AND PIN.**
-> `cli` refused what it cannot REPRESENT or TARGET, but `system`, `tools` and
-> `tool_choice` were accepted then dropped or OUTRANKED, surfacing as a MODEL
-> failure. (`--system-prompt` IS passed and a simple instruction obeyed; the
-> persona outranks a structured-output contract. Never say cli ignores it.)
-> `unserviceableCliParams` is the single oracle, decided from the PARAMS, and
-> `cli` now **THROWS** on them, ambient or explicit alike — never routed to
-> sdk, which would let a param pick the meter. The fix is a declared
+> `cli` refused what it cannot REPRESENT or TARGET, but a param it accepts and
+> then drops or OUTRANKS surfaced as a MODEL failure. (`--system-prompt` IS
+> passed and a simple instruction obeyed; the persona outranks a
+> structured-output contract. Never say cli ignores it.)
+> `unserviceableCliParams` is the single oracle, decided from the PARAMS, and an
+> **ALLOWLIST**: it serves `model`/`max_tokens`/`messages` and **THROWS** on
+> every other param, named or not, ambient or explicit — never routed to sdk,
+> which would let a param pick the meter. A key it cannot enumerate fails
+> CLOSED, as a refusal to guess, never a named param. The fix is a declared
 > `{backend:'sdk'}` pin gated on **`isClaudeAvailableFor('sdk')`**. The throw
 > cannot fire in CI (which runs the `sdk` default), so
 > `npm run anthropic:pin:gate` is the guard. Serviceable calls stay on cli
@@ -738,8 +740,8 @@ Smoke test: `npm run anthropic:ping`.
   `cli` always spawns `claude -p --tools ''`, so a caller forcing `tool_choice`
   got a plain `text` block with **no error** — which cost the tiered-recall
   discovery generator a whole shadow window (20/20 runs fell back to legacy).
-  Since 2026-11-15 the seam THROWS instead: the drop is no longer silent, and
-  the pin is the fix, not merely the intent.
+  Since 2026-11-15 the seam THROWS instead, so the pin is the fix, not the
+  intent.
 - **`max_tokens` is UNENFORCED on `cli`** — accepted and ignored, not merely
   unenforceable, so it is never a bound for cost or for parse safety.
 - **Availability is the backend's own answer, never `process.env.ANTHROPIC_API_KEY`.**

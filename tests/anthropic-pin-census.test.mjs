@@ -1205,3 +1205,78 @@ describe('the claimed indirect-pin fail-opens, as probes', () => {
     }
   });
 });
+
+// THE ALLOWLIST RULE (2026-11-15). The gate's param question changed shape with
+// the oracle's: inside a literal `messages.create({…})` argument it now asks
+// whether every key is SERVICEABLE, not whether any key is one of three names.
+// These are the cases that separate the two — a denylist passes every one of
+// them, so a scanner that still answers the old question fails here.
+describe('the allowlist rule: a param nobody named is still a violation', () => {
+  const planted = (createArgs) => `
+    import { createAnthropicClient } from './lib/anthropic-client.mjs';
+    const client = await createAnthropicClient();
+    await client.messages.create(${createArgs});
+  `;
+
+  it('RED: `stream` — passed at a real site, dropped by cli, refused by no denylist', () => {
+    const c = classifyPinningInSource(planted(
+      "{ model: 'm', max_tokens: 10, messages: [], stream: true }",
+    ));
+    assert.equal(c.ruleAViolation, true, 'the shape the denylist could not see');
+    assert.deepEqual(c.unserviceable, ['stream']);
+  });
+
+  it('RED: `output_config` — a param that did not exist when the denylist was written', () => {
+    const c = classifyPinningInSource(planted(
+      "{ model: 'm', messages: [], output_config: { effort: 'high' } }",
+    ));
+    assert.equal(c.ruleAViolation, true);
+    assert.deepEqual(c.unserviceable, ['output_config']);
+  });
+
+  it('named params still sort FIRST, so the gate\'s message is stable', () => {
+    const c = classifyPinningInSource(planted(
+      "{ temperature: 0, system: 's', messages: [], stream: true }",
+    ));
+    assert.deepEqual(c.unserviceable, ['system', 'stream', 'temperature']);
+  });
+
+  // THE DIRECTION THE GATE MUST NOT FIRE. `create(params, requestOptions)` —
+  // the second argument is transport options, which the cli adapter honours.
+  // Scanning every argument was harmless under the denylist and made the
+  // allowlist fail the gate on summarise-domains.mjs:91, a call cli serves
+  // correctly. Found by running the gate, not by review.
+  it('GREEN: `{ signal }` in the SECOND argument is not a param', () => {
+    const c = classifyPinningInSource(planted(
+      "{ model: 'm', max_tokens: 10, messages: [] }, { signal: ctrl.signal }",
+    ));
+    assert.equal(c.ruleAViolation, false, 'requestOptions are not params');
+    assert.deepEqual(c.unserviceable, []);
+  });
+
+  it('GREEN: an object literal ELSEWHERE in the file is judged by the named rule only', () => {
+    // Were the allowlist applied file-wide, every object in the repo would be a
+    // violation. It is scoped to the create argument for exactly this reason.
+    // `temperature` is an UNNAMED unserviceable param, so it is caught inside a
+    // create literal and ignored anywhere else; a NAMED one (`system`,
+    // `stream`) is caught in both, which is the staged-request case below.
+    const c = classifyPinningInSource(`
+      import { createAnthropicClient } from './lib/anthropic-client.mjs';
+      const cfg = { temperature: 3, retries: 2, verbose: false };
+      const client = await createAnthropicClient();
+      await client.messages.create({ model: 'm', max_tokens: 1, messages: [] });
+    `);
+    assert.equal(c.ruleAViolation, false);
+  });
+
+  it('a NAMED param still counts outside the create call — the staged-request shape', () => {
+    const c = classifyPinningInSource(`
+      import { createAnthropicClient } from './lib/anthropic-client.mjs';
+      const client = await createAnthropicClient();
+      const req = { model: 'm', max_tokens: 1, system: 'be brief', messages: [] };
+      await client.messages.create(req);
+    `);
+    assert.equal(c.ruleAViolation, true, 'the file-wide named rule covers what the scoped one cannot see');
+    assert.deepEqual(c.unserviceable, ['system']);
+  });
+});
