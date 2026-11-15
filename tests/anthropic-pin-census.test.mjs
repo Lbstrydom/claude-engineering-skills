@@ -468,8 +468,16 @@ describe('AST: the shapes a text scan could not see', () => {
     assert.equal(c.unpinned, 1);
   });
 
-  it('a member-expression callee counts — `mod.createAnthropicClient()` after a dynamic import', () => {
-    assert.equal(unpinned('const c = await mod.createAnthropicClient();'), 1);
+  it('a member-expression callee counts when the RECEIVER is the seam module', () => {
+    const src = "const mod = await import('./anthropic-client.mjs');\n"
+      + 'const c = await mod.createAnthropicClient();';
+    assert.equal(unpinned(src), 1);
+  });
+
+  // The property name alone counted an unrelated object's same-named factory as
+  // a seam construction, failing the gate for a call that is not this seam's.
+  it('a member call on an UNRELATED receiver does not count', () => {
+    assert.equal(classifyPinningInSource('const c = await unrelatedBag.createAnthropicClient();').constructions, 0);
   });
 
   it('a COMPUTED key is unresolved, never a pin', () => {
@@ -752,13 +760,20 @@ describe('a factory must be pinned on EVERY path out', () => {
 describe('every spelling of the construction counts', () => {
   const unpinned = (src) => classifyPinningInSource(src).unpinned;
 
-  it("a BRACKETED member call — `mod['createAnthropicClient']()`", () => {
-    assert.equal(unpinned("const c = await mod['createAnthropicClient']();"), 1,
-      'the non-computed test excluded this spelling entirely');
+  it("a BRACKETED member call on the seam module — `mod['createAnthropicClient']()`", () => {
+    const src = "const mod = await import('./anthropic-client.mjs');\n"
+      + "const c = await mod['createAnthropicClient']();";
+    assert.equal(unpinned(src), 1, 'the non-computed test excluded this spelling entirely');
   });
 
   it('a bracketed member call can be pinned too', () => {
-    assert.equal(unpinned("const c = await mod['createAnthropicClient']({ backend: 'sdk' });"), 0);
+    const src = "const mod = await import('./anthropic-client.mjs');\n"
+      + "const c = await mod['createAnthropicClient']({ backend: 'sdk' });";
+    assert.equal(unpinned(src), 0);
+  });
+
+  it("a bracketed call on an UNRELATED receiver does not count", () => {
+    assert.equal(classifyPinningInSource("const c = await bag['createAnthropicClient']();").constructions, 0);
   });
 
   it('a DYNAMIC computed member call is not claimed either way', () => {
@@ -820,6 +835,101 @@ describe('a spread into a .create() argument can hide a param', () => {
     const c = classifyPinningInSource(src);
     assert.equal(c.dynamicKeys, false, 'the broad rule would have cost the summariser its credit');
     assert.equal(c.ruleAViolation, false);
+  });
+});
+
+// ── round 6: a guard of mine that cried wolf, and two over-broad matches ────
+//
+// `endsInReturn` (round 5) tested only whether the LAST statement was a
+// `return`, so `if (x) return A; else return B;` was marked unresolvable
+// although every path returns. Fail-closed but WRONG is noise, and a gate that
+// cries wolf is a gate that gets bypassed.
+describe('alwaysReturns: terminating shapes are recognised', () => {
+  const held = (body) => indirectPinHolds(
+    `function opts() { ${body} }\nawait createAnthropicClient(opts());`, 'opts',
+  ).pinned;
+
+  it('GREEN: if/else where BOTH branches return', () => {
+    assert.equal(held("if (x) return { backend: 'sdk' }; else return { backend: 'bedrock' };"), true);
+  });
+
+  it('RED: an if with NO else falls through', () => {
+    assert.equal(held("if (x) return { backend: 'sdk' };"), false);
+  });
+
+  it('GREEN: try/catch where both return', () => {
+    assert.equal(held("try { return { backend: 'sdk' }; } catch { return { backend: 'sdk' }; }"), true);
+  });
+
+  it('RED: a try with no catch', () => {
+    assert.equal(held("try { return { backend: 'sdk' }; } finally { log(); }"), false,
+      'relying on a finally to terminate is obscure enough to deserve a human read');
+  });
+
+  it('GREEN: a switch with a default where every case returns', () => {
+    assert.equal(held("switch (k) { case 1: return { backend: 'sdk' }; default: return { backend: 'sdk' }; }"), true);
+  });
+
+  it('RED: a switch with NO default', () => {
+    assert.equal(held("switch (k) { case 1: return { backend: 'sdk' }; }"), false);
+  });
+
+  it('GREEN: a throw terminates a branch', () => {
+    assert.equal(held("if (x) throw new Error('no'); else return { backend: 'sdk' };"), true);
+  });
+
+  it('RED: a loop is not recognised as terminating', () => {
+    assert.equal(held("while (x) { return { backend: 'sdk' }; }"), false,
+      'an unrecognised shape reads as unresolvable — the safe direction');
+  });
+});
+
+// Matching ANY member call named `create` meant `db.records.create({ ...row })`
+// in a file that happens to construct a client set the unknown-param flag,
+// failing the gate for a wholly unrelated call.
+describe('the spread rule is scoped to the Messages API', () => {
+  it("RED: `client.messages.create({ ...request })` is flagged", () => {
+    const src = 'await createAnthropicClient();\nawait client.messages.create({ ...request });';
+    assert.equal(classifyPinningInSource(src).dynamicKeys, true);
+  });
+
+  it("GREEN: `db.records.create({ ...row })` is not an Anthropic request", () => {
+    const src = 'await createAnthropicClient();\nawait db.records.create({ ...row });';
+    assert.equal(classifyPinningInSource(src).dynamicKeys, false);
+  });
+
+  it("GREEN: a bare `create({ ...x })` with no `messages` receiver is not either", () => {
+    const src = 'await createAnthropicClient();\nawait thing.create({ ...x });';
+    assert.equal(classifyPinningInSource(src).dynamicKeys, false);
+  });
+
+  // STATED LIMIT, not a hidden one: following a staged request needs dataflow,
+  // which this gate does not do. Rule B's declaration is the mechanism for it.
+  it('a STAGED request is a declared limit', () => {
+    const src = 'await createAnthropicClient();\nconst req = { ...defaults };\nawait client.messages.create(req);';
+    assert.equal(classifyPinningInSource(src).dynamicKeys, false,
+      'documented in the module: a value crossing a statement boundary is Rule B territory');
+  });
+});
+
+describe('provenance: the two-step namespace form', () => {
+  it('GREEN: `const mod = await import(seam); const { createAnthropicClient: mk } = mod;`', () => {
+    const src = "const mod = await import('./anthropic-client.mjs');\n"
+      + 'const { createAnthropicClient: mk } = mod;\nconst c = await mk();';
+    assert.equal(classifyPinningInSource(src).unpinned, 1,
+      'a missed alias is invisible to BOTH rules');
+  });
+
+  it('GREEN: a namespace import of the seam', () => {
+    const src = "import * as seam from './lib/anthropic-client.mjs';\n"
+      + 'const c = await seam.createAnthropicClient();';
+    assert.equal(classifyPinningInSource(src).unpinned, 1);
+  });
+
+  it('RED: the same two-step from an unrelated module', () => {
+    const src = "const mod = await import('./other.mjs');\n"
+      + 'const { createAnthropicClient: mk } = mod;\nconst c = await mk();';
+    assert.equal(classifyPinningInSource(src).constructions, 0);
   });
 });
 

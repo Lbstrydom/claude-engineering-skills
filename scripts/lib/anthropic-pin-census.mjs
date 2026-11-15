@@ -45,6 +45,14 @@
  *     fails too, asking for a re-baseline, in the shape `size:ratchet:gate` and
  *     `knip-gate` already use.
  *
+ * **Stated limits, so nobody mistakes them for coverage.** A request STAGED
+ * before the call — `const req = { ...defaults }; client.messages.create(req)` —
+ * is not seen, and neither is a construction reached through a dynamic computed
+ * member (`mod[whichever]()`). Both need dataflow, which this gate does not do
+ * and should not grow into: they are the same shape as the HANDOFF that Rule B
+ * exists for, one statement earlier instead of one module over. The declaration
+ * is the mechanism for them, not a sixth pattern.
+ *
  * `classifyPinningInSource` is a PURE function of file text, so the gate's
  * positive control can plant a source string rather than a file: a planted
  * unpinned-plus-`system` source must come back as a violation, or the scanner
@@ -137,7 +145,7 @@ function paramsInSource(source) {
     // — including the summariser, the highest-volume deliberately-cli site —
     // and move their spend off the Max credit to guard a hypothesis. The narrow
     // rule flags 0 today, so it costs nothing and still closes the shape.
-    if (node?.type === 'CallExpression' && memberNameOf(node.callee) === 'create') {
+    if (node?.type === 'CallExpression' && isMessagesCreateCallee(node.callee)) {
       for (const arg of node.arguments || []) {
         if (arg?.type !== 'ObjectExpression') continue;
         if ((arg.properties || []).some((p) => p.type === 'SpreadElement')) dynamicKeys = true;
@@ -231,7 +239,7 @@ export function resolveBackendOfArg(argNode) {
  * @returns {Array<{verdict: string, argNode: object|undefined}>}
  */
 function constructionsIn(ast) {
-  const names = factoryLocalNames(ast);
+  const { names, namespaces } = factoryBindings(ast);
   const out = [];
   walk(ast, (node) => {
     if (node?.type !== 'CallExpression') return;
@@ -239,14 +247,43 @@ function constructionsIn(ast) {
     const isFactory = (callee?.type === 'Identifier' && names.has(callee.name))
       // `mod.createAnthropicClient(...)` after a dynamic import, and the
       // bracketed spelling `mod['createAnthropicClient']()`, which the
-      // non-computed test excluded. A computed property whose key is NOT a
-      // string literal is a different matter — see the module note on limits.
-      || (callee?.type === 'MemberExpression' && memberNameOf(callee) === FACTORY_NAME);
+      // non-computed test excluded. PROVENANCE REQUIRED on the receiver: the
+      // property name alone counted `unrelatedBag['createAnthropicClient']()`
+      // as a seam construction, failing the gate for a call that is not this
+      // seam's. No site in this repo uses the member form at all (measured
+      // 2026-11-15), so requiring provenance costs nothing today. A computed
+      // property whose key is NOT a string literal stays a declared limit.
+      || (callee?.type === 'MemberExpression' && memberNameOf(callee) === FACTORY_NAME
+        && callee.object?.type === 'Identifier' && namespaces.has(callee.object.name));
     if (!isFactory) return;
     const argNode = (node.arguments || [])[0];
     out.push({ verdict: resolveBackendOfArg(argNode), argNode });
   });
   return out;
+}
+
+/**
+ * Is this callee the Messages API's `…messages.create`?
+ *
+ * Narrowed after round 6: matching any member call named `create` meant
+ * `db.records.create({ ...row })` in a file that happens to construct a client
+ * set the unknown-param flag, failing the gate for an unrelated call. The
+ * receiver must itself be a `messages` member.
+ *
+ * **Stated limit.** A request STAGED first — `const req = { ...defaults };
+ * client.messages.create(req)` — is not seen. Following that needs dataflow,
+ * which this gate does not do and should not grow into: the honest answer is
+ * that Rule B exists precisely because a value crossing a boundary cannot be
+ * tracked statically, and a staged request is that same shape one step earlier.
+ * A file doing it keeps its census entry and its reason, which is the mechanism
+ * for exactly this.
+ */
+function isMessagesCreateCallee(callee) {
+  if (callee?.type !== 'MemberExpression') return false;
+  if (memberNameOf(callee) !== 'create') return false;
+  const receiver = callee.object;
+  if (receiver?.type === 'MemberExpression') return memberNameOf(receiver) === 'messages';
+  return receiver?.type === 'Identifier' && receiver.name === 'messages';
 }
 
 /**
@@ -293,10 +330,28 @@ function memberNameOf(callee) {
  * which is the worst failure this gate can have.
  *
  * @param {object} ast
- * @returns {Set<string>}
+ * @returns {{names: Set<string>, namespaces: Set<string>}}
  */
-function factoryLocalNames(ast) {
+function factoryBindings(ast) {
   const names = new Set([FACTORY_NAME]);
+  // Namespace bindings for the seam, so the TWO-STEP form resolves:
+  //   const mod = await import('…/anthropic-client.mjs');
+  //   const { createAnthropicClient: mk } = mod;
+  // The one-step check missed it, and a missed alias is invisible to BOTH rules.
+  const seamNamespaces = new Set();
+  walk(ast, (node) => {
+    if (node?.type === 'VariableDeclarator' && node.id?.type === 'Identifier'
+      && isSeamImportInit(node.init)) {
+      seamNamespaces.add(node.id.name);
+    }
+    if (node?.type === 'ImportDeclaration' && SEAM_MODULE_RE.test(node.source?.value || '')) {
+      for (const spec of node.specifiers || []) {
+        if (spec.type === 'ImportNamespaceSpecifier' && spec.local?.name) {
+          seamNamespaces.add(spec.local.name);
+        }
+      }
+    }
+  });
   walk(ast, (node) => {
     // Static: import { createAnthropicClient as mk } from '...'
     if (node?.type === 'ImportDeclaration' && SEAM_MODULE_RE.test(node.source?.value || '')) {
@@ -315,7 +370,9 @@ function factoryLocalNames(ast) {
     // same name as this seam's — a false construction, which fails the gate
     // for the wrong reason and teaches the next author to distrust it.
     if (node?.type === 'VariableDeclarator' && node.id?.type === 'ObjectPattern') {
-      if (!isSeamImportInit(node.init)) return;
+      const fromSeam = isSeamImportInit(node.init)
+        || (node.init?.type === 'Identifier' && seamNamespaces.has(node.init.name));
+      if (!fromSeam) return;
       for (const prop of node.id.properties || []) {
         if (prop.type !== 'ObjectProperty') continue;
         if (propertyKeyName(prop) !== FACTORY_NAME) continue;
@@ -323,7 +380,7 @@ function factoryLocalNames(ast) {
       }
     }
   });
-  return names;
+  return { names, namespaces: seamNamespaces };
 }
 
 /**
@@ -495,6 +552,53 @@ export function indirectPinHolds(source, fnName) {
 }
 
 /**
+ * Does every path through this statement return?
+ *
+ * A deliberately small completion analysis over the shapes that actually occur
+ * in an options factory. Anything it does not recognise is treated as NOT
+ * terminating, so the error falls toward "unresolvable" — but only after the
+ * common terminating shapes are recognised, because fail-closed-but-WRONG is
+ * noise, and a gate that cries wolf is a gate that gets bypassed. The R5
+ * version tested only "is the last statement a `return`", which marked
+ * `if (x) return A; else return B;` unresolvable although every path returns.
+ *
+ * @param {object} node - a statement, or a BlockStatement
+ * @returns {boolean}
+ */
+function alwaysReturns(node) {
+  if (!node) return false;
+  switch (node.type) {
+    case 'ReturnStatement':
+    case 'ThrowStatement':
+      return true;
+    case 'BlockStatement': {
+      const statements = node.body || [];
+      return statements.some((st) => alwaysReturns(st));
+    }
+    case 'IfStatement':
+      // BOTH branches, and there must BE an else — `if (x) return A;` falls
+      // through when x is false.
+      return Boolean(node.alternate)
+        && alwaysReturns(node.consequent) && alwaysReturns(node.alternate);
+    case 'TryStatement':
+      // The handler decides: a try whose catch returns, returns. A `finally`
+      // that returns also terminates, but relying on that is obscure enough
+      // that an options factory doing it should be read by a human.
+      return Boolean(node.handler)
+        && alwaysReturns(node.block) && alwaysReturns(node.handler.body);
+    case 'SwitchStatement':
+      // Only with a `default`, and only if every case terminates. A case that
+      // falls through to the next is not handled here and reads as
+      // non-terminating, which is the safe direction.
+      return (node.cases || []).some((c) => !c.test)
+        && (node.cases || []).every((c) => (c.consequent || []).length === 0
+          || c.consequent.some((st) => alwaysReturns(st)));
+    default:
+      return false;
+  }
+}
+
+/**
  * The ObjectExpressions a function can RETURN.
  *
  * `() => ({...})` is the concise-body form; `return {...}` is the block form.
@@ -518,9 +622,7 @@ function returnedObjectsOf(fnNode) {
   // return { backend: 'sdk' }; }` is the shape. A full completion analysis is
   // not needed to be SOUND here, only conservative: a body that does not end in
   // a return has an unresolvable path, full stop.
-  const statements = body.body || [];
-  const last = statements[statements.length - 1];
-  const endsInReturn = last?.type === 'ReturnStatement';
+  const endsInReturn = alwaysReturns(body);
   const out = [];
   const visit = (node) => {
     if (!node || typeof node !== 'object') return;

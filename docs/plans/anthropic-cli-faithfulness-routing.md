@@ -1025,6 +1025,61 @@ either reading the changelog or being wrong.
 
 ---
 
+## 7.10 Round 6 — the CAP, not convergence, and the card
+
+**Round 6 did not converge: H:3 M:5 against a threshold of H==0 && M<=2.** Six
+is `/audit-code`'s cap, so the decision to continue is the operator's, not mine.
+The structural-or-stop card (`scripts/audit-structural-card.mjs`) reports **5
+structural clusters, 84 polish, of 89**, with `anthropic-pin-census.mjs` raised
+in 6 rounds and `work-unit-labels.mjs` in 4. Every structural cluster is the
+same one: the census's control-flow analysis.
+
+Four of round 6's findings were fixed anyway, because two were regressions I
+introduced in round 5 and leaving a guard that cries wolf is worse than the gap
+it covers:
+
+| # | defect | note |
+|---|---|---|
+| 1 | `endsInReturn` marked `if (x) return A; else return B;` unresolvable, though every path returns | **my R5 regression.** `alwaysReturns` now recognises if/else, try/catch, switch-with-default and throw; anything unrecognised still reads as unresolvable |
+| 2 | the spread rule matched ANY member call named `create`, so `db.records.create({ ...row })` failed the gate | **my R5 regression.** Scoped to a `…messages.create` receiver |
+| 3 | provenance missed the two-step `const mod = await import(seam); const { createAnthropicClient: mk } = mod;` | a missed alias is invisible to BOTH rules |
+| 4 | a member call counted on property name alone, so `unrelatedBag['createAnthropicClient']()` counted as a seam construction | provenance now required on the receiver; no site in this repo uses the member form at all (measured), so it costs nothing |
+
+**These four fixes are NOT audited.** They were written after the final round, at
+the cap, which is the normal state at a cap and is stated here rather than
+implied. They carry four negative controls (last-statement-only 4/128 fail ·
+any-`create` 2/128 · no namespace 1/128 · no receiver provenance 2/128) and the
+suite is green, but no adversarial pass has read them.
+
+### 7.10a The one finding left open, and why it is a limit rather than a gap
+
+A request STAGED before the call — `const req = { ...defaults };
+client.messages.create(req)` — is not seen by the spread rule. Following it needs
+dataflow, which this gate does not do. That is not a patch waiting to happen: it
+is the same shape as the HANDOFF that Rule B exists for (§2.6a), one statement
+earlier instead of one module over. The honest answer is the declaration, not a
+sixth pattern. Written into the module's own docstring as a stated limit.
+
+### 7.10b What six rounds on one file actually says
+
+The file was raised in every round. Reading that as "the audit is churning"
+would be the comfortable conclusion and the wrong one: each round found a REAL
+fail-open, and four of the six rounds found one I had introduced while fixing
+the previous. The honest reading is that **a gate asserting a security-shaped
+property over source is harder than it looks, and I under-estimated it three
+times — twice by arguing a parser was over-engineering, once by assuming
+"fail closed" was free.**
+
+What changed each round is worth recording, because the trend is the argument
+for stopping rather than for another round: the regex rounds produced shapes
+with no principled enumeration (R1–R3), the AST rounds produced "this node type
+also assigns the key" (R4–R5), and round 6 produced two over-broad matches of my
+own making plus one declared limit. The defect class is converging even though
+the count has not, which is exactly the judgement the cap exists to hand to a
+human.
+
+---
+
 ## 8. Follow-ups (not this change)
 
 1. **The ~164K prefix tax on every remaining `cli` call** (§2.4) is the larger
