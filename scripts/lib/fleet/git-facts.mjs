@@ -177,17 +177,38 @@ export function gitCommonDir(cwd) {
  * as "cannot locate the git common dir" with nothing to act on (consumer reports 2026-11-15). Two causes produce it — the
  * folder belongs to another account, or THIS process runs under a different (sandboxed or elevated) token than the one that
  * owns it, as an app-launched session on Windows can — and each has its remedy. Both are a person's security decision:
- * fleet names them and changes nothing.
+ * fleet names them and changes nothing. (Its doc sits here; `unquoteShellArg`, its helper, is defined first.)
  */
+/**
+ * One POSIX-shell argument back to its value: `'…'` segments are literal, `"…"` segments drop backslash-escapes of `"`, `\`,
+ * `$` and backtick, and a bare `\x` is `x` — so git's `'O'\''Brien'` decodes to `O'Brien`. Unbalanced quoting returns null.
+ */
+export function unquoteShellArg(s) {
+  let out = ''; let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "'") { const j = s.indexOf("'", i + 1); if (j === -1) return null; out += s.slice(i + 1, j); i = j + 1; }
+    else if (c === '"') {
+      i += 1;
+      while (i < s.length && s[i] !== '"') { if (s[i] === '\\' && /["\\$`]/.test(s[i + 1] ?? '')) { out += s[i + 1]; i += 2; } else { out += s[i]; i += 1; } }
+      if (i >= s.length) return null;
+      i += 1;
+    } else if (c === '\\' && i + 1 < s.length) { out += s[i + 1]; i += 2; }
+    else { out += c; i += 1; }
+  }
+  return out;
+}
+
 export function dubiousOwnership(stderr) {
   const text = String(stderr ?? '');
   if (!/dubious ownership/i.test(text)) return null;
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const fix = lines.find((l) => /git config --global --add safe\.directory/.test(l));
   const head = (lines.find((l) => /dubious ownership/i.test(l)) ?? 'detected dubious ownership').replace(/^fatal:\s*/, '');
-  // The path: git's own remedy line holds it whole (an apostrophe in it, e.g. O'Brien, survives); else the quoted span of the
-  // refusal, greedily to its LAST quote. Every command printed is quoted by the one shell quoter.
-  const where = fix?.replace(/^.*safe\.directory\s+/, '').trim().replace(/^(['"])(.*)\1$/, '$2') || /at '(.*)'/.exec(head)?.[1] || null;
+  // The path. The refusal line prints it RAW between single quotes (`at '%s'`), so greedily to the last quote it is exact, an
+  // apostrophe (O'Brien) included. git's advice line shell-quotes it instead (`'O'\''Brien'`), so it is only the fallback, and
+  // is decoded properly (audit R4 H1/M1). Every command printed is re-quoted by the one shell quoter.
+  const where = /at '(.*)'/.exec(head)?.[1] || (fix ? unquoteShellArg(fix.replace(/^.*safe\.directory\s+/, '').trim()) : null) || null;
   // Both remedies are rendered by the one shell quoter from the unwrapped path, never copied from git's advice text (audit R3 M3).
   const trust = where ? renderCommand(['git', 'config', '--global', '--add', 'safe.directory', where]) : 'git config --global --add safe.directory <the repository folder>';
   const own = where ? renderCommand(['takeown', '/F', where, '/R', '/D', 'Y'], 'win32') : 'takeown /F <the repository folder> /R /D Y';

@@ -6,7 +6,7 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv } from './helpers/fleet-repo.mjs';
-import { dubiousOwnership, gitCommonDir } from '../scripts/lib/fleet/git-facts.mjs';
+import { dubiousOwnership, gitCommonDir, unquoteShellArg } from '../scripts/lib/fleet/git-facts.mjs';
 
 after(cleanupFleetRoots);
 
@@ -28,6 +28,12 @@ describe('dubious ownership', () => {
     const r = dubiousOwnership("fatal: detected dubious ownership in repository at 'C:/w/O'Brien repo'\nTo add an exception for this directory, call:\n\n\tgit config --global --add safe.directory \"C:/w/O'Brien repo\"\n");
     assert.ok(r.includes("takeown /F 'C:/w/O''Brien repo' /R /D Y"), r);
     assert.doesNotMatch(r, /takeown \/F 'C:\/w\/O' /);
+    // git's own sq-quoting of an apostrophe ('O'\''Brien') is decoded, never passed through mangled (audit R4 H1/M1).
+    const sq = dubiousOwnership("fatal: detected dubious ownership in repository at 'C:/w/O'Brien'\n\tgit config --global --add safe.directory 'C:/w/O'\\''Brien'\n");
+    assert.ok(sq.includes("takeown /F 'C:/w/O''Brien' /R /D Y"), sq);
+    assert.equal(unquoteShellArg("'C:/w/O'\\''Brien'"), "C:/w/O'Brien");
+    assert.equal(unquoteShellArg('"C:/my \\"x\\" repo"'), 'C:/my "x" repo');
+    assert.equal(unquoteShellArg("'unbalanced"), null);
     // A single-quoted suggestion is unwrapped the same way (audit R2 M1).
     const single = dubiousOwnership("fatal: detected dubious ownership in repository at 'C:/my repo'\n\tgit config --global --add safe.directory 'C:/my repo'\n");
     assert.ok(single.includes("takeown /F 'C:/my repo' /R /D Y"), single);
