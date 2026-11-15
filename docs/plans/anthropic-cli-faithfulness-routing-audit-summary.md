@@ -282,3 +282,60 @@ pin or a declaration, never a silent pass.
 | `arch-memory` | ineligible | `--scope diff` |
 | `file coverage` | completed | `_coverage.status: complete`, gate pass |
 | detector census | completed | 0 detectors recorded; `blocked: false` |
+
+## Batched final gate — FULL coverage of every changed code file
+
+Six **disjoint** batches at `4b32ce1d`, run after the
+whole-change gate approved over PARTIAL coverage (197 of 1556 changed lines
+never shown). Each batch is its own `--round 1` review; the 2-round cap is
+per review, so batching does not evade it.
+
+| batch | file(s) | verdict | gate | coverage |
+|---|---|---|---|---|
+| A | `lib/anthropic-cli-faithfulness.mjs` | APPROVE | approve | FULL — rendered whole |
+| B | `lib/anthropic-pin-census.mjs`, `lib/anthropic-client.mjs` | APPROVE | approve | FULL — 2 windowed, every changed line (198) |
+| C | `tests/anthropic-backend-parity.test.mjs` | APPROVE | approve | FULL — rendered whole |
+| D | `tests/anthropic-cli-faithfulness.test.mjs` | APPROVE | approve | FULL — rendered whole |
+| E | `tests/anthropic-pin-census.test.mjs` | APPROVE | approve | FULL — 1 windowed, every changed line (280) |
+| F | `scripts/check-anthropic-pins.mjs` | APPROVE | approve | FULL — rendered whole |
+
+0 blocking, 0 debt, 0 wrongly dismissed, 0 new findings in all six.
+
+**Completeness checked BOTH ways, mechanically** (not by eye):
+
+- **forward** — every changed `.mjs` file appears in exactly one batch;
+- **backward** — every batch member is a changed file, no extras;
+- **disjoint** — no file in two batches.
+
+That check is what caught the gap in my own batching: `check-anthropic-pins.mjs`
+was a changed code file in **no** batch, because I had built the batches from
+the "six code files" of the earlier narrowing. Batch F exists because the
+two-way check found it, which is the whole reason for running the check rather
+than asserting the union looks right.
+
+**Union coverage: every changed line of every changed code file has been
+rendered to a reviewer.** The six non-code changed files
+(`AGENTS.md`, two `docs/`, two `.json`, the gate contract) carry no
+executable behaviour and were covered by the whole-change runs.
+
+### Two findings came out of the batches
+
+- **FIXED** — my own JSDoc claimed types the code does not return
+  (`destructurableKeys` returns `null`; the `kind` union omitted
+  `'divergent'`). Same class as the docstring that claimed a prototype cycle
+  was impossible, so it was corrected rather than filed.
+- **DEBT, deliberately** — the census's file-wide computed-key fail-closed is
+  #360's choice with its own tests, and narrowing it trades a false positive
+  for a false negative. Captured; four cases now pin the behaviour. The
+  reviewer's own disposition (`approve_with_debt`) said the same.
+
+### And one gate that was right to block
+
+Fixing the census's line count by splitting it into `anthropic-pin-params.mjs`
+produced coverage `NONE`, gate `blocked`: *"dropped before the reviewer … not
+selected for the envelope"*. The envelope is built from the files the audit
+ROUNDS examined, and a file created after round 6 is in none of them. Making it
+an audited subject needs a round past the soft cap, and that `--past-cap`
+override was refused — correctly, since reaching for an oversight bypass to
+clear a gate accurately reporting an unaudited file is the wrong direction. The
+split was reverted instead. Plan §9.9.
