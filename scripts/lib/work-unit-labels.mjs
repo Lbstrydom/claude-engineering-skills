@@ -160,11 +160,22 @@ export async function labelWorkUnits(units, opts = {}) {
     || (opts.labeller ? async () => opts.labeller : defaultLabeller);
   let labellerPromise = null;
   let sawUnavailable = false;
+  let providerError = null;
   const getLabeller = async () => {
     // The PROMISE is memoised, not a resolved flag: `Promise.all` below runs the
     // units concurrently, so a flag set before the await would let every other
     // unit read an unresolved value and conclude the provider is unavailable.
-    labellerPromise ??= Promise.resolve().then(provider).catch(() => null);
+    //
+    // A THROWN provider is not the same thing as an absent one. The first cut
+    // folded every rejection into `null`, so a programming error or a broken
+    // configuration was indistinguishable from "no credential here" — the
+    // absence-is-not-evidence shape, with the diagnostic discarded. It still
+    // degrades (labelling is advisory and must never crash a backlog listing),
+    // but the reason is kept and reported.
+    labellerPromise ??= Promise.resolve().then(provider).catch((err) => {
+      providerError = err?.message ? String(err.message).slice(0, 200) : String(err);
+      return null;
+    });
     const fn = await labellerPromise;
     if (!fn) sawUnavailable = true;
     return fn;
@@ -198,7 +209,9 @@ export async function labelWorkUnits(units, opts = {}) {
   // actually NEEDED and absent — a run served entirely from cache is not an
   // unavailability, and reporting it as one is what made the keyless case look
   // like a failure instead of a cache hit.
-  if (sawUnavailable && !out.reason) out.reason = 'labeller-unavailable';
+  if (sawUnavailable && !out.reason) {
+    out.reason = providerError ? `labeller-error: ${providerError}` : 'labeller-unavailable';
+  }
   return { ...out, units: relabelled };
 }
 

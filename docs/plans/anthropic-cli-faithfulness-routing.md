@@ -846,6 +846,86 @@ contract and its 26 implementations, not a local fix — recorded as §8.5.
 
 ---
 
+## 7.7 Round 3 triggered the pivot rule, and the pivot is: parse, do not match text
+
+Three consecutive rounds on the same concern is `/audit-code`'s pivot
+threshold — stop patching, propose a new design. Round 3's findings named it:
+
+| round | fail-open shape the text scan could not see |
+|---|---|
+| R1 | shorthand `{ system }`; a spread after the literal; an unverified `via` claim; a count that could not see a second construction |
+| R2 | a duplicate key where the LAST one wins; `{ ...opts(), backend:'cli' }` satisfying a `via` claim; a replacement at a constant count |
+| R3 | a shorthand `{ backend }` that WINS at runtime; a NESTED `metadata:{backend:'sdk'}` read as top-level; a construction with **two** nesting levels the construction regex did not match at all — invisible to BOTH rules; `{ ...opts(), ...overrides }` still satisfying a `via` claim; the digest stripping whitespace from inside STRING LITERALS |
+
+**Every individual fix was correct about the shape it was told about and blind
+to the next one. That is the signature of the wrong tool, not of an incomplete
+pattern** — and it is what three rounds were needed to make undeniable, because
+each round's fix genuinely closed what it was shown.
+
+### 7.7a The argument I made against parsing was wrong on the facts
+
+I declined a parser twice (§7.5, §7.6) as "the over-engineering cliff for a gate
+over 33 files". The auditor asked for one five times across three rounds. It was
+right, and my reason was not a judgement call that went the other way — it was
+false: **this repo already parses JS in five gates** through the shared
+[`ast.mjs`](../../scripts/lib/ast.mjs), including
+`find-stdout-exit-sites.mjs`, which backs `stdout:flush:gate` — the same shape
+of gate as this one, over a larger corpus. So the AST was the cheaper option as
+well as the correct one, and "find the existing oracle before building a second
+one" would have found it in one grep.
+
+The generalisable form, and it is the uncomfortable one: **"that would be
+over-engineering" is a claim about this repo's existing machinery, so it has to
+be checked against the repo rather than asserted from the shape of the
+problem.** I asserted it twice and shipped two rounds of fail-open gate instead.
+
+### 7.7b What the AST version is
+
+`resolveBackendOfArg` reads the construction's own argument node, so only
+TOP-LEVEL properties count and the last assignment wins, as it does at runtime.
+Three verdicts: `pinned`, `cli` (explicitly the transport that cannot honour the
+params), `unresolved`. The fail-closed bucket is deliberately large — a
+non-literal value, a computed key, or a spread after the winner all land in it.
+
+`constructionsIn` matches a CallExpression, so nesting depth is irrelevant;
+`unserviceableParamsInSource` matches an ObjectProperty, so every spelling
+(`system:`, `'system':`, shorthand `system`) counts once and prose counts never,
+with no comment-stripper. `argRestsOnFactory` requires an indirect claim's
+construction to call the factory AND add no `backend`, no computed key and no
+other spread — the factory's object must be the last word.
+
+Two new guarantees the text version could not offer:
+
+- **An unparseable file is UNKNOWN, not clean.** `classifyPinningInSource`
+  returns `parsed: false` and the audit fails on it. Without that the gate's
+  strongest claim would evaporate on exactly the file most likely to be
+  mid-edit.
+- **The digest folds formatting without touching string contents.**
+  `normaliseArgText` walks the span tracking quote state, so
+  `mode === 'use cli'` and `mode === 'usecli'` keep different digests — they can
+  select different backends, and the whitespace-stripping version gave them one.
+
+### 7.7c The pivot immediately found a real defect the regexes had passed
+
+`azure-claude-adapter.mjs` builds its test-seam client as
+`{ ...clientOptions(), ..._clientOptions }`. The second spread can carry a
+`backend` and override the Azure route's sdk requirement; the stricter
+`argRestsOnFactory` flagged it. No caller does so (every one passes
+`azureRoute`/`fetch`/`redactor` only), so writing `backend: 'sdk'` last is
+behaviour-neutral — it just stops being possible. A gate's first real find after
+a rewrite is the best evidence the rewrite was the right call.
+
+### 7.7d Also fixed: a swallowed provider error
+
+`labelWorkUnits`' provider catch folded every rejection into `null`, so a
+programming error or a broken configuration was indistinguishable from "no
+credential on this machine", with the diagnostic discarded — the
+absence-is-not-evidence shape. It still degrades, because labelling is advisory
+and must never crash a backlog listing, but the reason is kept:
+`labeller-error: <message>` rather than `labeller-unavailable`.
+
+---
+
 ## 8. Follow-ups (not this change)
 
 1. **The ~164K prefix tax on every remaining `cli` call** (§2.4) is the larger

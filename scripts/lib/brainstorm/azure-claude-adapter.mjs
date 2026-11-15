@@ -81,7 +81,13 @@ export async function callAzureClaude({ topic, model, maxTokens, timeoutMs = 600
 
   try {
     const anthropic = _clientOptions
-      ? await createAnthropicClient({ ...clientOptions(), ..._clientOptions })
+      // `backend: 'sdk'` LAST, after both spreads, so the pin is the last word.
+      // `anthropic:pin:gate` flagged this construction once it started resolving
+      // the EFFECTIVE backend: `_clientOptions` is a test seam and could carry a
+      // `backend`, which would silently override the Azure route's sdk
+      // requirement. No caller does (every one passes azureRoute/fetch/redactor
+      // only), so this is behaviour-neutral — it just stops being possible.
+      ? await createAnthropicClient({ ...clientOptions(), ..._clientOptions, backend: 'sdk' })
       : await client();
     const request = {
       model,

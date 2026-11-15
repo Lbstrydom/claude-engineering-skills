@@ -134,11 +134,24 @@ describe('labelWorkUnits: the cache is independent of provider availability', ()
     assert.equal(res.reason, null, 'no unit concluded the provider was unavailable');
   });
 
-  test('a provider that throws degrades like an unavailable one', async (t) => {
+  // A THROWN provider degrades like an absent one — labelling is advisory and
+  // must never crash a backlog listing — but it must not READ like one. Folding
+  // the rejection into `null` made a programming error indistinguishable from
+  // "no credential on this machine", with the diagnostic discarded.
+  test('a provider that THROWS degrades, but keeps its reason', async (t) => {
     const res = await labelWorkUnits([unit('k-throw')], {
-      repoRoot: mkRoot(t), labellerProvider: async () => { throw new Error('boom'); },
+      repoRoot: mkRoot(t), labellerProvider: async () => { throw new Error('boom: bad config'); },
     });
-    assert.equal(res.failed, 1);
+    assert.equal(res.failed, 1, 'it still degrades');
+    assert.match(res.reason, /^labeller-error: /, 'and says it was an ERROR, not an absence');
+    assert.match(res.reason, /boom: bad config/, 'carrying the diagnostic');
+    assert.notEqual(res.reason, 'labeller-unavailable');
+  });
+
+  test('an ABSENT provider is reported as absent, not as an error', async (t) => {
+    const res = await labelWorkUnits([unit('k-none')], {
+      repoRoot: mkRoot(t), labellerProvider: async () => null,
+    });
     assert.equal(res.reason, 'labeller-unavailable');
   });
 

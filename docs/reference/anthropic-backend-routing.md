@@ -131,24 +131,35 @@ guard, in `check:static`. Two rules, because one cannot see both shapes:
   by confirming every unpinned construction in the file passes it, so the
   declaration cannot outlive the pin it claims nor describe a factory nothing
   calls.
-- **The effective backend is the LAST `backend:`, and the gate fails closed on
-  anything it cannot resolve.** `resolveBackendInArgs` returns `pinned` (a
-  literal `sdk`/`bedrock` last, no spread after it), `cli` (explicitly the
-  transport that cannot honour the params — never coverable by a census entry),
-  or `unresolved` (no `backend:`, a variable, or a spread after the literal).
-  Resolving the FIRST match instead let `{ backend:'sdk', backend:'cli' }` and
-  `{ ...clientOptions(), backend:'cli' }` read as pinned. Shorthand
-  `{ system }` counts as passing the param. Every one of these shapes was
-  fail-OPEN in an earlier cut and each now has a planted RED case in
-  `tests/anthropic-pin-census.test.mjs`.
+- **It PARSES.** Three versions of this gate were regular expressions and three
+  consecutive audit rounds each found a different fail-open shape they could not
+  see — shorthand `{ system }`, a spread after the literal, a duplicate key
+  where the last wins, a shorthand `{ backend }` that wins at runtime, a nested
+  `metadata:{backend:'sdk'}` read as top-level, and a construction two nesting
+  levels deep that the construction regex missed **entirely**. Each fix was
+  right about the shape it was shown and blind to the next. The module now uses
+  the shared [`ast.mjs`](../../scripts/lib/ast.mjs), as five other gates here
+  already do.
+- **The effective backend is the last TOP-LEVEL `backend`, resolved from the
+  argument node**, with three verdicts: `pinned` (a literal `sdk`/`bedrock`,
+  last, no spread after it), `cli` (explicitly the transport that cannot honour
+  the params — never coverable by a census entry), `unresolved` (absent, a
+  non-literal value, a computed key, or a spread after the winner). The
+  fail-closed bucket is deliberately large.
+- **An unparseable file is UNKNOWN, not clean** — `parsed: false`, and the audit
+  fails on it. Otherwise the gate's strongest claim would evaporate on exactly
+  the file most likely to be mid-edit.
+- Every one of those shapes has a planted RED case in
+  `tests/anthropic-pin-census.test.mjs`, and each fix has a negative control.
 - A Rule B declaration carries the **COUNT** of unpinned constructions and an
   **`argsDigest`** of their arguments, not just the file. The count alone let a
   declaration clear every construction added later; the count plus the digest
   also catches a REPLACEMENT, which preserves the total while the declared
   reason goes stale. Growth, an unrecorded shrink and a changed shape all fail.
-  Two structurally identical constructions share a digest by design — for this
-  gate they are the same shape, and that is the stated limit of a non-parsing
-  check.
+  The digest folds formatting without touching string contents, so
+  `mode === 'use cli'` and `mode === 'usecli'` keep different digests — they can
+  select different backends. Two structurally identical constructions still
+  share a digest, by design: for this gate they are the same shape.
 - Every verdict category is **printed**. Two of the seven were counted in `ok`
   and never reported, so the gate could exit 1 with no line saying why — worse
   than no gate. A test reads the CLI's own source to keep that true.

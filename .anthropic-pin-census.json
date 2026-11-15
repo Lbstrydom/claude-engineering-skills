@@ -4,27 +4,27 @@
     "scripts/anthropic-ping.mjs": {
       "reason": "The reachability ping sends {model, max_tokens, messages} only — no system, tools or tool_choice — and is the one command whose job is to prove the AMBIENT backend works, so pinning it would make it test something other than what the operator configured. Client is not handed anywhere.",
       "constructions": 1,
-      "argsDigest": "e3b0c44298fc"
+      "argsDigest": "6e9c960fd025"
     },
     "scripts/lib/neighbourhood-query.mjs": {
       "reason": "The security-failure-mode Haiku call sends {model, max_tokens, messages} only; the JSON contract is in the USER turn, not system. Client is local to the branch and not handed to another module.",
       "constructions": 1,
-      "argsDigest": "e3b0c44298fc"
+      "argsDigest": "6e9c960fd025"
     },
     "scripts/lib/visual/explain.mjs": {
       "reason": "Advisory VLM prose: {model, max_tokens, messages} only, with the instruction in the user content. Client is local; failures already degrade to '' and never block the deterministic report.",
       "constructions": 1,
-      "argsDigest": "e3b0c44298fc"
+      "argsDigest": "6e9c960fd025"
     },
     "scripts/symbol-index/summarise.mjs": {
       "reason": "The highest-volume Claude call site here, and deliberately cli-serviceable: the one-line-per-symbol instruction is in the USER turn, so no system/tools/tool_choice is sent and the Max 20x credit is kept. Truncation is caught by assessBatchCompleteness reading stop_reason, not by max_tokens. Both branches (public and the azureRoute one, which reconcileBackendWithBaseUrl already coerces to sdk) are local; the client is not handed anywhere.",
       "constructions": 2,
-      "argsDigest": "d24dd357811d"
+      "argsDigest": "b38db1b6aee7"
     },
     "scripts/symbol-index/summarise-domains.mjs": {
       "reason": "Same shape as summarise.mjs: {model, max_tokens, messages} only, instruction in the user turn. Client is local to the call.",
       "constructions": 2,
-      "argsDigest": "d24dd357811d"
+      "argsDigest": "b38db1b6aee7"
     }
   },
   "indirectPins": {

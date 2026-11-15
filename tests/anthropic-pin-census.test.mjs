@@ -27,6 +27,7 @@ import {
   unserviceableParamsInSource,
   indirectPinHolds,
   unpinnedArgsDigest,
+  normaliseArgText,
   auditPinCensus,
 } from '../scripts/lib/anthropic-pin-census.mjs';
 import { trackedScriptFiles } from '../scripts/check-anthropic-pins.mjs';
@@ -299,7 +300,13 @@ describe('fail-closed: the shapes the first cut missed', () => {
       { indirectPins: { 'a.mjs': { via: 'opts', reason: 'r' } } },
     );
     assert.equal(v.ok, false);
-    assert.match(v.brokenIndirect[0].why, /does not pass opts\(\)/);
+    // Keyed on the STRUCTURE (which file, which `via`), not on the prose: the
+    // wording changed once already when the check was narrowed, and an
+    // assertion on a sentence fails for the wrong reason when it does.
+    assert.equal(v.brokenIndirect.length, 1);
+    assert.equal(v.brokenIndirect[0].file, 'a.mjs');
+    assert.equal(v.brokenIndirect[0].via, 'opts');
+    assert.match(v.brokenIndirect[0].why, /opts\(\)/, 'and it names the function the claim rests on');
   });
 });
 
@@ -428,6 +435,147 @@ describe('Rule B counts constructions, not files', () => {
       { unpinnedConstructions: { 'a.mjs': { reason: 'r' } } });
     assert.equal(v.ok, false);
     assert.equal(v.countDrift[0].declared, undefined);
+  });
+});
+
+// ── the shapes NO regular expression saw (round-3 audit, pivot to the AST) ──
+//
+// Three consecutive rounds each found a different fail-open shape in a
+// text-matching scanner, and round 3's three were the ones that settled it: a
+// shorthand `{ backend }` that WINS at runtime, a NESTED `metadata: { backend:
+// 'sdk' }` counted as top-level, and a construction with two nesting levels that
+// the construction regex did not match AT ALL — invisible to both rules at once.
+// Each regex fix was right about the shape it was told about and blind to the
+// next, which is the signature of the wrong tool. The module now parses.
+describe('AST: the shapes a text scan could not see', () => {
+  const unpinned = (src) => classifyPinningInSource(src).unpinned;
+
+  it("RED: a SHORTHAND `{ backend: 'sdk', backend }` is not pinned — the shorthand wins", () => {
+    assert.equal(unpinned("await createAnthropicClient({ backend: 'sdk', backend });"), 1,
+      'at runtime the later shorthand property is the effective value');
+  });
+
+  it("RED: a NESTED backend is not a top-level pin", () => {
+    assert.equal(
+      unpinned("await createAnthropicClient({ backend: 'cli', metadata: { backend: 'sdk' } });"), 1,
+      'the nested literal appeared last in the TEXT but is not a property of the options object',
+    );
+  });
+
+  it('RED: a construction nested two levels deep is still FOUND', () => {
+    const c = classifyPinningInSource('await createAnthropicClient({ redactor: makeRedactor(getRules()) });');
+    assert.equal(c.constructions, 1, 'the old construction regex matched one nesting level and missed this entirely');
+    assert.equal(c.unpinned, 1);
+  });
+
+  it('a member-expression callee counts — `mod.createAnthropicClient()` after a dynamic import', () => {
+    assert.equal(unpinned('const c = await mod.createAnthropicClient();'), 1);
+  });
+
+  it('a COMPUTED key is unresolved, never a pin', () => {
+    assert.equal(unpinned("await createAnthropicClient({ [key]: 'sdk' });"), 1);
+  });
+
+  it('a quoted key IS a pin — spelling does not change semantics', () => {
+    assert.equal(unpinned(`await createAnthropicClient({ 'backend': 'sdk' });`), 0);
+    assert.equal(unpinned(`await createAnthropicClient({ "backend": 'bedrock' });`), 0);
+  });
+
+  it('a param named in PROSE is invisible, with no comment-stripper needed', () => {
+    const src = '/** @param {string} system - the system prompt */\n'
+      + '// system: this is documentation\n'
+      + 'const msg = "system: not a property";\n'
+      + 'await createAnthropicClient();';
+    const c = classifyPinningInSource(src);
+    assert.deepEqual(c.unserviceable, []);
+    assert.equal(c.ruleAViolation, false);
+  });
+
+  it('shorthand `{ system }` is still caught', () => {
+    assert.deepEqual(unserviceableParamsInSource('x({ model, system, messages })'), ['system']);
+  });
+
+  // A FILE THE PARSER CANNOT READ IS UNKNOWN, NOT CLEAN — otherwise the gate's
+  // strongest guarantee evaporates on the file most likely to be mid-edit.
+  it('an UNPARSEABLE file reports parsed:false and fails the audit', () => {
+    const broken = 'function ( { !!! this is not javascript';
+    const c = classifyPinningInSource(broken);
+    assert.equal(c.parsed, false);
+    assert.equal(c.ruleAViolation, false, 'it makes no claim either way');
+    const v = auditPinCensus(new Map([['broken.mjs', broken]]), { unpinnedConstructions: {} });
+    assert.equal(v.ok, false, 'and the audit refuses to call it clean');
+    assert.deepEqual(v.unparsed, ['broken.mjs']);
+  });
+});
+
+// `{ ...opts(), backend: selected }` and `{ ...opts(), ...overrides }` resolve
+// as UNRESOLVED, and the round-2 `used` check accepted everything except a
+// literal `cli` — so both passed while either can replace the factory's pin.
+describe('an indirect claim requires the factory to be the LAST word', () => {
+  const factory = "function opts() { return { backend: 'sdk' }; }\n";
+
+  it('GREEN: the factory call IS the argument', () => {
+    assert.equal(indirectPinHolds(factory + 'await createAnthropicClient(opts());', 'opts').used, true);
+  });
+
+  it('GREEN: spread the factory and add unrelated options', () => {
+    assert.equal(indirectPinHolds(factory + 'await createAnthropicClient({ ...opts(), fresh: true });', 'opts').used, true);
+  });
+
+  it("RED: a literal `backend: 'cli'` after the spread", () => {
+    assert.equal(indirectPinHolds(factory + "await createAnthropicClient({ ...opts(), backend: 'cli' });", 'opts').used, false);
+  });
+
+  it('RED: a VARIABLE backend after the spread — unresolved can be cli', () => {
+    assert.equal(indirectPinHolds(factory + 'await createAnthropicClient({ ...opts(), backend: selected });', 'opts').used, false);
+  });
+
+  it('RED: a SECOND spread after the factory — it can carry a backend', () => {
+    assert.equal(indirectPinHolds(factory + 'await createAnthropicClient({ ...opts(), ...overrides });', 'opts').used, false);
+  });
+
+  it('RED: a computed key after the factory', () => {
+    assert.equal(indirectPinHolds(factory + "await createAnthropicClient({ ...opts(), [k]: 'cli' });", 'opts').used, false);
+  });
+
+  it('the pin must be inside the NAMED function, not merely in the file', () => {
+    const src = 'function opts() { return { azureRoute: r }; }\n'
+      + "function other() { return { backend: 'sdk' }; }\n"
+      + 'await createAnthropicClient(opts());';
+    assert.equal(indirectPinHolds(src, 'opts').pinned, false);
+  });
+});
+
+// The digest folds FORMATTING. It must not fold the contents of a string
+// literal: `mode === 'use cli'` and `mode === 'usecli'` can select different
+// backends, and the whitespace-stripping version gave them one digest.
+describe('normaliseArgText: formatting folds, literals do not', () => {
+  it('whitespace outside a literal is folded', () => {
+    assert.equal(normaliseArgText('{ a:  1,\n  b: 2 }'), '{a:1,b:2}');
+  });
+
+  it('whitespace INSIDE a literal survives', () => {
+    assert.equal(normaliseArgText("{ a: 'use cli' }"), "{a:'use cli'}");
+    assert.notEqual(normaliseArgText("{ a: 'use cli' }"), normaliseArgText("{ a: 'usecli' }"));
+  });
+
+  it('an escaped quote does not end the literal', () => {
+    assert.equal(normaliseArgText(`{ a: 'it\\'s here' }`), `{a:'it\\'s here'}`);
+  });
+
+  it('a template literal keeps its spaces', () => {
+    assert.equal(normaliseArgText('{ a: `use cli` }'), '{a:`use cli`}');
+  });
+
+  it('a trailing comma is formatting', () => {
+    assert.equal(normaliseArgText('{ a: 1, }'), '{a:1}');
+  });
+
+  it("digests differ for `'use cli'` vs `'usecli'`", () => {
+    assert.notEqual(
+      unpinnedArgsDigest("await createAnthropicClient({ a: 'use cli' });"),
+      unpinnedArgsDigest("await createAnthropicClient({ a: 'usecli' });"),
+    );
   });
 });
 
