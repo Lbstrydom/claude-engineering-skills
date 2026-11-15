@@ -278,7 +278,7 @@ export const CLI_READ_PARAMS = Object.freeze(['model', 'max_tokens', 'system', '
  * `constructor` is excluded by the same list.
  *
  * @param {object} params
- * @returns {Set<string|symbol>}
+ * @returns {Set<string|symbol>|null} null when the chain does not terminate
  */
 function destructurableKeys(params) {
   const keys = new Set(Reflect.ownKeys(params));
@@ -354,7 +354,8 @@ function sdkVisibleKeys(params) {
  * string teaches the next reader to dismiss the second as noise.
  *
  * @param {object} params - the `messages.create()` params
- * @returns {{param: string, why: string, kind: 'unrepresentable'|'unresolvable'}|null}
+ * @returns {{param: string, why: string,
+ *   kind: 'unrepresentable'|'unresolvable'|'divergent'}|null}
  *   null when cli can serve the call
  */
 export function unserviceableCliParams(params) {

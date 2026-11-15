@@ -24,12 +24,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   classifyPinningInSource,
-  unserviceableParamsInSource,
   indirectPinHolds,
   unpinnedArgsDigest,
   normaliseArgText,
   auditPinCensus,
 } from '../scripts/lib/anthropic-pin-census.mjs';
+// Split out of the census on 2026-11-15 (size:ratchet:gate); same rules, new home.
+import { unserviceableParamsInSource } from '../scripts/lib/anthropic-pin-params.mjs';
 import { trackedScriptFiles } from '../scripts/check-anthropic-pins.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -1431,6 +1432,54 @@ describe('the assignment rule needs a Messages API call in the file', () => {
       await client.messages.create(req);
     `);
     assert.deepEqual(c.unserviceable, ['system']);
+    assert.equal(c.ruleAViolation, true);
+  });
+});
+
+// Raised by the batched final review and NOT changed: the file-wide property
+// branch sets `dynamicKeys` for ANY computed key, so `{ [someKey]: v }` in an
+// unrelated lookup table fails Rule A for a file that sends nothing of the
+// sort. That is #360's deliberate fail-closed choice, with its own two tests
+// above; narrowing it would trade the false positive for a false NEGATIVE (a
+// request built entirely from computed keys is not request-shaped and would
+// escape). Recorded as debt rather than overturned here. These cases pin the
+// behaviour as it stands, so a later change to it is a visible decision.
+describe('a computed key fails closed file-wide (#360 behaviour, pinned)', () => {
+  const file = (body) => `
+    import { createAnthropicClient } from './lib/anthropic-client.mjs';
+    const client = await createAnthropicClient();
+    ${body}
+  `;
+
+  it('an unrelated computed key fails closed — the known false positive', () => {
+    const c = classifyPinningInSource(file(`
+      const lookup = { [someKey]: 'value' };
+      await client.messages.create({ model: 'm', max_tokens: 1, messages: [] });
+    `));
+    assert.equal(c.dynamicKeys, true, 'broad by design; see the module note');
+    assert.deepEqual(c.unserviceable, [], 'and never CLAIMED to be a named param');
+  });
+
+  it('a computed key in the `.create()` argument fails closed', () => {
+    const c = classifyPinningInSource(file(
+      "await client.messages.create({ model: 'm', max_tokens: 1, messages: [], [k]: 1 });",
+    ));
+    assert.equal(c.dynamicKeys, true);
+    assert.equal(c.ruleAViolation, true);
+  });
+
+  it('a computed key in a STAGED request fails closed', () => {
+    const c = classifyPinningInSource(file(`
+      const req = { model: 'm', max_tokens: 1, messages: [], [k]: 1 };
+      await client.messages.create(req);
+    `));
+    assert.equal(c.dynamicKeys, true);
+    assert.equal(c.ruleAViolation, true);
+  });
+
+  it('a spread into the `.create()` argument fails closed', () => {
+    const c = classifyPinningInSource(file('await client.messages.create({ ...base });'));
+    assert.equal(c.dynamicKeys, true);
     assert.equal(c.ruleAViolation, true);
   });
 });
