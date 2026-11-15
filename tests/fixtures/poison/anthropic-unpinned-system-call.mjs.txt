@@ -1,0 +1,37 @@
+/**
+ * POISON FIXTURE for `npm run anthropic:pin:gate` — not loaded by anything.
+ *
+ * The SILENT variant, and the only one that matters: an ordinary-looking helper
+ * that builds a Claude client without a backend pin and sends `system`. It runs
+ * fine for anyone on the committed `sdk` default — CI included — and throws only
+ * where `CLAUDE_BACKEND=cli` is set, which is the operator's machine and no
+ * runner. So the break ships green and surfaces as a MODEL failure one layer up,
+ * far from this file.
+ *
+ * That is exactly the shape `check-anthropic-pins.mjs` exists to refuse at merge
+ * time, because the runtime throw it enforces can never fire in CI. If the gate
+ * reads this file as clean, the gate is decorative.
+ *
+ * It is overlaid onto an existing TRACKED script rather than added as a new
+ * path, for the same reason `db-suite-unenrolled.test.mjs.txt` is: the harness
+ * overlays onto tracked files, and it models the likelier route in — an existing
+ * module grows a Claude call, and nobody pins it.
+ */
+import { createAnthropicClient } from './lib/anthropic-client.mjs';
+
+const SYSTEM = 'Answer with a single line of JSON and nothing else.';
+
+export async function summariseThing(text) {
+  // No `{ backend: 'sdk' }`: the ambient backend serves this, whatever it is.
+  const client = await createAnthropicClient({});
+  const res = await client.messages.create({
+    model: 'claude-haiku-5-5',
+    max_tokens: 400,
+    // The unserviceable param. `cli` passes it as `--system-prompt` and is
+    // outranked by the agent persona on a structured-output contract exactly
+    // like this one, so the caller's JSON parse fails on prose.
+    system: SYSTEM,
+    messages: [{ role: 'user', content: text }],
+  });
+  return JSON.parse(res.content.find((b) => b.type === 'text').text);
+}
