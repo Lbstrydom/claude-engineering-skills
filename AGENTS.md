@@ -774,7 +774,7 @@ is set; without Azure env vars, client construction and resolved models are
   var is set.** An `if (!process.env.OPENAI_API_KEY)` guard upstream of an
   Azure-aware seam is dead code on exactly the installs it was written for (tell: a
   **failure with zero latency**). Let ONE oracle answer
-  (`lib/brainstorm/provider-availability.mjs`); use **`isClaudeAvailable()`, never
+  (`lib/provider-availability.mjs`); use **`isClaudeAvailable()`, never
   `ANTHROPIC_API_KEY`**. An **omitted `azureRoute` ADOPTS the tenant's route**;
   pass `azureRoute: null` only where an id *means* the public service. Tests
   spawning such a CLI must scrub `AZURE_*`. Which voices /brainstorm runs is

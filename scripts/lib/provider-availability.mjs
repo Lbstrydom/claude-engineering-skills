@@ -1,4 +1,4 @@
-import { azureConfig } from '../config.mjs';
+import { azureConfig } from './config.mjs';
 
 /**
  * Single oracle for "can this brainstorm provider actually be called?".

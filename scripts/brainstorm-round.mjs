@@ -19,7 +19,7 @@ import { BrainstormEnvelopeWriteSchema, BRAINSTORM_PROVIDERS } from './lib/brain
 import { callOpenAI } from './lib/brainstorm/openai-adapter.mjs';
 import { callGemini } from './lib/brainstorm/gemini-adapter.mjs';
 import { callAzureClaude } from './lib/brainstorm/azure-claude-adapter.mjs';
-import { resolveProviderAvailability, defaultProviders } from './lib/brainstorm/provider-availability.mjs';
+import { resolveProviderAvailability, defaultProviders } from './lib/provider-availability.mjs';
 import { azureConfig } from './lib/config.mjs';
 import { preflightEstimateUsd } from './lib/brainstorm/pricing.mjs';
 import { resolveOutputBudget, resolveProviderCall, DEPTH_TOKENS } from './lib/brainstorm/depth-config.mjs';
@@ -135,7 +135,7 @@ function parseBrainstormArgs(argv) {
     // public, openai+azure-claude on Azure), so it is resolved after the argv
     // loop rather than baked in here — `null` means "user did not choose". A
     // provider with no route degrades to state:'misconfigured' (see
-    // lib/brainstorm/provider-availability.mjs); it does not fail the run.
+    // lib/provider-availability.mjs); it does not fail the run.
     models: null,
     forceGemini: false,      // --with-gemini
     openaiOnly: false,       // --no-gemini / --openai-only
@@ -818,7 +818,7 @@ async function dispatchDebateCall({ provider, reactingTo, systemPrompt, userMess
 
 async function dispatchProvider({ provider, topic, systemPreface = '', args, resolvedModels }) {
   // "Can this provider be called?" — a route question, not a public-env-var
-  // question. See lib/brainstorm/provider-availability.mjs for why the two are
+  // question. See lib/provider-availability.mjs for why the two are
   // not the same on an Azure work profile.
   const availability = resolveProviderAvailability(provider);
   if (!availability.available) {

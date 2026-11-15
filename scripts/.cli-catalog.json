@@ -917,6 +917,10 @@
     "scripts/transcript-archive.mjs": {
       "description": "Archive, verify or purge redacted coordinator transcripts in a local content-addressed store; default-deny by repo training_eligible flag.",
       "category": "other"
+    },
+    "scripts/check-setup.mjs": {
+      "description": "Setup doctor: opens with audit readiness (audit route, degraded-audit policy, CRLF hazard) before any spend, then per-feature keys, store, browser and GitHub checks.",
+      "category": "diagnostic"
     }
   }
 }

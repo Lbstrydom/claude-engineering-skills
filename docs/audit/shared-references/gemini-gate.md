@@ -8,10 +8,12 @@ This is the canonical copy. Consuming skills carry a `references/gemini-gate.md`
 synced by `node scripts/sync-shared-audit-refs.mjs` and drift-checked in
 `npm run check`. **Edit this file, never a copy.**
 
-After the final GPT audit round (whether converged or not), run
-the final reviewer — the newest Gemini Pro by default (`latest-pro`, resolved at runtime; override with `FINAL_REVIEW_MODEL`) as an independent third reviewer. This step is MANDATORY —
-Gemini provides cross-model perspective that catches blind spots in the
-Claude-GPT deliberation.
+After the final GPT audit round (converged or not), run the final reviewer
+(MANDATORY) — newest Gemini Pro by default (`latest-pro`; override with
+`FINAL_REVIEW_MODEL`), a third view on the Claude-GPT deliberation. **Name it
+by role**: report `_gate.label` from the result — `final gate (<provider> /
+<model>)` — never "Gemini" unless `_provider` is `gemini`, and repeat
+`_gate.independenceNote` when present.
 
 **Provider / no-key degradation ladder (don't just skip).** Each rung asks
 whether a ROUTE exists, not whether one public variable is set — the rung 2a

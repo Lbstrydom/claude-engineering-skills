@@ -51,9 +51,14 @@ Run the check first; do not infer availability from a variable name.
   then run it. Re-attempt the step once after hydrating.
 - **Auditor route** — ask whether a ROUTE exists, not whether one public
   variable is set. `OPENAI_API_KEY` **or** an active Azure profile
-  (`AZURE_OPENAI_ENDPOINT`) both satisfy the GPT leg; `openai-audit.mjs` already
-  gates on `!azureConfig.active && !process.env.OPENAI_API_KEY`. `npm run
-  check-setup` reports the resolved answer for every leg at once.
+  (`AZURE_OPENAI_ENDPOINT`) both satisfy the GPT leg. Run
+  `node scripts/check-setup.mjs` and read its first section: `audit route:`
+  (`azure` / `public` / `MISSING`) and `degraded audits:` (`allowed` /
+  `forbidden`). Do not read, copy or print a `.env` to answer this — the CLI
+  asks the same loader the runtime uses.
+- **A fresh worktree has no keys.** Hydration copies the tooling, not the keys.
+  The fix is the per-user `~/.audit-loop.env`, which every checkout and
+  worktree reads; name it when `audit route: MISSING`.
 
 A prerequisite that resolves at Rung 0 is not a degradation — proceed normally
 and say nothing.
@@ -62,6 +67,12 @@ and say nothing.
 
 The GPT passes are the audit. Without them there is no transcript for the final
 reviewer to review, so the whole flow degrades rather than one step.
+
+**Repo policy first.** When `check-setup` reports `degraded audits: forbidden`
+(`AUDIT_FORBID_DEGRADED=1`), skip this rung entirely: report
+`AUDIT_NOT_RUN — no auditor route (degraded audits forbidden by repo policy)`,
+name `~/.audit-loop.env` as the fix, and stop. Do not offer the substitute as a
+choice, in a chip or otherwise.
 
 1. **Say so before doing any work**, in one line, naming the concrete missing
    prerequisite and the resolved alternatives you checked — the same shape
