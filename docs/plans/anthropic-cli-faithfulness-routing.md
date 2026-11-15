@@ -247,7 +247,7 @@ it accepts and then quietly fails to honour:
 
 | param | today | measured consequence |
 |---|---|---|
-| `system` | passed as `--system-prompt`, outranked by the Claude Code persona | §2.3: 69× output tokens, instruction ignored |
+| `system` | passed as `--system-prompt` — obeyed for a simple instruction, outranked by the Claude Code persona on a structured-output contract | §2.3: 69× output tokens, the instruction overridden on the real prompt; §7.12: obeyed 3/3 on a shortened one, still 466–673 tokens |
 | `tools` / `tool_choice` | **silently dropped** (`--tools ''`) | AGENTS.md: 20/20 tiered-recall runs fell back to legacy for a whole shadow window |
 | `max_tokens` | warns once, unenforced | §2.3: 1995 emitted against a 200 ceiling |
 
@@ -1183,7 +1183,49 @@ No doc, error string or comment says cli "ignores" or "drops" `system`; the
 module has always said it is **not honoured as an instruction** because the
 persona and its ~164K context outrank it. One AGENTS.md line lumped `system`
 with the dropped params and now says "dropped or OUTRANKED" with the
-`--system-prompt` fact stated.
+`--system-prompt` fact stated. Restated once more in §7.12, because "not
+honoured as an instruction" still reads as *never*, and the measurement says
+*not reliably*.
+
+---
+
+## 7.12 The `system` claim, narrowed to what was measured (2026-11-15)
+
+**Louis's decision: keep the throw.** This section records the claim the throw
+now rests on, because the earlier wording claimed more than the evidence.
+
+Two measurements on the same seam, one prompt family:
+
+| prompt | cli result | sdk result |
+|---|---|---|
+| the REAL `NORMALIZE_PROMPT` | 1995–2784 output tokens in ~40s against `max_tokens: 200`; first-person Claude Code prose citing AGENTS.md | the requested one line, 29–43 tokens, 1.3s |
+| a SHORTENED variant | a **correct one-line answer, 3 of 3 runs** — still 466–673 output tokens | — |
+
+So all three of these are true at once, and the first two are what a reader of
+the old wording would have got wrong:
+
+1. `--system-prompt` **is passed**, and the string **reaches the model**.
+2. A **simple instruction is obeyed**.
+3. A **structured-output contract is outranked** by the agent persona and its
+   ~164K-token auto-discovered project context, which is also charged on every
+   call whatever the prompt says.
+
+**Why that still justifies a throw rather than a warning.** The seam decides
+from the params, and *nothing in the params distinguishes a simple instruction
+from a contract a consumer will parse*. "Sometimes honoured" is the worst
+property a transport can have for a contract: a warning would be ignored on the
+runs that work, and the runs that fail do so as a model failure one layer up —
+which is the exact conflation this change exists to end. `arm-eval/judge.mjs`
+scoring its own transport failure as `conformant: false` is that failure mode
+with a row written to the store.
+
+**What this is NOT a claim about.** It does not say cli ignores `system`, drops
+it, or fails to deliver it — `tools`/`tool_choice` are the params that are
+genuinely dropped, and conflating the two overstates the case for the throw. A
+future operator who wants cli for `system`-passing work has a real option the
+measurement supports (shorten the prompt, accept the prefix, verify the parse);
+this PR declines to make that the default, and says why rather than implying it
+is impossible.
 
 ---
 

@@ -434,3 +434,64 @@ describe('isClaudeAvailableFor: the gate a pinned site must ask', () => {
     assert.equal(isClaudeAvailableFor('sdk'), true);
   });
 });
+
+// ── The `system` CLAIM, guarded (2026-11-15) ───────────────────────────────
+//
+// Louis kept the throw and asked for the wording restated precisely, because
+// the earlier phrasing ("does not honour `system` as an instruction") reads as
+// NEVER, and the measurement says NOT RELIABLY:
+//
+//   * the REAL `NORMALIZE_PROMPT` on cli → 1995-2784 output tokens of
+//     first-person prose against `max_tokens: 200`; sdk returned the requested
+//     one line in 29-43.
+//   * a SHORTENED variant of that same prompt → a correct one-line answer
+//     3 of 3 runs, still 466-673 output tokens.
+//
+// So `--system-prompt` IS passed and a simple instruction IS obeyed; what cli
+// cannot promise is that the instruction WINS over the agent persona and its
+// ~164K-token project context on a structured-output contract. A wording claim
+// with no guard goes stale silently (AGENTS.md's own rule), and the overstated
+// version is worse than vague: it would be falsified by one terse cli reply,
+// and an operator who found that would discount the whole refusal. This suite
+// is where that claim lives, so it is pinned here rather than asserted in prose.
+describe('the stated reason for refusing `system` matches what was measured', () => {
+  const why = () => unserviceableCliParams({ system: 'be brief' }).why;
+
+  it('says the param is PASSED, not ignored or dropped', () => {
+    assert.match(why(), /PASSES|passed/,
+      'cli delivers the string as `--system-prompt`; claiming otherwise is falsifiable');
+    assert.doesNotMatch(why(), /\bignores?\b/i);
+    assert.doesNotMatch(why(), /\bdrops?\b|\bdropped\b/i,
+      '`tools`/`tool_choice` are dropped; `system` is not — conflating them overstates the case');
+  });
+
+  it('says UNRELIABLY, and names what outranks it', () => {
+    assert.match(why(), /reliabl/i, 'the claim is "not reliably honoured", not "never honoured"');
+    assert.match(why(), /outrank/i);
+    assert.match(why(), /persona/i);
+  });
+
+  it('carries the measurement that makes it falsifiable', () => {
+    assert.match(why(), /1995/, 'the measured figure, so a reader can check the claim');
+    assert.match(why(), /164K|164,000/, 'and the prefix that is charged either way');
+  });
+
+  // NEGATIVE CONTROL for the three above: the `tools` reason MUST still say
+  // "drops", or these assertions would be rewarding vagueness everywhere
+  // rather than precision about `system` specifically.
+  it('and `tools` still says DROPS, because that one really is dropped', () => {
+    const toolsWhy = unserviceableCliParams({ tools: [] }).why;
+    assert.match(toolsWhy, /drops|dropped/);
+    assert.doesNotMatch(toolsWhy, /reliabl/i, 'nothing unreliable about it — it never arrives');
+  });
+
+  // The same claim travels in the user-facing message, which is what a reader
+  // of a log line sees; a precise docstring with a sloppy error string would
+  // have left the overstatement exactly where it does the damage.
+  it('the thrown message carries the restated claim too', () => {
+    const { message } = cliFaithfulnessVerdict({ system: 'be brief' });
+    assert.match(message, /cannot honour `system`/);
+    assert.match(message, /PASSES|passed/);
+    assert.doesNotMatch(message, /\bignores\b/i);
+  });
+});

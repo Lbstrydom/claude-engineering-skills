@@ -91,6 +91,16 @@ cannot **target** (a `baseURL` — `reconcileBackendWithBaseUrl`). Both throw.
 Three params were the silent third category: accepted, then dropped or
 outranked, so the failure surfaced one layer up as a *model* failure.
 
+**Say it precisely.** `cli` does **not** ignore `system` — it passes the string
+as `--system-prompt`, and a simple instruction is obeyed. What it cannot promise
+is that the instruction *wins*: the agent persona and its injected project
+context outrank it on a structured-output contract, and the ~164K-token prefix
+is on the bill whatever the prompt asks. "Sometimes honoured" is why `system` is
+refused rather than merely warned about — a seam cannot tell a simple
+instruction from a contract by looking at the params, and the consumer that
+parses the answer cannot either. `tools` and `tool_choice` are the stronger
+case: those are genuinely dropped.
+
 `unserviceableCliParams` is the single oracle, decided from the params at
 `messages.create()` time (the params are not known at construction time).
 
@@ -189,7 +199,7 @@ The refusal set and why each member is in it:
 
 | param | what cli does | measured consequence |
 |---|---|---|
-| `system` | passed as `--system-prompt`, then outranked by the `claude -p` agent persona and its injected project context | 1995 output tokens in 40.0s against `max_tokens: 200`; a first-person Claude Code reply citing AGENTS.md, where sdk returned the requested one-line sentence in 29 tokens / 1.3s |
+| `system` | **passed** as `--system-prompt` — obeyed for a simple instruction, **outranked** by the `claude -p` agent persona and its ~164K-token injected project context on a structured-output contract, and the prefix is charged either way | the REAL `NORMALIZE_PROMPT`: 1995–2784 output tokens in ~40s against `max_tokens: 200`, a first-person Claude Code reply citing AGENTS.md, where sdk returned the requested one-line sentence in 29–43 tokens / 1.3s. A **shortened** variant of that same prompt: a correct one-line answer **3/3**, still 466–673 output tokens |
 | `tools` | dropped — the adapter always spawns `--tools ''` | §"Forced tool-calling" below: 20/20 tiered-recall runs fell back for a whole shadow window |
 | `tool_choice` | dropped, no error | same |
 

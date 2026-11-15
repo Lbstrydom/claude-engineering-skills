@@ -717,7 +717,8 @@ Smoke test: `npm run anthropic:ping`.
 > **A BACKEND MUST NOT ACCEPT A CALL IT CANNOT HONOUR — THROW AND PIN.**
 > `cli` refused what it cannot REPRESENT or TARGET, but `system`, `tools` and
 > `tool_choice` were accepted then dropped or OUTRANKED, surfacing as a MODEL
-> failure. (`--system-prompt` IS passed; the persona outranks it.)
+> failure. (`--system-prompt` IS passed and a simple instruction obeyed; the
+> persona outranks a structured-output contract. Never say cli ignores it.)
 > `unserviceableCliParams` is the single oracle, decided from the PARAMS, and
 > `cli` now **THROWS** on them, ambient or explicit alike — never routed to
 > sdk, which would let a param pick the meter. The fix is a declared

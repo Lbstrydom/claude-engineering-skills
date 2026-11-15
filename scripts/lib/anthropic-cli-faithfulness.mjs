@@ -35,13 +35,24 @@
  *
  * Measured 2026-11-14 (docs/plans/anthropic-cli-faithfulness-routing.md §6.B):
  *
- *   - `system` — `claude -p` receives it as `--system-prompt`, but the Claude
- *     Code agent persona plus its ~164,000-token auto-discovered project
- *     context outrank it. On `normalize-intent`'s own call shape the cli
- *     backend emitted **1995 output tokens in 40.0s against
- *     `max_tokens: 200`**, opening "I haven't changed anything. This session
- *     has no file-edit or shell tools … AGENTS.md requires …", where the sdk
- *     backend returned the requested one-line sentence in 29 tokens and 1.3s.
+ *   - `system` — **not that cli ignores it. It is passed, and it is not
+ *     reliable.** `claude -p` receives the string as `--system-prompt` and
+ *     obeys it for a simple instruction, but the Claude Code agent persona and
+ *     its ~164,000-token auto-discovered project context OUTRANK it on a
+ *     structured-output contract, and that prefix is on every call whatever the
+ *     prompt says. Both halves measured 2026-11-14/15 on the same seam:
+ *       * `normalize-intent`'s REAL `NORMALIZE_PROMPT` → **1995–2784 output
+ *         tokens in ~40s against `max_tokens: 200`**, opening "I haven't
+ *         changed anything. This session has no file-edit or shell tools …
+ *         AGENTS.md requires …", where the sdk backend returned the requested
+ *         one-line sentence in 29–43 tokens and 1.3s.
+ *       * a SHORTENED variant of that same prompt → a correct one-line answer
+ *         **3 of 3 times**, still burning 466–673 output tokens.
+ *     So the honest claim is the narrow one: obeyed for a simple instruction,
+ *     outranked for a structured-output contract, and never free. A seam cannot
+ *     tell the two apart from the params, and "sometimes honoured" is the worst
+ *     property a transport can have for a contract a consumer then parses —
+ *     which is why `system` is in the refusal set even though it is delivered.
  *     Confirms the 2026-07-19 observation recorded at
  *     scripts/lib/arch-memory/normalize-intent.mjs:262-269, and post-dates the
  *     `--tools ''` fix, so disabling tools did not make `claude -p` terse.
@@ -53,8 +64,9 @@
  *
  * **The membership test — apply this to any new param.** Does the param being
  * unmet change the ANSWER the caller receives?
- *   - `system` unmet → a different KIND of answer than was asked for. The
- *     consumer's parse then fails, or succeeds on garbage:
+ *   - `system` unmet → a different KIND of answer than was asked for. Not
+ *     every time — that is the trap. The consumer's parse then fails, or
+ *     succeeds on garbage:
  *     `arm-eval/judge.mjs` records it as `conformant: false`, scoring its own
  *     transport failure as a model failure.
  *   - `tools`/`tool_choice` unmet → a text block where a tool call was
@@ -82,16 +94,20 @@ export function unserviceableCliParams(params) {
   if (typeof params?.system === 'string' && params.system.trim()) {
     return {
       param: 'system',
-      why: 'the cli backend does not honour `system` as an instruction — the '
-        + '`claude -p` agent persona and its auto-discovered project context '
-        + 'outrank it (measured: 1995 output tokens against a 200 ceiling)',
+      why: 'the cli backend PASSES `system` as `--system-prompt` but does not '
+        + 'honour it reliably — it is obeyed for a simple instruction and '
+        + 'OUTRANKED by the `claude -p` agent persona and its ~164K-token '
+        + 'project context on a structured-output contract (measured: '
+        + '1995-2784 output tokens of first-person prose against a 200 '
+        + 'ceiling), and that prefix is charged on every call',
     };
   }
   if (Array.isArray(params?.system) && params.system.length) {
     return {
       param: 'system',
-      why: 'the cli backend takes `--system-prompt` as a single string and does '
-        + 'not honour a structured system block as an instruction',
+      why: 'the cli backend takes `--system-prompt` as a single string, so a '
+        + 'structured system block cannot be delivered as sent, and what does '
+        + 'arrive is outranked on a structured-output contract',
     };
   }
   if (params?.tools !== undefined) {
