@@ -584,8 +584,33 @@ const heavyLine = (s, now, mineKey) => {
   const noteText = h.note ? ` — ${h.note} (note from ${hhmmOf(new Date(h.noteAt ?? h.startedAt))})` : '';
   const beat = beatText(h, now);
   if (s.heavy.state === 'held') return `heavy slot: HELD by ${who} for ${h.kind} until ${hhmmOf(new Date(h.expiresAt))} (${inMin(h.expiresAt, now)})${beat}${noteText}`;
-  return `heavy slot: EXPIRED at ${hhmmOf(new Date(h.expiresAt))} (${inMin(h.expiresAt, now)}), held by ${who} — ${s.heavy.verdict}: ${s.heavy.reason}${beat}${noteText}`;
+  // An expiry the heartbeat CHOSE (the tree went quiet while its runner kept beating) is not a crash: it leads the line, so a
+  // person never reads it as a bare EXPIRED. A quiet tree can be a run blocked on I/O or a lock, not a lost one.
+  const why = expiryCause(h, now);
+  if (why.kind === 'renewal-stopped') {
+    return `heavy slot: renewal stopped: tree idle ${why.idleMin} min (since ${why.since}) — the runner is still beating; the run may be blocked on I/O or a lock rather than lost. Lease expired at ${hhmmOf(new Date(h.expiresAt))} (${inMin(h.expiresAt, now)}), held by ${who}${h.pid !== undefined ? `, pid ${h.pid}` : ''}${noteText}`;
+  }
+  const lost = why.kind === 'heartbeat-stale' ? ` — heartbeat STOPPED at ${why.lastBeat} (${why.agoMin} min ago): the lease run runner is gone or frozen` : '';
+  return `heavy slot: EXPIRED at ${hhmmOf(new Date(h.expiresAt))} (${inMin(h.expiresAt, now)}), held by ${who} — ${s.heavy.verdict}: ${s.heavy.reason}${lost}${why.kind === 'none' ? beat : ''}${noteText}`;
 };
+
+/**
+ * Why an expired slot expired, as far as its heartbeats say:
+ *  - `renewal-stopped`: the runner kept beating but stopped renewing because the tree was idle (`treeIdleMs`);
+ *  - `heartbeat-stale`: the last beat is older than three intervals — the runner died or froze (a crash, not idleness);
+ *  - `none`: no heartbeat to judge by (not a `lease run`, or one that never beat).
+ */
+export function expiryCause(h, now) {
+  const b = h?.beat;
+  if (!b) return { kind: 'none' };
+  const sinceBeat = now.getTime() - ms(b.at);
+  if (sinceBeat > 3 * LIMITS.heartbeatMs) return { kind: 'heartbeat-stale', lastBeat: hhmmOf(new Date(b.at)), agoMin: Math.round(sinceBeat / MIN) };
+  if (!b.renewing) {
+    const idle = treeIdleMs(h, now) ?? 0;
+    return { kind: 'renewal-stopped', idleMin: Math.round(idle / MIN), since: b.cpuMovedAt ? hhmmOf(new Date(b.cpuMovedAt)) : '?' };
+  }
+  return { kind: 'none' };
+}
 
 /**
  * The holder's process tree as `lease status` sampled it (`lease-cpu.mjs:sampleTree`): launcher first, descendants indented,
@@ -607,7 +632,7 @@ const beatText = (h, now) => {
   if (!h.beat) return '';
   const idle = treeIdleMs(h, now);
   const idleTxt = idle !== null && idle >= MIN ? `, tree idle ${Math.round(idle / MIN)} min` : '';
-  return h.beat.renewing ? ` [lease run heartbeat ${inMin(h.beat.at, now)}${idleTxt}]` : ` [heartbeat stopped renewing: process tree idle ${Math.round((idle ?? 0) / MIN)} min]`;
+  return h.beat.renewing ? ` [lease run heartbeat ${inMin(h.beat.at, now)}${idleTxt}]` : ` [renewal stopped: tree idle ${Math.round((idle ?? 0) / MIN)} min]`;
 };
 
 /**
@@ -725,7 +750,7 @@ export function forceSuggestion(s, { cmd = 'fleet' } = {}) {
   if (!s?.measured || s.heavy.state !== 'expired' || s.heavy.verdict === 'pid-dead') return null;
   const idle = treeIdleMs(s.holder, new Date(s.holder.beat?.at ?? 0));
   if (idle === null || idle < LIMITS.treeIdleMs) return null;
-  return `its whole process tree used no CPU for ${Math.round(idle / MIN)} min (\`${cmd} lease status\` shows the tree). If a person confirms it is hung: \`${cmd} lease release --force --reason "<why>"\``;
+  return `its whole process tree used no CPU for ${Math.round(idle / MIN)} min — that can be a run blocked on I/O or a lock, not only a hung one (\`${cmd} lease status\` shows the tree). If a person confirms it is hung: \`${cmd} lease release --force --reason "<why>"\``;
 }
 
 /**

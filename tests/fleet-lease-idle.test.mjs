@@ -94,8 +94,20 @@ describe('an idle tree stops renewing; the slot is shown, never stolen', () => {
     const { lease } = idleRun();
     const s = summarise({ state: 'ok', lease }, at(70), probe);
     const text = renderStatus(s, { dir: 'D', now: at(70), cmd: 'fleet' }).join('\n');
-    assert.match(text, /heartbeat stopped renewing: process tree idle 60 min/);
-    assert.match(text, /idle: its whole process tree used no CPU for 60 min .*`fleet lease release --force --reason "<why>"`/);
+    // Never a bare EXPIRED: the line LEADS with why renewal stopped, and says a quiet tree may be blocked, not lost.
+    assert.match(text, /heavy slot: renewal stopped: tree idle 60 min \(since 10:10Z\) — the runner is still beating; the run may be blocked on I\/O or a lock rather than lost\. Lease expired at 10:49Z/);
+    assert.doesNotMatch(text, /heavy slot: EXPIRED/);
+    assert.match(text, /idle: its whole process tree used no CPU for 60 min — that can be a run blocked on I\/O or a lock.*`fleet lease release --force --reason "<why>"`/);
+  });
+
+  it('a CRASHED runner reads differently: its heartbeat went stale, and nothing suggests forcing on idleness', () => {
+    // Busy throughout, then the runner dies at minute 20: no beat after that; the last renewal (minute 20) expires at 30.
+    const { lease } = beatFor(20, (m) => m * 1000);
+    const s = summarise({ state: 'ok', lease }, at(45), probe);
+    const text = renderStatus(s, { dir: 'D', now: at(45), cmd: 'fleet' }).join('\n');
+    assert.match(text, /heavy slot: EXPIRED at 10:30Z .*heartbeat STOPPED at 10:20Z \(25 min ago\): the lease run runner is gone or frozen/);
+    assert.doesNotMatch(text, /renewal stopped/);
+    assert.doesNotMatch(text, /--force/);
   });
 
   it('past stuckRefusals, next names the holder WITH the remedy for a measured-idle tree', () => {
