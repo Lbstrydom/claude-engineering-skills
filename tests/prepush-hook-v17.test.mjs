@@ -233,10 +233,12 @@ describe('hook v17 - D2: the audit reads a snapshot of the pushed commit', () =>
       const r = runHook(c, source, p.stdin);
       assert.equal(r.status, 0, r.stderr);
       const rec = recOf(c);
-      assert.match(path.basename(rec.cwd), new RegExp(`^${CONSUMER_SNAPSHOT_PREFIX}`));
+      assert.match(path.basename(path.dirname(rec.cwd)), new RegExp(`^${CONSUMER_SNAPSHOT_PREFIX}`));
+      assert.equal(path.basename(rec.cwd), "tree", "the audit runs in the wrapper's worktree child");
       assert.equal(rec.app, 'export const app = 8; // pushed\n', 'the pushed bytes, not the working tree');
       assert.equal(rec.untrackedVisible, false);
       assert.equal(fs.existsSync(rec.cwd), false, 'the snapshot is removed after the audit');
+      assert.equal(fs.existsSync(path.dirname(rec.cwd)), false, 'and so is its wrapper');
       assert.ok(fs.readFileSync(marker).equals(before), 'the hook audit\'s own marker died with the snapshot');
       assert.match(r.stderr, /audit snapshot: .* a detached worktree of [0-9a-f]{12}/);
     });
@@ -249,7 +251,8 @@ describe('hook v17 - D2: the audit reads a snapshot of the pushed commit', () =>
       const rec = recOf(c);
       assert.equal(rec.gitDir, null, 'GIT_DIR must be unset inside the snapshot');
       assert.equal(rec.gitWorkTree, null);
-      assert.match(path.basename(rec.cwd), new RegExp(`^${CONSUMER_SNAPSHOT_PREFIX}`));
+      assert.match(path.basename(path.dirname(rec.cwd)), new RegExp(`^${CONSUMER_SNAPSHOT_PREFIX}`));
+      assert.equal(path.basename(rec.cwd), "tree", "the audit runs in the wrapper's worktree child");
     });
   });
   it('a refused audit (crash) still removes the snapshot, and the push is refused UNMEASURED', (t) => {

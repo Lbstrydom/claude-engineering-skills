@@ -648,7 +648,7 @@ must offer the `planless` and `snapshot` step capabilities, or the hook refuses.
   handed the hook no push range. `AUDIT_PREPUSH_ALLOW_UNMEASURED=1` remains the
   one override.
 - **The audit reads the pushed commit, not your working tree.** It runs in a
-  detached worktree of the pushed head (`$TMP/ces-consumer-snap-<tree>-<pid>`),
+  detached worktree of the pushed head (`$TMP/ces-consumer-snap-<tree>-<pid>/tree`, with the checkout's `node_modules` linked beside it),
   removed on every exit path; a husk left by a killed push is swept by a later
   push. Uncommitted edits and untracked files are invisible to it, with exactly two
   declared exceptions: an untracked `.auditignore` is copied in (it only narrows

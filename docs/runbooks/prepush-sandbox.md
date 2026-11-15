@@ -132,17 +132,21 @@ tree would decide "unchanged" about something it never read.
 
 **The consumer hook's audit snapshot had the same gap, with no upward walk to save
 it (upstream report e5a067c3, 2026-11-15).** `ces-consumer-snap-*` lives under the
-OS temp directory, so nothing above it has a `node_modules`. `snapshotCreateStep`
-now links the checkout's resolved `node_modules` in (`linkCheckoutNodeModules`,
-[`lib/prepush-snapshot.mjs`](../../scripts/lib/prepush-snapshot.mjs)) and unlinks it
-before any recursive removal. The bytes audited are still the pushed commit's;
-the **tools** are the checkout's installed tree, and the hook prints a line when
-the pushed `package-lock.json` differs (an install per push would not fit the
-audit budget). It refuses, with a warning, when the pushed commit's ignore rules
-do not ignore the link — `git check-ignore` decides, because `node_modules/`
-matches a junction on Git for Windows but not a POSIX symlink. Creating the
-snapshot *inside* the checkout was rejected: every checkout-rooted walker would
-then read a second copy of the tree. The same report's eslint/tsc `no_tool` had a
+OS temp directory, so nothing above it had a `node_modules`. The snapshot is now a
+**wrapper** — `ces-consumer-snap-<tree12>-<pid>/` holding the worktree as `tree/`
+and the checkout's resolved `node_modules` linked in **beside** it
+(`linkCheckoutNodeModules`, [`lib/prepush-snapshot.mjs`](../../scripts/lib/prepush-snapshot.mjs)).
+Node and `npx` both walk up past `tree/package.json` to it (measured), and git never
+sees it, so no ignore rule has to cover it — inside the worktree it would have
+needed one, and `node_modules/` matches a junction on Git for Windows but not a
+POSIX symlink. Every recursive removal (`removeSandboxDir`, so the sweep too)
+detaches a `node_modules` link first and **refuses** if it cannot. The bytes
+audited are still the pushed commit's; the **tools** are the checkout's installed
+tree, and the hook prints a line when the pushed `package-lock.json` is not the
+one that tree came from, or when the package declares workspaces (whose links
+resolve into the checkout's working copy) — an install per push would not fit
+the audit budget. Creating the snapshot *inside* the checkout was rejected: every
+checkout-rooted walker would then read a second copy of the tree. The same report's eslint/tsc `no_tool` had a
 **second, independent cause**: `npx` is `npx.cmd` on Windows and the linter's
 `execFile` could not start it from any cwd. It now goes through `resolveSpawnTarget`
 ([`lib/spawn-target.mjs`](../../scripts/lib/spawn-target.mjs)).

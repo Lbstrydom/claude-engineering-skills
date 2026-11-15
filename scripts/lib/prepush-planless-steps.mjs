@@ -18,7 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildIntentDocument } from './audit/planless-intent.mjs';
 import { createSnapshot, removeSnapshot, snapshotPath, gitWithLockRetry, linkCheckoutNodeModules, CONSUMER_SNAPSHOT_PREFIX } from './prepush-snapshot.mjs';
-import { sweepStaleSandboxes, describeSweep } from './prepush-sandbox-cleanup.mjs';
+import { sweepStaleSandboxes, describeSweep, removeSandboxDir } from './prepush-sandbox-cleanup.mjs';
 import { canonicalizeEol, atomicWriteFileSync } from './file-io.mjs';
 
 const OID_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
@@ -26,6 +26,8 @@ const OID_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 const INTENT_MIN_AGE_MS = 60 * 60 * 1000;
 /** Exactly the name `snapshotCreateStep` gives a snapshot: prefix, 12-hex tree tag, owner pid. */
 const SNAPSHOT_NAME_RE = new RegExp(`^${CONSUMER_SNAPSHOT_PREFIX}[0-9a-f]{12}-[1-9][0-9]*$`);
+/** The worktree's directory inside a snapshot's wrapper (snapshotCreateStep). */
+const SNAPSHOT_TREE_DIR = 'tree';
 /** Where the kept pre-push files live, relative to the consumer checkout (the hook's AUDIT_KEEP_DIR). */
 export const KEEP_DIR = path.join('.audit', 'prepush');
 /** A path handed back to the hook: forward slashes, which git-bash's `cd`, sh and node all accept unconverted. */
@@ -116,18 +118,27 @@ export function snapshotCreateStep({ cwd, headArg = null, ownerPid = null, gitFn
     for (const l of describeSweep(swept, tmpDir)) write(`[prepush-hook] ${l.trim()}`);
     if (swept.swept.length) { try { gitWithLockRetry(cwd, ['worktree', 'prune']); } catch { /* noop */ } }
   } catch (e) { write(`⚠ [prepush-hook] stale-snapshot sweep failed (continuing): ${e?.message ?? e}`); }
-  const dir = snapshotPath({ prefix: CONSUMER_SNAPSHOT_PREFIX, tag: tree.slice(0, 12), pid: ownerPid, tmpDir });
+  // The named directory is a WRAPPER: the worktree is its `tree/` child and the checkout's node_modules link sits beside it, outside
+  // the audited tree (linkCheckoutNodeModules says why). The sweep, the owner pid and the remove guard all key on the wrapper's name.
+  const wrapper = snapshotPath({ prefix: CONSUMER_SNAPSHOT_PREFIX, tag: tree.slice(0, 12), pid: ownerPid, tmpDir });
+  const dir = path.join(wrapper, SNAPSHOT_TREE_DIR);
+  try { fs.mkdirSync(wrapper); } catch (e) {
+    write(`✗  [prepush-hook] could not create the audit snapshot directory ${forShell(wrapper)} (${e?.code || 'error'}) - push BLOCKED: the audit must read the pushed commit, and there is nothing else it may read.`);
+    return { code: 1, line: '' };
+  }
   const created = createSnapshot({ repoRoot: cwd, sha, dir, onRetry: write });
   if (!created.ok) {
+    removeSandboxDir(wrapper);
     write(`✗  [prepush-hook] ${created.error} - push BLOCKED: the audit must read the pushed commit, and there is nothing else it may read.`);
     return { code: 1, line: '' };
   }
+  const discard = () => { removeSnapshot({ repoRoot: cwd, dir }); removeSandboxDir(wrapper); };
   const src = path.join(cwd, '.auditignore');
   const dst = path.join(dir, '.auditignore');
   // `ls-files` exits 0 either way: an empty answer is "untracked", a THROW is git failing - never read as "untracked" (audit B R2 H2).
   let tracked;
   try { tracked = gitFn(cwd, ['ls-files', '-z', '--', '.auditignore']).length > 0; } catch (e) {
-    removeSnapshot({ repoRoot: cwd, dir });
+    discard();
     write(`✗  [prepush-hook] git could not say whether .auditignore is tracked (${e?.status ?? e?.code ?? 'error'}) - push BLOCKED UNMEASURED: the audit's scope cannot be established.`);
     return { code: 1, line: '' };
   }
@@ -136,31 +147,42 @@ export function snapshotCreateStep({ cwd, headArg = null, ownerPid = null, gitFn
       fs.copyFileSync(src, dst);
       write('[prepush-hook] ▸ audit snapshot: .auditignore is untracked here - copied in, because it narrows what the audit reads');
     } catch (e) {
-      removeSnapshot({ repoRoot: cwd, dir });
+      discard();
       write(`✗  [prepush-hook] the untracked .auditignore could not be copied into the audit snapshot (${e?.code || 'error'}) - push BLOCKED UNMEASURED: without it the audit would read files you excluded.`);
       return { code: 1, line: '' };
     }
   }
   // The checkout's installed tools, made resolvable from the snapshot (see linkCheckoutNodeModules). Never blocks: without the link the
   // tool lanes report `no_tool` / an unparsed graph, which the audit already prints as UNMEASURED - so the reason is printed here too.
-  const modules = linkCheckoutNodeModules({ checkoutRoot: cwd, dir });
+  const modules = linkCheckoutNodeModules({ checkoutRoot: cwd, intoDir: wrapper, pushedRoot: dir });
   if (!modules.linked) {
     write(`⚠ [prepush-hook] audit snapshot: the checkout's node_modules is NOT linked in (${modules.reason}) - the lint, typecheck and layering lanes cannot resolve this repo's tools from the snapshot and will read UNMEASURED`);
-  } else if (modules.lockDiffers) {
-    write(`[prepush-hook] ▸ audit snapshot: tools resolve from ${forShell(modules.modules)}; the pushed package-lock.json differs from the checkout's, so they run with the checkout's installed tree, not the pushed one`);
+  } else {
+    if (modules.lock !== 'same') {
+      const why = modules.lock === 'differs' ? 'the pushed package-lock.json differs from the one that tree was installed from' : 'whether the pushed package-lock.json matches the installed tree could not be read';
+      write(`[prepush-hook] ▸ audit snapshot: tools resolve from ${forShell(modules.modules)}; ${why}, so they run with the checkout's installed tree, not the pushed one`);
+    }
+    if (modules.workspaces) {
+      write(`⚠ [prepush-hook] audit snapshot: this package declares workspaces - their package links in ${forShell(modules.modules)} resolve to the CHECKOUT's working copy, so a tool following an import into a workspace package reads that copy, not the pushed one`);
+    }
   }
   write(`[prepush-hook] ▸ audit snapshot: ${forShell(dir)} - a detached worktree of ${sha.slice(0, 12)}; the audit reads the pushed commit, not the working tree`);
   return { code: 0, line: forShell(dir) };
 }
 
-/** Is `dir` exactly a snapshot this hook makes: the snapshot NAME, directly under the temp root (canonical paths)? */
+/**
+ * Is `dir` exactly a snapshot this hook makes: the `tree/` worktree of a wrapper carrying the snapshot NAME, directly under the temp root
+ * (canonical paths)? The wrapper itself is not accepted: what `snapshot create` prints, and so what `remove` is handed, is the worktree.
+ */
 export function isConsumerSnapshotPath(dir, tmpDir = os.tmpdir()) {
   if (!dir) return false;
   const canon = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
   const abs = path.resolve(String(dir));
+  const wrapper = path.dirname(abs);
   // Case-folded only where the filesystem is (Windows); on a case-sensitive one /tmp/A and /tmp/a are different roots (audit B R2 H4).
   const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
-  return SNAPSHOT_NAME_RE.test(path.basename(abs)) && fold(canon(path.dirname(abs))) === fold(canon(tmpDir));
+  return path.basename(abs) === SNAPSHOT_TREE_DIR && SNAPSHOT_NAME_RE.test(path.basename(wrapper))
+    && fold(canon(path.dirname(wrapper))) === fold(canon(tmpDir));
 }
 
 /**
@@ -174,9 +196,12 @@ export function snapshotRemoveStep({ cwd, dir, write, tmpDir = os.tmpdir() }) {
     write(`⚠ [prepush-hook] refusing to remove ${dir || '(no path)'}: not an audit snapshot this hook makes`);
     return { code: 0, removed: false };
   }
+  const wrapper = path.dirname(path.resolve(String(dir)));
   const r = removeSnapshot({ repoRoot: cwd, dir, onRetry: write });
-  if (!r.removed) {
-    write(`⚠ [prepush-hook] the audit snapshot could not be removed: ${dir} (${r.error?.code || r.error?.message || 'unknown'}) - a later push sweeps it`);
+  // The wrapper goes only after the worktree: removeSandboxDir detaches the node_modules link first and refuses if it cannot.
+  const w = r.removed ? removeSandboxDir(wrapper) : { removed: false, error: r.error };
+  if (!w.removed) {
+    write(`⚠ [prepush-hook] the audit snapshot could not be removed: ${r.removed ? wrapper : dir} (${w.error?.code || w.error?.message || 'unknown'}) - a later push sweeps it`);
     return { code: 3, removed: false };
   }
   return { code: 0, removed: true };

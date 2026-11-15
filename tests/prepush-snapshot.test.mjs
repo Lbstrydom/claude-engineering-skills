@@ -14,7 +14,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import { createSnapshot, removeSnapshot, snapshotPath, unlinkNodeModulesLink, CONSUMER_SNAPSHOT_PREFIX } from '../scripts/lib/prepush-snapshot.mjs';
+import { createSnapshot, removeSnapshot, snapshotPath, detachNodeModulesLink, compareLockfiles, CONSUMER_SNAPSHOT_PREFIX } from '../scripts/lib/prepush-snapshot.mjs';
+import { findNodeModules } from '../scripts/lib/node-modules-resolver.mjs';
+import { resolveSpawnTarget } from '../scripts/lib/spawn-target.mjs';
+import { createRequire } from 'node:module';
 import { surveySandboxes, SANDBOX_PREFIX, CONSUMER_SNAPSHOT_AGE_MS, STALE_SANDBOX_AGE_MS } from '../scripts/lib/prepush-sandbox-cleanup.mjs';
 import { snapshotCreateStep, snapshotRemoveStep, snapshotPlanLine, writePlanlessIntent, isConsumerSnapshotPath, pruneKept } from '../scripts/lib/prepush-planless-steps.mjs';
 import { git } from './lib/hook-test-helpers.mjs';
@@ -141,7 +144,7 @@ describe('snapshotCreateStep / snapshotRemoveStep - the hook steps', () => {
       const res = snapshotCreateStep({ cwd: r.dir, headArg: r.head, ownerPid: process.pid, gitFn, write: (l) => lines.push(l), tmpDir: tmp, sweep: () => ({ swept: [], failed: [], young: [], unsurveyed: [] }) });
       assert.equal(res.code, 0, lines.join('\n'));
       made = res.line;
-      assert.ok(path.basename(made).startsWith(CONSUMER_SNAPSHOT_PREFIX));
+      assert.ok(path.basename(path.dirname(made)).startsWith(CONSUMER_SNAPSHOT_PREFIX));
       assert.equal(fs.readFileSync(path.join(made, '.auditignore'), 'utf8'), 'vendor/**\n');
       assert.match(lines.join('\n'), /\.auditignore is untracked here - copied in/);
       assert.match(lines.join('\n'), /reads the pushed commit, not the working tree/);
@@ -175,7 +178,7 @@ describe('snapshotCreateStep / snapshotRemoveStep - the hook steps', () => {
       assert.equal(none.code, 1);
       const res = snapshotCreateStep({ cwd: r.dir, headArg: r.head, ownerPid: 424242, gitFn, write: () => {}, tmpDir: tmp, sweep: () => ({ swept: [], failed: [], young: [], unsurveyed: [] }) });
       made = res.line;
-      assert.match(path.basename(made), /-424242$/);
+      assert.match(path.basename(path.dirname(made)), /-424242$/, "the WRAPPER carries the owner pid");
     } finally { if (made) snapshotRemoveStep({ cwd: r.dir, dir: made, write: () => {}, tmpDir: tmp }); rmrf(tmp); rmrf(r.dir); }
   });
   it('a .auditignore TRACKED in the checkout but deleted by the pushed commit is NOT copied in (audit B R1 H7)', () => {
@@ -201,11 +204,13 @@ describe('snapshotCreateStep / snapshotRemoveStep - the hook steps', () => {
     const tmp = tmpDir('snaproot-');
     const elsewhere = tmpDir('elsewhere-');
     try {
-      assert.equal(isConsumerSnapshotPath(path.join(tmp, `${CONSUMER_SNAPSHOT_PREFIX}0123456789ab-77`), tmp), true);
-      assert.equal(isConsumerSnapshotPath(path.join(elsewhere, `${CONSUMER_SNAPSHOT_PREFIX}0123456789ab-77`), tmp), false, 'right name, wrong root');
-      assert.equal(isConsumerSnapshotPath(path.join(tmp, `${CONSUMER_SNAPSHOT_PREFIX}evil`), tmp), false, 'prefix alone is not a name');
-      const victim = path.join(elsewhere, `${CONSUMER_SNAPSHOT_PREFIX}0123456789ab-77`);
-      fs.mkdirSync(victim);
+      assert.equal(isConsumerSnapshotPath(path.join(tmp, `${CONSUMER_SNAPSHOT_PREFIX}0123456789ab-77`, 'tree'), tmp), true);
+      assert.equal(isConsumerSnapshotPath(path.join(tmp, `${CONSUMER_SNAPSHOT_PREFIX}0123456789ab-77`), tmp), false, 'the wrapper is not the worktree');
+      assert.equal(isConsumerSnapshotPath(path.join(tmp, `${CONSUMER_SNAPSHOT_PREFIX}0123456789ab-77`, 'other'), tmp), false, 'only the tree child');
+      assert.equal(isConsumerSnapshotPath(path.join(elsewhere, `${CONSUMER_SNAPSHOT_PREFIX}0123456789ab-77`, 'tree'), tmp), false, 'right name, wrong root');
+      assert.equal(isConsumerSnapshotPath(path.join(tmp, `${CONSUMER_SNAPSHOT_PREFIX}evil`, 'tree'), tmp), false, 'prefix alone is not a name');
+      const victim = path.join(elsewhere, `${CONSUMER_SNAPSHOT_PREFIX}0123456789ab-77`, 'tree');
+      fs.mkdirSync(victim, { recursive: true });
       assert.equal(snapshotRemoveStep({ cwd: elsewhere, dir: victim, write: () => {}, tmpDir: tmp }).removed, false);
       assert.equal(fs.existsSync(victim), true);
     } finally { rmrf(tmp); rmrf(elsewhere); }
@@ -302,87 +307,129 @@ describe('writePlanlessIntent - the per-invocation intent file', () => {
 /**
  * Upstream report e5a067c3 (ai-organiser, 2026-11-15): the snapshot lives under the OS temp directory, where nothing above it has a
  * node_modules, so every cwd-relative tool lookup from it (npx --no-install eslint|tsc, an eslint config's plugins) resolved nothing
- * or a global copy. The checkout's own node_modules is linked in - and only when the PUSHED commit's ignore rules ignore it.
+ * or a global copy. The checkout's own node_modules is linked in BESIDE the worktree (its wrapper), never inside the audited tree.
  */
-describe("snapshotCreateStep links the checkout's node_modules into the snapshot", () => {
+describe("snapshotCreateStep makes the checkout's node_modules resolvable from the snapshot", () => {
   const noSweep = () => ({ swept: [], failed: [], young: [], unsurveyed: [] });
-  /** repo() plus a committed lockfile and an installed (untracked) node_modules in the checkout; `ignore` commits a .gitignore for it. */
-  function repoWithModules({ ignore }) {
+  /** repo() plus a committed lockfile and an installed (untracked, NOT ignored: the layout must not depend on it) node_modules. */
+  function repoWithModules({ pkg = null, modulesLinkTo = null } = {}) {
     const r = repo();
-    if (ignore) fs.writeFileSync(path.join(r.dir, '.gitignore'), 'node_modules/\n');
     fs.writeFileSync(path.join(r.dir, 'package-lock.json'), '{"lockfileVersion":3}\n');
-    git(['add', '--', 'package-lock.json', ...(ignore ? ['.gitignore'] : [])], r.dir);
+    if (pkg) fs.writeFileSync(path.join(r.dir, 'package.json'), `${JSON.stringify(pkg)}\n`);
+    git(['add', '--', 'package-lock.json', ...(pkg ? ['package.json'] : [])], r.dir);
     git(['commit', '-q', '-m', 'chore: lock'], r.dir);
     const head = git(['rev-parse', 'HEAD'], r.dir);
-    fs.mkdirSync(path.join(r.dir, 'node_modules', 'fake-tool'), { recursive: true });
-    fs.writeFileSync(path.join(r.dir, 'node_modules', 'fake-tool', 'package.json'), '{"name":"fake-tool","version":"1.0.0"}\n');
+    if (modulesLinkTo) {
+      fs.symlinkSync(modulesLinkTo, path.join(r.dir, 'node_modules'), 'junction');
+    } else {
+      fs.mkdirSync(path.join(r.dir, 'node_modules', 'fake-tool'), { recursive: true });
+      fs.writeFileSync(path.join(r.dir, 'node_modules', 'fake-tool', 'package.json'), '{"name":"fake-tool","version":"1.0.0"}\n');
+    }
     return { ...r, head };
   }
+  const create = (r, tmp, lines) => snapshotCreateStep({ cwd: r.dir, headArg: r.head, ownerPid: process.pid, gitFn, write: (l) => lines.push(l), tmpDir: tmp, sweep: noSweep });
+  const cleanup = (r, tmp, made) => { if (made) snapshotRemoveStep({ cwd: r.dir, dir: made, write: () => {}, tmpDir: tmp }); };
 
-  it("resolves the checkout's installed packages from the snapshot, which still holds only the pushed bytes; removal never descends into the checkout's tree", () => {
-    const r = repoWithModules({ ignore: true });
+  it("resolves the checkout's packages FROM the snapshot, whose tree still holds only the pushed bytes; removal never descends into the checkout's tree", () => {
+    const r = repoWithModules();
     const tmp = tmpDir('snapstep-mods-');
     const lines = [];
     let made = '';
     try {
-      const res = snapshotCreateStep({ cwd: r.dir, headArg: r.head, ownerPid: process.pid, gitFn, write: (l) => lines.push(l), tmpDir: tmp, sweep: noSweep });
+      const res = create(r, tmp, lines);
       assert.equal(res.code, 0, lines.join('\n'));
       made = res.line;
-      // The subject: the package resolves FROM the snapshot.
-      assert.equal(JSON.parse(fs.readFileSync(path.join(made, 'node_modules', 'fake-tool', 'package.json'), 'utf8')).name, 'fake-tool');
-      // Still the pushed commit, not the working tree: the dirty edit is absent and git sees no change at all (the link is ignored).
-      assert.equal(fs.readFileSync(path.join(made, 'src', 'a.mjs'), 'utf8'), 'export const pushed = 1;\n');
+      assert.equal(path.basename(made), 'tree');
+      assert.ok(isConsumerSnapshotPath(made, tmp));
+      // The subject: Node's own resolution, from inside the snapshot, reaches the checkout's package.
+      const resolved = createRequire(path.join(made, 'src', 'a.mjs')).resolve('fake-tool/package.json');
+      assert.equal(JSON.parse(fs.readFileSync(resolved, 'utf8')).name, 'fake-tool');
+      // Beside the tree, not in it: git sees no change at all although nothing ignores node_modules, and the dirty edit is absent.
+      assert.equal(fs.existsSync(path.join(made, 'node_modules')), false);
       assert.equal(gitFn(made, ['status', '--porcelain']), '');
-      assert.doesNotMatch(lines.join('\n'), /NOT linked|differs from the checkout/);
+      assert.equal(fs.readFileSync(path.join(made, 'src', 'a.mjs'), 'utf8'), 'export const pushed = 1;\n');
+      assert.doesNotMatch(lines.join('\n'), /NOT linked|differs from|workspaces/);
       const rm = snapshotRemoveStep({ cwd: r.dir, dir: made, write: () => {}, tmpDir: tmp });
       assert.equal(rm.removed, true);
+      assert.equal(fs.existsSync(path.dirname(made)), false, 'the wrapper is removed too');
       made = '';
       assert.ok(fs.existsSync(path.join(r.dir, 'node_modules', 'fake-tool', 'package.json')), "removing the snapshot emptied the checkout's node_modules");
-    } finally { if (made) snapshotRemoveStep({ cwd: r.dir, dir: made, write: () => {}, tmpDir: tmp }); rmrf(tmp); rmrf(r.dir); }
+    } finally { cleanup(r, tmp, made); rmrf(tmp); rmrf(r.dir); }
   });
 
-  it("says so when the pushed package-lock.json is not the checkout's (the tools are the checkout's installed tree)", () => {
-    const r = repoWithModules({ ignore: true });
+  it('INTEGRATION: an installed bin runs from the snapshot through npx --no-install, at the checkout\'s own version', () => {
+    // This repo's own node_modules stands in for the consumer's installed tree (the checkout's node_modules links to it).
+    const ownModules = findNodeModules(process.cwd());
+    const depcruiseVersion = JSON.parse(fs.readFileSync(path.join(ownModules, 'dependency-cruiser', 'package.json'), 'utf8')).version;
+    const r = repoWithModules({ modulesLinkTo: ownModules });
+    const tmp = tmpDir('snapstep-int-');
+    const lines = [];
+    let made = '';
+    try {
+      made = create(r, tmp, lines).line;
+      const t = resolveSpawnTarget({ cmd: 'npx', args: ['--no-install', '--offline', 'depcruise', '--version'] });
+      const out = execFileSync(t.cmd, t.args, { cwd: made, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 }).trim();
+      assert.equal(out, depcruiseVersion);
+      snapshotRemoveStep({ cwd: r.dir, dir: made, write: () => {}, tmpDir: tmp });
+      made = '';
+      assert.ok(fs.existsSync(path.join(ownModules, 'dependency-cruiser', 'package.json')), 'removal reached through two links into the real tree');
+    } finally { cleanup(r, tmp, made); rmrf(tmp); rmrf(r.dir); }
+  });
+
+  it("says so when the pushed package-lock.json is not the one the installed tree came from", () => {
+    const r = repoWithModules();
     fs.writeFileSync(path.join(r.dir, 'package-lock.json'), '{"lockfileVersion":3,"edited":true}\n');
     const tmp = tmpDir('snapstep-lock-');
     const lines = [];
     let made = '';
     try {
-      made = snapshotCreateStep({ cwd: r.dir, headArg: r.head, ownerPid: process.pid, gitFn, write: (l) => lines.push(l), tmpDir: tmp, sweep: noSweep }).line;
-      assert.ok(fs.existsSync(path.join(made, 'node_modules', 'fake-tool')));
-      assert.match(lines.join('\n'), /pushed package-lock\.json differs from the checkout's/);
-    } finally { if (made) snapshotRemoveStep({ cwd: r.dir, dir: made, write: () => {}, tmpDir: tmp }); rmrf(tmp); rmrf(r.dir); }
+      made = create(r, tmp, lines).line;
+      assert.match(lines.join('\n'), /the pushed package-lock\.json differs from the one that tree was installed from/);
+    } finally { cleanup(r, tmp, made); rmrf(tmp); rmrf(r.dir); }
   });
 
-  it("NEGATIVE: the pushed commit does not ignore node_modules -> no link (it would be an untracked change in the audited tree), and the warning names the lanes that go UNMEASURED", () => {
-    const r = repoWithModules({ ignore: false });
-    const tmp = tmpDir('snapstep-noign-');
+  it('warns that workspace packages resolve to the checkout when the pushed package.json declares workspaces', () => {
+    const r = repoWithModules({ pkg: { name: 'mono', workspaces: ['packages/*'] } });
+    const tmp = tmpDir('snapstep-ws-');
     const lines = [];
     let made = '';
     try {
-      const res = snapshotCreateStep({ cwd: r.dir, headArg: r.head, ownerPid: process.pid, gitFn, write: (l) => lines.push(l), tmpDir: tmp, sweep: noSweep });
-      assert.equal(res.code, 0, 'a missing link never blocks the push');
-      made = res.line;
-      assert.equal(fs.existsSync(path.join(made, 'node_modules')), false);
-      assert.equal(gitFn(made, ['status', '--porcelain']), '');
-      assert.match(lines.join('\n'), /node_modules is NOT linked in \(the pushed commit's ignore rules do not ignore the link.*UNMEASURED/);
-    } finally { if (made) snapshotRemoveStep({ cwd: r.dir, dir: made, write: () => {}, tmpDir: tmp }); rmrf(tmp); rmrf(r.dir); }
+      made = create(r, tmp, lines).line;
+      assert.match(lines.join('\n'), /declares workspaces - their package links .* resolve to the CHECKOUT's working copy/);
+    } finally { cleanup(r, tmp, made); rmrf(tmp); rmrf(r.dir); }
   });
 
-  it('unlinkNodeModulesLink removes only a LINK - a real node_modules directory is left alone', () => {
-    const d = tmpDir('unlink-');
+  it('compareLockfiles: same / differs / both-absent, and unknown when a side cannot be READ or PARSED (never folded into "same")', () => {
+    const a = tmpDir('lock-a-');
+    const b = tmpDir('lock-b-');
     try {
+      assert.equal(compareLockfiles(a, b), 'same', 'no lockfile on either side');
+      fs.writeFileSync(path.join(a, 'package-lock.json'), '{}\r\n');
+      assert.equal(compareLockfiles(a, b), 'differs', 'one side absent');
+      fs.writeFileSync(path.join(b, 'package-lock.json'), '{}\n');
+      assert.equal(compareLockfiles(a, b), 'same', 'line endings are not dependency identity');
+      fs.writeFileSync(path.join(b, 'package-lock.json'), '{"truncated":');
+      assert.equal(compareLockfiles(a, b), 'unknown', 'an unparseable side is unknown, never same');
+      fs.rmSync(path.join(b, 'package-lock.json'));
+      fs.mkdirSync(path.join(b, 'package-lock.json')); // a directory: the read fails with EISDIR, not ENOENT
+      assert.equal(compareLockfiles(a, b), 'unknown');
+    } finally { rmrf(a); rmrf(b); }
+  });
+
+  it('detachNodeModulesLink removes only a LINK - a real node_modules directory is left alone - and names each outcome', () => {
+    const d = tmpDir('unlink-');
+    const target = tmpDir('unlink-target-');
+    try {
+      assert.equal(detachNodeModulesLink(d).state, 'absent');
       fs.mkdirSync(path.join(d, 'node_modules', 'x'), { recursive: true });
-      assert.equal(unlinkNodeModulesLink(d), false);
+      assert.equal(detachNodeModulesLink(d).state, 'not-link');
       assert.ok(fs.existsSync(path.join(d, 'node_modules', 'x')));
-      const target = tmpDir('unlink-target-');
       fs.rmSync(path.join(d, 'node_modules'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       fs.mkdirSync(path.join(target, 'kept'));
       fs.symlinkSync(target, path.join(d, 'node_modules'), 'junction');
-      assert.equal(unlinkNodeModulesLink(d), true);
+      assert.equal(detachNodeModulesLink(d).state, 'unlinked');
       assert.equal(fs.existsSync(path.join(d, 'node_modules')), false);
       assert.ok(fs.existsSync(path.join(target, 'kept')), 'unlinking must not touch the target');
-      rmrf(target);
-    } finally { rmrf(d); }
+    } finally { rmrf(d); rmrf(target); }
   });
 });

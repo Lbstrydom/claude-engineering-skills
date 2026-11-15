@@ -125,6 +125,35 @@ export function probePidAlive(pid) {
 }
 
 /**
+ * Remove `<dir>/node_modules` when, and only when, it is a LINK (a junction on Windows, a directory symlink elsewhere): the shape
+ * prepush-check's provisionNodeModules and the consumer snapshot's linkCheckoutNodeModules create, pointing at a checkout's REAL
+ * tree. Called before anything removes `dir` recursively, so that removal never meets the link at all.
+ *
+ * Every outcome is named, because "nothing happened" has two meanings here: `absent` / `not-link` (a real directory, e.g. an
+ * `npm ci` install, left for the recursive removal) are safe to proceed past; `failed` means a link may still stand and the
+ * caller must NOT proceed. `unlinked` is verified by a second lstat, never inferred from unlink returning.
+ *
+ * @param {string} dir
+ * @returns {{state: 'absent'|'not-link'|'unlinked'|'failed', error?: Error}}
+ */
+export function detachNodeModulesLink(dir) {
+  const link = path.join(dir, 'node_modules');
+  let st;
+  try { st = fs.lstatSync(link); } catch (error) {
+    if (error?.code === 'ENOENT') return { state: 'absent' };
+    return { state: 'failed', error };
+  }
+  if (!st.isSymbolicLink()) return { state: 'not-link' };
+  try { fs.unlinkSync(link); } catch (error) { return { state: 'failed', error }; }
+  try {
+    fs.lstatSync(link);
+    return { state: 'failed', error: new Error(`${link} still present after unlink`) };
+  } catch (error) {
+    return error?.code === 'ENOENT' ? { state: 'unlinked' } : { state: 'failed', error };
+  }
+}
+
+/**
  * Remove a directory and report whether it is ACTUALLY gone afterwards.
  *
  * Never throws: callers are cleanup paths that must not convert a temp-file
@@ -140,6 +169,10 @@ export function probePidAlive(pid) {
  */
 export function removeSandboxDir(dir) {
   if (!fs.existsSync(dir)) return { removed: true };
+  // A node_modules LINK is removed on its own first, and a failure to do so stops the removal: the link's target is a checkout's
+  // real tree, so whether a recursive removal descends into it must never be left to rmSync or git (see detachNodeModulesLink).
+  const detached = detachNodeModulesLink(dir);
+  if (detached.state === 'failed') return { removed: false, error: detached.error };
   try {
     // Windows holds handles briefly after a process exits; retry per the
     // repo-wide rmSync hardening contract (tests/rmsync-retry-guard.test.mjs

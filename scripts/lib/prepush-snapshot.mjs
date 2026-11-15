@@ -17,14 +17,14 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { withGitLockRetry, GIT_LOCK_RETRY_DELAYS_MS } from './git-lock-retry.mjs';
 import { sanitizeGitEnv } from './git-env-sanitize.mjs';
-import { removeSandboxDir, CONSUMER_SNAPSHOT_PREFIX } from './prepush-sandbox-cleanup.mjs';
+import { removeSandboxDir, detachNodeModulesLink, CONSUMER_SNAPSHOT_PREFIX } from './prepush-sandbox-cleanup.mjs';
 import { findNodeModules } from './node-modules-resolver.mjs';
-import { canonicalizeEol } from './file-io.mjs';
 
 /** The consumer hook's snapshot prefix; defined beside the sweep that must know it (one spelling). */
-export { CONSUMER_SNAPSHOT_PREFIX };
+export { CONSUMER_SNAPSHOT_PREFIX, detachNodeModulesLink };
 
 /**
  * `git worktree add/remove/prune` write the SHARED repo's `.git/worktrees/` metadata, which a concurrent session can hold locked for a
@@ -76,78 +76,87 @@ export function createSnapshot({ repoRoot, sha, dir, onRetry = null }) {
 
 /**
  * Make the checkout's installed tools resolvable from a snapshot: link the `node_modules` the CHECKOUT resolves (Node's own upward
- * walk, lib/node-modules-resolver.mjs) into the snapshot root as a junction (a directory symlink off Windows).
+ * walk, lib/node-modules-resolver.mjs) into `intoDir` as a junction (a directory symlink off Windows). The consumer snapshot passes
+ * the snapshot's WRAPPER directory, the parent of the worktree, so the link is never inside the audited tree.
  *
- * Why (upstream report e5a067c3, 2026-11-15): a snapshot lives under the OS temp directory, so no directory above it has a
+ * Why (upstream report e5a067c3, 2026-11-15): a snapshot lives under the OS temp directory, so no directory above it had a
  * `node_modules`. Every cwd-relative tool lookup the audit makes from it - `npx --no-install eslint|tsc`, an eslint config's own
- * plugin imports - found nothing, or found a GLOBAL copy of a different version. The tools are the checkout's; the bytes they read
- * are still the pushed commit's. The alternative, creating the snapshot inside the checkout, would put a second copy of the whole
- * tree where every checkout-rooted walker (eslint, the symbol index, an IDE) reads it.
+ * plugin imports - found nothing, or a GLOBAL copy of another version (measured: tsc 5.4.3 against the consumer's 5.9.3). Node and
+ * npx both walk up past the worktree's package.json, so a link one level above it serves them (measured both ways).
  *
- * Refuses - removing its own link, never blocking - when the link does not RESOLVE (on Windows a junction to a missing target
- * is created without error, docs/runbooks/prepush-sandbox.md §2.2), or when the pushed commit's own ignore rules do not ignore it:
- * an unignored link is an untracked change the audit would read as part of the push. `git check-ignore` is asked, not a pattern
- * guessed: `node_modules/` matches a junction on Git for Windows but not a POSIX symlink.
+ * Why BESIDE the worktree, not in it: inside, git would see the link, and whether the pushed commit's ignore rules cover it is not a
+ * question with a portable answer - `node_modules/` matches a junction on Git for Windows but not a POSIX symlink, and
+ * `git check-ignore` also consults local and global excludes the pushed commit does not carry. Beside it, git never sees it. Creating
+ * the snapshot inside the checkout was rejected for the opposite reason: every checkout-rooted walker would read a second tree.
  *
- * `lockDiffers` says when the pushed commit's package-lock.json is not the checkout's: the tools then measure with the checkout's
- * installed tree, which the caller says out loud (installing per push is a cost the audit budget cannot carry).
+ * The bytes the tools read are still the pushed commit's; the TOOLS are the checkout's installed tree. `lock` says whether the pushed
+ * package-lock.json is the one that tree was installed from (the modules OWNER's, as prepush-check compares - in a linked worktree
+ * that is the main checkout, not `checkoutRoot`): `same`, `differs`, or `unknown` when either side could not be read. `workspaces`
+ * says the pushed package.json declares workspaces, whose package links resolve into the CHECKOUT's working copy, not the snapshot.
+ * Installing per push is a cost the audit budget cannot carry, so the caller says these out loud instead.
  *
- * @param {{checkoutRoot: string, dir: string}} input
- * @returns {{linked: true, modules: string, lockDiffers: boolean} | {linked: false, reason: string}}
+ * Refuses, removing its own link and never throwing, when the link does not RESOLVE: on Windows a junction to a missing target is
+ * created without error (docs/runbooks/prepush-sandbox.md §2.2).
+ *
+ * @param {{checkoutRoot: string, intoDir: string, pushedRoot: string}} input
+ * @returns {{linked: true, modules: string, lock: 'same'|'differs'|'unknown', workspaces: boolean} | {linked: false, reason: string}}
  */
-export function linkCheckoutNodeModules({ checkoutRoot, dir }) {
+export function linkCheckoutNodeModules({ checkoutRoot, intoDir, pushedRoot }) {
   const modules = findNodeModules(checkoutRoot);
   if (!modules) return { linked: false, reason: `no node_modules at or above ${checkoutRoot}` };
-  const link = path.join(dir, 'node_modules');
-  if (pathPresent(link)) return { linked: false, reason: 'the pushed commit already has a node_modules entry' };
+  const link = path.join(intoDir, 'node_modules');
   try {
     fs.symlinkSync(modules, link, 'junction');
   } catch (err) {
     return { linked: false, reason: `the link could not be made (${err?.code || err?.message || 'error'})` };
   }
-  const refuse = (reason) => { unlinkNodeModulesLink(dir); return { linked: false, reason }; };
-  if (!fs.existsSync(path.join(link, '.'))) return refuse(`the link to ${modules} does not resolve`);
-  let ignored;
-  try {
-    execFileSync('git', ['check-ignore', '-q', '--', 'node_modules'], { cwd: dir, stdio: 'ignore', env: sanitizeGitEnv(dir) });
-    ignored = true;
-  } catch (err) {
-    if (err?.status !== 1) return refuse(`git could not say whether node_modules is ignored (${err?.status ?? err?.code ?? 'error'})`);
-    ignored = false;
+  if (!fs.existsSync(path.join(link, '.'))) {
+    const d = detachNodeModulesLink(intoDir);
+    return { linked: false, reason: `the link to ${modules} does not resolve${d.state === 'failed' ? ' (and could not be removed)' : ''}` };
   }
-  if (!ignored) return refuse("the pushed commit's ignore rules do not ignore the link, so the audit would read it as an untracked change");
-  const lock = (root) => { try { return canonicalizeEol(fs.readFileSync(path.join(root, 'package-lock.json'))); } catch { return null; } };
-  const mine = lock(path.dirname(modules));
-  const pushed = lock(dir);
-  return { linked: true, modules, lockDiffers: !(mine && pushed ? mine.equals(pushed) : mine === pushed) };
+  return { linked: true, modules, lock: compareLockfiles(path.dirname(modules), pushedRoot), workspaces: declaresWorkspaces(pushedRoot) };
 }
 
-/** lstat, not exists: a dangling link is still an entry. */
-function pathPresent(p) {
-  try { fs.lstatSync(p); return true; } catch { return false; }
+/** Read a file, distinguishing absent (null) from unreadable (throws). */
+function readOrAbsent(file) {
+  try { return fs.readFileSync(file); } catch (err) {
+    if (err?.code === 'ENOENT') return null;
+    throw err;
+  }
 }
 
 /**
- * Remove the snapshot's `node_modules` entry ONLY when it is a link (what linkCheckoutNodeModules makes), BEFORE anything removes
- * the snapshot recursively: the link's target is the checkout's real tree, and the removal must never be the thing that decides
- * whether to descend into it (the 2026-08-19 incident in prepush-sandbox-cleanup.mjs is why this is not left to rmSync or git).
- * A real directory is left alone. Never throws.
- * @param {string} dir
- * @returns {boolean} true when a link was removed
+ * `same` only when both sides were READ and parse to the same JSON, or both are provably absent; `unknown` when either side could not be
+ * read or parsed. Compared as parsed JSON, not bytes: line endings and formatting are not dependency identity, and parsing needs no
+ * import of lib/file-io.mjs, whose barrel would put this module (and every pre-push test that reaches it) downstream of half the repo.
  */
-export function unlinkNodeModulesLink(dir) {
-  const link = path.join(dir, 'node_modules');
+export function compareLockfiles(installedRoot, pushedRoot) {
+  let a; let b;
   try {
-    if (!fs.lstatSync(link).isSymbolicLink()) return false;
-    fs.unlinkSync(link);
-    return true;
-  } catch {
-    return false;
-  }
+    a = readOrAbsent(path.join(installedRoot, 'package-lock.json'));
+    b = readOrAbsent(path.join(pushedRoot, 'package-lock.json'));
+  } catch { return 'unknown'; }
+  if (a === null && b === null) return 'same';
+  if (a === null || b === null) return 'differs';
+  let ja; let jb;
+  try { ja = JSON.parse(a.toString('utf8')); jb = JSON.parse(b.toString('utf8')); } catch { return 'unknown'; }
+  return isDeepStrictEqual(ja, jb) ? 'same' : 'differs';
+}
+
+/** Does the pushed package.json declare workspaces? Unreadable or unparseable reads as no: it is a warning, never a gate. */
+function declaresWorkspaces(root) {
+  try {
+    const w = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))?.workspaces;
+    return Array.isArray(w) ? w.length > 0 : Boolean(w && typeof w === 'object');
+  } catch { return false; }
 }
 
 /**
  * Remove a snapshot worktree and report whether its directory is ACTUALLY gone.
+ *
+ * A `node_modules` link inside it (prepush-check's provisionNodeModules) is detached FIRST, and a failed detach stops the removal
+ * with the snapshot left standing for a later sweep: neither `git worktree remove` nor rmSync may be the thing that decides whether
+ * to descend into the checkout's real tree.
  *
  * Order matters: `git worktree prune` runs only AFTER the directory is confirmed removed, and only when git's own removal failed. Pruning first
  * deregisters a worktree whose directory may still stand, turning a visible husk into an invisible one.
@@ -156,8 +165,9 @@ export function unlinkNodeModulesLink(dir) {
  * @returns {{removed: boolean, gitRemoveFailed: boolean, error: Error|null}}
  */
 export function removeSnapshot({ repoRoot, dir, onRetry = null }) {
+  const detached = detachNodeModulesLink(dir);
+  if (detached.state === 'failed') return { removed: false, gitRemoveFailed: false, error: detached.error ?? null };
   let gitRemoveFailed = false;
-  unlinkNodeModulesLink(dir);
   try {
     gitWithLockRetry(repoRoot, ['worktree', 'remove', '--force', dir], { onRetry });
   } catch {
