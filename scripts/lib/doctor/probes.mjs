@@ -6,6 +6,7 @@
  * @module scripts/lib/doctor/probes
  */
 import fs from 'node:fs';
+import { AUTOCRLF_ENABLED, AUTOCRLF_DISABLED } from '../eol-hazard.mjs';
 import path from 'node:path';
 
 import { ALL_GATES, runGates } from '../sync-isolation-verify.mjs';
@@ -318,14 +319,8 @@ const BROWSER_PROBE = {
 
 // ── Machine-state probe: git's checkout EOL filter (never gates — D9) ───────
 
-/**
- * Values `core.autocrlf` can hold, normalised to the three behaviours that
- * matter. Git's bool parser accepts more spellings than `true`/`false`, and a
- * probe that only recognised those two would read `yes` as unrecognised and a
- * genuinely-converting machine as fine.
- */
-const AUTOCRLF_ENABLED = new Set(['true', 'yes', 'on', '1']);
-const AUTOCRLF_DISABLED = new Set(['false', 'no', 'off', '0']);
+// `AUTOCRLF_ENABLED` / `AUTOCRLF_DISABLED` live in lib/eol-hazard.mjs — one
+// parser for git's bool spellings, shared with the worktree CRLF-hazard check.
 
 /**
  * Read one git config key together with the FILE it came from, without

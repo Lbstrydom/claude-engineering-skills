@@ -19,12 +19,13 @@ description: |
 
 # Investigate
 
-> **Worktree preflight** — in a linked git worktree the synced tooling tree
-> `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
-> does not populate it, and every command below that uses it dies on a bare
-> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. If this repo defines
-> no such script, `references/worktree-preflight.md` holds the entry to add — ask
-> the user first, since it edits their `package.json`.
+> **Worktree preflight** — in a linked git worktree the gitignored tooling tree
+> `scripts/.claude-skills/` is absent (`git worktree add` does not populate it),
+> so every command below that uses it dies on `MODULE_NOT_FOUND`. Run
+> `npm run skills:hydrate` first; if no such script exists,
+> `references/worktree-preflight.md` holds the entry to add (ask the user first:
+> it edits `package.json`). Keys are not copied — the audit route comes from
+> `~/.audit-loop.env`.
 
 ## Usage
 

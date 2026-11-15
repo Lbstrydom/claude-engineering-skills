@@ -9,7 +9,8 @@
  *
  *   node scripts/audit-structural-card.mjs --sid audit-plan-1792-99 --mode plan --round 4 --plan "$PLAN_FILE"
  *
- * Read-only apart from the card file it writes next to the round results. It
+ * Read-only apart from the card file it writes next to the round results and one
+ * observation-only `round_cap_stop` learning decision (both skipped by --no-write). It
  * creates no debt and no proposal; the verdict is a hint and the call is the
  * operator's. Exit 0 whenever the card was produced, 2 on an argument error.
  *
@@ -21,6 +22,7 @@ import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { AUDIT_ROUND_CAPS, cardFileName, parseRoundFlag, readFlagValue } from './lib/audit/round-cap.mjs';
 import { buildStructuralCard, writeCardFile } from './lib/audit/structural-card.mjs';
+import { recordCapStop } from './lib/audit/cap-productivity.mjs';
 
 const KNOWN_FLAGS = ['--sid', '--mode', '--round', '--plan', '--dir', '--json', '--no-write', '--selfcheck-relocation'];
 
@@ -42,6 +44,11 @@ async function main() {
 
   const { card, text } = await buildStructuralCard({ sid, mode, round: roundRes.value, planFile, caps, auditDir });
   if (!argv.includes('--no-write')) writeCardFile(auditDir, cardFileName(sid, roundRes.value), card);
+  if (card.productivity && !argv.includes('--no-write')) {
+    // Same decision key as the round-cap refusal for this round, so the two paths record ONE stop.
+    const rec = await recordCapStop({ sid, mode, round: roundRes.value, caps, productivity: card.productivity, runId: card.productivity.lastRunId });
+    if (!rec.recorded) process.stderr.write(`  [round-cap] cap-stop telemetry not recorded (${rec.reason})\n`);
+  }
   if (argv.includes('--json')) console.log(JSON.stringify(card, null, 2)); else console.log(text);
 }
 

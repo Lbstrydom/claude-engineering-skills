@@ -63,6 +63,7 @@ import { execFileSync } from 'node:child_process';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { detectPackageManager, displayDlx } from './lib/package-manager.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { probeEolHazard, EOL_FIX } from './lib/eol-hazard.mjs';
 
 const KNOWN_FLAGS = ['--json', '--from'];
 /**
@@ -330,6 +331,22 @@ function readPackageName(cwd) {
   }
 }
 
+/**
+ * The stderr notes a hydration run prints after its result line.
+ * @param {{action: string}} plan
+ * @param {{measured: boolean, hazard: boolean, reason: string|null}} eol
+ * @returns {string[]}
+ */
+export function hydrationNotes(plan, eol) {
+  const notes = [];
+  if (eol?.hazard) notes.push(`[hydrate] WARN line endings: ${eol.reason}. Fix: ${EOL_FIX}`);
+  if (plan?.action === 'copy') {
+    notes.push('[hydrate] keys are not copied: the audit route comes from ~/.audit-loop.env (per-user, every worktree). '
+      + 'Run node scripts/check-setup.mjs and read its `audit route:` line before any spend.');
+  }
+  return notes;
+}
+
 function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   try {
@@ -380,8 +397,16 @@ function main() {
       }
     }
   }
+  // A fresh worktree is where these two bite, and neither is a copy problem:
+  // the CRLF pair rewrites committed LF (byte-identity tests fail), and the keys
+  // are never copied (no audit route) — see lib/eol-hazard.mjs and
+  // lib/install/audit-readiness.mjs. Warn-only; never touches a .env.
+  const eol = probeEolHazard(cwd);
+  const notes = hydrationNotes(plan, eol);
+  for (const n of notes) process.stderr.write(`${n}
+`);
   if (asJson) {
-    console.log(JSON.stringify({ ok: plan.action !== 'fail', ...plan, pruned }));
+    console.log(JSON.stringify({ ok: plan.action !== 'fail', ...plan, pruned, eol }));
   } else {
     const message = pruned.length > 0 ? `${plan.message} (pruned ${pruned.length} stale item(s))` : plan.message;
     (plan.action === 'fail' ? process.stderr : process.stdout).write(`${message}\n`);

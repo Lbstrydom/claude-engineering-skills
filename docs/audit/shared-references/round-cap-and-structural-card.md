@@ -64,6 +64,11 @@ Read it as evidence for a human call, not as an instruction:
 - Every match prints what it matched on (`via`), so an over-match on a hub file is visible.
 - The card always asks: *would one missing shared capability remove several of these clusters?* It is a
   question, not a verdict. Nothing is created: no debt, no proposal.
+- It states the **last triaged round's acceptance rate** and the HIGH trend, read from the ledger. At
+  ≥ ⅔ it prints `⚠ CAPPED WHILE PRODUCTIVE` — the cap, not convergence, stopped the run. **Carry that line
+  into the final report** (rounds, acceptance at the last round), so the stop is not read as convergence. It
+  is also recorded as an observation-only `round_cap_stop` learning decision, so the cap policy can be decided
+  on data later; the card does not change the policy and does not admit another round.
 
 ## The human call
 

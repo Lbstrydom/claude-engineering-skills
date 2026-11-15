@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { normaliseCategoryKey, findingFiles, groupByLinkKeys } from '../concern-identity.mjs';
 import { normalizePath, atomicWriteFileSync } from '../file-io.mjs';
 import { discoverRoundResults, readRoundResult } from './transcript.mjs';
+import { assessCapProductivity, readLedgerEntries, renderCapProductivity } from './cap-productivity.mjs';
 
 export const CARD_VERSION = 1;
 
@@ -249,7 +250,7 @@ export function verdictFor(cluster, evidence, coverage) {
  * @param {object} input
  * @returns {object} the card JSON
  */
-export function assembleCard({ sid, mode, round, planFile, caps, audit, auditUnmeasured = null, sources, archByCluster = {}, notes = [], now = new Date() }) {
+export function assembleCard({ sid, mode, round, planFile, caps, audit, auditUnmeasured = null, sources, archByCluster = {}, notes = [], productivity = null, now = new Date() }) {
   const clusters = (audit?.clusters || []).map((c) => {
     const answered = Object.fromEntries(Object.entries(sources).filter(([n]) => n !== 'arch'));
     const arch = archByCluster[c.id];
@@ -277,6 +278,7 @@ export function assembleCard({ sid, mode, round, planFile, caps, audit, auditUnm
           suppressedTotal: audit.suppressedTotal, roundStats: audit.roundStats, hotFiles: audit.hotFiles }
       : null,
     auditUnmeasured,
+    productivity,
     sources: Object.fromEntries(Object.entries(sources).map(([n, s]) => [n, { status: s.status, detail: s.detail ?? null, count: (s.items || []).length }])),
     unmeasuredSources,
     notes,
@@ -317,6 +319,8 @@ export function renderStructuralCard(card) {
   } else {
     L.push(`This audit: UNMEASURED (${card.auditUnmeasured || 'no round results found'})`);
   }
+  const prod = renderCapProductivity(card.productivity);
+  if (prod) L.push(prod);
   const srcText = Object.entries(card.sources).map(([n, s]) =>
     s.status === 'measured' ? `${n} ok(${s.count})` : s.status === 'partial' ? `${n} PARTIAL(${s.count}; ${s.detail})` : `${n} ${s.detail ? `unreadable (${s.detail})` : s.status}`).join(' · ');
   L.push(`Sources: ${srcText}`);
@@ -386,7 +390,7 @@ export function readAuditRounds({ sid, auditDir }) {
       const r = readRoundResult(p);
       // Plan-mode results store a COUNT here; code-mode results (legacy-production-audit) store the suppressed findings.
       const sup = r._suppression?.suppressed;
-      rounds.push({ round, findings: r.findings || [], suppressed: Array.isArray(sup) ? sup.length : (Number(sup) || 0) });
+      rounds.push({ round, findings: r.findings || [], suppressed: Array.isArray(sup) ? sup.length : (Number(sup) || 0), runId: r._cloudRunId ?? null });
     } catch (err) {
       return { rounds: null, unmeasured: `unreadable round result (${err.message})` };
     }
@@ -594,7 +598,9 @@ export async function buildStructuralCard({
     withArch.arch = bad ? { status: 'failed', items: [], detail: bad.detail } : { status: 'measured', items: archResults.flatMap((r) => r.items), detail: archResults.length ? null : 'no recurrent cluster to query' };
   }
 
-  const card = assembleCard({ sid, mode, round, planFile, caps, audit, auditUnmeasured: unmeasured, sources: withArch, archByCluster, notes });
+  const ledger = rounds ? (deps.readLedger || readLedgerEntries)({ sid, auditDir }) : { entries: null, unmeasured: null };
+  const productivity = rounds ? assessCapProductivity({ rounds, ledgerEntries: ledger.entries, ledgerUnmeasured: ledger.unmeasured }) : null;
+  const card = assembleCard({ sid, mode, round, planFile, caps, audit, auditUnmeasured: unmeasured, sources: withArch, archByCluster, notes, productivity });
   return { card, text: renderStructuralCard(card) };
 }
 
