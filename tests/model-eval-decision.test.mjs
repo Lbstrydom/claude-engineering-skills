@@ -466,11 +466,25 @@ describe('decision-eval runner — end to end with injected clients', () => {
     assert.equal(sum.stop.kind, 'InstrumentFailure');
     assert.equal(anthropic.calls.length, 0);
   });
+  it('egress preflight: a case whose arm payload is refused stops the run before ANY spend (no judge, no arm call)', async () => {
+    const { sink } = sinks();
+    const anthropic = fakeAnthropic();
+    const openai = fakeOpenAI();
+    const bad = freshCase({ id: 'bad-case', context: `${CASE.context} SECRET_MARKER` });
+    const gate = (p, { label }) => { if (label === 'decision-eval:arm' && p.includes('SECRET_MARKER')) throw new Error('[egress-gate] dsn-password'); };
+    const sum = await runDecisionEval({ phase: 'variance', runId: 't9', cases: [freshCase(), bad], manifest: {}, capUsd: 5, anthropic, openai, judgeModel: 'gpt-6.1-terra', zodTextFormat: fakeZodTextFormat, assertEgressSafe: gate, sink });
+    assert.equal(sum.stop.kind, 'InstrumentFailure');
+    assert.match(sum.stop.message, /egress preflight: case bad-case/);
+    assert.equal(anthropic.calls.length, 0);
+    assert.equal(openai.calls.length, 0, 'not even the judge checkpoint is paid for');
+  });
   it('the arm egress gate runs before the wire and its refusal propagates', async () => {
     const { sink } = sinks();
     const anthropic = fakeAnthropic();
     const gate = (p, { label }) => { if (label === 'decision-eval:arm') throw new Error('[egress-gate] secret in arm payload'); };
-    await assert.rejects(runDecisionEval({ phase: 'rehearsal', runId: 't6', cases: [freshCase()], manifest: {}, capUsd: 1, anthropic, openai: fakeOpenAI(), judgeModel: 'gpt-6.1-terra', zodTextFormat: fakeZodTextFormat, assertEgressSafe: gate, sink }), /egress-gate/);
+    const sum = await runDecisionEval({ phase: 'rehearsal', runId: 't6', cases: [freshCase()], manifest: {}, capUsd: 1, anthropic, openai: fakeOpenAI(), judgeModel: 'gpt-6.1-terra', zodTextFormat: fakeZodTextFormat, assertEgressSafe: gate, sink });
+    assert.equal(sum.stop.kind, 'InstrumentFailure', 'caught by the egress preflight, before the wire');
+    assert.match(sum.stop.message, /egress-gate/);
     assert.equal(anthropic.calls.length, 0);
   });
   it('a budget scope carries spend across runs (rehearsal + variance share one cap)', async () => {

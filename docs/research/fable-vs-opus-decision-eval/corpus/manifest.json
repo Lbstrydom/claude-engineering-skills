@@ -1,6 +1,6 @@
 {
   "contractEpoch": 2,
-  "corpusSha256": "7449289d71f999d7bfa80176e10f25fd3383f8c5004c5ef970de9386a57b4b99",
+  "corpusSha256": "5eb0beae27988f5e78ebf8f3eeded1bfdcfdfb4a4fe1fae42698c98ef834ff3e",
   "promptHashes": {
     "arm": "515f60d257f3de7ee6401e427e676116c478faecf05d61df9aae49f065904e2c",
     "judge": "e05083686bac56bd9506d80c6e854e0b7f626556d427c2e50e29d1591d9f696a"
@@ -24,7 +24,7 @@
     "disposable-db-guard-predicate": {
       "file": "disposable-db-guard-predicate.json",
       "role": "design-fork",
-      "sha256": "e8535061f41ffd185528a4a14073e1b841e8d49cd763262712dc894aa89cb129"
+      "sha256": "4d2c89db8acc4f43609b412b74c56c4219fffd599ea074b55aefcfba185f9b45"
     },
     "prepush-check-target-tree": {
       "file": "prepush-check-target-tree.json",

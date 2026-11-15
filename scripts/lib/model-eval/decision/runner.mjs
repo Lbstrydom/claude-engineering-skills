@@ -109,6 +109,23 @@ export async function runDecisionEval(o) {
     return null;
   }
 
+  // ── Egress preflight BEFORE any spend ──────────────────────────────────────
+  // Every case's arm payload is known up front, so check them all now: a
+  // refusal found at the Nth case mid-run (2026-11-15, variance-e2b: a quoted
+  // local-dev DSN tripped `dsn-password` after 5 paid arm calls) is spend for
+  // a run that cannot complete. A refusal still propagates from the per-call
+  // check below — this only moves the discovery to before the first call.
+  for (const c of o.cases) {
+    for (const model of arms) {
+      const req = buildArmRequest({ model, c, effort, maxTokens });
+      try { o.assertEgressSafe(`${req.system}\n${req.messages[0].content}`, { label: 'decision-eval:arm' }); } catch (err) {
+        stop = { kind: 'InstrumentFailure', message: `egress preflight: case ${c.id} arm payload refused before any spend — ${err.message}` };
+        break;
+      }
+    }
+    if (stop) break;
+  }
+
   // ── Control checkpoint BEFORE any arm spend (plan §C4/§C8) ─────────────────
   // Judge-only cost: if the judge cannot tell each case's frozen gold answer
   // from its frozen confident-wrong answer, no arm output it grades means
@@ -117,7 +134,7 @@ export async function runDecisionEval(o) {
     { gradeId: hex8(rnd), kind: 'preflight-gold', caseId: c.id, rep: 0, text: c.controls.gold },
     { gradeId: hex8(rnd), kind: 'preflight-trap', caseId: c.id, rep: 0, text: c.controls.trap },
   ]);
-  stop = await gradeItems(preflightItems);
+  if (!stop) stop = await gradeItems(preflightItems);
   if (!stop) {
     const pf = controlOutcomes(preflightItems, grades);
     if (pf.total !== preflightItems.length || pf.passed !== pf.total) {

@@ -17,6 +17,21 @@ Anything off-contract, outstanding, or differing from the plan is recorded here
   **Fixed the gold control text only** (rubric, context and question unchanged), re-froze
   (corpus `7449289d71f9`), and re-ran as `variance-e2b`. This is instrument repair made before
   any arm output existed under epoch 2, not a change made after seeing results.
+- **The egress gate refused a case's arm payload mid-run** (`variance-e2b`, kept as evidence,
+  $0.68: checkpoint + 5 Opus calls, then a crash). `disposable-db-guard-predicate` quotes this
+  repo's own stock local-dev DSN (`postgres:postgres@127.0.0.1`, already public, not a real
+  credential) and it matched `dsn-password`. The gate was right and was not bypassed. Two fixes:
+  (1) the credential part of that excerpt is elided to `postgres://[credentials elided]@…` and the
+  case re-frozen (corpus `5eb0beae2798`); (2) the runner now **egress-checks every case's arm
+  payload before any spend** and stops cleanly (`InstrumentFailure`) instead of crashing after
+  paid calls (tested). The 5 Opus outputs from e2b were produced under a superseded corpus hash
+  and are excluded.
+- **Epoch-2 variance runs at 3 reps, not 4.** The budget scope `autonomous` had $6.41 left after
+  e2b. At 4 reps the projected scope total was about $9.25 of $10, too close given the per-call
+  worst-case reservations, and a budget stop during grading would leave paid outputs ungraded.
+  At 3 reps there are 2 degrees of freedom per case across 10 cases, i.e. 20 within-case dof vs
+  epoch 1's 15, which is enough to estimate `s_w`. The variance phase is not the comparison, so
+  the main run's n is still set by `proposeReps` from the measured spread.
 
 ## 2026-11-15 — variance phase
 
