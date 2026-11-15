@@ -3,20 +3,40 @@
 - **Plan**: [`anthropic-cli-faithfulness-routing.md`](anthropic-cli-faithfulness-routing.md)
 - **Date**: 2026-11-15
 - **Session**: `audit-code-1794726002780-79060`
-- **Scope**: `--scope diff` (R1 over `a4697858`), then R2+ diff-scoped per round
-- **Audited head**: `db775bdd` (final-review marker: run `9c1a3b3e`, tree `5149eb18`)
+- **Scope**: `--scope diff` (R1 over `a4697858`), then R2+ diff-scoped per round.
+  **R7 over the WHOLE PR diff** (41 files), because rounds 6's fixes and the four
+  addenda had never been read adversarially.
+- **Audited head**: `2f148286` (R7). R6's head was `db775bdd`.
 
-## CAPPED at round 6 — NOT converged
+## CAPPED at round 7 — still NOT converged
+
+Round 7 is the extra round Louis authorised after reading the round-6 card
+(`--past-cap`, soft cap 6, absolute cap 8). It did not converge either, and the
+reason is in the numbers rather than in the rigour: widening the scope from the
+last commit to the whole PR put 15 files in front of the auditor for the first
+time, so the count went UP.
 
 | | |
 |---|---|
-| Final round | **H:3 M:5 L:0** against a threshold of `H==0 && M<=2` |
-| Rounds | 6 of 6 (the cap). Continuing is the operator's call |
-| Findings total | 103 across 6 rounds |
+| Final round | **H:11 M:18 L:2** against a threshold of `H==0 && M<=2` |
+| Rounds | 7 of a soft 6 / absolute 8 |
+| Findings total | 135 across 7 rounds |
 | File coverage | `complete` every round |
-| Final gate | **Gemini `gemini-4-argon`: APPROVE**, `gateDisposition: approve`, 0 blocking, **1 LOW debt finding (fixed)** |
-| Gate code coverage | **PARTIAL — 1917 of 2657 changed lines never shown** |
-| Local gate | `guards:preflight` PASS, 36 steps, 2723 tests |
+| R7 adjudication | 20 accepted · 7 dismissed · 5 deferred · 32/32 ledgered · 5/5 deferrals captured |
+| Final gate | **7 disjoint batches over all 41 changed files** — 4 APPROVE, 3 CONCERNS (`approve_with_debt`), **0 blocking**, 5 new findings, 0 wrongly dismissed |
+| Gate code coverage | **FULL on 6 of 7 batches** (see below) |
+| Local gate | `guards:preflight` PASS, 36 steps, 2731 tests |
+
+### Why the final review is seven calls, not one
+
+`FULL_CODE_MAX_CHARS` is a hard 100,000-char constant
+([code-render.mjs](../../scripts/lib/final-review/code-render.mjs)), and
+`windowTargetFor` divides it by the changed-file count. At 41 files that is
+~2.4K of window each — which is **why round 6's gate reported PARTIAL, 1917 of
+2657 changed lines never shown**. No flag tunes it. One call cannot cover this
+diff; several disjoint calls can, and the union of their coverage records is
+the answer. The partition asserts DISJOINTNESS and COMPLETENESS in both
+directions before any call is made, because the union claim is false otherwise.
 
 ### Per-round
 
@@ -28,6 +48,7 @@
 | R4 | SIGNIFICANT_ISSUES | 7 | 5 | 1 | AST-level fail-opens, 2 against the module's own docstrings |
 | R5 | SIGNIFICANT_ISSUES | 6 | 3 | 0 | control flow, spellings, provenance |
 | R6 | SIGNIFICANT_ISSUES | 3 | 5 | 0 | 2 regressions I introduced in R5 + 1 declared limit |
+| R7 | SIGNIFICANT_ISSUES | 11 | 18 | 2 | whole-PR scope: 3 more gate fail-opens, the pin's effect on RESUME, and 5 pre-existing solo-control/research findings |
 
 ## The honest shape of this audit
 
@@ -53,17 +74,22 @@ The defect CLASS is converging even though the count is not.
 
 ## Not verified / stated plainly
 
-- **Round 6 did not converge.** The structural-or-stop card reports **5
-  structural clusters of 89**, all the census's control-flow analysis;
-  `anthropic-pin-census.mjs` was raised in 6 rounds, `work-unit-labels.mjs` in 4.
-- **The round-6 fixes are UNAUDITED** — written after the final round, at the
-  cap. Four negative controls fire and the suite is green; no adversarial pass
-  has read them.
-- **The Gemini gate saw PARTIAL code coverage**: 6/26 changed files rendered
-  whole, 1917 of 2657 changed lines never shown. Its APPROVE is therefore an
-  approval of what it was shown, not of the whole diff. Said here because a gate
-  verdict quoted without its coverage is the exact false-green this repo's own
-  discipline warns about.
+- **Round 7 did not converge either** (H:11 M:18 vs `H==0 && M<=2`), and the
+  count rose because the scope widened from the last commit to all 41 changed
+  files. The round-6 card's 5 structural clusters of 89 were all the census's
+  control-flow analysis, and round 7 found three more fail-opens in exactly
+  that analysis — the cluster is real, and it is the reason the extra round was
+  worth running.
+- **The ROUND-7 fixes are now the unaudited ones.** That is the standing
+  property of a last round, not a defect of this one: whatever is fixed after
+  the final pass has not been read adversarially. They carry red-first controls
+  (3 of 134 fail against the pre-fix module; 2 of 136 for the reporting fixes)
+  and `guards:preflight` is green.
+- **Round 6's gate saw PARTIAL code coverage** — 1917 of 2657 changed lines
+  never shown — so its APPROVE was an approval of what it was shown. Round 7's
+  gate is seven disjoint batches covering all 41 files: **FULL on 6 of 7**.
+  Recorded because a gate verdict quoted without its coverage is the exact
+  false-green this repo's discipline warns about.
 - The **full** test suite ran only in `guards:preflight`; the whole suite runs
   in the GitHub `full-suite` check on the PR.
 - The **consumer-synced bundle is unverified** — nothing is merged, and both

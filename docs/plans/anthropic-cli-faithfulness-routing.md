@@ -1045,11 +1045,13 @@ it covers:
 | 3 | provenance missed the two-step `const mod = await import(seam); const { createAnthropicClient: mk } = mod;` | a missed alias is invisible to BOTH rules |
 | 4 | a member call counted on property name alone, so `unrelatedBag['createAnthropicClient']()` counted as a seam construction | provenance now required on the receiver; no site in this repo uses the member form at all (measured), so it costs nothing |
 
-**These four fixes are NOT audited.** They were written after the final round, at
-the cap, which is the normal state at a cap and is stated here rather than
-implied. They carry four negative controls (last-statement-only 4/128 fail ·
-any-`create` 2/128 · no namespace 1/128 · no receiver provenance 2/128) and the
-suite is green, but no adversarial pass has read them.
+**These four fixes were unaudited when this section was written; round 7 has
+since read them.** They were written after round 6's final pass, at the cap,
+which is the normal state at a cap. They carry four negative controls
+(last-statement-only 4/128 fail · any-`create` 2/128 · no namespace 1/128 · no
+receiver provenance 2/128), and §7.13 records what the extra round found in
+them — three more fail-opens of the same class, which is why the round was
+worth running rather than a formality.
 
 ### 7.10a The one finding left open, and why it is a limit rather than a gap
 
@@ -1228,6 +1230,102 @@ this PR declines to make that the default, and says why rather than implying it
 is impossible.
 
 ---
+
+## 7.13 Round 7 — the extra round, over the WHOLE PR diff (2026-11-15)
+
+**Louis's decision after the round-6 card: keep the `system` throw, run one more
+round.** Scoped deliberately to all 41 changed files rather than the last
+commit, because round 6's fixes, the four addenda and the wording restatement
+had never been read adversarially. **H:11 M:18 L:2** — the count went UP, and
+that is the scope widening, not a regression: 15 files were in front of the
+auditor for the first time.
+
+20 accepted · 7 dismissed · 5 deferred · 32/32 ledgered · 5/5 deferrals captured.
+
+### The three that justified the round
+
+All one class, and the worst class a MERGE GATE can have — it did not miss a
+site, it **certified** one:
+
+| | the shape | why it was certified |
+|---|---|---|
+| 1 | `{ ...opts(), get backend() { return 'cli'; } }` | `isValueProperty` is false for an `ObjectMethod`, and `argRestsOnFactory` `continue`d past it. `resolveBackendOfArg` has always called that shape unresolved — two answers to one question inside one module |
+| 2 | `switch (x) { case 1: return a; default: }` | an EMPTY consequent read as terminating, so the one path that falls out with no value counted as a return. The allowance exists for stacked fall-through labels; it now applies only when a LATER case terminates |
+| 3 | `const mk = ns.createAnthropicClient` | a factory LIFTED off a seam namespace was not a binding, so every call through it was invisible to BOTH rules and the file read as containing no client at all |
+
+Each verified red against the pre-fix module (exactly 3 of 134 fail), each with
+a positive or negative control beside it, so the fix cannot have closed the hole
+by refusing the shape the escape hatch exists for.
+
+### What only the wider scope could see
+
+- **The unconditional sdk pin made a RESUME inherit a transport.** An arm file
+  recorded under `cli` would have had sdk rows appended — two prompt prefixes,
+  two `max_tokens` semantics, two meters — in the file that is compared ACROSS
+  arms. `assertResumableBackend` refuses; a warning on a long run is read after
+  the spend. An arm with no recorded provenance still resumes: an unknown
+  transport is not a known-different one.
+- **`isClaudeAvailableFor` THROWS on a half-configured Azure profile** — this
+  PR's own test asserts it — and five call sites asked that about an OPTIONAL
+  capability inside no try block, `audit-loop.mjs`'s final-review gate among
+  them. `claudeAvailability` sits beside the oracle it wraps: not a second
+  oracle, and not a silent `false`, which would report a broken route as an
+  absent one.
+- **`defaultLabeller`'s blanket `catch { return null }`** meant no rejection
+  could reach `getLabeller`, so the `providerThrew` distinction added in the
+  addenda was unreachable in production.
+- **A raised cap is half a fix.** 64→1000 and 2000→4000 fixed the measured
+  samples; a ceiling cannot make a longer answer fit, and a truncated label is
+  worse than none — short, plausible, cached for the TTL. All three sites check
+  `stop_reason`, and a test asserts the cap and the check travel together.
+- **`normaliseArgText` merged tokens**: whitespace was dropped outright, so
+  `typeof x` and `typeofx` shared a digest. Collapsed to one space where it
+  separates tokens. The regex-literal half is a STATED limit rather than
+  engineered around — it needs the parser's token stream, cannot occur in an
+  options object, and fails toward a shared digest, never a false alarm.
+- **Two tests were not checking what they claimed.** One compared a pure
+  function with itself (a tautology that passes whatever the adapters do); it
+  now asserts on two real clients. The other matched the first `max_tokens` in
+  the source — and each of those files now carries a comment quoting the OLD
+  cap, so a comment edit could have turned it red or green with the request
+  unchanged.
+
+### Dismissed, each checked in the enforcing code
+
+- **`--selfcheck-relocation` ordering** (3rd raise): the repo-wide smoke
+  contract all 26 CLIs implement, and AGENTS.md's own declared non-finding for
+  the stdout-flush gate. A change to all 26 is §8's follow-up.
+- **No `{ok:false}` envelope on failure**: `check-windowed-views.mjs`, the
+  nearest sibling gate, emits none either. These gates are read by humans and by
+  `npm run check`'s exit code.
+- **"The census ignores requests staged before `messages.create()`"**: false.
+  `paramsInSource` walks EVERY object property in the file, deliberately not
+  restricted to a `create()` argument; `walk()` ignores a visitor's return value,
+  so the early `return` stops no descent; and Rule A is evaluated BEFORE and
+  independently of the declared baseline, which is the undeclarable-away
+  property the gate was built for.
+
+### The final review, in seven disjoint batches
+
+`FULL_CODE_MAX_CHARS` is a hard 100,000-char constant and `windowTargetFor`
+divides it by the changed-file count — ~2.4K of window each at 41 files, which
+is why round 6's gate reported **PARTIAL, 1917 of 2657 changed lines never
+shown**. No flag tunes it, so the review runs as disjoint batches whose union is
+every changed file, with disjointness and completeness asserted in both
+directions first. Five new findings, **0 blocking**, 0 wrongly dismissed — and
+one of them was a real silent failure: `auditPinCensus` sets `ok: false` on
+`unparsed`, and the CLI printed every category but that one, so the gate exited
+1 with nothing on stderr explaining itself, on exactly the file most likely to
+be mid-edit. Now reported, and asserted MECHANICALLY from the verdict's own keys
+rather than from a list written beside them — a list would be updated by the
+same person who forgot the loop.
+
+A sixth finding is recorded as a follow-up rather than acted on: `npm run
+stdout:flush:gate`'s census walks `scripts/*.mjs` and never descends into
+`scripts/symbol-index/`, so it reported "at baseline" over a corpus that had not
+looked there. The one site in this diff is fixed; widening the gate's corpus
+changes a ratchet population repo-wide and is not a round-7 change.
+
 
 ## 8. Follow-ups (not this change)
 

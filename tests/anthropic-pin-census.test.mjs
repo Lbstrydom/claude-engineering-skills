@@ -1101,3 +1101,47 @@ export async function go() { return makeClient({ system: 'x' }); }`;
     assert.equal(c.unpinned, 0, 'not this seam, so not this gate\u2019s business');
   });
 });
+
+// ── A FAILURE THE GATE DOES NOT NAME (2026-11-15, final review A-census) ────
+//
+// `auditPinCensus` sets `ok: false` on `unparsed`, deliberately — a file the
+// parser could not read is UNKNOWN, not clean. The CLI printed every other
+// category and not that one, so the gate exited 1 with nothing on stderr
+// explaining itself, on exactly the file most likely to be mid-edit.
+//
+// Asserted MECHANICALLY, from the verdict's own keys rather than from a list
+// written beside them: a list would have to be updated by the same person who
+// forgot the reporting loop, which is the failure this is for. A new verdict
+// category now fails here until it is reported.
+describe('every failure category the verdict can carry is reported by the gate', () => {
+  it('each non-ok verdict key appears in a reporting loop in check-anthropic-pins.mjs', () => {
+    const verdict = auditPinCensus(new Map(), {});
+    const categories = Object.keys(verdict).filter((k) => k !== 'ok');
+    assert.ok(categories.length >= 7, `expected the full verdict shape, got ${categories.join(', ')}`);
+
+    const cli = fs.readFileSync(path.join(REPO_ROOT, 'scripts/check-anthropic-pins.mjs'), 'utf8');
+    const unreported = categories.filter((k) => !cli.includes(`of verdict.${k})`));
+    assert.deepEqual(unreported, [],
+      'a category that fails the gate but is never printed makes the failure unexplainable');
+  });
+
+  // The companion half: Rule A's `params` is EMPTY for a dynamic key (a spread
+  // into a `.create()` argument, or a computed non-literal key). The gate fails
+  // closed on those, correctly — but the message interpolated an empty list and
+  // read `passes ``,`, naming nothing, for the one case a reader most needs
+  // told apart from a named param.
+  it('Rule A can fire with NO named params, which the message must handle', () => {
+    const src = `import { createAnthropicClient } from './anthropic-client.mjs';
+export async function go(req) {
+  const c = await createAnthropicClient({});
+  return c.messages.create({ ...req });
+}`;
+    const c = classifyPinningInSource(src);
+    assert.equal(c.ruleAViolation, true, 'a spread into create() fails closed');
+    assert.deepEqual(c.unserviceable, [], 'and it names no param — this is the empty case');
+
+    const cli = fs.readFileSync(path.join(REPO_ROOT, 'scripts/check-anthropic-pins.mjs'), 'utf8');
+    assert.match(cli, /v\.params\.length/,
+      'so the message must branch on it rather than interpolate an empty list');
+  });
+});

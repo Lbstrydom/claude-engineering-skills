@@ -110,11 +110,27 @@ async function main() {
     await finishAndExit(0); return;
   }
 
+  // A FILE THE PARSER COULD NOT READ FAILS THE GATE, SO IT MUST BE NAMED.
+  // `auditPinCensus` sets `ok: false` on `unparsed` — deliberately, since an
+  // unreadable file is unknown rather than clean — and this block printed every
+  // other category but that one. The gate therefore exited 1 with no line
+  // explaining itself, on exactly the file most likely to be mid-edit: the
+  // worst possible moment to be given a silent failure.
+  for (const f of verdict.unparsed) {
+    process.stderr.write(`  UNPARSED        ${f} — could not be parsed, so its pinning is UNKNOWN, not clean.\n`);
+  }
   for (const v of verdict.ruleA) {
-    process.stderr.write(
-      `  UNPINNED+PARAM  ${v.file} — constructs an unpinned client and passes `
-      + `\`${v.params.join('`, `')}\`, which the cli backend cannot honour.\n`,
-    );
+    // `params` is EMPTY when the violation is a dynamic key — a spread into a
+    // `.create()` argument, or a computed key that is not a string literal.
+    // Rule A fails closed on those, correctly, but printing the literal list
+    // then produced `passes ``,` — a dangling message naming nothing, for the
+    // one case the reader most needs told apart from a named param.
+    process.stderr.write(v.params.length
+      ? `  UNPINNED+PARAM  ${v.file} — constructs an unpinned client and passes `
+        + `\`${v.params.join('`, `')}\`, which the cli backend cannot honour.\n`
+      : `  UNPINNED+PARAM  ${v.file} — constructs an unpinned client and builds its request with a `
+        + 'spread or a computed key, so whether it passes `system`/`tools`/`tool_choice` cannot be '
+        + 'read statically. Fails closed: pin it, or write the keys literally.\n');
   }
   for (const f of verdict.undeclared) {
     process.stderr.write(`  UNDECLARED      ${f} — constructs a client with no literal backend pin.\n`);
@@ -161,6 +177,13 @@ async function main() {
       '  An indirectPins entry is VERIFIED, not trusted: the named `via` function must exist in\n'
       + '  that file, contain the literal pin, and be passed by every unpinned construction there.\n'
       + '  Fix the code or remove the entry.\n');
+  }
+  if (verdict.unparsed.length) {
+    process.stderr.write(
+      '  An UNPARSED file is not a gate bug to work around: fix the syntax error, or if the file\n'
+      + '  is deliberately not JavaScript, it does not belong in this corpus. The gate refuses to\n'
+      + '  call a file it could not read clean, because that is the one file whose pinning nobody\n'
+      + '  has checked.\n');
   }
   if (verdict.undeclared.length || verdict.stale.length || verdict.declaredWithoutReason.length) {
     process.stderr.write(

@@ -20,7 +20,7 @@ import { briefConfig } from '../lib/config.mjs';
 import { symbolIndexConfig, azureConfig } from '../lib/config.mjs';
 import { chunkBatches } from '../lib/symbol-index.mjs';
 import { redactSecrets } from '../lib/sensitive-egress-gate.mjs';
-import { emit } from '../lib/cli-io.mjs';
+import { emit, finishAndExit } from '../lib/cli-io.mjs';
 import { createAnthropicClient, isClaudeAvailable } from '../lib/anthropic-client.mjs';
 import { azureThrottle } from '../lib/azure-throttle.mjs';
 import { isInvokedAsScript } from '../lib/cli-entry.mjs';
@@ -305,8 +305,17 @@ async function main() {
 // is false and the CLI exits 0 having run nothing (AGENTS.md, CLI smoke
 // contract).
 if (isInvokedAsScript(import.meta.url)) {
-  main().catch(err => {
+  // `await finishAndExit(1)`, never a bare `process.exit(1)`. This script emits
+  // one JSON line per symbol to stdout, and on Windows a piped stdout is
+  // ASYNCHRONOUS — `npm run`, `| tee` and every CI capture are pipes. A throw
+  // part-way through a long run therefore discarded whatever had not flushed,
+  // and the consumer read a truncated final line as a parse error, blamed on
+  // the wrong thing (AGENTS.md, "an exit that stdout can reach must drain
+  // first"). `npm run stdout:flush:gate` did not catch it: its census walks
+  // `scripts/*.mjs` and never descends into `scripts/symbol-index/`, so it
+  // reported "at baseline" over a corpus that had not looked here.
+  main().catch(async err => {
     process.stderr.write(`summarise: fatal: ${err.stack || err.message}\n`);
-    process.exit(1);
+    await finishAndExit(1);
   });
 }
