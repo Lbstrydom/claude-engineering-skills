@@ -22,7 +22,7 @@ You are one of several concurrent sessions coordinated by /fleet.
 2. Renew your lease while working: node scripts/fleet.mjs touch
    Push your branch early (git push -u origin <your-branch>) and after each meaningful commit, and push an
    integration branch the moment you create it: work only this disk holds is what a crash or an archive loses.
-   Pushing the BASE branch still needs the user.
+   This needs no turn: only opening a PR and taking the heavy slot wait for one. Pushing the BASE branch still needs the user.
 3. If you are waiting on something, say so: node scripts/fleet.mjs touch --waiting-on <session|human|ci|train|external>:<ref>[:<note>]
    Waiting on an account switch: use exactly --waiting-on human:account-switch (the token handover receive looks for).
 4. At each checkpoint (after claim, before a heavy run, before ready) run: node scripts/fleet.mjs next

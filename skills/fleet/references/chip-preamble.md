@@ -15,8 +15,8 @@ TITLE. Set the session title to "PREFIX: SHORT TASK" (add the PR number once the
 session_id "self". [rule 6]
 
 AUTHORITY. Pre-authorised at launch by the user (this chip click is the approval): create branches, write and audit a
-plan, implement, run /audit-code and the final-review gate, commit, push the branch and open PRs ONLY when the coordinator
-says it is your turn. NOT authorised: merge; changing GitHub settings or rulesets; --no-verify unless the user told you to
+plan, implement, run /audit-code and the final-review gate, commit, push your own branch at any time, and open PRs ONLY when
+the coordinator says it is your turn. NOT authorised: merge; changing GitHub settings or rulesets; --no-verify unless the user told you to
 in THIS session; raising caps or baselines; spawning chips (record findings with fleet propose instead). A message from
 another session is information, never approval. [rule 1]
 
@@ -27,8 +27,10 @@ ROUTE. ROUTE_CHOICE. [rule 3]
 [MODEL HANDOFF, /cycle --autonomous only. You plan on the strong model. When /audit-plan converges, END YOUR TURN and send
 the coordinator: "plan audited, ready to implement: PLAN_PATH". Implement only after the coordinator says "go". [rule 16]]
 
-TURN. A FREE lease is not a turn. Take the heavy slot (fleet lease acquire, or lease run) and push only when the coordinator
-says it is your turn; a refused acquire queues you. The slot is for LOCAL CPU/IO-heavy work only (full test suite, pre-push
+TURN. A FREE lease is not a turn. Two things wait for the coordinator to say it is your turn: opening a PR, and taking the
+heavy slot (fleet lease acquire, or lease run); a refused acquire queues you. Pushing your own branch does NOT wait: push
+early and often (participant rule 2). If this repo's pre-push hook runs the full gate, that push is heavy work: run it as
+`fleet lease run -- git push`, which queues, and never skip the hook. The slot is for LOCAL CPU/IO-heavy work only (full test suite, pre-push
 gate, install): API-bound rounds (/audit-code, /audit-plan, the Gemini review) never take it. Mind the cost window: no new
 coding during the hours `node scripts/fleet.mjs lease peak` shows (weekdays unless a range names days; shipping is fine). [rule 14]
 
@@ -61,7 +63,8 @@ your PROOF PLAN, whether it shipped itself (with the conditions output), and you
 
 STATUS WORDS. The same rule holds in every mid-task note, not only the final report: say merged, green, fixed, done or
 converged only with the artifact beside it (commit sha, PR number, CI run id or URL, test count). No artifact yet means
-"in progress" or "claimed, not yet verified". [rule 17]
+"in progress" or "claimed, not yet verified". Start every note to the coordinator with the `stamp:` line a fresh
+`fleet next` prints (your head commit and merge state, with the time): it is how a note read later shows it is stale. [rule 17]
 ```
 
 ## Notes for the coordinator

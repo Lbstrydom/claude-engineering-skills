@@ -16,7 +16,7 @@
  */
 import { ArgvError } from '../cli-io.mjs';
 import { readSessions, transact } from './registry.mjs';
-import { isTerminalState } from './overlap.mjs';
+import { isTerminalState, mergedWhat } from './overlap.mjs';
 import { buildStatusFrom, gatherFacts } from './facts.mjs';
 import { baseAdvance } from './merged-facts.mjs';
 import {
@@ -175,10 +175,29 @@ export function cmdNext(ctx, flags) {
   // The machine-wide lease (information for the user/coordinator: who holds the heavy slot, announced windows, peak hours).
   const lease = leaseForNext(ctx);
   const fyi = [...prune.lines, ...unregistered, ...proposalLines, ...upstreamLines, ...lease.lines];
+  const stamp = noteStamp(r.item, ctx.now);
   return ok({
-    id, ...r.result, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals, ...(upApplicable ? { upstream: upRead } : {}), lease: lease.lease,
-    text: [`next for ${id}:`, ...renderObligations(r.result, { cmd: ctx.cmd }).map((l) => `  ${l}`), ...fyi].join('\n'),
+    id, ...r.result, stamp, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals, ...(upApplicable ? { upstream: upRead } : {}), lease: lease.lease,
+    text: [`next for ${id}:`, ...renderObligations(r.result, { cmd: ctx.cmd }).map((l) => `  ${l}`), ...fyi, `stamp: ${stamp}`].join('\n'),
   });
+}
+
+/**
+ * The line a chip puts at the head of every status note (consumer report 2026-11-15: a coordinator acted on notes written
+ * before the chip's PR merged, with nothing in them to say so). What THIS read saw: the session, its head commit, and whether
+ * that work is merged, at a time. A coordinator compares it with `fleet status` — a note whose head or merge state differs is
+ * stale. Merge state comes from the same merged evidence `status` uses; it never claims "not merged" without complete evidence.
+ * @param {{id: string, oid?: string|null, state?: string, merged?: object|null}} item
+ * @param {Date} [now]
+ */
+export function noteStamp(item, now = new Date()) {
+  const head = item.oid ? `head ${item.oid.slice(0, 12)}` : 'head not observed';
+  const m = item.merged;
+  const merge = !m ? 'merge state not measured'
+    : m.merged === true ? mergedWhat(m)
+      : m.merged === 'partially' ? `${mergedWhat(m)}, with newer commits since`
+        : m.known ? 'not merged' : 'merge state not measured';
+  return `${item.id} · ${head} · ${merge} · ${item.state ?? '?'} · seen ${(now instanceof Date ? now : new Date(now)).toISOString().slice(0, 16)}Z`;
 }
 
 // ── directive ───────────────────────────────────────────────────────────────
