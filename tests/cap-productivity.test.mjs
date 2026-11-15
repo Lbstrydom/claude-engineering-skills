@@ -112,7 +112,7 @@ describe('the card carries it', () => {
       assert.match(readLedgerEntries({ sid: 's', auditDir: dir }).unmeasured, /no ledger/);
       fs.writeFileSync(path.join(dir, 's-ledger.json'), JSON.stringify({ version: 1, entries: ruledAt(3, ['accepted']) }));
       assert.equal(readLedgerEntries({ sid: 's', auditDir: dir }).entries.length, 1);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -159,7 +159,7 @@ describe('telemetry: round_cap_reached', () => {
       assert.equal(res.ok, false, 'the cap policy is unchanged');
       assert.equal(recorded.length, 1);
       assert.equal(recorded[0].productivity.stillProductive, true);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   test('--past-cap with a missing card is an operator continuing: no cap stop is recorded', async () => {
@@ -177,7 +177,7 @@ describe('telemetry: round_cap_reached', () => {
       const out = lines.join('');
       assert.match(out, /Building it failed/, 'never says the card was written when building it failed');
       assert.doesNotMatch(out, /It is printed above and written/);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   test('--past-cap with a missing card that DOES build still records nothing (the record path is reachable here)', async () => {
@@ -192,6 +192,6 @@ describe('telemetry: round_cap_reached', () => {
       });
       assert.equal(res.code, 'CARD_REQUIRED');
       assert.equal(recorded.length, 0);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });

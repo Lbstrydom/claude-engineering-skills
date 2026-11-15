@@ -68,7 +68,7 @@ describe('the surfaces a human reads use the label', () => {
       const data = JSON.parse(fs.readFileSync(out, 'utf8'));
       assert.equal(data._gate.label, 'final gate (fixture / fixture)');
       assert.match(r.stdout, /\| final gate \(fixture \/ fixture\)/);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   test('the shared gemini-gate reference says to name it by role', () => {
