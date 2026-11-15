@@ -1205,3 +1205,283 @@ describe('the claimed indirect-pin fail-opens, as probes', () => {
     }
   });
 });
+
+// THE ALLOWLIST RULE (2026-11-15). The gate's param question changed shape with
+// the oracle's: inside a literal `messages.create({…})` argument it now asks
+// whether every key is SERVICEABLE, not whether any key is one of three names.
+// These are the cases that separate the two — a denylist passes every one of
+// them, so a scanner that still answers the old question fails here.
+describe('the allowlist rule: a param nobody named is still a violation', () => {
+  const planted = (createArgs) => `
+    import { createAnthropicClient } from './lib/anthropic-client.mjs';
+    const client = await createAnthropicClient();
+    await client.messages.create(${createArgs});
+  `;
+
+  it('RED: `stream` — passed at a real site, dropped by cli, refused by no denylist', () => {
+    const c = classifyPinningInSource(planted(
+      "{ model: 'm', max_tokens: 10, messages: [], stream: true }",
+    ));
+    assert.equal(c.ruleAViolation, true, 'the shape the denylist could not see');
+    assert.deepEqual(c.unserviceable, ['stream']);
+  });
+
+  it('RED: `output_config` — a param that did not exist when the denylist was written', () => {
+    const c = classifyPinningInSource(planted(
+      "{ model: 'm', messages: [], output_config: { effort: 'high' } }",
+    ));
+    assert.equal(c.ruleAViolation, true);
+    assert.deepEqual(c.unserviceable, ['output_config']);
+  });
+
+  it('named params still sort FIRST, so the gate\'s message is stable', () => {
+    const c = classifyPinningInSource(planted(
+      "{ temperature: 0, system: 's', messages: [], stream: true }",
+    ));
+    assert.deepEqual(c.unserviceable, ['system', 'stream', 'temperature']);
+  });
+
+  // THE DIRECTION THE GATE MUST NOT FIRE. `create(params, requestOptions)` —
+  // the second argument is transport options, which the cli adapter honours.
+  // Scanning every argument was harmless under the denylist and made the
+  // allowlist fail the gate on summarise-domains.mjs:91, a call cli serves
+  // correctly. Found by running the gate, not by review.
+  it('GREEN: `{ signal }` in the SECOND argument is not a param', () => {
+    const c = classifyPinningInSource(planted(
+      "{ model: 'm', max_tokens: 10, messages: [] }, { signal: ctrl.signal }",
+    ));
+    assert.equal(c.ruleAViolation, false, 'requestOptions are not params');
+    assert.deepEqual(c.unserviceable, []);
+  });
+
+  it('GREEN: an object literal ELSEWHERE in the file is judged by the named rule only', () => {
+    // Were the allowlist applied file-wide, every object in the repo would be a
+    // violation. It is scoped to the create argument for exactly this reason.
+    // `temperature` is an UNNAMED unserviceable param, so it is caught inside a
+    // create literal and ignored anywhere else; a NAMED one (`system`,
+    // `stream`) is caught in both, which is the staged-request case below.
+    const c = classifyPinningInSource(`
+      import { createAnthropicClient } from './lib/anthropic-client.mjs';
+      const cfg = { temperature: 3, retries: 2, verbose: false };
+      const client = await createAnthropicClient();
+      await client.messages.create({ model: 'm', max_tokens: 1, messages: [] });
+    `);
+    assert.equal(c.ruleAViolation, false);
+  });
+
+  it('a NAMED param still counts outside the create call — the staged-request shape', () => {
+    const c = classifyPinningInSource(`
+      import { createAnthropicClient } from './lib/anthropic-client.mjs';
+      const client = await createAnthropicClient();
+      const req = { model: 'm', max_tokens: 1, system: 'be brief', messages: [] };
+      await client.messages.create(req);
+    `);
+    assert.equal(c.ruleAViolation, true, 'the file-wide named rule covers what the scoped one cannot see');
+    assert.deepEqual(c.unserviceable, ['system']);
+  });
+});
+
+// ── The STAGED request: the gap the round-1 audit of the allowlist found ────
+//
+// `const req = { model, max_tokens, messages, temperature: 0.2 };
+//  client.messages.create(req)` — not an argument to `.create`, so the scoped
+// allowlist rule cannot see it, and the file-wide named rule knows only four
+// spellings. `temperature` escaped a gate that described itself as an
+// allowlist. Closed by SHAPE (`messages` plus `model` or `max_tokens`), which
+// needs no dataflow and cannot be defeated by an extra assignment.
+describe('a request-shaped literal is judged by the allowlist wherever it sits', () => {
+  const file = (body) => `
+    import { createAnthropicClient } from './lib/anthropic-client.mjs';
+    const client = await createAnthropicClient();
+    ${body}
+  `;
+
+  it('RED: a staged request carrying an UNNAMED unserviceable param is caught', () => {
+    const c = classifyPinningInSource(file(`
+      const req = { model: 'm', max_tokens: 10, messages: [], temperature: 0.2 };
+      await client.messages.create(req);
+    `));
+    assert.equal(c.ruleAViolation, true, 'the shape the named-only rule let through');
+    assert.deepEqual(c.unserviceable, ['temperature']);
+  });
+
+  it('RED: and through an extra hop, which dataflow-following would have to chase', () => {
+    const c = classifyPinningInSource(file(`
+      const base = { model: 'm', max_tokens: 10, messages: [], output_config: { effort: 'high' } };
+      const req = base;
+      await client.messages.create(req);
+    `));
+    assert.equal(c.ruleAViolation, true);
+    assert.deepEqual(c.unserviceable, ['output_config']);
+  });
+
+  it('GREEN: a staged request built only from the allowlist is clean', () => {
+    const c = classifyPinningInSource(file(`
+      const req = { model: 'm', max_tokens: 10, messages: [] };
+      await client.messages.create(req);
+    `));
+    assert.equal(c.ruleAViolation, false);
+    assert.deepEqual(c.unserviceable, []);
+  });
+
+  // THE DIRECTION IT MUST NOT FIRE. Request-SHAPED means `messages` plus
+  // `model` or `max_tokens`. A `messages` array alone appears in prompt
+  // builders and fixtures that send nothing, and flagging those would fail the
+  // gate for files that make no request at all.
+  it('GREEN: an object with `messages` but no model/max_tokens is not a request', () => {
+    const c = classifyPinningInSource(file(`
+      const cfg = { messages: [], retries: 2, temperature: 9 };
+      await client.messages.create({ model: 'm', max_tokens: 1, messages: [] });
+    `));
+    assert.equal(c.ruleAViolation, false, 'not every object with a messages key is a request');
+  });
+
+  it('a spread into a request-shaped literal still fails CLOSED', () => {
+    const c = classifyPinningInSource(file(`
+      const req = { model: 'm', max_tokens: 10, messages: [], ...extra };
+      await client.messages.create(req);
+    `));
+    assert.equal(c.dynamicKeys, true);
+    assert.equal(c.ruleAViolation, true, 'unknowable is not clean');
+  });
+});
+
+// ── A request ASSEMBLED BY ASSIGNMENT (round-2 audit of the allowlist) ──────
+//
+// Every other rule here reads object PROPERTIES, so `req.system = SYSTEM` was
+// invisible to the whole gate — before this change as well as after it. A file
+// could stage a clean literal and add the unserviceable param on the next line.
+describe('a named param assigned onto a request is caught', () => {
+  const file = (body) => `
+    import { createAnthropicClient } from './lib/anthropic-client.mjs';
+    const client = await createAnthropicClient();
+    ${body}
+  `;
+
+  it('RED: `req.system = …` after a clean literal', () => {
+    const c = classifyPinningInSource(file(`
+      const req = { model: 'm', max_tokens: 1, messages: [] };
+      req.system = 'be brief';
+      await client.messages.create(req);
+    `));
+    assert.equal(c.ruleAViolation, true);
+    assert.deepEqual(c.unserviceable, ['system']);
+  });
+
+  it('RED: `params.output_config = …`, the shape that is invisible to a key-scan', () => {
+    const c = classifyPinningInSource(file(`
+      const params = { model: 'm', messages: [] };
+      params.output_config = { effort: 'high' };
+      await client.messages.create(params);
+    `));
+    assert.equal(c.ruleAViolation, true);
+    assert.deepEqual(c.unserviceable, ['output_config']);
+  });
+
+  // THE DIRECTION IT MUST NOT FIRE, and the first cut of this rule DID fire
+  // here: a computed member assignment was folded into `dynamicKeys`, so
+  // `out[idx] = …` — an array index write at summarise.mjs:185, nothing to do
+  // with params — failed the gate for a deliberately-cli site. Failing closed
+  // is only honest where the subject is actually a candidate.
+  it('GREEN: an array index write is not an unreadable request key', () => {
+    const c = classifyPinningInSource(file(`
+      const out = [];
+      out[idx] = 'x';
+      await client.messages.create({ model: 'm', max_tokens: 1, messages: [] });
+    `));
+    assert.equal(c.dynamicKeys, false, 'an index write says nothing about params');
+    assert.equal(c.ruleAViolation, false);
+  });
+
+  it('GREEN: an unrelated property assignment is untouched', () => {
+    const c = classifyPinningInSource(file(`
+      const o = {};
+      o.retries = 2;
+      await client.messages.create({ model: 'm', max_tokens: 1, messages: [] });
+    `));
+    assert.equal(c.ruleAViolation, false);
+  });
+});
+
+// Round-3 narrowing: the assignment rule only fires in a file that actually
+// makes a Messages API call. Without that condition an unrelated
+// `stats.system = …` in a file that happens to construct a client read as a
+// request param.
+describe('the assignment rule needs a Messages API call in the file', () => {
+  it('GREEN: `stats.system = …` in a file that calls nothing is not a param', () => {
+    const c = classifyPinningInSource(`
+      import { createAnthropicClient } from './lib/anthropic-client.mjs';
+      export async function build() {
+        const client = await createAnthropicClient();
+        const stats = {};
+        stats.system = 'linux';
+        return { client, stats };
+      }
+    `);
+    assert.deepEqual(c.unserviceable, []);
+    assert.equal(c.ruleAViolation, false);
+  });
+
+  it('RED: the same assignment in a file that DOES call messages.create is caught', () => {
+    const c = classifyPinningInSource(`
+      import { createAnthropicClient } from './lib/anthropic-client.mjs';
+      const client = await createAnthropicClient();
+      const req = { model: 'm', max_tokens: 1, messages: [] };
+      req.system = 'be brief';
+      await client.messages.create(req);
+    `);
+    assert.deepEqual(c.unserviceable, ['system']);
+    assert.equal(c.ruleAViolation, true);
+  });
+});
+
+// Flagged by the batched final review and deliberately NOT changed: the
+// file-wide property branch sets `dynamicKeys` for ANY computed key, so
+// `{ [someKey]: v }` in an unrelated lookup table fails Rule A for a file that
+// sends nothing of the sort. That is #360's fail-closed choice (its own two
+// cases are above), and narrowing it to request-shaped objects would trade the
+// false positive for a false NEGATIVE: a request built entirely from computed
+// keys is not request-shaped and would escape. I narrowed it, saw those two
+// cases go red, and reverted — overturning another change's tested decision on
+// one reviewer comment, inside a PR about something else, is scope expansion.
+// Captured as debt. These cases PIN the behaviour so a later change to it is a
+// visible decision rather than a silent one.
+describe('a computed key fails closed file-wide (#360 behaviour, pinned)', () => {
+  const file = (body) => `
+    import { createAnthropicClient } from './lib/anthropic-client.mjs';
+    const client = await createAnthropicClient();
+    ${body}
+  `;
+
+  it('an unrelated computed key fails closed — the known false positive', () => {
+    const c = classifyPinningInSource(file(`
+      const lookup = { [someKey]: 'value' };
+      await client.messages.create({ model: 'm', max_tokens: 1, messages: [] });
+    `));
+    assert.equal(c.dynamicKeys, true, 'broad by design — see the note at the branch');
+    assert.deepEqual(c.unserviceable, [], 'and never CLAIMED to be a named param');
+  });
+
+  it('a computed key in the `.create()` argument fails closed', () => {
+    const c = classifyPinningInSource(file(
+      "await client.messages.create({ model: 'm', max_tokens: 1, messages: [], [k]: 1 });",
+    ));
+    assert.equal(c.dynamicKeys, true);
+    assert.equal(c.ruleAViolation, true);
+  });
+
+  it('a computed key in a STAGED request fails closed', () => {
+    const c = classifyPinningInSource(file(`
+      const req = { model: 'm', max_tokens: 1, messages: [], [k]: 1 };
+      await client.messages.create(req);
+    `));
+    assert.equal(c.dynamicKeys, true);
+    assert.equal(c.ruleAViolation, true);
+  });
+
+  it('a spread into the `.create()` argument fails closed', () => {
+    const c = classifyPinningInSource(file('await client.messages.create({ ...base });'));
+    assert.equal(c.dynamicKeys, true);
+    assert.equal(c.ruleAViolation, true);
+  });
+});

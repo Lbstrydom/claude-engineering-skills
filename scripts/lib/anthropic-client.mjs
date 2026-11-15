@@ -748,10 +748,6 @@ function createCliAdapter(opts = {}) {
        *   factory default for this single call.
        */
       async create(params, requestOptions = {}) {
-        const { model, max_tokens, system, messages } = params;
-
-        assertOneShotTextMessages(messages);
-
         // FAITHFULNESS PRECONDITION: a backend must not accept a call whose
         // params it cannot honour. The decision lives in
         // `anthropic-cli-faithfulness.mjs` — one importable home, so a second
@@ -765,8 +761,19 @@ function createCliAdapter(opts = {}) {
         // which sites had moved. A pin is declared, greppable, and gated
         // (`npm run anthropic:pin:gate`).
         // docs/plans/anthropic-cli-faithfulness-routing.md §3.
+        //
+        // FIRST, before the destructure and before the messages assertion. The
+        // oracle is an ALLOWLIST (2026-11-15), so one of its verdicts is "I
+        // cannot enumerate this call's params at all" — and running the
+        // messages check first answered that case with `cli backend requires a
+        // non-empty messages array`, a true sentence about the wrong problem.
+        // A reader handed it would go looking at their messages array.
         const verdict = cliFaithfulnessVerdict(params);
         if (verdict) throw new Error(verdict.message);
+
+        const { model, max_tokens, system, messages } = params;
+
+        assertOneShotTextMessages(messages);
 
         if (max_tokens !== undefined && !_warnedMaxTokensCli) {
           _warnedMaxTokensCli = true;

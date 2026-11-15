@@ -193,3 +193,149 @@ rather than weakening the control.*
 | use a JS parser (5 raises over 3 rounds) | **conceded at R3** | I was wrong twice. The repo already parses in five gates |
 | `--selfcheck-relocation` ordering (2 raises) | **dismissed, false positive** | Verified in the enforcing code: all 26 CLIs do this and AGENTS.md specifies it. A repo-wide contract change, recorded as plan §8.4 |
 | 17 solo-control-audit findings | **deferred, independence stated** | 27 lines touched in a 2,480-line file; none of the cited code reads the transport selection or shares a column, constraint or transaction with it |
+
+---
+
+# Audit summary — the ALLOWLIST flip (addendum 4, PR #361)
+
+- **Plan**: [`anthropic-cli-faithfulness-routing.md`](anthropic-cli-faithfulness-routing.md) §9
+- **Date**: 2026-11-15
+- **Session**: `audit-code-1794749279189-66388`
+- **Scope**: R1 `--scope diff --base origin/main` (the whole change, because
+  **none of it had been audited** — the branch was pushed and the PR opened
+  before any round ran). R2–R6 diff-scoped per round against the working tree.
+- **Audited head**: `f6d9ca55dac1cb14cee5f4a19fab1a9c329c397a` plus the uncommitted fixes of rounds
+  1–6, committed as the next commit on this branch. Final-review tree hash
+  `3ec85cb52bae`; git diff base `3dabb3f3b1ab` (main at #360's squash merge).
+
+## Six rounds, and each one found a real defect in the previous one's fix
+
+| round | verdict | H | M | L | what it found |
+|---|---|---|---|---|---|
+| 1 | SIGNIFICANT_ISSUES | 6 | 3 | 2 | inherited-property divergence; the staged request escaping the gate |
+| 2 | SIGNIFICANT_ISSUES | 3 | 2 | 0 | NON-ENUMERABLE inherited keys; a request assembled by member assignment |
+| 3 | SIGNIFICANT_ISSUES | 3 | 5 | 0 | a Proxy prototype cycle (infinite loop); `Object.prototype` pollution whitelisted; inherited ALLOWLISTED params |
+| 4 | SIGNIFICANT_ISSUES | 2 | 0 | 0 | the divergence check had become too BROAD — keys neither backend reads |
+| 5 | SIGNIFICANT_ISSUES | 2 | 2 | 0 | value read before membership (a getter could throw/side-effect); `toJSON` makes the sdk body undecidable |
+| 6 | SIGNIFICANT_ISSUES | 2 | 3 | 0 | a TOCTOU between the oracle's read and the adapter's; `toJSON` callability; `CLI_READ_PARAMS` duplicated unchecked |
+
+Every round's findings were fixed; **nothing was deferred and no debt was
+captured.** 35 findings, 35 ruled: 31 accepted, 3 severity-adjusted, 1
+dismissed. Acceptance 100% / 100% / 100% / 100% / 75% / 100%.
+
+## The one pivot that mattered
+
+Rounds 1–3 each patched the key ENUMERATION and round 3 found the next layer
+anyway. The fix was to stop patching and ask the invariant instead: **what sdk
+will SEND (own enumerable) versus what cli can READ (the destructure, which
+walks the prototype chain and ignores enumerability)** — any key in the
+difference is a divergence, whatever its name. Round 4 then corrected the
+direction, scoping divergence to the params the adapter actually destructures,
+because an inherited key it never names is read by neither backend.
+
+## Final gate — APPROVE, over PARTIAL code coverage
+
+`FINAL_REVIEW_MODEL` (Gemini Pro), round 1 then round 2 (the hard cap):
+
+- **Round 1**: `APPROVE`, gate `approve`, 0 blocking, 0 debt, 0 wrongly
+  dismissed. Coverage **PARTIAL** — 4/11 changed files whole, 437 of 1627
+  changed lines never shown.
+- **Round 2** (transcript narrowed to the six code files, so the verdict covers
+  the code rather than the prose): `APPROVE`, gate `approve`, 0 blocking, 0
+  debt, 0 wrongly dismissed. Coverage **PARTIAL** — 2/6 whole, 4 windowed, 0
+  absent, 197 of 1556 changed lines never shown, diff hunks post-image verified.
+
+**Stated plainly: this is an APPROVE of the examined files, not of every line.**
+A coverage gap is not release-blocking, and it is not a clean full-coverage
+approve either.
+
+## Round-6 structural card — the human call, and why it was STOP
+
+The card classified 4 clusters structural and 25 polish, with
+`anthropic-cli-faithfulness.mjs` raised in 6 rounds. Its one genuinely
+structural item was the TOCTOU, and it was **fixed rather than deferred**: the
+wider fix (hand the adapter a validated snapshot — a change to its signature)
+was rejected as too large for an audit round, and the minimal one closes the
+window completely by never reading an accessor. Size is not scope, so a defer
+there would have been dishonest.
+
+The one concern raised in four rounds and **not** fixed is the census's
+shape-versus-dataflow trade-off: neither the request-shape rule nor the
+member-assignment rule ties its subject to a particular `.create` call. That is
+the dataflow this gate declares out of scope, it is now a stated LIMIT in the
+module docstring with the three bounds that make it acceptable, and measured it
+flags 0 additional files in this repo. Its failure direction is a demand for a
+pin or a declaration, never a silent pass.
+
+## Pass census (round 6)
+
+| identifier | state | reason |
+|---|---|---|
+| `structure` | completed | — |
+| `backend` | completed | — |
+| `sustainability` | completed | — |
+| `frontend` | ineligible | no frontend files in the diff |
+| `wiring` | ineligible | not selected for the R2+ pass set |
+| `quickfix` | completed | 0 findings |
+| `duplication` | completed | js/ts only; all changed files are `.mjs` |
+| `adjacency` | completed | — |
+| `arch-memory` | ineligible | `--scope diff` |
+| `file coverage` | completed | `_coverage.status: complete`, gate pass |
+| detector census | completed | 0 detectors recorded; `blocked: false` |
+
+## Batched final gate — FULL coverage of every changed code file
+
+Six **disjoint** batches at `4b32ce1d`, run after the
+whole-change gate approved over PARTIAL coverage (197 of 1556 changed lines
+never shown). Each batch is its own `--round 1` review; the 2-round cap is
+per review, so batching does not evade it.
+
+| batch | file(s) | verdict | gate | coverage |
+|---|---|---|---|---|
+| A | `lib/anthropic-cli-faithfulness.mjs` | APPROVE | approve | FULL — rendered whole |
+| B | `lib/anthropic-pin-census.mjs`, `lib/anthropic-client.mjs` | APPROVE | approve | FULL — 2 windowed, every changed line (198) |
+| C | `tests/anthropic-backend-parity.test.mjs` | APPROVE | approve | FULL — rendered whole |
+| D | `tests/anthropic-cli-faithfulness.test.mjs` | APPROVE | approve | FULL — rendered whole |
+| E | `tests/anthropic-pin-census.test.mjs` | APPROVE | approve | FULL — 1 windowed, every changed line (280) |
+| F | `scripts/check-anthropic-pins.mjs` | APPROVE | approve | FULL — rendered whole |
+
+0 blocking, 0 debt, 0 wrongly dismissed, 0 new findings in all six.
+
+**Completeness checked BOTH ways, mechanically** (not by eye):
+
+- **forward** — every changed `.mjs` file appears in exactly one batch;
+- **backward** — every batch member is a changed file, no extras;
+- **disjoint** — no file in two batches.
+
+That check is what caught the gap in my own batching: `check-anthropic-pins.mjs`
+was a changed code file in **no** batch, because I had built the batches from
+the "six code files" of the earlier narrowing. Batch F exists because the
+two-way check found it, which is the whole reason for running the check rather
+than asserting the union looks right.
+
+**Union coverage: every changed line of every changed code file has been
+rendered to a reviewer.** The six non-code changed files
+(`AGENTS.md`, two `docs/`, two `.json`, the gate contract) carry no
+executable behaviour and were covered by the whole-change runs.
+
+### Two findings came out of the batches
+
+- **FIXED** — my own JSDoc claimed types the code does not return
+  (`destructurableKeys` returns `null`; the `kind` union omitted
+  `'divergent'`). Same class as the docstring that claimed a prototype cycle
+  was impossible, so it was corrected rather than filed.
+- **DEBT, deliberately** — the census's file-wide computed-key fail-closed is
+  #360's choice with its own tests, and narrowing it trades a false positive
+  for a false negative. Captured; four cases now pin the behaviour. The
+  reviewer's own disposition (`approve_with_debt`) said the same.
+
+### And one gate that was right to block
+
+Fixing the census's line count by splitting it into `anthropic-pin-params.mjs`
+produced coverage `NONE`, gate `blocked`: *"dropped before the reviewer … not
+selected for the envelope"*. The envelope is built from the files the audit
+ROUNDS examined, and a file created after round 6 is in none of them. Making it
+an audited subject needs a round past the soft cap, and that `--past-cap`
+override was refused — correctly, since reaching for an oversight bypass to
+clear a gate accurately reporting an unaudited file is the wrong direction. The
+split was reverted instead. Plan §9.9.

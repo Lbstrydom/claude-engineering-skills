@@ -1366,15 +1366,8 @@ changes a ratchet population repo-wide and is not a round-7 change.
    is the same shape of contradiction one level up. It would be a THROW under
    throw-and-pin, not a coercion, and would need the same per-site pin census
    this PR did for `system`.
-8. **The refusal set is a DENYLIST; make it an ALLOWLIST** — "is every key on
-   this call one cli can represent", throwing on the first it cannot, so a new
-   SDK parameter is refused by default. Census in §7.11d: `stream` is dropped
-   silently today, and `output_config` is invisible to a literal-key scan. Flips
-   the seam's refusal semantics for every future key, so it wants its own audit;
-   the cross-backend contract test (one call carrying `system`, `tools`,
-   `tool_choice`, `max_tokens` and an unknown key, asserting per backend that
-   each is either in the emitted request or a named error, never silently
-   absent) belongs with it.
+8. ~~**The refusal set is a DENYLIST; make it an ALLOWLIST**~~ — **SHIPPED
+   2026-11-15, as its own PR.** See §9.
 9. **AGENTS.md has 238 characters of headroom** against its 79,000 cap after
    this change (the reshape itself was net +12 chars, having reworded in place
    rather than adding). The gate's own message is the
@@ -1387,3 +1380,246 @@ changes a ratchet population repo-wide and is not a round-7 change.
    resident. Not done here: it is unrelated to this change, and quietly
    rewriting three other sections inside a backend-routing PR is the scope
    expansion AGENTS.md's own scope-discipline rule forbids.
+
+---
+
+## 9. Addendum 4 — the refusal set became an ALLOWLIST (shipped 2026-11-15)
+
+§8 item 8, deferred out of the parent PR deliberately because it changes
+refusal semantics for every future param. Its own change, its own review.
+
+### 9.1 What the oracle now asks
+
+`unserviceableCliParams` asked *"is this call carrying one of these three
+params?"* It now asks *"is every param on this call one the cli backend can
+serve?"* The serviceable set is `SERVICEABLE_CLI_PARAMS` —
+`{model, max_tokens, messages}` — and anything else throws with the same
+throw-and-pin remedy.
+
+Two things the allowlist had to get right, or it is worse than the denylist it
+replaced:
+
+- **`max_tokens` stays serviceable.** It is as unenforced on cli as `system`
+  is unhonoured, but the membership test settled in the parent PR is whether
+  the param being unmet changes the ANSWER the caller receives, and an unmet
+  ceiling gives the answer that was asked for, possibly more of it. Refusing on
+  it would refuse every call (every caller sets it — the Messages API requires
+  it), collapsing the routing into "cli is never usable" and moving all of the
+  operator's spend off the Max 20x credit. The module's docstring carries that
+  reasoning next to the list it justifies.
+- **A key the scan cannot resolve fails CLOSED, in its own words.** "This call
+  passes a param cli cannot honour" and "I cannot tell what this call passes"
+  are different facts. The oracle returns `kind: 'unrepresentable' |
+  'unresolvable'` and the two verdicts share no wording; the gate's
+  spread/computed-key message says the same thing. Collapsing them into one
+  string is how a true positive gets dismissed as noise.
+
+### 9.2 The census, re-measured on this branch
+
+Re-derived by AST over every tracked `scripts/**/*.mjs` (`messages.create`
+argument 0, 2026-11-15). It reproduces §7.11d exactly:
+
+| key | literal call sites | under the allowlist |
+|---|---|---|
+| `model` / `max_tokens` / `messages` | 19 each | serviceable |
+| `system` | 10 | refused (was refused) |
+| `tools` / `tool_choice` | 3 | refused (was refused) |
+| `stream` | 1 | **refused (was SERVED)** |
+| spread into the argument | 1 | unresolvable → fails closed |
+
+26 `messages.create` call sites in all; 19 pass a literal object, 7 pass a
+staged request variable (the declared dataflow limit, unchanged). `output_config`
+is assigned onto a request variable at three sites and appears in no literal, so
+a key-scan cannot see it at all — which is the second half of the argument for
+an allowlist: a denylist can only refuse what someone thought to name, and these
+are params that did not exist when the names were chosen.
+
+### 9.3 Blast radius: zero new pins
+
+`npm run anthropic:pin:gate` is clean with the baseline unchanged. All five
+declared-unpinned files — `anthropic-ping.mjs`, `neighbourhood-query.mjs`,
+`visual/explain.mjs`, `symbol-index/summarise.mjs`,
+`symbol-index/summarise-domains.mjs` — send exactly `{model, max_tokens,
+messages}`, which is the allowlist. **The summariser, the highest-volume
+deliberately-cli site, is untouched**, so no spend moves off the Max credit.
+
+`stream`'s one site is `streamAnthropicMessage` in
+`lib/final-review/transport.mjs`, and every client reaching it is already pinned
+`{backend:'sdk'}` by `final-review/providers.mjs` and `final-review/shadow.mjs`.
+Decided on the code at the site rather than assumed: the runtime refusal is
+unreachable there today, and the value of naming `stream` is that the NEXT
+caller of that helper cannot reach it from an ambient-cli client silently.
+
+### 9.4 What the flip found: a gate asking a stricter question needs an exacter subject
+
+The first clean-looking run of the gate failed on
+`symbol-index/summarise-domains.mjs:91` for passing `signal` — which is
+`create(params, requestOptions)`'s SECOND argument, transport options the cli
+adapter honours. The census had always looped over every argument of the call;
+under the denylist that was harmless, because argument 1 never spells `system`.
+The allowlist made the sloppiness load-bearing in one step, and it would have
+pinned a deliberately-cli site for a param that is not a param.
+
+Generalises: **when a rule's question gets stricter, its SUBJECT has to get
+correspondingly exact.** Recorded as a `GREEN:` case in
+`tests/anthropic-pin-census.test.mjs` — the direction the gate must not fire.
+
+### 9.5 Ordering: the faithfulness verdict now runs FIRST
+
+`createCliAdapter`'s `create()` destructured params and ran
+`assertOneShotTextMessages` before consulting the oracle. With an `unresolvable`
+verdict in play that order answered "I cannot enumerate this call's params" with
+`cli backend requires a non-empty messages array` — a true sentence about the
+wrong problem, which would send a reader to inspect their messages array. The
+verdict is now the first statement in the method.
+
+### 9.6 The cross-backend contract test
+
+`tests/anthropic-backend-parity.test.mjs`: for one set of params, `sdk` and
+`cli` either both serve the call or the cli path throws — never one quietly
+doing something different from the other.
+
+- Asserted on the **emitted request** both sides: the sdk arm reads the captured
+  fetch BODY, the cli arm reads the ARGV the `claude` binary was spawned with
+  (its transport's equivalent of a request). Asserting on client config is how a
+  misroute passes review.
+- Each refused param is asserted to be **honoured by sdk on the wire** first.
+  Without that half the test could pass on a param neither backend supports,
+  which demonstrates no divergence at all.
+- Every ambient var the factory reads is scrubbed, for the reason recorded in
+  §7.11c: `anthropic-pin-on-azure` passed locally and failed in CI (3 of 8) on
+  exactly that.
+- **Negative control, run before claiming green**: widening
+  `SERVICEABLE_CLI_PARAMS` to include `stream`, `output_config`, `temperature`,
+  `metadata` and `stop_sequences` turns 6 of the 12 cases red and the oracle's
+  own suite stays green — so the parity suite, and only the parity suite, is
+  what measures the flip.
+
+### 9.7 Round-1 audit of the allowlist (2026-11-15) — two real defects
+
+`SIGNIFICANT_ISSUES | H:6 M:3 L:2`, coverage `complete`, audited against
+`origin/main`. Eleven findings, four concerns. Two were real and the rebuttal
+written for one of them was **wrong**, which is worth recording rather than
+smoothing over.
+
+**The inherited-property divergence — the audit was right, the rebuttal was not.**
+`Reflect.ownKeys(params)` sees own keys only, so `Object.create({system:'x'})`
+passed the allowlist. The first rebuttal argued this was harmless because
+`JSON.stringify` omits inherited properties — true of the **sdk** arm, and
+irrelevant to **cli**, whose adapter does `const { system } = params`, and
+**destructuring walks the prototype chain**. Measured on the real objects: sdk
+emits no `system`; cli reads `'INHERITED'` and would push `--system-prompt`.
+That is precisely the cross-backend divergence this module exists to refuse,
+and the oracle declared it serviceable. The enumeration is now own ∪ `for…in`.
+
+The deliberation also named the test this would have needed: a case checking
+only the sdk body and "cli served it" passes straight over the defect. Both
+arms are now asserted. **Generalises: a claim about what a transport does is
+settled against the transport, not against the serialization format it happens
+to use** — and when two adapters read the same object by different mechanisms,
+"what does this object contain" has two answers.
+
+**The staged request escaped the gate.** `const req = { model, max_tokens,
+messages, temperature: 0.2 }; client.messages.create(req)` is not an argument
+to `.create`, so the scoped allowlist rule could not see it, and the file-wide
+rule knew only four named params — `temperature` passed a gate that described
+itself as an allowlist. Closed by **shape**: an object literal carrying
+`messages` plus `model` or `max_tokens` is a request, judged by the allowlist
+wherever it sits. Shape rather than dataflow because it needs no variable
+chasing and cannot be defeated by an extra assignment; measured, it flags zero
+additional files in this repo. A `messages` key alone is deliberately not
+enough — prompt builders and fixtures carry one and send nothing.
+
+**`max_tokens`: deliberation compromised to MEDIUM/LOW, not dismissed.** The
+reviewer accepted that refusing every call deletes the backend, and still held
+that an unenforced required param is not harmless for every consumer. Its ask
+was concrete and is done: each of the five unpinned cli-eligible sites was
+audited for reliance on `max_tokens` as a HARD bound, the per-site answer is
+recorded in `.anthropic-pin-census.json`, and none relies on one (a probe with
+no output contract; a cost budget rather than a correctness constraint;
+advisory prose that degrades to `''`; and two summarisers where
+`assessBatchCompleteness` reads `stop_reason`, which is the enforcement that
+matters). The parity claim is now qualified in both the reference doc and the
+suite: `max_tokens` is the **declared exception to parity** — the contract is
+about the KIND and SHAPE of the answer, not every numeric bound.
+
+Also fixed: the gate contract's `guards` sentence conflated Rule A (a hard
+failure no entry excuses) with Rule B (the declared-unpinned record), and the
+parity suite pinned a concrete model id where the house rule wants a sentinel.
+
+### 9.8 Six audit rounds, and what the loop was actually for
+
+Full numbers, the pass census and the final-gate verdicts are in
+[`…-audit-summary.md`](anthropic-cli-faithfulness-routing-audit-summary.md).
+Three things belong here because they are reusable, not bookkeeping.
+
+**The audit found two defects in the change and four in its own fixes.** Rounds
+1–3 each patched the key ENUMERATION — own keys, then `for…in`, then the
+prototype chain — and each time the next round found a layer the patch could
+not see. That is the signature of fixing instances rather than the invariant.
+Round 3's pivot was to ask the invariant instead: **what sdk will SEND (own
+enumerable) versus what cli can READ (a destructure, which walks the prototype
+chain and ignores enumerability)**, and refuse any key in the difference,
+whatever its name. Three rounds of specific keys collapsed into one rule.
+
+**Then round 4 corrected the direction, which is the half that is easy to
+miss.** The invariant as first written was too broad: an inherited key the
+adapter never destructures — `temperature`, say — is read by NEITHER backend, so
+flagging it was a false positive, not caution. The oracle now mirrors the
+adapter's actual destructure (`CLI_READ_PARAMS`), and the duplication is
+CHECKED: a test parses `createCliAdapter`'s own pattern and asserts set
+equality, because a field added to the adapter and not to the list would be
+invisible to the divergence check and nothing else reads both sides.
+
+**Two of my own tests asserted the defect as desirable**, and both were caught
+by a later round rather than by review. One said "an inherited SERVICEABLE param
+is still served" — but an inherited `max_tokens` makes sdk send `{"model":"m"}`,
+which the Messages API rejects, while cli serves it happily: a divergence,
+pinned as correct. The other used a prototype getter for `tools`, encoding the
+over-broad rule round 4 removed. **A test written in the same sitting as the
+fix inherits the fix's blind spot**, which is the argument for the adversarial
+round rather than for more care.
+
+**One rebuttal was wrong, and the deliberation said why.** Round 1's rebuttal
+argued the inherited-property finding was harmless because `JSON.stringify`
+omits inherited properties. True of the sdk arm; irrelevant to cli, which
+destructures. The deliberation also named the test the fix would need — one
+checking only the sdk body and "cli served it" passes straight over the defect.
+**A claim about what a transport does is settled against the transport, not
+against the serialization format it happens to use.**
+
+### 9.9 The batched final gate, and two things it taught
+
+The gate's first two runs approved over **PARTIAL** coverage — 197 of 1556
+changed lines never shown — so it was re-run as **disjoint batches** over the
+code files until every changed line had been rendered. Per-batch verdicts and
+the combined coverage are in the audit summary.
+
+**A new file is not covered by the rounds that audited its old home.** The
+first attempt to fix the census's line count split it into
+`anthropic-pin-params.mjs`. The move changed no rule — and the final gate
+refused it anyway: coverage `NONE`, gate `blocked`, *"all 1 changed file(s)
+were dropped before the reviewer … not selected for the envelope"*. The
+envelope is built from the files the AUDIT ROUNDS examined, and a file created
+after round 6 appears in none of them. The gate was right: no reviewer had seen
+that file at that sha, and "it is only a move" is an argument, not evidence.
+
+Making it an audited subject needs a round past the soft cap, and **the
+cap-override was correctly refused** — `--past-cap` is an oversight bypass, and
+reaching for one to clear a gate that is accurately reporting an unaudited file
+is the wrong direction. So the cause was removed instead: the split is reverted,
+and the census is back under the limit by condensing the audit narrative in its
+own comments, which belongs in this plan (where it already is) rather than
+duplicated at length in the module. **Generalises: when a guard blocks you,
+check whether the thing it is protecting against is the thing you just did.**
+
+**A finding can be correct and still not yours to act on.** The same review
+flagged the census's file-wide computed-key fail-closed: `{ [someKey]: v }` in
+an unrelated lookup table fails Rule A for a file that sends nothing of the
+sort. True, and verified on a planted source. It is also #360's deliberate
+choice with two tests encoding it, and narrowing it trades that false positive
+for a false NEGATIVE — a request built entirely from computed keys is not
+request-shaped and would escape. I narrowed it, saw those two tests go red, and
+reverted. Captured as debt, with four cases pinning the behaviour so the next
+change to it is a visible decision. The reviewer's own disposition said the
+same: `approve_with_debt` means capture and list, not re-litigate.
