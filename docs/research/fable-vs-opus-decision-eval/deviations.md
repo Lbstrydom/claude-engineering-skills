@@ -4,6 +4,24 @@ Plan: [`docs/plans/fable-vs-opus-decision-eval.md`](../../plans/fable-vs-opus-de
 Anything off-contract, outstanding, or differing from the plan is recorded here
 **before** merge and raised to Louis in the PR description. Newest first.
 
+## 2026-11-15 — spot sample: CERTIFIED BY OVERRIDE (Louis)
+
+- **Louis's ruling**, relayed verbatim by the coordinator: "as for certify, if I read this correctly it
+  is pretty clear on the result so I am assuming certify by override is ok?" That is option 1 of
+  [`verdict.md`](verdict.md) §4.
+- **This is an override, not a pass under the pre-registered rule.** Under the rule the sample is still
+  12/12 exceptions and `certified: false`. `cross-grade.json` and `summary.json` are **not** edited to
+  say otherwise; the override exists only here and in `verdict.md`.
+- **Stated reason:** the failure was an instrument incompatibility. Gemini (`gemini-pro-latest`) did not
+  follow the verbatim-quote contract: its quotes were paraphrased or `...`-elided, so the mechanical
+  quote check voided all 12 of its grades (E3). This is not evidence that the primary judge misgraded.
+  - GPT agreed with the primary on 12/12, with q within 0.05.
+  - Gemini's decision calls agreed on 7/9.
+  - Both of Gemini's disagreements were lenient, one per arm, with no arm-directional pattern.
+- **Disclosure kept:** the spot sample was graded by LLMs, not a human, and the two may share biases.
+  The GPT grader is the same model as the primary judge. This is not equivalent to human review.
+- **Certified outcome:** `opus:material-gain-ruled-out` (by override).
+
 ## 2026-11-15 — spot-sample outcome: exception (awaiting Louis)
 
 - Cross-grade ran as pre-registered (fixture `fable-opus-xgrade` at `6b18b17d`, $0.80, scope `main` now

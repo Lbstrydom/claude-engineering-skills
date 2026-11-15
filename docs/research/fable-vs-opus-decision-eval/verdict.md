@@ -2,8 +2,10 @@
 
 - **Date**: 2026-11-15
 - **Plan**: [`docs/plans/fable-vs-opus-decision-eval.md`](../../plans/fable-vs-opus-decision-eval.md) (pre-registered rule §12)
-- **Status**: **NOT CERTIFIED — one exception awaits Louis (§4).** Every figure below is final. Whether
-  the pre-registered verdict is *certified* depends on Louis's ruling on the spot-sample exception.
+- **Status**: **CERTIFIED BY OVERRIDE (Louis, 2026-11-15): `opus:material-gain-ruled-out`.** The
+  pre-registered spot-sample rule was **not** passed: it recorded 12/12 exceptions because Gemini voided
+  its grades by not quoting verbatim. Louis accepted a disclosed override (§4,
+  [`deviations.md`](deviations.md)). The spot sample was graded by LLMs, not a human.
 - **Evidence**: [`runs/main/`](runs/main/summary.json), pinned fixture `fable-opus-main` at `f51bc7b3`
   (arms + primary judge); cross-grade in fixture `fable-opus-xgrade` at `6b18b17d`. Raw arm outputs:
   `calls.jsonl`. Primary judge: `grades.jsonl`. Cross-graders: `cross-grades.jsonl` /
@@ -40,7 +42,7 @@ computed from measured rows (USD = measured tokens × published price). **estima
   | design-fork | +0.090 | [−0.027, +0.229] | inconclusive |
   | cross-repo | −0.119 | [−0.425, +0.089] | gain ruled out |
 
-## 2. Instrument (all passed except the spot sample)
+## 2. Instrument (all passed except the spot sample, which was certified by override)
 
 | Check | Result |
 |---|---|
@@ -51,7 +53,7 @@ computed from measured rows (USD = measured tokens × published price). **estima
 | Sample completeness, unpaired case-reps | complete, none |
 | Fill-check (C5) | ok, thinking tokens reported on 60 / 60 |
 | Artifact scan (secret shapes + private terms) | safe to commit |
-| **Spot sample, cross-vendor (pre-registered 2026-11-15T15:52Z)** | **12 / 12 exceptions, not certified** |
+| **Spot sample, cross-vendor (pre-registered 2026-11-15T15:52Z)** | **12 / 12 exceptions — failed under the rule; certified by Louis's override (§4)** |
 
 ## 3. Cost of the experiment
 
@@ -62,7 +64,13 @@ computed from measured rows (USD = measured tokens × published price). **estima
 | Budget scope `main`, total | **$15.12 of $25** | derived |
 | Earlier scope `autonomous` (rehearsal + variance) | $8.06 of $10 | derived |
 
-## 4. Exception for Louis — the spot sample
+## 4. The spot-sample exception — resolved: certified by override
+
+**Ruling (Louis, 2026-11-15), option 1:** "as for certify, if I read this correctly it is pretty clear
+on the result so I am assuming certify by override is ok?" The verdict is certified **by override**.
+It did **not** pass the pre-registered rule. Reason: Gemini's quotes were not verbatim, an instrument
+incompatibility, not evidence of primary misgrading. The persisted `cross-grade.json` still reads
+`certified: false`, as the rule computed it. The record of the decision as it was put to Louis follows.
 
 The pre-registered rule (in [`deviations.md`](deviations.md)) has two LLM graders re-grade the
 12 sampled outputs blind. An item is an exception if it is unmeasured (E3), if both graders
@@ -120,7 +128,7 @@ never as a pass of the pre-registered rule. The alternatives:
 Re-running Gemini with a relaxed quote check was **not** done. That would change a pre-registered
 instrument after seeing its output.
 
-## 5. Proposed Fable usage rule (pending certification)
+## 5. Proposed Fable usage rule (certified by override)
 
 - **Coordinator-grade decisions (review, design forks, cross-repo synthesis): use Opus 5.5.**
   On this corpus Fable 5.2 was +0.02 q, within noise. It costs 2.4× per correct decision and is
