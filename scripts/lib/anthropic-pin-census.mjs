@@ -49,7 +49,14 @@ const CONSTRUCTION_RE = /createAnthropicClient\s*\(([^()]*(?:\([^()]*\)[^()]*)*)
  * site reads as unpinned and must be declared or made literal.
  */
 function pinsBackendLiterally(argText) {
-  return /\bbackend\s*:\s*(['"`])(sdk|bedrock)\1/.test(argText);
+  if (!/\bbackend\s*:\s*(['"`])(sdk|bedrock)\1/.test(argText)) return false;
+  // FAIL CLOSED on a spread. `{ backend:'sdk', ...opts }` carries the literal,
+  // but `opts` may override it and this gate cannot know what `opts` holds, so
+  // the EFFECTIVE backend is unresolved — and an unresolved backend is not a
+  // pin. A site that wants the gate's blessing writes the literal last with no
+  // spread after it, or declares itself in the census.
+  const afterPin = argText.slice(argText.search(/\bbackend\s*:/));
+  return !/\.\.\./.test(afterPin);
 }
 
 /** Strip line and block comments, so a param named only in prose never counts. */
@@ -75,8 +82,14 @@ export function unserviceableParamsInSource(source) {
   return UNSERVICEABLE_PARAM_KEYS.filter((key) => {
     // A property key: start of line / `{` / `,` before it, `:` after it, and
     // not a string-literal key or a type annotation.
-    const re = new RegExp(`(?:^|[{,]|\\s)${key}\\s*:(?!:)`, 'm');
-    return re.test(code);
+    const explicit = new RegExp(`(?:^|[{,]|\\s)${key}\\s*:(?!:)`, 'm');
+    // SHORTHAND, which the first cut missed — and missed in the FAIL-OPEN
+    // direction, so a file writing `messages.create({ model, max_tokens,
+    // system, messages })` cleared Rule A while sending the param. Matched as
+    // a bare property between `{`/`,` and `,`/`}`, which is the only position a
+    // shorthand can occupy.
+    const shorthand = new RegExp(`[{,]\\s*${key}\\s*[,}]`, 'm');
+    return explicit.test(code) || shorthand.test(code);
   });
 }
 
@@ -123,38 +136,59 @@ export function classifyPinningInSource(source) {
  * Scoped by brace matching from the function header, so a pin in a LATER
  * function cannot satisfy the claim.
  *
+ * It also checks that the file's unpinned CONSTRUCTIONS actually reference the
+ * named function. Without that, the claim was only "this file defines a pinned
+ * options factory somewhere" — true of a file whose constructions ignore it
+ * entirely, which is the shape the entry is supposed to rule out.
+ *
  * @param {string} source
  * @param {string} fnName
- * @returns {{found: boolean, pinned: boolean}}
+ * @returns {{found: boolean, pinned: boolean, used: boolean}}
  */
 export function indirectPinHolds(source, fnName) {
   const code = stripComments(source);
   const safe = fnName.replace(/[^A-Za-z0-9_$]/g, '');
-  if (!safe) return { found: false, pinned: false };
+  if (!safe) return { found: false, pinned: false, used: false };
   const header = new RegExp(
     '(?:function\\s+' + safe + '\\s*\\(|(?:const|let|var)\\s+' + safe + '\\s*=)',
   );
   const m = header.exec(code);
-  if (!m) return { found: false, pinned: false };
+  if (!m) return { found: false, pinned: false, used: false };
+  // Every unpinned construction in this file must name the function the claim
+  // rests on — otherwise the claim describes a factory nothing calls.
+  const used = unpinnedConstructionArgs(code).every((a) => new RegExp(`\\b${safe}\\s*\\(`).test(a));
   const open = code.indexOf('{', m.index);
-  if (open === -1) return { found: true, pinned: false };
+  if (open === -1) return { found: true, pinned: false, used };
   let depth = 0;
   let end = code.length;
   for (let i = open; i < code.length; i++) {
     if (code[i] === '{') depth += 1;
     else if (code[i] === '}') { depth -= 1; if (depth === 0) { end = i; break; } }
   }
-  return { found: true, pinned: pinsBackendLiterally(code.slice(open, end + 1)) };
+  return { found: true, pinned: pinsBackendLiterally(code.slice(open, end + 1)), used };
+}
+
+/** The argument text of every construction in `code` that carries no literal pin. */
+function unpinnedConstructionArgs(code) {
+  const out = [];
+  CONSTRUCTION_RE.lastIndex = 0;
+  let m;
+  while ((m = CONSTRUCTION_RE.exec(code)) !== null) {
+    const arg = m[1] || '';
+    if (!pinsBackendLiterally(arg)) out.push(arg);
+  }
+  return out;
 }
 
 /**
  * Compare a filesystem census against the declared baseline.
  *
  * @param {Map<string, string>} sources - repo-relative path → file text
- * @param {{unpinnedConstructions?: Record<string, {reason: string}>,
+ * @param {{unpinnedConstructions?: Record<string, {reason: string, constructions: number}>,
  *   indirectPins?: Record<string, {via: string, reason: string}>}} baseline
  * @returns {{ok: boolean, ruleA: Array<{file: string, params: string[]}>,
- *   undeclared: string[], stale: string[], declaredWithoutReason: string[],
+ *   undeclared: string[], countDrift: Array<{file: string, declared: *, actual: number}>,
+ *   stale: string[], declaredWithoutReason: string[],
  *   brokenIndirect: Array<{file: string, via: string, why: string}>,
  *   staleIndirect: string[]}}
  */
@@ -163,6 +197,7 @@ export function auditPinCensus(sources, baseline) {
   const indirect = baseline?.indirectPins || {};
   const ruleA = [];
   const undeclared = [];
+  const countDrift = [];
   const brokenIndirect = [];
   const seen = new Set();
   const seenIndirect = new Set();
@@ -172,16 +207,30 @@ export function auditPinCensus(sources, baseline) {
     if (claim) {
       if (c.unpinned > 0) seenIndirect.add(file);
       const via = String(claim.via || '');
-      const held = via ? indirectPinHolds(source, via) : { found: false, pinned: false };
+      const held = via ? indirectPinHolds(source, via) : { found: false, pinned: false, used: false };
       if (!via) brokenIndirect.push({ file, via: '(none)', why: 'the entry names no `via` function' });
       else if (!held.found) brokenIndirect.push({ file, via, why: `${via}() is not defined in this file` });
       else if (!held.pinned) brokenIndirect.push({ file, via, why: `${via}() contains no literal backend pin` });
+      else if (!held.used) brokenIndirect.push({ file, via, why: `an unpinned construction in this file does not pass ${via}()` });
       continue; // its pinning is judged by the claim above, not by Rule A/B
     }
     if (c.ruleAViolation) ruleA.push({ file, params: c.unserviceable });
     if (c.unpinned > 0) {
       seen.add(file);
-      if (!Object.prototype.hasOwnProperty.call(declared, file)) undeclared.push(file);
+      if (!Object.prototype.hasOwnProperty.call(declared, file)) {
+        undeclared.push(file);
+      } else {
+        // THE COUNT, not merely the presence. Declaring a file used to clear
+        // every unpinned construction in it for ever, so adding a SECOND one to
+        // a declared file — with any params at all — was unflagged, and the
+        // reason text kept describing only the first. Same lesson as every
+        // other ratchet here: a population check that counts presence cannot
+        // see growth.
+        const want = Number(declared[file]?.constructions);
+        if (!Number.isInteger(want) || want !== c.unpinned) {
+          countDrift.push({ file, declared: declared[file]?.constructions, actual: c.unpinned });
+        }
+      }
     }
   }
   const staleIndirect = Object.keys(indirect).filter((f) => !seenIndirect.has(f));
@@ -195,9 +244,10 @@ export function auditPinCensus(sources, baseline) {
   return {
     ok: ruleA.length === 0 && undeclared.length === 0 && stale.length === 0
       && declaredWithoutReason.length === 0 && brokenIndirect.length === 0
-      && staleIndirect.length === 0,
+      && staleIndirect.length === 0 && countDrift.length === 0,
     ruleA,
     undeclared,
+    countDrift,
     stale,
     declaredWithoutReason,
     brokenIndirect,

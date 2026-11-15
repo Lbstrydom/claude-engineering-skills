@@ -719,6 +719,76 @@ makes non-negotiable.
 
 ---
 
+## 7.5 What the round-1 audit of the reshape found, and what it changed
+
+Six real defects in the new code, four of them FAIL-OPEN in the scanner — the
+direction where a gate prints clean over a violation. Each now has a planted RED
+case, because a clean verdict is worth exactly what the ability to go red is
+worth.
+
+| # | defect | direction | fix |
+|---|---|---|---|
+| 1 | `unserviceableParamsInSource` missed SHORTHAND `{ system }` | fail-open | matched as a bare property between `{`/`,` and `,`/`}` |
+| 2 | `{ backend:'sdk', ...opts }` read as PINNED, though `opts` may override it | fail-open | a spread AFTER the literal makes the effective backend unresolved, so not a pin |
+| 3 | an `indirectPins` claim never checked the CONSTRUCTION calls the named function | fail-open | `indirectPinHolds` returns `used`, and every unpinned construction in the file must pass `via()` |
+| 4 | Rule B counted FILES: a second unpinned construction in a declared file was unflagged | fail-open | the declaration carries the COUNT; growth AND an unrecorded shrink fail |
+| 5 | the CLI counted `brokenIndirect`/`staleIndirect` in `ok` but never PRINTED them | silent failure | every verdict category is reported, pinned by a test that reads the CLI's own source |
+| 6 | the `max_tokens` warn-once test asserted its text only WHEN PRESENT | vacuous pass | `_resetClientCache()` first, then assert exactly one line across two calls |
+
+(5) is the sharpest of the gate defects: a gate that exits 1 printing nothing is
+worse than no gate, and two of its seven failure categories were in that state.
+(6) I wrote knowingly, with a comment explaining why the assertion was
+conditional — which is the form this plan's own §6.E warns about, one layer over:
+the comment made the weakness legible and left it in place.
+
+### 7.5a The measured instance of the `max_tokens` class — found by running the audit
+
+The audit's own `[brief]` step printed `claude-haiku-5-5 done in 10.4s
+(0 chars)` and fell through to Gemini. Reproduced directly against AGENTS.md as
+the user turn: at `max_tokens: 2000` the model returns **`stop_reason:
+max_tokens`, `thinking_tokens: 2000`, and a single `thinking` block with no text
+at all**. `context.mjs` read `response.content?.[0]?.text`, i.e. the thinking
+block, got `undefined`, and logged it as though the model had answered.
+
+Two defects in one line, and both are shapes this plan already names:
+
+- **Reading index 0 is not reading the answer.** The fix takes the first `text`
+  block. The log now names `stop_reason` and the block types when there is no
+  text, so "0 chars" can never again mean "we did not look in the right place".
+- **A ceiling must be sized to the answer PLUS what the model spends getting
+  there.** Measured at 4000: `end_turn`, thinking 763–1721, text 2215–3271 chars
+  (the brief is capped at 3000 anyway). Same correction as `summaryMaxTokens`
+  (§5.2), on a budget nobody had re-measured since thinking became a default.
+
+This leg had therefore been dead in **every** audit run, on both transports:
+grep of eight pre-change round logs from 2026-11-14 shows the same `(0 chars)`
+line, so the pin did not cause it and the fix is not a regression repair — but
+it IS the honest answer to the audit's "unenforced output budget" finding. The
+class is real; refusing `max_tokens` at the seam is not the remedy (§3.3), and a
+consumer that notices is.
+
+### 7.5b One fix of mine had a concurrency bug, caught before it shipped
+
+Making the labeller lazy (below) first used a resolved-FLAG set before the
+await. `labelWorkUnits` runs its units through `Promise.all`, so every other unit
+would read `labeller` while it was still `undefined` and conclude the provider
+was unavailable — one construction becoming "unavailable" for all but one unit.
+Memoising the PROMISE instead is the fix; a test asserts the labeller resolves
+once across three concurrent units and that all three got a label.
+
+### 7.5c A regression the pin itself introduced
+
+`defaultLabeller` is pinned to sdk, so on a keyless `CLAUDE_BACKEND=cli` install
+it returns `null`. `labelWorkUnits` resolved it BEFORE touching the cache and
+returned `labeller-unavailable`, serving **none** of the labels already on disk —
+strictly worse than before the pin, for exactly the population the pin was
+written for. A cache hit needs no provider, so the provider is now resolved
+lazily on the first MISS, and `labeller-unavailable` is reported only when a
+provider was actually needed and absent. Negative control: reverting to the
+eager resolve fails 2 of the file's 24 tests.
+
+---
+
 ## 8. Follow-ups (not this change)
 
 1. **The ~164K prefix tax on every remaining `cli` call** (§2.4) is the larger

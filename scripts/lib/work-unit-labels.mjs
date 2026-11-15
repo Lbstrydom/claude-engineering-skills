@@ -129,11 +129,31 @@ export async function labelWorkUnits(units, opts = {}) {
   if (!Array.isArray(units) || units.length === 0) return out;
   if (opts.enabled === false) return { ...out, reason: 'disabled' };
 
-  const labeller = opts.labeller || await defaultLabeller();
-  if (!labeller) return { ...out, reason: 'labeller-unavailable' };
-
   const { join } = await import('node:path');
   const cacheFile = join(opts.repoRoot || process.cwd(), CACHE_REL);
+
+  // LAZY, and resolved at most once. Constructing the labeller up-front made a
+  // cached label depend on provider availability: on a keyless
+  // `CLAUDE_BACKEND=cli` install `defaultLabeller()` now returns null (it is
+  // pinned to sdk), so this function returned `labeller-unavailable` and served
+  // NONE of the labels already on disk. That is strictly worse than before the
+  // pin for exactly the population the pin was written for. A cache hit needs
+  // no provider, so nothing may be resolved before the first miss.
+  // The PROMISE is memoised, not a resolved flag. `Promise.all` below runs the
+  // units concurrently, so a flag set before the await would let every other
+  // unit read `labeller` while it is still undefined and conclude the provider
+  // is unavailable — one construction becomes "unavailable" for all but one
+  // unit. Memoising the promise makes every caller await the same resolution.
+  let labellerPromise = null;
+  let sawUnavailable = false;
+  const getLabeller = async () => {
+    labellerPromise ??= opts.labeller
+      ? Promise.resolve(opts.labeller)
+      : defaultLabeller().catch(() => null);
+    const fn = await labellerPromise;
+    if (!fn) sawUnavailable = true;
+    return fn;
+  };
 
   const relabelled = await Promise.all(units.map(async (u) => {
     // Singletons keep their category: their `detail` IS the description, and a
@@ -143,7 +163,9 @@ export async function labelWorkUnits(units, opts = {}) {
     try {
       const hit = getCached(cacheFile, cacheKey, CACHE_TTL_MS);
       if (hit) { out.cached++; return { ...u, label: hit, labelSource: 'llm-cached' }; }
-      const raw = await labeller(u);
+      const fn = await getLabeller();
+      if (!fn) { out.failed++; return { ...u, labelSource: 'underived' }; }
+      const raw = await fn(u);
       const label = sanitizeLabel(raw);
       if (!label) { out.failed++; return { ...u, labelSource: 'underived' }; }
       putCached(cacheFile, cacheKey, label, CACHE_TTL_MS);   // successes only (C10)
@@ -157,6 +179,11 @@ export async function labelWorkUnits(units, opts = {}) {
     }
   }));
 
+  // `labeller-unavailable` still reported, but now only when the provider was
+  // actually NEEDED and absent — a run served entirely from cache is not an
+  // unavailability, and reporting it as one is what made the keyless case look
+  // like a failure instead of a cache hit.
+  if (sawUnavailable && !out.reason) out.reason = 'labeller-unavailable';
   return { ...out, units: relabelled };
 }
 

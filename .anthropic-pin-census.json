@@ -1,20 +1,25 @@
 {
-  "_description": "Every TRACKED scripts/**/*.mjs that constructs an Anthropic client WITHOUT a literal backend pin. Gate: node scripts/check-anthropic-pins.mjs. Rule A (an unpinned construction in a file that also passes system/tools/tool_choice) is a hard failure no entry excuses. unpinnedConstructions is Rule B, the drift-only record that a human decided each remaining unpinned construction serves only cli-serviceable calls; each reason must say what was checked, INCLUDING any client handed to another module, since that handoff is what a file-local scan cannot see. indirectPins is the one escape from Rule A, and it is verified not trusted: the named via function must exist in that file and contain the literal pin.",
+  "_description": "Every TRACKED scripts/**/*.mjs that constructs an Anthropic client WITHOUT a literal backend pin. Gate: node scripts/check-anthropic-pins.mjs. Rule A (an unpinned construction in a file that also passes system/tools/tool_choice) is a hard failure no entry excuses. unpinnedConstructions is Rule B, the drift-only record that a human decided each remaining unpinned construction serves only cli-serviceable calls; each entry carries the COUNT of unpinned constructions in that file (a count, not mere presence, so a construction added later cannot ride on an old declaration) and a reason saying what was checked, INCLUDING any client handed to another module, since that handoff is what a file-local scan cannot see. indirectPins is the one escape from Rule A, and it is verified not trusted: the named via function must exist in that file and contain the literal pin.",
   "unpinnedConstructions": {
     "scripts/anthropic-ping.mjs": {
-      "reason": "The reachability ping sends {model, max_tokens, messages} only — no system, tools or tool_choice — and is the one command whose job is to prove the AMBIENT backend works, so pinning it would make it test something other than what the operator configured. Client is not handed anywhere."
+      "reason": "The reachability ping sends {model, max_tokens, messages} only — no system, tools or tool_choice — and is the one command whose job is to prove the AMBIENT backend works, so pinning it would make it test something other than what the operator configured. Client is not handed anywhere.",
+      "constructions": 1
     },
     "scripts/lib/neighbourhood-query.mjs": {
-      "reason": "The security-failure-mode Haiku call sends {model, max_tokens, messages} only; the JSON contract is in the USER turn, not system. Client is local to the branch and not handed to another module."
+      "reason": "The security-failure-mode Haiku call sends {model, max_tokens, messages} only; the JSON contract is in the USER turn, not system. Client is local to the branch and not handed to another module.",
+      "constructions": 1
     },
     "scripts/lib/visual/explain.mjs": {
-      "reason": "Advisory VLM prose: {model, max_tokens, messages} only, with the instruction in the user content. Client is local; failures already degrade to '' and never block the deterministic report."
+      "reason": "Advisory VLM prose: {model, max_tokens, messages} only, with the instruction in the user content. Client is local; failures already degrade to '' and never block the deterministic report.",
+      "constructions": 1
     },
     "scripts/symbol-index/summarise.mjs": {
-      "reason": "The highest-volume Claude call site here, and deliberately cli-serviceable: the one-line-per-symbol instruction is in the USER turn, so no system/tools/tool_choice is sent and the Max 20x credit is kept. Truncation is caught by assessBatchCompleteness reading stop_reason, not by max_tokens. Both branches (public and the azureRoute one, which reconcileBackendWithBaseUrl already coerces to sdk) are local; the client is not handed anywhere."
+      "reason": "The highest-volume Claude call site here, and deliberately cli-serviceable: the one-line-per-symbol instruction is in the USER turn, so no system/tools/tool_choice is sent and the Max 20x credit is kept. Truncation is caught by assessBatchCompleteness reading stop_reason, not by max_tokens. Both branches (public and the azureRoute one, which reconcileBackendWithBaseUrl already coerces to sdk) are local; the client is not handed anywhere.",
+      "constructions": 2
     },
     "scripts/symbol-index/summarise-domains.mjs": {
-      "reason": "Same shape as summarise.mjs: {model, max_tokens, messages} only, instruction in the user turn. Client is local to the call."
+      "reason": "Same shape as summarise.mjs: {model, max_tokens, messages} only, instruction in the user turn. Client is local to the call.",
+      "constructions": 2
     }
   },
   "indirectPins": {

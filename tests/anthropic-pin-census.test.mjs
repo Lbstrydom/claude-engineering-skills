@@ -131,16 +131,17 @@ describe('classifyPinningInSource: planted sources (the positive control)', () =
 describe('indirectPinHolds: the one escape, and it is verified', () => {
   it('holds when the named function contains the literal pin', () => {
     const src = "function clientOptions() { return { backend: 'sdk', azureRoute: r }; }";
-    assert.deepEqual(indirectPinHolds(src, 'clientOptions'), { found: true, pinned: true });
+    assert.deepEqual(indirectPinHolds(src, 'clientOptions'), { found: true, pinned: true, used: true },
+      'no construction in this source, so `used` is vacuously true — the audit only consults it for a file that constructs one');
   });
 
   it('RED: a named function with no pin does NOT hold', () => {
     const src = 'function clientOptions() { return { azureRoute: r }; }';
-    assert.deepEqual(indirectPinHolds(src, 'clientOptions'), { found: true, pinned: false });
+    assert.deepEqual(indirectPinHolds(src, 'clientOptions'), { found: true, pinned: false, used: true });
   });
 
   it('RED: a `via` naming a function the file does not define does NOT hold', () => {
-    assert.deepEqual(indirectPinHolds('const x = 1;', 'clientOptions'), { found: false, pinned: false });
+    assert.deepEqual(indirectPinHolds('const x = 1;', 'clientOptions'), { found: false, pinned: false, used: false });
   });
 
   // The claim is scoped: a pin in a LATER function cannot satisfy it. Without
@@ -172,7 +173,7 @@ describe('auditPinCensus: the drift rules', () => {
   it('a declared one passes', () => {
     const v = auditPinCensus(
       new Map([['a.mjs', 'await createAnthropicClient();']]),
-      { unpinnedConstructions: { 'a.mjs': { reason: 'serviceable: no system/tools sent' } } },
+      { unpinnedConstructions: { 'a.mjs': { reason: 'serviceable: no system/tools sent', constructions: 1 } } },
     );
     assert.equal(v.ok, true);
   });
@@ -180,7 +181,7 @@ describe('auditPinCensus: the drift rules', () => {
   it('a declaration with an empty reason fails — the reason IS the record', () => {
     const v = auditPinCensus(
       new Map([['a.mjs', 'await createAnthropicClient();']]),
-      { unpinnedConstructions: { 'a.mjs': { reason: '  ' } } },
+      { unpinnedConstructions: { 'a.mjs': { reason: '  ', constructions: 1 } } },
     );
     assert.equal(v.ok, false);
     assert.deepEqual(v.declaredWithoutReason, ['a.mjs']);
@@ -192,7 +193,7 @@ describe('auditPinCensus: the drift rules', () => {
   it('a stale declaration fails and asks for a re-baseline', () => {
     const v = auditPinCensus(
       new Map([['a.mjs', "await createAnthropicClient({ backend: 'sdk' });"]]),
-      { unpinnedConstructions: { 'a.mjs': { reason: 'r' } } },
+      { unpinnedConstructions: { 'a.mjs': { reason: 'r', constructions: 1 } } },
     );
     assert.equal(v.ok, false);
     assert.deepEqual(v.stale, ['a.mjs']);
@@ -201,7 +202,7 @@ describe('auditPinCensus: the drift rules', () => {
   it('NO ENTRY EXCUSES RULE A: declaring an unpinned+system file still fails', () => {
     const v = auditPinCensus(
       new Map([['a.mjs', "await createAnthropicClient();\nx({ system: 'be brief' });"]]),
-      { unpinnedConstructions: { 'a.mjs': { reason: 'I promise it is fine' } } },
+      { unpinnedConstructions: { 'a.mjs': { reason: 'I promise it is fine', constructions: 1 } } },
     );
     assert.equal(v.ok, false);
     assert.equal(v.ruleA.length, 1, 'Rule A is not declarable away');
@@ -232,6 +233,110 @@ describe('auditPinCensus: the drift rules', () => {
     );
     assert.equal(v.ok, false);
     assert.deepEqual(v.staleIndirect, ['a.mjs']);
+  });
+});
+
+// ── fail-closed holes the round-1 audit found (2026-11-15) ─────────────────
+//
+// All four were FAIL-OPEN: the scanner said clean over a real violation. Each
+// gets a planted RED case, because a scanner's clean verdict is only worth what
+// its ability to go red is worth.
+describe('fail-closed: the shapes the first cut missed', () => {
+  it('SHORTHAND `{ system }` is an unserviceable param', () => {
+    const planted = `
+      const client = await createAnthropicClient();
+      await client.messages.create({ model, max_tokens, system, messages });
+    `;
+    const c = classifyPinningInSource(planted);
+    assert.deepEqual(c.unserviceable, ['system'], 'shorthand sends the param just as `system:` does');
+    assert.equal(c.ruleAViolation, true, 'this cleared Rule A before \u2014 fail-open, the worse direction');
+  });
+
+  it('shorthand `{ tools }` / `{ tool_choice }` too', () => {
+    assert.deepEqual(unserviceableParamsInSource('x({ a, tools, b })'), ['tools']);
+    assert.deepEqual(unserviceableParamsInSource('x({ tool_choice })'), ['tool_choice']);
+  });
+
+  it('a bare identifier that is not a property is still not a param', () => {
+    assert.deepEqual(unserviceableParamsInSource('const system = 1; use(system);'), [],
+      'the shorthand matcher must not fire on every mention of the word');
+  });
+
+  it('A SPREAD AFTER THE PIN makes the backend unresolved, so NOT pinned', () => {
+    const c = classifyPinningInSource("await createAnthropicClient({ backend: 'sdk', ...opts });");
+    assert.equal(c.unpinned, 1, '`opts` may override `backend`, and this gate cannot know');
+  });
+
+  it('a spread BEFORE the literal pin is fine — the literal wins', () => {
+    const c = classifyPinningInSource("await createAnthropicClient({ ...opts, backend: 'sdk' });");
+    assert.equal(c.unpinned, 0);
+  });
+
+  it('an indirect claim whose construction never calls the `via` function does NOT hold', () => {
+    const src = `
+      function clientOptions() { return { backend: 'sdk' }; }
+      const c = await createAnthropicClient({ redactor: null });
+    `;
+    const held = indirectPinHolds(src, 'clientOptions');
+    assert.equal(held.pinned, true, 'the factory does carry the literal');
+    assert.equal(held.used, false, 'but nothing passes it \u2014 the claim describes a factory nobody calls');
+  });
+
+  it('it holds when every unpinned construction passes the function', () => {
+    const src = `
+      function clientOptions() { return { backend: 'sdk' }; }
+      const a = await createAnthropicClient(clientOptions());
+      const b = await createAnthropicClient({ ...clientOptions(), fresh: true });
+    `;
+    const held = indirectPinHolds(src, 'clientOptions');
+    assert.equal(held.used, true);
+  });
+
+  it('a broken `used` claim fails the audit', () => {
+    const v = auditPinCensus(
+      new Map([['a.mjs', "function opts() { return { backend: 'sdk' }; }\nawait createAnthropicClient({});\nx({ system: 's' });"]]),
+      { indirectPins: { 'a.mjs': { via: 'opts', reason: 'r' } } },
+    );
+    assert.equal(v.ok, false);
+    assert.match(v.brokenIndirect[0].why, /does not pass opts\(\)/);
+  });
+});
+
+// A declaration used to clear a FILE for ever, so a second unpinned
+// construction added to a declared file was unflagged and the entry's reason
+// kept describing only the first. Counting is the fix, and it is the shape every
+// other ratchet in this repo already uses.
+describe('Rule B counts constructions, not files', () => {
+  const src1 = 'await createAnthropicClient();';
+  const src2 = 'await createAnthropicClient();\nawait createAnthropicClient({ fresh: true });';
+
+  it('a matching count passes', () => {
+    const v = auditPinCensus(new Map([['a.mjs', src1]]),
+      { unpinnedConstructions: { 'a.mjs': { reason: 'r', constructions: 1 } } });
+    assert.equal(v.ok, true);
+  });
+
+  it('A SECOND construction in a DECLARED file fails', () => {
+    const v = auditPinCensus(new Map([['a.mjs', src2]]),
+      { unpinnedConstructions: { 'a.mjs': { reason: 'r', constructions: 1 } } });
+    assert.equal(v.ok, false);
+    assert.deepEqual(v.countDrift, [{ file: 'a.mjs', declared: 1, actual: 2 }]);
+  });
+
+  // A shrink fails too, like size:ratchet:gate: a count left high hides the
+  // next addition back up to it.
+  it('a REMOVED construction fails too, asking for a re-baseline', () => {
+    const v = auditPinCensus(new Map([['a.mjs', src1]]),
+      { unpinnedConstructions: { 'a.mjs': { reason: 'r', constructions: 2 } } });
+    assert.equal(v.ok, false);
+    assert.equal(v.countDrift.length, 1);
+  });
+
+  it('a declaration with NO count fails — it is the pre-count state', () => {
+    const v = auditPinCensus(new Map([['a.mjs', src1]]),
+      { unpinnedConstructions: { 'a.mjs': { reason: 'r' } } });
+    assert.equal(v.ok, false);
+    assert.equal(v.countDrift[0].declared, undefined);
   });
 });
 
@@ -280,6 +385,20 @@ describe('the REPO is clean against its committed baseline', () => {
     for (const rel of ['scripts/evolve-prompts.mjs', 'scripts/solo-control-audit.mjs']) {
       const text = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
       assert.equal(classifyPinningInSource(text).unpinned, 0, `${rel} must pin every construction`);
+    }
+  });
+
+  // A gate that exits non-zero printing nothing is worse than no gate: the
+  // first cut counted brokenIndirect/staleIndirect in `ok` but never printed
+  // them, so those two failures were silent. This reads the CLI's own source
+  // rather than running it, since the repo is clean and cannot produce them.
+  it('the CLI reports EVERY verdict category it can fail on', () => {
+    const cli = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'check-anthropic-pins.mjs'), 'utf8');
+    for (const key of ['ruleA', 'undeclared', 'countDrift', 'stale', 'declaredWithoutReason', 'brokenIndirect', 'staleIndirect']) {
+      assert.ok(
+        new RegExp(`verdict\\.${key}`).test(cli),
+        `${key} is in the verdict but the CLI never prints it \u2014 that failure would exit 1 with no reason`,
+      );
     }
   });
 

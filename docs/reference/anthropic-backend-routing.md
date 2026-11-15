@@ -127,8 +127,23 @@ guard, in `check:static`. Two rules, because one cannot see both shapes:
   handoff is one of the two sites the census found which a by-hand list missed.
 - The one escape from Rule A is `indirectPins`, and it is **verified, not
   trusted**: an entry naming a `via` function (`azure-claude-adapter.mjs`'s
-  `clientOptions()`) is checked by re-reading that function for the literal, so
-  the declaration cannot outlive the pin it claims.
+  `clientOptions()`) is checked by re-reading that function for the literal AND
+  by confirming every unpinned construction in the file passes it, so the
+  declaration cannot outlive the pin it claims nor describe a factory nothing
+  calls.
+- **Fail-closed on what it cannot resolve.** A forwarded `{ backend }` reads as
+  unpinned (a gate cannot check a variable's value), and a **spread after the
+  literal** — `{ backend:'sdk', ...opts }` — leaves the effective backend
+  unresolved, so also unpinned. Shorthand `{ system }` counts as passing the
+  param. All four shapes were fail-OPEN in the first cut; each now has a planted
+  RED case in `tests/anthropic-pin-census.test.mjs`.
+- A Rule B declaration carries the **COUNT** of unpinned constructions, not just
+  the file. Declaring a file once would otherwise clear every construction added
+  to it later while its `reason` kept describing only the first; growth and an
+  unrecorded shrink both fail.
+- Every verdict category is **printed**. Two of the seven were counted in `ok`
+  and never reported, so the gate could exit 1 with no line saying why — worse
+  than no gate. A test reads the CLI's own source to keep that true.
 
 **A pinned site must also change its availability gate.** `isClaudeAvailable()`
 answers for the AMBIENT backend, and on a keyless `CLAUDE_BACKEND=cli` install

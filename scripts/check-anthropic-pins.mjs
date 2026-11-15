@@ -119,8 +119,19 @@ async function main() {
   for (const f of verdict.undeclared) {
     process.stderr.write(`  UNDECLARED      ${f} — constructs a client with no literal backend pin.\n`);
   }
+  for (const d of verdict.countDrift) {
+    process.stderr.write(
+      `  COUNT DRIFT     ${d.file} — declares ${d.declared ?? '(no count)'} unpinned construction(s), found ${d.actual}.\n`,
+    );
+  }
   for (const f of verdict.stale) {
     process.stderr.write(`  STALE           ${f} — declared in ${BASELINE_PATH}, but no longer constructs an unpinned client.\n`);
+  }
+  for (const b of verdict.brokenIndirect) {
+    process.stderr.write(`  BROKEN INDIRECT ${b.file} — via ${b.via}: ${b.why}.\n`);
+  }
+  for (const f of verdict.staleIndirect) {
+    process.stderr.write(`  STALE INDIRECT  ${f} — has an indirectPins entry but constructs no unpinned client.\n`);
   }
   for (const f of verdict.declaredWithoutReason) {
     process.stderr.write(`  NO REASON       ${f} — declared with an empty \`reason\`.\n`);
@@ -133,6 +144,18 @@ async function main() {
       + '  the sdk default, so without the pin the break ships and fires only where\n'
       + '  CLAUDE_BACKEND=cli is set. Gate the site on `isClaudeAvailableFor(\'sdk\')` too —\n'
       + '  the ambient check says available on a keyless cli install.\n');
+  }
+  if (verdict.countDrift.length) {
+    process.stderr.write(
+      `  A declaration carries the COUNT of unpinned constructions, not just the file: declaring\n`
+      + '  a file once would otherwise clear every construction added to it later. Update the\n'
+      + `  \`constructions\` number and say in \`reason\` what the new one does.\n`);
+  }
+  if (verdict.brokenIndirect.length || verdict.staleIndirect.length) {
+    process.stderr.write(
+      '  An indirectPins entry is VERIFIED, not trusted: the named `via` function must exist in\n'
+      + '  that file, contain the literal pin, and be passed by every unpinned construction there.\n'
+      + '  Fix the code or remove the entry.\n');
   }
   if (verdict.undeclared.length || verdict.stale.length || verdict.declaredWithoutReason.length) {
     process.stderr.write(

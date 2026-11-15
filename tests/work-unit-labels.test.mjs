@@ -43,6 +43,59 @@ describe('sanitizeLabel', () => {
   });
 });
 
+// ── a cache hit must not depend on the provider (round-1 audit, 2026-11-15) ──
+//
+// Pinning `defaultLabeller` to the sdk backend made it return null on a keyless
+// `CLAUDE_BACKEND=cli` install. `labelWorkUnits` resolved the labeller BEFORE
+// touching the cache, so it then returned `labeller-unavailable` and served
+// NONE of the labels already on disk \u2014 strictly worse, for exactly the
+// population the pin was written for. The provider is now resolved lazily, on
+// the first cache MISS.
+describe('labelWorkUnits: the cache is independent of provider availability', () => {
+  test('cached labels are served when the labeller is unavailable', async (t) => {
+    const root = mkRoot(t);
+    // Warm the cache through a working labeller.
+    const warm = await labelWorkUnits([unit('k-cached')], {
+      repoRoot: root, labeller: async () => 'a cached cluster name',
+    });
+    assert.equal(warm.labelled, 1);
+
+    // Now the same unit with NO labeller available at all.
+    let asked = 0;
+    const res = await labelWorkUnits([unit('k-cached')], {
+      repoRoot: root,
+      labeller: null,            // falsy \u2192 defaultLabeller(), which has no key here
+    });
+    assert.equal(res.cached, 1, 'the label is on disk; nothing about it needs a provider');
+    assert.equal(res.units[0].labelSource, 'llm-cached');
+    assert.equal(res.units[0].label, 'a cached cluster name');
+    assert.equal(asked, 0);
+  });
+
+  test('a cache MISS with no labeller is underived, and says so once', async (t) => {
+    const res = await labelWorkUnits([unit('k-miss')], { repoRoot: mkRoot(t), labeller: null });
+    assert.equal(res.cached, 0);
+    assert.equal(res.failed, 1);
+    assert.equal(res.units[0].labelSource, 'underived');
+    assert.equal(res.reason, 'labeller-unavailable', 'the provider WAS needed and absent');
+  });
+
+  // The provider must be constructed at most once across concurrent units:
+  // `Promise.all` runs them together, and a resolved-flag set before the await
+  // let every other unit read an undefined labeller and call it unavailable.
+  test('the labeller is resolved ONCE across concurrent units', async (t) => {
+    let built = 0;
+    const labeller = async () => 'shared name';
+    const res = await labelWorkUnits(
+      [unit('c1'), unit('c2'), unit('c3')],
+      { repoRoot: mkRoot(t), labeller: (() => { built++; return labeller; })() },
+    );
+    assert.equal(built, 1);
+    assert.equal(res.labelled, 3, 'every unit got a label, not just the first');
+    assert.equal(res.reason, null, 'and no unit concluded the provider was unavailable');
+  });
+});
+
 describe('labelWorkUnits', () => {
   test('replaces the fallback label and marks the source', async (t) => {
     const res = await labelWorkUnits([unit('k1')], {

@@ -319,15 +319,30 @@ async function _llmCondense(content) {
         const response = await withBudget(
           anthropic.messages.create({
             model,
-            max_tokens: 2000,
+            // 4000, not 2000. MEASURED 2026-11-15 against AGENTS.md as the user
+            // turn: at 2000 this model spent the WHOLE budget on a thinking
+            // block (`stop_reason: max_tokens`, thinking_tokens 2000, zero text
+            // blocks) and the leg silently produced nothing. At 4000 it returns
+            // `end_turn` with thinking 763-1721 and 2215-3271 chars of text,
+            // and the brief is capped at 3000 chars anyway. Same class as
+            // `summaryMaxTokens`: a ceiling must be sized to the answer plus
+            // whatever the model spends getting there.
+            max_tokens: 4000,
             system: BRIEF_SYSTEM_PROMPT,
             messages: [{ role: 'user', content: userContent }]
           }, { timeoutMs: budget, signal: controller.signal }),
           budget,
           model,
         ).catch((err) => { controller.abort(); throw err; });
-        const text = response.content?.[0]?.text?.trim();
-        process.stderr.write(`  [brief] ${model} done in ${((Date.now() - startMs) / 1000).toFixed(1)}s (${text?.length ?? 0} chars)\n`);
+        // The FIRST TEXT BLOCK, not `content[0]`. A thinking-capable model puts
+        // a `thinking` block first, which has no `.text`, so the index-0 read
+        // returned undefined from a perfectly good response — and the log below
+        // then reported "(0 chars)" as though the model had answered. This leg
+        // had been dead in every audit run for that reason.
+        const text = (response.content || [])
+          .filter((b) => b?.type === 'text').map((b) => b.text || '').join('').trim();
+        const why = text ? '' : ` [no text block: stop_reason=${response.stop_reason}, blocks=${(response.content || []).map((b) => b?.type).join('+') || 'none'}]`;
+        process.stderr.write(`  [brief] ${model} done in ${((Date.now() - startMs) / 1000).toFixed(1)}s (${text?.length ?? 0} chars)${why}\n`);
         if (text && text.length > 100) return text.slice(0, 3000); // Cap at 3000 chars
       } catch (err) {
         process.stderr.write(`  [brief] Claude Haiku failed: ${await describeBriefClaudeFailure(err)} — trying Gemini Flash\n`);

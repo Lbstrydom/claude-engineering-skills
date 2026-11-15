@@ -366,7 +366,14 @@ describe('max_tokens: unenforced on cli, never a refusal', () => {
       'the response must not be silently truncated to look like the ceiling held');
   });
 
-  it('the once-per-session warning says UNENFORCED, not merely unenforceable', async () => {
+  // NOT a conditional assertion. The first version of this test asserted on the
+  // warning's TEXT only when present, because warn-once state is module-global
+  // and another suite may have tripped it first — so it passed with zero hits,
+  // which is the vacuous pass this repo's own discipline names. `_resetClientCache`
+  // clears that state (its whole purpose), so the count IS assertable: exactly
+  // one line across two calls, both halves of the "once per session" claim.
+  it('the max_tokens warning fires ONCE per session and says UNENFORCED', async () => {
+    _resetClientCache();
     const written = [];
     const origWrite = process.stderr.write;
     process.stderr.write = (chunk, ...rest) => {
@@ -378,14 +385,14 @@ describe('max_tokens: unenforced on cli, never a refusal', () => {
         backend: 'cli', claudeBin: writeFakeCli('ok'), fresh: true,
       });
       await client.messages.create({ ...BASE_PARAMS, max_tokens: 64 });
+      await client.messages.create({ ...BASE_PARAMS, max_tokens: 128 });
     } finally {
       process.stderr.write = origWrite;
     }
-    // Warn-once state is module-global and other suites in this file may have
-    // already tripped it, so this asserts on the TEXT when present rather than
-    // on its presence — the shape claim, not an ordering claim.
     const hits = written.filter((l) => /max_tokens is UNENFORCED/.test(l));
-    for (const h of hits) assert.match(h, /accepted and ignored/);
+    assert.equal(hits.length, 1, 'once per session, and at least once — not zero');
+    assert.match(hits[0], /accepted and ignored/);
+    assert.match(hits[0], /1995 output tokens/, 'the warning carries the measurement');
   });
 });
 
