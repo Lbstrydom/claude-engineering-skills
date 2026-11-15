@@ -72,14 +72,15 @@ export function assessCapProductivity({ rounds, ledgerEntries, ledgerUnmeasured 
   const base = { lastRound, lastRunId, acceptanceRate: null, ruled: 0, highByRound, stillProductive: null };
   if (lastRound == null) return { ...base, unmeasured: 'no round results' };
   if (!ledgerEntries) return { ...base, unmeasured: ledgerUnmeasured || 'no ledger' };
-  const last = ledgerEntries.filter((e) => e?.resolvedRound === lastRound)
-    .map((e) => ({ outcome: e.adjudicationOutcome, ruling: e.ruling }));
-  if (last.length === 0) return { ...base, unmeasured: `round ${lastRound} has no rulings in the ledger (not triaged)` };
-  // A half-triaged round would yield a rate over a subset of its findings. Ledger entries are one per CONCERN
-  // (topicId), so compare concerns with concerns: every last-round finding's topic, derived exactly as
-  // write-ledger-entries derives it, must have a ruling at this round. Two findings of one concern count once.
-  const ruledTopics = new Set(ledgerEntries.filter((e) => e?.resolvedRound === lastRound).map((e) => e.topicId));
+  // Ledger entries are one per CONCERN (topicId), so compare concerns with concerns: the last round's own topics,
+  // derived exactly as write-ledger-entries derives them. The rate counts ONLY rulings for those topics — an entry
+  // stamped with this round number for a concern the result no longer carries (a re-run, a hand edit) is not
+  // this round's ruling — and every one of those topics must be ruled, or the round is partially triaged.
   const topics = new Set((sorted[sorted.length - 1].findings || []).map(topicOf));
+  const mine = ledgerEntries.filter((e) => e?.resolvedRound === lastRound && topics.has(e.topicId));
+  const last = mine.map((e) => ({ outcome: e.adjudicationOutcome, ruling: e.ruling }));
+  if (last.length === 0) return { ...base, unmeasured: `round ${lastRound} has no rulings in the ledger (not triaged)` };
+  const ruledTopics = new Set(mine.map((e) => e.topicId));
   const unruled = [...topics].filter((t) => !ruledTopics.has(t)).length;
   if (unruled > 0) return { ...base, ruled: last.length, unmeasured: `round ${lastRound} partially triaged (${topics.size - unruled} of ${topics.size} concerns ruled)` };
   const a = roundAcceptance(last);

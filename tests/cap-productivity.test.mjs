@@ -65,6 +65,13 @@ describe('assessCapProductivity', () => {
     assert.match(p.unmeasured, /partially triaged \(2 of 5 concerns ruled\)/);
   });
 
+  test('a ruling stamped with the last round for a concern the result no longer carries is not counted', () => {
+    const stale = { topicId: 'not-in-this-round', resolvedRound: 3, adjudicationOutcome: 'dismissed', ruling: 'overrule' };
+    const p = assessCapProductivity({ rounds: consumerRounds, ledgerEntries: [...ruledAt(3, Array(5).fill('accepted')), stale] });
+    assert.equal(p.acceptanceRate, 1);
+    assert.equal(p.ruled, 5);
+  });
+
   test('two findings of ONE concern need one ruling — concerns are compared with concerns', () => {
     const dup = { id: 'H3-dup', severity: 'HIGH', category: 'c0', section: 's' };
     const rounds = [{ round: 1, findings: [dup, { ...dup, id: 'H3-dup-2' }], runId: 'r' }];
