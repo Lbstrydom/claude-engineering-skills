@@ -251,7 +251,7 @@ export async function labelWorkUnits(units, opts = {}) {
  */
 async function defaultLabeller() {
   try {
-    const { createAnthropicClient, isClaudeAvailableFor } = await import('./anthropic-client.mjs');
+    const { createAnthropicClient, isClaudeAvailableFor, textFromResponse } = await import('./anthropic-client.mjs');
     // `isClaudeAvailableFor('sdk')`, not the ambient `isClaudeAvailable()`: this
     // call passes `system`, so it is pinned below, and the ambient answer is
     // `true` under a KEYLESS `CLAUDE_BACKEND=cli` install — the gate would pass
@@ -265,11 +265,22 @@ async function defaultLabeller() {
     return async (unit) => {
       const res = await client.messages.create({
         model,
-        max_tokens: 64,
+        // 1000, not 64 — and this is the sharpest consequence of pinning to sdk.
+        // On `cli` the cap was ACCEPTED AND IGNORED, so 64 never bound; on sdk it
+        // is ENFORCED to the token, and `claude-haiku-5-5` thinks by default.
+        // MEASURED 2026-11-15 on this exact prompt: at 64 the response is ONE
+        // thinking block, `stop_reason: max_tokens`, thinking_tokens 64, and NO
+        // text block — i.e. every label underived. At 200 the text is truncated
+        // ("Unlab"). At 600 and 1000 it is `end_turn` with thinking 149–183 and
+        // a complete label. 1000 leaves ~5x headroom over the measured worst
+        // case; `MAX_LABEL_CHARS` bounds what is actually kept, so a generous
+        // cap costs a few cents of thinking, never a long label.
+        max_tokens: 1000,
         system: SYSTEM,
         messages: [{ role: 'user', content: buildPrompt(unit) }],
       });
-      return res?.content?.[0]?.text ?? null;
+      // The first TEXT block, never `content[0]` — which is the thinking block.
+      return textFromResponse(res) || null;
     };
   } catch {
     return null;

@@ -5,7 +5,7 @@
   "files": {
     "scripts/campaign.mjs": 1017,
     "scripts/cross-skill.mjs": 1124,
-    "scripts/lib/anthropic-client.mjs": 1079,
+    "scripts/lib/anthropic-client.mjs": 1103,
     "scripts/lib/audit/evidence-triage.mjs": 1245,
     "scripts/lib/audit/legacy-production-audit.mjs": 1702,
     "scripts/lib/config.mjs": 1005,

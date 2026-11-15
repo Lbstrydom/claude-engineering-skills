@@ -301,7 +301,7 @@ async function _llmCondense(content) {
     const budget = budgetFor('Claude');
     if (budget) {
       try {
-        const { createAnthropicClient } = await import('./anthropic-client.mjs');
+        const { createAnthropicClient, textFromResponse } = await import('./anthropic-client.mjs');
         // PINNED `backend:'sdk'` (2026-11-15): `system` is BRIEF_SYSTEM_PROMPT,
         // the entire output contract for this brief, and the cli backend does
         // not honour it. The seam throws on it, and the gate above was switched
@@ -334,13 +334,13 @@ async function _llmCondense(content) {
           budget,
           model,
         ).catch((err) => { controller.abort(); throw err; });
-        // The FIRST TEXT BLOCK, not `content[0]`. A thinking-capable model puts
-        // a `thinking` block first, which has no `.text`, so the index-0 read
-        // returned undefined from a perfectly good response — and the log below
-        // then reported "(0 chars)" as though the model had answered. This leg
-        // had been dead in every audit run for that reason.
-        const text = (response.content || [])
-          .filter((b) => b?.type === 'text').map((b) => b.text || '').join('').trim();
+        // `textFromResponse`, not `content[0].text`. A thinking-capable model
+        // puts a `thinking` block first, which has no `.text`, so the index-0
+        // read returned undefined from a perfectly good response — and the log
+        // below reported "(0 chars)" as though the model had answered. This leg
+        // had been dead in every audit run for that reason. The reader lives at
+        // the seam because three call sites had this bug independently.
+        const text = textFromResponse(response).trim();
         const why = text ? '' : ` [no text block: stop_reason=${response.stop_reason}, blocks=${(response.content || []).map((b) => b?.type).join('+') || 'none'}]`;
         process.stderr.write(`  [brief] ${model} done in ${((Date.now() - startMs) / 1000).toFixed(1)}s (${text?.length ?? 0} chars)${why}\n`);
         if (text && text.length > 100) return text.slice(0, 3000); // Cap at 3000 chars

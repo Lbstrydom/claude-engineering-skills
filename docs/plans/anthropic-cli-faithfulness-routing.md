@@ -1080,6 +1080,113 @@ human.
 
 ---
 
+## 7.11 Four coordinator addenda, answered by measurement
+
+### 7.11a The pin turned `max_tokens` from IGNORED into ENFORCED — and killed two sites
+
+**This is a regression this PR introduced**, found by the addendum's question
+rather than by any of the six audit rounds. MEASURED 2026-11-15 against
+`claude-haiku-5-5` on each site's own prompt:
+
+| site | cap | on sdk, measured | consequence |
+|---|---|---|---|
+| `work-unit-labels` | **64** | `stop_reason: max_tokens`, thinking_tokens **64**, **zero text blocks** | **every label underived.** 100% dead |
+| `refine-prompts` | **2000** | `stop_reason: max_tokens`, thinking 1206, text cut mid-sentence | truncated suggestion |
+| `context.mjs` brief | 2000 | thinking 2000, zero text blocks | already fixed in §7.5a |
+| `arm-eval/judge` | 4000 | not re-measured live (Opus spend); it joins ALL blocks so it has no index-0 bug, and §7.11b changes how its failures are recorded | **inferred**, flagged |
+
+On `cli` the cap was **accepted and ignored**, so 64 never bound. The pin makes
+it bind. New caps are measurements, not guesses: labeller 64 → **1000**
+(measured 600 and 1000 both `end_turn`, thinking 149–183; `MAX_LABEL_CHARS`
+bounds what is kept, so a generous cap costs thinking, never a long label);
+refine 2000 → **4000** (measured `end_turn`, thinking 552, 3695 chars complete).
+
+**And the same index-0 bug was at THREE sites**, not one:
+`res.content[0].text` is the THINKING block on a thinking-capable model. One
+reader now lives at the seam — `textFromResponse` — because three spellings of
+one question deserve one answer.
+
+**The generalisable rule: changing which backend serves a call changes which of
+its parameters are ENFORCED, so every cap at a moved site is a new number that
+needs measuring.** I pinned four sites and re-measured one. That is the gap the
+addendum closed.
+
+### 7.11b `unavailable` is not `non-conformant` (judge)
+
+`callJudgeDefault`'s catch returned `{conformant:false, error}` for every throw
+but the egress gate, so a missing credential read as a judgement about the
+judge's OUTPUT. Load-bearing here, not adjacent: the pin makes it reachable on a
+keyless install. `unavailable: true` now propagates out of `judgeSession`;
+`conformant` stays false so every consumer still fails closed. The corrective
+retry is SKIPPED when unavailable — a credential does not appear because the
+prompt was reworded, and the retry doubled the spend on a dead config. A
+positive control asserts a genuinely non-conformant judge still gets its retry.
+
+Scope boundary: `decision.mjs` already returns an EMPTY decision for a
+non-conformant judge rather than a scored-against row, so the per-arm
+conformance rate is not depressed by this. Re-working that accounting to record
+`unmeasured` is a measurement-semantics change on a spend-bearing harness and is
+left out deliberately (§8.6).
+
+### 7.11c Azure: NOT a blocker, proven on the emitted request
+
+`tests/anthropic-pin-on-azure.test.mjs`, asserting on url + headers + body, never
+the client config:
+
+- A site pinned to `{backend:'sdk'}` with **no public `ANTHROPIC_API_KEY`** emits
+  to `https://tenant.openai.azure.com/anthropic/v1/messages` with the **Azure**
+  `api-key`, and `system` survives. The omitted `azureRoute` adopts the tenant
+  route, so a keyless-for-public Azure install is served by Foundry.
+- A stray public key is **not** sent to the tenant endpoint — the 2026-08-13
+  cross-service-credential rule, asserted on the wire.
+- A **misconfigured** profile (endpoint set, credential missing) makes BOTH
+  availability oracles THROW, by design. `isClaudeAvailable()` always did, so
+  the backend-aware oracle did not introduce it; pinned under `work-unit-labels`
+  it degrades inside the existing try, and `refine-prompts` calls it outside one
+  — pre-existing and unchanged. The deliberate refusal to demote to the public
+  endpoint is NOT weakened.
+- **Precedence today, recorded not changed**: ambient `CLAUDE_BACKEND=cli` WINS
+  over an active Azure route, because the route is consulted only once the
+  candidate backend is sdk. So on a tenant with cli set, a serviceable call is
+  spawned against PUBLIC Anthropic while Foundry sits unused — measured, nothing
+  reached the tenant. A pinned site on that same install does reach Foundry,
+  which is why the precedence is survivable today. Left for a policy decision
+  (§8.7).
+
+### 7.11d The refusal set is a DENYLIST, and the fix is a follow-up
+
+Correct and conceded. The cli adapter destructures
+`{model, max_tokens, system, messages}` and discards the rest, so naming three
+params refuses three and lets the next one through by default. Census of every
+`messages.create` body key in the repo (AST, 19 call sites):
+
+| key | sites | cli can represent it |
+|---|---|---|
+| `model` / `max_tokens` / `messages` | 19 | yes |
+| `system` | 10 | passed as `--system-prompt`, then outranked |
+| `tools` / `tool_choice` | 3 | no — refused today |
+| `stream` | 1 | **no — silently dropped** |
+| a spread | 1 | unknowable |
+
+Plus `output_config` (reasoning effort), which is assigned rather than written
+as a literal and so is invisible to that scan — itself an argument for an
+allowlist over a pattern.
+
+**Proposed as a follow-up, not dropped** (§8.8). It flips the seam's refusal
+semantics for every future key, which wants its own audit, and this PR is
+already at the round cap. The cross-backend contract test belongs with it, since
+it asserts the allowlist's contract.
+
+### 7.11e Wording, checked
+
+No doc, error string or comment says cli "ignores" or "drops" `system`; the
+module has always said it is **not honoured as an instruction** because the
+persona and its ~164K context outrank it. One AGENTS.md line lumped `system`
+with the dropped params and now says "dropped or OUTRANKED" with the
+`--system-prompt` fact stated.
+
+---
+
 ## 8. Follow-ups (not this change)
 
 1. **The ~164K prefix tax on every remaining `cli` call** (§2.4) is the larger
@@ -1106,7 +1213,29 @@ human.
    contract-level change: it belongs in one pass over `cli-io.mjs` plus the
    contract text in AGENTS.md, not in a backend-routing PR that would leave one
    file behaving differently from the other 25.
-5. **AGENTS.md has 309 characters of headroom** against its 79,000 cap after
+6. **The judge's conformance ACCOUNTING** — `decision.mjs` returns an empty
+   decision for a non-conformant judge, so an `unavailable` one is not recorded
+   as `unmeasured` either. Changing that is measurement semantics on a
+   spend-bearing harness and wants its own change (§7.11b).
+7. **Ambient `CLAUDE_BACKEND=cli` wins over an active Azure route**, so a
+   serviceable call on a tenant goes to public Anthropic while Foundry sits
+   unused (measured, §7.11c). A policy decision, not a defect. If a refusal is
+   wanted, the faithfulness seam IS the natural home: it already decides
+   per-call from state the caller did not choose, and `reconcileBackendWithBaseUrl`
+   next to it already refuses a cli/destination contradiction — an active route
+   is the same shape of contradiction one level up. It would be a THROW under
+   throw-and-pin, not a coercion, and would need the same per-site pin census
+   this PR did for `system`.
+8. **The refusal set is a DENYLIST; make it an ALLOWLIST** — "is every key on
+   this call one cli can represent", throwing on the first it cannot, so a new
+   SDK parameter is refused by default. Census in §7.11d: `stream` is dropped
+   silently today, and `output_config` is invisible to a literal-key scan. Flips
+   the seam's refusal semantics for every future key, so it wants its own audit;
+   the cross-backend contract test (one call carrying `system`, `tools`,
+   `tool_choice`, `max_tokens` and an unknown key, asserting per backend that
+   each is either in the emitted request or a named error, never silently
+   absent) belongs with it.
+9. **AGENTS.md has 238 characters of headroom** against its 79,000 cap after
    this change (the reshape itself was net +12 chars, having reworded in place
    rather than adding). The gate's own message is the
    finding: *"the next invariant will not fit, and shaving words to squeeze

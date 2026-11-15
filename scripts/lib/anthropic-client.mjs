@@ -165,6 +165,30 @@ function resolveAwsRegion() {
 }
 
 /**
+ * The TEXT a response carries, joined across every text block.
+ *
+ * **`content[0].text` is not the answer.** A thinking-capable model puts a
+ * `thinking` block first, which has no `.text`, so the index-0 read returns
+ * `undefined` from a perfectly good response. Three call sites here had that
+ * bug independently — `context.mjs`'s brief (dead in every audit run),
+ * `work-unit-labels`' labeller and `refine-prompts` — which is three spellings
+ * of one question, so it gets one answer at the seam.
+ *
+ * Returns `''` when the response carries no text block at all. A caller that
+ * needs to know WHY (a `max_tokens` stop, a thinking-only response) reads
+ * `stop_reason` itself: an empty string is the content, not the diagnosis.
+ *
+ * @param {{content?: Array<{type?: string, text?: string}>}} response
+ * @returns {string}
+ */
+export function textFromResponse(response) {
+  return (response?.content || [])
+    .filter((b) => b?.type === 'text')
+    .map((b) => b?.text || '')
+    .join('');
+}
+
+/**
  * Is a Claude client usable right now without throwing at construction?
  *
  * The cli backend authenticates via the `claude` CLI (subscription / Agent SDK

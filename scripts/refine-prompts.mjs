@@ -13,7 +13,7 @@ import { reservoirSample } from './lib/rng.mjs';
 import { PASS_NAMES, learningConfig, briefConfig } from './lib/config.mjs';
 import { refreshModelCatalog } from './lib/model-resolver.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
-import { createAnthropicClient, isClaudeAvailableFor } from './lib/anthropic-client.mjs';
+import { createAnthropicClient, isClaudeAvailableFor, textFromResponse } from './lib/anthropic-client.mjs';
 
 const MIN_EXAMPLES_THRESHOLD = learningConfig.minExamplesThreshold;
 
@@ -158,11 +158,20 @@ async function suggestRefinements(passName, outcomesPath) {
       const anthropic = await createAnthropicClient({ backend: 'sdk' });
       const response = await anthropic.messages.create({
         model: briefConfig.claudeModel,
-        max_tokens: 2000,
+        // 4000, not 2000. Same correction as the labeller and the brief: on
+        // `cli` the cap was ignored, on sdk it is enforced and this model
+        // thinks. MEASURED 2026-11-15 on a representative outcome payload: at
+        // 2000 it returns `stop_reason: max_tokens` with 1206 thinking tokens
+        // and a suggestion cut mid-sentence; at 4000 it is `end_turn` with
+        // thinking 552 and 3695 chars of complete text.
+        max_tokens: 4000,
         system: REFINEMENT_SYSTEM,
         messages: [{ role: 'user', content: `Outcome data:\n\n${statsBlock}${exampleBlock}\n\nSuggest prompt refinements to reduce false positives.` }]
       });
-      suggestion = response.content?.[0]?.text;
+      // The first TEXT block, never `content[0]`: that is the thinking block on
+      // a thinking-capable model, so this read returned `undefined` from a good
+      // response and the refinement silently produced nothing.
+      suggestion = textFromResponse(response) || undefined;
     } catch (err) {
       console.log(`Haiku failed: ${err.message}`);
     }

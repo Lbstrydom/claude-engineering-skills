@@ -91,7 +91,11 @@ export function buildJudgePrompt({ experimentType, blindOutputs, dims, contextPa
  * }} input
  * @returns {Promise<{ presentationOrder:string[], labelToArm:Record<string,string>,
  *   dims:string[], intentDims:'scored'|'unscored', passes:Array<Record<string,Record<string,number>>>,
- *   conformant:boolean, error:string|null }>}
+ *   conformant:boolean, unavailable?:boolean, error:string|null }>}
+ *   `unavailable: true` means NO ANSWER WAS OBTAINED — a transport, credential
+ *   or seam refusal — as opposed to an answer that failed the rubric contract.
+ *   `conformant` is false either way, so existing consumers still fail closed;
+ *   the flag is what lets a reader tell a bad judgement from a dead config.
  */
 export async function judgeSession({ experimentType, outputs, contextPack = null, intentScorable = null, seed = 1, deps = {} }) {
   if (!Array.isArray(outputs) || outputs.length < 2) {
@@ -118,12 +122,29 @@ export async function judgeSession({ experimentType, outputs, contextPack = null
     // dims on a large prompt → a strict-schema reject. Feed the exact validation
     // error back and demand the complete object (honest — never fabricates a
     // score). A second failure is genuinely non-conformant → fail closed.
-    if (!res || !res.conformant || !res.result) {
+    // The corrective retry exists for a model that omitted a rubric dimension.
+    // It is pointless — and doubles the spend — when no answer was obtained at
+    // all: a missing credential does not become present because the prompt was
+    // reworded. Skipped when the judge reported itself UNAVAILABLE.
+    if ((!res || !res.conformant || !res.result) && !res?.unavailable) {
       const correctivePrompt = buildJudgePrompt({ experimentType, blindOutputs, dims, contextPack: scorable ? contextPack : null, corrective: res?.error || 'the prior JSON was incomplete or invalid' });
       res = await d.callJudge({ prompt: correctivePrompt, schema, labels, dims, pass, retry: true });
     }
     if (!res || !res.conformant || !res.result) {
-      return { presentationOrder, labelToArm, dims, intentDims: scorable ? 'scored' : 'unscored', passes, conformant: false, error: res?.error || `judge pass ${pass} non-conformant` };
+      // `unavailable` PROPAGATES, so a reader of the session can tell a judge
+      // that scored badly from one that never ran. Without it both arrive as
+      // `conformant: false` with a prose `error`, and only the prose
+      // distinguishes them — which is not a field anything can key on.
+      return {
+        presentationOrder,
+        labelToArm,
+        dims,
+        intentDims: scorable ? 'scored' : 'unscored',
+        passes,
+        conformant: false,
+        ...(res?.unavailable ? { unavailable: true } : {}),
+        error: res?.error || `judge pass ${pass} non-conformant`,
+      };
     }
     // Fold into label→dims→score.
     const byLabel = {};
@@ -210,6 +231,19 @@ async function callJudgeDefault({ prompt, schema }) {
     // An egress-gate refusal MUST surface loudly — never degrade a secret-carrying
     // payload into a benign "non-conformant" result (mirrors the shadow's rule).
     if (err && typeof err.message === 'string' && err.message.includes('[egress-gate]')) throw err;
-    return { conformant: false, result: null, error: err.message, latencyMs: Date.now() - start };
+    // UNAVAILABLE is not NON-CONFORMANT. Every throw here used to be recorded as
+    // `conformant: false`, i.e. as a judgement about the judge's OUTPUT — so a
+    // missing credential, a refused route or a seam refusal all read as "the
+    // judge failed to conform", which is the same conflation (a transport
+    // failure wearing a result's clothes) that this change exists to end one
+    // layer down. The flag says which it was; `conformant` stays false so every
+    // existing consumer still fails closed.
+    return {
+      conformant: false,
+      unavailable: true,
+      result: null,
+      error: err.message,
+      latencyMs: Date.now() - start,
+    };
   }
 }
