@@ -1,7 +1,7 @@
 {
   "version": 1,
   "gate": "anthropic:pin:gate",
-  "guards": "every construction of a Claude client that sends `system`, `tools` or `tool_choice` carries a `{backend:'sdk'}` pin, or is enumerated in the committed `.anthropic-pin-census.json` with a reason",
+  "guards": "every construction of a Claude client whose request carries a param the cli backend cannot serve — an ALLOWLIST of `model`/`max_tokens`/`messages`, so any other param counts, named or not — has a `{backend:'sdk'}` pin, or is enumerated in the committed `.anthropic-pin-census.json` with a reason",
   "gates": [
     {
       "id": "anthropic-pin-gate-detects-an-unpinned-system-call",
