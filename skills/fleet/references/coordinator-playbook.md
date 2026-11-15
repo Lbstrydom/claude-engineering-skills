@@ -81,7 +81,13 @@ EVERY store the consumers use before fast-forwarding; otherwise the next consume
 fails its schema precondition. If you fast-forwarded too early, roll back with
 `git reset --keep <previous-sha>` and migrate first.
 
-## 5. Before rebasing onto a moved main: look for competing implementations
+## 5. Before updating a branch from a moved main: look for competing implementations
+
+**Merge `main` into the branch by default; rebase only as the exception.** A host's
+auto-fix mode can forbid rebase and force-push on its PR. A session told to rebase there
+must either break that rule or improvise, so ask for a merge of `origin/main`. Its tests
+must then cover the merged tree, not the pre-merge one. The squash merge
+flattens the merge commit anyway.
 
 A concurrent session can implement the SAME feature and land it on main while you work —
 worse than a conflict, because both sides may apply cleanly into duplicate code. Before
