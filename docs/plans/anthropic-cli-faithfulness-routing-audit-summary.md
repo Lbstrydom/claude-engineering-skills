@@ -1,112 +1,99 @@
-# Audit summary — anthropic-cli-faithfulness-routing
+# Audit summary — anthropic-cli-faithfulness-routing (THROW AND PIN rework)
 
 - **Plan**: [`anthropic-cli-faithfulness-routing.md`](anthropic-cli-faithfulness-routing.md)
-- **Date**: 2026-11-14 → 2026-11-15
-- **Session**: `audit-code-1794695240854-77644`
-- **Scope**: `--scope diff` (R1), then R2+ diff-scoped per round
-- **Cloud run id** (final round): `a85b36a0-7368-4f48-a152-a9e6c011d0a9`
+- **Date**: 2026-11-15
+- **Session**: `audit-code-1794726002780-79060`
+- **Scope**: `--scope diff` (R1 over `a4697858`), then R2+ diff-scoped per round
+- **Audited head**: `db775bdd` (final-review marker: run `9c1a3b3e`, tree `5149eb18`)
 
-## CONVERGED — Round 6
+## CAPPED at round 6 — NOT converged
 
 | | |
 |---|---|
-| Final | **H:0 M:0 L:0** |
-| Rounds | 6 (cap 6; R5 and R6 both threshold-met, R6 with zero findings) |
-| Findings total | 19 across 6 rounds |
-| Disposition | 14 accepted+fixed · 2 severity-adjusted+fixed · 3 dismissed |
+| Final round | **H:3 M:5 L:0** against a threshold of `H==0 && M<=2` |
+| Rounds | 6 of 6 (the cap). Continuing is the operator's call |
+| Findings total | 103 across 6 rounds |
 | File coverage | `complete` every round |
-| Local gate | `guards:preflight` PASS, 35/35 steps, 2591 tests |
+| Final gate | **Gemini `gemini-4-argon`: APPROVE**, `gateDisposition: approve`, 0 blocking, **1 LOW debt finding (fixed)** |
+| Gate code coverage | **PARTIAL — 1917 of 2657 changed lines never shown** |
+| Local gate | `guards:preflight` PASS, 36 steps, 2723 tests |
 
 ### Per-round
 
-| round | verdict | H | M | L | coverage |
+| round | verdict | H | M | L | the concern |
 |---|---|---|---|---|---|
-| R1 | SIGNIFICANT_ISSUES | 5 | 1 | 0 | complete |
-| R2 | SIGNIFICANT_ISSUES | 2 | 2 | 2 | complete |
-| R3 | SIGNIFICANT_ISSUES | 3 | 1 | 0 | complete |
-| R4 | PASS | 0 | 2 | 0 | complete |
-| R5 | PASS | 0 | 1 | 0 | complete |
-| R6 | PASS | 0 | 0 | 0 | complete |
+| R1 | SIGNIFICANT_ISSUES | 19 | 12 | 1 | 4 fail-open holes in the new gate + a dead brief leg + 17 pre-existing solo-control findings |
+| R2 | SIGNIFICANT_ISSUES | 4 | 8 | 1 | the fail-closed pass was itself fail-open; 3 of my new tests vacuous |
+| R3 | SIGNIFICANT_ISSUES | 4 | 6 | 0 | **pivot threshold** — regex cannot do this job |
+| R4 | SIGNIFICANT_ISSUES | 7 | 5 | 1 | AST-level fail-opens, 2 against the module's own docstrings |
+| R5 | SIGNIFICANT_ISSUES | 6 | 3 | 0 | control flow, spellings, provenance |
+| R6 | SIGNIFICANT_ISSUES | 3 | 5 | 0 | 2 regressions I introduced in R5 + 1 declared limit |
 
-R4 and R5 met the convergence threshold (`H==0 && M<=2 && quickFix==0`) but
-their findings were fixed rather than accepted, because both said a guard in
-this change did not guard — see §6.F of the plan.
+## The honest shape of this audit
 
-## CENSUS — final round (R6)
+**Every round found a real fail-open, and four of the six found one I had
+introduced while fixing the previous round.** That is the record, and it is the
+reason the cap handed the decision to a human rather than my declaring
+convergence.
 
-| identifier | state | reason |
-|---|---|---|
-| `backend` | completed | ran; 0 findings |
-| `sustainability` | completed | ran; 0 findings |
-| `structure` | ineligible | not selected for R2+; `--files` overrides `--scope`, and R2+ scope is the round's diff. Ran in full at R1 |
-| `wiring` | ineligible | as `structure` |
-| `frontend` | ineligible | backend-only diff; no frontend surface in scope any round |
-| `quickfix` | completed | ran at R1–R3 (raised H4/H5 at R1); 0 at R6 |
-| `duplication` | completed | JS/TS diff, examined |
-| `adjacency` | completed | JS/TS diff, examined |
-| `arch-memory` | ineligible | `--scope=diff`; the symbol catalogue is a `--scope=full` input (Step 0.5) |
-| `file coverage` | completed | `_coverage.status: complete`, `gate: pass`, every round |
-| tool pre-pass (`eslint`) | `no_tool` | **not a clean lint** — no eslint project resolved in this repo, so nothing was linted |
+What changed across the rounds is the argument for stopping:
 
-`structure`/`wiring`/`frontend` are `ineligible` for R2–R6 by the skill's own
-R2+ rule, not skipped by choice; R1 ran all five passes. The `eslint` row is
-`no_tool`, which is explicitly not a clean result.
+- **R1–R3** produced shapes with no principled enumeration (shorthand, spreads,
+  duplicate keys, nesting depth) — the signature of the wrong tool.
+- **R3** hit the pivot rule. The census now parses, via the shared
+  `scripts/lib/ast.mjs` that five other gates here already use. My twice-made
+  argument that a parser was over-engineering was **false on the facts**, not a
+  judgement call that went the other way.
+- **R4–R5** produced "this node type also assigns the key" — answerable against
+  the grammar.
+- **R6** produced two over-broad matches of my own making plus one limit that
+  needs dataflow and is now declared rather than patched.
 
-## What each round found, and what its fix missed
+The defect CLASS is converging even though the count is not.
 
-The same Silent-Data-Loss concern was raised in four consecutive rounds, each
-time against the previous round's fix. That sequence is the most useful output
-of this audit and is written up as plan §6.F.
+## Not verified / stated plainly
 
-| round | defect | the fix's blind spot |
-|---|---|---|
-| R1 | `summariseBatch` read neither `stop_reason` nor the entry count | — |
-| R2 | the oracle treated a full slate of entries as clearing a `max_tokens` stop, **and the test asserted it** | a populated slot is not a *finished* one |
-| R3 | the verdict was computed, logged, then **discarded**; `main()` re-derived `complete` from a null count | two places computing one answer (single-oracle) |
-| R4 | the propagation tests never executed `summariseBatch` or `main()` | **the guard's stated subject was a layer it never ran** |
-| R5 | the integration helper had no subprocess timeout | a hang would read as unrelated flakiness, not a defect |
+- **Round 6 did not converge.** The structural-or-stop card reports **5
+  structural clusters of 89**, all the census's control-flow analysis;
+  `anthropic-pin-census.mjs` was raised in 6 rounds, `work-unit-labels.mjs` in 4.
+- **The round-6 fixes are UNAUDITED** — written after the final round, at the
+  cap. Four negative controls fire and the suite is green; no adversarial pass
+  has read them.
+- **The Gemini gate saw PARTIAL code coverage**: 6/26 changed files rendered
+  whole, 1917 of 2657 changed lines never shown. Its APPROVE is therefore an
+  approval of what it was shown, not of the whole diff. Said here because a gate
+  verdict quoted without its coverage is the exact false-green this repo's own
+  discipline warns about.
+- The **full** test suite ran only in `guards:preflight`; the whole suite runs
+  in the GitHub `full-suite` check on the PR.
+- The **consumer-synced bundle is unverified** — nothing is merged, and both
+  `anthropic-cli-faithfulness.mjs` and `anthropic-pin-census.mjs` are new lib
+  modules in the sync closure.
+- No `docs/status/` entry: that is `/ship` time, with the PR number.
 
-**Rule extracted**: a check that agrees with the thing it was meant to check
-independently has stopped being a check. R2 was an implementation and its test
-agreeing; R4 was a test suite whose comment claimed a layer it never executed.
-Both passed. Only reverting at the *right layer* separates them.
+## Negative controls — 27 run across six rounds, every one seen to fail
+
+| round | controls (failures / suite) |
+|---|---|
+| seam | oracle neutered 11/27 · seam swallows the verdict 7/27 · planted unpinned+`system` file turns the gate RED (exit 1), removing it restores green |
+| R1 | eager labeller 2/24 · no shorthand 2/40 · no spread guard 1/40 · trusted indirect pin 2/40 · no count check 3/40 |
+| R2 | first-match-wins 1/52 · trusted `used` 1/52 · no digest check 2/52 · eager provider 4/27 |
+| R3 | flattened nesting 1/74 · shorthand ignored 1/74 · literal whitespace stripped 4/74 · unparsed-reads-clean 1/74 · swallowed provider error 1/28 |
+| R4 | skip computed keys 2/96 · pin anywhere in the factory 4/96 · no aliases 2/96 · no dynamic-key fail-closed 1/96 · no computed params 3/96 · comma folded in literals 1/96 · truthiness-keyed error 2/32 |
+| R5 | bare return 1/110 · implicit fallthrough 1/110 · no bracketed spelling 1/110 · no provenance 2/110 · no spread rule 1/110 · unguarded `String(err)` 1/32 |
+| R6 | last-statement-only 4/128 · any-`create` 2/128 · no namespace 1/128 · no receiver provenance 2/128 |
+
+Two controls had to be **re-run** after they were found not to have mutated the
+file at all, and one (R4's throw-vs-absence) **would not go red** — which
+exposed two mechanisms covering one question. That one is written up as plan
+§7.8a: *if a negative control will not fire, look for the second mechanism
+rather than weakening the control.*
 
 ## Adjudicated against the auditor
 
-| finding | ruling | outcome |
+| concern | ruling | outcome |
 |---|---|---|
-| R1 H2/H4 — `max_tokens` accepted-but-unenforced on cli | **compromise** (GPT deliberation, HIGH→MEDIUM) | The description was accepted; the recommendation ("refuse when `max_tokens` is supplied") was arithmetically "always sdk", since the Messages API requires it and all 17 ambient sites set it, and would have required deleting the `BILLING PIN` control. GPT's counter — an operator-level strict path — was better than the rebuttal's position and was adopted as `CLAUDE_CLI_STRICT_MAX_TOKENS`, default off |
-| R2 L1/L2 — `process.exit(2)` vs the drain convention | dismissed, false-positive | The cited invariant names "a `stderr` write before an exit" as its own deliberate non-finding (`AGENTS.md:98`); the branch writes to stderr, so there is no stdout buffer to drain |
-| R3 H2 — missing `--selfcheck-relocation` | dismissed, false-positive | Verified in the enforcing code: `relocation-guard.test.mjs` iterates `CLI_SMOKE_SET` joined against `scripts/`, the contract covers consumer-synced CLIs, and the sibling `docs/research/out-of-diff-noise-campaign/replay.mjs` carries no handler either |
-
-## Negative controls (all run, none assumed)
-
-| revert | result |
-|---|---|
-| `unserviceableCliParams` → `null` | 13 of 19 fail; the 5 must-not-fire cases stay green |
-| `strictMaxTokensRequested` → `false` | 4 of 27 fail (the strict-path tests) |
-| `strictMaxTokensRequested` → `true` | 9 of 27 fail — the `BILLING PIN` and default-serviceable tests, i.e. the direction it must **not** fire |
-| `assessBatchCompleteness` → always complete | 7 of 15 fail |
-| `complete` → `missing.length === 0` (the pre-R2 defect) | 2 fail, by name |
-| `main()` recomputes `complete` from the null count | integration suite **fails**; unit suite passes 19/19 — the asymmetry R4 predicted |
-| `incompleteBatches++` removed | integration suite fails 2 |
-| a provider that hangs forever | `ETIMEDOUT` + SIGKILL at the cap, named in the failure |
-
-## A figure that corrected itself
-
-Re-running the committed harness produced a **5th** sdk sample of **1308**
-output tokens, 14% above the 1146 maximum from the first four. The audit's "four
-samples do not establish that every batch fits" was therefore right on this
-plan's own numbers; `TOKENS_PER_SYMBOL` went 192 → 256 and the plan records the
-correction rather than re-fitting the range.
-
-## Not verified here
-
-- The **full** test suite ran only in `guards:preflight` (35 gates, 2591 tests).
-  The whole suite runs in the GitHub `full-suite` check on the PR.
-- The **consumer-synced bundle is unverified** — nothing is merged, and
-  `scripts/lib/anthropic-cli-faithfulness.mjs` is a new lib module in the sync
-  closure. After merge, confirm it reaches a consumer with
-  `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in that
-  consumer's MAIN checkout.
-- No `docs/status/` entry: that is written at `/ship` time with the PR number.
+| refuse `max_tokens` at the seam (3 raises) | **compromise** | Class accepted, recommendation rejected: refusing on a param every caller sets is arithmetically "cli is never usable". Closed where it was MEASURED instead — the audit's own `[brief]` step, dead on both transports since before this change |
+| use a JS parser (5 raises over 3 rounds) | **conceded at R3** | I was wrong twice. The repo already parses in five gates |
+| `--selfcheck-relocation` ordering (2 raises) | **dismissed, false positive** | Verified in the enforcing code: all 26 CLIs do this and AGENTS.md specifies it. A repo-wide contract change, recorded as plan §8.4 |
+| 17 solo-control-audit findings | **deferred, independence stated** | 27 lines touched in a 2,480-line file; none of the cited code reads the transport selection or shares a column, constraint or transaction with it |
