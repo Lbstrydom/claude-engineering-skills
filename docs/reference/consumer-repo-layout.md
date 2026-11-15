@@ -225,3 +225,37 @@ it is committed because **its dirtiness is the only evidence a sync ran**, the
 sync never commits on the consumer's behalf. It is append-only (newest-first)
 because a second sync used to erase the first, which is precisely the evidence
 the file exists to preserve.
+
+---
+
+## The CLI smoke contract (`--selfcheck-relocation`)
+
+> Condensed out of `AGENTS.md` on 2026-11-15; the two imperatives (implement the
+> handler in `CLI_SMOKE_SET` scripts; use `isInvokedAsScript`, never a hand
+> comparison) stay resident there.
+
+A synced CLI runs from a **different absolute path** than the one it was written
+at, so every top-level CLI script that needs to prove its imports survive
+relocation implements, at the head of `main()`:
+
+```js
+if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+```
+
+Today: `check-setup.mjs`, `doctor.mjs`, `cross-skill.mjs`, plus the others in
+`CLI_SMOKE_SET`. The CI guard fails if a `CLI_SMOKE_SET` script lacks the handler.
+Library modules (no `main()`) cannot carry it, so they get an import-test in
+[`tests/relocation-guard.test.mjs`](../../tests/relocation-guard.test.mjs) instead.
+
+### The entry guard is `isInvokedAsScript`, never a hand comparison
+
+The guard itself is `if (isInvokedAsScript(import.meta.url))`
+([cli-entry.mjs](../../scripts/lib/cli-entry.mjs)). A hand comparison of
+`process.argv[1]` with `import.meta.url` is wrong: Node realpaths one side and
+not the other, so **through a symlink or junction the hand guard is false and the
+CLI exits 0 having run nothing** — 16 of 26 did, measured 2026-10-13.
+
+No smoke run goes through a link, so the smoke contract above cannot catch this.
+The census in [`tests/cli-entry-guards.test.mjs`](../../tests/cli-entry-guards.test.mjs)
+is what enforces it — the filesystem is the only side that can see a script no
+list mentions.

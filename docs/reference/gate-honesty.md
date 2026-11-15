@@ -72,6 +72,58 @@ invalid — never silently accepted. One shared `validateGateContract`
 (`scripts/lib/gate-honesty/schema.mjs`) enforces this for the loader, the
 test suite, and `check-gate-contracts.mjs` alike — no drift between callers.
 
+### `stated` is a VERBATIM quote — the mechanical do-not-condense list
+
+`stated` must appear **character-for-character** in `statedIn` —
+`fileTextContains` is an EOL-normalised plain substring test, with no fuzzy
+match, no whitespace folding and no markdown awareness.
+`check-gate-contracts.mjs` fails with "not found verbatim — prose/contract have
+drifted" on any rewording, and it runs inside `npm run check`.
+
+**The subtlest way to break one is markdown emphasis**, because the `*`
+characters are part of the substring and are invisible when you read the
+rendered file. A contract quoting
+
+```text
+generated copy — run `npm run skills:regenerate`
+```
+
+is NOT satisfied by prose that reads
+
+```markdown
+`.claude/skills/<name>/` is the **generated copy** — run `npm run skills:regenerate`
+```
+
+— the `**` sits between `generated copy` and the space, so the substring is
+absent. Moving emphasis onto an adjacent phrase, or re-wrapping a line so a
+quoted span breaks across two lines with different leading indentation, breaks a
+quote just as surely as rewording it. This cost one of the 15 breakages below,
+and it is the failure most likely to bite a prose reflow.
+
+That makes every `statedIn: AGENTS.md` quote a **do-not-condense list the
+always-loaded file does not advertise** — and unlike a judgement call about what
+is a tripwire, a gate cannot forget. **Measured 2026-11-15: 26 gates quote
+AGENTS.md, and a single condensation pass broke 15 of them** (the other 11
+survived only because that pass happened not to reflow their lines) — so treat
+the whole 26 as pinned, not the subset that failed last time. Rewording a pinned
+sentence is a decision to re-word the contract too, not a copy-edit.
+
+**List them before editing AGENTS.md** (prints `id` + the exact quoted text):
+
+```bash
+node -e "for (const p of require('fs').globSync('{skills/*,scripts/gate-contracts}/*.json')) for (const g of (require('./'+p).gates||[])) if (g.statedIn==='AGENTS.md') console.log(p, '|', g.id, '|', JSON.stringify(g.stated))"
+```
+
+**Do not pipe that through `head`, and do not truncate its output.** The list is
+the whole point, and a short read of it under-reports what is pinned — on
+2026-11-15 a reviewer piped it `| tee file | head -5`, `head` closed the pipe and
+SIGPIPE'd the writer mid-stream, 11 of 26 lines reached the file, and a correct
+count of 26 was nearly "corrected" to 11. Redirect to a file or read it whole,
+then count.
+
+Restore a broken quote to its exact prior wording (`git show HEAD~1:AGENTS.md`)
+rather than editing the contract, unless the gate's meaning genuinely changed.
+
 ## Oracle registry (v1, closed set)
 
 A plain `Map` + four adapter functions

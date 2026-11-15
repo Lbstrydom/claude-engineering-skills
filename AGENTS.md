@@ -9,14 +9,19 @@
 > session, so size is a cost.** Subsystem-grade operational detail (connection
 > recipes, env tables, migration mechanics) belongs in `docs/` with a short
 > *what-it-is / when-you-need-it / pointer* stub here, mirroring the skill
-> `SKILL.md ≤3K + references/` progressive-disclosure pattern. Same "avoid the
-> messy middle" discipline as the generated-artifact policy below, applied to this
-> file itself. **Enforced since 2026-07-13**: `npm run context:check` (run by
-> the pre-push hook and `/ship` Step 4) fails on `ctx/oversized-agents-md`
-> when this file exceeds **79000 characters** (characters, not lines, since
-> 2026-08-01 — rationale at `DEFAULT_MAX_AGENTS_MD_CHARS` in
-> `scripts/check-context-drift.mjs`) — condense a dossier section to a stub +
-> `docs/<topic>.md` rather than raising the cap.
+> `SKILL.md ≤3K + references/` pattern. **Enforced since 2026-07-13**: `npm run context:check` (run by
+> the pre-push hook and `/ship` Step 4) fails on
+> `ctx/oversized-agents-md` above **79000 characters**
+> (`DEFAULT_MAX_AGENTS_MD_CHARS` in `scripts/check-context-drift.mjs`) — condense
+> a dossier section to a stub + `docs/<topic>.md` rather than raising the cap.
+>
+> **The test for a line: would an agent that never opens the linked doc still
+> avoid the mistake?** A line that *describes* a subsystem moves; a **tripwire**,
+> one that stops a mistake an agent would make unprompted, stays resident whatever
+> its section's size — shortened, not relocated. **And 26 sentences here are
+> quoted character-for-character by gate contracts** (`statedIn: AGENTS.md`), so
+> `npm run check` fails on any rewording: list them before editing —
+> [gate-honesty.md](docs/reference/gate-honesty.md) §`stated` is a VERBATIM quote.
 
 <!-- arch-map-discoverability:start -->
 > **Architecture map**: [`docs/architecture-map.md`](docs/architecture-map.md)
@@ -28,87 +33,82 @@
 > documents each domain as a `### \`<domain>\`` heading; **This doc + `.audit-loop/domain-map.json` together enforce**
 > that the two agree. `npm run docs:architecture-intent:check` (in the pre-push
 > `check`) fails when the map declares a domain the doc never documents — the
-> reverse is never flagged, since the doc may retain retired domains as
-> rationale.
+> reverse is never flagged, since the doc may retain retired domains as rationale.
 >
-> **Bootstrap / refresh order** — when the map is stale, missing, or after
-> editing [`.audit-loop/domain-map.json`](.audit-loop/domain-map.json):
-> `npm run dashboard:setup` (chains `arch:refresh` → `arch:render` →
-> `dashboard:build`). Editing `domain-map.json` alone does not retag existing DB
-> rows (re-tagging happens in `arch:refresh` against the symbol_index table) —
-> always start with `arch:refresh` after a rename. **Ownership is automatic**: an
-> incremental re-asks the ownership oracle about the rows it CARRIES, and an
-> `OWNERSHIP_RULE_EPOCH` change promotes the next run to a full walk.
+> **Bootstrap / refresh order** — stale or missing map, or after editing
+> [`.audit-loop/domain-map.json`](.audit-loop/domain-map.json): `npm run
+> dashboard:setup`. **Editing `domain-map.json` alone does not retag existing DB
+> rows** (re-tagging happens in `arch:refresh` against `symbol_index`) — always
+> start with `arch:refresh` after a rename. An `OWNERSHIP_RULE_EPOCH` change
+> promotes the next run to a full walk.
 >
-> **Two-layer dependency model**: **Observed** (DB import graph →
-> `.audit-loop/domain-deps-observed.json`, regenerated each `arch:render`,
-> gitignored — what code *actually* imports) + **Manual** (`allowedDeps` in the
-> committed `domain-map.json` — intent the graph cannot see). The dashboard merges
-> both with per-edge provenance; manual entries are NOT a fallback, and a stale
-> observed envelope is rejected. **Coverage honesty**: the envelope carries a
-> `coverage` verdict counting what the graph DROPPED; absent reads `unknown`,
-> never clean. `npm run arch:coverage-gate` owns the exit code — in `check`, NOT
-> `dashboard:setup`. [Detail](docs/reference/architecture-index.md) ·
+> **Two-layer dependency model** — **Observed** (the DB import graph, gitignored:
+> what code *actually* imports) + **Manual** (`allowedDeps` in the committed
+> `domain-map.json`: intent the graph cannot see). Manual entries are NOT a
+> fallback, and a stale observed envelope is rejected. **Coverage honesty**: the
+> envelope carries a `coverage` verdict counting what the graph DROPPED; absent
+> reads `unknown`, never clean. `npm run arch:coverage-gate` owns the exit code —
+> in `check`, NOT `dashboard:setup`.
+> [Detail](docs/reference/architecture-index.md) ·
 > [Design](docs/plans/observed-graph-coverage-honesty.md)
 >
 > **THE CORPUS IS THE REPO, NOT THE DISK — and dep-cruiser's extension list is a
 > QUESTION, not a constant.** The index walked the filesystem against a fixed
-> `SKIP_DIRS` and never asked git, so gitignored-and-untracked files (this
-> bundle's own `scripts/.claude-skills/` among them) were indexed as a consumer's
-> code; and `CRUISABLE_EXTENSIONS` *claimed* `.ts`/`.vue` parseable when
-> dep-cruiser could not resolve `typescript`, so `arch:drift` printed
+> `SKIP_DIRS` and never asked git, so gitignored-and-untracked files were indexed
+> as a consumer's code; and `CRUISABLE_EXTENSIONS` *claimed* `.ts`/`.vue` parseable
+> when dep-cruiser could not resolve `typescript`, so `arch:drift` printed
 > `Layering violations: 0` — *nothing measured*, worded as *no violations*.
 > `enumerateFilesWithOwnership` now asks the one oracle
 > ([disowned-paths.mjs](scripts/lib/disowned-paths.mjs): **ignored AND untracked**,
 > of the CANDIDATES, fail-open and loud) and `assessParserAvailability` asks the
-> parser. **Generalise: before a walk or an allowlist decides what a repo
-> contains, ask what already knows — git for ownership, the parser for its own
-> capability.** Measurements: [architecture-index.md](docs/reference/architecture-index.md).
+> parser. **Generalise: before a walk or an allowlist decides what a repo contains,
+> ask what already knows — git for ownership, the parser for its own capability.**
+> [Measurements](docs/reference/architecture-index.md).
 >
 > **RETAGGING A MODULE CHANGES EVERY EDGE *INTO* IT — re-baseline BOTH
 > directions.** Moving a file to another domain changes the `from` domain of
-> everything it imports *and* the `to` domain of everything that imports it — the
+> everything it imports *and* the `to` domain of everything that imports it; the
 > second half is invisible from the file you are editing, and three retags in four
-> days (`d5e66d35` and `a146bb7b` among them) forgot it. Do not verify by grep — a
-> docstring mention reads as an import. Run the mechanical check:
-> `tests/arm-vocabulary-layering.test.mjs` re-derives the whole violation set and
-> is in `npm test`, so a retag that breaks the inbound half fails at push.
-> Detail: [god-module-and-layering-debt.md](docs/plans/god-module-and-layering-debt.md) §1.2.
+> days (`d5e66d35`, `a146bb7b`) forgot it. Do not verify by grep — a docstring
+> mention reads as an import. `tests/arm-vocabulary-layering.test.mjs` re-derives
+> the whole violation set and is in `npm test`, so a retag that breaks the inbound
+> half fails at push.
+> [Detail](docs/plans/god-module-and-layering-debt.md) §1.2.
 
 > **An ignored path declares WHY it is ignored, and a private one declares where
-> it durably lives.** The two categories below cover *generated* files. A third,
+> it durably lives.** The two categories below cover *generated* files; a third,
 > **P — private and load-bearing**, covers what is neither generated nor
-> publishable: it must never be public, cannot be regenerated, and therefore
-> owes a `Durable home:` (skipping that question left 37 tech-debt entries on
-> exactly one disk). Declared in `.gitignore`'s own comment blocks
-> (`Category: A|B|P`, plus `Durable home:` / `Recoverable:` / `Disposable:` for P),
-> gated drift-only by `npm run gitignore:policy:gate`. Policy + the per-rule table:
-> [`docs/reference/gitignore-policy.md`](docs/reference/gitignore-policy.md).
+> publishable: never public, not regenerable, and therefore owing a
+> `Durable home:` (skipping that question left 37 tech-debt entries on exactly one
+> disk). Declared in `.gitignore`'s own comment blocks (`Category: A|B|P`, plus
+> `Durable home:` / `Recoverable:` / `Disposable:` for P), gated drift-only by
+> `npm run gitignore:policy:gate`. Policy + per-rule table:
+> [`gitignore-policy.md`](docs/reference/gitignore-policy.md).
 >
 > **An exit that stdout can reach must drain first.** On Windows a piped
 > `process.stdout` is asynchronous — `npm run x`, `x | tee` and every CI capture
 > are pipes — so `process.exit()` **discards whatever has not flushed**, and a
-> truncated JSON envelope a caller parses reads as a parse error blamed on the
-> wrong thing. Use **`await finishAndExit(code)`** ([cli-io.mjs](scripts/lib/cli-io.mjs))
+> truncated JSON envelope reads to its caller as a parse error blamed on the wrong
+> thing. Use **`await finishAndExit(code)`** ([cli-io.mjs](scripts/lib/cli-io.mjs))
 > after writing to stdout. In a **synchronous** function it cannot be awaited: hand
-> the decision to the async caller, and never fire `void finishAndExit(code)`
-> and fall through — that returns immediately and the exit still truncates.
+> the decision to the async caller, and never fire `void finishAndExit(code)` and
+> fall through — that returns at once and the exit still truncates.
 > `npm run stdout:flush:gate` ratchets the population drift-only (growth AND
-> unrecorded shrink fail; `--report` for the triaged census). Deliberate
-> non-findings: a `stderr` write before an exit, and the `--selfcheck-relocation`
-> smoke contract's exact two-statement body.
+> unrecorded shrink fail; `--report` for the triaged census; deliberate
+> non-findings are a `stderr` write before an exit and the `--selfcheck-relocation`
+> two-statement body).
 > [Census](docs/reference/ratchet-gates.md) · [Plan](docs/plans/stdout-flush-drain-gate.md)
 >
 > **A figure compared over time is a trend only if the population is stable.**
-> `unremediated_acceptances` is a 7–30 day window on `audit_runs.created_at` and
-> `unlocked_fixes` a 14-day one, so its 116 → 47 fall over five weeks was rows
-> **aging out**: the two windows shared **0** rows and **110 of the 116** were still
-> open. Both figures reproduced exactly — reproducing a figure cannot detect that
-> the population under it rotated. The mechanical test is whether the reader's
-> result depends on `now()`. Every such view is derived from the migrations
-> (windowedness **propagates**: the view at the centre of this names no clock at
-> all) and must declare its window in `.windowed-views.json`, gated drift-only by
-> `npm run windowed-views:gate`. [§7](docs/plans/standing-queue-burndown.md) ·
+> `unremediated_acceptances` is a 7–30 day window on `audit_runs.created_at`, so
+> its 116 → 47 fall over five weeks was rows **aging out** — the two windows shared
+> **0** rows and **110 of the 116** were still open, and both figures reproduced
+> exactly: reproducing a figure cannot detect that the population under it rotated.
+> The mechanical test is whether the reader's result depends on `now()`.
+> Windowedness **propagates** (the view at the centre of this names no clock at
+> all), so every such view must declare its window in `.windowed-views.json`,
+> gated drift-only by `npm run windowed-views:gate`.
+> [§7](docs/plans/standing-queue-burndown.md) ·
 > [discipline](docs/audit/shared-references/verification-discipline.md) §4a.
 >
 > **Oversized files may not grow.** `npm run size:ratchet:gate` ratchets every
@@ -118,11 +118,12 @@
 > a file grow back unchallenged. [Measurement](docs/reference/ratchet-gates.md).
 >
 > **A capture column with no coverage entry is a column nobody will notice stops filling.**
-> `.own-model-coverage.json` tracks the own-model telemetry columns with hand-set floors;
-> `npm run own-model:coverage:gate` (offline, in `check`) fails when an entry names a column
-> the schema fixture lacks or a nullable column a covered migration added has no entry or
-> reasoned exemption, and `own-model:coverage` is the live drift check (zero eligible rows is
-> `unmeasured`, never green). [Plan](docs/plans/own-model-telemetry-pr3.md)
+> `.own-model-coverage.json` tracks the own-model telemetry columns with
+> hand-set floors; `npm run own-model:coverage:gate` (offline, in `check`) fails
+> when an entry names a column the schema fixture lacks, or a nullable column a
+> covered migration added has no entry or reasoned exemption. `own-model:coverage`
+> is the live drift check — **zero eligible rows is `unmeasured`, never green**.
+> [Plan](docs/plans/own-model-telemetry-pr3.md)
 >
 > **Skill markdown may not grow.** `npm run skills:size:gate` ratchets every
 > `skills/**/*.md` (and the canonical shared references, never the generated copies)
@@ -135,65 +136,55 @@
 > generated file lands in exactly ONE of two categories; never tracked-but-
 > unverified-and-volatile:
 > - **A — derived from external/mutable state OR carrying volatile provenance
->   (timestamps, HEAD shas) → gitignored.** It is not source and cannot be a
->   pure function of committed source. Examples: `.audit-loop/domain-deps-observed.json`,
->   `.audit-loop/cache/`, `dashboard/index.html` + `dashboard/telemetry.html`
->   (rebuilt by `npm run dashboard`), `scripts/.sync-manifest.json` (timestamp +
->   HEAD sha ⇒ per-push churn), `docs/architecture-map.md` (timestamp + commit
->   sha + LLM-written summaries, rendered from the CLOUD symbol_index;
->   regenerate with `npm run arch:render`), `skills.manifest.json` (a build output
->   nothing reads from git; `release.yml` builds it where it is used — 9 of 16 PR
->   main-merges conflicted on its `bundleVersion` line).
+>   (timestamps, HEAD shas) → gitignored.** Not source, and not a pure function of
+>   committed source: `.audit-loop/domain-deps-observed.json`, `.audit-loop/cache/`,
+>   `dashboard/*.html`, `scripts/.sync-manifest.json`, `docs/architecture-map.md`
+>   (regenerate with `npm run arch:render`), `skills.manifest.json`.
 > - **B — a pure, deterministic function of committed source → committed AND
->   freshness-verified in the pre-push `check`.** Regeneration must be byte-
->   identical (no clocks/shas/network). Example: `.claude/skills/**` (regen by
->   `skills:regenerate`, enforced by `skills:check`); `docs/plans/README.md`, the
+>   freshness-verified in the pre-push `check`.** Regeneration must be
+>   byte-identical (no clocks/shas/network): `.claude/skills/**`
+>   (`skills:regenerate` / `skills:check`), `docs/plans/README.md`, the
 >   status-bucketed plans index (`plans:index` / `plans:index:check`);
->   `docs/requirements-map.md` (`requirements:map` / `requirements:map:check`);
->   `scripts/lib/bundle-deps.json`, the synced bundle's npm deps derived from the
->   import graph (`npm run bundle:deps` / `bundle:deps:check`).
+>   `docs/requirements-map.md` (`requirements:map` / `requirements:map:check`); `scripts/lib/bundle-deps.json`
+>   (`npm run bundle:deps` / `bundle:deps:check`).
 >
 > The test for a tracked generated file: *would two regenerations on the same
-> commit be byte-identical, and does a check enforce it?* If no → it belongs in
-> A (gitignore it), not committed. A committed artifact whose dirtiness carries
-> no information is churn, not a reference. Per-example history:
+> commit be byte-identical, and does a check enforce it?* If no → it belongs in A
+> (gitignore it), not committed. A committed artifact whose dirtiness carries no
+> information is churn, not a reference. Per-example history and rationale:
 > [gitignore-policy.md](docs/reference/gitignore-policy.md).
 <!-- arch-map-discoverability:end -->
 
 > **Design right-sizing — the simplest structurally-honest solution.** At any
 > non-trivial fork, reject BOTH cliffs: the **band-aid** (patch the symptom or
-> defer the real fix *because it's harder* — the root cause resurfaces) and the
-> **over-engineering** (an abstraction / config / artifact no *current*
-> requirement needs). Forcing question before committing: *"what's the band-aid,
-> what's the over-built version, and why is mine the smallest thing that's a true
-> function of the problem?"* `/plan` and `/audit-code` carry the full check; a
-> `defer`/accept-debt is honest only as a true scope boundary or documented debt,
-> **never because the correct fix is larger**.
+> defer the real fix *because it's harder*) and the **over-engineering** (an
+> abstraction / config / artifact no *current* requirement needs). Forcing
+> question: *"what's the band-aid, what's the over-built version, and why is mine
+> the smallest thing that's a true function of the problem?"* `/plan` and
+> `/audit-code` carry the full check; a `defer` is honest only as a true scope
+> boundary or documented debt, **never because the correct fix is larger**.
 >
 > **Scope is decided by impact, not authorship (load-bearing test).** The
 > companion failure mode: dismissing a finding as "out-of-scope / pre-existing /
 > not introduced by this change" when the change being shipped actually *depends*
-> on the cited code path. Authorship ("did I write this line?") and ownership
-> ("does the plan own this section?") are the wrong test; **impact** is the right
-> one — *does the correctness or stability of what I'm shipping ride on this
-> path?* If yes, it is in-scope **for the fix/defer decision** even when
+> on the cited path. Authorship and plan-ownership are the wrong test; **impact**
+> is the right one — *does the correctness or stability of what I'm shipping ride
+> on this path?* If yes it is in-scope **for the fix/defer decision** even when
 > pre-existing, and a silent defer is the band-aid. A pre-existing finding in a
-> *changed* file is a yellow flag (you usually touched it because your change now
-> rides on it), and passing tests don't clear it — a green suite only covers
-> exercised paths. Legitimate `defer` therefore requires naming the
+> *changed* file is a yellow flag, and passing tests don't clear it — a green
+> suite only covers exercised paths. Legitimate `defer` requires naming the
 > **independence** (the new code does not call/depend on the cited path), not the
-> authorship. `/audit-code` (Step 3) and `/audit-plan` (Step 3) both enforce this.
-> A same-file finding needs more than a call-graph claim: the independence
-> sentence must state the cited code does not share the SAME column/constraint
-> or the SAME transaction instance the new code depends on — sharing a table
-> or a broader boundary is not sufficient.
+> authorship; for a same-file finding, that the cited code does not share the SAME
+> column/constraint or the SAME transaction instance the new code depends on —
+> sharing a table or a broader boundary is not sufficient. `/audit-code` (Step 3)
+> and `/audit-plan` (Step 3) enforce this.
 
 ## Project Overview
 
-**Purpose**: A bundle of 17 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
-**Runtime**: Node.js (ESM modules, `"type": "module"`)
-**Deployment**: CLI scripts + skill files, invoked by AI coding assistants (Claude Code, Copilot, Cursor, Windsurf)
-**Repo**: Renamed from `claude-audit-loop` to `claude-engineering-skills` (Phase E)
+17 AI-pair-programming skills covering the development quality lifecycle, planning
+through code audit to live UX testing and shipping. Node.js, ESM only
+(`"type": "module"`); CLI scripts + skill files invoked by AI coding assistants.
+Renamed from `claude-audit-loop` in Phase E.
 
 ## Skill Chain
 
@@ -201,28 +192,23 @@
 → ux-lock → deploy → the four UI lenses → ship**, with `/cycle` driving the whole
 chain and pausing for human implementation. The four lenses are **disjoint** and
 run together on a UI PR — click-test (page DOM) ∥ persona-test (journey) ∥
-nav-audit (system IA) ∥ visual-audit (paint). `/fleet` sits beside the chain: it coordinates concurrent sessions, cooperatively.
-Coordinating several sessions? → `/fleet` `references/coordinator-playbook.md`.
+nav-audit (system IA) ∥ visual-audit (paint). `/fleet` sits beside the chain,
+coordinating concurrent sessions cooperatively
+(`references/coordinator-playbook.md`).
 
-Diagram, per-skill scope and depth (modes, flags, wave/lens design invariants)
-and the naming convention:
-[`docs/reference/skill-roster.md`](docs/reference/skill-roster.md) — read it before
-renaming a skill or "simplifying" a wave.
+Diagram, per-skill scope and depth (modes, flags, wave/lens design invariants) and
+the naming convention: [`skill-roster.md`](docs/reference/skill-roster.md) — read
+it before renaming a skill or "simplifying" a wave.
 
-**Skill file structure** (Phase B.1+ — progressive disclosure):
+**Skill file structure** (progressive disclosure): `skills/<name>/` is
+**authoritative — edit ONLY here** — with `SKILL.md` (canonical flow, ≤3K tokens),
+`references/<topic>.md` (loaded on demand) and optional `examples/`.
+`.claude/skills/<name>/` is the generated copy — run `npm run skills:regenerate`
+and **never hand-edit it**.
 
-```
-skills/<name>/                   ← authoritative; edit ONLY here
-├── SKILL.md                     ← canonical flow; ≤3K tokens target
-├── references/<topic>.md        ← rare/edge content, loaded on demand
-└── examples/<sample>.md         ← optional output templates
-
-.claude/skills/<name>/            ← generated copy — run `npm run skills:regenerate`
-```
-
-> **Skill surfaces — three invariants.** Discovery-root history, the retired-tooling
-> table, the migration recipe and the full frontmatter contract live in
-> [`docs/reference/skill-surface-ownership.md`](docs/reference/skill-surface-ownership.md).
+> **Skill surfaces — three invariants.** Discovery-root history, the
+> retired-tooling table, the migration recipe and the full frontmatter contract:
+> [`skill-surface-ownership.md`](docs/reference/skill-surface-ownership.md).
 >
 > **(1) Never ship the same skill name in two discovered roots** — Copilot's
 > precedence between `.github/skills/`, `.claude/skills/` and `.agents/skills/` is
@@ -231,9 +217,9 @@ skills/<name>/                   ← authoritative; edit ONLY here
 > **RETIRED** — never re-introduce a generator, and check both retired roots when a
 > consumer's Copilot behaves oddly (the sync deliberately never deletes them).
 >
-> **(2) Skills install REPO-SCOPED, never machine-global.** A SKILL.md is only valid
-> alongside the runner layout it cites, so **no correct content exists** for the
-> layout-agnostic `~/.claude/skills/`; it and `.agents/skills/` are retired
+> **(2) Skills install REPO-SCOPED, never machine-global.** A SKILL.md is only
+> valid alongside the runner layout it cites, so **no correct content exists** for
+> the layout-agnostic `~/.claude/skills/`; it and `.agents/skills/` are retired
 > (`resolveSkillTargets` throws) and `.githooks/post-merge` is **deleted**.
 > Installing is `npx github:Lbstrydom/claude-engineering-skills <dir>`. Proposing a
 > new surface? Answer first: *which layout does its content belong to, and what
@@ -243,35 +229,34 @@ skills/<name>/                   ← authoritative; edit ONLY here
 > trap is silence: a bad `name` is a **silent skip**;
 > `description` is required, **max 1024 chars**; every optional key sits at **column 0** —
 > indented under `description: |` it is description TEXT, parsed, valid and
-> **inert**. Semantic overlap has no oracle: declare the discriminator in BOTH
-> descriptions (*topic* → `/explain --history`, *claim* → `/investigate`). VS Code
-> reads `.vscode/mcp.json`, **NOT** `.mcp.json` — keep the two mirrored when adding servers.
+> **inert**. Semantic
+> overlap has no oracle: declare the discriminator in BOTH descriptions (*topic* →
+> `/explain --history`, *claim* → `/investigate`). VS Code reads
+> `.vscode/mcp.json`, **NOT** `.mcp.json` — keep the two mirrored when adding servers.
 
 Every reference file has `summary:` YAML frontmatter that must byte-match the
-parent SKILL.md's reference-index row. `npm run skills:check` enforces this — see
-`docs/reference/skill-reference-format.md`. A skill MAY also carry a colocated
-`gate-contract.json` binding a stated gate to its enforcing code+test (never
-packaged/synced; no contract = `uncontracted`, not failed) — `npm run
-skills:check`/`gates:check` validate it; details: `docs/reference/gate-honesty.md`.
+parent SKILL.md's reference-index row, enforced by `npm run skills:check`
+([format](docs/reference/skill-reference-format.md)). A skill MAY also carry a
+colocated `gate-contract.json` binding a stated gate to its enforcing code+test
+(never packaged/synced; no contract = `uncontracted`, not failed), validated by
+`skills:check`/`gates:check` ([detail](docs/reference/gate-honesty.md)). Each
+skill is a sibling — shared env vars and cloud audit store, distinct scopes.
 
-Each skill is a sibling — they share env vars and the cloud audit store but have
-distinct scopes.
-
-> **AN UNMEASURED ROUND MUST NOT WEAR A CLEAN ROUND'S CLOTHES.** A round that
-> lost every pass to Azure 429s printed `Verdict: INCOMPLETE | H:0 M:0 L:0`,
-> exit 0 — one word from a clean audit, and the convergence test reads only those
-> three numbers, so `/cycle` converges and ships. Pinned: `formatAuditSummaryLine`
+> **AN UNMEASURED ROUND MUST NOT WEAR A CLEAN ROUND'S CLOTHES.** A round that lost
+> every pass to Azure 429s printed `Verdict: INCOMPLETE | H:0 M:0 L:0`, exit 0 —
+> one word from a clean audit, and the convergence test reads only those three
+> numbers, so `/cycle` converges and ships. Pinned: `formatAuditSummaryLine`
 > refuses the counts-first shape for INCOMPLETE; `openai-audit.mjs` sets **exit 3**
 > (1 already means "the CLI errored"); `countFindings` folds INCOMPLETE into its
-> existing `failed` flag, so ONE predicate answers "is this round evidence". 429 is
-> budgeted apart from a generic transient (`retryAttemptsFor`/`nextRetryDelayMs`),
-> and `describeLostWrites` flags a `42P10`-shaped error as **store schema drift**
-> (`setup-postgres.mjs --check-drift`). [Detail](docs/reference/audit-internals.md)
+> `failed` flag, so ONE predicate answers "is this round evidence". 429 is budgeted
+> apart from a generic transient (`retryAttemptsFor`/`nextRetryDelayMs`), and
+> `describeLostWrites` flags a `42P10`-shaped error as **store schema drift**.
+> [Detail](docs/reference/audit-internals.md)
 
 **Four imperatives the roster is too late to tell you.** **(1)** A new mechanical
 wave must be declared in `MECHANICAL_WAVES` ([audit-shadow.mjs](scripts/lib/audit-shadow.mjs)),
-or `PASS_PROMPTS` silently enrols it in the model-A/B/C shadow's **paid** comparison.
-**(2)** `classifySelector` ([selector-policy.mjs](scripts/lib/ux-lock/selector-policy.mjs))
+or `PASS_PROMPTS` silently enrols it in the model-A/B/C shadow's **paid**
+comparison. **(2)** `classifySelector` ([selector-policy.mjs](scripts/lib/ux-lock/selector-policy.mjs))
 is ux-lock's **single** policy oracle — never add a second classifier.
 **(3)** persona-consistency's `expectedContradictions.max` is loosenable — treat
 raising it like deleting a test. **(4)** visual-audit's scope firewall: *include a
@@ -280,133 +265,118 @@ is FOR* — signifiers in, affordance judgments out (those are persona-test's).
 
 ## Consumer-repo layout (isolation)
 
-This repo's tooling deploys to consumers under **`scripts/.claude-skills/`**,
-not their natural `scripts/`, gitignored via a managed block in their root
-`.gitignore`. Untracked, so a fresh clone of a consumer needs
-`npm run sync -- --target <name>` from THIS repo to hydrate it. (The `--` is
-load-bearing: without it npm swallows `--target` and the sync writes into EVERY
-consumer instead of the named one. Verified 2026-07-20.)
+This repo's tooling deploys to consumers under **`scripts/.claude-skills/`**, not
+their natural `scripts/`, gitignored via a managed block in their root
+`.gitignore`. Untracked, so a fresh clone of a consumer needs `npm run sync --
+--target <name>` from THIS repo to hydrate it. **The `--` is load-bearing**:
+without it npm swallows `--target` and the sync writes into EVERY consumer
+instead of the named one (verified 2026-07-20).
 
 > **Upstream-owned — never patch the synced copy (governance).** A failure in a
 > consumer's `scripts/.claude-skills/**` file is an **UPSTREAM** bug: fix it HERE
 > + re-sync. The local edit is gitignored (invisible to review), overwritten next
-> sync, and leaves the bug live for every other consumer — the band-aid at the
-> consumer/upstream seam. Each synced file carries a banner saying so
-> (`sync-banner.mjs`); drift backstops and the `.githooks/pre-push.local` recipe
-> for repo-specific push gates (never the managed hook):
-> [consumer-adoption.md](docs/runbooks/consumer-adoption.md).
+> sync, and leaves the bug live for every other consumer. Each synced file carries
+> a banner saying so (`sync-banner.mjs`); drift backstops and the
+> `.githooks/pre-push.local` recipe for repo-specific push gates (never the managed
+> hook): [consumer-adoption.md](docs/runbooks/consumer-adoption.md).
 >
 > **Consumers are not all on ONE store**, so **an unasked question must never
 > render as an empty result** — a single-store read is blind to a consumer (`/ship`
 > printed `0 open` against 8). Fan out with `npm run upstream:queues` /
 > `stores:drift`; name a store by `storeDescriptor` (fingerprint + consumers, never
-> a hostname — this repo is public). **An EMPTY DSN env var is the AIR-GAP
-> signal** (`airGapDbUrl`) — never "fix" it to fall through to `~/.audit-loop.env`.
+> a hostname — this repo is public). **An EMPTY DSN env var is the AIR-GAP signal**
+> (`airGapDbUrl`) — never "fix" it to fall through to `~/.audit-loop.env`.
 > [Detail](docs/reference/consumer-repo-layout.md)
 >
 > **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report
 > --affected-path <synced path>`; here: `npm run upstream:issues` →
 > `ack|fix|wont-fix|annotate|history`. **Every body and `--note` goes on stdin** —
-> a backtick in an argv note runs as command substitution and silently elides
-> text the append-only log cannot repair; `annotate` is the only legal repair,
-> never a second `fixed`. Recipe + closure flags:
-> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Reporting an upstream bug.
+> a backtick in an argv note runs as command substitution and silently elides text
+> the append-only log cannot repair; `annotate` is the only legal repair, never a
+> second `fixed`. [consumer-adoption.md](docs/runbooks/consumer-adoption.md)
+> §Reporting an upstream bug.
 
-> **SEVEN shapes consumers keep reporting — check for them when adding a gate or a
-> nudge.** *(1)* a read handing back a key its writer rejects · *(2)* a gate
-> judging files the repo does not own — **ignored AND untracked**, asked of the
-> **candidates** · *(3)* a check verifying one direction only — ask **which side
-> am I iterating, and what is unrepresentable from it?** · *(4)* a documented
-> command whose tooling cannot reach a linked worktree (only TRACKED content
-> does, so a remedy rides on `package.json`; Gate: `npm run worktree:preflight:gate`)
-> · *(5)* synced content — a SKILL.md **or a data asset's own `_description`** —
-> naming an `npm run` alias or an out-of-closure `docs/` file; name synced tooling
-> BY PATH and the sync rewrites it to the consumer layout
-> (`npm run skills:consumer-refs:gate`, which judges every non-`.mjs`/`.sql`
-> file in the closure since 2026-11-14 — markdown-only let `.windowed-views.json`
-> ship an alias in its own description)
-> · *(6)* a **relative link** in synced markdown, whose href resolves where the
-> file LANDS (`npm run docs:synced-links:gate`) · *(7)* a synced SKILL.md
-> resolving its own subject through the **shell** — the host loads neither `.env`
-> nor `~/.audit-loop.env`, so document the command BARE and let the CLI's chain
-> end in `measured:false`, never a refusal and never a zero. Each shape, its
-> measurement and its predicate: [consumer-repo-layout.md](docs/reference/consumer-repo-layout.md).
+> **SEVEN shapes consumers keep reporting — read them before adding a gate or a
+> nudge**, one `###` each with its measurement and predicate in
+> [consumer-repo-layout.md](docs/reference/consumer-repo-layout.md) §Seven shapes:
+> *(1)* a read handing back a key its writer rejects · *(2)* a gate judging files
+> the repo does not own · *(3)* a check verifying one direction only · *(4)* a
+> documented command whose tooling cannot reach a linked worktree
+> (Gate: `npm run worktree:preflight:gate`) · *(5)* synced content naming an
+> `npm run` alias or an out-of-closure `docs/` file — **name synced tooling BY
+> PATH** and the sync rewrites it (`npm run skills:consumer-refs:gate`) · *(6)* a
+> **relative link** in synced markdown, whose href resolves where the file LANDS
+> (`npm run docs:synced-links:gate`) · *(7)* a synced SKILL.md resolving its own
+> subject through the **shell** — document the command BARE and let the CLI's chain
+> end in `measured:false`, never a refusal and never a zero.
 
 > **"Is this file mine to fix?" must be answerable OFFLINE**, and no single signal
-> answers it — git-ignore state, the content banner and the sync manifest each
-> have a hole. The one predicate is `createUpstreamOwnershipOracle`, unioning
-> git-ignore state with the **committed** `scripts/.sync-owned.json`; compare
-> **case-insensitively**. `debt:review` LISTS upstream-owned entries but never
-> leverage-ranks them (`debt-resolve.mjs` *deletes* the record of a still-open
-> defect). **`skills:hydrate` cannot run in CI by construction** and FAILS there
-> rather than exiting 0 having copied nothing. Holes + measurements:
+> answers it — git-ignore state, the content banner and the sync manifest each have
+> a hole. The one predicate is `createUpstreamOwnershipOracle`, unioning git-ignore
+> state with the **committed** `scripts/.sync-owned.json`; compare
+> **case-insensitively**. **`skills:hydrate` cannot run in CI by construction** and
+> FAILS there rather than exiting 0 having copied nothing. The three holes, and why
+> `debt:review` never leverage-ranks upstream-owned entries:
 > [consumer-repo-layout.md](docs/reference/consumer-repo-layout.md)
 
 > **Upstream bug, but you're blocked?** Patching upstream-owned *source* stays
 > forbidden; a **runtime/env/DB** unblock is OK if you report it, label it
-> `TEMP — pending upstream fix`, and reconcile when the fix lands. Recipe +
-> the divergence it prevents: [consumer-adoption.md](docs/runbooks/consumer-adoption.md)
-> §"Blocked on an upstream bug".
+> `TEMP — pending upstream fix` and reconcile when the fix lands.
+> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Blocked.
 
 > **Consumer divergence is DECLARED, never inferred — and the sync must never
-> revert it silently.** **(1)** The **manifest hash** (never HEAD) is the
-> three-way BASE — `disk !== base` is consumer content: tracked ⇒ REFUSE + fail
-> (`--overwrite-diverged` consents), untracked ⇒ overwrite loudly. **(2)** Standing
-> divergence lives in the committed `.sync-overrides.json` (`reason` required,
-> malformed ⇒ ABORT, `scripts/.claude-skills/**` never claimable — that is an
-> upstream report); review an `upstreamMoved` report, never ignore it. **(3)** Every
-> sync writes the committed, **append-only** `.sync-receipt.json` — a deliberate
-> generated-artifact-policy exception (its dirtiness is the only evidence a sync
-> ran). [Why each shape](docs/reference/consumer-repo-layout.md) ·
-> [Plan](docs/plans/consumer-sync-durability.md).
+> revert it silently.** The **manifest hash, never HEAD**, is the three-way BASE;
+> standing divergence lives in the committed `.sync-overrides.json`
+> (`scripts/.claude-skills/**` is never claimable — that is an upstream report);
+> and the committed, append-only `.sync-receipt.json` is a deliberate
+> generated-artifact-policy exception, because its dirtiness is the only evidence
+> a sync ran. The three mechanics in full (refusal rules, `upstreamMoved`,
+> `--overwrite-diverged`) before you touch the sync:
+> [consumer-repo-layout.md](docs/reference/consumer-repo-layout.md) §Consumer
+> divergence · [Plan](docs/plans/consumer-sync-durability.md).
 
 ### Sync mechanics — pointer
 
 Sync-behavior detail (the isolated subdir, the what-goes-where table, the
-managed-gitignore block + untrack semantics, the `sync-*` module list):
+managed-gitignore block, the `sync-*` module list):
 [`consumer-adoption.md`](docs/runbooks/consumer-adoption.md) §"Sync internals".
 One structural invariant stays here: **the sync layout's single source of truth is
-[`sync-path-map.mjs`](scripts/lib/sync-path-map.mjs)** — never hand-compute a
-consumer path.
+[`sync-path-map.mjs`](scripts/lib/sync-path-map.mjs)** — never hand-compute one.
 
 **A consumer's package manager is [`package-manager.mjs`](scripts/lib/package-manager.mjs)'s
 answer, never a hardcoded `npm`/`npx`** — the managers are not swappable, so two
-lockfiles + no `packageManager` field is **ambiguous and left alone**, never guessed.
-Adjudicate an install by RE-PROBING `node_modules`, never the exit code (pnpm exits
-non-zero on `ERR_PNPM_IGNORED_BUILDS` after a successful install). Why it matters,
-and the corepack/`.cmd` trap: [consumer-adoption.md](docs/runbooks/consumer-adoption.md)
-§Your package manager.
+lockfiles + no `packageManager` field is **ambiguous and left alone**, never
+guessed. Adjudicate an install by RE-PROBING `node_modules`, never the exit code
+(pnpm exits non-zero on `ERR_PNPM_IGNORED_BUILDS` after a successful install). The
+corepack/`.cmd` trap:
+[consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Your package manager.
 
 ### CLI smoke contract (`--selfcheck-relocation`)
 
-Every top-level CLI script that needs to prove its imports survive relocation implements:
-
-```js
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
-```
-
-at the head of `main()`. Today: `check-setup.mjs`, `doctor.mjs`, `cross-skill.mjs`, plus others in `CLI_SMOKE_SET`. Library modules (no `main()`) get an import-test in [`tests/relocation-guard.test.mjs`](tests/relocation-guard.test.mjs); the CI guard fails if a `CLI_SMOKE_SET` script lacks the handler.
-
-**The entry guard itself is `if (isInvokedAsScript(import.meta.url))`**
+A CLI in `CLI_SMOKE_SET` implements the `--selfcheck-relocation` handler at the
+head of `main()` (CI fails if one lacks it); library modules get an import-test in
+[`relocation-guard.test.mjs`](tests/relocation-guard.test.mjs) instead. **The entry
+guard itself is `if (isInvokedAsScript(import.meta.url))`**
 ([cli-entry.mjs](scripts/lib/cli-entry.mjs)) — never a hand comparison of
 `process.argv[1]` with `import.meta.url`. Node realpaths one side and not the
 other, so through a symlink or junction the hand guard is false and the CLI exits
-0 having run nothing (16 of 26 did, measured 2026-10-13). No smoke run goes
+0 having run nothing (16 of 26 did, measured 2026-10-13); no smoke run goes
 through a link, so the census in
-[`tests/cli-entry-guards.test.mjs`](tests/cli-entry-guards.test.mjs) is what
-enforces it.
+[`cli-entry-guards.test.mjs`](tests/cli-entry-guards.test.mjs) is what enforces it.
+Snippet + current set: [consumer-repo-layout.md](docs/reference/consumer-repo-layout.md)
+§CLI smoke contract.
 
-### Adopting these skills in a new consumer repo
-
-See [`docs/runbooks/consumer-adoption.md`](docs/runbooks/consumer-adoption.md) §Diagnostics for the migration recipe and `doctor` — one command over every adoption-friction class, ratcheted by `npm run upstream:coverage:gate`.
+**Adopting these skills in a new consumer repo** — the migration recipe and
+`doctor` (one command over every adoption-friction class, ratcheted by
+`npm run upstream:coverage:gate`): [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Diagnostics.
 
 ## Browser Tool Setup (persona-test)
 
-`/persona-test` drives a real browser. **Playwright MCP is the preferred tool** — free, no credentials, works on your own apps. `.mcp.json` registers it and Claude Code prompts to enable it on first open (click **Allow**). **First-time setup: `npx playwright install chromium`** — without it the server crashes silently and no tools appear. Windows may need an MCP override: [CLAUDE.md](./CLAUDE.md#claude-code-only-notes). Verify command + BrightData alternative: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
+`/persona-test` drives a real browser; **Playwright MCP is the preferred tool** (free, no credentials, registered in `.mcp.json`). **First-time setup: `npx playwright install chromium`** — without it the server crashes silently and no tools appear. Windows may need an MCP override: [CLAUDE.md](./CLAUDE.md#claude-code-only-notes). BrightData alternative: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
 
 ## Mermaid validation (for plan diagrams)
 
-Two surfaces catch broken Mermaid before it ships. **Interactive**: `.mcp.json` registers `mcp-mermaid` (VS Code: `.vscode/mcp.json`); call **`mcp__mermaid__generate_mermaid_diagram`** with `outputType: "mermaid"` to validate without rendering — invalid syntax returns an MCP error with line/column, no API key. **Pre-push**: `npm run plans:lint` (part of `npm run check`) scans `docs/plans/*.md` for what the parser accepts but stricter renderers reject — **ERROR `subgraph-as-edge-endpoint`** (anchor the edge to a node *inside* the subgraph) blocks; **WARN `unquoted-special-chars-in-label`** (write `ID["..."]` when a label has `<br/>` or non-ASCII) is advisory. History and rule-coverage rationale: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
+**Interactive**: call **`mcp__mermaid__generate_mermaid_diagram`** with `outputType: "mermaid"` to validate without rendering — invalid syntax returns an MCP error with line/column, no API key. **Pre-push**: `npm run plans:lint` (in `check`) scans `docs/plans/*.md` for what the parser accepts but stricter renderers reject — **ERROR `subgraph-as-edge-endpoint`** (anchor the edge to a node *inside* the subgraph) blocks; **WARN `unquoted-special-chars-in-label`** (write `ID["..."]` when a label has `<br/>` or non-ASCII) is advisory. Registration and rule-coverage rationale: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
 
 ---
 
@@ -415,28 +385,25 @@ Two surfaces catch broken Mermaid before it ships. **Interactive**: `.mcp.json` 
 | Package | Version | Notes |
 |---------|---------|-------|
 | `zod` | **4.6.7** | Zod 4 API — NOT Zod 3. `_def.type` is a string (`'object'`, `'array'`, `'enum'`), NOT `_def.typeName` (`'ZodObject'`). `shape` is a direct property on object schemas, NOT `_def.shape()`. `_def.entries` for enums, NOT `_def.values`. |
-| `openai` | **7.8.0** | v7 since 2026-08-09; `responses.parse()` + `zodTextFormat()` unchanged and live-verified on the bump to 7.8.0 + zod 4.5.2 (2026-09-03); zod 4.6.5 (2026-09-24, #115) and 4.6.7 (2026-10-25, #294) are CI-verified only |
-| `@google/genai` | ^2.19.0 | Google Generative AI SDK. Uses `responseMimeType: 'application/json'` + `responseSchema` for structured output |
+| `openai` | **7.8.0** | v7 since 2026-08-09; `responses.parse()` + `zodTextFormat()` unchanged, live-verified on the 7.8.0 + zod 4.5.2 bump (2026-09-03); zod 4.6.5 (#115) and 4.6.7 (#294) are CI-verified only |
+| `@google/genai` | ^2.19.0 | `responseMimeType: 'application/json'` + `responseSchema` for structured output |
 | `dotenv` | 17.4.2 | Load via `lib/load-env.mjs`, never `dotenv/config` (cwd-only) |
 
 ## Architecture
 
 **Do not hand-maintain a module tree here** — [`docs/architecture-map.md`](docs/architecture-map.md)
-is the live, generated per-symbol index (see the bootstrap note at the top of this
-file); an inline tree goes stale silently (the one removed 2026-07-13 listed
-2 test files against 100+ real). Layout in one line: `scripts/*.mjs` are CLI
-entry points; `scripts/lib/**` are focused modules (split from the former
-`shared.mjs` monolith, which remains as a backwards-compatible barrel); `tests/` is
-the Node built-in test-runner suite; `.claude/skills/**` is generated from `skills/**`.
-
-### Script responsibilities + key patterns — pointer
+is the live, generated per-symbol index (bootstrap note at the top of this file);
+an inline tree goes stale silently, the one removed 2026-07-13 listing 2 test
+files against 100+ real. Layout in one line: `scripts/*.mjs` are CLI entry points,
+`scripts/lib/**` focused modules (split from the former `shared.mjs` monolith,
+still a backwards-compatible barrel), `tests/` the Node test-runner suite, and
+`.claude/skills/**` is generated from `skills/**`.
 
 Per-module prose (openai-audit, gemini-review, the learning-store barrel) and the
 named patterns (adaptive sizing, semantic dedup, atomic persistence, the closed
 Gemini loop, …) live in
-[`docs/reference/audit-internals.md`](docs/reference/audit-internals.md).
-Condensed out 2026-07-20 having already rotted — exactly what the rule above
-prevents.
+[`audit-internals.md`](docs/reference/audit-internals.md) — condensed out
+2026-07-20 having already rotted, exactly what the rule above prevents.
 
 ### Testing
 
@@ -448,66 +415,59 @@ a linked worktree). Carry the date and the command — the anecdote in
 #### Pre-push runs against a clean checkout, not the working tree
 
 The hook runs `check` in a throwaway worktree at the **commit being pushed**
-([`prepush-check.mjs`](scripts/prepush-check.mjs)). Two sessions share one tree
-here, so tree-checking gave false blocks (a cried-wolf gate gets `--no-verify`'d)
-and false passes (a fix in the tree but not the commit read green). Not `git
-stash` — that yanks the other session's files mid-edit. Detail + escape hatches:
-[`docs/runbooks/prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md). **A killed
-hook must fail CLOSED**: Git for Windows reads a signal-killed hook as exit 0, so
-the marked `fail-closed-on-signal` trap block stays byte-identical in both hooks
-(#225, runbook §8).
+([`prepush-check.mjs`](scripts/prepush-check.mjs)) — never `git stash`, which
+yanks a concurrent session's files mid-edit. **A killed hook must fail CLOSED**:
+Git for Windows reads a signal-killed hook as exit 0, so the marked
+`fail-closed-on-signal` trap block stays byte-identical in both hooks. Why,
+escape hatches and #225: [`prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md) §1, §8.
 
-**THIS repo's full suite runs in GitHub Actions, not on the shared machine.** CES is
-public, so `full-suite.yml` (`ubuntu-latest`, standard runners only: free) is its one
-full run per PR, and a local CES push is the **branch tier** by default
-(`.test-tiers.json` `defaultTier` + `ciVerdict`; `AUDIT_PREPUSH_TIER=full` and every push
-to `main` stay full). The Actions budget
-(standard runners, no artifacts or cache, cancel-in-progress) is gated by
-`tests/workflow-runner-labels.test.mjs`. Consumers get none of this: wine and storyline
-stay local-first. [Plan](docs/plans/ci-full-suite-actions.md) ·
+**THIS repo's full suite runs in GitHub Actions, not on the shared machine.** CES
+is public, so `full-suite.yml` is its one full run per PR, and a local CES push is
+the **branch tier** by default (`.test-tiers.json`; `AUDIT_PREPUSH_TIER=full` and
+every push to `main` stay full). The Actions budget is gated by
+`tests/workflow-runner-labels.test.mjs`. Consumers get none of this — wine and
+storyline stay local-first. [Plan](docs/plans/ci-full-suite-actions.md) ·
 [runbook](docs/runbooks/gate-cost.md) §6.
 
 #### A spend-bearing run PINS its revision — it never shares the working tree
 
-Same tree, higher stakes: the store refuses a snapshot whose arms disagree, so two
-died on 2026-08-17 (~$13) — one to a rebase, one to a **concurrent session's
-commit**. Run ANY revision-stamped, spend-bearing job (arm-eval, solo-control,
-model-eval, replays) via `npm run fixture:create`. Two traps it does not remove:
-gitignored inputs are ABSENT, and **trust the store, not the fixture's local
-bake-off log**, which reads near-zero and looks like lost progress.
+The store refuses a snapshot whose arms disagree, so two died on 2026-08-17
+(~$13) — one to a rebase, one to a **concurrent session's commit**. Run ANY
+revision-stamped, spend-bearing job (arm-eval, solo-control, model-eval, replays)
+via `npm run fixture:create`. Two traps it does not remove: gitignored inputs are
+ABSENT, and **trust the store, not the fixture's local bake-off log**, which reads
+near-zero and looks like lost progress.
 [Runbook](docs/runbooks/pinned-revision-fixture.md)
 
 - **A DB suite no runner names has never run.** Without a disposable DSN it skips
   itself, and node reports a never-run suite as a clean pass — so enrolment in
   `db-test-container.mjs`'s `*_SUITE_FILES` (**and**, in lockstep,
-  `postgres-parity.yml`) is the only thing that makes it coverage (a 2026-08-11
-  census found 15 enrolled nowhere). `npm run db:enrolment:gate` iterates the
-  FILESYSTEM — the only side that can see a file no list mentions. **Adding a
-  DB-gated suite is two edits, never one.** Run them locally via `npm run db:local`
-  (mirrors CI: `--test-concurrency=1`, isolated→destructive→contract) — never by
-  setting `AUDIT_DB_TEST_URL` globally for an unscoped `npm test`: every enrolled
-  file hits one container concurrently and times out (`cancelledByParent`),
-  reading as regressions that are pure contention.
+  `postgres-parity.yml`) is the only thing that makes it coverage (2026-08-11
+  census: 15 enrolled nowhere). **Adding a DB-gated suite is two edits, never
+  one**; `npm run db:enrolment:gate` iterates the FILESYSTEM, the only side that
+  can see a file no list mentions. Run them via `npm run db:local` (mirrors CI) —
+  never by setting `AUDIT_DB_TEST_URL` globally for an unscoped `npm test`: every
+  enrolled file hits one container concurrently and times out
+  (`cancelledByParent`), reading as regressions that are pure contention.
 - **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
   that *skips* on a missing input passes having read nothing. **Adding a check? Ask
   whether it can go green in a clean checkout having checked nothing — if so it
   needs a strictness flag, not a tolerated skip.** A sandbox setup failure is a
-  push failure, never a pass.
+  push failure, not a pass.
 - **`npm test` refuses a green it did not earn.** Node can report a suite as
-  `not ok` and still exit 0. `adjudicateRun` ([run-tests.mjs](scripts/run-tests.mjs))
-  keys on the **consequence** rather than the cause, and fails **closed** when its
-  own report is missing. [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §2.3.
+  `not ok` and still exit 0, so `adjudicateRun` ([run-tests.mjs](scripts/run-tests.mjs))
+  keys on the **consequence**, not the cause, and fails **closed** when its own
+  report is missing. [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §2.3.
 - **One range, one resolver** — [`push-range.mjs`](scripts/lib/push-range.mjs).
-  Gates must not re-infer a base from working-tree state (`@{u}`, dirty→`HEAD~1`):
-  that scoped multi-commit pushes to their tip and collapsed to `HEAD~1` always in
-  a detached tree. An unresolvable explicit base fails hard, never demotes to
-  inference.
+  Gates must not re-infer a base from working-tree state (`@{u}`, dirty→`HEAD~1`);
+  an unresolvable explicit base fails hard, never demotes to inference.
+  [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §3.
 - **Hashing working-tree bytes ≠ hashing committed source.** A generator hashing
   files for a *committed* artifact must canonicalise CRLF→LF with `canonicalizeEol`
-  ([`lib/file-io.mjs`](scripts/lib/file-io.mjs)), the one byte-level fold. The
-  tell: **git says clean and your tool says changed; git is right.** Do NOT
-  canonicalise where the exact bytes ARE the contract. That, and the
-  worktree-`node_modules` rule: [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §2.1–2.2.
+  ([`file-io.mjs`](scripts/lib/file-io.mjs)), the one byte-level fold — but NOT
+  where the exact bytes ARE the contract. The tell: **git says clean and your tool
+  says changed; git is right.** That and the worktree-`node_modules` rule:
+  [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §2.1–2.2.
 - **An mtime freshness oracle is usually wrong in the HEALTHY case, not merely
   lossy** — the writer's own ordering decides it, and `lock newer than
   node_modules/` was the normal post-install state. Ask **who writes these two
@@ -518,28 +478,25 @@ bake-off log**, which reads near-zero and looks like lost progress.
 #### Testing doctrine — pointer
 
 Three tiers, because blanket TDD is theatre at the LLM boundary but rigor pays at
-deterministic seams: **Tier 1** test-first for deterministic modules; **Tier 2**
-invariants + canned fixtures for LLM-orchestration seams — never assertions on
-model prose, never a whole-provider mock (that tests the mock); **Tier 3
-(non-negotiable)** two seams where a change lands with its test in the **same
-commit** — *(a)* **sensitive-path egress** (a leak ships credentials to a
+deterministic seams. Tiers 1–2, the guarding tests and the deliberate deferrals:
+[`testing-doctrine.md`](docs/reference/testing-doctrine.md). Resident: **Tier 3 is
+non-negotiable** — two seams where a change lands with its test in the **same
+commit**, *(a)* **sensitive-path egress** (a leak ships credentials to a
 third-party LLM) and *(b)* the **consumer sync / relocation contract** (a break
-ships silently to repos you cannot observe). Tier list, guarding tests and the
-deliberate deferrals: [`docs/reference/testing-doctrine.md`](docs/reference/testing-doctrine.md).
+ships silently to repos you cannot observe).
 
 #### Pre-ship empirical verify — for skills that assert on a live runtime
 
-Static review cannot catch what only appears when a real browser renders real
-data — a mid-theme-transition `getComputedStyle` read once *fabricated* a bug
-that survived four review passes. **(1)** Any skill driving a browser must run
-against ONE real app before being called done, and a field finding with a green
-repro routes to a regression test + ONE focused review, never the adjudication
-loop. **(2)** Two capture bug classes by name: mid-state-change capture (freeze
-transitions AFTER the flip + `await document.fonts.ready`), and empty/failed
-capture, which must degrade to `unverified`, never "verified / 0 findings".
+Static review cannot catch what only appears when a real browser renders real data
+— a mid-theme-transition `getComputedStyle` read once *fabricated* a bug that
+survived four review passes. **(1)** Any skill driving a browser must run against
+ONE real app before being called done; a field finding with a green repro routes
+to a regression test + ONE focused review, never the adjudication loop.
+**(2)** Freeze transitions AFTER the flip + `await document.fonts.ready`; an
+empty/failed capture degrades to `unverified`, never "verified / 0 findings".
 **(3)** **Audit your success paths** — ask of any green-emitting branch *"can this
 return green without having checked anything?"*
-→ [`docs/runbooks/pre-ship-empirical-verify.md`](docs/runbooks/pre-ship-empirical-verify.md).
+→ [`pre-ship-empirical-verify.md`](docs/runbooks/pre-ship-empirical-verify.md).
 
 ## Model Resolution
 
@@ -548,16 +505,13 @@ when providers ship new versions. All model-reading env vars in config.mjs pass
 through `resolveModel()`.
 
 **Sentinels** (preferred in `.env`) — `latest-gpt`, `latest-gpt-mini`,
-`latest-opus`, `latest-sonnet`, `latest-haiku`, and Google's authoritative
-aliases `latest-pro` / `latest-flash` / `latest-flash-lite`. A sentinel picks
-the newest tier match from live-catalog ∪ `STATIC_POOL`; a stale concrete id is
-remapped to one with a one-time warning; concrete ids pass through. The heavy
-entry points refresh the catalog and re-resolve, so new provider models are
-picked up with no `STATIC_POOL` edit (`MODEL_CATALOG_REFRESH=skip` opts out for
-air-gapped CI; a network failure falls back silently). Per-sentinel table,
-resolution order and static-pool maintenance:
-[`model-resolution.md`](docs/reference/model-resolution.md). Self-check:
-`node scripts/lib/model-resolver.mjs resolve | catalog`.
+`latest-opus`, `latest-sonnet`, `latest-haiku`, plus Google's `latest-pro` /
+`latest-flash` / `latest-flash-lite`. A sentinel picks the newest tier match from
+live-catalog ∪ `STATIC_POOL`; a stale concrete id is remapped with a one-time
+warning; concrete ids pass through. Heavy entry points refresh the catalog and
+re-resolve, so new provider models need no `STATIC_POOL` edit
+(`MODEL_CATALOG_REFRESH=skip` opts out for air-gapped CI; a network failure falls
+back silently). Self-check: `node scripts/lib/model-resolver.mjs resolve | catalog`.
 
 **Anti-patterns (load-bearing):**
 - Do NOT pin concrete model IDs in new code — use a sentinel (`latest-*`).
@@ -566,39 +520,40 @@ resolution order and static-pool maintenance:
 - Do NOT retry 404 — `classifyLlmError` treats any 4xx (except 429) as non-retryable.
 - When rewrapping an LLM error, surface `err.status` + the real provider
   `error.message` — don't collapse to `"API error ${status}"` (it names the bad model).
-- **OpenRouter**: one model id → many backends w/ incompatible ctx limits, picked per request; and reasoning tokens count against `max_tokens`. Unpinned runs fail at random, reading as model flakiness — always send `provider:{require_parameters,sort}` + `reasoning:{effort}`. [experiment-4](docs/research/experiment-4-cheap-final-reviewer-smoke.md)
+- **OpenRouter**: one model id → many backends with incompatible ctx limits, picked per request, and reasoning tokens count against `max_tokens`. Unpinned runs fail at random, reading as model flakiness — always send `provider:{require_parameters,sort}` + `reasoning:{effort}`. [experiment-4](docs/research/experiment-4-cheap-final-reviewer-smoke.md)
 - **A model id carries its ROUTE, and the two are never reconciled.** Some models
-  are reached BOTH natively and via OpenRouter (`qwen3.8-max` vs `qwen/qwen3.8-max`);
-  `transportForModel` dispatches on exactly that shape and the routes bill
-  differently, so **never "normalise" `source_model`** — it erases the routing
-  decision and corrupts costing. What must NOT vary by route is the vendor
-  **family**: call `modelFamily`, never a local head-of-string helper. Reading the
-  vendor off whichever half of the id was present is how a model grading its own
-  output got recorded as unbiased (`self_family`, fixed 2026-08-23). A new vendor
-  needs `VENDOR_ALIASES` too — `npm test` fails until it has it.
+  are reached BOTH natively and via OpenRouter (`qwen3.8-max` vs
+  `qwen/qwen3.8-max`); `transportForModel` dispatches on exactly that shape and
+  the routes bill differently, so **never "normalise" `source_model`** — it erases
+  the routing decision and corrupts costing. What must NOT vary by route is the
+  vendor **family**: call `modelFamily`, never a local head-of-string helper —
+  reading the vendor off whichever half of the id was present is how a model
+  grading its own output got recorded as unbiased (`self_family`, fixed
+  2026-08-23). A new vendor needs `VENDOR_ALIASES` too; `npm test` fails until it has it.
 
-→ Resolution-order detail, live-catalog mechanics, startup-log example, static-pool
-maintenance: [`docs/reference/model-resolution.md`](docs/reference/model-resolution.md).
+→ Per-sentinel table, resolution order, live-catalog mechanics, startup-log
+example, static-pool maintenance:
+[`model-resolution.md`](docs/reference/model-resolution.md).
 
 ## Memory-Health Gate
 
 `scripts/memory-health.mjs`: three trigger metrics deciding whether the flat
-`audit_findings` + fingerprint-dedup design leaks signal a graph memory would recover.
-**When you need it**: reading a weekly AMBER, changing a metric, or promoting the graph
-design. Dossier (sampled metrics, thresholds, pgvector record-time dedup):
-[`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md).
-**Resident rule**: a new wave that emits control state needs a
-`control_marker_prefixes` sentinel (matched on the detail-snapshot **prefix**, never the
-category), or the gate reads AMBER forever on its own logging.
+`audit_findings` + fingerprint-dedup design leaks signal a graph memory would
+recover. A weekly AMBER, a metric change, promoting the graph design:
+[`memory-health-gate.md`](docs/reference/memory-health-gate.md).
+**Resident**: a new wave that emits control state needs a
+`control_marker_prefixes` sentinel (matched on the detail-snapshot **prefix**,
+never the category), or the gate reads AMBER forever on its own logging.
 
 ## Learning System (Phase 1)
 
 Adaptive-learning telemetry across audit decision points → `learning_decisions` +
-`recurring_finding_clusters`. **When you need it**: auto-deferral, `npm run learning:*`,
-the weekly review, replay/promotion — [`docs/runbooks/learning-system.md`](docs/runbooks/learning-system.md).
-**Resident rules**: `LEARNING_DISABLE=1` kills all live learning + telemetry; telemetry
-never crashes a run (flush failures spill to `.audit/learning-outbox/`); a plan accepts a
-v1 limit with `<!-- audit:accept-v1: <glob> :: <reason> -->`.
+`recurring_finding_clusters`. Auto-deferral, `learning:*`, the weekly review,
+replay/promotion:
+[`learning-system.md`](docs/runbooks/learning-system.md). **Resident**:
+`LEARNING_DISABLE=1` kills all live learning + telemetry; telemetry never crashes
+a run (flush failures spill to `.audit/learning-outbox/`); a plan accepts a v1
+limit with `<!-- audit:accept-v1: <glob> :: <reason> -->`.
 
 ## Environment Variables
 
@@ -613,56 +568,51 @@ The rows below are the ones whose semantics constrain how you write code:
 | `AUDIT_DB_URL` | — | Postgres DSN for the store. Unset → **local-only mode**, not an error (#16 graceful degradation). Supabase: **Session pooler (5432)**, never the Transaction pooler. |
 | `LEARNING_DISABLE` | — | `1` kills **all** adaptive-learning behaviour + telemetry in one variable. |
 | `LEARNING_REPO_NAME` | — | Must be the **`owner/repo` slug** (matches `audit_repos.name`) — a bare repo name silently misses the lookup, which is how weekly-review sat broken for weeks in every consumer. `install.mjs`/`setup.mjs` derive it; don't hand-type it. |
-| `FINAL_REVIEW_TIMEOUT_MS` | `270000` | **COUPLED** to `FINAL_REVIEW_HARD_DEADLINE_MS`: the watchdog floor is `2x timeout + 60000`, so 270s is the most the default admits -- raise both together. `GEMINI_REVIEW_TIMEOUT_MS` is a deprecated alias; the pair is read by `finalReviewTimeoutMs()`, alongside `finalReviewModelSpec()` which owns the ONE default for `FINAL_REVIEW_MODEL`. |
+| `FINAL_REVIEW_TIMEOUT_MS` | `270000` | **COUPLED** to `FINAL_REVIEW_HARD_DEADLINE_MS`: the watchdog floor is `2x timeout + 60000`, so 270s is the most the default admits — raise both together. Read by `finalReviewTimeoutMs()` (`GEMINI_REVIEW_TIMEOUT_MS` is a deprecated alias); `finalReviewModelSpec()` owns the ONE default for `FINAL_REVIEW_MODEL`. |
 | `AUDIT_AUTHOR_TIER_HINT` | — | **Observation-only** — it records an author-model tier and must never route. |
 | ~~`SUPABASE_AUDIT_*`~~ | — | **Sunset in M4.** The runtime DSN's password IS the secret — there is no separate write-role key. |
 
 ## Postgres-Parity Store (M1–M4)
 
 The cloud learning store talks to **Postgres directly via the `pg` driver** — no
-`@supabase/supabase-js` / PostgREST layer. "Supabase-hosted vs self-hosted" is just a
-connection string. **Load-bearing invariants** (the rest is in the docs below):
+`@supabase/supabase-js` / PostgREST layer; "Supabase-hosted vs self-hosted" is just
+a connection string. **Load-bearing invariants** (the rest is in the docs below):
 
-- **Connect**: `AUDIT_DB_URL=postgresql://…pooler.supabase.com:5432/postgres` +
-  `AUDIT_DB_SSL_MODE=no-verify`. Use the Supabase **Session pooler (5432)**, **NOT the
-  Transaction pooler (6543)** — it drops server-side prepared statements + the
-  `search_path=public` pin the `db/` seam needs.
-- **Single-tenant**: the DSN password IS the secret (no separate read/write keys); the
-  runtime `pg.Pool` ([`scripts/lib/db/client.mjs`](scripts/lib/db/client.mjs)) owns
-  `public` and **bypasses RLS** (correct here). Schema is **`public`-only** in v1.
-- **Setup**: `node scripts/setup-postgres.mjs --migrate` (fresh / new migrations,
-  idempotent) · `--adopt` (seed the `audit_loop_migrations` ledger from a
-  pre-provisioned DB) · `--check-drift` (CI: exit 1 on drift). Shared secrets across
-  consumer repos: `npm run setup:cloud` → `~/.audit-loop.env`.
+- **Connect**: `AUDIT_DB_URL` + `AUDIT_DB_SSL_MODE=no-verify`, via the Supabase
+  **Session pooler (5432)**, **NOT the Transaction pooler (6543)** — 6543 drops
+  server-side prepared statements and the `search_path=public` pin the `db/` seam
+  needs. Single-tenant: the DSN password IS the secret; the runtime `pg.Pool`
+  ([`db/client.mjs`](scripts/lib/db/client.mjs)) owns `public` and **bypasses RLS**
+  (correct here), and the schema is **`public`-only** in v1. Setup recipe,
+  `--migrate`/`--adopt`/`--check-drift`, `npm run setup:cloud`:
+  [postgres-parity.md](docs/runbooks/postgres-parity.md) §Connecting + §Setup recipe.
 - **Never use the dashboard as the routine migration path** — it reintroduces the
   silent-drift the ledger exists to eliminate; make the source migration idempotent
   and retry `--migrate` instead.
-- **`audit_runs.commit_sha` is HEAD at audit-capture time, not the commit containing
-  the audited diff** — the parent on a dirty tree (the normal case). Use `audited_sha`/
-  `audited_tree` (added `20260719120000`) for target identity; NULL on both means
+- **`audit_runs.commit_sha` is HEAD at audit-capture time, not the commit
+  containing the audited diff** — the parent on a dirty tree (the normal case).
+  Use `audited_sha`/`audited_tree` for target identity; NULL on both means
   unverifiable, never guess. Measured 2026-09-20: 72% zero file-overlap between
   `commit_sha`'s diff and its own findings across 94 sampled runs.
   [Plan](docs/plans/audit-target-identity-commit-sha-correction.md).
-- **jsonb-safe write seam — do NOT hand-`JSON.stringify` a jsonb column.** The
-  db-layer write builders (`serializeWriteParam`) auto-serialize a plain array
-  bound to ANY column on the write path (node-postgres otherwise binds an ARRAY
-  literal that jsonb rejects with `22P02` or silently stores as `{}`). **Pass
-  jsonb values raw**; a real `text[]`/`int[]` column opts OUT with
-  **`pgArray(value)`** — a jsonb writer that forgets is safe, a `text[]` writer
-  that forgets fails LOUDLY. [postgres-parity.md](docs/runbooks/postgres-parity.md)
-  §jsonb write seam.
+- **jsonb-safe write seam — do NOT hand-`JSON.stringify` a jsonb column.**
+  `serializeWriteParam` auto-serializes a plain array bound to ANY column on the
+  write path (node-postgres otherwise binds an ARRAY literal jsonb rejects with
+  `22P02` or silently stores as `{}`). **Pass jsonb values raw**; a real
+  `text[]`/`int[]` column opts OUT with **`pgArray(value)`** — a jsonb writer that
+  forgets is safe, a `text[]` writer that forgets fails LOUDLY.
+  [postgres-parity.md](docs/runbooks/postgres-parity.md) §jsonb write seam.
 - **Migrations stay schema-portable**: `parity:check-coupling` fails on any `<schema>.`
   qualification or non-core reference outside the recorded baseline.
 - **Every audit-store write in `legacy-production-audit.mjs`'s cloud block goes
   through `durableWrite`** ([durable-write.mjs](scripts/lib/durable-write.mjs)),
   registered in [audit-store-writers.mjs](scripts/lib/audit-store-writers.mjs).
-  Four outcomes, and they are not interchangeable: `written` · `spilled` (queued,
-  replayed by a later drain) · `lost` (evidence kept, never replayed) · `skipped`
-  (the store declined — cloud off is a supported mode, not a failure). `lost`
-  **or** `spilled` makes a run `incomplete`. A new write-shaped export under
-  `scripts/lib/store/**` must be registered or exempted **with a reason** —
-  `npm test` derives the set from the filesystem, the only side that can see a
-  module no list mentions. Derivation, spill-eligibility and the single bootstrap:
+  Four outcomes, not interchangeable: `written` · `spilled` · `lost` · `skipped`
+  (cloud off is a supported mode, not a failure); `lost` **or** `spilled` makes a
+  run `incomplete`. A new write-shaped export under `scripts/lib/store/**` must be
+  registered or exempted **with a reason** — `npm test` derives the set from the
+  filesystem, the only side that can see a module no list mentions. Outcome
+  semantics, spill-eligibility and the single bootstrap:
   [postgres-parity.md](docs/runbooks/postgres-parity.md) · [plan](docs/plans/audit-store-write-durability.md).
 - **`emit({ok:false})` sets a non-zero exit code** ([cli-io.mjs](scripts/lib/cli-io.mjs)).
   Without the coupling a CLI reports a failure in its envelope and exits 0, which
@@ -670,78 +620,70 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   `emit(env, {softFail:true, reason})` — the reason is **required** — and
   `npm run emit:exit:gate` ratchets the opt-out population, failing on growth AND
   on an unrecorded reduction.
-  Design: [cross-skill-command-registry.md](docs/plans/cross-skill-command-registry.md) §2b F4.
+  [Design](docs/plans/cross-skill-command-registry.md) §2b F4.
 - **A SCHEMA ERROR IS NOT AN EMPTY RESULT — and a bare `catch { return null }`
   renders it as one.** Ask of any catch around a query: *can a broken query and an
   absent row leave here as the same value?* `isSchemaFaultSqlstate` /
   `describeSchemaFault` ([db/errors.mjs](scripts/lib/db/errors.mjs)) make a
-  read-path catch **degrade loudly**, naming the SQLSTATE and the remedy. Testing
-  the pure decision is not enough — **split the decision out AND put one assertion
-  on a real Postgres**; the pure tests passed throughout the entire period a
-  freshness cache was dead. Incident (2026-09-05):
+  read-path catch **degrade loudly**. Testing the pure decision is not enough —
+  **split it out AND put one assertion on a real Postgres**; the pure tests passed
+  throughout the whole period a freshness cache was dead (incident 2026-09-05).
   [postgres-parity.md](docs/runbooks/postgres-parity.md).
 - **"Disposable" is an ALLOWLIST of loopback hosts, and it fails CLOSED.**
-  `isDisposableDbHost` / `assertDisposableDbUrl` (`scripts/lib/db/client.mjs`)
+  `isDisposableDbHost` / `assertDisposableDbUrl` ([db/client.mjs](scripts/lib/db/client.mjs))
   guard the suites that `DROP SCHEMA public CASCADE` and the schema fixture.
-  **Never re-express this as "not $VENDOR"** — a denylist is only as current as
-  the last infra change (the one it replaced went inert the day the store moved);
-  production identity is likewise compared as host+port+database, never as a DSN
-  string. No env escape hatch, deliberately, and **regenerate the fixture only
-  from a fresh replay** (`npm run db:local:regen`).
+  **Never re-express this as "not $VENDOR"** — a denylist is only as current as the
+  last infra change, and the one it replaced went inert the day the store moved.
+  Production identity is compared as host+port+database, never as a DSN string; no
+  env escape hatch, deliberately; and **regenerate the fixture only from a fresh
+  replay** (`npm run db:local:regen`).
   [postgres-parity.md](docs/runbooks/postgres-parity.md) §Incident + §Correction.
 - **Bound an RPC at the CALLER** — `SET statement_timeout` inside a function is
   decorative. `CREATE OR REPLACE FUNCTION` resets **`proconfig`** (restate `SET
   search_path`) but PRESERVES the ACL; **changing the argument list makes a
   DIFFERENT function**, whose default ACL is `EXECUTE` to `PUBLIC` and which the
   old `REVOKE` does not name. Verify by `has_function_privilege`, never by review
-  or by a `proacl` that reads `NULL`. Both traps:
+  or by a `proacl` that reads `NULL`.
   [memory-health-gate.md](docs/reference/memory-health-gate.md).
 
-→ **Design** (no-adapter `pg`-direct decision, schema scope, privilege model, file plan): [`docs/plans/postgres-parity.md`](docs/plans/postgres-parity.md) + [`postgres-parity-schema-coupling.md`](docs/plans/postgres-parity-schema-coupling.md). **Operations** (setup recipe, migration-drift CLI + exit codes, pre-push snippet, break-glass atomic-apply, shared-cloud-config, prerequisites): [`docs/runbooks/postgres-parity.md`](docs/runbooks/postgres-parity.md).
+→ **Design** (the no-adapter `pg`-direct decision, schema scope, privilege model): [`postgres-parity.md`](docs/plans/postgres-parity.md) + [`schema-coupling`](docs/plans/postgres-parity-schema-coupling.md). **Operations** (setup, migration-drift CLI + exit codes, break-glass atomic-apply, shared cloud config): [`runbooks/postgres-parity.md`](docs/runbooks/postgres-parity.md).
 
 ## Anthropic Backend Routing
 
 All Claude API calls go through one seam,
-[`scripts/lib/anthropic-client.mjs`](scripts/lib/anthropic-client.mjs);
-`CLAUDE_BACKEND` switches transport without touching call sites — for the calls
-that transport can serve faithfully (see the refusal rule below). `sdk` (the
-committed default, and what an unset `CLAUDE_BACKEND` resolves to) is the
-direct `@anthropic-ai/sdk` API billing `ANTHROPIC_API_KEY`;
-`cli` spawns `claude -p --output-format json` and draws on the Max 20x Agent
-SDK credit. **Local status: `cli`** (in the gitignored `.env`; the committed
-default stays `sdk` for CI without the `claude` CLI). Call sites use
-`createAnthropicClient()`, never `new Anthropic()` — regression-guarded by
-[tests/anthropic-client-migration.test.mjs](tests/anthropic-client-migration.test.mjs).
+[`anthropic-client.mjs`](scripts/lib/anthropic-client.mjs); `CLAUDE_BACKEND`
+switches transport without touching call sites — for the calls that transport can
+serve faithfully (refusal rule below). `sdk` (committed default, and what an unset
+`CLAUDE_BACKEND` resolves to) is the direct `@anthropic-ai/sdk` API billing
+`ANTHROPIC_API_KEY`; `cli` spawns `claude -p --output-format json` on the Max 20x
+Agent SDK credit. **Local status: `cli`** (gitignored `.env`; the committed default
+stays `sdk` for CI without the `claude` CLI). Call sites use
+`createAnthropicClient()`, never `new Anthropic()` — guarded by
+[anthropic-client-migration.test.mjs](tests/anthropic-client-migration.test.mjs).
 Smoke test: `npm run anthropic:ping`.
 
-> **A BACKEND MUST NOT ACCEPT A CALL IT CANNOT HONOUR — THROW AND PIN.**
-> `cli` refused what it cannot REPRESENT or TARGET, but a param it accepts and
-> then drops or OUTRANKS surfaced as a MODEL failure. (`--system-prompt` IS
-> passed and a simple instruction obeyed; the persona outranks a
-> structured-output contract. Never say cli ignores it.)
+> **A BACKEND MUST NOT ACCEPT A CALL IT CANNOT HONOUR — THROW AND PIN.** A param
+> `cli` accepts and then drops or OUTRANKS surfaced as a MODEL failure.
 > `unserviceableCliParams` is the single oracle, decided from the PARAMS, and an
-> **ALLOWLIST**: it serves `model`/`max_tokens`/`messages` and **THROWS** on
-> every other param, named or not, ambient or explicit — never routed to sdk,
-> which would let a param pick the meter. A key it cannot enumerate fails
-> CLOSED, as a refusal to guess, never a named param. The fix is a declared
-> `{backend:'sdk'}` pin gated on **`isClaudeAvailableFor('sdk')`**. The throw
-> cannot fire in CI (which runs the `sdk` default), so
-> `npm run anthropic:pin:gate` is the guard. Serviceable calls stay on cli
-> and keep the credit (`BILLING PIN` is that control). **And `cli`'s cost does
-> not depend on your prompt**: a ~164K-token prefix per call, so no prompt
-> change fixes a `cli` cost problem and `--bare` strips the prefix and the OAuth
-> credit together. Measured 2026-11-14 —
+> **ALLOWLIST**: it serves `model`/`max_tokens`/`messages` and **THROWS** on every
+> other param, named or not, ambient or explicit — never routed to sdk, which would
+> let a param pick the meter; a key it cannot enumerate fails CLOSED. The fix is a
+> declared `{backend:'sdk'}` pin gated on **`isClaudeAvailableFor('sdk')`**, and
+> since the throw cannot fire in CI (which runs the `sdk` default)
+> `npm run anthropic:pin:gate` is the guard. **`cli`'s cost does not depend on your
+> prompt** — a ~164K-token prefix per call, so no prompt change fixes a `cli` cost
+> problem and `--bare` strips the prefix and the OAuth credit together. What `cli`
+> does pass (`--system-prompt` is passed and obeyed), `BILLING PIN`, measurements:
 > [reference](docs/reference/anthropic-backend-routing.md) ·
 > [plan](docs/plans/anthropic-cli-faithfulness-routing.md).
 
-**Load-bearing gotchas** (operational depth in the reference below):
+**Load-bearing gotchas**:
 
 - **Forced tool-calling needs `{backend:'sdk'}` explicitly (found 2026-07-14).**
-  `cli` always spawns `claude -p --tools ''`, so a caller forcing `tool_choice`
-  got a plain `text` block with **no error** — which cost the tiered-recall
-  discovery generator a whole shadow window (20/20 runs fell back to legacy).
-  Since 2026-11-15 the seam THROWS instead, so the pin is the fix, not the
-  intent.
+  `cli` always spawns `claude -p --tools ''`, so a caller forcing `tool_choice` got
+  a plain `text` block with **no error** — costing the tiered-recall discovery
+  generator a whole shadow window (20/20 runs fell back to legacy). Since
+  2026-11-15 the seam THROWS instead, so the pin is the fix, not the intent.
 - **`max_tokens` is UNENFORCED on `cli`** — accepted and ignored, not merely
   unenforceable, so it is never a bound for cost or for parse safety.
 - **Availability is the backend's own answer, never `process.env.ANTHROPIC_API_KEY`.**
@@ -750,8 +692,8 @@ Smoke test: `npm run anthropic:ping`.
   highest-volume Claude call site here, which under `CLAUDE_BACKEND=cli` with no
   key emitted **null summaries for the whole symbol corpus**. Ask
   `isClaudeAvailable()` where the ambient backend will serve the call, and
-  `isClaudeAvailableFor('sdk')` at a PINNED site — the ambient answer is `true`
-  on a keyless `cli` install, so a pinned site passed its gate and then threw
+  `isClaudeAvailableFor('sdk')` at a PINNED site — the ambient answer is `true` on
+  a keyless `cli` install, so a pinned site passed its gate then threw
   `ANTHROPIC_API_KEY required` for a backend nobody selected.
 - **`claude-trace` cannot meter the scripted cli backend** (it corrupts the JSON
   envelope on stdout). Use the backend's own self-reported `cost_usd`.
@@ -761,39 +703,36 @@ call-site list: [`docs/reference/anthropic-backend-routing.md`](docs/reference/a
 
 ## Shadow Final-Review A/B — CLOSED 2026-07-28, verdict KEEP
 
-Opt-in, observation-only 2nd final reviewer (`FINAL_REVIEW_SHADOW`); committed default
-unset, paused locally on cost. Unset ⇒ byte-identical; never gates. **When you need it**:
-turning it on, choosing an envelope scope, reading a campaign refusal, or **before any
-reviewer/model comparison** (three results that generalise) —
-[briefing](docs/research/final-review-shadow-adjudication-briefing.md) §Moved from
-AGENTS.md · [plan](docs/plans/final-review-shadow-reviewer.md) ·
-[`environment-variables.md`](docs/reference/environment-variables.md) §Shadow final review.
+Opt-in, observation-only 2nd final reviewer (`FINAL_REVIEW_SHADOW`); committed
+default unset, paused locally on cost. Unset ⇒ byte-identical; never gates. Read
+it **before any reviewer/model comparison** (three results that generalise):
+[briefing](docs/research/final-review-shadow-adjudication-briefing.md) ·
+[plan](docs/plans/final-review-shadow-reviewer.md).
 
 ## Tiered-Recall Audit Pipeline
 
 Discovery → Stage 0/1/2 alternative to the GPT 5-pass legacy audit; chooser
-`AUDIT_TIERED_PIPELINE_ENABLED` defaults **off** (production runs legacy). **When you
-need it**: enabling it, its shadow window, or Phase 14 —
-[`docs/plans/tiered-recall-audit-pipeline.md`](docs/plans/tiered-recall-audit-pipeline.md)
-(§Moved from AGENTS.md has the former dossier). Resident:
+`AUDIT_TIERED_PIPELINE_ENABLED` defaults **off** (production runs legacy).
+Enabling it, its shadow window, Phase 14:
+[`tiered-recall-audit-pipeline.md`](docs/plans/tiered-recall-audit-pipeline.md).
+Resident:
 
 - **Execution eligibility is per-call, not env-global** (`allowTiered`): only
   `openai-audit.mjs`'s `main()` passes `allowTiered: true`, so tests and library
   callers can never spend. Both must hold before a provider is constructed.
-- **"Window met" is now epoch-gated, not eyeballed** (2026-07-26, after the 5th
-  false green): `comparedRuns` counts only rows the collector stamped with the
-  current `TIERED_SHADOW_CONTRACT_EPOCH`. All pre-stamp rows are ineligible and
-  the window restarts — re-collect, never backfill (see the swap-eval section).
+- **"Window met" is epoch-gated, not eyeballed** (2026-07-26, after the 5th false
+  green): `comparedRuns` counts only rows the collector stamped with the
+  current `TIERED_SHADOW_CONTRACT_EPOCH`; pre-stamp rows are ineligible and the
+  window restarts — re-collect, never backfill.
 
 ## Model Swap-In Evaluation Harness
 
 `scripts/lib/model-eval/` answers "is this new LLM release worth switching to?" for
-the auditor or adjudicator role. **When you need it**: a model ships, or you are reading
-a verdict — playbook, tiers, recall-ceiling caveat and verdict history:
-[`docs/runbooks/model-eval-harness.md`](docs/runbooks/model-eval-harness.md). Resident,
+the auditor or adjudicator role. Playbook, tiers, recall-ceiling caveat, verdict
+history: [`model-eval-harness.md`](docs/runbooks/model-eval-harness.md). Resident,
 because they bind any measurement work:
-- **A model swap is SYNCHRONOUS, never a background window**: run it when the model
-  ships, adjudicate in the same sitting, verdict → `docs/research/`. Passive
+- **A model swap is SYNCHRONOUS, never a background window**: run it when the
+  model ships, adjudicate in the same sitting, verdict → `docs/research/`. Passive
   collection killed arm-eval and produced five false "window met" reads. Only
   intervention-over-organic-work earns a shadow; exactly two are open
   (tiered-pipeline, final-review 2nd gate). **Do not add a sixth collector.**
@@ -807,282 +746,249 @@ because they bind any measurement work:
 
 ## Local Weekly Maintenance Checks (opt-in)
 
-Default-OFF local replica of the weekly maintenance checks, run from the pre-push hook
-when overdue (`AUDIT_LOOP_WEEKLY_MAINTENANCE=1`; `npm run maintenance:status`) — in THIS
-repo the only runner of the four store-backed checks, whose Actions crons were deleted
-2026-09-13. **When you need it**: enabling it, a stale heartbeat, `runner:doctor` /
-`cadence:doctor` — [local-maintenance-checks.md](docs/runbooks/local-maintenance-checks.md) ·
+Default-OFF local replica of the weekly maintenance checks, run from the pre-push
+hook when overdue (`AUDIT_LOOP_WEEKLY_MAINTENANCE=1`; `npm run maintenance:status`)
+— in THIS repo the only runner of the four store-backed checks, whose Actions
+crons were deleted 2026-09-13. Enabling it, a stale heartbeat,
+`runner:doctor`/`cadence:doctor`:
+[local-maintenance-checks.md](docs/runbooks/local-maintenance-checks.md) ·
 [workflow-cadence-doctor.md](docs/reference/workflow-cadence-doctor.md).
-**Resident rule**: a cadence is OBSERVED, never trusted for having been configured — and
-**`ok` means "the run did not fail", not "the thing it measures is current"**, so a
-workflow skip branch emits `::notice title=audit-loop-no-measurement::<reason>`
+**Resident**: a cadence is OBSERVED, never trusted for having been configured, and
+**`ok` means "the run did not fail", not "the thing it measures is current"** — so
+a workflow skip branch emits `::notice title=audit-loop-no-measurement::<reason>`
 (`lib/measurement-marker.mjs`); never grep the job log for it.
 
 ## Azure AI Foundry Work Profile
 
 The **same** bundle in a corporate Azure tenant (restricted models), env-selected.
-**Opt-in invariant**: the Azure path activates **only** when `AZURE_OPENAI_ENDPOINT` is
-set; without Azure env vars, client construction and resolved models are
+**Opt-in invariant**: the Azure path activates **only** when `AZURE_OPENAI_ENDPOINT`
+is set; without Azure env vars, client construction and resolved models are
 **byte-identical** to the public path. Seams: `createOpenAIClient({purpose})`,
-`embedText()`, `azureConfig` in [config.mjs](scripts/lib/config.mjs). **When you need the
-dossier** (tenant setup, `AZURE_CLAUDE_ROUTE`, 401/404/429, quota and throttling):
-[`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md).
+`embedText()`, `azureConfig` in [config.mjs](scripts/lib/config.mjs). Dossier
+(tenant setup, `AZURE_CLAUDE_ROUTE`, 401/404/429, quota):
+[`azure-work-profile.md`](docs/runbooks/azure-work-profile.md).
 
 **Four invariants that constrain any code reaching a provider**:
 
 - **An availability gate must ask whether a ROUTE exists, not whether a public env
-  var is set.** An `if (!process.env.OPENAI_API_KEY)` guard upstream of an Azure-aware
-  seam is dead code on exactly the installs it was written for (tell: a **failure with
-  zero latency**). Let ONE oracle answer (`lib/brainstorm/provider-availability.mjs`);
-  use **`isClaudeAvailable()`, never `ANTHROPIC_API_KEY`**. An **omitted `azureRoute`
-  ADOPTS the tenant's route**; pass `azureRoute: null` only where an id *means* the
-  public service. Tests spawning such a CLI must scrub `AZURE_*`. Which voices
-  /brainstorm runs is `defaultProviders()`, never a constant.
+  var is set.** An `if (!process.env.OPENAI_API_KEY)` guard upstream of an
+  Azure-aware seam is dead code on exactly the installs it was written for (tell: a
+  **failure with zero latency**). Let ONE oracle answer
+  (`lib/brainstorm/provider-availability.mjs`); use **`isClaudeAvailable()`, never
+  `ANTHROPIC_API_KEY`**. An **omitted `azureRoute` ADOPTS the tenant's route**;
+  pass `azureRoute: null` only where an id *means* the public service. Tests
+  spawning such a CLI must scrub `AZURE_*`. Which voices /brainstorm runs is
+  `defaultProviders()`, never a constant.
 - **The deployment is CONSTRUCTOR-level route state, not a body field**: build
-  `AzureOpenAI({endpoint, deployment, apiVersion})`, **never concatenate an operation
-  path**, never share one client across purposes; one client per candidate deployment.
+  `AzureOpenAI({endpoint, deployment, apiVersion})`, **never concatenate an
+  operation path**, and never share one client across purposes.
 - **An endpoint and the credential it is addressed with are ONE unit** — pass
-  `azureConfig.claudeRoute` as `createAnthropicClient({azureRoute})`, **never a bare
-  `baseURL`**. Assert on the **emitted request**, not the client config.
+  `azureConfig.claudeRoute` as `createAnthropicClient({azureRoute})`, **never a
+  bare `baseURL`**. Assert on the **emitted request**, not the client config.
 - **A deployment or resource switch is a DIFFERENT vector space** — provenance is
   `resolveEmbedProfile()`, and `arch:refresh` auto-promotes to a full re-embed.
 
 ## Cross-Skill Data Loop
 
 Migration `20260419120000_cross_skill_data_loop.sql` closes the feedback loop
-between the skills. Every skill writes to a shared learning store via
-`scripts/cross-skill.mjs` — graceful no-op when the cloud store is off.
+between the skills. Catalogue (9 tables, 3 columns, 6 views, the bandit reward
+extension, the `recommend-skills` advisor):
+[`cross-skill-data-loop.md`](docs/reference/cross-skill-data-loop.md).
 
-Catalogue — 9 tables, 3 added columns, 6 views, and the bandit reward
-extension (and the `recommend-skills` advisor):
-[`docs/reference/cross-skill-data-loop.md`](docs/reference/cross-skill-data-loop.md).
-
-**Design rule**: all cross-skill writes go through `scripts/cross-skill.mjs`.
-Never hand-write curl POSTs in a SKILL.md for these tables — the CLI handles
-auth, graceful no-op, git-derived commit_sha, and error normalisation.
+**Design rule**: all cross-skill writes go through `scripts/cross-skill.mjs`, a
+graceful no-op when the cloud store is off. Never hand-write curl POSTs in a
+SKILL.md for these tables — the CLI handles auth, graceful no-op, git-derived
+commit_sha and error normalisation.
 
 ## R2+ Audit Mode (Phase 1)
 
 `--round >= 2` (with `--ledger`/`--diff`/`--changed`) enables three-layer defence
-against finding churn: rulings injection, R2+ prompts, post-output suppression. The
-**Adjudication Ledger** is two-axis: `adjudicationOutcome` × `remediationState`,
-written via `writeLedgerEntry()`. **When you need it**: changing suppression, a rulings
-group, or the existence gate — read [`docs/reference/r2-audit-mode.md`](docs/reference/r2-audit-mode.md)
-first. Resident: a rulings header claims only what its ruling ESTABLISHED, and
-hard-suppress keys on the CONCERN, never on category text — an overstated header or a
-fuzzed category suppresses true positives silently.
+against finding churn: rulings injection, R2+ prompts, post-output suppression.
+The **Adjudication Ledger** is two-axis — `adjudicationOutcome` ×
+`remediationState`, written via `writeLedgerEntry()`. Changing suppression, a
+rulings group or the existence gate: read
+[`r2-audit-mode.md`](docs/reference/r2-audit-mode.md) first. Resident: a rulings
+header claims only what its ruling ESTABLISHED, and hard-suppress keys on the
+CONCERN, never on category text — an overstated header or fuzzed category
+suppresses true positives silently.
 
-## Architectural Memory — Pre-fix Consultation (MANDATORY)
+## Architectural Memory — pre-fix consultation (MANDATORY)
 
-The architectural-memory feature (`docs/plans/architectural-memory.md`)
-indexes every symbol in this repo into the audit store, with embeddings, so we
-can find near-duplicates before writing new code. The `/plan` skill
-consults it automatically. **But ad-hoc fixes in Claude Code or Copilot
-bypass the planning skill entirely** — which is where most architectural
-drift creeps in.
+[Architectural memory](docs/plans/architectural-memory.md) indexes every symbol in
+this repo into the audit store with embeddings, so near-duplicates are findable
+before new code is written. `/plan` consults it automatically — **but ad-hoc fixes
+in Claude Code or Copilot bypass the planning skill entirely**, where most
+architectural drift creeps in.
 
-**Rule** — if you (the AI agent reading this) are about to write a new
-function, class, hook, component, route, method, or constant as part of
-a fix or feature request, you MUST first run:
-
-```bash
-node scripts/cross-skill.mjs get-neighbourhood --json '{
-  "targetPaths": ["<files you intend to touch>"],
-  "intentDescription": "<one-line summary of what you are about to write>",
-  "k": 8
-}'
-```
+**Rule** — before writing a new function, class, hook, component, route, method or
+constant as part of a fix or feature request, you MUST run
+`node scripts/cross-skill.mjs get-neighbourhood --json` with `targetPaths` (files
+you intend to touch), `intentDescription` (one line on what you are about to write)
+and `k: 8`.
 
 Then act on the recommendation column. **Three bands, and no absolute cosine
-numbers — the cutoff is computed per repo** (see "Why no fixed numbers" below):
+numbers — the cutoff is `μ + 3σ` over the repo's OWN embedding background**,
+computed at `arch:refresh`:
 
-- **`precedent`** — existing code occupies this space and merits a serious look
-  **before** you write anything. Open the named symbols. Then decide, on the
-  code, whether to reuse one, extend one, or write a sibling — and say which,
-  and why, in your reply. The band does **not** tell you which of those three
-  is right; a distance score cannot see dependency direction, API shape,
-  ownership or accumulated debt.
-  - `bandReason: above-floor-cluster` — several similar symbols. This is the
-    *strongest* duplication signal, not a weaker one.
-  - `bandReason: above-floor-standout` — one clear match.
-- **`review`** — nothing rose above this repo's noise floor. Proceed greenfield.
-  `bandReason` says why: `below-noise-floor` (compared, and weak) or
-  `uncalibrated-repo` (no calibration exists here yet — see below).
-- **`unscored`** — the symbol has **no embedding**, so nothing was compared.
-  This is *absence of evidence*, not a weak match. Never read it as "checked
-  and rejected".
+- **`precedent`** — existing code occupies this space: open the named symbols
+  **before** you write anything, then decide on the code whether to reuse, extend
+  or write a sibling, and say which and why. The band does **not** decide that for
+  you. `bandReason: above-floor-cluster` is the *strongest* duplication signal,
+  not a weaker one.
+- **`review`** — nothing rose above this repo's noise floor; proceed greenfield.
+  **An uncalibrated repo (`bandReason: uncalibrated-repo`) bands `review` only**:
+  honest, not degraded; run `npm run arch:refresh`.
+- **`unscored`** — the symbol has **no embedding**, so nothing was compared. This
+  is *absence of evidence*, not a weak match. Never read it as "checked and
+  rejected".
 
-**Why no fixed numbers**: the cutoff is `μ + 3σ` over the repo's OWN embedding
-background, computed at `arch:refresh`. **An uncalibrated repo bands `review` only**:
-honest, not degraded; run `npm run arch:refresh`. The old `reuse`/`extend`/
-`justify-divergence` band names are **retired** — seeing them means stale tooling.
-History: [arch-memory-band-recalibration.md](docs/plans/arch-memory-band-recalibration.md).
+The old `reuse`/`extend`/`justify-divergence` band names are **retired** — seeing
+them means stale tooling. Band semantics and recalibration history:
+[arch-memory-band-recalibration.md](docs/plans/arch-memory-band-recalibration.md).
 
-**When NOT to consult**:
-
-- Pure bug fixes that change only an existing function's body (no new symbol introduced).
-- Trivial edits: typos, formatting, single-line conditional tweaks.
-- Doc-only or test-only changes (unless adding new test helpers).
-- Cloud store offline (`{"cloud": false}`) — log an `npm run arch:refresh` hint, proceed.
+**When NOT to consult**: bug fixes changing only an existing function's body (no
+new symbol); trivial edits (typos, formatting, one-line conditionals); doc-only or
+test-only changes (unless adding test helpers); cloud store offline
+(`{"cloud": false}` — log an `arch:refresh` hint, proceed).
 
 **The rule above is host-neutral and mandatory; the hook is Claude-Code-only
-ACCELERATION, not cross-agent enforcement.** `.claude/hooks/arch-memory-check.sh`
-auto-fires on `UserPromptSubmit` when the prompt carries an intent verb
-(`fix`/`add`/`implement`/… — list in the hook), and a
-`> **Architectural-memory consultation**` callout means it fired: treat it as
-authoritative. **Copilot, Cursor and every other host get no hook** — there you run
-the command above by hand, and so must Claude when the hook didn't fire (a question
-that became a fix mid-conversation). Disable with `ARCH_MEMORY_HOOK_DISABLE=1`. Cost
-~$0.0003 + one RPC, disk-cached 24h by `(intentDescription, model, dim)`.
+ACCELERATION, not cross-agent enforcement.** A
+`> **Architectural-memory consultation**` callout means
+`.claude/hooks/arch-memory-check.sh` fired — treat it as authoritative.
+**Copilot, Cursor and every other host get no hook** — there you run the command
+above by hand, and so must Claude when the hook didn't fire (a question that
+became a fix mid-conversation). Trigger verbs, cost, cache and the disable flag:
+[enforcement-mechanisms.md](docs/reference/enforcement-mechanisms.md)
+§The two accelerators.
 
-## Security incident memory — Mandatory consultation
+## Security incident memory — mandatory consultation
 
-Companion to architectural memory. The `/plan` skill auto-fires
-`get-incident-neighbourhood` in Phase 0.5b — for ad-hoc fixes outside
-`/plan`, manually consult before writing security-relevant code:
+Companion to architectural memory. `/plan` auto-fires
+`get-incident-neighbourhood` in Phase 0.5b — for ad-hoc fixes outside `/plan`,
+consult it by hand before writing security-relevant code:
 
-```bash
-node scripts/cross-skill.mjs get-incident-neighbourhood --json '{
-  "targetPaths": ["<files you intend to touch>"],
-  "intentDescription": "<one-line summary>",
-  "k": 3
-}'
-```
+`node scripts/cross-skill.mjs get-incident-neighbourhood --json` with the same
+`targetPaths` / `intentDescription` shape and `k: 3`.
 
-**When to consult**: any change to auth flows, payment handling, input
-parsing, log statements that might carry sensitive data, external API
-calls with credentials, file uploads, or anything in a domain previously
-mentioned in `docs/security-strategy.md` incidents.
-
-**When NOT to consult**: pure UI tweaks, type-only refactors, test
-fixtures, doc-only changes, cosmetic edits.
+**When to consult**: any change to auth flows, payment handling, input parsing,
+logs that might carry sensitive data, external API calls with credentials, file
+uploads, or any domain named in a `docs/security-strategy.md` incident. **NOT**:
+UI tweaks, type-only refactors, test fixtures, doc-only or cosmetic edits.
 
 If the response includes incidents with `mitigation-failing` or
-`manual-verification-required` status that match your target paths,
-explicitly address them in the design before proposing code.
-
-If `docs/security-strategy.md` doesn't exist for this repo, run
-`/security-strategy bootstrap` once to seed it. Single-line
-post-push reminders surface security-relevant commits via `/ship`.
+`manual-verification-required` status matching your target paths, address them
+explicitly in the design before proposing code. If `docs/security-strategy.md`
+doesn't exist here, run `/security-strategy bootstrap` once to seed it; `/ship`
+surfaces security-relevant commits in a one-line post-push reminder.
 
 ### Secret pre-write gate + audit trail (back-port from corporate kit)
 
 `npm run security:refresh` gates every parsed incident before it reaches the DB
 ([secret-classifier.mjs](scripts/lib/security/secret-classifier.mjs)):
 high-confidence secret shapes **REFUSE** (not indexed, non-zero exit — scrub
-`docs/security-strategy.md` and re-run); low-confidence PII **auto-REDACTs**
-into the stored row. Writes append to `security_strategy_events` as governance
-evidence. One defence-in-depth invariant: the final-pass redactor is the gentle
+`docs/security-strategy.md` and re-run); low-confidence PII **auto-REDACTs** into
+the stored row, and writes append to `security_strategy_events`. One
+defence-in-depth invariant: the final-pass redactor is the gentle
 `lib/secret-patterns.mjs`, deliberately **NOT** `sanitizer.mjs`, which
-blanket-redacts any 20+ char token and would corrupt incident prose. Full kit +
-why the corporate Azure modules were not ported: [docs/plans/security/](docs/plans/security/).
+blanket-redacts any 20+ char token and would corrupt incident prose. Full kit:
+[docs/plans/security/](docs/plans/security/).
 
 ## Quick-fix detection — two-layer architecture
 
-Plan: `docs/plans/brainstorm-quickfix-v1.md` Feature B.
-
-**Philosophy**: nudge, not gate. Root cause beats shortcut, but explicit
-acceptance beats silent shortcut. The system surfaces shortcuts so the
-author can decide whether they're warranted, not so they're automatically
-blocked.
+**Philosophy**: nudge, not gate — root cause beats shortcut, explicit acceptance
+beats a silent one.
 
 <!-- host-contract: hook-rule; rule=quickfix-surfaced-before-done; portable=quickfix wave in /audit-code; accelerator=.claude/hooks/quickfix-scan.mjs -->
 
 **The RULE is host-neutral; the hook is Claude-Code-only ACCELERATION** (same
 shape as arch-memory above). *Rule*: a shortcut signature is surfaced to the
 author before the change is called done — satisfied when EITHER layer ran.
-*Portable path (all hosts)*: **Layer 2**, the `quickfix` wave in /audit-code —
-a low-reasoning GPT pass for DESIGN-level shortcuts regex can't see (stub
-returns, tests asserting non-failure, masked root causes); emits
+*Portable path (all hosts)*: **Layer 2**, the `quickfix` wave in /audit-code, a
+low-reasoning GPT pass for DESIGN-level shortcuts regex can't see; emits
 `is_quick_fix: true`, gated by the `quickFix == 0` convergence threshold.
-*Accelerator (Claude Code only)*: **Layer 1**, `.claude/hooks/quickfix-scan.mjs`
-— fires on every Edit/Write (PostToolUse), pure-regex over ~12 mechanical
-signatures (empty catch, unjustified `@ts-ignore`, masked errors, hardcoded
-localhost, …), emits a `<system-reminder>`, NEVER blocks. Opt-outs:
-`QUICKFIX_HOOK_DISABLE=1`, `// quickfix-hook:ignore`, >80K-char diff bail,
-sensitive-path short-circuit. Patterns: `scripts/lib/quickfix-patterns.mjs`.
-**Cadence is NOT equivalent** — hook = every edit, wave = once per audit, so on
-Copilot a shortcut is caught later and only in audited changes. Say so rather
-than implying parity.
+*Accelerator (Claude Code only)*: **Layer 1**,
+`.claude/hooks/quickfix-scan.mjs` — pure-regex on every Edit/Write, emits a
+`<system-reminder>`, NEVER blocks. Two layers because neither covers the other's
+axis: mechanical-at-edit-time vs semantic-at-review-time. **Cadence is NOT
+equivalent** — hook = every edit, wave = once per audit, so on Copilot a shortcut
+is caught later and only in audited changes; say so rather than implying parity.
+Signatures and opt-outs:
+[enforcement-mechanisms.md](docs/reference/enforcement-mechanisms.md)
+§The two accelerators · full spec:
+[`brainstorm-quickfix-v1.md`](docs/plans/brainstorm-quickfix-v1.md) §B.
 
-Two layers because neither covers the other's axis: mechanical-at-edit-time
-vs semantic-at-review-time. Full spec:
-`docs/plans/brainstorm-quickfix-v1.md` §B.
+## Where enforcement lives — NOT in a `$PATH` wrapper
+
+**Enforcement goes into the code that performs the action — host-agnostic and
+fail-closed.** `assertDisposableDbUrl` is the pattern: the destructive suites
+cannot run against a non-loopback DSN because **the code refuses**, on every host,
+with no PATH and no hook. Its limit is the honest part — it covers only actions
+that go through repo code, so a raw-shell gotcha ("never bare `git stash` in a
+shared tree") has no interception point and stays prose on every host.
+
+**A `$PATH`-wrapper layer — a `.bin/` prepended to `PATH` shadowing `git`/`npm` to
+intercept dangerous invocations — was proposed for exactly that gap and REJECTED
+2026-11-15**: machine/shell-global state (the retired-surface shape, §Skill Chain
+invariant 2); `spawnSync('git', …)` resolves through PATH, so the gates' own
+tooling would run through it and a bug in it reads as a clean gate; PATH shadowing
+resolves differently in Git Bash, PowerShell and `cmd`; and it is invisibly
+bypassable, so it is an accelerator at far higher blast radius. The four reasons
+and the forcing question for the next such proposal:
+[`enforcement-mechanisms.md`](docs/reference/enforcement-mechanisms.md).
 
 ## Requirements Layer — de-facto invariant ledger
 
-Plan: `docs/plans/requirements-layer.md`. A materialized view of the
-codebase's de-facto requirements — the behavioural / safety / security /
-correctness / persistence invariants the code already enforces.
+A materialized view of the codebase's de-facto requirements — the invariants the
+code already enforces. CLI `scripts/requirements.mjs` (`extract --files` →
+`reconcile` → `index`); the **committed `.requirements/ledger.json`** is the single
+persisted artefact (the index is derived in-memory). `/audit-code` injects a
+`<requirements_rubric>` block when the ledger exists, and is unaffected when it
+doesn't. Per-module detail and the `.requirements/` layout:
+[`requirements-layer.md`](docs/plans/requirements-layer.md).
 
-- **`scripts/requirements.mjs`** — CLI: `extract --files <a,b,…> [--runs N]`
-  → `reconcile` → `index`; modules under `scripts/lib/requirements/`
-  (per-module detail: the plan above).
-- **`.requirements/`** — `README.md` + the **committed** `ledger.json` (the
-  shared, diffable rubric) are tracked; `candidates.json` / `gaps.json` are
-  gitignored extraction intermediates; `overrides.json` is user-curated
-  (committed when present). `ledger.json` is the single persisted artefact —
-  the index is derived in-memory.
-- **`/audit-code` consumption** — when `.requirements/ledger.json` exists,
-  `runMultiPassCodeAudit` injects a `<requirements_rubric>` block (in-scope
-  `active` invariants enforced, the rest indexed). Non-blocking: ledger absent →
-  audit unaffected.
-- **Egress safety** — `extract --files` is user-supplied: every path is
-  repo-root-contained AND symlink-resolved before read; sensitive paths
-  (and sensitive symlink targets) are refused; bodies are secret-redacted.
+**Egress safety (resident)** — `extract --files` is user-supplied: every path is
+repo-root-contained AND symlink-resolved before read; sensitive paths (and
+sensitive symlink targets) are refused; bodies are secret-redacted.
 
 ## Personal config — keep it out of the public repo
 
 This repo is **public on GitHub**, so the committed `.claude/settings.json` holds
-only project-portable values — most of all `permissions.additionalDirectories`,
+only project-portable values — above all `permissions.additionalDirectories`,
 whose empty-array placeholder is intentional. Never put a personal folder path
-(other projects, vault locations, AppData) there. Per-developer overrides go in
-the gitignored **`.claude/settings.local.json`**, which Claude Code merges on top
-automatically; copy `.claude/settings.local.example.json` for the format.
+there. Per-developer overrides go in the gitignored
+**`.claude/settings.local.json`**, merged on top automatically; copy
+`.claude/settings.local.example.json` for the format.
 
 ## Scope discipline — pre-existing uncommitted changes
 
-When you find uncommitted, unstaged, untracked, or unpushed changes in
-the repo that are **unrelated to the current task**: leave them alone.
-They are the user's working set, not yours to tidy.
+Uncommitted, unstaged, untracked or unpushed changes **unrelated to the current
+task** are the user's working set — leave them alone. Scope expansion is the
+failure mode this prevents; repo hygiene is a separate, explicitly requested task.
 
-**Rules:**
-
-- **Stage by name only** — never `git add -A`, `git add .`, or `git
-  add -u`. Stage exactly the files you modified for the current task.
-- **Never auto-commit** pre-existing state to "clean up" — that
-  bundles unrelated work into your commit and corrupts blame/history.
-- **Never auto-stash** unrelated work — stash conflicts on pop bite
-  worse than the original mess.
-- **Never `git rm --cached`** legacy tracked-but-gitignored files
-  without an explicit user instruction; that change ships to every
-  collaborator and isn't reversible by `git pull`.
-- **Mention what you saw, once**, in a one-line note: *"Heads-up:
-  there are 3 unrelated unstaged files (foo.ts, bar.mjs, baz.json) I
-  left untouched."* Then move on — don't relitigate them.
-- If the unrelated state genuinely blocks the task (e.g., a half-edited
-  file you need to also edit), stop and ask the user how to proceed
-  before touching it.
-
-**Why:** Scope expansion is the failure mode this rule prevents.  Without
-it, sessions drift from the requested task into repo-hygiene meta-work
-the user didn't authorise, and the final commit bundles unrelated work
-that's hard to revert cleanly.  Repo hygiene is a separate, dedicated
-task — request it explicitly when you want it done.
+- **Stage by name only** — never `git add -A`, `git add .` or `git add -u`. Stage
+  exactly the files you modified for the current task.
+- **Never auto-commit** pre-existing state to "clean up" — that bundles unrelated
+  work into your commit and corrupts blame/history.
+- **Never auto-stash** unrelated work — stash conflicts on pop bite worse than
+  the original mess.
+- **Never `git rm --cached`** legacy tracked-but-gitignored files without an
+  explicit user instruction; it ships to every collaborator and `git pull` does
+  not reverse it.
+- **Mention what you saw, once**: *"Heads-up: 3 unrelated unstaged files left
+  untouched (foo.ts, bar.mjs, baz.json)."* Then move on.
+- If the unrelated state genuinely blocks the task (a half-edited file you must
+  also edit), stop and ask before touching it.
 
 ## Contracts across the prose↔code seam (no compiler runs here)
 
-The single-oracle rule (`classifySelector`, `sensitive-paths.mjs`) is stated
-elsewhere for **code↔code** seams. Its worst case is the seam where the
-**producer is a SKILL.md** — prose a model follows — and the **consumer is
-code**. Nothing type-checks that, nothing errors, and the failure is silent in
-both directions.
-
-Two incidents produced the rules below and are written up in
+The single-oracle rule's worst case is the seam where the **producer is a
+SKILL.md** — prose a model follows — and the **consumer is code**. Nothing
+type-checks that, nothing errors, and the failure is silent both ways. Two
+incidents produced the rules below, written up in
 [`testing-doctrine.md`](docs/reference/testing-doctrine.md) §prose↔code seam: a
 reader that matched **0 findings in all 7 live sessions** because the SKILL.md
-said `severity` and every consumer read `code`, and a prompt that asked for a
-field the response schema forbade outright.
+said `severity` and every consumer read `code`, and a prompt asking for a field
+the response schema forbade outright.
 
 - **Before reading a field out of a model-authored payload**, grep the authoring
   SKILL.md for the field name. A docstring about "the real production shape" is
@@ -1098,14 +1004,14 @@ field the response schema forbade outright.
   the first's clothes.
 - **The worse variant: the prompt asks for a field the RESPONSE SCHEMA forbids** —
   unrepresentable, not mistyped, and uncatchable from either side alone. Ask it of
-  the EMITTED schema (`z.toJSONSchema(...)` → `properties`/`required`), never of the
-  Zod source: **a prompt that names a field is a claim about a contract you have not
-  checked.** A required field must also be filled by every non-LLM constructor, so
-  adding one is never a one-line change.
+  the EMITTED schema (`z.toJSONSchema(...)` → `properties`/`required`), never of
+  the Zod source: **a prompt that names a field is a claim about a contract you
+  have not checked.** A required field must also be filled by every non-LLM
+  constructor, so adding one is never a one-line change.
 - **A hand-written annotated example in a reference doc is the same seam, one hop
-  over.** `contract-and-bootstrap.md`'s JSONC example drifted from
+  over** — `contract-and-bootstrap.md`'s JSONC example drifted from
   `VisualContractSchema` silently until `npm run visual-contract-doc:gate` compared
-  both sides' `z.toJSONSchema(...)` key sets, in both directions — never the doc
+  both sides' `z.toJSONSchema(...)` key sets, in both directions, never the doc
   against the Zod source.
 
 ## Sensitive paths + VCS contract (canonical locations)
@@ -1122,79 +1028,74 @@ implementation. Three invariants that constrain any change here:
   symlink named innocently but resolving into `~/.ssh/` is caught; a resolution
   error or a repo-escaping symlink classifies as `sensitive`, and `redactSecrets`
   returns `[REDACTED:redaction-failed]` rather than leak a payload it could not
-  process. INC-001 in [docs/security-strategy.md](docs/security-strategy.md)
-  records the symlink-bypass class this closed.
-- **Structured results, never bare throws.**
-  [`scripts/lib/vcs.mjs`](scripts/lib/vcs.mjs) returns `{ok:true,…}` or
-  `{ok:false, error:{code,…}}` over a closed `VcsErrorCode` enum, of which
-  `EXEC_FAILED` is the **only** retryable code. Likewise
-  `runJsonLinesAsyncStrict` ([subprocess.mjs](scripts/lib/subprocess.mjs))
+  process (INC-001 in [security-strategy.md](docs/security-strategy.md)).
+- **Structured results, never bare throws.** [`vcs.mjs`](scripts/lib/vcs.mjs)
+  returns `{ok:true,…}` or `{ok:false, error:{code,…}}` over a closed
+  `VcsErrorCode` enum, of which `EXEC_FAILED` is the **only** retryable code.
+  Likewise `runJsonLinesAsyncStrict` ([subprocess.mjs](scripts/lib/subprocess.mjs))
   hard-fails on parse errors by default — that closes the `.filter(Boolean)`
-  silent-data-loss invariant, where dropped lines let a caller read a short
-  list as a complete one.
+  silent-data-loss invariant, where dropped lines let a caller read a short list
+  as a complete one.
 
 Category lists, the 12-case diff-state matrix, both error enums and their exit
-codes: [`docs/reference/sensitive-paths-and-vcs.md`](docs/reference/sensitive-paths-and-vcs.md).
+codes: [`sensitive-paths-and-vcs.md`](docs/reference/sensitive-paths-and-vcs.md).
 
 ## Verification discipline (cross-skill)
 
-Eight rules, each led by its measurement — six from a 2026-08-07 field report,
-plus §7 and §4a. Canonical:
-[`docs/audit/shared-references/verification-discipline.md`](docs/audit/shared-references/verification-discipline.md),
+Eight rules, each led by its measurement. Canonical:
+[`verification-discipline.md`](docs/audit/shared-references/verification-discipline.md),
 synced into ten skills' `references/` by `sync-shared-audit-refs.mjs` and
 byte-checked in `npm run check`. **Edit the canonical, never a copy.**
 
 - **Pin a line number to the commit you read it at** — `path:120 (a4ec98da)`.
   *5 of 9* bad claims in one verified document were correct when written and
   decayed into wrong-but-**resolving** references. Cite append-newest-first files
-  (`status.md`) by section header, never by line. Check with
-  `npm run docs:citations -- <doc>` (report-only, not in `check`).
+  (`status.md`) by section header, never by line. `npm run docs:citations -- <doc>`
+  (report-only, not in `check`).
 - **Label figures `measured`/`derived`/`expected` and carry the command.** This
   file's own test row read `~5250 tests (~12s)` against a real 12,216 in 80s —
-  *2.3x* and *6.7x* stale, and it is the number you reach for when a run looks
-  wrong.
+  *2.3x* and *6.7x* stale, and it is what you reach for when a run looks wrong.
 - **A check is not trustworthy until seen to fail; when one fails, suspect the
-  instrument first.** Red-then-green, one defect at a time. A before/after
+  instrument first.** Red-then-green, one defect at a time; a before/after
   observation of a pre-existing defect is **not** a negative control. Six
   consecutive verification-script failures in one session were all instrument
   defects. `/audit-code` Step 4.5 and `/ux-lock` Step 2.5 own this.
 - **Reproducing a figure is not verifying its attribution.** A 22.5% reduction
   reproduced perfectly while its stated cause was false — the parent already had
-  the credited property, and the real mechanism was *92%* of the delta.
+  the credited property, and the real mechanism was *92%* of the delta;
   `/investigate` Step 2.5 reports `figure` and `attribution` separately.
 - **Promote a one-off check that mattered** — subject probe + negative control +
   vacuous-pass guard, with a disposition and a named retirement predicate:
-  [`skills/audit-code/examples/contract-test-scaffold.md`](skills/audit-code/examples/contract-test-scaffold.md).
+  [contract-test-scaffold.md](skills/audit-code/examples/contract-test-scaffold.md).
 - **Verify what the consumer receives, not what the producer sent.** `/ship`
   Step 6.8; `unverified` must name a concrete blocked prerequisite, never a bare
   "not applicable".
 
 ## Commit provenance trailers (`AI-*`)
 
-`/ship` commits carry `AI-*` git trailers (`AI-Skill`/`AI-Models`/`AI-Gate`/…) written
-ONLY by `scripts/ship-commit.mjs` and `scripts/ship-train.mjs` — **never hand-typed; the
-`AI-*` namespace is reserved.** `AI-Gate` is `passed`/`converged` (verified against the
-store) or `waived`/`not-run` (declared); **`passed` is rare by design** — never
-hand-write `.audit/last-audit-run.json` or reorder a ship to chase it. **When you need
-it**: reading or querying trailers, or a gate refusal —
-[`docs/reference/commit-provenance.md`](docs/reference/commit-provenance.md).
+`/ship` commits carry `AI-*` git trailers (`AI-Skill`/`AI-Models`/`AI-Gate`/…)
+written ONLY by `ship-commit.mjs` and `ship-train.mjs` — **never hand-typed; the
+`AI-*` namespace is reserved.** `AI-Gate` is `passed`/`converged` (verified against
+the store) or `waived`/`not-run` (declared); **`passed` is rare by design** — never
+hand-write `.audit/last-audit-run.json` or reorder a ship to chase it. Reading or
+querying trailers, and gate refusals:
+[`commit-provenance.md`](docs/reference/commit-provenance.md).
 
 ## Code Style
 
 - ESM modules (`import`/`export`, not `require`)
-- `process.stderr.write()` for progress logging (keeps stdout clean for JSON output)
-- `--out <file>` pattern: JSON to file, 1-line summary to stdout
+- `process.stderr.write()` for progress logging (keeps stdout clean for JSON)
+- `--out <file>`: JSON to file, 1-line summary to stdout
 - Zod schemas define structured output contracts for all LLM calls
-- Functions follow `{result, usage, latencyMs}` return contract
+- Functions follow the `{result, usage, latencyMs}` return contract
 - Operator docs: real values or PowerShell vars in CLI examples, **never `<angle-brackets>`** (PowerShell reserves `<` — unpasteable); render a `--worksheet`, not raw JSON
 
 ## Do NOT
 
-- Use `_def.typeName` or `_def.shape()` — these are Zod 3 patterns, we use Zod 4
+- Use `_def.typeName` / `_def.shape()` (Zod 3) or `require()` — see §Dependencies
 - Send `.env` or credential files to external APIs
-- Use `require()` — project is ESM-only
 - Use `import 'dotenv/config'` — cwd-only; import `lib/load-env.mjs` instead
-- Create new Anthropic/OpenAI client instances per call — reuse the client created in `main()`
+- Create new Anthropic/OpenAI client instances per call — reuse the one from `main()`
 - Hand-keep a "which files are code" extension list — derive from `file-taxonomy.mjs` ([contract](docs/reference/file-coverage.md))
 
 ## Accepted Technical Debt
