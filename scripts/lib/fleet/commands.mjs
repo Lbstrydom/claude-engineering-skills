@@ -16,6 +16,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ArgvError } from '../cli-io.mjs';
+import { missingToolingWarning } from './bundle-stamp.mjs';
 import {
   runGit, headOf, listWorktrees, tipSubject, repoToplevel,
 } from './git-facts.mjs';
@@ -289,6 +290,14 @@ export function bindingWarnings(record) {
   return src.branch === record.id ? [] : [`claim id ${record.id} is not its bound branch ${src.branch}: merged evidence retires a claim by its BRANCH — claim from that branch's worktree, or pass --worktree`];
 }
 
+/** `missingToolingWarning` for the claim's worktree, as an output line; empty when there is nothing to say or no script path. */
+function toolingWarningLine(ctx, worktree) {
+  const script = ctx.argv?.[1];
+  if (!script) return '';
+  const w = missingToolingWarning({ scriptDir: path.dirname(script), worktree });
+  return w ? `\nwarning: ${w}` : '';
+}
+
 /** The branches of the sessions that would BLOCK this claim on the pre-lock registry read (no merged evidence yet). */
 function blockingHolderBranches(facts, id, flags, paths, hasPaths, ctx) {
   const cur = facts.registry.sessions.find((s) => s.id === id) ?? null;
@@ -378,7 +387,8 @@ export function cmdClaim(ctx, flags) {
     + (!start.ok && v.mode === 'new' && v.record ? `
 warning: startOid not recorded — ${start.reason}` : '')
     + (v.record ? `\n${v.mode === 'new' ? 'registered' : 'updated'} ${id} (gen ${v.record.gen}, rev ${v.record.rev}): ${v.record.intent}${v.verdict.overridden ? '\n  --override: recorded as a known overlap on both sessions' : ''}` : '')
-    + (v.record ? bindingWarnings(v.record).map((w) => `\nwarning: ${w}`).join('') : '');
+    + (v.record ? bindingWarnings(v.record).map((w) => `\nwarning: ${w}`).join('') : '')
+    + (v.record ? toolingWarningLine(ctx, v.record.worktree) : '');
   const good = v.verdict.verdict === 'ok' || v.verdict.verdict === 'warn' || v.verdict.overridden;
   return {
     ok: Boolean(good), code: good ? 'ok' : 'refused', id, mode: v.mode, verdict: v.verdict.verdict, overridden: Boolean(v.verdict.overridden),

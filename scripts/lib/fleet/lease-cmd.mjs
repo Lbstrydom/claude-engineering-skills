@@ -28,7 +28,7 @@ import {
 export const SUBS = Object.freeze(['acquire', 'attach', 'release', 'status', 'announce', 'peak', 'wait', 'log', 'grant', 'turn', 'run']);
 
 /** The flags each sub-command accepts (besides `--json`); anything else is an argument error, never ignored. */
-const ALLOWED = Object.freeze({
+export const ALLOWED = Object.freeze({
   acquire: ['--kind', '--for', '--pid', '--token', '--note', '--id'],
   attach: ['--pid', '--token', '--id'],
   release: ['--token', '--id', '--force', '--reason', '--end-turn'],

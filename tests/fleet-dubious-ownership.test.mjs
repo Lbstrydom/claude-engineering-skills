@@ -16,7 +16,11 @@ describe('dubious ownership', () => {
   it('dubiousOwnership passes git\'s message and remedy through; anything else is null', () => {
     const r = dubiousOwnership(STDERR);
     assert.match(r, /detected dubious ownership in repository at 'C:\/w\/repo'/);
-    assert.match(r, /run: git config --global --add safe\.directory C:\/w\/repo/);
+    assert.match(r, /git config --global --add safe\.directory C:\/w\/repo/);
+    // Both causes, both remedies, and that fleet itself changes nothing (second consumer report).
+    assert.match(r, /owned by another account, or this process runs under a different \(sandboxed or elevated\) token/);
+    assert.match(r, /takeown \/F "C:\/w\/repo" \/R \/D Y/);
+    assert.match(r, /fleet changes nothing/);
     assert.equal(dubiousOwnership('fatal: not a git repository (or any of the parent directories): .git'), null);
   });
 

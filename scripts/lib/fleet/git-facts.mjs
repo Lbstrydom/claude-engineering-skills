@@ -173,7 +173,10 @@ export function gitCommonDir(cwd) {
 /**
  * git's `safe.directory` refusal, passed through WHOLE with its remedy, or null. `runGit`'s reason keeps only stderr's first
  * line, and git puts the remedy (`git config --global --add safe.directory …`) on a later one, so a refusal used to surface
- * as "cannot locate the git common dir" with nothing to act on (consumer report 2026-11-15).
+ * as "cannot locate the git common dir" with nothing to act on (consumer reports 2026-11-15). Two causes produce it — the
+ * folder belongs to another account, or THIS process runs under a different (sandboxed or elevated) token than the one that
+ * owns it, as an app-launched session on Windows can — and each has its remedy. Both are a person's security decision:
+ * fleet names them and changes nothing.
  */
 export function dubiousOwnership(stderr) {
   const text = String(stderr ?? '');
@@ -181,7 +184,11 @@ export function dubiousOwnership(stderr) {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const fix = lines.find((l) => /git config --global --add safe\.directory/.test(l));
   const head = (lines.find((l) => /dubious ownership/i.test(l)) ?? 'detected dubious ownership').replace(/^fatal:\s*/, '');
-  return `git refuses this repository: ${head}. To trust it, run: ${fix ?? 'git config --global --add safe.directory <the repository path>'} (only if you trust the folder's owner)`;
+  const where = /at '([^']+)'/.exec(head)?.[1] ?? 'the repository folder';
+  return `git refuses this repository: ${head}. Cause: the folder is owned by another account, or this process runs under a `
+    + `different (sandboxed or elevated) token than the folder's owner. Remedies, a person's choice (fleet changes nothing): `
+    + `trust the folder for git — ${fix ?? `git config --global --add safe.directory ${where}`} — or take ownership of it `
+    + `(Windows: takeown /F "${where}" /R /D Y). Only if you trust the folder's contents.`;
 }
 
 const commonDirs = new Map();

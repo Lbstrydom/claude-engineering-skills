@@ -127,3 +127,45 @@ export function parseWaitingOn(spec) {
   if (!ref) throw new ArgvError(`--waiting-on ${JSON.stringify(spec)}: ref is empty`);
   return { kind, ref, note };
 }
+
+/** One line per verb for `fleet <verb> --help` (the full contract is in skills/fleet/SKILL.md and its references). */
+export const VERB_SUMMARY = Object.freeze({
+  status: 'every session, branch and worktree, with overlaps and landing order (read-only)',
+  add: 'adopt existing work (a branch, #PR, or --all) as a session',
+  claim: 'register this session: its intent and the paths it will touch; BLOCKED (exit 3) on overlapping live work',
+  ready: 'mark this session ready to land at its current head',
+  touch: 'renew this session\'s lease; record or clear what it waits on',
+  hold: 'pause (on) or resume (off) heavy runs for every session',
+  start: 'create worktrees and claims for a batch of tasks',
+  repair: 'quarantine an invalid registry record',
+  release: 'retire this session\'s claim (done, or --abandoned)',
+  'archive-check': 'is a worktree safe to remove? (read-only)',
+  prune: 'list (or --apply) removable merged/abandoned branches and worktrees',
+  archive: 'snapshot a worktree to a tag, then remove it (dry run unless --apply)',
+  handover: 'move the fleet to another account (prepare / receive)',
+  next: 'this session\'s obligations at a checkpoint, plus FYI lines and the note stamp',
+  restack: 'rebase a branch onto base, verifying the result',
+  directive: 'post, list or ack a coordinator directive',
+  propose: 'record a finding for the coordinator (durable)',
+  proposal: 'fold, queue or decline one recorded finding',
+  proposals: 'list recorded findings',
+  lease: 'the machine-wide heavy slot: acquire, run, release, status, announce, peak, wait, log, grant, turn',
+  land: 'build a combined test train of ready sessions; --approve lands it (exit 4 = it ran red)',
+});
+
+/**
+ * `fleet <verb> --help`: the verb's line and every flag it accepts, from the SAME spec the parser enforces (so the help cannot
+ * advertise a flag the CLI would refuse). `extra` lists sub-commands (lease).
+ */
+export function verbHelp(verb, { extra = null } = {}) {
+  const spec = VERBS[verb];
+  if (!spec) return null;
+  const [min, max] = spec.positionals ?? [0, 0];
+  const pos = max === 0 ? '' : min === 0 ? ' [arg]' : ' <arg>';
+  const flags = [
+    ...spec.bool.map((f) => `  ${f}`),
+    ...spec.value.map((f) => `  ${f} <value>`),
+    ...spec.repeat.map((f) => `  ${f} <value>   (repeatable)`),
+  ];
+  return [`usage: fleet ${verb}${pos} [flags]`, `  ${VERB_SUMMARY[verb] ?? ''}`, ...(extra ? [extra] : []), 'flags:', ...flags, ''].join('\n');
+}
