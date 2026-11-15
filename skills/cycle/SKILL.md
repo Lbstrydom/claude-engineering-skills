@@ -103,7 +103,7 @@ golden-path workflow without thinking about it.
 > read `audit route:` and `degraded audits:`. A fresh worktree has no keys — the
 > route comes from `~/.audit-loop.env`. If one is absent,
 > `references/prerequisite-ladder.md` decides: hydrate and retry, the labelled
-> substitute (never when `degraded audits: forbidden`), or `AUDIT_NOT_RUN` and
+> substitute (not when `degraded audits: forbidden`), or `AUDIT_NOT_RUN` and
 > stop. Say so before generating the plan, and carry the `AUDIT_DEGRADED` /
 > `AUDIT_NOT_RUN` label into Step 6's handoff to /ship.
 
@@ -568,7 +568,7 @@ scope.
   Audit-plan:  3 rounds, APPROVE
   Clusters:    A in-cluster H:0 (2 deferred→C); B in-cluster H:0 (autonomous)  ← only if hasClustering
   Audit-code:  4 rounds, CONVERGED, H:0 M:1 L:2                 ← classic path (no §11)
-  Final gate:  APPROVE (<provider> / <model>) over union diff  ← only if hasClustering
+  Final review: APPROVE (<provider> / <model>) over union diff ← only if hasClustering
   Persona:    0 P0, 1 P1 (deferred)
   UX-lock:    2 specs generated
   Ship:       BLOCKED — run: /ship docs/plans/<name>.md

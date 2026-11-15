@@ -59,7 +59,8 @@ describe('the surfaces a human reads use the label', () => {
   });
   test('/cycle report templates print the provider, not "Gemini APPROVE"', () => {
     for (const p of ['skills/cycle/SKILL.md', 'skills/cycle/references/remediate-mode.md']) {
-      assert.doesNotMatch(read(p), /Final gate:\s+Gemini APPROVE/, p);
+      assert.doesNotMatch(read(p), /Final (gate|review):\s+Gemini APPROVE/, p);
+      assert.ok(read(p).includes('APPROVE (<provider> / <model>)'), p);
     }
   });
 });
