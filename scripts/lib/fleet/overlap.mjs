@@ -307,9 +307,14 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [], trac
   const myPaths = claim.paths ?? [];
   const conflicts = [];
   const uninspected = [];
+  const finished = [];
   for (const o of others) {
     const s = o.session;
-    if (!o.live || isTerminalState(s.state) || s.id === claim.id) continue;
+    if (!o.live || isTerminalState(s.state) || s.id === claim.id) {
+      // Merged and clean, but never released: not counted, and disclosed so its record gets retired.
+      if (o.finished && !isTerminalState(s.state) && s.id !== claim.id) finished.push({ with: s.id, note: o.finished });
+      continue;
+    }
     if (o.uncommittedUnknown) uninspected.push({ with: s.id, reason: o.uncommittedUnknown });
     const via = [];
     const hit = { with: s.id, via, paths: [], files: [], known: false };
@@ -340,12 +345,13 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [], trac
     const advisoryOnly = via.every((v) => v === 'uncommitted' || v === 'paths-abstract' || v === 'hot-files');
     hit.uncommittedOnly = via.includes('uncommitted') && advisoryOnly;
     hit.abstractOnly = via.includes('paths-abstract') && advisoryOnly;
+    if (o.mergedNote) hit.holderMerged = o.mergedNote;
     hit.known = (claim.knownOverlaps ?? []).some((k) => k.with === s.id)
       || (s.knownOverlaps ?? []).some((k) => k.with === claim.id);
     conflicts.push(hit);
   }
   const blocking = conflicts.filter(isBlockingConflict);
-  const extra = uninspected.length ? { uninspected } : {};
+  const extra = { ...(uninspected.length ? { uninspected } : {}), ...(finished.length ? { finished } : {}) };
   if (mode === 'new' && blocking.length) return { ok: false, verdict: 'blocked', conflicts, ...extra };
   if (mode === 'adopt' && blocking.length) return { ok: true, verdict: 'warn', conflicts, ...extra };
   // Advisory-only evidence (uncommitted edits) reads as a WARN, never a block and never a silent OK.

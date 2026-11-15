@@ -32,7 +32,7 @@ import {
 import { renderChipPrompt, renderOpenTrains } from './render-train.mjs';
 import { WaitingOnSchema, listTrains, quarantine, transact } from './registry.mjs';
 import {
-  buildStatusFrom, gatherFacts, leaseMsFrom, othersFor, readyChecks, resolveUpstream, statusChecks,
+  buildStatusFrom, gatherFacts, leaseMsFrom, othersFor, withMergedEvidence, readyChecks, resolveUpstream, statusChecks,
 } from './facts.mjs';
 import { parseWaitingOn, splitPaths } from './argv.mjs';
 import { newDirectiveId, readDirectives, readHosts, writeDirective, writeHost } from './directives.mjs';
@@ -289,6 +289,20 @@ export function bindingWarnings(record) {
   return src.branch === record.id ? [] : [`claim id ${record.id} is not its bound branch ${src.branch}: merged evidence retires a claim by its BRANCH — claim from that branch's worktree, or pass --worktree`];
 }
 
+/** The branches of the sessions that would BLOCK this claim on the pre-lock registry read (no merged evidence yet). */
+function blockingHolderBranches(facts, id, flags, paths, hasPaths, ctx) {
+  const cur = facts.registry.sessions.find((s) => s.id === id) ?? null;
+  const mode = claimMode(cur);
+  const claimPaths = hasPaths || mode === 'new' ? paths : cur.paths;
+  const intent = flags['--intent'] ?? cur?.intent;
+  const v = decideClaim({
+    claim: { id, intent, paths: claimPaths ?? [], knownOverlaps: mode === 'adopt' ? cur.knownOverlaps : [] },
+    mode, others: othersFor(facts, id, ctx.now), complete: true, hotFiles: ctx.config.hotFiles ?? [],
+  });
+  const byId = new Map(facts.registry.sessions.map((s) => [s.id, s]));
+  return v.conflicts.filter(isBlockingConflict).map((c) => byId.get(c.with)?.source?.branch);
+}
+
 export function cmdClaim(ctx, flags) {
   const bind = resolveClaimBinding(ctx, flags);
   const { id, branch } = bind;
@@ -298,7 +312,11 @@ export function cmdClaim(ctx, flags) {
   if (!pv.ok) throw new ArgvError(`fleet claim: ${pv.errors.join('; ')}`);
   const waiting = waitingFromFlags(flags, ctx);
   // The `claim` fact profile: every live session's worktree is probed for UNCOMMITTED edits (advisory evidence).
-  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: true, untracked: false, uncommitted: 'all' });
+  const gathered = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: true, untracked: false, uncommitted: 'all' });
+  // Merged evidence only for the holders of an overlap that would BLOCK (judged on the pre-lock read): a merged, clean holder
+  // is finished work, not an overlap. The common no-conflict path asks `gh` nothing. A holder registered after this read has
+  // no evidence and is judged as before (live) — the safe side.
+  const facts = withMergedEvidence(gathered, { cwd: ctx.cwd, env: ctx.env, names: blockingHolderBranches(gathered, id, flags, paths, hasPaths, ctx) });
   // A detached `--worktree` claim starts from THAT worktree's HEAD, not the cwd's.
   const start = startOidFor(branch || !bind.worktree ? ctx : { ...ctx, cwd: bind.worktree }, branch, facts.base.measure);
   const startOid = start.ok ? start.oid : null; // claim stays lenient but never substitutes; the reason is surfaced below

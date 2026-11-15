@@ -190,9 +190,11 @@ export function renderClaimVerdict(v, ctx = {}) {
     if (c.uncommittedFiles?.length) detail.push(`UNCOMMITTED in their worktree: ${c.uncommittedFiles.slice(0, 5).join(', ')} (advisory)`);
     if (c.via.includes('intent')) detail.push('identical intent');
     if (c.hotFiles?.length) detail.push(`hot files ${c.hotFiles.slice(0, 5).join(', ')} (${c.hotOnly ? 'disclosed, not blocking' : 'not counted'})`);
+    if (c.holderMerged) detail.push(`the holder's work is ${c.holderMerged}; if that session is finished, retire its record: \`${ctx.cmd ?? 'fleet'} release --id ${c.with}\``);
     lines.push(`  ${c.known ? '[known] ' : ''}${c.hotOnly ? '[hot] ' : ''}${c.abstractOnly ? '[abstract] ' : ''}${c.with}: ${c.via.join('+')}${detail.length ? ` — ${detail.join('; ')}` : ''}`);
   }
   for (const u of v.uninspected ?? []) lines.push(`  note: uncommitted work not inspected for ${u.with} (${u.reason})`);
+  for (const f of v.finished ?? []) lines.push(`  note: ${f.with} not counted as an overlap — ${f.note}, worktree clean; retire its record: \`${ctx.cmd ?? 'fleet'} release --id ${f.with}\``);
   return lines.join('\n');
 }
 
