@@ -510,6 +510,18 @@ export const EXCLUSIONS = [
     test: rel => /^docs\/experiments\/.*known-defects.*\.json$/.test(rel),
   },
   {
+    id: 'DECISION_CORPUS',
+    reason:
+      'the Fable-vs-Opus decision eval\'s frozen inputs and raw outputs (docs/plans/fable-vs-opus-decision-eval.md). ' +
+      'Corpus contexts are byte-frozen excerpts labelled `path@sha` AS THEY STOOD AT A PAST COMMIT ' +
+      '(one cites a plan that exists only on an unmerged branch), sha256-pinned by a manifest the ' +
+      'runner refuses on; runs/** is raw model and judge output, which may name any path, real or ' +
+      'invented. Neither is authored reference prose: editing either to keep a link green would ' +
+      'invalidate the frozen input or falsify the recorded output. Same class as CORPUS and ' +
+      'TOOL_OWNED; scoped to those two subtrees, so the experiment\'s authored docs stay gated.',
+    test: rel => /^docs\/research\/fable-vs-opus-decision-eval\/(corpus|runs)\//.test(rel),
+  },
+  {
     id: 'VENDORED',
     reason:
       'a portable security kit whose files are path-mirrored to their destination on purpose; its ' +
