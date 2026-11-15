@@ -190,7 +190,7 @@ const PINNED_DOCUMENT_ONLY = {
   // (REMEDIATE mode, 2026-09-27): the first reuses the cluster-scope exit via
   // Step R4; the second is document-only BECAUSE no plan-content identity exists
   // in the store to build an oracle on (see the gate's reason).
-  cycle: ['remediate-focused-audit-scope', 'audit-plan-skip-requires-explicit-mode', 'cluster-scope-preflight-exits-nonzero', 'cluster-start-ref-validated-on-use', 'preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
+  cycle: ['remediate-focused-audit-scope', 'audit-plan-skip-requires-explicit-mode', 'cluster-scope-preflight-exits-nonzero', 'cluster-start-ref-validated-on-use', 'preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory', 'autonomous-never-pushes-without-ship'],
   plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
 };
 const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'fleet', 'investigate', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship', 'skills', 'ux-lock', 'visual-audit'];
@@ -322,7 +322,9 @@ describe('gate-honesty — real skills/', () => {
     // 56 -> 57: +1 audit-code (changed-lines-unread-blocks-convergence, 2026-10-10, upstream 58f4e3a5).
     // 57 -> 56: audit-plan round-caps moved from document-only to executable (2026-10-25). The cap is enforced in code now:
     //   openai-audit.mjs exits 4 past the soft cap, and the cli-exit scenarios drive the real CLI to that refusal.
-    assert.equal(totalDocOnly, 56);   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
+    // 56 -> 57: +1 cycle (autonomous-never-pushes-without-ship, 2026-11-15, ai-organiser PR #111/#112). Document-only: /cycle
+    //   has no exit code; the prose is pinned by tests/cycle-autonomous-ship-gate.test.mjs.
+    assert.equal(totalDocOnly, 57);   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
