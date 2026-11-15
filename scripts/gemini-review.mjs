@@ -842,7 +842,8 @@ async function main() {
 
   // A typo'd flag must refuse, not run: `--rond 3` silently dropped is an UNCAPPED review.
   try { assertKnownFlags(args, REVIEW_FLAGS, { cli: 'gemini-review', from: 1 }); } catch (err) { console.error(`Error: ${err.message}`); process.exit(2); }
-  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role, envelopeScopeCli, campaignDigest, round: roundArg, priorPath, allowInfraScope, batch } = parseReviewArgs(args);
+  let parsedArgs; try { parsedArgs = parseReviewArgs(args); } catch (err) { console.error(`Error: ${err.message}`); process.exit(2); }
+  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role, envelopeScopeCli, campaignDigest, round: roundArg, priorPath, allowInfraScope, batch } = parsedArgs;
   // The 2-round cap is CODE: --round 3+ is refused before any provider is built.
   const roundCheck = validateRoundArgs({ round: roundArg, priorPath });
   const priorCheck = roundCheck.ok && priorPath ? parsePriorResult(readFileOrDie(priorPath)) : { ok: true, prior: null };

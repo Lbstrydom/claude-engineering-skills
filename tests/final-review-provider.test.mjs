@@ -12,7 +12,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectProvider, applyProviderSetting } from '../scripts/gemini-review.mjs';
-import { ProviderNotReadyError, describeAzureClaudeGap } from '../scripts/lib/final-review/providers.mjs';
+import { ProviderNotReadyError, describeAzureClaudeGap, quoteForDisplay } from '../scripts/lib/final-review/providers.mjs';
 
 describe('selectProvider precedence', () => {
   test('auto-detect prefers Gemini when GEMINI_API_KEY is present', () => {
@@ -129,5 +129,14 @@ describe('half-configured Azure profile: refuse loudly, with a remedy that keeps
 
   test('a fully configured route has no gap', () => {
     assert.equal(describeAzureClaudeGap({ ...halfConfigured, claudeDeployment: 'claude-opus-dep' }, {}), null);
+  });
+});
+
+describe('quoteForDisplay — a suggested command stays pasteable', () => {
+  test('a plain path is shown bare', () => assert.equal(quoteForDisplay('scripts/azure-doctor.mjs'), 'scripts/azure-doctor.mjs'));
+  test('a path with a space or a shell metacharacter is quoted, with " ` $ escaped', () => {
+    assert.equal(quoteForDisplay('my repo/scripts/x.mjs'), '"my repo/scripts/x.mjs"');
+    assert.equal(quoteForDisplay('a$b/x.mjs'), '"a\\$b/x.mjs"');
+    assert.equal(quoteForDisplay('a&b/x.mjs'), '"a&b/x.mjs"');
   });
 });

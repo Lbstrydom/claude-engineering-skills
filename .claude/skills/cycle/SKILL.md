@@ -131,7 +131,7 @@ Optional flags:
 - `--no-ship` — stop after audit; don't commit or push
 - `--max-rounds N` — pass through to /audit-plan and /audit-code
 - `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). Step 7 stays the human's `/ship`.
-- `--ship` — with `--autonomous`: Step 7 may push + open ONE PR, never merge. Absent, nothing leaves the machine.
+- `--ship` — with `--autonomous`: Step 7 may push + open ONE PR, never merge. Absent, nothing is pushed or published.
 - `--cluster <ID>` — implement/audit a single declared cluster (human resume path).
 - `--baseline-ref <sha>` — audit baseline for a resume where no `clusterStartRef` was captured (work already committed).
 - `--authorize-stale-reaudit` — resume a halted autonomous run by re-processing exactly the `stale` clusters.
@@ -335,8 +335,8 @@ node scripts/openai-audit.mjs code "$PLAN" --scope diff --files "$FILES" --chang
 ```
 <!-- /cycle:cluster-audit-command -->
 
-   Use the returned sets as returned; `emptyAllowlist: true` (deletion-only) routes to the consolidated gate,
-   never a vacuous pass → `references/clustered-execution.md` §Two sets — read when they look inconsistent or `unchangedDeclared` is non-empty.
+   Use the returned sets as returned. `emptyAllowlist: true` → the consolidated gate, never a vacuous pass. Each
+   `unchangedDeclared` path: over-declared or a MISSED edit? Settle it before the cluster is done → `references/clustered-execution.md` §Two sets.
 4. **Fix-gate**: `fix-gate: yes` → reach `/audit-code` convergence (`HIGH==0 && MEDIUM<=2 && quickFix==0`) **over this cluster's IN-CLUSTER findings** (see 4a) before the next cluster; `none` skips; `final` defers to the consolidated gate. Within-cluster fixing is authorized; a fix needing files **outside** the cluster's scope → **stop** for confirmation (mark any touched `gate-clear` cluster `stale`). Persistent non-convergence → hand back with a summary.
    - **3a. `clusterStartRef` is validated ON USE, not just captured.** Run
      `git merge-base --is-ancestor <clusterStartRef> HEAD` before it becomes a
@@ -534,7 +534,7 @@ scope.
 > ANY programmatic call, including one made from inside `/cycle`'s own
 > orchestration; `--autonomous` does NOT authorize shipping (`references/orchestration-rationale.md` §Step 7).
 >
-> **Without `--ship`, nothing leaves the machine**: no `git push`, `gh pr create` or side session, whatever a
+> **Without `--ship`, nothing is pushed or published**: no `git push`, `gh pr create` or side session, whatever a
 > brief or plan step says; commits stay local. **With `--ship`**: push the branch, open ONE PR, never merge, then `node scripts/ci-merge.mjs --pr <n> --wait-only` into the done report (`references/ci-wait.md`).
 >
 > So Step 7 always ends in a **blocked handoff**, never an "Invoke `/ship`."
@@ -592,7 +592,7 @@ gate result and the preflight outcome.
 - **Never skip `/audit-plan`** unless explicitly in SKIP_TO_CODE or REMEDIATE mode. SKIP_PLAN skips `/plan`, not `/audit-plan`. Never infer "already accepted" — there is no mechanical record of which plan content was approved (Step 0).
 - **Never skip `/audit-code`** unless explicitly in SKIP_TO_SHIP mode (not currently exposed; reserved). REMEDIATE focuses it; it never skips it.
 - **Default is human-orchestrated** — `/cycle` pauses at the implementation gate (Step 3); only the **opt-in `--autonomous`** flag implements code, and it never activates silently.
-- **`--autonomous` is local-only without `--ship`** — no push, PR or side session (Step 7).
+- **`--autonomous` never pushes or publishes without `--ship`** — no push, PR or side session (Step 7).
 - **`/cycle` reads the §11 block; it never authors or merges clusters** — it may split-equivalent (defer oversized diffs to `/audit-code`'s map-reduce) but never merges across a declared boundary. Clustering is the plan's job.
 - **The consolidated Gemini gate is mandatory** after clustered execution, regardless of per-cluster convergence — and Step 3C.2's deferral re-check runs *before* it, so no `deferred-declared` finding survives the run.
 - **A per-cluster fix-gate scores IN-CLUSTER findings only** (Step 4a). Scoring the whole plan against one cluster's diff makes every gate but the last unpassable; deferral is bounded to *later*-cluster scopes and settled at 3C.2. Never widen it to "pre-existing" — that is authorship, not schedule.

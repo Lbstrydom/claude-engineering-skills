@@ -26,12 +26,19 @@
  * @module scripts/lib/final-review/batching
  */
 
-import { statSync } from 'node:fs';
-import { normalizePath } from '../file-io.mjs';
+import { statSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { CHANGED_FILE_MAX_PER_FILE, FULL_CODE_MAX_CHARS } from './code-render.mjs';
 import { COVERAGE_STATES } from './code-coverage.mjs';
 
 const defaultSizeOf = (p) => { try { return statSync(p).size; } catch { return 0; } };
+
+/**
+ * Path IDENTITY for planning and the completeness check: separators unified, case KEPT. Not `normalizePath`, whose
+ * lowercasing is a Windows matching key: on a case-sensitive checkout `A.mjs` and `a.mjs` are two changed files, and
+ * folding them would drop one from every batch while the check, using the same fold, still reported the partition whole.
+ */
+const pathKey = (p) => p.replaceAll('\\', '/');
 
 /**
  * Pack the changed files into disjoint batches, in diff order (first fit).
@@ -46,7 +53,7 @@ export function planDisjointBatches(changedFiles, { sizeOf = defaultSizeOf, budg
   const seen = new Set();
   const files = (Array.isArray(changedFiles) ? changedFiles : [])
     .filter((p) => typeof p === 'string' && p.length > 0)
-    .filter((p) => { const k = normalizePath(p); if (seen.has(k)) return false; seen.add(k); return true; });
+    .filter((p) => { const k = pathKey(p); if (seen.has(k)) return false; seen.add(k); return true; });
   const batches = [];
   for (const file of files) {
     const cost = Math.min(Math.max(0, sizeOf(file) | 0), perFileCap);
@@ -59,19 +66,19 @@ export function planDisjointBatches(changedFiles, { sizeOf = defaultSizeOf, budg
 /**
  * The completeness check from `round-cap-and-structural-card.md`, mechanically:
  * forward (every changed file in a batch), backward (every batch member is a
- * changed file) and pairwise disjoint. Paths compare normalised.
+ * changed file) and pairwise disjoint. Paths compare by `pathKey` (case kept).
  *
  * @param {string[][]} batches
  * @param {string[]} changedFiles - the diff's file set
  * @returns {{ok: boolean, missing: string[], extra: string[], duplicated: string[]}}
  */
 export function checkBatchCompleteness(batches, changedFiles) {
-  const changed = new Map((changedFiles || []).map((p) => [normalizePath(p), p]));
+  const changed = new Map((changedFiles || []).map((p) => [pathKey(p), p]));
   const counts = new Map();
   const extra = [];
   for (const batch of batches || []) {
     for (const p of batch) {
-      const k = normalizePath(p);
+      const k = pathKey(p);
       counts.set(k, (counts.get(k) || 0) + 1);
       if (!changed.has(k)) extra.push(p);
     }
@@ -190,6 +197,11 @@ export function foldBatchResults(parts, provider) {
   };
 }
 
+/** Content fingerprint of a path; an absent file (a deletion) has a stable fingerprint of its own. */
+function defaultFingerprint(p) {
+  try { return createHash('sha256').update(readFileSync(p)).digest('hex'); } catch (e) { return `absent:${e?.code ?? 'error'}`; }
+}
+
 /** Sum two usage records key by key (numeric fields only; a non-numeric field keeps the first value seen). */
 function addUsage(a, b) {
   const out = { ...(a || {}) };
@@ -210,7 +222,12 @@ function addUsage(a, b) {
  * @param {{provider: string, stamp: (result: object) => void, log?: (line: string) => void}} opts
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
-export async function reviewBatches(plan, reviewOne, { provider, stamp, log = (l) => process.stderr.write(l) }) {
+export async function reviewBatches(plan, reviewOne, { provider, stamp, log = (l) => process.stderr.write(l), fingerprint = defaultFingerprint }) {
+  // Every batch must judge the SAME bytes. The batches run minutes apart, so a working-tree edit between them would make
+  // the fold a verdict on a tree that never existed. Fingerprint every planned file once, re-check after each batch, and
+  // refuse (no verdict, no marker) on any drift. An edit inside one batch's own read window is the unbatched path's risk.
+  const files = plan.batches.flat();
+  const before = new Map(files.map((p) => [p, fingerprint(p)]));
   const parts = [];
   let usage = {};
   let latencyMs = 0;
@@ -220,6 +237,11 @@ export async function reviewBatches(plan, reviewOne, { provider, stamp, log = (l
     stamp(r.result);
     log(`  [final-review] batch ${i + 1}/${plan.batches.length}: ${r.result.verdict} → ${r.result.gateDisposition}`
       + ` (coverage ${r.result._envelope?.codeCoverage?.state ?? 'unknown'})\n`);
+    const moved = files.filter((p) => fingerprint(p) !== before.get(p));
+    if (moved.length > 0) {
+      throw new Error(`[final-review] the working tree changed during the batched review (after batch ${i + 1}/${plan.batches.length}): `
+        + `${moved.join(', ')} — no verdict recorded; re-run the review on a stable tree`);
+    }
     parts.push({ files: plan.batches[i], result: r.result });
     usage = addUsage(usage, r.usage);
     latencyMs += r.latencyMs || 0;

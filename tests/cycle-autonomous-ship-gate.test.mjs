@@ -25,7 +25,7 @@ const step7 = (s) => {
 };
 
 for (const file of [CANONICAL, GENERATED]) {
-  describe(`${file}: autonomous mode is local-only without --ship`, () => {
+  describe(`${file}: autonomous mode never pushes or publishes without --ship`, () => {
     const s = read(file);
 
     test('--ship is a documented flag, and the autonomous usage line says it stops before ship', () => {
@@ -36,7 +36,7 @@ for (const file of [CANONICAL, GENERATED]) {
 
     test('Step 7 forbids push, PR creation and side sessions by name when --ship is absent', () => {
       const body = step7(s);
-      assert.match(body, /Without `--ship`, nothing leaves the machine/);
+      assert.match(body, /Without `--ship`, nothing is pushed or published/);
       for (const action of ['`git push`', '`gh pr create`', 'side session']) assert.ok(body.includes(action), `Step 7 must name ${action}`);
       assert.match(body, /With `--ship`\*\*: push the branch, open ONE PR, never merge/);
     });
@@ -45,9 +45,14 @@ for (const file of [CANONICAL, GENERATED]) {
       assert.doesNotMatch(step7(s), /^> A pushed PR:/m);
     });
 
+    test('Step 3C keeps a RESIDENT instruction to settle every unchangedDeclared path (not only a link)', () => {
+      const loop = s.slice(s.indexOf('### Loop (autonomous)'), s.indexOf('### Step 3C.1'));
+      assert.match(loop, /`unchangedDeclared` path: over-declared or a MISSED edit\? Settle it before the cluster is done/);
+    });
+
     test('the hard rules carry it, so it survives a reader who skips Step 7', () => {
       const rules = s.slice(s.indexOf('## Hard rules'));
-      assert.match(rules, /`--autonomous` is local-only without `--ship`/);
+      assert.match(rules, /`--autonomous` never pushes or publishes without `--ship`/);
     });
   });
 }

@@ -515,6 +515,16 @@ function assertAzureClaudeReady({ azure = azureConfig, env = process.env } = {})
  * @param {object} env
  * @returns {string|null}
  */
+/**
+ * A path made safe to paste into a suggested command: double-quoted when it carries whitespace or a character a POSIX
+ * shell or PowerShell would act on, with `"` / `` ` `` / `$` escaped. A plain path is shown bare, as before.
+ * @param {string} p
+ * @returns {string}
+ */
+export function quoteForDisplay(p) {
+  return /[\s"'`$&|;<>(){}*?!#]/.test(p) ? `"${p.replace(/(["`$\\])/g, '\\$1')}"` : p;
+}
+
 export function describeAzureClaudeGap(azure, env = {}) {
   const route = azure?.claudeRoute;
   const missing = [];
@@ -524,7 +534,7 @@ export function describeAzureClaudeGap(azure, env = {}) {
   if (missing.length === 0) return null;
   // Named BY PATH, resolved from this module: in a consumer the tooling lives under
   // scripts/.claude-skills/ and an `npm run` alias of this repo does not exist there.
-  const cli = (name) => `node ${relative(process.cwd(), fileURLToPath(new URL(`../../${name}`, import.meta.url))).replaceAll('\\', '/')}`;
+  const cli = (name) => `node ${quoteForDisplay(relative(process.cwd(), fileURLToPath(new URL(`../../${name}`, import.meta.url))).replaceAll('\\', '/'))}`;
   const lines = [
     `Azure final reviewer (${route?.mode || 'unresolved'} route) requires ${missing.join(' + ')}, `
       + `and the active Azure profile never falls back to a public reviewer on its own.`,

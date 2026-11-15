@@ -41,9 +41,13 @@ describe('planDisjointBatches packs to the renderer budget', () => {
     assert.ok(checkBatchCompleteness(batches, files).ok);
   });
 
-  test('duplicates (case-folded) are planned once', () => {
+  test('an exact duplicate is planned once, but paths differing only in CASE are two files', () => {
+    assert.equal(planDisjointBatches(['a.mjs', 'a.mjs'], { sizeOf: () => 1 }).flat().length, 1);
+    // On a case-sensitive checkout these are two changed files; folding them dropped one from every batch.
     const b = planDisjointBatches(['A.mjs', 'a.mjs'], { sizeOf: () => 1 });
-    assert.equal(b.flat().length, 1);
+    assert.deepEqual(b.flat(), ['A.mjs', 'a.mjs']);
+    assert.ok(checkBatchCompleteness(b, ['A.mjs', 'a.mjs']).ok);
+    assert.deepEqual(checkBatchCompleteness([['A.mjs']], ['A.mjs', 'a.mjs']).missing, ['a.mjs'], 'the check must not fold them either');
   });
 });
 
@@ -152,10 +156,37 @@ describe('reviewBatches runs every batch through the caller\'s own review', () =
   });
 });
 
+describe('reviewBatches refuses a tree that moved between batches', () => {
+  const plan = { batches: [['a'], ['b'], ['c']], transcripts: ['ta', 'tb', 'tc'] };
+  const reviewOne = async () => ({ result: okResult(), usage: {}, latencyMs: 1 });
+  const opts = (fingerprint) => ({ provider: 'gemini', stamp: (r) => stampGateDisposition(r, 1), log: () => {}, fingerprint });
+
+  test('a file edited after batch 1 stops the run with no verdict', async () => {
+    let calls = 0;
+    const fp = (p) => (p === 'c' && ++calls > 1 ? 'edited' : `orig:${p}`);
+    await assert.rejects(reviewBatches(plan, reviewOne, opts(fp)), /working tree changed during the batched review \(after batch 1\/3\): c/);
+  });
+
+  test('an edit that is RESTORED before the end is still caught at the batch boundary it spanned', async () => {
+    let n = 0;
+    const fp = (p) => { if (p === 'b') n += 1; return p === 'b' && n === 3 ? 'transient' : `orig:${p}`; };
+    await assert.rejects(reviewBatches(plan, reviewOne, opts(fp)), /after batch 2\/3\): b/);
+  });
+
+  test('a stable tree folds normally', async () => {
+    const out = await reviewBatches(plan, reviewOne, opts((p) => `orig:${p}`));
+    assert.equal(out.result._batches.length, 3);
+  });
+});
+
 describe('--batch is a known review flag', () => {
   test('accepted and parsed', () => {
     assert.ok(REVIEW_FLAGS.includes('--batch'));
     assert.equal(parseReviewArgs(['review', 'p.md', 't.json', '--batch']).batch, true);
     assert.equal(parseReviewArgs(['review', 'p.md', 't.json']).batch, false);
+  });
+  test('a value flag followed by another flag refuses instead of swallowing it', () => {
+    assert.throws(() => parseReviewArgs(['review', 'p.md', 't.json', '--out', '--batch']), /--out needs a value, got the flag "--batch"/);
+    assert.equal(parseReviewArgs(['review', 'p.md', 't.json', '--out', 'r.json', '--batch']).outFile, 'r.json');
   });
 });

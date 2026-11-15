@@ -13,9 +13,14 @@ export const REVIEW_FLAGS = Object.freeze([
   '--round', '--prior', '--allow-infra-scope', '--batch',
 ]);
 
+// A value-taking flag followed by another flag has NO value: `--out --batch` must refuse, not write to a file named
+// "--batch" while also turning batch mode on. Throws; the CLI maps it to exit 2 like an unknown flag.
 const flagValue = (args, name) => {
   const i = args.indexOf(name);
-  return i !== -1 && args[i + 1] ? args[i + 1] : null;
+  if (i === -1) return null;
+  const v = args[i + 1];
+  if (typeof v === 'string' && v.startsWith('--')) throw new Error(`${name} needs a value, got the flag "${v}"`);
+  return v || null;
 };
 
 /**
