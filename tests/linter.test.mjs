@@ -20,6 +20,8 @@ import {
   resetExecFileSync,
   setExistsSync,
   resetExistsSync,
+  isToolAvailable,
+  spawnWithTreeKill,
 } from '../scripts/lib/linter.mjs';
 import { ProducerFindingSchema } from '../scripts/lib/schemas.mjs';
 import { semanticId } from '../scripts/lib/findings.mjs';
@@ -562,5 +564,25 @@ describe('semanticId dispatch on classification.sourceKind', () => {
       category: 'Undefined reference', section: 'src/foo.js:10', detail: "'x' is not defined",
     };
     assert.notEqual(semanticId(tool), semanticId(model), 'tool + model findings are tracked separately by design');
+  });
+});
+
+// Upstream report e5a067c3 (ai-organiser, 2026-11-15): every JS/TS tool is `npx --no-install <tool>`, and on Windows `npx` is a
+// `.cmd` shim that execFile/spawn cannot start without a shell (ENOENT). The probe failed from ANY cwd, so eslint and tsc read
+// `no_tool` on every Windows audit. The REAL exec (no injected fake) is exercised here; the defect exists only on Windows.
+describe('the real tool exec starts the Windows npx shim (no injected fake)', () => {
+  const onWindows = process.platform === 'win32';
+  beforeEach(() => resetExecFileSync());
+  test('the availability probe answers true for `npx --version`', { skip: !onWindows && 'npx is a .cmd shim only on Windows' }, () => {
+    assert.equal(isToolAvailable(['npx', ['--version']]), true);
+  });
+  test('NEGATIVE: a command that does not exist still reads unavailable', () => {
+    assert.equal(isToolAvailable(['ces-no-such-tool-e5a067c3', ['--version']]), false);
+  });
+  test('the project-tool spawn starts `npx --version` too', { skip: !onWindows && 'npx is a .cmd shim only on Windows' }, async () => {
+    const res = await spawnWithTreeKill('npx', ['--version'], { timeoutMs: 30_000 });
+    assert.equal(res.kind, 'exit', res.error ? String(res.error) : '');
+    assert.equal(res.code, 0);
+    assert.match(res.stdout, /^\d+\.\d+/);
   });
 });

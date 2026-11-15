@@ -130,6 +130,23 @@ compares the manifest of the directory that *owns* those modules, not
 `repoRoot`'s — comparing one checkout's `package.json` while linking another's
 tree would decide "unchanged" about something it never read.
 
+**The consumer hook's audit snapshot had the same gap, with no upward walk to save
+it (upstream report e5a067c3, 2026-11-15).** `ces-consumer-snap-*` lives under the
+OS temp directory, so nothing above it has a `node_modules`. `snapshotCreateStep`
+now links the checkout's resolved `node_modules` in (`linkCheckoutNodeModules`,
+[`lib/prepush-snapshot.mjs`](../../scripts/lib/prepush-snapshot.mjs)) and unlinks it
+before any recursive removal. The bytes audited are still the pushed commit's;
+the **tools** are the checkout's installed tree, and the hook prints a line when
+the pushed `package-lock.json` differs (an install per push would not fit the
+audit budget). It refuses, with a warning, when the pushed commit's ignore rules
+do not ignore the link — `git check-ignore` decides, because `node_modules/`
+matches a junction on Git for Windows but not a POSIX symlink. Creating the
+snapshot *inside* the checkout was rejected: every checkout-rooted walker would
+then read a second copy of the tree. The same report's eslint/tsc `no_tool` had a
+**second, independent cause**: `npx` is `npx.cmd` on Windows and the linter's
+`execFile` could not start it from any cwd. It now goes through `resolveSpawnTarget`
+([`lib/spawn-target.mjs`](../../scripts/lib/spawn-target.mjs)).
+
 > **Do not "fix" a worktree by hand-linking `node_modules` into it.** That hides
 > the tool bug from the next person, and is the ritual this removes.
 

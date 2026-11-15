@@ -967,7 +967,7 @@ async function runLegacyProductionAuditImpl(ctx) {
     usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
     latencyMs: 0,
   };
-  let archState = 'SKIPPED_NO_INTENT';
+  let archState = 'SKIPPED_NO_ARCH_INTENT_DOC';
   let archReportForOrphan = null;
   if (shouldRunPass('architecture')) {
     const archOut = await runArchitecturePass({

@@ -43,6 +43,7 @@ import { getProfileForFile } from './language-profiles.mjs';
 import { getRuleMetadata } from './rule-metadata.mjs';
 import { toolRunConfig } from './tool-run-config.mjs';
 import { worstToolState } from './tool-states.mjs';
+import { resolveSpawnTarget } from './spawn-target.mjs';
 import { oneLine } from './coverage-format.mjs';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -90,12 +91,22 @@ function computeMaxBuffer(fileCount) {
 
 // ── execFileSync indirection (testable) ──────────────────────────────────────
 // Tests inject a fake via `setExecFileSync()` to avoid spawning real processes.
-let _execFileSync = execFileSync;
+//
+// The REAL exec resolves the Windows `npm`/`npx` shim first (lib/spawn-target.mjs, the one oracle). Every JS/TS tool is
+// `npx --no-install <tool>`, and on Windows `npx` is `npx.cmd`: execFileSync('npx') is ENOENT with no shell, so the
+// availability probe failed and eslint + tsc read `no_tool` on every Windows audit, from ANY cwd (upstream report
+// e5a067c3, 2026-11-15 — first attributed to the pre-push snapshot). Resolved here, at the seam, so an injected fake
+// still sees the logical command its test asserts on.
+const shimSafeExecFileSync = (command, args, opts) => {
+  const t = resolveSpawnTarget({ cmd: command, args });
+  return execFileSync(t.cmd, t.args, opts);
+};
+let _execFileSync = shimSafeExecFileSync;
 
 /** @internal test-only */
 export function setExecFileSync(fn) { _execFileSync = fn; }
 /** @internal test-only */
-export function resetExecFileSync() { _execFileSync = execFileSync; }
+export function resetExecFileSync() { _execFileSync = shimSafeExecFileSync; }
 
 // ── existsSync indirection (testable) ────────────────────────────────────────
 // Same pattern as _execFileSync — tests fake file presence without touching
@@ -115,7 +126,7 @@ export function resetExistsSync() { _existsSync = existsSync; }
  * @param {[string, string[]]} probe - [command, args]
  * @returns {boolean}
  */
-function isToolAvailable([command, args = []]) {
+export function isToolAvailable([command, args = []]) {
   try {
     _execFileSync(command, args, { stdio: 'pipe', timeout: 10_000 });
     return true;
@@ -332,7 +343,8 @@ export function spawnWithTreeKill(command, args, { cwd = process.cwd(), timeoutM
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
+      const t = resolveSpawnTarget({ cmd: command, args }); // the Windows npx shim, as in shimSafeExecFileSync
+      child = spawn(t.cmd, t.args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
     } catch (error) {
       resolve({ kind: 'spawn_error', error });
       return;

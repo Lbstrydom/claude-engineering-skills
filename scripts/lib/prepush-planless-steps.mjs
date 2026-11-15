@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { buildIntentDocument } from './audit/planless-intent.mjs';
-import { createSnapshot, removeSnapshot, snapshotPath, gitWithLockRetry, CONSUMER_SNAPSHOT_PREFIX } from './prepush-snapshot.mjs';
+import { createSnapshot, removeSnapshot, snapshotPath, gitWithLockRetry, linkCheckoutNodeModules, CONSUMER_SNAPSHOT_PREFIX } from './prepush-snapshot.mjs';
 import { sweepStaleSandboxes, describeSweep } from './prepush-sandbox-cleanup.mjs';
 import { canonicalizeEol, atomicWriteFileSync } from './file-io.mjs';
 
@@ -140,6 +140,14 @@ export function snapshotCreateStep({ cwd, headArg = null, ownerPid = null, gitFn
       write(`✗  [prepush-hook] the untracked .auditignore could not be copied into the audit snapshot (${e?.code || 'error'}) - push BLOCKED UNMEASURED: without it the audit would read files you excluded.`);
       return { code: 1, line: '' };
     }
+  }
+  // The checkout's installed tools, made resolvable from the snapshot (see linkCheckoutNodeModules). Never blocks: without the link the
+  // tool lanes report `no_tool` / an unparsed graph, which the audit already prints as UNMEASURED - so the reason is printed here too.
+  const modules = linkCheckoutNodeModules({ checkoutRoot: cwd, dir });
+  if (!modules.linked) {
+    write(`⚠ [prepush-hook] audit snapshot: the checkout's node_modules is NOT linked in (${modules.reason}) - the lint, typecheck and layering lanes cannot resolve this repo's tools from the snapshot and will read UNMEASURED`);
+  } else if (modules.lockDiffers) {
+    write(`[prepush-hook] ▸ audit snapshot: tools resolve from ${forShell(modules.modules)}; the pushed package-lock.json differs from the checkout's, so they run with the checkout's installed tree, not the pushed one`);
   }
   write(`[prepush-hook] ▸ audit snapshot: ${forShell(dir)} - a detached worktree of ${sha.slice(0, 12)}; the audit reads the pushed commit, not the working tree`);
   return { code: 0, line: forShell(dir) };
