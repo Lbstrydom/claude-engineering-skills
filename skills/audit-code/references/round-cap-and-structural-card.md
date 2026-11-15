@@ -93,13 +93,18 @@ An `APPROVE` whose summary says `Code: PARTIAL, N changed line(s) never shown` i
 files only**. It is not release-blocking, and it is not a clean approve either — never report it as one. The
 cause is budget: the envelope renders whole files until it runs out, then windows or drops the rest.
 
-Reaching FULL needs smaller transcripts, not a bigger budget. Split the changed code files into **disjoint
-batches** and review each as its own `--round 1` (the 2-round cap is per review, so this does not evade it):
+Reaching FULL needs smaller transcripts, not a bigger budget. **Re-run the same review with `--batch`**: it
+packs `changed_files` into disjoint batches under the render budget, checks the partition mechanically
+(below), reviews each batch in turn and folds them into one verdict, one disposition and one marker. One
+blocked batch blocks the whole review:
 
 ```bash
-node scripts/build-audit-transcript.mjs --sid "$SID" --changed "<batch files>" --out ".audit/$SID-batch-A.json"
-node scripts/gemini-review.mjs review "$PLAN_FILE" ".audit/$SID-batch-A.json" --round 1 --run-id "$RUN_ID" --out ".audit/$SID-gemini-batch-A.json"
+node scripts/gemini-review.mjs review "$PLAN_FILE" ".audit/$SID-transcript.json" --batch --round 1 --run-id "$RUN_ID" --out ".audit/$SID-gemini-result.json"
 ```
+
+The folded `_batches[]` lists each batch's files, verdict and coverage. A batch still `PARTIAL` (one file
+whose changed lines exceed the window budget) is reported, not hidden. Splitting by hand (`build-audit-transcript.mjs --changed "<batch files>"`, one
+review each) is the fallback, and the rules below are what `--batch` does for you:
 
 One large file per batch is usually enough; `FULL` includes *windowed with every changed line shown*, so a
 batch need not render whole. Keep splitting any batch that still reports PARTIAL, and **re-run every batch

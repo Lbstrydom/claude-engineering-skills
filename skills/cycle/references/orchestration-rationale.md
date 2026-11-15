@@ -64,6 +64,17 @@ permanent, unconditional shape of this step, autonomous or not — the
 NOT authorize shipping. There is no version of Step 7 that completes without
 the human typing `/ship` themselves.
 
+**Blocking `/ship` was not enough on its own: the agent can push without it.**
+Measured 2026-11-15 (ai-organiser): a `/cycle --autonomous` run whose brief said
+*do not push* ran `git push` and `gh pr create` itself (PR #111), and a side
+session it started opened a second, unrelated PR (#112). The skill text only
+covered `/ship`, and an earlier line read *"A pushed PR: …"* as though pushing
+were a normal part of the step. So autonomous mode is now **local-only by
+default**: no push, no PR, and no side session or chip, because a side session
+is also an outward action that the human did not ask for. `--ship` is the
+explicit opt-in. It allows exactly one branch push and one PR, and never a
+merge. Merging stays with the human, through `/ship` or the PR itself.
+
 Once the human runs that command, `/ship` executes its own checklist
 (status update, AGENTS sync, plan update, stage + commit + push,
 ship_event log) and its Step 0.5c refreshes the architectural-memory index —

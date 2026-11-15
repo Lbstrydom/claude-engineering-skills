@@ -12,7 +12,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectProvider, applyProviderSetting } from '../scripts/gemini-review.mjs';
-import { ProviderNotReadyError } from '../scripts/lib/final-review/providers.mjs';
+import { ProviderNotReadyError, describeAzureClaudeGap } from '../scripts/lib/final-review/providers.mjs';
 
 describe('selectProvider precedence', () => {
   test('auto-detect prefers Gemini when GEMINI_API_KEY is present', () => {
@@ -91,5 +91,43 @@ describe('applyProviderSetting (.env mutation, pure)', () => {
 
   test('throws on an invalid provider', () => {
     assert.throws(() => applyProviderSetting('', 'bogus'), /invalid provider/);
+  });
+});
+
+describe('half-configured Azure profile: refuse loudly, with a remedy that keeps the profile (AIO 2026-11-15)', () => {
+  // ai-organiser: AZURE_OPENAI_ENDPOINT set, AZURE_FOUNDRY_CLAUDE_DEPLOYMENT unset. The refusal was right (hook v18 forbids a
+  // silent public fallback); its remedy, "unset AZURE_OPENAI_ENDPOINT", switched the whole work profile off to get past it.
+  const halfConfigured = { claudeRoute: { mode: 'apim', apiKey: 'k', credentialVar: 'AZURE_OPENAI_API_KEY' }, claudeDeployment: null };
+  const assertWith = (azure) => (deps) => {
+    const msg = describeAzureClaudeGap(azure, deps?.env ?? {});
+    if (msg) throw new ProviderNotReadyError(msg);
+  };
+
+  test('auto-detect still REFUSES - never routes the tenant diff to Gemini on its own', () => {
+    const env = { GEMINI_API_KEY: 'g' };
+    assert.throws(() => selectProvider(null, { env, azureActive: true, assertAzure: assertWith(halfConfigured) }),
+      (e) => e instanceof ProviderNotReadyError && /AZURE_FOUNDRY_CLAUDE_DEPLOYMENT/.test(e.message));
+  });
+
+  test('the message names the missing variable and the explicit opt-out, and no longer says to clear the endpoint', () => {
+    const msg = describeAzureClaudeGap(halfConfigured, { GEMINI_API_KEY: 'g' });
+    assert.match(msg, /requires AZURE_FOUNDRY_CLAUDE_DEPLOYMENT/);
+    assert.match(msg, /--provider gemini/);
+    assert.match(msg, /set-provider gemini/);
+    assert.match(msg, /azure-doctor\.mjs --target claude/);
+    assert.doesNotMatch(msg, /unset AZURE_OPENAI_ENDPOINT/);
+  });
+
+  test('the public opt-out is offered only when its key exists', () => {
+    assert.doesNotMatch(describeAzureClaudeGap(halfConfigured, {}), /--provider/);
+    assert.match(describeAzureClaudeGap(halfConfigured, { ANTHROPIC_API_KEY: 'a' }), /--provider anthropic/);
+  });
+
+  test('the explicit opt-out the message names actually works on the same profile', () => {
+    assert.equal(selectProvider('gemini', { env: { GEMINI_API_KEY: 'g' }, azureActive: true, assertAzure: assertWith(halfConfigured) }), 'gemini');
+  });
+
+  test('a fully configured route has no gap', () => {
+    assert.equal(describeAzureClaudeGap({ ...halfConfigured, claudeDeployment: 'claude-opus-dep' }, {}), null);
   });
 });

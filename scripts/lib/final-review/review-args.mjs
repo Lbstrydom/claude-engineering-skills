@@ -10,7 +10,7 @@
 /** Every flag `review` accepts — gemini-review.mjs refuses anything else (assertKnownFlags). */
 export const REVIEW_FLAGS = Object.freeze([
   '--json', '--out', '--provider', '--mode', '--run-id', '--role', '--envelope-scope', '--campaign-digest',
-  '--round', '--prior', '--allow-infra-scope',
+  '--round', '--prior', '--allow-infra-scope', '--batch',
 ]);
 
 const flagValue = (args, name) => {
@@ -54,8 +54,10 @@ export function parseReviewArgs(args) {
   const priorPath = flagValue(args, '--prior');
   // --allow-infra-scope — admit the bundle's own modules to the reviewer (the audit's flag, same meaning).
   const allowInfraScope = args.includes('--allow-infra-scope');
+  // --batch — review a diff too large for one envelope as disjoint batches folded into one verdict (batching.mjs).
+  const batch = args.includes('--batch');
   return {
     planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId, role,
-    envelopeScopeCli, campaignDigest, round, priorPath, allowInfraScope,
+    envelopeScopeCli, campaignDigest, round, priorPath, allowInfraScope, batch,
   };
 }

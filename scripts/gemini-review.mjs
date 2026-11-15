@@ -227,6 +227,7 @@ import {
 } from './lib/final-review/post-review.mjs';
 // Round cap + code-computed gate disposition (field report 2026-09-26).
 import { parseReviewArgs, REVIEW_FLAGS } from './lib/final-review/review-args.mjs';
+import { planTranscriptBatches, reviewBatches } from './lib/final-review/batching.mjs';
 import { assertKnownFlags } from './lib/cli-io.mjs';
 import {
   validateRoundArgs, parsePriorResult, priorFindingsOf, buildPriorRoundBlock, stampGateDisposition,
@@ -841,7 +842,7 @@ async function main() {
 
   // A typo'd flag must refuse, not run: `--rond 3` silently dropped is an UNCAPPED review.
   try { assertKnownFlags(args, REVIEW_FLAGS, { cli: 'gemini-review', from: 1 }); } catch (err) { console.error(`Error: ${err.message}`); process.exit(2); }
-  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role, envelopeScopeCli, campaignDigest, round: roundArg, priorPath, allowInfraScope } = parseReviewArgs(args);
+  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role, envelopeScopeCli, campaignDigest, round: roundArg, priorPath, allowInfraScope, batch } = parseReviewArgs(args);
   // The 2-round cap is CODE: --round 3+ is refused before any provider is built.
   const roundCheck = validateRoundArgs({ round: roundArg, priorPath });
   const priorCheck = roundCheck.ok && priorPath ? parsePriorResult(readFileOrDie(priorPath)) : { ok: true, prior: null };
@@ -852,7 +853,7 @@ async function main() {
   const { round } = roundCheck;
   const { prior } = priorCheck;
   if (mode !== 'review' || !planFile || !transcriptFile) {
-    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic|openai-compatible|openrouter] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>] [--envelope-scope full|thin|gap] [--campaign-digest <hex>] [--round 1|2] [--prior <round-1 result.json>]');
+    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic|openai-compatible|openrouter] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>] [--envelope-scope full|thin|gap] [--campaign-digest <hex>] [--round 1|2] [--prior <round-1 result.json>] [--batch]');
     console.error('       node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|openai-compatible|openrouter|default>');
     console.error('       node scripts/gemini-review.mjs ping');
     process.exit(1);
@@ -907,15 +908,24 @@ async function main() {
     // injects the role-specific system-prompt addendum; default (no --role)
     // is runReviewWithRetry, plus the settled-items block only on --round 2.
     const roundOpts = { ...(prior ? { roundBlock: buildPriorRoundBlock(prior, round) } : {}), allowInfraScope };
-    const r = role === 'adjudicator-only'
-      ? await runAdjudicatorOnlyReview(provider, client, planContent, transcriptContent, projectContext, auditMode, null, roundOpts)
-      : await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, null, roundOpts);
-    const { result, usage, latencyMs, transcriptContent: usedTranscript } = r;
-    await applyDebtSuppression(result, usedTranscript);
-    await applyScopeFilter(result, usedTranscript);
-    applyPriorRoundSuppression(result, priorFindingsOf(prior));
-    applyExistenceGate(result);
-    addSemanticIds(result, provider);
+    // One review of one transcript; `--batch` calls it once per batch, with that batch's narrowed transcript.
+    const reviewOne = async (transcriptContent) => {
+      const r = role === 'adjudicator-only'
+        ? await runAdjudicatorOnlyReview(provider, client, planContent, transcriptContent, projectContext, auditMode, null, roundOpts)
+        : await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, null, roundOpts);
+      const { result, transcriptContent: usedTranscript } = r;
+      await applyDebtSuppression(result, usedTranscript);
+      await applyScopeFilter(result, usedTranscript);
+      applyPriorRoundSuppression(result, priorFindingsOf(prior));
+      applyExistenceGate(result);
+      addSemanticIds(result, provider);
+      return r;
+    };
+    // --batch: a diff too big for one envelope → disjoint batches, one verdict (final-review/batching.mjs). null → one review.
+    const batchPlan = batch ? planTranscriptBatches(transcriptContent) : null;
+    const { result, usage, latencyMs, transcriptContent: usedTranscript = transcriptContent } = batchPlan
+      ? await reviewBatches(batchPlan, reviewOne, { provider, stamp: (res) => stampGateDisposition(res, round) })
+      : await reviewOne(transcriptContent);
     const gateSummary = stampGateDisposition(result, round);
     // Primary reviewer's resolved concrete model id (for source_model attribution)
     // — the descriptor's own, so every provider is named, not just three.

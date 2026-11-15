@@ -146,6 +146,30 @@ export function admissionPreflight(scopePaths, { exists, cwd = process.cwd(), ch
   });
 }
 
+/**
+ * The audit allowlist: admitted declared paths that ALSO changed since base.
+ *
+ * WHY THE INTERSECTION (measured 2026-11-15, ai-organiser `/cycle --autonomous`):
+ * the allowlist used to be the declared scope filtered only to on-disk paths, so
+ * every declared-but-untouched file was sent to the auditor whole — 52 files,
+ * round 1 cost $4.00 of a $4.15 run, and 27 of 33 findings were dismissed as
+ * pre-existing. An unchanged file has no diff for the auditor to judge, so
+ * auditing it is `--scope=full` under another name. `/audit-code --scope=diff`
+ * already audits only changed files; this makes the cluster audit do the same.
+ *
+ * @param {{path: string, admitted: boolean}[]} admissions - `admissionPreflight` rows
+ * @param {string[]} changedPaths - the reconciliation set (`collectReconciliationSet().all`)
+ * @returns {{files: string[], unchangedDeclared: string[]}}
+ */
+export function selectAuditAllowlist(admissions, changedPaths) {
+  const changed = new Set(changedPaths);
+  const admitted = admissions.filter(a => a.admitted).map(a => a.path);
+  return {
+    files: admitted.filter(p => changed.has(p)),
+    unchangedDeclared: admitted.filter(p => !changed.has(p)),
+  };
+}
+
 /** Paths `--files` cannot transport: it splits on `,` (openai-audit.mjs:594). */
 export const commaUnsafe = paths => paths.filter(p => p.includes(','));
 
@@ -224,10 +248,10 @@ function main() {
     problems.push(`out-of-scope edit (belongs to no declared cluster scope): ${p}`);
   }
 
-  // The allowlist is the declared scope filtered to what exists on disk —
-  // deletes and old rename operands are deliberately absent here while remaining
-  // in the reconciliation set above.
-  const files = admissions.filter(a => a.admitted).map(a => a.path);
+  // The allowlist is the declared scope filtered to what exists on disk AND to
+  // what this cluster actually CHANGED — deletes and old rename operands are
+  // deliberately absent here while remaining in the reconciliation set above.
+  const { files, unchangedDeclared } = selectAuditAllowlist(admissions, recon.all);
 
   let diffPath = null;
   if (files.length > 0) {
@@ -247,6 +271,9 @@ function main() {
     admissions,
     reconciliation: { tracked: recon.tracked, untracked: recon.untracked },
     outOfScope,
+    // Declared, on disk, but untouched since base: NOT audited (their code is
+    // pre-existing by construction), reported so a missed planned edit is visible.
+    unchangedDeclared,
     // An empty allowlist is reported, never disguised. A deletion-only cluster
     // legitimately lands here: there is no code to read, so it routes to the
     // consolidated gate rather than producing a vacuous per-cluster pass.
@@ -263,7 +290,7 @@ function main() {
     process.exit(1);
   }
   if (result.emptyAllowlist) {
-    console.error('cycle-cluster-scope: no auditable files (deletion-only cluster?) — '
+    console.error('cycle-cluster-scope: no changed auditable files (deletion-only cluster, or nothing implemented yet?) — '
       + 'route to the consolidated gate over the union diff; a per-cluster pass here would be vacuous.');
   }
   process.exit(0);
