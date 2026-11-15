@@ -4,6 +4,20 @@ Plan: [`docs/plans/fable-vs-opus-decision-eval.md`](../../plans/fable-vs-opus-de
 Anything off-contract, outstanding, or differing from the plan is recorded here
 **before** merge and raised to Louis in the PR description. Newest first.
 
+## 2026-11-15 — epoch 2 (10-case corpus)
+
+- **Corpus enlarged on Louis's call ("enlarge corpus first").** 5 new cases: 3 design-fork,
+  1 review, 1 cross-repo. Contract epoch → 2, which also applies the definitional fix below
+  (`correct` requires a measured output). The epoch-1 run reproduces at `ce49e42c` only.
+- **The control checkpoint caught an incomplete gold answer before any arm spend.** Run
+  `variance-e2` (kept as evidence, $0.12, judge only) stopped `InstrumentFailure`: the gold
+  control of `consumer-prepush-schema-behind-refusal` graded correct in both passes, but key-point
+  coverage was 0.78 against the 0.80 bar. The judge was right: the gold text omitted kp5 (why the
+  existing tests passed) and kp6 (a definite set difference is outside the fail-open contract).
+  **Fixed the gold control text only** (rubric, context and question unchanged), re-froze
+  (corpus `7449289d71f9`), and re-ran as `variance-e2b`. This is instrument repair made before
+  any arm output existed under epoch 2, not a change made after seeing results.
+
 ## 2026-11-15 — variance phase
 
 - **"Correct" counts one output whose q is unmeasured.** `cli-system-honour-claim` r3: pass 2

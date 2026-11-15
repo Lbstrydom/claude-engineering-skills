@@ -1,6 +1,6 @@
 {
   "contractEpoch": 2,
-  "corpusSha256": "7f4b1fcff4daebbe0d19ba412d45d37ca43e2927daa82dcaab5269f31bfb98a3",
+  "corpusSha256": "7449289d71f999d7bfa80176e10f25fd3383f8c5004c5ef970de9386a57b4b99",
   "promptHashes": {
     "arm": "515f60d257f3de7ee6401e427e676116c478faecf05d61df9aae49f065904e2c",
     "judge": "e05083686bac56bd9506d80c6e854e0b7f626556d427c2e50e29d1591d9f696a"
@@ -19,7 +19,7 @@
     "consumer-prepush-schema-behind-refusal": {
       "file": "consumer-prepush-schema-behind-refusal.json",
       "role": "cross-repo",
-      "sha256": "1ee29055af897429d94bbc2e1c2b4ff8c532c7c025ef7761a035131933d95add"
+      "sha256": "a4f4809be2e8c5f31a002812ace705bd8ffd5465e962f7716abe68f3175e2f23"
     },
     "disposable-db-guard-predicate": {
       "file": "disposable-db-guard-predicate.json",
