@@ -1,0 +1,218 @@
+{
+  "contractEpoch": 2,
+  "phase": "variance",
+  "runId": "variance-e2c",
+  "gitSha": "c72a1d693e9c2cac2ef424acfc2769f8f06fefe5",
+  "corpusSha256": "5eb0beae27988f5e78ebf8f3eeded1bfdcfdfb4a4fe1fae42698c98ef834ff3e",
+  "promptHashes": {
+    "arm": "515f60d257f3de7ee6401e427e676116c478faecf05d61df9aae49f065904e2c",
+    "judge": "e05083686bac56bd9506d80c6e854e0b7f626556d427c2e50e29d1591d9f696a"
+  },
+  "design": {
+    "arms": [
+      "claude-opus-5-5"
+    ],
+    "reps": 3,
+    "cases": 10,
+    "seed": 20261115,
+    "effort": "high",
+    "maxTokens": 16000,
+    "judgeModel": "gpt-6.1-terra",
+    "judgeReasoning": "medium",
+    "rule": {
+      "deltaFloor": 0.1,
+      "costRatioMax": 3,
+      "unmeasuredMax": 0.1,
+      "judgeNoiseFactor": 0.5,
+      "spotAgreementMin": 0.8,
+      "powerZ": 2.8,
+      "minMeasuredPerCase": 2,
+      "minMeasuredFraction": 0.75,
+      "armErrorRateMax": 0.1,
+      "repsMin": 3,
+      "repsMax": 10,
+      "bootstrapB": 10000
+    }
+  },
+  "status": "completed",
+  "spend": {
+    "runSpentUsd": 4.466,
+    "scopeSpentUsd": 8.0605,
+    "scopeSpentBeforeUsd": 3.5945,
+    "budgetScope": "autonomous",
+    "capUsd": 10,
+    "basis": "derived: measured tokens × published price (model-pricing-table.mjs)"
+  },
+  "stop": null,
+  "instrument": {
+    "controls": {
+      "total": 79,
+      "passed": 79,
+      "failures": []
+    },
+    "unmeasuredGrades": 1,
+    "totalGrades": 220,
+    "unmeasuredRate": 0.0045,
+    "unverifiedItems": 0,
+    "correctDisagreements": 4,
+    "modelMismatches": 0,
+    "judgeNoise": 0.092,
+    "credible": true,
+    "gateFailures": []
+  },
+  "perArm": {
+    "claude-opus-5-5": {
+      "outputs": 30,
+      "meanQ": 0.5977,
+      "correct": 16,
+      "sw": 0.1971,
+      "perCase": {
+        "consumer-prepush-schema-behind-refusal": {
+          "n": 3,
+          "mean": 0.1074,
+          "min": 0.0889,
+          "max": 0.1278,
+          "range": 0.0389
+        },
+        "check-ignore-ci-cause-string": {
+          "n": 3,
+          "mean": 0.4583,
+          "min": 0.25,
+          "max": 0.575,
+          "range": 0.325
+        },
+        "cli-system-honour-claim": {
+          "n": 3,
+          "mean": 0.8833,
+          "min": 0.85,
+          "max": 0.9,
+          "range": 0.05
+        },
+        "windowed-views-consumer-path-review": {
+          "n": 3,
+          "mean": 0.8815,
+          "min": 0.8667,
+          "max": 0.9111,
+          "range": 0.0444
+        },
+        "sync-manifest-ratchet-report": {
+          "n": 3,
+          "mean": 0.3833,
+          "min": 0.25,
+          "max": 0.6,
+          "range": 0.35
+        },
+        "disposable-db-guard-predicate": {
+          "n": 3,
+          "mean": 0.4667,
+          "min": 0.2222,
+          "max": 0.9556,
+          "range": 0.7333
+        },
+        "stale-override-four-sites": {
+          "n": 3,
+          "mean": 0.5167,
+          "min": 0.3,
+          "max": 0.9,
+          "range": 0.6
+        },
+        "skills-manifest-commit-or-ignore": {
+          "n": 3,
+          "mean": 0.763,
+          "min": 0.6889,
+          "max": 0.8222,
+          "range": 0.1333
+        },
+        "sdk-pin-max-tokens-review": {
+          "n": 3,
+          "mean": 0.7,
+          "min": 0.7,
+          "max": 0.7,
+          "range": 0
+        },
+        "prepush-check-target-tree": {
+          "n": 3,
+          "mean": 0.8167,
+          "min": 0.65,
+          "max": 0.95,
+          "range": 0.3
+        }
+      },
+      "statuses": {
+        "ok": 30
+      }
+    }
+  },
+  "cost": {
+    "claude-opus-5-5": {
+      "calls": 30,
+      "pricedCalls": 30,
+      "totalUsd": 3.6617,
+      "correct": 16,
+      "inputTokens": 143328,
+      "outputTokens": 154418,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "thinkingTokens": 68586,
+      "thinkingReportedCalls": 30,
+      "usdPerCall": 0.1221,
+      "usdPerCorrect": 0.2289,
+      "latencyMedianMs": 49478
+    }
+  },
+  "fillCheck": {
+    "ok": true,
+    "problems": [],
+    "thinkingTokensReportedOnCalls": 30,
+    "thinkingNote": null
+  },
+  "proposedN": {
+    "reps": 3,
+    "deltaTarget": 0.1971,
+    "raw": 2,
+    "infeasible": false,
+    "reason": null
+  },
+  "mainProjection": {
+    "available": true,
+    "reps": 3,
+    "callsPerArm": 30,
+    "gradesMain": 280,
+    "opusUsdPerCall": {
+      "value": 0.1221,
+      "label": "measured (derived from measured tokens)"
+    },
+    "fableUsdPerCall": {
+      "value": 0.2441,
+      "high": 0.3471,
+      "label": "estimated (Opus measured tokens × Fable price; high = 1.5× output)"
+    },
+    "judgeUsdPerGrade": {
+      "value": 0.0037,
+      "label": "measured (derived)"
+    },
+    "totalUsd": {
+      "value": 12.01,
+      "high": 15.0984,
+      "label": "estimated"
+    },
+    "suggestedCapUsd": {
+      "value": 23,
+      "label": "estimated: high band × 1.5 headroom"
+    }
+  },
+  "spotSampleIds": [
+    "917f54e5",
+    "c78a9e95",
+    "b3455ebe",
+    "39dfdd7f",
+    "5325a037",
+    "9fe6442b"
+  ],
+  "artifactScan": {
+    "secretFindings": [],
+    "privateTermHits": 0,
+    "privacyTermsConfigured": true,
+    "safeToCommit": true
+  }
+}

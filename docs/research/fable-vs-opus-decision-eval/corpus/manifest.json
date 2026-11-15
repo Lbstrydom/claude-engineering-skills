@@ -1,0 +1,60 @@
+{
+  "contractEpoch": 2,
+  "corpusSha256": "5eb0beae27988f5e78ebf8f3eeded1bfdcfdfb4a4fe1fae42698c98ef834ff3e",
+  "promptHashes": {
+    "arm": "515f60d257f3de7ee6401e427e676116c478faecf05d61df9aae49f065904e2c",
+    "judge": "e05083686bac56bd9506d80c6e854e0b7f626556d427c2e50e29d1591d9f696a"
+  },
+  "cases": {
+    "check-ignore-ci-cause-string": {
+      "file": "check-ignore-ci-cause-string.json",
+      "role": "review",
+      "sha256": "038984338d6dc9ab964f74bbee9dfbf44d1e5a217cdda0a91fac7022ed4de78b"
+    },
+    "cli-system-honour-claim": {
+      "file": "cli-system-honour-claim.json",
+      "role": "design-fork",
+      "sha256": "1e52eaaddd55a475f1842fc5a1b00bb658f2a7fda877b2a0c77f937d3a63d41f"
+    },
+    "consumer-prepush-schema-behind-refusal": {
+      "file": "consumer-prepush-schema-behind-refusal.json",
+      "role": "cross-repo",
+      "sha256": "a4f4809be2e8c5f31a002812ace705bd8ffd5465e962f7716abe68f3175e2f23"
+    },
+    "disposable-db-guard-predicate": {
+      "file": "disposable-db-guard-predicate.json",
+      "role": "design-fork",
+      "sha256": "4d2c89db8acc4f43609b412b74c56c4219fffd599ea074b55aefcfba185f9b45"
+    },
+    "prepush-check-target-tree": {
+      "file": "prepush-check-target-tree.json",
+      "role": "design-fork",
+      "sha256": "689dd89e12b11e04a1631b29f587ffd614809d0d606f77082a38b26af106db16"
+    },
+    "sdk-pin-max-tokens-review": {
+      "file": "sdk-pin-max-tokens-review.json",
+      "role": "review",
+      "sha256": "5cb6309bda3cb491c1572545b9f3d664bae07237769a60e07bdc175e9d88949e"
+    },
+    "skills-manifest-commit-or-ignore": {
+      "file": "skills-manifest-commit-or-ignore.json",
+      "role": "design-fork",
+      "sha256": "5108e99c0d282930bb67eb4207708bcbaca3051dff21d309bcff55e283ce7c59"
+    },
+    "stale-override-four-sites": {
+      "file": "stale-override-four-sites.json",
+      "role": "cross-repo",
+      "sha256": "4fbceb8c700dfec2c506e7ef7bd791d43eed368ccec15c51ecd687b93a3ffd42"
+    },
+    "sync-manifest-ratchet-report": {
+      "file": "sync-manifest-ratchet-report.json",
+      "role": "cross-repo",
+      "sha256": "898b790de22a92bc6e1d7ab59a6ca6031cc9c48f116475aa7c4a819799123d65"
+    },
+    "windowed-views-consumer-path-review": {
+      "file": "windowed-views-consumer-path-review.json",
+      "role": "review",
+      "sha256": "e0069f68121fd383c3e28d054bf92705dbbe3e087e00e8512d43e8929320eb12"
+    }
+  }
+}

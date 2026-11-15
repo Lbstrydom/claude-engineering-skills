@@ -1,0 +1,75 @@
+{
+  "id": "prepush-check-target-tree",
+  "role": "design-fork",
+  "title": "What tree should the pre-push gate verify when two sessions share one working tree?",
+  "decisionDate": "2026-07-20",
+  "context": "# Situation\n\nRepo: claude-engineering-skills (public). Its only push-time gate is a tracked git hook, `.githooks/pre-push`, which runs `npm run check` (context drift, skills freshness, plans lint, an architecture-coverage gate, a DB-schema gate, then the whole test suite) and blocks the push on failure. No CI workflow runs `check` on push or PR, so what the hook verifies is what ships unverified otherwise.\n\nTwo AI coding sessions routinely work in this ONE working tree at the same time (one audits or implements while the other edits and pushes). Observations so far:\n- A concurrent session's half-written file made an unrelated import fail mid-audit in another session (\"Two sessions, one working tree\", status log, 2026-07-19).\n- A push can be blocked by files the pushed commit does not contain, and, in the other direction, the hook can pass on a fix that exists only in the working tree and not in the commit being pushed. Nobody has yet measured how often either happens.\n- The hook gets the refs being pushed on stdin (one `<local_ref> <local_sha> <remote_ref> <remote_sha>` line each), but today only the DB-seam advisory reads them.\n\nThe maintainer asks: the hook should verify what the remote will actually receive. Decide how the hook should obtain the tree it checks and what that choice obliges elsewhere in the repo. The hook is POSIX shell run by Git for Windows; installing dependencies is slow (`node_modules` is present in the main checkout only); several checks read gitignored, locally generated inputs.\n\n# Code and rules at main@bd583ab3\n\nThe hook as it stands (comment blocks 4-16 elided):\n\n**.githooks/pre-push@bd583ab3:1-3, 18-80**\n\n```bash\n#!/bin/bash\n# Pre-push hook for claude-engineering-skills.\n#\n…\nREPO_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null)\"\n\n# ── 1. Checks (blocking) ────────────────────────────────────────────────\nif [ -f \"$REPO_ROOT/package.json\" ]; then\n  echo \"→ Pre-push checks: npm run check ...\"\n  ( cd \"$REPO_ROOT\" && npm run check )\n  CHECK_EXIT=$?\n  if [ $CHECK_EXIT -ne 0 ]; then\n    echo \"✗  pre-push checks FAILED (exit $CHECK_EXIT) — push blocked.\"\n    echo \"   Fix the issues above, or bypass with: git push --no-verify\"\n    exit 1\n  fi\n  echo \"✓  checks passed\"\nfi\n\n# ── 1.5 DB-seam change advisory (non-blocking) ───────────────────────────\n# `npm run check` does not run the destructive DB integration suites (they\n# need AUDIT_DB_TEST_URL, which is deliberately never set here). This block\n# tells the operator when a pushed commit touches that seam so it isn't\n# silently un-covered. Never blocks, never claims coverage.\n# Uses the hook's own stdin contract (<local_ref> <local_sha> <remote_ref>\n# <remote_sha> per line) rather than @{push}, which evaluates the wrong\n# commits for an explicit-ref push or an unconfigured upstream.\n# See docs/plans/local-db-test-container.md.\n{\n  DB_SEAM_MATCHED=0\n  ZERO_SHA=\"0000000000000000000000000000000000000000\"\n  while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do\n    [ -z \"$LOCAL_SHA\" ] && continue\n    [ \"$LOCAL_SHA\" = \"$ZERO_SHA\" ] && continue   # branch deletion — nothing pushed\n    if [ -z \"$REMOTE_SHA\" ] || [ \"$REMOTE_SHA\" = \"$ZERO_SHA\" ]; then\n      RANGE_BASE=$(git merge-base origin/main \"$LOCAL_SHA\" 2>/dev/null)\n      [ -z \"$RANGE_BASE\" ] && RANGE_BASE=$(git rev-parse \"$LOCAL_SHA~1\" 2>/dev/null)\n    else\n      RANGE_BASE=\"$REMOTE_SHA\"\n    fi\n    [ -z \"$RANGE_BASE\" ] && continue\n    CHANGED=$(git diff --name-only \"$RANGE_BASE\" \"$LOCAL_SHA\" 2>/dev/null)\n    for PREFIX in \"scripts/lib/db/\" \"scripts/lib/store/\" \"supabase/migrations/\" \"tests/db-\" \"scripts/setup-postgres.mjs\" \"tests/fixtures/expected-schema.json\"; do\n      if printf '%s\\n' \"$CHANGED\" | grep -qF \"$PREFIX\" 2>/dev/null; then\n        DB_SEAM_MATCHED=1\n        break\n      fi\n    done\n  done\n  if [ \"$DB_SEAM_MATCHED\" = \"1\" ]; then\n    echo \"ℹ DB-seam change detected — the local pre-push checks do NOT run the destructive DB suites. Run npm run db:local before pushing, or rely on the postgres-parity CI job.\" >&2\n  fi\n} || true\n\n# ── 2. Consumer-repo sync (non-blocking) ────────────────────────────────\nSYNC_SCRIPT=\"$REPO_ROOT/scripts/sync-to-repos.mjs\"\nif [ -f \"$SYNC_SCRIPT\" ]; then\n  echo \"→ Syncing skills to consumer repos...\"\n  node \"$SYNC_SCRIPT\" 2>&1\n  if [ $? -ne 0 ]; then\n    echo \"⚠  Sync completed with warnings — push continues\"\n  else\n    echo \"✓  Sync complete\"\n  fi\nfi\n\nexit 0\n```\n\nWhat `check` is:\n\n**package.json@bd583ab3:49-49**\n\n```json\n    \"check\": \"npm run context:check && npm run docs:check && npm run docs:refs:gate && npm run plans:status && npm run plans:index:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm run on-conflict:check && npm run arch:coverage-gate && npm run db:check-rls:gate && npm test\",\n```\n\nOne of those gates, on an input that is generated and gitignored (`arch:render` writes it):\n\n**scripts/arch-coverage-gate.mjs@bd583ab3:73-78**\n\n```js\n    // Not a gate failure: a repo that has never rendered has nothing to judge.\n    // Failing here would block first-time consumers for a non-problem.\n    log(`arch:coverage-gate: no ${OBSERVED_FILE} — run \\`npm run arch:render\\` first (skipping)`);\n    process.exit(0);\n  }\n\n```\n\nThe repo's rules for a tree other sessions are also using (AGENTS.md):\n\n**AGENTS.md@bd583ab3:1049-1072**\n\n```md\n## Scope discipline — pre-existing uncommitted changes\n\nWhen you find uncommitted, unstaged, untracked, or unpushed changes in\nthe repo that are **unrelated to the current task**: leave them alone.\nThey are the user's working set, not yours to tidy.\n\n**Rules:**\n\n- **Stage by name only** — never `git add -A`, `git add .`, or `git\n  add -u`. Stage exactly the files you modified for the current task.\n- **Never auto-commit** pre-existing state to \"clean up\" — that\n  bundles unrelated work into your commit and corrupts blame/history.\n- **Never auto-stash** unrelated work — stash conflicts on pop bite\n  worse than the original mess.\n- **Never `git rm --cached`** legacy tracked-but-gitignored files\n  without an explicit user instruction; that change ships to every\n  collaborator and isn't reversible by `git pull`.\n- **Mention what you saw, once**, in a one-line note: *\"Heads-up:\n  there are 3 unrelated unstaged files (foo.ts, bar.mjs, baz.json) I\n  left untouched.\"* Then move on — don't relitigate them.\n- If the unrelated state genuinely blocks the task (e.g., a half-edited\n  file you need to also edit), stop and ask the user how to proceed\n  before touching it.\n\n```\n\nThe status-log line that records the concurrency observation:\n\n**status.md@bd583ab3:971-971**\n\n```md\n- Left untouched per scope discipline: a **concurrent session's** `docs/plans/dismissed-fp-reopen-policy.md` (uncommitted, and holding a valuable 2026-07-17 re-examination). Note: an import of `scripts/lib/prompt-seeds.mjs` transiently failed mid-audit — that session was writing the file while this audit read it. Two sessions, one working tree.\n```\n",
+  "question": "Decide how the pre-push hook should obtain the tree it runs `npm run check` against, which alternatives you reject and why, and what other parts of the repo the choice forces you to change or at least audit (things that only worked because of how the hook ran today). Give your decision and the next steps.",
+  "rubric": {
+    "decision": "Run the check in a throwaway git worktree at exactly the pushed commit (the sha git hands the hook on stdin), not in the shared working tree, not after a git stash, and not by refusing a dirty tree. Because a fresh worktree has none of the gitignored inputs, every check that skips on a missing input must become a hard error in that sandbox (a setup failure is a push failure, never a pass), and every gate that infers its base from working-tree state must take the range git gave the hook from one resolver.",
+    "keyPoints": [
+      {
+        "id": "kp1",
+        "text": "Chooses to verify the pushed COMMIT in isolation: a throwaway `git worktree` checked out detached at the pushed sha taken from the hook's stdin, so it verifies exactly what the remote receives and cannot see another session's uncommitted files.",
+        "weight": 2
+      },
+      {
+        "id": "kp2",
+        "text": "Rejects `git stash` (and any auto-stash of the other session's work): it removes the other session's files mid-edit, pop conflicts bite worse than the original problem, and the repo's own rule forbids it. Also rejects \"refuse when the tree is dirty\", which keeps the false blocks and only moves them.",
+        "weight": 2
+      },
+      {
+        "id": "kp3",
+        "text": "Identifies the sandbox-honesty hazard: a fresh worktree has no gitignored inputs, so a check that skips on a missing input (the architecture-coverage gate exits 0 \"skipping\") passes having read nothing; each such skip must be forced into a hard error inside the sandbox, and a sandbox setup failure must fail the push.",
+        "weight": 2
+      },
+      {
+        "id": "kp4",
+        "text": "Notes that any drift gate inferring its base from working-tree state (@{u}, or \"dirty ? HEAD : HEAD~1\") is wrong in a detached tree and was already scoping multi-commit pushes to the tip commit; the range the hook was given on stdin should be resolved once, by one resolver, with an unresolvable explicit base failing hard rather than demoting to inference.",
+        "weight": 1
+      },
+      {
+        "id": "kp5",
+        "text": "Sees from the hook text that stdin is already consumed by the DB-seam advisory, so the hook must read it ONCE and share the captured range; a second reader would be silently starved.",
+        "weight": 1
+      }
+    ],
+    "traps": [
+      {
+        "id": "trap1",
+        "text": "Proposes git stash (with --include-untracked and/or --keep-index) around the check so it runs on the committed content."
+      },
+      {
+        "id": "trap2",
+        "text": "Keeps checking the working tree and adds a guard that refuses the push when the tree is dirty, or limits the check to the paths the pushed commits touch."
+      },
+      {
+        "id": "trap3",
+        "text": "Adopts a clean checkout but treats a missing gitignored input as an acceptable skip (green because nothing was read)."
+      },
+      {
+        "id": "trap4",
+        "text": "Checks only the index (staged content) rather than the commit being pushed."
+      }
+    ],
+    "leakTerms": [
+      "throwaway",
+      "git worktree add",
+      "sandbox",
+      "clean checkout",
+      "at the pushed sha",
+      "push-range",
+      "AUDIT_PUSH_RANGE_REQUIRED"
+    ]
+  },
+  "controls": {
+    "gold": "The hook should check the commit, in isolation: create a temporary detached worktree at the pushed sha (git gives it on stdin as `local_sha`), run `npm run check` there, and remove it afterwards. That is the only option that verifies exactly what the remote receives and is blind to the other session's half-written files, which fixes false blocks and false passes together.\n\nReject the alternatives on their own terms. `git stash` removes the other session's files mid-edit and pop can conflict; the repo's rule against auto-stashing exists for precisely this tree. Refusing a dirty tree keeps the false block and just relocates it. Staging-only checks verify something that is not what is pushed.\n\nThe change obliges two things elsewhere. First, a fresh worktree has none of the gitignored inputs, so any check that skips on a missing input passes having read nothing: `arch:coverage-gate` prints \"skipping\" and exits 0. Inside the isolated tree those skips must become hard errors, and a failure to set the tree up must fail the push, not pass it. Second, drift gates that infer their base from working-tree state (`@{u}`, or dirty ? HEAD : HEAD~1) are wrong in a detached tree and were already scoping multi-commit pushes to the tip. Resolve the range once, from the refs git gave the hook, in one resolver that fails hard on an explicit base it cannot resolve. The hook already hands its stdin to the DB advisory, so read it once and share it.\n\n## Decision\n\nRun `check` in a throwaway detached worktree at the pushed sha, force skip-on-missing-input checks to fail inside it, and resolve the push range once from the hook's stdin.",
+    "trap": "The cheapest honest fix is to make the check see only the commit. Before running `npm run check` the hook runs `git stash push --include-untracked --keep-index -m prepush`, runs the suite on what remains, then `git stash pop` in a trap handler so a failure cannot leave the tree stripped. The pushed commit is what remains checked out, so the result is exactly what the remote receives, and nothing needs rebuilding: `node_modules`, the generated architecture inputs and every gitignored file are still present, so no gate changes behaviour and no skip turns into a surprise failure. Installing dependencies into a second tree would cost minutes on every push; this costs a stash and a pop.\n\nThe scope-discipline rule about never auto-stashing is aimed at assistants tidying a user's tree, not at a hook that restores the state in a trap. If the stash does not apply cleanly the hook fails the push, which is the safe direction. To reduce collisions further the hook can refuse to run while another session holds the lock file, and can pass `--scope` so the drift gates only look at paths the pushed commits touch.\n\nThe existing range inference (`@{u}`, dirty-aware `HEAD~1`) is correct for a normal working tree and should not be touched; the less this change moves, the less it can break.\n\n## Decision\n\nStash the working tree around the check with a restoring trap, keep every gate and its range inference as is, and add a lock so two sessions do not push at once."
+  },
+  "sources": [
+    "25436c84 (2026-07-20) fix(prepush): check a clean checkout of the pushed commit, not the working tree; parent bd583ab3",
+    "Known outcome: scripts/prepush-check.mjs runs npm run check in a throwaway git worktree at the pushed sha; AUDIT_PUSH_RANGE_REQUIRED and ARCH_COVERAGE_REQUIRE_ENVELOPE force the two known silent-skip paths to hard errors; scripts/lib/push-range.mjs is the one range resolver; docs/runbooks/prepush-sandbox.md; tests/prepush-sandbox-honesty.test.mjs and tests/push-range.test.mjs",
+    "Same commit: the first sandbox run also exposed skills.manifest.json hashing CRLF working-tree bytes (rubric/background only)",
+    "Excluded from context: the fix commit, docs/runbooks/prepush-sandbox.md, the post-fix AGENTS.md wording, memory notes"
+  ]
+}

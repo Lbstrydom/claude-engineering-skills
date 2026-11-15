@@ -208,6 +208,66 @@ describe('judge rubric — right_sizing gets an explicit concision definition', 
   });
 });
 
+// ── Judge transport failure is UNAVAILABLE + classified retry (fable-vs-opus §2.1) ────────────
+// docs/plans/fable-vs-opus-decision-eval.md §2.1. At 809a615e callJudgeDefault's
+// catch returned {conformant:false} for every error but [egress-gate], so an
+// outage (ECONNRESET, 5xx, timeout) read exactly like a judge that answered
+// badly — and judgeSession fed the transport error text back to the model as a
+// "your previous response was REJECTED" schema correction.
+describe('judge — transport failure is unavailable, and only a retryable one is retried', () => {
+  it('callJudgeDefault: a thrown client error → unavailable:true, reason judge-transport', async () => {
+    const { _internals } = await import('../scripts/lib/arm-eval/judge.mjs');
+    const createClient = async () => ({ messages: { create: async () => { throw new Error('ECONNRESET socket hang up'); } } });
+    const res = await _internals.callJudgeDefault({ prompt: 'score these', schema: judgePassSchema(['output-1'], ['correctness']) }, { createClient });
+    assert.equal(res.unavailable, true, 'a transport failure must be marked unavailable');
+    assert.equal(res.reason, 'judge-transport');
+    assert.equal(res.conformant, false);
+    assert.equal(res.result, null);
+  });
+
+  it('callJudgeDefault: a parsed-but-invalid answer stays a judge-quality failure (not unavailable)', async () => {
+    const { _internals } = await import('../scripts/lib/arm-eval/judge.mjs');
+    const createClient = async () => ({ messages: { create: async () => ({ content: [{ type: 'text', text: '{"scores":[]}' }] }) } });
+    const res = await _internals.callJudgeDefault({ prompt: 'score these', schema: judgePassSchema(['output-1'], ['correctness']) }, { createClient });
+    assert.equal(res.conformant, false);
+    assert.ok(!res.unavailable, 'a bad answer is not unavailable — the judge answered, badly');
+  });
+
+  it('judgeSession: persistent RETRYABLE transport failure → unavailable, one plain retry (no corrective nudge)', async () => {
+    const prompts = [];
+    const callJudge = async ({ prompt }) => { prompts.push(prompt); return { conformant: false, unavailable: true, retryable: true, reason: 'judge-transport', result: null, error: 'ECONNRESET socket hang up' }; };
+    const r = await judgeSession({ experimentType: 'brainstorm', outputs: OUTPUTS, contextPack: null, seed: 1, deps: { callJudge } });
+    assert.equal(r.unavailable, true, 'the session reports the judge as unavailable');
+    assert.equal(r.conformant, false);
+    assert.equal(r.passes.length, 0, 'nothing scored');
+    assert.equal(prompts.length, 2, 'exactly one retry');
+    assert.ok(!/previous response was REJECTED/.test(prompts[1]), 'a transport error is not a schema rejection');
+    assert.ok(!prompts[1].includes('ECONNRESET'), 'the transport error text never reaches the model');
+  });
+
+  it('a non-429 4xx (auth) is unavailable and NOT retried', async () => {
+    const { _internals } = await import('../scripts/lib/arm-eval/judge.mjs');
+    const createClient = async () => ({ messages: { create: async () => { throw Object.assign(new Error('invalid x-api-key'), { status: 401 }); } } });
+    const res = await _internals.callJudgeDefault({ prompt: 'p', schema: judgePassSchema(['output-1'], ['correctness']) }, { createClient });
+    assert.equal(res.unavailable, true);
+    assert.equal(res.retryable, false);
+    let calls = 0;
+    const r = await judgeSession({ experimentType: 'brainstorm', outputs: OUTPUTS, contextPack: null, seed: 1, deps: { callJudge: async () => { calls++; return res; } } });
+    assert.equal(r.unavailable, true);
+    assert.equal(calls, 1, 'a 401 is not retried');
+  });
+
+  it('judgeSession: a transient transport failure recovers on the plain retry', async () => {
+    let n = 0;
+    const ok = fakeJudge([]);
+    const callJudge = async (args) => { n++; if (n === 1) return { conformant: false, unavailable: true, retryable: true, reason: 'judge-transport', result: null, error: 'HTTP 503' }; return ok(args); };
+    const r = await judgeSession({ experimentType: 'brainstorm', outputs: OUTPUTS, contextPack: null, seed: 1, deps: { callJudge } });
+    assert.equal(r.conformant, true);
+    assert.ok(!r.unavailable);
+    assert.equal(r.passes.length, 2);
+  });
+});
+
 // ── UNAVAILABLE is not NON-CONFORMANT (2026-11-15) ─────────────────────────
 //
 // `callJudgeDefault`'s catch returned `{ conformant: false, error }` for EVERY

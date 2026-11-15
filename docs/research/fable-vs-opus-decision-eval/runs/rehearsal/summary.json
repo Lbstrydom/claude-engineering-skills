@@ -1,0 +1,157 @@
+{
+  "contractEpoch": 1,
+  "phase": "rehearsal",
+  "runId": "rehearsal",
+  "gitSha": "ce49e42c6d08307eec312e9ac150ff9628d65c7d",
+  "corpusSha256": "7c9f62cff2d80999db861198768bfa99ca8c424812091b762cbd7f0320d08d1e",
+  "promptHashes": {
+    "arm": "515f60d257f3de7ee6401e427e676116c478faecf05d61df9aae49f065904e2c",
+    "judge": "e05083686bac56bd9506d80c6e854e0b7f626556d427c2e50e29d1591d9f696a"
+  },
+  "design": {
+    "arms": [
+      "claude-haiku-5-5"
+    ],
+    "reps": 1,
+    "cases": 5,
+    "seed": 20261115,
+    "effort": "high",
+    "maxTokens": 16000,
+    "judgeModel": "gpt-6.1-terra",
+    "judgeReasoning": "medium",
+    "rule": {
+      "deltaFloor": 0.1,
+      "costRatioMax": 3,
+      "unmeasuredMax": 0.1,
+      "judgeNoiseFactor": 0.5,
+      "spotAgreementMin": 0.8,
+      "powerZ": 2.8,
+      "minMeasuredPerCase": 2,
+      "minMeasuredFraction": 0.75,
+      "armErrorRateMax": 0.1,
+      "repsMin": 3,
+      "repsMax": 10,
+      "bootstrapB": 10000
+    }
+  },
+  "status": "completed",
+  "spend": {
+    "runSpentUsd": 0.19,
+    "scopeSpentUsd": 0.19,
+    "scopeSpentBeforeUsd": 0,
+    "budgetScope": "autonomous",
+    "capUsd": 10,
+    "basis": "derived: measured tokens × published price (model-pricing-table.mjs)"
+  },
+  "stop": null,
+  "instrument": {
+    "controls": {
+      "total": 20,
+      "passed": 20,
+      "failures": []
+    },
+    "unmeasuredGrades": 0,
+    "totalGrades": 50,
+    "unmeasuredRate": 0,
+    "unverifiedItems": 0,
+    "correctDisagreements": 0,
+    "modelMismatches": 0,
+    "judgeNoise": 0.03,
+    "credible": true,
+    "gateFailures": []
+  },
+  "perArm": {
+    "claude-haiku-5-5": {
+      "outputs": 5,
+      "meanQ": 0.4417,
+      "correct": 2,
+      "sw": null,
+      "perCase": {
+        "check-ignore-ci-cause-string": {
+          "n": 1,
+          "mean": 0.2,
+          "min": 0.2,
+          "max": 0.2,
+          "range": 0
+        },
+        "stale-override-four-sites": {
+          "n": 1,
+          "mean": 0.1083,
+          "min": 0.1083,
+          "max": 0.1083,
+          "range": 0
+        },
+        "sync-manifest-ratchet-report": {
+          "n": 1,
+          "mean": 0.3,
+          "min": 0.3,
+          "max": 0.3,
+          "range": 0
+        },
+        "cli-system-honour-claim": {
+          "n": 1,
+          "mean": 0.9,
+          "min": 0.9,
+          "max": 0.9,
+          "range": 0
+        },
+        "sdk-pin-max-tokens-review": {
+          "n": 1,
+          "mean": 0.7,
+          "min": 0.7,
+          "max": 0.7,
+          "range": 0
+        }
+      },
+      "statuses": {
+        "ok": 5
+      }
+    }
+  },
+  "cost": {
+    "claude-haiku-5-5": {
+      "calls": 5,
+      "pricedCalls": 5,
+      "totalUsd": 0.0202,
+      "correct": 2,
+      "inputTokens": 25937,
+      "outputTokens": 35201,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "thinkingTokens": 22780,
+      "thinkingReportedCalls": 5,
+      "usdPerCall": 0.004,
+      "usdPerCorrect": 0.0101,
+      "latencyMedianMs": 35591
+    }
+  },
+  "fillCheck": {
+    "ok": true,
+    "problems": [],
+    "thinkingTokensReportedOnCalls": 5,
+    "thinkingNote": null
+  },
+  "proposedN": {
+    "reps": null,
+    "deltaTarget": null,
+    "raw": null,
+    "infeasible": false,
+    "reason": "spread unmeasured"
+  },
+  "mainProjection": {
+    "available": false,
+    "reason": "no priced arm calls or no proposed n"
+  },
+  "spotSampleIds": [
+    "6f202c5f",
+    "5a6e0b15",
+    "9b450557",
+    "eafd6c7f"
+  ],
+  "artifactScan": {
+    "secretFindings": [],
+    "privateTermHits": 0,
+    "privacyTermsConfigured": true,
+    "safeToCommit": true
+  }
+}

@@ -139,4 +139,18 @@ describe('model pricing — Fable (fleet p-ddc3, read 2026-10-25)', () => {
     const cost = costFromUsage({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 }, 'claude-fable-5-1');
     assert.equal(cost.totalUsd, 0.25);
   });
+
+  // docs/plans/fable-vs-opus-decision-eval.md §2.1: at 809a615e priceFor('claude-fable-5-2')
+  // was null, so a Fable 5.2 arm would report no cost at all. Published rate (bundled
+  // claude-api skill, read 2026-11-15): $8 in / $40 out, cache read $0.20 (0.025x).
+  it('claude-fable-5-2 is priced at its own row: $8/$40, cache read $0.20', () => {
+    assert.equal(isPriced('claude-fable-5-2'), true, 'a Fable 5.2 arm must report a cost, not null');
+    const px = priceFor('claude-fable-5-2');
+    assert.equal(px.input, 8);
+    assert.equal(px.output, 40);
+    const read = costFromUsage({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 }, 'claude-fable-5-2');
+    assert.ok(Math.abs(read.totalUsd - 0.20) < 1e-9, `cache read must be $0.20/MTok, got ${read.totalUsd}`);
+    const write = costFromUsage({ input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 1_000_000 }, 'claude-fable-5-2');
+    assert.ok(Math.abs(write.totalUsd - 10) < 1e-9, `5-min cache write must be $10/MTok (1.25x), got ${write.totalUsd}`);
+  });
 });
