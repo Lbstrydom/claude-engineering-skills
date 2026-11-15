@@ -433,6 +433,15 @@ const MANDATORY = {
   // the whole point of this gate is that a check nobody can see fail is
   // indistinguishable from no check at all.
   'db:enrolment:gate': ['db-enrolment-gate-detects-a-suite-no-runner-names'],
+  // Added 2026-11-15 with the gate itself (docs/plans/anthropic-cli-faithfulness-routing.md).
+  // Post-2026-07-31, so a pill is mandatory — and it is the right call here for a
+  // reason specific to this gate: the refusal it enforces CANNOT FIRE IN CI. The cli
+  // backend throws on `system`/`tools`/`tool_choice`, CI runs the committed `sdk`
+  // default, so an unpinned call is green on every runner and throws only where
+  // CLAUDE_BACKEND=cli is set. A merge-time scanner is the only thing that can see
+  // it, and a scanner that silently matched nothing would print `clean` over the
+  // whole repo and read exactly like a real pass.
+  'anthropic:pin:gate': ['anthropic-pin-gate-detects-an-unpinned-system-call'],
   // Added 2026-09-04 with the three gates themselves (docs/plans/backlog-and-drift-reduction.md).
   // All post-2026-07-31, so each carries a pill rather than an exemption. Each pill
   // tampers with a real artifact, because the failure every one of them guards is
