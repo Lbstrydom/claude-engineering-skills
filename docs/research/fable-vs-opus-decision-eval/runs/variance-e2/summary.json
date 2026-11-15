@@ -1,0 +1,113 @@
+{
+  "contractEpoch": 2,
+  "phase": "variance",
+  "runId": "variance-e2",
+  "gitSha": "60c848f3fd660159a3b368a05d41791d0d9bddcd",
+  "corpusSha256": "7f4b1fcff4daebbe0d19ba412d45d37ca43e2927daa82dcaab5269f31bfb98a3",
+  "promptHashes": {
+    "arm": "515f60d257f3de7ee6401e427e676116c478faecf05d61df9aae49f065904e2c",
+    "judge": "e05083686bac56bd9506d80c6e854e0b7f626556d427c2e50e29d1591d9f696a"
+  },
+  "design": {
+    "arms": [
+      "claude-opus-5-5"
+    ],
+    "reps": 4,
+    "cases": 10,
+    "seed": 20261115,
+    "effort": "high",
+    "maxTokens": 16000,
+    "judgeModel": "gpt-6.1-terra",
+    "judgeReasoning": "medium",
+    "rule": {
+      "deltaFloor": 0.1,
+      "costRatioMax": 3,
+      "unmeasuredMax": 0.1,
+      "judgeNoiseFactor": 0.5,
+      "spotAgreementMin": 0.8,
+      "powerZ": 2.8,
+      "minMeasuredPerCase": 2,
+      "minMeasuredFraction": 0.75,
+      "armErrorRateMax": 0.1,
+      "repsMin": 3,
+      "repsMax": 10,
+      "bootstrapB": 10000
+    }
+  },
+  "status": "stopped:InstrumentFailure",
+  "spend": {
+    "runSpentUsd": 0.1232,
+    "scopeSpentUsd": 2.9116,
+    "scopeSpentBeforeUsd": 2.7884,
+    "budgetScope": "autonomous",
+    "capUsd": 10,
+    "basis": "derived: measured tokens × published price (model-pricing-table.mjs)"
+  },
+  "stop": {
+    "kind": "InstrumentFailure",
+    "message": "control checkpoint: 19/20 judge controls passed before any arm spend — the judge or a rubric is broken; failed: preflight-gold:consumer-prepush-schema-behind-refusal"
+  },
+  "instrument": {
+    "controls": {
+      "total": 20,
+      "passed": 19,
+      "failures": [
+        {
+          "kind": "preflight-gold",
+          "caseId": "consumer-prepush-schema-behind-refusal",
+          "rep": 0,
+          "gradeId": "4b313b8b"
+        }
+      ]
+    },
+    "unmeasuredGrades": 0,
+    "totalGrades": 40,
+    "unmeasuredRate": 0,
+    "unverifiedItems": 0,
+    "correctDisagreements": 0,
+    "modelMismatches": 0,
+    "judgeNoise": null,
+    "credible": false,
+    "gateFailures": [
+      "claude-opus-5-5: 10 case(s) with < 2 measured (check-ignore-ci-cause-string=0, cli-system-honour-claim=0, consumer-prepush-schema-behind-refusal=0, disposable-db-guard-predicate=0, prepush-check-target-tree=0, sdk-pin-max-tokens-review=0, skills-manifest-commit-or-ignore=0, stale-override-four-sites=0, sync-manifest-ratchet-report=0, windowed-views-consumer-path-review=0)",
+      "claude-opus-5-5: 0/40 measured < 0.75",
+      "judge controls 19/20 passed",
+      "judge noise s_j=unmeasured > 0.1"
+    ]
+  },
+  "perArm": {
+    "claude-opus-5-5": {
+      "outputs": 0,
+      "meanQ": null,
+      "correct": 0,
+      "sw": null,
+      "perCase": {},
+      "statuses": {}
+    }
+  },
+  "cost": {},
+  "fillCheck": {
+    "ok": true,
+    "problems": [],
+    "thinkingTokensReportedOnCalls": 0,
+    "thinkingNote": "API reported no thinking-token field; thinking is billed inside output_tokens (recorded as null, not 0)"
+  },
+  "proposedN": {
+    "reps": null,
+    "deltaTarget": null,
+    "raw": null,
+    "infeasible": false,
+    "reason": "spread unmeasured"
+  },
+  "mainProjection": {
+    "available": false,
+    "reason": "no priced arm calls or no proposed n"
+  },
+  "spotSampleIds": [],
+  "artifactScan": {
+    "secretFindings": [],
+    "privateTermHits": 0,
+    "privacyTermsConfigured": true,
+    "safeToCommit": true
+  }
+}
