@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots, writeFile, addBranch } from './helpers/fleet-repo.mjs';
 import { setup } from './helpers/fleet-cli-harness.mjs';
+import { sharedFilesHint } from '../scripts/lib/fleet/render.mjs';
 
 after(cleanupFleetRoots);
 
@@ -53,5 +54,21 @@ describe('claim: a merged, clean holder no longer blocks', () => {
     const r = s.f(['claim', '--id', 'feat-b', '--intent', 'work on b', '--paths', 'shared/**']);
     assert.equal(r.status, 3, r.stdout + r.stderr);
     assert.doesNotMatch(r.stdout, /merged/);
+    // No hotFiles/appendOnlyGlobs in this repo: the first such conflict says they exist (finding 5).
+    assert.match(r.stdout, /hint \(for the user\/coordinator\): this repo's \.fleet\.json sets no hotFiles or appendOnlyGlobs/);
+  });
+});
+
+describe('sharedFilesHint (finding 5: suggest hotFiles/appendOnlyGlobs, never a new flag)', () => {
+  const blocked = { verdict: 'blocked', conflicts: [{ with: 'x', via: ['paths'], paths: [['a/**', 'a/**']], files: [], known: false }] };
+  it('fires for a blocked path overlap when the repo sets neither key', () => {
+    assert.match(sharedFilesHint(blocked, { hotFiles: [], appendOnlyGlobs: [] }), /never --override/);
+  });
+  it('is silent once either key is set, for a non-blocked verdict, for an intent-only block, or with no config given', () => {
+    assert.equal(sharedFilesHint(blocked, { hotFiles: ['**/ledger.json'], appendOnlyGlobs: [] }), null);
+    assert.equal(sharedFilesHint(blocked, { hotFiles: [], appendOnlyGlobs: ['CHANGELOG.md'] }), null);
+    assert.equal(sharedFilesHint({ ...blocked, verdict: 'warn' }, { hotFiles: [] }), null);
+    assert.equal(sharedFilesHint({ verdict: 'blocked', conflicts: [{ with: 'x', via: ['intent'], paths: [], files: [], known: false }] }, {}), null);
+    assert.equal(sharedFilesHint(blocked, undefined), null);
   });
 });

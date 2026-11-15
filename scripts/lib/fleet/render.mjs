@@ -10,6 +10,7 @@
  */
 
 import { prWarnings } from './gh-facts.mjs';
+import { isBlockingConflict } from './overlap.mjs';
 
 const BANNER = (inv) => `registry incomplete: ${inv.length} record${inv.length === 1 ? '' : 's'} unreadable — claims may be missing`;
 
@@ -195,7 +196,23 @@ export function renderClaimVerdict(v, ctx = {}) {
   }
   for (const u of v.uninspected ?? []) lines.push(`  note: uncommitted work not inspected for ${u.with} (${u.reason})`);
   for (const f of v.finished ?? []) lines.push(`  note: ${f.with} not counted as an overlap — ${f.note}, worktree clean; retire its record: \`${ctx.cmd ?? 'fleet'} release --id ${f.with}\``);
+  const hint = sharedFilesHint(v, ctx.sharedConfig);
+  if (hint) lines.push(hint);
   return lines.join('\n');
+}
+
+/**
+ * A BLOCKED claim on concrete paths/files, in a repo whose `.fleet.json` sets neither `hotFiles` nor `appendOnlyGlobs`: say
+ * that a shared file every branch only ADDS to can be declared, instead of each chip stopping on it (consumer report
+ * 2026-11-15). Those two keys already are the co-owned mechanism (a hot-only overlap never blocks; landing union-merges
+ * append-only conflicts), so this names them rather than adding a per-claim flag. A config change is a person's decision.
+ * @param {{verdict: string, conflicts: object[]}} v
+ * @param {{hotFiles?: string[], appendOnlyGlobs?: string[]}|undefined} cfg - absent ⇒ no hint (the caller did not say)
+ */
+export function sharedFilesHint(v, cfg) {
+  if (!cfg || v.verdict !== 'blocked' || (cfg.hotFiles?.length ?? 0) > 0 || (cfg.appendOnlyGlobs?.length ?? 0) > 0) return null;
+  if (!v.conflicts.some((c) => isBlockingConflict(c) && (c.paths?.length || c.files?.length))) return null;
+  return '  hint (for the user/coordinator): this repo\'s .fleet.json sets no hotFiles or appendOnlyGlobs. If the overlap is a shared file every branch only ADDS to (a ledger, a changelog, an index), listing it in hotFiles makes such an overlap disclosed, not blocking, and appendOnlyGlobs keeps both sides at landing (references/config.md). Until then, stop and report; never --override.';
 }
 
 /** Render an `approvable` result. */
