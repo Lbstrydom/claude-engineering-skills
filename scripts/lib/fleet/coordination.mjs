@@ -28,7 +28,7 @@ import { pruneCountText, pruneIsEmpty, readPruneCache } from './prune-summary.mj
 import { proposalsLine, proposalsQuiet, readProposalsSummary } from './proposals.mjs';
 import { readUpstreamCache, renderUpstreamLine, upstreamQuiet, upstreamScript } from './upstream-count.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
-import { leaseForNext } from './lease-cmd.mjs';
+import { leaseForNext, leaseStuckFooter } from './lease-cmd.mjs';
 
 /**
  * The `checkpoint` fact profile for ONE session: its own merged evidence, its own
@@ -78,7 +78,7 @@ export function checkpointFooter(ctx, id, { limit = 3 } = {}) {
   }
   let footer;
   try { footer = unregisteredFooter(unregisteredCacheDir(ctx.cwd), ctx.now, ctx.cmd); } catch (e) { footer = [`unregistered-work footer not derived (${e.message})`]; }
-  return [...lines, ...footer];
+  return [...lines, ...footer, ...leaseStuckFooter(ctx)];
 }
 
 /** A cache older than this asks for one `fleet status` run (the only thing that refreshes it). */

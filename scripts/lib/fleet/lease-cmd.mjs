@@ -20,7 +20,7 @@ import { failed, ok, refused, selfId } from './commands.mjs';
 import { gitCommonDir, runGit } from './git-facts.mjs';
 import {
   LIMITS, LeaseConfigError, measureSlotWaits, repoLabel, decideAcquire, decideAnnounce, decideAttach, decideClearWindow, decideGrant, decideRelease, decideTurnConfig, decideWait, defaultProbe,
-  formatPeakRange, machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable, renderLog, renderStatus, repoKeyOf, summarise,
+  formatPeakRange, machineDir, nextLines, parsePeakHours, peakState, readLease, recoverUnreadable, renderLog, renderStatus, repoKeyOf, stuckLines, summarise,
   transactLease, turnKeptText,
 } from './lease.mjs';
 
@@ -359,4 +359,12 @@ export function leaseForNext(ctx) {
       lease: { state: 'unreadable', measured: false, reason },
     };
   }
+}
+
+/** The checkpoint footer's lease line: ONLY a stuck slot (`stuckLines`); silent otherwise and on any error (a footer never fails a verb). */
+export function leaseStuckFooter(ctx) {
+  try {
+    const read = readLease(machineDir(ctx.env));
+    return stuckLines(summarise(read, ctx.now, defaultProbe()), { cmd: ctx.cmd });
+  } catch { return []; }
 }

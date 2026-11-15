@@ -647,5 +647,21 @@ export function nextLines(read, now, { cmd = 'fleet', repoKey, probe = defaultPr
   if (s.turn && s.waiters.length) parts.push(`turn: ${s.turn.repo} until ${hhmmOf(new Date(s.turn.endsAt))}`);
   for (const w of s.waiters) parts.push(`${w.repo} waiting for the slot since ${hhmmOf(new Date(w.since))}`);
   if (s.peak.now) parts.push('peak-cost hours now');
-  return parts.length ? [`${tag} machine lease: ${parts.join('; ')} — ${status}`] : [];
+  return [...(parts.length ? [`${tag} machine lease: ${parts.join('; ')} — ${status}`] : []), ...stuckLines(s, { cmd })];
+}
+
+/**
+ * A slot that has expired but cannot be taken (pid alive, or unverifiable) while a waiter has been refused at least
+ * `LIMITS.stuckRefusals` times: name the holder and the by-hand remedy, so a stuck machine is visible without reading the
+ * journal (consumer report 2026-11-15: 343 refusals for one waiter, 38+ minutes, nothing said who). Information for the
+ * user/coordinator — `--force` is a person's decision, never this session's.
+ * @param {ReturnType<typeof summarise>} s
+ */
+export function stuckLines(s, { cmd = 'fleet' } = {}) {
+  if (!s?.measured || s.heavy.state !== 'expired' || !['pid-alive', 'unverifiable'].includes(s.heavy.verdict)) return [];
+  const refusals = Math.max(0, ...s.waiters.map((w) => w.refusals ?? 0));
+  if (refusals < LIMITS.stuckRefusals) return [];
+  const h = s.holder;
+  const longest = s.waiters.reduce((a, w) => ((w.refusals ?? 0) > (a.refusals ?? 0) ? w : a), s.waiters[0]);
+  return [`FYI for the user/coordinator, not an action for this session: the heavy slot looks STUCK — ${h.holder} (${h.repo}) expired at ${hhmmOf(new Date(h.expiresAt))}${h.pid !== undefined ? `, pid ${h.pid}` : ''} (${s.heavy.reason}); ${longest.repo} has been refused ${refusals} times since ${hhmmOf(new Date(longest.since))}. If a person confirms that job is gone or hung: \`${cmd} lease release --force --reason "<why>"\``];
 }
