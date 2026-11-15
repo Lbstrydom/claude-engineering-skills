@@ -579,6 +579,146 @@ describe('normaliseArgText: formatting folds, literals do not', () => {
   });
 });
 
+// ── round 4: AST-level fail-opens, two of them against this module's own
+// stated contract (the docstring was right and the code did not implement it) ──
+describe('a key the gate cannot resolve is never a pin', () => {
+  const unpinned = (src) => classifyPinningInSource(src).unpinned;
+
+  it("RED: a COMPUTED key after the literal — `{ backend:'sdk', [key]:'cli' }`", () => {
+    assert.equal(unpinned("await createAnthropicClient({ backend: 'sdk', [key]: 'cli' });"), 1,
+      'a computed key can BE `backend`, and it comes after the literal');
+  });
+
+  it("RED: a literal computed key — `['backend']: 'cli'`", () => {
+    assert.equal(unpinned("await createAnthropicClient({ backend: 'sdk', ['backend']: 'cli' });"), 1);
+  });
+
+  it("GREEN: a literal computed key for something ELSE leaves the pin standing", () => {
+    assert.equal(unpinned("await createAnthropicClient({ backend: 'sdk', ['redactor']: null });"), 0,
+      "`['redactor']` is statically known not to be `backend`");
+  });
+
+  it('RED: a GETTER named backend overrides the pin', () => {
+    assert.equal(unpinned("await createAnthropicClient({ backend: 'sdk', get backend() { return 'cli'; } });"), 1);
+  });
+
+  it('RED: a METHOD named backend does too', () => {
+    assert.equal(unpinned("await createAnthropicClient({ backend: 'sdk', backend() { return 'cli'; } });"), 1);
+  });
+});
+
+// A dead object inside the factory vouched for a live override: what matters is
+// what the function RETURNS.
+describe('an indirect claim rests on what the factory RETURNS', () => {
+  it('RED: a pinned object the function does not return', () => {
+    const src = "function opts() { const unused = { backend: 'sdk' }; return { backend: 'cli' }; }\n"
+      + 'await createAnthropicClient(opts());';
+    assert.equal(indirectPinHolds(src, 'opts').pinned, false,
+      'a dead object must not vouch for a live override');
+  });
+
+  it('RED: a function that returns something the gate cannot follow', () => {
+    const src = 'function opts() { return buildOptions(); }\nawait createAnthropicClient(opts());';
+    assert.equal(indirectPinHolds(src, 'opts').pinned, false);
+  });
+
+  it('RED: a function with no return at all', () => {
+    const src = "function opts() { const x = { backend: 'sdk' }; }\nawait createAnthropicClient(opts());";
+    assert.equal(indirectPinHolds(src, 'opts').pinned, false);
+  });
+
+  it('GREEN: a block-body return of a pinned object', () => {
+    const src = "function opts() { return { backend: 'sdk' }; }\nawait createAnthropicClient(opts());";
+    assert.equal(indirectPinHolds(src, 'opts').pinned, true);
+  });
+
+  it("GREEN: an arrow's concise body", () => {
+    const src = "const opts = () => ({ backend: 'sdk' });\nawait createAnthropicClient(opts());";
+    assert.equal(indirectPinHolds(src, 'opts').pinned, true);
+  });
+
+  it('RED: EVERY return must be pinned, not just one', () => {
+    const src = "function opts() { if (x) return { backend: 'sdk' }; return { backend: 'cli' }; }\n"
+      + 'await createAnthropicClient(opts());';
+    assert.equal(indirectPinHolds(src, 'opts').pinned, false);
+  });
+
+  it("a nested callback's return does not count as the function's", () => {
+    const src = "function opts() { run(() => ({ backend: 'sdk' })); return { backend: 'cli' }; }\n"
+      + 'await createAnthropicClient(opts());';
+    assert.equal(indirectPinHolds(src, 'opts').pinned, false);
+  });
+});
+
+describe('params: computed keys and aliased imports', () => {
+  it("a literal computed key passes the param — `{ ['system']: p }`", () => {
+    assert.deepEqual(unserviceableParamsInSource("x({ ['system']: p })"), ['system']);
+  });
+
+  // A DYNAMIC key might be `system`, so in a file that also constructs an
+  // unpinned client it fails closed — and only there, so the cost falls where a
+  // decision is owed.
+  it('a DYNAMIC key fails Rule A in a file with an unpinned construction', () => {
+    const c = classifyPinningInSource('await createAnthropicClient();\nx({ [k]: p });');
+    assert.equal(c.dynamicKeys, true);
+    assert.deepEqual(c.unserviceable, [], 'it is not CLAIMED to be a specific param');
+    assert.equal(c.ruleAViolation, true);
+  });
+
+  it('a DYNAMIC key is harmless where every construction is pinned', () => {
+    const c = classifyPinningInSource("await createAnthropicClient({ backend: 'sdk' });\nx({ [k]: p });");
+    assert.equal(c.dynamicKeys, true);
+    assert.equal(c.ruleAViolation, false);
+  });
+
+  it('an ALIASED static import is still a construction', () => {
+    const src = "import { createAnthropicClient as mk } from './lib/anthropic-client.mjs';\n"
+      + 'const c = await mk();';
+    assert.equal(classifyPinningInSource(src).unpinned, 1,
+      'matching the bare name alone left an aliased site invisible to BOTH rules');
+  });
+
+  it('an alias from a DYNAMIC import is too', () => {
+    const src = "const { createAnthropicClient: mk } = await import('./anthropic-client.mjs');\n"
+      + 'const c = await mk();';
+    assert.equal(classifyPinningInSource(src).unpinned, 1);
+  });
+
+  it('an alias from an UNRELATED module is not', () => {
+    const src = "import { createAnthropicClient as mk } from './something-else.mjs';\n"
+      + 'const c = await mk();';
+    assert.equal(classifyPinningInSource(src).constructions, 0);
+  });
+
+  it('a pinned aliased construction is pinned', () => {
+    const src = "import { createAnthropicClient as mk } from './lib/anthropic-client.mjs';\n"
+      + "const c = await mk({ backend: 'sdk' });";
+    assert.equal(classifyPinningInSource(src).unpinned, 0);
+  });
+});
+
+describe('the digest folds a trailing comma only in CODE', () => {
+  it("`'use,}'` and `'use}'` keep different digests", () => {
+    assert.notEqual(
+      normaliseArgText("{ a: 'use,}' }"),
+      normaliseArgText("{ a: 'use}' }"),
+    );
+    assert.notEqual(
+      unpinnedArgsDigest("await createAnthropicClient({ a: 'use,}' });"),
+      unpinnedArgsDigest("await createAnthropicClient({ a: 'use}' });"),
+    );
+  });
+
+  it('a code trailing comma still folds', () => {
+    assert.equal(normaliseArgText('{ a: 1, }'), '{a:1}');
+    assert.equal(normaliseArgText('{ a: [1, 2, ] }'), '{a:[1,2]}');
+  });
+
+  it('a comma between properties is NOT a trailing comma', () => {
+    assert.equal(normaliseArgText('{ a: 1, b: 2 }'), '{a:1,b:2}');
+  });
+});
+
 describe('the REPO is clean against its committed baseline', () => {
   it('the corpus is non-empty — an empty one is a broken enumeration, not a pass', () => {
     const sources = repoSources();

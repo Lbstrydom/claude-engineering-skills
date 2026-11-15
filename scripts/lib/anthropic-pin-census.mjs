@@ -61,6 +61,9 @@ const UNSERVICEABLE_PARAM_KEYS = Object.freeze(['system', 'tools', 'tool_choice'
 /** The factory every seam call site constructs its client through. */
 const FACTORY_NAME = 'createAnthropicClient';
 
+/** The module that exports it, as every call site spells it. */
+const SEAM_MODULE_RE = /anthropic-client\.mjs$/;
+
 /** Backends that are a usable pin: a declared transport that honours the params. */
 const PINNED_BACKENDS = Object.freeze(new Set(['sdk', 'bedrock']));
 
@@ -106,15 +109,33 @@ function isValueProperty(node) {
  * @returns {string[]} matched param names, in UNSERVICEABLE_PARAM_KEYS order
  */
 export function unserviceableParamsInSource(source) {
+  return paramsInSource(source).params;
+}
+
+/**
+ * The unserviceable params a source passes, plus whether any key is DYNAMIC.
+ *
+ * A computed key whose value is a string literal is statically known and counts
+ * as that key: `{ ['system']: p }` passes `system`, and discarding it was
+ * fail-open. A computed key that is an expression cannot be resolved, so it
+ * MIGHT be one of them — reported separately as `dynamicKeys` so Rule A can
+ * fail closed on it without the key being claimed as a specific param.
+ *
+ * @param {string} source
+ * @returns {{params: string[], dynamicKeys: boolean}}
+ */
+function paramsInSource(source) {
   const { ast } = parseSource(source);
-  if (!ast) return [];
+  if (!ast) return { params: [], dynamicKeys: false };
   const found = new Set();
+  let dynamicKeys = false;
   walk(ast, (node) => {
-    if (!isValueProperty(node)) return;
-    const name = propertyKeyName(node);
+    if (node?.type !== 'ObjectProperty' && node?.type !== 'ObjectMethod') return;
+    if (node.computed && node.key?.type !== 'StringLiteral') { dynamicKeys = true; return; }
+    const name = propertyKeyName(node) ?? (node.computed ? node.key?.value : null);
     if (name && UNSERVICEABLE_PARAM_KEYS.includes(name)) found.add(name);
   });
-  return UNSERVICEABLE_PARAM_KEYS.filter((k) => found.has(k));
+  return { params: UNSERVICEABLE_PARAM_KEYS.filter((k) => found.has(k)), dynamicKeys };
 }
 
 /**
@@ -151,7 +172,25 @@ export function resolveBackendOfArg(argNode) {
       verdict = 'unresolved';
       continue;
     }
+    // An ObjectMethod — `get backend() {...}` or `backend() {...}` — assigns the
+    // key too, and its value is not statically known.
+    if (prop.type === 'ObjectMethod') {
+      if (prop.computed || propertyKeyName(prop) === 'backend') verdict = 'unresolved';
+      continue;
+    }
     if (!isValueProperty(prop)) continue;
+    // A COMPUTED key can be 'backend', and it comes AFTER whatever was resolved
+    // before it, so it both supersedes that and is itself unknowable. Skipping
+    // it left `{ backend: 'sdk', [key]: 'cli' }` reading as pinned — the
+    // docstring below already claimed otherwise, which is the worse kind of
+    // defect: the stated contract was right and the code did not implement it.
+    if (prop.computed) {
+      const key = prop.key;
+      // `['backend']` IS statically known, and it is still an override.
+      if (key?.type === 'StringLiteral' && key.value !== 'backend') continue;
+      verdict = 'unresolved';
+      continue;
+    }
     const name = propertyKeyName(prop);
     if (name !== 'backend') continue;
     const value = prop.value;
@@ -178,11 +217,12 @@ export function resolveBackendOfArg(argNode) {
  * @returns {Array<{verdict: string, argNode: object|undefined}>}
  */
 function constructionsIn(ast) {
+  const names = factoryLocalNames(ast);
   const out = [];
   walk(ast, (node) => {
     if (node?.type !== 'CallExpression') return;
     const callee = node.callee;
-    const isFactory = (callee?.type === 'Identifier' && callee.name === FACTORY_NAME)
+    const isFactory = (callee?.type === 'Identifier' && names.has(callee.name))
       // `mod.createAnthropicClient(...)` after a dynamic import.
       || (callee?.type === 'MemberExpression' && !callee.computed
         && callee.property?.type === 'Identifier' && callee.property.name === FACTORY_NAME);
@@ -191,6 +231,44 @@ function constructionsIn(ast) {
     out.push({ verdict: resolveBackendOfArg(argNode), argNode });
   });
   return out;
+}
+
+/**
+ * Every LOCAL name the factory is reachable under in this file.
+ *
+ * Always includes `createAnthropicClient`, plus any alias an import or a
+ * destructuring gives it:
+ *   `import { createAnthropicClient as mk } from '…/anthropic-client.mjs'`
+ *   `const { createAnthropicClient: mk } = await import('…/anthropic-client.mjs')`
+ * Matching the bare name alone left an aliased site invisible to BOTH rules,
+ * which is the worst failure this gate can have.
+ *
+ * @param {object} ast
+ * @returns {Set<string>}
+ */
+function factoryLocalNames(ast) {
+  const names = new Set([FACTORY_NAME]);
+  walk(ast, (node) => {
+    // Static: import { createAnthropicClient as mk } from '...'
+    if (node?.type === 'ImportDeclaration' && SEAM_MODULE_RE.test(node.source?.value || '')) {
+      for (const spec of node.specifiers || []) {
+        if (spec.type === 'ImportSpecifier'
+          && (spec.imported?.name === FACTORY_NAME || spec.imported?.value === FACTORY_NAME)) {
+          if (spec.local?.name) names.add(spec.local.name);
+        }
+      }
+      return;
+    }
+    // Dynamic: const { createAnthropicClient: mk } = await import('...')
+    if (node?.type === 'VariableDeclarator' && node.id?.type === 'ObjectPattern') {
+      for (const prop of node.id.properties || []) {
+        if (prop.type !== 'ObjectProperty') continue;
+        if (propertyKeyName(prop) !== FACTORY_NAME) continue;
+        if (prop.value?.type === 'Identifier') names.add(prop.value.name);
+      }
+    }
+  });
+  return names;
 }
 
 /**
@@ -240,21 +318,35 @@ export function unpinnedArgsDigest(source) {
  * @returns {string}
  */
 export function normaliseArgText(text) {
-  let out = '';
+  const parts = [];        // each entry: {code:true, ch} or {code:false, ch}
   let quote = null;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (quote) {
-      out += ch;
-      if (ch === '\\') { out += text[i + 1] ?? ''; i += 1; continue; }
+      parts.push({ code: false, ch });
+      if (ch === '\\') { parts.push({ code: false, ch: text[i + 1] ?? '' }); i += 1; continue; }
       if (ch === quote) quote = null;
       continue;
     }
-    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; parts.push({ code: false, ch }); continue; }
     if (/\s/.test(ch)) continue;              // formatting, outside a literal
-    out += ch;
+    parts.push({ code: true, ch });
   }
-  return out.replace(/,(?=[}\])]|$)/g, '');   // a trailing comma is formatting
+  // A trailing comma is formatting ONLY in code. Running the fold over the
+  // finished string also folded it inside literals, so `'use,}'` and `'use}'`
+  // collided — against this function's own stated guarantee.
+  const out = [];
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (p.code && p.ch === ',') {
+      const next = parts[i + 1];
+      const atEnd = !next;
+      const beforeCloser = next && next.code && (next.ch === '}' || next.ch === ']' || next.ch === ')');
+      if (atEnd || beforeCloser) continue;
+    }
+    out.push(p.ch);
+  }
+  return out.join('');
 }
 
 /**
@@ -262,11 +354,12 @@ export function normaliseArgText(text) {
  *
  * @param {string} source - the file's text
  * @returns {{constructions: number, unpinned: number, unserviceable: string[],
- *   ruleAViolation: boolean, parsed: boolean}}
- *   `ruleAViolation` is true when the file both constructs an unpinned client
- *   and passes an unserviceable param — the file-local defect. `parsed` is
- *   false when the source could not be parsed at all, which callers must treat
- *   as unknown rather than clean.
+ *   dynamicKeys: boolean, ruleAViolation: boolean, parsed: boolean}}
+ *   `ruleAViolation` is true when the file constructs an unpinned client AND
+ *   either passes an unserviceable param or carries a key this gate cannot
+ *   resolve — the file-local defect. `parsed` is false when the source could
+ *   not be parsed at all, which callers must treat as unknown rather than
+ *   clean.
  */
 export function classifyPinningInSource(source) {
   const { ast } = parseSource(source);
@@ -275,12 +368,18 @@ export function classifyPinningInSource(source) {
   }
   const constructions = constructionsIn(ast);
   const unpinned = constructions.filter((c) => c.verdict !== 'pinned').length;
-  const unserviceable = unserviceableParamsInSource(source);
+  const { params: unserviceable, dynamicKeys } = paramsInSource(source);
   return {
     constructions: constructions.length,
     unpinned,
     unserviceable,
-    ruleAViolation: unpinned > 0 && unserviceable.length > 0,
+    dynamicKeys,
+    // FAIL CLOSED on a dynamic key. In a file that constructs an unpinned
+    // client, a key this gate cannot resolve might be `system` — and the whole
+    // point of Rule A is that such a file must pin or declare. A file with no
+    // unpinned construction is unaffected, so the cost falls only where a
+    // decision is actually owed.
+    ruleAViolation: unpinned > 0 && (unserviceable.length > 0 || dynamicKeys),
     parsed: true,
   };
 }
@@ -325,19 +424,58 @@ export function indirectPinHolds(source, fnName) {
   });
   if (!fnNode) return { found: false, pinned: false, used: false };
 
-  // The pin must be inside THAT function, not merely somewhere in the file.
-  let pinned = false;
-  walk(fnNode, (node) => {
-    if (pinned) return;
-    if (node?.type !== 'ObjectExpression') return;
-    if (resolveBackendOfArg(node) === 'pinned') pinned = true;
-  });
+  // The pin must be in what the function RETURNS, not merely somewhere inside
+  // it. Accepting any pinned object in the body let
+  // `function opts() { const unused = { backend: 'sdk' }; return { backend: 'cli' }; }`
+  // satisfy the claim — a dead object vouching for a live override.
+  const returned = returnedObjectsOf(fnNode);
+  const pinned = returned.length > 0
+    && returned.every((o) => resolveBackendOfArg(o) === 'pinned');
 
   const used = constructionsIn(ast)
     .filter((c) => c.verdict !== 'pinned')
     .every((c) => argRestsOnFactory(c.argNode, fnName));
 
   return { found: true, pinned, used };
+}
+
+/**
+ * The ObjectExpressions a function can RETURN.
+ *
+ * `() => ({...})` is the concise-body form; `return {...}` is the block form.
+ * Anything else a function might return — a variable, a call, a conditional —
+ * yields no object here, so `pinned` is false and the claim fails: the gate
+ * cannot follow a value it cannot see, and an unfollowable value is not a pin.
+ *
+ * Nested functions are NOT descended into: a `return` inside a callback belongs
+ * to that callback, not to this function.
+ *
+ * @param {object} fnNode
+ * @returns {object[]}
+ */
+function returnedObjectsOf(fnNode) {
+  const body = fnNode?.body;
+  if (!body) return [];
+  if (body.type === 'ObjectExpression') return [body];       // () => ({...})
+  if (body.type !== 'BlockStatement') return [];
+  const out = [];
+  const visit = (node) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) { node.forEach(visit); return; }
+    // Do not cross into a nested function: its `return` is not ours.
+    if (node !== body && /Function(Declaration|Expression)$|ArrowFunctionExpression/.test(node.type || '')) return;
+    if (node.type === 'ReturnStatement') {
+      if (node.argument?.type === 'ObjectExpression') out.push(node.argument);
+      else if (node.argument) out.push({ type: 'Unresolvable' });
+      return;
+    }
+    for (const key of Object.keys(node)) {
+      if (key === 'loc' || key === 'leadingComments' || key === 'trailingComments') continue;
+      visit(node[key]);
+    }
+  };
+  visit(body);
+  return out;
 }
 
 /**

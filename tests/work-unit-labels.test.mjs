@@ -148,6 +148,27 @@ describe('labelWorkUnits: the cache is independent of provider availability', ()
     assert.notEqual(res.reason, 'labeller-unavailable');
   });
 
+  // A promise can reject with ANYTHING. Keying the error/absence distinction on
+  // the message's truthiness collapsed `''`, `null` and `0` back into
+  // "unavailable" — the very conflation the distinction exists to end — so the
+  // FLAG is separate from the text.
+  for (const [label, thrown] of [
+    ['an Error with an empty message', new Error('')],
+    ['a bare empty string', ''],
+    ['null', null],
+    ['zero', 0],
+  ]) {
+    test(`a provider rejecting with ${label} is still an ERROR`, async (t) => {
+      const res = await labelWorkUnits([unit(`k-${label.replace(/\W+/g, '')}`)], {
+        repoRoot: mkRoot(t),
+        labellerProvider: async () => { throw thrown; },
+      });
+      assert.match(res.reason, /^labeller-error: /, 'a throw is a throw whatever it carried');
+      assert.notEqual(res.reason, 'labeller-unavailable');
+      assert.ok(res.reason.length > 'labeller-error: '.length, 'and it still says something');
+    });
+  }
+
   test('an ABSENT provider is reported as absent, not as an error', async (t) => {
     const res = await labelWorkUnits([unit('k-none')], {
       repoRoot: mkRoot(t), labellerProvider: async () => null,

@@ -926,6 +926,67 @@ and must never crash a backlog listing, but the reason is kept:
 
 ---
 
+## 7.8 Round 4: the AST was the right tool, and it still had seven fail-opens
+
+The pivot was correct and did not make the gate correct. Round 4 found seven
+defects in the AST version — but note what changed in their CHARACTER: these are
+all "this node type also assigns the key" or "this is the wrong node to read",
+which are *answerable* against the grammar. The regex rounds kept producing
+shapes with no principled enumeration.
+
+| # | defect | direction |
+|---|---|---|
+| 1 | a COMPUTED key after the literal was SKIPPED, leaving the earlier verdict: `{ backend:'sdk', [key]:'cli' }` read as pinned | fail-open |
+| 2 | a GETTER or METHOD named `backend` was ignored, though it assigns the key | fail-open |
+| 3 | `indirectPinHolds` accepted a pinned object ANYWHERE in the factory, not the one it RETURNS — a dead object vouching for a live override | fail-open |
+| 4 | a computed REQUEST key was discarded: `{ ['system']: p }` did not record `system` | fail-open |
+| 5 | an ALIASED import (`createAnthropicClient as mk`) matched nothing, so the site was invisible to BOTH rules | fail-open |
+| 6 | the trailing-comma fold ran over the whole normalised string, literals included, so `'use,}'` and `'use}'` collided | lossy |
+| 7 | a rejection with an empty message was reported as an ABSENCE, not an error | misclassification |
+
+**(1) and (6) were defects against this module's own docstrings.** Both texts
+already said computed keys are unresolved and that literal contents are
+preserved. The contract was right and the code did not implement it, which is
+worse than an undocumented gap: a reader checking the claim would have been
+reassured. Where a docstring states a guarantee, the test for it is not
+optional.
+
+(3) is the same error as §7.6's `used`, one level in: *asking whether something
+exists somewhere, rather than whether it is the thing that takes effect.* The
+fix reads the function's RETURN, and requires every return to be pinned —
+`if (x) return {backend:'sdk'}; return {backend:'cli'};` fails.
+
+(5) is the one that would have been worst in practice. A site the enumeration
+does not see is absent from Rule A *and* from Rule B's count, so it ships with
+no record anywhere. `factoryLocalNames` now collects the local name from a
+static `import { createAnthropicClient as mk } from '…/anthropic-client.mjs'`
+and from a destructured dynamic `import()`.
+
+(4) needed a decision rather than a fix. A computed key whose key is a string
+literal is statically known and now counts. A *dynamic* one cannot be resolved,
+so it might be `system` — reported as `dynamicKeys` and failing Rule A **only in
+a file that also constructs an unpinned client**, which is Rule A's own
+condition. A file where every construction is pinned is unaffected, so the cost
+of failing closed falls exactly where a decision is owed.
+
+### 7.8a A negative control that would not fire, and what it exposed
+
+The control for (7) — revert the throw/absence decision to the message's
+truthiness — **passed**, which meant the fix was not the thing being tested. Two
+mechanisms were covering one question: a `providerThrew` flag AND a
+`|| '(no message)'` fallback that made the message always truthy after a throw.
+Either would have done, so neither was tested, and a control cannot tell them
+apart.
+
+Collapsed to one: the flag decides, the text is a diagnostic that may be empty,
+and the fallback moved to the display site. The control then fails 2 of 32.
+
+**The rule: if a negative control will not go red, do not weaken the control —
+look for the second mechanism.** A guard that cannot be shown to matter usually
+has a twin, and a redundant pair is how both go untested.
+
+---
+
 ## 8. Follow-ups (not this change)
 
 1. **The ~164K prefix tax on every remaining `cli` call** (§2.4) is the larger

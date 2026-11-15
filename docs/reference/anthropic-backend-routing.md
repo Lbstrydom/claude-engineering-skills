@@ -149,6 +149,19 @@ guard, in `check:static`. Two rules, because one cannot see both shapes:
 - **An unparseable file is UNKNOWN, not clean** — `parsed: false`, and the audit
   fails on it. Otherwise the gate's strongest claim would evaporate on exactly
   the file most likely to be mid-edit.
+- **Anything that assigns the key counts**: a computed property (a string
+  literal resolves, an expression is unresolved), a getter and a method named
+  `backend` all override a literal that came before them. An **aliased** import
+  (`createAnthropicClient as mk`, static or destructured from a dynamic
+  `import()`) is a construction — a site the enumeration cannot see is absent
+  from Rule A *and* Rule B at once, which is the worst failure available to this
+  gate.
+- **An `indirectPins` claim rests on what the factory RETURNS**, and on every
+  return being pinned. A pinned object elsewhere in the function body is a dead
+  object vouching for a live override.
+- A **dynamic** request key might be `system`, so it fails Rule A — but only in
+  a file that also constructs an unpinned client, which is Rule A's own
+  condition. Failing closed therefore costs nothing where a pin already exists.
 - Every one of those shapes has a planted RED case in
   `tests/anthropic-pin-census.test.mjs`, and each fix has a negative control.
 - A Rule B declaration carries the **COUNT** of unpinned constructions and an

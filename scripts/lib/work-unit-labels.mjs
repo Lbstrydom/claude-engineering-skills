@@ -160,7 +160,8 @@ export async function labelWorkUnits(units, opts = {}) {
     || (opts.labeller ? async () => opts.labeller : defaultLabeller);
   let labellerPromise = null;
   let sawUnavailable = false;
-  let providerError = null;
+  let providerThrew = false;
+  let providerError = '';
   const getLabeller = async () => {
     // The PROMISE is memoised, not a resolved flag: `Promise.all` below runs the
     // units concurrently, so a flag set before the await would let every other
@@ -173,7 +174,20 @@ export async function labelWorkUnits(units, opts = {}) {
     // degrades (labelling is advisory and must never crash a backlog listing),
     // but the reason is kept and reported.
     labellerPromise ??= Promise.resolve().then(provider).catch((err) => {
-      providerError = err?.message ? String(err.message).slice(0, 200) : String(err);
+      // The FLAG is what distinguishes a throw from an absence; the text is
+      // only a diagnostic. A promise can reject with anything — `''`, `null`,
+      // `0` — and keying the distinction on the message's truthiness collapsed
+      // those back into "unavailable", which is the very conflation this exists
+      // to end.
+      // ONE mechanism, not two. A `|| '(no message)'` fallback here would make
+      // `providerError` always truthy after a throw, so the flag below could be
+      // keyed on either and a negative control could not tell them apart — two
+      // ways to answer one question, which is how a redundant guard goes
+      // untested. The FLAG is the decision; the text is only a diagnostic and
+      // may legitimately be empty.
+      providerThrew = true;
+      const raw = err instanceof Error ? err.message : String(err);
+      providerError = String(raw ?? '').slice(0, 200);
       return null;
     });
     const fn = await labellerPromise;
@@ -210,7 +224,9 @@ export async function labelWorkUnits(units, opts = {}) {
   // unavailability, and reporting it as one is what made the keyless case look
   // like a failure instead of a cache hit.
   if (sawUnavailable && !out.reason) {
-    out.reason = providerError ? `labeller-error: ${providerError}` : 'labeller-unavailable';
+    out.reason = providerThrew
+      ? `labeller-error: ${providerError || '(no message)'}`
+      : 'labeller-unavailable';
   }
   return { ...out, units: relabelled };
 }
