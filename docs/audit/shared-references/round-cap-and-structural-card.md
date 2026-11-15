@@ -68,8 +68,9 @@ Read it as evidence for a human call, not as an instruction:
   ≥ ⅔, on a card past the soft cap, it prints `⚠ AT THE CAP WHILE PRODUCTIVE`: if the run stops there, the
   cap stopped it, not convergence. **Carry that line into the final report** (rounds, acceptance at the last
   round), so the stop is not read as convergence. A card past the soft cap is also recorded as an
-  observation-only `round_cap_stop` learning decision (stderr says whether it was), so the cap policy can be
-  decided on data later; the card does not change the policy and does not admit another round.
+  observation-only `round_cap_reached` learning decision (stderr says whether it was) — the cap was REACHED
+  with that productivity, not proof the run stopped: a CONTINUE is recorded on the run as `past_cap_reason`.
+  So the cap policy can be decided on data later; the card does not change the policy or admit another round.
 
 ## The human call
 

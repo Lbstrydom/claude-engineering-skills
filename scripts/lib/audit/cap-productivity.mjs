@@ -11,7 +11,7 @@
  * Two outputs, one assessment:
  *   - the card states it (`renderCapProductivity`), so the operator reading the
  *     cap sees the acceptance rate of the last triaged round and the HIGH trend;
- *   - `recordCapStop` writes an observation-only `round_cap_stop` learning
+ *   - `recordCapStop` writes an observation-only `round_cap_reached` learning
  *     decision (no migration: `learning_decisions.decision_type` is free text),
  *     so the policy can later be decided on data.
  *
@@ -28,12 +28,20 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { generateTopicId, populateFindingMetadata } from '../ledger.mjs';
+
+/** A finding's ledger topic, derived on a COPY exactly as write-ledger-entries derives it (never mutates the input). */
+function topicOf(finding) {
+  const f = { ...finding };
+  populateFindingMetadata(f, f._pass);
+  return generateTopicId(f);
+}
 
 /** At or above this acceptance a round is PRODUCTIVE (the /audit-plan convergence table's "≥ ~⅔"). */
 export const PRODUCTIVE_ACCEPTANCE = 2 / 3;
 
 /** The learning decision type this module records. */
-export const CAP_STOP_DECISION_TYPE = 'round_cap_stop';
+export const CAP_REACHED_DECISION_TYPE = 'round_cap_reached';
 
 /**
  * The round's acceptance rate — the one formula. `outcome` is the adjudication
@@ -67,10 +75,13 @@ export function assessCapProductivity({ rounds, ledgerEntries, ledgerUnmeasured 
   const last = ledgerEntries.filter((e) => e?.resolvedRound === lastRound)
     .map((e) => ({ outcome: e.adjudicationOutcome, ruling: e.ruling }));
   if (last.length === 0) return { ...base, unmeasured: `round ${lastRound} has no rulings in the ledger (not triaged)` };
-  // A half-triaged round would yield a rate over a subset of its findings. Ledger entries are one per concern, so
-  // fewer rulings than findings reads as partial — failing toward UNMEASURED, never toward a confident rate.
-  const found = (sorted[sorted.length - 1].findings || []).length;
-  if (last.length < found) return { ...base, ruled: last.length, unmeasured: `round ${lastRound} partially triaged (${last.length} of ${found} findings ruled)` };
+  // A half-triaged round would yield a rate over a subset of its findings. Ledger entries are one per CONCERN
+  // (topicId), so compare concerns with concerns: every last-round finding's topic, derived exactly as
+  // write-ledger-entries derives it, must have a ruling at this round. Two findings of one concern count once.
+  const ruledTopics = new Set(ledgerEntries.filter((e) => e?.resolvedRound === lastRound).map((e) => e.topicId));
+  const topics = new Set((sorted[sorted.length - 1].findings || []).map(topicOf));
+  const unruled = [...topics].filter((t) => !ruledTopics.has(t)).length;
+  if (unruled > 0) return { ...base, ruled: last.length, unmeasured: `round ${lastRound} partially triaged (${topics.size - unruled} of ${topics.size} concerns ruled)` };
   const a = roundAcceptance(last);
   return { ...base, acceptanceRate: a.acceptanceRate, ruled: a.ruled, stillProductive: a.acceptanceRate >= PRODUCTIVE_ACCEPTANCE, unmeasured: null };
 }
@@ -138,7 +149,7 @@ export async function recordCapStop({ sid, mode, round, caps, productivity, runI
     if (!bound) return { recorded: false, reason: 'no run id or session id to key the decision' };
     const record = deps.record ?? (await import('../learning/decision-logger.mjs')).recordDecision;
     const key = record({
-      decisionType: CAP_STOP_DECISION_TYPE,
+      decisionType: CAP_REACHED_DECISION_TYPE,
       ...bound,
       context: {
         mode, trigger, requestedRound: round, softCap: caps?.soft ?? null, absoluteCap: caps?.absolute ?? null,

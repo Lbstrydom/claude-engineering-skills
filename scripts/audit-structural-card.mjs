@@ -10,7 +10,7 @@
  *   node scripts/audit-structural-card.mjs --sid audit-plan-1792-99 --mode plan --round 4 --plan "$PLAN_FILE"
  *
  * Read-only apart from the card file it writes next to the round results and one
- * observation-only `round_cap_stop` learning decision (both skipped by --no-write). It
+ * observation-only `round_cap_reached` learning decision (both skipped by --no-write). It
  * creates no debt and no proposal; the verdict is a hint and the call is the
  * operator's. Exit 0 whenever the card was produced, 2 on an argument error.
  *
@@ -48,7 +48,7 @@ async function main() {
     // Recorded only past the soft cap (recordCapStop refuses otherwise), as `on-demand`: the operator may still CONTINUE.
     // Same decision key as a later refusal of this round, so the two paths record ONE row.
     const rec = await recordCapStop({ sid, mode, round: roundRes.value, caps, productivity: card.productivity, runId: card.productivity.lastRunId, trigger: 'on-demand' });
-    process.stderr.write(rec.recorded ? '  [round-cap] cap reached, recorded (round_cap_stop, on-demand)\n' : `  [round-cap] cap-stop telemetry not recorded (${rec.reason})\n`);
+    process.stderr.write(rec.recorded ? '  [round-cap] cap reached, recorded (round_cap_reached, on-demand)\n' : `  [round-cap] cap-reached telemetry not recorded (${rec.reason})\n`);
   }
   if (argv.includes('--json')) console.log(JSON.stringify(card, null, 2)); else console.log(text);
 }

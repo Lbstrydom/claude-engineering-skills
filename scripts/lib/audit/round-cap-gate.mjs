@@ -47,7 +47,7 @@ async function emitCard({ argv, sid, mode, round, caps, auditDir, cwd, env, writ
       // Observation-only, and only for a REFUSED round (never --past-cap's missing-card case, which is an operator
       // continuing): capped-while-productive is data for the cap policy, never a reason to admit the round.
       const rec = await recordCap({ sid, mode, round, caps, productivity: card.productivity, runId: card.productivity.lastRunId, trigger: 'refused' });
-      write(rec.recorded ? '  [round-cap] cap stop recorded (round_cap_stop)\n' : `  [round-cap] cap-stop telemetry not recorded (${rec.reason})\n`);
+      write(rec.recorded ? '  [round-cap] cap reached, recorded (round_cap_reached)\n' : `  [round-cap] cap-reached telemetry not recorded (${rec.reason})\n`);
     }
     return card;
   } catch (err) {

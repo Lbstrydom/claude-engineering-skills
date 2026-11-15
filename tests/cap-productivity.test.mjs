@@ -10,15 +10,20 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   assessCapProductivity, readLedgerEntries, recordCapStop, renderCapProductivity, roundAcceptance,
-  CAP_STOP_DECISION_TYPE, PRODUCTIVE_ACCEPTANCE,
+  CAP_REACHED_DECISION_TYPE, PRODUCTIVE_ACCEPTANCE,
 } from '../scripts/lib/audit/cap-productivity.mjs';
 import { buildStructuralCard } from '../scripts/lib/audit/structural-card.mjs';
 import { gateRoundCap } from '../scripts/lib/audit/round-cap-gate.mjs';
 import { recordDecision, _resetForTest } from '../scripts/lib/learning/decision-logger.mjs';
+import { generateTopicId, populateFindingMetadata } from '../scripts/lib/ledger.mjs';
 
 const highs = (n, round) => Array.from({ length: n }, (_, i) => ({ id: `H${round}-${i}`, severity: 'HIGH', category: `c${i}`, section: 's' }));
 const consumerRounds = [{ round: 1, findings: highs(7, 1), runId: 'run-1' }, { round: 2, findings: highs(5, 2), runId: 'run-2' }, { round: 3, findings: highs(5, 3), runId: 'run-3' }];
-const ruledAt = (round, outcomes) => outcomes.map((o, i) => ({ topicId: `t${round}-${i}`, resolvedRound: round, adjudicationOutcome: o, ruling: o === 'dismissed' ? 'dismiss' : 'fix' }));
+// Topic ids derived exactly as write-ledger-entries derives them — a hand-made id would encode the reader's assumption.
+const topicOf = (f) => { const c = { ...f }; populateFindingMetadata(c, c._pass); return generateTopicId(c); };
+const ruledAt = (round, outcomes) => outcomes.map((o, i) => ({
+  topicId: topicOf(consumerRounds[round - 1].findings[i]), resolvedRound: round, adjudicationOutcome: o, ruling: o === 'dismissed' ? 'dismiss' : 'fix',
+}));
 
 describe('assessCapProductivity', () => {
   test('the reported case: last round 100% accepted, HIGH 7→5→5 → still productive', () => {
@@ -57,7 +62,16 @@ describe('assessCapProductivity', () => {
   test('a partially triaged last round is UNMEASURED, not a rate over a subset', () => {
     const p = assessCapProductivity({ rounds: consumerRounds, ledgerEntries: ruledAt(3, ['accepted', 'accepted']) });
     assert.equal(p.stillProductive, null);
-    assert.match(p.unmeasured, /partially triaged \(2 of 5 findings ruled\)/);
+    assert.match(p.unmeasured, /partially triaged \(2 of 5 concerns ruled\)/);
+  });
+
+  test('two findings of ONE concern need one ruling — concerns are compared with concerns', () => {
+    const dup = { id: 'H3-dup', severity: 'HIGH', category: 'c0', section: 's' };
+    const rounds = [{ round: 1, findings: [dup, { ...dup, id: 'H3-dup-2' }], runId: 'r' }];
+    const entry = { topicId: topicOf(dup), resolvedRound: 1, adjudicationOutcome: 'accepted', ruling: 'sustain' };
+    const p = assessCapProductivity({ rounds, ledgerEntries: [entry] });
+    assert.equal(p.unmeasured, null);
+    assert.equal(p.stillProductive, true);
   });
 
   test('one acceptance formula: defer is never acceptance; threshold is the convergence table\'s ⅔', () => {
@@ -95,10 +109,10 @@ describe('the card carries it', () => {
   });
 });
 
-describe('telemetry: round_cap_stop', () => {
+describe('telemetry: round_cap_reached', () => {
   test('the decision type is admitted by the logger (no migration: free-text type)', () => {
     _resetForTest();
-    const key = recordDecision({ decisionType: CAP_STOP_DECISION_TYPE, externalId: 'probe-r4-cap', context: {}, choice: { chose: 'stop_at_cap' } });
+    const key = recordDecision({ decisionType: CAP_REACHED_DECISION_TYPE, externalId: 'probe-r4-cap', context: {}, choice: { chose: 'stop_at_cap' } });
     assert.ok(key, 'admitted');
     _resetForTest();
   });
@@ -109,7 +123,7 @@ describe('telemetry: round_cap_stop', () => {
     const res = await recordCapStop({ sid: 's', mode: 'plan', round: 4, caps: { soft: 3, absolute: 5 }, productivity: p, runId: p.lastRunId },
       { record: (d) => { calls.push(d); return 'k'; }, flush: async () => {} });
     assert.deepEqual(res, { recorded: true, reason: null });
-    assert.equal(calls[0].decisionType, 'round_cap_stop');
+    assert.equal(calls[0].decisionType, 'round_cap_reached');
     assert.equal(calls[0].auditRunId, 'run-3');
     assert.equal(calls[0].round, 4);
     assert.equal(calls[0].choice.stillProductive, true);
