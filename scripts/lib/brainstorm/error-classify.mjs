@@ -23,7 +23,7 @@
  *
  * Three copies of one predicate is why fixing one adapter would have left the
  * other two wrong — the same reasoning that made
- * `brainstorm/provider-availability.mjs` one exported function.
+ * `lib/provider-availability.mjs` one exported function.
  *
  * @module scripts/lib/brainstorm/error-classify
  */

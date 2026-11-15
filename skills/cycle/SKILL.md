@@ -17,12 +17,13 @@ description: |
 allowed-tools: Bash(node scripts/cross-skill.mjs preview-gate --format human)
 ---
 
-> **Worktree preflight** — in a linked git worktree the synced tooling tree
-> `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
-> does not populate it, and every command below that uses it dies on a bare
-> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. If this repo defines
-> no such script, `references/worktree-preflight.md` holds the entry to add — ask
-> the user first, since it edits their `package.json`.
+> **Worktree preflight** — in a linked git worktree the gitignored tooling tree
+> `scripts/.claude-skills/` is absent (`git worktree add` does not populate it),
+> so every command below that uses it dies on `MODULE_NOT_FOUND`. Run
+> `npm run skills:hydrate` first; if no such script exists,
+> `references/worktree-preflight.md` holds the entry to add (ask the user first:
+> it edits `package.json`). Keys are not copied: put them in
+> `~/.audit-loop.env`, which every worktree reads.
 
 ## Usage
 
@@ -97,15 +98,14 @@ golden-path workflow without thinking about it.
 ## Step 0 — Parse Input
 
 > **A prerequisite that does not resolve is a stop, not a mid-flow death.**
-> /cycle spends real money on /plan before it ever reaches an audit step, so
-> resolve the audit prerequisites HERE — the helper scripts, and a GPT route
-> (`OPENAI_API_KEY` **or** an active Azure profile). If one is absent, the
-> ladder in `references/prerequisite-ladder.md` (the one /audit-code follows) decides what
-> happens: hydrate and retry, run the labelled adversarial-agent substitute, or
-> report `AUDIT_NOT_RUN` and stop. Whichever rung applies, say so before
-> generating the plan rather than after paying for it, and carry the same
-> `AUDIT_DEGRADED` / `AUDIT_NOT_RUN` label into Step 6's handoff to /ship so a
-> degraded run cannot reach a commit looking clean.
+> /cycle pays for /plan before any audit, so resolve the audit prerequisites
+> HERE: hydrate the helper scripts, then run `node scripts/check-setup.mjs` and
+> read `audit route:` and `degraded audits:`. A fresh worktree has no keys — the
+> route comes from `~/.audit-loop.env`. If one is absent,
+> `references/prerequisite-ladder.md` decides: hydrate and retry, the labelled
+> substitute (not when `degraded audits: forbidden`), or `AUDIT_NOT_RUN` and
+> stop. Say so before generating the plan, and carry the `AUDIT_DEGRADED` /
+> `AUDIT_NOT_RUN` label into Step 6's handoff to /ship.
 
 | Input shape | Mode |
 |---|---|
@@ -568,7 +568,7 @@ scope.
   Audit-plan:  3 rounds, APPROVE
   Clusters:    A in-cluster H:0 (2 deferred→C); B in-cluster H:0 (autonomous)  ← only if hasClustering
   Audit-code:  4 rounds, CONVERGED, H:0 M:1 L:2                 ← classic path (no §11)
-  Final gate:  Gemini APPROVE over union diff                  ← only if hasClustering
+  Final review: APPROVE (<provider> / <model>) over union diff ← only if hasClustering
   Persona:    0 P0, 1 P1 (deferred)
   UX-lock:    2 specs generated
   Ship:       BLOCKED — run: /ship docs/plans/<name>.md

@@ -25,6 +25,7 @@ import {
 import { parseResultPath } from '../finalize-outcomes.mjs';
 import { buildStructuralCard, readMatchingCard, writeCardFile } from './structural-card.mjs';
 import { recordPastCap } from '../store/run-aggregates.mjs';
+import { recordCapStop } from './cap-productivity.mjs';
 
 /**
  * Session id for card keying: the `<sid>` of `--out <sid>-r<N>-result.json`, else `AUDIT_SESSION_ID`.
@@ -37,11 +38,17 @@ export function sessionIdFromArgv(argv, env = process.env) {
   return parseResultPath(out).sid ?? (env.AUDIT_SESSION_ID || null);
 }
 
-async function emitCard({ argv, sid, mode, round, caps, auditDir, cwd, env, write, build }) {
+async function emitCard({ argv, sid, mode, round, caps, auditDir, cwd, env, write, build, recordCap }, { recordStop = false } = {}) {
   try {
     const { card, text } = await build({ sid, mode, round, planFile: argv[1] || null, caps, auditDir, cwd, env });
     const file = writeCardFile(auditDir, cardFileName(sid, round), card);
     write(`\n${text}\n\n  card written: ${path.relative(cwd, file) || file}\n`);
+    if (recordStop && card?.productivity) {
+      // Observation-only, and only for a REFUSED round (never --past-cap's missing-card case, which is an operator
+      // continuing): capped-while-productive is data for the cap policy, never a reason to admit the round.
+      const rec = await recordCap({ sid, mode, round, caps, productivity: card.productivity, runId: card.productivity.lastRunId, trigger: 'refused' });
+      write(rec.recorded ? '  [round-cap] cap reached, recorded (round_cap_reached)\n' : `  [round-cap] cap-reached telemetry not recorded (${rec.reason})\n`);
+    }
     return card;
   } catch (err) {
     // The cap holds even when the card cannot be built: say so, never swallow it.
@@ -60,12 +67,13 @@ async function emitCard({ argv, sid, mode, round, caps, auditDir, cwd, env, writ
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @param {(s: string) => void} [opts.write] - stderr sink
  * @param {Function} [opts.build] - card builder (test seam)
+ * @param {Function} [opts.recordCap] - cap-stop telemetry recorder (test seam)
  * @returns {Promise<{ok: true, round: number, roundCap: null | {mode: string, round: number, soft: number, absolute: number, pastCap: boolean,
  *   pastCapReason: string|null, cardSummary: object|null}} | {ok: false, exitCode: number, code: string}>}
  */
 export async function gateRoundCap(argv, {
   cwd = process.cwd(), auditDir = path.resolve(cwd, '.audit'), env = process.env,
-  write = (s) => process.stderr.write(s), build = buildStructuralCard,
+  write = (s) => process.stderr.write(s), build = buildStructuralCard, recordCap = recordCapStop,
 } = {}) {
   const modeRes = resolveAuditMode(argv);
   if (!modeRes.ok) { write(`Error: ${modeRes.error}\n`); return { ok: false, exitCode: modeRes.exitCode, code: modeRes.code }; }
@@ -80,10 +88,10 @@ export async function gateRoundCap(argv, {
   const pastCapReason = pc.present ? (pc.value ?? '') : null;
   const v = validateAuditRound({ mode, round, pastCapReason });
   const sid = sessionIdFromArgv(argv, env);
-  const ctx = { argv, sid, mode, round, caps: v.caps, auditDir, cwd, env, write, build };
+  const ctx = { argv, sid, mode, round, caps: v.caps, auditDir, cwd, env, write, build, recordCap };
 
   if (!v.ok) {
-    if (v.needsCard) await emitCard(ctx);
+    if (v.needsCard) await emitCard(ctx, { recordStop: true });
     write(`Error [${v.code}]: ${v.error}\n`);
     return { ok: false, exitCode: v.exitCode, code: v.code };
   }
@@ -93,9 +101,11 @@ export async function gateRoundCap(argv, {
     const found = readMatchingCard(auditDir, cardFileName(sid, round), { round, mode, planFile: argv[1] || null });
     if (!found.ok) {
       // A past-cap round needs the card for THIS (session, round) computed first — the evidence existed at the decision.
-      await emitCard(ctx);
+      const built = await emitCard(ctx);
       write(`Error [CARD_REQUIRED]: --past-cap is accepted only after the structural-or-stop card for ${mode} round ${round} has been built (${found.reason}). `
-        + 'It is printed above and written to the audit directory — read it, then re-run the same command.\n');
+        + (built
+          ? 'It is printed above and written to the audit directory — read it, then re-run the same command.\n'
+          : 'Building it failed (reason above), so a re-run is refused the same way until the card can be built.\n'));
       return { ok: false, exitCode: EXIT_CAPPED, code: 'CARD_REQUIRED' };
     }
     cardSummary = found.card.summary ?? null;

@@ -71,6 +71,8 @@ const VALID_DECISION_TYPES = Object.freeze([
   'quickfix_hit',
   'author_tier',
   'stage1_prediction',
+  // Observation-only: the GPT round cap stopped an audit (lib/audit/cap-productivity.mjs).
+  'round_cap_reached',
 ]);
 
 const STDERR_WARN_THROTTLE_MS = 1000;

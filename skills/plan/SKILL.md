@@ -18,12 +18,13 @@ description: |
 allowed-tools: Bash(node scripts/cross-skill.mjs detect-stack)
 ---
 
-> **Worktree preflight** — in a linked git worktree the synced tooling tree
-> `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
-> does not populate it, and every command below that uses it dies on a bare
-> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. If this repo defines
-> no such script, `references/worktree-preflight.md` holds the entry to add — ask
-> the user first, since it edits their `package.json`.
+> **Worktree preflight** — in a linked git worktree the gitignored tooling tree
+> `scripts/.claude-skills/` is absent (`git worktree add` does not populate it),
+> so every command below that uses it dies on `MODULE_NOT_FOUND`. Run
+> `npm run skills:hydrate` first; if no such script exists,
+> `references/worktree-preflight.md` holds the entry to add (ask the user first:
+> it edits `package.json`). Keys are not copied: put them in
+> `~/.audit-loop.env`, which every worktree reads.
 
 ## Usage
 
@@ -526,7 +527,7 @@ quality-positive, not just a token saving.
 3. **Cluster audit scope is derived, not restated**: it is the union of the member phases' `Files:` (plus an optional `Additional files:` sub-bullet, each entry intent-tagged per §7b). Never add a free-standing per-cluster `Files:` line — that is a second source of truth that drifts.
 4. `fix-gate: yes` → cluster must reach `/audit-code` convergence (`HIGH == 0 && MEDIUM <= 2 && quickFix == 0`) before the next builds on it; `final` → last cluster, gated by the consolidated Gemini pass; `none` → no blocking gate.
 5. Trailing `- **Final gate**:` line (**required**) — declares the mandatory consolidated Gemini review over the union diff.
-6. **Partition invariant**: every §7b *implementation* phase appears in exactly one cluster (none omitted/duplicated); close-out work is outside the phase set and is not clustered.
+6. **Partition invariant**: every §7b *implementation* phase is in exactly one cluster (none omitted/duplicated); close-out work is not clustered.
 7. **Optional** `author-tier: economy|standard|frontier` sub-bullet — an **advisory, observation-only** hint of the model tier this cluster's work likely warrants (you MAY derive it from the same scope signals the model-tier observer uses: floor paths → frontier, mechanical-only → economy). `/cycle` **records** it for actual-vs-suggested analysis but **does NOT change which model runs** — there is no router yet (see `docs/plans/model-tier-observation.md`). Omit it unless it adds signal; it never gates anything.
 
 **Authoring**: group coupled phases (cite the seam in `Coupling:`); keep

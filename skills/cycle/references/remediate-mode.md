@@ -167,7 +167,7 @@ Summary card:
   Source:     persona-test docs/…/report.md (2 P1 in scope, 0 deferred)
   Fixes:      2 files + plan log
   Audit-code: 2 rounds, CONVERGED, H:0 M:0 L:1 (focused: 3 files)
-  Final gate: Gemini APPROVE
+  Final review: APPROVE (<provider> / <model>)
   Rerun:      "Pieter" "adding a bottle" — 2/2 fixed (create→reload→edit→reload)
   Ship:       BLOCKED — run: /ship docs/plans/<name>.md
 ═══════════════════════════════════════

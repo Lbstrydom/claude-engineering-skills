@@ -602,7 +602,7 @@ ${R}Round ${round} stopped at the round cap${X} — read the structural-or-stop 
         execFileSync('node', geminiArgs, { stdio: 'inherit', timeout: 300000 });
         const geminiResult = parseResults(geminiOutFile);
         if (geminiResult) {
-          banner(`FINAL REVIEW — ${geminiResult.verdict || 'UNKNOWN'} (gate: ${geminiResult.gateDisposition || 'n/a'})\n  Provider: ${provider}\n  New findings: ${(geminiResult.new_findings || []).length}\n  Wrongly dismissed: ${(geminiResult.wrongly_dismissed || []).length}`);
+          banner(`FINAL REVIEW — ${geminiResult.verdict || 'UNKNOWN'} (gate: ${geminiResult.gateDisposition || 'n/a'})\n  ${geminiResult._gate?.label ?? `Provider: ${provider}`}${geminiResult._gate?.independenceNote ? ` — ${geminiResult._gate.independenceNote}` : ''}\n  New findings: ${(geminiResult.new_findings || []).length}\n  Wrongly dismissed: ${(geminiResult.wrongly_dismissed || []).length}`);
         }
       } catch (err) {
         console.error(`${Y}Final review failed${X}: ${err.message?.slice(0, 200)}`);

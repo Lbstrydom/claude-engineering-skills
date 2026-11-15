@@ -63,6 +63,7 @@ import { withFileLock } from './lib/file-lock.mjs';
 import { LedgerEntrySchema } from './lib/schemas.mjs';
 import { isDismissReasonClass, DISMISS_REASON_CLASSES } from './lib/adjudication-vocab.mjs';
 import { readPersistedDebtEntries } from './lib/debt-ledger.mjs';
+import { roundAcceptance } from './lib/audit/cap-productivity.mjs';
 
 const KNOWN_FLAGS = [
   '--result', '--ledger', '--triage', '--pass', '--round', '--mark-fixed',
@@ -504,12 +505,8 @@ async function main() {
   // HIGH count did; a round mostly dismissed or deferred is. Computed here
   // because this is where the judgements are, and a counted number beats a
   // remembered one.
-  const ruled = Object.values(triage);
-  const accepted = ruled.filter(t => t.outcome === 'accepted' && t.ruling !== 'defer').length;
-  const adjusted = ruled.filter(t => t.outcome === 'severity_adjusted').length;
-  const deferred = ruled.filter(t => t.ruling === 'defer').length;
-  const dismissed = ruled.filter(t => t.outcome === 'dismissed' && t.ruling !== 'defer').length;
-  const acceptanceRate = ruled.length > 0 ? (accepted + adjusted) / ruled.length : 0;
+  // One formula, shared with the round-cap card (lib/audit/cap-productivity.mjs).
+  const { accepted, adjusted, deferred, dismissed, acceptanceRate } = roundAcceptance(Object.values(triage));
 
   if (argv.includes('--json')) {
     console.log(JSON.stringify({

@@ -103,7 +103,9 @@ describe('checkSkill — marker states', () => {
   test('edited is distinct from missing', () => {
     // Two different failures needing two different remedies: "you never added
     // it" vs "you added it and then changed the wording".
-    const root = makeRepo({}, { s: WITH_MARKER.replace('Run `npm run skills:hydrate` first.', 'Just hydrate.') });
+    const edited = WITH_MARKER.replace('`npm run skills:hydrate` first;', 'just hydrate;');
+    assert.notEqual(edited, WITH_MARKER, 'the fixture edit must land, or this test checks nothing');
+    const root = makeRepo({}, { s: edited });
     const r = checkSkill(root, 's');
     assert.equal(r.status, 'edited');
     assert.ok(fs.readFileSync(path.join(root, 'skills', 's', 'SKILL.md'), 'utf-8').includes(MARKER_KEY));

@@ -723,6 +723,7 @@ import {
   playwrightInstallHint, playwrightBootstrapHint,
 } from './lib/package-manager.mjs';
 import { checkBundleDependencies } from './lib/install/bundle-deps.mjs';
+import { checkAuditReadiness } from './lib/install/audit-readiness.mjs';
 const execFileAsync = promisify(execFile);
 
 /**
@@ -962,7 +963,7 @@ async function main() {
   const env = loadEnv(REPO_PATH);
   injectResolvedDbEnv(env);
   const report = new Report();
-
+  checkAuditReadiness(env, report, REPO_PATH); // route + policy + line endings, first: before any spend
   await checkAuditLoop(env, report);
   checkEnvProvenance(report);
   await checkPersonaTest(env, report);

@@ -67,12 +67,13 @@ conversation. This site is `path+flags`; on empty input, ship without updating a
 Full contract: `references/input-acquisition.md`.
 
 
-> **Worktree preflight** — in a linked git worktree the synced tooling tree
-> `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
-> does not populate it, and every command below that uses it dies on a bare
-> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. If this repo defines
-> no such script, `references/worktree-preflight.md` holds the entry to add — ask
-> the user first, since it edits their `package.json`.
+> **Worktree preflight** — in a linked git worktree the gitignored tooling tree
+> `scripts/.claude-skills/` is absent (`git worktree add` does not populate it),
+> so every command below that uses it dies on `MODULE_NOT_FOUND`. Run
+> `npm run skills:hydrate` first; if no such script exists,
+> `references/worktree-preflight.md` holds the entry to add (ask the user first:
+> it edits `package.json`). Keys are not copied: put them in
+> `~/.audit-loop.env`, which every worktree reads.
 
 **Ship-specific, because here the wrong answer is silent instead of loud**: do not
 reach the tooling by `cd`-ing to the main checkout. `ship-commit.mjs` and

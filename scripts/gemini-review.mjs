@@ -237,6 +237,7 @@ export {
 } from './lib/final-review/run-id-recovery.mjs';
 import { resolveReviewRunId } from './lib/final-review/run-id-recovery.mjs';
 import { recordFinalReviewCall } from './lib/telemetry/final-review-call.mjs';
+import { describeFinalGate } from './lib/final-review/gate-label.mjs';
 
 // ── Review Orchestrator ────────────────────────────────────────────────────────
 
@@ -543,9 +544,10 @@ function formatReviewResult(result, usage, latencyMs, provider) {
   const lines = [];
   const descriptor = PROVIDERS[provider];
   const selectedModel = descriptor ? descriptor.resolveModel() : provider;
-  const title = `${descriptor?.label ?? provider} — Independent Final Review`;
-  lines.push(`# ${title}`);
+  const gate = gateOf(provider, selectedModel);
+  lines.push(`# Final gate — ${descriptor?.label ?? provider} (${provider} / ${selectedModel})`);
   lines.push(`- **Model**: ${selectedModel} | **Latency**: ${(latencyMs / 1000).toFixed(1)}s`);
+  if (gate.independenceNote) lines.push(`- **Independence**: ${gate.independenceNote}`);
   lines.push(`- **Tokens**: ${usage.input_tokens} in / ${usage.output_tokens} out (${usage.thinking_tokens} thinking)`);
   lines.push('');
 
@@ -732,14 +734,19 @@ export async function runAdjudicatorOnlyReview(provider, client, planContent, tr
   }
 }
 
+const gateOf = (provider, model) => describeFinalGate({ provider, model, authorModel: process.env.AUDIT_AUTHOR_TIER_HINT || null });
+/** The summary-line segment naming the gate by role — ONE spelling for the live and fixture paths. */
+const gateSegment = (gate) => ` | ${gate.label}${gate.independenceNote ? ` — ${gate.independenceNote}` : ''}`;
+
 function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile, gateSummary) {
   if (jsonMode || outFile) {
     const data = { ...result, _model: reviewerModelOf(provider), _provider: provider, _usage: usage };
+    data._gate = gateOf(provider, data._model);
     if (outFile) {
       const newCount = result.new_findings?.length ?? 0;
       const dismissedCount = result.wrongly_dismissed?.length ?? 0;
       const codeSeg = formatCodeCoverageSegment(result._envelope?.codeCoverage);
-      const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${newCount} | Wrongly dismissed: ${dismissedCount} | ${(latencyMs / 1000).toFixed(0)}s${codeSeg ? ` | ${codeSeg}` : ''}`;
+      const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${newCount} | Wrongly dismissed: ${dismissedCount} | ${(latencyMs / 1000).toFixed(0)}s${codeSeg ? ` | ${codeSeg}` : ''}${gateSegment(data._gate)}`;
       writeOutput(data, outFile, summaryLine);
     } else {
       console.log(JSON.stringify(data, null, 2));
@@ -796,7 +803,8 @@ function runFixtureReview({ transcriptFile, outFile, jsonMode, round = null, pri
   addSemanticIds(result, 'gemini');
   const gateSummary = stampGateDisposition(result, round);
   const data = { ...result, _model: 'fixture', _provider: 'fixture', _usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0 } };
-  const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${result.new_findings.length} | Wrongly dismissed: ${result.wrongly_dismissed.length} | fixture (no live call)`;
+  data._gate = gateOf('fixture', 'fixture');
+  const summaryLine = `Verdict: ${result.verdict} | ${gateSummary} | New: ${result.new_findings.length} | Wrongly dismissed: ${result.wrongly_dismissed.length} | fixture (no live call)${gateSegment(data._gate)}`;
   if (outFile) {
     writeOutput(data, outFile, summaryLine);
   } else if (jsonMode) {

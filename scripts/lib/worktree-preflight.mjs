@@ -63,12 +63,13 @@ export const CONSUMER_HYDRATE_NPM_SCRIPT = "\"skills:hydrate\": \"node -e \\\"co
  * reaches the same reader. `checkSkill` pins `CONSUMER_HYDRATE_NPM_SCRIPT` in that
  * file byte-for-byte, so moving the recipe kept the anti-drift property.
  */
-export const MARKER_BLOCK = `> **Worktree preflight** — in a linked git worktree the synced tooling tree
-> \`scripts/.claude-skills/\` is absent — it is gitignored, so \`git worktree add\`
-> does not populate it, and every command below that uses it dies on a bare
-> \`MODULE_NOT_FOUND\`. Run \`npm run skills:hydrate\` first. If this repo defines
-> no such script, \`references/worktree-preflight.md\` holds the entry to add — ask
-> the user first, since it edits their \`package.json\`.`;
+export const MARKER_BLOCK = `> **Worktree preflight** — in a linked git worktree the gitignored tooling tree
+> \`scripts/.claude-skills/\` is absent (\`git worktree add\` does not populate it),
+> so every command below that uses it dies on \`MODULE_NOT_FOUND\`. Run
+> \`npm run skills:hydrate\` first; if no such script exists,
+> \`references/worktree-preflight.md\` holds the entry to add (ask the user first:
+> it edits \`package.json\`). Keys are not copied: put them in
+> \`~/.audit-loop.env\`, which every worktree reads.`;
 
 /** The shared reference every in-scope skill carries, holding the hydrate recipe. */
 export const PREFLIGHT_REFERENCE = 'worktree-preflight.md';
