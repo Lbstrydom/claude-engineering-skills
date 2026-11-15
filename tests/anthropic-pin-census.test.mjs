@@ -26,6 +26,7 @@ import {
   classifyPinningInSource,
   unserviceableParamsInSource,
   indirectPinHolds,
+  unpinnedArgsDigest,
   auditPinCensus,
 } from '../scripts/lib/anthropic-pin-census.mjs';
 import { trackedScriptFiles } from '../scripts/check-anthropic-pins.mjs';
@@ -173,7 +174,7 @@ describe('auditPinCensus: the drift rules', () => {
   it('a declared one passes', () => {
     const v = auditPinCensus(
       new Map([['a.mjs', 'await createAnthropicClient();']]),
-      { unpinnedConstructions: { 'a.mjs': { reason: 'serviceable: no system/tools sent', constructions: 1 } } },
+      { unpinnedConstructions: { 'a.mjs': { reason: 'serviceable: no system/tools sent', constructions: 1, argsDigest: unpinnedArgsDigest('await createAnthropicClient();') } } },
     );
     assert.equal(v.ok, true);
   });
@@ -306,13 +307,103 @@ describe('fail-closed: the shapes the first cut missed', () => {
 // construction added to a declared file was unflagged and the entry's reason
 // kept describing only the first. Counting is the fix, and it is the shape every
 // other ratchet in this repo already uses.
+// ── THE LAST ASSIGNMENT WINS (round-2 audit, 2026-11-15) ────────────────────
+//
+// The first fail-closed pass tested whether an `sdk` literal appeared ANYWHERE
+// and then looked for a spread after the FIRST `backend:`. JavaScript resolves
+// the LAST one, so two shapes read as pinned while the effective backend was
+// cli \u2014 and the second of them also satisfied an `indirectPins` claim, which is
+// the very shape such a claim exists to rule out.
+describe('the effective backend is the LAST one, not the first', () => {
+  const unpinned = (src) => classifyPinningInSource(src).unpinned;
+
+  it("RED: `{ backend:'sdk', backend:'cli' }` is NOT pinned", () => {
+    assert.equal(unpinned("await createAnthropicClient({ backend: 'sdk', backend: 'cli' });"), 1,
+      'the duplicate key that wins is the last one');
+  });
+
+  it("RED: `{ ...clientOptions(), backend:'cli' }` is NOT pinned", () => {
+    assert.equal(unpinned("await createAnthropicClient({ ...clientOptions(), backend: 'cli' });"), 1);
+  });
+
+  it("GREEN: `{ ...clientOptions(), backend:'sdk' }` IS pinned \u2014 the literal wins", () => {
+    assert.equal(unpinned("await createAnthropicClient({ ...clientOptions(), backend: 'sdk' });"), 0);
+  });
+
+  it("RED: `{ backend:'sdk', ...opts }` stays unresolved \u2014 a spread AFTER the winner", () => {
+    assert.equal(unpinned("await createAnthropicClient({ backend: 'sdk', ...opts });"), 1);
+  });
+
+  it('RED: an explicit `cli` is unpinned, and cannot be covered by a via claim', () => {
+    const src = "function opts() { return { backend: 'sdk' }; }\n"
+      + "await createAnthropicClient({ ...opts(), backend: 'cli' });";
+    const held = indirectPinHolds(src, 'opts');
+    assert.equal(held.pinned, true, 'the factory still carries the literal');
+    assert.equal(held.used, false, 'but this construction overrides the pin the claim rests on');
+  });
+
+  it('GREEN: passing the factory with no backend of its own holds', () => {
+    const src = "function opts() { return { backend: 'sdk' }; }\n"
+      + 'await createAnthropicClient({ ...opts(), fresh: true });';
+    assert.equal(indirectPinHolds(src, 'opts').used, true);
+  });
+});
+
+// A REPLACEMENT preserves the count, so the count alone could not see it and
+// the declared reason went on describing a construction that was gone.
+describe('unpinnedArgsDigest: a replacement is visible even at a constant count', () => {
+  it('differs when a construction\u2019s arguments change', () => {
+    assert.notEqual(
+      unpinnedArgsDigest('await createAnthropicClient({ redactor: null });'),
+      unpinnedArgsDigest('await createAnthropicClient({ timeoutMs: 1 });'),
+    );
+  });
+
+  it('is stable across whitespace and comments', () => {
+    assert.equal(
+      unpinnedArgsDigest('await createAnthropicClient({ redactor: null });'),
+      unpinnedArgsDigest('// a note\nawait createAnthropicClient({\n  redactor:   null,\n});'),
+    );
+  });
+
+  it("is '' for a file with no unpinned construction", () => {
+    assert.equal(unpinnedArgsDigest("await createAnthropicClient({ backend: 'sdk' });"), '');
+  });
+
+  // Deliberate limit, stated rather than hidden: two structurally identical
+  // constructions are the same SHAPE, and for this gate that is the same thing.
+  it('two identical bare constructions share a digest \u2014 the stated limit', () => {
+    assert.equal(
+      unpinnedArgsDigest('await createAnthropicClient();'),
+      unpinnedArgsDigest('const a = await createAnthropicClient();'),
+    );
+  });
+
+  it('A REPLACEMENT at a constant count fails the audit', () => {
+    const base = { unpinnedConstructions: { 'a.mjs': { reason: 'r', constructions: 1, argsDigest: unpinnedArgsDigest('await createAnthropicClient({ redactor: null });') } } };
+    const ok = auditPinCensus(new Map([['a.mjs', 'await createAnthropicClient({ redactor: null });']]), base);
+    assert.equal(ok.ok, true);
+    const swapped = auditPinCensus(new Map([['a.mjs', 'await createAnthropicClient({ timeoutMs: 1 });']]), base);
+    assert.equal(swapped.ok, false, 'same count, different construction');
+    assert.match(String(swapped.countDrift[0].actual), /^digest /);
+  });
+
+  it('a declaration with no argsDigest fails \u2014 the pre-digest state', () => {
+    const v = auditPinCensus(
+      new Map([['a.mjs', 'await createAnthropicClient();']]),
+      { unpinnedConstructions: { 'a.mjs': { reason: 'r', constructions: 1 } } },
+    );
+    assert.equal(v.ok, false);
+  });
+});
+
 describe('Rule B counts constructions, not files', () => {
   const src1 = 'await createAnthropicClient();';
   const src2 = 'await createAnthropicClient();\nawait createAnthropicClient({ fresh: true });';
 
-  it('a matching count passes', () => {
+  it('a matching count AND digest passes', () => {
     const v = auditPinCensus(new Map([['a.mjs', src1]]),
-      { unpinnedConstructions: { 'a.mjs': { reason: 'r', constructions: 1 } } });
+      { unpinnedConstructions: { 'a.mjs': { reason: 'r', constructions: 1, argsDigest: unpinnedArgsDigest(src1) } } });
     assert.equal(v.ok, true);
   });
 

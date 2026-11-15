@@ -120,9 +120,14 @@ async function main() {
     process.stderr.write(`  UNDECLARED      ${f} — constructs a client with no literal backend pin.\n`);
   }
   for (const d of verdict.countDrift) {
-    process.stderr.write(
-      `  COUNT DRIFT     ${d.file} — declares ${d.declared ?? '(no count)'} unpinned construction(s), found ${d.actual}.\n`,
-    );
+    // SAME count, DIFFERENT constructions is its own failure: the declared
+    // reason now describes something that is not in the file any more, and only
+    // the digest can see it. Reporting it as a count mismatch would read as
+    // nonsense ("declares digest … construction(s)").
+    const isDigest = typeof d.actual === 'string' && String(d.actual).startsWith('digest ');
+    process.stderr.write(isDigest
+      ? `  SHAPE DRIFT     ${d.file} — its unpinned construction(s) changed (${d.declared} → ${d.actual}); the count is unchanged, so only the digest sees it.\n`
+      : `  COUNT DRIFT     ${d.file} — declares ${d.declared ?? '(no count)'} unpinned construction(s), found ${d.actual}.\n`);
   }
   for (const f of verdict.stale) {
     process.stderr.write(`  STALE           ${f} — declared in ${BASELINE_PATH}, but no longer constructs an unpinned client.\n`);

@@ -789,6 +789,63 @@ eager resolve fails 2 of the file's 24 tests.
 
 ---
 
+## 7.6 Round 2: the fail-closed pass was itself fail-open, and my tests were vacuous again
+
+| # | defect | why the round-1 fix missed it |
+|---|---|---|
+| 1 | `{ backend:'sdk', backend:'cli' }` and `{ ...clientOptions(), backend:'cli' }` read as PINNED | the check asked whether an `sdk` literal appeared ANYWHERE, then looked for a spread after the FIRST `backend:`. **JavaScript resolves the LAST one.** `resolveBackendInArgs` now resolves the last, and returns `'cli'` as its own verdict |
+| 2 | an `indirectPins` claim was satisfied by `{ ...clientOptions(), backend:'cli' }` | `used` only asked whether the factory was CALLED, not whether its pin survived. It now also requires the construction to name no backend of its own |
+| 3 | the count ratchet could not see a REPLACEMENT | swapping one unpinned construction for another preserves the total. Each declaration now carries `argsDigest` |
+| 4 | three of the five tests written to close round 1 were vacuous or non-hermetic | below |
+
+(1) and (2) are the same error twice: **a check that resolves the first match is
+not a check on the effective value.** The round-1 fix added a spread guard, which
+is the right idea anchored to the wrong occurrence — and anchoring it to the
+first occurrence is what let a plain duplicate key through, a shape simpler than
+the one the guard was written for.
+
+### 7.6a The vacuous-test lesson, for the third time in this plan
+
+§6.E and §7.5 already record one instance each. Round 2 found three more, all in
+the tests I had just written to close a fail-open:
+
+- an `asked` counter **wired to nothing**, so its `assert.equal(asked, 0)` could
+  never fail;
+- a `built` counter incremented in an **IIFE, before `labelWorkUnits` was
+  entered**, so it could not observe lazy resolution — the one thing the test
+  was named for;
+- `labeller: null`, which falls through to `defaultLabeller()` and therefore to
+  **the operator's environment**: the test's verdict depended on whether the
+  machine running it had `ANTHROPIC_API_KEY` set.
+
+The fix is not more assertions but a seam that makes the claim observable:
+`labelWorkUnits` now takes `labellerProvider`, an async thunk it calls **at most
+once and only after a cache MISS**. A test counting provider calls is then
+testing the laziness itself rather than a proxy for it, and never reaches a real
+provider, so the suite is hermetic. That is a better API than a test-only hook —
+laziness is a property of the caller's contract, so it belongs in the signature.
+
+**The pattern, stated plainly because it keeps recurring here:** when a test
+counts something, ask what would have to break for the counter to move. If the
+answer is "nothing the test controls", the counter is decoration. All three of
+these had a plausible name, a plausible comment, and a counter that could not
+move.
+
+### 7.6b Dismissed, verified against the contract
+
+`--selfcheck-relocation` runs before `assertKnownFlags` and ignores the POSIX
+`--` terminator (one MEDIUM, one LOW). Checked the enforcing code rather than the
+convention's name: **every** CLI in this repo does exactly this —
+`check-windowed-views.mjs:74`, `check-stdout-flush.mjs:219`, `doctor.mjs:164`,
+`check-setup.mjs:961` — and AGENTS.md's smoke contract specifies the handler "at
+the head of `main()`", with `tests/relocation-guard.test.mjs` enforcing its
+presence over `CLI_SMOKE_SET`. Changing it in this one file would make it the
+only CLI that differs, which is the two-spellings divergence this repo warns
+about. If the terminator should be honoured it is a repo-wide change to the
+contract and its 26 implementations, not a local fix — recorded as §8.5.
+
+---
+
 ## 8. Follow-ups (not this change)
 
 1. **The ~164K prefix tax on every remaining `cli` call** (§2.4) is the larger
@@ -809,7 +866,13 @@ eager resolve fails 2 of the file's 24 tests.
    those calls reach a transport that can serve them. Removing one would now
    break the call, not merely make its intent implicit. `anthropic:pin:gate`
    enforces that they stay.
-4. **AGENTS.md has 309 characters of headroom** against its 79,000 cap after
+4. **`--selfcheck-relocation` ignores the POSIX `--` terminator** in all 26 CLIs
+   that implement the smoke contract, so `-- --selfcheck-relocation` triggers it
+   and an unknown flag beside it is not rejected (§7.6b). Real, uniform, and a
+   contract-level change: it belongs in one pass over `cli-io.mjs` plus the
+   contract text in AGENTS.md, not in a backend-routing PR that would leave one
+   file behaving differently from the other 25.
+5. **AGENTS.md has 309 characters of headroom** against its 79,000 cap after
    this change (the reshape itself was net +12 chars, having reworded in place
    rather than adding). The gate's own message is the
    finding: *"the next invariant will not fit, and shaving words to squeeze

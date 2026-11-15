@@ -35,6 +35,7 @@
  *
  * @module scripts/lib/anthropic-pin-census
  */
+import { createHash } from 'node:crypto';
 
 /** The params `unserviceableCliParams` refuses, as they appear in source. */
 const UNSERVICEABLE_PARAM_KEYS = Object.freeze(['system', 'tools', 'tool_choice']);
@@ -43,20 +44,45 @@ const UNSERVICEABLE_PARAM_KEYS = Object.freeze(['system', 'tools', 'tool_choice'
 const CONSTRUCTION_RE = /createAnthropicClient\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g;
 
 /**
- * Does this argument list pin a backend explicitly? Accepts either quote style
- * and any whitespace; deliberately does NOT accept a variable
- * (`{ backend }`), because the gate cannot tell what that resolves to — such a
- * site reads as unpinned and must be declared or made literal.
+ * What backend does this argument list EFFECTIVELY name?
+ *
+ * **The last assignment wins.** The first cut tested whether an `sdk` literal
+ * appeared anywhere and then looked for a spread after the FIRST `backend:`,
+ * so `{ backend: 'sdk', backend: 'cli' }` and `{ ...clientOptions(), backend:
+ * 'cli' }` both read as PINNED — fail-open, and the second shape is one an
+ * `indirectPins` entry would also have covered. JavaScript resolves the last
+ * one, so this resolves the last one too.
+ *
+ *   - `'pinned'`    — the last `backend:` is a literal `sdk`/`bedrock` and no
+ *                     spread follows it.
+ *   - `'cli'`       — the last `backend:` is a literal `cli`. Explicitly the
+ *                     transport that cannot honour the params; never coverable
+ *                     by a census entry.
+ *   - `'unresolved'`— no `backend:` at all, a variable (`{ backend }`), or a
+ *                     spread after the literal. The gate cannot know, so it is
+ *                     not a pin.
+ *
+ * @param {string} argText
+ * @returns {'pinned'|'cli'|'unresolved'}
  */
+function resolveBackendInArgs(argText) {
+  const re = /\bbackend\s*:\s*(?:(['"`])([A-Za-z]+)\1)?/g;
+  let last = null;
+  let m;
+  while ((m = re.exec(argText)) !== null) last = m;
+  if (!last) return 'unresolved';
+  const value = last[2];
+  if (!value) return 'unresolved';                 // `{ backend }` or `{ backend: x }`
+  // A spread AFTER the winning literal may override it, and the gate cannot
+  // know what the spread holds.
+  if (/\.\.\./.test(argText.slice(last.index + last[0].length))) return 'unresolved';
+  if (value === 'sdk' || value === 'bedrock') return 'pinned';
+  return value === 'cli' ? 'cli' : 'unresolved';
+}
+
+/** Does this argument list carry a usable literal pin? */
 function pinsBackendLiterally(argText) {
-  if (!/\bbackend\s*:\s*(['"`])(sdk|bedrock)\1/.test(argText)) return false;
-  // FAIL CLOSED on a spread. `{ backend:'sdk', ...opts }` carries the literal,
-  // but `opts` may override it and this gate cannot know what `opts` holds, so
-  // the EFFECTIVE backend is unresolved — and an unresolved backend is not a
-  // pin. A site that wants the gate's blessing writes the literal last with no
-  // spread after it, or declares itself in the census.
-  const afterPin = argText.slice(argText.search(/\bbackend\s*:/));
-  return !/\.\.\./.test(afterPin);
+  return resolveBackendInArgs(argText) === 'pinned';
 }
 
 /** Strip line and block comments, so a param named only in prose never counts. */
@@ -156,7 +182,13 @@ export function indirectPinHolds(source, fnName) {
   if (!m) return { found: false, pinned: false, used: false };
   // Every unpinned construction in this file must name the function the claim
   // rests on — otherwise the claim describes a factory nothing calls.
-  const used = unpinnedConstructionArgs(code).every((a) => new RegExp(`\\b${safe}\\s*\\(`).test(a));
+  // Every unpinned construction must pass the factory AND name no backend of
+  // its own: `{ ...clientOptions(), backend: 'cli' }` passes the factory and
+  // then overrides the pin the claim rests on, so a call-check alone is
+  // fail-open in exactly the shape the claim exists to rule out.
+  const used = unpinnedConstructionArgs(code).every((a) => (
+    new RegExp(`\\b${safe}\\s*\\(`).test(a) && resolveBackendInArgs(a) !== 'cli'
+  ));
   const open = code.indexOf('{', m.index);
   if (open === -1) return { found: true, pinned: false, used };
   let depth = 0;
@@ -166,6 +198,30 @@ export function indirectPinHolds(source, fnName) {
     else if (code[i] === '}') { depth -= 1; if (depth === 0) { end = i; break; } }
   }
   return { found: true, pinned: pinsBackendLiterally(code.slice(open, end + 1)), used };
+}
+
+/**
+ * A stable digest of a file's unpinned construction ARGUMENTS.
+ *
+ * The count alone could not see a REPLACEMENT: swapping one unpinned
+ * construction for a different one preserves the total, so the declared reason
+ * kept describing a construction that no longer existed. Whitespace is
+ * normalised (and comments are already stripped) so the digest tracks the
+ * construction's shape rather than its formatting.
+ *
+ * @param {string} source
+ * @returns {string} 12 hex chars, or '' when the file constructs nothing unpinned
+ */
+export function unpinnedArgsDigest(source) {
+  const args = unpinnedConstructionArgs(stripComments(source))
+    // ALL whitespace and a trailing comma are formatting, not shape. Folding
+    // only runs of whitespace left `{ redactor: null }` and `{ redactor: null,
+    // }` with different digests, so a reformat would churn the baseline and the
+    // declarations would become noise nobody reads.
+    .map((a) => a.replace(/\s+/g, '').replace(/,(?=[}\])]|$)/g, ''))
+    .sort();
+  if (args.length === 0) return '';
+  return createHash('sha256').update(args.join('\u0000')).digest('hex').slice(0, 12);
 }
 
 /** The argument text of every construction in `code` that carries no literal pin. */
@@ -227,8 +283,15 @@ export function auditPinCensus(sources, baseline) {
         // other ratchet here: a population check that counts presence cannot
         // see growth.
         const want = Number(declared[file]?.constructions);
+        const wantDigest = String(declared[file]?.argsDigest || '');
+        const haveDigest = unpinnedArgsDigest(source);
         if (!Number.isInteger(want) || want !== c.unpinned) {
           countDrift.push({ file, declared: declared[file]?.constructions, actual: c.unpinned });
+        } else if (wantDigest !== haveDigest) {
+          // Same COUNT, different constructions. The reason text now describes
+          // something that is not there any more, which is the state Rule B
+          // exists to prevent.
+          countDrift.push({ file, declared: `digest ${wantDigest || '(none)'}`, actual: `digest ${haveDigest}` });
         }
       }
     }

@@ -131,16 +131,24 @@ guard, in `check:static`. Two rules, because one cannot see both shapes:
   by confirming every unpinned construction in the file passes it, so the
   declaration cannot outlive the pin it claims nor describe a factory nothing
   calls.
-- **Fail-closed on what it cannot resolve.** A forwarded `{ backend }` reads as
-  unpinned (a gate cannot check a variable's value), and a **spread after the
-  literal** — `{ backend:'sdk', ...opts }` — leaves the effective backend
-  unresolved, so also unpinned. Shorthand `{ system }` counts as passing the
-  param. All four shapes were fail-OPEN in the first cut; each now has a planted
-  RED case in `tests/anthropic-pin-census.test.mjs`.
-- A Rule B declaration carries the **COUNT** of unpinned constructions, not just
-  the file. Declaring a file once would otherwise clear every construction added
-  to it later while its `reason` kept describing only the first; growth and an
-  unrecorded shrink both fail.
+- **The effective backend is the LAST `backend:`, and the gate fails closed on
+  anything it cannot resolve.** `resolveBackendInArgs` returns `pinned` (a
+  literal `sdk`/`bedrock` last, no spread after it), `cli` (explicitly the
+  transport that cannot honour the params — never coverable by a census entry),
+  or `unresolved` (no `backend:`, a variable, or a spread after the literal).
+  Resolving the FIRST match instead let `{ backend:'sdk', backend:'cli' }` and
+  `{ ...clientOptions(), backend:'cli' }` read as pinned. Shorthand
+  `{ system }` counts as passing the param. Every one of these shapes was
+  fail-OPEN in an earlier cut and each now has a planted RED case in
+  `tests/anthropic-pin-census.test.mjs`.
+- A Rule B declaration carries the **COUNT** of unpinned constructions and an
+  **`argsDigest`** of their arguments, not just the file. The count alone let a
+  declaration clear every construction added later; the count plus the digest
+  also catches a REPLACEMENT, which preserves the total while the declared
+  reason goes stale. Growth, an unrecorded shrink and a changed shape all fail.
+  Two structurally identical constructions share a digest by design — for this
+  gate they are the same shape, and that is the stated limit of a non-parsing
+  check.
 - Every verdict category is **printed**. Two of the seven were counted in `ok`
   and never reported, so the gate could exit 1 with no line saying why — worse
   than no gate. A test reads the CLI's own source to keep that true.

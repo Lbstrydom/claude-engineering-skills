@@ -118,6 +118,9 @@ export function sanitizeLabel(raw) {
  *
  * @param {Array<object>} units - from `clusterWorkUnits`
  * @param {object} [opts]
+ * @param {Function} [opts.labellerProvider] - `async () => labeller|null`, called
+ *   at most once and only after a cache MISS. Takes precedence over
+ *   `opts.labeller`; without either, `defaultLabeller` is the provider.
  * @param {string} [opts.repoRoot] - cache location root (default cwd)
  * @param {(unit: object) => Promise<string|null>} [opts.labeller] - injected for
  *   tests; defaults to a small Claude call
@@ -139,17 +142,29 @@ export async function labelWorkUnits(units, opts = {}) {
   // NONE of the labels already on disk. That is strictly worse than before the
   // pin for exactly the population the pin was written for. A cache hit needs
   // no provider, so nothing may be resolved before the first miss.
+  //
+  // `opts.labeller` (an already-built labeller) and `opts.labellerProvider` (an
+  // async thunk returning one, or null) are both accepted; the provider form is
+  // what lets a caller — or a test — see WHEN resolution happens.
   // The PROMISE is memoised, not a resolved flag. `Promise.all` below runs the
   // units concurrently, so a flag set before the await would let every other
   // unit read `labeller` while it is still undefined and conclude the provider
   // is unavailable — one construction becomes "unavailable" for all but one
   // unit. Memoising the promise makes every caller await the same resolution.
+  // `labellerProvider` is the seam that makes laziness OBSERVABLE: an async
+  // thunk the module calls AT MOST ONCE, and only after a cache miss. A test
+  // that counts provider calls is then testing the laziness itself rather than
+  // a proxy for it — the first version counted a labeller built before this
+  // function was even entered, which could not observe resolution at all.
+  const provider = opts.labellerProvider
+    || (opts.labeller ? async () => opts.labeller : defaultLabeller);
   let labellerPromise = null;
   let sawUnavailable = false;
   const getLabeller = async () => {
-    labellerPromise ??= opts.labeller
-      ? Promise.resolve(opts.labeller)
-      : defaultLabeller().catch(() => null);
+    // The PROMISE is memoised, not a resolved flag: `Promise.all` below runs the
+    // units concurrently, so a flag set before the await would let every other
+    // unit read an unresolved value and conclude the provider is unavailable.
+    labellerPromise ??= Promise.resolve().then(provider).catch(() => null);
     const fn = await labellerPromise;
     if (!fn) sawUnavailable = true;
     return fn;
