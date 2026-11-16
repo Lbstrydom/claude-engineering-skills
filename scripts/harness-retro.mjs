@@ -5,7 +5,7 @@
  * an enforcement worked. Plan: docs/plans/harness-retro.md (v1 = the smallest
  * structurally honest version; see its right-sizing gate for what was cut).
  *
- *   node scripts/harness-retro.mjs scan   [--since 14d] [--fleet] [--top 5] [--json]
+ *   node scripts/harness-retro.mjs scan   [--since 7d] [--fleet] [--top 5] [--json]
  *   node scripts/harness-retro.mjs record --scan <id|latest> [--file <proposals.json>]   (else JSON on stdin)
  *   node scripts/harness-retro.mjs enforce --identity <fingerprint:fp|tripwire:name> --scan <id|latest>
  *                                          --test <tests/x.test.mjs> --layer <hook|gate|script|reference-doc|agents-md>
@@ -83,7 +83,7 @@ const readStdin = () => fs.readFileSync(0, 'utf8');
 async function cmdScan() {
   const now = Date.now();
   const startedAt = Date.now();
-  const sinceMs = parseSince(argOption('since', '14d'), now);
+  const sinceMs = parseSince(argOption('since', '7d'), now);
   const top = Number(argOption('top', String(DEFAULT_TOP)));
   if (!Number.isInteger(top) || top < 1) throw new ArgvError('--top must be a positive integer');
   const fleet = hasFlag('fleet');

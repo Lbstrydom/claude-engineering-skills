@@ -30,8 +30,8 @@ import { getRegressionSpecWindowCounts } from './regression-specs.mjs';
 import { getFleetEventWindowCounts } from './fleet-events.mjs';
 
 /** The eight read-only/meta skills whose ONLY signal is the git trailer proxy.
- *  harness-retro writes derived recurrence rows, but they describe OTHER sessions'
- *  failures, not its own use — so its usage signal is the trailer proxy too. */
+ *  harness-retro has no table (v1 writes only local artifacts), so its usage signal
+ *  is the trailer proxy too. */
 const TRAILER_ONLY_SKILLS = Object.freeze([
   'explain', 'investigate', 'brainstorm', 'security-strategy',
   'ai-context-management', 'cycle', 'skills', 'harness-retro',

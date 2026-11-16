@@ -10,7 +10,7 @@ import path from 'node:path';
 import { parseMemoryIndex, scanTripwires } from '../scripts/lib/friction/retro/memory-tripwires.mjs';
 import { buildIdf, tokenise } from '../scripts/lib/friction/retro/inventory.mjs';
 
-const mem = (name, description, type = 'feedback') => `---\nname: ${name}\ndescription: ${description}\nmetadata:\n  type: ${type}\n---\n\nbody of ${name}\n`;
+const mem = (name, description, type = 'feedback') => `---\nname: ${name}\ndescription: "${description}"\nmetadata:\n  type: ${type}\n---\n\nbody of ${name}\n`;
 
 function fixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'retro-mem-'));
@@ -21,7 +21,7 @@ function fixture() {
     '- [Sub](index-consumers.md) — a sub-index, not a tripwire',
     '',
   ].join('\n'));
-  fs.writeFileSync(path.join(dir, 'feedback_hook_path.md'), mem('feedback_hook_path', 'hook arch-memory-check.sh relative path no such file directory'));
+  fs.writeFileSync(path.join(dir, 'feedback_hook_path.md'), mem('feedback_hook_path', 'bash claude hooks arch-memory-check.sh: No such file or directory when a hook_non_blocking_error fires from a relative path'));
   fs.writeFileSync(path.join(dir, 'feedback_a.md'), mem('feedback_a', 'postgres numeric arrives as string'));
   fs.writeFileSync(path.join(dir, 'feedback_b.md'), mem('feedback_b', 'other thing entirely'));
   return dir;

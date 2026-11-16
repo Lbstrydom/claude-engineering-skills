@@ -3,12 +3,14 @@
 - **Date**: 2026-11-16
 - **Status**: In Progress
 - **Author**: Claude + Louis
-- **Scope**: backend (CLI + pure libs + one migration + one new skill — no UI)
+- **Scope**: backend (CLI + pure libs + one new skill — no UI, no migration)
 
 > **Detected**: scope `backend`, stack `js-ts` (+ postgres). Principle set: engineering principles #1–#20.
 > - **Target domain(s)**: `friction`, `scripts`, `shared-lib`, `skills-content`, `stores`, `supabase`
 > - ⚠ **Cross-domain work** — a horizontal feature (scan → judge → record → enforce → measure), each step in its owning subsystem. No new domain: the core lives under `scripts/lib/friction/retro/`, which the `scripts/lib/friction/**` rule already tags `friction`.
-> - ⚠ **MIGRATION** — this plan adds `supabase/migrations/20261116120000_harness_retro.sql` (three new tables, no change to existing ones). **It must be applied to EVERY store (NAS + storyline's Azure store) before CES `main` is fast-forwarded** — the 10-25 / 10-27 class. The tables are written only by the new CLI, so a store that is behind fails loudly on `--persist` (schema-fault, never an empty result) and nothing else in the toolchain touches them.
+> - **No migration in v1.** An earlier revision of this plan added three tables; the v1 right-sizing
+>   cut (§2 Right-sizing gate, cut 1) removed them — v1 writes nothing to the audit store, so no
+>   store needs migrating before CES `main` moves.
 
 ## 1. Context Summary
 
@@ -104,7 +106,6 @@ sequenceDiagram
     participant Inv as retro/inventory.mjs and memory-tripwires.mjs
     participant Art as .audit/harness-retro scan and proposal artifacts
     participant Reg as .harness-retro/decisions.json
-    participant DB as audit store
     Op->>CLI: scan --since 14d
     CLI->>Rd: enumerate and stream jsonl (local disk only)
     Rd->>Sig: records per file, attributed to a session
@@ -112,21 +113,20 @@ sequenceDiagram
     CLI->>Inv: rank candidates, check existing harness and tripwires
     CLI->>Reg: read decided fingerprints
     CLI->>Art: write scan artifact (versioned, derived only)
-    CLI->>DB: --persist: one transactional snapshot per session plus the scan row
     Op->>Op: skill step - the session model judges the top-N candidates
     Op->>CLI: record --scan id --stdin (Zod-validated against the scan)
     CLI->>Art: write proposals artifact + markdown
     Note over Op: human approves one; the fix PR also runs enforce, adding the registry entry
     Op->>CLI: effect
     CLI->>Reg: activation = first-parent main commit that introduced the entry
-    CLI->>DB: before vs after recurrence over covered windows
+    CLI->>Art: before vs after recurrence over covered windows (local artifacts)
 ```
 
 ### Egress policy — what may leave the reader, per destination (H1)
 
 | Destination | Fields | Free text? | Why safe |
 |---|---|---|---|
-| **Audit store** (private DB) | `fingerprint`, `fingerprint_version`, `kind`, `tool` (normalised), counts, timestamps, `session_key` (sha256 of the session id), `repo_uuid`, `origin`, account key (sha256 of the config dir) | **No** | No transcript text is persisted at all; a label is reproducible locally from the fingerprint. |
+| **Audit store** (private DB) | v1: **nothing**, except the existing `memory_friction.mitigation_refs` link written by `frictionLink` when a `type: friction` tripwire is enforced (a test path) | **No** | v1 adds no store write of its own (right-sizing cut 1). |
 | **Committed registry** (`.harness-retro/decisions.json`, PUBLIC repo) | `fingerprint`, version, `kind`, `tool`, `layer`, `test`, `summary`, `decision`, `memory?` | Only `summary`, **human-written** in the fix PR and reviewed there | Never copied from a transcript; the registry test refuses an entry whose `summary` contains a path, an email or a secret shape. |
 | **Local artifacts** (`.audit/harness-retro/*.json`, gitignored, this machine) | the above + `label` (normalised: no absolute paths, ids, emails, numbers; `redactSecrets`; refused to `[REDACTED:secret]` on a high-confidence shape; ≤160 chars) | Yes, bounded | Same disk as the transcripts it came from; never synced, never committed. |
 | **The judging model** (the session running `/harness-retro`) | the local artifact's candidate list | Yes, bounded | The same provider and account that already received the original text in the original session — no new destination. Recorded here rather than claimed as "zero egress". |
@@ -146,7 +146,7 @@ User text is never kept in any destination: `user_correction` carries only the k
    **assembled from ALL of their files**, whatever each file's own mtime — so a rescan where only the
    main file or only one subagent changed still reads the whole session (R3-H1). A snapshot is
    `complete` only when every constituent file was read without error; an incomplete snapshot is
-   reported and **never persisted**, so it can never replace a complete one. One
+   reported and is **never effect evidence**. One
    `createSessionExtractor()` per `sessionId`, fed files in this order: a session's main file, then its subagent files (sorted).
    Tool-use joins are **per file** (a subagent's `tool_use_id`s live in its own file), so the join
    map is cleared at each file boundary — bounded state. A `tool_result` whose `tool_use` is not in
@@ -160,7 +160,7 @@ User text is never kept in any destination: `user_correction` carries only the k
    root) and, if THAT root exists, the git step on it. The root is then passed to
    `resolveRepoIdentity` (`scripts/lib/repo-identity.mjs:122`) → stable `repo_uuid` (uuidv5 of the
    canonical remote) + display name. No root, or no identity → `repo: unresolved`, counted and
-   reported, never persisted and never guessed. "This repo" = the identity of the running checkout,
+   reported and never guessed. "This repo" = the identity of the running checkout,
    compared by `repo_uuid` (two repos with one basename never collide).
 4. **`retro/signals.mjs` — pure extractors, one per kind** (data-driven table, #4):
    `hook_rewrite`, `hook_block` (a hook refusing by design — enforcement that FIRED), `denial`
@@ -195,19 +195,20 @@ User text is never kept in any destination: `user_correction` carries only the k
 8. **`retro/memory-tripwires.mjs` — memory → enforcement promotion.** Parses every
    `[Title](file.md)` link in `MEMORY.md` (lines carry several), reads each file's frontmatter
    (`name`, `description`, optional `metadata.enforced_by`), scores it against every fingerprint
-   label with the same containment score (≥ 0.35). Output per tripwire: `firedSessions`,
+   label with a STRICTER rule than the inventory hint — containment ≥ **0.5** AND ≥ **3** shared
+   tokens (at the 0.35 hint floor, 71 of ~90 tripwires "matched" a 14-day corpus; measured
+   2026-11-16, 4 with the stricter rule). Output per tripwire: `firedSessions`,
    `matchedFingerprints`, `enforced`. `firedSessions ≥ 2` and not enforced → **promotion
-   candidate**; zero matches → `no-evidence`, never "dead".
+   candidate**; zero matches → `no-evidence`, never "dead". **v1 only lists them** (cut 3).
 9. **Local artifacts (H8)** under `.audit/harness-retro/` (gitignored):
    - `scan-<scanId>.json` — `ScanArtifactSchema` v1: `{schemaVersion, scanId, fingerprintVersion,
      accountKey, requested:{since, until}, files:{listed, read, readErrors, unparseableLines},
      measured, reason?, sessions:[{sessionKey, repoUuid|null, origin, startedAt, counts:{fp:n}}],
-     fingerprints:{fp:{kind, tool, label}}, candidates[], tripwires[], persisted, persistReason?}`.
+     fingerprints:{fp:{kind, tool, label}}, candidates[], tripwires[], summary}`.
    - `proposals-<scanId>.json` + `.md` — written by `record`.
-   - `heartbeat.json` — `{lastRunAt, scanId, measured}`.
    `scanId` = UTC timestamp + 6 random hex. Scan artifacts older than 60 days are pruned by `scan`.
 10. **The LLM step = the session's own model, driven by the skill.** The skill reads the latest
-    scan artifact's top-N candidates and promotion candidates, judges each, and pipes proposals to
+    scan artifact's top **5** candidates (`--top`) and the top promotion candidates, judges each, and pipes proposals to
     `record --scan <scanId> --stdin`. `record` validates against `ProposalSchema` (Zod `.strict()`)
     **and against the scan**. A proposal targets exactly one **identity**: `fingerprint:<fp>` (must be
     a ranked candidate of that scan) or `tripwire:<memory name>` (must be a promotion candidate of that
@@ -254,74 +255,36 @@ User text is never kept in any destination: `user_correction` carries only the k
       the after-the-fact proof.
     - `reject --identity <id> --scan <id|latest> --summary` appends `decision:'rejected'`; a rejected identity is
       shown `previouslyRejected` and never re-ranked into the top-N.
-13. **`enforce` — idempotent, ordered closure (H7).** Locks, always in this order: the
-    **registry's own lock** (`withFileLock` on `.harness-retro/decisions.json.lock` — every registry
-    mutation, `enforce` and `reject` alike, from any account, takes it), then, when `--memory` is
-    given, `<memoryDir>/.harness-retro.lock`. The registry is rewritten with `atomicWriteFileSync`.
-    After a **preflight** that validates every input (test path,
-    fingerprint in the latest scan or `--force-unscanned`, memory file exists, frontmatter parses)
-    and writes nothing on failure: (1) registry append — no-op if the fingerprint is already
-    `enforced`; (2) memory frontmatter `metadata.enforced_by: {fingerprint, test, date}` — no-op if
-    present; (3) the index: `MEMORY.md` lines are parsed into individual `[Title](file.md)` links;
-    a line whose ONLY link is this memory is moved verbatim to `index-enforced.md` (created on first
-    use, linked once from `MEMORY.md`); a line that also links other memories is **never edited** —
-    the entry is still appended to `index-enforced.md` and `status` reports `needs-manual-reflow`
-    for it (rewriting a shared prose line mechanically would garble the other tripwires). Each step
-    is a no-op if already done; (4) for a
-    `type: friction` memory, `frictionLink(kind:'test', ref: <test path>)` — already idempotent, so
-    `memory_friction.resolved` flips through the existing seam. Every step is idempotent, so a run
-    that died mid-way is completed by re-running it; `status` reports an **incomplete retirement**
-    (frontmatter says enforced but `MEMORY.md` still lists it, or the reverse). No rollback journal:
-    nothing here needs undoing, only finishing.
-14. **Store — three derived tables, one transactional writer (H2, H3, H5).** See §7 for DDL.
-    - `harness_retro_scans` — one row per `scan --persist`: `scan_id`, `account_key`, `repo_uuid`,
-      `requested_since`, `requested_until`, `files_listed/read`, `read_errors`, `completed`
-      (true only when every listed file was read without error), `fingerprint_version`.
-    - `harness_retro_sessions` — denominator; `harness_retro_occurrences` — numerator per
-      `(session_key, fingerprint)`.
-    - **One writer, one transaction per session**: `retro.sessionSnapshot` (registered in
-      `scripts/lib/audit-store-writers.mjs` via `durableWrite`, `rowKey: session_key`, backed by the
-      sessions PK). Its replay = `withTx`: `INSERT … ON CONFLICT (session_key) DO UPDATE SET … WHERE
-      harness_retro_sessions.observed_until <= EXCLUDED.observed_until RETURNING session_key`; only
-      when a row comes back does it `DELETE` the session's occurrences and insert the current set.
-      `observed_until` is the scan's `requested.until`, so a delayed replay of an OLDER spilled
-      snapshot, or the loser of two concurrent scans, cannot overwrite a newer one (the conflicting
-      row is locked by the upsert for the rest of the transaction). A superseded snapshot is a
-      **successful idempotent outcome** — receipt `{applied: true, rows: 0, reason: 'superseded'}` —
-      not a decline: the durable-writer receipt contract keeps its decline set unchanged (R3-H2),
-      and `cloud-off` is the only decline this writer returns. Replace-semantics make it idempotent AND reconcile removed or reclassified
-      occurrences; a denominator can never land without its numerator.
-    - **Schema faults are failures, never declines**: a `42P01`/`42703` (store not migrated) is
-      rethrown as the ORIGINAL error, so `durableWrite` spills it (a drain after migrating recovers
-      it) and `scan --persist` exits non-zero with `describeSchemaFault`'s diagnostic naming
-      `20261116120000_harness_retro.sql`. Only `cloud-off` is a decline.
-    - **Scan completion protocol (R3-H3)**: the scan row is ALWAYS written, last, by
-      `retro.scanComplete`, with `completed = (every listed file read cleanly) AND (every persisted
-      session snapshot returned written or superseded)` — the CLI holds the per-session outcomes in
-      memory for that one run. A `spilled` or `lost` snapshot makes that scan `completed: false`:
-      its range is not coverage evidence. A later drain of the spill does **not** upgrade the scan
-      row — by design: the next complete scan of the range restores coverage. Coverage can therefore
-      only be under-claimed (→ `unmeasured`), never over-claimed. A failed write
-      spills through the existing seam and is drained by the existing `write-spill drain`, so
-      recovery does not depend on the transcript still existing. The scan row is written by the
-      second registered writer `retro.scanComplete` (`rowKey: scan_id`) per the completion
-      protocol above.
-    - Only sessions whose `repo_uuid` equals the running repo's are persisted; others are
-      `persisted:false, reason:'other-repo'` (consumers are not on one store). Cloud off →
-      `persisted:false, reason:'cloud-off'`, everything else still runs (#16).
+13. **`enforce` / `reject` — idempotent closure (H7).** A **preflight** validates every input
+    (identity is a candidate of the scan or `--force-unscanned`; the test qualifies per the registry
+    rules; the summary is public-safe) and writes nothing on failure. Then (1) the registry append,
+    under the registry's own lock (`withFileLock` on `.harness-retro/decisions.json.lock`), atomic,
+    idempotent on `identity`; (2) for a `tripwire:` identity whose memory is `type: friction`, the
+    EXISTING `frictionLink(kind:'test', ref: <test>)` — idempotent — so `memory_friction.resolved`
+    flips through the existing seam. **v1 does not edit `MEMORY.md`** (cut 3): retiring the
+    tripwire line is a human edit in the fix PR; the memory file is kept.
+14. **Store — none in v1 (cut 1).** The effect metric reads the local scan artifacts (component 9),
+    which outlive the transcripts they were derived from (pruned after 60 days vs Claude Code's
+    ~30-day transcript cleanup). The cost of that choice is named: effect evidence is per machine and
+    per account, and a deleted `.audit/harness-retro/` loses it. Promote to a store only when a
+    measured need appears (e.g. an effect verdict that needs another machine's sessions).
 
-### Why the existing friction tables are NOT the persistence layer (evaluated, not dismissed)
+### The existing friction tables — what v1 reuses, and what they cannot carry
 
-- `memory_friction` mirrors `type: friction` memory files keyed `UNIQUE (repo_id, memory_name)`;
-  `frictionMirror` (`commands.mjs:321`) tombstones every row whose memory file is absent on a complete
-  scan — a retro fingerprint has no memory file, so the next `quality mirror` would deactivate it.
-  It also holds no per-occurrence timestamps, so the effect metric cannot be computed from it.
-- `friction_log` is free-text, append-only and unkeyed — a rescan would double-count and there is no
-  uniqueness constraint to make a replay idempotent.
-- **Reused instead**: `frictionLink` (tripwire closure for friction-typed memories),
-  `resolveHarnessMemoryDir`, `claudeConfigDir`, `redactSecrets` / `preWriteSecretGate`,
-  `withFileLock` / `atomicWriteFileSync`, `resolveRepoIdentity`, `durableWrite` + `withTx`,
-  `isCloudEnabled`.
+- **Reused**: `memory_friction.mitigation_refs` + its generated `resolved` column are the
+  enforcing-link store for friction-typed tripwires, written through the existing `frictionLink`
+  (`commands.mjs:416`). The committed `.harness-retro/decisions.json` is the enforcing link for
+  everything else, reviewed in the fix PR.
+- **Cannot carry the scan's derived rows**: `memory_friction` mirrors `type: friction` memory files
+  keyed `UNIQUE (repo_id, memory_name)`, and `frictionMirror` (`commands.mjs:321`) tombstones every
+  row whose memory file is absent on a complete scan — a fingerprint row with no memory file would
+  be deactivated by the next `quality mirror`. It also has no per-session occurrence column, which
+  the before/after metric needs (numerator AND denominator). `friction_log` is free text with no
+  key, so a rescan would double-count. Carrying the rows there would mean encoding counts in prose.
+- **Therefore v1 stores the derived rows nowhere but local artifacts** rather than add a table it
+  cannot yet show a need for (the constraint: no new table without a proven need).
+- **Also reused**: `resolveHarnessMemoryDir`, `claudeConfigDir`, `redactSecrets` /
+  `preWriteSecretGate`, `withFileLock` / `atomicWriteFileSync`, `resolveRepoIdentity`.
 
 ### Telemetry — the effect metric, computable (H3, H9)
 
@@ -348,31 +311,51 @@ Coverage is evidence of reading, not of session existence: a session started in 
 of a completed scan was necessarily modified at or after `since`, so the scan listed it if it still
 existed. Restricting `P` to accounts in `A` keeps the population the same on both sides of `t`
 (AGENTS.md: a figure compared over time is a trend only if the population is stable). Output
-carries `window`, `accounts`, counts, both rates and the thresholds. Source: the store when cloud is
-on; otherwise the union of local scan artifacts (`source:'local-scan'`), same function, same rules.
+carries `window`, `accounts`, counts, both rates and the thresholds. Source (v1): the union of the
+local scan artifacts on this machine (`source:'local-scan'`).
 
 ### Cadence
 
-- **Skill**: `/harness-retro`, at the end of a coordinator (or any) session.
+- **Skill**: `/harness-retro` at the end of every coordinator (or any) session.
   `skills/fleet/references/ending-a-session.md` gains one step pointing at it — the fleet SKILL.md
   cannot grow (over the size ratchet).
-- **Periodic**: `scan --persist` is the scan-only mode a periodic runner would call; it writes
-  `heartbeat.json`, and `status` reports a heartbeat older than 8 days loudly. Registering it with
-  the local weekly maintenance runner is **deferred** (§8) — no silent cron is added here.
+- **No periodic run in v1** (cut 2): no scheduler, no heartbeat. `status` reports the last scan's age.
 
 ### Right-sizing gate
 
 - **Band-aid extreme**: a grep script printing top error strings — no fingerprint identity, no
-  "already exists" check, no closure, no effect; lessons stay prose.
-- **Over-engineered extreme**: an always-on daemon tailing transcripts, an LLM API judge with its own
-  provider seam, embedding clusters, a proposals workflow table, auto-PRs, mutation-testing every fix.
-- **Chosen**: a deterministic batch scanner + the session's own model as judge + a committed decision
-  registry + three derived tables. Each piece serves a stated requirement: cross-session recurrence
-  (fingerprint + aggregate), no duplication (inventory), propose-never-apply (registry is appended in
-  a human-approved PR), "names the failure and ships a check" (Zod contract + registry test), the
-  before/after metric (scans for coverage, sessions for the denominator, occurrences for the
-  numerator; transcripts expire, so the store is what keeps the before-window; `CLAUDE_CONFIG_DIR`
-  is per-account, so one store aggregates accounts).
+  "already exists" check, no evidence contract, no effect; lessons stay prose.
+- **Over-engineered extreme**: an always-on daemon, a new store schema, an LLM API judge, embedding
+  clusters, automated MEMORY.md surgery, a dashboard, a scheduler.
+- **Chosen v1 — the smallest structurally honest version** (constraint from the coordinator,
+  2026-11-16): the deterministic scanner, fingerprints and cross-session counts, the existing-harness
+  check, and a ranked proposal report whose every item names a layer and a positive control, with
+  the evidence checked against the scan.
+
+**Cut from v1, and why** — each was built in an earlier revision of this branch and removed:
+
+1. **The audit-store tables + migration** (`harness_retro_scans/_sessions/_occurrences`, a
+   durable snapshot writer, a DB suite). The existing friction tables cannot carry the rows (above),
+   and v1 has no proven need for cross-machine persistence: local artifacts back the effect metric.
+   Removing it also removes a migration every store would have to apply before `main` moves.
+2. **A periodic / scheduled run and its heartbeat.** Cadence is "end of every coordinator session";
+   measure whether that is enough before adding a scheduler.
+3. **Automated memory retirement** (frontmatter mark, moving `MEMORY.md` lines to an enforced
+   index, two-direction consistency checks). v1 lists promotion candidates; a human edits the index.
+4. **Judging more than the top few.** The judge sees the top 5 candidates by default; the report
+   still lists counts for the rest.
+5. **Any dashboard.** The markdown report and `--json` envelope are the output.
+
+**Kept, because each is a current requirement**: the effect metric (asked for explicitly) computed
+from local artifacts; the committed decision registry and its `npm test` validation (the "ships
+with a check proving it fires" rule); evidence-checked `record`; the `frictionLink` reuse.
+
+**Cost of one retro run** (measured 2026-11-16 on this machine, which had ~45 other node processes
+running): the scan is deterministic — **zero model tokens**, **22 s for 7 days** (1,188 transcript
+files, 133 in-scope sessions), 112–131 s for 14 days (3,307 files); the default window is therefore
+7 days. The judging step reads the top-5 candidates plus promotion candidates: **~5.3 KB ≈ 1.3 k
+input tokens**, plus the model's own proposal output (a few hundred tokens per proposal). That is
+cheap enough to run at the end of every coordinator session.
 
 **Manual vs scripted**: scripted — the only manual steps are the judgment and the human approval.
 
@@ -387,8 +370,8 @@ on; otherwise the union of local scan artifacts (`source:'local-scan'`), same fu
   extractors (#4). A new kind = one extractor entry + a weight; a new inventory surface = one list
   entry; a new layer = one enum value.
 - **Fingerprint evolution** is explicit (`FINGERPRINT_VERSION`, component 5).
-- **Fleet scope**: `--fleet` reports every resolved repo; persistence stays repo-local, so a consumer
-  moving store needs no change here.
+- **Fleet scope**: `--fleet` reports every resolved repo; a fleet scan is never effect evidence for
+  this repo (only repo-local scans are).
 
 ## 7. File-Level Plan
 
@@ -422,42 +405,11 @@ on; otherwise the union of local scan artifacts (`source:'local-scan'`), same fu
   reject; the ordered idempotent closure, component 13).
 - `scripts/lib/friction/retro/report.mjs` (create) — `renderScanReport`, `renderProposals` (markdown).
 
-**Store + migration**
-
-- `supabase/migrations/20261116120000_harness_retro.sql` (create) —
-  - `harness_retro_scans (scan_id text PRIMARY KEY, account_key text NOT NULL, repo_uuid uuid NOT NULL,
-    fingerprint_version int NOT NULL, requested_since timestamptz NOT NULL, requested_until timestamptz
-    NOT NULL, files_listed int NOT NULL, files_read int NOT NULL, read_errors int NOT NULL,
-    completed boolean NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), CHECK (requested_since <
-    requested_until))`
-  - `harness_retro_sessions (session_key text PRIMARY KEY, repo_uuid uuid NOT NULL, account_key text NOT
-    NULL, origin text NOT NULL CHECK (origin IN ('interactive','automated')), started_at timestamptz NOT
-    NULL, fingerprint_version int NOT NULL, signal_count int NOT NULL, last_scan_id text NOT NULL,
-    observed_until timestamptz NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())`
-  - `harness_retro_occurrences (session_key text NOT NULL REFERENCES harness_retro_sessions(session_key)
-    ON DELETE CASCADE, fingerprint text NOT NULL, kind text NOT NULL, tool text NOT NULL DEFAULT '',
-    occurrences int NOT NULL CHECK (occurrences > 0), first_at timestamptz, last_at timestamptz,
-    PRIMARY KEY (session_key, fingerprint))`
-  - indexes `(repo_uuid, started_at)` on sessions, `(fingerprint)` on occurrences, `(repo_uuid,
-    account_key, completed)` on scans; RLS enabled, no anon policy (mirrors `memory_friction`).
-  - `repo_uuid` carries no FK to `audit_repos` deliberately: a session from a repo with no
-    `audit_repos` row in THIS store must still count; the identity is the stable uuidv5, not a row.
-  - No label / no free-text column (egress table).
-- `scripts/lib/store/harness-retro.mjs` (create) — `writeSessionSnapshot(snapshot)` (one `withTx`:
-  upsert session, delete + insert occurrences; returns a receipt `{applied, rows, reason?, error?}`),
-  `writeScanRow(row)`, `readRetroWindow({repoUuid, fromTs, toTs, fingerprintVersion})`,
-  `readCompletedScans({repoUuid})`. Zod `.strict()` row schemas at the boundary. Graceful cloud-off
-  (`reason:'cloud-off'`, the only decline); a superseded snapshot is `applied:true, reason:'superseded'`; schema faults rethrow.
-- `scripts/lib/audit-store-writers.mjs` (modify) — register `retro.sessionSnapshot`
-  (`rowKey: p => p.session_key`) and `retro.scanComplete` (`rowKey: p => p.scan_id`) through the
-  existing `receipt()` translation; update the keyed-writers docstring list.
-- `scripts/db-test-container.mjs` + `.github/workflows/postgres-parity.yml` (modify) — enrol
-  `tests/harness-retro-store.db.test.mjs` in lockstep.
-- Schema fixture regenerated via `npm run db:local:regen` if the parity/coupling checks require it.
+**Store** — none in v1 (right-sizing cut 1).
 
 **CLI**
 
-- `scripts/harness-retro.mjs` (create) — verbs `scan [--since 14d] [--fleet] [--persist] [--top N]`,
+- `scripts/harness-retro.mjs` (create) — verbs `scan [--since 7d] [--fleet] [--top 5]`,
   `record --scan <id|latest> --stdin`, `enforce --identity <fingerprint:fp|tripwire:name> --scan <id|latest> --test p --layer l
   --summary s [--memory name] [--force-unscanned]` (evidenceFingerprints, kind and tool are resolved
   from the named scan: `[fp]` for a fingerprint, the tripwire's matched set for a tripwire; a
@@ -509,12 +461,8 @@ on; otherwise the union of local scan artifacts (`source:'local-scan'`), same fu
   serialised by the registry lock).
 - `tests/harness-retro-cli.test.mjs` — cross-process end-to-end over a temp `CLAUDE_CONFIG_DIR`:
   UNMEASURED on empty and on format drift; `scan` → artifact → `record` from a SECOND process;
-  cloud-off persists nothing; other-repo not persisted; egress: a planted secret and a planted user
+  other-repo and unresolved sessions excluded; v1 has no store flag (`--persist` is refused); egress: a planted secret and a planted user
   sentence never appear in any artifact or store payload.
-- `tests/harness-retro-store.db.test.mjs` (DB-gated) — snapshot replace-semantics (rescan removes a
-  vanished occurrence), transaction atomicity (a failing insert leaves no session row), a delayed
-  OLDER snapshot returns `{applied: true, rows: 0, reason: 'superseded'}` and changes nothing, two concurrent snapshots end with the newer one, scan
-  row `completed`, window read; plus an unmigrated-store case (42P01 rethrown, not declined).
 
 ### 7b. Implementation Phases
 
@@ -538,26 +486,18 @@ proposals and recorded decisions. Files: `scripts/lib/friction/retro/aggregate.m
 `tests/harness-retro-registry.test.mjs` (create), `tests/harness-retro-proposal-schema.test.mjs`
 (create), `tests/harness-retro-effect.test.mjs` (create), `tests/harness-retro-closure.test.mjs` (create).
 
-**Phase 3 — Store**: migration, store module, durable writer registration, DB suite enrolment.
-Files: `supabase/migrations/20261116120000_harness_retro.sql` (create),
-`scripts/lib/store/harness-retro.mjs` (create), `scripts/lib/audit-store-writers.mjs` (modify),
-`scripts/db-test-container.mjs` (modify), `.github/workflows/postgres-parity.yml` (modify),
-`tests/harness-retro-store.db.test.mjs` (create).
+**Phase 3 — CLI**: verbs, envelopes, local artifacts, effect from local artifacts, sync declaration.
+Files: `scripts/harness-retro.mjs` (create), `package.json` (modify), `scripts/.cli-catalog.json` (modify),
+`scripts/lib/sync-entry-lists.mjs` (modify), `scripts/lib/sync-isolation-verify.mjs` (modify),
+`tests/harness-retro-cli.test.mjs` (create).
 
-**Phase 4 — CLI**: verbs, envelopes, artifacts, heartbeat, persistence through `durableWrite`,
-effect from store or local artifacts, sync declaration. Files: `scripts/harness-retro.mjs` (create),
-`package.json` (modify), `scripts/lib/sync-entry-lists.mjs` (modify),
-`scripts/lib/sync-isolation-verify.mjs` (modify), `tests/harness-retro-cli.test.mjs` (create).
-
-**Phase 5 — Skill + roster**: the skill and its references, fleet pointer, roster/count updates.
+**Phase 4 — Skill + roster**: the skill and its references, fleet pointer, roster/count updates.
 Files: `skills/harness-retro/SKILL.md` (create), `skills/harness-retro/references/judging-candidates.md`
 (create), `skills/harness-retro/references/effect-and-closure.md` (create),
 `skills/fleet/references/ending-a-session.md` (modify), `scripts/lib/store/skill-census.mjs` (modify),
 `tests/skill-census.test.mjs` (modify), `AGENTS.md` (modify), `docs/reference/skill-roster.md` (modify).
 
-**Close-out (not a phase)**: `npm run skills:regenerate`, `npm run bundle:deps`,
-`npm run db:local:regen` (if required), `npm run check`, `npm test`, `npm run db:local` for the
-DB suite, a real `node scripts/harness-retro.mjs scan --since 7d` on this machine (pre-ship
+**Close-out (not a phase)**: `npm run skills:regenerate`, `npm run bundle:deps`, `npm run check` (incl. `npm test`), a real `node scripts/harness-retro.mjs scan --since 7d` on this machine (pre-ship
 empirical verify), `npm run plans:index`.
 
 ## 8. Risk & Trade-off Register
@@ -578,8 +518,8 @@ empirical verify), `npm run plans:index`.
     round trip, the `archive_session` hook-rewrite) — the retro's first proposals, each its own PR
     after human approval ("propose, never apply"). Independence: none of them is on a code path the
     retro calls.
-  - Registering `scan --persist` with the local weekly maintenance runner (the retro works without it;
-    only the passive cadence is missing).
+  - A periodic / scheduled run (cut 2), a store (cut 1), automated tripwire retirement (cut 3) — each
+    re-enters only with a measured need.
   - Scripting the coordinator chores the retro will flag (merge-on-green-at-head watcher, archive +
     worktree removal, refusing to fast-forward CES main while a store is behind) — each a separate
     proposal through this pipeline.
@@ -590,9 +530,8 @@ empirical verify), `npm run plans:index`.
   effect branch and closure step — including the direction each must NOT fire.
 - **Integration**: the CLI cross-process over a synthetic `CLAUDE_CONFIG_DIR` (two slug dirs incl. a
   worktree slug, a subagent file, a truncated last line).
-- **DB**: `tests/harness-retro-store.db.test.mjs`, enrolled in both runners.
-- **Tier-3 egress (same commit)**: the CLI test asserts the store payload keys are exactly the
-  allowlist and that planted secret/user text never reaches any artifact or payload.
+- **Tier-3 egress (same commit)**: the CLI test asserts that planted secret/user text never reaches
+  any artifact the CLI writes (v1 writes no store payload).
 
 ### Proof plan
 
@@ -600,8 +539,7 @@ empirical verify), `npm run plans:index`.
 |---|---|---|---|
 | Detects recurring failures | fixture: one error in 3 sessions + a one-off | one `strong` candidate; the one-off counted, not ranked | aggregate test |
 | Empty or unreadable scan is UNMEASURED | empty config dir; lines that assemble zero sessions | `measured:false` + named reason, never `candidates:[]` alone | CLI test |
-| No write cloud-off / other-repo | stub store; two-repo fixture | zero store calls; `persisted:false` + reason | CLI test |
-| Rescan reconciles | DB: snapshot, then snapshot without one fp | occurrence row gone, session row updated | store DB test |
+| No store write; other repos excluded | two-repo fixture; `--persist` | other-repo/unresolved counted, not ranked; `--persist` exits 2 | CLI test |
 | Three-things + evidence honesty | proposal missing `positiveControl`; inflated sessions | `record` refuses naming the field / the mismatch | schema test |
 | Registry ties fix to failure | entry whose test lacks the fingerprint | refused; committed registry validates | registry test (red-then-green) |
 | Closure is re-runnable | fail after step 2, re-run | end state identical to an uninterrupted run | closure test |
@@ -614,14 +552,12 @@ empirical verify), `npm run plans:index`.
   - Coupling: the pure core — Phase 2 consumes Phase 1's session/occurrence shape and the
     fingerprint/label contract; auditing them together lets the wiring pass check that seam.
   - author-tier: standard
-- **Cluster B** — Phases 3–4 — fix-gate: yes
-  - Coupling: the CLI is the only caller of the store writers; persistence semantics (transactional
-    snapshot, scan completion, repo-local, cloud-off) live on the seam between them.
-  - Additional files: `tests/audit-store-durability-call-site.test.mjs` (modify — classify the new
-    `superseded` receipt reason), `.audit-loop/domain-map.json` (modify — declare `scripts → friction`
-    for the CLI entry point).
+- **Cluster B** — Phase 3 — fix-gate: yes
+  - Coupling: the CLI composes Cluster A's modules into the cross-process artifact hand-off.
+  - Additional files: `.audit-loop/domain-map.json` (modify — declare `scripts → friction`),
+    `tests/fixtures/cross-skill-envelopes.json` / `tests/dashboard-*.test.mjs` (modify — roster 18).
   - author-tier: standard
-- **Cluster C** — Phase 5 — fix-gate: final
+- **Cluster C** — Phase 4 — fix-gate: final
   - Coupling: the skill's field list and verbs are pinned to Cluster A's `ProposalSchema` and
     Cluster B's CLI.
   - Additional files: `skills/harness-retro/gate-contract.json` (create), `skills/harness-retro/references/worktree-preflight.md`
@@ -677,3 +613,10 @@ empirical verify), `npm run plans:index`.
   the card asks about already exists — `durableWrite` + `withTx`; this plan's writer uses it with an
   `observed_until` freshness guard rather than adding a second mechanism. Debt `fbc38b29` is about
   OTHER writers' replay ordering and stays independent (this plan's writer does not call them).
+- **v1 right-sizing cut (after the audits, 2026-11-16)** — on the coordinator's relayed constraint
+  (smallest structurally honest v1; reuse the friction tables or prove they cannot carry the data;
+  defer scheduling, dashboards, automated retirement, wide LLM judging; name the cost): removed the
+  three-table migration, store module, durable writers and DB suite; the heartbeat; automated
+  tripwire retirement; default judged candidates 10 → 5; default window 14 d → 7 d; stricter
+  tripwire matching (71 → 4 candidates on the 14-day corpus). Removals only, plus one stricter
+  threshold; re-verified by the full test suite and a focused audit round on the changed files.

@@ -236,9 +236,9 @@ RECUR across sessions; the session model judges only those candidates and
 proposes the lowest enforcing layer (hook/gate > script > reference doc >
 AGENTS.md) with the failure, the change and a positive-control test. A human
 approves; the fix is its own PR carrying a `.harness-retro/decisions.json` entry,
-validated in `npm test`. Also promotes `MEMORY.md` tripwires that keep firing,
-and measures recurrence before vs after a fix landed. Derived rows only
-(migration `20261116120000_harness_retro.sql`); transcripts never leave disk.
+validated in `npm test`. Also lists `MEMORY.md` tripwires that keep firing,
+and measures recurrence before vs after a fix landed (from local derived scan
+artifacts; v1 writes nothing to the audit store). Transcripts never leave disk.
 Plan: [`harness-retro.md`](../plans/harness-retro.md).
 
 ---

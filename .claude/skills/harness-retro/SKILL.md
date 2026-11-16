@@ -21,7 +21,7 @@ description: |
 ## Usage
 
 ```
-/harness-retro                 — scan this repo's sessions (14 days), judge, propose
+/harness-retro                 — scan this repo's sessions (7 days), judge, propose
 /harness-retro --fleet         — report every repo on this account
 /harness-retro effect          — did an enforced fix reduce its failure?
 ```
@@ -35,7 +35,7 @@ description: |
 > `~/.audit-loop.env`, which every worktree reads.
 
 **Detect mechanically, judge with the model, enforce in the repo.** The scanner
-is deterministic and costs no model tokens (~10 s for a week of transcripts);
+is deterministic and costs no model tokens (10-25 s for a week of transcripts);
 you are the judgment step, and only for the top few candidates it hands you
 (default 5). **Propose, never apply.**
 
@@ -46,7 +46,7 @@ disk**. v1 writes only derived scan artifacts under `.audit/harness-retro/`
 ## Step 1 — Scan
 
 ```bash
-node scripts/harness-retro.mjs scan --since 14d
+node scripts/harness-retro.mjs scan
 ```
 
 Read the report. **`UNMEASURED` is not a clean result** — say what it scanned

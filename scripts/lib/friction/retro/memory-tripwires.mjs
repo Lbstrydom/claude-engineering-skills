@@ -15,10 +15,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'yaml';
-import { tokenise, containmentScore, COVERAGE_FLOOR } from './inventory.mjs';
+import { tokenise, containmentScore } from './inventory.mjs';
 
 export const INDEX_FILE = 'MEMORY.md';
 export const PROMOTION_MIN_SESSIONS = 2;
+/** Tripwire matching is STRICTER than the inventory hint: a tripwire is a short
+ *  description, so a low containment floor matched most of MEMORY.md on a 14-day
+ *  corpus (71 of ~90 tripwires, measured 2026-11-16). Both conditions must hold. */
+export const TRIPWIRE_FLOOR = 0.5;
+export const TRIPWIRE_MIN_SHARED = 3;
 const LINK_RE = /\[([^\]]+)\]\(([^)\s]+\.md)\)/g;
 const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 
@@ -73,7 +78,10 @@ export function scanTripwires({ memoryDir, fingerprints, sessionsByFingerprint, 
     const matched = [];
     for (const [fp, toks] of fpTokens) {
       // the LABEL is the short side; score how much of it the tripwire names
-      if (toks.size && containmentScore(toks, memTokens, idf) >= COVERAGE_FLOOR) matched.push(fp);
+      if (!toks.size) continue;
+      let shared = 0;
+      for (const t of toks) if (memTokens.has(t)) shared++;
+      if (shared >= TRIPWIRE_MIN_SHARED && containmentScore(toks, memTokens, idf) >= TRIPWIRE_FLOOR) matched.push(fp);
     }
     const sessions = new Set();
     let occurrences = 0;
