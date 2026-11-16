@@ -50,6 +50,7 @@ Which lens, not how it works — every mode, flag and mechanism is in the roster
 - **visual-audit** — the **paint** lens: math-first, deterministic; the VLM never gates.
 - **ship** — packaging and delivery.
 - **fleet** — beside the chain, not in it: coordinates CONCURRENT sessions (who is doing what, no duplicate work, one combined test run before landing). It does not plan, audit or ship.
+- **harness-retro** — after sessions, not in the chain: mines past transcripts for failures that RECUR across sessions and proposes the lowest enforcing check for each. It never applies a change.
 
 ## `plan`
 
@@ -225,6 +226,20 @@ still surfaces it afterwards. `land --approve` is the one outward action and is
 never run without the user's explicit go-ahead in chat. Consumer config is an
 optional `.fleet.json` (`baseBranch`, `testCommand` incl. tiers, `mergeMethod`,
 `checks`). Plan: [`fleet-multi-session-coordination.md`](../plans/fleet-multi-session-coordination.md).
+
+## `harness-retro`
+
+The harness's own retro. A deterministic scanner reads recent Claude Code session
+transcripts on local disk, fingerprints failure signals (tool errors, denials,
+hook errors and blocks, refusals, retries, corrections) and ranks those that
+RECUR across sessions; the session model judges only those candidates and
+proposes the lowest enforcing layer (hook/gate > script > reference doc >
+AGENTS.md) with the failure, the change and a positive-control test. A human
+approves; the fix is its own PR carrying a `.harness-retro/decisions.json` entry,
+validated in `npm test`. Also lists `MEMORY.md` tripwires that keep firing,
+and measures recurrence before vs after a fix landed (from local derived scan
+artifacts; v1 writes nothing to the audit store). Transcripts never leave disk.
+Plan: [`harness-retro.md`](../plans/harness-retro.md).
 
 ---
 

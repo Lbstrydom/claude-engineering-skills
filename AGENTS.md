@@ -181,20 +181,21 @@
 
 ## Project Overview
 
-17 AI-pair-programming skills covering the development quality lifecycle, planning
+18 AI-pair-programming skills covering the development quality lifecycle, planning
 through code audit to live UX testing and shipping. Node.js, ESM only
 (`"type": "module"`); CLI scripts + skill files invoked by AI coding assistants.
 Renamed from `claude-audit-loop` in Phase E.
 
 ## Skill Chain
 
-17 skills; 16 run in this order: **plan → audit-plan → *(implement)* → audit-code
+18 skills; 16 run in this order: **plan → audit-plan → *(implement)* → audit-code
 → ux-lock → deploy → the four UI lenses → ship**, with `/cycle` driving the whole
 chain and pausing for human implementation. The four lenses are **disjoint** and
 run together on a UI PR — click-test (page DOM) ∥ persona-test (journey) ∥
 nav-audit (system IA) ∥ visual-audit (paint). `/fleet` sits beside the chain,
 coordinating concurrent sessions cooperatively
-(`references/coordinator-playbook.md`).
+(`references/coordinator-playbook.md`); `/harness-retro` runs after sessions,
+proposing checks for failures that recur across them (propose, never apply).
 
 Diagram, per-skill scope and depth (modes, flags, wave/lens design invariants) and
 the naming convention: [`skill-roster.md`](docs/reference/skill-roster.md) — read

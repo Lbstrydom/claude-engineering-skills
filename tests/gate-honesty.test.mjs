@@ -97,6 +97,9 @@ const PINNED_EXECUTABLE = {
   ship: ['guard-a-unscoped-commit-refused', 'guard-b-identity-is-a-precondition'],
   cycle: [],
   plan: [],
+  // 2026-11-16 (docs/plans/harness-retro.md): enforce refuses an identity no scan
+  // ranked, before any write — the trigger is a git checkout with no scan artifact.
+  'harness-retro': ['enforce-refuses-unscanned-identity'],
 };
 const PINNED_DOCUMENT_ONLY = {
   // `detector-blocks-convergence` (2026-08-01, green-but-unrealized Cluster B): the Step 5.0b
@@ -192,8 +195,10 @@ const PINNED_DOCUMENT_ONLY = {
   // in the store to build an oracle on (see the gate's reason).
   cycle: ['remediate-focused-audit-scope', 'audit-plan-skip-requires-explicit-mode', 'cluster-scope-preflight-exits-nonzero', 'cluster-start-ref-validated-on-use', 'preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory', 'autonomous-never-pushes-without-ship'],
   plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
+  // 2026-11-16: the judgment-side claims (see each reason); the CLI halves are pinned by the harness-retro suites.
+  'harness-retro': ['propose-never-apply', 'unmeasured-is-not-clean', 'record-refuses-bad-proposals', 'transcripts-never-leave-disk'],
 };
-const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'fleet', 'investigate', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship', 'skills', 'ux-lock', 'visual-audit'];
+const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'fleet', 'investigate', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship', 'skills', 'ux-lock', 'visual-audit', 'harness-retro'];
 
 describe('gate-honesty — real skills/', () => {
   it('loads the current repo contracts and runs every oracle clean, printing the coverage report', async () => {
@@ -261,7 +266,8 @@ describe('gate-honesty — real skills/', () => {
     // 15 -> 16: +1 audit-code (concern-decision-required, /audit-code Step 3.5,
     //   2026-09-22). The stderr match ('no concern decision') is load-bearing --
     //   exit 2 is also this CLI's code for argv and schema errors.
-    assert.equal(totalExecutable, 18); // +1 ux-lock strict-selectors (Phase C final); +2 round-caps (audit-plan, audit-code; 2026-10-25)
+    assert.equal(totalExecutable, 19); // +1 harness-retro enforce-refuses-unscanned-identity (2026-11-16)
+    // was 18: // +1 ux-lock strict-selectors (Phase C final); +2 round-caps (audit-plan, audit-code; 2026-10-25)
     // 35 → 36: +1 ship (unremediated-acceptances-never-blocks, /ship Step 0.5e, 2026-07-27).
     // 36 → 37: +1 ship (unit-test-lock-refuses-unverifiable-claims, 2026-07-29).
     // 37 → 38: +1 ship (final-review-credit-advisory-exit-zero, 2026-07-29).
@@ -324,7 +330,8 @@ describe('gate-honesty — real skills/', () => {
     //   openai-audit.mjs exits 4 past the soft cap, and the cli-exit scenarios drive the real CLI to that refusal.
     // 56 -> 57: +1 cycle (autonomous-never-pushes-without-ship, 2026-11-15, ai-organiser PR #111/#112). Document-only: /cycle
     //   has no exit code; the prose is pinned by tests/cycle-autonomous-ship-gate.test.mjs.
-    assert.equal(totalDocOnly, 57);   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
+    assert.equal(totalDocOnly, 61); // +4 harness-retro (2026-11-16)
+    // was 57:   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));

@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "skill": "harness-retro",
+  "gates": [
+    {
+      "id": "enforce-refuses-unscanned-identity",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "statedIn": "skills/harness-retro/SKILL.md",
+      "stated": "**`enforce` refuses, writing nothing, an identity the scan did not rank.** It",
+      "implementation": "scripts/harness-retro.mjs",
+      "scenario": "retro-enforce-unscanned-refusal",
+      "tests": [
+        "tests/gate-honesty.test.mjs",
+        "tests/harness-retro-closure.test.mjs"
+      ],
+      "proof": "process"
+    },
+    {
+      "id": "propose-never-apply",
+      "kind": "document-only",
+      "reason": "'Propose, never apply' is a NEGATIVE guarantee about the judging session: the model must not edit the harness itself. The CLI has no verb that edits a hook, gate, script or doc — that much is structural — but whether the session following the skill edits files by hand is model behaviour no exit code can assert.",
+      "statedIn": "skills/harness-retro/SKILL.md",
+      "stated": "(default 5). **Propose, never apply.**"
+    },
+    {
+      "id": "unmeasured-is-not-clean",
+      "kind": "document-only",
+      "reason": "The CLI half is executable and pinned by tests/harness-retro-cli.test.mjs (an empty account and a format-drifted transcript both return measured:false with a named reason). The STATED gate is the reporting rule — the model must not relay an UNMEASURED scan as a clean result — which is a judgement about prose the session writes, not an exit code."
+    },
+    {
+      "id": "record-refuses-bad-proposals",
+      "kind": "document-only",
+      "reason": "Enforced by code (checkProposalsAgainstScan in scripts/lib/friction/retro/proposal-schema.mjs; record exits 1) and pinned by tests/harness-retro-proposal-schema.test.mjs and tests/harness-retro-cli.test.mjs (inflated evidence refused from a second process, via stdin and via --file). Not yet bound to a cli-exit scenario: the fixture needs a schema-valid scan artifact plus a proposals file — constructible from files, so this is a candidate for promotion to executable, declared here rather than claimed as a binding that does not exist yet.",
+      "statedIn": "skills/harness-retro/SKILL.md",
+      "stated": "`record` refuses a proposal missing any of the three things, an `identity`"
+    },
+    {
+      "id": "transcripts-never-leave-disk",
+      "kind": "document-only",
+      "statedIn": "skills/harness-retro/SKILL.md",
+      "stated": "Transcripts are read from the account's config root and **never leave local",
+      "reason": "Structural rather than a refusal: the scanner has no network or upload code path and v1 writes nothing to the audit store — only gitignored local scan artifacts holding counts, hashes and redacted labels. Pinned by tests/harness-retro-cli.test.mjs (a planted secret and a planted user sentence never reach any artifact) and tests/harness-retro-fingerprint.test.mjs; an exit-code oracle cannot assert an absence of egress."
+    }
+  ],
+  "ignoredCandidates": [
+    {
+      "line": "node scripts/harness-retro.mjs enforce --identity fingerprint:0123456789abcdef --scan latest --test \"$TEST\" --layer gate --summary \"hook commands resolve from the project dir\"",
+      "reason": "A command example — the verb `enforce` is the CLI subcommand's NAME, not a claim. The enforce gate itself is the `enforce-refuses-unscanned-identity` contract above."
+    },
+    {
+      "line": "also refuses a test `npm test` would not run and a summary carrying a path.",
+      "reason": "Continuation of the `enforce-refuses-unscanned-identity` sentence. Enforced in code (testPathProblems / summaryProblems in scripts/lib/friction/retro/registry.mjs, called from the closure preflight) and pinned by tests/harness-retro-registry.test.mjs and tests/harness-retro-closure.test.mjs; the cli-exit binding is carried by the first half of the sentence."
+    },
+    {
+      "line": "report them as such, never as \"no effect\".",
+      "reason": "A reporting instruction to the model (how to word a pending/unmeasured effect verdict), not a refusal any code performs; the verdicts themselves carry their reasons in the effect output, pinned by tests/harness-retro-effect.test.mjs."
+    },
+    {
+      "line": "denials, hook errors and blocks, refusals, retries, user corrections), check",
+      "reason": "Frontmatter description prose listing the signal KINDS the scanner detects; the words name failure classes, not a claim this skill enforces."
+    },
+    {
+      "line": "lowest enforcing layer (hook/gate > script > reference doc > AGENTS.md) with",
+      "reason": "Frontmatter description of the enforcement ladder the model applies when proposing; a summary, not a gate."
+    },
+    {
+      "line": "the failure it prevents, the exact change and a positive-control test. Never",
+      "reason": "Frontmatter summary of the three-things contract and of propose-never-apply; both are dispositioned as their own gates (record-refuses-bad-proposals, propose-never-apply)."
+    },
+    {
+      "line": "- `already-covered` — a hook, gate, skill or memory already handles it; name",
+      "reason": "Definition of the `already-covered` verdict for the judge; describes what other surfaces enforce, not something this skill enforces."
+    },
+    {
+      "line": "propose only if its round trip is the cost (e.g. rewrite instead of block).",
+      "reason": "Judging guidance for the `hook_block` kind (when a recurring block warrants a proposal); a judgement call, no mechanical claim."
+    },
+    {
+      "line": "shape it validates (keys are exact; `.strict()` refuses extras):",
+      "reason": "Continuation of the record-refuses-bad-proposals sentence, introducing the example; the refusal is that gate."
+    },
+    {
+      "line": "\"failurePrevented\": { \"summary\": \"hook commands fail when the session cwd is not the repo root\", \"sessions\": 8, \"occurrences\": 51 },",
+      "reason": "A line of the JSON example envelope — data, not a claim. The example is validated against the emitted schema by tests/harness-retro-proposal-schema.test.mjs."
+    },
+    {
+      "line": "\"layer\": \"gate\",",
+      "reason": "A line of the JSON example envelope — data, not a claim."
+    },
+    {
+      "line": "\"positiveControl\": { \"test\": \"tests/<new-check>.test.mjs\", \"assertion\": \"a hook command with a relative path fails the test\" },",
+      "reason": "A line of the JSON example envelope — data, not a claim."
+    },
+    {
+      "line": "\"reason\": \"the grep nudge hook already blocks this before it runs\",",
+      "reason": "A line of the JSON example envelope — an example `reason` value, not a claim this skill makes."
+    }
+  ]
+}
