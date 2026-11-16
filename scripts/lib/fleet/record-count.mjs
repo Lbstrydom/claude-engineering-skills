@@ -141,7 +141,9 @@ export function refreshRecordCache({ cacheDir, cwd, now, run = runRecordStatus, 
     const held = withFileLockSync(path.join(cacheDir, `${RECORD_CACHE_FILE}.lock`), { attempts: 20 }, () => {
       const current = readRecordCache(cacheDir);
       const prev = current.state === 'ok' ? current.record : null;
-      if (prev && Date.parse(prev.attemptedAt) > toMs(startedAt)) return { record: prev, written: false };
+      // `>=`, not `>` (C-R5-M1): an invalidation stamped in the same millisecond as this refresh's start may postdate the
+      // measurement, so a tie goes to what is already there.
+      if (prev && Date.parse(prev.attemptedAt) >= toMs(startedAt)) return { record: prev, written: false };
       const record = nextRecordCache(measurement, prev, startedAt);
       CacheSchema.parse(record);
       atomicWriteFileSync(path.join(cacheDir, RECORD_CACHE_FILE), `${JSON.stringify(record, null, 2)}\n`);

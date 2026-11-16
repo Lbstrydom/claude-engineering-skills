@@ -48,8 +48,12 @@ const mergedSomething = (r) => Boolean(r.ok || r.run?.steps?.some((s) => s.step 
 const withRecordNudge = (r, cmd, ctx = null) => {
   if (!mergedSomething(r)) return r;
   // The cached count is stale the moment anything merges (C-R4-H2): invalidate it so `next` cannot stay quiet on it.
-  if (ctx) invalidateRecordCache(unregisteredCacheDir(ctx.cwd), ctx.now);
-  return { ...r, text: `${r.text}\n${LAND_RECORD_NUDGE(recordCommandFor(cmd), cmd)}` };
+  // Stamped NOW — after the merge, never the verb's start time (C-R5-H1) — so a refresh that began before the merge loses
+  // the ordering check. A failed invalidation is said, not swallowed (C-R5-H2).
+  const stamp = new Date(Math.max(Date.now(), ctx?.now instanceof Date ? ctx.now.getTime() : 0));
+  const invalidated = ctx ? invalidateRecordCache(unregisteredCacheDir(ctx.cwd), stamp) : false;
+  const warn = ctx && !invalidated ? `\nwarning: the records cache could not be invalidated — run \`${cmd} status\` before trusting \`${cmd} next\`'s records line` : '';
+  return { ...r, text: `${r.text}\n${LAND_RECORD_NUDGE(recordCommandFor(cmd), cmd)}${warn}`, recordCacheInvalidated: invalidated };
 };
 
 function validId(id) {

@@ -130,3 +130,18 @@ describe('audit C-R4 regressions', () => {
     assert.match(runRecordStatus(script, '.', { spawn: () => ({ status: 0, stdout: `noise {${JSON.stringify(env())}` }) }).reason, /exactly one JSON value/);
   });
 });
+
+describe('audit C-R5 regressions', () => {
+  it('M1: a refresh that started in the same millisecond as an invalidation does not overwrite it', async () => {
+    const { invalidateRecordCache } = await import('../scripts/lib/fleet/record-count.mjs');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'record-count-tie-'));
+    invalidateRecordCache(dir, NOW);
+    const r = refreshRecordCache({ cacheDir: dir, cwd: dir, now: NOW, run: () => interpretRecordStatus(env({ counts: { unrecorded: 0, unknown: 0 } })), script: 'x' });
+    assert.equal(r.written, false);
+    assert.equal(readRecordCache(dir).record.state, 'unmeasured');
+  });
+  it('H2: an invalidation that cannot be written says so', async () => {
+    const { invalidateRecordCache } = await import('../scripts/lib/fleet/record-count.mjs');
+    assert.equal(invalidateRecordCache(null, NOW), false);
+  });
+});
