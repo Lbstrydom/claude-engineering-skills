@@ -190,7 +190,7 @@ function build(ctx, flags, deps) {
   const suiteNote = !probeTier && !dryRun && config.fullSuite === 'train' && r.ok && r.train && ranTiers.length
     // Said of the repo's policy, never of each source (audit R2 M1): a branch may have been made ready under "session" or by
     // an older bundle, and nothing records which.
-    ? `full suite: .fleet.json fullSuite: "train" defers it to the train; this train's pre-land tiers ran:${ranTiers.join(', ')}${r.train.result === 'green' || r.train.result === 'green-after-rerun' ? '' : ' — NOT green, so the deferred suite has not passed'}` : null;
+    ? `full suite: .fleet.json fullSuite: "train" defers it to the train; this train's pre-land tiers ran: ${ranTiers.join(', ')}${r.train.result === 'green' || r.train.result === 'green-after-rerun' ? '' : ' — NOT green, so the deferred suite has not passed'}` : null;
   const notes = [staleNote, suiteNote].filter(Boolean);
   const withStale = (x) => (notes.length ? { ...x, ...(staleNote ? { staleReady } : {}), text: `${x.text}\n${notes.join('\n')}` } : x);
   if (!r.ok) return withStale({ ...r, text: `${r.code === 'error' ? 'ERROR' : 'REFUSED'}: ${r.reason}` });
