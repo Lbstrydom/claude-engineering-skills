@@ -98,7 +98,7 @@ shape it validates (keys are exact; `.strict()` refuses extras):
       "failurePrevented": { "summary": "hook commands fail when the session cwd is not the repo root", "sessions": 8, "occurrences": 51 },
       "layer": "gate",
       "change": { "files": [".claude/settings.json"], "description": "prefix every hook command with \"$CLAUDE_PROJECT_DIR\"" },
-      "positiveControl": { "test": "tests/hook-command-paths.test.mjs", "assertion": "a hook command with a relative path fails the test" },
+      "positiveControl": { "test": "tests/<new-check>.test.mjs", "assertion": "a hook command with a relative path fails the test" },
       "coordinatorChore": false
     },
     {
@@ -117,10 +117,10 @@ layer can enforce it). Present the rendered `proposals-<id>.md` to the human.
 
 ## Step 4 — After a human approves one
 
-The fix is its **own** PR. In that branch, once its test exists:
+The fix is its **own** PR. In that branch, once its test exists (`TEST` = that test's repo-relative path):
 
 ```bash
-node scripts/harness-retro.mjs enforce --identity fingerprint:0123456789abcdef --scan latest --test tests/hook-command-paths.test.mjs --layer gate --summary "hook commands resolve from the project dir"
+node scripts/harness-retro.mjs enforce --identity fingerprint:0123456789abcdef --scan latest --test "$TEST" --layer gate --summary "hook commands resolve from the project dir"
 ```
 
 **`enforce` refuses, writing nothing, an identity the scan did not rank.** It

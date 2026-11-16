@@ -60,7 +60,7 @@ Candidate: `hook_error`, tool `UserPromptSubmit`, label `bash: .claude/hooks/arc
 - `failurePrevented`: hook commands fail whenever the session cwd is not the
   repo root (8 sessions, 51 occurrences — from the scan).
 - `change`: `.claude/settings.json` hook commands prefixed with `"$CLAUDE_PROJECT_DIR"`.
-- `positiveControl`: `tests/hook-command-paths.test.mjs` — a relative hook
+- `positiveControl`: `tests/hook-command-paths.test.mjs` (planned) — a relative hook
   command fails the test; the current file passes.
 
 ## What you must not do

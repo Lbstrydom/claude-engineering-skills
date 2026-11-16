@@ -15,14 +15,16 @@ import { scanTripwires } from './memory-tripwires.mjs';
  * @param {{decisions: {byFingerprint: Map<string, object>}, inventory: {docs: object[], errors: object[]}, memoryDir: string|null, top?: number}} ctx
  */
 export function analyseScan(scan, { decisions, inventory: inv, memoryDir, top = 10 }) {
-  const aggregates = aggregateSessions(scan.sessions, scan.fingerprints);
+  // ONE canonical session set for every count this analysis reports (audit R3-H4/M5).
+  const sessions = canonicalSessions(scan.sessions);
+  const aggregates = aggregateSessions(sessions, scan.fingerprints);
   const ranked = rankCandidates(aggregates, { decisions: decisions.byFingerprint, top });
   const inventory = buildHarnessInventory(inv.docs);
   const candidates = ranked.candidates.map((c) => ({ ...c, identity: `fingerprint:${c.fingerprint}`, coveredBy: inventory.coverageFor(c.label) }));
 
   const sessionsByFingerprint = new Map();
   const occurrencesByFingerprint = new Map();
-  for (const s of canonicalSessions(scan.sessions)) {
+  for (const s of sessions) {
     for (const [fp, n] of Object.entries(s.counts)) {
       if (!sessionsByFingerprint.has(fp)) sessionsByFingerprint.set(fp, new Set());
       sessionsByFingerprint.get(fp).add(s.sessionKey);
@@ -33,7 +35,7 @@ export function analyseScan(scan, { decisions, inventory: inv, memoryDir, top = 
     ? scanTripwires({ memoryDir, fingerprints: scan.fingerprints, sessionsByFingerprint, occurrencesByFingerprint, idf: inventory.idf })
     : [];
   const summary = {
-    sessions: scan.sessions.length,
+    sessions: sessions.length,
     fingerprints: Object.keys(scan.fingerprints).length,
     strong: ranked.strongCount,
     weak: ranked.weakCount,
@@ -60,17 +62,24 @@ export function renderScanReport(a) {
   lines.push(`Scanned ${a.files.read}/${a.files.listed} transcript files (${a.files.readErrors} read errors, ${a.files.unparseableLines} unparseable lines) `
     + `→ ${a.summary.sessions ?? 0} sessions in scope, window ${a.requested.since} → ${a.requested.until}.`);
   lines.push(`Excluded: ${a.excluded.otherRepo} other-repo, ${a.excluded.unresolved} unresolved-repo; ${a.excluded.incomplete} incomplete (reported, not persisted).`);
-  lines.push(`Persisted: ${a.persisted ? 'yes' : `no (${a.persistReason})`}.`, '');
+  lines.push(`Persisted: ${a.persisted ? 'yes' : `no (${a.persistReason})`}.`);
+  // Coverage is separate from measurement (audit R3-M3): a measured scan can still
+  // be unfit as effect-metric evidence.
+  lines.push(`Coverage: ${a.completed ? 'complete' : 'INCOMPLETE — this scan is not effect-metric evidence (read/enumeration errors or an incomplete in-scope session)'}.`, '');
   if (a.summary?.inventoryErrors) lines.push(`WARNING: ${a.summary.inventoryErrors} harness surface(s) could not be read — "covered by" hints are incomplete.`, '');
   if (!a.measured) return `${lines.join('\n')}\n`;
   if (a.candidates.length === 0) {
-    lines.push(`No recurring failure (≥2 sessions) in ${a.summary.sessions} sessions — ${a.summary.oneOffs} one-off fingerprints counted, none ranked.`);
+    lines.push(`No NEW recurring failure (≥2 sessions) in ${a.summary.sessions} sessions — ${a.summary.oneOffs} one-off fingerprints counted, none ranked.`);
   } else {
     lines.push('| # | identity | kind | tool | sessions | occ | repos | rank | covered by | label |', '|---|---|---|---|---|---|---|---|---|---|');
     a.candidates.forEach((c, i) => {
       const cov = c.coveredBy.map((h) => `${h.surface}:${h.ref} (${h.score})`).join('; ') || '—';
       lines.push(`| ${i + 1} | \`${c.identity}\` | ${c.kind} | ${esc(c.tool)} | ${c.sessions} | ${c.occurrences} | ${c.repos} | ${c.rank} | ${esc(cov)} | ${esc(c.label)} |`);
     });
+  }
+  // Decided fingerprints that recurred are reported, not silently dropped (audit R3-H3).
+  if (a.summary.enforcedSeen || a.summary.previouslyRejected) {
+    lines.push('', `Also recurred but already decided (not re-ranked): ${a.summary.enforcedSeen} enforced, ${a.summary.previouslyRejected} previously rejected — run \`effect\` for the enforced ones.`);
   }
   const promos = a.tripwires.filter((t) => t.status === 'promotion-candidate');
   lines.push('', `Tripwires: ${promos.length} promotion candidate(s), ${a.summary.tripwiresWithoutEvidence} with no evidence in this window (no-evidence ≠ dead).`);

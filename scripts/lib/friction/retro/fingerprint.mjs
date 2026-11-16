@@ -59,9 +59,11 @@ export function normaliseSignalText(line) {
     // Absolute paths, INCLUDING segments with spaces ("My Docs"): a space is
     // consumed when the next word still carries a separator, so the path's tail
     // is never left behind in the label (cluster-A audit R2-H2).
-    .replace(/~[\\/](?:[^\s'"`)\]]|\s(?=[^'"`)\]\n]*[\\/]))*/g, '<path>')
-    .replace(/[A-Za-z]:[\\/](?:[^\s'"`)\]]|\s(?=[^'"`)\]\n]*[\\/]))*/g, '<path>')
-    .replace(/(?<![\w.<>~])\/[\w.~-](?:[^\s'"`)\]:]|\s(?=[^\s'"`)\]]*\/))*/g, '<path>')
+    // ...and a multiword FINAL component ("Alice Smith.txt"): a space is also
+    // consumed when the next word carries a file extension (audit R3-H1).
+    .replace(/~[\\/](?:[^\s'"`)\]]|\s(?=[^'"`)\]\n]*[\\/]|[^\s'"`)\]]*\.[A-Za-z0-9]{1,6}\b))*/g, '<path>')
+    .replace(/[A-Za-z]:[\\/](?:[^\s'"`)\]]|\s(?=[^'"`)\]\n]*[\\/]|[^\s'"`)\]]*\.[A-Za-z0-9]{1,6}\b))*/g, '<path>')
+    .replace(/(?<![\w.<>~])\/[\w.~-](?:[^\s'"`)\]:]|\s(?=[^\s'"`)\]]*\/|[^\s'"`)\]]*\.[A-Za-z0-9]{1,6}\b))*/g, '<path>')
     .replace(/\b[0-9a-f]{7,40}\b/gi, (m) => (/\d/.test(m) && /[a-f]/i.test(m) ? '<sha>' : m))
     // A status code carries meaning (401 ≠ 404): keep a 3-digit number that
     // follows HTTP/status/code/error; every other number is noise.

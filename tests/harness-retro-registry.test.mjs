@@ -56,6 +56,10 @@ describe('validateRegistry — controls', () => {
   it('red: a public summary with any absolute path, not just a known root', () => {
     assert.ok(summaryProblems('breaks /srv/client/acme/config.json').length > 0);
   });
+  it('red: a case that exists only inside a fixture STRING is not executable', () => {
+    const dir = tempRepo(`const fixture = "it('${FP}', () => {})";\n`);
+    assert.match(validateRegistry({ registry: { version: 1, decisions: [entry()] }, repoRoot: dir })[0], /no it\(\)\/test\(\) case/);
+  });
   it('red: a file with no executable case', () => {
     const dir = tempRepo(`const id = '${FP}';\n`);
     assert.match(validateRegistry({ registry: { version: 1, decisions: [entry()] }, repoRoot: dir })[0], /no it\(\)\/test\(\) case/);
@@ -121,6 +125,12 @@ describe('activationFor — landing time only', () => {
   });
   it('a rebased commit with no PR lookup is unknown — never its commit date', () => {
     assert.equal(activationFor('fingerprint:x', { runGit: log('sha3\t2026-10-01T00:00:00Z\tdev@x.y\n') }).status, 'unknown');
+  });
+  it('searches the EXACT identity line, so tripwire:foo never matches tripwire:foobar', () => {
+    let seen;
+    activationFor('tripwire:foo', { runGit: (args) => { seen = args; return ''; } });
+    assert.ok(seen.includes('-G"identity": "tripwire:foo"'), seen.join(' '));
+    assert.ok(!seen.some((a) => a.startsWith('-S')));
   });
   it('not on main yet → pending-merge; git unavailable → unknown', () => {
     assert.equal(activationFor('fingerprint:x', { runGit: log('') }).status, 'pending-merge');

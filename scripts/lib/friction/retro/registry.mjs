@@ -92,6 +92,22 @@ export function summaryProblems(summary) {
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const EXECUTABLE_TEST_RE = /\b(?:it|test)\s*\(\s*['"`]/;
 
+/** Replace every string literal's CONTENT with nothing, keeping its quotes (`'abc'` → `''`). */
+export function blankStringContents(src) {
+  let out = ''; let quote = null;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (quote) {
+      if (c === '\\') { i++; continue; }
+      if (c === quote) { out += c; quote = null; }
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') quote = c;
+    out += c;
+  }
+  return out;
+}
+
 /**
  * Remove `//` line comments and `/* *\/` block comments, leaving string
  * literals intact (a small scanner, not a parser: enough to stop a comment from
@@ -133,7 +149,9 @@ export function testPathProblems({ test, identity, repoRoot }) {
   // executable case nor a literal an assertion carries (cluster-A audit R2-H5).
   body = stripComments(body);
   const problems = [];
-  if (!EXECUTABLE_TEST_RE.test(body)) problems.push(`test ${rel} declares no it()/test() case`);
+  // The executable-case check runs on CODE ONLY (string contents blanked), so a
+  // fixture string like "it('x')" is not mistaken for a case (audit R3-M2).
+  if (!EXECUTABLE_TEST_RE.test(blankStringContents(body))) problems.push(`test ${rel} declares no it()/test() case`);
   const needle = identity.startsWith('fingerprint:') ? identity.slice('fingerprint:'.length) : identity;
   const inLiteral = new RegExp(`(['"\`])[^'"\`\\n]*${escapeRe(needle)}[^'"\`\\n]*\\1`);
   if (!inLiteral.test(body)) problems.push(`test ${rel} does not name ${needle} in a string literal`);
@@ -197,7 +215,10 @@ export async function appendDecision(repoRoot, decision) {
  *         | {status: 'pending-merge'} | {status: 'unknown', reason: string}}
  */
 export function activationFor(identity, { runGit, runGh = null, repoSlug = null, mainRef = 'origin/main' }) {
-  const log = runGit(['log', '--first-parent', '--reverse', '--format=%H%x09%cI%x09%ce', `-S${identity}`, mainRef, '--', REGISTRY_REL.replace(/\\/g, '/')]);
+  // -G on the EXACT `"identity": "<id>"` line, not -S on a substring: `tripwire:foo`
+  // must never match the introduction of `tripwire:foobar` (audit R3-M1).
+  const exactLine = `"identity": "${identity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`;
+  const log = runGit(['log', '--first-parent', '--reverse', '--format=%H%x09%cI%x09%ce', `-G${exactLine}`, mainRef, '--', REGISTRY_REL.replace(/\\/g, '/')]);
   if (log === null) return { status: 'unknown', reason: 'activation-unknown: git history unavailable' };
   const first = log.split('\n').find((l) => l.trim());
   if (!first) return { status: 'pending-merge' };
