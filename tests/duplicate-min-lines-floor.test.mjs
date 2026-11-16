@@ -30,9 +30,11 @@ import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
 const stats = { suppressed_clusters: 5, clusters_before: 9, clusters_after: 4, pairs_before: 7, pairs_after: 2, rows_suppressed: 10 };
 
 describe('resolveMinLines — flag > env > default, one parser', () => {
-  it('default is 6 (suppresses symbols of 5 lines or fewer)', () => {
-    assert.equal(DEFAULT_DUPLICATE_MIN_LINES, 6);
-    assert.deepEqual(resolveMinLines({ flag: undefined, env: '' }), { minLines: 6, source: 'default' });
+  it('the floor is OPT-IN: the default is 0 (off), so no consumer population changes silently', () => {
+    assert.equal(DEFAULT_DUPLICATE_MIN_LINES, 0);
+    assert.deepEqual(resolveMinLines({ flag: undefined, env: '' }), { minLines: 0, source: 'default' });
+    assert.equal(buildFloorState(resolveMinLines({ flag: undefined, env: '' })).enabled, false);
+    assert.deepEqual(resolveMinLines({ flag: '6', env: '' }), { minLines: 6, source: 'flag' }, 'an explicit 6 opts in');
   });
   it('env overrides the default; the flag overrides env', () => {
     assert.deepEqual(resolveMinLines({ flag: undefined, env: '9' }), { minLines: 9, source: 'env' });

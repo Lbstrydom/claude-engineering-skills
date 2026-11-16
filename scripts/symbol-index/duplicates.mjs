@@ -15,8 +15,8 @@
  * `scripts/.claude-skills/symbol-index/duplicates.mjs` — run it by that path:
  *   node scripts/.claude-skills/symbol-index/duplicates.mjs --json --min-lines 8
  *
- * Size floor: symbols spanning fewer than N lines (default 6, i.e. 5 or fewer)
- * are not clustered — a 3-line `sleep` helper copied across test files is not
+ * Size floor (OPT-IN, default off): with `--min-lines 6`, symbols spanning fewer
+ * than 6 lines (5 or fewer) are not clustered — a 3-line `sleep` helper copied across test files is not
  * refactor debt. Override per run with `--min-lines N` or per repo with the
  * `ARCH_DUPLICATE_MIN_LINES` env var (flag wins); `--min-lines 0` disables
  * it. The floor applies inside the SQL RPCs, so the arch:drift score uses the
@@ -161,7 +161,7 @@ async function main() {
   }
   if (args.help) {
     process.stdout.write('Usage: node scripts/symbol-index/duplicates.mjs [--limit N] [--min-lines N] [--json]\n'
-      + '  --min-lines N  skip symbols spanning fewer than N lines (default 6; 0 = off; env ARCH_DUPLICATE_MIN_LINES)\n');
+      + '  --min-lines N  skip symbols spanning fewer than N lines (default 0 = off, opt-in; env ARCH_DUPLICATE_MIN_LINES)\n');
     return finishAndExit(0);
   }
   let resolved;

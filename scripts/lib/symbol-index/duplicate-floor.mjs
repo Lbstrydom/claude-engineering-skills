@@ -25,12 +25,16 @@
  */
 
 /**
- * CES's default: suppress symbols spanning FEWER than this many lines, i.e.
- * 5 lines or fewer — the reported class (`sleep`, `sha256`, `claim` helpers).
- * A function with real logic is ≥6 lines and still clusters. Override per run
- * with `--min-lines N` or `ARCH_DUPLICATE_MIN_LINES`; `0` disables the floor.
+ * The default is OFF (0): the floor is OPT-IN. Changing the default would change
+ * every consumer's drift-score population at once and break the comparability of
+ * its trend, and a short helper copied in production code is real debt, not
+ * noise. A consumer opts in from its own workflow — e.g. storyline passes
+ * `--min-lines 6` to both `duplicates.mjs` and `drift.mjs`, which suppresses
+ * symbols of 5 lines or fewer (the `sleep`/`sha256`/`claim` class) while a
+ * function with real logic (≥6 lines) still clusters. Per run: `--min-lines N`;
+ * per repo: `ARCH_DUPLICATE_MIN_LINES`; `0` disables.
  */
-export const DEFAULT_DUPLICATE_MIN_LINES = 6;
+export const DEFAULT_DUPLICATE_MIN_LINES = 0;
 
 /** Upper bound: anything larger is a typo, not a size floor. */
 export const MAX_DUPLICATE_MIN_LINES = 10000;
@@ -140,7 +144,7 @@ export function floorExitCode(state) {
  */
 export function renderFloorLines(state) {
   const how = `--min-lines ${state.minLines} (from ${state.source})`;
-  if (!state.enabled) return [`  floor: OFF (${how}) — symbols of every size are clustered`];
+  if (!state.enabled) return [`  floor: OFF (${how}) — symbols of every size are clustered; opt in with --min-lines N (e.g. 6)`];
   if (state.reason === 'store-not-migrated') {
     return [`  floor: NOT APPLIED — ${how}, but this store has not applied the floor migration; `
       + 'showing the UN-FLOORED list (may over-report; if truncated, real clusters can fall off the page — raise --limit). Run the store migration.'];

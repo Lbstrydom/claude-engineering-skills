@@ -38,7 +38,7 @@ Three-model audit loop (Claude plans/codes, GPT audits, Gemini reviews) with ada
 | `npm run arch:refresh:full` | Full rebuild from scratch |
 | `npm run arch:render` | Generate `docs/architecture-map.md` (Mermaid + flat tables) |
 | `npm run arch:drift` | Compute drift score for active snapshot |
-| `npm run arch:duplicates` | List top cross-file duplicate clusters (refactor targets). Symbols under 6 lines are skipped; tune with `--min-lines N` / `ARCH_DUPLICATE_MIN_LINES` (`0` = off) — [details](docs/reference/architecture-index.md) |
+| `npm run arch:duplicates` | List top cross-file duplicate clusters (refactor targets). Opt-in size floor: `--min-lines 6` skips symbols of 5 lines or fewer (default `0` = off; env `ARCH_DUPLICATE_MIN_LINES`) — [details](docs/reference/architecture-index.md) |
 | `npm run security:refresh` | Re-parse `docs/security-strategy.md` and refresh the security_incidents Supabase index (auto-runs post-push from `/ship`) |
 
 **Requirements layer** (terminal) — a materialized view of the codebase's de-facto invariants, surfaced to `/audit-code` as a rubric:

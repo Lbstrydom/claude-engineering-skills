@@ -1,6 +1,7 @@
 # Plan: Size floor for `arch:duplicates` and the drift score
 
 - **Date**: 2026-11-16
+- **Amendment (2026-11-16, user-approved via the CES coordinator)**: the floor is **OPT-IN**. `DEFAULT_DUPLICATE_MIN_LINES` is `0`; a consumer opts in from its own workflow (storyline: `--min-lines 6` on both `duplicates.mjs` and `drift.mjs`). Reason: a default of 6 shifts every consumer's drift-score population at once and breaks trend comparability, and a short helper copied in production code is real debt. Everything else below stands; where the text says "default 6" read "the recommended opt-in value 6". Since an inherited default can no longer be positive, the "unsupported + default ⇒ degrade" branch of the exit contract is unreachable from the real resolver (kept as a pure function, tested synthetically).
 - **Status**: In Progress
 - **Author**: Claude + Louis
 - **Scope**: backend (detector CLI + Postgres RPCs + consumer docs)
@@ -33,7 +34,7 @@ and writing it into `duplicate_justified` would erase the suppressed count and i
 
 ```mermaid
 graph LR
-  CFG["config.mjs duplicateMinLines (env, default 6)"] --> CLI1["duplicates.mjs --min-lines"]
+  CFG["duplicate-floor.mjs default 0 (opt-in) + env"] --> CLI1["duplicates.mjs --min-lines"]
   CFG --> CLI2["drift.mjs --min-lines"]
   CFG --> CLI3["render-mermaid.mjs"]
   CLI1 --> ST["neighbourhood.mjs (minLines)"]
@@ -55,7 +56,7 @@ Decisions (principles from `engineering-principles.md`):
 - **SQL default `p_min_lines = 0` (off); CES default lives in JS config = 6.** Old callers and the
   existing DB suite stay byte-identical; the CES default is one value in
   `DEFAULT_DUPLICATE_MIN_LINES` in `duplicate-floor.mjs` (`ARCH_DUPLICATE_MIN_LINES`), overridable per run with
-  `--min-lines N` (precedence flag > env > default; `0` disables). Matches storyline's
+  `--min-lines N` (precedence flag > env > default; default 0 = off). Matches storyline's
   flag-passing pattern.
 - **Default 6** = suppress symbols spanning ≤5 lines, exactly the reported class (`sleep`,
   `sha256`, `claim` helpers). Anything ≥6 lines (a real function body with logic) still clusters.

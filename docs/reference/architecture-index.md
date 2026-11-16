@@ -116,22 +116,30 @@ mechanical check: `tests/arm-vocabulary-layering.test.mjs` re-derives the whole
 violation set and is in `npm test`, so a retag that breaks the inbound half fails
 at push. Detail: [god-module-and-layering-debt.md](../plans/god-module-and-layering-debt.md) §1.2.
 
-## `arch:duplicates` size floor — trivial helpers are not duplicate clusters
+## `arch:duplicates` size floor — opt-in, so trivial helpers need not be clusters
 
 Exact-signature clustering used to report every cross-file copy, including 2–5
 line test helpers (`sleep`, `sha256`), and those inflated both the cluster list
-and the `arch:drift` score. Symbols spanning **fewer than 6 lines** (so 5 or
-fewer) are now excluded before grouping, **inside the SQL** (`top_duplicate_clusters`
-and `drift_score`), so the list and the score always agree.
+and the `arch:drift` score. An opt-in size floor excludes symbols spanning fewer
+than N lines before grouping, **inside the SQL** (`top_duplicate_clusters` and
+`drift_score`), so the list and the score always agree.
 
-The floor is **path-independent**: it also hides a short duplicate in production code, not only test helpers. The suppressed count below is how you notice; if a real 4-line duplicate matters to you, lower the floor or turn it off.
+**The default is OFF (`0`)**, so no consumer's drift-score population or trend
+changes until it opts in. **Opt in from your own workflow** by passing the same
+value to both CLIs — e.g. storyline passes `--min-lines 6` to `duplicates.mjs`
+and to `drift.mjs`, which hides symbols of 5 lines or fewer (the
+`sleep`/`sha256`/`claim` class) while a function with real logic (≥6 lines) still
+clusters. Pass it to **both**, or the list and the verdict count different
+populations.
 
-Tune it per run or per repo — the flag wins over the env var, `0` turns it off:
+The floor is **path-independent**: when you opt in it also hides a short duplicate in production code, not only test helpers. The suppressed count below is how you notice; if a real 4-line duplicate matters to you, lower the floor or leave it off.
+
+Set it per run or per repo — the flag wins over the env var, `0` (the default) is off:
 
 ```bash
-node scripts/.claude-skills/symbol-index/duplicates.mjs --json --min-lines 8
+node scripts/.claude-skills/symbol-index/duplicates.mjs --json --min-lines 6
 ARCH_DUPLICATE_MIN_LINES=4 node scripts/.claude-skills/symbol-index/duplicates.mjs
-node scripts/.claude-skills/symbol-index/drift.mjs --min-lines 0
+node scripts/.claude-skills/symbol-index/drift.mjs --min-lines 6
 ```
 
 (In the CES repo itself the same files live at `scripts/symbol-index/…`.)
