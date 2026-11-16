@@ -10,6 +10,12 @@
  *   - `path`:  absolute filesystem path on the dev machine; resolved via
  *              `import.meta.dirname` so the constant works regardless of
  *              cwd at invocation time
+ *   - `merge`: OPTIONAL — `'manual'` or `'auto'` (absent = `'auto'`). Who
+ *              merges this consumer's `sync:pr` PRs. `'manual'` means the
+ *              consumer's own coordinator merges, so `sync:pr` must not arm
+ *              auto-merge unless an explicit `--merge` says so. Lives HERE,
+ *              not in an operator's memory of `--no-merge`: wine#1380
+ *              auto-merged against wine's rule because the flag was forgotten.
  *
  * @module scripts/lib/consumer-repos
  */
@@ -134,11 +140,15 @@ export const SOURCE_REPO_ROOT = (() => {
 // Public, committed consumer entries. Anchored to the MAIN checkout, never to
 // the worktree this module happens to be loaded from.
 const BASE_REPOS = [
-  { name: 'wine-cellar-app', alias: 'wine', path: path.resolve(SIBLING_ANCHOR, '..', 'wine-cellar-app') },
+  // wine's rule: its sync PRs are merged by the WCA coordinator, never auto-merged (wine#1380).
+  { name: 'wine-cellar-app', alias: 'wine', path: path.resolve(SIBLING_ANCHOR, '..', 'wine-cellar-app'), merge: 'manual' },
   { name: 'ai-organiser',    alias: 'ai',   path: path.resolve(SIBLING_ANCHOR, '..', 'ai-organiser') },
 ];
 
 const LOCAL_REGISTRY_BASENAME = 'consumer-repos.local.json';
+
+/** Legal values of a registry entry's optional `merge` field. Absent means `'auto'`. */
+export const MERGE_POLICIES = Object.freeze(['auto', 'manual']);
 
 /**
  * Where the local registry may live, most-specific first.
@@ -243,7 +253,12 @@ function loadLocalRepos() {
       if (missing.length) {
         throw new Error(`entry #${i} is missing required field(s): ${missing.join(', ')}`);
       }
+      // Validated, not defaulted: a typo'd `"merge": "manul"` silently reading as 'auto' is the wine#1380 incident again.
+      if (e.merge !== undefined && !MERGE_POLICIES.includes(e.merge)) {
+        throw new Error(`entry #${i} has merge ${JSON.stringify(e.merge)} — expected one of ${MERGE_POLICIES.join(', ')}`);
+      }
       return {
+        ...(e.merge !== undefined ? { merge: e.merge } : {}),
         name:  String(e.name),
         alias: String(e.alias),
         // Relative entries anchor to the main checkout for the same reason
@@ -270,14 +285,48 @@ function loadLocalRepos() {
   }
 }
 
-// Local entries win on alias/name collision so a developer can repoint a base.
-const _merged = [...BASE_REPOS];
-for (const local of loadLocalRepos()) {
-  const i = _merged.findIndex((r) => r.alias === local.alias || r.name === local.name);
-  if (i >= 0) _merged[i] = local; else _merged.push(local);
+/**
+ * Local entries win on alias/name collision (the registry's one identity rule) so a developer can repoint a base. A repoint that
+ * declares no `merge` inherits the base entry's policy: repointing wine must not quietly turn its manual-merge rule back into
+ * auto-merge. Only an explicit `merge` in the operator's own local file changes it. PURE.
+ * @param {ReadonlyArray<object>} base
+ * @param {ReadonlyArray<object>} local
+ * @returns {object[]}
+ */
+function mergeRegistries(base, local) {
+  // ONE identity resolution, used for both replacement and inheritance: each local entry names at most one base entry, and each
+  // base entry is repointed by at most one local entry. Anything else is ambiguous and refused like any malformed registry —
+  // guessing which entry a collision meant is how a policy gets silently dropped.
+  const matches = (a, b) => a.alias === b.alias || a.name === b.name;
+  const refuse = (why) => { throw new Error(`consumer-repos.local.json: ${why} — refusing to guess which consumer is meant`); };
+  const merged = [...base];
+  const repointed = new Set();
+  local.forEach((l, i) => {
+    if (local.slice(0, i).some((o) => matches(o, l))) refuse(`entry #${i} ("${l.alias}"/"${l.name}") collides with an earlier local entry`);
+    const hits = base.filter((b) => matches(b, l));
+    if (hits.length > 1) refuse(`entry #${i} matches ${hits.length} registered consumers (${hits.map((b) => b.alias).join(', ')})`);
+    const [b] = hits;
+    if (b && repointed.has(b)) refuse(`entry #${i} repoints "${b.alias}", which an earlier local entry already repoints`);
+    const entry = (b && l.merge === undefined && b.merge !== undefined) ? { ...l, merge: b.merge } : l;
+    if (b) { repointed.add(b); merged[merged.indexOf(b)] = entry; } else merged.push(entry);
+  });
+  return merged;
 }
 
-export const CONSUMER_REPOS = Object.freeze(_merged.map((r) => Object.freeze(r)));
+export const CONSUMER_REPOS = Object.freeze(mergeRegistries(BASE_REPOS, loadLocalRepos()).map((r) => Object.freeze(r)));
+
+/**
+ * Who merges a registered consumer's sync PR: the entry's `merge` field, `'auto'` when absent.
+ * @param {{merge?: string}|null|undefined} entry
+ * Fails CLOSED on any other value, whatever built the entry: an unrecognised policy read as 'auto' is wine#1380 again.
+ * @returns {'auto'|'manual'}
+ * @throws {Error} on a `merge` value that is not one of MERGE_POLICIES
+ */
+export function mergePolicyOf(entry) {
+  if (entry?.merge === undefined) return 'auto';
+  if (!MERGE_POLICIES.includes(entry.merge)) throw new Error(`consumer "${entry.name ?? '?'}" has merge ${JSON.stringify(entry.merge)} — expected one of ${MERGE_POLICIES.join(', ')}`);
+  return entry.merge;
+}
 
 /** @returns {string[]} the alias values, useful for CLI help text */
 export function consumerAliases() {
@@ -467,5 +516,5 @@ export function canonicaliseRegistryTarget(entry) {
  * the layout rules.
  */
 export const _internals = {
-  mainCheckoutRoot, SIBLING_ANCHOR, REPO_ROOT, LOCAL_REGISTRY_BASENAME, registryCandidatesFor,
+  mainCheckoutRoot, SIBLING_ANCHOR, REPO_ROOT, LOCAL_REGISTRY_BASENAME, registryCandidatesFor, mergeRegistries,
 };

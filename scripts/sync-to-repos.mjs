@@ -60,7 +60,7 @@ import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { deepMerge } from './lib/json-merge.mjs';
 import { assertContainedDestination } from './lib/install/safe-destination.mjs';
-import { planGarbageCollection, executeGarbageCollection, countCitations, carriedForFailedDeletions, mayStillExist } from './lib/sync-gc.mjs';
+import { planGarbageCollection, executeGarbageCollection, countCitations, carriedForFailedDeletions, mayStillExist, SYNC_RUN_ARTIFACTS } from './lib/sync-gc.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { retireLegacyCopilotBlock } from './lib/sync-legacy-copilot-block.mjs';
@@ -1069,7 +1069,7 @@ async function main() {
     // run goes on to PROCESS can be miscounted as clean - a refusal already stops the run non-zero and names itself.
     const baseLag = await enforceBaseLagForTarget(repo, { dryRun: DRY_RUN, allowStale: process.argv.includes('--allow-stale-base') });
     if (!baseLag.proceed) { totalErrors++; console.log(''); continue; }
-    if (!baseLag.measured) unmeasuredTargets.push({ name: repo.name, outcome: baseLag.outcome });
+    if (!baseLag.measured) unmeasuredTargets.push({ name: repo.name, outcome: baseLag.outcome, applyVerdict: baseLag.applyVerdict });
 
     // ── Pre-flight: stale .github/skills/ shadow detection ────────────────
     // Runs unconditionally (including --dry-run) since it uses the INTENDED
@@ -2096,10 +2096,9 @@ async function main() {
       }
     }
 
-    // Record the receipt + sidecar's own hashes too (patchManifestWithExtraHashes's header, /audit-code round 2 M1).
-    if (!DRY_RUN && manifestWritten) patchManifestWithExtraHashes(priorManifestPath, [
-      { rel: OWNED_SIDECAR_RELATIVE_PATH, abs: path.join(repo.path, OWNED_SIDECAR_RELATIVE_PATH) }, { rel: RECEIPT_PATH, abs: receiptPath },
-    ]);
+    // Record the receipt + sidecar's own hashes too (patchManifestWithExtraHashes's header, /audit-code round 2 M1). The SAME list gc
+    // skips (SYNC_RUN_ARTIFACTS): recorded here, they are in the next run's prior manifest without being payload, and are no orphans.
+    if (!DRY_RUN && manifestWritten) patchManifestWithExtraHashes(priorManifestPath, SYNC_RUN_ARTIFACTS.map((rel) => ({ rel, abs: path.join(repo.path, rel) })));
     const parts = [];
     if (repoNew > 0) parts.push(`${G}+${repoNew} new${X}`);
     if (repoUpdated > 0) parts.push(`${Y}~${repoUpdated} updated${X}`);

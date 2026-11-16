@@ -275,6 +275,45 @@ describe('enforceBaseLag - real git', () => {
   // that reads as a result: `sync:dry --target wine` printed the refusal and then `Would create: 0 update: 0 unchanged: 0` having
   // examined nothing (measured 2026-11-14), and it was the only read-only way to ask whether a consumer carried the held-path
   // staleness #357 had just made visible.
+  describe('a dry run says whether a REAL sync would apply, from the same plan the real run executes (wine, 2026-11-15)', () => {
+    const dirtyClassify = () => ({ ok: true, clean: false, syncOwned: [], needsReview: [], other: [{ status: ' M', path: 'app.js', origPath: null }], degraded: false });
+    const cases = [
+      { name: 'stale and clean (would-fast-forward)', setup: (w) => w.advance('app.js', 'two\n'), classify: cleanClassify, safe: true, line: /^safe to apply \(base lag\): yes — a real sync fast-forwards 1 commit\(s\) first/ },
+      { name: 'stale with the human\'s edit (stale-base-unmeasured)', setup: (w) => { w.advance('app.js', 'two\n'); fs.writeFileSync(path.join(w.consumer, 'app.js'), 'mine\n'); }, classify: dirtyClassify, safe: false, line: /^safe to apply \(base lag\): NO — a real sync REFUSES this consumer \(dirty\)/ },
+      { name: 'current', setup: () => {}, classify: cleanClassify, safe: true, line: /^safe to apply \(base lag\): yes — the base is current$/ },
+    ];
+    for (const c of cases) {
+      it(`${c.name}: the dry run's verdict matches what the real run then does`, () => {
+        const w = world();
+        try {
+          c.setup(w);
+          const dry = enforceBaseLag({ repoRoot: w.consumer, run, classify: c.classify, dryRun: true });
+          assert.equal(dry.applyVerdict.safe, c.safe, dry.applyVerdict.line);
+          assert.match(dry.applyVerdict.line, c.line);
+          // The property the line exists for: the REAL run, on the same state, does what the dry run said it would.
+          const wet = enforceBaseLag({ repoRoot: w.consumer, run, classify: c.classify, dryRun: false });
+          assert.equal(wet.ok, c.safe, wet.lines.join('\n'));
+          assert.equal(wet.applyVerdict, null, 'a real run reports what happened, never a prediction beside it');
+        } finally { w.rm(); }
+      });
+    }
+    it('an origin that cannot be reached is UNKNOWN, never "yes"', () => {
+      const ws = tmpDir('base-lag-unreach-');
+      try {
+        git(['init', '-q', '-b', 'main'], ws);
+        const dry = enforceBaseLag({ repoRoot: ws, run, classify: cleanClassify, dryRun: true });
+        assert.equal(dry.applyVerdict.safe, null);
+        assert.match(dry.applyVerdict.line, /^safe to apply \(base lag\): UNKNOWN/);
+      } finally { rmrf(ws); }
+    });
+    it('the summary prints the verdict under each unmeasured target in a dry run, and not in a real one', () => {
+      const t = [{ name: 'wine', outcome: 'would-fast-forward', applyVerdict: { safe: true, line: 'safe to apply: yes — x' } }];
+      assert.deepEqual(describeUnmeasuredTargets(t, { dryRun: true, targetCount: 1 }).lines,
+        ['  unmeasured wine (would-fast-forward) — its counts above are read against a base this run could not establish', '    safe to apply: yes — x']);
+      assert.equal(describeUnmeasuredTargets(t, { dryRun: false, targetCount: 1 }).lines.length, 1);
+    });
+  });
+
   describe('a DRY RUN reports and labels; it never refuses', () => {
     it('the dirty-and-stale case: ok, outcome `stale-base-unmeasured`, nothing moved, and the label says UNMEASURED not clean', () => {
       const w = world();
@@ -517,6 +556,7 @@ describe('sync-to-repos.mjs CLI - the lag is asked before the first write', { ti
       const dry = await runSyncCli(['--target-path', w.consumer, '--no-prompt', '--dry-run']);
       assert.equal(dry.code, 0, whySyncFailed(dry));
       assert.match(stripAnsi(dry.out), /would fast-forward 1 commit\(s\) to origin\/main \(dry run: nothing changed\)/);
+      assert.match(stripAnsi(dry.out), /unmeasured \S+ \(would-fast-forward\)[^\n]*\n\s+safe to apply \(base lag\): yes — a real sync fast-forwards 1 commit\(s\) first/, 'the summary says the stale state is safe to apply');
       assert.equal(w.head(), before);
       const stale = await runSyncCli(['--target-path', w.consumer, '--no-prompt', '--dry-run', '--allow-stale-base']);
       assert.equal(stale.code, 0, whySyncFailed(stale));
@@ -537,6 +577,7 @@ describe('sync-to-repos.mjs CLI - the lag is asked before the first write', { ti
       // And the verdict distinguishes unmeasured from clean, by name.
       assert.match(out, /DRY RUN complete — UNMEASURED for 1 of 1 target\(s\)/);
       assert.match(out, /unmeasured \S+ \(stale-base-unmeasured\)/);
+      assert.match(out, /safe to apply \(base lag\): NO — a real sync REFUSES this consumer \(dirty\)/);
       assert.equal(w.head(), before, 'still a dry run');
       assert.equal(fs.existsSync(path.join(w.consumer, '.sync-receipt.json')), false, 'nothing written');
       assert.equal(fs.readFileSync(path.join(w.consumer, 'app.js'), 'utf8'), 'my unfinished edit\n');

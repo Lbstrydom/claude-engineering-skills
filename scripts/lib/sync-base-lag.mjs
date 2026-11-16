@@ -202,6 +202,41 @@ export function planBaseLag({
 }
 
 /**
+ * Whether a REAL sync would apply to this consumer, read off the same `planBaseLag` result the real run's `enforceBaseLag`
+ * switches on — never a second classifier. A dry run's UNMEASURED verdict says its COUNTS were read against a stale base; it did not
+ * say whether the write itself would go through, and an operator read "a base this run could not establish" as "unsafe" while the
+ * real run then fast-forwarded and applied cleanly (wine, 2026-11-15). This is that missing answer.
+ *
+ * Scoped to what the plan decides, and says so: the BASE-LAG gate. `safe`: true = that gate lets a real sync proceed (after its own
+ * fast-forward, which can still fail at run time and then refuses with the changes restored); false = the gate refuses this
+ * consumer; null = it would proceed without having established the base (unchecked, or `--allow-stale-base` on purpose). Per-file
+ * refusals (divergence, overrides) are not this gate's: the dry run evaluates them itself and reports them in its own counts.
+ * A plan is a prediction, so only a DRY RUN carries this (`enforceBaseLag`); a real run reports what happened instead.
+ *
+ * @param {BaseLagPlan} plan
+ * @returns {{safe: boolean|null, line: string}}
+ */
+export function realRunVerdictOf(plan) {
+  switch (plan.action) {
+    case 'proceed':
+      return { safe: true, line: 'safe to apply (base lag): yes — the base is current' };
+    case 'fast-forward':
+      return {
+        safe: true,
+        line: `safe to apply (base lag): yes — a real sync fast-forwards ${plan.behindCount} commit(s) first${plan.discard.length ? ` (restoring ${plan.discard.length} sync-written file(s) it rewrites)` : ''} and then syncs; a fast-forward that fails at run time refuses with nothing lost, and only these dry-run counts are read against the stale base`,
+      };
+    case 'proceed-stale':
+      return { safe: null, line: 'safe to apply (base lag): only on purpose — --allow-stale-base writes onto the stale base (sync:pr still refuses a colliding path)' };
+    case 'unchecked':
+      return { safe: null, line: `safe to apply (base lag): UNKNOWN — a real sync would write without knowing whether this checkout is behind origin (${plan.detail})` };
+    case 'refuse':
+      return { safe: false, line: `safe to apply (base lag): NO — a real sync REFUSES this consumer (${plan.reason}); remedy: ${plan.remedy}` };
+    default:
+      return { safe: null, line: `safe to apply (base lag): UNKNOWN — unrecognised base-lag plan "${plan.action}"` };
+  }
+}
+
+/**
  * Check one consumer's base lag and, where it is safe, fix it. Never throws: every failure is a refusal or a loud "unchecked".
  *
  * A DRY RUN never refuses. A refusal protects the base from being WRITTEN onto, and a dry run writes nothing — so the same verdict
@@ -217,9 +252,18 @@ export function planBaseLag({
  *   dryRun?: boolean, allowStale?: boolean,
  *   managedBlockReader?: (input: {run: Runner, repoRoot: string, baseSha: string|null}) => ((relPath: string) => string),
  * }} input
- * @returns {{ok: boolean, measured: boolean, outcome: 'current'|'unchecked'|'stale-accepted'|'fast-forwarded'|'would-fast-forward'|'refused'|'stale-base-unmeasured', lines: string[]}}
+ * @returns {{ok: boolean, measured: boolean, outcome: 'current'|'unchecked'|'stale-accepted'|'fast-forwarded'|'would-fast-forward'|'refused'|'stale-base-unmeasured', lines: string[],
+ *   applyVerdict: ReturnType<typeof realRunVerdictOf>|null}} `applyVerdict` — DRY RUN only: what a real sync's base-lag gate does with the
+ *   same plan (`realRunVerdictOf`). null on a real run, whose `ok`/`outcome` already say what happened, so a failed fast-forward never
+ *   sits beside a predicted "yes".
  */
-export function enforceBaseLag({ repoRoot, run, classify, dryRun = false, allowStale = false, managedBlockReader }) {
+export function enforceBaseLag(args) {
+  const { plan, ...r } = enforceBaseLagCore(args);
+  if (!args.dryRun) return { ...r, applyVerdict: null };
+  return { ...r, applyVerdict: realRunVerdictOf(plan ?? { action: 'unchecked', detail: r.lines[0] ?? 'base lag not checked' }) };
+}
+
+function enforceBaseLagCore({ repoRoot, run, classify, dryRun = false, allowStale = false, managedBlockReader }) {
   const git = (args) => run('git', ['-C', repoRoot, ...args]);
   const facts = gatherBaseFacts(run, repoRoot);
   if (!facts.ok) {
@@ -234,6 +278,11 @@ export function enforceBaseLag({ repoRoot, run, classify, dryRun = false, allowS
     ? managedBlockReader({ run, repoRoot, baseSha: facts.baseSha })
     : undefined;
   const plan = planBaseLag({ repoRoot, baseBranch: facts.baseBranch, lag, behindCount: facts.behindCount, aheadCount: facts.aheadCount, classified, allowStale, managedBlockTransition });
+  return { ...executeBaseLagPlan({ plan, facts, git, repoRoot, dryRun }), plan };
+}
+
+/** The real run's (and dry run's) action on a `planBaseLag` result. Split out so `enforceBaseLag` can hand the plan to `realRunVerdictOf`. */
+function executeBaseLagPlan({ plan, facts, git, repoRoot, dryRun }) {
   switch (plan.action) {
     case 'proceed': return { ok: true, measured: true, outcome: 'current', lines: [] };
     case 'unchecked': return { ok: true, measured: false, outcome: 'unchecked', lines: [`base lag NOT CHECKED (${plan.detail})`] };
@@ -311,7 +360,10 @@ function refusedFastForward(repoRoot, target, because, recovery = '') {
  * nobody could compare are indistinguishable from zeros meaning "clean" unless the verdict says so. The same holds for a real
  * sync: `--allow-stale-base` and an unreachable origin both leave a consumer written onto a base nobody compared.
  *
- * @param {Array<{name: string, outcome: string}>} unmeasured
+ * Each target's line is followed by its `applyVerdict` (`realRunVerdictOf`) when it carries one: UNMEASURED is about the dry run's
+ * COUNTS, and on its own it was read as "unsafe to apply" for a consumer the real run then fast-forwarded and synced cleanly.
+ *
+ * @param {Array<{name: string, outcome: string, applyVerdict?: {safe: boolean|null, line: string}}>} unmeasured
  * @param {{dryRun: boolean, targetCount: number}} run
  * @param {{Y?: string, D?: string, X?: string}} [colors] — ANSI codes, caller's own
  * @returns {{verdict: string|null, lines: string[]}} `verdict` is null when everything was measured
@@ -323,7 +375,10 @@ export function describeUnmeasuredTargets(unmeasured, { dryRun, targetCount }, {
     : 'written without establishing its base lag';
   return {
     verdict: dryRun ? `${Y}DRY RUN complete — UNMEASURED for ${unmeasured.length} of ${targetCount} target(s)${X} — no files written` : null,
-    lines: unmeasured.map((t) => `  ${Y}unmeasured${X} ${t.name} ${D}(${t.outcome})${X} — ${why}`),
+    lines: unmeasured.flatMap((t) => [
+      `  ${Y}unmeasured${X} ${t.name} ${D}(${t.outcome})${X} — ${why}`,
+      ...(dryRun && t.applyVerdict ? [`    ${t.applyVerdict.line}`] : []),
+    ]),
   };
 }
 
@@ -343,7 +398,7 @@ const C = { R: '\x1b[31m', Y: '\x1b[33m', G: '\x1b[32m', D: '\x1b[2m', X: '\x1b[
  *
  * @param {{name: string, path: string}} repo
  * @param {{dryRun?: boolean, allowStale?: boolean, run?: Runner, classify?: Function, managedBlockReader?: Function, write?: (line: string) => void}} [opts]
- * @returns {Promise<{proceed: boolean, measured: boolean, outcome: string}>}
+ * @returns {Promise<{proceed: boolean, measured: boolean, outcome: string, applyVerdict: {safe: boolean|null, line: string}|null}>}
  */
 export async function enforceBaseLagForTarget(repo, { dryRun = false, allowStale = false, run, classify, managedBlockReader, write = (l) => console.log(l) } = {}) {
   // Every git call here is local or one short network round trip: bound it, and never let git prompt for credentials in a sync.
@@ -362,5 +417,5 @@ export async function enforceBaseLagForTarget(repo, { dryRun = false, allowStale
   const r = enforceBaseLag({ repoRoot: repo.path, run: runner, classify: classifier, dryRun, allowStale, managedBlockReader: blockReader });
   const colour = r.ok ? (r.outcome === 'current' ? C.D : r.outcome === 'fast-forwarded' ? C.G : C.Y) : C.R;
   for (const line of r.lines) write(`  ${colour}base-lag${C.X} ${line}`);
-  return { proceed: r.ok, measured: r.measured, outcome: r.outcome };
+  return { proceed: r.ok, measured: r.measured, outcome: r.outcome, applyVerdict: r.applyVerdict };
 }

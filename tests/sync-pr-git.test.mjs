@@ -42,9 +42,11 @@ const MANIFEST = { repo: 'Lbstrydom/claude-engineering-skills', commitSha: SHA }
  */
 function makeRunner(gh = () => undefined) {
   const ghCalls = [];
+  const ghInputs = [];
   const run = (cmd, args, { cwd, input } = {}) => {
     if (cmd === 'gh') {
       ghCalls.push(args);
+      ghInputs.push(input ?? null);
       const scripted = gh(args);
       if (scripted) return { status: 0, stdout: '', stderr: '', ...scripted };
       const stdout = { create: 'https://github.com/o/r/pull/1\n', list: '[]' }[args[1]] ?? '';
@@ -53,7 +55,7 @@ function makeRunner(gh = () => undefined) {
     const r = spawnSync(cmd, args, { cwd, input, encoding: 'utf-8', env: gitFixtureEnv(), windowsHide: true });
     return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error };
   };
-  return { run, ghCalls };
+  return { run, ghCalls, ghInputs };
 }
 
 
@@ -442,7 +444,7 @@ describe('sync-pr CLI on real git — a same-bundle re-run retries a failed supe
    * CLI. `resync: false` is a bare `sync:pr` re-run: no sync rewrote anything,
    * so the classification is the clean tree the first run left behind.
    */
-  async function syncThenSyncPr(gh, flags = [], { resync = true, leaseDeps = null } = {}) {
+  async function syncThenSyncPr(gh, flags = [], { resync = true, leaseDeps = null, entry = {} } = {}) {
     if (resync) {
       fx.syncWrites();
       // A real receipt event for this bundle: the retry proves the existing PR
@@ -453,14 +455,14 @@ describe('sync-pr CLI on real git — a same-bundle re-run retries a failed supe
       })}\n`);
     }
     write(fx.consumer, MANIFEST_RELATIVE_PATH, `${JSON.stringify({ repo: REPO, commitSha: up.current })}\n`);
-    const { run, ghCalls } = makeRunner(gh);
+    const { run, ghCalls, ghInputs } = makeRunner(gh);
     let printed = '';
     const clean = { ...classified, clean: true, syncOwned: [] };
     const code = await main(['node', 'sync-pr.mjs', ...flags], { write: (s) => { printed += s; } }, {
-      run, resolve: () => [{ name: 'fixture', path: fx.consumer }], classify: () => (resync ? classified : clean), ancestry: createGitAncestry(up.dir),
+      run, resolve: () => [{ name: 'fixture', path: fx.consumer, ...entry }], classify: () => (resync ? classified : clean), ancestry: createGitAncestry(up.dir),
       lease: leaseDeps, // null: these tests are about sync-pr's git sequence and must never touch the machine's real lease
     });
-    return { code, ghCalls, printed: printed.replace(/\x1b\[\d+m/g, '') };
+    return { code, ghCalls, ghInputs, printed: printed.replace(/\x1b\[\d+m/g, '') };
   }
 
   const verbs = (ghCalls) => ghCalls.map((a) => a[1]);
@@ -508,6 +510,30 @@ describe('sync-pr CLI on real git — a same-bundle re-run retries a failed supe
     assert.ok(!verbs(bare.ghCalls).some((v) => v === 'create' || v === 'merge'));
     assert.match(bare.printed, /supersession retried for https:\/\/github\.com\/o\/r\/pull\/9: complete/);
     assert.deepEqual(snapshot(), before);
+  });
+
+  describe('who merges: the consumer registry decides, a flag overrides, the output names the source (wine#1380)', () => {
+    const createBody = (r) => { const i = r.ghCalls.findIndex((a) => a[1] === 'create'); return i === -1 ? null : r.ghInputs[i]; };
+    it('a merge: "manual" consumer gets NO auto-merge without any flag, and the PR body does not claim one', async () => {
+      const r = await syncThenSyncPr(() => undefined, [], { entry: { merge: 'manual' } });
+      assert.equal(r.code, 0, r.printed);
+      assert.equal(verbs(r.ghCalls).filter((v) => v === 'create').length, 1, r.printed);
+      assert.ok(!verbs(r.ghCalls).includes('merge'), 'auto-merge must not be armed for a manual-merge consumer');
+      assert.ok(r.printed.includes('merge: manual — no auto-merge (decided by consumer registry (merge: "manual"))'), r.printed);
+      assert.ok(r.printed.includes('— no auto-merge (decided by consumer registry (merge: "manual"))'), r.printed);
+      assert.doesNotMatch(createBody(r) ?? '', /auto-merge is armed/);
+    });
+    it('negative control: an entry with no merge policy still arms auto-merge, and says the default decided', async () => {
+      const r = await syncThenSyncPr(() => undefined, []);
+      assert.ok(verbs(r.ghCalls).includes('merge'), r.printed);
+      assert.match(r.printed, /decided by default/);
+      assert.match(createBody(r) ?? '', /auto-merge is armed/);
+    });
+    it('--merge overrides a manual registry entry, and the output says the flag decided', async () => {
+      const r = await syncThenSyncPr(() => undefined, ['--merge'], { entry: { merge: 'manual' } });
+      assert.ok(verbs(r.ghCalls).includes('merge'), r.printed);
+      assert.match(r.printed, /decided by --merge flag/);
+    });
   });
 
   it('--dry-run on a same-bundle re-run asks gh nothing', async () => {

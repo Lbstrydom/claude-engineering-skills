@@ -19,7 +19,9 @@ import {
   SUPERSEDE_KEEP_REASON, SUPERSEDE_LIST_LIMIT, parseOpenSyncPrs, parseNameStatus, decideSupersession, supersedeOlderSyncPrs,
   SUPERSEDE_RETRY_SKIP, retrySupersession, supersessionRetryTarget, classifyBundleFreshness,
 } from '../scripts/lib/sync-pr.mjs';
-import { parseArgs } from '../scripts/sync-pr.mjs';
+import { parseArgs, resolveMergeDecision } from '../scripts/sync-pr.mjs';
+import { CONSUMER_REPOS, mergePolicyOf, _internals as registryInternals } from '../scripts/lib/consumer-repos.mjs';
+const { mergeRegistries } = registryInternals;
 import { RECEIPT_PATH } from '../scripts/lib/sync-receipt.mjs';
 import { OWNED_SIDECAR_RELATIVE_PATH, buildOwnedSidecar } from '../scripts/lib/sync-owned-sidecar.mjs';
 
@@ -180,12 +182,12 @@ describe('buildPrText', () => {
 describe('sync-pr parseArgs', () => {
   const argv = (...a) => ['node', 'sync-pr.mjs', ...a];
   it('reads the flags; --base defaults to null (the remote\'s default branch is asked, not assumed)', async () => {
-    assert.deepEqual(parseArgs(argv('--target', 'wine', '--no-merge')), { dryRun: false, merge: false, baseOverride: null, target: 'wine', leaseFor: 45, leaseWait: 0, ciWindow: 0 });
+    assert.deepEqual(parseArgs(argv('--target', 'wine', '--no-merge')), { dryRun: false, mergeFlag: false, baseOverride: null, target: 'wine', leaseFor: 45, leaseWait: 0, ciWindow: 0 });
     assert.equal(parseArgs(argv('--base', 'develop')).baseOverride, 'develop');
   });
   it('options end at `--`: nothing after it is read as a flag (assertKnownFlags already stops there)', async () => {
     assert.deepEqual(parseArgs(argv('--dry-run', '--', '--target', 'wine', '--no-merge', '--base')),
-      { dryRun: true, merge: true, baseOverride: null, target: undefined, leaseFor: 45, leaseWait: 0, ciWindow: 0 });
+      { dryRun: true, mergeFlag: null, baseOverride: null, target: undefined, leaseFor: 45, leaseWait: 0, ciWindow: 0 });
   });
   it('reads the lease flags as whole numbers within their limits and refuses the rest', () => {
     const p = parseArgs(argv('--lease-for', '60', '--lease-wait', '30', '--ci-window', '25'));
@@ -193,6 +195,47 @@ describe('sync-pr parseArgs', () => {
     for (const bad of [['--lease-for', '0'], ['--lease-for', '181'], ['--lease-wait', '721'], ['--ci-window', '181'], ['--lease-for', 'abc'], ['--lease-wait', '-1']]) {
       assert.throws(() => parseArgs(argv(...bad)), /whole number/, bad.join(' '));
     }
+  });
+});
+
+describe('sync-pr merge decision (registry default, flag override)', () => {
+  const argv = (...a) => ['node', 'sync-pr.mjs', ...a];
+  it('no flag reads as null (the registry decides); --merge true; both together is refused', () => {
+    assert.equal(parseArgs(argv()).mergeFlag, null);
+    assert.equal(parseArgs(argv('--merge')).mergeFlag, true);
+    assert.throws(() => parseArgs(argv('--merge', '--no-merge')), /contradict/);
+  });
+  it('the registry entry decides when no flag is passed, and every decision names its source', () => {
+    assert.deepEqual(resolveMergeDecision({ mergeFlag: null, entry: { merge: 'manual' } }), { merge: false, source: 'consumer registry (merge: "manual")' });
+    assert.deepEqual(resolveMergeDecision({ mergeFlag: null, entry: { merge: 'auto' } }), { merge: true, source: 'consumer registry (merge: "auto")' });
+    assert.deepEqual(resolveMergeDecision({ mergeFlag: null, entry: {} }), { merge: true, source: 'default (registry entry sets no merge policy)' });
+    assert.deepEqual(resolveMergeDecision({ mergeFlag: true, entry: { merge: 'manual' } }), { merge: true, source: '--merge flag' });
+    assert.deepEqual(resolveMergeDecision({ mergeFlag: false, entry: {} }), { merge: false, source: '--no-merge flag' });
+  });
+  it('an unrecognised merge value fails CLOSED, never reads as auto (whatever built the entry)', () => {
+    assert.throws(() => resolveMergeDecision({ mergeFlag: null, entry: { name: 'x', merge: 'manul' } }), /expected one of auto, manual/);
+    assert.throws(() => mergePolicyOf({ merge: 'MANUAL' }), /expected one of/);
+    assert.equal(mergePolicyOf({}), 'auto');
+  });
+  it('a local repoint inherits the base entry\'s manual policy unless it declares one; a new local entry has none', () => {
+    const base = [{ name: 'wine-cellar-app', alias: 'wine', path: '/a', merge: 'manual' }, { name: 'ai-organiser', alias: 'ai', path: '/b' }];
+    const by = (list, alias) => list.find((r) => r.alias === alias);
+    // matched by alias, by name, and with an explicit override
+    assert.equal(by(mergeRegistries(base, [{ name: 'wine-fork', alias: 'wine', path: '/x' }]), 'wine').merge, 'manual');
+    assert.equal(mergeRegistries(base, [{ name: 'wine-cellar-app', alias: 'w2', path: '/x' }]).find((r) => r.name === 'wine-cellar-app').merge, 'manual');
+    assert.equal(by(mergeRegistries(base, [{ name: 'wine-cellar-app', alias: 'wine', path: '/x', merge: 'auto' }]), 'wine').merge, 'auto');
+    assert.equal(by(mergeRegistries(base, [{ name: 'storyline', alias: 'story', path: '/s' }]), 'story').merge, undefined);
+    assert.equal(by(mergeRegistries(base, []), 'wine').path, '/a', 'no local file: the base entry stands');
+    // Ambiguity is refused, never resolved by guessing: two local entries repointing one base entry (by alias and by name),
+    // two local entries colliding with each other, and one local entry naming two base entries.
+    assert.throws(() => mergeRegistries(base, [{ name: 'other', alias: 'wine', path: '/o', merge: 'auto' }, { name: 'wine-cellar-app', alias: 'w2', path: '/w' }]), /repoints "wine", which an earlier local entry already repoints/);
+    assert.throws(() => mergeRegistries(base, [{ name: 's1', alias: 'story', path: '/1' }, { name: 's2', alias: 'story', path: '/2' }]), /collides with an earlier local entry/);
+    assert.throws(() => mergeRegistries(base, [{ name: 'ai-organiser', alias: 'wine', path: '/x' }]), /matches 2 registered consumers/);
+  });
+  it('wine is registered as a manual-merge consumer (its coordinator merges its sync PRs)', () => {
+    const wine = CONSUMER_REPOS.find((r) => r.alias === 'wine');
+    assert.ok(wine, 'wine is registered');
+    assert.equal(mergePolicyOf(wine), 'manual');
   });
 });
 

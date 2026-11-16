@@ -2,7 +2,8 @@
 /**
  * @fileoverview `sync-pr` — for every registered consumer, commit the group of
  * paths the last bundle sync wrote (and ONLY that group), push it on a
- * `chore/sync-<sha>` branch, open a PR and arm squash auto-merge.
+ * `chore/sync-<sha>` branch, open a PR and arm squash auto-merge — unless the
+ * consumer's registry entry says `merge: 'manual'` (wine), or a flag overrides.
  *
  * Zero-touch companion to `npm run sync`: the sync still never commits in a
  * consumer (see `lib/sync-receipt.mjs`), and a consumer's protected default
@@ -14,7 +15,8 @@
  *   node scripts/sync-pr.mjs                     # every registered consumer
  *   node scripts/sync-pr.mjs --target wine       # one consumer, by alias or name
  *   node scripts/sync-pr.mjs --dry-run           # print the plan, touch nothing
- *   node scripts/sync-pr.mjs --no-merge          # open the PR, leave merging to a human
+ *   node scripts/sync-pr.mjs --no-merge          # open the PR, leave merging to a human (overrides the registry)
+ *   node scripts/sync-pr.mjs --merge             # arm auto-merge even for a `merge: 'manual'` consumer (overrides the registry)
  *   node scripts/sync-pr.mjs --base develop      # consumer's base branch (default: the remote's HEAD)
  *   node scripts/sync-pr.mjs --lease-wait 30     # wait up to 30 min in the machine-lease queue per consumer (default: do not wait)
  *   node scripts/sync-pr.mjs --lease-for 60      # minutes of the heavy slot to ask for per consumer (default 45)
@@ -44,7 +46,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
-import { resolveTargets, consumerAliases } from './lib/consumer-repos.mjs';
+import { resolveTargets, consumerAliases, mergePolicyOf } from './lib/consumer-repos.mjs';
 import { MANIFEST_RELATIVE_PATH } from './lib/sync-manifest.mjs';
 import { classifyRepo } from './sync-status.mjs';
 import { planConsumerPr, runConsumerPr, gatherConsumerFacts, gatherSourceFacts, createManagedBlockTransitionReader, retrySupersession, supersessionRetryTarget, spawnRunner } from './lib/sync-pr.mjs';
@@ -56,7 +58,7 @@ import { exitCodeForSignal, runUnderLease } from './lib/fleet/lease-run.mjs';
 import { remoteReachedOf } from './lib/sync-pr-lease.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
-const KNOWN_FLAGS = ['--target', '--dry-run', '--no-merge', '--base', '--lease-for', '--lease-wait', '--ci-window'];
+const KNOWN_FLAGS = ['--target', '--dry-run', '--merge', '--no-merge', '--base', '--lease-for', '--lease-wait', '--ci-window'];
 /** The checkout this script lives in: the SOURCE repo whose turn a sync run takes (any worktree of it shares one repoKey). */
 const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
@@ -116,7 +118,7 @@ function formatRetry(retry) {
  * `assertKnownFlags` honours; this CLI takes no positionals, so anything
  * after it is ignored, never read as a flag.
  * @param {string[]} argv — full process argv
- * @returns {{dryRun: boolean, merge: boolean, baseOverride: string|null, target: string|undefined, leaseFor: number, leaseWait: number, ciWindow: number}}
+ * @returns {{dryRun: boolean, mergeFlag: boolean|null, baseOverride: string|null, target: string|undefined, leaseFor: number, leaseWait: number, ciWindow: number}}
  */
 export function parseArgs(argv) {
   assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'sync-pr' });
@@ -135,15 +137,33 @@ export function parseArgs(argv) {
     if (!/^\d{1,6}$/.test(raw) || Number(raw) < min || Number(raw) > max) throw new ArgvError(`sync-pr: ${name} must be a whole number from ${min} to ${max} (got ${JSON.stringify(raw)})`);
     return Number(raw);
   };
+  if (rest.includes('--merge') && rest.includes('--no-merge')) throw new ArgvError('sync-pr: --merge and --no-merge contradict each other — pass one');
   return {
     dryRun: rest.includes('--dry-run'),
-    merge: !rest.includes('--no-merge'),
+    // null = no flag: the consumer's registry entry decides (resolveMergeDecision).
+    mergeFlag: rest.includes('--no-merge') ? false : rest.includes('--merge') ? true : null,
     baseOverride: flagValue('--base') ?? null,
     target: flagValue('--target'),
     leaseFor: whole('--lease-for', 45, 1, 180),
     leaseWait: whole('--lease-wait', 0, 0, 720),
     ciWindow: whole('--ci-window', 0, 0, 180),
   };
+}
+
+/**
+ * Whether to arm auto-merge for one consumer, and WHICH SOURCE decided. An explicit flag wins; otherwise the
+ * consumer's registry `merge` field (consumer-repos.mjs) does, so a manual-merge consumer is safe even when the
+ * operator forgets `--no-merge` — the way wine#1380 auto-merged against wine's rule.
+ * @param {{mergeFlag: boolean|null, entry: {name?: string, merge?: string}|null|undefined}} input
+ * @returns {{merge: boolean, source: string}}
+ */
+export function resolveMergeDecision({ mergeFlag, entry }) {
+  if (mergeFlag === true) return { merge: true, source: '--merge flag' };
+  if (mergeFlag === false) return { merge: false, source: '--no-merge flag' };
+  const policy = mergePolicyOf(entry);
+  return entry?.merge !== undefined
+    ? { merge: policy === 'auto', source: `consumer registry (merge: "${policy}")` }
+    : { merge: true, source: 'default (registry entry sets no merge policy)' };
 }
 
 /**
@@ -182,7 +202,7 @@ export async function main(argv = process.argv, out = process.stdout, deps = {})
   // Asked once per run: what the source's HEAD is, so a 'clean' consumer can be told apart from a CURRENT one (da9a).
   const sourceFacts = deps.sourceFacts ?? gatherSourceFacts(run, SOURCE_ROOT);
   const lease = 'lease' in deps ? deps.lease : {};
-  const { dryRun, merge, baseOverride, target, leaseFor, leaseWait, ciWindow } = parseArgs(argv);
+  const { dryRun, mergeFlag, baseOverride, target, leaseFor, leaseWait, ciWindow } = parseArgs(argv);
   const targets = resolve(target);
   if (targets.length === 0) {
     throw new ArgvError(`sync-pr: unknown --target "${target}" — known: ${consumerAliases().join(', ')}`);
@@ -212,7 +232,9 @@ export async function main(argv = process.argv, out = process.stdout, deps = {})
       continue;
     }
     const { baseBranch } = facts;
+    const { merge, source: mergeSource } = resolveMergeDecision({ mergeFlag, entry: t });
     const plan = planConsumerPr({
+      autoMerge: merge,
       consumerName: t.name, classified, manifest, ...facts, ...sourceFacts,
       // BOTH files the sync mutates by managed block, asked by the one reader. With `.gitignore` alone, a sync that wrote four
       // files to a consumer committed three and left the `.gitattributes` EOL rule uncommitted on main (2026-11-14).
@@ -235,6 +257,8 @@ export async function main(argv = process.argv, out = process.stdout, deps = {})
     }
 
     const behind = plan.behindCount > 0 ? ` ${D}(this checkout is ${plan.behindCount} behind; origin left every synced path as the sync saw it)${X}` : '';
+    out.write(`  merge: ${merge ? 'arm squash auto-merge' : 'manual — no auto-merge'} ${D}(decided by ${mergeSource})${X}
+`);
     out.write(`  branch ${plan.branch} from origin/${baseBranch} ${plan.startPoint.slice(0, 8)}${behind}\n`);
     out.write(`  ${plan.surface.length} surface path(s) + receipt, commit "${plan.title}"\n`);
     for (const p of plan.addPaths) out.write(`    ${D}${p}${X}\n`);
@@ -260,8 +284,8 @@ export async function main(argv = process.argv, out = process.stdout, deps = {})
     else if (lease !== null && !ciWindow && result.ok) out.write(`  ${D}lease: the PR's CI is not recorded on the lease (pass --ci-window <min>, or announce it)${X}\n`);
     for (const w of result.warnings) out.write(`  ${Y}⚠${X} ${w}\n`);
     if (result.ok) {
-      const mergeNote = { armed: 'squash auto-merge armed', 'not-armed': 'auto-merge NOT armed', skipped: 'no auto-merge (--no-merge)' }[result.merged];
-      out.write(`  ${G}PR opened${X} ${result.url ?? '(url not parsed)'} ${D}— ${mergeNote}${X}\n`);
+      const mergeNote = { armed: 'squash auto-merge armed', 'not-armed': 'auto-merge NOT armed', skipped: 'no auto-merge' }[result.merged];
+      out.write(`  ${G}PR opened${X} ${result.url ?? '(url not parsed)'} ${D}— ${mergeNote} (decided by ${mergeSource})${X}\n`);
     } else {
       errored++;
       out.write(formatFailure(result));

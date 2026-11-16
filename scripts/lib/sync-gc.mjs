@@ -34,6 +34,17 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { assertContainedDestination } from './install/safe-destination.mjs';
+import { OWNED_SIDECAR_RELATIVE_PATH } from './sync-owned-sidecar.mjs';
+import { SYNC_RECEIPT_PATH } from './bundle-generated-stores.mjs';
+
+/**
+ * Files EVERY sync writes after its payload — the committed ownership sidecar and the receipt — and records in the manifest via
+ * `patchManifestWithExtraHashes` (lib/sync-manifest.mjs), so they are in the prior manifest's `files` but never in a run's
+ * payload destinations. The ONE list both the manifest patch and gc read: without it gc saw them as files "we no longer sync",
+ * advised them as "likely renamed upstream" with their citations counted, and the same run's `sync:pr` then committed fresh
+ * copies of both as sync-owned (wine dry run, 2026-11-15). They are sync output every run, never orphans.
+ */
+export const SYNC_RUN_ARTIFACTS = Object.freeze([OWNED_SIDECAR_RELATIVE_PATH, SYNC_RECEIPT_PATH]);
 
 /**
  * Is this manifest key a plain, normalised, POSIX repo-relative path?
@@ -50,7 +61,7 @@ function isPlainRelativeKey(key) {
 /**
  * Decide what gc should do with the prior manifest's keys. PURE.
  *
- * - A key still intended this run is not gc's business.
+ * - A key still intended this run is not gc's business; nor is a `SYNC_RUN_ARTIFACTS` path, which every run rewrites.
  * - A key that is not a plain normalised relative path names nothing the sync
  *   ever wrote: `unsafeKeys` — never deleted, never advised, reported.
  * - A key under the tooling dir is gitignored, regenerable payload: delete it.
@@ -73,7 +84,7 @@ export function planGarbageCollection({ priorFiles, intendedDests, toolingDir, e
   const orphanedTracked = [];
   const unsafeKeys = [];
   for (const key of Object.keys(priorFiles || {})) {
-    if (intendedDests.has(key)) continue;
+    if (intendedDests.has(key) || SYNC_RUN_ARTIFACTS.includes(key)) continue;
     if (!isPlainRelativeKey(key)) unsafeKeys.push(key);
     else if (key.startsWith(prefix)) deletions.push(key);
     else if (exists(key)) orphanedTracked.push(key);
