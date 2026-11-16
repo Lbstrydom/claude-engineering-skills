@@ -34,7 +34,11 @@ run that bundle.
   the required gates, then `fleet ready`, never the heavy slot for a full suite, and the exact test-log words
   `full suite deferred to the train (fullSuite: train)` (one spelling, `FULL_SUITE_LOG_LINE`, so a log is greppable).
 - `fleet ready` says the same and returns `fullSuite: "deferred-to-train"`.
-- `fleet land` (a real train, not a probe) says it is the one full-suite run for the sessions in it.
+- `fleet land` (a real train, not a probe, whose tiers RAN) says the sessions deferred their suite to it and names the
+  pre-land tiers that ran with their results (`NOT green, so the deferred suite has not passed` when red). It is never said
+  on a refusal, an error or a conflict. Fleet cannot know which command a repo calls its full suite: its pre-land tiers are
+  what `land` runs, so the note names them (audit R1 M2/H7/H8).
+- A malformed `.fleet.json` is an error, never read as the default mode (`fullSuiteOf` does not catch; audit R1 H5).
 - Participant rule 4a, the chip preamble's TURN block and `/cycle`'s clustered-execution reference carry the conditional.
 
 **Declined**: enforcing it in `lease acquire`/`lease run` (refusing a session's `--kind test`). A pre-push hook that runs the
@@ -51,8 +55,9 @@ drift-only); its "broadest suite" rule points at `references/clustered-execution
 tier. It is kept under `fleet/probes/` (same layout and lock, its own root), where no approve, confirm or resume reader
 looks, so no bundle can approve it; it removes its worktree, ends `abandoned`, and exits 0 green, 4 red, 3 on a conflict.
 `--tier` without `--dry-run` is an argv error. `fleet status` prints `hint: N ready branches never tested together — …`
-while two or more ready heads have not all been in one train or probe that reached a verdict (a tier result or a
-conflict); once one has, it prints that train's verdict. A moved head changes its oid, so the hint returns
+while two or more ready heads have not all been REACHED by one train or probe built on the CURRENT base that got a verdict:
+a tier result (every source applied) or a conflict (only the sources up to and including the conflicting one; audit R1
+H3/H4). Once one has, it prints that train's verdict. A moved head changes its oid, so the hint returns
 (`tested-together.mjs`, pure). `land` takes no heavy slot itself, so the probe needs none.
 
 **Declined**: running the probe automatically when a second branch becomes ready. That needs a watcher process fleet does
@@ -66,8 +71,12 @@ never runs. `tests/fleet-probe-and-stale-ready.test.mjs`.
 **Fix**: `claim --base <branch>` records the session's real fork point in `source.baseRef` (`--base <the base>` un-stacks).
 `gatherFacts` adds `ownChanged[branch]` = `stackBase...tip` for each stacked session; overlap (in `status` and in
 `claim`'s `othersFor`) uses it. What the session inherited (from-base files minus its own) shows once, collapsed:
-`inherited (N files) from stack base X — shared ancestor commits, not counted as overlaps`. A stack base that cannot be
-measured falls back to the from-base diff with a note, never to "no files". `changed` itself is unchanged, so check hooks
+`inherited (N files) from declared stack base X — …, not counted as overlaps (declared by claim --base, not verified …)`.
+A stack base that cannot be measured, or that already CONTAINS the session's head (it absorbed the work, or was mis-named,
+and would hide every own file), falls back to the from-base diff with a note, never to "no files" (audit R1 H9). The base
+need not be a registered session: the reported base was assembled by the coordinator and owned by none (deliberated, M5).
+What a mis-declared base can still do is bounded: it changes FILE evidence only, never declared-path conflicts, and an
+unrelated base only widens the diff. `changed` itself is unchanged, so check hooks
 and `land` see what they saw before. A declared-path conflict (not known) is now the first line under its branch.
 
 **Acceptance**: six sessions on one unlanded base report zero overlaps from it and one inherited line each; without
@@ -79,8 +88,10 @@ declared-path conflict is the first line. `tests/fleet-stacked-base.test.mjs`.
 **Fix**: two decision scopes, `test-plan` and `answer`, addressed with `--to <session|all>` (default `all`). They keep
 #375's properties: the user's exact words on stdin, the recording session and time, immutable, revocable by a new record,
 fail-closed on an unusable registry. `fleet next` quotes an active one addressed to the session as
-`USER DECISION <id> (<scope>) — the user's own words, recorded by <session> at <time>; not a peer's claim:`, apart from
-directives and never as a DO line, with the note that it grants nothing else.
+`USER DECISION <id> (<scope>) — recorded as the user's words by <session> at <time> (a record, not proof: fleet cannot
+verify who typed them):`, apart from directives and never as a DO line, with the note that it grants nothing else.
+Participant rule 4 limits acting on it to what narrows or redirects the session's own work (audit R1 H2/H6: any process
+that can run fleet can write a record, per #375's design). `next --json` carries `decisionsUsable` (M9).
 
 **Never grants merge, push, `--override` or deletion** — tested two ways: no such scope exists or is accepted, and none of
 the modules that merge, push, override a claim or delete work (`train-approve`, `serial`, `train`, `land`, `archive`,

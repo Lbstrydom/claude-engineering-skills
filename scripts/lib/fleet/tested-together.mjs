@@ -4,9 +4,10 @@
  * branches surfaced only at the full train, hours after the second became ready).
  *
  * The ready set is the (id, ready oid) pairs `land` would take. It counts as tested together when ONE train or probe
- * manifest carries every pair at the same oid AND got as far as a verdict (a tier result, or a conflict). A head that moves
- * changes its oid, so the set is untested again — which is what "re-run when a ready head moves" means. Pure: the caller
- * lists the manifests (real trains and probes).
+ * manifest, built on the CURRENT base, REACHED every pair at the same oid and got a verdict: a tier result (every source was
+ * applied), or a conflict — which reached only the sources up to and including the one that conflicted. A head or base
+ * that moves changes the identity, so the set is untested again ("re-run when a ready head moves"). Pure: the caller lists
+ * the manifests (real trains and probes).
  *
  * @module scripts/lib/fleet/tested-together
  */
@@ -16,17 +17,23 @@ export const readySet = (status) => status.items
   .filter((i) => status.landingOrder.includes(i.id) && i.ready?.oid)
   .map((i) => ({ id: i.id, oid: i.ready.oid }));
 
-const reachedVerdict = (t) => Boolean(t.conflict) || (t.tierResults ?? []).length > 0;
+/** The sources a manifest's verdict covers: all of them after a tier ran; up to the conflicting one after a conflict; none otherwise. */
+export function reachedSources(t) {
+  const all = t.sources ?? [];
+  if (t.conflict) { const at = all.findIndex((s) => s.id === t.conflict.sourceId); return at === -1 ? [] : all.slice(0, at + 1); }
+  return (t.tierResults ?? []).length > 0 ? all : [];
+}
 
 /**
  * @param {Array<{id: string, oid: string}>} ready
  * @param {object[]} manifests - train and probe manifests
+ * @param {string|null} baseOid - the base the next train would be built on; null (unmeasured) means nothing counts as tested
  * @returns {{count: number, tested: boolean, by: object|null}|null} null when fewer than two branches are ready
  */
-export function testedTogether(ready, manifests) {
+export function testedTogether(ready, manifests, baseOid) {
   if (ready.length < 2) return null;
-  const covers = (t) => ready.every((r) => (t.sources ?? []).some((s) => s.id === r.id && s.oid === r.oid));
-  const hits = manifests.filter((t) => reachedVerdict(t) && covers(t)).sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)));
+  const covers = (t) => { const got = reachedSources(t); return ready.every((r) => got.some((s) => s.id === r.id && s.oid === r.oid)); };
+  const hits = manifests.filter((t) => Boolean(baseOid) && t.baseOid === baseOid && covers(t)).sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)));
   return { count: ready.length, tested: hits.length > 0, by: hits[0] ?? null };
 }
 

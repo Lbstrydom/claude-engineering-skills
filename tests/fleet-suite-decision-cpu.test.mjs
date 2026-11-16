@@ -42,7 +42,29 @@ describe('fullSuite: "train"', () => {
     git(['checkout', '-q', 'main'], s.fx.repo);
     readyBranch(s, 'feat-b', { 'feat-b/b.txt': 'B\n' });
     const r = land(s);
-    assert.match(r.json.text, /full suite: this train is the one full-suite run for feat-b/);
+    assert.match(r.json.text, /full suite: deferred here by feat-b \(\.fleet\.json fullSuite: "train"\); this train's pre-land tiers ran: default:green$/m);
+  });
+
+  it('the suite note is said only for a train whose tiers ran — never on a refusal, and a red one says it has not passed (audit R1 M2/H7)', () => {
+    const red = { name: 'default', command: ['node', '-e', 'process.exit(1)'] };
+    const s = setup({ fleetConfig: { mergeMethod: 'direct-squash', fullSuite: 'train', testCommand: { tiers: [red] } } });
+    const none = land(s);
+    assert.equal(none.status, 3);
+    assert.doesNotMatch(none.json.text, /full suite:/, 'nothing was built, so nothing ran');
+    readyBranch(s, 'feat-b', { 'feat-b/b.txt': 'B\n' });
+    const r = land(s);
+    assert.equal(r.status, 4);
+    assert.match(r.json.text, /pre-land tiers ran: default:red — NOT green, so the deferred suite has not passed/);
+  });
+
+  it('a malformed .fleet.json is an error, never read as the default mode (audit R1 H5)', () => {
+    const s = setup({ fleetConfig: { fullSuite: 'train' } });
+    git(['checkout', '-q', '-b', 'feat', 'main'], s.fx.repo);
+    assert.equal(s.f(['claim', '--id', 'feat', '--intent', 'x', '--paths', 'feat/**']).status, 0);
+    fs.writeFileSync(path.join(s.fx.repo, '.fleet.json'), JSON.stringify({ fullSuite: 'later' }));
+    const n = s.f(['next', '--id', 'feat']);
+    assert.notEqual(n.status, 0);
+    assert.match(n.stdout + n.stderr, /fullSuite/);
   });
 
   it('the default (session) prints none of it', () => {
@@ -83,7 +105,8 @@ describe('user decisions: test-plan and answer', () => {
     assert.equal(d.ok, true, d.text);
     record(dir, 'answer', 'Use the v2 schema.', { '--to': 'someone-else' });
     const n = s.f(['next', '--id', 'feat', '--json']);
-    assert.match(n.json.text, new RegExp(`USER DECISION ${d.decision.id} \\(test-plan\\) — the user's own words, recorded by coordinator at \\S+; not a peer's claim:`));
+    assert.match(n.json.text, new RegExp(`USER DECISION ${d.decision.id} \\(test-plan\\) — recorded as the user's words by coordinator at \\S+ \\(a record, not proof: fleet cannot verify who typed them\\):`));
+    assert.equal(n.json.decisionsUsable, true);
     assert.match(n.json.text, /^ {4}> Run only the `fast` tier here; the train runs the rest\.$/m);
     assert.match(n.json.text, /never a merge, a push, --override or a deletion/);
     assert.doesNotMatch(n.json.text, /Use the v2 schema/, 'a decision for another session is not shown');
@@ -107,12 +130,17 @@ describe('user decisions: test-plan and answer', () => {
       assert.ok(!DECISION_SCOPES.includes(bad), bad);
       assert.throws(() => record(fleetDirOf(setup().fx), bad, 'yes'), /not expressible/);
     }
-    // Every module that merges, pushes, overrides a claim or deletes work: none may consult a decision.
-    const actors = ['train-approve.mjs', 'serial.mjs', 'train.mjs', 'land.mjs', 'archive.mjs', 'prune.mjs', 'prune-orphans.mjs', 'commands.mjs', 'lifecycle.mjs', 'restack.mjs', 'lease.mjs', 'lease-cmd.mjs', 'directives.mjs'];
-    for (const f of actors) {
-      const src = fs.readFileSync(path.join(ROOT, 'scripts/lib/fleet', f), 'utf8');
-      assert.doesNotMatch(src, /from '\.\/decisions(-cmd)?\.mjs'/, `${f} must not read decisions`);
-    }
+    // EVERY fleet module (the directory is listed, so a new file is covered) except the two that only read or render a
+    // decision: none may name decisions.mjs in any form (static or dynamic import), so no merge, push, claim-override or
+    // deletion path can consult one (audit R1 M11). The CLI only dispatches the verb.
+    const readers = new Set(['decisions.mjs', 'decisions-cmd.mjs', 'coordination.mjs']);
+    const fleetDir = path.join(ROOT, 'scripts/lib/fleet');
+    const files = fs.readdirSync(fleetDir).filter((f) => f.endsWith('.mjs') && !readers.has(f));
+    assert.ok(files.length > 50, `vacuous-pass guard: the census must see the fleet modules (saw ${files.length})`);
+    for (const f of files) assert.doesNotMatch(fs.readFileSync(path.join(fleetDir, f), 'utf8'), /decisions(-cmd)?\.mjs/, `${f} must not read decisions`);
+    const coord = fs.readFileSync(path.join(fleetDir, 'coordination.mjs'), 'utf8');
+    assert.match(coord, /import \{ decisionsForSession, renderSessionDecision \} from '\.\/decisions\.mjs';/, 'next reads only the session view');
+    assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'scripts/fleet.mjs'), 'utf8'), /from '\.\/lib\/fleet\/decisions\.mjs'/, 'the CLI imports only the verb module');
     // --to only on the session scopes.
     assert.throws(() => record(fleetDirOf(setup().fx), 'note', 'x', { '--to': 'feat' }), /--to applies only/);
   });
@@ -144,5 +172,26 @@ describe('machine CPU saturation (unleased test load)', () => {
     const run = w.runA(['lease', 'run', '--for', '5', '--', process.execPath, '-e', '0'], { FLEET_CPU_BUSY_PCT: '96' });
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stderr, /fleet lease run: WARNING: CPU 96% busy .* measured before this job started, so this load took no lease/);
+  });
+});
+
+describe('lease run: the start-of-run CPU check sits inside the lease lifecycle (audit R1 H1)', () => {
+  it('a stop signal while onGranted samples: the job never starts, and the slot is still released', async () => {
+    const { runUnderLease } = await import('../scripts/lib/fleet/lease-run.mjs');
+    const { readLease } = await import('../scripts/lib/fleet/lease.mjs');
+    const os = await import('node:os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-ongranted-'));
+    const sig = { handler: null, install(h) { sig.handler = h; return () => { sig.handler = null; }; } };
+    let jobRan = false;
+    const res = await runUnderLease({
+      dir, identity: { repoKey: 'aaaaaaaaaaaa', holder: 'main' }, repo: 'o/a', kind: 'gate', forMin: 30, pid: 4242,
+      now: () => new Date('2026-10-15T08:00:00Z'), probe: { scope: 'win32:box', isPidAlive: () => false }, signals: sig, log: () => {}, heartbeatMs: 0,
+      onGranted: async () => { assert.ok(sig.handler, 'signals are installed before onGranted runs'); sig.handler('SIGTERM'); },
+    }, async () => { jobRan = true; return { code: 0 }; });
+    assert.equal(jobRan, false);
+    assert.equal(res.signalled, 'SIGTERM');
+    assert.equal(res.released.ok, true);
+    assert.equal(readLease(dir).lease.heavy?.holder ?? null, null, 'the slot is free again');
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

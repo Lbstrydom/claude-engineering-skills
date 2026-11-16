@@ -203,7 +203,7 @@ export function cmdNext(ctx, flags) {
   const mine = decisionsForSession(ctx.dir, id, ctx.now ?? new Date());
   const decisionLines = mine.unusable ? [`user decisions: none shown — ${mine.unusable}`] : mine.decisions.flatMap(renderSessionDecision);
   return ok({
-    id, ...r.result, stamp, fullSuite, decisions: mine.decisions.map((d) => ({ id: d.id, scope: d.scope, at: d.at, recordedBy: d.recordedBy.session, words: d.words })), prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals, ...(upApplicable ? { upstream: upRead } : {}), records: recRead, lease: lease.lease,
+    id, ...r.result, stamp, fullSuite, decisionsUsable: !mine.unusable, decisionsUnusableReason: mine.unusable ?? null, decisions: mine.decisions.map((d) => ({ id: d.id, scope: d.scope, at: d.at, recordedBy: d.recordedBy.session, words: d.words })), prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals, ...(upApplicable ? { upstream: upRead } : {}), records: recRead, lease: lease.lease,
     text: [`next for ${id}:`, ...renderObligations(r.result, { cmd: ctx.cmd }).map((l) => `  ${l}`), ...decisionLines, ...testLines, ...fyi, `stamp: ${stamp}`].join('\n'),
   });
 }

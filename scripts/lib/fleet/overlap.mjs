@@ -673,11 +673,12 @@ export function buildStatus(facts) {
     if (live.futureDatedTipIgnored) notes.push('future-dated commit ignored');
     if (done.done && s.state !== 'done' && done.trainId) notes.push(`derived done (landed in ${done.trainId})`);
     let display = state;
+    let aheadZero = false; // a structured flag: the display string gains suffixes (` · stale`), so it is never compared
     if (state === 'ready') {
       if (s.ready?.oid && observedOid && s.ready.oid !== observedOid) display = 'ready (stale — head moved)';
       // Ahead 0 of the base: nothing left to land, so the mark expires on its own (consumer report 2026-11-15, item 5) —
       // derived on every read, never written; `land --include-stale` brings it back.
-      else if (s.source?.kind !== 'pr' && b && b.ahead === 0) display = 'ready (stale — ahead 0 of base)';
+      else if (s.source?.kind !== 'pr' && b && b.ahead === 0) { aheadZero = true; display = 'ready (stale — ahead 0 of base)'; }
       else if (!tipObserved) notes.push('ready oid not verifiable (tip not observed)');
     }
     if (!isTerminalState(state) && !live.live) { display = `${display} · stale`; }
@@ -687,7 +688,7 @@ export function buildStatus(facts) {
       id: s.id, tracked: true, kind: s.source?.kind ?? 'branch', branch, oid: observedOid,
       worktree: s.worktree ?? wt?.path ?? null, worktreeState: wtState(wt), intent: s.intent, paths: s.paths ?? [],
       state, display, live: live.live, liveReason: live.reason, stale: !isTerminalState(state) && !live.live,
-      gen: s.gen, rev: s.rev, ready: s.ready ?? null, readyStale: display.startsWith('ready (stale'), readyAheadZero: display === 'ready (stale — ahead 0 of base)',
+      gen: s.gen, rev: s.rev, ready: s.ready ?? null, readyStale: display.startsWith('ready (stale'), readyAheadZero: aheadZero,
       ahead: b?.ahead ?? null, behind: b?.behind ?? null, pr, notes, merged, workRemaining,
       waitingOn: (s.waitingOn ?? []).map((w) => waitingView(w, { byId, trains })),
       overlaps: [], hotOverlaps: [], duplicates: [], findings: [],

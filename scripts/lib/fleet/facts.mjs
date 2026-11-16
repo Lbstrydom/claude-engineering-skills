@@ -236,7 +236,17 @@ function stackedEvidence({ cwd, registry, analyse, tipOid, base }) {
   for (const s of registry.sessions) {
     const b = s.source?.branch; const stack = s.source?.baseRef;
     if (s.source?.kind !== 'branch' || !b || !stack || stack === base || stack === b || !analyse.has(b)) continue;
-    const r = changedFiles(cwd, tipOid.get(stack) ?? `refs/heads/${stack}`, tipOid.get(b) ?? b);
+    const stackRev = tipOid.get(stack) ?? `refs/heads/${stack}`; const tip = tipOid.get(b) ?? b;
+    // A declared base that already CONTAINS this branch's head (it merged the work, or was mis-named) would make the
+    // session's own diff empty and hide its overlap from everyone (audit R1 H9). Not verifiable as a fork point: fall back to
+    // the from-base diff, and say why. A fresh branch AT the base's tip (no own commits yet) is the legitimate equal case.
+    const same = runGit(['rev-parse', stackRev, tip], cwd);
+    const [so, to] = same.ok ? same.stdout.split('\n').map((x) => x.trim()) : [null, null];
+    if (so && to && so !== to && runGit(['merge-base', '--is-ancestor', to, so], cwd).ok) {
+      own[b] = { queried: false, files: [], reason: `${stack} already contains ${b}'s head, so it is not its fork point`, stackBase: stack };
+      continue;
+    }
+    const r = changedFiles(cwd, stackRev, tip);
     own[b] = { ...r, stackBase: stack };
   }
   return own;

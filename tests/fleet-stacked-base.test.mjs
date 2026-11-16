@@ -39,7 +39,7 @@ describe('claim --base: overlap from the real fork point', () => {
       assert.deepEqual(it.inherited.sort(), ['base/x.txt', 'base/y.txt']);
     }
     const text = s.f(['status']).stdout;
-    assert.equal((text.match(/inherited \(2 files\) from stack base shared-base — shared ancestor commits, not counted as overlaps/g) ?? []).length, 6);
+    assert.equal((text.match(/inherited \(2 files\) from declared stack base shared-base — commits it shares with that base, not counted as overlaps \(declared by claim --base, not verified/g) ?? []).length, 6);
     assert.doesNotMatch(text, /overlaps child-/);
     assert.equal(sessionRec(s.fx, 'child-1').source.baseRef, 'shared-base', 'recorded in the existing baseRef field');
   });
@@ -72,6 +72,21 @@ describe('claim --base: overlap from the real fork point', () => {
       assert.ok(at >= 0, lines.join('\n'));
       assert.match(lines[at + 1], /^ {4}overlaps (child-1|widener) \(paths\)/, `${id}: the declared conflict is the first line, before intent`);
     }
+  });
+
+  it('a declared base that already contains the session\'s head is not its fork point: measured from the base, and said (audit R1 H9)', () => {
+    const s = stackedFleet(2, { declareBase: false });
+    git(['branch', 'swallowed', 'child-1'], s.fx.repo); // a branch that holds child-1's own commit
+    git(['checkout', '-q', 'swallowed'], s.fx.repo);
+    writeFile(s.fx.repo, 'other.txt', 'o\n'); git(['add', '--', 'other.txt'], s.fx.repo); git(['commit', '-q', '-m', 'later'], s.fx.repo);
+    git(['checkout', '-q', 'child-1'], s.fx.repo);
+    assert.equal(s.f(['claim', '--id', 'child-1', '--base', 'swallowed']).status, 0);
+    git(['checkout', '-q', 'main'], s.fx.repo);
+    const st = s.f(['status', '--json']).json.status;
+    const it = st.items.find((x) => x.id === 'child-1');
+    assert.equal(it.inherited, undefined, 'nothing is counted as inherited');
+    assert.ok(it.notes.some((n) => /swallowed already contains child-1's head, so it is not its fork point/.test(n)), JSON.stringify(it.notes));
+    assert.ok(it.overlaps.some((o) => o.with === 'child-2'), 'its overlap evidence is kept');
   });
 
   it('--base refuses a branch that does not exist, and the session\'s own branch', () => {

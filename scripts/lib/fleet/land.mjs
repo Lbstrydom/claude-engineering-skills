@@ -183,9 +183,12 @@ function build(ctx, flags, deps) {
   const probeTier = flags['--tier'] ?? null;
   // Concurrent land operations on one repo are refused by the exclusive trains/.lock (a probe locks its own root).
   const r = withTrainLock(probeTier ? probesDir(ctx.dir) : ctx.dir, () => buildTrain({ cwd, config, sources, checkPayload: payloadFromStatus(status), dryRun, probeTier, deps }));
-  // fullSuite: "train": a real (non-probe) train is the ONE full-suite run for every session in it — say so on the result.
-  const suiteNote = !probeTier && !dryRun && config.fullSuite === 'train'
-    ? `full suite: this train is the one full-suite run for ${wanted.join(', ')} (.fleet.json fullSuite: "train" — the sessions deferred it here)` : null;
+  // fullSuite: "train": a train whose tiers RAN is the sessions' full-suite run — said only then (never on a refusal, an error or
+  // a conflict), naming the tiers that ran so the reader can judge what "full" covered (audit R1 M2/H7/H8: fleet cannot know
+  // which command a repo calls its full suite; its pre-land tiers are what it runs).
+  const ranTiers = (r.train?.tierResults ?? []).map((t) => `${t.name}:${t.result}`);
+  const suiteNote = !probeTier && !dryRun && config.fullSuite === 'train' && r.ok && r.train && ranTiers.length
+    ? `full suite: deferred here by ${r.train.sources.map((x) => x.id).join(', ')} (.fleet.json fullSuite: "train"); this train's pre-land tiers ran: ${ranTiers.join(', ')}${r.train.result === 'green' || r.train.result === 'green-after-rerun' ? '' : ' — NOT green, so the deferred suite has not passed'}` : null;
   const notes = [staleNote, suiteNote].filter(Boolean);
   const withStale = (x) => (notes.length ? { ...x, ...(staleNote ? { staleReady } : {}), text: `${x.text}\n${notes.join('\n')}` } : x);
   if (!r.ok) return withStale({ ...r, text: `${r.code === 'error' ? 'ERROR' : 'REFUSED'}: ${r.reason}` });

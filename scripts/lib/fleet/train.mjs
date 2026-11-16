@@ -370,7 +370,9 @@ function closeProbe({ cwd, dir, done, deps }) {
   const t = done.train;
   const rm = removeTrainWorktree(cwd, t, deps);
   const train = patchTrain(dir, t.trainId, { phase: 'abandoned', notes: [...(t.notes ?? []), `probe of tier ${t.testCommand[0]?.name} only — never approvable${rm.removed ? '' : ` (worktree: ${rm.reason})`}`] }, deps);
-  return { ...done, probe: true, train, approvability: { ok: false, reason: `probe: only tier ${t.testCommand[0]?.name} ran — build a full train (\`land\` without --tier) to approve` } };
+  // The reason says what happened (audit R1 L1): a conflict stops before any tier runs.
+  const what = t.conflict ? `stopped at a conflict before tier ${t.testCommand[0]?.name} ran` : `only tier ${t.testCommand[0]?.name} ran`;
+  return { ...done, probe: true, train, approvability: { ok: false, reason: `probe: ${what} — build a full train (\`land\` without --tier) to approve` } };
 }
 
 /**

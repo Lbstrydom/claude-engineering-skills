@@ -79,12 +79,12 @@ function itemBlock(it, nowMs = null, hosts = {}, untrackedIds = null) {
   // Between two UNTRACKED items an overlap is noise in the text view (v): it collapses to a count. Overlaps
   // involving a live claim stay in full — that is what overlap detection is for. JSON and land see everything.
   const collapse = untrackedIds && it.tracked === false;
-  const quiet = collapse ? it.overlaps.filter((o) => untrackedIds.has(o.with)) : [];
+  const quiet = collapse ? it.overlaps.filter((o) => untrackedIds.has(o.with) && !declared(o)) : []; // a declared line is already shown
   for (const o of it.overlaps) {
     if (quiet.includes(o) || declared(o)) continue;
     lines.push(overlapLine(o));
   }
-  if (it.inherited?.length) lines.push(`    inherited (${it.inherited.length} file${it.inherited.length === 1 ? '' : 's'}) from stack base ${it.stackBase} — shared ancestor commits, not counted as overlaps`);
+  if (it.inherited?.length) lines.push(`    inherited (${it.inherited.length} file${it.inherited.length === 1 ? '' : 's'}) from declared stack base ${it.stackBase} — commits it shares with that base, not counted as overlaps (declared by claim --base, not verified: a commit the base absorbed from this branch reads as inherited)`);
   if (quiet.length) lines.push(`    overlaps ${quiet.length} other untracked branch${quiet.length === 1 ? '' : 'es'} (--all)`);
   if (it.overlapsWithHidden?.length) {
     lines.push(`    + overlaps ${it.overlapsWithHidden.length} hidden item${it.overlapsWithHidden.length === 1 ? '' : 's'} — use --all`);

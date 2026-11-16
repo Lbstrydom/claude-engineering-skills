@@ -131,8 +131,6 @@ export async function runUnderLease(opts, job) {
     await sleep(wait);
   }
   const token = grant.heavy.token;
-  // Granted, the job not yet started: the caller's last look before it runs (the CPU-saturation warning, item 6). Never fatal.
-  if (onGranted) { try { await onGranted(grant); } catch { /* a warning that cannot be computed is no reason not to run */ } }
   if (grant.capped) log(`CAPPED: granted ${grant.capped.grantedMin} of the requested ${grant.capped.requestedMin} minutes - the turn ends at ${grant.capped.turnEndsAt.slice(11, 16)}Z and ${grant.capped.waiting} is waiting; the slot is released for them then unless this job is still running`);
 
   // 3. Run. Signals abort the job's AbortSignal; the job stops itself, and we release afterwards.
@@ -179,7 +177,13 @@ export async function runUnderLease(opts, job) {
   };
   const timer = heartbeatMs > 0 ? timers.every(heartbeatMs, beat) : null;
   let result; let threw = false; let thrown;
-  try { result = await job({ token, attach, signal: abort.signal }); } catch (e) { threw = true; thrown = e; }
+  try {
+    // Granted, the job not yet started: the caller's last look before it runs (the CPU-saturation warning, item 6). It runs
+    // INSIDE the protected lifecycle — signals are installed and the release below follows it — and is never fatal.
+    if (onGranted) { try { await onGranted(grant); } catch { /* a warning that cannot be computed is no reason not to run */ } }
+    // A stop signal during it: the job never starts, and the slot is released below like any other stop.
+    result = signalled ? {} : await job({ token, attach, signal: abort.signal });
+  } catch (e) { threw = true; thrown = e; }
   beating = false;
   if (timer) timers.cancel(timer);
 

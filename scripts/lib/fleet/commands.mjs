@@ -238,7 +238,7 @@ export function cmdStatus(ctx, flags = {}) {
   if (todo) lines.push('', todo);
   // Two or more ready branches never built together: the clash, if any, would surface only at the full train.
   const probes = listTrains(probesDir(ctx.dir));
-  const together = testedTogether(readySet(status), [...facts.trains, ...probes.trains]);
+  const together = testedTogether(readySet(status), [...facts.trains, ...probes.trains], facts.base?.measure?.ok ? facts.base.measure.oid : null);
   const togetherLine = testedTogetherLine(together, { cmd: ctx.cmd, probeTier: (ctx.config.testCommand ?? []).find((t) => t.stage === 'pre-land')?.name ?? null });
   if (togetherLine) lines.push('', togetherLine);
   for (const t of probes.invalid) warnings.push(`probe record unreadable: ${t.file} (${t.reason})`);

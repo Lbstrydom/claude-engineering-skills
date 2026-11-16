@@ -66,10 +66,11 @@ export const FULL_SUITE_MODES = Object.freeze(['session', 'train']);
 export const FULL_SUITE_LOG_LINE = 'full suite deferred to the train (fullSuite: train)';
 /** What `next` and `ready` tell a session under `fullSuite: "train"`. */
 export const fullSuiteDeferredLine = (cmd = 'fleet') => `TESTS: this repo defers the full suite to the train (.fleet.json fullSuite: "train"). Run the targeted and affected-file tests plus the required gates, then \`${cmd} ready\`; do NOT take the heavy slot for a full suite. Write in your plan's test log: "${FULL_SUITE_LOG_LINE}".`;
-/** `ctx.config.fullSuite`, or `session` when config cannot be read (a verb that prints this line never fails on it). */
-export function fullSuiteOf(ctx) {
-  try { return ctx.config.fullSuite ?? 'session'; } catch { return 'session'; }
-}
+/**
+ * `ctx.config.fullSuite`; `session` only when the key is absent. A config that fails to load throws its ConfigError like
+ * every other read of `ctx.config` (audit R1 H5): a malformed `.fleet.json` must never read as "the default mode".
+ */
+export const fullSuiteOf = (ctx) => ctx.config.fullSuite ?? 'session';
 const patternList = (what) => z.array(z.string(), { error: `must be an array of ${what}` }).max(MAX_HOT_FILES).optional();
 
 /** User-facing tier: the persisted tier minus `shell` (only a string testCommand may set it). */

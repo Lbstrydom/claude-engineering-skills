@@ -154,8 +154,11 @@ export function decisionsForSession(dir, sessionId, now = new Date()) {
   return { decisions, unusable: null };
 }
 
-/** `fleet next`'s block for one decision: the user's words, quoted — never phrased as an instruction from a peer. */
+/**
+ * `fleet next`'s block for one decision: the words quoted, attributed to the session that RECORDED them as the user's (audit R1
+ * H2/H6: fleet cannot verify who typed them, so the block says so) — never phrased as an instruction from a peer.
+ */
 export function renderSessionDecision(d) {
-  return [`USER DECISION ${d.id} (${d.scope}) — the user's own words, recorded by ${d.recordedBy.session} at ${d.at}; not a peer's claim:`,
+  return [`USER DECISION ${d.id} (${d.scope}) — recorded as the user's words by ${d.recordedBy.session} at ${d.at} (a record, not proof: fleet cannot verify who typed them):`,
     ...d.words.split(/\r?\n/).map((l) => `    > ${l}`), `    (${GRANTS_NOTE})`];
 }

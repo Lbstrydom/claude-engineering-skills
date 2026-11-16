@@ -57,6 +57,7 @@ describe('land --dry-run --tier: a fast-tier probe', () => {
     assert.equal(r.status, 3, r.stdout + r.stderr);
     assert.match(r.json.text, /PROBE \(tier fast only, never approvable\) — CONFLICT at feat-b/);
     assert.equal(ran(dir, 'full'), 0);
+    assert.match(r.json.text, /NOT approvable: probe: stopped at a conflict before tier fast ran/, 'the reason says no tier ran (audit R1 L1)');
   });
 
   it('a red probe exits 4; an unknown tier, or --tier without --dry-run, is refused', () => {
@@ -83,16 +84,27 @@ describe('land --dry-run --tier: a fast-tier probe', () => {
 
 describe('testedTogether (pure)', () => {
   const r = [{ id: 'a', oid: '1'.repeat(40) }, { id: 'b', oid: '2'.repeat(40) }];
-  const t = (sources, extra = {}) => ({ trainId: 't-1', createdAt: '2026-11-16T00:00:00Z', sources, tierResults: [{ name: 'fast', result: 'green' }], result: 'green', ...extra });
-  it('under two ready branches says nothing', () => assert.equal(testedTogether(r.slice(0, 1), []), null));
+  const B0 = 'b'.repeat(40);
+  const t = (sources, extra = {}) => ({ trainId: 't-1', createdAt: '2026-11-16T00:00:00Z', baseOid: B0, sources, tierResults: [{ name: 'fast', result: 'green' }], result: 'green', ...extra });
+  it('under two ready branches says nothing', () => assert.equal(testedTogether(r.slice(0, 1), [], B0), null));
   it('a moved head (different oid) is untested again', () => {
-    const moved = testedTogether(r, [t([{ id: 'a', oid: '1'.repeat(40) }, { id: 'b', oid: '3'.repeat(40) }])]);
+    const moved = testedTogether(r, [t([{ id: 'a', oid: '1'.repeat(40) }, { id: 'b', oid: '3'.repeat(40) }])], B0);
     assert.equal(moved.tested, false);
     assert.match(testedTogetherLine(moved, { probeTier: 'fast' }), /2 ready branches never tested together/);
   });
   it('a manifest that never reached a verdict does not count', () => {
-    assert.equal(testedTogether(r, [t(r, { tierResults: [], result: null })]).tested, false);
-    assert.equal(testedTogether(r, [t(r)]).tested, true);
+    assert.equal(testedTogether(r, [t(r, { tierResults: [], result: null })], B0).tested, false);
+    assert.equal(testedTogether(r, [t(r)], B0).tested, true);
+  });
+  it('a base that moved since the manifest, or an unmeasured base, is untested (audit R1 H4)', () => {
+    assert.equal(testedTogether(r, [t(r)], 'c'.repeat(40)).tested, false);
+    assert.equal(testedTogether(r, [t(r)], null).tested, false);
+  });
+  it('a conflict covers only the sources it reached (audit R1 H3)', () => {
+    const three = [...r, { id: 'c', oid: '4'.repeat(40) }];
+    const early = t(three, { tierResults: [], result: 'none', conflict: { sourceId: 'b' } });
+    assert.equal(testedTogether(three, [early], B0).tested, false, 'c was never applied');
+    assert.equal(testedTogether(r, [early], B0).tested, true, 'a and b were: their clash is the verdict');
   });
 });
 
@@ -114,6 +126,16 @@ describe('a ready mark on a branch ahead 0 of the base is stale', () => {
     assert.match(r.json.text, /left out: 1 stale ready mark\(s\), ahead 0 of the base \(feat-z\) — `--include-stale` brings them back/);
     const sel = land(s, ['--select', 'feat-z']);
     assert.match(sel.json.text, /--include-stale` brings back a mark that is ahead 0 of the base/);
+  });
+
+  it('stays a stale ready mark when its lease has ALSO expired (structured, not the display string — audit R1 M1)', () => {
+    const s = aheadZero();
+    const later = { env: { FLEET_NOW: new Date(Date.now() + 3 * 86_400_000).toISOString() } };
+    const st = s.f(['status', '--json'], later).json.status;
+    const it = st.items.find((x) => x.id === 'feat-z');
+    assert.match(it.display, /· stale$/, 'the lease suffix is on the display');
+    assert.equal(it.readyAheadZero, true);
+    assert.deepEqual(st.staleReady, ['feat-z']);
   });
 
   it('--include-stale brings it back into the train', () => {
