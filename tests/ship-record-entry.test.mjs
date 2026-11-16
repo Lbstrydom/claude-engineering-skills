@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   sanitizeField, codeSpan, entryFileName, prEntryFileName, renderPrEntry, planLogSuggestion, PLAN_LOG_LINE_RE, planHasMarker,
-  touchedPlans, titleFromSubject, publishEntry, checkEntriesDir, sweepTemps, renderInitReadme, renderFloorEntry, STALE_TEMP_MS,
+  touchedPlans, titleFromSubject, publishEntry, checkEntriesDir, sweepTemps, renderInitReadme, renderFloorEntry, renderRunEntry, STALE_TEMP_MS,
 } from '../scripts/lib/ship-record/entry.mjs';
 import { parseFloorMarker } from '../scripts/lib/ship-record/state.mjs';
 
@@ -126,5 +126,14 @@ describe('audit A-R1 regressions (entry)', () => {
   it('M12: the entry does not render the (mutable) head ref name', () => {
     assert.ok(!renderPrEntry({ ...PR, headRefName: 'renamed-branch' }, FACTS, { repo: 'o/r' }).includes('renamed-branch'));
     assert.equal(renderPrEntry({ ...PR, headRefName: 'a' }, FACTS, { repo: 'o/r' }), renderPrEntry({ ...PR, headRefName: 'b' }, FACTS, { repo: 'o/r' }));
+  });
+});
+
+describe('audit A-R5 regressions (entry)', () => {
+  it('H2: run and floor entries pass the branch and plan paths through the redacting boundary', () => {
+    const base = { branch: `rel/${FAKE_KEY}` };
+    const run = renderRunEntry({ nowIso: '2026-11-16T10:00:00.000Z', recorded: [PR], backlogLine: 'Backlog: x', suggestions: [{ plan: `docs/plans/${FAKE_KEY}.md`, line: 'l' }], base });
+    const floor = renderFloorEntry({ nowIso: '2026-11-16T10:00:00.000Z', mergedThrough: '2026-11-16T09:00:00.000Z', covered: [1], lastEntry: null, withGate: 0, total: 1, base });
+    assert.ok(!run.includes(FAKE_KEY) && !floor.includes(FAKE_KEY));
   });
 });

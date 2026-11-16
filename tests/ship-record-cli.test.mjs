@@ -303,12 +303,33 @@ describe('audit A-R4 regressions', () => {
     const git = (args) => { if (args[0] === 'fetch') { calls.push(args); return { status: 1, stdout: '', stderr: 'offline', error: null }; } return fx.g(args); };
     must(fx.g, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/develop']); // default is develop; no develop ref
     const env = runStatus({ ...ctxFor(fx), runners: { git, gh: fakeGh(fx.prs) } }, { fetch: true });
-    assert.deepEqual(calls.map((a) => a.at(-1)), ['develop']);
+    assert.deepEqual(calls.map((a) => a.at(-1)), ['+refs/heads/develop:refs/remotes/origin/develop']);
     assert.match(env.reason, /refs\/remotes\/origin\/develop not found/);
     must(fx.g, ['symbolic-ref', '--delete', 'refs/remotes/origin/HEAD']);
     calls.length = 0;
     const env2 = runStatus({ ...ctxFor(fx), runners: { git, gh: fakeGh(fx.prs) } }, { fetch: true });
     assert.equal(calls.length, 0, 'no branch known: nothing is fetched');
     assert.match(env2.warnings[0], /--fetch skipped: origin\/HEAD is not set/);
+  });
+});
+
+describe('audit A-R5 regressions', () => {
+  it('H1/M2: an option-shaped --base never reaches git', () => {
+    const fx = fixture();
+    const calls = [];
+    const git = (args) => { if (args[0] === 'fetch') calls.push(args); return fx.g(args); };
+    for (const bad of ['-p', '--prune', 'a..b', 'x.lock']) {
+      const env = runStatus({ ...ctxFor(fx), runners: { git, gh: fakeGh(fx.prs) } }, { fetch: true, base: bad });
+      assert.equal(env.state, 'unmeasured', bad);
+      assert.match(env.reason, /not a valid branch name/);
+    }
+    assert.equal(calls.length, 0);
+  });
+  it('M1: --fetch names an explicit destination refspec', () => {
+    const fx = fixture();
+    const calls = [];
+    const git = (args) => { if (args[0] === 'fetch') { calls.push(args); return { status: 0, stdout: '', stderr: '', error: null }; } return fx.g(args); };
+    runStatus({ ...ctxFor(fx), runners: { git, gh: fakeGh(fx.prs) } }, { fetch: true });
+    assert.equal(calls[0].at(-1), '+refs/heads/main:refs/remotes/origin/main');
   });
 });

@@ -27,7 +27,10 @@ export const WINDOW_LIMIT = 500;
 export const MAX_LIST_CALLS = 64;
 export const MERGED_FIELDS = 'number,headRefName,mergedAt,mergeCommit,url';
 const GH_TIMEOUT_MS = 30_000;
-const BRANCH_RE = /^[A-Za-z0-9._/-]+$/;
+const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+/** The ONE branch-name check, applied before ANY git call sees the name (A-R5-H1/M2): no option shape, no traversal. */
+export const isSafeBranch = (b) => typeof b === 'string' && BRANCH_RE.test(b) && !b.includes('..') && !b.endsWith('/') && !b.endsWith('.lock');
 
 // ── real runners ───────────────────────────────────────────────────────────
 
@@ -71,17 +74,17 @@ export function githubSlugFromRemote(url) {
  * @returns {{ok: true, branch: string} | {ok: false, reason: string}}
  */
 export function discoverBaseBranch({ git }, explicit = null) {
-  if (explicit !== null) return { ok: true, branch: explicit };
+  const checked = (branch) => (isSafeBranch(branch) ? { ok: true, branch } : { ok: false, reason: `base branch ${JSON.stringify(branch)} is not a valid branch name` });
+  if (explicit !== null) return checked(explicit);
   const r = git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
   if (!ok(r) || !out(r).startsWith('refs/remotes/origin/')) return { ok: false, reason: 'origin/HEAD is not set, so the default branch is unknown — git remote set-head origin --auto, or pass --base <branch>' };
-  return { ok: true, branch: out(r).slice('refs/remotes/origin/'.length) };
+  return checked(out(r).slice('refs/remotes/origin/'.length));
 }
 
 export function resolveBase({ git }, { branch: explicit = null } = {}) {
   const d = discoverBaseBranch({ git }, explicit);
   if (!d.ok) return d;
   const branch = d.branch;
-  if (!BRANCH_RE.test(branch) || branch.startsWith('-') || branch.includes('..')) return { ok: false, reason: `base branch ${JSON.stringify(branch)} is not a valid branch name` };
   const ref = `refs/remotes/origin/${branch}`;
   const v = git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
   if (!ok(v) || !SHA_RE.test(out(v))) return { ok: false, reason: `base ref ${ref} not found — git fetch origin ${branch}` };

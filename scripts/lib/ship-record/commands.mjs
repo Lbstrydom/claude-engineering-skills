@@ -65,7 +65,9 @@ function maybeFetch(ctx, opts) {
   const d = discoverBaseBranch(ctx.runners, opts.base ?? null);
   if (!d.ok) return `--fetch skipped: ${d.reason}`;
   const branch = d.branch;
-  const r = ctx.runners.git(['fetch', '--quiet', 'origin', branch]);
+  // An EXPLICIT destination (A-R5-M1): a single-branch clone's refspec may not map this branch to the tracking ref the
+  // resolver needs. The name is validated before this line (isSafeBranch), so it cannot read as an option.
+  const r = ctx.runners.git(['fetch', '--quiet', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
   return r.status === 0 && !r.error ? null : `git fetch origin ${branch} failed (${String(r.stderr ?? r.error?.message ?? '').trim().slice(0, 200)}); measured against the last fetch`;
 }
 

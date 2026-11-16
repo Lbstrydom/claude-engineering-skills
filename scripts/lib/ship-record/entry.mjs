@@ -174,12 +174,12 @@ export function renderRunEntry({ nowIso, recorded, backlogLine, suggestions, bas
     `<!-- ship-record-run v1 prs=${nums.join(',')} -->`,
     '',
     '### Changes',
-    `- Recorded ${recorded.length} merged PR(s) into ${codeSpan(base.branch)} that had no /ship record: ${nums.map((n) => `#${n}`).join(', ') || 'none'}.`,
+    `- Recorded ${recorded.length} merged PR(s) into ${sanitizeField(base.branch, 'ref')} that had no /ship record: ${nums.map((n) => `#${n}`).join(', ') || 'none'}.`,
     '',
     backlogLine,
   ];
   if (suggestions.length) {
-    lines.push('', '### Plan Implementation Log lines to paste', ...suggestions.map((s) => `- ${codeSpan(s.plan)}: ${codeSpan(s.line)}`));
+    lines.push('', '### Plan Implementation Log lines to paste', ...suggestions.map((s) => `- ${sanitizeField(s.plan, 'path')}: ${codeSpan(s.line)}`));
   }
   lines.push('');
   return lines.join('\n');
@@ -195,7 +195,7 @@ export function renderFloorEntry({ nowIso, mergedThrough, covered, lastEntry, wi
     '',
     '### Changes',
     `- Summarised backfill. The last log entry before this floor: ${lastEntry ? sanitizeField(lastEntry, 'title') : 'none found'}.`,
-    `- ${total} PR(s) merged into ${codeSpan(base.branch)} up to ${mergedThrough} are covered by this summary and get no individual entry; git log keeps their detail.`,
+    `- ${total} PR(s) merged into ${sanitizeField(base.branch, 'ref')} up to ${mergedThrough} are covered by this summary and get no individual entry; git log keeps their detail.`,
     `- Of those, ${withGate} carry a valid AI-Gate trailer on the squash commit (${total ? Math.round((withGate / total) * 100) : 0}%).`,
     '- PRs merged after the cutoff — or not in the covered list — are recorded one entry each by `ship-record catchup`.',
     '',
