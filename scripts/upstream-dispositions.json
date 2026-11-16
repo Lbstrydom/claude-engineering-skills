@@ -971,6 +971,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "fb7b5565-f5b6-42b4-9f13-0acf56ab8ff9",
+      "storeFingerprint": "c7177057dcafa55d",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/duplicate-min-lines-floor.test.mjs"
+      },
+      "recordedAt": "2026-11-16T17:21:57.950Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "fc843d6b-4f1a-49f5-ad11-4b9db5725086",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
