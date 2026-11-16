@@ -27,10 +27,16 @@ export const WINDOW_LIMIT = 500;
 export const MAX_LIST_CALLS = 64;
 export const MERGED_FIELDS = 'number,headRefName,mergedAt,mergeCommit,url';
 const GH_TIMEOUT_MS = 30_000;
-const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
-
-/** The ONE branch-name check, applied before ANY git call sees the name (A-R5-H1/M2): no option shape, no traversal. */
-export const isSafeBranch = (b) => typeof b === 'string' && BRANCH_RE.test(b) && !b.includes('..') && !b.endsWith('/') && !b.endsWith('.lock');
+/**
+ * The ONE branch-name check, applied before any git call USES the name (A-R5-H1/M2): git's own rules
+ * (`check-ref-format --branch`, A-R6-H1 — a hand-written character class rejected `_main` and `feature/a+b`), plus the one
+ * thing git's rules allow that an argv slot must not: a leading `-`. `check-ref-format` only VALIDATES; it reads no refs.
+ */
+export function isSafeBranch({ git }, b) {
+  if (typeof b !== 'string' || !b || b.startsWith('-') || /[\u0000-\u001f\u007f]/.test(b)) return false;
+  const r = git(['check-ref-format', '--branch', b]);
+  return ok(r) && out(r) === b;
+}
 
 // ── real runners ───────────────────────────────────────────────────────────
 
@@ -74,7 +80,7 @@ export function githubSlugFromRemote(url) {
  * @returns {{ok: true, branch: string} | {ok: false, reason: string}}
  */
 export function discoverBaseBranch({ git }, explicit = null) {
-  const checked = (branch) => (isSafeBranch(branch) ? { ok: true, branch } : { ok: false, reason: `base branch ${JSON.stringify(branch)} is not a valid branch name` });
+  const checked = (branch) => (isSafeBranch({ git }, branch) ? { ok: true, branch } : { ok: false, reason: `base branch ${JSON.stringify(branch)} is not a valid branch name` });
   if (explicit !== null) return checked(explicit);
   const r = git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
   if (!ok(r) || !out(r).startsWith('refs/remotes/origin/')) return { ok: false, reason: 'origin/HEAD is not set, so the default branch is unknown — git remote set-head origin --auto, or pass --base <branch>' };
@@ -258,7 +264,12 @@ export function gatherRecordState(runners, { branch = null, now = new Date() } =
   const inBase = new Map();
   if (merged.ok) {
     // The ledger is read at the PINNED base; a merge newer than it cannot have its record there yet (A-R3-H1).
-    for (const pr of merged.prs) if (pr.mergeCommit && hasCommit(runners, pr.mergeCommit)) inBase.set(pr.mergeCommit, ok(runners.git(['merge-base', '--is-ancestor', pr.mergeCommit, base.oid])));
+    // exit 0 = ancestor, 1 = not; anything else is a failed measurement (null), never "newer" (A-R6-M2).
+    for (const pr of merged.prs) {
+      if (!pr.mergeCommit || !hasCommit(runners, pr.mergeCommit)) continue;
+      const a = runners.git(['merge-base', '--is-ancestor', pr.mergeCommit, base.oid]);
+      inBase.set(pr.mergeCommit, a.error ? null : a.status === 0 ? true : a.status === 1 ? false : null);
+    }
     const markerFor = new Map();
     for (const m of entries.markers) markerFor.set(m.pr, (markerFor.get(m.pr) ?? new Set()).add(m.merge));
     for (const pr of merged.prs) {

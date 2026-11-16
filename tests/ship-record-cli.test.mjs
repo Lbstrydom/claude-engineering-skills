@@ -333,3 +333,21 @@ describe('audit A-R5 regressions', () => {
     assert.equal(calls[0].at(-1), '+refs/heads/main:refs/remotes/origin/main');
   });
 });
+
+describe('audit A-R6 regressions', () => {
+  it('H1/M1: git-valid branch names are accepted; option shapes are not', () => {
+    const fx = fixture();
+    for (const name of ['_main', 'feature/build+test', 'relé']) {
+      must(fx.g, ['update-ref', `refs/remotes/origin/${name}`, 'refs/remotes/origin/main']);
+      assert.equal(runStatus(ctxFor(fx), { base: name }).state, 'measured', name);
+    }
+    assert.equal(runStatus(ctxFor(fx), { base: '-x' }).state, 'unmeasured');
+  });
+  it('M2: a failed ancestry check is unknown, never read as newer-or-older', () => {
+    const fx = fixture();
+    const git = (args) => (args[0] === 'merge-base' ? { status: 128, stdout: '', stderr: 'fatal', error: null } : fx.g(args));
+    const env = runStatus({ ...ctxFor(fx), runners: { git, gh: fakeGh(fx.prs) } });
+    assert.equal(env.state, 'partial');
+    assert.equal(env.counts.unrecorded, 0);
+  });
+});

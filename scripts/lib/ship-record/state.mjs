@@ -141,7 +141,7 @@ export function classifyRecordState(f) {
     let by = null;
     if (sha && markerFor.get(pr.number)?.has(sha)) { status = 'recorded'; by = 'marker'; }
     else if (!sha || !SHA_RE.test(sha)) status = 'unknown';
-    else if (f.inBase?.get(sha) === false) status = 'unknown';
+    else if (f.inBase?.has(sha) && f.inBase.get(sha) !== true) status = 'unknown'; // newer than the base, or not determinable
     else {
       const ib = f.inBand?.get(sha);
       // 'in-band': the merge added a /ship-style entry. 'record-pr': the merge added ONLY catch-up records — it IS a record,
