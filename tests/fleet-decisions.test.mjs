@@ -80,6 +80,22 @@ describe('audit B-R1 regressions (decisions)', () => {
   it('M5: list surfaces registry usage against the cap', () => {
     const dir = tmp();
     rec(dir, newDecisionId(NOW));
-    assert.match(cmdDecision(ctx(dir), {}, ['list']).text, /registry: 1\/500 records/);
+    assert.match(cmdDecision(ctx(dir), {}, ['list']).text, /registry: 1\/5000 records/);
+  });
+});
+
+describe('audit B-R2 regressions (decisions)', () => {
+  it('M1/M3/M5: list shows no decision as active when the registry is unusable', () => {
+    const dir = tmp();
+    const r = cmdDecision(ctx(dir), { '--scope': 'record-catchup', '--words-file': '-' }, ['record'], stdin('ok'));
+    assert.match(cmdDecision(ctx(dir), {}, ['list']).text, /record-catchup {2}active/);
+    fs.writeFileSync(path.join(decisionsDir(dir), 'rev-20261116000000-0000.json'), '{garbage');
+    const text = cmdDecision(ctx(dir), {}, ['list']).text;
+    assert.match(text, new RegExp(`${r.decision.id} {2}record-catchup {2}INDETERMINATE`));
+    assert.match(text, /could not be interpreted/);
+  });
+  it('M2: multiline CRLF words are stored exactly', () => {
+    const r = cmdDecision(ctx(tmp()), { '--scope': 'note', '--words-file': '-' }, ['record'], stdin('line one\r\nline two\r\n'));
+    assert.equal(r.decision.words, 'line one\r\nline two');
   });
 });

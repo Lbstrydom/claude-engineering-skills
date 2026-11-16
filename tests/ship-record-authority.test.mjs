@@ -81,7 +81,7 @@ describe('trailers', () => {
   it('renders record-catchup only with a well-formed decision id, and AI-Decision is a reserved key', () => {
     const base = { skill: 'ship', models: ['claude'], gate: 'not-run' };
     assert.deepEqual(formatTrailerBlock({ ...base, shipAuthority: 'record-catchup', decision: 'dec-20261116000000-abcd' }).slice(-2), ['AI-Ship-Authority: record-catchup', 'AI-Decision: dec-20261116000000-abcd']);
-    assert.ok(!formatTrailerBlock({ ...base, shipAuthority: 'record-catchup', decision: 'bogus' }).some((l) => l.startsWith('AI-Ship-Authority')));
+    assert.throws(() => formatTrailerBlock({ ...base, shipAuthority: 'record-catchup', decision: 'bogus' }), /needs a decision id/);
     assert.ok(AI_TRAILER_KEYS.includes('AI-Decision'));
   });
 });
@@ -143,5 +143,28 @@ describe('audit B-R1 regressions (authority)', () => {
     assert.deepEqual(facts.map((f) => f.atHead), ['blob', 'symlink', 'absent']);
     const failing = gatherRecordPathFacts({ repoRoot: dir, git: () => ({ status: 128, stdout: '', error: null }), rels: ['docs/plans/real.md'] });
     assert.equal(failing[0].atHead, 'unknown');
+  });
+});
+
+describe('audit B-R2 regressions (authority)', () => {
+  it('M6: a blank line inserted outside the log refuses', () => {
+    const plan = '# P\n\n## Implementation Log\n- old\n\n## Out of Scope\n- y\n';
+    assert.match(planChangeIsRecordOnly(plan, plan.replace('# P\n', '# P\n\n')).reason, /blank line outside/);
+    assert.equal(planChangeIsRecordOnly(plan, plan.replace('- old\n', `- old\n\n${LINE}\n`)).ok, true);
+  });
+  it('M4: a record-catchup trailer without a valid decision id throws, never omits silently', () => {
+    assert.throws(() => formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'not-run', shipAuthority: 'record-catchup', decision: 'bogus' }), /needs a decision id/);
+  });
+  it('H2: a plan path with pathspec metacharacters is read literally', async (t) => {
+    const { gatherRecordPathFacts } = await import('../scripts/lib/ship-record/authority.mjs');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-record-lit-'));
+    const g = (args) => { const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }); return { status: r.status, stdout: r.stdout, error: r.error }; };
+    g(['init', '-q']);
+    fs.mkdirSync(path.join(dir, 'docs/plans'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'docs/plans/d.md'), '# d\n'); // what the glob [draft].md would match
+    g(['add', '-A']);
+    if (g(['commit', '-q', '-m', 'x']).status !== 0) { t.skip('could not commit'); return; }
+    fs.writeFileSync(path.join(dir, 'docs/plans/[draft].md'), LINE);
+    assert.equal(gatherRecordPathFacts({ repoRoot: dir, git: g, rels: ['docs/plans/[draft].md'] })[0].atHead, 'absent');
   });
 });

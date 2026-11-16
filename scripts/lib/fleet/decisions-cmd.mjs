@@ -16,7 +16,7 @@ import { ArgvError } from '../cli-io.mjs';
 import { transact } from './registry.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused } from './commands.mjs';
 import {
-  DECISION_SCOPES, DECISION_ID_RE, DECISIONS_CAP, GRANTS_NOTE, WORDS_MAX, newDecisionId, newRevocationId, readDecisions, writeRecord,
+  DECISION_SCOPES, DECISION_ID_RE, DECISIONS_CAP, GRANTS_NOTE, WORDS_MAX, registryUnusable, newDecisionId, newRevocationId, readDecisions, writeRecord,
 } from './decisions.mjs';
 
 const SUBS = ['record', 'revoke', 'list'];
@@ -47,8 +47,8 @@ export function readWords(spec, { readStdin = () => fs.readFileSync(0, 'utf8') }
 
 const byOf = (ctx, flags) => ({ session: flags['--id'] ?? currentBranch(ctx.cwd) ?? 'coordinator', hostSession: flags['--host-session'] ?? null });
 
-function render(d, revoked) {
-  const state = revoked ? `REVOKED by ${revoked.id}` : d.expiresAt && Date.parse(d.expiresAt) <= Date.now() ? 'expired' : 'active';
+function render(d, revoked, unusable, nowMs) {
+  const state = revoked ? `REVOKED by ${revoked.id}` : d.expiresAt && Date.parse(d.expiresAt) <= nowMs ? 'expired' : unusable ? 'INDETERMINATE (registry unusable)' : 'active';
   return [`${d.id}  ${d.scope}  ${state}  recorded ${d.at} by ${d.recordedBy.session}${d.expiresAt ? `, expires ${d.expiresAt}` : ''}`,
     ...d.words.split('\n').map((l) => `    > ${l}`)].join('\n');
 }
@@ -61,7 +61,10 @@ export function cmdDecision(ctx, flags, positionals, deps = {}) {
     if (scope !== undefined && !DECISION_SCOPES.includes(scope)) throw new ArgvError(`fleet decision list: --scope must be one of ${DECISION_SCOPES.join(', ')}`);
     const r = readDecisions(ctx.dir);
     const shown = r.decisions.filter((d) => !scope || d.scope === scope);
-    const lines = shown.length ? shown.map((d) => render(d, r.revocations.find((x) => x.revokes === d.id))) : ['no decisions recorded'];
+    // The SAME registry verdict activeDecision applies (B-R2-M1/M3/M5): an unusable history shows no decision as active.
+    const unusable = registryUnusable(r);
+    const lines = shown.length ? shown.map((d) => render(d, r.revocations.find((x) => x.revokes === d.id), unusable, ctx.now.getTime())) : ['no decisions recorded'];
+    if (unusable) lines.push(`warning: ${unusable}`);
     if (!r.complete) lines.push(`warning: incomplete read (${r.reason}) — this is not the whole list`);
     const used = r.decisions.length + r.revocations.length + r.unsupported.length + r.invalid.length;
     lines.push(`registry: ${used}/${DECISIONS_CAP} records${used >= DECISIONS_CAP * 0.8 ? ' — NEAR THE CAP: past it every decision reads inactive (fail-closed); plan retention before then' : ''}`);
@@ -84,7 +87,7 @@ export function cmdDecision(ctx, flags, positionals, deps = {}) {
     }));
     if (!tx.ok) return lockFailed();
     const d = tx.value;
-    return ok({ decision: d, text: [`decision ${d.id} recorded (${d.scope})`, render(d, null), `(${GRANTS_NOTE})`,
+    return ok({ decision: d, text: [`decision ${d.id} recorded (${d.scope})`, render(d, null, null, ctx.now.getTime()), `(${GRANTS_NOTE})`,
       ...(d.scope === 'record-catchup' ? [`use it: ship-commit.mjs --record --decision ${d.id}`] : [])].join('\n') });
   }
   const target = positionals[1];

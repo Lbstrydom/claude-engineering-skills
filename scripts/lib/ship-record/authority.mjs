@@ -55,7 +55,10 @@ export function planChangeIsRecordOnly(oldText, newText) {
   const oldHadLog = a.includes(LOG_HEADING);
   for (const j of inserted) {
     const l = b[j];
-    if (l === '') continue; // spacing around an inserted line or section
+    // Blank lines are located like any other insertion (B-R2-M6): inside the log, or after all original content when the
+    // section is being created at EOF.
+    const inLog = headingAt >= 0 && j > headingAt && j < sectionEnd(headingAt);
+    if (l === '') { if (inLog || (!oldHadLog && j > lastOld)) continue; return { ok: false, reason: `line ${j + 1} inserts a blank line outside the ${LOG_HEADING} section` }; }
     // A CREATED section must come after every original line (B-R1-H3): EOF means EOF, not "no later heading".
     if (!oldHadLog && l === LOG_HEADING && j === headingAt && j > lastOld && sectionEnd(headingAt) === b.length) continue;
     if (!PLAN_LOG_LINE_RE.test(l)) return { ok: false, reason: `line ${j + 1} is not a ship-record Implementation Log line` };
@@ -124,7 +127,9 @@ export function gatherRecordPathFacts({ repoRoot, git, rels }) {
     try { const st = fs.lstatSync(abs); kind = st.isSymbolicLink() ? 'symlink' : st.isFile() ? 'regular' : 'other'; } catch (e) { kind = e.code === 'ENOENT' ? 'missing' : 'other'; }
     // The tree ENTRY, not the object type (B-R1-H4/M6): git stores a symlink as a blob too; only the mode tells them apart.
     // Every git call is checked (B-R1-H7/H9): a failure is 'unknown' and refuses, never a fabricated "absent".
-    const t = git(['ls-tree', '-z', 'HEAD', '--', rel]);
+    // Literal pathspec (B-R2-H2): `[draft].md` is a filename, not a glob. Per-pathspec magic — never --literal-pathspecs,
+    // whose environment form leaks into hooks.
+    const t = git(['ls-tree', '-z', 'HEAD', '--', `:(literal)${rel}`]);
     let atHead = 'unknown';
     let oldText = null;
     if (t.status === 0 && !t.error) {

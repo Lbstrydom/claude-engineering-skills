@@ -23,16 +23,17 @@ import path from 'node:path';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { assertManaged } from './registry.mjs';
+import { DECISION_ID_RE } from '../commit-trailers.mjs';
 
 export const DECISION_SCOPES = Object.freeze(['record-catchup', 'note']);
-export const DECISION_ID_RE = /^dec-[0-9]{14}-[0-9a-f]{4}$/;
+export { DECISION_ID_RE };
 export const REVOCATION_ID_RE = /^rev-[0-9]{14}-[0-9a-f]{4}$/;
 export const WORDS_MAX = 4000;
 /** At most this many records are read; over it the read is `complete:false`, never "none". */
-export const DECISIONS_CAP = 500;
+export const DECISIONS_CAP = 5000;
 export const GRANTS_NOTE = 'a decision records the user\'s words; it grants only its scope, and never a merge';
 
-const NO_CONTROL_EXCEPT_NEWLINE = /^[^\u0000-\u0008\u000b-\u001f\u007f]+$/;
+const NO_CONTROL_EXCEPT_NEWLINE = /^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]+$/; // LF and CR (CRLF) allowed (B-R2-M2)
 const IsoSchema = z.string().refine((s) => Number.isFinite(Date.parse(s)), 'must be an ISO timestamp');
 const Words = z.string().min(1).max(WORDS_MAX).regex(NO_CONTROL_EXCEPT_NEWLINE, 'must not contain control characters');
 const By = z.strictObject({ session: z.string().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/), hostSession: z.string().max(200).nullable() });
@@ -91,6 +92,16 @@ export function readDecisions(dir, { cap = DECISIONS_CAP } = {}) {
 }
 
 /**
+ * Can ANY decision in this read be trusted as active? Null when yes; else the reason (incomplete read, or a record this reader
+ * could not interpret — it might be a revocation). The ONE rule `activeDecision` and `fleet decision list` share (B-R2-M1).
+ */
+export function registryUnusable(r) {
+  if (!r.complete) return `the registry read was incomplete (${r.reason}), so a revocation may be unread`;
+  const opaque = [...r.invalid.map((x) => x.file), ...r.unsupported.map((x) => x.file)];
+  return opaque.length ? `${opaque.length} decision record(s) could not be interpreted (${opaque.slice(0, 3).join(', ')}), so a revocation may be unread — fix or quarantine them` : null;
+}
+
+/**
  * Is decision `id` active for `scope` at `now`? Fail closed: an incomplete read, a revocation, an expiry, another scope
  * or an absent id each refuse with its own reason.
  * @returns {{ok: true, decision: object} | {ok: false, reason: string}}
@@ -103,10 +114,9 @@ export function activeDecision(dir, id, scope, now = new Date()) {
   if (d.scope !== scope) return { ok: false, reason: `decision ${id} is scoped ${d.scope}, not ${scope}` };
   const rev = r.revocations.find((x) => x.revokes === id);
   if (rev) return { ok: false, reason: `decision ${id} was revoked by ${rev.id} at ${rev.at}` };
-  if (!r.complete) return { ok: false, reason: `the registry read was incomplete (${r.reason}), so a revocation may be unread` };
   // Fail closed (B-R1-H2/H8): a record this reader could not interpret might be a revocation of exactly this decision.
-  const opaque = [...r.invalid.map((x) => x.file), ...r.unsupported.map((x) => x.file)];
-  if (opaque.length) return { ok: false, reason: `${opaque.length} decision record(s) could not be interpreted (${opaque.slice(0, 3).join(', ')}), so a revocation may be unread — fix or quarantine them` };
+  const unusable = registryUnusable(r);
+  if (unusable) return { ok: false, reason: unusable };
   if (d.expiresAt && Date.parse(d.expiresAt) <= now.getTime()) return { ok: false, reason: `decision ${id} expired at ${d.expiresAt}` };
   return { ok: true, decision: d };
 }
