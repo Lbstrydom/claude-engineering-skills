@@ -16,7 +16,7 @@
 import '../lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
 import { detectRepoStack } from '../lib/repo-stack.mjs';
 import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
@@ -60,7 +60,10 @@ function parseArgs(argv) {
   // ignored flag lets an operator believe they asked for something the CLI
   // never did. `arch:render --dry-run` used to render for real, silently.
   assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'arch:render' });
-  const args = { out: 'docs/architecture-map.md', floor: null };
+  // `outExplicit` records whether the operator NAMED the output. Only the
+  // default is guarded against tracked files (see resolveMapOutput); a path the
+  // operator typed is a deliberate override and always writes.
+  const args = { out: 'docs/architecture-map.md', outExplicit: false, floor: null };
   // Same resolver as arch:drift, so the rendered status can be told the same
   // per-run floor. A malformed value is a usage error (exit 2) BEFORE any work,
   // never a quiet INSUFFICIENT_DATA in a published map.
@@ -81,6 +84,7 @@ function parseArgs(argv) {
         throw new ArgvError('arch:render: --out requires a file path (e.g. --out docs/architecture-map.md)');
       }
       args.out = value;
+      args.outExplicit = true;
     }
   }
   return args;
@@ -89,6 +93,115 @@ function parseArgs(argv) {
 function commitSha() {
   try { return execSync('git rev-parse HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim().slice(0, 12); }
   catch { return null; }
+}
+
+/** Default `spawnSync` runner for {@link isTrackedByGit}; injectable for tests. */
+function runGit(args, opts) {
+  const r = spawnSync('git', args, { ...opts, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', error: r.error || null };
+}
+
+/**
+ * Nearest existing ancestor directory of `absPath`, symlinks resolved — so git
+ * is asked by the repository that actually OWNS the destination (a nested
+ * repo, a submodule, or a symlinked `docs/` into another worktree), not by
+ * whichever repo the process happens to run in. Returns null when nothing
+ * resolves.
+ */
+function owningDir(absPath) {
+  let dir = path.dirname(absPath);
+  let suffix = path.basename(absPath);
+  for (;;) {
+    try { return { dir: fs.realpathSync(dir), suffix }; } catch { /* try the parent */ }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    // Keep the unresolved tail: a tracked map whose docs/ was deleted from the
+    // working tree must still be queried as docs/architecture-map.md.
+    suffix = path.join(path.basename(dir), suffix);
+    dir = parent;
+  }
+}
+
+/**
+ * Positive proof that no repository applies: git's env-based repo selection is
+ * unset AND every ancestor's `.git` is definitely absent (`lstat` ENOENT /
+ * ENOTDIR — a dangling symlink or an access error is "something is there").
+ */
+function provablyNoRepo(dir) {
+  if (process.env.GIT_DIR || process.env.GIT_WORK_TREE) return false;
+  for (let d = dir; ; d = path.dirname(d)) {
+    try { fs.lstatSync(path.join(d, '.git')); return false; }
+    catch (err) { if (err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR') return false; }
+    if (path.dirname(d) === d) return true;
+  }
+}
+
+/**
+ * Who owns `absPath`: `tracked` | `untracked` | `not-a-repo` | `indeterminate`.
+ *
+ * Classified from the exit code, stdout and the filesystem — never from git's
+ * message text, which is localised and version-dependent. The query runs in the
+ * nearest existing ancestor of the REAL destination so the owning repository
+ * answers; `GIT_INDEX_FILE` is scrubbed so an alternate index (set by some
+ * hooks) cannot stand in for the checkout's own. `git ls-files -z -- <abs>`
+ * exits 0 and lists the path iff it is tracked (an ignored or unknown file
+ * lists nothing). On a non-zero exit "no repository" must be PROVEN
+ * ({@link provablyNoRepo}); anything else — a repo whose query failed (dubious
+ * ownership, corruption, submodule boundary), a dangling `.git`, GIT_DIR in
+ * the env — is `indeterminate`, so an operational git failure can only ever
+ * skip a write.
+ *
+ * @param {string} absPath — the absolute path the renderer would write
+ * @param {(args: string[], opts: object) => {status:number|null, stdout:string, stderr:string, error:Error|null}} [exec]
+ * @returns {{state: 'tracked'|'untracked'|'not-a-repo'|'indeterminate', detail?: string}}
+ */
+export function isTrackedByGit(absPath, exec = runGit) {
+  const owner = owningDir(absPath);
+  if (owner === null) return { state: 'indeterminate', detail: `no existing directory above ${absPath}` };
+  const { dir } = owner;
+  const real = path.join(dir, owner.suffix);
+  // Repository discovery must come from the destination's own location, never
+  // from variables a hook or caller exported for a DIFFERENT repo or index.
+  const env = { ...process.env, LC_ALL: 'C' };
+  for (const k of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_PREFIX']) delete env[k];
+  const r = exec(['ls-files', '-z', '--', real], { cwd: dir, env });
+  if (r.error) return { state: 'indeterminate', detail: r.error.message };
+  if (r.status === 0) return { state: r.stdout.length > 0 ? 'tracked' : 'untracked' };
+  if (provablyNoRepo(dir)) return { state: 'not-a-repo' };
+  return { state: 'indeterminate', detail: String(r.stderr).trim().split('\n')[0] || `git exited ${r.status}` };
+}
+
+/**
+ * Decide whether the map may be written. A consumer may legitimately TRACK
+ * `docs/architecture-map.md`; the maintenance check runs this renderer from a
+ * pre-push hook, and rewriting a tracked file dirties the consumer's checkout
+ * on every push (upstream c9ebd9f9). Only the DEFAULT output is guarded:
+ * `--out <path>` is the operator's explicit override and always writes.
+ *
+ * @param {{outPath: string, outExplicit: boolean, ownership: () => {state: string, detail?: string}}} o
+ *   `ownership` is lazy so an explicit `--out` never consults git.
+ * @returns {{outPath: string|null, warning: string|null}} null path = skip every map write
+ */
+export function resolveMapOutput({ outPath, outExplicit, ownership }) {
+  if (outExplicit) return { outPath, warning: null };
+  const { state, detail } = ownership();
+  if (state === 'untracked' || state === 'not-a-repo') return { outPath, warning: null };
+  const why = state === 'tracked'
+    ? `${outPath} is TRACKED by git, so the renderer will not rewrite it`
+    : `could not determine whether ${outPath} is tracked by git (${detail}), so the renderer will not risk rewriting it`;
+  return {
+    outPath: null,
+    warning: `arch:render: SKIPPED map write — ${why}.\n`
+      + `  To stop tracking it: \`git rm --cached docs/architecture-map.md\` AND add it to .gitignore (ignoring alone does not untrack).\n`
+      + `  To refresh a deliberately tracked map by hand (this MODIFIES the tracked file): \`npm run arch:render -- --out docs/architecture-map.md\`.\n`,
+  };
+}
+
+/** The final-render write seam; a null path means the guard skipped the map. */
+export function writeMapOutput(outPath, markdown) {
+  if (outPath === null) return false;
+  atomicWriteFileSync(outPath, markdown);
+  return true;
 }
 
 function classify(score, threshold) {
@@ -167,7 +280,10 @@ function cleanupOrFail(repoRoot) {
  * (deleted) observed-deps file are CONSISTENTLY unavailable rather than
  * presenting half-stale state to the dashboard.
  */
-function writeAbortStub(outPath, identityName, reason, hint) {
+export function writeAbortStub(outPath, identityName, reason, hint) {
+  // null = the tracked-output guard skipped the map (resolveMapOutput); a stub
+  // must not overwrite a file the consumer tracks any more than a render may.
+  if (outPath === null) return false;
   const stub = [
     '<!-- audit-loop:architectural-map -->',
     `# Architecture Map — ${identityName}`,
@@ -184,6 +300,7 @@ function writeAbortStub(outPath, identityName, reason, hint) {
   // dashboard then sees the non-zero exit and the operator gets the real
   // error rather than a silently stale architecture-map.
   atomicWriteFileSync(outPath, stub);
+  return true;
 }
 
 /**
@@ -247,8 +364,22 @@ export function handleRenderFailure(err, {
 async function main() {
   assertRepoRoot(import.meta.url);
   const args = parseArgs(process.argv);
-  const outPath = path.resolve(args.out);
   const repoRoot = process.cwd();
+  // The guard is re-evaluated at EVERY map write (render, stub, failure stub), not
+  // once up front: the render awaits the store for a long time, and a map staged
+  // meanwhile must not be overwritten on a stale "untracked" verdict. A null path
+  // means the map write is skipped; the observed-deps work is independent and
+  // still runs. The check uses the same absolute path that is written.
+  const absOut = path.resolve(args.out);
+  let warned = false;
+  const decideOut = () => {
+    const g = resolveMapOutput({
+      outPath: absOut, outExplicit: args.outExplicit, ownership: () => isTrackedByGit(absOut),
+    });
+    if (g.warning && !warned) { process.stderr.write(g.warning); warned = true; }
+    return g.outPath;
+  };
+  decideOut(); // up front too: warn before the slow store init
   await initLearningStore();
 
   const identity = resolveRepoIdentity(repoRoot);
@@ -259,29 +390,29 @@ async function main() {
     // the dashboard can't accidentally consume both the old observed file
     // AND the new cloud-disabled stub.
     cleanupOrFail(repoRoot);
-    writeAbortStub(outPath, identity.name, 'cloud-disabled — run `npm run arch:refresh` to populate',
+    const stubbed = writeAbortStub(decideOut(), identity.name, 'cloud-disabled — run `npm run arch:refresh` to populate',
       'Architectural memory cloud store is not configured for this repo.\n' +
       'Set `AUDIT_DB_URL` (Supabase Dashboard → Connect → Session pooler)\n' +
       'in `.env`, then `npm run arch:refresh`. The legacy\n' +
       '`SUPABASE_AUDIT_*` triplet was sunset in postgres-parity M4.');
-    process.stderr.write(`arch:render: cloud disabled — wrote stub to ${outPath}\n`);
+    process.stderr.write(`arch:render: cloud disabled — ${stubbed ? `wrote stub to ${absOut}` : 'map write skipped'}\n`);
     process.exit(0);
   }
 
   const repo = await getRepoIdByUuid(identity.repoUuid);
   if (!repo) {
     cleanupOrFail(repoRoot);
-    writeAbortStub(outPath, identity.name, 'repo-not-registered',
+    const stubbed = writeAbortStub(decideOut(), identity.name, 'repo-not-registered',
       'Repo not found in architectural-memory store. Run `npm run arch:refresh` first.');
-    process.stderr.write(`arch:render: repo not found in store — wrote stub, run \`npm run arch:refresh\` first\n`);
+    process.stderr.write(`arch:render: repo not found in store — ${stubbed ? 'wrote stub' : 'map write skipped'}, run \`npm run arch:refresh\` first\n`);
     process.exit(0);
   }
   const snap = await getActiveSnapshot(repo.id);
   if (!snap?.refreshId) {
     cleanupOrFail(repoRoot);
-    writeAbortStub(outPath, identity.name, 'no-active-snapshot',
+    const stubbed = writeAbortStub(decideOut(), identity.name, 'no-active-snapshot',
       'Repo is registered but has no active snapshot. Run `npm run arch:refresh` first.');
-    process.stderr.write(`arch:render: no active snapshot — wrote stub, run \`npm run arch:refresh\` first\n`);
+    process.stderr.write(`arch:render: no active snapshot — ${stubbed ? 'wrote stub' : 'map write skipped'}, run \`npm run arch:refresh\` first\n`);
     process.exit(0);
   }
 
@@ -438,8 +569,10 @@ async function main() {
       store: getActiveStoreDescriptor(),
     });
 
-    atomicWriteFileSync(outPath, markdown);
-    process.stderr.write(`arch:render: wrote ${outPath} (${bytesWritten} bytes, ${allSymbols.length} symbols, ${violations.length} violations)\n`);
+    const finalOut = decideOut();
+    if (writeMapOutput(finalOut, markdown)) {
+      process.stderr.write(`arch:render: wrote ${finalOut} (${bytesWritten} bytes, ${allSymbols.length} symbols, ${violations.length} violations)\n`);
+    }
 
     // Plan: docs/plans/observed-domain-deps.md §6 — write the observed-deps
     // envelope from the DB import graph. Best-effort; thrown errors here must
@@ -539,7 +672,7 @@ async function main() {
       cleanupOrFail(repoRoot);
     }
   } catch (err) {
-    handleRenderFailure(err, { repoRoot, outPath, identityName: identity.name });
+    handleRenderFailure(err, { repoRoot, outPath: decideOut(), identityName: identity.name });
   }
 }
 

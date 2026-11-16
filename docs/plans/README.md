@@ -25,6 +25,7 @@ This is the list to read when asking "what is in flight?".
 | [fleet — defects from two work consumers' November feedback](./fleet-work-consumer-feedback-nov.md) | `In Progress` | implemented on branch `claude/nostalgic-nobel-101150`, PR pending |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
 | [Harness Retro — promote recurring session failures into enforcement](./harness-retro.md) | `In Progress` |  |
+| [render-mermaid must not overwrite a tracked architecture map](./render-mermaid-tracked-output-guard.md) | `Draft` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Ship record catch-up — /ship's RECORD half without its PUSH/MERGE authority](./ship-record-catchup.md) | `In Progress` |  |
 | [Ship trains — batched, impact-based `/ship --train`](./ship-trains.md) | `Approved` |  |

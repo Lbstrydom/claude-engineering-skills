@@ -192,7 +192,10 @@ export const CHECKS = [
     steps: [
       { script: 'symbol-index/refresh.mjs', args: [] },
       // Re-render the snapshot the dashboard's Architecture tab reads (docs/architecture-map.md +
-      // the observed-deps envelope, both gitignored). Without it the index was refreshed weekly but
+      // the observed-deps envelope). Both are gitignored in THIS repo only: a consumer may TRACK
+      // the map, and render-mermaid.mjs then skips the map write (with a warning) instead of
+      // dirtying the consumer's checkout on every push (upstream c9ebd9f9); the envelope is still
+      // written. Without it the index was refreshed weekly but
       // the snapshot only ever aged — persona-test 2026-10-10 found it 13 days old two days after a
       // maintenance run. Per-domain summaries are cached; render degrades without an Anthropic key.
       { script: 'symbol-index/render-mermaid.mjs', args: [] },
