@@ -37,6 +37,9 @@ import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
 import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
 import { isInvokedAsScript } from '../lib/cli-entry.mjs';
+import {
+  FloorArgError, resolveMinLines, readMinLinesFlag, buildFloorState, floorExitCode, renderFloorLines,
+} from '../lib/symbol-index/duplicate-floor.mjs';
 
 /**
  * Every flag this CLI accepts. Enforced rather than documented: `arch:drift`'s
@@ -47,11 +50,11 @@ import { isInvokedAsScript } from '../lib/cli-entry.mjs';
  * same change (audit R2 H2); leaving one of two sibling CLIs strict is the
  * inconsistency the finding names.
  */
-const KNOWN_FLAGS = ['--out', '--json', '--selfcheck-relocation'];
+const KNOWN_FLAGS = ['--out', '--json', '--min-lines', '--selfcheck-relocation'];
 
 function parseArgs(argv) {
   assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'arch:drift' });
-  const args = { out: null, json: false };
+  const args = { out: null, json: false, minLinesFlag: readMinLinesFlag(argv.slice(2)) };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--out') {
       // round-1 M2: reject a missing/flag-looking value rather than
@@ -71,6 +74,7 @@ function parseArgs(argv) {
       i++;
     }
     else if (argv[i] === '--json') args.json = true;
+    else if (argv[i] === '--min-lines') { if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) i++; }
   }
   return args;
 }
@@ -232,6 +236,13 @@ async function main() {
     if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); process.exit(2); }
     throw err;
   }
+  let resolvedFloor;
+  try {
+    resolvedFloor = resolveMinLines({ flag: args.minLinesFlag });
+  } catch (err) {
+    if (err instanceof FloorArgError) { process.stderr.write(`arch:drift: ${err.message}\n`); process.exit(2); }
+    throw err;
+  }
   await initLearningStore();
   // Deliberately still 0: cloud-disabled is an explicit local opt-out (no
   // AUDIT_DB_URL configured at all), not a failed verification. Both CI paths
@@ -249,17 +260,41 @@ async function main() {
     process.exit(gate.code);
   }
   let drift;
+  let floorUnsupported = false;
+  const scoreWith = (minLines) => computeDriftScore({
+    repoId: repo.id,
+    refreshId: snap.refreshId,
+    simDup: symbolIndexConfig.driftSimDup,
+    simName: symbolIndexConfig.driftSimName,
+    minLines,
+  });
   try {
-    drift = await computeDriftScore({
-      repoId: repo.id,
-      refreshId: snap.refreshId,
-      simDup: symbolIndexConfig.driftSimDup,
-      simName: symbolIndexConfig.driftSimName,
-    });
+    drift = await scoreWith(resolvedFloor.minLines);
   } catch (err) {
-    process.stderr.write(`arch:drift: RPC failed: ${err.message}\n`);
-    process.exit(2);
+    if (err.code === 'FLOOR_UNSUPPORTED') {
+      floorUnsupported = true;
+      // An un-floored score is >= the floored one (the floor only removes rows),
+      // so falling back can over-report but never hide drift. An EXPLICIT floor
+      // the store cannot honour is a failed measurement, not a degraded one.
+      if (floorExitCode(buildFloorState(resolvedFloor, { unsupported: true })) === 2) {
+        process.stderr.write(`arch:drift: --min-lines ${resolvedFloor.minLines} was requested (${resolvedFloor.source}) but this store has not applied the floor migration; migrate it or pass --min-lines 0\n`);
+        process.exit(2);
+      }
+      try {
+        drift = await scoreWith(0);
+      } catch (err2) {
+        process.stderr.write(`arch:drift: RPC failed: ${err2.message}\n`);
+        process.exit(2);
+      }
+    } else {
+      process.stderr.write(`arch:drift: RPC failed: ${err.message}\n`);
+      process.exit(2);
+    }
   }
+  const floor = buildFloorState(resolvedFloor, {
+    stats: floorUnsupported ? null : drift?.duplication_floor ?? null,
+    unsupported: floorUnsupported,
+  });
   // Corpus size, hoisted OUT of the pragma block below. It was already computed
   // there — but only when the repo happened to contain `@duplicate-justification`
   // pragmas, and only to decide a candidate-pool cap, so the number that says
@@ -295,6 +330,7 @@ async function main() {
   try {
     rawClusters = await getTopDuplicateClusters({
       repoId: repo.id, refreshId: snap.refreshId, limit: 20,
+      minLines: floorUnsupported ? 0 : resolvedFloor.minLines,
     });
   } catch (err) {
     process.stderr.write(`arch:drift: top_duplicate_clusters failed (continuing without): ${err.message}\n`);
@@ -384,6 +420,9 @@ async function main() {
   if (freshness.state === 'behind' || freshness.state === 'off-branch') {
     process.stderr.write(`arch:drift: WARNING — the active index is ${freshness.detail}; this report does not describe the current code\n`);
   }
+  // The floor's state is part of the verdict's evidence: an un-applied or
+  // unreadable floor must be visible in the issue body, not only in stderr.
+  excludedNote += `\n${renderFloorLines(floor).join('\n').trim()}\n`;
   const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters, snap.commitSha ?? null, symbolCount, store, freshness) + excludedNote + renderStalePragmaSection(stalePragmas) + ambiguousUnresolvedSection;
 
   // `symbolCount`/`store` ride in the JSON envelope for the same reason they

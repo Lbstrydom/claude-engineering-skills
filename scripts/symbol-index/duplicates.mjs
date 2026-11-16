@@ -9,6 +9,22 @@
  *   npm run arch:duplicates
  *   npm run arch:duplicates -- --limit 50
  *   npm run arch:duplicates -- --json
+ *   npm run arch:duplicates -- --min-lines 8
+ *
+ * In a consumer repo the sync ships this file as
+ * `scripts/.claude-skills/symbol-index/duplicates.mjs` — run it by that path:
+ *   node scripts/.claude-skills/symbol-index/duplicates.mjs --json --min-lines 8
+ *
+ * Size floor (OPT-IN, default off): with `--min-lines 6`, symbols spanning fewer
+ * than 6 lines (5 or fewer) are not clustered — a 3-line `sleep` helper copied across test files is not
+ * refactor debt. Override per run with `--min-lines N` or per repo with the
+ * `ARCH_DUPLICATE_MIN_LINES` env var (flag wins); `--min-lines 0` disables
+ * it. The floor applies inside the SQL RPCs, so the arch:drift score uses the
+ * same one. `--json` carries a `floor` object (minLines, source, applied,
+ * suppressedClusters) — an unknown count is `null`, never 0. A store that has
+ * not applied the floor migration returns the UN-floored list with
+ * `floor.applied: false`; if the floor was requested explicitly the CLI exits 2.
+ * Policy: docs/plans/duplicate-min-lines-floor.md.
  *
  * Exit codes:
  *   0 — query succeeded (zero or many clusters; both are normal)
@@ -24,6 +40,7 @@ import {
   getRepoIdByUuid,
   getActiveSnapshot,
   getTopDuplicateClusters,
+  computeDriftScore,
   countSymbolsForSnapshot,
   getActiveStoreDescriptor,
 } from '../learning-store.mjs';
@@ -31,6 +48,14 @@ import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { assertKnownFlags, ArgvError, finishAndExit } from '../lib/cli-io.mjs';
 import { isInvokedAsScript } from '../lib/cli-entry.mjs';
+import {
+  FloorArgError,
+  resolveMinLines,
+  readMinLinesFlag,
+  buildFloorState,
+  floorExitCode,
+  renderFloorLines,
+} from '../lib/symbol-index/duplicate-floor.mjs';
 
 /**
  * Every flag this CLI accepts. Enforced, not merely documented: `--limit` now
@@ -38,13 +63,14 @@ import { isInvokedAsScript } from '../lib/cli-entry.mjs';
  * silently-ignored `--limti 50` would enforce that gate over a 20-cluster
  * prefix while the envelope still described itself as complete.
  */
-const KNOWN_FLAGS = ['--limit', '--json', '--help'];
+const KNOWN_FLAGS = ['--limit', '--json', '--min-lines', '--help'];
 
 function parseArgs(argv) {
   assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'arch:duplicates' });
-  const args = { limit: 20, json: false, help: false };
+  const args = { limit: 20, json: false, help: false, minLinesFlag: readMinLinesFlag(argv.slice(2)) };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--limit') args.limit = Number(argv[++i]);
+    else if (argv[i] === '--min-lines') { if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) i++; }
     else if (argv[i] === '--json') args.json = true;
     else if (argv[i] === '--help' || argv[i] === '-h') {
       // By PATH, not `npm run` — the sync never adds npm aliases to a consumer
@@ -96,10 +122,11 @@ function corpusLine(symbolCount, store) {
   return `  snapshot: ${corpus}   store: ${store?.label || 'unknown'}`;
 }
 
-export function renderText(clusters, repoName, { truncated, limit, symbolCount = null, store = null }) {
+export function renderText(clusters, repoName, { truncated, limit, symbolCount = null, store = null, floor = null }) {
+  const floorLines = floor ? renderFloorLines(floor) : [];
   if (clusters.length === 0) {
     return `arch:duplicates (${repoName}): no cross-file exact-duplicate clusters in this snapshot.\n`
-      + corpusLine(symbolCount, store) + '\n';
+      + [corpusLine(symbolCount, store), ...floorLines].join('\n') + '\n';
   }
   const lines = [];
   const count = truncated
@@ -107,6 +134,7 @@ export function renderText(clusters, repoName, { truncated, limit, symbolCount =
     : `${clusters.length} cluster(s)`;
   lines.push(`arch:duplicates (${repoName}): ${count} — files share identical symbol bodies + signatures`);
   lines.push(corpusLine(symbolCount, store));
+  lines.push(...floorLines);
   if (truncated) {
     lines.push(`  (truncated at --limit ${limit}; re-run with a larger --limit for the full set)`);
   }
@@ -132,8 +160,16 @@ async function main() {
     throw err;
   }
   if (args.help) {
-    process.stdout.write('Usage: node scripts/symbol-index/duplicates.mjs [--limit N] [--json]\n');
+    process.stdout.write('Usage: node scripts/symbol-index/duplicates.mjs [--limit N] [--min-lines N] [--json]\n'
+      + '  --min-lines N  skip symbols spanning fewer than N lines (default 0 = off, opt-in; env ARCH_DUPLICATE_MIN_LINES)\n');
     return finishAndExit(0);
+  }
+  let resolved;
+  try {
+    resolved = resolveMinLines({ flag: args.minLinesFlag });
+  } catch (err) {
+    if (err instanceof FloorArgError) { process.stderr.write(`arch:duplicates: ${err.message}\n`); process.exit(2); }
+    throw err;
   }
   await initLearningStore();
   if (!await isCloudEnabled()) {
@@ -154,15 +190,38 @@ async function main() {
   }
 
   let rows;
-  try {
+  let floorUnsupported = false;
+  const fetchRows = (minLines) => getTopDuplicateClusters({
     // limit + 1: see `paginate` — the extra row is how truncation is DETECTED
     // rather than inferred.
-    rows = await getTopDuplicateClusters({
-      repoId: repo.id, refreshId: snap.refreshId, limit: args.limit + 1,
-    });
+    repoId: repo.id, refreshId: snap.refreshId, limit: args.limit + 1, minLines,
+  });
+  try {
+    rows = await fetchRows(resolved.minLines);
   } catch (err) {
-    process.stderr.write(`arch:duplicates: RPC failed: ${err.message}\n`);
-    process.exit(2);
+    if (err.code === 'FLOOR_UNSUPPORTED') {
+      floorUnsupported = true;
+      // The floor only ever REMOVES rows, so the un-floored POPULATION is a
+      // superset: it can over-report. A truncated top-N page can additionally
+      // be displaced by trivial clusters, so `truncated` still governs
+      // completeness. Say so, don't hide it.
+      const state = buildFloorState(resolved, { unsupported: true });
+      if (floorExitCode(state) === 2) {
+        process.stderr.write(`arch:duplicates: --min-lines ${resolved.minLines} was requested (${resolved.source}) `
+          + 'but this store has not applied the floor migration (supabase/migrations/20261030130000_duplicate_min_lines_floor.sql). '
+          + 'Migrate the store, or pass --min-lines 0 to run without a floor.\n');
+        process.exit(2);
+      }
+      try {
+        rows = await fetchRows(0);
+      } catch (err2) {
+        process.stderr.write(`arch:duplicates: RPC failed: ${err2.message}\n`);
+        process.exit(2);
+      }
+    } else {
+      process.stderr.write(`arch:duplicates: RPC failed: ${err.message}\n`);
+      process.exit(2);
+    }
   }
   const { clusters, truncated, total } = paginate(rows, args.limit);
 
@@ -181,11 +240,28 @@ async function main() {
   }
   const store = getActiveStoreDescriptor();
 
+  // Suppressed-count, from the SAME SQL population as the list (drift_score's
+  // duplication_floor). Whole-snapshot, so independent of --limit; fetched once.
+  // A failure is reported as an UNKNOWN count (null), never as 0.
+  let stats = null;
+  if (resolved.minLines > 0 && !floorUnsupported) {
+    try {
+      const drift = await computeDriftScore({
+        repoId: repo.id, refreshId: snap.refreshId, minLines: resolved.minLines,
+      });
+      stats = drift?.duplication_floor ?? null;
+    } catch (err) {
+      process.stderr.write(`arch:duplicates: floor stats failed (suppressed count reported as unknown): ${err.message}\n`);
+    }
+  }
+  const floor = buildFloorState(resolved, { stats, unsupported: floorUnsupported });
+
   if (args.json) {
     process.stdout.write(JSON.stringify({
       repoName: identity.name,
       refreshId: snap.refreshId,
       symbolCount,
+      floor,
       store,
       // `limit`/`truncated`/`total` let a caller assert EXHAUSTIVITY. Without
       // them a policy gate over "all clusters" cannot tell a complete result
@@ -197,7 +273,7 @@ async function main() {
       clusters,
     }, null, 2) + '\n');
   } else {
-    process.stdout.write(renderText(clusters, identity.name, { truncated, limit: args.limit, symbolCount, store }));
+    process.stdout.write(renderText(clusters, identity.name, { truncated, limit: args.limit, symbolCount, store, floor }));
   }
   // NOT `process.exit(0)`: on Windows a redirected/piped stdout is async, and
   // exit() discards whatever has not flushed. The `--json` envelope exists to

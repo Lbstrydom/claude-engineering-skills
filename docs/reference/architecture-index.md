@@ -115,3 +115,46 @@ Do not verify this by grep — a docstring mention reads as an import. Run the
 mechanical check: `tests/arm-vocabulary-layering.test.mjs` re-derives the whole
 violation set and is in `npm test`, so a retag that breaks the inbound half fails
 at push. Detail: [god-module-and-layering-debt.md](../plans/god-module-and-layering-debt.md) §1.2.
+
+## `arch:duplicates` size floor — opt-in, so trivial helpers need not be clusters
+
+Exact-signature clustering used to report every cross-file copy, including 2–5
+line test helpers (`sleep`, `sha256`), and those inflated both the cluster list
+and the `arch:drift` score. An opt-in size floor excludes symbols spanning fewer
+than N lines before grouping, **inside the SQL** (`top_duplicate_clusters` and
+`drift_score`), so the list and the score always agree.
+
+**The default is OFF (`0`)**, so no consumer's drift-score population or trend
+changes until it opts in. **Opt in from your own workflow** by passing the same
+value to both CLIs — e.g. storyline passes `--min-lines 6` to `duplicates.mjs`
+and to `drift.mjs`, which hides symbols of 5 lines or fewer (the
+`sleep`/`sha256`/`claim` class) while a function with real logic (≥6 lines) still
+clusters. Pass it to **both** (and to `arch:render` if you render the map — it takes the same
+`--min-lines`), or they count different populations.
+
+The floor is **path-independent**: when you opt in it also hides a short duplicate in production code, not only test helpers. The suppressed count below is how you notice; if a real 4-line duplicate matters to you, lower the floor or leave it off.
+
+Set it per run or per repo — the flag wins over the env var, `0` (the default) is off:
+
+```bash
+node scripts/.claude-skills/symbol-index/duplicates.mjs --json --min-lines 6
+ARCH_DUPLICATE_MIN_LINES=4 node scripts/.claude-skills/symbol-index/duplicates.mjs
+node scripts/.claude-skills/symbol-index/drift.mjs --min-lines 6
+```
+
+(In the CES repo itself the same files live at `scripts/symbol-index/…`.)
+
+What to read in the output — the `--json` envelope gains a `floor` object:
+
+| Field | Meaning |
+|---|---|
+| `minLines`, `source` | The effective floor and where it came from (`flag` / `env` / `default`). |
+| `applied` | `false` when the floor is off (`reason: disabled`) **or** the store cannot honour it (`reason: store-not-migrated`). `true` with `reason: count-unavailable` means the floor ran but its suppressed-count query failed — `suppressedClusters` is then `null`. |
+| `suppressedClusters` | Clusters that vanished because of the floor. `null` means *unknown*, never zero. Also `pairsBefore/After`, `rowsSuppressed` to explain a score change when a cluster shrank but survived. |
+
+A store that has not applied migration `20261030130000_duplicate_min_lines_floor.sql`
+returns the **un-floored** list with `applied: false` (the population can only
+over-report; if the page is `truncated`, trivial clusters can push real ones off
+it — raise `--limit`); if you asked for the floor explicitly (flag or env), the CLI
+exits 2 instead. A malformed value (`--min-lines 1O`) is exit 2, not a quiet
+default. Design: [`duplicate-min-lines-floor.md`](../plans/duplicate-min-lines-floor.md).
