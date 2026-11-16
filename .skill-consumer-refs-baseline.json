@@ -1,6 +1,6 @@
 {
   "$comment": "Declared unreachable pointers in SYNCED content — skill markdown and the non-implementation assets the sync ships. See scripts/check-skill-consumer-refs.mjs. Three kinds: `doc` (a docs/ path outside the sync closure), `npm` (any npm run alias — the sync never merges npm scripts), `path` (a BARE upstream path in a tree the sync relocates; `node <path>` is excluded because the sync's rewriter maps exactly that form). Every entry needs a disposition and a real reason; a --update placeholder reason is rejected.",
-  "totalSites": 375,
+  "totalSites": 379,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -50,7 +50,7 @@
     "doc docs/audit/shared-references/worktree-preflight.md": {
       "disposition": "provenance",
       "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
-      "sites": 17
+      "sites": 18
     },
     "doc docs/plans/architectural-memory.md": {
       "disposition": "provenance",
@@ -170,7 +170,7 @@
     "doc docs/runbooks/consumer-adoption.md": {
       "disposition": "provenance",
       "reason": "The worktree-preflight marker cites it as rationale and already labels it \"source repo only — docs/runbooks/ is not synced\". The remedy beside it is a bare node bootstrap that depends on nothing.",
-      "sites": 17
+      "sites": 18
     },
     "doc docs/runbooks/local-maintenance-checks.md": {
       "disposition": "provenance",
@@ -220,7 +220,7 @@
     "npm check": {
       "disposition": "source-repo-only",
       "reason": "The source repo pre-push aggregate. A consumer has its own test/verify entry point; the skills never depend on the aggregate existing.",
-      "sites": 52
+      "sites": 53
     },
     "npm dashboard:setup": {
       "disposition": "source-repo-only",
@@ -275,7 +275,7 @@
     "npm skills:hydrate": {
       "disposition": "consumer-wired",
       "reason": "The worktree-hydration alias. Every site already says \"if this repo defines no such script, add this entry\" and inlines a bare node+git bootstrap, so the text works with or without it. The two in fleet/references/participant-rules.md (the chip participant block, 2026-10-08) point at that inlined entry in the same skill's SKILL.md preflight rather than repeating it.",
-      "sites": 22
+      "sites": 23
     },
     "npm skills:regenerate": {
       "disposition": "source-repo-only",
