@@ -295,3 +295,20 @@ describe('audit A-R3 regressions', () => {
     assert.match(env.reason, /newer than the fetched base/);
   });
 });
+
+describe('audit A-R4 regressions', () => {
+  it('M1: --fetch fetches the DISCOVERED default branch even when its tracking ref is missing; never a guessed main', () => {
+    const fx = fixture();
+    const calls = [];
+    const git = (args) => { if (args[0] === 'fetch') { calls.push(args); return { status: 1, stdout: '', stderr: 'offline', error: null }; } return fx.g(args); };
+    must(fx.g, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/develop']); // default is develop; no develop ref
+    const env = runStatus({ ...ctxFor(fx), runners: { git, gh: fakeGh(fx.prs) } }, { fetch: true });
+    assert.deepEqual(calls.map((a) => a.at(-1)), ['develop']);
+    assert.match(env.reason, /refs\/remotes\/origin\/develop not found/);
+    must(fx.g, ['symbolic-ref', '--delete', 'refs/remotes/origin/HEAD']);
+    calls.length = 0;
+    const env2 = runStatus({ ...ctxFor(fx), runners: { git, gh: fakeGh(fx.prs) } }, { fetch: true });
+    assert.equal(calls.length, 0, 'no branch known: nothing is fetched');
+    assert.match(env2.warnings[0], /--fetch skipped: origin\/HEAD is not set/);
+  });
+});

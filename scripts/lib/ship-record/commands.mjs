@@ -11,7 +11,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { gatherRecordState, readBaseEntries, resolveBase, listMergedSince, mergeFacts, ENTRIES_DIR, MARKER_FILE } from './facts.mjs';
+import { gatherRecordState, readBaseEntries, resolveBase, discoverBaseBranch, listMergedSince, mergeFacts, ENTRIES_DIR, MARKER_FILE } from './facts.mjs';
 import { isFloorEntryName, SHA_RE, RUN_ENTRY_RE } from './state.mjs';
 import {
   parseRunMarker, prEntryFileName, renderPrEntry, renderRunEntry, renderFloorEntry, renderInitReadme, publishEntry, checkEntriesDir, sweepTemps,
@@ -61,8 +61,10 @@ function envelope(verb, st, cmd, extra = {}) {
 
 function maybeFetch(ctx, opts) {
   if (!opts.fetch) return null;
-  const b = resolveBase(ctx.runners, { branch: opts.base ?? null });
-  const branch = b.ok ? b.branch : (opts.base ?? 'main');
+  // Discovery, not resolution: the tracking ref may be exactly what is missing. No branch known ⇒ say so, never fetch a guess.
+  const d = discoverBaseBranch(ctx.runners, opts.base ?? null);
+  if (!d.ok) return `--fetch skipped: ${d.reason}`;
+  const branch = d.branch;
   const r = ctx.runners.git(['fetch', '--quiet', 'origin', branch]);
   return r.status === 0 && !r.error ? null : `git fetch origin ${branch} failed (${String(r.stderr ?? r.error?.message ?? '').trim().slice(0, 200)}); measured against the last fetch`;
 }

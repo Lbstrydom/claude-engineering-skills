@@ -64,14 +64,23 @@ export function githubSlugFromRemote(url) {
  * Resolve the base triple. `branch` explicit, else origin/HEAD's target, else `main`.
  * @returns {{ok: true, branch: string, ref: string, oid: string, repo: string} | {ok: false, reason: string}}
  */
+/**
+ * Which branch is the base — DISCOVERY only, separate from resolving its tracking ref (A-R4-M1), so `--fetch` can fetch the
+ * default branch even when its tracking ref is missing. Explicit wins; else origin/HEAD's target; never a guessed `main`
+ * (A-R1-H11: that measures the wrong branch in a repo whose default is another one).
+ * @returns {{ok: true, branch: string} | {ok: false, reason: string}}
+ */
+export function discoverBaseBranch({ git }, explicit = null) {
+  if (explicit !== null) return { ok: true, branch: explicit };
+  const r = git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+  if (!ok(r) || !out(r).startsWith('refs/remotes/origin/')) return { ok: false, reason: 'origin/HEAD is not set, so the default branch is unknown — git remote set-head origin --auto, or pass --base <branch>' };
+  return { ok: true, branch: out(r).slice('refs/remotes/origin/'.length) };
+}
+
 export function resolveBase({ git }, { branch: explicit = null } = {}) {
-  let branch = explicit;
-  if (branch === null) {
-    const r = git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
-    // Fail closed (audit A-R1-H11): guessing `main` measures the WRONG branch in a repo whose default is another one.
-    if (!ok(r) || !out(r).startsWith('refs/remotes/origin/')) return { ok: false, reason: 'origin/HEAD is not set, so the default branch is unknown — git remote set-head origin --auto, or pass --base <branch>' };
-    branch = out(r).slice('refs/remotes/origin/'.length);
-  }
+  const d = discoverBaseBranch({ git }, explicit);
+  if (!d.ok) return d;
+  const branch = d.branch;
   if (!BRANCH_RE.test(branch) || branch.startsWith('-') || branch.includes('..')) return { ok: false, reason: `base branch ${JSON.stringify(branch)} is not a valid branch name` };
   const ref = `refs/remotes/origin/${branch}`;
   const v = git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
