@@ -72,8 +72,12 @@ never runs. `tests/fleet-probe-and-stale-ready.test.mjs`.
 `gatherFacts` adds `ownChanged[branch]` = `stackBase...tip` for each stacked session; overlap (in `status` and in
 `claim`'s `othersFor`) uses it. What the session inherited (from-base files minus its own) shows once, collapsed:
 `inherited (N files) from declared stack base X — …, not counted as overlaps (declared by claim --base, not verified …)`.
-A stack base that cannot be measured, or that already CONTAINS the session's head (it absorbed the work, or was mis-named,
-and would hide every own file), falls back to the from-base diff with a note, never to "no files" (audit R1 H9). The base
+The fork point is the stack base's COMMIT at claim, kept in a sidecar `fleet/stack-bases/<key>.json` (tied to the claim's
+`gen`; a new directory, so no older reader sees it), and the own diff is `forkOid...tip`. Measuring from the branch NAME
+would let a base later fast-forwarded onto the session's work, or one that absorbed commits made before the claim, empty
+the session's own diff and hide its overlap (audit R1 H9, R2 H1/M2, R3 H1/M1 — a containment heuristic was tried first
+and could not tell those from a fresh branch). No usable record (claimed by an older fleet, or for an earlier claim) falls
+back to the from-base diff with a note, never to "no files". The base
 need not be a registered session: the reported base was assembled by the coordinator and owned by none (deliberated, M5).
 What a mis-declared base can still do is bounded: it changes FILE evidence only, never declared-path conflicts, and an
 unrelated base only widens the diff. `changed` itself is unchanged, so check hooks

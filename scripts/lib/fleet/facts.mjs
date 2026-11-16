@@ -19,6 +19,7 @@ import { GH_TIMEOUT_MS, OPEN_PR_CHECK_ARGS, OPEN_PR_LIST_ARGS, listPullRequests,
 import { ghBatch } from './gh-batch.mjs';
 import { ConfigError } from './config.mjs';
 import { fleetDir, readSessions, readHold, listTrains } from './registry.mjs';
+import { stackBaseFor } from './stack-bases.mjs';
 import {
   DEFAULT_LEASE_MS, buildStatus, checkBlocksApproval, idleMsFrom, isIdleTip, liveness, mergedDone, workRemainingIn, worktreeOf,
 } from './overlap.mjs';
@@ -135,7 +136,7 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   const baseOidSnap = measure.ok ? measure.oid : tipOid.get(base) ?? null;
   const baseRev = baseOidSnap ?? base;
   const { changed, patchIds } = branchEvidence({ cwd, analyse: sel.analyse, tipOid, baseRev, patches });
-  const ownChanged = stackedEvidence({ cwd, registry, analyse: sel.analyse, tipOid, base });
+  const ownChanged = stackedEvidence({ cwd, dir, registry, analyse: sel.analyse, tipOid, base });
   for (const n of sel.skippedUntracked) changed[n] = { queried: false, files: [], reason: 'not requested: untracked branches are not analysed by this command' };
   // The budget covers EVERY per-ref analysis: the branches above AND the materialised PR refs below.
   const budget = Number.isInteger(maxBranches) && maxBranches >= 0 ? maxBranches - sel.analyse.size : Infinity;
@@ -225,32 +226,22 @@ function branchEvidence({ cwd, analyse, tipOid, baseRev, patches }) {
 }
 
 /**
- * A session stacked on another unlanded branch (`claim --base <branch>`, recorded as `source.baseRef`) is measured from
- * its REAL fork point: its own changed files are `stackBase...tip`, so commits it inherited from the shared base are not
- * its overlap (consumer report 2026-11-15, item 3: six sessions on one unlanded base all overlapped on the base's files).
- * Keyed by branch, beside `changed` (which stays the from-base diff every other consumer reads). A stack base that cannot
- * be resolved is `{queried:false, reason}`, and overlap then falls back to the from-base diff — never to "no files".
+ * A session stacked on another unlanded branch (`claim --base <branch>`, the name in `source.baseRef`) is measured from
+ * its REAL fork point: the stack base's commit recorded AT CLAIM (stack-bases.mjs), so its own changed files are
+ * `forkOid...tip` and commits it inherited from the shared base are not its overlap (consumer report 2026-11-15, item 3).
+ * The commit, never the branch name: a base later fast-forwarded onto the session's work, or one that absorbed commits made
+ * before the claim, would otherwise make the session's own diff read empty (audit R1 H9, R2 H1, R3 H1/M1). Keyed by branch,
+ * beside `changed` (the from-base diff every other consumer reads). No usable record, or an unmeasurable diff, is
+ * `{queried:false, reason}`, and overlap falls back to the from-base diff — never to "no files".
  */
-function stackedEvidence({ cwd, registry, analyse, tipOid, base }) {
+function stackedEvidence({ cwd, dir, registry, analyse, tipOid, base }) {
   const own = {};
   for (const s of registry.sessions) {
     const b = s.source?.branch; const stack = s.source?.baseRef;
     if (s.source?.kind !== 'branch' || !b || !stack || stack === base || stack === b || !analyse.has(b)) continue;
-    const stackRev = tipOid.get(stack) ?? `refs/heads/${stack}`; const tip = tipOid.get(b) ?? b;
-    // A declared base that already CONTAINS this branch's head — it merged or was fast-forwarded onto the session's own work,
-    // or was mis-named — would make the own diff empty and hide the session's overlap from everyone (audit R1 H9, R2 H1/M2).
-    // The legitimate case is a session with no commits since it claimed (head == its recorded startOid): its own diff IS
-    // empty. Anything else contained in the base is not a fork point: fall back to the from-base diff, and say why. With no
-    // startOid recorded, only an equal tip is taken as fresh.
-    const same = runGit(['rev-parse', stackRev, tip], cwd);
-    const [so, to] = same.ok ? same.stdout.split('\n').map((x) => x.trim()) : [null, null];
-    const fresh = s.startOid ? to === s.startOid : so === to;
-    if (so && to && !fresh && runGit(['merge-base', '--is-ancestor', to, so], cwd).ok) {
-      own[b] = { queried: false, files: [], reason: `${stack} already contains ${b}'s head, so it is not its fork point`, stackBase: stack };
-      continue;
-    }
-    const r = changedFiles(cwd, stackRev, tip);
-    own[b] = { ...r, stackBase: stack };
+    const fork = stackBaseFor(dir, s);
+    if (!fork.ok) { own[b] = { queried: false, files: [], reason: fork.reason, stackBase: stack }; continue; }
+    own[b] = { ...changedFiles(cwd, fork.oid, tipOid.get(b) ?? b), stackBase: stack };
   }
   return own;
 }

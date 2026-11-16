@@ -34,6 +34,7 @@ import {
 import { renderChipPrompt, renderOpenTrains } from './render-train.mjs';
 import { WaitingOnSchema, listTrains, probesDir, quarantine, transact } from './registry.mjs';
 import { readySet, testedTogether, testedTogetherLine } from './tested-together.mjs';
+import { writeStackBase } from './stack-bases.mjs';
 import { FULL_SUITE_LOG_LINE, fullSuiteOf } from './config.mjs';
 import {
   buildStatusFrom, gatherFacts, leaseMsFrom, othersFor, withMergedEvidence, readyChecks, resolveUpstream, statusChecks,
@@ -331,16 +332,18 @@ function blockingHolderBranches(facts, id, flags, paths, hasPaths, ctx) {
  * `claim --base <branch>`: this session is stacked on another UNLANDED local branch, so its overlap is measured from that
  * fork point (recorded as `source.baseRef`; no new registry field, so an older bundle reads the record unchanged). The base
  * itself, or the session's own branch, is an argv error; a branch that does not exist locally is refused before any write.
- * @returns {string|null} the stack base (the repo's base un-stacks), or null when none was given
+ * @returns {{name: string, oid: string|null}|null} the stack base and its commit NOW (the fork point recorded with the claim;
+ *   the repo's base un-stacks, oid null), or null when none was given
  */
 export function stackBaseFrom(ctx, flags, branch) {
   const b = flags['--base'];
   if (b === undefined) return null;
   if (!/^[^\s-][^\s]*$/.test(b)) throw new ArgvError(`fleet claim: --base ${JSON.stringify(b)} is not a branch name`);
-  if (b === ctx.config.baseBranch) return b; // un-stacks a session that was stacked
+  if (b === ctx.config.baseBranch) return { name: b, oid: null }; // un-stacks a session that was stacked
   if (b === branch) throw new ArgvError(`fleet claim: --base ${b} is this session's own branch — name the branch it is stacked on`);
-  if (!headOf(ctx.cwd, `refs/heads/${b}`).ok) throw new ArgvError(`fleet claim: --base ${b} is not a local branch — fetch or create it first (a stacked base is measured locally)`);
-  return b;
+  const h = headOf(ctx.cwd, `refs/heads/${b}`);
+  if (!h.ok) throw new ArgvError(`fleet claim: --base ${b} is not a local branch — fetch or create it first (a stacked base is measured locally)`);
+  return { name: b, oid: h.oid };
 }
 
 export function cmdClaim(ctx, flags) {
@@ -401,9 +404,9 @@ export function cmdClaim(ctx, flags) {
     const fresh = mode === 'new';
     const base = fresh
       ? { gen: cur ? cur.gen + 1 : 1, ready: null, waitingOn: [], knownOverlaps: [], createdAt: stamp, state: 'working', startOid,
-        source: { kind: 'branch', branch, repo: null, prNumber: null, headRepo: null, headRef: branch, baseRef: stackBase ?? ctx.config.baseBranch } }
+        source: { kind: 'branch', branch, repo: null, prNumber: null, headRepo: null, headRef: branch, baseRef: stackBase?.name ?? ctx.config.baseBranch } }
       : { gen: cur.gen, ready: cur.ready, waitingOn: cur.waitingOn, knownOverlaps: cur.knownOverlaps, createdAt: cur.createdAt, state: cur.state, startOid: cur.startOid,
-        source: stackBase && cur.source.kind === 'branch' ? { ...cur.source, baseRef: stackBase } : cur.source };
+        source: stackBase && cur.source.kind === 'branch' ? { ...cur.source, baseRef: stackBase.name } : cur.source };
     if (flags['--host-session'] !== undefined) writeHost(ctx.dir, { id, hostSession: flags['--host-session'], at: stamp });
     const record = t.writeSession({
       schemaVersion: 1, rev: cur ? cur.rev + 1 : 1, id, ...base,
@@ -411,6 +414,8 @@ export function cmdClaim(ctx, flags) {
       waitingOn: applyWaiting(base.waitingOn, waiting), knownOverlaps: [...base.knownOverlaps, ...known],
       leaseExpiresAt: leaseIso(ctx), updatedAt: stamp,
     });
+    // The fork point is the stack base's commit AT CLAIM, kept beside the record (stack-bases.mjs), under the same lock.
+    if (stackBase && record.source.kind === 'branch') writeStackBase(ctx.dir, { id, gen: record.gen, base: stackBase.oid ? stackBase.name : null, oid: stackBase.oid, at: stamp });
     return { verdict: overriding ? { ...verdict, overridden: true } : verdict, mode, record };
   });
   if (!tx.ok) return lockFailed();

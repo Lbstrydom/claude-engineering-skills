@@ -5,6 +5,8 @@
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots, writeFile } from './helpers/fleet-repo.mjs';
 import { setup, sessionRec } from './helpers/fleet-cli-harness.mjs';
@@ -74,35 +76,41 @@ describe('claim --base: overlap from the real fork point', () => {
     }
   });
 
-  /** child-1 claims stacked on shared-base BEFORE it commits (participant rule 1), then commits its own file. */
-  function claimThenCommit({ swallow }) {
+  /** `late` stacks on shared-base, commits its own files (before or after its claim), then the base absorbs them. */
+  function absorbed({ commitBeforeClaim, swallow }) {
     const s = stackedFleet(1);
     const r = s.fx.repo;
     git(['checkout', '-q', '-b', 'late', 'shared-base'], r);
+    const commit = () => { writeFile(r, 'late/f.txt', 'l\n'); writeFile(r, 'child-1/f.txt', 'clash\n'); git(['add', '--', 'late', 'child-1'], r); git(['commit', '-q', '-m', 'late work'], r); };
+    if (commitBeforeClaim) commit();
     assert.equal(s.f(['claim', '--id', 'late', '--intent', 'l', '--paths', 'late/**', '--base', 'shared-base']).status, 0);
-    writeFile(r, 'late/f.txt', 'l\n'); writeFile(r, 'child-1/f.txt', 'clash\n');
-    git(['add', '--', 'late', 'child-1'], r); git(['commit', '-q', '-m', 'late work'], r);
+    if (!commitBeforeClaim) commit();
     git(['checkout', '-q', 'main'], r);
     swallow(r);
-    return s.f(['status', '--json']).json.status.items.find((x) => x.id === 'late');
+    return { s, it: s.f(['status', '--json']).json.status.items.find((x) => x.id === 'late') };
   }
+  const ff = (r) => git(['branch', '-f', 'shared-base', 'late'], r);
+  const past = (r) => { git(['checkout', '-q', 'shared-base'], r); git(['merge', '-q', '--ff-only', 'late'], r); writeFile(r, 'z.txt', 'z\n'); git(['add', '--', 'z.txt'], r); git(['commit', '-q', '-m', 'z'], r); git(['checkout', '-q', 'main'], r); };
 
-  for (const [what, swallow] of [
-    ['fast-forwarded onto the session\'s commits (equal tips, audit R2 H1/M2)', (r) => git(['branch', '-f', 'shared-base', 'late'], r)],
-    ['moved past them (contains the head, audit R1 H9)', (r) => { git(['checkout', '-q', 'shared-base'], r); git(['merge', '-q', '--ff-only', 'late'], r); writeFile(r, 'z.txt', 'z\n'); git(['add', '--', 'z.txt'], r); git(['commit', '-q', '-m', 'z'], r); git(['checkout', '-q', 'main'], r); }],
+  for (const [what, opts] of [
+    ['fast-forwarded onto commits made after the claim (audit R2 H1)', { commitBeforeClaim: false, swallow: ff }],
+    ['moved past them (audit R1 H9)', { commitBeforeClaim: false, swallow: past }],
+    ['fast-forwarded onto commits made BEFORE the claim (audit R3 H1/M1)', { commitBeforeClaim: true, swallow: ff }],
   ]) {
-    it(`a declared base ${what} is not the fork point: measured from the base, and said`, () => {
-      const it = claimThenCommit({ swallow });
-      assert.equal(it.inherited, undefined, 'nothing is counted as inherited');
-      assert.ok(it.notes.some((n) => /shared-base already contains late's head, so it is not its fork point/.test(n)), JSON.stringify(it.notes));
-      assert.ok(it.overlaps.some((o) => o.with === 'child-1' && o.files.includes('child-1/f.txt')), 'the real file overlap is kept');
+    it(`a base ${what}: the session is still measured from its recorded fork point, its own files kept`, () => {
+      const { it } = absorbed(opts);
+      assert.deepEqual([...it.inherited].sort(), ['base/x.txt', 'base/y.txt'], 'only the base files from before the claim are inherited');
+      assert.ok(it.overlaps.some((o) => o.with === 'child-1' && o.files.includes('child-1/f.txt')), JSON.stringify(it.overlaps));
     });
   }
 
-  it('control: the same session with its base NOT absorbing its work keeps the stacked measure', () => {
-    const it = claimThenCommit({ swallow: () => {} });
-    assert.ok(it.inherited?.length > 0);
-    assert.ok(it.overlaps.some((o) => o.with === 'child-1' && o.files.includes('child-1/f.txt')), 'its own edit of child-1/f.txt still overlaps');
+  it('a stacked claim with no recorded fork point (an older fleet) is measured from the base, and says so', () => {
+    const { s, it: before } = absorbed({ commitBeforeClaim: false, swallow: () => {} });
+    assert.ok(before.inherited?.length > 0, 'control: with the record, the stacked measure applies');
+    fs.rmSync(path.join(s.fx.repo, '.git', 'fleet', 'stack-bases'), { recursive: true, force: true });
+    const it = s.f(['status', '--json']).json.status.items.find((x) => x.id === 'late');
+    assert.equal(it.inherited, undefined);
+    assert.ok(it.notes.some((n) => /stack base shared-base not measured \(no fork point recorded/.test(n)), JSON.stringify(it.notes));
   });
 
   it('--base refuses a branch that does not exist, and the session\'s own branch', () => {
