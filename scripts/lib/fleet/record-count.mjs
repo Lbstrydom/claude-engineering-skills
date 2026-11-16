@@ -40,7 +40,13 @@ const CacheSchema = z.object({
   remedy: z.string().nullable(),
   measuredAt: z.string().nullable(),
   attemptedAt: z.string(),
-}).strict();
+}).strict().superRefine((r, ctx) => {
+  // One invariant for every state, enforced where the cache is written AND read (C-R1-M2).
+  const counted = r.state === 'measured' || r.state === 'partial';
+  if (counted && (r.unrecorded === null || r.unknown === null)) ctx.addIssue({ code: 'custom', message: `${r.state} needs both counts` });
+  if (!counted && (r.unrecorded !== null || r.unknown !== null)) ctx.addIssue({ code: 'custom', message: `${r.state} carries no counts` });
+  if (r.state === 'measured' && r.unknown !== 0) ctx.addIssue({ code: 'custom', message: 'measured means nothing undeterminable' });
+});
 
 const toMs = (now) => (now instanceof Date ? now.getTime() : typeof now === 'number' ? now : Date.now());
 const iso = (now) => new Date(toMs(now)).toISOString();
@@ -57,13 +63,16 @@ export function recordScript(here = path.dirname(fileURLToPath(import.meta.url))
 export function interpretRecordStatus(env) {
   const bad = (reason) => ({ state: 'unmeasured', unrecorded: null, unknown: null, floorThrough: null, reason, remedy: null });
   if (!env || typeof env !== 'object' || env.verb !== 'status') return bad('the reader printed no status envelope');
+  if (env.ok !== true) return bad(`the reader reported failure${typeof env.reason === 'string' ? ` (${env.reason})` : ''}`); // C-R1-H2
   if (!RECORD_STATES.includes(env.state)) return bad(`the reader reported an unknown state ${JSON.stringify(env.state)}`);
   const isCount = (v) => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
   const measured = env.state === 'measured' || env.state === 'partial';
   const c = env.counts ?? {};
   if (measured && (!isCount(c.unrecorded) || !isCount(c.unknown))) return bad('the reader\'s envelope was malformed (a counter was missing or not a whole number)');
+  // A "measured" claim with undeterminable PRs is not complete (C-R1-H1/M2): it reads partial, never clean.
+  const state = env.state === 'measured' && c.unknown > 0 ? 'partial' : env.state;
   return {
-    state: env.state,
+    state,
     unrecorded: measured ? c.unrecorded : null,
     unknown: measured ? c.unknown : null,
     floorThrough: typeof env.floor?.mergedThrough === 'string' ? env.floor.mergedThrough : null,
@@ -114,11 +123,15 @@ export function nextRecordCache(m, previous, now) {
 /** `status`'s refresh: run the reader, write the cache. Never throws. */
 export function refreshRecordCache({ cacheDir, cwd, now, run = runRecordStatus, script = recordScript() }) {
   const prev = readRecordCache(cacheDir);
-  const record = nextRecordCache(run(script, cwd), prev.state === 'ok' ? prev.record : null, now);
+  const startedAt = now; // the attempt is stamped at its START, so ordering above compares start times
+  const record = nextRecordCache(run(script, cwd), prev.state === 'ok' ? prev.record : null, startedAt);
   try {
     CacheSchema.parse(record);
     if (!cacheDir) return { record, written: false, warning: 'record-count cache not written (the git common dir could not be resolved)' };
     fs.mkdirSync(cacheDir, { recursive: true });
+    // Two overlapping `status` runs: the one that STARTED later wins (C-R1-M3) — re-read just before publishing.
+    const latest = readRecordCache(cacheDir);
+    if (latest.state === 'ok' && Date.parse(latest.record.attemptedAt) > Date.parse(record.attemptedAt)) return { record: latest.record, written: false };
     atomicWriteFileSync(path.join(cacheDir, RECORD_CACHE_FILE), `${JSON.stringify(record, null, 2)}\n`);
     return { record, written: true };
   } catch (e) { return { record, written: false, warning: `record-count cache not written (${e.message})` }; }
@@ -137,7 +150,7 @@ export function renderRecordLine(read, now, cmd = 'fleet') {
   if (r.state === 'measured' || r.state === 'partial') {
     const floor = r.floorThrough ? ` since the floor (${r.floorThrough})` : '';
     const unk = r.unknown ? `; ${r.unknown} not yet determinable` : '';
-    if (r.unrecorded === 0 && r.state === 'measured') return `records: every merged PR is recorded${floor}${stale}`;
+    if (r.unrecorded === 0 && r.state === 'measured' && r.unknown === 0) return `records: every merged PR is recorded${floor}${stale}`;
     const n = r.state === 'partial' ? `≥${r.unrecorded}` : String(r.unrecorded);
     return `records: ${n} merged PR(s) unrecorded${floor}${unk}${next} (coordinator)${stale}`;
   }
@@ -148,7 +161,7 @@ export function renderRecordLine(read, now, cmd = 'fleet') {
 
 /** Nothing worth a checkpoint line: measured, fresh, and none unrecorded. */
 export function recordQuiet(read, now) {
-  return Boolean(read && read.state === 'ok' && read.record.state === 'measured' && read.record.unrecorded === 0
+  return Boolean(read && read.state === 'ok' && read.record.state === 'measured' && read.record.unrecorded === 0 && read.record.unknown === 0
     && toMs(now) - Date.parse(read.record.measuredAt ?? read.record.attemptedAt) <= RECORD_STALE_MS);
 }
 

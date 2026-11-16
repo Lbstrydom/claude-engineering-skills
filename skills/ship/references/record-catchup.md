@@ -49,9 +49,11 @@ record is the train log gets its own entry — accepted redundancy.
 
 ## Rollout, per repo (coordinator)
 
-1. `node scripts/ship-record.mjs init` (repos without the marker), then `floor --write`. The floor needs a **complete**
-   listing and every covered merge local (`--fetch`); it refuses otherwise. It never moves.
-2. Commit with `ship-commit.mjs --record` (below), open a docs-only PR. The user approves the merge.
+1. `node scripts/ship-record.mjs init` (repos without the marker), then `floor --write` — both work in the working tree,
+   so they go in ONE record PR. The floor needs a **complete** listing and every covered merge local (`--fetch`); it
+   refuses otherwise. It never moves.
+2. Commit both with `ship-commit.mjs --record` (below), open a docs-only PR. The user approves the merge. Until it
+   merges, `status`/`catchup` still read the BASE tree and report `no-marker`/`no-floor` — expected, not a failure.
 3. After it merges: `catchup --write` at each cadence point; paste the plan Implementation Log lines it prints (the script
    never writes a plan — PR #87 is why); commit with `--record`; docs-only PR; the user merges.
 

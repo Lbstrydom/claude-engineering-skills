@@ -37,11 +37,14 @@ function configuredRequiredChecks(ctx) {
 
 const MODES = ['--approve', '--confirm', '--reconcile', '--resume', '--abandon'];
 const withText = (r, text) => ({ ...r, text });
+export const _internals = Object.freeze({ mergedSomething: (r) => mergedSomething(r) });
 /**
  * A landing that MERGED is the moment the session log falls behind (docs/plans/ship-record-catchup.md §2.7): say so where the
  * coordinator is looking. The count is stale the instant a PR lands, so the line names the action, never a number.
  */
-const withRecordNudge = (r, cmd) => (r.ok ? { ...r, text: `${r.text}\n${LAND_RECORD_NUDGE(recordCommandFor(cmd), cmd)}` } : r);
+// Nudged when ANYTHING merged, not only on overall success (C-R1-M1/M4): a serial run can merge PRs and then stop.
+const mergedSomething = (r) => Boolean(r.ok || r.run?.steps?.some((s) => s.step === 'merged'));
+const withRecordNudge = (r, cmd) => (mergedSomething(r) ? { ...r, text: `${r.text}\n${LAND_RECORD_NUDGE(recordCommandFor(cmd), cmd)}` } : r);
 
 function validId(id) {
   try { return assertTrainId(id); } catch (e) { throw new ArgvError(`fleet land: ${e.message}`); }

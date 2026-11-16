@@ -76,3 +76,34 @@ describe('cache + renderer', () => {
     assert.match(LAND_RECORD_NUDGE('node scripts/ship-record.mjs', 'node scripts/fleet.mjs'), /catchup --write/);
   });
 });
+
+describe('audit C-R1 regressions', () => {
+  it('H1/M2: zero unrecorded with an unknown is partial, never "every PR recorded", never quiet', () => {
+    const m = interpretRecordStatus(env({ counts: { unrecorded: 0, unknown: 1 } }));
+    assert.equal(m.state, 'partial');
+    const read = rec(m);
+    assert.doesNotMatch(renderRecordLine(read, NOW), /every merged PR is recorded/);
+    assert.equal(recordQuiet(read, NOW), false);
+  });
+  it('H2: a failed envelope is unmeasured, whatever its counts say', () => {
+    assert.equal(interpretRecordStatus(env({ ok: false })).state, 'unmeasured');
+  });
+  it('M2: the cache refuses an inconsistent record', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'record-count-inv-'));
+    fs.writeFileSync(path.join(dir, 'record-count.json'), JSON.stringify({ ...nextRecordCache(interpretRecordStatus(env()), null, NOW), unknown: 2 }));
+    assert.equal(readRecordCache(dir).state, 'unreadable');
+  });
+  it('M3: an older refresh never replaces a newer one', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'record-count-ord-'));
+    const later = new Date(NOW.getTime() + 60_000);
+    refreshRecordCache({ cacheDir: dir, cwd: dir, now: later, run: () => interpretRecordStatus(env()), script: 'x' });
+    const older = refreshRecordCache({ cacheDir: dir, cwd: dir, now: NOW, run: () => interpretRecordStatus(env({ counts: { unrecorded: 9, unknown: 0 } })), script: 'x' });
+    assert.equal(older.written, false);
+    assert.equal(readRecordCache(dir).record.unrecorded, 3);
+  });
+  it('M1/M4: a serial run that merged and then stopped still nudges', async () => {
+    const { _internals } = await import('../scripts/lib/fleet/land.mjs');
+    assert.equal(_internals.mergedSomething({ ok: false, run: { steps: [{ step: 'merged' }, { step: 'failed' }] } }), true);
+    assert.equal(_internals.mergedSomething({ ok: false, run: { steps: [{ step: 'pending' }] } }), false);
+  });
+});

@@ -6,7 +6,8 @@
  * Shape of every mutating verb (plan §2, "Every registry mutation is a
  * transaction"): gather slow git/gh facts OUTSIDE the lock → `transact` (takes
  * `fleet/.lock`, re-reads, evaluates the gate on the fresh read, writes) →
- * release. `status` takes no lock and writes nothing; it never renews a lease.
+ * release. `status` takes no lock and writes nothing to the REGISTRY; it never renews a lease. It does refresh its derived
+ * caches beside the registry (unregistered work, prune, upstream count, session-log records).
  *
  * Result `code`: `ok` (exit 0) · `refused` (3) · `error` (1) · `argv` (2).
  *
