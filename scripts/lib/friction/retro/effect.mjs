@@ -11,6 +11,8 @@
  * @module scripts/lib/friction/retro/effect
  */
 
+import { canonicalSessions } from './aggregate.mjs';
+
 export const DEFAULT_WINDOW_DAYS = 14;
 export const MIN_SESSIONS_PER_WINDOW = 10;
 export const MIN_HITS = 3;
@@ -72,10 +74,7 @@ export function computeEffect(input) {
   const accounts = coveredAccounts(scans, repoUuid, t - W, t + W);
   if (accounts.size === 0) return { ...withActivation, verdict: 'unmeasured', reason: 'no-covered-account: no account has completed scans spanning both windows' };
 
-  // One session counts once, however many inputs carried it (audit H4).
-  const unique = new Map();
-  for (const s of sessions) if (!unique.has(s.sessionKey)) unique.set(s.sessionKey, s);
-  const population = [...unique.values()].filter((s) => s.repoUuid === repoUuid && accounts.has(s.accountKey));
+  const population = canonicalSessions(sessions).filter((s) => s.repoUuid === repoUuid && accounts.has(s.accountKey));
   if (population.some((s) => s.fingerprintVersion !== decision.fingerprintVersion
       && ms(s.startedAt) >= t - W && ms(s.startedAt) < t + W)) {
     return { ...withActivation, verdict: 'unmeasured', reason: 'fingerprint-version-changed within the windows — re-baseline' };

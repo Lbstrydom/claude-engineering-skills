@@ -27,6 +27,11 @@ describe('normaliseSignalText', () => {
     assert.equal(out, '<id> <id> at <sha> by <email> <url> line N');
   });
 
+  it('a path with spaces is normalised whole — no tail left behind', () => {
+    assert.equal(normaliseSignalText('cannot open C:\\Users\\bob\\My Client Docs\\plan.txt now'), 'cannot open <path> now');
+    assert.equal(normaliseSignalText('cannot open /srv/client acme/config.json now'), 'cannot open <path> now');
+  });
+
   it('a single-component absolute path is normalised too', () => {
     assert.equal(normaliseSignalText('cannot read /customer-secret now'), 'cannot read <path> now');
   });

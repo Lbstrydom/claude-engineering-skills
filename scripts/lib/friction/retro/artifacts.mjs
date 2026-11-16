@@ -42,7 +42,7 @@ export const ScanArtifactSchema = z.object({
   requested: z.object({ since: z.string(), until: z.string() }).strict(),
   files: z.object({
     listed: z.number().int(), read: z.number().int(), readErrors: z.number().int(),
-    unparseableLines: z.number().int(), unjoinedResults: z.number().int(), enumerationErrors: z.number().int(),
+    unparseableLines: z.number().int(), unjoinedResults: z.number().int(), enumerationErrors: z.number().int(), truncatedTails: z.number().int(),
   }).strict(),
   completed: z.boolean(),
   measured: z.boolean(),

@@ -3,7 +3,37 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkProposalsAgainstScan, evidenceFor, ProposalSchema } from '../scripts/lib/friction/retro/proposal-schema.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
+import { checkProposalsAgainstScan, evidenceFor, ProposalSchema, ProposalsEnvelopeSchema } from '../scripts/lib/friction/retro/proposal-schema.mjs';
+
+const SKILL = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'harness-retro', 'SKILL.md'), 'utf8');
+
+/** Every property name the EMITTED schema declares, through unions and nesting. */
+function schemaKeys(node, out = new Set()) {
+  if (!node || typeof node !== 'object') return out;
+  for (const [k, v] of Object.entries(node.properties ?? {})) { out.add(k); schemaKeys(v, out); }
+  for (const branch of [...(node.anyOf ?? []), ...(node.oneOf ?? []), ...(node.allOf ?? [])]) schemaKeys(branch, out);
+  if (node.items) schemaKeys(node.items, out);
+  return out;
+}
+
+describe('SKILL.md ↔ ProposalSchema (the prose↔code seam)', () => {
+  const block = SKILL.match(/<!-- harness-retro:proposal-example -->\s*```json\s*([\s\S]*?)```/);
+  it('the SKILL.md example is a VALID envelope under the emitted schema', () => {
+    assert.ok(block, 'SKILL.md must carry the marked proposal example');
+    const parsed = ProposalsEnvelopeSchema.safeParse(JSON.parse(block[1]));
+    assert.ok(parsed.success, JSON.stringify(parsed.error?.issues));
+  });
+  it('every field the emitted schema declares is named in SKILL.md (no unrepresentable or undocumented field)', () => {
+    const keys = schemaKeys(z.toJSONSchema(ProposalsEnvelopeSchema));
+    assert.ok(keys.size >= 15, `expected the full key set, got ${[...keys]}`);
+    const missing = [...keys].filter((k) => !SKILL.includes(`"${k}"`) && !SKILL.includes(`\`${k}\``));
+    assert.deepEqual(missing, []);
+  });
+});
 
 const A = 'aaaaaaaaaaaaaaaa'; const B = 'bbbbbbbbbbbbbbbb'; const C = 'cccccccccccccccc';
 const scan = {

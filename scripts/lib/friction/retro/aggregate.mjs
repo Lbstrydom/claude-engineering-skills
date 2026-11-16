@@ -16,6 +16,24 @@ export const KIND_WEIGHTS = Object.freeze({
 export const STRONG_SESSIONS = 3;
 export const WEAK_SESSIONS = 2;
 
+/**
+ * THE duplicate-session policy, shared by aggregation, the tripwire pass,
+ * proposal evidence and the effect metric (cluster-A audit R2-H4/M2/M5): one row
+ * per `sessionKey`, and a LATER row supersedes an earlier one — inputs are in
+ * observation order (scan artifacts oldest → newest), so the last row is the
+ * newest snapshot, mirroring the store's `observed_until` guard. A single scan
+ * never produces duplicates (sessions are grouped by id), so this is a no-op
+ * there by construction.
+ * @template {{sessionKey: string}} T
+ * @param {T[]} sessions
+ * @returns {T[]}
+ */
+export function canonicalSessions(sessions) {
+  const byKey = new Map();
+  for (const s of sessions ?? []) byKey.set(s.sessionKey, s);
+  return [...byKey.values()];
+}
+
 /** @param {number} sessions */
 export const strengthOf = (sessions) => (sessions >= STRONG_SESSIONS ? 'strong' : sessions >= WEAK_SESSIONS ? 'weak' : 'one-off');
 
@@ -27,11 +45,7 @@ export const strengthOf = (sessions) => (sessions >= STRONG_SESSIONS ? 'strong' 
  */
 export function aggregateSessions(sessions, fingerprints) {
   const out = new Map();
-  const seen = new Set();
-  for (const s of sessions) {
-    // One session counts once, however many inputs carried it (audit H4).
-    if (seen.has(s.sessionKey)) continue;
-    seen.add(s.sessionKey);
+  for (const s of canonicalSessions(sessions)) {
     const day = typeof s.startedAt === 'string' ? s.startedAt.slice(0, 10) : null;
     for (const [fp, n] of Object.entries(s.counts ?? {})) {
       let a = out.get(fp);

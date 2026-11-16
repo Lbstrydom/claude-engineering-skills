@@ -112,3 +112,36 @@ describe('createSessionExtractor', () => {
     assert.deepEqual(kinds(s), ['user_correction']);
   });
 });
+
+describe('runScan — completeness and measurement honesty', async () => {
+  const { runScan } = await import('../scripts/lib/friction/retro/scan.mjs');
+  const resolver = { resolve: () => ({ repoUuid: 'r', name: 'o/r' }) };
+  const recs = [use('t1', 'Bash'), result('t1', 'Error: boom')];
+  const listing = (files, extra = {}) => () => ({ projectsDir: '/p', projectsDirExists: true, enumerationErrors: [], files, ...extra });
+  const file = (id) => ({ path: `/p/s/${id}.jsonl`, slug: 's', subagent: false, mtimeMs: Date.now() });
+  const streamWith = (stats) => async (_p, onRecord) => { for (const r of recs) onRecord(r); return { lines: 3, parsed: 2, unparseable: 0, truncatedTail: false, readError: null, ...stats }; };
+  const scan = (list, stream) => runScan({ configDir: '/cfg', sinceMs: 0, resolver, thisRepoUuid: 'r', list, stream });
+
+  it('a truncated LAST line is a write in progress: the session stays complete', async () => {
+    const r = await scan(listing([file('a')]), streamWith({ unparseable: 1, truncatedTail: true }));
+    assert.equal(r.sessions[0].complete, true);
+    assert.equal(r.completed, true);
+    assert.equal(r.files.truncatedTails, 1);
+  });
+  it('a garbled line mid-file makes the session incomplete and the scan not coverage evidence', async () => {
+    const r = await scan(listing([file('a')]), streamWith({ unparseable: 1, truncatedTail: false }));
+    assert.equal(r.sessions[0].complete, false);
+    assert.equal(r.completed, false);
+  });
+  it('an unreadable projects dir is UNMEASURED, never an empty clean scan', async () => {
+    const r = await scan(listing([], { enumerationErrors: [{ path: '/p', code: 'EACCES' }] }), streamWith({}));
+    assert.equal(r.measured, false);
+    assert.equal(r.reason, 'enumeration-errors');
+  });
+  it('sessions that all belong elsewhere are UNMEASURED for this repo', async () => {
+    const r = await runScan({ configDir: '/cfg', sinceMs: 0, resolver, thisRepoUuid: 'other', list: listing([file('a')]), stream: streamWith({}) });
+    assert.equal(r.measured, false);
+    assert.equal(r.reason, 'no-in-scope-sessions');
+    assert.equal(r.excluded.otherRepo, 1);
+  });
+});

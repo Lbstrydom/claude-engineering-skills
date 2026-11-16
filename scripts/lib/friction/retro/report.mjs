@@ -6,7 +6,7 @@
  *
  * @module scripts/lib/friction/retro/report
  */
-import { aggregateSessions, rankCandidates } from './aggregate.mjs';
+import { aggregateSessions, rankCandidates, canonicalSessions } from './aggregate.mjs';
 import { buildHarnessInventory } from './inventory.mjs';
 import { scanTripwires } from './memory-tripwires.mjs';
 
@@ -22,7 +22,7 @@ export function analyseScan(scan, { decisions, inventory: inv, memoryDir, top = 
 
   const sessionsByFingerprint = new Map();
   const occurrencesByFingerprint = new Map();
-  for (const s of scan.sessions) {
+  for (const s of canonicalSessions(scan.sessions)) {
     for (const [fp, n] of Object.entries(s.counts)) {
       if (!sessionsByFingerprint.has(fp)) sessionsByFingerprint.set(fp, new Set());
       sessionsByFingerprint.get(fp).add(s.sessionKey);

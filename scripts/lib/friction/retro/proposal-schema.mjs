@@ -12,6 +12,7 @@
  */
 import { z } from 'zod';
 import { IDENTITY_RE, LAYERS } from './registry.mjs';
+import { canonicalSessions } from './aggregate.mjs';
 
 const Propose = z.object({
   identity: z.string().regex(IDENTITY_RE),
@@ -76,7 +77,7 @@ export function evidenceFor(identity, scan) {
   const want = new Set(fps);
   const sessions = new Set();
   let occurrences = 0;
-  for (const s of scan.sessions) {
+  for (const s of canonicalSessions(scan.sessions)) {
     for (const [fp, n] of Object.entries(s.counts)) {
       if (!want.has(fp)) continue;
       sessions.add(s.sessionKey); occurrences += n;

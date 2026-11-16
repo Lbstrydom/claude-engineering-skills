@@ -82,7 +82,7 @@ export async function runScan(opts) {
   const files = groups.flatMap(([, g]) => g);
   const stats = {
     listed: files.length, read: 0, readErrors: 0, unparseableLines: 0, unjoinedResults: 0,
-    enumerationErrors: enumerationErrors.length,
+    enumerationErrors: enumerationErrors.length, truncatedTails: 0,
   };
   const versions = new Set();
   const fingerprints = {};
@@ -97,9 +97,11 @@ export async function runScan(opts) {
       const r = await stream(f.path, ex.push);
       ex.endFile();
       if (r.readError) { stats.readErrors++; complete = false; } else stats.read++;
-      // An unparseable line means the snapshot is a lower bound, not the session:
-      // incomplete, so it is reported but never persisted (audit H5).
-      if (r.unparseable > 0) complete = false;
+      // A garbled line MID-file means records were lost: incomplete, reported but
+      // never persisted (audit H5). A garbled LAST line is a write in progress —
+      // the snapshot is exact as of `until`, and a later scan supersedes it.
+      if (r.unparseable - (r.truncatedTail ? 1 : 0) > 0) complete = false;
+      if (r.truncatedTail) stats.truncatedTails++;
       stats.unparseableLines += r.unparseable;
     }
     const s = ex.finish();
@@ -147,7 +149,9 @@ export async function runScan(opts) {
     requested: { since: new Date(sinceMs).toISOString(), until: new Date(untilMs).toISOString() },
     files: stats,
     // Coverage evidence: every listed file read cleanly AND the walk itself saw no error.
-    completed: stats.listed > 0 && stats.readErrors === 0 && enumerationErrors.length === 0,
+    // ...and no in-scope session was incomplete (audit R2-M3): a scan that could
+    // not persist a session cannot claim to cover it.
+    completed: stats.listed > 0 && stats.readErrors === 0 && enumerationErrors.length === 0 && excluded.incomplete === 0,
     ...verdict,
     transcriptVersions: [...versions].sort(),
     excluded,

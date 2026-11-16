@@ -54,3 +54,13 @@ describe('aggregateSessions + rankCandidates', () => {
     assert.equal(strengthOf(1), 'one-off'); assert.equal(strengthOf(2), 'weak'); assert.equal(strengthOf(3), 'strong');
   });
 });
+
+describe('canonicalSessions — one duplicate policy everywhere', async () => {
+  const { canonicalSessions } = await import('../scripts/lib/friction/retro/aggregate.mjs');
+  it('a later row for the same session supersedes the earlier one', () => {
+    const rows = [s('1', 'r', { aaaaaaaaaaaaaaaa: 1 }), s('1', 'r', { aaaaaaaaaaaaaaaa: 5 }), s('2', 'r', { aaaaaaaaaaaaaaaa: 1 })];
+    assert.deepEqual(canonicalSessions(rows).map((r) => r.counts.aaaaaaaaaaaaaaaa), [5, 1]);
+    const a = aggregateSessions(rows, fps).get('aaaaaaaaaaaaaaaa');
+    assert.equal(a.sessions, 2); assert.equal(a.occurrences, 6);
+  });
+});

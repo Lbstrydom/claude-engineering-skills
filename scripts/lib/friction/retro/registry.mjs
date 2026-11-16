@@ -19,6 +19,7 @@ import { z } from 'zod';
 import { atomicWriteFileSync } from '../../file-io.mjs';
 import { withFileLock } from '../../file-lock.mjs';
 import { preWriteSecretGate } from '../../security/secret-classifier.mjs';
+import { normaliseSignalText } from './fingerprint.mjs';
 
 export const REGISTRY_REL = path.join('.harness-retro', 'decisions.json');
 export const LAYERS = Object.freeze(['hook', 'gate', 'script', 'reference-doc', 'agents-md']);
@@ -73,18 +74,46 @@ export function decisionIndex(registry) {
   return { byIdentity, byFingerprint };
 }
 
-/** Summary is public: refuse anything path-, email- or secret-shaped. */
+/**
+ * Summary is public: refuse anything path-, email- or secret-shaped. Uses the
+ * SAME normaliser that cleans fingerprint labels, so the two policies cannot
+ * drift (cluster-A audit R2-H3: a hand list of roots let /srv/... through).
+ */
 export function summaryProblems(summary) {
   const s = String(summary ?? '');
+  const norm = normaliseSignalText(s);
   const out = [];
-  if (/[A-Za-z]:[\\/]|(?:^|\s)\/(?:Users|home|tmp|c)\/|~[\\/]/.test(s)) out.push('summary contains an absolute path');
-  if (/[\w.+-]+@[\w-]+\.[\w.-]+/.test(s)) out.push('summary contains an email address');
+  if (norm.includes('<path>')) out.push('summary contains an absolute path');
+  if (norm.includes('<email>')) out.push('summary contains an email address');
   if (!preWriteSecretGate(s).ok) out.push('summary contains a secret shape');
   return out;
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const EXECUTABLE_TEST_RE = /\b(?:it|test)\s*\(\s*['"`]/;
+
+/**
+ * Remove `//` line comments and `/* *\/` block comments, leaving string
+ * literals intact (a small scanner, not a parser: enough to stop a comment from
+ * satisfying the positive-control check).
+ */
+export function stripComments(src) {
+  let out = ''; let i = 0; let quote = null;
+  while (i < src.length) {
+    const c = src[i]; const n = src[i + 1];
+    if (quote) {
+      out += c;
+      if (c === '\\') { out += n ?? ''; i += 2; continue; }
+      if (c === quote) quote = null;
+      i++; continue;
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; out += c; i++; continue; }
+    if (c === '/' && n === '/') { while (i < src.length && src[i] !== '\n') i++; continue; }
+    if (c === '/' && n === '*') { const end = src.indexOf('*/', i + 2); i = end === -1 ? src.length : end + 2; continue; }
+    out += c; i++;
+  }
+  return out;
+}
 
 /**
  * Does `test` qualify as the positive control for `identity`? It must be a file
@@ -100,6 +129,9 @@ export function testPathProblems({ test, identity, repoRoot }) {
   try { body = fs.readFileSync(path.join(repoRoot, rel), 'utf8'); } catch (err) {
     return [err?.code === 'ENOENT' ? `test ${rel} does not exist` : `test ${rel} is unreadable (${err?.code})`];
   }
+  // Comments are stripped first: a commented-out `it('<fp>')` is neither an
+  // executable case nor a literal an assertion carries (cluster-A audit R2-H5).
+  body = stripComments(body);
   const problems = [];
   if (!EXECUTABLE_TEST_RE.test(body)) problems.push(`test ${rel} declares no it()/test() case`);
   const needle = identity.startsWith('fingerprint:') ? identity.slice('fingerprint:'.length) : identity;

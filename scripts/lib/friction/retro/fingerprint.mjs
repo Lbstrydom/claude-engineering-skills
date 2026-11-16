@@ -56,9 +56,12 @@ export function normaliseSignalText(line) {
     .replace(/\bmcp__[0-9a-f]{8}-[0-9a-f-]{27,}__/gi, 'mcp__X__')
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<id>')
     .replace(/\b(?:toolu|local|req|msg|agent)[_-][A-Za-z0-9-]{6,}/g, '<id>')
-    .replace(/~[\\/][^\s'"`)\]]*/g, '<path>')
-    .replace(/[A-Za-z]:[\\/][^\s'"`)\]]*/g, '<path>')
-    .replace(/(?<![\w.<>~])\/(?:[\w.~-]+\/)*[\w.~-]+\/?/g, '<path>')
+    // Absolute paths, INCLUDING segments with spaces ("My Docs"): a space is
+    // consumed when the next word still carries a separator, so the path's tail
+    // is never left behind in the label (cluster-A audit R2-H2).
+    .replace(/~[\\/](?:[^\s'"`)\]]|\s(?=[^'"`)\]\n]*[\\/]))*/g, '<path>')
+    .replace(/[A-Za-z]:[\\/](?:[^\s'"`)\]]|\s(?=[^'"`)\]\n]*[\\/]))*/g, '<path>')
+    .replace(/(?<![\w.<>~])\/[\w.~-](?:[^\s'"`)\]:]|\s(?=[^\s'"`)\]]*\/))*/g, '<path>')
     .replace(/\b[0-9a-f]{7,40}\b/gi, (m) => (/\d/.test(m) && /[a-f]/i.test(m) ? '<sha>' : m))
     // A status code carries meaning (401 ≠ 404): keep a 3-digit number that
     // follows HTTP/status/code/error; every other number is noise.

@@ -74,14 +74,14 @@ export function listTranscriptFiles({ configDir }) {
 /**
  * Stream one transcript, calling `onRecord(record)` for each parsed line.
  * Unparseable lines are COUNTED, never thrown on (a truncated last line is the
- * normal state of a live session's file — the scan marks such a session
- * incomplete so it is reported but not persisted).
+ * normal state of a live session's file). `truncatedTail` is true when the
+ * LAST line was the unparseable one — a write in progress, not corruption.
  * @param {string} filePath
  * @param {(record: object) => void} onRecord
  * @returns {Promise<{lines: number, parsed: number, unparseable: number, readError: string|null}>}
  */
 export async function streamTranscript(filePath, onRecord) {
-  const stats = { lines: 0, parsed: 0, unparseable: 0, readError: null };
+  const stats = { lines: 0, parsed: 0, unparseable: 0, truncatedTail: false, readError: null };
   let stream;
   try {
     stream = fs.createReadStream(filePath, { encoding: 'utf8' });
@@ -90,7 +90,8 @@ export async function streamTranscript(filePath, onRecord) {
       if (!line) continue;
       stats.lines++;
       let rec;
-      try { rec = JSON.parse(line); } catch { stats.unparseable++; continue; }
+      try { rec = JSON.parse(line); } catch { stats.unparseable++; stats.truncatedTail = true; continue; }
+      stats.truncatedTail = false;
       if (rec && typeof rec === 'object') { stats.parsed++; onRecord(rec); } else stats.unparseable++;
     }
   } catch (err) {

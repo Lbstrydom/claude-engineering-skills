@@ -49,6 +49,13 @@ describe('validateRegistry — controls', () => {
     const dir = tempRepo(`// guards ${FP}\nit('x', () => {});\n`);
     assert.match(validateRegistry({ registry: { version: 1, decisions: [entry()] }, repoRoot: dir })[0], /string literal/);
   });
+  it('red: a commented-out case naming the fingerprint does not count', () => {
+    const dir = tempRepo(`// it('${FP}', () => {});\n/* test('${FP}') */\nit('unrelated', () => {});\n`);
+    assert.match(validateRegistry({ registry: { version: 1, decisions: [entry()] }, repoRoot: dir })[0], /string literal/);
+  });
+  it('red: a public summary with any absolute path, not just a known root', () => {
+    assert.ok(summaryProblems('breaks /srv/client/acme/config.json').length > 0);
+  });
   it('red: a file with no executable case', () => {
     const dir = tempRepo(`const id = '${FP}';\n`);
     assert.match(validateRegistry({ registry: { version: 1, decisions: [entry()] }, repoRoot: dir })[0], /no it\(\)\/test\(\) case/);
