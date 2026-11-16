@@ -42,7 +42,7 @@ describe('fullSuite: "train"', () => {
     git(['checkout', '-q', 'main'], s.fx.repo);
     readyBranch(s, 'feat-b', { 'feat-b/b.txt': 'B\n' });
     const r = land(s);
-    assert.match(r.json.text, /full suite: deferred here by feat-b \(\.fleet\.json fullSuite: "train"\); this train's pre-land tiers ran: default:green$/m);
+    assert.match(r.json.text, /full suite: \.fleet\.json fullSuite: "train" defers it to the train; this train's pre-land tiers ran: default:green$/m);
   });
 
   it('the suite note is said only for a train whose tiers ran — never on a refusal, and a red one says it has not passed (audit R1 M2/H7)', () => {

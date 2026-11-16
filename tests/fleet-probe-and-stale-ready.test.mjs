@@ -104,7 +104,13 @@ describe('testedTogether (pure)', () => {
     const three = [...r, { id: 'c', oid: '4'.repeat(40) }];
     const early = t(three, { tierResults: [], result: 'none', conflict: { sourceId: 'b' } });
     assert.equal(testedTogether(three, [early], B0).tested, false, 'c was never applied');
-    assert.equal(testedTogether(r, [early], B0).tested, true, 'a and b were: their clash is the verdict');
+    const atLast = t(r, { tierResults: [], result: 'none', conflict: { sourceId: 'b' } });
+    assert.equal(testedTogether(r, [atLast], B0).tested, true, 'a conflict at the last source reached them all: the clash is the verdict');
+  });
+  it('a manifest built from MORE branches than the ready set did not test this combination (audit R2 M3)', () => {
+    const three = [...r, { id: 'c', oid: '4'.repeat(40) }];
+    assert.equal(testedTogether(r, [t(three)], B0).tested, false, 'c was in that candidate');
+    assert.equal(testedTogether(three, [t(r)], B0).tested, false, 'and fewer is not enough either');
   });
 });
 

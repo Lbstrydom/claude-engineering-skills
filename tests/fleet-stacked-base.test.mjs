@@ -74,19 +74,35 @@ describe('claim --base: overlap from the real fork point', () => {
     }
   });
 
-  it('a declared base that already contains the session\'s head is not its fork point: measured from the base, and said (audit R1 H9)', () => {
-    const s = stackedFleet(2, { declareBase: false });
-    git(['branch', 'swallowed', 'child-1'], s.fx.repo); // a branch that holds child-1's own commit
-    git(['checkout', '-q', 'swallowed'], s.fx.repo);
-    writeFile(s.fx.repo, 'other.txt', 'o\n'); git(['add', '--', 'other.txt'], s.fx.repo); git(['commit', '-q', '-m', 'later'], s.fx.repo);
-    git(['checkout', '-q', 'child-1'], s.fx.repo);
-    assert.equal(s.f(['claim', '--id', 'child-1', '--base', 'swallowed']).status, 0);
-    git(['checkout', '-q', 'main'], s.fx.repo);
-    const st = s.f(['status', '--json']).json.status;
-    const it = st.items.find((x) => x.id === 'child-1');
-    assert.equal(it.inherited, undefined, 'nothing is counted as inherited');
-    assert.ok(it.notes.some((n) => /swallowed already contains child-1's head, so it is not its fork point/.test(n)), JSON.stringify(it.notes));
-    assert.ok(it.overlaps.some((o) => o.with === 'child-2'), 'its overlap evidence is kept');
+  /** child-1 claims stacked on shared-base BEFORE it commits (participant rule 1), then commits its own file. */
+  function claimThenCommit({ swallow }) {
+    const s = stackedFleet(1);
+    const r = s.fx.repo;
+    git(['checkout', '-q', '-b', 'late', 'shared-base'], r);
+    assert.equal(s.f(['claim', '--id', 'late', '--intent', 'l', '--paths', 'late/**', '--base', 'shared-base']).status, 0);
+    writeFile(r, 'late/f.txt', 'l\n'); writeFile(r, 'child-1/f.txt', 'clash\n');
+    git(['add', '--', 'late', 'child-1'], r); git(['commit', '-q', '-m', 'late work'], r);
+    git(['checkout', '-q', 'main'], r);
+    swallow(r);
+    return s.f(['status', '--json']).json.status.items.find((x) => x.id === 'late');
+  }
+
+  for (const [what, swallow] of [
+    ['fast-forwarded onto the session\'s commits (equal tips, audit R2 H1/M2)', (r) => git(['branch', '-f', 'shared-base', 'late'], r)],
+    ['moved past them (contains the head, audit R1 H9)', (r) => { git(['checkout', '-q', 'shared-base'], r); git(['merge', '-q', '--ff-only', 'late'], r); writeFile(r, 'z.txt', 'z\n'); git(['add', '--', 'z.txt'], r); git(['commit', '-q', '-m', 'z'], r); git(['checkout', '-q', 'main'], r); }],
+  ]) {
+    it(`a declared base ${what} is not the fork point: measured from the base, and said`, () => {
+      const it = claimThenCommit({ swallow });
+      assert.equal(it.inherited, undefined, 'nothing is counted as inherited');
+      assert.ok(it.notes.some((n) => /shared-base already contains late's head, so it is not its fork point/.test(n)), JSON.stringify(it.notes));
+      assert.ok(it.overlaps.some((o) => o.with === 'child-1' && o.files.includes('child-1/f.txt')), 'the real file overlap is kept');
+    });
+  }
+
+  it('control: the same session with its base NOT absorbing its work keeps the stacked measure', () => {
+    const it = claimThenCommit({ swallow: () => {} });
+    assert.ok(it.inherited?.length > 0);
+    assert.ok(it.overlaps.some((o) => o.with === 'child-1' && o.files.includes('child-1/f.txt')), 'its own edit of child-1/f.txt still overlaps');
   });
 
   it('--base refuses a branch that does not exist, and the session\'s own branch', () => {

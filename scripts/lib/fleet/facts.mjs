@@ -237,12 +237,15 @@ function stackedEvidence({ cwd, registry, analyse, tipOid, base }) {
     const b = s.source?.branch; const stack = s.source?.baseRef;
     if (s.source?.kind !== 'branch' || !b || !stack || stack === base || stack === b || !analyse.has(b)) continue;
     const stackRev = tipOid.get(stack) ?? `refs/heads/${stack}`; const tip = tipOid.get(b) ?? b;
-    // A declared base that already CONTAINS this branch's head (it merged the work, or was mis-named) would make the
-    // session's own diff empty and hide its overlap from everyone (audit R1 H9). Not verifiable as a fork point: fall back to
-    // the from-base diff, and say why. A fresh branch AT the base's tip (no own commits yet) is the legitimate equal case.
+    // A declared base that already CONTAINS this branch's head — it merged or was fast-forwarded onto the session's own work,
+    // or was mis-named — would make the own diff empty and hide the session's overlap from everyone (audit R1 H9, R2 H1/M2).
+    // The legitimate case is a session with no commits since it claimed (head == its recorded startOid): its own diff IS
+    // empty. Anything else contained in the base is not a fork point: fall back to the from-base diff, and say why. With no
+    // startOid recorded, only an equal tip is taken as fresh.
     const same = runGit(['rev-parse', stackRev, tip], cwd);
     const [so, to] = same.ok ? same.stdout.split('\n').map((x) => x.trim()) : [null, null];
-    if (so && to && so !== to && runGit(['merge-base', '--is-ancestor', to, so], cwd).ok) {
+    const fresh = s.startOid ? to === s.startOid : so === to;
+    if (so && to && !fresh && runGit(['merge-base', '--is-ancestor', to, so], cwd).ok) {
       own[b] = { queried: false, files: [], reason: `${stack} already contains ${b}'s head, so it is not its fork point`, stackBase: stack };
       continue;
     }

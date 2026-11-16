@@ -4,8 +4,8 @@
  * branches surfaced only at the full train, hours after the second became ready).
  *
  * The ready set is the (id, ready oid) pairs `land` would take. It counts as tested together when ONE train or probe
- * manifest, built on the CURRENT base, REACHED every pair at the same oid and got a verdict: a tier result (every source was
- * applied), or a conflict — which reached only the sources up to and including the one that conflicted. A head or base
+ * manifest, built on the CURRENT base from EXACTLY that set, REACHED every pair and got a verdict: a tier result (every source
+ * was applied), or a conflict — which reached only the sources up to and including the one that conflicted. A head or base
  * that moves changes the identity, so the set is untested again ("re-run when a ready head moves"). Pure: the caller lists
  * the manifests (real trains and probes).
  *
@@ -32,7 +32,16 @@ export function reachedSources(t) {
  */
 export function testedTogether(ready, manifests, baseOid) {
   if (ready.length < 2) return null;
-  const covers = (t) => { const got = reachedSources(t); return ready.every((r) => got.some((s) => s.id === r.id && s.oid === r.oid)); };
+  // EXACTLY the ready set (audit R2 M3): a candidate that also held another branch did not test this combination — the
+  // extra branch can mask or cause a clash. And every pair REACHED (R1 H3): a conflict stops before the later sources.
+  const key = (x) => `${x.id}\u0000${x.oid}`;
+  const want = new Set(ready.map(key));
+  const covers = (t) => {
+    const all = t.sources ?? [];
+    if (all.length !== want.size || !all.every((s) => want.has(key(s)))) return false;
+    const got = new Set(reachedSources(t).map(key));
+    return [...want].every((k) => got.has(k));
+  };
   const hits = manifests.filter((t) => Boolean(baseOid) && t.baseOid === baseOid && covers(t)).sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)));
   return { count: ready.length, tested: hits.length > 0, by: hits[0] ?? null };
 }

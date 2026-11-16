@@ -188,7 +188,9 @@ function build(ctx, flags, deps) {
   // which command a repo calls its full suite; its pre-land tiers are what it runs).
   const ranTiers = (r.train?.tierResults ?? []).map((t) => `${t.name}:${t.result}`);
   const suiteNote = !probeTier && !dryRun && config.fullSuite === 'train' && r.ok && r.train && ranTiers.length
-    ? `full suite: deferred here by ${r.train.sources.map((x) => x.id).join(', ')} (.fleet.json fullSuite: "train"); this train's pre-land tiers ran: ${ranTiers.join(', ')}${r.train.result === 'green' || r.train.result === 'green-after-rerun' ? '' : ' — NOT green, so the deferred suite has not passed'}` : null;
+    // Said of the repo's policy, never of each source (audit R2 M1): a branch may have been made ready under "session" or by
+    // an older bundle, and nothing records which.
+    ? `full suite: .fleet.json fullSuite: "train" defers it to the train; this train's pre-land tiers ran:${ranTiers.join(', ')}${r.train.result === 'green' || r.train.result === 'green-after-rerun' ? '' : ' — NOT green, so the deferred suite has not passed'}` : null;
   const notes = [staleNote, suiteNote].filter(Boolean);
   const withStale = (x) => (notes.length ? { ...x, ...(staleNote ? { staleReady } : {}), text: `${x.text}\n${notes.join('\n')}` } : x);
   if (!r.ok) return withStale({ ...r, text: `${r.code === 'error' ? 'ERROR' : 'REFUSED'}: ${r.reason}` });
