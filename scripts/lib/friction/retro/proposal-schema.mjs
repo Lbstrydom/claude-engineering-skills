@@ -6,7 +6,9 @@
  * this schema AND against the scan, so evidence cannot be inflated.
  *
  * The field list in `skills/harness-retro/SKILL.md` is pinned to
- * `z.toJSONSchema(ProposalSchema)` by tests/harness-retro-proposal-schema.test.mjs.
+ * this schema's EMITTED JSON Schema by tests/harness-retro-proposal-schema.test.mjs.
+ * It is never sent to a provider: the judge is the session's own model, and this
+ * schema only validates what `record` receives.
  *
  * @module scripts/lib/friction/retro/proposal-schema
  */
