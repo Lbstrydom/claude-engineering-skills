@@ -72,6 +72,12 @@ export async function runScan(opts) {
   } = opts;
   // `until` can never be in the future: coverage claims what was READ (audit H6).
   const untilMs = Math.min(opts.untilMs ?? Date.now(), Date.now());
+  // Coverage can never reach behind the transcript-retention horizon: Claude Code
+  // deletes transcripts after `cleanupPeriodDays` (default 30), so a session that
+  // started earlier may be gone and its absence would read as "no failure".
+  // The REQUESTED since is clamped for the coverage claim (coordinator check, 2026-11-16).
+  const retentionDays = Number.isFinite(opts.retentionDays) && opts.retentionDays > 0 ? opts.retentionDays : 30;
+  const coverageSinceMs = Math.max(sinceMs, untilMs - retentionDays * 86_400_000);
   const listing = list({ configDir });
   const { projectsDirExists, files: allFiles } = listing;
   const enumerationErrors = listing.enumerationErrors ?? [];
@@ -146,7 +152,9 @@ export async function runScan(opts) {
   return {
     fingerprintVersion: FINGERPRINT_VERSION,
     accountKey: accountKeyOf(configDir),
-    requested: { since: new Date(sinceMs).toISOString(), until: new Date(untilMs).toISOString() },
+    requested: { since: new Date(coverageSinceMs).toISOString(), until: new Date(untilMs).toISOString() },
+    retentionDays,
+    sinceClamped: coverageSinceMs > sinceMs,
     files: stats,
     // Coverage evidence: every listed file read cleanly AND the walk itself saw no error.
     // ...and no in-scope session was incomplete (audit R2-M3): a scan that could

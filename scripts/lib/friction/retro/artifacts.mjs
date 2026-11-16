@@ -40,6 +40,8 @@ export const ScanArtifactSchema = z.object({
   repoUuid: z.string().nullable(),
   fleet: z.boolean(),
   requested: z.object({ since: z.string(), until: z.string() }).strict(),
+  retentionDays: z.number().positive(),
+  sinceClamped: z.boolean(),
   files: z.object({
     listed: z.number().int(), read: z.number().int(), readErrors: z.number().int(),
     unparseableLines: z.number().int(), unjoinedResults: z.number().int(), enumerationErrors: z.number().int(), truncatedTails: z.number().int(),
@@ -112,13 +114,25 @@ export function readAllScanArtifacts(repoRoot) {
   return { scans: out, invalid };
 }
 
+/**
+ * Whether a scan artifact is EFFECT EVIDENCE: a completed, measured, repo-local
+ * scan. Its per-session counts are the only surviving record of sessions whose
+ * transcripts Claude Code has since deleted (cleanupPeriodDays, default 30), so
+ * it is never pruned — deleting it would turn a later `effect` UNMEASURED.
+ */
+export const isEffectEvidence = (a) => a.completed === true && a.measured === true && a.fleet === false && Boolean(a.repoUuid);
+
+/** Prune only artifacts that can never be effect evidence (fleet, unmeasured or incomplete scans) older than `days`. */
 export function pruneScanArtifacts(repoRoot, { now = Date.now(), days = PRUNE_AFTER_DAYS } = {}) {
   let pruned = 0;
   for (const id of listScanIds(repoRoot)) {
     const p = path.join(artifactDir(repoRoot), `scan-${id}.json`);
     try {
-      if (now - fs.statSync(p).mtimeMs > days * 86_400_000) { fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); pruned++; }
-    } catch { /* best effort */ }
+      if (now - fs.statSync(p).mtimeMs <= days * 86_400_000) continue;
+      if (isEffectEvidence(JSON.parse(fs.readFileSync(p, 'utf8')))) continue;
+      fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      pruned++;
+    } catch { /* unreadable: leave it — never delete what could not be classified */ }
   }
   return pruned;
 }

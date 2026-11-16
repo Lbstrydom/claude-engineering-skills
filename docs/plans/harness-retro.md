@@ -206,7 +206,8 @@ User text is never kept in any destination: `user_correction` carries only the k
      measured, reason?, sessions:[{sessionKey, repoUuid|null, origin, startedAt, counts:{fp:n}}],
      fingerprints:{fp:{kind, tool, label}}, candidates[], tripwires[], summary}`.
    - `proposals-<scanId>.json` + `.md` — written by `record`.
-   `scanId` = UTC timestamp + 6 random hex. Scan artifacts older than 60 days are pruned by `scan`.
+   `scanId` = UTC timestamp (ms) + 6 random hex. `scan` prunes only artifacts that can never be effect
+   evidence (fleet, unmeasured or incomplete) older than 60 days; evidence artifacts are kept.
 10. **The LLM step = the session's own model, driven by the skill.** The skill reads the latest
     scan artifact's top **5** candidates (`--top`) and the top promotion candidates, judges each, and pipes proposals to
     `record --scan <scanId> --stdin`. `record` validates against `ProposalSchema` (Zod `.strict()`)
@@ -313,6 +314,18 @@ existed. Restricting `P` to accounts in `A` keeps the population the same on bot
 (AGENTS.md: a figure compared over time is a trend only if the population is stable). Output
 carries `window`, `accounts`, counts, both rates and the thresholds. Source (v1): the union of the
 local scan artifacts on this machine (`source:'local-scan'`).
+
+**Horizon — which data limit applies.** The binding limit is Claude Code's transcript retention
+(`cleanupPeriodDays` in the account's `settings.json`, default **30 days**), not artifact pruning:
+(1) every scan clamps its coverage claim to `now − cleanupPeriodDays` (a `--since 60d` request covers
+only the last 30 — older sessions may already be deleted, and their absence must not read as "no
+failure"); (2) a before-window can therefore only be measured if a scan ran while its sessions were
+still on disk — run `/harness-retro` at the end of coordinator sessions *before* a fix lands;
+(3) the scan artifacts that hold those counts are effect evidence and are **never pruned** (only
+old fleet / unmeasured / incomplete scans are), so after the 30-day transcript cleanup they are the
+sole local copy (`.gitignore` Category P, no durable home in v1 — declared honestly). A
+before-window older than the earliest completed scan → `unmeasured: no-covered-account` naming the
+retention limit, never "0 recurrences". Artifact size: ~185 KB per 7-day scan of this repo.
 
 ### Cadence
 

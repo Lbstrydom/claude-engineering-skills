@@ -72,6 +72,17 @@ function resolveRoots(cwd = process.cwd()) {
   return { repoRoot: path.resolve(top), mainRoot: path.resolve(main) };
 }
 
+/**
+ * Claude Code's transcript retention for this account: `cleanupPeriodDays` in
+ * `<configDir>/settings.json`, default 30. Coverage is clamped to it.
+ */
+export function transcriptRetentionDays(configDir) {
+  try {
+    const v = JSON.parse(fs.readFileSync(path.join(configDir, 'settings.json'), 'utf8')).cleanupPeriodDays;
+    return Number.isFinite(v) && v > 0 ? v : 30;
+  } catch { return 30; }
+}
+
 export function parseSince(v, now = Date.now()) {
   const m = String(v ?? '14d').match(/^(\d+)d$/);
   if (!m || Number(m[1]) < 1) throw new ArgvError(`--since must look like 14d (got ${v})`);
@@ -92,7 +103,9 @@ async function cmdScan() {
   const self = resolveRepoIdentity(repoRoot);
   const thisRepoUuid = self.source === 'path-fallback' ? null : self.repoUuid;
   log(`scanning ${configDir} since ${new Date(sinceMs).toISOString()}${fleet ? ' (fleet)' : ''}…`);
-  const scan = await runScan({ configDir, sinceMs, untilMs: now, resolver: createRepoResolver(), thisRepoUuid, fleet });
+  const retentionDays = transcriptRetentionDays(configDir);
+  const scan = await runScan({ configDir, sinceMs, untilMs: now, resolver: createRepoResolver(), thisRepoUuid, fleet, retentionDays });
+  if (scan.sinceClamped) log(`--since reaches past the transcript retention horizon (${retentionDays} d): coverage is claimed from ${scan.requested.since} only`);
 
   const registry = readRegistry(repoRoot);
   const { dir: memoryDir, exists: memExists } = resolveHarnessMemoryDir({ repoRoot: mainRoot });
@@ -104,7 +117,7 @@ async function cmdScan() {
   const artifact = {
     schemaVersion: SCAN_SCHEMA_VERSION, scanId, createdAt: new Date(now).toISOString(),
     fingerprintVersion: scan.fingerprintVersion, accountKey: scan.accountKey, repoUuid: thisRepoUuid, fleet,
-    requested: scan.requested, files: scan.files, completed: scan.completed, measured: scan.measured,
+    requested: scan.requested, retentionDays: scan.retentionDays, sinceClamped: scan.sinceClamped, files: scan.files, completed: scan.completed, measured: scan.measured,
     ...(scan.reason ? { reason: scan.reason } : {}),
     transcriptVersions: scan.transcriptVersions, excluded: scan.excluded,
     sessions: scan.sessions, fingerprints: scan.fingerprints,

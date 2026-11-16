@@ -80,6 +80,14 @@ scripts/lib/runner-hosts.*.json
 #   .audit/write-spill/, which is a SOLE LOCAL COPY until the drain succeeds
 #   (the artifact exists because the remote write did not land) — an accepted,
 #   bounded loss window, reported by `npm run debt:reconcile`.
+#   NOT disposable and NOT in the durable home: .audit/harness-retro/scan-*.json
+#   (/harness-retro v1). Their per-session failure counts are DERIVED, but only
+#   regenerable while Claude Code still holds the transcripts (cleanupPeriodDays,
+#   default 30) — after that they are the sole record of the effect metric's
+#   before-window. v1 deliberately has no store (plan right-sizing cut 1), so
+#   this is a SOLE LOCAL COPY with no durable home; the tool never prunes an
+#   evidence artifact, and losing one makes `harness-retro effect` UNMEASURED
+#   with that reason, never wrong. A durable home is the trigger to revisit.
 # See docs/reference/gitignore-policy.md. This directory held 37 debt entries
 # that existed nowhere else until 2026-09-04.
 # ALL of it. `.audit/` is our directory — only audit-loop tooling writes

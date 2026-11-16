@@ -57,6 +57,13 @@ describe('computeEffect', () => {
   });
   it('pending until the after-window has elapsed', () => { assert.equal(run({ now: T + 5 * DAY }).verdict, 'pending'); });
   it('no covered account → unmeasured', () => { assert.equal(run({ scans: [{ ...fullScan, completed: false }] }).verdict, 'unmeasured'); });
+  it('a before-window older than every scan on disk is UNMEASURED with the retention reason — never "0 recurrences"', () => {
+    const lateScan = { ...fullScan, since: iso(T + DAY), until: iso(T + 20 * DAY) };   // scanning began after activation
+    const r = run({ scans: [lateScan], sessions: sessions({ before: 0 }) });
+    assert.equal(r.verdict, 'unmeasured');
+    assert.match(r.reason, /cleanupPeriodDays/);
+    assert.equal(r.rates, undefined);
+  });
   it('a short window → unmeasured naming it', () => {
     const r = run({ sessions: sessions({ before: 4 }) });
     assert.equal(r.verdict, 'unmeasured'); assert.match(r.reason, /^before-window/);

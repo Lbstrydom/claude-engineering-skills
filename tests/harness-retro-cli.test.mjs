@@ -152,6 +152,21 @@ describe('harness-retro CLI', () => {
     assert.ok(s.json.lastScan.scanId);
   });
 
+  it('pruning never deletes effect evidence — only old fleet/unmeasured/incomplete scans', async () => {
+    const { pruneScanArtifacts } = await import('../scripts/lib/friction/retro/artifacts.mjs');
+    const dir = path.join(repo, '.audit', 'harness-retro');
+    const old = Date.now() - 90 * 86_400_000;
+    const evidence = path.join(dir, 'scan-20260101T000000000Z-aaaaaa.json');
+    const junk = path.join(dir, 'scan-20260101T000000000Z-bbbbbb.json');
+    fs.writeFileSync(evidence, JSON.stringify({ completed: true, measured: true, fleet: false, repoUuid: 'u' }));
+    fs.writeFileSync(junk, JSON.stringify({ completed: true, measured: false, fleet: false, repoUuid: 'u' }));
+    fs.utimesSync(evidence, old / 1000, old / 1000); fs.utimesSync(junk, old / 1000, old / 1000);
+    assert.equal(pruneScanArtifacts(repo), 1);
+    assert.ok(fs.existsSync(evidence));
+    assert.ok(!fs.existsSync(junk));
+    fs.rmSync(evidence, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
   it('usage errors exit 2', () => {
     assert.equal(run(['nope'], { cwd: repo, configDir, memoryDir }).code, 2);
     assert.equal(run(['scan', '--since', 'yesterday'], { cwd: repo, configDir, memoryDir }).code, 2);

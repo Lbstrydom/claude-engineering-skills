@@ -72,7 +72,12 @@ export function computeEffect(input) {
   if (now < t + W) return { ...withActivation, verdict: 'pending', reason: `after-window ends ${window.after[1]}` };
 
   const accounts = coveredAccounts(scans, repoUuid, t - W, t + W);
-  if (accounts.size === 0) return { ...withActivation, verdict: 'unmeasured', reason: 'no-covered-account: no account has completed scans spanning both windows' };
+  if (accounts.size === 0) {
+    return { ...withActivation, verdict: 'unmeasured',
+      reason: 'no-covered-account: no completed repo-local scan on this machine covers both windows. Sessions can only be counted '
+        + 'while their transcripts exist (Claude Code cleanupPeriodDays, default 30), so a before-window older than the earliest '
+        + 'scan cannot be measured retroactively — this is UNMEASURED, never "0 recurrences".' };
+  }
 
   const population = canonicalSessions(sessions).filter((s) => s.repoUuid === repoUuid && accounts.has(s.accountKey));
   if (population.some((s) => s.fingerprintVersion !== decision.fingerprintVersion

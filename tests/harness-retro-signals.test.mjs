@@ -149,3 +149,21 @@ describe('runScan — completeness and measurement honesty', async () => {
     assert.equal(r.excluded.otherRepo, 1);
   });
 });
+
+describe('runScan — the transcript-retention horizon', async () => {
+  const { runScan } = await import('../scripts/lib/friction/retro/scan.mjs');
+  const resolver = { resolve: () => ({ repoUuid: 'r', name: 'o/r' }) };
+  const list = () => ({ projectsDir: '/p', projectsDirExists: true, enumerationErrors: [], files: [{ path: '/p/s/a.jsonl', slug: 's', subagent: false, mtimeMs: Date.now() }] });
+  const stream = async (_p, onRecord) => { onRecord(use('t1', 'Bash')); onRecord(result('t1', 'Error: x')); return { lines: 2, parsed: 2, unparseable: 0, truncatedTail: false, readError: null }; };
+  it('coverage is never claimed behind cleanupPeriodDays — a 60-day request is clamped to 30', async () => {
+    const now = Date.now();
+    const r = await runScan({ configDir: '/cfg', sinceMs: now - 60 * 86_400_000, untilMs: now, resolver, thisRepoUuid: 'r', list, stream, retentionDays: 30 });
+    assert.equal(r.sinceClamped, true);
+    assert.ok(Math.abs(Date.parse(r.requested.since) - (now - 30 * 86_400_000)) < 1000);
+  });
+  it('a request inside the horizon is not clamped', async () => {
+    const now = Date.now();
+    const r = await runScan({ configDir: '/cfg', sinceMs: now - 7 * 86_400_000, untilMs: now, resolver, thisRepoUuid: 'r', list, stream, retentionDays: 30 });
+    assert.equal(r.sinceClamped, false);
+  });
+});
