@@ -72,7 +72,8 @@ node scripts/fleet.mjs decision record --scope record-catchup --words-file -
 node scripts/ship-commit.mjs --record --decision <dec-id> --gate not-run --no-run-id --skill ship --models claude --message-file - --expect-head <sha> --expect-branch <branch> --path docs/status/entries/<file>.md
 ```
 
-`--record` refuses (exit 2) unless every path is a NEW entry file, the canonical `init` marker, or a plan change that only
+Pass one `--path` per file the record commit carries — every new entry file (per-PR, run, floor, the init marker) and
+every plan you pasted a line into; `git status` lists them. `--record` refuses (exit 2) unless every path is a NEW entry file, the canonical `init` marker, or a plan change that only
 inserts catch-up lines inside its `## Implementation Log`; the gate is `not-run`; and the decision is active (not revoked,
 not expired). The commit carries `AI-Ship-Authority: record-catchup` and `AI-Decision: <dec-id>`, so the merge reviewer can
 read the words (`fleet decision list`). **The decision is a declaration, not verified authority** — the path check is the

@@ -116,8 +116,9 @@ These will silently regress under future refactors.
 
 Step 6.8 of a PRIOR `/ship` run wrote a note instead of amending an
 already-pushed status.md entry (which would force a second commit + push —
-see SKILL.md Step 6.8). Step 2 of THIS run drains them, prepends them above this
-session's own entry, then deletes exactly the ones it drained.
+see SKILL.md Step 6.8). Step 2 of THIS run drains them, places them at the top of
+this session's own entry (inside it, under its `## ` heading — per-entry files hold one heading), then deletes exactly
+the ones it drained.
 
 **There may be more than one, and the subsection holds all of them.** A ship
 does not happen after every note: Step 2 only runs inside `/ship`, and not every

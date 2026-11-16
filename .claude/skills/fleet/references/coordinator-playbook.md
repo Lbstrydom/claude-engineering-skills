@@ -123,6 +123,7 @@ record catch-up for its repo** — chips never run it, so two runs never race. T
 - **Cadence**: after each `fleet land` (it prints the nudge), at every pass (`fleet status` shows
   `records: N merged PR(s) unrecorded`), and at end of day: `node scripts/ship-record.mjs catchup --write`, paste the
   plan lines it prints, commit with `ship-commit.mjs --record --decision <id>`, open a docs-only PR. The user merges it.
-- **Push lanes (rule 8)**: records are one file per PR, named from the merge, so record PRs never conflict with each
-  other or with `/ship` entries — they need no lane.
+- **Push lanes (rule 8)**: the per-PR entry FILES are named from the merge, so they never conflict with each other or with
+  `/ship` entries. Two things a record PR can share are NOT conflict-free — a pasted plan line and the one-time floor —
+  which is why there is exactly one writer per repo (you): keep one record PR open at a time, and floor once.
 - **`records: UNMEASURED` is not zero**: fix what it names (`--fetch`, `origin/HEAD`, a re-sync) before reading it.

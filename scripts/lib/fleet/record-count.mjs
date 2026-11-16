@@ -121,25 +121,28 @@ export function nextRecordCache(m, previous, now) {
   };
 }
 
-/** `status`'s refresh: run the reader, write the cache. Never throws. */
+/**
+ * `status`'s refresh: run the reader OUTSIDE any lock (it can take a minute), then — under the cache lock — re-read the
+ * current record, merge the measurement with THAT (never a copy read before the child ran), and publish only if this
+ * attempt started later than what is there (C-R1-M3, C-R2-H1, C-R3-H1). Never throws.
+ */
 export function refreshRecordCache({ cacheDir, cwd, now, run = runRecordStatus, script = recordScript() }) {
-  const prev = readRecordCache(cacheDir);
-  const startedAt = now ?? new Date(); // stamped at the START, before the child runs (C-R2-H1: never at write time)
-  const record = nextRecordCache(run(script, cwd), prev.state === 'ok' ? prev.record : null, startedAt);
+  const startedAt = now ?? new Date(); // stamped at the START, before the child runs
+  const measurement = run(script, cwd);
   try {
-    CacheSchema.parse(record);
-    if (!cacheDir) return { record, written: false, warning: 'record-count cache not written (the git common dir could not be resolved)' };
+    if (!cacheDir) return { record: nextRecordCache(measurement, null, startedAt), written: false, warning: 'record-count cache not written (the git common dir could not be resolved)' };
     fs.mkdirSync(cacheDir, { recursive: true });
-    // Two overlapping `status` runs: the one that STARTED later wins (C-R1-M3), and the compare and the write happen under
-    // one lock so an older run cannot slip in between them (C-R2-H1).
     const held = withFileLockSync(path.join(cacheDir, `${RECORD_CACHE_FILE}.lock`), { attempts: 20 }, () => {
-      const latest = readRecordCache(cacheDir);
-      if (latest.state === 'ok' && Date.parse(latest.record.attemptedAt) > Date.parse(record.attemptedAt)) return { record: latest.record, written: false };
+      const current = readRecordCache(cacheDir);
+      const prev = current.state === 'ok' ? current.record : null;
+      if (prev && Date.parse(prev.attemptedAt) > toMs(startedAt)) return { record: prev, written: false };
+      const record = nextRecordCache(measurement, prev, startedAt);
+      CacheSchema.parse(record);
       atomicWriteFileSync(path.join(cacheDir, RECORD_CACHE_FILE), `${JSON.stringify(record, null, 2)}\n`);
       return { record, written: true };
     });
-    return held.ok ? held.value : { record, written: false, warning: 'record-count cache not written (another status run held its lock)' };
-  } catch (e) { return { record, written: false, warning: `record-count cache not written (${e.message})` }; }
+    return held.ok ? held.value : { record: nextRecordCache(measurement, null, startedAt), written: false, warning: 'record-count cache not written (another status run held its lock)' };
+  } catch (e) { return { record: nextRecordCache(measurement, null, startedAt), written: false, warning: `record-count cache not written (${e.message})` }; }
 }
 
 const ageText = (ms) => (ms < 90 * 60 * 1000 ? `${Math.max(1, Math.round(ms / 60000))}m` : `${Math.round(ms / 3600000)}h`);
