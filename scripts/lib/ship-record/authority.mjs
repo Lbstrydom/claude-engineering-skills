@@ -31,6 +31,8 @@ const LOG_HEADING = '## Implementation Log';
 
 const row = (id, ok, reason) => ({ id, ok, reason });
 const lines = (s) => String(s).replace(/\r\n/g, '\n').split('\n');
+/** A file's lines without the empty element its terminating newline produces (B-R4-H1): that newline is not content. */
+const planLines = (s) => { const l = lines(s); if (l.length && l[l.length - 1] === '') l.pop(); return l; };
 
 /**
  * Is `newText` = `oldText` with only suggestion lines INSERTED inside its `## Implementation Log` section (or that section
@@ -38,8 +40,8 @@ const lines = (s) => String(s).replace(/\r\n/g, '\n').split('\n');
  * @returns {{ok: true, inserted: number} | {ok: false, reason: string}}
  */
 export function planChangeIsRecordOnly(oldText, newText) {
-  const a = lines(oldText);
-  const b = lines(newText);
+  const a = planLines(oldText);
+  const b = planLines(newText);
   // Greedy line alignment: every old line must appear in order; everything extra is an insertion.
   const inserted = [];
   let i = 0;
@@ -114,6 +116,7 @@ function pathVerdict(p) {
   }
   if (PLAN_PATH_RE.test(p.rel)) {
     if (p.atHead !== 'blob') return 'is not an existing plan at HEAD';
+    if (p.modeChanged !== false && p.modeChanged !== undefined) return p.modeChanged === null ? 'its file mode could not be compared with HEAD' : 'changes the file mode (a record changes only lines)';
     const v = planChangeIsRecordOnly(p.oldText ?? '', p.newText ?? '');
     return v.ok ? null : v.reason;
   }
@@ -136,11 +139,13 @@ export function gatherRecordPathFacts({ repoRoot, git, rels }) {
     const t = git(['ls-tree', '-z', 'HEAD', '--', `:(literal)${rel}`]);
     let atHead = 'unknown';
     let oldText = null;
+    let headMode = null;
     if (t.status === 0 && !t.error) {
       const entry = String(t.stdout).split('\0').find((x) => x.endsWith(`\t${rel}`));
       if (!entry) atHead = 'absent';
       else {
         const [mode, type] = entry.split('\t')[0].split(' ');
+        headMode = mode;
         atHead = type === 'blob' && (mode === '100644' || mode === '100755') ? 'blob' : mode === '120000' ? 'symlink' : 'other';
         if (atHead === 'blob') {
           const shown = git(['show', `HEAD:${rel}`]);
@@ -149,7 +154,14 @@ export function gatherRecordPathFacts({ repoRoot, git, rels }) {
       }
     }
     const newText = kind === 'regular' ? fs.readFileSync(abs, 'utf8') : null;
-    return { rel, atHead, kind, oldText, newText };
+    // The mode git would COMMIT (B-R4-M1): `diff --raw` against HEAD honours core.fileMode, so an exec-bit flip shows here
+    // exactly when it would land. No diff line = unchanged mode.
+    let modeChanged = null;
+    if (atHead === 'blob') {
+      const d = git(['diff', '--raw', '--no-renames', 'HEAD', '--', `:(literal)${rel}`]);
+      if (d.status === 0 && !d.error) { const m = /^:(\d{6}) (\d{6}) /.exec(String(d.stdout)); modeChanged = m ? m[1] !== m[2] : false; }
+    }
+    return { rel, atHead, kind, oldText, newText, headMode, modeChanged };
   });
 }
 

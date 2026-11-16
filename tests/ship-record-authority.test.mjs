@@ -176,3 +176,17 @@ describe('audit B-R3 regressions', () => {
     assert.match(planChangeIsRecordOnly('# P\n', `# P\n${LINE}\n`).reason, /outside|no ## Implementation Log/);
   });
 });
+
+describe('audit B-R4 regressions', () => {
+  it('H1: the terminating newline is not content, with or without one', () => {
+    assert.equal(planChangeIsRecordOnly('# P\n', `# P\n## Implementation Log\n${LINE}\n`).ok, true);
+    assert.equal(planChangeIsRecordOnly('# P', `# P\n\n## Implementation Log\n${LINE}`).ok, true);
+    assert.equal(planChangeIsRecordOnly('# P\n\n## Implementation Log\n', `# P\n\n## Implementation Log\n${LINE}\n`).ok, true);
+  });
+  it('M1: a plan whose mode changes refuses, even with a valid log insertion', () => {
+    const p = { rel: 'docs/plans/p.md', atHead: 'blob', kind: 'regular', oldText: '# P\n\n## Implementation Log\n', newText: `# P\n\n## Implementation Log\n${LINE}\n` };
+    assert.equal(good([{ ...p, modeChanged: false }]).ok, true);
+    assert.match(reasonOf(good([{ ...p, modeChanged: true }]), 'paths'), /file mode/);
+    assert.match(reasonOf(good([{ ...p, modeChanged: null }]), 'paths'), /could not be compared/);
+  });
+});
