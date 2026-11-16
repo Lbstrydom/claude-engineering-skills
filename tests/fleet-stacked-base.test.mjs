@@ -124,7 +124,7 @@ describe('claim --base: overlap from the real fork point', () => {
   it('a stacked claim with no recorded fork point (an older fleet) is measured from the base, and says so', () => {
     const { s, it: before } = absorbed({ commitBeforeClaim: false, swallow: () => {} });
     assert.ok(before.inherited?.length > 0, 'control: with the record, the stacked measure applies');
-    fs.rmSync(path.join(s.fx.repo, '.git', 'fleet', 'stack-bases'), { recursive: true, force: true });
+    fs.rmSync(path.join(s.fx.repo, '.git', 'fleet', 'stack-bases'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const it = s.f(['status', '--json']).json.status.items.find((x) => x.id === 'late');
     assert.equal(it.inherited, undefined);
     assert.ok(it.notes.some((n) => /stack base shared-base not measured \(no fork point recorded/.test(n)), JSON.stringify(it.notes));
@@ -147,7 +147,7 @@ describe('claim --base: overlap from the real fork point', () => {
     assert.deepEqual(writeStackBase(dir, { id: 'late', gen: 1, base: 'shared-base', oid: B, at: 't' }), { created: false });
     assert.equal(fs.readFileSync(path.join(stackBasesDir(dir), file), 'utf8'), '{not json', 'never overwritten');
     assert.match(stackBaseFor(dir, sess).reason, /unreadable/);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('--base refuses a branch that does not exist, and the session\'s own branch', () => {

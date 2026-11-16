@@ -192,6 +192,6 @@ describe('lease run: the start-of-run CPU check sits inside the lease lifecycle 
     assert.equal(res.signalled, 'SIGTERM');
     assert.equal(res.released.ok, true);
     assert.equal(readLease(dir).lease.heavy?.holder ?? null, null, 'the slot is free again');
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });
