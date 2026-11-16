@@ -37,6 +37,8 @@ const args = (over = {}) => ({
 const snapshot = () => [fs.existsSync(path.join(repo, '.harness-retro', 'decisions.json')), fs.readFileSync(path.join(mem, 'MEMORY.md'), 'utf8')];
 
 describe('preflight', () => {
+  // gate-contract: enforce-refuses-unscanned-identity (skills/harness-retro/gate-contract.json) — the
+  // red direction is the cli-exit scenario; the green direction is 'enforce: registry entry…' below.
   it('writes NOTHING when any input is bad', async () => {
     const before = snapshot();
     for (const bad of [{ test: 'tests/missing.test.mjs' }, { layer: 'vibes' }, { summary: 'see C:\\Users\\bob' }, { identity: 'fingerprint:cccccccccccccccc' }]) {

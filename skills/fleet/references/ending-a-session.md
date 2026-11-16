@@ -8,6 +8,9 @@ Verbs that retire a claim or remove a branch or worktree. Removing a worktree is
 user's decision; the coordinator rules that govern when to bring it to them are in
 `references/coordination.md` ("Rules for a coordinator", rules 7 and 8).
 
+- **Before archiving a coordinator, run `/harness-retro`** (`node scripts/harness-retro.mjs scan --persist`,
+  then judge its candidates): it finds the failures that recurred across this
+  session's chips and proposes a check for each. It proposes; it never edits.
 - `fleet release [--abandoned]` retires the claim now: the session stops blocking
   claims and leaves the landing order. It never refuses; it prints the
   archive verdict as advice.

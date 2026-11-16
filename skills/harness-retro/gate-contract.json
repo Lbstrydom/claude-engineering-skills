@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "skill": "harness-retro",
+  "gates": [
+    {
+      "id": "enforce-refuses-unscanned-identity",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "statedIn": "skills/harness-retro/SKILL.md",
+      "stated": "**`enforce` refuses, writing nothing, an identity the scan did not rank.** It",
+      "implementation": "scripts/harness-retro.mjs",
+      "scenario": "retro-enforce-unscanned-refusal",
+      "tests": [
+        "tests/gate-honesty.test.mjs",
+        "tests/harness-retro-closure.test.mjs"
+      ],
+      "proof": "process"
+    },
+    {
+      "id": "propose-never-apply",
+      "kind": "document-only",
+      "reason": "'Propose, never apply' is a NEGATIVE guarantee about the judging session: the model must not edit the harness itself. The CLI has no verb that edits a hook, gate, script or doc — that much is structural — but whether the session following the skill edits files by hand is model behaviour no exit code can assert."
+    },
+    {
+      "id": "unmeasured-is-not-clean",
+      "kind": "document-only",
+      "reason": "The CLI half is executable and pinned by tests/harness-retro-cli.test.mjs (an empty account and a format-drifted transcript both return measured:false with a named reason). The STATED gate is the reporting rule — the model must not relay an UNMEASURED scan as a clean result — which is a judgement about prose the session writes, not an exit code."
+    },
+    {
+      "id": "record-refuses-bad-proposals",
+      "kind": "document-only",
+      "reason": "Enforced by code (checkProposalsAgainstScan in scripts/lib/friction/retro/proposal-schema.mjs; record exits 1) and pinned by tests/harness-retro-proposal-schema.test.mjs and tests/harness-retro-cli.test.mjs (inflated evidence refused from a second process). Not bound to a cli-exit scenario because `record` reads its envelope on stdin and the cli-exit recipe registry has no stdin channel; declared here rather than claimed as a binding that does not hold."
+    }
+  ],
+  "ignoredCandidates": []
+}
