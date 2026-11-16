@@ -116,7 +116,8 @@ function pathVerdict(p) {
   }
   if (PLAN_PATH_RE.test(p.rel)) {
     if (p.atHead !== 'blob') return 'is not an existing plan at HEAD';
-    if (p.modeChanged !== false && p.modeChanged !== undefined) return p.modeChanged === null ? 'its file mode could not be compared with HEAD' : 'changes the file mode (a record changes only lines)';
+    // Mode evidence is REQUIRED (B-R5-M2): only an explicit false (compared, unchanged) passes; absent or unknown refuses.
+    if (p.modeChanged !== false) return p.modeChanged === true ? 'changes the file mode (a record changes only lines)' : 'its file mode could not be compared with HEAD';
     const v = planChangeIsRecordOnly(p.oldText ?? '', p.newText ?? '');
     return v.ok ? null : v.reason;
   }

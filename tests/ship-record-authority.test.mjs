@@ -45,7 +45,7 @@ describe('evaluateRecordCommit', () => {
     const v = good([
       entry('docs/status/entries/2026-11-16-091244-pr-5.md'),
       entry('docs/status/entries/README.md', renderInitReadme().replace(/\n/g, '\r\n')),
-      { rel: 'docs/plans/p.md', atHead: 'blob', kind: 'regular', oldText: '# P\n\n## Implementation Log\n', newText: `# P\n\n## Implementation Log\n${LINE}\n` },
+      { rel: 'docs/plans/p.md', atHead: 'blob', kind: 'regular', oldText: '# P\n\n## Implementation Log\n', newText: `# P\n\n## Implementation Log\n${LINE}\n`, modeChanged: false },
     ]);
     assert.equal(v.ok, true, v.refusals.join('\n'));
   });
@@ -138,7 +138,7 @@ describe('audit B-R1 regressions (authority)', () => {
     const blob = spawnSync('git', ['hash-object', '-w', '--stdin'], { cwd: dir, input: 'real.md', encoding: 'utf8' }).stdout.trim();
     g(['update-index', '--add', '--cacheinfo', `120000,${blob},docs/plans/link.md`]);
     g(['add', 'docs/plans/real.md']);
-    if (g(['commit', '-q', '-m', 'x']).status !== 0) { t.skip('could not commit'); return; }
+    const c = g(['commit', '-q', '-m', 'x']); assert.equal(c.status, 0, `test repo commit failed: ${c.stdout}`); // fail, never skip: the check must run
     const facts = gatherRecordPathFacts({ repoRoot: dir, git: g, rels: ['docs/plans/real.md', 'docs/plans/link.md', 'docs/plans/none.md'] });
     assert.deepEqual(facts.map((f) => f.atHead), ['blob', 'symlink', 'absent']);
     const failing = gatherRecordPathFacts({ repoRoot: dir, git: () => ({ status: 128, stdout: '', error: null }), rels: ['docs/plans/real.md'] });
@@ -163,7 +163,7 @@ describe('audit B-R2 regressions (authority)', () => {
     fs.mkdirSync(path.join(dir, 'docs/plans'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'docs/plans/d.md'), '# d\n'); // what the glob [draft].md would match
     g(['add', '-A']);
-    if (g(['commit', '-q', '-m', 'x']).status !== 0) { t.skip('could not commit'); return; }
+    const c = g(['commit', '-q', '-m', 'x']); assert.equal(c.status, 0, `test repo commit failed: ${c.stdout}`); // fail, never skip: the check must run
     fs.writeFileSync(path.join(dir, 'docs/plans/[draft].md'), LINE);
     assert.equal(gatherRecordPathFacts({ repoRoot: dir, git: g, rels: ['docs/plans/[draft].md'] })[0].atHead, 'absent');
   });
@@ -188,5 +188,6 @@ describe('audit B-R4 regressions', () => {
     assert.equal(good([{ ...p, modeChanged: false }]).ok, true);
     assert.match(reasonOf(good([{ ...p, modeChanged: true }]), 'paths'), /file mode/);
     assert.match(reasonOf(good([{ ...p, modeChanged: null }]), 'paths'), /could not be compared/);
+    assert.match(reasonOf(good([{ ...p, modeChanged: undefined }]), 'paths'), /could not be compared/, 'absent evidence refuses (B-R5-M2)');
   });
 });
