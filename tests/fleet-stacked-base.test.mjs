@@ -122,6 +122,26 @@ describe('claim --base: overlap from the real fork point', () => {
     assert.ok(it.notes.some((n) => /stack base shared-base not measured \(no fork point recorded/.test(n)), JSON.stringify(it.notes));
   });
 
+  it('the fork-point record is create-only: a repeat keeps the first, an invalid file is never replaced (audit R5)', async () => {
+    const os = await import('node:os');
+    const { writeStackBase, stackBaseFor, stackBasesDir } = await import('../scripts/lib/fleet/stack-bases.mjs');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-sb-'));
+    const A = 'a'.repeat(40); const B = 'b'.repeat(40);
+    const sess = { id: 'late', gen: 1, source: { baseRef: 'shared-base' } };
+    assert.equal(stackBaseFor(dir, sess).ok, false);
+    assert.deepEqual(writeStackBase(dir, { id: 'late', gen: 1, base: 'shared-base', oid: A, at: 't' }), { created: true });
+    assert.deepEqual(writeStackBase(dir, { id: 'late', gen: 1, base: 'shared-base', oid: B, at: 't' }), { created: false });
+    assert.equal(stackBaseFor(dir, sess).oid, A, 'the first fork point stands');
+    assert.equal(stackBaseFor(dir, { ...sess, gen: 2 }).ok, false, 'a new claim generation has none until it records one');
+    assert.equal(stackBaseFor(dir, { ...sess, source: { baseRef: 'other' } }).ok, false, 'another base name is another key');
+    const [file] = fs.readdirSync(stackBasesDir(dir));
+    fs.writeFileSync(path.join(stackBasesDir(dir), file), '{not json');
+    assert.deepEqual(writeStackBase(dir, { id: 'late', gen: 1, base: 'shared-base', oid: B, at: 't' }), { created: false });
+    assert.equal(fs.readFileSync(path.join(stackBasesDir(dir), file), 'utf8'), '{not json', 'never overwritten');
+    assert.match(stackBaseFor(dir, sess).reason, /unreadable/);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('--base refuses a branch that does not exist, and the session\'s own branch', () => {
     const s = setup();
     git(['checkout', '-q', '-b', 'feat', 'main'], s.fx.repo);

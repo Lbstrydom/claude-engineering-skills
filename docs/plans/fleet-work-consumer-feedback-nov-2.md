@@ -72,8 +72,11 @@ never runs. `tests/fleet-probe-and-stale-ready.test.mjs`.
 `gatherFacts` adds `ownChanged[branch]` = `stackBase...tip` for each stacked session; overlap (in `status` and in
 `claim`'s `othersFor`) uses it. What the session inherited (from-base files minus its own) shows once, collapsed:
 `inherited (N files) from declared stack base X — …, not counted as overlaps (declared by claim --base, not verified …)`.
-The fork point is the stack base's COMMIT at claim, kept in a sidecar `fleet/stack-bases/<key>.json` (tied to the claim's
-`gen`; a new directory, so no older reader sees it), and the own diff is `forkOid...tip`. Measuring from the branch NAME
+The fork point is the stack base's COMMIT at claim, kept in an immutable, create-only sidecar, one file per (session,
+claim gen, base name) under `fleet/stack-bases/` (a new directory, so no older reader sees it), and the own diff is
+`forkOid...tip`. Nothing ever overwrites or deletes a record: a re-claim keeps the first, a new gen or base is a new key,
+un-stacking stops naming one, and an unreadable record is left in place and measured conservatively (audit R4/R5, after
+the pivot rule fired on this concern: a mutable record kept producing lifecycle findings). Measuring from the branch NAME
 would let a base later fast-forwarded onto the session's work, or one that absorbed commits made before the claim, empty
 the session's own diff and hide its overlap (audit R1 H9, R2 H1/M2, R3 H1/M1 — a containment heuristic was tried first
 and could not tell those from a fresh branch). No usable record (claimed by an older fleet, or for an earlier claim) falls

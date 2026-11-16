@@ -407,10 +407,10 @@ export function cmdClaim(ctx, flags) {
         source: { kind: 'branch', branch, repo: null, prNumber: null, headRepo: null, headRef: branch, baseRef: stackBase?.name ?? ctx.config.baseBranch } }
       : { gen: cur.gen, ready: cur.ready, waitingOn: cur.waitingOn, knownOverlaps: cur.knownOverlaps, createdAt: cur.createdAt, state: cur.state, startOid: cur.startOid,
         source: stackBase && cur.source.kind === 'branch' ? { ...cur.source, baseRef: stackBase.name } : cur.source };
-    // The fork point (the stack base's COMMIT at claim, stack-bases.mjs) is written FIRST, under the same lock (audit R4 H3/M1):
-    // a session write that then fails leaves only a record no session matches (its gen or base differs), which readers ignore.
-    // A repeated --base for the same claim and base keeps the fork point it already has (R4 H1/H4).
-    if (stackBase && base.source.kind === 'branch') writeStackBase(ctx.dir, { id, gen: base.gen, base: stackBase.oid ? stackBase.name : null, oid: stackBase.oid, at: stamp });
+    // The fork point (the stack base's COMMIT at claim, stack-bases.mjs): one immutable, create-only record per (id, gen, base),
+    // written before the session record under the same lock. A repeat keeps the first; nothing is ever overwritten or deleted
+    // (audit R4/R5), and un-stacking (--base <the repo base>) just stops naming one.
+    if (stackBase?.oid && base.source.kind === 'branch') writeStackBase(ctx.dir, { id, gen: base.gen, base: stackBase.name, oid: stackBase.oid, at: stamp });
     if (flags['--host-session'] !== undefined) writeHost(ctx.dir, { id, hostSession: flags['--host-session'], at: stamp });
     const record = t.writeSession({
       schemaVersion: 1, rev: cur ? cur.rev + 1 : 1, id, ...base,
