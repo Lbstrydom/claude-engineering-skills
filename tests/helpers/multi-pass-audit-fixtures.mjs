@@ -75,7 +75,7 @@ export function minimalFinalizationData(overrides = {}) {
     runQuickfix: false, quickfixResult: { result: skipped('quickfix'), usage: {}, latencyMs: 0 },
     runDuplication: false, duplicationResult: { result: skipped('duplication'), usage: {}, latencyMs: 0 },
     runAdjacency: false, adjacencyResult: { result: skipped('adjacency'), usage: {}, latencyMs: 0 },
-    archState: 'SKIPPED_NO_INTENT', archResult: { result: {}, usage: {}, latencyMs: 0 },
+    archState: 'SKIPPED_NO_ARCH_INTENT_DOC', archResult: { result: {}, usage: {}, latencyMs: 0 },
     orphanState: 'SKIPPED_NO_GRAPH', orphanResult: { result: {}, usage: {}, latencyMs: 0 },
     eventWiringState: 'ANALYZED_CLEAN', eventWiringResult: { result: {}, usage: {}, latencyMs: 0 },
     isR2Plus: false,

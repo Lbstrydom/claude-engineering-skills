@@ -156,7 +156,7 @@ export async function assembleFindings(data) {
     { name: 'duplication', ran: runDuplication, result: duplicationResult, displayPrefix: 'Duplication' },
     { name: 'adjacency', ran: runAdjacency, result: adjacencyResult, displayPrefix: 'Adjacency' },
     // M1 (code-audit r2): archState/orphanState have MULTIPLE skip reasons
-    // (SKIPPED_PASS_FILTER, SKIPPED_NO_INTENT, SKIPPED_NO_GRAPH, ...) — a
+    // (SKIPPED_PASS_FILTER, SKIPPED_NO_ARCH_INTENT_DOC, SKIPPED_NO_GRAPH, ...) — a
     // `!== 'SKIPPED_PASS_FILTER'` check reported `ran: true` for every OTHER
     // skip reason too, the exact frontendWillRun-vs-runFrontend mismatch
     // (M6, round 1) recurring for the pass immediately below it.

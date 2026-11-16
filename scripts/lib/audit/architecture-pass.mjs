@@ -81,7 +81,7 @@ export async function runArchitecturePass({ openai, repoRoot, focusBlock, planCo
   const domainMapPath = path.join(repoRoot, '.audit-loop/domain-map.json');
 
   if (!fs.existsSync(intentPath)) {
-    return { state: 'SKIPPED_NO_INTENT', result: emptyResult, archReport: null };
+    return { state: 'SKIPPED_NO_ARCH_INTENT_DOC', result: emptyResult, archReport: null };
   }
   if (!fs.existsSync(domainMapPath)) {
     return { state: 'SKIPPED_MISSING_DOMAIN_MAP', result: emptyResult, archReport: null };

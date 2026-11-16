@@ -65,7 +65,7 @@ function minimalFinalizationData(overrides = {}) {
     duplicationResult: {},
     runAdjacency: true,
     adjacencyResult: {},
-    archState: 'SKIPPED_NO_INTENT',
+    archState: 'SKIPPED_NO_ARCH_INTENT_DOC',
     archResult: {},
     orphanState: 'SKIPPED_NO_GRAPH',
     orphanResult: {},
