@@ -119,7 +119,7 @@ export function pruneScanArtifacts(repoRoot, { now = Date.now(), days = PRUNE_AF
   for (const id of listScanIds(repoRoot)) {
     const p = path.join(artifactDir(repoRoot), `scan-${id}.json`);
     try {
-      if (now - fs.statSync(p).mtimeMs > days * 86_400_000) { fs.rmSync(p); pruned++; }
+      if (now - fs.statSync(p).mtimeMs > days * 86_400_000) { fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); pruned++; }
     } catch { /* best effort */ }
   }
   return pruned;

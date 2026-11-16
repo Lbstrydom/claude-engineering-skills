@@ -19,9 +19,9 @@ import { collectTelemetry } from '../scripts/lib/dashboard/collect-telemetry.mjs
 const ui = buildUi();
 
 describe('censusAllSkills (producer)', () => {
-  it('produces exactly 17 rows without throwing, cloud on or off', async () => {
+  it('produces exactly 18 rows without throwing, cloud on or off', async () => {
     const result = await censusAllSkills({ root: process.cwd() });
-    assert.equal(result.rows.length, 17, `expected 17 skill rows, got ${result.rows.length}`);
+    assert.equal(result.rows.length, 18, `expected 18 skill rows, got ${result.rows.length}`);
     assert.deepEqual(
       result.rows.map((r) => r.skill).sort(),
       [...ALL_SKILLS].sort(),
@@ -46,7 +46,7 @@ describe('collectTelemetry -> skillCensus (consumer path)', () => {
     assert.ok('skillCensus' in data, 'collectTelemetry must include a skillCensus key');
     assert.ok('skillCensus' in data.sources, 'collectTelemetry must include a sources.skillCensus status');
     assert.ok(Array.isArray(data.skillCensus.rows), 'skillCensus.rows must be an array');
-    assert.equal(data.skillCensus.rows.length, 17);
+    assert.equal(data.skillCensus.rows.length, 18);
     assert.notEqual(data.sources.skillCensus.status, 'unexpected-error',
       `skillCensus degraded: ${data.sources.skillCensus.detail}`);
   });

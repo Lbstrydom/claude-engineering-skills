@@ -419,6 +419,10 @@
       "description": "Report the last local-maintenance run without running anything.",
       "category": "diagnostic"
     },
+    "harness:retro": {
+      "description": "Harness retro — scan local session transcripts for failures that recur across sessions, record proposals, enforce/reject decisions, measure before-vs-after effect (/harness-retro).",
+      "category": "diagnostic"
+    },
     "memory:health": {
       "description": "Memory-health gate — fuzzy re-raise rate, cluster density, recurrence (human report).",
       "category": "diagnostic"

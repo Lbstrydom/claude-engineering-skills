@@ -2101,7 +2101,9 @@
           "audit.suppressionEvents",
           "learning.banditArms",
           "learning.fpPatterns",
-          "debt.entries"
+          "debt.entries",
+          "retro.sessionSnapshot",
+          "retro.scanComplete"
         ],
         "drainCap": 100
       }

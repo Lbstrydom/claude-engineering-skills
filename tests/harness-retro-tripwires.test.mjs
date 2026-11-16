@@ -110,7 +110,7 @@ describe('retirement', () => {
 
   it('an unreadable index is an error, never an empty index to overwrite', () => {
     const bad = path.join(dir, 'MEMORY.md');
-    fs.rmSync(bad);
+    fs.rmSync(bad, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     fs.mkdirSync(bad);   // reading a directory as a file → EISDIR, not ENOENT
     assert.throws(() => retireFromIndex(dir, 'feedback_hook_path.md'), /EISDIR|illegal operation/i);
   });

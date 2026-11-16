@@ -652,6 +652,25 @@ empirical verify), `npm run plans:index`.
   non-blocking): CLI/registry-test/activation still keyed on `fingerprint` after R3-M1 → fixed
   (`--identity` + `--scan`, identity-keyed test and activation search). G2 (LOW): DB-test oracle
   still said `stale-snapshot` → fixed (`superseded`). No debt left open from the gate.
+
+### Implementation audit trail (`/cycle --autonomous`, 2026-11-16)
+
+- **Cluster A** (Phases 1–2): 4 GPT rounds. R1 30 findings (5 deferred-declared to B/C, all built
+  there), R2 14, R3 11, R4 12 at 33% acceptance → **STOP** on the acceptance-rate rule; every
+  valid finding fixed, the rest dismissed with recorded reasons. The recurring class was path
+  redaction (R2–R4), closed structurally: absolute paths are redacted to the next delimiter.
+- **Cluster B** (Phases 3–4): 2 rounds. R1 15 (9 fixed), R2 1 HIGH (a re-raise of the
+  by-design "no scan-row upgrade on drain", linked `sameConcernAs`) + 1 MEDIUM (fixed) →
+  converged (HIGH 0 after the re-raise ruling, MEDIUM ≤ 2, quickFix 0).
+- **Cluster C** (Phase 5): covered by the consolidated final gate.
+- **Final gate** (Gemini, union of A–C): **APPROVE**.
+- **Deviations, recorded honestly**: (1) Clusters B and C were built while Cluster A's audit ran,
+  so `cycle-cluster-scope.mjs` refused A's scope as "out-of-scope edits"; A's rounds were run over
+  exactly A's files with an explicit `aa714af3..HEAD` patch instead. (2) Every audit after the
+  migration file existed ran with `AUDIT_ALLOW_SCHEMA_BEHIND=1` — the NAS store is (correctly)
+  not migrated by a worker — so those rounds are local-only and commits read `AI-Gate: not-run`.
+  (3) The full `npm test` added four repo invariants the plan did not list (CLI catalog entry,
+  the cross-skill golden writer list, two dashboard roster counts) — fixed in place.
 - **Structural card at the cap**: 2 STRUCTURAL clusters (closure workflow; durable write contract),
   both on `scripts/lib/audit-store-writers.mjs`, linked to existing debt `fbc38b29` "Stale Write
   Replay". Call: **STOP** (the coordinator's brief caps plan audit at 3 rounds). The shared primitive
