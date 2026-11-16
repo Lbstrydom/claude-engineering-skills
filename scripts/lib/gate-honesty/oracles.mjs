@@ -444,6 +444,20 @@ const CLI_EXIT_RECIPES = {
     expectStderrContains: 'PAST_CAP_REQUIRED',
     envPrereq: null,
   },
+  // /harness-retro's closure preflight: `enforce` for an identity no scan ranked
+  // refuses with exit 1 BEFORE any write. A git checkout with no scan artifact is
+  // the fixture (files only); the stderr match proves the refusal is the evidence
+  // check, not argv validation (exit 2) or a missing checkout. Pinned in both
+  // directions by tests/harness-retro-closure.test.mjs (a valid identity closes).
+  'retro-enforce-unscanned-refusal': {
+    args: ['enforce', '--identity', 'fingerprint:0123456789abcdef', '--scan', 'latest',
+      '--test', 'tests/x.test.mjs', '--layer', 'gate', '--summary', 'hook commands use a relative path'],
+    env: {},
+    fixture(dir) { spawnSync('git', ['init', '-q'], { cwd: dir, encoding: 'utf-8', windowsHide: true }); },
+    expectExit: 1,
+    expectStderrContains: 'is not a candidate of scan',
+    envPrereq: null,
+  },
   'round-cap-code-refusal': {
     args: ['code', 'plan.md', '--round', '7'],
     env: { AUDIT_ALLOW_FOREIGN_CWD: '1', AUDIT_CARD_NO_ARCH: '1', MODEL_CATALOG_REFRESH: 'skip', AUDIT_TOOL_VERSION_CHECK: 'skip' },
