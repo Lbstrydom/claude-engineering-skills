@@ -47,8 +47,15 @@
       "id": "cluster-scope-preflight-exits-nonzero",
       "kind": "document-only",
       "statedIn": "skills/cycle/SKILL.md",
-      "stated": "#    writes the patch. EXITS NON-ZERO on an out-of-scope edit, an unadmittable",
-      "reason": "DOCUMENT-ONLY here for the same reason as cluster-start-ref-validated-on-use: /cycle is an orchestrator and emits no exit code of its own, so there is nothing for the cli-exit oracle to assert against and asserting one would be the fake-check class this registry exists to catch. The claim is NOT unbacked — the mechanical half is scripts/cycle-cluster-scope.mjs, which owns the exit code and returns non-zero on (a) a changed path belonging to no declared cluster scope, (b) a declared path that would not be admitted and is not explained by this cluster having deleted it, and (c) a comma-unsafe path that --files cannot transport. Pinned by tests/cycle-audit-scope-contract.test.mjs against REAL throwaway git repos — rename (both operands), delete, untracked, typo, space-bearing and comma-bearing paths — because the defect it replaces was invisible to every check that read tool config instead of running it (measured 2026-08-13: 52 files audited against 11 declared, 26 of 31 findings about untouched code). Added 2026-08-14 under docs/plans/cycle-cluster-audit-scope.md KD-2/KD-3."
+      "stated": "#    pre-flight, patch. EXITS NON-ZERO on an out-of-scope edit, an unadmittable",
+      "reason": "DOCUMENT-ONLY here for the same reason as cluster-start-ref-validated-on-use: /cycle is an orchestrator and emits no exit code of its own, so there is nothing for the cli-exit oracle to assert against and asserting one would be the fake-check class this registry exists to catch. The claim is NOT unbacked — the mechanical half is scripts/cycle-cluster-scope.mjs, which owns the exit code and returns non-zero on (a) a changed path belonging to no declared cluster scope, (b) a declared path that would not be admitted and is not explained by this cluster having deleted it, and (c) a comma-unsafe path that --files cannot transport. Pinned by tests/cycle-audit-scope-contract.test.mjs against REAL throwaway git repos — rename (both operands), delete, untracked, typo, space-bearing and comma-bearing paths — because the defect it replaces was invisible to every check that read tool config instead of running it (measured 2026-08-13: 52 files audited against 11 declared, 26 of 31 findings about untouched code). Added 2026-08-14 under docs/plans/cycle-cluster-audit-scope.md KD-2/KD-3. UPDATED 2026-11-15: the comment was condensed (the allowlist is now declared scope ∩ changed, selectAuditAllowlist in the same script, pinned by the same test file); the exit-code claim is unchanged."
+    },
+    {
+      "id": "autonomous-never-pushes-without-ship",
+      "kind": "document-only",
+      "statedIn": "skills/cycle/SKILL.md",
+      "stated": "**`--autonomous` never pushes or publishes without `--ship`** — no push, PR or side session (Step 7).",
+      "reason": "DOCUMENT-ONLY because no oracle exists: /cycle is an orchestrator with no exit code, and the rule constrains what the AGENT does (git push, gh pr create, starting a side session), not what a command returns. Added 2026-11-15 after ai-organiser's autonomous run pushed and opened PR #111 (and a side session opened #112) despite a brief saying not to; /ship's disable-model-invocation already blocked /ship itself, but nothing covered a direct push. The SKILL TEXT side is guarded by tests/cycle-autonomous-ship-gate.test.mjs, which asserts the prohibition sentence names all three actions, the --ship exception is one PR and never a merge, the handoff still ends Step 7, and the hard rule is present, in both the canonical and generated copies."
     }
   ],
   "ignoredCandidates": [
@@ -351,6 +358,34 @@
     {
       "line": "allowed-tools: Bash(node scripts/cross-skill.mjs preview-gate --format human)",
       "reason": "A frontmatter key, not prose: the word 'gate' is part of the subcommand name preview-gate. The grant itself is validated by the allowed-tools rule in scripts/lib/skill-frontmatter-layout.mjs (exact read-only command)."
+    },
+    {
+      "line": "Usage: /cycle --autonomous <plan-file> --ship  — Also push the branch + open ONE PR (never merge)",
+      "reason": "Restates the contracted gate autonomous-never-pushes-without-ship (usage/flag-list/Step 7 copy of the same rule); same disposition, same guard (tests/cycle-autonomous-ship-gate.test.mjs)."
+    },
+    {
+      "line": "`--ship` — with `--autonomous`: Step 7 may push + open ONE PR, never merge. Absent, nothing is pushed or published.",
+      "reason": "Restates the contracted gate autonomous-never-pushes-without-ship (usage/flag-list/Step 7 copy of the same rule); same disposition, same guard (tests/cycle-autonomous-ship-gate.test.mjs)."
+    },
+    {
+      "line": "> brief or plan step says; commits stay local. **With `--ship`**: push the branch, open ONE PR, never merge, then `node scripts/ci-merge.mjs --pr <n> --wait-only` into the done report (`references/ci-wait.md`).",
+      "reason": "Restates the contracted gate autonomous-never-pushes-without-ship (usage/flag-list/Step 7 copy of the same rule); same disposition, same guard (tests/cycle-autonomous-ship-gate.test.mjs)."
+    },
+    {
+      "line": "> So Step 7 always ends in a **blocked handoff** (after the push + PR when `--ship`), never an \"Invoke `/ship`.\"",
+      "reason": "The blocked handoff is enforced by /ship's own disable-model-invocation frontmatter, not by /cycle (no exit code here); the --ship parenthetical restates autonomous-never-pushes-without-ship. Reworded 2026-11-15 from the earlier line with the same disposition."
+    },
+    {
+      "line": "> **`--files` is the ONLY flag that scopes the audit** (`--changed`/`--diff` never bound what the model",
+      "reason": "Condensed 2026-11-15 from the Step 3C --files note: an instruction to the AGENT about which flag scopes the cluster audit. The enforcing half is scripts/cycle-cluster-scope.mjs (allowlist = declared scope ∩ changed, selectAuditAllowlist), contracted under cluster-scope-preflight-exits-nonzero and pinned by tests/cycle-audit-scope-contract.test.mjs; /cycle itself has no exit code."
+    },
+    {
+      "line": "> reads), and it is the declared scope ∩ what CHANGED — never compute it by hand",
+      "reason": "Condensed 2026-11-15 from the Step 3C --files note: an instruction to the AGENT about which flag scopes the cluster audit. The enforcing half is scripts/cycle-cluster-scope.mjs (allowlist = declared scope ∩ changed, selectAuditAllowlist), contracted under cluster-scope-preflight-exits-nonzero and pinned by tests/cycle-audit-scope-contract.test.mjs; /cycle itself has no exit code."
+    },
+    {
+      "line": "Use the returned sets as returned. `emptyAllowlist: true` → the consolidated gate, never a vacuous pass. Each",
+      "reason": "Agent routing instruction for cycle-cluster-scope.mjs's JSON (emptyAllowlist / unchangedDeclared), condensed 2026-11-15 from the deletion-only paragraph with the same disposition: the script reports, /cycle routes; no /cycle exit code to assert. Resident-ness is guarded by tests/cycle-autonomous-ship-gate.test.mjs."
     }
   ]
 }

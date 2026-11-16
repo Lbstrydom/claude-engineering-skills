@@ -21,7 +21,8 @@
  * @module scripts/lib/final-review/providers
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { GoogleGenAI } from '@google/genai';
 import { createOpenAIClient } from '../openai-client.mjs';
 import { createAnthropicClient } from '../anthropic-client.mjs';
@@ -389,7 +390,7 @@ export function selectProvider(choice, { env = process.env, azureActive = azureC
     return 'gemini';
   }
   if (choice === 'azure-claude') {
-    assertAzureClaudeReady();
+    assertAzure({ env });
     return 'azure-claude';
   }
   // Provider-agnostic routes (generic OpenAI-compatible + OpenRouter preset) are
@@ -410,7 +411,7 @@ export function selectProvider(choice, { env = process.env, azureActive = azureC
   // an explicit choice (above). Off Azure: Gemini first (default reviewer); public Opus last. NO fallback to a compatible/OpenRouter
   // route (G1) - those require explicit selection.
   if (azureActive) {
-    assertAzure();
+    assertAzure({ env });
     return 'azure-claude';
   }
   if (env.GEMINI_API_KEY) return 'gemini';
@@ -489,19 +490,70 @@ export function runSetProvider(provider) {
  * (it throws for `foundry` without an AI endpoint), so this only has to confirm
  * a route resolved at all and that we have something to address.
  */
-function assertAzureClaudeReady() {
-  const route = azureConfig.claudeRoute;
+function assertAzureClaudeReady({ azure = azureConfig, env = process.env } = {}) {
+  const message = describeAzureClaudeGap(azure, env);
+  if (message) throw new ProviderNotReadyError(message);
+}
+
+/**
+ * Pure: why the Azure final reviewer cannot run, or null when it can.
+ *
+ * The refusal itself is correct and stays (hook v18: on an active Azure profile a
+ * work-tenant diff must not reach a public reviewer just because the tenant's
+ * route is incomplete). What was wrong was the REMEDY. It said "unset
+ * AZURE_OPENAI_ENDPOINT", which switches off the whole work profile, GPT audit
+ * route included, to reach a reviewer the operator could already pick with an
+ * explicit choice. Measured 2026-11-15 (ai-organiser): endpoint set, no Claude
+ * deployment, and the gate ran only after the endpoint was cleared for the
+ * process. So the message names each missing variable, how to find the
+ * deployment, and the explicit opt-out that the precedence in `selectProvider`
+ * already honours. It offers that opt-out only when its key exists, and says it
+ * is the operator's decision, because whether the tenant allows public egress
+ * is something only the operator knows.
+ *
+ * @param {object} azure - an azureConfig snapshot
+ * @param {object} env
+ * @returns {string|null}
+ */
+/**
+ * A path made safe to paste into a suggested command. SINGLE quotes, because they are literal in BOTH a POSIX shell
+ * and PowerShell (no `$` expansion, no escape character), which double quotes are not: inside them PowerShell expands
+ * `$` and escapes with a backtick, so a backslash escape is not portable. An embedded `'` is doubled, PowerShell's
+ * escape; a POSIX shell reads `'a''b'` as `ab`, so such a path is flagged as PowerShell-only rather than mis-shown.
+ * A plain path is shown bare, as before.
+ * @param {string} p
+ * @returns {string}
+ */
+export function quoteForDisplay(p) {
+  if (!/[\s"'`$&|;<>(){}*?!#,@%^~[\]=]/.test(p)) return p;
+  return p.includes("'") ? `'${p.replaceAll("'", "''")}' (PowerShell quoting)` : `'${p}'`;
+}
+
+export function describeAzureClaudeGap(azure, env = {}) {
+  const route = azure?.claudeRoute;
   const missing = [];
   if (!route) missing.push('AZURE_OPENAI_ENDPOINT');
   if (!route?.apiKey) missing.push(route?.credentialVar || 'AZURE_OPENAI_API_KEY');
-  if (!azureConfig.claudeDeployment) missing.push('AZURE_FOUNDRY_CLAUDE_DEPLOYMENT');
-  if (missing.length > 0) {
-    throw new ProviderNotReadyError(
-      `Azure final reviewer (${route?.mode || 'unresolved'} route) requires ` +
-      `${missing.join(' + ')}. Set ${missing.length > 1 ? 'them' : 'it'} or unset ` +
-      `AZURE_OPENAI_ENDPOINT to use Gemini/Claude.`,
-    );
+  if (!azure?.claudeDeployment) missing.push('AZURE_FOUNDRY_CLAUDE_DEPLOYMENT');
+  if (missing.length === 0) return null;
+  // Named BY PATH, resolved from this module: in a consumer the tooling lives under
+  // scripts/.claude-skills/ and an `npm run` alias of this repo does not exist there.
+  const cli = (name) => `node ${quoteForDisplay(relative(process.cwd(), fileURLToPath(new URL(`../../${name}`, import.meta.url))).replaceAll('\\', '/'))}`;
+  const lines = [
+    `Azure final reviewer (${route?.mode || 'unresolved'} route) requires ${missing.join(' + ')}, `
+      + `and the active Azure profile never falls back to a public reviewer on its own.`,
+    `  Fix the route: set ${missing.length > 1 ? 'them' : 'it'}`
+      + `${missing.includes('AZURE_FOUNDRY_CLAUDE_DEPLOYMENT') ? ` (\`${cli('azure-doctor.mjs')} --target claude\` probes for a working deployment)` : ''}.`,
+  ];
+  const publicChoices = [];
+  if (env.GEMINI_API_KEY) publicChoices.push('gemini');
+  if (env.ANTHROPIC_API_KEY) publicChoices.push('anthropic');
+  if (publicChoices.length > 0) {
+    lines.push(`  Or, ONLY if this repo's code may leave the tenant: pass --provider ${publicChoices[0]} for one run, or `
+      + `\`${cli('gemini-review.mjs')} set-provider ${publicChoices[0]}\` for this repo. Do not clear AZURE_OPENAI_ENDPOINT: `
+      + 'that disables the Azure audit route too.');
   }
+  return lines.join('\n');
 }
 
 /**

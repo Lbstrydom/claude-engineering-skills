@@ -22,7 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolveEffectiveScope } from '../scripts/lib/audit-scope.mjs';
-import { collectReconciliationSet, admissionPreflight, commaUnsafe } from '../scripts/cycle-cluster-scope.mjs';
+import { collectReconciliationSet, admissionPreflight, commaUnsafe, selectAuditAllowlist } from '../scripts/cycle-cluster-scope.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const SKILL = path.join(REPO_ROOT, 'skills', 'cycle', 'SKILL.md');
@@ -201,6 +201,29 @@ describe('KD-2/KD-3 — cycle-cluster-scope over real git repos', () => {
     } finally { cleanup(dir); }
   });
 
+  it('a declared-but-UNCHANGED file is not audited — the allowlist is declared ∩ changed (AIO 2026-11-15)', () => {
+    // ai-organiser's autonomous run audited 52 declared files whole, unchanged ones
+    // included: $4.00 of $4.15 on round 1, 27 of 33 findings dismissed as pre-existing.
+    const { dir, base } = makeRepo(d => fs.appendFileSync(path.join(d, 's', 'keep.mjs'), 'edit\n'));
+    try {
+      const r = runCli(dir, base, ['s/keep.mjs', 's/old.mjs']);
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(r.json.files, ['s/keep.mjs'], 'only the CHANGED declared file reaches --files');
+      assert.equal(r.json.filesCsv, 's/keep.mjs');
+      assert.deepEqual(r.json.unchangedDeclared, ['s/old.mjs'], 'the untouched one is reported, not silently dropped');
+      assert.doesNotMatch(fs.readFileSync(path.join(dir, r.json.diffPath), 'utf8'), /old\.mjs/);
+    } finally { cleanup(dir); }
+  });
+
+  it('selectAuditAllowlist keeps admission AND change as separate conditions', () => {
+    const rows = [
+      { path: 'a.mjs', admitted: true }, { path: 'b.mjs', admitted: true },
+      { path: 'gone.mjs', admitted: false },
+    ];
+    assert.deepEqual(selectAuditAllowlist(rows, ['a.mjs', 'gone.mjs']), { files: ['a.mjs'], unchangedDeclared: ['b.mjs'] });
+    assert.deepEqual(selectAuditAllowlist(rows, []), { files: [], unchangedDeclared: ['a.mjs', 'b.mjs'] });
+  });
+
   it('a mutable base that has left history is refused, not silently widened', () => {
     const { dir } = makeRepo(() => {});
     try {
@@ -320,6 +343,9 @@ describe('audit-found regressions — delete lifecycle and the shared extension 
     const { dir, base } = makeRepo();
     try {
       fs.rmSync(path.join(dir, 's', 'doomed.mjs'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      // keep.mjs is EDITED too: the allowlist is declared ∩ changed, so an untouched
+      // keep.mjs would be absent for that reason and the assertion below would prove nothing.
+      fs.appendFileSync(path.join(dir, 's', 'keep.mjs'), 'edit\n');
       const r = run(dir, base, ['s/keep.mjs', 's/doomed.mjs']);
       assert.equal(r.status, 0, `a declared delete must not be fatal: ${r.stderr}`);
       assert.deepEqual(r.json.files, ['s/keep.mjs'], 'the deleted path must not be in the allowlist');

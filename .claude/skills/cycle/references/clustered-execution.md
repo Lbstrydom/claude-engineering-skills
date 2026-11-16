@@ -44,8 +44,24 @@ cluster updates/invalidates only that cluster's record.
 *reconciliation set* includes deletes and both rename operands (that is how an
 edit leaving the cluster is detected); the *allowlist* is that set filtered to
 paths on disk (the audit's admission policy rejects off-disk paths, so
-including them guarantees a shortfall). The script returns both and never
-mixes them.
+including them guarantees a shortfall) AND to paths that changed since the
+cluster's base. The script returns both and never mixes them.
+
+**Declared but unchanged is not audited.** Until 2026-11-15 the allowlist was
+the declared scope filtered only to on-disk paths, so every declared file the
+cluster never touched was audited whole. Measured in ai-organiser's autonomous
+run: 52 files, $4.00 of the run's $4.15 spent on round 1, and 27 of 33 findings
+dismissed as pre-existing. An unchanged file has no diff to judge, so auditing
+it is `--scope=full` under another name; `/audit-code --scope=diff` audits only
+changed files, and the cluster audit now does the same. Those paths come back
+as `unchangedDeclared`. A non-empty list is information, not an error: either
+the plan over-declared, or a planned edit was not made. Check which before
+calling the cluster done.
+
+A deletion-only cluster has an empty allowlist and reports
+`emptyAllowlist: true`. That is correct, because there is no code to read.
+Route it to the consolidated Gemini gate over the union diff, where the
+deletion IS visible. Do not record a vacuous per-cluster pass.
 
 ## 3a — why `clusterStartRef` is validated on use
 

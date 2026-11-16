@@ -10,12 +10,19 @@
 /** Every flag `review` accepts — gemini-review.mjs refuses anything else (assertKnownFlags). */
 export const REVIEW_FLAGS = Object.freeze([
   '--json', '--out', '--provider', '--mode', '--run-id', '--role', '--envelope-scope', '--campaign-digest',
-  '--round', '--prior', '--allow-infra-scope',
+  '--round', '--prior', '--allow-infra-scope', '--batch',
 ]);
 
+// A value-taking flag followed by another flag has NO value: `--out --batch` must refuse, not write to a file named
+// "--batch" while also turning batch mode on. Throws; the CLI maps it to exit 2 like an unknown flag.
 const flagValue = (args, name) => {
   const i = args.indexOf(name);
-  return i !== -1 && args[i + 1] ? args[i + 1] : null;
+  if (i === -1) return null;
+  const v = args[i + 1];
+  // A trailing value flag is the same malformation: `--round` with nothing after it read as "no round", i.e. uncapped.
+  if (v === undefined || v === '') throw new Error(`${name} needs a value, got nothing`);
+  if (v.startsWith('--')) throw new Error(`${name} needs a value, got the flag "${v}"`);
+  return v;
 };
 
 /**
@@ -54,8 +61,10 @@ export function parseReviewArgs(args) {
   const priorPath = flagValue(args, '--prior');
   // --allow-infra-scope — admit the bundle's own modules to the reviewer (the audit's flag, same meaning).
   const allowInfraScope = args.includes('--allow-infra-scope');
+  // --batch — review a diff too large for one envelope as disjoint batches folded into one verdict (batching.mjs).
+  const batch = args.includes('--batch');
   return {
     planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId, role,
-    envelopeScopeCli, campaignDigest, round, priorPath, allowInfraScope,
+    envelopeScopeCli, campaignDigest, round, priorPath, allowInfraScope, batch,
   };
 }
