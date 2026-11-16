@@ -5,7 +5,7 @@
  * whether an enforcement worked. Plan: docs/plans/harness-retro.md.
  *
  *   node scripts/harness-retro.mjs scan   [--since 14d] [--fleet] [--persist] [--top 10] [--json]
- *   node scripts/harness-retro.mjs record --scan <id|latest>            (proposals JSON on stdin)
+ *   node scripts/harness-retro.mjs record --scan <id|latest> [--file <proposals.json>]   (else JSON on stdin)
  *   node scripts/harness-retro.mjs enforce --identity <fingerprint:fp|tripwire:name> --scan <id|latest>
  *                                          --test <tests/x.test.mjs> --layer <hook|gate|script|reference-doc|agents-md>
  *                                          --summary <text> [--memory <name>] [--force-unscanned]
@@ -47,7 +47,7 @@ import { computeEffect, DEFAULT_WINDOW_DAYS } from './lib/friction/retro/effect.
 const VERBS = ['scan', 'record', 'enforce', 'reject', 'effect', 'status'];
 const KNOWN = [
   '--since', '--fleet', '--persist', '--top', '--json', '--scan', '--identity', '--test', '--layer',
-  '--summary', '--memory', '--force-unscanned', '--window-days', '--help', '--selfcheck-relocation',
+  '--summary', '--memory', '--force-unscanned', '--window-days', '--file', '--help', '--selfcheck-relocation',
 ];
 const HEARTBEAT_STALE_DAYS = 8;
 const DAY_MS = 86_400_000;
@@ -197,7 +197,10 @@ async function cmdRecord() {
   const { repoRoot } = resolveRoots();
   const scan = readScanArtifact(repoRoot, argOption('scan', 'latest'));
   let input;
-  try { input = JSON.parse(readStdin()); } catch (err) { throw new ArgvError(`record reads a proposals JSON envelope on stdin: ${err.message}`); }
+  const file = argOption('file');
+  try { input = JSON.parse(file ? fs.readFileSync(file, 'utf8') : readStdin()); } catch (err) {
+    throw new ArgvError(`record reads a proposals JSON envelope from --file or stdin: ${err.message}`);
+  }
   const r = checkProposalsAgainstScan(input, scan);
   if (!r.ok) { emit({ ok: false, scanId: scan.scanId, problems: r.problems }); return; }
   const paths = writeProposalsArtifact(repoRoot, scan.scanId, r.envelope, renderProposals(r.envelope));

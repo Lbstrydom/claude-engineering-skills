@@ -31,7 +31,7 @@
     {
       "id": "record-refuses-bad-proposals",
       "kind": "document-only",
-      "reason": "Enforced by code (checkProposalsAgainstScan in scripts/lib/friction/retro/proposal-schema.mjs; record exits 1) and pinned by tests/harness-retro-proposal-schema.test.mjs and tests/harness-retro-cli.test.mjs (inflated evidence refused from a second process). Not bound to a cli-exit scenario because `record` reads its envelope on stdin and the cli-exit recipe registry has no stdin channel; declared here rather than claimed as a binding that does not hold.",
+      "reason": "Enforced by code (checkProposalsAgainstScan in scripts/lib/friction/retro/proposal-schema.mjs; record exits 1) and pinned by tests/harness-retro-proposal-schema.test.mjs and tests/harness-retro-cli.test.mjs (inflated evidence refused from a second process, via stdin and via --file). Not yet bound to a cli-exit scenario: the fixture needs a schema-valid scan artifact plus a proposals file — constructible from files, so this is a candidate for promotion to executable, declared here rather than claimed as a binding that does not exist yet.",
       "statedIn": "skills/harness-retro/SKILL.md",
       "stated": "`record` refuses a proposal missing any of the three things, an `identity`"
     },

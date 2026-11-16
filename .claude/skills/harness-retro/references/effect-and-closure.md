@@ -6,8 +6,11 @@ summary: Closing a decision and reading its effect — enforce/reject, tripwire 
 
 ## `enforce` — in the fix PR, after the human said yes
 
+`--identity` is `fingerprint:<16 hex>` or `tripwire:<memory name>`; `--layer` is one of
+`hook`, `gate`, `script`, `reference-doc`, `agents-md`; `TEST` is the new test's path.
+
 ```bash
-node scripts/harness-retro.mjs enforce --identity <fingerprint:fp|tripwire:name> --scan latest --test tests/<x>.test.mjs --layer <hook|gate|script|reference-doc|agents-md> --summary "<public one-liner>"
+node scripts/harness-retro.mjs enforce --identity tripwire:feedback_example --scan latest --test "$TEST" --layer gate --summary "hook commands resolve from the project dir"
 ```
 
 Order, every step idempotent (re-running finishes an interrupted run):

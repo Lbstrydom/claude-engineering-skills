@@ -77,10 +77,10 @@ example: `references/judging-candidates.md`.
 
 ## Step 3 — Record
 
-Write the envelope to a file with the Write tool, then pipe it:
+Write the envelope to a file with the Write tool, then record it:
 
 ```bash
-node scripts/harness-retro.mjs record --scan latest < .claude/tmp/retro-proposals.json
+node scripts/harness-retro.mjs record --scan latest --file .claude/tmp/retro-proposals.json
 ```
 
 `record` refuses a proposal missing any of the three things, an `identity`

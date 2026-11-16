@@ -127,7 +127,9 @@ describe('harness-retro CLI', () => {
     const bad = run(['record', '--scan', 'latest'], { cwd: repo, configDir, memoryDir, stdin: proposal(99) });
     assert.equal(bad.code, 1);
     assert.match(bad.json.problems[0], /claims 99 sessions, scan has 3/);
-    const good = run(['record', '--scan', 'latest'], { cwd: repo, configDir, memoryDir, stdin: proposal(3) });
+    const file = path.join(repo, 'proposals.json');
+    fs.writeFileSync(file, proposal(3));
+    const good = run(['record', '--scan', 'latest', '--file', file], { cwd: repo, configDir, memoryDir });
     assert.equal(good.code, 0, good.stderr);
     assert.equal(good.json.recorded, 1);
     assert.ok(fs.existsSync(path.join(repo, good.json.report)));
