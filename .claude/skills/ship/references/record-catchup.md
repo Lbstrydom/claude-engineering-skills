@@ -66,10 +66,11 @@ Record the standing permission ONCE, at launch, in the user's exact words:
 node scripts/fleet.mjs decision record --scope record-catchup --words-file -
 ```
 
-(the words on stdin, never argv). Then commit:
+(the words on stdin, never argv). Then commit — `$DECISION` is the id it printed, `$HEAD_SHA`/`$BRANCH` the identity
+captured before you started, `$ENTRY` each file (one `--path` per file):
 
 ```bash
-node scripts/ship-commit.mjs --record --decision <dec-id> --gate not-run --no-run-id --skill ship --models claude --message-file - --expect-head <sha> --expect-branch <branch> --path docs/status/entries/<file>.md
+node scripts/ship-commit.mjs --record --decision $DECISION --gate not-run --no-run-id --skill ship --models claude --message-file - --expect-head $HEAD_SHA --expect-branch $BRANCH --path $ENTRY
 ```
 
 Pass one `--path` per file the record commit carries — every new entry file (per-PR, run, floor, the init marker) and

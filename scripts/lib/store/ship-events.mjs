@@ -70,10 +70,12 @@ export async function recordShipEvent(repoId, event) {
 }
 
 /** The projection the verified write reads back (the query builder accepts true | '*' | string[], never a bare column). */
-export const SHIP_EVENT_RETURNING = Object.freeze(['id']);
+const SHIP_EVENT_RETURNING = Object.freeze(['id']);
+/** The projection, for the contract test that runs it through the query builder (the barrel exports functions only). */
+export const shipEventReturning = () => SHIP_EVENT_RETURNING;
 
 /** At most this many commit shas per `findShipEvents` call (one bounded `= ANY($2)` read). */
-export const FIND_SHIP_EVENTS_MAX = 500;
+const FIND_SHIP_EVENTS_MAX = 500;
 
 /**
  * Which of `shas` already have a ship event carrying `reason` in `block_reasons` — the record catch-up's

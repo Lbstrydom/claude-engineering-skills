@@ -199,6 +199,8 @@ const EXPECTED_EXPORTS = [
   'recordRegressionSpecRun',
   'repointRegressionSpec',
   'recordShipEvent',
+  'findShipEvents', // ship record catch-up — batched existence read for at-least-once event reconciliation
+  'shipEventReturning', // the verified-write projection recordShipEvent reads back (contract-tested)
   'retireMissedCorrelationsForHash', // WS1 — dismissal cascade (Gemini gate round-3 finding)
   'updatePlanStatus',
   'upsertPlan',
@@ -405,6 +407,7 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
   });
 
   it('pins the total export count (update deliberately when the surface changes)', () => {
+    // 219 → 221: findShipEvents + shipEventReturning added 2026-11-16 (ship record catch-up: event reconciliation).
     // 217 → 219: recordEquivalence + recordWriteReceipt added 2026-10-29 (audit telemetry capture v1).
     // 216 → 219: adjudicationEventRefusal added 2026-10-26 (own-model telemetry: required adjudicator kind + dismissal class).
     // 215 → 216: recordPastCap added 2026-10-25 (round-cap override record).
@@ -638,6 +641,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // 211 → 212: +readDebtEventsCloudResult (2026-10-11, debt-readers-ask-
     // store.md) — the events read that says whether it happened, so a
     // reporting caller cannot count a failed query as "no recurrence".
-    assert.equal(EXPECTED_EXPORTS.length, 219);
+    assert.equal(EXPECTED_EXPORTS.length, 221);
   });
 });

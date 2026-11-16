@@ -261,7 +261,7 @@ describe('audit A-R1 regressions', () => {
 
 describe('audit A-R2 regressions', () => {
   it('H1/H3: the verified-write projection is one the query builder accepts (a bare string is refused)', async () => {
-    const { SHIP_EVENT_RETURNING } = await import('../scripts/lib/store/ship-events.mjs');
+    const SHIP_EVENT_RETURNING = (await import('../scripts/lib/store/ship-events.mjs')).shipEventReturning();
     const { _builders } = await import('../scripts/lib/db/query.mjs');
     assert.match(_builders.buildInsert('ship_events', { outcome: 'warned' }, { returning: SHIP_EVENT_RETURNING }).sql, /RETURNING "id"$/);
     assert.throws(() => _builders.buildInsert('ship_events', { outcome: 'warned' }, { returning: 'id' }), /raw strings are not accepted/, 'negative control: the shape the bug used');

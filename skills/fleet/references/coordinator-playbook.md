@@ -113,8 +113,8 @@ read its failures; after that, targeted runs are fine.
 ## 7. Record the PRs you merge (the session log)
 
 Merging with `fleet land` or `gh pr merge` skips `/ship`, so nothing writes the session log. **The coordinator owns the
-record catch-up for its repo** — chips never run it, so two runs never race. The runbook is the ship skill's
-`references/record-catchup.md`; the coordinator's part:
+record catch-up for its repo** — chips never run it, so two runs never race. The full runbook ships with the /ship
+skill (its record catch-up reference); the coordinator's part:
 
 - **At launch, once**: record the user's standing permission in their exact words, on stdin —
   `node scripts/fleet.mjs decision record --scope record-catchup --words-file -`. It is a declaration, not verified
