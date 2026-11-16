@@ -27,7 +27,7 @@ export const GATE_VALUES = Object.freeze(['passed', 'converged', 'waived', 'not-
  * against (ship-train verify), so adding a key here is the only edit a reader needs; a test pins the renderer to it.
  */
 export const AI_TRAILER_KEYS = Object.freeze([
-  'AI-Skill', 'AI-Models', 'AI-Gate', 'AI-Run-ID', 'AI-Work-Item', 'AI-Audited-Tree', 'AI-Final-Review', 'AI-Ship-Authority',
+  'AI-Skill', 'AI-Models', 'AI-Gate', 'AI-Run-ID', 'AI-Work-Item', 'AI-Audited-Tree', 'AI-Final-Review', 'AI-Ship-Authority', 'AI-Decision',
 ]);
 
 /**
@@ -553,7 +553,7 @@ export function messageFileError(kind, suppliedPath) {
  *   git rev-parse <sha>^{tree}  ==  git log -1 --format='%(trailers:key=AI-Audited-Tree,valueonly)' <sha>
  *
  * @param {{skill: string, models: string[], gate: string, runId?: string|null, auditedTree?: string|null,
- *   finalReview?: 'approve'|'approve_with_debt'|'blocked'|null, shipAuthority?: string}} v
+ *   finalReview?: 'approve'|'approve_with_debt'|'blocked'|null, shipAuthority?: string, decision?: string}} v
  * @returns {string[]}
  */
 export function formatTrailerBlock(v) {
@@ -596,6 +596,12 @@ export function formatTrailerBlock(v) {
   // keeps it queryable (`git log --grep` / trailers) and impossible to spell differently by hand (the AI-* namespace is
   // reserved, so a hand-typed one is rejected as `reserved-trailer`).
   if (v.shipAuthority === 'launch-prompt') lines.push('AI-Ship-Authority: launch-prompt');
+  // A docs-only RECORD commit (ship-commit `--record`, docs/plans/ship-record-catchup.md §2.6): set only after
+  // lib/ship-record/authority.mjs held, and always with the standing decision it ran under, so the merge reviewer can read
+  // the user's exact words (`fleet decision list`). Without a well-formed decision id neither line is emitted.
+  if (v.shipAuthority === 'record-catchup' && /^dec-[0-9]{14}-[0-9a-f]{4}$/.test(v.decision ?? '')) {
+    lines.push('AI-Ship-Authority: record-catchup', `AI-Decision: ${v.decision}`);
+  }
   return lines;
 }
 
