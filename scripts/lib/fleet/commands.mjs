@@ -42,6 +42,7 @@ import { listRuns, resolveRunsDir, summariseRuns } from '../run-heartbeat.mjs';
 import { PRUNE_STATUS_BUDGET_MS, invalidatePruneCache, pruneStatusLine, summarisePrune, writePruneCache } from './prune-summary.mjs';
 import { proposalsLine, readProposalsSummary } from './proposals.mjs';
 import { refreshUpstreamCache, renderUpstreamLine } from './upstream-count.mjs';
+import { refreshRecordCache, renderRecordLine } from './record-count.mjs';
 
 
 /**
@@ -219,16 +220,21 @@ export function cmdStatus(ctx, flags = {}) {
   const upstream = refreshUpstreamCache({ fleetDir: unregisteredCacheDir(ctx.cwd), now: ctx.now ?? new Date() });
   if (upstream.warning) warnings.push(upstream.warning);
   const upstreamLine = upstream.applicable ? renderUpstreamLine({ state: 'ok', record: upstream.record }, ctx.now ?? new Date(), ctx.cmd) : null;
+  // The session-log backlog (docs/plans/ship-record-catchup.md §2.7): `status` runs the sibling ship-record CLI as a bounded
+  // child (fleet never imports the ship domain) and writes the cache `next` reads. Every repo, every state: unmeasured is a line.
+  const records = refreshRecordCache({ cacheDir: unregisteredCacheDir(ctx.cwd), cwd: ctx.cwd, now: ctx.now ?? new Date() });
+  if (records.warning) warnings.push(records.warning);
+  const recordLine = renderRecordLine({ state: 'ok', record: records.record }, ctx.now ?? new Date(), ctx.cmd);
   // Background-run heartbeats (docs/plans/test-campaign-controls.md §2.1): absent dir says nothing, unreadable says UNMEASURED.
   let runsLine;
   try { runsLine = summariseRuns(listRuns(resolveRunsDir(ctx.cwd).dir, { now: ctx.now ? new Date(ctx.now).getTime() : Date.now() })); } catch (err) { runsLine = `runs: UNMEASURED (${err.message})`; }
-  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now, all: Boolean(flags['--all']), unregistered }), prune.line, proposalsLine(proposals, ctx.cmd), ...(upstreamLine ? [upstreamLine] : []), ...(runsLine ? [runsLine] : [])];
+  const lines = [renderStatus({ ...status, items: view.items }, { hidden: view.hidden, hosts: hosts.hosts, directives, now: ctx.now, all: Boolean(flags['--all']), unregistered }), prune.line, proposalsLine(proposals, ctx.cmd), ...(upstreamLine ? [upstreamLine] : []), recordLine, ...(runsLine ? [runsLine] : [])];
   lines.push('', ...renderUnregistered(unregistered, { groups: groupUnregistered(unregistered.items), all: Boolean(flags['--all']), tags: archiveTags }));
   if (general.length) lines.push('', 'checks:', ...general.map((f) => `  ${f.level}: ${f.message}`));
   const todo = renderOpenTrains(facts.trains, ctx.cmd);
   if (todo) lines.push('', todo);
   if (warnings.length) lines.push('', ...warnings.map((w) => `warning: ${w}`));
-  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete }, unregistered: { ...unregistered, archiveTags }, prune: statusPruneView(prune.record), proposals, ...(upstream.applicable ? { upstream: upstream.record } : {}) }, checks: hook.results, warnings, text: lines.join('\n') });
+  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete }, unregistered: { ...unregistered, archiveTags }, prune: statusPruneView(prune.record), proposals, ...(upstream.applicable ? { upstream: upstream.record } : {}), records: records.record }, checks: hook.results, warnings, text: lines.join('\n') });
 }
 
 /**

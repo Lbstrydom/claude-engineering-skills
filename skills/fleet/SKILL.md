@@ -34,16 +34,17 @@ Usage:
   /fleet next [--id <id>]                        # what this session should do now
   /fleet release [--id <id>] [--abandoned]       # retire a claim now
   /fleet archive-check [<id|branch|path>]        # what removing a worktree would lose
-  /fleet prune [--apply [--remote] [--include-fresh]]  # branches/worktrees removable with nothing lost; --apply runs exactly that list
-  /fleet archive <worktree|branch|id> [--apply] [--discard-ignored] [--include-fresh]  # snapshot to a local archive/* tag, then remove
+  /fleet prune [--apply [--remote] [--include-fresh]]  # removable with nothing lost; --apply runs that list
+  /fleet archive <worktree|branch|id> [--apply] [--discard-ignored] [--include-fresh]  # snapshot to an archive/* tag, remove
   /fleet handover winddown [--repo <path>]... [--scheduler-snapshot <file>]  # BEFORE prepare
-  /fleet handover prepare [--repo <path>]... [--scheduler-checked] [--winddown-waived "<why>"]  # moving to another Claude Code account
-  /fleet handover receive --from <json> [--dry-run] [--allow-older]  # in the NEW account: verify/copy memory, list follow-ups
+  /fleet handover prepare [--repo <path>]... [--scheduler-checked] [--winddown-waived "<why>"]  # to another account
+  /fleet handover receive --from <json> [--dry-run] [--allow-older]  # in the NEW account: verify, list follow-ups
   /fleet directive --to <id|all> --kind <k> --reason <r> [--ref] [--note] | --list | --ack <id> --outcome done|declined
-  /fleet propose --what "..." --where "..." --why "..." [--evidence "..."] [--theme <slug>] [--blocked-by <#PR|branch>]  # record a finding durably; it outlives the worktree
+  /fleet decision record --scope record-catchup|note --words-file - | revoke <id> --words-file - | list  # user's exact words; never a merge
+  /fleet propose --what "..." --where "..." --why "..." [--evidence "..."] [--theme <slug>] [--blocked-by <#PR|branch>]  # a durable finding
   /fleet proposal <id> --folded <session> | --queued <reason> | --declined <reason> | --done <PR>  # set its outcome; history only grows
   /fleet proposals [--all]                       # the findings queue grouped by theme; blocked-by rechecked from facts
-  /fleet lease acquire [--kind gate|test|timing|maintenance] [--for <1-180>] [--pid <n>] [--token <t>] [--note "..."]  # take the machine's one heavy slot (shared by every repo)
+  /fleet lease acquire [--kind gate|test|timing|maintenance] [--for <1-180>] [--pid <n>] [--token <t>] [--note "..."]  # the machine's one heavy slot (all repos)
   /fleet lease attach --pid <n> | release [--end-turn] [--force --reason "..."] | status | log | wait
   /fleet lease announce --kind quiet|ci --until <iso|+Nm> [--over-held] | --clear-window | peak --hours "..."
   /fleet lease grant --window <id> --until <t> [--to <r>] | turn --minutes <n> | run [--wait <m>] -- <cmd>  # references/lease.md

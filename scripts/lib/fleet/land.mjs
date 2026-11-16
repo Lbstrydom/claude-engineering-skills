@@ -15,6 +15,7 @@ import { abandonTrain, branchOfRef, buildTrain, defaultDeps, resumeTrain, withTr
 import { approveTrain, confirmTrain, reconcileTrain } from './train-approve.mjs';
 import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
 import { redTierLines } from './tier-failure.mjs';
+import { LAND_RECORD_NUDGE, recordCommandFor } from './record-count.mjs';
 import {
   renderAbandon, renderApprove, renderBuilt, renderConfirm, renderDryRun, renderReconcile, renderSerial,
 } from './render-train.mjs';
@@ -36,6 +37,11 @@ function configuredRequiredChecks(ctx) {
 
 const MODES = ['--approve', '--confirm', '--reconcile', '--resume', '--abandon'];
 const withText = (r, text) => ({ ...r, text });
+/**
+ * A landing that MERGED is the moment the session log falls behind (docs/plans/ship-record-catchup.md §2.7): say so where the
+ * coordinator is looking. The count is stale the instant a PR lands, so the line names the action, never a number.
+ */
+const withRecordNudge = (r, cmd) => (r.ok ? { ...r, text: `${r.text}\n${LAND_RECORD_NUDGE(recordCommandFor(cmd), cmd)}` } : r);
 
 function validId(id) {
   try { return assertTrainId(id); } catch (e) { throw new ArgvError(`fleet land: ${e.message}`); }
@@ -56,15 +62,15 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
 
   if (modes[0] === '--approve' && flags['--serial']) {
     const r = approveSerial({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), deps, ...configuredRequiredChecks(ctx), timeoutMs: serialTimeout(ctx) });
-    return withText(r, renderSerial(r, cmd));
+    return withRecordNudge(withText(r, renderSerial(r, cmd)), cmd);
   }
   if (modes[0] === '--approve') {
     const r = approveTrain({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), cmd, deps, ...configuredRequiredChecks(ctx) });
-    return withText(r, renderApprove(r, cmd));
+    return withRecordNudge(withText(r, renderApprove(r, cmd)), cmd);
   }
   if (modes[0] === '--confirm') {
     const r = confirmTrain({ cwd, trainId: validId(flags['--confirm']), deps });
-    return withText(r, renderConfirm(r));
+    return withRecordNudge(withText(r, renderConfirm(r)), cmd);
   }
   if (modes[0] === '--reconcile') {
     const r = reconcileTrain({ cwd, trainId: validId(flags['--reconcile']), deps });
@@ -76,7 +82,7 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
   }
   if (modes[0] === '--resume' && readSerial(ctx.dir, validId(flags['--resume'])).ok) {
     const r = resumeSerial({ cwd, trainId: flags['--resume'], deps, ...configuredRequiredChecks(ctx) });
-    return withText(r, renderSerial(r, cmd));
+    return withRecordNudge(withText(r, renderSerial(r, cmd)), cmd);
   }
   if (modes[0] === '--resume') {
     const trainId = validId(flags['--resume']);

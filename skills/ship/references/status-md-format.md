@@ -158,6 +158,19 @@ Base pinning: <strict | none> (<evidence>). Overrides used: <flags, or none>.
 but never `passed`. The log PR itself is a ride-along row. Commit it with
 `ship-commit.mjs --gate not-run` as usual; the train's squash messages carry the real gates.
 
+### Record catch-up entries — PRs merged without `/ship` (`ship-record.mjs`)
+
+Written by the script, never by hand, and only ever CREATED (`references/record-catchup.md`):
+
+- **Per PR**: `<merge date>-<merge time>-pr-<N>.md`, named from the PR's `mergedAt` (UTC) so a rerun writes the same
+  bytes. Its second line is `<!-- ship-record v1 pr=<N> merge=<sha> -->` — the marker that makes the PR "recorded".
+  Every field comes from the merge commit (subject, files, trailers), never the editable GitHub title or body.
+- **Run**: `<now>-record-catchup-<8 hex>.md` with the `Backlog:` line and the plan lines to paste; marker
+  `<!-- ship-record-run v1 prs=<N,…> -->`.
+- **Floor** (once per repo): `<now>-record-floor.md`, the summarised backfill, marker
+  `<!-- ship-record-floor v1 merged-through=<ISO> covered=<N,…|none> -->`. A repo on one `status.md` adopts per-entry
+  files first with `ship-record init`, which writes the cutover README.
+
 ## Never commit these into status.md
 
 - Raw tool output (dumps, stack traces, lint output)

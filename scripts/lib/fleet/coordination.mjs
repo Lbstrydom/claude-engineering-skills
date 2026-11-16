@@ -27,6 +27,7 @@ import { readUnregisteredCache, unregisteredCacheDir } from './unregistered.mjs'
 import { pruneCountText, pruneIsEmpty, readPruneCache } from './prune-summary.mjs';
 import { proposalsLine, proposalsQuiet, readProposalsSummary } from './proposals.mjs';
 import { readUpstreamCache, renderUpstreamLine, upstreamQuiet, upstreamScript } from './upstream-count.mjs';
+import { readRecordCache, renderRecordLine, recordQuiet } from './record-count.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
 import { leaseForNext, leaseStuckFooter } from './lease-cmd.mjs';
 
@@ -78,7 +79,20 @@ export function checkpointFooter(ctx, id, { limit = 3 } = {}) {
   }
   let footer;
   try { footer = unregisteredFooter(unregisteredCacheDir(ctx.cwd), ctx.now, ctx.cmd); } catch (e) { footer = [`unregistered-work footer not derived (${e.message})`]; }
-  return [...lines, ...footer, ...leaseStuckFooter(ctx)];
+  return [...lines, ...footer, ...recordFooter(ctx), ...leaseStuckFooter(ctx)];
+}
+
+/**
+ * The checkpoint footer's session-log line: only an ACTIONABLE measured count (every chip sees this footer; the full state,
+ * unmeasured included, is in `next` and `status`). Worded as the coordinator's, never this session's: one owner per repo.
+ * Never throws.
+ */
+export function recordFooter(ctx, { read = readRecordCache } = {}) {
+  try {
+    const r = read(unregisteredCacheDir(ctx.cwd));
+    if (r.state !== 'ok' || !(r.record.unrecorded > 0)) return [];
+    return [`FYI for the user/coordinator, not an action for this session: ${renderRecordLine(r, ctx.now ?? new Date(), ctx.cmd)}`];
+  } catch (e) { return [`session-log footer not derived (${e.message})`]; }
 }
 
 /** A cache older than this asks for one `fleet status` run (the only thing that refreshes it). */
@@ -174,10 +188,13 @@ export function cmdNext(ctx, flags) {
   const upstreamLines = upApplicable && !upstreamQuiet(upRead, ctx.now ?? new Date()) ? [`FYI for the user/coordinator, not an action for this session: ${renderUpstreamLine(upRead, ctx.now ?? new Date(), ctx.cmd)}`] : [];
   // The machine-wide lease (information for the user/coordinator: who holds the heavy slot, announced windows, peak hours).
   const lease = leaseForNext(ctx);
-  const fyi = [...prune.lines, ...unregistered, ...proposalLines, ...upstreamLines, ...lease.lines];
+  // The session-log backlog: from the cache `status` writes; silent only when measured, fresh and zero (unmeasured is a line).
+  const recRead = readRecordCache(dir);
+  const recordLines = recordQuiet(recRead, ctx.now ?? new Date()) ? [] : [`FYI for the user/coordinator, not an action for this session: ${renderRecordLine(recRead, ctx.now ?? new Date(), ctx.cmd)}`];
+  const fyi = [...prune.lines, ...unregistered, ...proposalLines, ...upstreamLines, ...recordLines, ...lease.lines];
   const stamp = noteStamp(r.item, ctx.now);
   return ok({
-    id, ...r.result, stamp, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals, ...(upApplicable ? { upstream: upRead } : {}), lease: lease.lease,
+    id, ...r.result, stamp, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals, ...(upApplicable ? { upstream: upRead } : {}), records: recRead, lease: lease.lease,
     text: [`next for ${id}:`, ...renderObligations(r.result, { cmd: ctx.cmd }).map((l) => `  ${l}`), ...fyi, `stamp: ${stamp}`].join('\n'),
   });
 }

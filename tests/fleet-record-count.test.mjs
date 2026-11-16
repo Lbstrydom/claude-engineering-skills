@@ -1,0 +1,78 @@
+/**
+ * @fileoverview The "N merged PRs unrecorded" nudge (scripts/lib/fleet/record-count.mjs).
+ * Plan: docs/plans/ship-record-catchup.md §2.7. The property under test is "unmeasured is never zero": a missing script, a
+ * failed child, a malformed envelope, an absent cache and a not-initialised repo each render as what they are.
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  interpretRecordStatus, runRecordStatus, nextRecordCache, refreshRecordCache, readRecordCache, renderRecordLine, recordQuiet,
+  recordScript, RECORD_STALE_MS, LAND_RECORD_NUDGE,
+} from '../scripts/lib/fleet/record-count.mjs';
+
+const NOW = new Date('2026-11-16T12:00:00.000Z');
+const env = (extra = {}) => ({ ok: true, verb: 'status', state: 'measured', reason: null, floor: { mergedThrough: '2026-11-10T00:00:00Z' }, counts: { merged: 5, recorded: 2, unrecorded: 3, unknown: 0 }, remedy: 'node scripts/ship-record.mjs catchup --write', ...extra });
+const rec = (m, at = NOW) => ({ state: 'ok', record: nextRecordCache(m, null, at) });
+
+describe('interpretRecordStatus', () => {
+  it('reads counts without coercion; a missing counter is unmeasured, never 0', () => {
+    assert.equal(interpretRecordStatus(env()).unrecorded, 3);
+    const bad = interpretRecordStatus(env({ counts: { unrecorded: null, unknown: 0 } }));
+    assert.equal(bad.state, 'unmeasured');
+    assert.equal(bad.unrecorded, null);
+    assert.equal(interpretRecordStatus({ verb: 'catchup' }).state, 'unmeasured');
+    assert.equal(interpretRecordStatus(env({ state: 'nonsense' })).state, 'unmeasured');
+  });
+  it('a non-measured state carries null counts and its remedy', () => {
+    const m = interpretRecordStatus(env({ state: 'no-floor', counts: { unrecorded: null, unknown: null }, remedy: 'node scripts/ship-record.mjs floor --write' }));
+    assert.deepEqual([m.state, m.unrecorded, m.remedy], ['no-floor', null, 'node scripts/ship-record.mjs floor --write']);
+  });
+});
+
+describe('runRecordStatus', () => {
+  it('a missing sibling script is UNMEASURED with a re-sync remedy', () => {
+    assert.match(runRecordStatus(path.join(os.tmpdir(), 'nope', 'ship-record.mjs'), os.tmpdir()).reason, /re-sync/);
+  });
+  it('a failed or garbled child is unmeasured', () => {
+    const script = fileURLToPath(import.meta.url); // exists
+    assert.match(runRecordStatus(script, '.', { spawn: () => ({ status: 1, stdout: '' }) }).reason, /exited 1/);
+    assert.match(runRecordStatus(script, '.', { spawn: () => ({ status: 0, stdout: 'hello' }) }).reason, /no JSON/);
+    assert.equal(runRecordStatus(script, '.', { spawn: () => ({ status: 0, stdout: JSON.stringify(env()) }) }).unrecorded, 3);
+  });
+  it('the sibling resolves next to fleet in this layout', () => {
+    assert.ok(fs.existsSync(recordScript(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/lib/fleet'))));
+  });
+});
+
+describe('cache + renderer', () => {
+  it('round-trips the cache; measuredAt only moves on an answer', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'record-count-'));
+    refreshRecordCache({ cacheDir: dir, cwd: dir, now: NOW, run: () => interpretRecordStatus(env()), script: 'x' });
+    const later = new Date(NOW.getTime() + 60_000);
+    refreshRecordCache({ cacheDir: dir, cwd: dir, now: later, run: () => ({ state: 'unmeasured', unrecorded: null, unknown: null, floorThrough: null, reason: 'gh down', remedy: null }), script: 'x' });
+    const r = readRecordCache(dir);
+    assert.deepEqual([r.record.state, r.record.measuredAt, r.record.attemptedAt], ['unmeasured', NOW.toISOString(), later.toISOString()]);
+  });
+  it('renders every state as what it is', () => {
+    assert.match(renderRecordLine({ state: 'missing' }, NOW), /not measured yet/);
+    assert.match(renderRecordLine({ state: 'unreadable', reason: 'schema mismatch' }, NOW), /UNMEASURED \(cache schema mismatch\)/);
+    assert.match(renderRecordLine(rec(interpretRecordStatus(env())), NOW), /^records: 3 merged PR\(s\) unrecorded since the floor .* node scripts\/ship-record\.mjs catchup --write \(coordinator\)$/);
+    assert.match(renderRecordLine(rec(interpretRecordStatus(env({ state: 'partial', counts: { unrecorded: 1, unknown: 2 } }))), NOW), /≥1 .*2 not yet determinable/);
+    assert.match(renderRecordLine(rec(interpretRecordStatus(env({ counts: { unrecorded: 0, unknown: 0 } }))), NOW), /every merged PR is recorded/);
+    assert.match(renderRecordLine(rec(interpretRecordStatus(env({ state: 'no-marker', counts: {}, remedy: 'node scripts/ship-record.mjs init' }))), NOW), /not initialised — node scripts\/ship-record\.mjs init/);
+    assert.match(renderRecordLine(rec({ state: 'unmeasured', reason: 'gh not installed' }), NOW), /UNMEASURED \(gh not installed\)/);
+    assert.match(renderRecordLine(rec(interpretRecordStatus(env()), new Date(NOW.getTime() - RECORD_STALE_MS - 3_600_000)), NOW), /stale/);
+  });
+  it('quiet only when measured, fresh and zero', () => {
+    assert.equal(recordQuiet(rec(interpretRecordStatus(env({ counts: { unrecorded: 0, unknown: 0 } }))), NOW), true);
+    assert.equal(recordQuiet(rec(interpretRecordStatus(env())), NOW), false);
+    assert.equal(recordQuiet({ state: 'missing' }, NOW), false);
+  });
+  it('the land nudge names the action, not a stale number', () => {
+    assert.match(LAND_RECORD_NUDGE('node scripts/ship-record.mjs', 'node scripts/fleet.mjs'), /catchup --write/);
+  });
+});
