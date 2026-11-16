@@ -404,8 +404,8 @@ cheap enough to run at the end of every coordinator session.
 - `scripts/lib/friction/retro/aggregate.mjs` (create) — `KIND_WEIGHTS`, `aggregateSessions`, `rankCandidates`.
 - `scripts/lib/friction/retro/inventory.mjs` (create) — `tokenise`, `buildIdf`, `containmentScore`,
   `chunkText`, `collectHarnessDocs` (→ `{docs, errors}`), `buildHarnessInventory` (→ `{coverageFor, idf}`) (`COVERAGE_FLOOR = 0.35`).
-- `scripts/lib/friction/retro/memory-tripwires.mjs` (create) — `parseMemoryIndex`, `scanTripwires`,
-  `markEnforced`, `retireFromIndex` (+ pure `retireFromIndexText`), `retirementStatus`.
+- `scripts/lib/friction/retro/memory-tripwires.mjs` (create) — `parseMemoryIndex`, `readFrontmatter`,
+  `scanTripwires` (read-only; v1 lists candidates, retirement is a human edit — cut 3).
 - `scripts/lib/friction/retro/registry.mjs` (create) — `RegistrySchema`, `readRegistry`,
   `appendDecision`, `validateRegistry({entries, repoRoot})`, `activationFor(identity, {runGit})`.
 - `scripts/lib/friction/retro/proposal-schema.mjs` (create) — `ProposalSchema`,

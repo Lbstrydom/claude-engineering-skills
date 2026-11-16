@@ -40,8 +40,10 @@ you are the judgment step, and only for the top few candidates it hands you
 (default 5). **Propose, never apply.**
 
 Transcripts are read from the account's config root and **never leave local
-disk**. v1 writes only derived scan artifacts under `.audit/harness-retro/`
-(gitignored) and nothing to the audit store.
+disk**. v1 writes derived scan artifacts under `.audit/harness-retro/`
+(gitignored) and adds no audit-store write of its own; `enforce` on a
+`type: friction` tripwire records its test through the existing `quality link`
+seam (`memory_friction`).
 
 ## Step 1 — Scan
 

@@ -108,8 +108,9 @@ export function readScanArtifact(repoRoot, id = 'latest') {
 /** Every readable scan artifact (invalid ones are skipped and counted). */
 export function readAllScanArtifacts(repoRoot) {
   const out = []; let invalid = 0;
-  for (const id of listScanIds(repoRoot)) {
-    try { out.push(readScanArtifact(repoRoot, id)); } catch { invalid++; }
+  const dir = artifactDir(repoRoot);
+  for (const id of listScanIds(repoRoot)) {   // ONE listing; each file read directly (audit v1-M2)
+    try { out.push(ScanArtifactSchema.parse(JSON.parse(fs.readFileSync(path.join(dir, `scan-${id}.json`), 'utf8')))); } catch { invalid++; }
   }
   return { scans: out, invalid };
 }

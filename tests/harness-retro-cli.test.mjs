@@ -132,6 +132,12 @@ describe('harness-retro CLI', () => {
     assert.equal(good.code, 0, good.stderr);
     assert.equal(good.json.recorded, 1);
     assert.ok(fs.existsSync(path.join(repo, good.json.report)));
+    // Egress over EVERY artifact, including the proposals JSON + markdown record just wrote (audit v1-M7).
+    const dir = path.join(repo, '.audit', 'harness-retro');
+    for (const f of fs.readdirSync(dir)) {
+      const body = fs.readFileSync(path.join(dir, f), 'utf8');
+      assert.ok(!body.includes('Z9Z9Z9Z9') && !body.includes('bluefinch'), `${f} leaked planted text`);
+    }
   });
 
   it('a transcript that parses but holds no conversation is format-unrecognised', () => {

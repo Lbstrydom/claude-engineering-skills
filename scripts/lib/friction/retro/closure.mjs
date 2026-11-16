@@ -40,7 +40,15 @@ export function preflightDecision({ decision, identity, scan, test, layer, summa
   }
   problems.push(...summaryProblems(summary));
   let isFriction = false;
-  if (mem && memoryDir) isFriction = readFrontmatter(path.join(memoryDir, `${mem}.md`))?.fm?.metadata?.type === 'friction';
+  if (mem) {
+    // A tripwire decision needs its memory READABLE: an unavailable or malformed
+    // memory must not silently read as non-friction (audit v1-H1/H8).
+    const fm = memoryDir ? readFrontmatter(path.join(memoryDir, `${mem}.md`)) : null;
+    if (!memoryDir) problems.push('memory dir unresolved — a tripwire decision needs its memory file');
+    else if (!fm) problems.push(`memory ${mem} not found or has no frontmatter`);
+    else if (fm.parseError) problems.push(`memory ${mem} frontmatter is malformed: ${fm.parseError}`);
+    else isFriction = fm.fm?.metadata?.type === 'friction';
+  }
   const fpMeta = scan && evidence?.evidenceFingerprints?.[0] ? scan.fingerprints[evidence.evidenceFingerprints[0]] : null;
   const candidate = {
     identity,

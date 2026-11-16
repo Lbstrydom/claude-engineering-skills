@@ -55,4 +55,15 @@ describe('scanTripwires', () => {
     assert.equal(out.find((t) => t.memory === 'feedback_a').status, 'no-evidence');
     assert.ok(!out.some((t) => t.memory === 'index-consumers'));
   });
+
+  it('the registry decides a tripwire status; malformed frontmatter is reported, not read as empty', () => {
+    fs.writeFileSync(path.join(dir, 'feedback_b.md'), '---\nname: [unclosed\n---\nbody\n');
+    const idf = buildIdf([tokenise('x y z')]);
+    const out = scanTripwires({
+      memoryDir: dir, fingerprints: {}, idf, sessionsByFingerprint: new Map(), occurrencesByFingerprint: new Map(),
+      decisions: new Map([['tripwire:feedback_a', { decision: 'enforced' }]]),
+    });
+    assert.equal(out.find((t) => t.memory === 'feedback_a').status, 'enforced');
+    assert.equal(out.find((t) => t.memory === 'feedback_b').status, 'frontmatter-unreadable');
+  });
 });

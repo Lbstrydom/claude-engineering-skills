@@ -32,7 +32,7 @@ export function analyseScan(scan, { decisions, inventory: inv, memoryDir, top = 
     }
   }
   const tripwires = memoryDir
-    ? scanTripwires({ memoryDir, fingerprints: scan.fingerprints, sessionsByFingerprint, occurrencesByFingerprint, idf: inventory.idf })
+    ? scanTripwires({ memoryDir, fingerprints: scan.fingerprints, sessionsByFingerprint, occurrencesByFingerprint, idf: inventory.idf, decisions: decisions.byIdentity ?? new Map() })
     : [];
   const summary = {
     sessions: sessions.length,

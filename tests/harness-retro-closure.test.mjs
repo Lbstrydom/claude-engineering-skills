@@ -45,6 +45,13 @@ describe('preflight', () => {
     }
     assert.equal(registryExists(), false);
   });
+  it('a tripwire whose memory is unavailable or malformed is refused — never read as non-friction', () => {
+    assert.equal(preflightDecision(args({ memoryDir: null })).ok, false);
+    fs.writeFileSync(path.join(mem, 'feedback_hook.md'), '---\nname: [unclosed\n---\nbody\n');
+    const r = preflightDecision(args());
+    assert.equal(r.ok, false);
+    assert.ok(r.problems.some((p) => /malformed/.test(p)), r.problems.join('; '));
+  });
   it('a tripwire identity resolves its evidence fingerprints and records its memory name', () => {
     const p = preflightDecision(args());
     assert.ok(p.ok, JSON.stringify(p.problems));

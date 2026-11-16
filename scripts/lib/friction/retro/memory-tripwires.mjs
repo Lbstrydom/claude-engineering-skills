@@ -53,7 +53,8 @@ const readOr = (p, fb = '') => {
 export function readFrontmatter(filePath) {
   const m = readOr(filePath).match(FM_RE);
   if (!m) return null;
-  try { return { fm: yaml.parse(m[1]) ?? {}, body: m[2] }; } catch { return null; }
+  // A malformed block is NOT absent frontmatter: it is reported (audit v1-H3).
+  try { return { fm: yaml.parse(m[1]) ?? {}, body: m[2] }; } catch (err) { return { fm: null, body: m[2], parseError: err.message }; }
 }
 
 /**
@@ -62,7 +63,7 @@ export function readFrontmatter(filePath) {
  *          sessionsByFingerprint: Map<string, Set<string>>, occurrencesByFingerprint: Map<string, number>,
  *          idf: (t: string) => number}} opts
  */
-export function scanTripwires({ memoryDir, fingerprints, sessionsByFingerprint, occurrencesByFingerprint, idf }) {
+export function scanTripwires({ memoryDir, fingerprints, sessionsByFingerprint, occurrencesByFingerprint, idf, decisions = new Map() }) {
   const links = parseMemoryIndex(readOr(path.join(memoryDir, INDEX_FILE)));
   const seen = new Set();
   const out = [];
@@ -73,7 +74,8 @@ export function scanTripwires({ memoryDir, fingerprints, sessionsByFingerprint, 
     seen.add(name);
     const parsed = readFrontmatter(path.join(memoryDir, link.file));
     const description = String(parsed?.fm?.description ?? '');
-    const enforced = Boolean(parsed?.fm?.metadata?.enforced_by);
+    // The registry is the source of truth for a decided tripwire (audit v1-M4).
+    const decided = decisions.get(`tripwire:${name}`)?.decision ?? null;
     const memTokens = tokenise(`${link.title} ${name.replace(/[_-]/g, ' ')} ${description}`);
     const matched = [];
     for (const [fp, toks] of fpTokens) {
@@ -89,9 +91,9 @@ export function scanTripwires({ memoryDir, fingerprints, sessionsByFingerprint, 
       for (const s of sessionsByFingerprint.get(fp) ?? []) sessions.add(s);
       occurrences += occurrencesByFingerprint.get(fp) ?? 0;
     }
-    const status = enforced ? 'enforced'
+    const status = decided ?? (parsed?.parseError ? 'frontmatter-unreadable'
       : matched.length === 0 ? 'no-evidence'
-        : sessions.size >= PROMOTION_MIN_SESSIONS ? 'promotion-candidate' : 'fired-once';
+        : sessions.size >= PROMOTION_MIN_SESSIONS ? 'promotion-candidate' : 'fired-once');
     out.push({
       identity: `tripwire:${name}`, memory: name, title: link.title, status,
       firedSessions: sessions.size, occurrences, matchedFingerprints: matched.sort(),

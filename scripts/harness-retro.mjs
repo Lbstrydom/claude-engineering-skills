@@ -15,9 +15,12 @@
  *   node scripts/harness-retro.mjs status
  *
  * Transcripts are read from the account's config root (`CLAUDE_CONFIG_DIR`, else
- * `~/.claude`) and NEVER leave local disk. v1 persists nothing to the audit
- * store: derived scan artifacts live under `.audit/harness-retro/` (gitignored)
- * and decisions in the committed `.harness-retro/decisions.json`. Propose, never
+ * `~/.claude`) and NEVER leave local disk. v1 adds no audit-store write of its
+ * own: derived scan artifacts live under `.audit/harness-retro/` (gitignored) and
+ * decisions in the committed `.harness-retro/decisions.json`. The one store
+ * touch is the EXISTING `frictionLink` seam, which — when `enforce` closes a
+ * `type: friction` tripwire with the cloud on — appends the enforcing test to
+ * `memory_friction.mitigation_refs` (the deliberate reuse of the friction tables). Propose, never
  * apply: nothing here edits the harness except `enforce`/`reject`, which a human
  * runs in the fix PR after approving a proposal.
  *
