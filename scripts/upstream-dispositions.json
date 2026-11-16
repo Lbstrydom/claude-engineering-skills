@@ -762,6 +762,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "c9ebd9f9-5aa4-4de4-aaff-f7b5b5f9e809",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/render-mermaid-tracked-guard.test.mjs"
+      },
+      "recordedAt": "2026-11-16T20:03:46.394Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "cbd8b539-a6c7-4102-a434-48eed6a6fb10",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
