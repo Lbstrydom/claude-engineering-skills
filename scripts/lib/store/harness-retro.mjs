@@ -5,7 +5,8 @@
  * Writers return receipts `{applied, rows, reason?, error?}` for the durable-write
  * registry (`scripts/lib/audit-store-writers.mjs`):
  *   - cloud off            → `{applied:false, reason:'cloud-off'}` (the ONLY decline)
- *   - superseded snapshot  → `{applied:true, rows:0, reason:'superseded'}` (idempotent success)
+ *   - superseded snapshot  → `{applied:true, rows:0, reason:'superseded'}` (idempotent success) —
+ *     the stored snapshot is as new or NEWER (strict `<` guard: an equal cutoff is a replay)
  *   - any SQL error        → `{applied:false, error}` with the ORIGINAL error, so a
  *     schema fault (store not migrated) spills and fails loudly instead of
  *     reading as a decline.
@@ -70,7 +71,7 @@ const UPSERT_SESSION_SQL = `
     started_at = EXCLUDED.started_at, fingerprint_version = EXCLUDED.fingerprint_version,
     signal_count = EXCLUDED.signal_count, last_scan_id = EXCLUDED.last_scan_id,
     observed_until = EXCLUDED.observed_until, updated_at = now()
-  WHERE harness_retro_sessions.observed_until <= EXCLUDED.observed_until
+  WHERE harness_retro_sessions.observed_until < EXCLUDED.observed_until
   RETURNING session_key`;
 
 /**
@@ -119,7 +120,9 @@ export async function writeScanRow(row) {
         [r.scan_id, r.account_key, r.repo_uuid, r.fingerprint_version, r.requested_since, r.requested_until,
           r.files_listed, r.files_read, r.read_errors, r.completed],
       );
-      return { applied: true, rows: res.rowCount ?? 0 };
+      // A zero-row result is NOT a success (audit B-R1-H3): nothing was written.
+      if ((res.rowCount ?? 0) === 0) return { applied: false, rows: 0, error: new Error('harness_retro_scans: INSERT returned no row') };
+      return { applied: true, rows: res.rowCount };
     });
   } catch (error) {
     return { applied: false, rows: 0, error };

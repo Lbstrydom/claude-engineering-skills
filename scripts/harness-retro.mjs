@@ -63,8 +63,10 @@ function git(args, cwd) {
 function resolveRoots(cwd = process.cwd()) {
   const top = git(['rev-parse', '--show-toplevel'], cwd);
   if (!top) throw new ArgvError('harness-retro must run inside a git checkout');
-  const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
-  const main = common ? path.dirname(common) : top;
+  // The MAIN worktree is the first entry of `git worktree list` — correct for a
+  // linked worktree AND a --separate-git-dir checkout (audit B-R1-M2).
+  const first = (git(['worktree', 'list', '--porcelain'], cwd) ?? '').split(/\r?\n/).find((l) => l.startsWith('worktree '));
+  const main = first ? first.slice('worktree '.length).trim() : top;
   return { repoRoot: path.resolve(top), mainRoot: path.resolve(main) };
 }
 
@@ -75,6 +77,23 @@ export function parseSince(v, now = Date.now()) {
 }
 
 const readStdin = () => fs.readFileSync(0, 'utf8');
+
+/**
+ * The ONE place a store payload is built from a scan artifact — derived fields
+ * only, no label (the egress table). Exported so the boundary is tested directly.
+ */
+export function buildSessionSnapshot(artifact, s) {
+  const occurrences = Object.entries(s.counts).map(([fp, n]) => ({
+    fingerprint: fp, kind: artifact.fingerprints[fp].kind, tool: artifact.fingerprints[fp].tool,
+    occurrences: n, first_at: s.spans[fp]?.firstAt ?? null, last_at: s.spans[fp]?.lastAt ?? null,
+  }));
+  return {
+    session_key: s.sessionKey, repo_uuid: s.repoUuid, account_key: artifact.accountKey, origin: s.origin,
+    started_at: s.startedAt, fingerprint_version: artifact.fingerprintVersion,
+    signal_count: occurrences.reduce((a, o) => a + o.occurrences, 0), last_scan_id: artifact.scanId,
+    observed_until: artifact.requested.until, occurrences,
+  };
+}
 
 /** Persist one scan: a transactional snapshot per COMPLETE session, then the scan row. */
 async function persistScan(artifact, { repoRoot }) {
@@ -94,26 +113,20 @@ async function persistScan(artifact, { repoRoot }) {
   const outcomes = { written: 0, spilled: 0, lost: 0, skipped: 0, notPersisted: 0 };
   for (const s of artifact.sessions) {
     if (!s.complete || !s.startedAt) { outcomes.notPersisted++; continue; }
-    const occurrences = Object.entries(s.counts).map(([fp, n]) => ({
-      fingerprint: fp, kind: artifact.fingerprints[fp].kind, tool: artifact.fingerprints[fp].tool,
-      occurrences: n, first_at: s.spans[fp]?.firstAt ?? null, last_at: s.spans[fp]?.lastAt ?? null,
-    }));
-    const r = await durableWrite('retro.sessionSnapshot', {
-      session_key: s.sessionKey, repo_uuid: s.repoUuid, account_key: artifact.accountKey, origin: s.origin,
-      started_at: s.startedAt, fingerprint_version: artifact.fingerprintVersion,
-      signal_count: occurrences.reduce((a, o) => a + o.occurrences, 0), last_scan_id: artifact.scanId,
-      observed_until: artifact.requested.until, occurrences,
-    }, { repoRoot });
+    const r = await durableWrite('retro.sessionSnapshot', buildSessionSnapshot(artifact, s), { repoRoot });
     outcomes[r.outcome] = (outcomes[r.outcome] ?? 0) + 1;
   }
-  const completed = artifact.completed && outcomes.spilled === 0 && outcomes.lost === 0;
+  // EVERY outcome other than `written` means an eligible session did not land as
+  // a fresh write; `skipped` and `notPersisted` count too (audit B-R1-H4/M5/H5).
+  const notLanded = outcomes.spilled + outcomes.lost + outcomes.skipped + outcomes.notPersisted;
+  const completed = artifact.completed && notLanded === 0;
   const scanRow = await durableWrite('retro.scanComplete', {
     scan_id: artifact.scanId, account_key: artifact.accountKey, repo_uuid: artifact.repoUuid,
     fingerprint_version: artifact.fingerprintVersion, requested_since: artifact.requested.since,
     requested_until: artifact.requested.until, files_listed: artifact.files.listed,
     files_read: artifact.files.read, read_errors: artifact.files.readErrors, completed,
   }, { repoRoot });
-  const failed = outcomes.spilled + outcomes.lost > 0 || scanRow.outcome !== 'written';
+  const failed = outcomes.spilled + outcomes.lost + outcomes.skipped > 0 || scanRow.outcome !== 'written';
   return {
     persisted: !failed, persistReason: failed ? 'store-write-incomplete' : 'written',
     failed, outcomes, scanRowOutcome: scanRow.outcome, completed,
@@ -209,11 +222,12 @@ async function cmdClose(decision) {
   emit(r.ok ? { ok: true, decision: r.decision, steps: r.steps } : { ok: false, problems: r.problems });
 }
 
-async function effectInputs({ repoRoot, repoUuid }) {
+async function effectInputs({ repoRoot, repoUuid, fromTs, toTs }) {
   const { isCloudEnabled } = await import('./lib/store/repo.mjs');
   if (await isCloudEnabled()) {
     const store = await import('./lib/store/harness-retro.mjs');
-    const sessions = await store.readRetroWindow({ repoUuid, fromTs: '1970-01-01T00:00:00Z', toTs: '9999-01-01T00:00:00Z' });
+    // Bounded to the union of the requested windows (audit B-R1-M7), never the whole history.
+    const sessions = fromTs ? await store.readRetroWindow({ repoUuid, fromTs, toTs }) : [];
     const scans = await store.readRetroScans({ repoUuid });
     return { source: 'store', sessions, scans };
   }
@@ -243,16 +257,22 @@ async function cmdEffect() {
     emit({ ok: true, measured: false, reason: want ? `no enforced decision ${want}` : 'no enforced decisions in the registry yet', results: [] });
     return;
   }
-  const inputs = await effectInputs({ repoRoot, repoUuid: self.repoUuid });
   const slug = self.name && self.name.includes('/') ? self.name : null;
   const runGh = (args) => {
     const r = spawnSync('gh', args, { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
     return r.status === 0 ? String(r.stdout) : null;
   };
-  const results = decisions.map((d) => computeEffect({
+  const activations = decisions.map((d) => activationFor(d.identity, { runGit: (a) => git(a, repoRoot), runGh, repoSlug: slug }));
+  const times = activations.filter((a) => a.status === 'active').map((a) => Date.parse(a.at));
+  const W = windowDays * DAY_MS;
+  const inputs = await effectInputs({
+    repoRoot, repoUuid: self.repoUuid,
+    fromTs: times.length ? new Date(Math.min(...times) - W).toISOString() : null,
+    toTs: times.length ? new Date(Math.max(...times) + W).toISOString() : null,
+  });
+  const results = decisions.map((d, i) => computeEffect({
     decision: d, repoUuid: self.repoUuid, windowDays, source: inputs.source,
-    activation: activationFor(d.identity, { runGit: (a) => git(a, repoRoot), runGh, repoSlug: slug }),
-    sessions: inputs.sessions, scans: inputs.scans,
+    activation: activations[i], sessions: inputs.sessions, scans: inputs.scans,
   }));
   emit({ ok: true, source: inputs.source, results });
 }

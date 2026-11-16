@@ -150,6 +150,21 @@ describe('harness-retro CLI', () => {
     assert.equal(s.json.heartbeat.stale, false);
   });
 
+  it('the STORE payload carries exactly the allowlisted keys and no transcript text', async () => {
+    const { buildSessionSnapshot } = await import('../scripts/harness-retro.mjs');
+    const { SNAPSHOT_KEYS, OCCURRENCE_KEYS, SessionSnapshotSchema } = await import('../scripts/lib/store/harness-retro.mjs');
+    const dir = path.join(repo, '.audit', 'harness-retro');
+    const scan = JSON.parse(fs.readFileSync(path.join(dir, fs.readdirSync(dir).filter((f) => f.startsWith('scan-')).sort()[0]), 'utf8'));
+    for (const s of scan.sessions) {
+      const snap = buildSessionSnapshot(scan, s);
+      assert.deepEqual(Object.keys(snap).sort(), [...SNAPSHOT_KEYS].sort());
+      for (const o of snap.occurrences) assert.deepEqual(Object.keys(o).sort(), [...OCCURRENCE_KEYS].sort());
+      assert.ok(SessionSnapshotSchema.safeParse(snap).success);
+      const body = JSON.stringify(snap);
+      assert.ok(!body.includes('Z9Z9Z9Z9') && !body.includes('bluefinch') && !body.includes('Cannot find module'), body);
+    }
+  });
+
   it('usage errors exit 2', () => {
     assert.equal(run(['nope'], { cwd: repo, configDir, memoryDir }).code, 2);
     assert.equal(run(['scan', '--since', 'yesterday'], { cwd: repo, configDir, memoryDir }).code, 2);

@@ -65,6 +65,14 @@ describe('harness_retro store (DB integration)', { skip }, () => {
     assert.deepEqual(await occRows(k), [{ fingerprint: FP1, occurrences: 3 }]);
   });
 
+  it('an EQUAL cutoff is a replay: superseded, never a replacement', async () => {
+    const k = key();
+    await store.writeSessionSnapshot(snap(k, '2026-11-12T00:00:00.000Z', [[FP1, 3]]));
+    const r = await store.writeSessionSnapshot(snap(k, '2026-11-12T00:00:00.000Z', [[FP2, 9]]));
+    assert.deepEqual(r, { applied: true, rows: 0, reason: 'superseded' });
+    assert.deepEqual(await occRows(k), [{ fingerprint: FP1, occurrences: 3 }]);
+  });
+
   it('two concurrent snapshots end with the newer one', async () => {
     const k = key();
     await Promise.all([

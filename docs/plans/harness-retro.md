@@ -407,19 +407,19 @@ on; otherwise the union of local scan artifacts (`source:'local-scan'`), same fu
   orchestrates enumeration → per-session extraction → repo resolution → result (no persistence).
 - `scripts/lib/friction/retro/aggregate.mjs` (create) — `KIND_WEIGHTS`, `aggregateSessions`, `rankCandidates`.
 - `scripts/lib/friction/retro/inventory.mjs` (create) — `tokenise`, `buildIdf`, `containmentScore`,
-  `buildHarnessInventory`, `coverageFor` (`COVERAGE_FLOOR = 0.35`).
+  `chunkText`, `collectHarnessDocs` (→ `{docs, errors}`), `buildHarnessInventory` (→ `{coverageFor, idf}`) (`COVERAGE_FLOOR = 0.35`).
 - `scripts/lib/friction/retro/memory-tripwires.mjs` (create) — `parseMemoryIndex`, `scanTripwires`,
-  `retireTripwire`.
+  `markEnforced`, `retireFromIndex` (+ pure `retireFromIndexText`), `retirementStatus`.
 - `scripts/lib/friction/retro/registry.mjs` (create) — `RegistrySchema`, `readRegistry`,
   `appendDecision`, `validateRegistry({entries, repoRoot})`, `activationFor(identity, {runGit})`.
 - `scripts/lib/friction/retro/proposal-schema.mjs` (create) — `ProposalSchema`,
   `ProposalsEnvelopeSchema`, `checkProposalsAgainstScan(envelope, scan)`.
 - `scripts/lib/friction/retro/artifacts.mjs` (create) — `ScanArtifactSchema`, `newScanId`,
-  `writeScanArtifact`, `readScanArtifact(id|'latest')`, `listScanArtifacts`, `pruneScanArtifacts`,
+  `writeScanArtifact`, `readScanArtifact(id|'latest')`, `listScanIds`, `readAllScanArtifacts`, `pruneScanArtifacts`,
   `writeHeartbeat`, `readHeartbeat`.
 - `scripts/lib/friction/retro/effect.mjs` (create) — `coveredAccounts`, `computeEffect`.
-- `scripts/lib/friction/retro/closure.mjs` (create) — `enforceDecision`, `rejectDecision`,
-  `retirementStatus` (the ordered idempotent closure, component 13).
+- `scripts/lib/friction/retro/closure.mjs` (create) — `preflightDecision`, `closeDecision` (enforce and
+  reject; the ordered idempotent closure, component 13).
 - `scripts/lib/friction/retro/report.mjs` (create) — `renderScanReport`, `renderProposals` (markdown).
 
 **Store + migration**
