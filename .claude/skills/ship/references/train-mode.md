@@ -9,6 +9,11 @@ in any other repository say so and stop. `ship-train` is not part of the synced 
 tooling: it classifies PRs against the sync closure and publishes through the source
 repository's own sync tools, neither of which exists in a consumer.
 
+**Kept gated on purpose (2026-11-16).** A consumer's gap was the RECORD half (no status entry, no
+ship_event), and that is `references/record-catchup.md` — no train needed. Lifting the gate would not fix
+the cause (`--train` is still human-typed) and would mean syncing ship-train, its store reader and fleet's
+serial callback; squash-trailer coverage is now measured per record entry, as evidence for that later call.
+
 One human `/ship --train` lands several already-audited PRs together: one
 `status.md` entry, per-PR provenance written into each squash commit, ONE
 combined test run (fleet), and ONE consumer sync. Without it, each PR needs its

@@ -26,6 +26,7 @@
  *   proposals [--all]               the findings queue grouped by theme; blockedBy rechecked against facts (read-only)
  *   lease acquire|attach|release|status|announce|peak  the machine-wide heavy slot, announced windows and peak hours (shared by every repo's fleet)
  *   directive --to|--list|--ack     coordinator requests in the shared registry
+ *   decision record|revoke|list     a user decision in their exact words (stdin); grants only its scope, never a merge
  *   restack [<branch>] [--replace]  replay a branch's own commits onto the base (patch-id checked)
  *   land [--select a,b] [--dry-run] build + test one combined train
  *   land --approve|--confirm|--reconcile|--resume|--abandon <trainId>
@@ -60,6 +61,7 @@ import { cmdHandover } from './lib/fleet/handover.mjs';
 import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { cmdLand } from './lib/fleet/land.mjs';
 import { cmdPropose, cmdProposal, cmdProposals } from './lib/fleet/proposals-cmd.mjs';
+import { cmdDecision } from './lib/fleet/decisions-cmd.mjs';
 import { ALLOWED as LEASE_FLAGS, SUBS as LEASE_SUBS, cmdLease } from './lib/fleet/lease-cmd.mjs';
 import { fleetDir, RegistryError } from './lib/fleet/registry.mjs';
 import { recordInvocation } from './lib/fleet/telemetry.mjs';
@@ -148,6 +150,7 @@ async function main() {
       case 'handover': result = await cmdHandover(ctx, flags, positionals); break;
       case 'next': result = cmdNext(ctx, flags); break;
       case 'directive': result = cmdDirective(ctx, flags); break;
+      case 'decision': result = cmdDecision(ctx, flags, positionals); break;
       case 'restack': result = cmdRestack(ctx, flags, positionals); break;
       case 'land': result = cmdLand(ctx, flags); break;
       case 'propose': result = cmdPropose(ctx, flags); break;

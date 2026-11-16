@@ -15,6 +15,8 @@ import { abandonTrain, branchOfRef, buildTrain, defaultDeps, resumeTrain, withTr
 import { approveTrain, confirmTrain, reconcileTrain } from './train-approve.mjs';
 import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
 import { redTierLines } from './tier-failure.mjs';
+import { LAND_RECORD_NUDGE, invalidateRecordCache, recordCommandFor } from './record-count.mjs';
+import { unregisteredCacheDir } from './unregistered.mjs';
 import {
   renderAbandon, renderApprove, renderBuilt, renderConfirm, renderDryRun, renderReconcile, renderSerial,
 } from './render-train.mjs';
@@ -36,6 +38,23 @@ function configuredRequiredChecks(ctx) {
 
 const MODES = ['--approve', '--confirm', '--reconcile', '--resume', '--abandon'];
 const withText = (r, text) => ({ ...r, text });
+export const _internals = Object.freeze({ mergedSomething: (r) => mergedSomething(r) });
+/**
+ * A landing that MERGED is the moment the session log falls behind (docs/plans/ship-record-catchup.md §2.7): say so where the
+ * coordinator is looking. The count is stale the instant a PR lands, so the line names the action, never a number.
+ */
+// Nudged when ANYTHING merged, not only on overall success (C-R1-M1/M4): a serial run can merge PRs and then stop.
+const mergedSomething = (r) => Boolean(r.ok || r.run?.steps?.some((s) => s.step === 'merged'));
+const withRecordNudge = (r, cmd, ctx = null) => {
+  if (!mergedSomething(r)) return r;
+  // The cached count is stale the moment anything merges (C-R4-H2): invalidate it so `next` cannot stay quiet on it.
+  // Stamped NOW — after the merge, never the verb's start time (C-R5-H1) — so a refresh that began before the merge loses
+  // the ordering check. A failed invalidation is said, not swallowed (C-R5-H2).
+  const stamp = new Date(Math.max(Date.now(), ctx?.now instanceof Date ? ctx.now.getTime() : 0));
+  const invalidated = ctx ? invalidateRecordCache(unregisteredCacheDir(ctx.cwd), stamp) : false;
+  const warn = ctx && !invalidated ? `\nwarning: the records cache could not be invalidated — run \`${cmd} status\` before trusting \`${cmd} next\`'s records line` : '';
+  return { ...r, text: `${r.text}\n${LAND_RECORD_NUDGE(recordCommandFor(cmd), cmd)}${warn}`, recordCacheInvalidated: invalidated };
+};
 
 function validId(id) {
   try { return assertTrainId(id); } catch (e) { throw new ArgvError(`fleet land: ${e.message}`); }
@@ -56,15 +75,15 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
 
   if (modes[0] === '--approve' && flags['--serial']) {
     const r = approveSerial({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), deps, ...configuredRequiredChecks(ctx), timeoutMs: serialTimeout(ctx) });
-    return withText(r, renderSerial(r, cmd));
+    return withRecordNudge(withText(r, renderSerial(r, cmd)), cmd, ctx);
   }
   if (modes[0] === '--approve') {
     const r = approveTrain({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), cmd, deps, ...configuredRequiredChecks(ctx) });
-    return withText(r, renderApprove(r, cmd));
+    return withRecordNudge(withText(r, renderApprove(r, cmd)), cmd, ctx);
   }
   if (modes[0] === '--confirm') {
     const r = confirmTrain({ cwd, trainId: validId(flags['--confirm']), deps });
-    return withText(r, renderConfirm(r));
+    return withRecordNudge(withText(r, renderConfirm(r)), cmd, ctx);
   }
   if (modes[0] === '--reconcile') {
     const r = reconcileTrain({ cwd, trainId: validId(flags['--reconcile']), deps });
@@ -76,7 +95,7 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
   }
   if (modes[0] === '--resume' && readSerial(ctx.dir, validId(flags['--resume'])).ok) {
     const r = resumeSerial({ cwd, trainId: flags['--resume'], deps, ...configuredRequiredChecks(ctx) });
-    return withText(r, renderSerial(r, cmd));
+    return withRecordNudge(withText(r, renderSerial(r, cmd)), cmd, ctx);
   }
   if (modes[0] === '--resume') {
     const trainId = validId(flags['--resume']);

@@ -557,7 +557,11 @@ test('composeFinalMessage: AI-Final-Review lands in the parseable trailer block'
 
 test('AI_TRAILER_KEYS is exactly what the renderer emits, in block order (the one list readers canonicalise against)', () => {
   const full = formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'passed', runId: 'ecae388d-c176-4182-9d27-0210b919b844', workItem: '01a179bd-3d97-739c-b15b-3eb0d65f78b2', auditedTree: AUDITED_TREE, finalReview: 'approve', shipAuthority: 'launch-prompt' });
-  assert.deepEqual(full.map((l) => l.split(': ')[0]), [...AI_TRAILER_KEYS]);
+  // AI-Decision rides only on a RECORD commit (gate not-run, AI-Ship-Authority: record-catchup), which cannot coexist with the
+  // passed-gate keys above — so the canonical list is the launch-prompt block followed by the record block's extra key.
+  const record = formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'not-run', shipAuthority: 'record-catchup', decision: 'dec-20261116000000-abcd' });
+  const keys = [...full, ...record].map((l) => l.split(': ')[0]);
+  assert.deepEqual(keys.filter((k, i) => keys.indexOf(k) === i), [...AI_TRAILER_KEYS]);
 });
 
 test('AI-Work-Item is validated as a UUIDv7 and only emitted when present', () => {

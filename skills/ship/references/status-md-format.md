@@ -116,8 +116,9 @@ These will silently regress under future refactors.
 
 Step 6.8 of a PRIOR `/ship` run wrote a note instead of amending an
 already-pushed status.md entry (which would force a second commit + push —
-see SKILL.md Step 6.8). Step 2 of THIS run drains them, prepends them above this
-session's own entry, then deletes exactly the ones it drained.
+see SKILL.md Step 6.8). Step 2 of THIS run drains them, places them at the top of
+this session's own entry (inside it, under its `## ` heading — per-entry files hold one heading), then deletes exactly
+the ones it drained.
 
 **There may be more than one, and the subsection holds all of them.** A ship
 does not happen after every note: Step 2 only runs inside `/ship`, and not every
@@ -157,6 +158,19 @@ Base pinning: <strict | none> (<evidence>). Overrides used: <flags, or none>.
 `identityProvable` is `false` on an unpinned destination, where a train can land `converged`
 but never `passed`. The log PR itself is a ride-along row. Commit it with
 `ship-commit.mjs --gate not-run` as usual; the train's squash messages carry the real gates.
+
+### Record catch-up entries — PRs merged without `/ship` (`ship-record.mjs`)
+
+Written by the script, never by hand, and only ever CREATED (`references/record-catchup.md`):
+
+- **Per PR**: `<merge date>-<merge time>-pr-<N>.md`, named from the PR's `mergedAt` (UTC) so a rerun writes the same
+  bytes. Its second line is `<!-- ship-record v1 pr=<N> merge=<sha> -->` — the marker that makes the PR "recorded".
+  Every field comes from the merge commit (subject, files, trailers), never the editable GitHub title or body.
+- **Run**: `<now>-record-catchup-<8 hex>.md` with the `Backlog:` line and the plan lines to paste; marker
+  `<!-- ship-record-run v1 prs=<N,…> -->`.
+- **Floor** (once per repo): `<now>-record-floor.md`, the summarised backfill, marker
+  `<!-- ship-record-floor v1 merged-through=<ISO> covered=<N,…|none> -->`. A repo on one `status.md` adopts per-entry
+  files first with `ship-record init`, which writes the cutover README.
 
 ## Never commit these into status.md
 

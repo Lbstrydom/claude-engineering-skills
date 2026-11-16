@@ -109,3 +109,21 @@ Guards that catch a change are named after the invariant they protect, not after
 feature, so a name-targeted test run misses them, and a slow pre-push gate then fails
 late. Before a branch's first push, run the full test suite once in the background and
 read its failures; after that, targeted runs are fine.
+
+## 7. Record the PRs you merge (the session log)
+
+Merging with `fleet land` or `gh pr merge` skips `/ship`, so nothing writes the session log. **The coordinator owns the
+record catch-up for its repo** — chips never run it, so two runs never race. The full runbook ships with the /ship
+skill (its record catch-up reference); the coordinator's part:
+
+- **At launch, once**: record the user's standing permission in their exact words, on stdin —
+  `node scripts/fleet.mjs decision record --scope record-catchup --words-file -`. It is a declaration, not verified
+  authority: what makes a record commit safe is `ship-commit.mjs --record`'s docs-only check and the user's merge of the
+  record PR. No decision scope grants a merge, a push or an override.
+- **Cadence**: after each `fleet land` (it prints the nudge), at every pass (`fleet status` shows
+  `records: N merged PR(s) unrecorded`), and at end of day: `node scripts/ship-record.mjs catchup --write`, paste the
+  plan lines it prints, commit with `ship-commit.mjs --record --decision <id>`, open a docs-only PR. The user merges it.
+- **Push lanes (rule 8)**: the per-PR entry FILES are named from the merge, so they never conflict with each other or with
+  `/ship` entries. Two things a record PR can share are NOT conflict-free — a pasted plan line and the one-time floor —
+  which is why there is exactly one writer per repo (you): keep one record PR open at a time, and floor once.
+- **`records: UNMEASURED` is not zero**: fix what it names (`--fetch`, `origin/HEAD`, a re-sync) before reading it.
