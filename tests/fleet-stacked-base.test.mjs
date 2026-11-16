@@ -104,6 +104,15 @@ describe('claim --base: overlap from the real fork point', () => {
     });
   }
 
+  it('re-running claim --base after the base absorbed the work KEEPS the recorded fork point (audit R4 H1/H4)', () => {
+    const { s } = absorbed({ commitBeforeClaim: false, swallow: ff });
+    git(['checkout', '-q', 'late'], s.fx.repo);
+    assert.equal(s.f(['claim', '--id', 'late', '--base', 'shared-base']).status, 0);
+    git(['checkout', '-q', 'main'], s.fx.repo);
+    const it = s.f(['status', '--json']).json.status.items.find((x) => x.id === 'late');
+    assert.ok(it.overlaps.some((o) => o.with === 'child-1' && o.files.includes('child-1/f.txt')), JSON.stringify(it.overlaps));
+  });
+
   it('a stacked claim with no recorded fork point (an older fleet) is measured from the base, and says so', () => {
     const { s, it: before } = absorbed({ commitBeforeClaim: false, swallow: () => {} });
     assert.ok(before.inherited?.length > 0, 'control: with the record, the stacked measure applies');

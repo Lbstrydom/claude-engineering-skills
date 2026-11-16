@@ -338,7 +338,7 @@ function blockingHolderBranches(facts, id, flags, paths, hasPaths, ctx) {
 export function stackBaseFrom(ctx, flags, branch) {
   const b = flags['--base'];
   if (b === undefined) return null;
-  if (!/^[^\s-][^\s]*$/.test(b)) throw new ArgvError(`fleet claim: --base ${JSON.stringify(b)} is not a branch name`);
+  if (!/^[^\s-][^\s]*$/.test(b) || b.length > 250) throw new ArgvError(`fleet claim: --base ${JSON.stringify(b)} is not a branch name`);
   if (b === ctx.config.baseBranch) return { name: b, oid: null }; // un-stacks a session that was stacked
   if (b === branch) throw new ArgvError(`fleet claim: --base ${b} is this session's own branch — name the branch it is stacked on`);
   const h = headOf(ctx.cwd, `refs/heads/${b}`);
@@ -407,6 +407,10 @@ export function cmdClaim(ctx, flags) {
         source: { kind: 'branch', branch, repo: null, prNumber: null, headRepo: null, headRef: branch, baseRef: stackBase?.name ?? ctx.config.baseBranch } }
       : { gen: cur.gen, ready: cur.ready, waitingOn: cur.waitingOn, knownOverlaps: cur.knownOverlaps, createdAt: cur.createdAt, state: cur.state, startOid: cur.startOid,
         source: stackBase && cur.source.kind === 'branch' ? { ...cur.source, baseRef: stackBase.name } : cur.source };
+    // The fork point (the stack base's COMMIT at claim, stack-bases.mjs) is written FIRST, under the same lock (audit R4 H3/M1):
+    // a session write that then fails leaves only a record no session matches (its gen or base differs), which readers ignore.
+    // A repeated --base for the same claim and base keeps the fork point it already has (R4 H1/H4).
+    if (stackBase && base.source.kind === 'branch') writeStackBase(ctx.dir, { id, gen: base.gen, base: stackBase.oid ? stackBase.name : null, oid: stackBase.oid, at: stamp });
     if (flags['--host-session'] !== undefined) writeHost(ctx.dir, { id, hostSession: flags['--host-session'], at: stamp });
     const record = t.writeSession({
       schemaVersion: 1, rev: cur ? cur.rev + 1 : 1, id, ...base,
@@ -414,8 +418,6 @@ export function cmdClaim(ctx, flags) {
       waitingOn: applyWaiting(base.waitingOn, waiting), knownOverlaps: [...base.knownOverlaps, ...known],
       leaseExpiresAt: leaseIso(ctx), updatedAt: stamp,
     });
-    // The fork point is the stack base's commit AT CLAIM, kept beside the record (stack-bases.mjs), under the same lock.
-    if (stackBase && record.source.kind === 'branch') writeStackBase(ctx.dir, { id, gen: record.gen, base: stackBase.oid ? stackBase.name : null, oid: stackBase.oid, at: stamp });
     return { verdict: overriding ? { ...verdict, overridden: true } : verdict, mode, record };
   });
   if (!tx.ok) return lockFailed();

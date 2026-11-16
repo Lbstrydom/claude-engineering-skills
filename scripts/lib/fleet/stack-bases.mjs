@@ -26,11 +26,19 @@ export const StackBaseSchema = z.strictObject({
   base: z.string().min(1).max(250), oid: z.string().regex(OID_RE), at: z.string(),
 });
 
-/** Record (or, with `base: null`, remove) a session's fork point. The caller holds `fleet/.lock`. */
+/**
+ * Record (or, with `base: null`, remove) a session's fork point. The same claim (gen) on the same base KEEPS the fork point
+ * it has: re-running `claim --base` after the base moved — perhaps onto this session's own commits — must not move it. The
+ * caller holds `fleet/.lock`.
+ */
 export function writeStackBase(dir, { id, gen, base, oid, at }) {
   const file = fileFor(dir, id);
   if (base === null) { fs.rmSync(file, { force: true }); return null; }
   const rec = StackBaseSchema.parse({ schemaVersion: 1, id, gen, base, oid, at });
+  try {
+    const cur = StackBaseSchema.safeParse(JSON.parse(fs.readFileSync(file, 'utf8')));
+    if (cur.success && cur.data.gen === gen && cur.data.base === base) return cur.data;
+  } catch { /* absent or unreadable: write it */ }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   atomicWriteFileSync(file, `${JSON.stringify(rec, null, 2)}\n`);
   return rec;
