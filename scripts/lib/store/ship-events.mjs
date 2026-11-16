@@ -59,7 +59,7 @@ export async function recordShipEvent(repoId, event) {
       stack_detected: event.stackDetected || null,
       framework: event.framework || null,
       duration_ms: event.durationMs || null,
-    }, { returning: 'id' });
+    }, { returning: SHIP_EVENT_RETURNING });
     // Verified, not assumed (audit A-R1-H5): success means the row came back, so a caller reconciling events can trust it.
     if (!inserted?.id) return { ok: false, cloud: true, reason: 'write-unverified', error: 'the insert returned no row' };
     return { ok: true, cloud: true };
@@ -68,6 +68,9 @@ export async function recordShipEvent(repoId, event) {
     return { ok: false, cloud: true, reason: 'write-failed', error: err.message };
   }
 }
+
+/** The projection the verified write reads back (the query builder accepts true | '*' | string[], never a bare column). */
+export const SHIP_EVENT_RETURNING = Object.freeze(['id']);
 
 /** At most this many commit shas per `findShipEvents` call (one bounded `= ANY($2)` read). */
 export const FIND_SHIP_EVENTS_MAX = 500;

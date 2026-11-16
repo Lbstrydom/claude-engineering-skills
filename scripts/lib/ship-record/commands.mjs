@@ -8,10 +8,11 @@
  *
  * @module scripts/lib/ship-record/commands
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { gatherRecordState, readBaseEntries, resolveBase, listMergedSince, mergeFacts, ENTRIES_DIR, MARKER_FILE } from './facts.mjs';
-import { isFloorEntryName, SHA_RE } from './state.mjs';
+import { isFloorEntryName, SHA_RE, RUN_ENTRY_RE } from './state.mjs';
 import {
   parseRunMarker, prEntryFileName, renderPrEntry, renderRunEntry, renderFloorEntry, renderInitReadme, publishEntry, checkEntriesDir, sweepTemps,
   touchedPlans, planLogSuggestion, planHasMarker, entryFileName,
@@ -123,7 +124,7 @@ export async function runCatchup(ctx, opts = {}) {
   const pending = opts.write ? pendingForRunEntry(ctx, st, recorded) : [];
   if (opts.write && pending.length) {
     const nowIso = ctx.now().toISOString();
-    const runName = entryFileName(nowIso, 'record-catchup');
+    const runName = entryFileName(nowIso, `record-catchup-${crypto.randomBytes(2).toString('hex')}`); // A-R2-M2
     const runBytes = renderRunEntry({ nowIso, recorded: pending, backlogLine: ctx.backlog(), suggestions: env.suggestions, base: st.base });
     const r = publishEntry(dir, runName, runBytes);
     if (r.outcome === 'written') env.wrote.push(`${ENTRIES_DIR}/${runName}`); else env.errors.push(r.reason);
@@ -143,7 +144,7 @@ export function pendingForRunEntry(ctx, st, recorded) {
   let names = [];
   try { names = fs.readdirSync(dir); } catch { return recorded; }
   for (const n of names) {
-    if (!/-record-catchup\.md$/.test(n) || onBase.has(n)) continue;
+    if (!RUN_ENTRY_RE.test(n) || onBase.has(n)) continue;
     try { for (const x of parseRunMarker(fs.readFileSync(path.join(dir, n), 'utf8'))) listed.add(x); } catch { /* unreadable: treat as listing nothing */ }
   }
   return recorded.filter((p) => !onBase.has(prEntryFileName(p)) && !listed.has(p.number));
@@ -171,7 +172,11 @@ export async function reconcileEvents(ctx, st, recordedThisRun) {
   for (let i = 0; i < all.length; i += EVENT_BATCH) {
     const chunk = all.slice(i, i + EVENT_BATCH);
     const found = await ctx.events.find(scope.repoId, chunk.map((p) => p.mergeCommit), EVENT_REASON);
-    if (!found.ok) { ev.lost += all.length - i; ev.lostPrs.push(...all.slice(i).map((p) => p.number)); ev.reason = found.error ?? found.reason; return ev; }
+    if (!found.ok) {
+      // Nothing has been written yet (writes follow every read), so all that is not already present is unreconciled (A-R2-M1).
+      const lost = [...missing, ...all.slice(i)];
+      ev.lost = lost.length; ev.lostPrs = lost.map((p) => p.number); ev.reason = found.error ?? found.reason; return ev;
+    }
     if (!found.cloud) { ev.skipped = all.length; ev.reason = 'cloud off'; return ev; }
     for (const p of chunk) { if (found.present.has(p.mergeCommit)) ev.existing++; else missing.push(p); }
   }
@@ -190,7 +195,7 @@ export async function reconcileEvents(ctx, st, recordedThisRun) {
 function lastLogEntry(ctx, base, names) {
   const entries = names.filter((n) => n !== 'README.md' && /\.md$/.test(n)).sort();
   if (entries.length) return { label: entries[entries.length - 1], dateIso: `${entries[entries.length - 1].slice(0, 10)}T00:00:00Z` };
-  const r = ctx.runners.git(['show', `${base.ref}:status.md`]);
+  const r = ctx.runners.git(['show', `${base.oid}:status.md`]);
   const m = r.status === 0 ? /^## (\d{4}-\d{2}-\d{2})\b.*$/m.exec(String(r.stdout)) : null;
   return m ? { label: `status.md: ${m[0].slice(3).trim()}`, dateIso: `${m[1]}T00:00:00Z` } : null;
 }
@@ -200,7 +205,7 @@ export function runFloor(ctx, opts = {}) {
   const warning = maybeFetch(ctx, opts);
   const base = resolveBase(ctx.runners, { branch: opts.base ?? null });
   if (!base.ok) throw new RecordRefusal(`floor refused: ${base.reason}`);
-  const entries = readBaseEntries(ctx.runners, base.ref);
+  const entries = readBaseEntries(ctx.runners, base.oid); // the pinned commit, never the moving tracking ref (A-R2-H2)
   if (!entries.ok) throw new RecordRefusal(`floor refused: ${entries.reason}`);
   const markerLocal = fs.existsSync(path.join(ctx.repoRoot, MARKER_FILE));
   if (!entries.markerPresent && !markerLocal) throw new RecordRefusal('floor refused: docs/status/entries/README.md is absent', { remedy: `${ctx.cmd} init` });

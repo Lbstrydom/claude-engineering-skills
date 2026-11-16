@@ -121,7 +121,7 @@ describe('verbs', () => {
     assert.equal(dry.wouldWrite.length, 2);
     const first = await runCatchup(ctxFor(fx), { write: true, events: false });
     assert.deepEqual(first.wrote.filter((p) => /-pr-\d+\.md$/.test(p)).map((p) => path.basename(p)), ['2026-11-11-020000-pr-3.md', '2026-11-12-030000-pr-4.md']);
-    assert.ok(first.wrote.some((p) => p.endsWith('-record-catchup.md')));
+    assert.ok(first.wrote.some((p) => /-record-catchup-[0-9a-f]{4}.md$/.test(p)));
     assert.deepEqual(first.suggestions.map((s) => [s.plan, s.pr]), [['docs/plans/p.md', 3]]);
     const second = await runCatchup(ctxFor(fx), { write: true, events: false });
     assert.equal(second.wrote.length, 0, 'the idempotency oracle: a rerun writes nothing');
@@ -220,7 +220,7 @@ describe('audit A-R1 regressions', () => {
   it('H4: a run that died after its per-PR files still gets its run entry next time', async () => {
     const fx = fixture();
     const first = await runCatchup(ctxFor(fx), { write: true, events: false });
-    const run = first.wrote.find((p) => p.endsWith('-record-catchup.md'));
+    const run = first.wrote.find((p) => /-record-catchup-[0-9a-f]{4}.md$/.test(p));
     fs.rmSync(path.join(fx.dir, run)); // simulate the crash between the per-PR files and the run entry
     const second = await runCatchup({ ...ctxFor(fx), now: () => new Date('2026-11-13T00:05:00Z') }, { write: true, events: false });
     assert.equal(second.wrote.length, 1);
@@ -256,5 +256,28 @@ describe('audit A-R1 regressions', () => {
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /"--" is refused/);
     assert.equal(fs.readdirSync(path.join(fx.dir, 'docs/status/entries')).filter((n) => /-pr-/.test(n)).length, 0);
+  });
+});
+
+describe('audit A-R2 regressions', () => {
+  it('H1/H3: the verified-write projection is one the query builder accepts (a bare string is refused)', async () => {
+    const { SHIP_EVENT_RETURNING } = await import('../scripts/lib/store/ship-events.mjs');
+    const { _builders } = await import('../scripts/lib/db/query.mjs');
+    assert.match(_builders.buildInsert('ship_events', { outcome: 'warned' }, { returning: SHIP_EVENT_RETURNING }).sql, /RETURNING "id"$/);
+    assert.throws(() => _builders.buildInsert('ship_events', { outcome: 'warned' }, { returning: 'id' }), /raw strings are not accepted/, 'negative control: the shape the bug used');
+  });
+  it('M1/M3: a failed later chunk loses every unreconciled PR, including missing ones from earlier chunks', async () => {
+    const prs = Array.from({ length: 600 }, (_, i) => ({ number: i + 1, status: 'recorded', by: 'marker', mergeCommit: (i + 1).toString(16).padStart(40, '0'), mergedAt: new Date(Date.UTC(2026, 10, 1) + i * 60_000).toISOString() }));
+    let call = 0;
+    const port = { resolveRepoId: async () => ({ ok: true, repoId: null }), find: async (_r, shas) => (++call === 1 ? { ok: true, cloud: true, present: new Set(shas.slice(0, 450)) } : { ok: false, cloud: true, reason: 'read-failed' }), record: async () => assert.fail('nothing may be written after a failed read') };
+    const ev = await reconcileEvents({ now: () => NOW, events: port }, { prs }, []);
+    assert.deepEqual([ev.existing, ev.lost, ev.written], [450, 150, 0]);
+  });
+  it('M2: run entries carry a collision-resistant suffix and are still recognised', async () => {
+    const fx = fixture();
+    const first = await runCatchup(ctxFor(fx), { write: true, events: false });
+    const run = path.basename(first.wrote.find((p) => /-record-catchup/.test(p)));
+    assert.match(run, /^2026-11-13-000000-record-catchup-[0-9a-f]{4}\.md$/);
+    assert.equal((await runCatchup(ctxFor(fx), { write: true, events: false })).wrote.length, 0, 'the suffixed run entry is still read as a run entry');
   });
 });

@@ -41,6 +41,8 @@ export const PR_MARKER_RE = /<!-- ship-record v1 pr=(\d+) merge=([0-9a-f]{40}) -
 export const ENTRY_NAME_RE = /^(\d{4}-\d{2}-\d{2})-(\d{6})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
 const PR_ENTRY_RE = /^\d{4}-\d{2}-\d{2}-\d{6}-pr-([1-9]\d*)\.md$/;
 const FLOOR_ENTRY_RE = /^\d{4}-\d{2}-\d{2}-\d{6}-record-floor\.md$/;
+/** A run entry: `…-record-catchup-<4 hex>.md` (the suffix keeps two same-second runs apart). */
+export const RUN_ENTRY_RE = /^\d{4}-\d{2}-\d{2}-\d{6}-record-catchup(?:-[0-9a-f]{4})?\.md$/;
 
 export const RECORD_STATES = Object.freeze(['measured', 'partial', 'unmeasured', 'no-floor', 'ambiguous-floor', 'no-marker']);
 

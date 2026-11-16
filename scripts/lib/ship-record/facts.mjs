@@ -16,7 +16,7 @@ import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 import { classifyGhFailure } from '../fleet/gh-facts.mjs';
 import { parseMessageTrailers, GATE_VALUES } from '../commit-trailers.mjs';
 import {
-  SHA_RE, isFloorEntryName, parseFloorMarker, parsePrMarkers, prNumberFromEntryName, classifyRecordState, listingStart,
+  SHA_RE, RUN_ENTRY_RE, isFloorEntryName, parseFloorMarker, parsePrMarkers, prNumberFromEntryName, classifyRecordState, listingStart,
 } from './state.mjs';
 
 export const ENTRIES_DIR = 'docs/status/entries';
@@ -169,7 +169,7 @@ export function listMergedSince({ gh }, { repo, branch, fromIso, toIso, limit = 
 export const hasCommit = ({ git }, sha) => SHA_RE.test(sha ?? '') && ok(git(['cat-file', '-e', `${sha}^{commit}`]));
 
 /** A file name the catch-up itself writes (per-PR, floor, run) — never evidence that /ship ran. */
-export const isCatchupEntryName = (name) => prNumberFromEntryName(name) !== null || isFloorEntryName(name) || /^\d{4}-\d{2}-\d{2}-\d{6}-record-catchup\.md$/.test(name);
+export const isCatchupEntryName = (name) => prNumberFromEntryName(name) !== null || isFloorEntryName(name) || RUN_ENTRY_RE.test(name);
 
 /** Every path a merge changed against its first parent: NUL-separated (no quoting), sorted (no config-dependent order). */
 export function mergePaths({ git }, sha) {
