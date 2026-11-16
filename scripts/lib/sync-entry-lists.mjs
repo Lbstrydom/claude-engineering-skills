@@ -172,6 +172,10 @@ export const CORE_ENTRY = [
   // /ship SKILL.md shells it, nothing imports it. Walker pulls in
   // lib/commit-trailers.mjs (+ its sensitive-paths closure). Also in CLI_SMOKE_SET.
   'scripts/ship-commit.mjs',
+  // Ship record catch-up (docs/plans/ship-record-catchup.md): /ship's record half for PRs merged without /ship. Nothing
+  // imports it — SKILL.md, the coordinator playbook and fleet's record-count child (a SIBLING of fleet.mjs) shell it, so it
+  // must ship beside fleet.mjs in every consumer. Walker pulls in lib/ship-record/**. Also in CLI_SMOKE_SET.
+  'scripts/ship-record.mjs',
   // Test-evidence record/check CLI (Cluster C); nothing imports it, so declared here. In CLI_SMOKE_SET.
   'scripts/test-evidence.mjs',
   '.claude/hooks/quickfix-scan.mjs',

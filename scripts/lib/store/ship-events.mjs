@@ -10,6 +10,7 @@
 
 import { isCloudEnabled } from './repo.mjs';
 import { many, insertReturning } from '../db/query.mjs';
+import { describeSchemaFault } from '../db/errors.mjs';
 import { runWindowCountQuery } from './window-count-query.mjs';
 // Single oracle for "is this string a plausible audit_repos row id" — the same
 // UUID_RE campaign.mjs's CLI and bandit-fp.mjs's own writers already gate on.
@@ -44,7 +45,7 @@ export async function recordShipEvent(repoId, event) {
   }
   if (!await isCloudEnabled()) return { ok: true, cloud: false, reason: 'cloud-off' };
   try {
-    await insertReturning('ship_events', {
+    const inserted = await insertReturning('ship_events', {
       repo_id: repoId || null,
       commit_sha: event.commitSha || null,
       branch: event.branch || null,
@@ -58,11 +59,55 @@ export async function recordShipEvent(repoId, event) {
       stack_detected: event.stackDetected || null,
       framework: event.framework || null,
       duration_ms: event.durationMs || null,
-    });
+    }, { returning: SHIP_EVENT_RETURNING });
+    // Verified, not assumed (audit A-R1-H5): success means the row came back, so a caller reconciling events can trust it.
+    if (!inserted?.id) return { ok: false, cloud: true, reason: 'write-unverified', error: 'the insert returned no row' };
     return { ok: true, cloud: true };
   } catch (err) {
     process.stderr.write(`  [learning] recordShipEvent failed: ${err.message}\n`);
     return { ok: false, cloud: true, reason: 'write-failed', error: err.message };
+  }
+}
+
+/** The projection the verified write reads back (the query builder accepts true | '*' | string[], never a bare column). */
+const SHIP_EVENT_RETURNING = Object.freeze(['id']);
+/** The projection, for the contract test that runs it through the query builder (the barrel exports functions only). */
+export const shipEventReturning = () => SHIP_EVENT_RETURNING;
+
+/** At most this many commit shas per `findShipEvents` call (one bounded `= ANY($2)` read). */
+const FIND_SHIP_EVENTS_MAX = 500;
+
+/**
+ * Which of `shas` already have a ship event carrying `reason` in `block_reasons` — the record catch-up's
+ * read-before-write (docs/plans/ship-record-catchup.md §2.5). ONE batched read. At-least-once, not exactly-once: the
+ * table has no unique key, so any count of these events must deduplicate by (repo_id, commit_sha).
+ *
+ * A schema fault is NOT "no events" — it comes back `ok:false` with the fault described, so a broken query can never
+ * read as "every event is missing" and re-insert the lot.
+ *
+ * @param {string} repoId
+ * @param {string[]} shas
+ * @param {string} reason
+ * @returns {Promise<{ok: true, cloud: boolean, present: Set<string>} | {ok: false, cloud: boolean, reason: string, error?: string}>}
+ */
+export async function findShipEvents(repoId, shas, reason) {
+  if (!Array.isArray(shas) || shas.length > FIND_SHIP_EVENTS_MAX || !shas.every((s) => typeof s === 'string' && /^[0-9a-f]{40}$/.test(s))) {
+    return { ok: false, cloud: false, reason: 'bad-input', error: `findShipEvents: shas must be at most ${FIND_SHIP_EVENTS_MAX} 40-hex commit ids` };
+  }
+  if (typeof reason !== 'string' || !/^[a-z0-9-]{1,64}$/.test(reason)) return { ok: false, cloud: false, reason: 'bad-input', error: 'findShipEvents: reason must be a block-reason code' };
+  if (repoId != null && !isSyncableRepoId(repoId)) return { ok: false, cloud: false, reason: 'invalid-repo-id', error: `findShipEvents: repoId "${String(repoId)}" is not a valid audit_repos UUID` };
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, present: new Set() };
+  if (shas.length === 0) return { ok: true, cloud: true, present: new Set() };
+  try {
+    const rows = await many(
+      `SELECT DISTINCT commit_sha FROM ship_events
+        WHERE repo_id IS NOT DISTINCT FROM $1 AND commit_sha = ANY($2) AND block_reasons @> $3::jsonb`,
+      [repoId || null, shas, JSON.stringify([reason])], // a READ binds raw: node-pg builds the text[] literal
+    );
+    return { ok: true, cloud: true, present: new Set(rows.map((r) => r.commit_sha)) };
+  } catch (err) {
+    const fault = describeSchemaFault(err, 'findShipEvents');
+    return { ok: false, cloud: true, reason: fault ? 'schema-fault' : 'read-failed', error: fault ?? err.message };
   }
 }
 

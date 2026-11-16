@@ -80,15 +80,16 @@ import {
   evaluatePreauthorisedShip, renderPreauthConditions, gatherChangedPaths,
 } from './lib/ship-preauth.mjs';
 import { readFinalReviewMarker, boundFinalReviewDisposition } from './lib/final-review-marker.mjs';
+import { checkRecordCommit } from './lib/ship-record/authority.mjs'; // --record: docs-only record commits (ship-record-catchup §2.6)
 import { finishAndExit } from './lib/cli-io.mjs';
 
 const KNOWN_FLAGS = new Set([
   '--message-file', '--skill', '--models', '--gate', '--path',
-  '--expect-head', '--expect-branch', '--work-item',
+  '--expect-head', '--expect-branch', '--work-item', '--decision',
 ]);
 const KNOWN_BOOLEAN_FLAGS = new Set([
   '--no-run-id', '--no-tests', '--selfcheck-relocation', '--expect-detached',
-  '--check-migrations', '--preauthorised', '--check-preauthorised',
+  '--check-migrations', '--preauthorised', '--check-preauthorised', '--record',
 ]);
 
 function err(line) { process.stderr.write(`${line}\n`); }
@@ -262,6 +263,7 @@ async function main() {
     if (a === '--expect-detached') { opts.expectDetached = true; continue; }
     // A boolean flag that is ACCEPTED but never stored is silently inert: the commit would proceed unchecked. Stored here.
     if (a === '--preauthorised') { opts.preauthorised = true; continue; }
+    if (a === '--record') { opts.record = true; continue; }
     if (KNOWN_FLAGS.has(a)) {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) {
@@ -280,7 +282,7 @@ async function main() {
     if (!KNOWN_BOOLEAN_FLAGS.has(a)) {
       inputErrors.push({
         field: a,
-        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--path|--expect-head|--expect-branch|--expect-detached|--no-run-id|--no-tests|--preauthorised|--work-item. Example: --gate converged`,
+        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--path|--expect-head|--expect-branch|--expect-detached|--no-run-id|--no-tests|--preauthorised|--record|--decision|--work-item. Example: --gate converged`,
       });
     }
   }
@@ -307,21 +309,10 @@ async function main() {
   if (!mf) {
     inputErrors.push(messageFileError('missing', String(mf)));
   } else if (mf === '-') {
-    // `-` reads the message from stdin, so a heredoc satisfies the skill's
-    // "write it to a file, never -m" rule without leaving a file behind.
-    // Upstream 575256de asked for this via `/dev/stdin`, which cannot work on
-    // the containment path below: Git-Bash resolves it to `/proc/self/fd/0`,
-    // which is not a regular file, so `existsSync` is false and it reported as
-    // a merely-missing path. `-` is the portable spelling and needs no
-    // filesystem at all.
-    //
-    // It also removes the reason temp files accumulate: `.claude/tmp` held 658
-    // of them (39MB) when this landed, largely one-shot commit messages.
-    //
-    // No safety check, and that is not a gap: `checkMessageFileSafety` exists
-    // to stop a path argument being pointed at a file the caller never intended
-    // to read (a key, something outside the repo). Piped bytes were already in
-    // the caller's hands — there is no path to traverse and no new egress.
+    // `-` reads the message from stdin (a heredoc, no file left behind). Not `/dev/stdin` (upstream 575256de): Git-Bash
+    // resolves it to `/proc/self/fd/0`, not a regular file, so it read as merely missing. It also stopped temp files
+    // accumulating (`.claude/tmp` held 658, 39MB). No safety check, and that is not a gap: `checkMessageFileSafety` stops a
+    // PATH being pointed at a file the caller never meant to read; piped bytes were already in the caller's hands.
     try {
       messageText = fs.readFileSync(0, 'utf-8');
     } catch (e) {
@@ -690,6 +681,12 @@ async function main() {
     }
     values.shipAuthority = 'launch-prompt';
     err('  [preauthorised] all conditions held — the commit will carry AI-Ship-Authority: launch-prompt');
+  }
+  if (opts.record) { // a docs-only RECORD commit under a standing decision; the change itself is judged against HEAD
+    const rec = checkRecordCommit({ repoRoot, git: gitRun, paths: opts.paths, decisionId: opts.decision, gate: values.gate, flags: opts });
+    for (const line of rec.lines) err(line);
+    if (!rec.ok) { err('AGENT FIX: --record: this commit is not a record-only change. Commit code through /ship, or fix what is REFUSED above.'); process.exit(2); }
+    values.shipAuthority = 'record-catchup'; values.decision = rec.decisionId;
   }
 
   // ---- scope check (row 11) -----------------------------------------------

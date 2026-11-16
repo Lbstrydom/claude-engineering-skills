@@ -89,6 +89,7 @@ const CLI_SMOKE_SET = [
   'check-windowed-views.mjs', // windowed-view declaration gate — relocation-sensitive twice over (repo root AND migrations dir resolve by layout, and a consumer has both candidate dirs); declared in sync-entry-lists.mjs CORE_ENTRY, verified before adding
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
   'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
+  'ship-record.mjs', // ship record catch-up; declared in sync-entry-lists.mjs CORE_ENTRY (verified before adding); fleet spawns it as a sibling
   'test-evidence.mjs', // hash-bound test-evidence record/check; declared in sync-to-repos.mjs
   'ensure-branch-protection.mjs', // strengthen-only main-branch ruleset tool — declared in sync-to-repos.mjs entries; a cloned consumer self-applies
   'maintenance-checks.mjs', // local weekly-maintenance replica — spawns sibling checks, must survive relocation

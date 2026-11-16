@@ -58,6 +58,9 @@ otherwise; if any condition refuses, stop and tell the user to type /ship PLAN_P
 evidence or re-run to find a pass. Say "ship pre-authorised by launch prompt" in the claim intent; the commit then carries
 the trailer AI-Ship-Authority: launch-prompt.]
 
+RECORDS. You never run the record catch-up (ship-record.mjs) or write a session-log entry for another PR: the coordinator
+owns that for the repo (coordinator-playbook §7). [rule 8]
+
 FINAL REPORT. Per PR: the branch, the PR number, the files you changed, the audit rounds, the red and green evidence against
 your PROOF PLAN, whether it shipped itself (with the conditions output), and your Findings.
 

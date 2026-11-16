@@ -140,7 +140,8 @@ describe('fleet status through the CLI', () => {
     const { repo } = makeFleetRepo();
     addBranch(repo, 'feat-a', { 'a.txt': 'A\n' });
     addBranch(repo, 'feat-b', { 'b.txt': 'B\n' });
-    const strip = (r) => JSON.stringify(r.json?.status, (k, v) => (k === 'observedAt' ? undefined : v));
+    // observedAt and the session-log cache's attempt/measure instants are clock readings, not cache-dependent state.
+    const strip = (r) => JSON.stringify(r.json?.status, (k, v) => (['observedAt', 'attemptedAt', 'measuredAt'].includes(k) ? undefined : v));
     const off = runFleet(['status', '--json'], { cwd: repo, env: scrubbedEnv({ FLEET_CACHE: 'off', FLEET_TELEMETRY: 'off' }) });
     const cold = runFleet(['status', '--json'], { cwd: repo, env: scrubbedEnv({ FLEET_TELEMETRY: 'off' }) });
     const warm = runFleet(['status', '--json'], { cwd: repo, env: scrubbedEnv({ FLEET_TELEMETRY: 'off' }) });

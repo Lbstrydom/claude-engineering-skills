@@ -27,7 +27,7 @@ export const GATE_VALUES = Object.freeze(['passed', 'converged', 'waived', 'not-
  * against (ship-train verify), so adding a key here is the only edit a reader needs; a test pins the renderer to it.
  */
 export const AI_TRAILER_KEYS = Object.freeze([
-  'AI-Skill', 'AI-Models', 'AI-Gate', 'AI-Run-ID', 'AI-Work-Item', 'AI-Audited-Tree', 'AI-Final-Review', 'AI-Ship-Authority',
+  'AI-Skill', 'AI-Models', 'AI-Gate', 'AI-Run-ID', 'AI-Work-Item', 'AI-Audited-Tree', 'AI-Final-Review', 'AI-Ship-Authority', 'AI-Decision',
 ]);
 
 /**
@@ -87,6 +87,8 @@ export const RUN_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 export const TREE_ID_RE = GIT_OBJECT_ID_RE;
 export const SKILL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 export const RESERVED_TRAILER_RE = /^AI-[A-Za-z0-9-]*\s*:/i;
+/** A fleet decision id (`dec-<14 digits>-<4 hex>`): the ONE grammar — lib/fleet/decisions.mjs imports it from here (B-R2-M4). */
+export const DECISION_ID_RE = /^dec-[0-9]{14}-[0-9a-f]{4}$/;
 
 /**
  * Whether this evidence can still be checked against committed content even
@@ -553,7 +555,7 @@ export function messageFileError(kind, suppliedPath) {
  *   git rev-parse <sha>^{tree}  ==  git log -1 --format='%(trailers:key=AI-Audited-Tree,valueonly)' <sha>
  *
  * @param {{skill: string, models: string[], gate: string, runId?: string|null, auditedTree?: string|null,
- *   finalReview?: 'approve'|'approve_with_debt'|'blocked'|null, shipAuthority?: string}} v
+ *   finalReview?: 'approve'|'approve_with_debt'|'blocked'|null, shipAuthority?: string, decision?: string}} v
  * @returns {string[]}
  */
 export function formatTrailerBlock(v) {
@@ -596,6 +598,14 @@ export function formatTrailerBlock(v) {
   // keeps it queryable (`git log --grep` / trailers) and impossible to spell differently by hand (the AI-* namespace is
   // reserved, so a hand-typed one is rejected as `reserved-trailer`).
   if (v.shipAuthority === 'launch-prompt') lines.push('AI-Ship-Authority: launch-prompt');
+  // A docs-only RECORD commit (ship-commit `--record`, docs/plans/ship-record-catchup.md §2.6): set only after
+  // lib/ship-record/authority.mjs held, and always with the standing decision it ran under, so the merge reviewer can read
+  // the user's exact words (`fleet decision list`). Without a well-formed decision id neither line is emitted.
+  if (v.shipAuthority === 'record-catchup') {
+    // Loud, never a silent omission (B-R2-M4): ship-commit validated the decision before this point, so a bad id here is a bug.
+    if (!DECISION_ID_RE.test(v.decision ?? '')) throw new Error(`formatTrailerBlock: record-catchup needs a decision id (dec-<14 digits>-<4 hex>), got ${JSON.stringify(v.decision ?? null)}`);
+    lines.push('AI-Ship-Authority: record-catchup', `AI-Decision: ${v.decision}`);
+  }
   return lines;
 }
 

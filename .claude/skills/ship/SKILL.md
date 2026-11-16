@@ -707,16 +707,10 @@ plus §7b/§11 `Files:` bullets when present (reuse the paths Step 5 already
 read from the plan). An empty intersection: proceed silently, nothing to
 report.
 
-A non-empty intersection is worth a pause, not an automatic stop — name the
-overlapping files and the upstream commit(s) that touched them, and let the
-operator pick: rebase now (the squash-merge note below already prefers
-`rebase` over `merge` on a `/ship`-created branch, for the same reason) or
-push and resolve on GitHub. Either way, don't decide it silently — a
-confusing CI investigation later costs more than one question now.
-
-If a rebase or merge resolves real overlap, re-run the full test suite
-before continuing to Step 6 — a clean 3-way merge with zero conflict markers
-is not proof of correctness.
+A non-empty intersection is a pause, not a stop: name the overlapping files and
+upstream commit(s), and let the operator pick rebase now (preferred, as below)
+or push and resolve on GitHub — say which. After a rebase or merge that
+resolved real overlap, re-run the full suite: zero conflict markers prove nothing.
 
 ---
 
@@ -1094,6 +1088,9 @@ explicit-invocation rule above. Its three flags are read only from this invocati
 refusals, overrides, recovery: `references/train-mode.md` (read it before running any verb of
 `node scripts/ship-train.mjs plan | message | land | verify | sync`).
 
+**PRs merged without `/ship`** (fleet land, `gh pr merge`): the record half, docs-only, merge stays human —
+`node scripts/ship-record.mjs`, `references/record-catchup.md`.
+
 ---
 
 ## Reference files
@@ -1113,6 +1110,7 @@ situations — read them only when the trigger applies.
 | `references/python-environment-discovery.md` | Python pre-push command discovery — env wrapper detection + per-tool probe order. | detect-stack returned `python` or `mixed` with Python files in the diff. |
 | `references/status-md-format.md` | status.md session-log template + update rules + persona / UX status sections. | Step 2 — creating status.md for the first time, OR appending UX / Persona / Regression-Lock / Plan-Verify sections. |
 | `references/train-mode.md` | /ship --train runbook — plan, land, verify, sync a batch of ship-ready PRs; refusals, overrides, recovery. | `/ship --train` was invoked, or the user asked to land several ready PRs together. |
+| `references/record-catchup.md` | Record catch-up — /ship's record half for PRs merged without it: one entry per PR, docs-only commit, human merge. | A PR merged without /ship (`fleet status`: records). |
 | `references/upstream-triage.md` | Step 0.5h — triaging a consumer's upstream report: the owning store, the FULL uuid, and the freshness check. | Step 0.5h's card lists a report you are about to `ack`, `fix` or `wont-fix`. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |
 | `references/ci-merge.md` | ci-merge.mjs - wait on every check of the pushed head, reject red or UNSTABLE, update BEHIND, squash-merge. | A push opened or updated a PR: waiting on CI, or merging. |

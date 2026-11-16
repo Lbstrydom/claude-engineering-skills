@@ -925,6 +925,10 @@
     "scripts/check-setup.mjs": {
       "description": "Setup doctor: opens with audit readiness (audit route, degraded-audit policy, CRLF hazard) before any spend, then per-feature keys, store, browser and GitHub checks.",
       "category": "diagnostic"
+    },
+    "scripts/ship-record.mjs": {
+      "description": "Ship record catch-up: record PRs merged without /ship (status, catchup, floor, init); writes only new session-log entry files.",
+      "category": "skills"
     }
   }
 }
