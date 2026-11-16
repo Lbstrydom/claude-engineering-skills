@@ -41,6 +41,7 @@ export async function computeDriftScore({ repoId, refreshId, simDup, simName, mi
   } catch (err) {
     const e = new Error(`drift_score RPC failed: ${err.message}`);
     e.code = err.code === 'FLOOR_UNSUPPORTED' ? 'FLOOR_UNSUPPORTED' : 'RPC_ERROR';
+    e.cause = err;
     throw e;
   }
 }
@@ -60,6 +61,7 @@ export async function getTopDuplicateClusters({ repoId, refreshId, limit = 20, m
   } catch (err) {
     const e = new Error(`top_duplicate_clusters RPC failed: ${err.message}`);
     e.code = err.code === 'FLOOR_UNSUPPORTED' ? 'FLOOR_UNSUPPORTED' : 'RPC_ERROR';
+    e.cause = err;
     throw e;
   }
 }

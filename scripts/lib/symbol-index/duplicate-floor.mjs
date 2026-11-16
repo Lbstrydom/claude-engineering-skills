@@ -152,6 +152,7 @@ export function renderFloorLines(state) {
   if (state.reason === 'count-unavailable') {
     return [`  floor: ${how} applied; suppressed clusters UNKNOWN (count query failed)`];
   }
-  return [`  floor: ${how} — suppressed ${state.suppressedClusters} cluster(s) `
-    + `(${state.rowsSuppressed} symbol(s) under ${state.minLines} lines)`];
+  const rows = state.rowsSuppressed === null || state.rowsSuppressed === undefined
+    ? 'symbol count UNKNOWN' : `${state.rowsSuppressed} symbol(s) under ${state.minLines} lines`;
+  return [`  floor: ${how} — suppressed ${state.suppressedClusters} cluster(s) (${rows})`];
 }

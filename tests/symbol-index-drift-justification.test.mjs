@@ -492,6 +492,8 @@ describe('duplicate-justification exclusion — end-to-end (disposable DB)', { s
     assert.equal(drift.duplication_floor.rows_suppressed, 2);
     const driftOff = await computeDriftScore({ repoId, refreshId });
     assert.equal(driftOff.duplication_floor.suppressed_clusters, 0, 'floor off suppresses nothing, and says 0 truthfully');
+    assert.equal(driftOff.duplication_pairs, 2, 'absolute: two 2-file clusters = 2 pairs with the floor off');
+    assert.equal(drift.duplication_pairs, 1, 'absolute: only the 8-line cluster = 1 pair at floor 6');
     assert.equal(driftOff.duplication_pairs - drift.duplication_pairs, 1, 'the score drops by the suppressed pair — list and score share one population');
   });
 
@@ -542,6 +544,7 @@ describe('duplicate-justification exclusion — end-to-end (disposable DB)', { s
     }
     const drift = await computeDriftScore({ repoId, refreshId, minLines: 6 });
     const f = drift.duplication_floor;
+    assert.equal(drift.duplication_pairs, 1, 'absolute: the 2 surviving copies make exactly 1 pair');
     assert.equal(f.suppressed_clusters, 0, 'the cluster survives with 2 files');
     assert.equal(f.pairs_before - f.pairs_after, 2, 'but 3 pairs became 1 — pairs_before/after explain the score change');
     assert.equal(f.rows_suppressed, 1);

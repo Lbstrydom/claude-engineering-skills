@@ -36,7 +36,7 @@ import {
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { renderArchitectureMap } from '../lib/arch-render.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
-import { FloorArgError, resolveMinLines, buildFloorState, floorExitCode } from '../lib/symbol-index/duplicate-floor.mjs';
+import { FloorArgError, resolveMinLines, readMinLinesFlag, buildFloorState, floorExitCode } from '../lib/symbol-index/duplicate-floor.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { loadDomainRules, loadCoverageConfig } from '../lib/symbol-index/domain-tagger.mjs';
 import { graphVerdict } from '../lib/symbol-index/graph-verdict.mjs';
@@ -53,15 +53,25 @@ import {
 import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
 /** Every flag this CLI accepts. `assertKnownFlags` rejects anything else. */
-export const KNOWN_FLAGS = Object.freeze(['--out']);
+export const KNOWN_FLAGS = Object.freeze(['--out', '--min-lines']);
 
 function parseArgs(argv) {
   // Same sweep as refresh.mjs / prune.mjs / remove-legacy-synced.mjs: an
   // ignored flag lets an operator believe they asked for something the CLI
   // never did. `arch:render --dry-run` used to render for real, silently.
   assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'arch:render' });
-  const args = { out: 'docs/architecture-map.md' };
+  const args = { out: 'docs/architecture-map.md', floor: null };
+  // Same resolver as arch:drift, so the rendered status can be told the same
+  // per-run floor. A malformed value is a usage error (exit 2) BEFORE any work,
+  // never a quiet INSUFFICIENT_DATA in a published map.
+  try {
+    args.floor = resolveMinLines({ flag: readMinLinesFlag(argv.slice(2)) });
+  } catch (err) {
+    if (err instanceof FloorArgError) throw new ArgvError(`arch:render: ${err.message}`);
+    throw err;
+  }
   for (let i = 2; i < argv.length; i++) {
+    if (argv[i] === '--min-lines') { if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) i++; continue; }
     if (argv[i] === '--out') {
       const value = argv[++i];
       // Validate arity here — assertKnownFlags deliberately checks names only.
@@ -316,20 +326,10 @@ async function main() {
     let drift = { score: 0 };
     let driftStatus;
     const threshold = symbolIndexConfig.driftThreshold;
-    // Same floor policy as arch:drift (env/default; flags belong to the CLIs), so
-    // the rendered status and the drift verdict describe one population.
-    // Resolved OUTSIDE the drift try: a malformed floor is a configuration error,
-    // not a drift_score RPC failure, and must not be reported as one.
-    let floorResolved = null;
-    try {
-      floorResolved = resolveMinLines();
-    } catch (cfgErr) {
-      if (!(cfgErr instanceof FloorArgError)) throw cfgErr;
-      process.stderr.write(`arch:render: ${cfgErr.message}\n`);
-    }
-    if (!floorResolved) {
-      driftStatus = 'INSUFFICIENT_DATA';
-    } else {
+    // Same floor policy as arch:drift: the floor was resolved (flag > env > default)
+    // in parseArgs, so a malformed value never reaches here. An opted-in floor the
+    // store cannot honour is a usage/setup error (exit 2), not INSUFFICIENT_DATA.
+    {
       try {
         const scoreWith = (minLines) => computeDriftScore({
           repoId: repo.id, refreshId: snap.refreshId,
@@ -338,18 +338,19 @@ async function main() {
           minLines,
         });
         try {
-          drift = await scoreWith(floorResolved.minLines);
+          drift = await scoreWith(args.floor.minLines);
         } catch (floorErr) {
           if (floorErr.code !== 'FLOOR_UNSUPPORTED') throw floorErr;
-          // Same rule as arch:drift: an INHERITED default degrades visibly; a floor
-          // the operator set by name that the store cannot honour is a failed measurement.
-          if (floorExitCode(buildFloorState(floorResolved, { unsupported: true })) === 2) throw floorErr;
+          if (floorExitCode(buildFloorState(args.floor, { unsupported: true })) === 2) {
+            throw new ArgvError(`arch:render: --min-lines ${args.floor.minLines} (${args.floor.source}) needs the floor migration, which this store has not applied; migrate it or pass --min-lines 0`);
+          }
           process.stderr.write(`arch:render: floor migration not applied on this store; rendering the un-floored score\n`);
           drift = await scoreWith(0);
         }
         // A missing / non-numeric score is an unavailable measurement, never 0 (=GREEN).
         driftStatus = Number.isFinite(drift?.score) ? classify(drift.score, threshold) : 'INSUFFICIENT_DATA';
       } catch (err) {
+        if (err?.code === 'ARGV_ERROR') throw err;
         process.stderr.write(`arch:render: drift_score RPC failed: ${err.message}\n`);
         driftStatus = 'INSUFFICIENT_DATA';
       }

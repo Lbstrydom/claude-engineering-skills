@@ -132,6 +132,11 @@ describe('renderFloorLines / renderText', () => {
     assert.match(unsupported, /NOT APPLIED/);
     assert.doesNotMatch(unsupported, /suppressed 0/);
   });
+  it('a valid count with a missing row count renders UNKNOWN, never "null symbol(s)"', () => {
+    const out = renderFloorLines(buildFloorState({ minLines: 6, source: 'flag' }, { stats: { ...stats, rows_suppressed: undefined } })).join(String.fromCharCode(10));
+    assert.match(out, /symbol count UNKNOWN/);
+    assert.doesNotMatch(out, /null/);
+  });
   it('the zero-cluster text carries the floor line, so "clean" is never printed without it', () => {
     const out = renderText([], 'repo', { truncated: false, limit: 20, symbolCount: 10, store: null,
       floor: buildFloorState({ minLines: 6, source: 'default' }, { stats }) });

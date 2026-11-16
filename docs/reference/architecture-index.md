@@ -129,8 +129,8 @@ changes until it opts in. **Opt in from your own workflow** by passing the same
 value to both CLIs — e.g. storyline passes `--min-lines 6` to `duplicates.mjs`
 and to `drift.mjs`, which hides symbols of 5 lines or fewer (the
 `sleep`/`sha256`/`claim` class) while a function with real logic (≥6 lines) still
-clusters. Pass it to **both**, or the list and the verdict count different
-populations.
+clusters. Pass it to **both** (and to `arch:render` if you render the map — it takes the same
+`--min-lines`), or they count different populations.
 
 The floor is **path-independent**: when you opt in it also hides a short duplicate in production code, not only test helpers. The suppressed count below is how you notice; if a real 4-line duplicate matters to you, lower the floor or leave it off.
 
