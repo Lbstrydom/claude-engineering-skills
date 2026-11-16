@@ -74,12 +74,17 @@ const inputKey = (name, input) => crypto.createHash('sha256')
  */
 export function classifyToolResult({ text, isError, permissionDecision, toolDenialKind }) {
   const head = text.slice(0, 600);
-  if (HOOK_REWRITE_PATTERN.test(head)) return 'hook_rewrite';
+  // Structured fields first; TEXT patterns only on an error result — a successful
+  // output that merely CONTAINS hook/denial text (a grep over transcripts, a log
+  // dump) is not that event (cluster-A audit R4-M1).
   if (permissionDecision?.decision === 'reject' && permissionDecision?.source === 'hook') return 'hook_block';
-  if (HOOK_BLOCK_PATTERN.test(head)) return 'hook_block';
-  if (POST_HOOK_ERROR_PATTERN.test(head)) return 'hook_error';
   if (permissionDecision?.decision === 'reject' || toolDenialKind) return 'denial';
-  if (DENIAL_PATTERNS.some((re) => re.test(head))) return 'denial';
+  if (isError) {
+    if (HOOK_REWRITE_PATTERN.test(head)) return 'hook_rewrite';
+    if (HOOK_BLOCK_PATTERN.test(head)) return 'hook_block';
+    if (POST_HOOK_ERROR_PATTERN.test(head)) return 'hook_error';
+    if (DENIAL_PATTERNS.some((re) => re.test(head))) return 'denial';
+  }
   const refusalScope = isError ? head : meaningfulLine(head);
   if (REFUSAL_PATTERNS.some((re) => re.test(refusalScope))) return 'refusal';
   if (isError) return 'tool_error';

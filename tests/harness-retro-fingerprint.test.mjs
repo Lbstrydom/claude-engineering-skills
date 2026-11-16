@@ -11,8 +11,8 @@ import {
 
 describe('normaliseSignalText', () => {
   it('replaces absolute Windows, POSIX and home paths', () => {
-    assert.equal(normaliseSignalText('cannot open C:\\Users\\bob\\x.txt now'), 'cannot open <path> now');
-    assert.equal(normaliseSignalText('cannot open /c/GIT/repo/x.mjs now'), 'cannot open <path> now');
+    assert.equal(normaliseSignalText('cannot open C:\\Users\\bob\\x.txt: denied'), 'cannot open <path>: denied');
+    assert.equal(normaliseSignalText('cannot open /c/GIT/repo/x.mjs: denied'), 'cannot open <path>: denied');
     assert.equal(normaliseSignalText('see ~/.claude/projects/x'), 'see <path>');
   });
 
@@ -27,15 +27,18 @@ describe('normaliseSignalText', () => {
     assert.equal(out, '<id> <id> at <sha> by <email> <url> line N');
   });
 
-  it('a path with spaces is normalised whole — no tail left behind', () => {
-    assert.equal(normaliseSignalText('cannot open C:\\Users\\bob\\My Client Docs\\plan.txt now'), 'cannot open <path> now');
-    assert.equal(normaliseSignalText('cannot open /srv/client acme/config.json now'), 'cannot open <path> now');
-    assert.equal(normaliseSignalText('cannot open /home/alice/clients/Alice Smith.txt now'), 'cannot open <path> now');
-    assert.equal(normaliseSignalText('cannot open C:\\Users\\bob\\Alice Smith.docx now'), 'cannot open <path> now');
+  it('a path is redacted to the next delimiter, spaces and all — no component left behind', () => {
+    assert.equal(normaliseSignalText('open /home/Alice/My Private Docs/file.txt'), 'open <path>');
+    assert.equal(normaliseSignalText('cd C:\\Users\\Alice Smith'), 'cd <path>');
+    assert.equal(normaliseSignalText("ls: cannot access '/x/My Docs': No such file"), "ls: cannot access '<path>': No such file");
+    assert.equal(normaliseSignalText('cannot open C:\\Users\\bob\\My Client Docs\\plan.txt: denied'), 'cannot open <path>: denied');
+    assert.equal(normaliseSignalText('cannot open /srv/client acme/config.json: denied'), 'cannot open <path>: denied');
+    assert.equal(normaliseSignalText('cannot open /home/alice/clients/Alice Smith.txt: denied'), 'cannot open <path>: denied');
+    assert.equal(normaliseSignalText('cannot open C:\\Users\\bob\\Alice Smith.docx: denied'), 'cannot open <path>: denied');
   });
 
   it('a single-component absolute path is normalised too', () => {
-    assert.equal(normaliseSignalText('cannot read /customer-secret now'), 'cannot read <path> now');
+    assert.equal(normaliseSignalText('cannot read /customer-secret: denied'), 'cannot read <path>: denied');
   });
 
   it('keeps a status code (401 ≠ 404) while other numbers collapse', () => {

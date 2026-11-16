@@ -56,14 +56,13 @@ export function normaliseSignalText(line) {
     .replace(/\bmcp__[0-9a-f]{8}-[0-9a-f-]{27,}__/gi, 'mcp__X__')
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<id>')
     .replace(/\b(?:toolu|local|req|msg|agent)[_-][A-Za-z0-9-]{6,}/g, '<id>')
-    // Absolute paths, INCLUDING segments with spaces ("My Docs"): a space is
-    // consumed when the next word still carries a separator, so the path's tail
-    // is never left behind in the label (cluster-A audit R2-H2).
-    // ...and a multiword FINAL component ("Alice Smith.txt"): a space is also
-    // consumed when the next word carries a file extension (audit R3-H1).
-    .replace(/~[\\/](?:[^\s'"`)\]]|\s(?=[^'"`)\]\n]*[\\/]|[^\s'"`)\]]*\.[A-Za-z0-9]{1,6}\b))*/g, '<path>')
-    .replace(/[A-Za-z]:[\\/](?:[^\s'"`)\]]|\s(?=[^'"`)\]\n]*[\\/]|[^\s'"`)\]]*\.[A-Za-z0-9]{1,6}\b))*/g, '<path>')
-    .replace(/(?<![\w.<>~])\/[\w.~-](?:[^\s'"`)\]:]|\s(?=[^\s'"`)\]]*\/|[^\s'"`)\]]*\.[A-Za-z0-9]{1,6}\b))*/g, '<path>')
+    // Absolute paths are redacted TO THE NEXT DELIMITER (quote, backtick, ), ],
+    // ", " or ": ") — not word by word. A path may contain spaces anywhere
+    // ("C:\Users\Alice Smith\My Docs"), and every word-level heuristic tried
+    // here left some component behind (cluster-A audit R2-H2, R3-H1, R4-H1/H7).
+    // Over-redaction is the safe direction: it only merges fingerprints.
+    .replace(/(?:~|[A-Za-z]:)[\\/](?:(?![,:]\s)[^'"`)\]\n])*/g, '<path>')
+    .replace(/(?<![\w.<>~])\/[\w.~-](?:(?![,:]\s)[^'"`)\]\n])*/g, '<path>')
     .replace(/\b[0-9a-f]{7,40}\b/gi, (m) => (/\d/.test(m) && /[a-f]/i.test(m) ? '<sha>' : m))
     // A status code carries meaning (401 ≠ 404): keep a 3-digit number that
     // follows HTTP/status/code/error; every other number is noise.

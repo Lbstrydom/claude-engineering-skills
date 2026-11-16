@@ -20,13 +20,15 @@ import path from 'node:path';
 import readline from 'node:readline';
 
 /**
- * Directory entries, distinguishing ABSENCE (ENOENT/ENOTDIR → empty) from a
+ * Directory entries, distinguishing ABSENCE (ENOENT → empty) from a
  * FAILURE to read (anything else → counted in `errors`). An unreadable dir must
  * never look like an empty one (cluster-A audit H17).
  */
 function dirEntries(d, errors) {
   try { return fs.readdirSync(d, { withFileTypes: true }); } catch (err) {
-    if (err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR') errors.push({ path: d, code: err?.code ?? 'EREAD' });
+    // Only ENOENT is absence. ENOTDIR means something that is NOT a directory
+    // sits where one is expected (e.g. `projects` is a file) — an error (R4-M2).
+    if (err?.code !== 'ENOENT') errors.push({ path: d, code: err?.code ?? 'EREAD' });
     return [];
   }
 }

@@ -42,6 +42,10 @@ describe('classifyToolResult', () => {
     assert.equal(classifyToolResult({ text: 'docs/a.md\nThe CLI refuses — writing nothing', isError: false }), null);
     assert.equal(classifyToolResult({ text: 'ces-sync-manifest-refused-writes.md', isError: false }), null);
   });
+  it('hook/denial TEXT inside a successful output is not that event', () => {
+    assert.equal(classifyToolResult({ text: 'PreToolUse:Bash hook error: Bash leading command is grep', isError: false }), null);
+    assert.equal(classifyToolResult({ text: 'Permission for this action was denied by the Claude Code auto mode classifier.', isError: false }), null);
+  });
   it('any other error is tool_error', () => {
     assert.equal(classifyToolResult({ text: 'Error: ENOENT', isError: true }), 'tool_error');
   });
