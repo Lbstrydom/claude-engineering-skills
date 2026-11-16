@@ -1,6 +1,6 @@
 # Plan: Ship record catch-up — /ship's RECORD half without its PUSH/MERGE authority
 - **Date**: 2026-11-16
-- **Status**: Approved
+- **Status**: In Progress
 - **Author**: Claude + Louis
 - **Scope**: backend (Node ESM CLIs + libs, skill prose) — stack `js-ts`
 - **Target domain(s)**: `fleet`, `ship`, `skills-content`
@@ -550,3 +550,33 @@ shrink), `npm run size:ratchet:gate`, `npm run bundle:deps`, `npm run guards:pre
   match to an unrelated repo-identity helper, not a shared primitive. Remaining risk is implementation-completeness, which the
   clustered `/audit-code` verifies against real code.
 - **Final gate** (Gemini, round 1): **APPROVE**, gate `approve` (blocking 0, debt 2 LOW), both folded in: the file plan now names `revokeDecision` and the `AI-Decision` trailer; `sanitizeField` renders `ref`/`path` with a backtick fence one longer than the longest backtick run in the value (CommonMark), so a backtick cannot close the span.
+
+## Implementation Log
+
+### 2026-11-16 — /cycle --autonomous (clusters A–C)
+- **Completed**: all seven phases. Cluster A — `scripts/lib/ship-record/{state,facts,entry,commands}.mjs`, `scripts/ship-record.mjs`
+  (`status | catchup | floor | init`), `findShipEvents` in `scripts/lib/store/ship-events.mjs`. Cluster B —
+  `scripts/lib/fleet/decisions.mjs` + `decisions-cmd.mjs` (`fleet decision record | revoke | list`),
+  `scripts/lib/ship-record/authority.mjs`, `ship-commit.mjs --record --decision`, `AI-Ship-Authority: record-catchup` +
+  `AI-Decision` trailers. Cluster C — `scripts/lib/fleet/record-count.mjs` (status/next/footer/land), the runbook
+  `skills/ship/references/record-catchup.md`, ship/fleet skill prose, `CORE_ENTRY` + `CLI_SMOKE_SET` + CLI catalog.
+- **Audits**: A — 6 GPT rounds (H 11→3→1→0→2→1), stopped at the cap while productive (every finding fixed with a regression
+  test). B — 5 rounds, converged at R5 (PASS, H0 M2, both then fixed). C — 6 rounds; see the audit trail. Every dismissal
+  went through deliberation (B H6/M3/M5, C H1/M4/L1) or is a tooling coverage notice.
+- **Live proof** (measured 2026-11-16 on CES, this branch): `node scripts/ship-record.mjs status --json` → `no-floor`,
+  `unrecorded: null`; a dry `floor --json` covers 31 merged PRs since the last entry (2026-11-13), and an independent
+  `gh pr list --state merged --base main --search "merged:>=2026-11-13"` counts 31 settled PRs — equal. Trailer coverage in
+  that window: 2 of 31.
+- **Deviations from the plan, and why**:
+  - The script writes NO plan file (§2.4 after audit R2-H1): plan Implementation Log lines are printed for the
+    coordinator to paste; `--record` accepts a section-aware, insertion-only plan change.
+  - The PR body and head-ref name are not rendered (immutability, R2-H2 / A-R1-M12); the title is the merge commit's subject.
+  - Extra files: `scripts/lib/ship-record/commands.mjs` (verbs, testable without the CLI) and
+    `scripts/lib/fleet/decisions-cmd.mjs` (keeps ship-commit's import of the reader free of fleet's command layer).
+  - Rule 8's note went into `skills/fleet/references/coordinator-playbook.md` §7, not `coordination-rationale.md`, which is
+    at 11,992 of its 12,000-char cap.
+  - `--fetch` uses an explicit `+refs/heads/<b>:refs/remotes/origin/<b>` refspec; the base branch must come from
+    `origin/HEAD` or `--base` (no guessed `main`).
+- **Remaining (operational, after merge + sync)**: per repo, the coordinator records the standing decision, runs
+  `init` (consumers) → `floor --write` → commit with `--record` → docs-only PR the user merges → `catchup --write` at each
+  cadence point.

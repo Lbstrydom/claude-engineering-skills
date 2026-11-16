@@ -145,3 +145,16 @@ describe('audit C-R5 regressions', () => {
     assert.equal(invalidateRecordCache(null, NOW), false);
   });
 });
+
+describe('audit C-R6 regressions', () => {
+  it('H1: invalidations taking the lock out of timestamp order keep attemptedAt monotonic', async () => {
+    const { invalidateRecordCache } = await import('../scripts/lib/fleet/record-count.mjs');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'record-count-mono-'));
+    const later = new Date(NOW.getTime() + 5000);
+    invalidateRecordCache(dir, later);
+    invalidateRecordCache(dir, NOW); // stamped earlier, arrives second
+    assert.ok(Date.parse(readRecordCache(dir).record.attemptedAt) > later.getTime());
+    const r = refreshRecordCache({ cacheDir: dir, cwd: dir, now: later, run: () => interpretRecordStatus(env({ counts: { unrecorded: 0, unknown: 0 } })), script: 'x' });
+    assert.equal(r.written, false, 'a refresh that started before the last invalidation loses');
+  });
+});

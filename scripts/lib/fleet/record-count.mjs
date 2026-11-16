@@ -192,7 +192,11 @@ export function invalidateRecordCache(cacheDir, now) {
     fs.mkdirSync(cacheDir, { recursive: true });
     const held = withFileLockSync(path.join(cacheDir, `${RECORD_CACHE_FILE}.lock`), { attempts: 20 }, () => {
       const cur = readRecordCache(cacheDir);
-      const record = nextRecordCache({ state: 'unmeasured', unrecorded: null, unknown: null, floorThrough: null, reason: 'a landing merged PR(s) since the last measurement — run `fleet status`', remedy: null }, cur.state === 'ok' ? cur.record : null, now ?? new Date());
+      // Monotonic under the lock (C-R6-H1): never stamp an attempt earlier than, or equal to, the one already recorded —
+      // two invalidations taking the lock out of order still leave the latest instant on top.
+      const prevMs = cur.state === 'ok' ? Date.parse(cur.record.attemptedAt) : -Infinity;
+      const at = new Date(Math.max(toMs(now ?? new Date()), prevMs + 1));
+      const record = nextRecordCache({ state: 'unmeasured', unrecorded: null, unknown: null, floorThrough: null, reason: 'a landing merged PR(s) since the last measurement — run `fleet status`', remedy: null }, cur.state === 'ok' ? cur.record : null, at);
       CacheSchema.parse(record);
       atomicWriteFileSync(path.join(cacheDir, RECORD_CACHE_FILE), `${JSON.stringify(record, null, 2)}\n`);
       return true;
