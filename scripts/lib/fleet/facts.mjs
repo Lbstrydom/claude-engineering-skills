@@ -241,6 +241,12 @@ function stackedEvidence({ cwd, dir, registry, analyse, tipOid, base }) {
     if (s.source?.kind !== 'branch' || !b || !stack || stack === base || stack === b || !analyse.has(b)) continue;
     const fork = stackBaseFor(dir, s);
     if (!fork.ok) { own[b] = { queried: false, files: [], reason: fork.reason, stackBase: stack }; continue; }
+    // The record must still be history of the base (audit R6 H1/M1, deliberated): a base rewound or force-pushed since may
+    // leave a recorded commit that holds the session's own work. Not an ancestor of the base's tip ⇒ conservative.
+    if (!runGit(['merge-base', '--is-ancestor', fork.oid, tipOid.get(stack) ?? `refs/heads/${stack}`], cwd).ok) {
+      own[b] = { queried: false, files: [], reason: `${stack} no longer contains the recorded fork point (rewritten or deleted since the claim)`, stackBase: stack };
+      continue;
+    }
     own[b] = { ...changedFiles(cwd, fork.oid, tipOid.get(b) ?? b), stackBase: stack };
   }
   return own;

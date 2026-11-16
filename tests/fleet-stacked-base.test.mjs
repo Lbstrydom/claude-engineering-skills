@@ -113,6 +113,14 @@ describe('claim --base: overlap from the real fork point', () => {
     assert.ok(it.overlaps.some((o) => o.with === 'child-1' && o.files.includes('child-1/f.txt')), JSON.stringify(it.overlaps));
   });
 
+  it('a base rewritten since the claim (recorded fork point no longer in it) is measured from the base, and said (audit R6)', () => {
+    const { s } = absorbed({ commitBeforeClaim: false, swallow: () => {} });
+    git(['branch', '-f', 'shared-base', 'main'], s.fx.repo); // rewound: the recorded commit is no longer the base's history
+    const it = s.f(['status', '--json']).json.status.items.find((x) => x.id === 'late');
+    assert.equal(it.inherited, undefined);
+    assert.ok(it.notes.some((n) => /shared-base no longer contains the recorded fork point/.test(n)), JSON.stringify(it.notes));
+  });
+
   it('a stacked claim with no recorded fork point (an older fleet) is measured from the base, and says so', () => {
     const { s, it: before } = absorbed({ commitBeforeClaim: false, swallow: () => {} });
     assert.ok(before.inherited?.length > 0, 'control: with the record, the stacked measure applies');
