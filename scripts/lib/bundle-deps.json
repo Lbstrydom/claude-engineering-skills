@@ -221,7 +221,6 @@
         "scripts/.claude-skills/lib/schemas-install.mjs",
         "scripts/.claude-skills/lib/schemas.mjs",
         "scripts/.claude-skills/lib/store/friction.mjs",
-        "scripts/.claude-skills/lib/store/harness-retro.mjs",
         "scripts/.claude-skills/lib/store/model-eval.mjs",
         "scripts/.claude-skills/lib/store/nav-audit.mjs",
         "scripts/.claude-skills/lib/store/persona-outcomes.mjs",
