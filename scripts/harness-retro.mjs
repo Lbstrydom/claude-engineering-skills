@@ -103,7 +103,11 @@ async function persistScan(artifact, { repoRoot }) {
   // Probe first: an unmigrated store fails loudly ONCE instead of spilling every session.
   const { query } = await import('./lib/db/query.mjs');
   const { describeSchemaFault } = await import('./lib/db/errors.mjs');
-  try { await query('SELECT 1 FROM harness_retro_scans LIMIT 0'); } catch (err) {
+  // Every table AND column the writers bind, so a partly-applied or drifted schema
+  // fails here once, not per session (audit B-R2-M1).
+  const PROBE = 'SELECT s.scan_id, s.completed, x.session_key, x.observed_until, o.fingerprint, o.occurrences '
+    + 'FROM harness_retro_scans s, harness_retro_sessions x, harness_retro_occurrences o LIMIT 0';
+  try { await query(PROBE); } catch (err) {
     const why = describeSchemaFault(err, 'harness-retro persist');
     if (why) return { persisted: false, persistReason: 'store-not-migrated', failed: true, detail: `${why} — apply supabase/migrations/20261116120000_harness_retro.sql` };
     return { persisted: false, persistReason: 'store-unreachable', failed: true, detail: err.message };
