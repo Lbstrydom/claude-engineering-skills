@@ -41,6 +41,8 @@ export function codeSpan(s) {
 }
 
 const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+/** Backslash-escape the CommonMark punctuation that could start a link, image, emphasis, code span or table cell (A-R1-M14). */
+const escapeMarkdown = (s) => s.replace(/[\\`*_[\]~|]/g, (c) => `\\${c}`); // `[` is enough to defuse links and images; ( ) stay readable
 
 /**
  * The ONE path from an external fact to entry text.
@@ -67,7 +69,7 @@ export function sanitizeField(value, kind, ctx = {}) {
     return codeSpan(shown);
   }
   // title: 3. neutralise markup (no HTML, no marker forgery), then 4. truncate.
-  s = escapeHtml(s);
+  s = escapeMarkdown(escapeHtml(s));
   return s.length > TITLE_MAX ? `${s.slice(0, TITLE_MAX - 1)}…` : s;
 }
 
@@ -129,7 +131,8 @@ export function renderPrEntry(pr, facts, { repo }) {
     `<!-- ship-record v1 pr=${pr.number} merge=${pr.mergeCommit} -->`,
     '',
     '### Changes',
-    `- Merged #${pr.number} at ${pr.mergedAt} as \`${pr.mergeCommit.slice(0, 12)}\` from ${sanitizeField(pr.headRefName, 'ref')}${url ? ` (${url})` : ''}.`,
+    // No head ref name: it is not immutable (a branch rename re-labels it), and the bytes must not move (A-R1-M12).
+    `- Merged #${pr.number} at ${pr.mergedAt} as \`${pr.mergeCommit.slice(0, 12)}\`${url ? ` (${url})` : ''}.`,
     '',
     '### Files Affected',
     ...listed,
@@ -154,13 +157,21 @@ export const planHasMarker = (text, n) => String(text ?? '').includes(`<!-- ship
 
 // ── run, floor, init ───────────────────────────────────────────────────────
 
+export const RUN_MARKER_RE = /<!-- ship-record-run v1 prs=([0-9,]+) -->/g;
+
+/** PR numbers a run entry lists (its marker), so a later run knows they already have a run entry. */
+export function parseRunMarker(text) {
+  return [...String(text ?? '').matchAll(RUN_MARKER_RE)].flatMap((m) => m[1].split(',').filter(Boolean).map(Number));
+}
+
 /** The run entry: what this run recorded, plus the Backlog line. The only non-deterministic file (duplicates are harmless). */
 export function renderRunEntry({ nowIso, recorded, backlogLine, suggestions, base }) {
   const { date } = stamp(nowIso);
-  const nums = recorded.map((p) => p.number);
+  const nums = recorded.map((p) => p.number).sort((a, b) => a - b);
   const range = nums.length ? `#${Math.min(...nums)}…#${Math.max(...nums)}` : 'none';
   const lines = [
     `## ${date} — Record catch-up: ${recorded.length} PR(s) (${range})`,
+    `<!-- ship-record-run v1 prs=${nums.join(',')} -->`,
     '',
     '### Changes',
     `- Recorded ${recorded.length} merged PR(s) into ${codeSpan(base.branch)} that had no /ship record: ${nums.map((n) => `#${n}`).join(', ') || 'none'}.`,

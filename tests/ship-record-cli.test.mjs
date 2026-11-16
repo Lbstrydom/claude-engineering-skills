@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { listMergedSince, inBandRecorded, githubSlugFromRemote, resolveBase } from '../scripts/lib/ship-record/facts.mjs';
 import { runStatus, runCatchup, runFloor, runInit, RecordRefusal, reconcileEvents } from '../scripts/lib/ship-record/commands.mjs';
 import { renderInitReadme } from '../scripts/lib/ship-record/entry.mjs';
@@ -43,6 +44,7 @@ function fixture() {
   write('scripts/four.mjs', 'x');
   const s4 = commit('fix: four (#4)');
   must(g, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+  must(g, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
   const prs = [
     { number: 1, mergedAt: '2026-11-09T12:00:00Z', mergeCommit: { oid: s1 }, headRefName: 'b1', url: 'https://github.com/o/r/pull/1' },
     { number: 2, mergedAt: '2026-11-11T01:00:00Z', mergeCommit: { oid: s2 }, headRefName: 'b2', url: 'https://github.com/o/r/pull/2' },
@@ -82,7 +84,7 @@ describe('facts', () => {
   });
   it('in-band = this merge ADDED an entry; a modification is not', () => {
     const fx = fixture();
-    assert.equal(inBandRecorded({ git: fx.g }, fx.shas.s2), true);
+    assert.equal(inBandRecorded({ git: fx.g }, fx.shas.s2), 'in-band');
     assert.equal(inBandRecorded({ git: fx.g }, fx.shas.s3), false);
     assert.equal(inBandRecorded({ git: fx.g }, 'f'.repeat(40)), null);
   });
@@ -148,7 +150,7 @@ describe('verbs', () => {
     const g = gitIn(dir);
     must(g, ['init', '-q', '-b', 'main']); must(g, ['remote', 'add', 'origin', 'https://github.com/o/r.git']);
     fs.writeFileSync(path.join(dir, 'status.md'), '# Project Status Log\n\n## 2026-11-01 — old work\n');
-    must(g, ['add', '-A']); must(g, ['commit', '-q', '-m', 'init']); must(g, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    must(g, ['add', '-A']); must(g, ['commit', '-q', '-m', 'init']); must(g, ['update-ref', 'refs/remotes/origin/main', 'HEAD']); must(g, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
     const ctx = { ...ctxFor({ dir, g, prs: [] }) };
     assert.equal(runStatus(ctx).state, 'no-marker');
     assert.equal(runStatus(ctx).remedy, 'node scripts/ship-record.mjs init');
@@ -192,5 +194,67 @@ describe('event reconciliation', () => {
     const st = { prs: [{ number: 9, status: 'recorded', by: 'marker', mergeCommit: 'c'.repeat(40), mergedAt: '2026-11-12T00:00:00Z' }] };
     const ev = await reconcileEvents({ now: () => NOW, events: { resolveRepoId: async () => ({ ok: true, repoId: null }), find: async () => ({ ok: false, cloud: true, reason: 'schema-fault' }), record: async () => assert.fail('must not write') } }, st, []);
     assert.deepEqual([ev.lost, ev.written], [1, 0]);
+  });
+});
+
+describe('audit A-R1 regressions', () => {
+  it('H11: no origin/HEAD is UNMEASURED, never a guess at main', () => {
+    const fx = fixture();
+    must(fx.g, ['symbolic-ref', '--delete', 'refs/remotes/origin/HEAD']);
+    const env = runStatus(ctxFor(fx));
+    assert.equal(env.state, 'unmeasured');
+    assert.match(env.reason, /origin\/HEAD is not set/);
+    assert.equal(runStatus(ctxFor(fx), { base: 'main' }).state, 'measured', '--base names it explicitly');
+  });
+  it('H10: a record PR (catch-up files only) is recorded by itself; it does not spawn an entry', async () => {
+    const fx = fixture();
+    await runCatchup(ctxFor(fx), { write: true, events: false });
+    must(fx.g, ['add', '-A']); must(fx.g, ['commit', '-q', '-m', 'docs(status): record (#6)']);
+    const s6 = must(fx.g, ['rev-parse', 'HEAD']);
+    must(fx.g, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    assert.equal(inBandRecorded({ git: fx.g }, s6), 'record-pr');
+    const prs = [...fx.prs, { number: 6, mergedAt: '2026-11-12T06:00:00Z', mergeCommit: { oid: s6 }, headRefName: 'r', url: '' }];
+    const env = runStatus({ ...ctxFor(fx), runners: { git: fx.g, gh: fakeGh(prs) } });
+    assert.deepEqual([env.counts.recorded, env.counts.unrecorded], [4, 0]);
+  });
+  it('H4: a run that died after its per-PR files still gets its run entry next time', async () => {
+    const fx = fixture();
+    const first = await runCatchup(ctxFor(fx), { write: true, events: false });
+    const run = first.wrote.find((p) => p.endsWith('-record-catchup.md'));
+    fs.rmSync(path.join(fx.dir, run)); // simulate the crash between the per-PR files and the run entry
+    const second = await runCatchup({ ...ctxFor(fx), now: () => new Date('2026-11-13T00:05:00Z') }, { write: true, events: false });
+    assert.equal(second.wrote.length, 1);
+    assert.match(fs.readFileSync(path.join(fx.dir, second.wrote[0]), 'utf8'), /<!-- ship-record-run v1 prs=3,4 -->/);
+    const third = await runCatchup({ ...ctxFor(fx), now: () => new Date('2026-11-13T00:10:00Z') }, { write: true, events: false });
+    assert.equal(third.wrote.length, 0);
+  });
+  it('H3/M8: reconciliation reaches the oldest missing event beyond one batch', async () => {
+    const prs = Array.from({ length: 501 }, (_, i) => ({ number: i + 1, status: 'recorded', by: 'marker', mergeCommit: (i + 1).toString(16).padStart(40, '0'), mergedAt: new Date(Date.UTC(2026, 10, 1) + i * 60_000).toISOString() }));
+    const store = new Set(prs.slice(1).map((p) => p.mergeCommit)); // only the OLDEST is missing
+    const port = { resolveRepoId: async () => ({ ok: true, repoId: null }), find: async (_r, shas) => ({ ok: true, cloud: true, present: new Set(shas.filter((s) => store.has(s))) }), record: async (_r, e) => { store.add(e.commitSha); return { ok: true, cloud: true }; } };
+    const ev = await reconcileEvents({ now: () => NOW, events: port }, { prs }, []);
+    assert.deepEqual([ev.written, ev.existing, ev.backlog], [1, 500, 0]);
+  });
+  it('H6/M13: init refuses a symlinked ancestor and creates nothing outside', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-record-sym-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-record-out-'));
+    try { fs.symlinkSync(outside, path.join(dir, 'docs'), 'junction'); } catch { t.skip('symlinks unavailable'); return; }
+    assert.throws(() => runInit({ repoRoot: dir }), /not a real directory/);
+    assert.deepEqual(fs.readdirSync(outside), []);
+  });
+  it('H7/M10: a floor refuses when a covered merge cannot be measured', () => {
+    const fx = fixture();
+    fs.rmSync(path.join(fx.dir, 'docs/status/entries/2026-11-10-000000-record-floor.md'));
+    must(fx.g, ['add', '-A']); must(fx.g, ['commit', '-q', '-m', 'x']); must(fx.g, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    const prs = [...fx.prs, { number: 9, mergedAt: '2026-11-12T04:00:00Z', mergeCommit: { oid: 'e'.repeat(40) }, headRefName: 'x', url: '' }];
+    assert.throws(() => runFloor({ ...ctxFor(fx), runners: { git: fx.g, gh: fakeGh(prs) } }, { write: true }), /not in the local object store \(#9\)/);
+  });
+  it('H9: the CLI refuses `--` instead of reading a flag after it', () => {
+    const fx = fixture();
+    const cli = fileURLToPath(new URL('../scripts/ship-record.mjs', import.meta.url));
+    const r = spawnSync(process.execPath, [cli, 'catchup', '--', '--write'], { cwd: fx.dir, encoding: 'utf8' });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /"--" is refused/);
+    assert.equal(fs.readdirSync(path.join(fx.dir, 'docs/status/entries')).filter((n) => /-pr-/.test(n)).length, 0);
   });
 });

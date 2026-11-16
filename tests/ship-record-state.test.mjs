@@ -46,7 +46,7 @@ describe('classifyRecordState', () => {
     const st = classifyRecordState(base({
       merged: { ok: true, complete: true, prs: [pr(20, '2026-11-11T00:00:00Z', 'a'), pr(21, '2026-11-11T01:00:00Z', 'b'), pr(22, '2026-11-11T02:00:00Z', 'c'), pr(23, '2026-11-11T03:00:00Z', 'd')] },
       baseMarkers: [{ pr: 20, merge: sha('a') }, { pr: 23, merge: sha('e') }], // 23's marker names another sha: not evidence
-      inBand: new Map([[sha('b'), true], [sha('c'), false], [sha('d'), false]]),
+      inBand: new Map([[sha('b'), 'in-band'], [sha('c'), false], [sha('d'), false]]),
     }));
     assert.deepEqual(st.prs.map((p) => [p.number, p.status, p.by]), [[20, 'recorded', 'marker'], [21, 'recorded', 'in-band'], [22, 'unrecorded', null], [23, 'unrecorded', null]]);
     assert.equal(st.state, 'measured');
@@ -83,5 +83,28 @@ describe('classifyRecordState', () => {
     ];
     assert.deepEqual(cases.map((c) => classifyRecordState(c).state), ['no-marker', 'no-floor', 'ambiguous-floor', 'unmeasured', 'unmeasured']);
     for (const c of cases) assert.equal(classifyRecordState(c).counts.unrecorded, null);
+  });
+});
+
+describe('audit A-R1 regressions (oracle)', () => {
+  it('M15: a calendar-invalid date is refused', () => {
+    assert.match(parseFloorMarker('<!-- ship-record-floor v1 merged-through=2026-02-30T00:00:00Z covered=1 -->').reason, /ISO-8601/);
+  });
+  it('M11: a stale marker for the same PR does not shadow the matching one, in either order', () => {
+    const prs = [pr(20, '2026-11-11T00:00:00Z', 'a')];
+    for (const markers of [[{ pr: 20, merge: sha('b') }, { pr: 20, merge: sha('a') }], [{ pr: 20, merge: sha('a') }, { pr: 20, merge: sha('b') }]]) {
+      assert.equal(classifyRecordState(base({ merged: { ok: true, complete: true, prs }, baseMarkers: markers })).prs[0].status, 'recorded');
+    }
+  });
+  it('M9: a malformed listing is unmeasured; a malformed row is partial, never skipped silently', () => {
+    assert.equal(classifyRecordState(base({ merged: { ok: true, prs: [] } })).state, 'unmeasured');
+    assert.equal(classifyRecordState(base({ merged: { ok: true, complete: true } })).state, 'unmeasured');
+    const st = classifyRecordState(base({ merged: { ok: true, complete: true, prs: [{ number: 5, mergedAt: 'garbage' }] } }));
+    assert.equal(st.state, 'partial');
+    assert.match(st.reason, /no valid number or merge time/);
+  });
+  it('H10: record-pr is recorded evidence', () => {
+    const st = classifyRecordState(base({ merged: { ok: true, complete: true, prs: [pr(40, '2026-11-11T00:00:00Z', 'a')] }, inBand: new Map([[sha('a'), 'record-pr']]) }));
+    assert.deepEqual([st.prs[0].status, st.prs[0].by], ['recorded', 'record-pr']);
   });
 });

@@ -54,7 +54,8 @@ function flagValue(argv, flag) {
 function backlogLine(cwd) {
   const r = spawnSync(process.execPath, [path.join(SCRIPT_DIR, 'backlog-snapshot.mjs')], { cwd, encoding: 'utf8', timeout: BACKLOG_TIMEOUT_MS, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
   const line = String(r.stdout ?? '').split('\n').map((l) => l.trim()).find((l) => l.startsWith('Backlog'));
-  if (r.error || !line) return `Backlog: unmeasured (${r.error ? (r.error.code ?? r.error.message) : `backlog-snapshot exited ${r.status} with no Backlog line`})`;
+  // Only a SUCCESSFUL child's line counts (audit A-R1-M16): a plausible line from a failed run is not a measurement.
+  if (r.error || r.status !== 0 || !line) return `Backlog: unmeasured (${r.error ? (r.error.code ?? r.error.message) : `backlog-snapshot exited ${r.status}${line ? '' : ' with no Backlog line'}`})`;
   return line;
 }
 
@@ -102,14 +103,20 @@ function render(env) {
 export async function main(argv = process.argv) {
   if (argv.includes('--selfcheck-relocation')) { process.stdout.write('OK\n'); return finishAndExit(0); }
   const verb = argv[2];
-  const json = argv.includes('--json');
+  // Flags are read from ONE slice (audit A-R1-H9): `catchup -- --write` must never enable a write. This CLI takes no
+  // positionals, so a `--` terminator (or anything after it) is refused outright rather than half-honoured.
+  const args = argv.slice(3);
+  const json = args.includes('--json');
   try {
     if (!Object.hasOwn(VERBS, verb ?? '')) throw new ArgvError(`ship-record: unknown verb ${JSON.stringify(verb ?? '')}. Verbs: ${Object.keys(VERBS).join(', ')}`);
+    if (args.includes('--')) throw new ArgvError(`ship-record ${verb}: takes no positional arguments, so "--" is refused`);
+    const stray = args.find((a, i) => !a.startsWith('--') && !['--max', '--base'].includes(args[i - 1]));
+    if (stray !== undefined) throw new ArgvError(`ship-record ${verb}: unexpected argument ${JSON.stringify(stray)}`);
     assertKnownFlags(argv, VERBS[verb], { cli: `ship-record ${verb}`, from: 3 });
-    const maxRaw = flagValue(argv, '--max');
+    const maxRaw = flagValue(args, '--max');
     const max = maxRaw === null ? undefined : Number(maxRaw);
     if (max !== undefined && (!Number.isSafeInteger(max) || max < 1 || max > 500)) throw new ArgvError('ship-record: --max must be an integer 1–500');
-    const opts = { base: flagValue(argv, '--base'), fetch: argv.includes('--fetch'), write: argv.includes('--write'), max, events: !argv.includes('--no-events') };
+    const opts = { base: flagValue(args, '--base'), fetch: args.includes('--fetch'), write: args.includes('--write'), max, events: !args.includes('--no-events') };
 
     const cwd = process.cwd();
     const runners = realRunners(cwd);

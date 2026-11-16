@@ -45,7 +45,7 @@ export async function recordShipEvent(repoId, event) {
   }
   if (!await isCloudEnabled()) return { ok: true, cloud: false, reason: 'cloud-off' };
   try {
-    await insertReturning('ship_events', {
+    const inserted = await insertReturning('ship_events', {
       repo_id: repoId || null,
       commit_sha: event.commitSha || null,
       branch: event.branch || null,
@@ -59,7 +59,9 @@ export async function recordShipEvent(repoId, event) {
       stack_detected: event.stackDetected || null,
       framework: event.framework || null,
       duration_ms: event.durationMs || null,
-    });
+    }, { returning: 'id' });
+    // Verified, not assumed (audit A-R1-H5): success means the row came back, so a caller reconciling events can trust it.
+    if (!inserted?.id) return { ok: false, cloud: true, reason: 'write-unverified', error: 'the insert returned no row' };
     return { ok: true, cloud: true };
   } catch (err) {
     process.stderr.write(`  [learning] recordShipEvent failed: ${err.message}\n`);
@@ -84,7 +86,10 @@ export const FIND_SHIP_EVENTS_MAX = 500;
  * @returns {Promise<{ok: true, cloud: boolean, present: Set<string>} | {ok: false, cloud: boolean, reason: string, error?: string}>}
  */
 export async function findShipEvents(repoId, shas, reason) {
-  if (!Array.isArray(shas) || shas.length > FIND_SHIP_EVENTS_MAX) return { ok: false, cloud: false, reason: 'bad-input', error: `findShipEvents: at most ${FIND_SHIP_EVENTS_MAX} shas` };
+  if (!Array.isArray(shas) || shas.length > FIND_SHIP_EVENTS_MAX || !shas.every((s) => typeof s === 'string' && /^[0-9a-f]{40}$/.test(s))) {
+    return { ok: false, cloud: false, reason: 'bad-input', error: `findShipEvents: shas must be at most ${FIND_SHIP_EVENTS_MAX} 40-hex commit ids` };
+  }
+  if (typeof reason !== 'string' || !/^[a-z0-9-]{1,64}$/.test(reason)) return { ok: false, cloud: false, reason: 'bad-input', error: 'findShipEvents: reason must be a block-reason code' };
   if (repoId != null && !isSyncableRepoId(repoId)) return { ok: false, cloud: false, reason: 'invalid-repo-id', error: `findShipEvents: repoId "${String(repoId)}" is not a valid audit_repos UUID` };
   if (!await isCloudEnabled()) return { ok: true, cloud: false, present: new Set() };
   if (shas.length === 0) return { ok: true, cloud: true, present: new Set() };

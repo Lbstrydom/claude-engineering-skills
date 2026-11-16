@@ -117,3 +117,14 @@ describe('publishEntry — create-only', () => {
     assert.ok(!fs.existsSync(path.join(d, '.a.md.tmp-1')));
   });
 });
+
+describe('audit A-R1 regressions (entry)', () => {
+  it('M14: a title cannot render as a link, image or emphasis', () => {
+    const t = sanitizeField('see [x](https://e.example) ![i](u) *b* _c_ `d`', 'title');
+    assert.ok(!/(^|[^\\])\[x\]\(/.test(t) && !/(^|[^\\])!\[/.test(t) && !/(^|[^\\])\*b/.test(t), t);
+  });
+  it('M12: the entry does not render the (mutable) head ref name', () => {
+    assert.ok(!renderPrEntry({ ...PR, headRefName: 'renamed-branch' }, FACTS, { repo: 'o/r' }).includes('renamed-branch'));
+    assert.equal(renderPrEntry({ ...PR, headRefName: 'a' }, FACTS, { repo: 'o/r' }), renderPrEntry({ ...PR, headRefName: 'b' }, FACTS, { repo: 'o/r' }));
+  });
+});

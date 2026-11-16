@@ -68,7 +68,9 @@ export function resolveBase({ git }, { branch: explicit = null } = {}) {
   let branch = explicit;
   if (branch === null) {
     const r = git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
-    branch = ok(r) && out(r).startsWith('refs/remotes/origin/') ? out(r).slice('refs/remotes/origin/'.length) : 'main';
+    // Fail closed (audit A-R1-H11): guessing `main` measures the WRONG branch in a repo whose default is another one.
+    if (!ok(r) || !out(r).startsWith('refs/remotes/origin/')) return { ok: false, reason: 'origin/HEAD is not set, so the default branch is unknown — git remote set-head origin --auto, or pass --base <branch>' };
+    branch = out(r).slice('refs/remotes/origin/'.length);
   }
   if (!BRANCH_RE.test(branch) || branch.startsWith('-') || branch.includes('..')) return { ok: false, reason: `base branch ${JSON.stringify(branch)} is not a valid branch name` };
   const ref = `refs/remotes/origin/${branch}`;
@@ -87,7 +89,8 @@ export function resolveBase({ git }, { branch: explicit = null } = {}) {
  * Reads entry CONTENT only for `*-pr-<N>.md` and `*-record-floor.md` files (bounded).
  */
 export function readBaseEntries({ git }, ref) {
-  const ls = git(['ls-tree', '-r', '--name-only', ref, '--', `${ENTRIES_DIR}/`]);
+  // `ref` is the base COMMIT oid, never the tracking ref: a concurrent fetch must not move the tree under one run (A-R1-M4).
+  const ls = git(['-c', 'core.quotePath=false', 'ls-tree', '-r', '--name-only', ref, '--', `${ENTRIES_DIR}/`]);
   if (!ok(ls)) return { ok: false, reason: `could not list ${ENTRIES_DIR} on ${ref}` };
   const paths = out(ls) ? out(ls).split('\n') : [];
   const names = paths.map((p) => p.slice(ENTRIES_DIR.length + 1)).filter((n) => n && !n.includes('/'));
@@ -165,18 +168,36 @@ export function listMergedSince({ gh }, { repo, branch, fromIso, toIso, limit = 
 /** Is `sha` a commit in the local object store? */
 export const hasCommit = ({ git }, sha) => SHA_RE.test(sha ?? '') && ok(git(['cat-file', '-e', `${sha}^{commit}`]));
 
+/** A file name the catch-up itself writes (per-PR, floor, run) — never evidence that /ship ran. */
+export const isCatchupEntryName = (name) => prNumberFromEntryName(name) !== null || isFloorEntryName(name) || /^\d{4}-\d{2}-\d{2}-\d{6}-record-catchup\.md$/.test(name);
+
+/** Every path a merge changed against its first parent: NUL-separated (no quoting), sorted (no config-dependent order). */
+export function mergePaths({ git }, sha) {
+  const r = git(['diff-tree', '-z', '--no-commit-id', '--name-status', '--no-renames', '-r', `${sha}^1`, sha]);
+  if (!ok(r)) return null;
+  const parts = String(r.stdout).split('\0').filter((x) => x !== '');
+  const rows = [];
+  for (let i = 0; i + 1 < parts.length; i += 2) rows.push({ status: parts[i], path: parts[i + 1] });
+  return rows.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
 /**
- * Did this merge commit ADD a log entry (a non-README `.md` under docs/status/entries/)? That is /ship Step 2's
- * footprint for the PR it ships. A modification or deletion is not evidence (audit R1-H9). null = not determinable.
+ * What did this merge commit ADD to the log (audit R1-H9, A-R1-H10)? A modification or deletion is never evidence.
+ *  - 'in-band'  : it added a /ship-style entry (a non-README `.md` that is not one of the catch-up's own files);
+ *  - 'record-pr': it added catch-up files and changed nothing else but plans — it is itself a record, so it needs none;
+ *  - false      : neither; null: not determinable (merge not local, or git failed).
  */
 export function inBandRecorded({ git }, sha) {
   if (!hasCommit({ git }, sha)) return null;
-  const r = git(['diff-tree', '--no-commit-id', '--name-status', '--no-renames', '-r', `${sha}^1`, sha, '--', `${ENTRIES_DIR}/`]);
-  if (!ok(r)) return null;
-  return out(r).split('\n').some((l) => {
-    const [st, p] = l.split('\t');
-    return st === 'A' && p && p.endsWith('.md') && p !== MARKER_FILE && !p.slice(ENTRIES_DIR.length + 1).includes('/');
-  });
+  const rows = mergePaths({ git }, sha);
+  if (!rows) return null;
+  const direct = (p) => (p.startsWith(`${ENTRIES_DIR}/`) && !p.slice(ENTRIES_DIR.length + 1).includes('/') ? p.slice(ENTRIES_DIR.length + 1) : null);
+  const added = rows.filter((r) => r.status === 'A' && direct(r.path) && r.path.endsWith('.md'));
+  if (added.some((r) => r.path !== MARKER_FILE && !isCatchupEntryName(direct(r.path)))) return 'in-band';
+  const catchup = added.filter((r) => r.path === MARKER_FILE || isCatchupEntryName(direct(r.path)));
+  const planEdits = rows.filter((r) => r.status === 'M' && /^docs\/plans\/[^/]+\.md$/.test(r.path));
+  if (catchup.length && catchup.length + planEdits.length === rows.length) return 'record-pr';
+  return false;
 }
 
 /** Three observed trailer states (audit R3-M3). */
@@ -195,12 +216,12 @@ export function trailerState(message) {
 export function mergeFacts({ git }, sha) {
   if (!hasCommit({ git }, sha)) return null;
   const msg = git(['log', '-1', '--format=%B', sha]);
-  const files = git(['diff-tree', '--no-commit-id', '--name-only', '--no-renames', '-r', `${sha}^1`, sha]);
-  if (!ok(msg) || !ok(files)) return null;
+  const files = mergePaths({ git }, sha);
+  if (!ok(msg) || !files) return null;
   const message = String(msg.stdout).replace(/\r\n/g, '\n');
   return {
     subject: message.split('\n')[0] ?? '',
-    files: out(files) ? out(files).split('\n') : [],
+    files: files.map((r) => r.path),
     trailers: trailerState(message),
   };
 }
@@ -215,17 +236,18 @@ export function gatherRecordState(runners, { branch = null, now = new Date() } =
   const base = resolveBase(runners, { branch });
   const fail = (reason) => ({ state: 'unmeasured', reason, base: base.ok ? base : null, floor: null, prs: [], counts: { merged: null, recorded: null, unrecorded: null, unknown: null } });
   if (!base.ok) return fail(base.reason);
-  const entries = readBaseEntries(runners, base.ref);
+  const entries = readBaseEntries(runners, base.oid);
   if (!entries.ok) return fail(entries.reason);
-  const pre = classifyRecordState({ markerPresent: entries.markerPresent, floors: entries.floors, merged: { ok: true, prs: [] }, baseMarkers: [], inBand: new Map() });
+  const pre = classifyRecordState({ markerPresent: entries.markerPresent, floors: entries.floors, merged: { ok: true, complete: true, prs: [] }, baseMarkers: [], inBand: new Map() });
   if (pre.state !== 'measured') return { ...pre, base, entries };
   const floor = entries.floors[0];
   const merged = listMergedSince(runners, { repo: base.repo, branch: base.branch, fromIso: listingStart(floor), toIso: now.toISOString() });
   const inBand = new Map();
   if (merged.ok) {
-    const markerFor = new Map(entries.markers.map((m) => [m.pr, m.merge]));
+    const markerFor = new Map();
+    for (const m of entries.markers) markerFor.set(m.pr, (markerFor.get(m.pr) ?? new Set()).add(m.merge));
     for (const pr of merged.prs) {
-      if (!pr.mergeCommit || markerFor.get(pr.number) === pr.mergeCommit) continue;
+      if (!pr.mergeCommit || markerFor.get(pr.number)?.has(pr.mergeCommit)) continue;
       inBand.set(pr.mergeCommit, inBandRecorded(runners, pr.mergeCommit));
     }
   }
