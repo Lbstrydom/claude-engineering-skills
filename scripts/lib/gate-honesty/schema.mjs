@@ -63,6 +63,9 @@ export const CLI_EXIT_SCENARIOS = Object.freeze([
   // Files only: a plan path argument; the card's store reads are cloud-off under the hermetic env.
   'round-cap-plan-refusal',
   'round-cap-code-refusal',
+  // /harness-retro enforce preflight: an identity no scan ranked is refused before
+  // any write. Files only: a `git init` fixture dir with no scan artifact.
+  'retro-enforce-unscanned-refusal',
 ]);
 
 const ProofSchema = z.enum(['process', 'unit-seam']);

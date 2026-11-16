@@ -61,9 +61,9 @@ describe('buildTrend — delta AND percentage, never just one', () => {
   });
 });
 
-describe('ALL_SKILLS — the 17-skill roster is exhaustive and has no duplicates', () => {
-  it('lists exactly 17 skills', () => {
-    assert.equal(ALL_SKILLS.length, 17);
+describe('ALL_SKILLS — the 18-skill roster is exhaustive and has no duplicates', () => {
+  it('lists exactly 18 skills', () => {
+    assert.equal(ALL_SKILLS.length, 18);
   });
 
   it('has no duplicate names', () => {
@@ -83,7 +83,7 @@ describe('ALL_SKILLS — the 17-skill roster is exhaustive and has no duplicates
   });
 
   it('includes every trailer-proxy-only skill', () => {
-    for (const s of ['explain', 'investigate', 'brainstorm', 'security-strategy', 'ai-context-management', 'cycle', 'skills', 'fleet']) {
+    for (const s of ['explain', 'investigate', 'brainstorm', 'security-strategy', 'ai-context-management', 'cycle', 'skills', 'harness-retro', 'fleet']) {
       assert.ok(ALL_SKILLS.includes(s), `missing trailer-proxy skill: ${s}`);
     }
   });

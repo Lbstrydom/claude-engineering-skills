@@ -29,10 +29,12 @@ import { getNavAuditWindowCounts } from './nav-audit.mjs';
 import { getRegressionSpecWindowCounts } from './regression-specs.mjs';
 import { getFleetEventWindowCounts } from './fleet-events.mjs';
 
-/** The seven read-only/meta skills whose ONLY signal is the git trailer proxy. */
+/** The eight read-only/meta skills whose ONLY signal is the git trailer proxy.
+ *  harness-retro has no table (v1 writes only local artifacts), so its usage signal
+ *  is the trailer proxy too. */
 const TRAILER_ONLY_SKILLS = Object.freeze([
   'explain', 'investigate', 'brainstorm', 'security-strategy',
-  'ai-context-management', 'cycle', 'skills',
+  'ai-context-management', 'cycle', 'skills', 'harness-retro',
 ]);
 
 /** Skills with a DB table, in the order their rows are built. */
@@ -41,7 +43,7 @@ const DB_SKILLS = Object.freeze(['audit-code', 'audit-plan', 'plan', 'ship', 'pe
 /** No DB table at all, by deliberate design; still get a trailer-proxy fallback row. */
 const NO_TABLE_SKILLS = Object.freeze(['click-test', 'visual-audit']);
 
-/** All seventeen skill names, in the bundle's own documented order. */
+/** All eighteen skill names, in the bundle's own documented order. */
 export const ALL_SKILLS = Object.freeze([
   'audit-code', 'audit-plan', 'plan', 'ship', 'persona-test', 'nav-audit', 'ux-lock',
   'click-test', 'visual-audit',

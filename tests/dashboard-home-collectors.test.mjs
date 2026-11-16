@@ -257,9 +257,9 @@ describe('collectVitals', () => {
     assert.deepEqual(reduceVitalsInput({ plans: r.plans, skills: r.skillsCount }), r);
   });
 
-  test('skills compare count with the census roster (17)', () => {
+  test('skills compare count with the census roster (18)', () => {
     const m = byId(collectVitals(tmp(), { plans: { active: [] }, skills: new Array(16).fill({}), now: NOW }), 'skills');
-    assert.deepEqual(m.value, { count: 16, roster: 17 });
+    assert.deepEqual(m.value, { count: 16, roster: 18 });
   });
 
   test('maintenance: absent, future-dated, malformed, in-window and overdue heartbeats', () => {
