@@ -44,6 +44,7 @@
     "cache:check": "node scripts/cache-hitrate-check.mjs",
     "cache:check:json": "node scripts/cache-hitrate-check.mjs --json",
     "audit:check-deps": "node scripts/check-deps.mjs",
+    "harness:retro": "node scripts/harness-retro.mjs",
     "memory:health": "node scripts/memory-health.mjs",
     "concern:report": "node scripts/concern-telemetry-report.mjs",
     "memory:health:json": "node scripts/memory-health.mjs --json",

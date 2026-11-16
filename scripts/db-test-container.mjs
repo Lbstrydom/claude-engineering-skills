@@ -98,6 +98,11 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // mock store cannot show what the view selects. Two edits, always — this
   // list AND postgres-parity.yml.
   'tests/control-marker-acceptance-db.test.mjs',
+  // Enrolled 2026-11-16 with migration 20261116120000 (docs/plans/harness-retro.md):
+  // the freshness-guarded snapshot upsert, replace-semantics and transaction
+  // rollback are only observable against a real Postgres. Two edits — this list
+  // AND postgres-parity.yml.
+  'tests/harness-retro-store.db.test.mjs',
   // Enrolled 2026-10-25 with migration 20261025120000 (round cap): the run-wide accepted/dismissed recount, its run
   // scoping and the stale-last-writer schedule need real row locks and a real audit_findings table.
   'tests/run-adjudication-counts-db.test.mjs',

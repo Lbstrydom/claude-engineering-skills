@@ -110,6 +110,9 @@ const CLI_SMOKE_SET = [
   // check-doc-citations.mjs just above: it is declared in sync-to-repos.mjs
   // CORE_ENTRY, so this set asserting consumer presence does not fail gate 4.
   'sync-status.mjs',
+  // /harness-retro CLI — declared in sync-entry-lists.mjs CORE_ENTRY (verified
+  // before adding: this set asserts CONSUMER PRESENCE).
+  'harness-retro.mjs',
   // NOTE: `verify-anchor-contract.mjs` is deliberately NOT here. Its plan
   // (evidence-anchor-path-contract §9a) originally demanded membership by
   // reflex and was CORRECTED: this set asserts CONSUMER PRESENCE, so an entry

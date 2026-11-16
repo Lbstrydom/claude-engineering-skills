@@ -239,6 +239,10 @@ export const CORE_ENTRY = [
   // about; caught 2026-07-22 when enabling the opt-in for the first time in
   // wine-cellar-app produced a live MODULE_NOT_FOUND.
   'scripts/maintenance-checks.mjs',
+  // /harness-retro's CLI (docs/plans/harness-retro.md). Shipped because the
+  // synced SKILL.md names it by path — a documented command whose tooling is
+  // absent where it runs is defect class (4)/(5).
+  'scripts/harness-retro.mjs',
   'scripts/memory-health.mjs',
   'scripts/concern-telemetry-report.mjs', // concern-report maintenance check
   'scripts/check-model-freshness.mjs',
