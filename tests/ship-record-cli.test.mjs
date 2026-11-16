@@ -351,3 +351,15 @@ describe('audit A-R6 regressions', () => {
     assert.equal(env.counts.unrecorded, 0);
   });
 });
+
+describe('audit C-R4 regressions (CLI)', () => {
+  it('M2: --json argument errors are envelopes with exit 2', () => {
+    const fx = fixture();
+    const cli = fileURLToPath(new URL('../scripts/ship-record.mjs', import.meta.url));
+    const r = spawnSync(process.execPath, [cli, 'catchup', '--json', '--max', '0'], { cwd: fx.dir, encoding: 'utf8' });
+    assert.equal(r.status, 2);
+    const e = JSON.parse(r.stdout.trim());
+    assert.deepEqual([e.ok, e.argv], [false, true]);
+    assert.match(e.message, /--max/);
+  });
+});

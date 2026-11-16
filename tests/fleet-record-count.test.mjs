@@ -40,7 +40,7 @@ describe('runRecordStatus', () => {
   it('a failed or garbled child is unmeasured', () => {
     const script = fileURLToPath(import.meta.url); // exists
     assert.match(runRecordStatus(script, '.', { spawn: () => ({ status: 1, stdout: '' }) }).reason, /exited 1/);
-    assert.match(runRecordStatus(script, '.', { spawn: () => ({ status: 0, stdout: 'hello' }) }).reason, /no JSON/);
+    assert.match(runRecordStatus(script, '.', { spawn: () => ({ status: 0, stdout: 'hello' }) }).reason, /exactly one JSON value/);
     assert.equal(runRecordStatus(script, '.', { spawn: () => ({ status: 0, stdout: JSON.stringify(env()) }) }).unrecorded, 3);
   });
   it('the sibling resolves next to fleet in this layout', () => {
@@ -105,5 +105,28 @@ describe('audit C-R1 regressions', () => {
     const { _internals } = await import('../scripts/lib/fleet/land.mjs');
     assert.equal(_internals.mergedSomething({ ok: false, run: { steps: [{ step: 'merged' }, { step: 'failed' }] } }), true);
     assert.equal(_internals.mergedSomething({ ok: false, run: { steps: [{ step: 'pending' }] } }), false);
+  });
+});
+
+describe('audit C-R4 regressions', () => {
+  it('H2: a merge invalidates a cached measured zero, so next is no longer quiet', async () => {
+    const { invalidateRecordCache } = await import('../scripts/lib/fleet/record-count.mjs');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'record-count-inval-'));
+    refreshRecordCache({ cacheDir: dir, cwd: dir, now: NOW, run: () => interpretRecordStatus(env({ counts: { unrecorded: 0, unknown: 0 } })), script: 'x' });
+    assert.equal(recordQuiet(readRecordCache(dir), NOW), true);
+    assert.equal(invalidateRecordCache(dir, new Date(NOW.getTime() + 1000)), true);
+    const r = readRecordCache(dir);
+    assert.equal(recordQuiet(r, NOW), false);
+    assert.match(renderRecordLine(r, NOW), /UNMEASURED \(a landing merged/);
+    assert.equal(r.record.measuredAt, NOW.toISOString(), 'the last measurement is kept as history');
+  });
+  it('M3: a failing reader keeps its own message', () => {
+    const script = fileURLToPath(import.meta.url);
+    assert.match(runRecordStatus(script, '.', { spawn: () => ({ status: 3, stdout: JSON.stringify({ ok: false, message: 'catchup refused: no floor' }), stderr: '' }) }).reason, /exited 3: catchup refused: no floor/);
+    assert.match(runRecordStatus(script, '.', { spawn: () => ({ status: 1, stdout: '', stderr: 'x\nboom: gh down\n' }) }).reason, /exited 1: boom: gh down/);
+  });
+  it('M5: stdout must be exactly one JSON value', () => {
+    const script = fileURLToPath(import.meta.url);
+    assert.match(runRecordStatus(script, '.', { spawn: () => ({ status: 0, stdout: `noise {${JSON.stringify(env())}` }) }).reason, /exactly one JSON value/);
   });
 });

@@ -25,6 +25,7 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { withFileLock, LockTimeoutError } from './lib/file-lock.mjs';
 import { realRunners } from './lib/ship-record/facts.mjs';
 import { cacheDirFor } from './lib/fleet/git-facts.mjs';
+import { renderCommand } from './lib/fleet/shell-quote.mjs';
 import { RecordRefusal, runStatus, runCatchup, runFloor, runInit } from './lib/ship-record/commands.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -40,7 +41,8 @@ const EXIT_REFUSED = 3;
 /** How this CLI is named in the commands it prints: by path, relative when inside the repo (sync rewrites docs, not output). */
 function selfCommand(repoRoot) {
   const rel = path.relative(repoRoot, path.join(SCRIPT_DIR, 'ship-record.mjs')).split(path.sep).join('/');
-  return `node ${rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : path.join(SCRIPT_DIR, 'ship-record.mjs')}`;
+  // Shell-quoted (C-R4-M1): an absolute path with a space must stay one argument.
+  return renderCommand(['node', rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : path.join(SCRIPT_DIR, 'ship-record.mjs')]);
 }
 
 function flagValue(argv, flag) {
@@ -151,14 +153,17 @@ export async function main(argv = process.argv) {
     if (json) emit(env); else { process.stdout.write(`${render(env)}\n`); if (env.ok === false) process.exitCode = 1; }
     return finishAndExit(env.ok === false ? 1 : 0);
   } catch (err) {
-    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); return finishAndExit(2); }
+    // --json: every failure is an envelope too (C-R4-M2), with the same exit code the text mode uses.
+    if (err instanceof ArgvError) { if (json) emit({ ok: false, verb: verb ?? null, argv: true, message: err.message }); process.stderr.write(`${err.message}\n`); process.exitCode = 2; return finishAndExit(2); }
     if (err instanceof RecordRefusal) {
       if (json) emit({ ok: false, verb, refused: true, message: err.message, ...err.details });
       else process.stderr.write(`${err.message}${err.details?.remedy ? `\nnext: ${err.details.remedy}` : ''}\n`);
       process.exitCode = EXIT_REFUSED;
       return finishAndExit(EXIT_REFUSED);
     }
+    if (json) emit({ ok: false, verb: verb ?? null, error: true, message: String(err?.message ?? err) });
     process.stderr.write(`ship-record ${verb}: ${err?.stack || err}\n`);
+    process.exitCode = 1;
     return finishAndExit(1);
   }
 }

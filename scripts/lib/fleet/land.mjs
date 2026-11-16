@@ -15,7 +15,8 @@ import { abandonTrain, branchOfRef, buildTrain, defaultDeps, resumeTrain, withTr
 import { approveTrain, confirmTrain, reconcileTrain } from './train-approve.mjs';
 import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
 import { redTierLines } from './tier-failure.mjs';
-import { LAND_RECORD_NUDGE, recordCommandFor } from './record-count.mjs';
+import { LAND_RECORD_NUDGE, invalidateRecordCache, recordCommandFor } from './record-count.mjs';
+import { unregisteredCacheDir } from './unregistered.mjs';
 import {
   renderAbandon, renderApprove, renderBuilt, renderConfirm, renderDryRun, renderReconcile, renderSerial,
 } from './render-train.mjs';
@@ -44,7 +45,12 @@ export const _internals = Object.freeze({ mergedSomething: (r) => mergedSomethin
  */
 // Nudged when ANYTHING merged, not only on overall success (C-R1-M1/M4): a serial run can merge PRs and then stop.
 const mergedSomething = (r) => Boolean(r.ok || r.run?.steps?.some((s) => s.step === 'merged'));
-const withRecordNudge = (r, cmd) => (mergedSomething(r) ? { ...r, text: `${r.text}\n${LAND_RECORD_NUDGE(recordCommandFor(cmd), cmd)}` } : r);
+const withRecordNudge = (r, cmd, ctx = null) => {
+  if (!mergedSomething(r)) return r;
+  // The cached count is stale the moment anything merges (C-R4-H2): invalidate it so `next` cannot stay quiet on it.
+  if (ctx) invalidateRecordCache(unregisteredCacheDir(ctx.cwd), ctx.now);
+  return { ...r, text: `${r.text}\n${LAND_RECORD_NUDGE(recordCommandFor(cmd), cmd)}` };
+};
 
 function validId(id) {
   try { return assertTrainId(id); } catch (e) { throw new ArgvError(`fleet land: ${e.message}`); }
@@ -65,15 +71,15 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
 
   if (modes[0] === '--approve' && flags['--serial']) {
     const r = approveSerial({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), deps, ...configuredRequiredChecks(ctx), timeoutMs: serialTimeout(ctx) });
-    return withRecordNudge(withText(r, renderSerial(r, cmd)), cmd);
+    return withRecordNudge(withText(r, renderSerial(r, cmd)), cmd, ctx);
   }
   if (modes[0] === '--approve') {
     const r = approveTrain({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), cmd, deps, ...configuredRequiredChecks(ctx) });
-    return withRecordNudge(withText(r, renderApprove(r, cmd)), cmd);
+    return withRecordNudge(withText(r, renderApprove(r, cmd)), cmd, ctx);
   }
   if (modes[0] === '--confirm') {
     const r = confirmTrain({ cwd, trainId: validId(flags['--confirm']), deps });
-    return withRecordNudge(withText(r, renderConfirm(r)), cmd);
+    return withRecordNudge(withText(r, renderConfirm(r)), cmd, ctx);
   }
   if (modes[0] === '--reconcile') {
     const r = reconcileTrain({ cwd, trainId: validId(flags['--reconcile']), deps });
@@ -85,7 +91,7 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
   }
   if (modes[0] === '--resume' && readSerial(ctx.dir, validId(flags['--resume'])).ok) {
     const r = resumeSerial({ cwd, trainId: flags['--resume'], deps, ...configuredRequiredChecks(ctx) });
-    return withRecordNudge(withText(r, renderSerial(r, cmd)), cmd);
+    return withRecordNudge(withText(r, renderSerial(r, cmd)), cmd, ctx);
   }
   if (modes[0] === '--resume') {
     const trainId = validId(flags['--resume']);

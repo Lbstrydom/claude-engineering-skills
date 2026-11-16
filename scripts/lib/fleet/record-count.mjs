@@ -90,11 +90,17 @@ export function runRecordStatus(script, cwd, { spawn = spawnSync } = {}) {
   try { r = spawn(process.execPath, [script, 'status', '--json'], { cwd, encoding: 'utf8', timeout: RECORD_RUN_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }); }
   catch (e) { return bad(`could not run the reader (${e.message})`); }
   if (!r || r.error) return bad(`could not run the reader (${r?.error?.code ?? r?.error?.message ?? 'no result'})`);
-  if (r.status !== 0) return bad(`the reader exited ${r.status}`);
-  const text = String(r.stdout ?? '');
-  const start = text.indexOf('{');
-  if (start < 0) return bad('the reader printed no JSON');
-  try { return interpretRecordStatus(JSON.parse(text.slice(start))); } catch { return bad('the reader\'s output was not valid JSON'); }
+  const text = String(r.stdout ?? '').trim();
+  const tail = String(r.stderr ?? '').trim().split('\n').filter(Boolean).slice(-1)[0] ?? '';
+  if (r.status !== 0) {
+    // Keep what the reader SAID (C-R4-M3): its envelope's message, else the last stderr line.
+    let said = '';
+    try { const e = JSON.parse(text); said = typeof e?.message === 'string' ? e.message : ''; } catch { /* not an envelope */ }
+    return bad(`the reader exited ${r.status}${said || tail ? `: ${(said || tail).slice(0, 200)}` : ''}`);
+  }
+  if (!text) return bad('the reader printed no JSON');
+  // stdout is ONE JSON value by contract (C-R4-M5): anything else is a contract violation, not something to skip past.
+  try { return interpretRecordStatus(JSON.parse(text)); } catch { return bad('the reader\'s stdout was not exactly one JSON value'); }
 }
 
 /** Read the cache: `{state:'missing'|'unreadable'|'ok', record?, reason?}`. Never throws. */
@@ -173,8 +179,28 @@ export function recordQuiet(read, now) {
     && toMs(now) - Date.parse(read.record.measuredAt ?? read.record.attemptedAt) <= RECORD_STALE_MS);
 }
 
+/**
+ * A landing merged PR(s): the cached count is now known to be stale (C-R4-H2). Record that as an UNMEASURED attempt (the
+ * last measurement's time is kept as history), so `next` asks for a refresh instead of staying quiet on a stale zero.
+ * Never throws; returns whether it wrote.
+ */
+export function invalidateRecordCache(cacheDir, now) {
+  if (!cacheDir) return false;
+  try {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const held = withFileLockSync(path.join(cacheDir, `${RECORD_CACHE_FILE}.lock`), { attempts: 20 }, () => {
+      const cur = readRecordCache(cacheDir);
+      const record = nextRecordCache({ state: 'unmeasured', unrecorded: null, unknown: null, floorThrough: null, reason: 'a landing merged PR(s) since the last measurement — run `fleet status`', remedy: null }, cur.state === 'ok' ? cur.record : null, now ?? new Date());
+      CacheSchema.parse(record);
+      atomicWriteFileSync(path.join(cacheDir, RECORD_CACHE_FILE), `${JSON.stringify(record, null, 2)}\n`);
+      return true;
+    });
+    return held.ok && held.value === true;
+  } catch { return false; }
+}
+
 /** The sibling ship-record command for a fleet command (`node scripts/fleet.mjs` → `node scripts/ship-record.mjs`). */
-export const recordCommandFor = (fleetCmd) => String(fleetCmd ?? 'node scripts/fleet.mjs').replace(/fleet\.mjs("?)$/, 'ship-record.mjs$1');
+export const recordCommandFor = (fleetCmd) => String(fleetCmd ?? 'node scripts/fleet.mjs').replace(/fleet\.mjs(["']?)$/, 'ship-record.mjs$1');
 
 /** The line `fleet land` prints after a merge: the count is stale the moment a PR lands, so it names the action, not a number. */
 export const LAND_RECORD_NUDGE = (recordCmd, fleetCmd) => `records: this landing merged PR(s) without /ship — record them: \`${recordCmd} catchup --write\` (coordinator); \`${fleetCmd} status\` re-measures`;
