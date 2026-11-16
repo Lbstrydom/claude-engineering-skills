@@ -34,8 +34,6 @@
  *   `audit.diffComplexity`   — keyed on `run_id`
  *   `learning.outcome`       — keyed on `decision_key`
  *   `debt.entries`           — `UNIQUE (repo_id, topic_id)` (see its note below)
- *   `retro.sessionSnapshot`  — `harness_retro_sessions` PK `session_key` (20261116120000)
- *   `retro.scanComplete`     — `harness_retro_scans` PK `scan_id` (20261116120000)
  *
  * This paragraph previously named only the first two and called the rest
  * `lost`-only. That went stale as writers were promoted, and the staleness
@@ -63,7 +61,6 @@ import { recordRunDiff } from './store/run-diffs.mjs';
 import { recordLlmCalls } from './store/llm-calls.mjs';
 import { recordAdjudicationEvent } from './store/adjudication-events.mjs';
 import { recordEquivalence } from './store/model-ab.mjs';
-import { writeSessionSnapshot, writeScanRow } from './store/harness-retro.mjs';
 
 /**
  * Turn a store receipt into a `durableWrite` result.
@@ -378,26 +375,6 @@ export function registerAuditStoreWriters() {
       }
       return { applied: true };
     },
-  });
-
-  // ── retro.sessionSnapshot / retro.scanComplete ────────────────────────────
-  // docs/plans/harness-retro.md §2 c14. Not part of the audit run's cloud block:
-  // written only by `scripts/harness-retro.mjs scan --persist`. Keyed by the
-  // PRIMARY KEYs that arbitrate them (harness_retro_sessions.session_key,
-  // harness_retro_scans.scan_id), and replay-safe because the snapshot is a
-  // replace guarded by `observed_until` — a delayed replay of an OLDER snapshot
-  // returns `{applied:true, reason:'superseded'}` and changes nothing. A schema
-  // fault (store not migrated) comes back as `error` and is rethrown by
-  // `receipt()`, so it spills and fails loudly; `cloud-off` is the one decline.
-  registerWriter('retro.sessionSnapshot', {
-    schemaVersion: 1,
-    rowKey: (p) => p.session_key,
-    replay: (payload) => receipt(writeSessionSnapshot(payload)),
-  });
-  registerWriter('retro.scanComplete', {
-    schemaVersion: 1,
-    rowKey: (p) => p.scan_id,
-    replay: (payload) => receipt(writeScanRow(payload)),
   });
 
   _registered = true;

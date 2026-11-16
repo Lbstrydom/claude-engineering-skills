@@ -57,8 +57,6 @@ export const ScanArtifactSchema = z.object({
   candidates: z.array(z.record(z.string(), z.unknown())),
   tripwires: z.array(z.record(z.string(), z.unknown())),
   summary: z.record(z.string(), z.unknown()),
-  persisted: z.boolean(),
-  persistReason: z.string().optional(),
 }).strict();
 
 /** UTC timestamp to the MILLISECOND + 6 random hex — lexical order is creation
@@ -133,17 +131,4 @@ export function writeProposalsArtifact(repoRoot, scanId, envelope, markdown) {
   atomicWriteFileSync(json, `${JSON.stringify(envelope, null, 2)}\n`);
   atomicWriteFileSync(md, markdown);
   return { json, md };
-}
-
-export function writeHeartbeat(repoRoot, beat) {
-  const dir = artifactDir(repoRoot);
-  fs.mkdirSync(dir, { recursive: true });
-  atomicWriteFileSync(path.join(dir, 'heartbeat.json'), `${JSON.stringify(beat, null, 2)}\n`);
-}
-
-export function readHeartbeat(repoRoot) {
-  try { return JSON.parse(fs.readFileSync(path.join(artifactDir(repoRoot), 'heartbeat.json'), 'utf8')); } catch (err) {
-    if (err?.code === 'ENOENT') return null;
-    return { unreadable: true, error: err?.code ?? err?.message };
-  }
 }

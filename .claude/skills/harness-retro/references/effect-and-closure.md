@@ -1,5 +1,5 @@
 ---
-summary: Closing a decision and reading its effect — enforce/reject, tripwire retirement, activation, the verdicts.
+summary: Closing a decision and reading its effect — enforce/reject, activation, the verdicts.
 ---
 
 # Closing a decision, and reading its effect
@@ -22,14 +22,12 @@ Order, every step idempotent (re-running finishes an interrupted run):
    PUBLIC).
 2. **Registry** — appended to `.harness-retro/decisions.json` under its own lock,
    with every evidence fingerprint. No commit sha: a commit cannot name itself.
-3. **Tripwire retirement** (`tripwire:` identities) — the memory file gets
-   `metadata.enforced_by`; its `MEMORY.md` line moves to `index-enforced.md`
-   when it is the line's only link. A line shared with other tripwires is never
-   rewritten: `status` reports `needs-manual-reflow` for you to reflow by hand.
+3. **Not in v1: tripwire retirement.** `enforce` never edits `MEMORY.md`; the
+   scan lists promotion candidates and a human removes or reflows the index line in
+   the fix PR. The memory file is kept.
 4. **Friction mirror** — a `type: friction` memory is also closed through
    `frictionLink`, so `memory_friction.resolved` flips.
 
-`status` reports any half-done retirement in both directions.
 
 `reject --identity … --scan latest --summary "…"` records a "no": the identity
 is then shown as `previouslyRejected` and never re-ranked.
@@ -59,5 +57,5 @@ completed scans cover both, so the figure cannot drift with `now()`. Cloud off,
 the same function runs over the local scan artifacts (`source: local-scan`) —
 limited to transcripts that were still on disk when scanned.
 
-`unmeasured` is not "no effect". Run `scan --persist` regularly so the windows
+`unmeasured` is not "no effect". Run `scan` at the end of every coordinator session so the windows
 are covered.

@@ -21,7 +21,7 @@
       "kind": "document-only",
       "reason": "'Propose, never apply' is a NEGATIVE guarantee about the judging session: the model must not edit the harness itself. The CLI has no verb that edits a hook, gate, script or doc — that much is structural — but whether the session following the skill edits files by hand is model behaviour no exit code can assert.",
       "statedIn": "skills/harness-retro/SKILL.md",
-      "stated": "for the ranked candidates it hands you. **Propose, never apply.**"
+      "stated": "(default 5). **Propose, never apply.**"
     },
     {
       "id": "unmeasured-is-not-clean",
@@ -40,14 +40,7 @@
       "kind": "document-only",
       "statedIn": "skills/harness-retro/SKILL.md",
       "stated": "Transcripts are read from the account's config root and **never leave local",
-      "reason": "Structural rather than a refusal: the scanner has no network or upload code path, and the store row schemas (.strict(), no free-text column) cannot carry transcript text. Pinned by tests/harness-retro-cli.test.mjs (a planted secret and a planted user sentence never reach any artifact) and tests/harness-retro-fingerprint.test.mjs; an exit-code oracle cannot assert an absence of egress."
-    },
-    {
-      "id": "unmigrated-store-fails-loud",
-      "kind": "document-only",
-      "statedIn": "skills/harness-retro/SKILL.md",
-      "stated": "durable denominator. An unmigrated store exits non-zero naming the migration —",
-      "reason": "Enforced in code (persistScan in scripts/harness-retro.mjs probes the table and returns failed:true with describeSchemaFault naming the migration; the store writer rethrows a 42P01) and pinned by tests/harness-retro-store.db.test.mjs. Not a cli-exit scenario: the trigger is a DATABASE missing a table, which a filesystem fixture cannot construct — the same reason the migration-realization gate is document-only."
+      "reason": "Structural rather than a refusal: the scanner has no network or upload code path and v1 writes nothing to the audit store — only gitignored local scan artifacts holding counts, hashes and redacted labels. Pinned by tests/harness-retro-cli.test.mjs (a planted secret and a planted user sentence never reach any artifact) and tests/harness-retro-fingerprint.test.mjs; an exit-code oracle cannot assert an absence of egress."
     }
   ],
   "ignoredCandidates": [
@@ -74,10 +67,6 @@
     {
       "line": "the failure it prevents, the exact change and a positive-control test. Never",
       "reason": "Frontmatter summary of the three-things contract and of propose-never-apply; both are dispositioned as their own gates (record-refuses-bad-proposals, propose-never-apply)."
-    },
-    {
-      "line": "relay it; never retry around it.",
-      "reason": "Continuation of the unmigrated-store-fails-loud sentence: an instruction to the model about relaying the CLI failure."
     },
     {
       "line": "- `already-covered` — a hook, gate, skill or memory already handles it; name",

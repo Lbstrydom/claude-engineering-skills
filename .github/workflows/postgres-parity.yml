@@ -317,7 +317,6 @@ jobs:
             tests/campaign-quarantine.test.mjs \
             tests/candidate-audit-findings-window.test.mjs \
             tests/control-marker-acceptance-db.test.mjs \
-            tests/harness-retro-store.db.test.mjs \
             tests/run-adjudication-counts-db.test.mjs \
             tests/own-model-telemetry-db.test.mjs \
             tests/own-model-ledger-db.test.mjs \

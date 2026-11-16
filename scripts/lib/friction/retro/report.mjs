@@ -14,7 +14,7 @@ import { scanTripwires } from './memory-tripwires.mjs';
  * @param {object} scan - a `runScan` result
  * @param {{decisions: {byFingerprint: Map<string, object>}, inventory: {docs: object[], errors: object[]}, memoryDir: string|null, top?: number}} ctx
  */
-export function analyseScan(scan, { decisions, inventory: inv, memoryDir, top = 10 }) {
+export function analyseScan(scan, { decisions, inventory: inv, memoryDir, top = 5 }) {
   // ONE canonical session set for every count this analysis reports (audit R3-H4/M5).
   const sessions = canonicalSessions(scan.sessions);
   const aggregates = aggregateSessions(sessions, scan.fingerprints);
@@ -61,8 +61,8 @@ export function renderScanReport(a) {
   lines.push(`# ${head}`, '');
   lines.push(`Scanned ${a.files.read}/${a.files.listed} transcript files (${a.files.readErrors} read errors, ${a.files.unparseableLines} unparseable lines) `
     + `→ ${a.summary.sessions ?? 0} sessions in scope, window ${a.requested.since} → ${a.requested.until}.`);
-  lines.push(`Excluded: ${a.excluded.otherRepo} other-repo, ${a.excluded.unresolved} unresolved-repo; ${a.excluded.incomplete} incomplete (reported, not persisted).`);
-  lines.push(`Persisted: ${a.persisted ? 'yes' : `no (${a.persistReason})`}.`);
+  lines.push(`Excluded: ${a.excluded.otherRepo} other-repo, ${a.excluded.unresolved} unresolved-repo; ${a.excluded.incomplete} incomplete (reported, not effect evidence).`);
+  if (Number.isFinite(a.elapsedMs)) lines.push(`Cost: ${(a.elapsedMs / 1000).toFixed(1)} s wall, no model tokens (the scan is deterministic).`);
   // Coverage is separate from measurement (audit R3-M3): a measured scan can still
   // be unfit as effect-metric evidence.
   lines.push(`Coverage: ${a.completed ? 'complete' : 'INCOMPLETE — this scan is not effect-metric evidence (read/enumeration errors or an incomplete in-scope session)'}.`, '');

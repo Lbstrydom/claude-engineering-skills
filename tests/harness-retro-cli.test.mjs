@@ -5,7 +5,7 @@
  * Every run is hermetic: a temp git repo (with an origin, so it has a stable
  * identity) is the checkout, a temp CLAUDE_CONFIG_DIR holds fixture transcripts,
  * FRICTION_MEMORY_DIR points at a temp memory dir, and an EMPTY AUDIT_DB_URL is
- * the air-gap signal — cloud off, so nothing can reach a store.
+ * the air-gap signal. v1 writes nothing to any store; only local derived artifacts.
  *
  * Tier-3 egress: a planted secret and a planted user sentence must not appear in
  * any artifact the CLI writes.
@@ -74,7 +74,7 @@ describe('harness-retro CLI', () => {
     assert.equal(r.json.reason, 'no-transcripts');
   });
 
-  it('detects the recurring failure, excludes other-repo and unresolved sessions, and persists nothing cloud-off', () => {
+  it('detects the recurring failure, excludes other-repo and unresolved sessions, writes only local derived artifacts', () => {
     const slug = 'C--fixture';
     for (const id of ['s1', 's2', 's3']) {
       writeSession(configDir, slug, id, session({
@@ -90,7 +90,7 @@ describe('harness-retro CLI', () => {
     writeSession(configDir, 'C--other', 's5', session({ cwd: other }));
     writeSession(configDir, 'C--tmp', 's6', session({ cwd: path.join(os.tmpdir(), 'not-a-repo-xyz') }));
 
-    const r = run(['scan', '--json', '--persist'], { cwd: repo, configDir, memoryDir });
+    const r = run(['scan', '--json'], { cwd: repo, configDir, memoryDir });
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.measured, true);
     assert.equal(r.json.candidates.length, 1);
@@ -99,8 +99,7 @@ describe('harness-retro CLI', () => {
     assert.equal(r.json.excluded.unresolved, 1);
     // one-offs: s4's error, s1's secret-bearing error, and s1's correction (kind kept, words dropped)
     assert.equal(r.json.summary.oneOffs, 3);
-    assert.equal(r.json.persisted, false);
-    assert.equal(r.json.persistReason, 'cloud-off');
+    assert.ok(Number.isFinite(r.json.elapsedMs));
     assert.equal(r.json.promotionCandidates[0]?.identity, 'tripwire:feedback_missing_module');
 
     // Egress: nothing the CLI wrote carries the planted secret or the human's words.
@@ -143,32 +142,19 @@ describe('harness-retro CLI', () => {
     assert.equal(r.json.reason, 'format-unrecognised');
   });
 
-  it('effect with no enforced decision says so (unmeasured), and status reports the heartbeat', () => {
+  it('effect with no enforced decision says so (unmeasured), and status reports the last scan', () => {
     const e = run(['effect'], { cwd: repo, configDir, memoryDir });
     assert.equal(e.json.measured, false);
     assert.match(e.json.reason, /no enforced decisions/);
     const s = run(['status'], { cwd: repo, configDir, memoryDir });
     assert.equal(s.json.ok, true);
-    assert.equal(s.json.heartbeat.stale, false);
-  });
-
-  it('the STORE payload carries exactly the allowlisted keys and no transcript text', async () => {
-    const { buildSessionSnapshot } = await import('../scripts/harness-retro.mjs');
-    const { SNAPSHOT_KEYS, OCCURRENCE_KEYS, SessionSnapshotSchema } = await import('../scripts/lib/store/harness-retro.mjs');
-    const dir = path.join(repo, '.audit', 'harness-retro');
-    const scan = JSON.parse(fs.readFileSync(path.join(dir, fs.readdirSync(dir).filter((f) => f.startsWith('scan-')).sort()[0]), 'utf8'));
-    for (const s of scan.sessions) {
-      const snap = buildSessionSnapshot(scan, s);
-      assert.deepEqual(Object.keys(snap).sort(), [...SNAPSHOT_KEYS].sort());
-      for (const o of snap.occurrences) assert.deepEqual(Object.keys(o).sort(), [...OCCURRENCE_KEYS].sort());
-      assert.ok(SessionSnapshotSchema.safeParse(snap).success);
-      const body = JSON.stringify(snap);
-      assert.ok(!body.includes('Z9Z9Z9Z9') && !body.includes('bluefinch') && !body.includes('Cannot find module'), body);
-    }
+    assert.ok(s.json.scansOnDisk >= 1);
+    assert.ok(s.json.lastScan.scanId);
   });
 
   it('usage errors exit 2', () => {
     assert.equal(run(['nope'], { cwd: repo, configDir, memoryDir }).code, 2);
     assert.equal(run(['scan', '--since', 'yesterday'], { cwd: repo, configDir, memoryDir }).code, 2);
+    assert.equal(run(['scan', '--persist'], { cwd: repo, configDir, memoryDir }).code, 2);   // cut from v1: an unknown flag
   });
 });

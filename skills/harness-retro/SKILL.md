@@ -22,7 +22,7 @@ description: |
 
 ```
 /harness-retro                 — scan this repo's sessions (14 days), judge, propose
-/harness-retro --fleet         — report every repo on this account (no persistence)
+/harness-retro --fleet         — report every repo on this account
 /harness-retro effect          — did an enforced fix reduce its failure?
 ```
 
@@ -34,12 +34,14 @@ description: |
 > it edits `package.json`). Keys are not copied: put them in
 > `~/.audit-loop.env`, which every worktree reads.
 
-**Detect mechanically, judge with the model, enforce in the repo, measure with
-the store.** The scanner is deterministic; you are the judgment step, and only
-for the ranked candidates it hands you. **Propose, never apply.**
+**Detect mechanically, judge with the model, enforce in the repo.** The scanner
+is deterministic and costs no model tokens (~10 s for a week of transcripts);
+you are the judgment step, and only for the top few candidates it hands you
+(default 5). **Propose, never apply.**
 
 Transcripts are read from the account's config root and **never leave local
-disk**. Only derived counts reach the store (`--persist`, cloud on).
+disk**. v1 writes only derived scan artifacts under `.audit/harness-retro/`
+(gitignored) and nothing to the audit store.
 
 ## Step 1 — Scan
 
@@ -52,9 +54,8 @@ and why it could not conclude (no transcripts, read errors, unrecognised
 format, no in-scope sessions), then stop. `MEASURED` with zero candidates is a
 valid result: report how many sessions were scanned and that nothing recurred.
 
-Add `--persist` at the end of a coordinator session so the effect metric has a
-durable denominator. An unmigrated store exits non-zero naming the migration —
-relay it; never retry around it.
+Run it at the end of every coordinator session: the scan artifacts it leaves
+are what `effect` later measures against.
 
 ## Step 2 — Judge each candidate (the only model step)
 
@@ -126,9 +127,11 @@ node scripts/harness-retro.mjs enforce --identity fingerprint:0123456789abcdef -
 **`enforce` refuses, writing nothing, an identity the scan did not rank.** It
 also refuses a test `npm test` would not run and a summary carrying a path.
 Otherwise it appends the decision to `.harness-retro/decisions.json` (committed with the
-fix) and, for a `tripwire:` identity, retires the tripwire from `MEMORY.md`
-(the file is kept). `reject --identity … --summary …` records a "no". Closure
-rules, re-running an interrupted `enforce`, and reading `effect`:
+fix). For a `tripwire:` identity whose memory is `type: friction`, it also
+records the enforcing test through the existing `quality link` seam. It does NOT
+edit `MEMORY.md`: retiring the tripwire line is a human edit in the same PR.
+`reject --identity … --summary …` records a "no". Closure rules and reading
+`effect`:
 `references/effect-and-closure.md`.
 
 ## Step 5 — Was it worth it?
@@ -141,15 +144,15 @@ Recurrence before vs after each enforcement landed, over equal windows and a
 stable population. `pending`, `pending-merge` and `unmeasured` carry reasons —
 report them as such, never as "no effect".
 
-`node scripts/harness-retro.mjs status` reports the heartbeat (stale after 8
-days), registry problems and half-finished retirements.
+`node scripts/harness-retro.mjs status` reports the last scan's age and any
+registry problems.
 
 ## Reference files
 
 | File | Summary | Read when |
 |---|---|---|
 | `references/judging-candidates.md` | Judging a retro candidate — the enforcement ladder, the three-things contract, coordinator chores, an example. | Step 2 — judging candidates, OR unsure which layer a fix belongs in. |
-| `references/effect-and-closure.md` | Closing a decision and reading its effect — enforce/reject, tripwire retirement, activation, the verdicts. | Step 4 or 5 — recording an approved fix, OR an effect verdict needs explaining. |
+| `references/effect-and-closure.md` | Closing a decision and reading its effect — enforce/reject, activation, the verdicts. | Step 4 or 5 — recording an approved fix, OR an effect verdict needs explaining. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
 
 — end of /harness-retro —

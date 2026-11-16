@@ -1,6 +1,6 @@
 /**
  * @fileoverview The scan orchestrator — enumerate → assemble sessions → extract →
- * resolve repo → derived result. No persistence and no network (plan
+ * resolve repo → derived result. No writes and no network (plan
  * docs/plans/harness-retro.md §2 components 1–4).
  *
  * Session assembly: files are grouped by the session id their PATH names
@@ -98,7 +98,7 @@ export async function runScan(opts) {
       ex.endFile();
       if (r.readError) { stats.readErrors++; complete = false; } else stats.read++;
       // A garbled line MID-file means records were lost: incomplete, reported but
-      // never persisted (audit H5). A garbled LAST line is a write in progress —
+      // never effect evidence (audit H5). A garbled LAST line is a write in progress —
       // the snapshot is exact as of `until`, and a later scan supersedes it.
       if (r.unparseable - (r.truncatedTail ? 1 : 0) > 0) complete = false;
       if (r.truncatedTail) stats.truncatedTails++;
@@ -115,7 +115,7 @@ export async function runScan(opts) {
     const repo = s.firstCwd ? resolver.resolve(s.firstCwd) : null;
     if (!repo) { excluded.unresolved++; continue; }
     if (!fleet && repo.repoUuid !== thisRepoUuid) { excluded.otherRepo++; continue; }
-    if (!complete) excluded.incomplete++;   // still reported; never persisted (plan R3-H1)
+    if (!complete) excluded.incomplete++;   // still reported; never effect evidence (plan R3-H1)
 
     const counts = {};
     const spans = {};
@@ -150,7 +150,7 @@ export async function runScan(opts) {
     files: stats,
     // Coverage evidence: every listed file read cleanly AND the walk itself saw no error.
     // ...and no in-scope session was incomplete (audit R2-M3): a scan that could
-    // not persist a session cannot claim to cover it.
+    // not read a session completely cannot claim to cover it.
     completed: stats.listed > 0 && stats.readErrors === 0 && enumerationErrors.length === 0 && excluded.incomplete === 0,
     ...verdict,
     transcriptVersions: [...versions].sort(),

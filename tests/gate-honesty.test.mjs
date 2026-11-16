@@ -196,7 +196,7 @@ const PINNED_DOCUMENT_ONLY = {
   cycle: ['remediate-focused-audit-scope', 'audit-plan-skip-requires-explicit-mode', 'cluster-scope-preflight-exits-nonzero', 'cluster-start-ref-validated-on-use', 'preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory', 'autonomous-never-pushes-without-ship'],
   plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
   // 2026-11-16: the judgment-side claims (see each reason); the CLI halves are pinned by the harness-retro suites.
-  'harness-retro': ['propose-never-apply', 'unmeasured-is-not-clean', 'record-refuses-bad-proposals', 'transcripts-never-leave-disk', 'unmigrated-store-fails-loud'],
+  'harness-retro': ['propose-never-apply', 'unmeasured-is-not-clean', 'record-refuses-bad-proposals', 'transcripts-never-leave-disk'],
 };
 const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'fleet', 'investigate', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship', 'skills', 'ux-lock', 'visual-audit', 'harness-retro'];
 
@@ -330,7 +330,7 @@ describe('gate-honesty — real skills/', () => {
     //   openai-audit.mjs exits 4 past the soft cap, and the cli-exit scenarios drive the real CLI to that refusal.
     // 56 -> 57: +1 cycle (autonomous-never-pushes-without-ship, 2026-11-15, ai-organiser PR #111/#112). Document-only: /cycle
     //   has no exit code; the prose is pinned by tests/cycle-autonomous-ship-gate.test.mjs.
-    assert.equal(totalDocOnly, 62); // +5 harness-retro (2026-11-16)
+    assert.equal(totalDocOnly, 61); // +4 harness-retro (2026-11-16)
     // was 57:   // +1 audit-code coverage-gate-fail-incomplete (file-coverage contract, 2026-09-30); +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5); +2 ship: converged + no-tests cap (2026-09-04)
 
     const allSkillNames = listSkillNames(skillsRoot);

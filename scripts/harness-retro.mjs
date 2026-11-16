@@ -1,26 +1,28 @@
 #!/usr/bin/env node
 /**
  * @fileoverview Harness retro CLI — detect recurring session failures
- * mechanically, hand ranked candidates to a judge, record decisions, measure
- * whether an enforcement worked. Plan: docs/plans/harness-retro.md.
+ * mechanically, hand the top few to a judge, record decisions, measure whether
+ * an enforcement worked. Plan: docs/plans/harness-retro.md (v1 = the smallest
+ * structurally honest version; see its right-sizing gate for what was cut).
  *
- *   node scripts/harness-retro.mjs scan   [--since 14d] [--fleet] [--persist] [--top 10] [--json]
+ *   node scripts/harness-retro.mjs scan   [--since 14d] [--fleet] [--top 5] [--json]
  *   node scripts/harness-retro.mjs record --scan <id|latest> [--file <proposals.json>]   (else JSON on stdin)
  *   node scripts/harness-retro.mjs enforce --identity <fingerprint:fp|tripwire:name> --scan <id|latest>
  *                                          --test <tests/x.test.mjs> --layer <hook|gate|script|reference-doc|agents-md>
- *                                          --summary <text> [--memory <name>] [--force-unscanned]
+ *                                          --summary <text> [--force-unscanned]
  *   node scripts/harness-retro.mjs reject  --identity <id> --scan <id|latest> --summary <text>
- *   node scripts/harness-retro.mjs effect  [--identity <id>] [--window-days 14] [--json]
- *   node scripts/harness-retro.mjs status  [--json]
+ *   node scripts/harness-retro.mjs effect  [--identity <id>] [--window-days 14]
+ *   node scripts/harness-retro.mjs status
  *
  * Transcripts are read from the account's config root (`CLAUDE_CONFIG_DIR`, else
- * `~/.claude`) and NEVER leave local disk. Only derived records are persisted,
- * and only with `--persist` and a cloud store. Propose, never apply: nothing
- * here edits the harness except `enforce`/`reject`, which a human runs in the
- * fix PR after approving a proposal.
+ * `~/.claude`) and NEVER leave local disk. v1 persists nothing to the audit
+ * store: derived scan artifacts live under `.audit/harness-retro/` (gitignored)
+ * and decisions in the committed `.harness-retro/decisions.json`. Propose, never
+ * apply: nothing here edits the harness except `enforce`/`reject`, which a human
+ * runs in the fix PR after approving a proposal.
  *
- * Exit codes: 0 ok (including an honest UNMEASURED scan) · 1 a failure (bad
- * proposals, a store write that did not land, an unmigrated store) · 2 usage.
+ * Exit codes: 0 ok (including an honest UNMEASURED scan) · 1 a refusal (bad
+ * proposals, an enforce preflight) · 2 usage.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,19 +39,19 @@ import { analyseScan, renderScanReport, renderProposals } from './lib/friction/r
 import { readRegistry, decisionIndex, validateRegistry, activationFor } from './lib/friction/retro/registry.mjs';
 import {
   newScanId, writeScanArtifact, readScanArtifact, readAllScanArtifacts, pruneScanArtifacts,
-  writeProposalsArtifact, writeHeartbeat, readHeartbeat, SCAN_SCHEMA_VERSION,
+  writeProposalsArtifact, listScanIds, SCAN_SCHEMA_VERSION,
 } from './lib/friction/retro/artifacts.mjs';
 import { checkProposalsAgainstScan } from './lib/friction/retro/proposal-schema.mjs';
 import { closeDecision } from './lib/friction/retro/closure.mjs';
-import { retirementStatus } from './lib/friction/retro/memory-tripwires.mjs';
 import { computeEffect, DEFAULT_WINDOW_DAYS } from './lib/friction/retro/effect.mjs';
 
 const VERBS = ['scan', 'record', 'enforce', 'reject', 'effect', 'status'];
 const KNOWN = [
-  '--since', '--fleet', '--persist', '--top', '--json', '--scan', '--identity', '--test', '--layer',
-  '--summary', '--memory', '--force-unscanned', '--window-days', '--file', '--help', '--selfcheck-relocation',
+  '--since', '--fleet', '--top', '--json', '--scan', '--identity', '--test', '--layer',
+  '--summary', '--force-unscanned', '--window-days', '--file', '--help', '--selfcheck-relocation',
 ];
-const HEARTBEAT_STALE_DAYS = 8;
+/** Default judged candidates: the judge sees only the top few (plan right-sizing gate). */
+const DEFAULT_TOP = 5;
 const DAY_MS = 86_400_000;
 
 const log = (m) => process.stderr.write(`[harness-retro] ${m}\n`);
@@ -64,7 +66,7 @@ function resolveRoots(cwd = process.cwd()) {
   const top = git(['rev-parse', '--show-toplevel'], cwd);
   if (!top) throw new ArgvError('harness-retro must run inside a git checkout');
   // The MAIN worktree is the first entry of `git worktree list` — correct for a
-  // linked worktree AND a --separate-git-dir checkout (audit B-R1-M2).
+  // linked worktree AND a --separate-git-dir checkout.
   const first = (git(['worktree', 'list', '--porcelain'], cwd) ?? '').split(/\r?\n/).find((l) => l.startsWith('worktree '));
   const main = first ? first.slice('worktree '.length).trim() : top;
   return { repoRoot: path.resolve(top), mainRoot: path.resolve(main) };
@@ -78,73 +80,13 @@ export function parseSince(v, now = Date.now()) {
 
 const readStdin = () => fs.readFileSync(0, 'utf8');
 
-/**
- * The ONE place a store payload is built from a scan artifact — derived fields
- * only, no label (the egress table). Exported so the boundary is tested directly.
- */
-export function buildSessionSnapshot(artifact, s) {
-  const occurrences = Object.entries(s.counts).map(([fp, n]) => ({
-    fingerprint: fp, kind: artifact.fingerprints[fp].kind, tool: artifact.fingerprints[fp].tool,
-    occurrences: n, first_at: s.spans[fp]?.firstAt ?? null, last_at: s.spans[fp]?.lastAt ?? null,
-  }));
-  return {
-    session_key: s.sessionKey, repo_uuid: s.repoUuid, account_key: artifact.accountKey, origin: s.origin,
-    started_at: s.startedAt, fingerprint_version: artifact.fingerprintVersion,
-    signal_count: occurrences.reduce((a, o) => a + o.occurrences, 0), last_scan_id: artifact.scanId,
-    observed_until: artifact.requested.until, occurrences,
-  };
-}
-
-/** Persist one scan: a transactional snapshot per COMPLETE session, then the scan row. */
-async function persistScan(artifact, { repoRoot }) {
-  const { isCloudEnabled } = await import('./lib/store/repo.mjs');
-  if (!(await isCloudEnabled())) return { persisted: false, persistReason: 'cloud-off' };
-  if (!artifact.repoUuid) return { persisted: false, persistReason: 'no-repo-identity' };
-  // Probe first: an unmigrated store fails loudly ONCE instead of spilling every session.
-  const { query } = await import('./lib/db/query.mjs');
-  const { describeSchemaFault } = await import('./lib/db/errors.mjs');
-  // Every table AND column the writers bind, so a partly-applied or drifted schema
-  // fails here once, not per session (audit B-R2-M1).
-  const PROBE = 'SELECT s.scan_id, s.completed, x.session_key, x.observed_until, o.fingerprint, o.occurrences '
-    + 'FROM harness_retro_scans s, harness_retro_sessions x, harness_retro_occurrences o LIMIT 0';
-  try { await query(PROBE); } catch (err) {
-    const why = describeSchemaFault(err, 'harness-retro persist');
-    if (why) return { persisted: false, persistReason: 'store-not-migrated', failed: true, detail: `${why} — apply supabase/migrations/20261116120000_harness_retro.sql` };
-    return { persisted: false, persistReason: 'store-unreachable', failed: true, detail: err.message };
-  }
-  await import('./lib/audit-store-writers.mjs');
-  const { durableWrite } = await import('./lib/durable-write.mjs');
-  const outcomes = { written: 0, spilled: 0, lost: 0, skipped: 0, notPersisted: 0 };
-  for (const s of artifact.sessions) {
-    if (!s.complete || !s.startedAt) { outcomes.notPersisted++; continue; }
-    const r = await durableWrite('retro.sessionSnapshot', buildSessionSnapshot(artifact, s), { repoRoot });
-    outcomes[r.outcome] = (outcomes[r.outcome] ?? 0) + 1;
-  }
-  // EVERY outcome other than `written` means an eligible session did not land as
-  // a fresh write; `skipped` and `notPersisted` count too (audit B-R1-H4/M5/H5).
-  const notLanded = outcomes.spilled + outcomes.lost + outcomes.skipped + outcomes.notPersisted;
-  const completed = artifact.completed && notLanded === 0;
-  const scanRow = await durableWrite('retro.scanComplete', {
-    scan_id: artifact.scanId, account_key: artifact.accountKey, repo_uuid: artifact.repoUuid,
-    fingerprint_version: artifact.fingerprintVersion, requested_since: artifact.requested.since,
-    requested_until: artifact.requested.until, files_listed: artifact.files.listed,
-    files_read: artifact.files.read, read_errors: artifact.files.readErrors, completed,
-  }, { repoRoot });
-  const failed = outcomes.spilled + outcomes.lost + outcomes.skipped > 0 || scanRow.outcome !== 'written';
-  return {
-    persisted: !failed, persistReason: failed ? 'store-write-incomplete' : 'written',
-    failed, outcomes, scanRowOutcome: scanRow.outcome, completed,
-  };
-}
-
 async function cmdScan() {
   const now = Date.now();
+  const startedAt = Date.now();
   const sinceMs = parseSince(argOption('since', '14d'), now);
-  const top = Number(argOption('top', '10'));
+  const top = Number(argOption('top', String(DEFAULT_TOP)));
   if (!Number.isInteger(top) || top < 1) throw new ArgvError('--top must be a positive integer');
   const fleet = hasFlag('fleet');
-  const persist = hasFlag('persist');
-  if (fleet && persist) throw new ArgvError('--persist is repo-local; drop --fleet (other repos persist from their own checkout)');
   const { repoRoot, mainRoot } = resolveRoots();
   const configDir = claudeConfigDir();
   const self = resolveRepoIdentity(repoRoot);
@@ -167,34 +109,19 @@ async function cmdScan() {
     transcriptVersions: scan.transcriptVersions, excluded: scan.excluded,
     sessions: scan.sessions, fingerprints: scan.fingerprints,
     candidates: analysis.candidates, tripwires: analysis.tripwires, summary: analysis.summary,
-    persisted: false, persistReason: persist ? 'pending' : 'not-requested',
   };
-  let persistResult = null;
-  if (persist && scan.measured) {
-    persistResult = await persistScan(artifact, { repoRoot });
-    artifact.persisted = persistResult.persisted;
-    artifact.persistReason = persistResult.persistReason;
-  } else if (persist) {
-    artifact.persistReason = 'unmeasured-scan';
-  }
   const file = writeScanArtifact(repoRoot, artifact);
   const pruned = pruneScanArtifacts(repoRoot, { now });
-  writeHeartbeat(repoRoot, { lastRunAt: artifact.createdAt, scanId, measured: scan.measured, persisted: artifact.persisted });
-  const failed = persistResult?.failed === true;
+  const elapsedMs = Date.now() - startedAt;
   const envelope = {
-    ok: !failed, measured: scan.measured, ...(scan.reason ? { reason: scan.reason } : {}),
-    scanId, artifact: path.relative(repoRoot, file), files: scan.files, excluded: scan.excluded,
-    summary: analysis.summary, persisted: artifact.persisted, persistReason: artifact.persistReason,
-    ...(persistResult ? { persist: persistResult } : {}), pruned,
+    ok: true, measured: scan.measured, ...(scan.reason ? { reason: scan.reason } : {}),
+    scanId, artifact: path.relative(repoRoot, file), elapsedMs, files: scan.files, excluded: scan.excluded,
+    completed: scan.completed, summary: analysis.summary, pruned,
     candidates: analysis.candidates.map(({ identity, kind, tool, sessions, occurrences, repos, rank, label, coveredBy }) => ({ identity, kind, tool, sessions, occurrences, repos, rank, label, coveredBy })),
     promotionCandidates: analysis.tripwires.filter((t) => t.status === 'promotion-candidate'),
   };
   if (hasFlag('json')) emit(envelope);
-  else {
-    process.stdout.write(renderScanReport({ ...artifact, summary: { ...analysis.summary }, candidates: analysis.candidates, tripwires: analysis.tripwires }));
-    if (persistResult?.detail) process.stdout.write(`\nPERSIST FAILED: ${persistResult.detail}\n`);
-    if (failed) process.exitCode ||= 1;
-  }
+  else process.stdout.write(renderScanReport({ ...artifact, elapsedMs, candidates: analysis.candidates, tripwires: analysis.tripwires }));
 }
 
 async function cmdRecord() {
@@ -216,31 +143,23 @@ async function cmdClose(decision) {
   const { repoRoot, mainRoot } = resolveRoots();
   const identity = argOption('identity');
   if (!identity) throw new ArgvError('--identity is required');
-  const scanArg = argOption('scan', 'latest');
   let scan = null;
-  try { scan = readScanArtifact(repoRoot, scanArg); } catch (err) { if (err.code !== 'NO_SCAN') throw err; }
+  try { scan = readScanArtifact(repoRoot, argOption('scan', 'latest')); } catch (err) { if (err.code !== 'NO_SCAN') throw err; }
   const { dir: memoryDir, exists } = resolveHarnessMemoryDir({ repoRoot: mainRoot });
   const { frictionLink } = await import('./lib/friction/commands.mjs');
   const r = await closeDecision({
     decision, identity, scan, test: argOption('test'), layer: argOption('layer'), summary: argOption('summary'),
-    memory: argOption('memory'), repoRoot, memoryDir: exists ? memoryDir : null, forceUnscanned: hasFlag('force-unscanned'),
+    repoRoot, memoryDir: exists ? memoryDir : null, forceUnscanned: hasFlag('force-unscanned'),
   }, { link: (a) => frictionLink({ ...a, repoRoot: mainRoot }) });
   if (!r.ok) for (const p of r.problems) log(`refused: ${p}`);
   emit(r.ok ? { ok: true, decision: r.decision, steps: r.steps } : { ok: false, problems: r.problems });
 }
 
-async function effectInputs({ repoRoot, repoUuid, fromTs, toTs }) {
-  const { isCloudEnabled } = await import('./lib/store/repo.mjs');
-  if (await isCloudEnabled()) {
-    const store = await import('./lib/store/harness-retro.mjs');
-    // Bounded to the union of the requested windows (audit B-R1-M7), never the whole history.
-    const sessions = fromTs ? await store.readRetroWindow({ repoUuid, fromTs, toTs }) : [];
-    const scans = await store.readRetroScans({ repoUuid });
-    return { source: 'store', sessions, scans };
-  }
-  const { scans: arts } = readAllScanArtifacts(repoRoot);
+/** v1 effect inputs: the local scan artifacts (derived, gitignored, this machine). */
+function effectInputs({ repoRoot, repoUuid }) {
+  const { scans: arts, invalid } = readAllScanArtifacts(repoRoot);
   const latest = new Map();
-  for (const a of arts) {
+  for (const a of arts) {   // oldest → newest, so a later scan's row supersedes
     for (const s of a.sessions) {
       if (!s.complete || s.repoUuid !== repoUuid) continue;
       latest.set(s.sessionKey, { sessionKey: s.sessionKey, repoUuid: s.repoUuid, accountKey: a.accountKey,
@@ -250,7 +169,7 @@ async function effectInputs({ repoRoot, repoUuid, fromTs, toTs }) {
   const scans = arts.filter((a) => a.repoUuid === repoUuid && !a.fleet).map((a) => ({
     accountKey: a.accountKey, repoUuid: a.repoUuid, since: a.requested.since, until: a.requested.until, completed: a.completed,
   }));
-  return { source: 'local-scan', sessions: [...latest.values()], scans };
+  return { source: 'local-scan', sessions: [...latest.values()], scans, invalidArtifacts: invalid };
 }
 
 async function cmdEffect() {
@@ -269,37 +188,32 @@ async function cmdEffect() {
     const r = spawnSync('gh', args, { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
     return r.status === 0 ? String(r.stdout) : null;
   };
-  const activations = decisions.map((d) => activationFor(d.identity, { runGit: (a) => git(a, repoRoot), runGh, repoSlug: slug }));
-  const times = activations.filter((a) => a.status === 'active').map((a) => Date.parse(a.at));
-  const W = windowDays * DAY_MS;
-  const inputs = await effectInputs({
-    repoRoot, repoUuid: self.repoUuid,
-    fromTs: times.length ? new Date(Math.min(...times) - W).toISOString() : null,
-    toTs: times.length ? new Date(Math.max(...times) + W).toISOString() : null,
-  });
-  const results = decisions.map((d, i) => computeEffect({
+  const inputs = effectInputs({ repoRoot, repoUuid: self.repoUuid });
+  const results = decisions.map((d) => computeEffect({
     decision: d, repoUuid: self.repoUuid, windowDays, source: inputs.source,
-    activation: activations[i], sessions: inputs.sessions, scans: inputs.scans,
+    activation: activationFor(d.identity, { runGit: (a) => git(a, repoRoot), runGh, repoSlug: slug }),
+    sessions: inputs.sessions, scans: inputs.scans,
   }));
-  emit({ ok: true, source: inputs.source, results });
+  emit({ ok: true, source: inputs.source, invalidArtifacts: inputs.invalidArtifacts, results });
 }
 
 async function cmdStatus() {
-  const { repoRoot, mainRoot } = resolveRoots();
-  const beat = readHeartbeat(repoRoot);
-  const ageDays = beat ? (Date.now() - Date.parse(beat.lastRunAt)) / DAY_MS : null;
+  const { repoRoot } = resolveRoots();
   const registry = readRegistry(repoRoot);
   const registryProblems = validateRegistry({ registry, repoRoot });
-  const { dir, exists } = resolveHarnessMemoryDir({ repoRoot: mainRoot });
-  const retirement = exists ? retirementStatus(dir) : [];
-  const stale = ageDays === null || ageDays > HEARTBEAT_STALE_DAYS;
+  const ids = listScanIds(repoRoot);
+  let lastScan = null;
+  if (ids.length) {
+    const a = readScanArtifact(repoRoot, 'latest');
+    lastScan = { scanId: a.scanId, createdAt: a.createdAt, ageDays: Math.round(((Date.now() - Date.parse(a.createdAt)) / DAY_MS) * 10) / 10, measured: a.measured };
+  }
   emit({
     ok: registryProblems.length === 0,
-    heartbeat: beat ? { ...beat, ageDays: Math.round(ageDays * 10) / 10, stale } : { stale: true, reason: 'never run' },
+    lastScan: lastScan ?? { reason: 'never run on this checkout' },
+    scansOnDisk: ids.length,
     decisions: { enforced: registry.decisions.filter((d) => d.decision === 'enforced').length, rejected: registry.decisions.filter((d) => d.decision === 'rejected').length },
-    registryProblems, retirement,
+    registryProblems,
   });
-  if (stale) log(`HEARTBEAT STALE — last scan ${beat ? `${Math.round(ageDays)} days ago` : 'never'}; run \`node scripts/harness-retro.mjs scan --persist\``);
 }
 
 export async function main() {
@@ -326,6 +240,5 @@ if (isInvokedAsScript(import.meta.url)) {
     process.stderr.write(`harness-retro: ${err.message}\n`);
     code = err instanceof ArgvError || err?.code === 'ARGV_ERROR' ? 2 : 1;
   }
-  try { const { closePool } = await import('./lib/db/client.mjs'); await closePool(); } catch { /* no pool */ }
   await finishAndExit(code);
 }
