@@ -114,3 +114,34 @@ describe('ship-commit --record (integration)', () => {
     assert.equal(run(dir, 'git', ['show', '--name-only', '--format=', 'HEAD']).stdout.trim(), 'docs/status/entries/2026-11-16-091244-pr-5.md');
   });
 });
+
+describe('audit B-R1 regressions (authority)', () => {
+  it('H3: a created Implementation Log must follow ALL original content', () => {
+    assert.match(planChangeIsRecordOnly('# P\nbody\n', `## Implementation Log\n${LINE}\n# P\nbody\n`).reason, /before original content|outside|not a ship-record/);
+  });
+  it('H4/M6: a plan that is a symlink at HEAD refuses even when replaced by a regular file', () => {
+    const v = good([{ rel: 'docs/plans/p.md', atHead: 'symlink', kind: 'regular', oldText: null, newText: LINE }]);
+    assert.match(reasonOf(v, 'paths'), /symlink at HEAD/);
+  });
+  it('H7/H9: a git failure at HEAD is unknown and refuses, never a fabricated absent', () => {
+    const v = good([{ rel: 'docs/status/entries/2026-11-16-091244-pr-5.md', atHead: 'unknown', kind: 'regular', newText: '## a\n' }]);
+    assert.match(reasonOf(v, 'paths'), /could not be read/);
+  });
+  it('gathers tree modes from git: a committed symlink reads as symlink', async (t) => {
+    const { gatherRecordPathFacts } = await import('../scripts/lib/ship-record/authority.mjs');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-record-mode-'));
+    const g = (args) => { const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }); return { status: r.status, stdout: r.stdout, error: r.error }; };
+    g(['init', '-q']);
+    fs.mkdirSync(path.join(dir, 'docs/plans'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'docs/plans/real.md'), '# r\n');
+    // A symlink blob committed via the index directly, so the test does not need symlink privileges on Windows.
+    const blob = spawnSync('git', ['hash-object', '-w', '--stdin'], { cwd: dir, input: 'real.md', encoding: 'utf8' }).stdout.trim();
+    g(['update-index', '--add', '--cacheinfo', `120000,${blob},docs/plans/link.md`]);
+    g(['add', 'docs/plans/real.md']);
+    if (g(['commit', '-q', '-m', 'x']).status !== 0) { t.skip('could not commit'); return; }
+    const facts = gatherRecordPathFacts({ repoRoot: dir, git: g, rels: ['docs/plans/real.md', 'docs/plans/link.md', 'docs/plans/none.md'] });
+    assert.deepEqual(facts.map((f) => f.atHead), ['blob', 'symlink', 'absent']);
+    const failing = gatherRecordPathFacts({ repoRoot: dir, git: () => ({ status: 128, stdout: '', error: null }), rels: ['docs/plans/real.md'] });
+    assert.equal(failing[0].atHead, 'unknown');
+  });
+});

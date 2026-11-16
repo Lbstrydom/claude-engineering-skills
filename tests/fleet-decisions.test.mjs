@@ -54,6 +54,32 @@ describe('decisions', () => {
   it('readWords refuses empty and missing input', () => {
     assert.throws(() => readWords(undefined), /required/);
     assert.throws(() => readWords('-', stdin('\n\n')), /empty/);
-    assert.equal(readWords('-', stdin('a\r\nb\n')), 'a\nb');
+    assert.equal(readWords('-', stdin('a\r\nb\n')), 'a\r\nb');
+  });
+});
+
+describe('audit B-R1 regressions (decisions)', () => {
+  const rec = (dir, id, extra = {}) => writeRecord(dir, { schemaVersion: 1, kind: 'decision', id, at: NOW.toISOString(), scope: 'record-catchup', words: 'w', recordedBy: { session: 's', hostSession: null }, expiresAt: null, ...extra });
+  it('H2/H8: an uninterpretable record (could be a revocation) makes every decision inactive', () => {
+    for (const bad of [JSON.stringify({ schemaVersion: 2, kind: 'revocation' }), '{not json', JSON.stringify({ schemaVersion: 1, kind: 'revocation', id: 'rev-x' })]) {
+      const dir = tmp();
+      const id = newDecisionId(NOW);
+      rec(dir, id);
+      assert.equal(activeDecision(dir, id, 'record-catchup', NOW).ok, true);
+      fs.writeFileSync(path.join(decisionsDir(dir), 'rev-20261116000000-0000.json'), bad);
+      assert.match(activeDecision(dir, id, 'record-catchup', NOW).reason, /could not be interpreted/);
+    }
+  });
+  it('H5: a calendar-invalid --expires is refused', () => {
+    assert.throws(() => cmdDecision(ctx(tmp()), { '--scope': 'note', '--words-file': '-', '--expires': '2027-02-30T12:00:00Z' }, ['record'], stdin('w')), /real calendar date/);
+    assert.equal(cmdDecision(ctx(tmp()), { '--scope': 'note', '--words-file': '-', '--expires': '2027-02-28T12:00:00Z' }, ['record'], stdin('w')).ok, true);
+  });
+  it('M2: only one trailing terminator is dropped; the rest is exact', () => {
+    assert.equal(readWords('-', stdin('a\r\nb\n\n')), 'a\r\nb\n');
+  });
+  it('M5: list surfaces registry usage against the cap', () => {
+    const dir = tmp();
+    rec(dir, newDecisionId(NOW));
+    assert.match(cmdDecision(ctx(dir), {}, ['list']).text, /registry: 1\/500 records/);
   });
 });

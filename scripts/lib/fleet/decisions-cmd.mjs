@@ -16,17 +16,30 @@ import { ArgvError } from '../cli-io.mjs';
 import { transact } from './registry.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused } from './commands.mjs';
 import {
-  DECISION_SCOPES, DECISION_ID_RE, GRANTS_NOTE, WORDS_MAX, newDecisionId, newRevocationId, readDecisions, writeRecord,
+  DECISION_SCOPES, DECISION_ID_RE, DECISIONS_CAP, GRANTS_NOTE, WORDS_MAX, newDecisionId, newRevocationId, readDecisions, writeRecord,
 } from './decisions.mjs';
 
 const SUBS = ['record', 'revoke', 'list'];
+
+/** Strict ISO-8601 (B-R1-H5): Date.parse accepts 2027-02-30 and normalises it to March 2; a round trip refuses it. */
+export function isStrictIso(s) {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?)(Z|[+-]\d{2}:\d{2})$/.exec(String(s ?? ''));
+  if (!m) return false;
+  const t = Date.parse(s);
+  if (!Number.isFinite(t)) return false;
+  const [y, mo, d] = m[1].split('-').map(Number);
+  const probe = new Date(Date.UTC(y, mo - 1, d));
+  return probe.getUTCFullYear() === y && probe.getUTCMonth() === mo - 1 && probe.getUTCDate() === d;
+}
 
 /** Read the words: `-` is stdin, anything else a file path. Exact bytes, only a trailing newline trimmed. */
 export function readWords(spec, { readStdin = () => fs.readFileSync(0, 'utf8') } = {}) {
   if (spec === undefined) throw new ArgvError('fleet decision: --words-file - (stdin) or --words-file <path> is required — the user\'s exact words');
   let text;
   try { text = spec === '-' ? readStdin() : fs.readFileSync(spec, 'utf8'); } catch (e) { throw new ArgvError(`fleet decision: could not read --words-file ${spec} (${e.code ?? e.message})`); }
-  text = String(text).replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  // EXACT words (B-R1-M2): only the one line terminator a shell or editor appends is dropped; every other byte, CRLF
+  // included, is kept as supplied.
+  text = String(text).replace(/\r?\n$/, '');
   if (!text.trim()) throw new ArgvError('fleet decision: the words are empty');
   if (text.length > WORDS_MAX) throw new ArgvError(`fleet decision: the words are over ${WORDS_MAX} characters`);
   return text;
@@ -50,6 +63,8 @@ export function cmdDecision(ctx, flags, positionals, deps = {}) {
     const shown = r.decisions.filter((d) => !scope || d.scope === scope);
     const lines = shown.length ? shown.map((d) => render(d, r.revocations.find((x) => x.revokes === d.id))) : ['no decisions recorded'];
     if (!r.complete) lines.push(`warning: incomplete read (${r.reason}) — this is not the whole list`);
+    const used = r.decisions.length + r.revocations.length + r.unsupported.length + r.invalid.length;
+    lines.push(`registry: ${used}/${DECISIONS_CAP} records${used >= DECISIONS_CAP * 0.8 ? ' — NEAR THE CAP: past it every decision reads inactive (fail-closed); plan retention before then' : ''}`);
     for (const u of r.unsupported) lines.push(`unsupported: ${u.file} (${u.reason}) — listed, never active`);
     for (const i of r.invalid) lines.push(`invalid: ${i.file} (${i.reason})`);
     lines.push(`(${GRANTS_NOTE})`);
@@ -62,7 +77,7 @@ export function cmdDecision(ctx, flags, positionals, deps = {}) {
     const scope = flags['--scope'];
     if (!DECISION_SCOPES.includes(scope)) throw new ArgvError(`fleet decision record: --scope must be one of ${DECISION_SCOPES.join(', ')} (got ${JSON.stringify(scope ?? null)}); merge, push and override are deliberately not expressible`);
     const expires = flags['--expires'] ?? null;
-    if (expires !== null && (!Number.isFinite(Date.parse(expires)) || Date.parse(expires) <= ctx.now.getTime())) throw new ArgvError('fleet decision record: --expires must be a future ISO timestamp');
+    if (expires !== null && (!isStrictIso(expires) || Date.parse(expires) <= ctx.now.getTime())) throw new ArgvError('fleet decision record: --expires must be a future ISO-8601 timestamp with a real calendar date (e.g. 2026-12-31T00:00:00Z)');
     const tx = transact(ctx.dir, () => writeRecord(ctx.dir, {
       schemaVersion: 1, kind: 'decision', id: newDecisionId(ctx.now), at, scope, words, recordedBy: byOf(ctx, flags),
       expiresAt: expires === null ? null : new Date(Date.parse(expires)).toISOString(),

@@ -43,8 +43,9 @@ export function planChangeIsRecordOnly(oldText, newText) {
   // Greedy line alignment: every old line must appear in order; everything extra is an insertion.
   const inserted = [];
   let i = 0;
+  let lastOld = -1; // index in b of the last line that matched an old line
   for (let j = 0; j < b.length; j++) {
-    if (i < a.length && a[i] === b[j]) { i++; continue; }
+    if (i < a.length && a[i] === b[j]) { i++; lastOld = j; continue; }
     inserted.push(j);
   }
   if (i < a.length) return { ok: false, reason: `line ${i + 1} of the plan was changed or removed — a record change only inserts lines` };
@@ -55,9 +56,11 @@ export function planChangeIsRecordOnly(oldText, newText) {
   for (const j of inserted) {
     const l = b[j];
     if (l === '') continue; // spacing around an inserted line or section
-    if (!oldHadLog && l === LOG_HEADING && j === headingAt && sectionEnd(headingAt) === b.length) continue; // section created at EOF
+    // A CREATED section must come after every original line (B-R1-H3): EOF means EOF, not "no later heading".
+    if (!oldHadLog && l === LOG_HEADING && j === headingAt && j > lastOld && sectionEnd(headingAt) === b.length) continue;
     if (!PLAN_LOG_LINE_RE.test(l)) return { ok: false, reason: `line ${j + 1} is not a ship-record Implementation Log line` };
     if (headingAt < 0 || j <= headingAt || j >= sectionEnd(headingAt)) return { ok: false, reason: `line ${j + 1} is outside the ${LOG_HEADING} section` };
+    if (!oldHadLog && j < lastOld) return { ok: false, reason: `line ${j + 1} was inserted before original content` };
   }
   return { ok: true, inserted: inserted.filter((j) => b[j] !== '').length };
 }
@@ -67,7 +70,7 @@ export function planChangeIsRecordOnly(oldText, newText) {
  * @param {string|null} f.gate the requested gate
  * @param {{preauthorised?: boolean, noTests?: boolean}} f.flags
  * @param {{ok: boolean, reason?: string, decision?: object}} f.decision activeDecision()'s result
- * @param {Array<{rel: string, atHead: 'absent'|'blob'|'other', kind: 'regular'|'symlink'|'missing'|'other', oldText?: string|null, newText?: string|null}>} f.paths
+ * @param {Array<{rel: string, atHead: 'absent'|'blob'|'symlink'|'other'|'unknown', kind: 'regular'|'symlink'|'missing'|'other', oldText?: string|null, newText?: string|null}>} f.paths
  */
 export function evaluateRecordCommit(f) {
   const c = [];
@@ -89,6 +92,8 @@ export function evaluateRecordCommit(f) {
 
 /** Why one path is not record-only, or null when it is. */
 function pathVerdict(p) {
+  if (p.atHead === 'unknown') return 'its state at HEAD could not be read (git failed), so nothing was checked';
+  if (p.atHead === 'symlink') return 'is a symlink at HEAD';
   if (p.kind === 'missing') return 'deleted (a record never deletes)';
   if (p.kind !== 'regular') return `not a regular file (${p.kind})`;
   const entry = ENTRY_PATH_RE.exec(p.rel);
@@ -117,9 +122,23 @@ export function gatherRecordPathFacts({ repoRoot, git, rels }) {
     const abs = path.join(repoRoot, rel);
     let kind = 'other';
     try { const st = fs.lstatSync(abs); kind = st.isSymbolicLink() ? 'symlink' : st.isFile() ? 'regular' : 'other'; } catch (e) { kind = e.code === 'ENOENT' ? 'missing' : 'other'; }
-    const t = git(['cat-file', '-t', `HEAD:${rel}`]);
-    const atHead = t.status !== 0 ? 'absent' : String(t.stdout).trim() === 'blob' ? 'blob' : 'other';
-    const oldText = atHead === 'blob' ? String(git(['show', `HEAD:${rel}`]).stdout ?? '') : null;
+    // The tree ENTRY, not the object type (B-R1-H4/M6): git stores a symlink as a blob too; only the mode tells them apart.
+    // Every git call is checked (B-R1-H7/H9): a failure is 'unknown' and refuses, never a fabricated "absent".
+    const t = git(['ls-tree', '-z', 'HEAD', '--', rel]);
+    let atHead = 'unknown';
+    let oldText = null;
+    if (t.status === 0 && !t.error) {
+      const entry = String(t.stdout).split('\0').find((x) => x.endsWith(`\t${rel}`));
+      if (!entry) atHead = 'absent';
+      else {
+        const [mode, type] = entry.split('\t')[0].split(' ');
+        atHead = type === 'blob' && (mode === '100644' || mode === '100755') ? 'blob' : mode === '120000' ? 'symlink' : 'other';
+        if (atHead === 'blob') {
+          const shown = git(['show', `HEAD:${rel}`]);
+          if (shown.status === 0 && !shown.error) oldText = String(shown.stdout ?? ''); else atHead = 'unknown';
+        }
+      }
+    }
     const newText = kind === 'regular' ? fs.readFileSync(abs, 'utf8') : null;
     return { rel, atHead, kind, oldText, newText };
   });

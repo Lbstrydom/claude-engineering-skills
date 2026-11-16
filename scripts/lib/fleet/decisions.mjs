@@ -104,6 +104,9 @@ export function activeDecision(dir, id, scope, now = new Date()) {
   const rev = r.revocations.find((x) => x.revokes === id);
   if (rev) return { ok: false, reason: `decision ${id} was revoked by ${rev.id} at ${rev.at}` };
   if (!r.complete) return { ok: false, reason: `the registry read was incomplete (${r.reason}), so a revocation may be unread` };
+  // Fail closed (B-R1-H2/H8): a record this reader could not interpret might be a revocation of exactly this decision.
+  const opaque = [...r.invalid.map((x) => x.file), ...r.unsupported.map((x) => x.file)];
+  if (opaque.length) return { ok: false, reason: `${opaque.length} decision record(s) could not be interpreted (${opaque.slice(0, 3).join(', ')}), so a revocation may be unread — fix or quarantine them` };
   if (d.expiresAt && Date.parse(d.expiresAt) <= now.getTime()) return { ok: false, reason: `decision ${id} expired at ${d.expiresAt}` };
   return { ok: true, decision: d };
 }
