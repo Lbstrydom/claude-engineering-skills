@@ -24,6 +24,7 @@ import { ArgvError, assertKnownFlags, emit, finishAndExit } from './lib/cli-io.m
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { withFileLock, LockTimeoutError } from './lib/file-lock.mjs';
 import { realRunners } from './lib/ship-record/facts.mjs';
+import { cacheDirFor } from './lib/fleet/git-facts.mjs';
 import { RecordRefusal, runStatus, runCatchup, runFloor, runInit } from './lib/ship-record/commands.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -133,8 +134,10 @@ export async function main(argv = process.argv) {
     else if (verb === 'init') env = runInit(ctx);
     else {
       // Writers on one machine serialise; a second run refuses rather than waits (plan §2.2).
-      const common = runners.git(['rev-parse', '--git-common-dir']);
-      const lockPath = path.join(path.resolve(cwd, String(common.stdout).trim()), 'ship-record.lock');
+      // The git common dir via fleet's one resolver (shared by every worktree of the repo), never a second derivation.
+      const common = cacheDirFor(cwd);
+      if (!common) throw new RecordRefusal('ship-record: the git common dir could not be resolved, so writes cannot be serialised');
+      const lockPath = path.join(common, 'ship-record.lock');
       if (!opts.write) env = verb === 'floor' ? runFloor(ctx, opts) : await runCatchup(ctx, opts);
       else {
         try {

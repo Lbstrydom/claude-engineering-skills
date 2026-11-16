@@ -9,8 +9,6 @@ session-log entry, the plan's Implementation Log line, the `Backlog:` line and t
 2026-11-16: storyline's `status.md` untouched for 325 commits, wine-cellar-app's for 394). `ship-record.mjs` does the record
 half on its own, **without** `/ship`'s push or merge authority: it only CREATES files under `docs/status/entries/`.
 
-Plan and audit trail: `docs/plans/ship-record-catchup.md` in the source repo.
-
 ## Who runs it
 
 **One owner per repo: the fleet coordinator.** Chips never run it. Two runs on one machine serialise on a lock; two on two
@@ -33,7 +31,7 @@ next command. `counts.unrecorded` is `null` whenever the state is not `measured`
 
 | State | Means | Remedy |
 |---|---|---|
-| `no-marker` | `docs/status/entries/README.md` absent on the base | `init` |
+| `no-marker` | the entries directory's cutover README is absent on the base | `init` |
 | `no-floor` | adopted, never floored | `floor --write` |
 | `ambiguous-floor` | two floors on the base (two coordinators floored on two branches) | a human removes all but one in a reviewed PR |
 | `unmeasured` | gh/git could not answer, `origin/HEAD` unset, an invalid floor | the reason names it |

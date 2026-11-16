@@ -709,7 +709,7 @@ report.
 
 A non-empty intersection is a pause, not a stop: name the overlapping files and
 upstream commit(s), and let the operator pick rebase now (preferred, as below)
-or push and resolve on GitHub — never silently. After a rebase or merge that
+or push and resolve on GitHub — say which. After a rebase or merge that
 resolved real overlap, re-run the full suite: zero conflict markers prove nothing.
 
 ---

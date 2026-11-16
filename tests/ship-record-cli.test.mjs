@@ -162,7 +162,7 @@ describe('verbs', () => {
   });
   it('a floor refuses an incomplete listing', () => {
     const fx = fixture();
-    fs.rmSync(path.join(fx.dir, 'docs/status/entries/2026-11-10-000000-record-floor.md'));
+    fs.rmSync(path.join(fx.dir, 'docs/status/entries/2026-11-10-000000-record-floor.md'), { recursive: true, maxRetries: 3, retryDelay: 50 });
     must(fx.g, ['add', '-A']); must(fx.g, ['commit', '-q', '-m', 'x']); must(fx.g, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
     assert.throws(() => runFloor(ctxFor(fx, { gh: { fail: true } }), { write: true }), /not authenticated|Bad credentials|401/);
   });
@@ -221,7 +221,7 @@ describe('audit A-R1 regressions', () => {
     const fx = fixture();
     const first = await runCatchup(ctxFor(fx), { write: true, events: false });
     const run = first.wrote.find((p) => /-record-catchup-[0-9a-f]{8}.md$/.test(p));
-    fs.rmSync(path.join(fx.dir, run)); // simulate the crash between the per-PR files and the run entry
+    fs.rmSync(path.join(fx.dir, run), { recursive: true, maxRetries: 3, retryDelay: 50 }); // simulate the crash between the per-PR files and the run entry
     const second = await runCatchup({ ...ctxFor(fx), now: () => new Date('2026-11-13T00:05:00Z') }, { write: true, events: false });
     assert.equal(second.wrote.length, 1);
     assert.match(fs.readFileSync(path.join(fx.dir, second.wrote[0]), 'utf8'), /<!-- ship-record-run v1 prs=3,4 -->/);
@@ -244,7 +244,7 @@ describe('audit A-R1 regressions', () => {
   });
   it('H7/M10: a floor refuses when a covered merge cannot be measured', () => {
     const fx = fixture();
-    fs.rmSync(path.join(fx.dir, 'docs/status/entries/2026-11-10-000000-record-floor.md'));
+    fs.rmSync(path.join(fx.dir, 'docs/status/entries/2026-11-10-000000-record-floor.md'), { recursive: true, maxRetries: 3, retryDelay: 50 });
     must(fx.g, ['add', '-A']); must(fx.g, ['commit', '-q', '-m', 'x']); must(fx.g, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
     const prs = [...fx.prs, { number: 9, mergedAt: '2026-11-12T04:00:00Z', mergeCommit: { oid: 'e'.repeat(40) }, headRefName: 'x', url: '' }];
     assert.throws(() => runFloor({ ...ctxFor(fx), runners: { git: fx.g, gh: fakeGh(prs) } }, { write: true }), /not in the local object store \(#9\)/);
