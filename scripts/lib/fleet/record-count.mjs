@@ -22,6 +22,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
+import { withFileLockSync } from '../file-lock.mjs';
 
 export const RECORD_CACHE_FILE = 'record-count.json';
 export const RECORD_CACHE_SCHEMA_VERSION = 1;
@@ -123,17 +124,21 @@ export function nextRecordCache(m, previous, now) {
 /** `status`'s refresh: run the reader, write the cache. Never throws. */
 export function refreshRecordCache({ cacheDir, cwd, now, run = runRecordStatus, script = recordScript() }) {
   const prev = readRecordCache(cacheDir);
-  const startedAt = now; // the attempt is stamped at its START, so ordering above compares start times
+  const startedAt = now ?? new Date(); // stamped at the START, before the child runs (C-R2-H1: never at write time)
   const record = nextRecordCache(run(script, cwd), prev.state === 'ok' ? prev.record : null, startedAt);
   try {
     CacheSchema.parse(record);
     if (!cacheDir) return { record, written: false, warning: 'record-count cache not written (the git common dir could not be resolved)' };
     fs.mkdirSync(cacheDir, { recursive: true });
-    // Two overlapping `status` runs: the one that STARTED later wins (C-R1-M3) — re-read just before publishing.
-    const latest = readRecordCache(cacheDir);
-    if (latest.state === 'ok' && Date.parse(latest.record.attemptedAt) > Date.parse(record.attemptedAt)) return { record: latest.record, written: false };
-    atomicWriteFileSync(path.join(cacheDir, RECORD_CACHE_FILE), `${JSON.stringify(record, null, 2)}\n`);
-    return { record, written: true };
+    // Two overlapping `status` runs: the one that STARTED later wins (C-R1-M3), and the compare and the write happen under
+    // one lock so an older run cannot slip in between them (C-R2-H1).
+    const held = withFileLockSync(path.join(cacheDir, `${RECORD_CACHE_FILE}.lock`), { attempts: 20 }, () => {
+      const latest = readRecordCache(cacheDir);
+      if (latest.state === 'ok' && Date.parse(latest.record.attemptedAt) > Date.parse(record.attemptedAt)) return { record: latest.record, written: false };
+      atomicWriteFileSync(path.join(cacheDir, RECORD_CACHE_FILE), `${JSON.stringify(record, null, 2)}\n`);
+      return { record, written: true };
+    });
+    return held.ok ? held.value : { record, written: false, warning: 'record-count cache not written (another status run held its lock)' };
   } catch (e) { return { record, written: false, warning: `record-count cache not written (${e.message})` }; }
 }
 
