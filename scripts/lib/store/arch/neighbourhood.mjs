@@ -34,21 +34,21 @@ export async function callNeighbourhoodRpc({ repoId, refreshId, targetPaths, int
   }
 }
 
-export async function computeDriftScore({ repoId, refreshId, simDup, simName }) {
+export async function computeDriftScore({ repoId, refreshId, simDup, simName, minLines = 0 }) {
   if (!await isCloudEnabled()) return null;
   try {
-    return await rpcDriftScore({ repoId, refreshId, simDup, simName });
+    return await rpcDriftScore({ repoId, refreshId, simDup, simName, minLines });
   } catch (err) {
     const e = new Error(`drift_score RPC failed: ${err.message}`);
-    e.code = 'RPC_ERROR';
+    e.code = err.code === 'FLOOR_UNSUPPORTED' ? 'FLOOR_UNSUPPORTED' : 'RPC_ERROR';
     throw e;
   }
 }
 
-export async function getTopDuplicateClusters({ repoId, refreshId, limit = 20 }) {
+export async function getTopDuplicateClusters({ repoId, refreshId, limit = 20, minLines = 0 }) {
   if (!await isCloudEnabled()) return [];
   try {
-    const rows = await rpcTopDuplicateClusters({ repoId, refreshId, limit });
+    const rows = await rpcTopDuplicateClusters({ repoId, refreshId, limit, minLines });
     return rows.map((r) => ({
       signatureHash: r.signature_hash,
       kind: r.kind,
@@ -59,7 +59,7 @@ export async function getTopDuplicateClusters({ repoId, refreshId, limit = 20 })
     }));
   } catch (err) {
     const e = new Error(`top_duplicate_clusters RPC failed: ${err.message}`);
-    e.code = 'RPC_ERROR';
+    e.code = err.code === 'FLOOR_UNSUPPORTED' ? 'FLOOR_UNSUPPORTED' : 'RPC_ERROR';
     throw e;
   }
 }

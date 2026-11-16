@@ -455,4 +455,144 @@ describe('duplicate-justification exclusion — end-to-end (disposable DB)', { s
     });
     assert.equal(copied, 2, 'no gate → both untouched files copy forward, exactly as before');
   });
+
+  // ── size floor (docs/plans/duplicate-min-lines-floor.md) ────────────────────
+  // A cluster is built from two files whose copies span `lines` lines.
+  async function floorCluster(refreshId, { name, lines, hashSuffix, files = ['x', 'y'], nullSpan = false }) {
+    const hash = `sig-floor-${hashSuffix}-${crypto.randomUUID()}`;
+    for (const f of files) {
+      const filePath = `${f}-${name}.mjs`;
+      const defMap = await recordSymbolDefinitions(repoId, [{ canonicalPath: filePath, symbolName: name, kind: 'function' }]);
+      await recordSymbolIndex(refreshId, repoId, [{
+        definitionId: defMap[`${filePath}|${name}|function`], filePath,
+        startLine: nullSpan ? null : 10, endLine: nullSpan ? null : 10 + lines - 1,
+        signatureHash: hash, purposeSummary: null, domainTag: null,
+      }]);
+    }
+    return hash;
+  }
+
+  it('floor: a below-floor cluster is suppressed, an above-floor duplicate is kept (positive control), and the count says so', async () => {
+    const pool = await getPool();
+    const refreshId = await insertRefreshRun(pool, repoId);
+    const small = await floorCluster(refreshId, { name: 'sleep', lines: 3, hashSuffix: 'small' });
+    const big = await floorCluster(refreshId, { name: 'realWork', lines: 8, hashSuffix: 'big' });
+
+    const off = await getTopDuplicateClusters({ repoId, refreshId, limit: 50 });
+    assert.ok(off.some((c) => c.signatureHash === small) && off.some((c) => c.signatureHash === big), 'floor off: both present (baseline)');
+
+    const on = await getTopDuplicateClusters({ repoId, refreshId, limit: 50, minLines: 6 });
+    assert.ok(!on.some((c) => c.signatureHash === small), 'the 3-line helper is suppressed at floor 6');
+    assert.ok(on.some((c) => c.signatureHash === big), 'POSITIVE CONTROL: the 8-line duplicate survives the same floor');
+
+    const drift = await computeDriftScore({ repoId, refreshId, minLines: 6 });
+    assert.equal(drift.duplication_floor.min_lines, 6);
+    assert.equal(drift.duplication_floor.suppressed_clusters, 1, 'exactly the small cluster');
+    assert.equal(drift.duplication_floor.clusters_before - drift.duplication_floor.clusters_after, 1);
+    assert.equal(drift.duplication_floor.rows_suppressed, 2);
+    const driftOff = await computeDriftScore({ repoId, refreshId });
+    assert.equal(driftOff.duplication_floor.suppressed_clusters, 0, 'floor off suppresses nothing, and says 0 truthfully');
+    assert.equal(driftOff.duplication_pairs - drift.duplication_pairs, 1, 'the score drops by the suppressed pair — list and score share one population');
+  });
+
+  it('floor: the override is honoured — a lower floor keeps what the default floor removes', async () => {
+    const pool = await getPool();
+    const refreshId = await insertRefreshRun(pool, repoId);
+    const small = await floorCluster(refreshId, { name: 'claim', lines: 4, hashSuffix: 'override' });
+    assert.ok(!(await getTopDuplicateClusters({ repoId, refreshId, limit: 50, minLines: 6 })).some((c) => c.signatureHash === small));
+    assert.ok((await getTopDuplicateClusters({ repoId, refreshId, limit: 50, minLines: 4 })).some((c) => c.signatureHash === small),
+      'floor 4 keeps a 4-line symbol (span >= floor is kept)');
+    assert.ok((await getTopDuplicateClusters({ repoId, refreshId, limit: 50, minLines: 0 })).some((c) => c.signatureHash === small), 'floor 0 disables');
+  });
+
+  it('floor: both RPCs are scoped to the requested repo — a mismatched (repo, refresh) pair sees nothing', async () => {
+    const pool = await getPool();
+    const refreshId = await insertRefreshRun(pool, repoId);
+    const h = await floorCluster(refreshId, { name: 'scoped', lines: 9, hashSuffix: 'scope' });
+    const other = await upsertRepoByUuid({ repoUuid: `${REPO_UUID}-other`, name: 'duplicate-floor-other-repo', fingerprint: null });
+    try {
+      assert.ok((await getTopDuplicateClusters({ repoId, refreshId, limit: 50, minLines: 6 })).some((c) => c.signatureHash === h), 'own repo sees it');
+      assert.ok(!(await getTopDuplicateClusters({ repoId: other.id, refreshId, limit: 50, minLines: 6 })).some((c) => c.signatureHash === h), 'other repo does not');
+      const drift = await computeDriftScore({ repoId: other.id, refreshId, minLines: 6 });
+      assert.equal(drift.duplication_pairs, 0, 'drift_score uses the same repo scope as the list');
+      assert.equal(drift.duplication_floor.clusters_before, 0);
+    } finally {
+      await pool.query('DELETE FROM audit_repos WHERE id = $1', [other.id]);
+    }
+  });
+
+  it('floor: a symbol with an UNKNOWN span (NULL lines) is kept, never silently suppressed', async () => {
+    const pool = await getPool();
+    const refreshId = await insertRefreshRun(pool, repoId);
+    const h = await floorCluster(refreshId, { name: 'nolines', lines: 1, hashSuffix: 'null', nullSpan: true });
+    assert.ok((await getTopDuplicateClusters({ repoId, refreshId, limit: 50, minLines: 6 })).some((c) => c.signatureHash === h));
+  });
+
+  it('floor: a 3-file cluster with one sub-floor copy stays a cluster but the score/pairs change (mixed span)', async () => {
+    const pool = await getPool();
+    const refreshId = await insertRefreshRun(pool, repoId);
+    const hash = `sig-floor-mixed-${crypto.randomUUID()}`;
+    for (const [f, lines] of [['m1', 9], ['m2', 9], ['m3', 2]]) {
+      const filePath = `${f}.mjs`;
+      const defMap = await recordSymbolDefinitions(repoId, [{ canonicalPath: filePath, symbolName: 'mixed', kind: 'function' }]);
+      await recordSymbolIndex(refreshId, repoId, [{
+        definitionId: defMap[`${filePath}|mixed|function`], filePath, startLine: 1, endLine: lines,
+        signatureHash: hash, purposeSummary: null, domainTag: null,
+      }]);
+    }
+    const drift = await computeDriftScore({ repoId, refreshId, minLines: 6 });
+    const f = drift.duplication_floor;
+    assert.equal(f.suppressed_clusters, 0, 'the cluster survives with 2 files');
+    assert.equal(f.pairs_before - f.pairs_after, 2, 'but 3 pairs became 1 — pairs_before/after explain the score change');
+    assert.equal(f.rows_suppressed, 1);
+  });
+
+  it('floor: legacy 3-/4-arg call shapes still resolve, and ACLs are service_role only (has_function_privilege)', async () => {
+    const pool = await getPool();
+    const refreshId = await insertRefreshRun(pool, repoId);
+    await floorCluster(refreshId, { name: 'legacy', lines: 2, hashSuffix: 'legacy' });
+    const legacyList = await pool.query('SELECT * FROM top_duplicate_clusters($1::uuid, $2::uuid, $3::integer)', [repoId, refreshId, 50]);
+    assert.ok(legacyList.rows.length >= 1, 'old 3-arg shape = floor off');
+    const legacyScore = await pool.query('SELECT drift_score($1::uuid, $2::uuid, $3::numeric, $4::numeric) AS r', [repoId, refreshId, 0.85, 0.9]);
+    assert.equal(legacyScore.rows[0].r.duplication_floor.min_lines, 0);
+
+    // Vacuous-pass guard: the probe must be able to SEE a PUBLIC grant. now() is
+    // executable by PUBLIC out of the box; if this reads false, 'public' is not
+    // being resolved as the PUBLIC pseudo-role and every ACL assertion below is empty.
+    const ctl = await pool.query("SELECT has_function_privilege('public', 'pg_catalog.now()'::regprocedure, 'EXECUTE') AS pub");
+    assert.equal(ctl.rows[0].pub, true, 'ACL probe positive control');
+
+    for (const sig of [
+      'top_duplicate_clusters(uuid,uuid,integer,integer)',
+      'drift_score(uuid,uuid,numeric,numeric,integer)',
+    ]) {
+      const { rows } = await pool.query(
+        `SELECT has_function_privilege('public', $1::regprocedure, 'EXECUTE') AS pub,
+                has_function_privilege('anon', $1::regprocedure, 'EXECUTE') AS anon,
+                has_function_privilege('authenticated', $1::regprocedure, 'EXECUTE') AS auth,
+                has_function_privilege('service_role', $1::regprocedure, 'EXECUTE') AS svc`, [sig]);
+      assert.deepEqual(rows[0], { pub: false, anon: false, auth: false, svc: true }, `${sig} ACL`);
+    }
+    const { rows: old } = await pool.query(
+      `SELECT to_regprocedure('public.top_duplicate_clusters(uuid,uuid,integer)') AS a, to_regprocedure('public.drift_score(uuid,uuid,numeric,numeric)') AS b`);
+    assert.deepEqual(old[0], { a: null, b: null }, 'the OLD overloads are gone — no second function with a default PUBLIC ACL');
+  });
+
+  it('floor: FLOOR_UNSUPPORTED only when the exact signature is absent; an internal 42883 is rethrown unchanged', async () => {
+    const { withFloorProbe } = await import('../scripts/lib/db/rpc.mjs');
+    const pool = await getPool();
+    const refreshId = await insertRefreshRun(pool, repoId);
+    // Signature absent: a nonexistent-signature probe maps 42883 -> FLOOR_UNSUPPORTED.
+    await assert.rejects(
+      () => withFloorProbe('public.no_such_fn_for_floor(uuid)', () => pool.query('SELECT no_such_fn_for_floor($1::uuid)', [refreshId])),
+      (err) => err.code === 'FLOOR_UNSUPPORTED');
+    // Signature present: a 42883 raised from ELSEWHERE is not a missing-floor signal.
+    await assert.rejects(
+      () => withFloorProbe('public.drift_score(uuid,uuid,numeric,numeric,integer)', () => pool.query('SELECT some_other_missing_fn()')),
+      (err) => err.code === '42883');
+    // Non-42883 errors propagate untouched.
+    await assert.rejects(
+      () => withFloorProbe('public.drift_score(uuid,uuid,numeric,numeric,integer)', () => pool.query('SELECT 1/0')),
+      (err) => err.code === '22012');
+  });
 });

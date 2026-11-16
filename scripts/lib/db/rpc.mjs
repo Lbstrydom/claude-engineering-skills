@@ -137,12 +137,51 @@ export async function markFindingNeedsTriage({
  * @param {{repoId: string, refreshId: string, simDup?: number, simName?: number}} args
  * @returns {Promise<object | null>} the JSONB payload
  */
-export async function driftScore({ repoId, refreshId, simDup, simName }) {
-  const row = await one(
-    'SELECT drift_score($1::uuid, $2::uuid, $3::numeric, $4::numeric) AS result',
-    [repoId, refreshId, simDup ?? 0.85, simName ?? 0.90]
-  );
-  return row?.result ?? null;
+export async function driftScore({ repoId, refreshId, simDup, simName, minLines = 0 }) {
+  // minLines = 0 sends the LEGACY 4-arg shape, so a floor-off run behaves
+  // identically on a store that has not applied the floor migration.
+  if (!minLines) {
+    const row = await one(
+      'SELECT drift_score($1::uuid, $2::uuid, $3::numeric, $4::numeric) AS result',
+      [repoId, refreshId, simDup ?? 0.85, simName ?? 0.90]
+    );
+    return row?.result ?? null;
+  }
+  return withFloorProbe('public.drift_score(uuid,uuid,numeric,numeric,integer)', async () => {
+    const row = await one(
+      'SELECT drift_score($1::uuid, $2::uuid, $3::numeric, $4::numeric, $5::integer) AS result',
+      [repoId, refreshId, simDup ?? 0.85, simName ?? 0.90, minLines]
+    );
+    return row?.result ?? null;
+  });
+}
+
+/**
+ * Run a floor-bearing RPC call. SQLSTATE 42883 (undefined_function) is
+ * ambiguous: it is what a store WITHOUT the floor migration raises, but also
+ * what an undefined function INSIDE the RPC raises. Disambiguate by asking the
+ * same connection whether the exact schema-qualified signature exists:
+ * present => the error came from elsewhere, rethrow it unchanged; absent =>
+ * `FLOOR_UNSUPPORTED`. Deliberately uncached — it runs only on the error
+ * path, and a cache would let two stores in one process share one answer.
+ *
+ * @template T
+ * @param {string} signature - e.g. 'public.drift_score(uuid,uuid,numeric,numeric,integer)'
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export async function withFloorProbe(signature, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err?.code !== '42883') throw err;
+    const probe = await one('SELECT to_regprocedure($1) IS NOT NULL AS present', [signature]);
+    if (probe?.present) throw err;
+    const e = new Error(`store has no ${signature} — floor migration not applied`);
+    e.code = 'FLOOR_UNSUPPORTED';
+    e.cause = err;
+    throw e;
+  }
 }
 
 // ── 4. memory_health_metrics (scalar jsonb) ───────────────────────────────
@@ -241,7 +280,7 @@ export async function memoryHealthSemanticCluster({
 /**
  * Top-N exact-duplicate clusters in a snapshot. Companion to driftScore.
  *
- * @param {{repoId: string, refreshId: string, limit?: number}} args
+ * @param {{repoId: string, refreshId: string, limit?: number, minLines?: number}} args
  * @returns {Promise<Array<{
  *   signature_hash: string,
  *   kind: string,
@@ -251,11 +290,17 @@ export async function memoryHealthSemanticCluster({
  *   example_purpose: string | null,
  * }>>}
  */
-export async function topDuplicateClusters({ repoId, refreshId, limit }) {
-  return many(
-    'SELECT * FROM top_duplicate_clusters($1::uuid, $2::uuid, $3::integer)',
-    [repoId, refreshId, limit ?? 20]
-  );
+export async function topDuplicateClusters({ repoId, refreshId, limit, minLines = 0 }) {
+  if (!minLines) {
+    return many(
+      'SELECT * FROM top_duplicate_clusters($1::uuid, $2::uuid, $3::integer)',
+      [repoId, refreshId, limit ?? 20]
+    );
+  }
+  return withFloorProbe('public.top_duplicate_clusters(uuid,uuid,integer,integer)', () => many(
+    'SELECT * FROM top_duplicate_clusters($1::uuid, $2::uuid, $3::integer, $4::integer)',
+    [repoId, refreshId, limit ?? 20, minLines]
+  ));
 }
 
 // ── 6. symbol_neighbourhood (set, takes vector + text[]) ──────────────────

@@ -36,6 +36,7 @@ import {
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { renderArchitectureMap } from '../lib/arch-render.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
+import { FloorArgError, resolveMinLines, buildFloorState, floorExitCode } from '../lib/symbol-index/duplicate-floor.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { loadDomainRules, loadCoverageConfig } from '../lib/symbol-index/domain-tagger.mjs';
 import { graphVerdict } from '../lib/symbol-index/graph-verdict.mjs';
@@ -315,16 +316,43 @@ async function main() {
     let drift = { score: 0 };
     let driftStatus;
     const threshold = symbolIndexConfig.driftThreshold;
+    // Same floor policy as arch:drift (env/default; flags belong to the CLIs), so
+    // the rendered status and the drift verdict describe one population.
+    // Resolved OUTSIDE the drift try: a malformed floor is a configuration error,
+    // not a drift_score RPC failure, and must not be reported as one.
+    let floorResolved = null;
     try {
-      drift = await computeDriftScore({
-        repoId: repo.id, refreshId: snap.refreshId,
-        simDup: symbolIndexConfig.driftSimDup,
-        simName: symbolIndexConfig.driftSimName,
-      });
-      driftStatus = classify(Number(drift.score) || 0, threshold);
-    } catch (err) {
-      process.stderr.write(`arch:render: drift_score RPC failed: ${err.message}\n`);
+      floorResolved = resolveMinLines();
+    } catch (cfgErr) {
+      if (!(cfgErr instanceof FloorArgError)) throw cfgErr;
+      process.stderr.write(`arch:render: ${cfgErr.message}\n`);
+    }
+    if (!floorResolved) {
       driftStatus = 'INSUFFICIENT_DATA';
+    } else {
+      try {
+        const scoreWith = (minLines) => computeDriftScore({
+          repoId: repo.id, refreshId: snap.refreshId,
+          simDup: symbolIndexConfig.driftSimDup,
+          simName: symbolIndexConfig.driftSimName,
+          minLines,
+        });
+        try {
+          drift = await scoreWith(floorResolved.minLines);
+        } catch (floorErr) {
+          if (floorErr.code !== 'FLOOR_UNSUPPORTED') throw floorErr;
+          // Same rule as arch:drift: an INHERITED default degrades visibly; a floor
+          // the operator set by name that the store cannot honour is a failed measurement.
+          if (floorExitCode(buildFloorState(floorResolved, { unsupported: true })) === 2) throw floorErr;
+          process.stderr.write(`arch:render: floor migration not applied on this store; rendering the un-floored score\n`);
+          drift = await scoreWith(0);
+        }
+        // A missing / non-numeric score is an unavailable measurement, never 0 (=GREEN).
+        driftStatus = Number.isFinite(drift?.score) ? classify(drift.score, threshold) : 'INSUFFICIENT_DATA';
+      } catch (err) {
+        process.stderr.write(`arch:render: drift_score RPC failed: ${err.message}\n`);
+        driftStatus = 'INSUFFICIENT_DATA';
+      }
     }
     const status = driftStatus;
 
