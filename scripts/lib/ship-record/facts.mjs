@@ -243,7 +243,10 @@ export function gatherRecordState(runners, { branch = null, now = new Date() } =
   const floor = entries.floors[0];
   const merged = listMergedSince(runners, { repo: base.repo, branch: base.branch, fromIso: listingStart(floor), toIso: now.toISOString() });
   const inBand = new Map();
+  const inBase = new Map();
   if (merged.ok) {
+    // The ledger is read at the PINNED base; a merge newer than it cannot have its record there yet (A-R3-H1).
+    for (const pr of merged.prs) if (pr.mergeCommit && hasCommit(runners, pr.mergeCommit)) inBase.set(pr.mergeCommit, ok(runners.git(['merge-base', '--is-ancestor', pr.mergeCommit, base.oid])));
     const markerFor = new Map();
     for (const m of entries.markers) markerFor.set(m.pr, (markerFor.get(m.pr) ?? new Set()).add(m.merge));
     for (const pr of merged.prs) {
@@ -251,5 +254,5 @@ export function gatherRecordState(runners, { branch = null, now = new Date() } =
       inBand.set(pr.mergeCommit, inBandRecorded(runners, pr.mergeCommit));
     }
   }
-  return { ...classifyRecordState({ markerPresent: true, floors: entries.floors, merged, baseMarkers: entries.markers, inBand }), base, entries };
+  return { ...classifyRecordState({ markerPresent: true, floors: entries.floors, merged, baseMarkers: entries.markers, inBand, inBase }), base, entries };
 }

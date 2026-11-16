@@ -42,7 +42,7 @@ export const ENTRY_NAME_RE = /^(\d{4}-\d{2}-\d{2})-(\d{6})-([a-z0-9]+(?:-[a-z0-9
 const PR_ENTRY_RE = /^\d{4}-\d{2}-\d{2}-\d{6}-pr-([1-9]\d*)\.md$/;
 const FLOOR_ENTRY_RE = /^\d{4}-\d{2}-\d{2}-\d{6}-record-floor\.md$/;
 /** A run entry: `…-record-catchup-<4 hex>.md` (the suffix keeps two same-second runs apart). */
-export const RUN_ENTRY_RE = /^\d{4}-\d{2}-\d{2}-\d{6}-record-catchup(?:-[0-9a-f]{4})?\.md$/;
+export const RUN_ENTRY_RE = /^\d{4}-\d{2}-\d{2}-\d{6}-record-catchup(?:-[0-9a-f]{4,8})?\.md$/;
 
 export const RECORD_STATES = Object.freeze(['measured', 'partial', 'unmeasured', 'no-floor', 'ambiguous-floor', 'no-marker']);
 
@@ -102,6 +102,8 @@ export function listingStart(floor) {
  * @param {{ok: boolean, complete?: boolean, prs?: Array<{number:number, mergedAt:string, mergeCommit:string|null}>, reason?: string, partialReason?: string}} f.merged the listing
  * @param {Array<{pr:number, merge:string}>} f.baseMarkers catch-up markers on the base tree
  * @param {Map<string, 'in-band'|'record-pr'|false|null>} f.inBand merge sha → what its own merge added (null = not determinable)
+ * @param {Map<string, boolean>} [f.inBase] merge sha → is it an ancestor of the pinned base? false ⇒ merged after the fetched
+ *   base, so the base tree cannot show its record yet: unknown, never unrecorded (A-R3-H1)
  */
 export function classifyRecordState(f) {
   const nulls = (state, reason, extra = {}) => ({
@@ -139,6 +141,7 @@ export function classifyRecordState(f) {
     let by = null;
     if (sha && markerFor.get(pr.number)?.has(sha)) { status = 'recorded'; by = 'marker'; }
     else if (!sha || !SHA_RE.test(sha)) status = 'unknown';
+    else if (f.inBase?.get(sha) === false) status = 'unknown';
     else {
       const ib = f.inBand?.get(sha);
       // 'in-band': the merge added a /ship-style entry. 'record-pr': the merge added ONLY catch-up records — it IS a record,
@@ -157,6 +160,6 @@ export function classifyRecordState(f) {
   const reasons = [];
   if (f.merged.complete === false) reasons.push(f.merged.partialReason ?? 'the listing was not complete');
   if (malformed > 0) reasons.push(`${malformed} listed PR(s) had no valid number or merge time`);
-  if (counts.unknown > 0) reasons.push(`${counts.unknown} merge commit(s) are not in the local object store — git fetch origin`);
+  if (counts.unknown > 0) reasons.push(`${counts.unknown} merge commit(s) are not in the local object store or are newer than the fetched base — git fetch origin`);
   return { state, reason: reasons.length ? reasons.join('; ') : null, floor, prs, counts };
 }

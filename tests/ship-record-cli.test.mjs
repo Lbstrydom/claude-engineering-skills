@@ -121,7 +121,7 @@ describe('verbs', () => {
     assert.equal(dry.wouldWrite.length, 2);
     const first = await runCatchup(ctxFor(fx), { write: true, events: false });
     assert.deepEqual(first.wrote.filter((p) => /-pr-\d+\.md$/.test(p)).map((p) => path.basename(p)), ['2026-11-11-020000-pr-3.md', '2026-11-12-030000-pr-4.md']);
-    assert.ok(first.wrote.some((p) => /-record-catchup-[0-9a-f]{4}.md$/.test(p)));
+    assert.ok(first.wrote.some((p) => /-record-catchup-[0-9a-f]{8}.md$/.test(p)));
     assert.deepEqual(first.suggestions.map((s) => [s.plan, s.pr]), [['docs/plans/p.md', 3]]);
     const second = await runCatchup(ctxFor(fx), { write: true, events: false });
     assert.equal(second.wrote.length, 0, 'the idempotency oracle: a rerun writes nothing');
@@ -220,7 +220,7 @@ describe('audit A-R1 regressions', () => {
   it('H4: a run that died after its per-PR files still gets its run entry next time', async () => {
     const fx = fixture();
     const first = await runCatchup(ctxFor(fx), { write: true, events: false });
-    const run = first.wrote.find((p) => /-record-catchup-[0-9a-f]{4}.md$/.test(p));
+    const run = first.wrote.find((p) => /-record-catchup-[0-9a-f]{8}.md$/.test(p));
     fs.rmSync(path.join(fx.dir, run)); // simulate the crash between the per-PR files and the run entry
     const second = await runCatchup({ ...ctxFor(fx), now: () => new Date('2026-11-13T00:05:00Z') }, { write: true, events: false });
     assert.equal(second.wrote.length, 1);
@@ -277,7 +277,21 @@ describe('audit A-R2 regressions', () => {
     const fx = fixture();
     const first = await runCatchup(ctxFor(fx), { write: true, events: false });
     const run = path.basename(first.wrote.find((p) => /-record-catchup/.test(p)));
-    assert.match(run, /^2026-11-13-000000-record-catchup-[0-9a-f]{4}\.md$/);
+    assert.match(run, /^2026-11-13-000000-record-catchup-[0-9a-f]{8}\.md$/);
     assert.equal((await runCatchup(ctxFor(fx), { write: true, events: false })).wrote.length, 0, 'the suffixed run entry is still read as a run entry');
+  });
+});
+
+describe('audit A-R3 regressions', () => {
+  it('H1: a merge present locally but newer than the fetched base is unknown, never unrecorded', () => {
+    const fx = fixture();
+    fs.writeFileSync(path.join(fx.dir, 'scripts/seven.mjs'), 'x');
+    must(fx.g, ['add', '-A']); must(fx.g, ['commit', '-q', '-m', 'feat: seven (#7)']);
+    const s7 = must(fx.g, ['rev-parse', 'HEAD']); // NOT pushed to refs/remotes/origin/main
+    const prs = [...fx.prs, { number: 7, mergedAt: '2026-11-12T07:00:00Z', mergeCommit: { oid: s7 }, headRefName: 'b7', url: '' }];
+    const env = runStatus({ ...ctxFor(fx), runners: { git: fx.g, gh: fakeGh(prs) } });
+    assert.equal(env.state, 'partial');
+    assert.deepEqual([env.counts.unrecorded, env.counts.unknown], [2, 1]);
+    assert.match(env.reason, /newer than the fetched base/);
   });
 });

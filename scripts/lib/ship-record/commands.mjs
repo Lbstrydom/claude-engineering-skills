@@ -124,10 +124,15 @@ export async function runCatchup(ctx, opts = {}) {
   const pending = opts.write ? pendingForRunEntry(ctx, st, recorded) : [];
   if (opts.write && pending.length) {
     const nowIso = ctx.now().toISOString();
-    const runName = entryFileName(nowIso, `record-catchup-${crypto.randomBytes(2).toString('hex')}`); // A-R2-M2
     const runBytes = renderRunEntry({ nowIso, recorded: pending, backlogLine: ctx.backlog(), suggestions: env.suggestions, base: st.base });
-    const r = publishEntry(dir, runName, runBytes);
-    if (r.outcome === 'written') env.wrote.push(`${ENTRIES_DIR}/${runName}`); else env.errors.push(r.reason);
+    // 32 random bits per name, and an exclusive create retried under a fresh suffix on a collision (A-R2-M2, A-R3-M1).
+    let r = null;
+    for (let attempt = 0; attempt < 3 && r?.outcome !== 'written'; attempt++) {
+      const runName = entryFileName(nowIso, `record-catchup-${crypto.randomBytes(4).toString('hex')}`);
+      r = publishEntry(dir, runName, runBytes);
+      if (r.outcome === 'written') env.wrote.push(`${ENTRIES_DIR}/${runName}`);
+    }
+    if (r.outcome !== 'written') env.errors.push(r.reason);
   }
   if (opts.write && opts.events !== false) env.events = await reconcileEvents(ctx, st, recorded);
   else env.events.skipped = recorded.length;
