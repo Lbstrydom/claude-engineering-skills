@@ -675,6 +675,9 @@ export function buildStatus(facts) {
     let display = state;
     if (state === 'ready') {
       if (s.ready?.oid && observedOid && s.ready.oid !== observedOid) display = 'ready (stale — head moved)';
+      // Ahead 0 of the base: nothing left to land, so the mark expires on its own (consumer report 2026-11-15, item 5) —
+      // derived on every read, never written; `land --include-stale` brings it back.
+      else if (s.source?.kind !== 'pr' && b && b.ahead === 0) display = 'ready (stale — ahead 0 of base)';
       else if (!tipObserved) notes.push('ready oid not verifiable (tip not observed)');
     }
     if (!isTerminalState(state) && !live.live) { display = `${display} · stale`; }
@@ -684,7 +687,7 @@ export function buildStatus(facts) {
       id: s.id, tracked: true, kind: s.source?.kind ?? 'branch', branch, oid: observedOid,
       worktree: s.worktree ?? wt?.path ?? null, worktreeState: wtState(wt), intent: s.intent, paths: s.paths ?? [],
       state, display, live: live.live, liveReason: live.reason, stale: !isTerminalState(state) && !live.live,
-      gen: s.gen, rev: s.rev, ready: s.ready ?? null, readyStale: display.startsWith('ready (stale'),
+      gen: s.gen, rev: s.rev, ready: s.ready ?? null, readyStale: display.startsWith('ready (stale'), readyAheadZero: display === 'ready (stale — ahead 0 of base)',
       ahead: b?.ahead ?? null, behind: b?.behind ?? null, pr, notes, merged, workRemaining,
       waitingOn: (s.waitingOn ?? []).map((w) => waitingView(w, { byId, trains })),
       overlaps: [], hotOverlaps: [], duplicates: [], findings: [],
@@ -736,7 +739,16 @@ export function buildStatus(facts) {
   // only of `hotFiles` goes to `hotOverlaps` (disclosed, not counted as a conflict anywhere).
   const hotFiles = facts.hotFiles ?? [];
   const active = items.filter((i) => i.branch && i.kind !== 'remote-only' && !isTerminalState(i.state));
-  const changedOf = (i) => (facts.changed?.[i.branch]?.queried ? facts.changed[i.branch].files ?? [] : []);
+  const fullOf = (i) => (facts.changed?.[i.branch]?.queried ? facts.changed[i.branch].files ?? [] : []);
+  // A stacked session (`claim --base`) is measured from its real fork point; what it inherited from the shared base is
+  // counted once per item, collapsed (`inherited`), never as an overlap.
+  const ownOf = (i) => (i.tracked && facts.ownChanged?.[i.branch]?.queried ? facts.ownChanged[i.branch].files ?? [] : null);
+  const changedOf = (i) => ownOf(i) ?? fullOf(i);
+  for (const i of active) {
+    const own = ownOf(i);
+    if (own) { const mine = new Set(own); i.stackBase = facts.ownChanged[i.branch].stackBase; i.inherited = fullOf(i).filter((f) => !mine.has(f)); }
+    else if (i.tracked && facts.ownChanged?.[i.branch]) i.notes.push(`stack base ${facts.ownChanged[i.branch].stackBase} not measured (${facts.ownChanged[i.branch].reason ?? 'unknown'}) — overlaps measured from ${baseName}`);
+  }
   // Uncommitted evidence (a registered session's worktree): advisory, volatile, never counted as committed.
   const uncommittedOf = (i) => (i.tracked && facts.uncommitted?.[i.branch]?.queried ? facts.uncommitted[i.branch].files ?? [] : []);
   for (let x = 0; x < active.length; x += 1) {
@@ -808,6 +820,8 @@ export function buildStatus(facts) {
     hold: facts.hold ?? null,
     items,
     landingOrder: order.filter((id) => { const i = items.find((x) => x.id === id); return i?.state === 'ready' && !i.readyStale; }),
+    // Ready marks that expired because the branch is ahead 0 of the base: left out of `land` unless `--include-stale`.
+    staleReady: items.filter((i) => i.readyAheadZero).map((i) => i.id),
     cycles,
     duplicates: dupGroups,
     trains: trains.filter((t) => !['landed', 'abandoned'].includes(t.phase)).map((t) => ({ trainId: t.trainId, phase: t.phase, result: t.result ?? null })),

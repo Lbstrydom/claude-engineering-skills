@@ -38,7 +38,7 @@ import { runChecks, buildCheckPayload } from './checks.mjs';
 import { resolveAppendOnly } from './union-merge.mjs';
 import { superviseTier } from './tier-supervisor.mjs';
 import { approvable, tiersOf, worstResult } from './overlap.mjs';
-import { assertManaged, fleetDir, newTrainId, readTrain, writeTrain } from './registry.mjs';
+import { assertManaged, fleetDir, newTrainId, probesDir, readTrain, writeTrain } from './registry.mjs';
 
 const DEP_FILES = new Set(['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock']);
 const WIN_SHIMS = /^(?:npm|npx|pnpm|yarn)$/i;
@@ -277,12 +277,18 @@ export function planSources(sources, { mergeMethod, expectedOid }) {
  * @param {boolean} [args.dryRun]
  * @param {ReturnType<typeof defaultDeps>} [args.deps]
  */
-export function buildTrain({ cwd, config, sources, checkPayload = { sessions: [], overlaps: [] }, dryRun = false, deps = defaultDeps() }) {
+export function buildTrain({ cwd, config, sources, checkPayload = { sessions: [], overlaps: [] }, dryRun = false, probeTier = null, deps = defaultDeps() }) {
   const refuse = (reason) => ({ ok: false, code: 'refused', reason });
-  const dir = fleetDir(cwd);
-  const tiers = config.testCommand ?? [];
-  const pre = tiers.filter((t) => t.stage === 'pre-land');
+  // A probe (`land --dry-run --tier <name>`) builds the same combined candidate but runs ONE tier, under `fleet/probes/`,
+  // where no approve/confirm/resume reader looks: it can never be approved.
+  const dir = probeTier ? probesDir(fleetDir(cwd)) : fleetDir(cwd);
+  const allTiers = config.testCommand ?? [];
+  const pre = allTiers.filter((t) => t.stage === 'pre-land');
   if (!pre.length) return refuse('no testCommand configured — set testCommand in .fleet.json, or add scripts.test to package.json');
+  const probe = probeTier ? pre.find((t) => t.name === probeTier) : null;
+  if (probeTier && !probe) return refuse(`no pre-land tier named ${JSON.stringify(probeTier)} (pre-land tiers: ${pre.map((t) => t.name).join(', ')})`);
+  const tiers = probe ? [probe] : allTiers;
+  if (probe) dryRun = false; // a probe BUILDS and runs its tier; plain --dry-run only plans
 
   const remote = 'origin';
   const urls = resolveRemoteUrls(cwd, remote);
@@ -343,15 +349,28 @@ export function buildTrain({ cwd, config, sources, checkPayload = { sessions: []
     if (applied.unioned.length) patchTrain(dir, trainId, { notes: applied.unioned.map((u) => `${u.sourceId}: ${u.files.join(', ')} merged keeping both sides (appendOnlyGlobs)`) }, deps);
     if (conflict) {
       const t = patchTrain(dir, trainId, { phase: 'conflict', result: 'none', conflict, notes: [`stopped at ${conflict.sourceId}: ${conflict.reason}`] }, deps);
-      return { ok: true, train: t, approvability: approvable(t) };
+      const out = { ok: true, train: t, approvability: approvable(t) };
+      return probe ? closeProbe({ cwd, dir, done: out, deps }) : out;
     }
     const head = wgit(['rev-parse', 'HEAD', 'HEAD^{tree}']);
     if (!head.ok) return abandon(`cannot read the candidate: ${head.reason}`);
     const [oid, tree] = head.stdout.split('\n').map((s) => s.trim());
     patchTrain(dir, trainId, { candidate: { oid, tree } }, deps);
     deps.hooks?.afterCandidate?.();
-    return finishTrain({ cwd, dir, trainId, getChecks: () => config.checks ?? [], checkPayload, deps });
+    const done = finishTrain({ cwd, dir, trainId, getChecks: () => config.checks ?? [], checkPayload, deps });
+    return probe ? closeProbe({ cwd, dir, done, deps }) : done;
   } finally { hooks.cleanup(); }
+}
+
+/**
+ * A finished probe: its result stays recorded (the status hint reads it), its worktree is removed and its phase is
+ * `abandoned` — it was never a candidate for approval. A removal that fails is a note, not a lost result.
+ */
+function closeProbe({ cwd, dir, done, deps }) {
+  const t = done.train;
+  const rm = removeTrainWorktree(cwd, t, deps);
+  const train = patchTrain(dir, t.trainId, { phase: 'abandoned', notes: [...(t.notes ?? []), `probe of tier ${t.testCommand[0]?.name} only — never approvable${rm.removed ? '' : ` (worktree: ${rm.reason})`}`] }, deps);
+  return { ...done, probe: true, train, approvability: { ok: false, reason: `probe: only tier ${t.testCommand[0]?.name} ran — build a full train (\`land\` without --tier) to approve` } };
 }
 
 /**

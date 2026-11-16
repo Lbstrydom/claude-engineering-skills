@@ -2,7 +2,7 @@
  * @fileoverview `fleet decision record | revoke | list` — the verb over decisions.mjs
  * (docs/plans/ship-record-catchup.md §2.6).
  *
- *   decision record --scope <record-catchup|note> --words-file - [--expires <ISO>] [--id <session>] [--host-session <id>]
+ *   decision record --scope <record-catchup|note|test-plan|answer> --words-file - [--to <session|all>] [--expires <ISO>] [--id <session>] [--host-session <id>]
  *   decision revoke <dec-id> --words-file - [--id <session>]
  *   decision list [--scope <s>]
  *
@@ -16,7 +16,7 @@ import { ArgvError } from '../cli-io.mjs';
 import { transact } from './registry.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused } from './commands.mjs';
 import {
-  DECISION_SCOPES, DECISION_ID_RE, DECISIONS_CAP, GRANTS_NOTE, WORDS_MAX, registryUnusable, newDecisionId, newRevocationId, readDecisions, writeRecord,
+  DECISION_SCOPES, SESSION_SCOPES, DECISION_ID_RE, DECISIONS_CAP, GRANTS_NOTE, WORDS_MAX, registryUnusable, newDecisionId, newRevocationId, readDecisions, writeRecord,
 } from './decisions.mjs';
 
 const SUBS = ['record', 'revoke', 'list'];
@@ -50,7 +50,7 @@ const byOf = (ctx, flags) => ({ session: flags['--id'] ?? currentBranch(ctx.cwd)
 
 function render(d, revoked, unusable, nowMs) {
   const state = revoked ? `REVOKED by ${revoked.id}` : d.expiresAt && Date.parse(d.expiresAt) <= nowMs ? 'expired' : unusable ? 'INDETERMINATE (registry unusable)' : 'active';
-  return [`${d.id}  ${d.scope}  ${state}  recorded ${d.at} by ${d.recordedBy.session}${d.expiresAt ? `, expires ${d.expiresAt}` : ''}`,
+  return [`${d.id}  ${d.scope}${d.to ? ` → ${d.to}` : ''}  ${state}  recorded ${d.at} by ${d.recordedBy.session}${d.expiresAt ? `, expires ${d.expiresAt}` : ''}`,
     ...d.words.split(/\r?\n/).map((l) => `    > ${l}`)].join('\n');
 }
 
@@ -81,11 +81,15 @@ export function cmdDecision(ctx, flags, positionals, deps = {}) {
   if (sub === 'record') {
     const scope = flags['--scope'];
     if (!DECISION_SCOPES.includes(scope)) throw new ArgvError(`fleet decision record: --scope must be one of ${DECISION_SCOPES.join(', ')} (got ${JSON.stringify(scope ?? null)}); merge, push and override are deliberately not expressible`);
+    // test-plan/answer are FOR a session (`--to <id>`, default `all`): `fleet next` quotes them there. The other scopes have no reader that addresses one.
+    const forSession = SESSION_SCOPES.includes(scope);
+    if (!forSession && flags['--to'] !== undefined) throw new ArgvError(`fleet decision record: --to applies only to --scope ${SESSION_SCOPES.join('/')}`);
+    const to = forSession ? flags['--to'] ?? 'all' : undefined;
     const expires = flags['--expires'] ?? null;
     if (expires !== null && (!isStrictIso(expires) || Date.parse(expires) <= ctx.now.getTime())) throw new ArgvError('fleet decision record: --expires must be a future ISO-8601 timestamp with a real calendar date (e.g. 2026-12-31T00:00:00Z)');
     const tx = transact(ctx.dir, () => writeRecord(ctx.dir, {
       schemaVersion: 1, kind: 'decision', id: newDecisionId(ctx.now), at, scope, words, recordedBy: byOf(ctx, flags),
-      expiresAt: expires === null ? null : new Date(Date.parse(expires)).toISOString(),
+      expiresAt: expires === null ? null : new Date(Date.parse(expires)).toISOString(), ...(forSession ? { to } : {}),
     }));
     if (!tx.ok) return lockFailed();
     const d = tx.value;

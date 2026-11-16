@@ -32,7 +32,9 @@ import {
   writeUnregisteredCache,
 } from './unregistered.mjs';
 import { renderChipPrompt, renderOpenTrains } from './render-train.mjs';
-import { WaitingOnSchema, listTrains, quarantine, transact } from './registry.mjs';
+import { WaitingOnSchema, listTrains, probesDir, quarantine, transact } from './registry.mjs';
+import { readySet, testedTogether, testedTogetherLine } from './tested-together.mjs';
+import { FULL_SUITE_LOG_LINE, fullSuiteOf } from './config.mjs';
 import {
   buildStatusFrom, gatherFacts, leaseMsFrom, othersFor, withMergedEvidence, readyChecks, resolveUpstream, statusChecks,
 } from './facts.mjs';
@@ -234,8 +236,14 @@ export function cmdStatus(ctx, flags = {}) {
   if (general.length) lines.push('', 'checks:', ...general.map((f) => `  ${f.level}: ${f.message}`));
   const todo = renderOpenTrains(facts.trains, ctx.cmd);
   if (todo) lines.push('', todo);
+  // Two or more ready branches never built together: the clash, if any, would surface only at the full train.
+  const probes = listTrains(probesDir(ctx.dir));
+  const together = testedTogether(readySet(status), [...facts.trains, ...probes.trains]);
+  const togetherLine = testedTogetherLine(together, { cmd: ctx.cmd, probeTier: (ctx.config.testCommand ?? []).find((t) => t.stage === 'pre-land')?.name ?? null });
+  if (togetherLine) lines.push('', togetherLine);
+  for (const t of probes.invalid) warnings.push(`probe record unreadable: ${t.file} (${t.reason})`);
   if (warnings.length) lines.push('', ...warnings.map((w) => `warning: ${w}`));
-  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete }, unregistered: { ...unregistered, archiveTags }, prune: statusPruneView(prune.record), proposals, ...(upstream.applicable ? { upstream: upstream.record } : {}), records: records.record }, checks: hook.results, warnings, text: lines.join('\n') });
+  return ok({ status: { ...status, items: view.items, hidden: view.hidden, hosts: hosts.hosts, directives: { active: directives.active, unsupported: directives.unsupported, invalid: directives.invalid, complete: directives.complete }, unregistered: { ...unregistered, archiveTags }, prune: statusPruneView(prune.record), proposals, ...(upstream.applicable ? { upstream: upstream.record } : {}), records: records.record, testedTogether: together ? { count: together.count, tested: together.tested, trainId: together.by?.trainId ?? null } : null }, checks: hook.results, warnings, text: lines.join('\n') });
 }
 
 /**
@@ -319,6 +327,22 @@ function blockingHolderBranches(facts, id, flags, paths, hasPaths, ctx) {
   return v.conflicts.filter(isBlockingConflict).map((c) => byId.get(c.with)?.source?.branch);
 }
 
+/**
+ * `claim --base <branch>`: this session is stacked on another UNLANDED local branch, so its overlap is measured from that
+ * fork point (recorded as `source.baseRef`; no new registry field, so an older bundle reads the record unchanged). The base
+ * itself, or the session's own branch, is an argv error; a branch that does not exist locally is refused before any write.
+ * @returns {string|null} the stack base (the repo's base un-stacks), or null when none was given
+ */
+export function stackBaseFrom(ctx, flags, branch) {
+  const b = flags['--base'];
+  if (b === undefined) return null;
+  if (!/^[^\s-][^\s]*$/.test(b)) throw new ArgvError(`fleet claim: --base ${JSON.stringify(b)} is not a branch name`);
+  if (b === ctx.config.baseBranch) return b; // un-stacks a session that was stacked
+  if (b === branch) throw new ArgvError(`fleet claim: --base ${b} is this session's own branch — name the branch it is stacked on`);
+  if (!headOf(ctx.cwd, `refs/heads/${b}`).ok) throw new ArgvError(`fleet claim: --base ${b} is not a local branch — fetch or create it first (a stacked base is measured locally)`);
+  return b;
+}
+
 export function cmdClaim(ctx, flags) {
   const bind = resolveClaimBinding(ctx, flags);
   const { id, branch } = bind;
@@ -327,6 +351,7 @@ export function cmdClaim(ctx, flags) {
   const pv = validateClaimPatterns(paths);
   if (!pv.ok) throw new ArgvError(`fleet claim: ${pv.errors.join('; ')}`);
   const waiting = waitingFromFlags(flags, ctx);
+  const stackBase = stackBaseFrom(ctx, flags, branch);
   // The `claim` fact profile: every live session's worktree is probed for UNCOMMITTED edits (advisory evidence).
   const gathered = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: true, untracked: false, uncommitted: 'all' });
   // Merged evidence only for the holders of an overlap that would BLOCK (judged on the pre-lock read): a merged, clean holder
@@ -376,8 +401,9 @@ export function cmdClaim(ctx, flags) {
     const fresh = mode === 'new';
     const base = fresh
       ? { gen: cur ? cur.gen + 1 : 1, ready: null, waitingOn: [], knownOverlaps: [], createdAt: stamp, state: 'working', startOid,
-        source: { kind: 'branch', branch, repo: null, prNumber: null, headRepo: null, headRef: branch, baseRef: ctx.config.baseBranch } }
-      : { gen: cur.gen, ready: cur.ready, waitingOn: cur.waitingOn, knownOverlaps: cur.knownOverlaps, createdAt: cur.createdAt, state: cur.state, startOid: cur.startOid, source: cur.source };
+        source: { kind: 'branch', branch, repo: null, prNumber: null, headRepo: null, headRef: branch, baseRef: stackBase ?? ctx.config.baseBranch } }
+      : { gen: cur.gen, ready: cur.ready, waitingOn: cur.waitingOn, knownOverlaps: cur.knownOverlaps, createdAt: cur.createdAt, state: cur.state, startOid: cur.startOid,
+        source: stackBase && cur.source.kind === 'branch' ? { ...cur.source, baseRef: stackBase } : cur.source };
     if (flags['--host-session'] !== undefined) writeHost(ctx.dir, { id, hostSession: flags['--host-session'], at: stamp });
     const record = t.writeSession({
       schemaVersion: 1, rev: cur ? cur.rev + 1 : 1, id, ...base,
@@ -526,7 +552,10 @@ export function cmdReady(ctx, flags) {
   const pushLine = !unpushed ? []
     : !unpushed.ok ? [`note: could not check whether ${branch}'s commits are held by a remote ref (${unpushed.reason})`]
       : unpushed.count > 0 ? [`warning: ${unpushed.count} commit(s) on ${branch} are held by no remote ref — push your branch (pushing the base still needs the user)`] : [];
-  return ok({ id, record: tx.value.record, checks: gate.results, ...(unpushed ? { unpushed } : {}), text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...pushLine].join('\n') });
+  // fullSuite: "train": the mark says the full suite is the train's, so the deferral is on record where the session reads it.
+  const deferred = fullSuiteOf(ctx) === 'train';
+  const suiteLine = deferred ? [`full suite: deferred to the train (.fleet.json fullSuite: "train") — \`${ctx.cmd} land\` is its one full-suite run; your plan's test log says "${FULL_SUITE_LOG_LINE}"`] : [];
+  return ok({ id, record: tx.value.record, checks: gate.results, fullSuite: deferred ? 'deferred-to-train' : 'session', ...(unpushed ? { unpushed } : {}), text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...pushLine, ...suiteLine].join('\n') });
 }
 
 /**

@@ -31,7 +31,9 @@ TURN. A FREE lease is not a turn. Two things wait for the coordinator to say it 
 heavy slot (fleet lease acquire, or lease run); a refused acquire queues you. Pushing your own branch does NOT wait: push
 early and often (participant rule 2). If this repo's pre-push hook runs the full gate, that push is heavy work: run it as
 `fleet lease run -- git push`, which queues, and never skip the hook. The slot is for LOCAL CPU/IO-heavy work only (full test suite, pre-push
-gate, install): API-bound rounds (/audit-code, /audit-plan, the Gemini review) never take it. Mind the cost window: no new
+gate, install): API-bound rounds (/audit-code, /audit-plan, the Gemini review) never take it. If `fleet next` says the
+repo sets fullSuite: "train", run no full suite at all: targeted and affected tests plus the gates, then `fleet ready`,
+and log the deferral in the words it gives (participant rule 4a). Mind the cost window: no new
 coding during the hours `node scripts/fleet.mjs lease peak` shows (weekdays unless a range names days; shipping is fine). [rule 14]
 
 CLAIM. Run fleet claim --id CHIP_ID --intent "ONE LINE" --paths "GLOBS" from INSIDE your worktree before editing. If it is

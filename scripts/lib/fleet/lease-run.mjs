@@ -108,7 +108,7 @@ export async function runUnderLease(opts, job) {
     endTurn = false, releaseToCiWindow = 0, windowRepo, cmdName = 'fleet', now = () => new Date(), random = Math.random,
     probe = defaultProbe(), signals = processSignals, transact = transactLease, log = () => {},
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)), forceExit = (code) => process.exit(code),
-    heartbeatMs = LIMITS.heartbeatMs, ceilingMin, cpuOf = (p) => processTreeActivity(p), timers = realTimers,
+    heartbeatMs = LIMITS.heartbeatMs, ceilingMin, cpuOf = (p) => processTreeActivity(p), timers = realTimers, onGranted = null,
   } = opts;
   const startedAt = now().getTime();
   const deadline = startedAt + Math.max(0, waitMin) * 60_000;
@@ -131,6 +131,8 @@ export async function runUnderLease(opts, job) {
     await sleep(wait);
   }
   const token = grant.heavy.token;
+  // Granted, the job not yet started: the caller's last look before it runs (the CPU-saturation warning, item 6). Never fatal.
+  if (onGranted) { try { await onGranted(grant); } catch { /* a warning that cannot be computed is no reason not to run */ } }
   if (grant.capped) log(`CAPPED: granted ${grant.capped.grantedMin} of the requested ${grant.capped.requestedMin} minutes - the turn ends at ${grant.capped.turnEndsAt.slice(11, 16)}Z and ${grant.capped.waiting} is waiting; the slot is released for them then unless this job is still running`);
 
   // 3. Run. Signals abort the job's AbortSignal; the job stops itself, and we release afterwards.

@@ -58,6 +58,14 @@ function itemBlock(it, nowMs = null, hosts = {}, untrackedIds = null) {
   const head = [it.id, `[${it.display}]`];
   if (it.branch && it.branch !== it.id) head.push(`branch ${it.branch}`);
   lines.push(head.join('  '));
+  // A DECLARED-path conflict is the line that needs a decision: it comes first under its branch (consumer report 2026-11-15).
+  const overlapLine = (o) => {
+    const what = o.files.length ? ` on ${o.files.join(', ')}` : '';
+    const unc = o.uncommittedFiles?.length ? ` · uncommitted: ${o.uncommittedFiles.join(', ')}` : '';
+    return `    overlaps ${o.with} (${o.via.join('+')})${what}${unc}${o.known ? ' [known]' : ''}`;
+  };
+  const declared = (o) => o.via.includes('paths') && !o.known;
+  for (const o of it.overlaps) if (declared(o)) lines.push(overlapLine(o));
   if (it.intent) lines.push(`    intent: ${it.intent}`);
   const meta = [];
   if (it.ahead !== null && it.ahead !== undefined) meta.push(`ahead ${it.ahead} / behind ${it.behind ?? '?'}`);
@@ -73,11 +81,10 @@ function itemBlock(it, nowMs = null, hosts = {}, untrackedIds = null) {
   const collapse = untrackedIds && it.tracked === false;
   const quiet = collapse ? it.overlaps.filter((o) => untrackedIds.has(o.with)) : [];
   for (const o of it.overlaps) {
-    if (quiet.includes(o)) continue;
-    const what = o.files.length ? ` on ${o.files.join(', ')}` : '';
-    const unc = o.uncommittedFiles?.length ? ` · uncommitted: ${o.uncommittedFiles.join(', ')}` : '';
-    lines.push(`    overlaps ${o.with} (${o.via.join('+')})${what}${unc}${o.known ? ' [known]' : ''}`);
+    if (quiet.includes(o) || declared(o)) continue;
+    lines.push(overlapLine(o));
   }
+  if (it.inherited?.length) lines.push(`    inherited (${it.inherited.length} file${it.inherited.length === 1 ? '' : 's'}) from stack base ${it.stackBase} — shared ancestor commits, not counted as overlaps`);
   if (quiet.length) lines.push(`    overlaps ${quiet.length} other untracked branch${quiet.length === 1 ? '' : 'es'} (--all)`);
   if (it.overlapsWithHidden?.length) {
     lines.push(`    + overlaps ${it.overlapsWithHidden.length} hidden item${it.overlapsWithHidden.length === 1 ? '' : 's'} — use --all`);

@@ -9,7 +9,7 @@
  * @module scripts/lib/fleet/land
  */
 import { ArgvError } from '../cli-io.mjs';
-import { assertTrainId, readTrain } from './registry.mjs';
+import { assertTrainId, probesDir, readTrain } from './registry.mjs';
 import { buildStatusFrom, gatherFacts, payloadFromStatus } from './facts.mjs';
 import { abandonTrain, branchOfRef, buildTrain, defaultDeps, resumeTrain, withTrainLock } from './train.mjs';
 import { approveTrain, confirmTrain, reconcileTrain } from './train-approve.mjs';
@@ -68,7 +68,8 @@ function validId(id) {
 export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) {
   const modes = MODES.filter((m) => flags[m] !== undefined);
   if (modes.length > 1) throw new ArgvError(`fleet land: ${modes.join(' and ')} are mutually exclusive`);
-  if (modes.length && (flags['--select'] !== undefined || flags['--dry-run'])) throw new ArgvError('fleet land: --select/--dry-run apply only when building a train');
+  if (modes.length && (flags['--select'] !== undefined || flags['--dry-run'] || flags['--tier'] !== undefined || flags['--include-stale'])) throw new ArgvError('fleet land: --select/--dry-run/--tier/--include-stale apply only when building a train');
+  if (flags['--tier'] !== undefined && !flags['--dry-run']) throw new ArgvError('fleet land: --tier applies only with --dry-run (a probe that runs one tier and is never approvable); a train you can approve runs every pre-land tier');
   if (flags['--accept-rerun'] && modes[0] !== '--approve') throw new ArgvError('fleet land: --accept-rerun applies only to --approve');
   if (flags['--serial'] && modes[0] !== '--approve') throw new ArgvError('fleet land: --serial applies only to --approve (a stopped serial run continues with --resume)');
   const { cwd, cmd } = ctx; // NOTE: ctx.config is lazy — manifest-driven verbs below never touch it
@@ -124,6 +125,15 @@ export function parseSelect(v) {
  */
 function finishBuilt(r, cmd) {
   const red = r.train.result === 'red';
+  if (r.probe) {
+    // A probe is never approvable: green exits 0, a tier that ran red exits 4, a conflict (no tier ran) exits 3.
+    const green = r.train.result === 'green' || r.train.result === 'green-after-rerun';
+    const code = red ? 'red' : green && !r.train.conflict ? 'ok' : 'refused';
+    const verdict = r.train.conflict ? `CONFLICT at ${r.train.conflict.sourceId}` : r.train.result ?? 'none';
+    const text = [`PROBE (tier ${r.train.testCommand[0]?.name} only, never approvable) — ${verdict}`,
+      renderBuilt({ train: r.train, approvability: r.approvability, cmd }), ...(red ? redTierLines(r.train) : [])].join('\n');
+    return { ...r, ok: code === 'ok', code, reason: code === 'ok' ? undefined : `probe: ${verdict}`, trainId: r.train.trainId, text };
+  }
   const text = [renderBuilt({ train: r.train, approvability: r.approvability, cmd }), ...(red ? redTierLines(r.train) : [])].join('\n');
   const usable = r.approvability.ok || r.approvability.needsAcceptRerun === true;
   const code = usable ? 'ok' : red ? 'red' : 'refused';
@@ -139,19 +149,27 @@ function build(ctx, flags, deps) {
     return { ok: false, code: 'refused', reason: 'registry incomplete — a train is never built on partial data', text: `REFUSED: registry incomplete (${facts.registry.invalid.map((i) => i.file).join(', ')}) — run \`${cmd} repair --quarantine <file>\`` };
   }
   const status = buildStatusFrom(facts);
-  const readyIds = new Set(status.landingOrder);
-  let wanted = status.landingOrder;
+  // A ready mark on a branch ahead 0 of the base has expired (nothing left to land): out by default, `--include-stale` brings it back.
+  const includeStale = Boolean(flags['--include-stale']);
+  const staleReady = status.staleReady ?? [];
+  const order = includeStale ? [...status.landingOrder, ...staleReady] : status.landingOrder;
+  const readyIds = new Set(order);
+  let wanted = order;
+  const staleNote = !includeStale && staleReady.length
+    ? `left out: ${staleReady.length} stale ready mark(s), ahead 0 of the base (${staleReady.join(', ')}) — \`--include-stale\` brings them back`
+    : null;
   if (selectGiven) {
     wanted = selectIds;
     const bad = wanted.filter((id) => !readyIds.has(id));
     if (bad.length) {
       const why = bad.map((id) => { const it = status.items.find((i) => i.id === id); return `${id} (${it ? it.display : 'unknown session'})`; });
-      return { ok: false, code: 'refused', reason: `not ready to land: ${why.join(', ')}`, text: `REFUSED: not ready to land: ${why.join(', ')}` };
+      const hint = bad.some((id) => staleReady.includes(id)) ? ' — `--include-stale` brings back a mark that is ahead 0 of the base' : '';
+      return { ok: false, code: 'refused', reason: `not ready to land: ${why.join(', ')}`, text: `REFUSED: not ready to land: ${why.join(', ')}${hint}` };
     }
     // Keep the proposed landing order among the selection.
-    wanted = status.landingOrder.filter((id) => wanted.includes(id));
+    wanted = order.filter((id) => wanted.includes(id));
   }
-  if (!wanted.length) return { ok: false, code: 'refused', reason: 'nothing is ready to land', text: 'REFUSED: nothing is ready to land (a session must be `ready` and its head not moved since)' };
+  if (!wanted.length) return { ok: false, code: 'refused', reason: 'nothing is ready to land', staleReady, text: `REFUSED: nothing is ready to land (a session must be \`ready\`, its head not moved since, and ahead of the base)${staleNote ? `\n${staleNote}` : ''}` };
 
   const sources = wanted.map((id) => {
     const s = facts.registry.sessions.find((x) => x.id === id);
@@ -162,9 +180,15 @@ function build(ctx, flags, deps) {
     };
   });
   const dryRun = Boolean(flags['--dry-run']);
-  // Concurrent land operations on one repo are refused by the exclusive trains/.lock.
-  const r = withTrainLock(ctx.dir, () => buildTrain({ cwd, config, sources, checkPayload: payloadFromStatus(status), dryRun, deps }));
-  if (!r.ok) return { ...r, text: `${r.code === 'error' ? 'ERROR' : 'REFUSED'}: ${r.reason}` };
-  if (r.dryRun) return { ...r, code: 'ok', text: renderDryRun(r) };
-  return finishBuilt(r, cmd);
+  const probeTier = flags['--tier'] ?? null;
+  // Concurrent land operations on one repo are refused by the exclusive trains/.lock (a probe locks its own root).
+  const r = withTrainLock(probeTier ? probesDir(ctx.dir) : ctx.dir, () => buildTrain({ cwd, config, sources, checkPayload: payloadFromStatus(status), dryRun, probeTier, deps }));
+  // fullSuite: "train": a real (non-probe) train is the ONE full-suite run for every session in it — say so on the result.
+  const suiteNote = !probeTier && !dryRun && config.fullSuite === 'train'
+    ? `full suite: this train is the one full-suite run for ${wanted.join(', ')} (.fleet.json fullSuite: "train" — the sessions deferred it here)` : null;
+  const notes = [staleNote, suiteNote].filter(Boolean);
+  const withStale = (x) => (notes.length ? { ...x, ...(staleNote ? { staleReady } : {}), text: `${x.text}\n${notes.join('\n')}` } : x);
+  if (!r.ok) return withStale({ ...r, text: `${r.code === 'error' ? 'ERROR' : 'REFUSED'}: ${r.reason}` });
+  if (r.dryRun) return withStale({ ...r, code: 'ok', text: renderDryRun(r) });
+  return withStale(finishBuilt(r, cmd));
 }

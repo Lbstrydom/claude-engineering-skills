@@ -80,6 +80,8 @@ same base (`not-an-ancestor`, hard fail), which is where the exit code is.
 
 Unit isolation structurally *cannot* catch the failure modes a delete/refactor cluster introduces: a stale `vi.mock`/`jest.mock` of a now-deleted module path only errors when something actually resolves it (i.e. in integration), and cross-module integration breaks are invisible to per-module unit suites.
 
+**Exception — a fleet repo with `fullSuite: "train"`.** When `fleet next` says the repo's `.fleet.json` sets `fullSuite: "train"`, the cluster boundary runs the targeted and affected-file tests plus the required gates, never the full suite and never the heavy slot: `fleet land` builds every ready branch into one candidate and runs the full suite there once (fleet participant rule 4a). Write `full suite deferred to the train (fullSuite: train)` in the plan's test log, so the deferral is on record where the cluster's evidence is.
+
 ## 4.5 — what `finalize-outcomes` captures
 
 This deterministically captures `adjudication_outcome` + `audit_runs.labeled` + the `needs_triage` reconciliation for any finding the ledger omitted — replacing the model-remembered `/audit-code` Step 3.5b for the autonomous path. The `run-id` is the audit's `_cloudRunId` (written on the `--out` JSON; stable across rounds because `audit-loop.mjs`/the audit threads one unified id).

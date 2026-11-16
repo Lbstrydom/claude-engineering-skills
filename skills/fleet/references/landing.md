@@ -27,6 +27,20 @@ it on draft-time checks), and on a green, CLEAN, auto-merge-armed PR still
 unmerged after 15 minutes (re-arm it). Limit: checks are matched by name; `gh`
 does not say which app produced an observed check.
 
+## A fast-tier probe, before the full train
+
+`land --dry-run --tier <name>` builds the same combined candidate from every ready branch and runs ONLY that pre-land
+tier. It takes no heavy slot of its own, is kept under `fleet/probes/` (where no approve, confirm or resume reader looks,
+so no bundle can approve it), removes its worktree, and exits 0 green, 4 red, 3 on a conflict. Plain `--dry-run` still
+only plans. Once two or more branches are ready, `status` prints `N ready branches never tested together` until a train
+or probe has covered every ready head at its current commit, so run a probe when a second branch becomes ready and again
+when a ready head moves: a clash then surfaces in minutes, not at the full train.
+
+## Stale ready marks
+
+A ready mark on a branch ahead 0 of the base (nothing left to land) reads `ready (stale — ahead 0 of base)`; it is
+derived on every read, never written. `land` leaves it out and names it; `--include-stale` brings it back.
+
 ## A red train (exit 4)
 
 A train whose tiers RAN and went red exits **4**, never 3 (3 means nothing ran or it was not allowed), and `land` prints

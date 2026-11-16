@@ -8,8 +8,9 @@
  * **A declaration, not verified authority.** No code here can prove the words came from the user — any process that can
  * run fleet can write a record. So nothing treats a decision as the safety boundary: `ship-commit.mjs --record` checks
  * the change itself against HEAD regardless, and the decision's id rides in the commit (`AI-Decision`) so whoever
- * approves the merge reads the words first. **Closed scope**: `record-catchup` and `note`; no merge, push or override
- * value exists, so none can be granted.
+ * approves the merge reads the words first. **Closed scope**: `record-catchup`, `note`, and the two a session reads at its
+ * checkpoint, `test-plan` and `answer` (consumer report 2026-11-15, item 4: `fleet next` quotes them as the user's words).
+ * No merge, push, override or deletion value exists, so none can be granted.
  *
  * Storage: `fleet/decisions/<id>.json` in the shared registry — a NEW directory, so an older bundle's reader never sees
  * it. Writes happen inside `transact` (the caller holds `fleet/.lock`). Pure of fleet's command layer, so ship-commit can
@@ -25,13 +26,15 @@ import { atomicWriteFileSync } from '../file-io.mjs';
 import { assertManaged } from './registry.mjs';
 import { DECISION_ID_RE } from '../commit-trailers.mjs';
 
-export const DECISION_SCOPES = Object.freeze(['record-catchup', 'note']);
+export const DECISION_SCOPES = Object.freeze(['record-catchup', 'note', 'test-plan', 'answer']);
+/** Scopes a session reads at its checkpoint (`fleet next`), addressed with `to` (a session id, or `all`). */
+export const SESSION_SCOPES = Object.freeze(['test-plan', 'answer']);
 export { DECISION_ID_RE };
 export const REVOCATION_ID_RE = /^rev-[0-9]{14}-[0-9a-f]{4}$/;
 export const WORDS_MAX = 4000;
 /** At most this many records are read; over it the read is `complete:false`, never "none". */
 export const DECISIONS_CAP = 5000;
-export const GRANTS_NOTE = 'a decision records the user\'s words; it grants only its scope, and never a merge';
+export const GRANTS_NOTE = 'a decision records the user\'s words; it grants only its scope, and never a merge, a push, --override or a deletion';
 
 const NO_CONTROL_EXCEPT_NEWLINE = /^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]+$/; // LF and CR (CRLF) allowed (B-R2-M2)
 const IsoSchema = z.string().refine((s) => Number.isFinite(Date.parse(s)), 'must be an ISO timestamp');
@@ -42,7 +45,10 @@ const By = z.strictObject({ session: z.string().min(1).max(200).regex(/^[^\u0000
 export const DecisionSchema = z.strictObject({
   schemaVersion: z.literal(1), kind: z.literal('decision'), id: z.string().regex(DECISION_ID_RE),
   at: IsoSchema, scope: z.enum(DECISION_SCOPES), words: Words, recordedBy: By, expiresAt: IsoSchema.nullable(),
-});
+  // Who a session-scope decision is FOR (a session id, or `all`). Only `test-plan`/`answer` carry it — an older reader
+  // already lists those scopes as unsupported, so the new field never reaches a reader that does not know it.
+  to: z.string().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/).optional(),
+}).refine((d) => (d.to === undefined) === !SESSION_SCOPES.includes(d.scope), { message: 'to is required for test-plan/answer and absent otherwise', path: ['to'] });
 export const RevocationSchema = z.strictObject({
   schemaVersion: z.literal(1), kind: z.literal('revocation'), id: z.string().regex(REVOCATION_ID_RE),
   at: IsoSchema, revokes: z.string().regex(DECISION_ID_RE), words: Words, recordedBy: By,
@@ -130,4 +136,26 @@ export function writeRecord(dir, record) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   atomicWriteFileSync(file, `${JSON.stringify(r, null, 2)}\n`);
   return r;
+}
+
+/**
+ * The active `test-plan`/`answer` decisions addressed to `sessionId` (or to `all`), newest first — what `fleet next` quotes.
+ * The SAME fail-closed verdict as `activeDecision`: an unusable registry shows NONE as active and says why.
+ * @returns {{decisions: object[], unusable: string|null}}
+ */
+export function decisionsForSession(dir, sessionId, now = new Date()) {
+  const r = readDecisions(dir);
+  const unusable = registryUnusable(r);
+  if (unusable) return { decisions: [], unusable };
+  const revoked = new Set(r.revocations.map((x) => x.revokes));
+  const decisions = r.decisions.filter((d) => SESSION_SCOPES.includes(d.scope) && (d.to === 'all' || d.to === sessionId)
+    && !revoked.has(d.id) && !(d.expiresAt && Date.parse(d.expiresAt) <= now.getTime()))
+    .sort((a, b) => b.at.localeCompare(a.at));
+  return { decisions, unusable: null };
+}
+
+/** `fleet next`'s block for one decision: the user's words, quoted — never phrased as an instruction from a peer. */
+export function renderSessionDecision(d) {
+  return [`USER DECISION ${d.id} (${d.scope}) — the user's own words, recorded by ${d.recordedBy.session} at ${d.at}; not a peer's claim:`,
+    ...d.words.split(/\r?\n/).map((l) => `    > ${l}`), `    (${GRANTS_NOTE})`];
 }

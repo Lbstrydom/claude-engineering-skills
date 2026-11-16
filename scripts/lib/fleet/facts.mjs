@@ -135,6 +135,7 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   const baseOidSnap = measure.ok ? measure.oid : tipOid.get(base) ?? null;
   const baseRev = baseOidSnap ?? base;
   const { changed, patchIds } = branchEvidence({ cwd, analyse: sel.analyse, tipOid, baseRev, patches });
+  const ownChanged = stackedEvidence({ cwd, registry, analyse: sel.analyse, tipOid, base });
   for (const n of sel.skippedUntracked) changed[n] = { queried: false, files: [], reason: 'not requested: untracked branches are not analysed by this command' };
   // The budget covers EVERY per-ref analysis: the branches above AND the materialised PR refs below.
   const budget = Number.isInteger(maxBranches) && maxBranches >= 0 ? maxBranches - sel.analyse.size : Infinity;
@@ -159,7 +160,7 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
     base: { name: base, upstream: up.upstream, freshness: baseFreshness(cwd, { base, upstream: up.upstream }), measure },
     registry, hold: readHold(dir), trains: trainsRead.trains, trainsInvalid: trainsRead.invalid,
     worktrees: worktreeList,
-    branches, prs: prFacts, changed, patchIds,
+    branches, prs: prFacts, changed, patchIds, ownChanged,
     ...(branchesNotAnalysed ? { branchesNotAnalysed } : {}),
     ...(checks === false ? { checks: { queried: false, reason: 'not requested' } } : {}),
   };
@@ -221,6 +222,24 @@ function branchEvidence({ cwd, analyse, tipOid, baseRev, patches }) {
     if (patches) patchIds[n] = patchId(cwd, baseRev, rev);
   }
   return { changed, patchIds };
+}
+
+/**
+ * A session stacked on another unlanded branch (`claim --base <branch>`, recorded as `source.baseRef`) is measured from
+ * its REAL fork point: its own changed files are `stackBase...tip`, so commits it inherited from the shared base are not
+ * its overlap (consumer report 2026-11-15, item 3: six sessions on one unlanded base all overlapped on the base's files).
+ * Keyed by branch, beside `changed` (which stays the from-base diff every other consumer reads). A stack base that cannot
+ * be resolved is `{queried:false, reason}`, and overlap then falls back to the from-base diff — never to "no files".
+ */
+function stackedEvidence({ cwd, registry, analyse, tipOid, base }) {
+  const own = {};
+  for (const s of registry.sessions) {
+    const b = s.source?.branch; const stack = s.source?.baseRef;
+    if (s.source?.kind !== 'branch' || !b || !stack || stack === base || stack === b || !analyse.has(b)) continue;
+    const r = changedFiles(cwd, tipOid.get(stack) ?? `refs/heads/${stack}`, tipOid.get(b) ?? b);
+    own[b] = { ...r, stackBase: stack };
+  }
+  return own;
 }
 
 const mergeNotAnalysed = (a, b) => (!a && !b ? null
@@ -482,7 +501,8 @@ export function othersFor(facts, selfId, now, sessions = facts.registry.sessions
     const wt = facts.worktrees?.queried ? worktreeOf(facts.worktrees.worktrees ?? [], s.worktree, b) : null;
     const md = merged?.merged ? mergedDone(merged, workRemainingIn(facts, b ?? null, wt)) : null;
     return {
-      session: s, live: live && !md?.done, changedFiles: k && facts.changed?.[k]?.queried ? facts.changed[k].files : [],
+      session: s, live: live && !md?.done,
+      changedFiles: b && facts.ownChanged?.[b]?.queried && k === b ? facts.ownChanged[b].files : k && facts.changed?.[k]?.queried ? facts.changed[k].files : [],
       uncommittedFiles: u?.queried ? u.files : [], ...(u && !u.queried ? { uncommittedUnknown: u.reason } : {}),
       ...(live && md?.done ? { finished: md.note } : {}), ...(md && !md.done ? { mergedNote: md.note } : {}),
     };

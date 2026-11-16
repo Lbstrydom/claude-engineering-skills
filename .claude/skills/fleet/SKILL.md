@@ -28,29 +28,29 @@ description: |
 Usage:
   /fleet status [--json] [--all] [--fetch]       # morning view; read-only
   /fleet start --task "..." [--paths a,b] [--task "..." [--paths c]]...
-  /fleet claim --id <id> --intent "..." --paths "a/**,b.mjs" [--worktree <path>] [--override] [--host-session <id>]
+  /fleet claim --id <id> --intent "..." --paths "a/**,b.mjs" [--base <branch>] [--worktree <path>] [--override] [--host-session <id>]
   /fleet add <branch|#PR> | --all [--id <id>]    # adopt work that already exists
   /fleet ready | touch [--id <id>]               # mark ready at HEAD / renew lease
   /fleet next [--id <id>]                        # what this session should do now
   /fleet release [--id <id>] [--abandoned]       # retire a claim now
   /fleet archive-check [<id|branch|path>]        # what removal would lose
-  /fleet prune [--apply [--remote] [--include-fresh]]  # removable with nothing lost; --apply runs that list
+  /fleet prune [--apply [--remote] [--include-fresh]]  # removable with nothing lost
   /fleet archive <worktree|branch|id> [--apply] [--discard-ignored] [--include-fresh]  # snapshot to an archive/* tag, remove
   /fleet handover winddown [--repo <path>]... [--scheduler-snapshot <file>]  # BEFORE prepare
   /fleet handover prepare [--repo <path>]... [--scheduler-checked] [--winddown-waived "<why>"]  # to another account
-  /fleet handover receive --from <json> [--dry-run] [--allow-older]  # in the NEW account: verify, list follow-ups
+  /fleet handover receive --from <json> [--dry-run] [--allow-older]  # in the NEW account
   /fleet directive --to <id|all> --kind <k> --reason <r> [--ref] [--note] | --list | --ack <id> --outcome done|declined
-  /fleet decision record --scope record-catchup|note --words-file - | revoke <id> --words-file - | list  # the user's words, on stdin
-  /fleet propose --what "..." --where "..." --why "..." [--evidence "..."] [--theme <slug>] [--blocked-by <#PR|branch>]  # a durable finding
-  /fleet proposal <id> --folded <session> | --queued <reason> | --declined <reason> | --done <PR>  # set its outcome; history only grows
-  /fleet proposals [--all]                       # the findings queue grouped by theme; blocked-by rechecked from facts
+  /fleet decision record --scope <s> [--to <id>] --words-file - | revoke <id> --words-file - | list  # user's words, stdin
+  /fleet propose --what "..." --where "..." --why "..." [--evidence "..."] [--theme <slug>] [--blocked-by <#PR|branch>]
+  /fleet proposal <id> --folded <session> | --queued <reason> | --declined <reason> | --done <PR>  # set its outcome
+  /fleet proposals [--all]                       # the findings queue by theme
   /fleet lease acquire [--kind gate|test|timing|maintenance] [--for <1-180>] [--pid <n>] [--token <t>] [--note "..."]  # take the machine's one heavy slot (shared by every repo)
   /fleet lease attach --pid <n> | release [--end-turn] [--force --reason "..."] | status | log | wait
   /fleet lease announce --kind quiet|ci --until <iso|+Nm> [--over-held] | --clear-window | peak --hours "..."
-  /fleet lease grant --window <id> --until <t> [--to <r>] | turn --minutes <n> | run [--wait <m>] -- <cmd>  # references/lease.md
+  /fleet lease grant --window <id> --until <t> [--to <r>] | turn --minutes <n> | run [--wait <m>] -- <cmd>  
   /fleet hold on [--reason "..."] [--notify] | off [--note "..."]
   /fleet repair --quarantine <file>
-  /fleet land [--select a,b] [--dry-run]         # build a train, one test run
+  /fleet land [--select a,b] [--dry-run [--tier <t>]] [--include-stale]  # one test run
   /fleet land --approve <trainId> [--accept-rerun] [--serial]
   /fleet land --confirm|--reconcile|--resume|--abandon <trainId>
   /fleet restack [<branch>] [--onto <ref>] [--from <oid>] [--replace]

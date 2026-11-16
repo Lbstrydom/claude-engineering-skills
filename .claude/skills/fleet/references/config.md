@@ -32,3 +32,8 @@ never blocks; mixed evidence still blocks. A tier or check may carry a one-line
 `"note"` (≤300 chars), printed and recorded in the manifest. Landing keys —
 `requiredChecks`, `appendOnlyGlobs`, `restackIgnore`, `serialTimeoutMs` — are in
 `references/landing.md`; `ghAccount` (a gh login name; the handover's PR probe reads that repo as it, using `gh auth token --user`; never a token), `archiveIgnore` (default `node_modules/**`, `scripts/.claude-skills/**`, `.claude/settings.local.json`: gitignored paths that `archive-check` and `prune` treat as disposable) is used by the verbs in `references/ending-a-session.md`.
+
+`fullSuite` (`"session"` default, or `"train"`): with `"train"`, sessions run the targeted and affected-file tests plus the
+required gates and never take the heavy slot for a full suite; `next` and `ready` say so and give the test-log words
+(`full suite deferred to the train (fullSuite: train)`), and `fleet land` is the one full-suite run. Under `"train"`
+`land` is the only place a combination is tested in full, so run the fast-tier probe (`references/landing.md`) early.

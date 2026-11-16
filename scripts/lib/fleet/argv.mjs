@@ -16,7 +16,7 @@ import { ArgvError } from '../cli-io.mjs';
 export const VERBS = Object.freeze({
   status: { bool: ['--json', '--all', '--fetch'], value: [], repeat: [], positionals: [0, 0] },
   add: { bool: ['--json', '--all'], value: ['--id'], repeat: [], positionals: [0, 1] },
-  claim: { bool: ['--json', '--override', '--clear-waiting'], value: ['--id', '--intent', '--paths', '--host-session', '--worktree'], repeat: ['--waiting-on'], positionals: [0, 0] },
+  claim: { bool: ['--json', '--override', '--clear-waiting'], value: ['--id', '--intent', '--paths', '--host-session', '--worktree', '--base'], repeat: ['--waiting-on'], positionals: [0, 0] },
   ready: { bool: ['--json', '--clear-waiting'], value: ['--id'], repeat: ['--waiting-on'], positionals: [0, 0] },
   touch: { bool: ['--json', '--clear-waiting'], value: ['--id'], repeat: ['--waiting-on', '--unwait'], positionals: [0, 0] },
   hold: { bool: ['--json', '--notify'], value: ['--reason', '--note', '--id'], repeat: [], positionals: [1, 1] },
@@ -33,7 +33,7 @@ export const VERBS = Object.freeze({
     bool: ['--json', '--list', '--all'],
     value: ['--to', '--kind', '--reason', '--ref', '--note', '--expires-hours', '--ack', '--outcome', '--id'], repeat: [], positionals: [0, 0],
   },
-  decision: { bool: ['--json'], value: ['--scope', '--words-file', '--expires', '--id', '--host-session'], repeat: [], positionals: [1, 2] },
+  decision: { bool: ['--json'], value: ['--scope', '--words-file', '--expires', '--id', '--host-session', '--to'], repeat: [], positionals: [1, 2] },
   propose: { bool: ['--json'], value: ['--what', '--where', '--why', '--evidence', '--theme', '--blocked-by', '--id'], repeat: [], positionals: [0, 0] },
   proposal: { bool: ['--json'], value: ['--folded', '--queued', '--declined', '--done', '--id'], repeat: [], positionals: [1, 1] },
   proposals: { bool: ['--json', '--all'], value: [], repeat: [], positionals: [0, 0] },
@@ -42,8 +42,8 @@ export const VERBS = Object.freeze({
     value: ['--kind', '--for', '--pid', '--token', '--note', '--id', '--reason', '--from', '--until', '--hours', '--clear-window', '--limit', '--window', '--to', '--minutes', '--wait', '--timeout'], repeat: [], positionals: [1, 256],
   },
   land: {
-    bool: ['--json', '--dry-run', '--accept-rerun', '--serial'],
-    value: ['--select', '--approve', '--confirm', '--reconcile', '--resume', '--abandon'], repeat: [], positionals: [0, 0],
+    bool: ['--json', '--dry-run', '--accept-rerun', '--serial', '--include-stale'],
+    value: ['--select', '--tier', '--approve', '--confirm', '--reconcile', '--resume', '--abandon'], repeat: [], positionals: [0, 0],
   },
 });
 

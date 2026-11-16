@@ -15,6 +15,7 @@
  */
 import cp from 'node:child_process';
 import crypto from 'node:crypto';
+import os from 'node:os';
 
 const TIMEOUT_MS = 15_000;
 const WIN_SCRIPT = "Get-CimInstance Win32_Process | ForEach-Object { $s = if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') } else { '-' }; '{0} {1} {2} {3} {4}' -f $_.ProcessId, $_.ParentProcessId, ($_.KernelModeTime + $_.UserModeTime), $s, $_.Name }";
@@ -171,4 +172,51 @@ export async function sampleTree(pid, { sampleMs = 5_000, read = readProcessTabl
   const started = second.filter((r) => !before.has(r.pid)).length;
   const exited = first.filter((r) => !now2.has(r.pid)).length;
   return { measured: true, tree: second, cpuMs, windowMs: Math.max(1, clock() - t0), started, exited };
+}
+
+// ── Machine-wide CPU (unleased test load) ──────────────────────────────────
+
+/** At or above this share of every core busy, the machine is saturated: something heavy is running. */
+export const CPU_SATURATED_PCT = 85;
+
+/** Summed busy and total CPU time across all cores, from `os.cpus()`. */
+const cpuTimes = (list) => list.reduce((a, c) => {
+  const t = c.times; const total = t.user + t.nice + t.sys + t.idle + t.irq;
+  return { busy: a.busy + total - t.idle, total: a.total + total };
+}, { busy: 0, total: 0 });
+
+/**
+ * How busy the WHOLE machine is, sampled over `sampleMs` (consumer report 2026-11-15, item 6: test runs that took no lease
+ * saturated the CPU while `lease status` said the slot was free). `FLEET_CPU_BUSY_PCT` pins the reading (a test seam, like
+ * `FLEET_NOW`); `FLEET_CPU_SAMPLE_MS=0` skips it. A failed or skipped sample is `{measured:false}` — never "idle". Never throws.
+ * @returns {Promise<{measured: true, busyPct: number, cores: number, sampleMs: number} | {measured: false, reason: string}>}
+ */
+export async function machineCpu({ env = process.env, cpus = () => os.cpus(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  try {
+    const pinned = env.FLEET_CPU_BUSY_PCT;
+    if (pinned !== undefined && pinned !== '') {
+      const n = Number(pinned);
+      return Number.isFinite(n) && n >= 0 && n <= 100 ? { measured: true, busyPct: Math.round(n), cores: cpus().length, sampleMs: 0 } : { measured: false, reason: `FLEET_CPU_BUSY_PCT ${JSON.stringify(pinned)} is not 0-100` };
+    }
+    const raw = env.FLEET_CPU_SAMPLE_MS;
+    const sampleMs = raw === undefined || raw === '' ? 1_000 : Number(raw);
+    if (!Number.isFinite(sampleMs) || sampleMs <= 0) return { measured: false, reason: 'not sampled (FLEET_CPU_SAMPLE_MS=0)' };
+    const a = cpuTimes(cpus()); await sleep(sampleMs); const list = cpus(); const b = cpuTimes(list);
+    const total = b.total - a.total;
+    if (!(total > 0) || !list.length) return { measured: false, reason: 'the CPU counters did not advance' };
+    return { measured: true, busyPct: Math.round(((b.busy - a.busy) / total) * 100), cores: list.length, sampleMs };
+  } catch (e) { return { measured: false, reason: e.message }; }
+}
+
+/**
+ * The warning, or null when the machine is not saturated (or was not measured). It names what the lease cannot see — work
+ * that took no lease — and never says what to stop: that is a person's call.
+ * @param {{measured: boolean, busyPct?: number, cores?: number}} cpu
+ * @param {{slotFree?: boolean, holder?: string|null, starting?: boolean}} [o] - `starting`: `lease run`, sampled after its grant
+ */
+export function cpuSaturationLine(cpu, { slotFree = true, holder = null, starting = false } = {}) {
+  if (!cpu?.measured || cpu.busyPct < CPU_SATURATED_PCT) return null;
+  const who = starting ? 'measured before this job started, so this load took no lease'
+    : slotFree ? 'the heavy slot is FREE, so this load took no lease' : `the slot is held${holder ? ` by ${holder}` : ''}, and more than its job may be running`;
+  return `WARNING: CPU ${cpu.busyPct}% busy across ${cpu.cores} cores — ${who} (unleased test load?). A timing-sensitive or full run now will be slow; check before adding more.`;
 }
