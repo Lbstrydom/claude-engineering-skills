@@ -883,6 +883,17 @@
     },
     {
       "schemaVersion": 1,
+      "issueId": "e5a067c3-a481-4451-a47a-4d5b106581f0",
+      "storeFingerprint": "d5a9d07b91225a93",
+      "state": "fixed",
+      "disposition": {
+        "kind": "test",
+        "value": "tests/prepush-snapshot.test.mjs"
+      },
+      "recordedAt": "2026-11-16T00:20:28.781Z"
+    },
+    {
+      "schemaVersion": 1,
       "issueId": "ea23dfda-0fb2-4e32-a7a1-fa3b7c6555fe",
       "storeFingerprint": "d5a9d07b91225a93",
       "state": "fixed",
