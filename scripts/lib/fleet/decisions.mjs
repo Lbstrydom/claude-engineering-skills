@@ -35,7 +35,8 @@ export const GRANTS_NOTE = 'a decision records the user\'s words; it grants only
 
 const NO_CONTROL_EXCEPT_NEWLINE = /^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]+$/; // LF and CR (CRLF) allowed (B-R2-M2)
 const IsoSchema = z.string().refine((s) => Number.isFinite(Date.parse(s)), 'must be an ISO timestamp');
-const Words = z.string().min(1).max(WORDS_MAX).regex(NO_CONTROL_EXCEPT_NEWLINE, 'must not contain control characters');
+const Words = z.string().min(1).max(WORDS_MAX).regex(NO_CONTROL_EXCEPT_NEWLINE, 'must not contain control characters')
+  .refine((s) => !/\r(?!\n)/.test(s), 'a carriage return is allowed only as part of CRLF (B-R3-M2)');
 const By = z.strictObject({ session: z.string().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/), hostSession: z.string().max(200).nullable() });
 
 export const DecisionSchema = z.strictObject({

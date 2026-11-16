@@ -41,6 +41,7 @@ export function readWords(spec, { readStdin = () => fs.readFileSync(0, 'utf8') }
   // included, is kept as supplied.
   text = String(text).replace(/\r?\n$/, '');
   if (!text.trim()) throw new ArgvError('fleet decision: the words are empty');
+  if (/\r(?!\n)/.test(text)) throw new ArgvError('fleet decision: a carriage return is allowed only as part of a CRLF line end');
   if (text.length > WORDS_MAX) throw new ArgvError(`fleet decision: the words are over ${WORDS_MAX} characters`);
   return text;
 }
@@ -50,7 +51,7 @@ const byOf = (ctx, flags) => ({ session: flags['--id'] ?? currentBranch(ctx.cwd)
 function render(d, revoked, unusable, nowMs) {
   const state = revoked ? `REVOKED by ${revoked.id}` : d.expiresAt && Date.parse(d.expiresAt) <= nowMs ? 'expired' : unusable ? 'INDETERMINATE (registry unusable)' : 'active';
   return [`${d.id}  ${d.scope}  ${state}  recorded ${d.at} by ${d.recordedBy.session}${d.expiresAt ? `, expires ${d.expiresAt}` : ''}`,
-    ...d.words.split('\n').map((l) => `    > ${l}`)].join('\n');
+    ...d.words.split(/\r?\n/).map((l) => `    > ${l}`)].join('\n');
 }
 
 export function cmdDecision(ctx, flags, positionals, deps = {}) {
@@ -71,7 +72,8 @@ export function cmdDecision(ctx, flags, positionals, deps = {}) {
     for (const u of r.unsupported) lines.push(`unsupported: ${u.file} (${u.reason}) — listed, never active`);
     for (const i of r.invalid) lines.push(`invalid: ${i.file} (${i.reason})`);
     lines.push(`(${GRANTS_NOTE})`);
-    return ok({ decisions: shown, revocations: r.revocations, complete: r.complete, text: lines.join('\n') });
+    // The machine-readable form says what the text says (B-R3-M1): `usable:false` means no decision here is active.
+    return ok({ decisions: shown, revocations: r.revocations, complete: r.complete, usable: !unusable, unusableReason: unusable ?? null, text: lines.join('\n') });
   }
   if (positionals.length > (sub === 'revoke' ? 2 : 1)) throw new ArgvError(`fleet decision ${sub}: unexpected argument ${JSON.stringify(positionals.at(-1))}`);
   const words = readWords(flags['--words-file'], deps);

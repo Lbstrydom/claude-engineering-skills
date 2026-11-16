@@ -168,3 +168,11 @@ describe('audit B-R2 regressions (authority)', () => {
     assert.equal(gatherRecordPathFacts({ repoRoot: dir, git: g, rels: ['docs/plans/[draft].md'] })[0].atHead, 'absent');
   });
 });
+
+describe('audit B-R3 regressions', () => {
+  it('H1: blank lines alone, or a log line with no log section, are not a record', () => {
+    assert.match(planChangeIsRecordOnly('# P\n', '# P\n\n').reason, /inserts no ship-record/);
+    assert.match(planChangeIsRecordOnly('# P\n\n## Implementation Log\n', '# P\n\n## Implementation Log\n\n').reason, /inserts no ship-record/);
+    assert.match(planChangeIsRecordOnly('# P\n', `# P\n${LINE}\n`).reason, /outside|no ## Implementation Log/);
+  });
+});

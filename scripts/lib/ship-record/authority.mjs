@@ -65,7 +65,11 @@ export function planChangeIsRecordOnly(oldText, newText) {
     if (headingAt < 0 || j <= headingAt || j >= sectionEnd(headingAt)) return { ok: false, reason: `line ${j + 1} is outside the ${LOG_HEADING} section` };
     if (!oldHadLog && j < lastOld) return { ok: false, reason: `line ${j + 1} was inserted before original content` };
   }
-  return { ok: true, inserted: inserted.filter((j) => b[j] !== '').length };
+  // A record change records something (B-R3-H1): blank lines alone are not a record, and a created section must exist.
+  const lines_ = inserted.filter((j) => b[j] !== '' && b[j] !== LOG_HEADING).length;
+  if (lines_ === 0) return { ok: false, reason: 'the change inserts no ship-record Implementation Log line' };
+  if (!oldHadLog && !(headingAt > lastOld)) return { ok: false, reason: `the plan had no ${LOG_HEADING}, and none was appended after its content` };
+  return { ok: true, inserted: lines_ };
 }
 
 /**

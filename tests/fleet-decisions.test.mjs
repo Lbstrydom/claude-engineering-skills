@@ -99,3 +99,18 @@ describe('audit B-R2 regressions (decisions)', () => {
     assert.equal(r.decision.words, 'line one\r\nline two');
   });
 });
+
+describe('audit B-R3 regressions (decisions)', () => {
+  it('M1: list exposes usable:false with its reason when the registry is unusable', () => {
+    const dir = tmp();
+    cmdDecision(ctx(dir), { '--scope': 'note', '--words-file': '-' }, ['record'], stdin('ok'));
+    assert.equal(cmdDecision(ctx(dir), {}, ['list']).usable, true);
+    fs.writeFileSync(path.join(decisionsDir(dir), 'rev-20261116000000-0000.json'), '{garbage');
+    const r = cmdDecision(ctx(dir), {}, ['list']);
+    assert.deepEqual([r.usable, /could not be interpreted/.test(r.unusableReason)], [false, true]);
+  });
+  it('M2: a standalone carriage return is refused at input and by the schema', () => {
+    assert.throws(() => readWords('-', stdin('a\rb')), /carriage return/);
+    assert.ok(classifyRecord({ schemaVersion: 1, kind: 'decision', id: 'dec-20261116000000-abcd', at: NOW.toISOString(), scope: 'note', words: 'a\rb', recordedBy: { session: 's', hostSession: null }, expiresAt: null }).invalid);
+  });
+});
