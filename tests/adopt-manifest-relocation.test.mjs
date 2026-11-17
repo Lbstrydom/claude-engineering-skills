@@ -21,6 +21,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
 
 import {
   LAYOUT_CONSTANTS,
@@ -64,9 +65,10 @@ describe('expected-schema manifest — sync path mapping', () => {
 
 describe('expected-schema manifest — declared in the sync closure', () => {
   it('sync-to-repos ships it (an fs-read asset the import walker cannot see)', () => {
-    const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf-8');
-    assert.ok(src.includes(`'${SRC}'`),
-      `${SRC} must be declared in sync-to-repos.mjs — the import-graph walker never sees an fs read`);
+    const shipped = new Set(getSyncClosure().files.map((f) => f.replaceAll('\\', '/')));
+    assert.ok(shipped.size > 1000, 'vacuous-pass guard: the computed bundle is populated');
+    assert.ok(shipped.has(SRC),
+      `${SRC} must be in the computed sync bundle — the import-graph walker never sees an fs read, so it has to be a declared asset`);
   });
 
   it('the source manifest actually exists to be shipped', () => {

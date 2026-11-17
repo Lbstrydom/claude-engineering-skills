@@ -1,182 +1,100 @@
 /**
- * @fileoverview sync-inventory.mjs hand-maintains a mirror of sync-to-repos.mjs's
- * entry-point arrays (it cannot import the CLI module directly — see its
- * header note on why consumer-repos.mjs path arithmetic is source-only), and
- * every array carries a "keep in lock-step" comment pointing back at
- * sync-to-repos.mjs as authoritative. Comments are not enforcement: the two
- * drifted silently — sync-to-repos.mjs's CORE_ENTRY grew four
- * local-maintenance-checks entries (maintenance-checks.mjs, memory-health.mjs,
- * check-model-freshness.mjs, context-staleness.mjs) plus several standalone
- * operator CLIs that sync-inventory.mjs never picked up, so every consumer of
- * getSyncInventoryForRepo/getAllConsumerInventories (the isolation verifier,
- * the relocation guard, and install/deps.mjs's derived npm-dependency
- * computation) had a blind spot for those files' entire transitive closure.
+ * @fileoverview The bundle inventory has ONE owner (debt 3627c83a).
  *
- * This test diffs the two modules' entry-point arrays directly so the class
- * cannot recur silently again.
+ * `sync-inventory.mjs` used to hand-maintain a mirror of the lists
+ * `sync-to-repos.mjs` also declared, with "keep in lock-step" comments and a
+ * parity test as the only thing between two independently editable copies. The
+ * two drifted silently before (four maintenance-checks entries missing from the
+ * mirror), and a comment is not enforcement.
+ *
+ * Now `lib/sync-inventory.mjs` owns the inventory and the CLI imports it. These
+ * tests pin that structure, so a re-introduced second copy fails here, and pin
+ * the one thing a refactor like that must not change: the bytes of the bundle.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { _internals as syncToRepos } from '../scripts/sync-to-repos.mjs';
-import { _internals as syncInventory } from '../scripts/lib/sync-inventory.mjs';
+import { REPOS } from '../scripts/sync-to-repos.mjs';
+import * as inventory from '../scripts/lib/sync-inventory.mjs';
 
-/** @returns {{onlyInA: string[], onlyInB: string[]}} sorted, de-duplicated set diff */
-function diffArrays(a, b) {
-  const setA = new Set(a);
-  const setB = new Set(b);
-  return {
-    onlyInA: [...setA].filter((x) => !setB.has(x)).sort(),
-    onlyInB: [...setB].filter((x) => !setA.has(x)).sort(),
-  };
-}
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const CLI_SRC = fs.readFileSync(path.join(ROOT, 'scripts/sync-to-repos.mjs'), 'utf8');
+const INV_SRC = fs.readFileSync(path.join(ROOT, 'scripts/lib/sync-inventory.mjs'), 'utf8');
+const { _internals } = inventory;
 
-function assertSameSet(a, b, { aLabel, bLabel }) {
-  const { onlyInA, onlyInB } = diffArrays(a, b);
-  assert.deepEqual(
-    { onlyInA, onlyInB },
-    { onlyInA: [], onlyInB: [] },
-    `${aLabel} and ${bLabel} have drifted.\n` +
-      `  Only in ${aLabel}: ${JSON.stringify(onlyInA)}\n` +
-      `  Only in ${bLabel}: ${JSON.stringify(onlyInB)}\n` +
-      'sync-to-repos.mjs is authoritative — reconcile scripts/lib/sync-inventory.mjs to match.',
-  );
-}
+describe('the CLI declares no inventory of its own', () => {
+  // Each pattern is a DECLARATION (`const X =` / `function x(` at column 0), not a mention in a comment.
+  const DECLARATIONS = [
+    /^const (CORE_ASSETS|EDITOR_FILES|CLAUDE_CODE_FILES|NON_CODE_FILES|SKILL_FILES|FILE_UNIVERSE|CORE_NON_IMPORTABLE)\s*=/m,
+    /^function (syncMigrations|buildSkillFiles|bundleForRepo|resolveBundle|buildFileUniverse|realMissingDeps)\s*\(/m,
+    /^(const|let) (CORE_ENTRY|LEARNING_ENTRY|ARCH_ENTRY|DEBT_ENTRY|SYNC_ISOLATION_ENTRY)\s*=/m,
+  ];
 
-describe('sync-inventory.mjs stays in lock-step with sync-to-repos.mjs (authoritative)', () => {
-  it('CORE_ENTRY ∪ CORE_NON_IMPORTABLE matches sync-to-repos.mjs CORE_ENTRY', () => {
-    // sync-inventory.mjs splits its mirror into two arrays (importable vs
-    // dynamic-import-only entries); sync-to-repos.mjs keeps them in one list.
-    // The union is the thing that must match.
-    assertSameSet(
-      syncToRepos.CORE_ENTRY,
-      [...syncInventory.CORE_ENTRY, ...syncInventory.CORE_NON_IMPORTABLE],
-      { aLabel: 'sync-to-repos.mjs CORE_ENTRY', bLabel: 'sync-inventory.mjs CORE_ENTRY+CORE_NON_IMPORTABLE' },
-    );
+  it('no declaration of an inventory list or of the resolution functions remains in sync-to-repos.mjs', () => {
+    for (const re of DECLARATIONS) assert.doesNotMatch(CLI_SRC, re, `a second copy of the inventory is back: ${re}`);
   });
 
-  it('CORE_ASSETS matches (excluding the dynamically-enumerated supabase/migrations/* tail)', () => {
-    // sync-to-repos.mjs spreads `...syncMigrations()` directly into its
-    // CORE_ASSETS array; sync-inventory.mjs adds the same call's result
-    // separately at bundle-time (see its bundleForRepo). Strip the migration
-    // files from both sides so the comparison is of the hand-written entries only.
-    const stripMigrations = (arr) => arr.filter((f) => !f.startsWith('supabase/migrations/'));
-    assertSameSet(
-      stripMigrations(syncToRepos.CORE_ASSETS),
-      stripMigrations(syncInventory.CORE_ASSETS),
-      { aLabel: 'sync-to-repos.mjs CORE_ASSETS', bLabel: 'sync-inventory.mjs CORE_ASSETS' },
-    );
+  it('negative control: the same patterns DO match the owner, so they can fail', () => {
+    assert.match(INV_SRC, DECLARATIONS[0]);
+    assert.match(INV_SRC, /^(export )?function syncMigrations\s*\(/m);
+    assert.match(INV_SRC, /^export function bundleForRepo\s*\(/m);
   });
 
-  it('LEARNING_ENTRY matches', () => {
-    assertSameSet(syncToRepos.LEARNING_ENTRY, syncInventory.LEARNING_ENTRY, {
-      aLabel: 'sync-to-repos.mjs LEARNING_ENTRY', bLabel: 'sync-inventory.mjs LEARNING_ENTRY',
-    });
-  });
-
-  it('ARCH_ENTRY matches', () => {
-    assertSameSet(syncToRepos.ARCH_ENTRY, syncInventory.ARCH_ENTRY, {
-      aLabel: 'sync-to-repos.mjs ARCH_ENTRY', bLabel: 'sync-inventory.mjs ARCH_ENTRY',
-    });
-  });
-
-  it('DEBT_ENTRY matches', () => {
-    assertSameSet(syncToRepos.DEBT_ENTRY, syncInventory.DEBT_ENTRY, {
-      aLabel: 'sync-to-repos.mjs DEBT_ENTRY', bLabel: 'sync-inventory.mjs DEBT_ENTRY',
-    });
-  });
-
-  it('SYNC_ISOLATION_ENTRY matches', () => {
-    assertSameSet(syncToRepos.SYNC_ISOLATION_ENTRY, syncInventory.SYNC_ISOLATION_ENTRY, {
-      aLabel: 'sync-to-repos.mjs SYNC_ISOLATION_ENTRY', bLabel: 'sync-inventory.mjs SYNC_ISOLATION_ENTRY',
-    });
-  });
-
-  it('sync-inventory.mjs never carries a bare relative-form entry (the ./lib/redact.mjs phantom-path class)', () => {
-    // A `./`-prefixed entry point normalises (in collectImportClosure) to a
-    // repo-ROOT-relative path, not a scripts/-relative one — `./lib/redact.mjs`
-    // silently resolved to the nonexistent `lib/redact.mjs` and still ended up
-    // in every consumer inventory's `files` list (readFile fails, but the
-    // queued path stays in the closure's `visited` set regardless). Every
-    // entry-point array here is meant to be repo-root-relative; guard the
-    // whole set rather than just the one historical offender.
-    const allEntries = [
-      ...syncInventory.CORE_ENTRY, ...syncInventory.CORE_NON_IMPORTABLE,
-      ...syncInventory.LEARNING_ENTRY, ...syncInventory.ARCH_ENTRY,
-      ...syncInventory.DEBT_ENTRY, ...syncInventory.SYNC_ISOLATION_ENTRY,
-    ];
-    const relativeForm = allEntries.filter((f) => f.startsWith('./') || f.startsWith('../'));
-    assert.deepEqual(relativeForm, []);
+  it('the CLI imports its bundle from the owner', () => {
+    assert.match(CLI_SRC, /import \{[^}]*\bbundleForRepo\b[^}]*\} from '\.\/lib\/sync-inventory\.mjs'/);
   });
 });
 
-// Both copies, not just the mirror. The authoritative copy in sync-to-repos.mjs
-// kept the swallow-everything catch long after this mirror was fixed (verified
-// 2026-10-13, docs/plans/sync-to-repos-failure-honesty.md M2) — a fix applied to
-// one half of a lock-step pair is exactly what these assertions exist to catch.
-for (const [label, spec] of [
-  ['lib/sync-inventory.mjs', '../scripts/lib/sync-inventory.mjs'],
-  ['sync-to-repos.mjs', '../scripts/sync-to-repos.mjs'],
-]) {
-  describe(`${label}: syncMigrations distinguishes "no migrations" from "could not look"`, () => {
-    // Round-1 audit H3/M7: every readdirSync failure returned [], so EACCES on an
-    // existing directory, an I/O failure, or a mis-resolved REPO_ROOT were all
-    // indistinguishable from a repo that legitimately has none — and the bundle
-    // would ship with its schema silently absent.
-    it('an unreadable migrations directory throws instead of reporting none', async () => {
-      const { _internals } = await import(spec);
-      const fsMod = await import('node:fs');
-      const real = fsMod.default.readdirSync;
-      try {
-        fsMod.default.readdirSync = () => { const e = new Error('permission denied'); e.code = 'EACCES'; throw e; };
-        assert.throws(() => _internals.syncMigrations(), /Refusing to report an empty migration set/);
-      } finally {
-        fsMod.default.readdirSync = real;
-      }
-    });
-
-    it('ENOENT still means none — the expected-absence case must stay quiet', async () => {
-      // Vacuous-pass guard: a version that threw on everything would satisfy the
-      // test above while breaking every repo without a migrations directory.
-      const { _internals } = await import(spec);
-      const fsMod = await import('node:fs');
-      const real = fsMod.default.readdirSync;
-      try {
-        fsMod.default.readdirSync = () => { const e = new Error('nope'); e.code = 'ENOENT'; throw e; };
-        assert.deepEqual(_internals.syncMigrations(), []);
-      } finally {
-        fsMod.default.readdirSync = real;
-      }
-    });
-  });
-}
-
-// 689c: the lists are no longer two hand-kept copies - both modules import the ONE list in
-// sync-entry-lists.mjs. These assert the structure, so a re-introduced second copy fails here.
-describe('one entry list (sync-entry-lists.mjs) feeds both the sync and the inventory', () => {
-  it('sync-to-repos.mjs and sync-inventory.mjs hold the very same arrays', async () => {
+describe('the owner reads the one shared entry list', () => {
+  it('every entry array is the shared array, not a copy', async () => {
     const shared = await import('../scripts/lib/sync-entry-lists.mjs');
-    for (const name of ['LEARNING_ENTRY', 'ARCH_ENTRY', 'DEBT_ENTRY', 'SYNC_ISOLATION_ENTRY']) {
-      assert.strictEqual(syncToRepos[name], shared[name], `sync-to-repos.mjs ${name} is not the shared array`);
-      assert.strictEqual(syncInventory[name], shared[name], `sync-inventory.mjs ${name} is not the shared array`);
+    for (const name of ['CORE_ENTRY', 'LEARNING_ENTRY', 'ARCH_ENTRY', 'DEBT_ENTRY', 'SYNC_ISOLATION_ENTRY']) {
+      assert.strictEqual(_internals[name], shared[name], `sync-inventory.mjs ${name} is not the shared array`);
     }
-    assert.strictEqual(syncToRepos.CORE_ENTRY, shared.CORE_ENTRY);
   });
 
-  it('inventory CORE_NON_IMPORTABLE is a subset of the shared CORE_ENTRY and the split is a partition', async () => {
-    const shared = await import('../scripts/lib/sync-entry-lists.mjs');
-    const all = new Set(shared.CORE_ENTRY);
-    const stray = syncInventory.CORE_NON_IMPORTABLE.filter((e) => !all.has(e));
-    assert.deepEqual(stray, [], 'CORE_NON_IMPORTABLE names an entry the shared CORE_ENTRY does not carry');
-    const overlap = syncInventory.CORE_ENTRY.filter((e) => syncInventory.CORE_NON_IMPORTABLE.includes(e));
-    assert.deepEqual(overlap, []);
-    assert.equal(syncInventory.CORE_ENTRY.length + syncInventory.CORE_NON_IMPORTABLE.length, all.size,
-      'importable + non-importable must cover the shared list exactly');
+  it('never carries a bare relative-form entry (the ./lib/redact.mjs phantom-path class)', () => {
+    // A `./`-prefixed entry point normalises (in collectImportClosure) to a repo-ROOT-relative path, so
+    // `./lib/redact.mjs` silently resolved to the nonexistent `lib/redact.mjs` and still ended up in every
+    // consumer's `files` list. Every entry array is repo-root-relative.
+    const all = [
+      ..._internals.CORE_ENTRY, ..._internals.LEARNING_ENTRY, ..._internals.ARCH_ENTRY,
+      ..._internals.DEBT_ENTRY, ..._internals.SYNC_ISOLATION_ENTRY,
+    ];
+    assert.ok(all.length > 50, 'vacuous-pass guard: the entry lists must be populated');
+    assert.deepEqual(all.filter((f) => f.startsWith('./') || f.startsWith('../')), []);
+  });
+});
+
+describe('the bundle the sync ships IS the bundle the library reports', () => {
+  it('the sync target bundle equals getSyncClosure() exactly, in order', () => {
+    const lib = inventory.getSyncClosure();
+    assert.ok(REPOS.length > 0 && lib.files.length > 1000, 'vacuous-pass guard: a populated bundle');
+    assert.deepEqual(REPOS[0].files, lib.files);
+    assert.deepEqual(REPOS[0].unresolved, lib.unresolved);
+  });
+});
+
+// Both the fail-closed migrations read and its quiet ENOENT case, on the one owner.
+describe('lib/sync-inventory.mjs: syncMigrations distinguishes "no migrations" from "could not look"', () => {
+  it('an unreadable migrations directory throws instead of reporting none', () => {
+    const real = fs.readdirSync;
+    try {
+      fs.readdirSync = () => { const e = new Error('permission denied'); e.code = 'EACCES'; throw e; };
+      assert.throws(() => _internals.syncMigrations(), /Refusing to report an empty migration set/);
+    } finally { fs.readdirSync = real; }
   });
 
-  it('negative control: the shared module has no imports, so it cannot run the sync main', async () => {
-    const fs = await import('node:fs');
-    const src = fs.default.readFileSync(new URL('../scripts/lib/sync-entry-lists.mjs', import.meta.url), 'utf8');
-    assert.ok(!/^\s*import\s/m.test(src), 'sync-entry-lists.mjs must stay a leaf module');
+  it('ENOENT still means none — the expected-absence case must stay quiet', () => {
+    // Vacuous-pass guard: a version that threw on everything would satisfy the test above while breaking every
+    // repo without a migrations directory.
+    const real = fs.readdirSync;
+    try {
+      fs.readdirSync = () => { const e = new Error('nope'); e.code = 'ENOENT'; throw e; };
+      assert.deepEqual(_internals.syncMigrations(), []);
+    } finally { fs.readdirSync = real; }
   });
 });

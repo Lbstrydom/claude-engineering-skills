@@ -30,6 +30,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { collectMjs } from './helpers/fixtures.mjs';
+import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const LIB_DIR = path.join(REPO_ROOT, 'scripts', 'lib');
@@ -43,15 +44,10 @@ const ASSET_URL_RE = /new URL\(\s*['"`](\.\/[^'"`]+\.(?!mjs)[a-z0-9]+)['"`]\s*,\
 
 describe('sync: module-relative fs-read assets are declared', () => {
   it('every `new URL(./asset, import.meta.url)` target under scripts/lib is in a sync array', () => {
-    const syncSrc = fs.readFileSync(
-      path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf-8');
-
-    // Array-element-shaped occurrence, so a mention inside a comment or a doc
-    // URL cannot satisfy the assertion. Same approach as sync-packaging.test.mjs.
-    const isDeclared = (rel) => {
-      const escaped = rel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      return new RegExp(`[\\[,\\s]['"\`]${escaped}['"\`]`).test(syncSrc);
-    };
+    // The COMPUTED bundle, so a mention inside a comment or a doc URL cannot satisfy the assertion.
+    const shipped = new Set(getSyncClosure().files.map((f) => f.replaceAll('\\', '/')));
+    assert.ok(shipped.size > 1000, 'vacuous-pass guard: the computed bundle is populated');
+    const isDeclared = (rel) => shipped.has(rel);
 
     const undeclared = [];
     for (const file of collectMjs(LIB_DIR)) {
