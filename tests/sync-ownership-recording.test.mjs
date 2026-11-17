@@ -92,7 +92,8 @@ describe('journal deletion is conditional (defect 2)', () => {
 
 describe('--adopt-orphans (recovery for records already lost)', () => {
   it('is opt-in and never defaults on', () => {
-    assert.match(SRC, /const ADOPT_ORPHANS = process\.argv\.includes\('--adopt-orphans'\)/);
+    // The flag is read through the one parser (lib/sync-argv.mjs), which rejects `--adopt-orphans=x`.
+    assert.match(SRC, /const ADOPT_ORPHANS = ARGV\.flags\.adoptOrphans;/);
     // Guard against a default-true regression: the flag must gate the branch.
     assert.match(SRC, /if \(collisions\.length && ADOPT_ORPHANS\)/);
   });
