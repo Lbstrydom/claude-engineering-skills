@@ -62,8 +62,12 @@ ai-organiser and storyline are all `layout: isolated`, with 1142 entries each, 1
 So tightening D6 only affects destinations that are absent from a consumer's manifest. Today that is no
 `.claude/skills/` path, so the tightening cannot mass-abort a consumer.
 
-**Size gate (measured)**: `scripts/sync-to-repos.mjs` is 2298 lines against a baseline of 2300. Every PR must
-leave it ≤ baseline. The D9 unification (Cluster B) deletes about 200 duplicated lines and runs early to buy
+**Size gate (measured)**: `scripts/sync-to-repos.mjs` is 2298 lines against a baseline of 2300. **Rule: every
+COMMIT leaves it at or below its parent commit's line count** (an oversized file may not grow, AGENTS.md), and
+that is checked per commit with `git show <parent>:scripts/sync-to-repos.mjs | wc -l` alongside
+`size:ratchet:gate`. A commit that shrinks it re-records the baseline downward in the SAME commit. Phase 1
+meets the rule by replacing the 25-line constant block `:193-243` with the parser import plus about 10
+reads. The D9 unification (Cluster B) deletes about 200 duplicated lines and runs early to buy
 headroom. A shrink fails `size:ratchet:gate` until the baseline is re-recorded DOWNWARD in
 `.file-size-baseline.json`. Lowering the baseline is not raising a cap.
 
@@ -104,7 +108,7 @@ graph LR
 
 **A. One argv parser (D1, D15): `scripts/lib/sync-argv.mjs`** (#5 SSOT, #12 validation, #15 error handling)
 - `parseSyncArgv(argv) → { flags:{dryRun,noPrompt,adoptOrphans,overwriteDiverged,allowRollback,allowStaleBase,quietLegacyCheck}, target, targetPath, errors:string[] }`.
-  It is pure and never throws. The complete grammar, every case rejected before target resolution:
+  It is pure and never throws. **Input contract**: the CALLER passes `process.argv.slice(2)` (the same region `assertKnownFlags` reads with `from = 2`), never the full `process.argv`; a test pins that the node and script paths are never reported as positionals. The complete grammar, every case rejected before target resolution:
   - **Region**: only tokens before the first `--` are read. Tokens after it are ignored, matching
     `assertKnownFlags`. A bare positional before `--` (anything not a flag and not a value flag's
     value) is an error, because this CLI takes no positionals.
@@ -119,7 +123,7 @@ graph LR
     than in `main()`. Today's check at `:935-941` moves here.
 - `selectTargets(parsed, repos) → {repos}|{error}` is exported beside the parser as the one pure
   "which consumers" decision. It is what D1's proof exercises.
-- The module-scope constants become reads of one `const ARGV = parseSyncArgv(process.argv)`. It still evaluates
+- The module-scope constants become reads of one `const ARGV = parseSyncArgv(process.argv.slice(2))`. It still evaluates
   at import, but it cannot throw, so the test that imports this module still works. `main()` throws
   `ArgvError(ARGV.errors.join('; '))` straight after `assertKnownFlags`, before any target is resolved. The
   existing catch turns that into exit 2.
@@ -190,6 +194,11 @@ graph LR
   - Staleness and the documented check-then-unlink limitation are the primitive's own (`file-lock.mjs`
     header). They are not re-solved here. A non-cooperating writer (an editor, a `git checkout`) is not
     excluded by any lock: the receipt CAS below is the defence for that case.
+  - **`--dry-run` takes no lock and writes nothing**, the lock file included, so a read-only consumer can be
+    dry-run. Its documented limitation: a dry-run that runs during a real sync into the same consumer may
+    observe a half-written state. It is advisory output and never a base for any later decision. Test: a
+    dry-run leaves the consumer tree byte-identical (hash every file before and after), including no lock
+    file.
   - Mechanics: the for-loop body is wrapped as an async callback, and its `continue`s become `return`s
     (about 20 sites; reviewed with `git diff -w`). No logic moves.
 - The prior receipt is read through `readConsumerFile`. If it is `unreadable`/`refused`, OR present but
@@ -198,12 +207,24 @@ graph LR
   conflict). Do not delete it: it is the rollback guard's history.` The rollback guard cannot answer, and the
   late write would destroy the history. This is fail-closed for a safety guard's input, the same shape as the
   existing `unsupported` refusal.
-- The write becomes `commitReceipt({root, startSnapshot, entry, recheckRollback})`. Under the lock it
-  re-reads the receipt. If the bytes changed since the start snapshot (only a non-cooperating writer can now
-  change them), it appends `entry` onto the FRESH parsed receipt (the record is append-only, so merging is
-  an append) AND re-runs `detectSourceRollback` against the fresh latest entry. A rollback that only shows up
-  now is reported as a target error (the entry is still recorded, because it states what happened). If the
-  fresh read is unreadable or malformed, it does not write. Returns `{written|merged|declined|failed, reason}`.
+- **Concurrency contract.** Every writer of `.sync-receipt.json` is this CLI, and every run writes it only
+  inside the per-consumer lock. Cooperating writers are therefore fully serialised, and the rollback decision,
+  made ONCE before any mutation and under that lock, cannot be invalidated by another sync. The only other
+  thing that can change the file is an UNSUPPORTED external modification: a `git checkout`/`merge`/`pull` of
+  this tracked file in the consumer while a sync runs. That is detected and disclosed, never claimed
+  prevented.
+- The write becomes `commitReceipt({root, startSnapshot, entry})`. It re-reads the receipt.
+  - Bytes unchanged since the start snapshot → append and write.
+  - Changed → `merged`: append `entry` onto the FRESH parsed record (append-only, so merging is an append)
+    and report a TARGET ERROR, `.sync-receipt.json changed outside this sync during the run (a git operation
+    on the consumer?) — merged; re-run sync to re-validate`. The re-run re-validates rollback before any
+    mutation.
+  - Fresh read unreadable or malformed → `declined`, nothing written.
+  - The residual window between the re-read and the rename is documented in the function header as part of
+    the unsupported case. It is NOT closed and not claimed closed: Node has no compare-and-rename, the same
+    limit `file-lock.mjs` documents. There is no post-mutation rollback recheck, because it could only report
+    a rollback already performed.
+  - Returns `{written|merged|declined|failed, reason}`.
 - `failed` or `declined` (other than "no change worth writing") counts as a TARGET ERROR (`repoErrors++`,
   `totalErrors++`), so the exit code carries it.
 - **A missed receipt cannot blind the next run.** `detectSourceRollback` is given the NEWER of two stamps:
@@ -254,9 +275,9 @@ graph LR
   `overridesHeld`. That is three moved lines, no growth.
 
 **H. The manifest records what we wrote (D7)**
-- Definition: `srcHash` is sha256 of `outContent` AFTER every rendering stage (EOL fold, JSON stage, pin
+- Definition: `srcHash` is `manifestHashOf(outContent)` (see §I), computed AFTER every rendering stage (EOL fold, JSON stage, pin
   guard, rewriter, banner), i.e. the exact bytes the write call is handed. The loop records
-  `writtenHash.set(dstRel, 'sha256:'+srcHash)` only on these three paths:
+  `writtenHash.set(dstRel, srcHash)` only on these three paths:
   - unchanged: `srcHash === dstHash`, so the disk bytes ARE those bytes;
   - EOL-repaired: after `writeConsumerFile` returns, which writes `outContent`;
   - written: after `writeConsumerFile` returns.
@@ -269,10 +290,18 @@ graph LR
   transfer check instead of a tautology.
 
 **I. GC asks the divergence question (D3)**
-- `planGarbageCollection` gains a `diskHash(rel) → hex|null` probe and returns, besides `deletions`,
-  `divergedHeld` (disk hash ≠ prior manifest base) and `probeFailed`.
+- **One hash form at the boundary.** Manifest values are `sha256:<64 lowercase hex>`. One helper,
+  `manifestHashOf(buf)`, produces that form, and both `writtenHash` (§H) and the GC probe use it, so GC
+  compares strings of one form. `isManifestHash(v)` validates stored values. A malformed stored base
+  classifies the candidate as `unknown-base`, which is HELD (never deleted) and reported.
+- `planGarbageCollection` gains a `probe(rel) → {state:'present', hash} | {state:'absent'} | {state:'refused', reason} | {state:'failed', code}`
+  (built on `readConsumerFile`), and returns `deletions` (present with hash === base),
+  `divergedHeld` (present with hash ≠ base, or `unknown-base`), `alreadyAbsent`, and `probeFailed`
+  (refused or failed).
+- `alreadyAbsent` → the goal state. Its stale manifest entry is dropped (not carried), with no error. This
+  is today's `absent` outcome of `executeGarbageCollection`, reached earlier.
 - `probeFailed` non-empty → the target's GC is skipped entirely (nothing deleted). It is reported with the
-  paths and counted as a target error; the prior entries are carried forward so the next run retries.
+  paths and counted as a target error, and the prior entries are carried forward so the next run retries.
 - `divergedHeld` → NOT deleted by default. Each is printed as `held  <path> (upstream retired it, but this
   copy was edited locally; re-run with --overwrite-diverged to delete)`, its prior entry is carried forward,
   and it is recorded in the receipt as `retiredHeld`. With `--overwrite-diverged` (the existing per-run
@@ -405,20 +434,20 @@ dry-run diff over the three consumers, the bundle-identity diff, and the CI run 
 | D | Oracle (red on parent → green) |
 |---|---|
 | D1 | **Unit only, by design.** `CONSUMER_REPOS` always merges the real `BASE_REPOS` (`scripts/lib/consumer-repos.mjs:316`), so a red-on-parent CLI spawn of a trailing `--target` would SYNC THE REAL CONSUMERS. No test may spawn the CLI with a `--target` form that, on the parent, means "all". The oracle is a pure `selectTargets(parsed, repos)` exported beside `parseSyncArgv`, given fixture repos: trailing `--target`, `--target ""`, `--target=`, `--target --dry-run` → errors; `--target=wine` → exactly `[wine]`. The red evidence replays the parent's two expressions (`:221-236`) inside the test as a named `parentSelect` fixture, which returns ALL repos for those inputs. The fixture is pinned so it cannot drift from what shipped: the test reads `git show 8ce88fc2:scripts/sync-to-repos.mjs` and asserts the fixture's source text is a byte-identical substring of it, skipped with a stated reason only when that commit is absent (a shallow clone). Boolean `=value`: `parseSyncArgv(['--dry-run=true'])` errors, while the parent's `includes('--dry-run')` reads false (the real-sync case). A safe e2e (after the fix only) spawns `--target` (trailing) and asserts exit 2 before any target resolution, by checking that stdout carries no target header. |
-| D15 | `-- --dry-run` does NOT set dry-run (the parent sets it); e2e on a temp consumer: the args after `--` are ignored by both the validator and the reader. |
+| D15 | `-- --dry-run` does NOT set dry-run (the parent sets it). e2e on a temp consumer: the args after `--` are ignored by both the validator and the reader. A VALID spawn (`--target-path <tmp> --dry-run`) runs with no argv error, which pins the `slice(2)` input contract. |
 | D2 | e2e: a temp consumer whose `scripts/.claude-skills` is a junction (win32) / symlink (POSIX) to an outside dir. After the run the outside dir holds no manifest, journal, watermark, sidecar or lock (the parent writes the manifest outside). Unit: each IO function on a leaf symlink, an ancestor symlink and a dangling leaf symlink returns `refused`/throws, and the outside root is byte-unchanged. Census test: no write/unlink outside `sync-consumer-io.mjs` except the allowlist; red on the parent (9 sites). |
 | D4 | Unit: `readConsumerFile` with an injected EACCES read → `unreadable`; the preflight gives ABORT, and `updateManagedBlock` is never called. e2e (deterministic on every platform, no chmod): `.gitignore` is a DIRECTORY, so `readFileSync` raises EISDIR. Post: target ABORT, the directory untouched, and no payload file written (the abort comes before the write loop). Parent: `null` → payload written, then a failed `.gitignore` write: red on "no payload written". The destructive case (a fresh block replacing the file) is proven by the unit, because a real EACCES cannot be induced deterministically for an elevated or Windows test user. |
-| D5 | (a) Lock: two CLI spawns into ONE temp consumer (`--target-path`), the first held inside its locked section by a test-only env hook (`SYNC_TEST_HOLD_AFTER_LOCK_MS`, read through a seam that is inert unless `NODE_ENV=test`, so it is unreachable in production; documented as a test seam). The second must report `SKIP … another sync`, exit non-zero, and change no bytes. Parent: both write. (b) Unit `commitReceipt`: the snapshot is stale because a non-cooperating writer appended an entry; the result keeps BOTH entries and the rollback recheck runs on the fresh latest entry. Parent equivalent (`appendReceiptEntry(prior)`) drops one. (c) e2e malformed prior receipt (conflict markers): target ABORT, the receipt bytes unchanged, and the message does not say "move it aside". |
+| D5 | (a) Lock: two CLI spawns into ONE temp consumer (`--target-path`), the first held inside its locked section by a test-only env hook (`SYNC_TEST_HOLD_AFTER_LOCK_MS`, read through a seam that is inert unless `NODE_ENV=test`, so it is unreachable in production; documented as a test seam). The second must report `SKIP … another sync`, exit non-zero, and change no bytes. Parent: both write. (b) Unit `commitReceipt` with an injected `read` seam that returns different bytes on its second call (a deterministic interleaving at the read-to-write boundary): result `merged`, the record written keeps BOTH entries, and the caller counts a target error. Parent equivalent (`appendReceiptEntry(prior)`) drops one entry silently. (c) e2e malformed prior receipt (conflict markers): target ABORT, the receipt bytes unchanged, and the message does not say "move it aside". |
 | D14 | Unit: `commitReceipt` with an injected write fault → `failed`; the caller increments the error count (asserted through the extracted target-result reducer). Unit `latestSourceStamp`: a receipt entry OLDER than the manifest stamp → the manifest's commitSha is used, so a rollback the stale receipt would miss is detected. Parent: `detectSourceRollback` sees only the stale receipt → no rollback reported. |
 | D6 | e2e: the consumer has its own `.claude/skills/<shipped-name>/SKILL.md` (no banner, not an earlier upstream blob, not in the manifest). Result: `ABORT … collide`, the file is unchanged. Parent: overwritten. Positive controls: a byte-identical prior upstream version is adopted as `owned`; an unmanifested consumer `.claude/settings.json` with its own keys reports `merge` and keeps them; an empty or invalid `.claude/settings.json` is a preflight collision, not an ERR after payload. |
 | D7 | Unit-level seam: the manifest builder is given `writtenHash` while the disk differs → the manifest records `writtenHash`. e2e: hard to race, so the unit is the oracle; it is stated as such in the report. |
-| D8 | `readSource` with an injected EACCES throws `SourceReadError`; a missing declared entry throws `MissingEntryPointError`; ENOENT for a non-entry file returns null. Parent: returns null. |
+| D8 | `readSource` with an injected EACCES throws `SourceReadError`, and so does an injected ENOENT for a VISITED (universe-member) non-entry file. A declared entry outside the universe throws `MissingEntryPointError`. A retired file that is NOT in the universe is never visited (asserted: its path never reaches `readFile`). Parent: returns null and drops the subtree. |
 | D9 | The bundle-identity oracle (§2 B), plus the pin test: `sync-to-repos.mjs` declares none of the inventory consts. It is red on the parent because they exist there. |
 | D10 | e2e: the consumer's relocated `oss-call-policy.json` has an extra key that upstream lacks → after the sync the key is gone, and a `divergedOverwritten` receipt entry exists. Parent: the key persists. Control: `.claude/settings.json` consumer keys are preserved. |
 | D11 | Unit: for a JSON source whose raw bytes ≠ its canonical stringify, `renderOutbound` used by the comparand equals the writer's output. e2e: a byte-identical canonical JSON orphan is content-owned (not a collision). Parent: collision. |
 | D12 | Unit: a PassThrough input ended with no data → the promise resolves `false` within 100 ms. Parent's logic: never resolves (asserted with a timeout race). |
 | D13 | e2e: an overridden path whose content differs only in EOL → bytes unchanged and `hold` recorded. Parent: rewritten to LF. |
-| D3 | Unit `planGarbageCollection`: `diskHash` ≠ base → `divergedHeld`; `diskHash` null → `probeFailed` → no deletions at all. e2e: a retired tooling file edited locally survives the sync, is reported `held`, appears in `retiredHeld` and keeps its manifest entry. With `--overwrite-diverged` it is deleted and recorded in `divergedOverwritten`. Parent: silently deleted. |
+| D3 | Unit `planGarbageCollection`, each state beside an ordinary deletable candidate: equal bytes → `deletions`; changed bytes → `divergedHeld`; malformed stored base → `divergedHeld` (unknown-base); `absent` → `alreadyAbsent` (entry dropped); `refused`/`failed` → `probeFailed` → NO deletions at all, even for the ordinary candidate. e2e: a retired tooling file edited locally survives the sync, is reported `held`, appears in `retiredHeld` and keeps its manifest entry. With `--overwrite-diverged` it is deleted and recorded in `divergedOverwritten`. Parent: silently deleted. |
 | D16 | Negative control: a fixture `CLI_SMOKE_SET` entry that appears only in a COMMENT of the sync source. The old text predicate passes it and the new closure predicate fails it. Both predicates are exercised as functions with a fixture. |
 
 **Test-safety invariant**: every e2e spawn passes `--target-path <tmp consumer>` (the single-target route),
@@ -461,6 +490,11 @@ Actions (CES: `full-suite.yml`). If `fleet next` reports `fullSuite: "train"`, i
 
 ## Audit trail
 
+- R2 (GPT): SIGNIFICANT_GAPS H:6 M:2, 8/8 accepted (100%). The changes: `argv.slice(2)` input contract (H1);
+  one `sha256:` hash form via `manifestHashOf` (H2); a four-state GC probe (H3); the receipt concurrency
+  contract (every writer is locked; an external modification is detected, disclosed and merged; the residual
+  is stated) (H4); the post-mutation rollback recheck removed (H5); the D8 test matches the contract (H6);
+  dry-run takes no lock (M1); a per-commit no-growth rule (M2).
 - R1 (GPT, SID audit-plan-1794948254001-80080): SIGNIFICANT_GAPS H:6 M:3. 9/9 accepted as fix-now
   (acceptance 100%, productive). The changes: per-consumer `withFileLock` exclusion plus rollback recheck
   (H1); shared-merge split from ownership (H2); GC holds diverged files and skips on a failed probe (H3);
