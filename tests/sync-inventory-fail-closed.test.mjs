@@ -11,12 +11,16 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { collectImportClosure } from '../scripts/lib/module-graph.mjs';
 import {
   readSource, resolveBundle, realMissingDeps, bundleForRepo, SourceReadError, MissingEntryPointError,
 } from '../scripts/lib/sync-inventory.mjs';
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fsError = (code) => Object.assign(new Error(`${code} injected`), { code });
 
 describe('readSource — a failed read is never "no imports"', () => {
@@ -37,6 +41,18 @@ describe('readSource — a failed read is never "no imports"', () => {
 describe('the closure walk — red-then-green on the dropped subtree', () => {
   const ENTRY = ['scripts/lib/sync-receipt.mjs']; // imports exactly one other file
   const real = (rel) => readSource(rel);
+
+  it('the replayed parent readSource is pinned to the base commit, not recreated from memory', (t) => {
+    const r = spawnSync('git', ['show', '8ce88fc2:scripts/sync-to-repos.mjs'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26 });
+    if (r.error) throw r.error;
+    if (r.status !== 0) {
+      if (/bad object|unknown revision|invalid object name|not a valid object|bad revision/i.test(r.stderr)) { t.skip('base commit absent (shallow clone)'); return; }
+      assert.fail(`git show failed: ${r.stderr}`);
+    }
+    // The statement the replay below reproduces: every read error collapses to null.
+    assert.ok(r.stdout.replace(/\r\n/g, '\n').includes("const readSource = (rel) => {\n  try { return fs.readFileSync(path.join(SOURCE_ROOT, rel), 'utf-8'); }\n  catch { return null; }\n};"),
+      'the parent readSource drifted from the replay');
+  });
 
   it('PARENT behaviour (catch → null): an unreadable import silently drops its subtree', () => {
     const parentRead = (rel) => {

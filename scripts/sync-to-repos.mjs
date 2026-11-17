@@ -74,10 +74,9 @@ import { resolveEnvValue } from './lib/env-setting.mjs';
 // The bundle inventory has ONE owner (lib/sync-inventory.mjs); this CLI declares no inventory list of its own.
 import { bundleForRepo, versionContractBundle, readSource, realMissingDeps } from './lib/sync-inventory.mjs';
 
-// The ownership comparand asks "what would we write here?" to PROVE a destination is ours. A source that cannot be
-// read proves nothing, which is the conservative answer (the destination stays a collision), so this one caller maps
-// a read failure to null on purpose. Bundle RESOLUTION never does (lib/sync-inventory.mjs `readSource` throws).
-const readSourceOrNull = (rel) => { try { return readSource(rel); } catch { return null; } };
+// Ownership comparand only: a source that cannot be read proves nothing, so it maps to null (the destination stays a collision);
+// only ENOENT is silent. Bundle RESOLUTION never does this (lib/sync-inventory.mjs `readSource` throws).
+const readSourceOrNull = (rel) => { try { return readSource(rel); } catch (err) { if (err.code !== 'ENOENT' && err.code !== 'ENOTDIR') console.log(`  warn  ${err.message}`); return null; } };
 
 // `.audit/` is OURS, entirely — the directory name is our invention and only
 // our tooling writes there (~30 distinct named paths, plus every skill

@@ -24,6 +24,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
 
 const HOOK_REF = /[.]claude[\\\/]+hooks[\\\/]+([A-Za-z0-9._-]+[.](?:mjs|sh))/g;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -41,11 +42,9 @@ function registeredHooks() {
   return found;
 }
 
-// The inventory has ONE owner now (lib/sync-inventory.mjs + the shared entry lists); the CLI declares none.
-function syncListText() {
-  return fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-inventory.mjs'), 'utf-8')
-    + fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-entry-lists.mjs'), 'utf-8');
-}
+// The COMPUTED bundle (lib/sync-inventory.mjs is its one owner), not source text: a hook named only in a comment or an
+// unused declaration must not count as shipped.
+const SHIPPED = new Set(getSyncClosure().files.map((f) => f.replaceAll('\\', '/')));
 
 describe('synced settings.json hook closure', () => {
   it('parses the hook registrations at all (guards against a vacuous pass)', () => {
@@ -60,12 +59,17 @@ describe('synced settings.json hook closure', () => {
   });
 
   it('every registered hook is in the sync inventory, else it ships to no consumer', () => {
-    const inventory = syncListText();
+    assert.ok(SHIPPED.size > 1000, 'vacuous-pass guard: the computed bundle is populated');
     const missing = [];
     for (const h of registeredHooks()) {
       const entry = `.claude/hooks/${h}`;
-      if (!inventory.includes(entry)) missing.push(h);
+      if (!SHIPPED.has(entry)) missing.push(h);
     }
     assert.deepEqual(missing, [], `registered but not shipped: ${missing.join(', ')}`);
+  });
+
+  it('negative control: a hook path that exists only as text is not in the bundle', () => {
+    assert.equal(SHIPPED.has('.claude/hooks/a-hook-nobody-ships.mjs'), false);
+    assert.equal(SHIPPED.has('.claude/hooks/arch-memory-check.sh'), true, 'and a real one is');
   });
 });
