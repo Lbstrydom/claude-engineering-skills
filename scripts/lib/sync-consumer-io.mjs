@@ -25,6 +25,14 @@
  * `absent` is the ONLY state a caller may treat as "no file". A caller that
  * folds `unreadable` or `refused` into it is the bug this module exists to end.
  *
+ * RESIDUAL, stated rather than hidden: containment is checked, then the path is
+ * used again, so a process that replaces a checked directory with a link in that
+ * gap can still redirect one operation. Node exposes no `openat`/`O_NOFOLLOW`
+ * directory handle to close it, and the payload writes always had the same
+ * window. The threat needs a concurrent writer inside the consumer's own tree,
+ * i.e. someone who can already write there; the per-consumer lock excludes the
+ * cooperating writer (another sync), nothing excludes an adversarial one.
+ *
  * @module scripts/lib/sync-consumer-io
  */
 

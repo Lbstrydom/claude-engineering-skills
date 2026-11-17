@@ -418,8 +418,9 @@ export function appendReceiptEntry(prior, entry, limit = RECEIPT_HISTORY_LIMIT) 
   };
 }
 
-/** Stable identity of one receipt entry: a sync run's own stamp. Unique per run. */
-const entryKey = (e) => `${e?.syncedAt ?? ''}|${e?.source?.commitSha ?? ''}`;
+/** Identity of one receipt entry: its COMPLETE content, so an in-place edit of any field reads as a different entry. */
+const entryKey = (e) => JSON.stringify(e ?? null);
+const entryLabel = (e) => `${e?.syncedAt ?? '?'}@${String(e?.source?.commitSha ?? '?').slice(0, 7)}`;
 
 /**
  * Commit a sync's receipt entry onto the record that is on disk NOW (debts
@@ -466,7 +467,7 @@ export function commitReceipt({ start, entry, read, write }) {
     return {
       outcome: 'declined', error: true,
       reason: `${RECEIPT_PATH} lost ${missing.length} entr${missing.length === 1 ? 'y' : 'ies'} this run started with `
-        + `(${missing.map(entryKey).join(', ')}) — probably a git checkout/merge of the file during the run; nothing written, so neither history is overwritten`,
+        + `(${missing.map(entryLabel).join(', ')}, or edited in place) — probably a git checkout/merge of the file during the run; nothing written, so neither history is overwritten`,
     };
   }
   const changed = base.entries.length !== (start?.entries ?? []).length || base.entries.some((e, i) => entryKey(e) !== entryKey(start.entries[i]));

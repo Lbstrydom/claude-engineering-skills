@@ -61,6 +61,12 @@ describe('commitReceipt — re-reads at commit time; failures are errors', () =>
     assert.match(out.reason, /lost 1 entr/);
   });
 
+  test('an existing entry EDITED IN PLACE (same stamp, a changed field list) is detected, not merged over (audit R1 H5/M3)', () => {
+    const edited = { ...B, created: ['someone-edited-this.json'] };
+    const { out, writes } = run([B, A], [file(edited, A)]);
+    assert.deepEqual([out.outcome, out.error, writes.length], ['declined', true, 0]);
+  });
+
   test('independently changed histories (one shared entry, one new on each side): declined, nothing written', () => {
     const Y = at('2026-11-02T18:00:00.000Z', 'e'.repeat(40));
     const { out, writes } = run([B, A], [file(Y, A)]);

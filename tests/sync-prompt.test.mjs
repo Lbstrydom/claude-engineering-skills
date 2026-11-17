@@ -54,6 +54,19 @@ describe('createConfirmPrompt', () => {
     assert.match(h2.text(), /no input — declined/);
   });
 
+  it('input that ENDED before the prompt was created declines instead of waiting for an `end` it already missed (audit R1 H8)', async () => {
+    const h = harness();
+    h.input.end();
+    h.input.resume();
+    await new Promise((r) => setTimeout(r, 30)); // let `end` fire BEFORE any prompt exists
+    assert.equal(h.input.readableEnded, true, 'precondition: the stream already ended');
+    const r = await settlesWithin(createConfirmPrompt({ input: h.input, output: h.output })('go? '), 1000);
+    assert.deepEqual([r.settled, r.v], [true, false]);
+    // and a second prompt against the same exhausted stream behaves the same
+    const r2 = await settlesWithin(createConfirmPrompt({ input: h.input, output: h.output })('again? '), 1000);
+    assert.deepEqual([r2.settled, r2.v], [true, false]);
+  });
+
   it('an answer followed by close settles exactly once with the answer (no late decline)', async () => {
     const h = harness();
     const p = createConfirmPrompt({ input: h.input, output: h.output })('go? ');

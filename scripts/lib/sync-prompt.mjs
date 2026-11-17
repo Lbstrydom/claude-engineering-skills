@@ -28,6 +28,9 @@ export function createConfirmPrompt({ input = process.stdin, output = process.st
     });
     // Node forwards an input stream's error to the Interface, where an unhandled one would throw.
     rl.on('error', () => { settle(false); rl.close(); });
+    input.once?.('error', () => { settle(false); rl.close(); }); // older Nodes do not forward it to the Interface
+    // A stream that ENDED before the prompt was created never emits `end` to this Interface: decline now, do not wait.
+    if (input.readableEnded || input.destroyed) { output.write('\n  no input — declined\n'); settle(false); rl.close(); return; }
     rl.question(question, (answer) => {
       const a = String(answer).trim().toLowerCase();
       settle(a === '' || a === 'y' || a === 'yes');

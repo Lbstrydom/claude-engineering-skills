@@ -20,7 +20,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MUTATION = /\b(atomicWriteFileSync|writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync|copyFileSync|mkdirSync|rmdirSync)\s*\(/;
+// Sync names, plus the promise spellings (`fs.promises.writeFile(`, `fsp.rm(`): the same mutations by another API.
+const MUTATION = /\b(atomicWriteFileSync|writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync|copyFileSync|mkdirSync|rmdirSync)\s*\(|\b(?:fs\.promises|fsp)\.(writeFile|appendFile|unlink|rm|rename|copyFile|mkdir|rmdir)\s*\(/;
+
+// The immutable pre-change commit (main before this PR), never a moving ref.
+const PARENT_SHA = '593a6f35';
 
 /** Lines of `src` that call a filesystem mutation, comments excluded. */
 export function mutationSites(src) {
@@ -78,19 +82,22 @@ describe('every consumer mutation goes through the one contained seam', () => {
   });
 
   it('RED on the parent: the same scan finds the nine unrouted consumer writes in the pre-change CLI', (t) => {
-    const r = spawnSync('git', ['show', 'origin/main:scripts/sync-to-repos.mjs'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26 });
+    const r = spawnSync('git', ['show', `${PARENT_SHA}:scripts/sync-to-repos.mjs`], { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26 });
     if (r.error) throw r.error;
     if (r.status !== 0) {
-      if (/bad object|unknown revision|invalid object name|not a valid object|bad revision|ambiguous argument/i.test(r.stderr)) return t.skip('origin/main not available');
+      if (/bad object|unknown revision|invalid object name|not a valid object|bad revision|ambiguous argument/i.test(r.stderr)) return t.skip(`${PARENT_SHA} not available (shallow clone)`);
       assert.fail(`git show failed: ${r.stderr}`);
     }
-    // After this change merges origin/main IS the fixed tree, so this evidence only reads the base while it still differs.
     const sites = mutationSites(r.stdout);
-    if (sites.length === 0) return t.skip('origin/main already carries the fix; the evidence applied to the pre-change base');
     assert.ok(sites.length >= 8, `the pre-change CLI had ${sites.length} mutation sites`);
   });
 
-  it('negative control: a planted bare write IS detected', () => {
+  it('negative control: a planted bare write IS detected, including the promise API; a comment is not', () => {
     assert.equal(mutationSites("fs.writeFileSync(path.join(repo.path, 'x'), 'y');\n// fs.writeFileSync(a, b);\n").length, 1);
+    assert.equal(mutationSites("await fs.promises.writeFile(p, 'y');\nawait fsp.rm(p);\n").length, 2);
+  });
+
+  it('stated limit: the scan sees direct calls (an alias is caught at its binding, delegation not at all) — it is the tripwire for the common mistake; the behaviour of every write path is proven by sync-consumer-io.test.mjs and the e2e suite', () => {
+    assert.equal(mutationSites('const w = fs.writeFileSync; w(a, b);').length, 0, 'an alias binding without a call is not a site');
   });
 });
