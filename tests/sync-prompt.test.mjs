@@ -103,6 +103,22 @@ ${r.stderr}`);
     assert.match(r.stdout, /ANSWER=false/);
   });
 
+  it('a stream whose _destroy completes ASYNCHRONOUSLY (error emitted later) still declines cleanly, and the listener is released after close (audit R4)', () => {
+    const modUrl = new URL('../scripts/lib/sync-prompt.mjs', import.meta.url).href;
+    const script = `import { Readable, PassThrough } from 'node:stream';
+      import { createConfirmPrompt } from '${modUrl}';
+      const input = new Readable({ read() {}, destroy(err, cb) { setTimeout(() => cb(err), 80); } });
+      const output = new PassThrough();
+      input.destroy(new Error('late boom'));
+      const answer = await createConfirmPrompt({ input, output })('go? ');
+      await new Promise((r) => setTimeout(r, 250));
+      console.log('ANSWER=' + answer + ' LISTENERS=' + input.listenerCount('error'));`;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 20000 });
+    assert.equal(r.status, 0, `uncaught error escaped:
+${r.stderr}`);
+    assert.match(r.stdout, /ANSWER=false LISTENERS=0/);
+  });
+
   it('an answer followed by close settles exactly once with the answer (no late decline)', async () => {
     const h = harness();
     const p = createConfirmPrompt({ input: h.input, output: h.output })('go? ');
