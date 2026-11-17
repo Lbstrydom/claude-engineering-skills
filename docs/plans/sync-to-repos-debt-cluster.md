@@ -215,10 +215,15 @@ graph LR
   prevented.
 - The write becomes `commitReceipt({root, startSnapshot, entry})`. It re-reads the receipt.
   - Bytes unchanged since the start snapshot → append and write.
-  - Changed → `merged`: append `entry` onto the FRESH parsed record (append-only, so merging is an append)
-    and report a TARGET ERROR, `.sync-receipt.json changed outside this sync during the run (a git operation
-    on the consumer?) — merged; re-run sync to re-validate`. The re-run re-validates rollback before any
-    mutation.
+  - Changed, and EVERY start-snapshot entry is still present in the fresh record → `merged`. Entry identity
+    is `generatedAt` + `source.commitSha`; that pair is unique per sync run. The new `entry` is appended onto
+    the fresh record and a TARGET ERROR is reported: `.sync-receipt.json changed outside this sync during the
+    run (a git operation on the consumer?) — merged; re-run sync to re-validate`. The re-run re-validates
+    rollback before any mutation.
+  - Changed, and ANY start-snapshot entry is missing from the fresh record (e.g. a checkout restored an older
+    valid history) → `declined`. Nothing is written, so neither history is overwritten, and a TARGET ERROR
+    names the missing entries. No heuristic reconciliation: an append-only record that lost entries is a
+    state for a human. The manifest stamp below keeps the rollback guard informed in the meantime.
   - Fresh read unreadable or malformed → `declined`, nothing written.
   - The residual window between the re-read and the rename is documented in the function header as part of
     the unsupported case. It is NOT closed and not claimed closed: Node has no compare-and-rename, the same
@@ -227,12 +232,16 @@ graph LR
   - Returns `{written|merged|declined|failed, reason}`.
 - `failed` or `declined` (other than "no change worth writing") counts as a TARGET ERROR (`repoErrors++`,
   `totalErrors++`), so the exit code carries it.
-- **A missed receipt cannot blind the next run.** `detectSourceRollback` is given the NEWER of two stamps:
-  the receipt's latest entry, and the consumer manifest's `commitSha` + `generatedAt`. The manifest is
-  written before the receipt (`:1894` vs `:2086`), so a receipt failure leaves the manifest as the evidence
-  of what the consumer last received. Picking "newer" is a pure function `latestSourceStamp(receiptEntry,
-  manifest)` in `sync-rollback-guard.mjs`, keyed on `generatedAt`. Neither stamp present → today's
-  "no prior knowledge".
+- **A missed receipt cannot blind the next run.** `detectSourceRollback` is evaluated against EACH durable
+  stamp independently: the receipt's latest entry, and the consumer manifest's source `commitSha`. Both are
+  compared by commit ANCESTRY, which the guard already uses via `createGitAncestry`; wall-clock order is never
+  consulted. A rollback is reported if EITHER stamp shows the current source is behind it. A stamp whose
+  commit the source cannot resolve gets the guard's existing fail-closed treatment for an unresolvable
+  commit. The manifest is written before the receipt (`:1894` vs `:2086`), so a failed receipt write still
+  leaves the manifest stamp. If the manifest write ALSO failed, the target already ended in error with its
+  journal kept, and the next run sees the older receipt stamp: today's behaviour, and the residual of a run
+  that recorded nothing. The combining function is `rollbackAgainstStamps(stamps, current, ancestry)` in
+  `sync-rollback-guard.mjs`. With no stamps at all, the answer is today's "no prior knowledge".
 
 **E. Outbound is rendered once (D10, D11): `scripts/lib/sync-outbound.mjs`** (#1, #5)
 - `renderOutbound({srcRel, dstRel, srcContent, existingContent, rewriteConfig}) → {content, rewrite:{changed,hits}, pinsHeld, isJson}`
@@ -296,8 +305,17 @@ graph LR
   classifies the candidate as `unknown-base`, which is HELD (never deleted) and reported.
 - `planGarbageCollection` gains a `probe(rel) → {state:'present', hash} | {state:'absent'} | {state:'refused', reason} | {state:'failed', code}`
   (built on `readConsumerFile`), and returns `deletions` (present with hash === base),
-  `divergedHeld` (present with hash ≠ base, or `unknown-base`), `alreadyAbsent`, and `probeFailed`
-  (refused or failed).
+  `divergedHeld` (present with hash ≠ a valid base), `unknownBaseHeld` (stored base fails `isManifestHash`),
+  `alreadyAbsent`, and `probeFailed` (refused or failed).
+- `unknownBaseHeld` is NEVER deleted, not even with `--overwrite-diverged`. Invalid provenance is not a
+  divergence the flag authorises. It is reported as `held  <path> (its ownership record is malformed; delete
+  it by hand if it is ours)`, and its entry is carried forward unchanged.
+- Deletion is `removeConsumerFile(root, rel, {expectHash})`: it re-reads and compares IMMEDIATELY before the
+  unlink and returns `{held: 'changed-since-probe'}` on a mismatch. That shrinks the probe-to-unlink window
+  from the whole GC loop to one read-compare-unlink. The residual (an editor writing between that read and
+  the unlink) is documented as unsupported concurrent modification, the same contract as the receipt. A
+  quarantine/restore protocol was considered and rejected as over-built for a gitignored, upstream-owned
+  tooling file.
 - `alreadyAbsent` → the goal state. Its stale manifest entry is dropped (not carried), with no error. This
   is today's `absent` outcome of `executeGarbageCollection`, reached earlier.
 - `probeFailed` non-empty → the target's GC is skipped entirely (nothing deleted). It is reported with the
@@ -346,7 +364,7 @@ graph LR
 | `scripts/lib/sync-path-map.mjs` | modify | export `isCoOwnedJsonDest` (D10); `LAYOUT_CONSTANTS.SYNC_LOCK` (D5) |
 | `scripts/lib/sync-inventory.mjs` | modify | sole bundle owner; fail-closed `readSource`; `realMissingDeps` (D8, D9) |
 | `scripts/lib/sync-receipt.mjs` | modify | `commitReceipt` CAS + rollback recheck; optional `retiredHeld` (D5, D14, D3) |
-| `scripts/lib/sync-rollback-guard.mjs` | modify | `latestSourceStamp(receiptEntry, manifest)` (D14) |
+| `scripts/lib/sync-rollback-guard.mjs` | modify | `rollbackAgainstStamps(stamps, current, ancestry)` (D14) |
 | `scripts/lib/file-lock.mjs` | reuse (no change) | `withFileLock` for per-consumer exclusion (D5) |
 | `scripts/lib/sync-gc.mjs` | modify | `divergedHeld`/`probeFailed`; deletes via `removeConsumerFile` (D3, D2) |
 | `scripts/lib/sync-manifest.mjs` | modify | `patchManifestWithExtraHashes(root, …)` contained (D2) |
@@ -359,7 +377,7 @@ graph LR
 | `tests/sync-prompt.test.mjs` | create | D12 |
 | `tests/sync-debt-cluster-e2e.test.mjs` | create | the e2e red→green set (temp source + temp consumer, real CLI spawn) |
 | `tests/sync-receipt.test.mjs` | modify | `commitReceipt` cases |
-| `tests/sync-rollback-guard.test.mjs` | modify | `latestSourceStamp` |
+| `tests/sync-rollback-guard.test.mjs` | modify | `rollbackAgainstStamps` |
 | `tests/sync-consumer-io-census.test.mjs` | create | the mutation-site census (D2) |
 | `tests/sync-gc.test.mjs` | modify | diverged deletions |
 | `tests/sync-inventory-parity.test.mjs` | modify | pin: the CLI declares no inventory arrays |
@@ -437,8 +455,8 @@ dry-run diff over the three consumers, the bundle-identity diff, and the CI run 
 | D15 | `-- --dry-run` does NOT set dry-run (the parent sets it). e2e on a temp consumer: the args after `--` are ignored by both the validator and the reader. A VALID spawn (`--target-path <tmp> --dry-run`) runs with no argv error, which pins the `slice(2)` input contract. |
 | D2 | e2e: a temp consumer whose `scripts/.claude-skills` is a junction (win32) / symlink (POSIX) to an outside dir. After the run the outside dir holds no manifest, journal, watermark, sidecar or lock (the parent writes the manifest outside). Unit: each IO function on a leaf symlink, an ancestor symlink and a dangling leaf symlink returns `refused`/throws, and the outside root is byte-unchanged. Census test: no write/unlink outside `sync-consumer-io.mjs` except the allowlist; red on the parent (9 sites). |
 | D4 | Unit: `readConsumerFile` with an injected EACCES read → `unreadable`; the preflight gives ABORT, and `updateManagedBlock` is never called. e2e (deterministic on every platform, no chmod): `.gitignore` is a DIRECTORY, so `readFileSync` raises EISDIR. Post: target ABORT, the directory untouched, and no payload file written (the abort comes before the write loop). Parent: `null` → payload written, then a failed `.gitignore` write: red on "no payload written". The destructive case (a fresh block replacing the file) is proven by the unit, because a real EACCES cannot be induced deterministically for an elevated or Windows test user. |
-| D5 | (a) Lock: two CLI spawns into ONE temp consumer (`--target-path`), the first held inside its locked section by a test-only env hook (`SYNC_TEST_HOLD_AFTER_LOCK_MS`, read through a seam that is inert unless `NODE_ENV=test`, so it is unreachable in production; documented as a test seam). The second must report `SKIP … another sync`, exit non-zero, and change no bytes. Parent: both write. (b) Unit `commitReceipt` with an injected `read` seam that returns different bytes on its second call (a deterministic interleaving at the read-to-write boundary): result `merged`, the record written keeps BOTH entries, and the caller counts a target error. Parent equivalent (`appendReceiptEntry(prior)`) drops one entry silently. (c) e2e malformed prior receipt (conflict markers): target ABORT, the receipt bytes unchanged, and the message does not say "move it aside". |
-| D14 | Unit: `commitReceipt` with an injected write fault → `failed`; the caller increments the error count (asserted through the extracted target-result reducer). Unit `latestSourceStamp`: a receipt entry OLDER than the manifest stamp → the manifest's commitSha is used, so a rollback the stale receipt would miss is detected. Parent: `detectSourceRollback` sees only the stale receipt → no rollback reported. |
+| D5 | (a) Lock: two CLI spawns into ONE temp consumer (`--target-path`), the first held inside its locked section by a test-only env hook (`SYNC_TEST_HOLD_AFTER_LOCK_MS`, read through a seam that is inert unless `NODE_ENV=test`, so it is unreachable in production; documented as a test seam). The second must report `SKIP … another sync`, exit non-zero, and change no bytes. Parent: both write. (b) Unit `commitReceipt` with an injected `read` seam that returns different bytes on its second call (a deterministic interleaving at the read-to-write boundary): result `merged`, the record written keeps BOTH entries, and the caller counts a target error. Parent equivalent (`appendReceiptEntry(prior)`) drops one entry silently. (b2) Unit: the fresh record is an OLDER valid history (a start entry is missing) → `declined`, nothing written. (b3) Unit `rollbackAgainstStamps`: a receipt stamp that is fine plus a manifest stamp the source is behind → rollback reported; no timestamps are read (a stamp with a skewed `generatedAt` changes nothing). (c) e2e malformed prior receipt (conflict markers): target ABORT, the receipt bytes unchanged, and the message does not say "move it aside". |
+| D14 | Unit: `commitReceipt` with an injected write fault → `failed`; the caller increments the error count (asserted through the extracted target-result reducer). Unit `rollbackAgainstStamps`: a stale receipt plus a newer manifest commit → the rollback the stale receipt would miss is detected. Parent: `detectSourceRollback` sees only the stale receipt → no rollback reported. |
 | D6 | e2e: the consumer has its own `.claude/skills/<shipped-name>/SKILL.md` (no banner, not an earlier upstream blob, not in the manifest). Result: `ABORT … collide`, the file is unchanged. Parent: overwritten. Positive controls: a byte-identical prior upstream version is adopted as `owned`; an unmanifested consumer `.claude/settings.json` with its own keys reports `merge` and keeps them; an empty or invalid `.claude/settings.json` is a preflight collision, not an ERR after payload. |
 | D7 | Unit-level seam: the manifest builder is given `writtenHash` while the disk differs → the manifest records `writtenHash`. e2e: hard to race, so the unit is the oracle; it is stated as such in the report. |
 | D8 | `readSource` with an injected EACCES throws `SourceReadError`, and so does an injected ENOENT for a VISITED (universe-member) non-entry file. A declared entry outside the universe throws `MissingEntryPointError`. A retired file that is NOT in the universe is never visited (asserted: its path never reaches `readFile`). Parent: returns null and drops the subtree. |
@@ -447,7 +465,7 @@ dry-run diff over the three consumers, the bundle-identity diff, and the CI run 
 | D11 | Unit: for a JSON source whose raw bytes ≠ its canonical stringify, `renderOutbound` used by the comparand equals the writer's output. e2e: a byte-identical canonical JSON orphan is content-owned (not a collision). Parent: collision. |
 | D12 | Unit: a PassThrough input ended with no data → the promise resolves `false` within 100 ms. Parent's logic: never resolves (asserted with a timeout race). |
 | D13 | e2e: an overridden path whose content differs only in EOL → bytes unchanged and `hold` recorded. Parent: rewritten to LF. |
-| D3 | Unit `planGarbageCollection`, each state beside an ordinary deletable candidate: equal bytes → `deletions`; changed bytes → `divergedHeld`; malformed stored base → `divergedHeld` (unknown-base); `absent` → `alreadyAbsent` (entry dropped); `refused`/`failed` → `probeFailed` → NO deletions at all, even for the ordinary candidate. e2e: a retired tooling file edited locally survives the sync, is reported `held`, appears in `retiredHeld` and keeps its manifest entry. With `--overwrite-diverged` it is deleted and recorded in `divergedOverwritten`. Parent: silently deleted. |
+| D3 | Unit `planGarbageCollection`, each state beside an ordinary deletable candidate: equal bytes → `deletions`; changed bytes → `divergedHeld`; malformed stored base → `unknownBaseHeld`, NOT deleted with or without `--overwrite-diverged` (both flag states asserted); bytes changed between probe and remove (an injected `read` seam) → `held: changed-since-probe`; `absent` → `alreadyAbsent` (entry dropped); `refused`/`failed` → `probeFailed` → NO deletions at all, even for the ordinary candidate. e2e: a retired tooling file edited locally survives the sync, is reported `held`, appears in `retiredHeld` and keeps its manifest entry. With `--overwrite-diverged` it is deleted and recorded in `divergedOverwritten`. Parent: silently deleted. |
 | D16 | Negative control: a fixture `CLI_SMOKE_SET` entry that appears only in a COMMENT of the sync source. The old text predicate passes it and the new closure predicate fails it. Both predicates are exercised as functions with a fixture. |
 
 **Test-safety invariant**: every e2e spawn passes `--target-path <tmp consumer>` (the single-target route),
@@ -490,6 +508,10 @@ Actions (CES: `full-suite.yml`). If `fleet next` reports `fullSuite: "train"`, i
 
 ## Audit trail
 
+- R3 (GPT): NEEDS_REVISION H:3 M:1. Accepted: H1 (the merge lost entries → a subset rule, else decline), H2
+  (wall-clock dropped → per-stamp ancestry), M1 (`unknownBaseHeld` is never deleted). H3 was downgraded to MEDIUM
+  (an `expectHash` recheck before unlink plus a documented residual; quarantine rejected as over-built).
+  Acceptance about 88%. Round 3 is the plan cap. See the structural card below.
 - R2 (GPT): SIGNIFICANT_GAPS H:6 M:2, 8/8 accepted (100%). The changes: `argv.slice(2)` input contract (H1);
   one `sha256:` hash form via `manifestHashOf` (H2); a four-state GC probe (H3); the receipt concurrency
   contract (every writer is locked; an external modification is detected, disclosed and merged; the residual
