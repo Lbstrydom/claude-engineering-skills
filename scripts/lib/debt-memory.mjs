@@ -388,6 +388,24 @@ export async function persistDebtEntries(context, entries, { ledgerPath = DEFAUL
 /**
  * Remove a debt entry from committed JSON + cloud mirror.
  */
+/**
+ * Find a debt entry for a writer that must accept every key the authoritative reader hands out.
+ * The store holds every entry and the local cache only a subset (2026-11-17: 67 of 459), so a
+ * writer that looked locally alone rejected the topicIds `debt-review` printed for 85% of the debt.
+ * @returns {{entry: object|null, where: 'local'|'store'|null}}
+ */
+export function pickDebtEntry(topicId, { local = [], store = null } = {}) {
+  const l = local.find((e) => e.topicId === topicId);
+  if (l) return { entry: l, where: 'local' };
+  const s = (store ?? []).find((e) => e.topicId === topicId);
+  return s ? { entry: s, where: 'store' } : { entry: null, where: null };
+}
+
+/** A resolve succeeded iff the copy that existed was removed: the local row, or for a store-only entry the store row. */
+export function debtRemovalSucceeded(where, { removedLocal, removedCloud } = {}) {
+  return where === 'store' ? removedCloud === true : removedLocal === true;
+}
+
 export async function removeDebt(context, topicId, { ledgerPath = DEFAULT_DEBT_LEDGER_PATH } = {}) {
   if (context.source === EventSource.DISABLED) return { removedLocal: false, removedCloud: false };
   const removedLocal = await removeDebtEntry(topicId, { ledgerPath });

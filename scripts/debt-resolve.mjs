@@ -36,8 +36,8 @@
 
 // Load .env without the banner (keeps CLI stdout clean for JSON output)
 import './lib/load-env.mjs';
-import { initLearningStore, isCloudEnabled, resolveRepoForStore } from './learning-store.mjs';
-import { selectEventSource, removeDebt, appendEvents, persistDebtEntries } from './lib/debt-memory.mjs';
+import { initLearningStore, isCloudEnabled, resolveRepoForStore, readDebtEntriesCloud } from './learning-store.mjs';
+import { selectEventSource, removeDebt, appendEvents, persistDebtEntries, pickDebtEntry, debtRemovalSucceeded } from './lib/debt-memory.mjs';
 import { readDebtLedger, readPersistedDebtEntries, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { DEFAULT_DEBT_EVENTS_PATH } from './lib/debt-events.mjs';
 import { generateRepoProfile } from './lib/context.mjs';
@@ -195,12 +195,25 @@ async function main() {
 
   // Verify entry exists
   const ledger = readDebtLedger({ ledgerPath: opts.ledgerPath, events: [] });
-  const entry = ledger.entries.find(e => e.topicId === opts.topicId);
+  // The store is authoritative and holds entries the local cache never saw; ask it when the cache misses.
+  let store = null;
+  if (repoId != null && !ledger.entries.some((e) => e.topicId === opts.topicId)) {
+    try { store = await readDebtEntriesCloud(repoId); } catch (err) {
+      console.error(`Error: ${opts.topicId} is not in ${opts.ledgerPath} and the store could not be read (${err.message}) — not "no such entry"`);
+      process.exit(1);
+    }
+  }
+  const { entry, where } = pickDebtEntry(opts.topicId, { local: ledger.entries, store });
   if (!entry) {
-    console.error(`Error: no debt entry with topicId "${opts.topicId}" in ${opts.ledgerPath}`);
+    console.error(`Error: no debt entry with topicId "${opts.topicId}" in ${opts.ledgerPath}${repoId != null ? ' or the store' : ''}`);
     process.exit(2);
   }
 
+  if (opts.acceptPermanent && where === 'store') {
+    // acceptPermanent rewrites the PERSISTED local row; a store-only entry has none to rewrite. Refuse, never invent one.
+    console.error(`Error: ${opts.topicId} exists only in the store; --accept-permanent needs it in the local cache (run node scripts/debt-reconcile.mjs first)`);
+    process.exit(2);
+  }
   if (opts.acceptPermanent) {
     await acceptPermanent(ctx, opts, entry);
     return;
@@ -228,8 +241,8 @@ async function main() {
     process.exit(1);
   }
 
-  if (!removed.removedLocal) {
-    console.error(`Error: entry ${opts.topicId} not removed from local ledger`);
+  if (!debtRemovalSucceeded(where, removed)) {
+    console.error(`Error: entry ${opts.topicId} not removed from the ${where === 'store' ? 'store' : 'local ledger'}`);
     process.exit(1);
   }
 
