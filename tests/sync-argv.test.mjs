@@ -154,7 +154,13 @@ describe('CLI wiring — spawns forms that mean "ALL consumers" or a REAL sync o
   // parent, a trailing `--target` syncs every registered consumer and `--dry-run=true` runs for real.
   // So no spawn runs unless the CLI under test reads its flags through the parser and the selector.
   const cliSource = fs.readFileSync(path.join(ROOT, 'scripts/sync-to-repos.mjs'), 'utf8');
-  const fixedCli = /parseSyncArgv\(process\.argv\.slice\(2\)\)/.test(cliSource) && /selectTargets\(ARGV, REPOS\)/.test(cliSource);
+  // Text AND behaviour (code-audit R3 H1): the CLI source must route through the parser/selector, AND the parser it
+  // imports (this very module) must, in-process, reject every argv about to be spawned. A middle revision whose
+  // parser stops rejecting passes the text check alone, which is exactly the case this behavioural half closes.
+  const DANGEROUS_ARGV = [['--', '--dry-run'], ['--target'], ['--dry-run=true']];
+  const fixedCli = /parseSyncArgv\(process\.argv\.slice\(2\)\)/.test(cliSource)
+    && /selectTargets\(ARGV, REPOS\)/.test(cliSource)
+    && DANGEROUS_ARGV.every((a) => parseSyncArgv(a).errors.length > 0);
   const run = (args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts/sync-to-repos.mjs'), ...args], {
     cwd: ROOT, encoding: 'utf8', timeout: 60000,
     env: { ...process.env, MODEL_CATALOG_REFRESH: 'skip' },
