@@ -183,6 +183,7 @@ describe('sync-to-repos.mjs structural contract', () => {
   });
 
   it('--no-prompt flag is parsed at module init', () => {
-    assert.match(src, /const NO_PROMPT = process\.argv\.includes\(['"]--no-prompt['"]\)/);
+    // Read through the one parser (lib/sync-argv.mjs), at module init.
+    assert.match(src, /const NO_PROMPT = ARGV\.flags\.noPrompt;/);
   });
 });

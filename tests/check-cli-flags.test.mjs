@@ -315,8 +315,11 @@ describe('prose about a guard is not a guard', () => {
     // cannot be "restored" by prose, because stripComments removes that.
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const src = fs.readFileSync(path.join(repoRoot, 'scripts/sync-to-repos.mjs'), 'utf-8');
-    assert.equal(parsesFlags(src), true);
+    // The flag grammar now lives in lib/sync-argv.mjs, so the CLI file itself no longer spells out an
+    // `includes('--x')` read and `parsesFlags` cannot see it. That is why the guard is pinned here by
+    // CALL (below) AND by behaviour (tests/sync-argv.test.mjs: `--dry-runn` exits 2), not by the detector.
     assert.equal(rejectsUnknownFlags(src), true);
+    assert.match(stripComments(src), /parseSyncArgv\(process\.argv\.slice\(2\)\)/, 'the CLI must read its flags through the one parser');
     assert.match(stripComments(src), /assertKnownFlags\s*\(/, 'the guard must survive comment-stripping');
   });
 

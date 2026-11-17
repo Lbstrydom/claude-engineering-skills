@@ -65,6 +65,7 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { retireLegacyCopilotBlock } from './lib/sync-legacy-copilot-block.mjs';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
+import { parseSyncArgv, selectTargets, KNOWN_FLAGS } from './lib/sync-argv.mjs';
 import {
   compareSkillSurfaces, listSurfaceNames, classifyOrphans, LIVE_SURFACE, SHADOWING_SURFACES,
 } from './lib/skill-surface-identity.mjs';
@@ -190,26 +191,29 @@ const UNTRACK_PATTERNS = [
   'docs/arm-eval/worksheets/*',
 ];
 
-const DRY_RUN = process.argv.includes('--dry-run');
-const NO_PROMPT = process.argv.includes('--no-prompt');
+// One parse of the command line (lib/sync-argv.mjs): a flag with no usable value is an ERROR, never an
+// absent flag. Never throws, so importing this module for its exports still works; main() reports `.errors`.
+const ARGV = parseSyncArgv(process.argv.slice(2));
+const DRY_RUN = ARGV.flags.dryRun;
+const NO_PROMPT = ARGV.flags.noPrompt;
 // Recovery escape hatch for orphaned ownership records: adopt files that sit at
 // a destination we intend to write but are absent from the consumer's manifest.
 // Deliberately opt-in and never default — the collision guard it relaxes is the
 // only thing standing between a sync and a consumer's own file. See the ABORT
 // branch below for why an orphan can exist at all.
-const ADOPT_ORPHANS = process.argv.includes('--adopt-orphans');
+const ADOPT_ORPHANS = ARGV.flags.adoptOrphans;
 // Escape hatch for the divergence guard below. Deliberately a FLAG and not an
 // env var: an env var set once in a shell survives into every later run in that
 // session, and this is the one control whose whole value is that the operator
 // reaffirms it per run. Every path it consumes is named in the output and
 // recorded in `.sync-receipt.json`.
-const OVERWRITE_DIVERGED = process.argv.includes('--overwrite-diverged');
+const OVERWRITE_DIVERGED = ARGV.flags.overwriteDiverged;
 
 // Consent to ship a bundle OLDER than what a consumer already has. Same shape
 // and same reasoning as --overwrite-diverged above: a deliberate rollback is a
 // legitimate operation, it is just never the DEFAULT, because the failure it
 // guards is silent (see detectSourceRollback).
-const ALLOW_ROLLBACK = process.argv.includes('--allow-rollback');
+const ALLOW_ROLLBACK = ARGV.flags.allowRollback;
 
 // The single banner line used as an ownership fingerprint when adopting
 // orphans. `BANNER_BODY` is an ARRAY of lines — passing it straight to
@@ -218,10 +222,6 @@ const ALLOW_ROLLBACK = process.argv.includes('--allow-rollback');
 // fails toward "suspicious" is still a lying diagnostic; normalise here and
 // pin it in tests/sync-ownership-recording.test.mjs.
 const BANNER_MARKER = Array.isArray(BANNER_BODY) ? BANNER_BODY[0] : String(BANNER_BODY);
-const targetFilter = (() => {
-  const idx = process.argv.indexOf('--target');
-  return idx === -1 ? null : process.argv[idx + 1];
-})();
 
 // `--target-path <dir>` — sync into ANY repo, not only a registered one.
 //
@@ -230,17 +230,13 @@ const targetFilter = (() => {
 // install. `install.mjs` drives this flag; a third party can also call it
 // directly. Validation (canonicalisation, containment, eligibility) lives in
 // `resolveAdHocTarget`, not here.
-const targetPathArg = (() => {
-  const idx = process.argv.indexOf('--target-path');
-  return idx === -1 ? null : process.argv[idx + 1];
-})();
 
 // Suppress this run's legacy-surface warning because a PARENT process
 // (`install.mjs`) is about to report the same finding and offer to act on it.
 // Only the output is suppressed — the inspection still runs — so a direct
 // `npm run sync` is unchanged and the parent stays the single voice when it owns
 // the interaction.
-const QUIET_LEGACY_CHECK = process.argv.includes('--quiet-legacy-check');
+const QUIET_LEGACY_CHECK = ARGV.flags.quietLegacyCheck;
 
 const SOURCE_ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -847,21 +843,6 @@ function assessConsumerAzureEmbed(repoPath) {
 }
 
 /**
- * Every flag this CLI reads. Kept adjacent to `main()` rather than beside the
- * `process.argv.includes` constants because those are module-scope and evaluate
- * on IMPORT — throwing there would break the test that imports this module for
- * its exports.
- *
- * `--target` takes a value; `assertKnownFlags` validates NAMES only, so the
- * value is a bare positional it ignores by design.
- */
-const KNOWN_FLAGS = [
-  '--dry-run', '--no-prompt', '--adopt-orphans', '--target',
-  '--target-path', '--quiet-legacy-check', '--overwrite-diverged',
-  '--allow-rollback', '--allow-stale-base',
-];
-
-/**
  * Drop git's repo-scoped environment before this process runs ANY git command.
  *
  * ## The incident (root-caused 2026-07-30)
@@ -911,6 +892,9 @@ async function main() {
   // naming `assertKnownFlags` made the name-based detector read the file as
   // already fixed, so it was reported as "baseline can shrink — fixed or gone".
   assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'sync-to-repos' });
+  // assertKnownFlags validates NAMES only; a missing/empty/flag-shaped value, `--switch=value`, a positional,
+  // a duplicate or both selectors would otherwise read as "absent" and sync EVERY consumer (or run for real).
+  if (ARGV.errors.length) throw new ArgvError(`sync-to-repos: ${ARGV.errors.join('; ')}`);
   assertRepoRoot(import.meta.url);
   scrubAmbientGitEnv();
 
@@ -928,22 +912,20 @@ async function main() {
   const priorUpstream = createPriorUpstreamResolver({ sourceRoot: SOURCE_ROOT });
   const undeclaredDeps = []; // per-consumer `name: packages` lines for the end-of-run summary
 
-  // `--target` (registry) and `--target-path` (arbitrary) are mutually
-  // exclusive: they answer the same question differently, and silently
-  // preferring one would make the ignored flag a lie on a command that WRITES
-  // INTO OTHER REPOS.
-  if (targetFilter && targetPathArg) {
-    console.error(`${R}--target and --target-path are mutually exclusive${X}`);
-    console.error('  --target <name>      picks a registered consumer');
-    console.error('  --target-path <dir>  syncs into any repo by path');
+  // The ONE "which consumers does this run touch?" decision (lib/sync-argv.mjs selectTargets): an unusable
+  // selector never falls through to "all".
+  const selection = selectTargets(ARGV, REPOS);
+  if (selection.error) {
+    console.error(`${R}${selection.error}${X}`);
+    console.error(`  Known: ${REPOS.map(r => r.name + ' (' + r.alias + ')').join(', ')}`);
+    console.error(`  Or sync an unregistered repo by path: --target-path <dir>`);
     process.exit(1);
   }
-
-  let targetRepos;
-  if (targetPathArg) {
+  let targetRepos = selection.repos;
+  if (selection.mode === 'path') {
     let identity;
     try {
-      identity = resolveAdHocTarget(targetPathArg, {
+      identity = resolveAdHocTarget(ARGV.targetPath, {
         warn: (m) => console.log(`  ${Y}warn${X}  ${m}`),
       });
     } catch (err) {
@@ -951,18 +933,6 @@ async function main() {
       process.exit(1);
     }
     targetRepos = [decorateTarget(identity)];
-  } else {
-    targetRepos = targetFilter
-      ? REPOS.filter(r => r.name === targetFilter || r.alias === targetFilter)
-      : REPOS;
-
-    if (targetFilter && targetRepos.length === 0) {
-      console.error(`${R}Unknown target: "${targetFilter}"${X}`);
-      const knownTargets = REPOS.map(r => r.name + ' (' + r.alias + ')').join(', ');
-      console.error(`  Known: ${knownTargets}`);
-      console.error(`  Or sync an unregistered repo by path: --target-path <dir>`);
-      process.exit(1);
-    }
   }
 
   const dryRunSuffix = DRY_RUN ? ' ' + Y + '[DRY RUN]' + X : '';
@@ -1067,7 +1037,7 @@ async function main() {
     console.log(`${B}→ ${repo.name}${X} (${repo.path})`);
     // `measured: false` never stops the run; it is carried into the summary (see `describeUnmeasuredTargets`). Only a target this
     // run goes on to PROCESS can be miscounted as clean - a refusal already stops the run non-zero and names itself.
-    const baseLag = await enforceBaseLagForTarget(repo, { dryRun: DRY_RUN, allowStale: process.argv.includes('--allow-stale-base') });
+    const baseLag = await enforceBaseLagForTarget(repo, { dryRun: DRY_RUN, allowStale: ARGV.flags.allowStaleBase });
     if (!baseLag.proceed) { totalErrors++; console.log(''); continue; }
     if (!baseLag.measured) unmeasuredTargets.push({ name: repo.name, outcome: baseLag.outcome, applyVerdict: baseLag.applyVerdict });
 

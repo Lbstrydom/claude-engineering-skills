@@ -23,6 +23,7 @@
  * Plan: docs/plans/debt-burndown-workstreams.md (WS-A follow-up).
  */
 import assert from 'node:assert/strict';
+import { parseSyncArgv } from '../scripts/lib/sync-argv.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -92,7 +93,13 @@ describe('journal deletion is conditional (defect 2)', () => {
 
 describe('--adopt-orphans (recovery for records already lost)', () => {
   it('is opt-in and never defaults on', () => {
-    assert.match(SRC, /const ADOPT_ORPHANS = process\.argv\.includes\('--adopt-orphans'\)/);
+    // The flag is read through the one parser (lib/sync-argv.mjs), which rejects `--adopt-orphans=x`.
+    assert.match(SRC, /const ADOPT_ORPHANS = ARGV\.flags\.adoptOrphans;/);
+    // ...and the parser it reads is opt-in: absent => false, only the explicit switch => true (the read above
+    // would pass unchanged if the parser defaulted it on).
+    assert.equal(parseSyncArgv([]).flags.adoptOrphans, false);
+    assert.equal(parseSyncArgv(['--dry-run']).flags.adoptOrphans, false);
+    assert.equal(parseSyncArgv(['--adopt-orphans']).flags.adoptOrphans, true);
     // Guard against a default-true regression: the flag must gate the branch.
     assert.match(SRC, /if \(collisions\.length && ADOPT_ORPHANS\)/);
   });

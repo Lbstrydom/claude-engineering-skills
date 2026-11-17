@@ -145,7 +145,7 @@ describe('runSyncCli — one wrapper, one reported budget', () => {
     // Vacuous-pass guard: proves the wrapper actually ran the CLI and captured
     // its refusal, rather than returning a shape nobody exercised.
     const r = await runSyncCli(['--dry-run', '--target', 'wine', '--target-path', '.']);
-    assert.equal(r.code, 1);
+    assert.equal(r.code, 2, 'an argv mistake is a usage error (ArgvError → exit 2)');
     assert.equal(r.killed, false);
     assert.match(r.out, /mutually exclusive/);
     assert.equal(r.out, r.stdout + r.stderr, 'out must be the concatenation, not a third source of truth');

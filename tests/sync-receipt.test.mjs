@@ -376,8 +376,9 @@ describe('detectSourceRollback', () => {
     const path = await import('node:path');
     const src = fs.readFileSync(path.join(import.meta.dirname, '../scripts/sync-to-repos.mjs'), 'utf-8');
     assert.match(src, /detectSourceRollback/, 'the guard must actually be wired into the sync');
-    assert.match(src, /--allow-rollback/, 'a deliberate rollback needs a consent flag, not a code edit');
-    assert.match(src, /'--allow-rollback'/, 'the flag must be registered so assertKnownFlags accepts it');
+    const argvSrc = fs.readFileSync(path.join(import.meta.dirname, '../scripts/lib/sync-argv.mjs'), 'utf-8');
+    assert.match(src, /ALLOW_ROLLBACK = ARGV\.flags\.allowRollback/, 'a deliberate rollback needs a consent flag, not a code edit');
+    assert.match(argvSrc, /'--allow-rollback'/, 'the flag must be registered so assertKnownFlags accepts it');
     // The refusal must precede the copy loop; a guard that reports after writing
     // is a log line, not a guard.
     assert.ok(src.indexOf('detectSourceRollback(') < src.indexOf('buildReceiptEntry('),
