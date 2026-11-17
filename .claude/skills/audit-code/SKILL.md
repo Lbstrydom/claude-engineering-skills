@@ -80,18 +80,15 @@ diff-scope cannot see.
 ```bash
 # .audit/ is gitignored — a fresh checkout or new linked worktree lacks it, and the redirect fails first.
 mkdir -p .audit
-# 1. Resolve repo identity + active snapshot. Read JSON with node, never jq (not in check-deps).
-node scripts/cross-skill.mjs resolve-repo-identity > .audit/repo-identity.json
-node scripts/cross-skill.mjs get-active-refresh-id --repo-uuid "$(node -p "require('./.audit/repo-identity.json').repoUuid")" > .audit/active-refresh.json
-# 2. Fetch top-N symbols, CARRYING the refresh id forward — never retype it.
-#    Skip states (cloud:false, null refreshId, RPC_ERROR) fall through to no catalogue.
-REFRESH_ID=$(node -p "const r=require('./.audit/active-refresh.json');r.cloud===false?'':(r.refreshId||'')")
-TOPN="${ARCH_AUDIT_FULL_TOPN:-200}"
-rm -f .audit/symbol-catalogue.json
-if [ -n "$REFRESH_ID" ]; then
-  node scripts/cross-skill.mjs list-symbols-for-snapshot --json "{\"refreshId\":\"$REFRESH_ID\",\"limit\":$TOPN}" > .audit/symbol-catalogue.json \
-    || { echo "arch-memory: list-symbols failed (RPC_ERROR) — no catalogue" >&2; rm -f .audit/symbol-catalogue.json; }
-else echo "arch-memory: no active snapshot (cloud off or no refresh) — no catalogue" >&2; fi
+# Any failure below (a command, the JSON, or an {"ok":false} envelope such as RPC_ERROR — exit stays 0) ends as "no catalogue".
+rm -f .audit/symbol-catalogue.json .audit/active-refresh.json
+TOPN="${ARCH_AUDIT_FULL_TOPN:-200}"    # Read JSON with node, never jq (not in check-deps).
+if node scripts/cross-skill.mjs resolve-repo-identity > .audit/repo-identity.json &&
+   node scripts/cross-skill.mjs get-active-refresh-id --repo-uuid "$(node -p "require('./.audit/repo-identity.json').repoUuid")" > .audit/active-refresh.json &&
+   REFRESH_ID=$(node -p "const r=require('./.audit/active-refresh.json');r.ok===false||r.cloud===false?'':(r.refreshId||'')") && [ -n "$REFRESH_ID" ] &&
+   node scripts/cross-skill.mjs list-symbols-for-snapshot --json "{\"refreshId\":\"$REFRESH_ID\",\"limit\":$TOPN}" > .audit/symbol-catalogue.json &&
+   node -e "process.exit(require('./.audit/symbol-catalogue.json').ok===false?1:0)"
+then :; else rm -f .audit/symbol-catalogue.json; echo "arch-memory: no catalogue (cloud off, no snapshot, or RPC_ERROR)" >&2; fi
 ```
 
 Read `.audit/symbol-catalogue.json` and format the rows as a `## Symbol catalogue (top N by domain)` section
@@ -180,7 +177,7 @@ before trusting the patch.** → `references/round-recipes.md` §untracked-file 
 ```bash
 # CHANGED = the exact files you edited this round, comma-separated, no globs:
 # the CLI splits on commas, so a pattern reaches it literally.
-R=2                                         # round number: bump it each later round so r$R files never overwrite an earlier round's
+R="${R:?set R to this round's number}"       # required: r$R files never overwrite an earlier round's
 CHANGED="scripts/openai-audit.mjs,tests/audit-skill-shell-recipes.test.mjs"
 FILES="$CHANGED"                            # + any dependent you also want in scope
 PASSES="sustainability"                     # e.g. sustainability,backend — per r2-plus-mode.md
