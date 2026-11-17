@@ -53,12 +53,13 @@ describe('sync .gitattributes EOL pins', () => {
   it('sync-to-repos wires a managed .gitattributes write from the DERIVED pins', () => {
     const src = fs.readFileSync(
       fileURLToPath(new URL('../scripts/sync-to-repos.mjs', import.meta.url)), 'utf-8');
-    assert.ok(src.includes("'.gitattributes'"), 'must target .gitattributes');
+    assert.ok(src.includes('LAYOUT_CONSTANTS.GITATTRIBUTES_PATH'), 'must target .gitattributes (through the one contained write seam)');
     assert.ok(src.includes('computeEolPins') && src.includes('renderEolPinLines'),
       'must derive the pins rather than inline a hand-kept list');
     assert.ok(src.includes('eolPins.uncovered'),
       'must act on the uncovered set — a derivation nobody checks is a list with extra steps');
-    assert.ok(src.includes('atomicWriteFileSync(gaPath'), 'must write the .gitattributes block');
+    assert.ok(src.includes('writeConsumerFile(repo.path, LAYOUT_CONSTANTS.GITATTRIBUTES_PATH, gaPreview.content)'),
+      'must write the .gitattributes block through the contained seam');
   });
 });
 

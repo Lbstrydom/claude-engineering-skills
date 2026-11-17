@@ -35,6 +35,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { detectSourceRollback } from './sync-receipt.mjs';
 
 /**
  * Build an `(ancestor, descendant) => 'yes'|'no'|'unknown'` oracle over one
@@ -113,4 +114,36 @@ export function planRollbackResponse(rollback, { repoName, allowRollback, colors
       `    --allow-rollback.${X}`,
     ],
   };
+}
+
+/**
+ * Would this sync move the consumer BACKWARDS, judged against EVERY durable record
+ * of what it last received (debt ad2fd650d8bd)?
+ *
+ * There are two: the receipt's latest entry, and the consumer manifest's source
+ * commit. The manifest is written BEFORE the receipt, so a failed receipt write
+ * still leaves the manifest stamp — the guard is not blind to a delivery just
+ * because its receipt line was lost. Each stamp is compared by commit ANCESTRY
+ * (`detectSourceRollback`), never by wall-clock `generatedAt`, which is not an
+ * ordering across hosts or clock adjustments. A rollback is reported if EITHER
+ * stamp shows the incoming source is behind it; an unresolvable commit keeps the
+ * detector's own fail-open answer, so a git problem can never block a delivery.
+ *
+ * @param {Array<object|null>} stamps  receipt entries or `manifestStamp(...)` shapes
+ * @param {string|null} incomingSha
+ * @param {(a: string, d: string) => 'yes'|'no'|'unknown'} ancestry
+ * @returns {null | {recordedSha: string, incomingSha: string, recordedAt: string|null}}
+ */
+export function rollbackAgainstStamps(stamps, incomingSha, ancestry) {
+  for (const stamp of stamps) {
+    const hit = detectSourceRollback(stamp, incomingSha, ancestry);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** The consumer manifest's last-delivery stamp, shaped like a receipt entry. */
+export function manifestStamp(manifest) {
+  if (!manifest || typeof manifest !== 'object' || typeof manifest.commitSha !== 'string') return null;
+  return { source: { commitSha: manifest.commitSha }, syncedAt: typeof manifest.generatedAt === 'string' ? manifest.generatedAt : null };
 }
