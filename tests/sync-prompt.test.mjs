@@ -9,6 +9,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import readline from 'node:readline';
 import { PassThrough } from 'node:stream';
+import { spawnSync } from 'node:child_process';
 
 import { createConfirmPrompt } from '../scripts/lib/sync-prompt.mjs';
 
@@ -75,13 +76,31 @@ describe('createConfirmPrompt', () => {
       h.input.write(typed);
       await p;
     }
+    await new Promise((r) => setImmediate(r)); // the listener is removed one turn after settling (see the destroyed-input test)
     assert.equal(h.input.listenerCount('error'), baseline, 'every settlement path must remove its listener');
     const h2 = harness();
     const b2 = h2.input.listenerCount('error');
     const eof = createConfirmPrompt({ input: h2.input, output: h2.output })('go? ');
     h2.input.end();
     await eof;
+    await new Promise((r) => setImmediate(r));
     assert.equal(h2.input.listenerCount('error'), b2, 'the EOF path too');
+  });
+
+  it('a stream destroyed WITH AN ERROR immediately before the prompt declines cleanly: no uncaught exception (audit R3)', () => {
+    // In a subprocess: an escaped stream error is a process-level uncaught exception, which would take the test runner down.
+    const modUrl = new URL('../scripts/lib/sync-prompt.mjs', import.meta.url).href;
+    const script = `import { PassThrough } from 'node:stream';
+      import { createConfirmPrompt } from '${modUrl}';
+      const input = new PassThrough(); const output = new PassThrough();
+      input.destroy(new Error('boom'));
+      const answer = await createConfirmPrompt({ input, output })('go? ');
+      await new Promise((r) => setTimeout(r, 50));
+      console.log('ANSWER=' + answer);`;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 20000 });
+    assert.equal(r.status, 0, `uncaught error escaped:
+${r.stderr}`);
+    assert.match(r.stdout, /ANSWER=false/);
   });
 
   it('an answer followed by close settles exactly once with the answer (no late decline)', async () => {

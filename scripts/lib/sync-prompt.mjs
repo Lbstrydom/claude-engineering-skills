@@ -23,7 +23,9 @@ export function createConfirmPrompt({ input = process.stdin, output = process.st
     // One named handler, removed on EVERY settlement path: repeated prompts on a shared stdin must not accumulate listeners.
     const onInputError = () => { settle(false); rl.close(); };
     const settle = (value) => {
-      input.removeListener?.('error', onInputError);
+      // Removed on the NEXT turn, not now: a stream destroyed with an error just before the prompt still has that error
+      // queued, and a handler gone by then would let it escape as an uncaught exception.
+      setImmediate(() => input.removeListener?.('error', onInputError));
       if (!settled) { settled = true; resolve(value); }
     };
     // Close with no answer (EOF) or a stream error is a DECLINE, never a hang.
