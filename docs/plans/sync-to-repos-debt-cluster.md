@@ -187,7 +187,12 @@ graph LR
   pid plus a token, stale recovery that needs a dead pid AND an old mtime, and a token-checked release.
   - `lockPath` = `<consumer>/scripts/.claude-skills/.sync.lock`, which `LAYOUT_CONSTANTS` declares in
     `scripts/lib/sync-path-map.mjs` and the containment check validates before acquiring. It is gitignored
-    by the existing tooling-dir block.
+    by the existing tooling-dir block. **Precondition (first sync)**: `tryAcquireLock` writes with `{flag:'wx'}`
+    and does not create parents, so on a consumer whose `scripts/.claude-skills/` does not exist yet the caller
+    first validates `lockPath` through containment and then `mkdirSync(dirname(lockPath), {recursive:true})`
+    (not in `--dry-run`). That is the same step `writeConsumerFile` performs, and it lives in
+    `sync-consumer-io.mjs` as `prepareConsumerLockPath(root)`. Test: a first sync into an empty temp consumer
+    acquires the lock and completes.
   - The acquire is bounded (`maxWaitMs: 30000`). On contention or `LockTimeoutError` the result is `SKIP <consumer>:
     another sync is writing into it (pid N since T)`, counted as a target error. The run never waits
     indefinitely, and it never proceeds without the lock.
@@ -393,8 +398,8 @@ scrubbed env. It does not add a new one.
 **Phase 1 — Argv**: parser plus wiring; the first commit. Files: `scripts/lib/sync-argv.mjs` (create), `scripts/sync-to-repos.mjs` (modify), `tests/sync-argv.test.mjs` (create).
 **Phase 2 — Inventory owner**: unify the bundle, fail-closed `readSource`, parity on the computed closure. Files: `scripts/lib/sync-inventory.mjs` (modify), `scripts/sync-to-repos.mjs` (modify), `tests/sync-inventory-parity.test.mjs` (modify), `tests/cli-smoke-set-sync-parity.test.mjs` (modify), `.file-size-baseline.json` (modify).
 **Phase 3 — Consumer IO seam**: contained writes everywhere, tri-state preflight reads. Files: `scripts/lib/sync-consumer-io.mjs` (create), `tests/sync-consumer-io-census.test.mjs` (create), `scripts/lib/sync-gc.mjs` (modify), `scripts/lib/sync-manifest.mjs` (modify), `scripts/lib/sync-legacy-copilot-block.mjs` (modify), `scripts/sync-to-repos.mjs` (modify), `tests/sync-consumer-io.test.mjs` (create), `tests/sync-debt-cluster-e2e.test.mjs` (create).
-**Phase 4 — Exclusion, receipt + prompt**: per-consumer lock, CAS commit with rollback recheck, fail-closed prior read, write failure is an error, manifest stamp fallback, prompt settles. Files: `scripts/lib/sync-receipt.mjs` (modify), `scripts/lib/sync-rollback-guard.mjs` (modify), `tests/sync-rollback-guard.test.mjs` (modify), `scripts/lib/sync-prompt.mjs` (create), `scripts/sync-to-repos.mjs` (modify), `tests/sync-receipt.test.mjs` (modify), `tests/sync-prompt.test.mjs` (create), `tests/sync-debt-cluster-e2e.test.mjs` (modify).
-**Phase 5 — Outbound + ownership**: `renderOutbound`, JSON co-ownership rule, evidence-based inventory ownership. Files: `scripts/lib/sync-outbound.mjs` (create), `scripts/lib/sync-path-map.mjs` (modify), `scripts/sync-to-repos.mjs` (modify), `tests/sync-outbound.test.mjs` (create), `tests/sync-debt-cluster-e2e.test.mjs` (modify).
+**Phase 4 — Exclusion, receipt + prompt**: per-consumer lock, receipt commit with subset-or-decline, fail-closed prior read, write failure is an error, per-stamp rollback check, prompt settles. Files: `scripts/lib/sync-path-map.mjs` (modify: `LAYOUT_CONSTANTS.SYNC_LOCK`), `scripts/lib/sync-receipt.mjs` (modify), `scripts/lib/sync-rollback-guard.mjs` (modify), `tests/sync-rollback-guard.test.mjs` (modify), `scripts/lib/sync-prompt.mjs` (create), `scripts/sync-to-repos.mjs` (modify), `tests/sync-receipt.test.mjs` (modify), `tests/sync-prompt.test.mjs` (create), `tests/sync-debt-cluster-e2e.test.mjs` (modify).
+**Phase 5 — Outbound + ownership**: `renderOutbound`, JSON co-ownership rule, evidence-based inventory ownership. Files: `scripts/lib/sync-outbound.mjs` (create), `scripts/lib/sync-path-map.mjs` (modify: `isCoOwnedJsonDest`), `scripts/sync-to-repos.mjs` (modify), `tests/sync-outbound.test.mjs` (create), `tests/sync-debt-cluster-e2e.test.mjs` (modify).
 **Phase 6 — Write-loop accounting**: EOL vs override, manifest from written hashes, GC divergence. Files: `scripts/lib/sync-gc.mjs` (modify), `scripts/sync-to-repos.mjs` (modify), `tests/sync-gc.test.mjs` (modify), `tests/sync-debt-cluster-e2e.test.mjs` (modify).
 
 **Close-out (not a phase)**: `npm run guards:preflight`; `npm run size:ratchet:gate`; `npm run skills:check`; `node scripts/sync-to-repos.mjs --dry-run --target <each of wine, ai-organiser, storyline>` (read-only; zero new `collide`/`ABORT` lines vs a base-commit dry run, saved to scratch and diffed). The full suite runs in GitHub Actions (`full-suite.yml`).
@@ -508,6 +513,9 @@ Actions (CES: `full-suite.yml`). If `fleet next` reports `fullSuite: "train"`, i
 
 ## Audit trail
 
+- Final gate R1 (gemini-4-argon): CONCERNS, blocked on G1 (the first-sync lock has no parent dir → a
+  `prepareConsumerLockPath` precondition) plus G2 LOW debt (`sync-path-map.mjs` belongs in Phase 4 for
+  `SYNC_LOCK`). Both fixed.
 - R3 (GPT): NEEDS_REVISION H:3 M:1. Accepted: H1 (the merge lost entries → a subset rule, else decline), H2
   (wall-clock dropped → per-stamp ancestry), M1 (`unknownBaseHeld` is never deleted). H3 was downgraded to MEDIUM
   (an `expectHash` recheck before unlink plus a documented residual; quarantine rejected as over-built).
