@@ -146,7 +146,7 @@ function snapshot(dir, base = dir, out = new Map()) {
 describe('sync --target-path — argument handling', () => {
   it('rejects --target and --target-path together rather than preferring one', async () => {
     const r = await run(['--dry-run', '--target', 'wine', '--target-path', tmp]);
-    assert.equal(r.code, 1);
+    assert.equal(r.code, 2, 'a usage error is exit 2 (ArgvError), like every other argv mistake');
     assert.match(r.stderr, /mutually exclusive/);
   });
 
