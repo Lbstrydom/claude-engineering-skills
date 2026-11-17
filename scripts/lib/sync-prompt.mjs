@@ -16,6 +16,9 @@ import readline from 'node:readline';
  * @param {{input?: NodeJS.ReadableStream, output?: NodeJS.WritableStream, createInterface?: typeof readline.createInterface}} [opts]
  * @returns {(question: string) => Promise<boolean>}  resolves true only for an empty answer (default Y), `y` or `yes`
  */
+/** Destroyed inputs that already carry the shared no-op error guard (one per stream, however many prompts). */
+const guarded = new WeakSet();
+
 export function createConfirmPrompt({ input = process.stdin, output = process.stderr, createInterface = readline.createInterface } = {}) {
   return (question) => new Promise((resolve) => {
     const rl = createInterface({ input, output });
@@ -24,10 +27,11 @@ export function createConfirmPrompt({ input = process.stdin, output = process.st
     const onInputError = () => { settle(false); rl.close(); };
     const settle = (value) => {
       // A DESTROYED stream may still have its error queued however long its _destroy takes (`destroyed`/`closed` flip
-      // before the events are emitted), and no elapsed-time cutoff is right for every stream. So its `once` handler is
-      // simply KEPT: it is consumed by that error, or stays on a dead stream that nothing else uses. A live stream's goes now,
-      // so repeated prompts on a live shared stdin do not accumulate listeners.
-      if (!input.destroyed) input.removeListener?.('error', onInputError);
+      // before the events are emitted), and no elapsed-time cutoff is right for every stream. So it gets ONE shared,
+      // permanent no-op guard (never one per prompt), and this prompt's own handler goes either way: repeated prompts
+      // neither accumulate listeners nor let a late error escape.
+      if (input.destroyed && !guarded.has(input)) { guarded.add(input); input.on?.('error', () => {}); }
+      input.removeListener?.('error', onInputError);
       if (!settled) { settled = true; resolve(value); }
     };
     // Close with no answer (EOF) or a stream error is a DECLINE, never a hang.

@@ -119,6 +119,15 @@ ${r.stderr}`);
     assert.match(r.stdout, /ANSWER=false/);
   });
 
+  it('many prompts on one already-DESTROYED input do not accumulate listeners (audit R6)', async () => {
+    const h = harness();
+    h.input.destroy();
+    await new Promise((r) => setTimeout(r, 30));
+    const baseline = h.input.listenerCount('error');
+    for (let i = 0; i < 15; i++) assert.equal(await createConfirmPrompt({ input: h.input, output: h.output })('go? '), false);
+    assert.ok(h.input.listenerCount('error') <= baseline + 1, `one shared guard at most, got ${h.input.listenerCount('error') - baseline} extra`);
+  });
+
   it('an answer followed by close settles exactly once with the answer (no late decline)', async () => {
     const h = harness();
     const p = createConfirmPrompt({ input: h.input, output: h.output })('go? ');
