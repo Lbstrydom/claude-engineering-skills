@@ -12,7 +12,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { gatherRecordState, readBaseEntries, resolveBase, discoverBaseBranch, listMergedSince, mergeFacts, ENTRIES_DIR, MARKER_FILE } from './facts.mjs';
-import { isFloorEntryName, SHA_RE, RUN_ENTRY_RE } from './state.mjs';
+import { isFloorEntryName, SHA_RE, RUN_ENTRY_RE, listingStart } from './state.mjs';
 import {
   parseRunMarker, prEntryFileName, renderPrEntry, renderRunEntry, renderFloorEntry, renderInitReadme, publishEntry, checkEntriesDir, sweepTemps,
   touchedPlans, planLogSuggestion, planHasMarker, entryFileName,
@@ -222,12 +222,23 @@ export function runFloor(ctx, opts = {}) {
   if (existing.length) throw new RecordRefusal(`floor refused: a floor already exists (${[...new Set(existing)].join(', ')}); a floor never moves`);
   const now = ctx.now();
   const last = lastLogEntry(ctx, base, entries.names);
+  const list = (fromIso) => {
+    const l = listMergedSince(ctx.runners, { repo: base.repo, branch: base.branch, fromIso, toIso: now.toISOString() });
+    if (!l.ok) throw new RecordRefusal(`floor refused: ${l.reason}`);
+    if (!l.complete) throw new RecordRefusal(`floor refused: the listing is not complete (${l.partialReason}) — a floor is a claim about everything before it`);
+    return l;
+  };
+  const settledIn = (l) => l.prs.filter((p) => Date.parse(p.mergedAt) <= now.getTime() - SETTLE_MS);
   const fromIso = last?.dateIso ?? new Date(now.getTime() - FLOOR_DEFAULT_LOOKBACK_DAYS * 86_400_000).toISOString();
-  const listing = listMergedSince(ctx.runners, { repo: base.repo, branch: base.branch, fromIso, toIso: now.toISOString() });
-  if (!listing.ok) throw new RecordRefusal(`floor refused: ${listing.reason}`);
-  if (!listing.complete) throw new RecordRefusal(`floor refused: the listing is not complete (${listing.partialReason}) — a floor is a claim about everything before it`);
-  const settled = listing.prs.filter((p) => Date.parse(p.mergedAt) <= now.getTime() - SETTLE_MS);
-  const mergedThrough = settled.length ? settled[settled.length - 1].mergedAt : new Date(now.getTime() - SETTLE_MS).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  let listing = list(fromIso);
+  const first = settledIn(listing);
+  const mergedThrough = first.length ? first[first.length - 1].mergedAt : new Date(now.getTime() - SETTLE_MS).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  // Every status/catch-up listing re-checks from listingStart (RECHECK_DAYS before the cutoff), and a PR it sees there
+  // that the floor does not cover reads as unrecorded. So the floor must have listed at least that far back: starting at
+  // the last log entry alone left a gap (CES 2026-11-16: 11 PRs merged 11-09..11-12 read as unrecorded).
+  const need = listingStart({ mergedThrough });
+  if (Date.parse(need) < Date.parse(fromIso)) listing = list(need);
+  const settled = settledIn(listing).filter((p) => Date.parse(p.mergedAt) <= Date.parse(mergedThrough));
   const covered = settled.map((p) => p.number);
   // Every covered PR's merge must be MEASURED: an unreadable one is neither "has a gate" nor "has none" (A-R1-H7/M10).
   const facts = settled.map((p) => ({ p, f: mergeFacts(ctx.runners, p.mergeCommit) }));

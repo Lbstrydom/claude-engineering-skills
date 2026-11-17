@@ -31,6 +31,7 @@ function fixture() {
   must(g, ['remote', 'add', 'origin', 'https://github.com/o/r.git']);
   const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); };
   const commit = (msg) => { must(g, ['add', '-A']); must(g, ['commit', '-q', '-m', msg]); return must(g, ['rev-parse', 'HEAD']); };
+  write('.gitkeep', ''); commit('root'); // #1 must not be the root commit: a root has no parent to diff, so it reads as unmeasurable
   write('docs/status/entries/README.md', renderInitReadme());
   write('docs/plans/p.md', '# Plan\n\n## Implementation Log\n');
   write('docs/status/entries/2026-11-10-000000-record-floor.md', `## 2026-11-10 — Record floor\n${renderFloorMarker({ mergedThrough: '2026-11-10T00:00:00Z', covered: [1] })}\n`);
@@ -165,6 +166,17 @@ describe('verbs', () => {
     fs.rmSync(path.join(fx.dir, 'docs/status/entries/2026-11-10-000000-record-floor.md'), { recursive: true, maxRetries: 3, retryDelay: 50 });
     must(fx.g, ['add', '-A']); must(fx.g, ['commit', '-q', '-m', 'x']); must(fx.g, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
     assert.throws(() => runFloor(ctxFor(fx, { gh: { fail: true } }), { write: true }), /not authenticated|Bad credentials|401/);
+  });
+  it('a floor covers the whole recheck window, not just PRs since the last log entry', () => {
+    // Last log entry is 2026-11-11; #1 merged 11-09 — inside the 7-day recheck window before the cutoff (#4, 11-12).
+    // Listing only from the last entry left #1 neither covered nor recorded, so every status read called it unrecorded.
+    const fx = fixture();
+    fs.rmSync(path.join(fx.dir, 'docs/status/entries/2026-11-10-000000-record-floor.md'), { recursive: true, maxRetries: 3, retryDelay: 50 });
+    must(fx.g, ['add', '-A']); must(fx.g, ['commit', '-q', '-m', 'x']); must(fx.g, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    const f = runFloor(ctxFor(fx), { write: true });
+    const text = fs.readFileSync(path.join(fx.dir, f.wrote[0]), 'utf8');
+    assert.match(text, /merged-through=2026-11-12T03:00:00(?:.000)?Z covered=1,2,3,4 -->/);
+    assert.match(text, /last log entry before this floor: 2026-11-11-000000-own-entry\.md/);
   });
 });
 
