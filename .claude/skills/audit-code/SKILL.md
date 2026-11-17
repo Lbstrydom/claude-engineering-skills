@@ -87,7 +87,7 @@ if node scripts/cross-skill.mjs resolve-repo-identity > .audit/repo-identity.jso
    node scripts/cross-skill.mjs get-active-refresh-id --repo-uuid "$(node -p "require('./.audit/repo-identity.json').repoUuid")" > .audit/active-refresh.json &&
    REFRESH_ID=$(node -p "const r=require('./.audit/active-refresh.json');r.ok===false||r.cloud===false?'':(r.refreshId||'')") && [ -n "$REFRESH_ID" ] &&
    node scripts/cross-skill.mjs list-symbols-for-snapshot --json "{\"refreshId\":\"$REFRESH_ID\",\"limit\":$TOPN}" > .audit/symbol-catalogue.json &&
-   node -e "process.exit(require('./.audit/symbol-catalogue.json').ok===false?1:0)"
+   node -e "process.exitCode=require('./.audit/symbol-catalogue.json').ok===false?1:0"
 then :; else rm -f .audit/symbol-catalogue.json; echo "arch-memory: no catalogue (cloud off, no snapshot, or RPC_ERROR)" >&2; fi
 ```
 
