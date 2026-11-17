@@ -12,9 +12,8 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseSyncArgv, selectTargets, KNOWN_FLAGS } from '../scripts/lib/sync-argv.mjs';
@@ -41,11 +40,14 @@ const sel = (args) => selectTargets(parseSyncArgv(args), REPOS);
 
 describe('parent replay is pinned to the base commit', () => {
   test('the replayed expressions are byte-identical substrings of the base source', (t) => {
-    let src;
-    try {
-      src = execFileSync('git', ['show', `${BASE_SHA}:scripts/sync-to-repos.mjs`], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 26 });
-    } catch { t.skip(`${BASE_SHA} not available (shallow clone)`); return; }
-    src = src.replace(/\r\n/g, '\n');
+    const r = spawnSync('git', ['show', `${BASE_SHA}:scripts/sync-to-repos.mjs`], { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26 });
+    if (r.error) throw r.error; // git itself is missing: a real failure, never a skip
+    if (r.status !== 0) {
+      // Skip ONLY for the documented case (the base commit is absent, e.g. a shallow clone); any other git failure fails loudly.
+      if (/bad object|unknown revision|invalid object name|not a valid object|bad revision/i.test(r.stderr)) { t.skip(`${BASE_SHA} not available (shallow clone)`); return; }
+      assert.fail(`git show ${BASE_SHA} failed: ${r.stderr}`);
+    }
+    const src = r.stdout.replace(/\r\n/g, '\n');
     assert.ok(src.includes(PARENT_TARGET_EXPR), 'targetFilter expression drifted from the base');
     assert.ok(src.includes(PARENT_SELECT_EXPR), 'REPOS selection expression drifted from the base');
     assert.ok(src.includes("process.argv.includes('--dry-run')"), 'dry-run read drifted from the base');
@@ -111,10 +113,14 @@ describe('D15 — grammar', () => {
     assert.deepEqual([p.flags.dryRun, p.flags.noPrompt, p.flags.allowStaleBase, p.flags.adoptOrphans, p.errors], [true, true, true, false, []]);
   });
 
-  test('tokens after -- are ignored, including a switch (parent set dry-run from them)', () => {
-    const p = parseSyncArgv(['--', '--dry-run', '--target']);
-    assert.deepEqual([p.flags.dryRun, p.target, p.errors], [false, null, []]);
+  test('anything after -- is an ERROR: discarding `-- --dry-run` would turn a safety flag into a real sync', () => {
+    for (const a of [['--', '--dry-run'], ['--target', 'wine', '--', '--dry-run'], ['--', 'x']]) {
+      const p = parseSyncArgv(a);
+      assert.ok(p.errors.some((e) => /after "--"/.test(e)), JSON.stringify(a));
+      assert.ok('error' in selectTargets(p, REPOS), 'must not fall through to a selection');
+    }
     assert.equal(parentDryRun(['node', 'x.mjs', '--', '--dry-run']), true, 'red evidence: the parent honoured it');
+    assert.deepEqual(parseSyncArgv(['--dry-run', '--']).errors, [], 'a bare trailing -- is harmless');
   });
 
   test('a bare positional before -- is an error; the node/script paths are not part of the input', () => {
@@ -143,37 +149,50 @@ describe('D15 — grammar', () => {
   });
 });
 
-describe('CLI wiring (spawns only forms that are safe on the parent too: they abort before any target resolves)', () => {
+describe('CLI wiring — spawns forms that mean "ALL consumers" or a REAL sync on the parent code', () => {
+  // SAFETY PRECONDITION (code-audit R1 H17): these spawns are safe ONLY against the fixed CLI. On the
+  // parent, a trailing `--target` syncs every registered consumer and `--dry-run=true` runs for real.
+  // So no spawn runs unless the CLI under test reads its flags through the parser and the selector.
+  const cliSource = fs.readFileSync(path.join(ROOT, 'scripts/sync-to-repos.mjs'), 'utf8');
+  const fixedCli = /parseSyncArgv\(process\.argv\.slice\(2\)\)/.test(cliSource) && /selectTargets\(ARGV, REPOS\)/.test(cliSource);
   const run = (args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts/sync-to-repos.mjs'), ...args], {
     cwd: ROOT, encoding: 'utf8', timeout: 60000,
     env: { ...process.env, MODEL_CATALOG_REFRESH: 'skip' },
   });
 
-  test('trailing --target exits 2 and names the problem, before any target header', () => {
-    const r = run(['--target']);
+  // An argv rejection must happen BEFORE any work: exit 2 and nothing on stdout (the run header, target lines and
+  // every consumer write come after the argv check), so no consumer was reached (code-audit R2 H1).
+  const assertAbortedBeforeWork = (r, pattern) => {
     assert.equal(r.status, 2, r.stderr);
-    assert.match(r.stderr, /--target requires a value/);
-    assert.doesNotMatch(r.stdout, /wine-cellar|ai-organiser|storyline/i);
+    assert.match(r.stderr, pattern);
+    assert.equal(r.stdout, '', 'stdout must be empty: the run never started');
+  };
+
+  test('precondition: the CLI under test is the fixed one (else NO spawn runs)', () => {
+    assert.ok(fixedCli, 'scripts/sync-to-repos.mjs does not use the parser: spawning it with these argv would sync the REAL consumers');
   });
 
-  test('an unknown flag (--dry-runn) still exits 2 — the assertKnownFlags guard, by behaviour', () => {
-    const r = run(['--dry-runn']);
-    assert.equal(r.status, 2, r.stderr);
-    assert.match(r.stderr, /unknown flag/);
+  test('-- --dry-run exits 2 (the parent honoured it; silently discarding it would run for real)', (t) => {
+    if (!fixedCli) return t.skip('unfixed CLI: refusing to spawn');
+    assertAbortedBeforeWork(run(['--', '--dry-run']), /after "--"/);
   });
 
-  test('--dry-run=true exits 2 instead of running a real sync', () => {
-    const r = run(['--dry-run=true']);
-    assert.equal(r.status, 2, r.stderr);
-    assert.match(r.stderr, /takes no value/);
+  test('trailing --target exits 2 and names the problem, before any target header', (t) => {
+    if (!fixedCli) return t.skip('unfixed CLI: refusing to spawn');
+    assertAbortedBeforeWork(run(['--target']), /--target requires a value/);
   });
 
-  test('a valid --target-path --dry-run on an empty temp dir parses (no argv error)', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-argv-'));
-    try {
-      const r = run(['--target-path', dir, '--dry-run', '--no-prompt']);
-      assert.notEqual(r.status, 2, r.stderr);
-      assert.doesNotMatch(r.stderr, /requires a value|takes no value|unexpected argument/);
-    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  test('an unknown flag (--dry-runn) still exits 2 — the assertKnownFlags guard, by behaviour', (t) => {
+    if (!fixedCli) return t.skip('unfixed CLI: refusing to spawn');
+    assertAbortedBeforeWork(run(['--dry-runn']), /unknown flag/);
   });
+
+  test('--dry-run=true exits 2 instead of running a real sync', (t) => {
+    if (!fixedCli) return t.skip('unfixed CLI: refusing to spawn');
+    assertAbortedBeforeWork(run(['--dry-run=true']), /takes no value/);
+  });
+
+  // The VALID-invocation path (`--target-path <fixture> --no-prompt` reaching a real target and producing the consumer
+  // layout, exit 0, idempotent) is covered end to end by tests/sync-target-path.test.mjs, which drives this same CLI
+  // through the parser. Not duplicated here with a weaker assertion (code-audit R2 M1).
 });

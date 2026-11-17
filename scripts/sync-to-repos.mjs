@@ -65,7 +65,7 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { retireLegacyCopilotBlock } from './lib/sync-legacy-copilot-block.mjs';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
-import { parseSyncArgv, KNOWN_FLAGS } from './lib/sync-argv.mjs';
+import { parseSyncArgv, selectTargets, KNOWN_FLAGS } from './lib/sync-argv.mjs';
 import {
   compareSkillSurfaces, listSurfaceNames, classifyOrphans, LIVE_SURFACE, SHADOWING_SURFACES,
 } from './lib/skill-surface-identity.mjs';
@@ -222,7 +222,6 @@ const ALLOW_ROLLBACK = ARGV.flags.allowRollback;
 // fails toward "suspicious" is still a lying diagnostic; normalise here and
 // pin it in tests/sync-ownership-recording.test.mjs.
 const BANNER_MARKER = Array.isArray(BANNER_BODY) ? BANNER_BODY[0] : String(BANNER_BODY);
-const targetFilter = ARGV.target;
 
 // `--target-path <dir>` — sync into ANY repo, not only a registered one.
 //
@@ -231,7 +230,6 @@ const targetFilter = ARGV.target;
 // install. `install.mjs` drives this flag; a third party can also call it
 // directly. Validation (canonicalisation, containment, eligibility) lives in
 // `resolveAdHocTarget`, not here.
-const targetPathArg = ARGV.targetPath;
 
 // Suppress this run's legacy-surface warning because a PARENT process
 // (`install.mjs`) is about to report the same finding and offer to act on it.
@@ -914,11 +912,20 @@ async function main() {
   const priorUpstream = createPriorUpstreamResolver({ sourceRoot: SOURCE_ROOT });
   const undeclaredDeps = []; // per-consumer `name: packages` lines for the end-of-run summary
 
-  let targetRepos;
-  if (targetPathArg) {
+  // The ONE "which consumers does this run touch?" decision (lib/sync-argv.mjs selectTargets): an unusable
+  // selector never falls through to "all".
+  const selection = selectTargets(ARGV, REPOS);
+  if (selection.error) {
+    console.error(`${R}${selection.error}${X}`);
+    console.error(`  Known: ${REPOS.map(r => r.name + ' (' + r.alias + ')').join(', ')}`);
+    console.error(`  Or sync an unregistered repo by path: --target-path <dir>`);
+    process.exit(1);
+  }
+  let targetRepos = selection.repos;
+  if (selection.mode === 'path') {
     let identity;
     try {
-      identity = resolveAdHocTarget(targetPathArg, {
+      identity = resolveAdHocTarget(ARGV.targetPath, {
         warn: (m) => console.log(`  ${Y}warn${X}  ${m}`),
       });
     } catch (err) {
@@ -926,18 +933,6 @@ async function main() {
       process.exit(1);
     }
     targetRepos = [decorateTarget(identity)];
-  } else {
-    targetRepos = targetFilter
-      ? REPOS.filter(r => r.name === targetFilter || r.alias === targetFilter)
-      : REPOS;
-
-    if (targetFilter && targetRepos.length === 0) {
-      console.error(`${R}Unknown target: "${targetFilter}"${X}`);
-      const knownTargets = REPOS.map(r => r.name + ' (' + r.alias + ')').join(', ');
-      console.error(`  Known: ${knownTargets}`);
-      console.error(`  Or sync an unregistered repo by path: --target-path <dir>`);
-      process.exit(1);
-    }
   }
 
   const dryRunSuffix = DRY_RUN ? ' ' + Y + '[DRY RUN]' + X : '';

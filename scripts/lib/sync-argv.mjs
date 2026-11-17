@@ -20,7 +20,8 @@
  * positional.
  *
  * (Worded to avoid the literal spelling of a process-argv read: `check-cli-flags`
- * classifies a file by RAW source, and this pure library has no argv of its own.) Only tokens before the first `--` are read.
+ * classifies a file by RAW source, and this pure library has no argv of its own.) `--` ends flags; the command takes no
+ * positionals, so any token after it is an error rather than silently discarded.
  *
  * @module scripts/lib/sync-argv
  */
@@ -66,7 +67,13 @@ export function parseSyncArgv(args) {
 
   for (let i = 0; i < list.length; i++) {
     const tok = list[i];
-    if (tok === '--') break;
+    if (tok === '--') {
+      // POSIX: `--` ends flags. This command takes NO positionals, so anything after it can only be a
+      // mistake, and silently discarding `-- --dry-run` would turn a safety flag into a REAL sync of
+      // every consumer (code-audit R1 H11/H18/H19).
+      if (i + 1 < list.length) errors.push(`unexpected argument(s) after "--": ${list.slice(i + 1).map((t) => JSON.stringify(t)).join(' ')} — this command takes flags only`);
+      break;
+    }
     if (typeof tok !== 'string' || !tok.startsWith('--')) {
       errors.push(`unexpected argument ${JSON.stringify(tok)} — this command takes flags only`);
       continue;
