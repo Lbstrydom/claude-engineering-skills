@@ -23,11 +23,11 @@ export function createConfirmPrompt({ input = process.stdin, output = process.st
     // One named handler, removed on EVERY settlement path: repeated prompts on a shared stdin must not accumulate listeners.
     const onInputError = () => { settle(false); rl.close(); };
     const settle = (value) => {
-      // Owned through the stream's own lifecycle. A DESTROYED stream may still have its error queued (`destroyed`/`closed`
-      // flip before the events are emitted, and an async _destroy emits them later), so its handler stays until `close`,
-      // with a bounded timer as the backstop for a stream that already closed or never emits it; otherwise it goes now.
-      const release = () => input.removeListener?.('error', onInputError);
-      if (input.destroyed && input.once) { input.once('close', release); setTimeout(release, 1000).unref(); } else release();
+      // A DESTROYED stream may still have its error queued however long its _destroy takes (`destroyed`/`closed` flip
+      // before the events are emitted), and no elapsed-time cutoff is right for every stream. So its `once` handler is
+      // simply KEPT: it is consumed by that error, or stays on a dead stream that nothing else uses. A live stream's goes now,
+      // so repeated prompts on a live shared stdin do not accumulate listeners.
+      if (!input.destroyed) input.removeListener?.('error', onInputError);
       if (!settled) { settled = true; resolve(value); }
     };
     // Close with no answer (EOF) or a stream error is a DECLINE, never a hang.
