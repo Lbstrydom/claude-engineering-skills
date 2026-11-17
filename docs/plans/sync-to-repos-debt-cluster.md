@@ -1,6 +1,6 @@
 # Plan: sync-to-repos debt cluster (16 still-present defects)
 - **Date**: 2026-11-17
-- **Status**: Draft
+- **Status**: Approved
 - **Author**: Claude + Louis
 - **Scope**: backend (Node ESM CLI + `scripts/lib/**`; stack `js-ts`)
 - **Target domain(s)**: `install`, `shared-lib`
@@ -513,6 +513,7 @@ Actions (CES: `full-suite.yml`). If `fleet next` reports `fullSuite: "train"`, i
 
 ## Audit trail
 
+- **Stop decision**: GPT capped at round 3 (plan soft cap) WITHOUT a clean round, while productive (acceptance 100%/100%/100%, HIGH 6→6→3; structural card: 0 structural clusters). Per the card, the cap stopped it, not convergence. The remaining R3 concerns were fixed in place. Final gate R2 (gemini-4-argon): **APPROVE**, blocking 0, debt 0. CONTINUE (`--past-cap`) is left to the coordinator/user.
 - Final gate R1 (gemini-4-argon): CONCERNS, blocked on G1 (the first-sync lock has no parent dir → a
   `prepareConsumerLockPath` precondition) plus G2 LOW debt (`sync-path-map.mjs` belongs in Phase 4 for
   `SYNC_LOCK`). Both fixed.
