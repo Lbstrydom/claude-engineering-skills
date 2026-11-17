@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Sync names, plus the promise spellings (`fs.promises.writeFile(`, `fsp.rm(`): the same mutations by another API.
-const MUTATION = /\b(atomicWriteFileSync|writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync|copyFileSync|mkdirSync|rmdirSync)\s*\(|\b(?:fs\.promises|fsp)\.(writeFile|appendFile|unlink|rm|rename|copyFile|mkdir|rmdir)\s*\(/;
+const MUTATION = /\b(atomicWriteFileSync|writeFileSync|appendFileSync|unlinkSync|rmSync|renameSync|copyFileSync|mkdirSync|rmdirSync)\s*\(|\b(?:fs\.promises|fsp|fs)\.(writeFile|appendFile|unlink|rm|rename|copyFile|mkdir|rmdir|truncate)\s*\(/;
 
 // The immutable pre-change commit (main before this PR), never a moving ref.
 const PARENT_SHA = '593a6f35';
@@ -94,7 +94,7 @@ describe('every consumer mutation goes through the one contained seam', () => {
 
   it('negative control: a planted bare write IS detected, including the promise API; a comment is not', () => {
     assert.equal(mutationSites("fs.writeFileSync(path.join(repo.path, 'x'), 'y');\n// fs.writeFileSync(a, b);\n").length, 1);
-    assert.equal(mutationSites("await fs.promises.writeFile(p, 'y');\nawait fsp.rm(p);\n").length, 2);
+    assert.equal(mutationSites("await fs.promises.writeFile(p, 'y');\nawait fsp.rm(p);\nfs.writeFile(p, 'y', cb);\n").length, 3, 'promise AND callback spellings');
   });
 
   it('stated limit: the scan sees direct calls (an alias is caught at its binding, delegation not at all) — it is the tripwire for the common mistake; the behaviour of every write path is proven by sync-consumer-io.test.mjs and the e2e suite', () => {

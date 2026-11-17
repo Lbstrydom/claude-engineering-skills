@@ -67,6 +67,23 @@ describe('createConfirmPrompt', () => {
     assert.deepEqual([r2.settled, r2.v], [true, false]);
   });
 
+  it('repeated prompts on one shared input do not accumulate error listeners (audit R2 M2/M3)', async () => {
+    const h = harness();
+    const baseline = h.input.listenerCount('error');
+    for (const typed of ['y\n', 'n\n', '\n']) {
+      const p = createConfirmPrompt({ input: h.input, output: h.output })('go? ');
+      h.input.write(typed);
+      await p;
+    }
+    assert.equal(h.input.listenerCount('error'), baseline, 'every settlement path must remove its listener');
+    const h2 = harness();
+    const b2 = h2.input.listenerCount('error');
+    const eof = createConfirmPrompt({ input: h2.input, output: h2.output })('go? ');
+    h2.input.end();
+    await eof;
+    assert.equal(h2.input.listenerCount('error'), b2, 'the EOF path too');
+  });
+
   it('an answer followed by close settles exactly once with the answer (no late decline)', async () => {
     const h = harness();
     const p = createConfirmPrompt({ input: h.input, output: h.output })('go? ');

@@ -20,7 +20,12 @@ export function createConfirmPrompt({ input = process.stdin, output = process.st
   return (question) => new Promise((resolve) => {
     const rl = createInterface({ input, output });
     let settled = false;
-    const settle = (value) => { if (!settled) { settled = true; resolve(value); } };
+    // One named handler, removed on EVERY settlement path: repeated prompts on a shared stdin must not accumulate listeners.
+    const onInputError = () => { settle(false); rl.close(); };
+    const settle = (value) => {
+      input.removeListener?.('error', onInputError);
+      if (!settled) { settled = true; resolve(value); }
+    };
     // Close with no answer (EOF) or a stream error is a DECLINE, never a hang.
     rl.once('close', () => {
       if (!settled) output.write('\n  no input — declined\n');
@@ -28,7 +33,7 @@ export function createConfirmPrompt({ input = process.stdin, output = process.st
     });
     // Node forwards an input stream's error to the Interface, where an unhandled one would throw.
     rl.on('error', () => { settle(false); rl.close(); });
-    input.once?.('error', () => { settle(false); rl.close(); }); // older Nodes do not forward it to the Interface
+    input.once?.('error', onInputError); // older Nodes do not forward it to the Interface
     // A stream that ENDED before the prompt was created never emits `end` to this Interface: decline now, do not wait.
     if (input.readableEnded || input.destroyed) { output.write('\n  no input — declined\n'); settle(false); rl.close(); return; }
     rl.question(question, (answer) => {
