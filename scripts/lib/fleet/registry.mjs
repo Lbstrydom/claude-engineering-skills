@@ -185,6 +185,12 @@ export function assertManaged(dir, p) {
 
 const sessionsDir = (dir) => path.join(dir, 'sessions');
 const trainsDir = (dir) => path.join(dir, 'trains');
+/**
+ * Probe trains (`land --dry-run --tier <name>`) live under their OWN root, `fleet/probes/`, with the same layout. A probe ran
+ * one tier only, so it must never be approvable — and a manifest no train reader ever lists cannot be approved by any bundle,
+ * this one or an older one (no field an older reader would have to understand).
+ */
+export const probesDir = (dir) => path.join(dir, 'probes');
 const sessionPath = (dir, id) => assertManaged(dir, path.join(sessionsDir(dir), `${storageKey(id)}.json`));
 
 /** A fresh train id: `t-<yyyymmddhhmmss>-<4 hex>` (UTC). */

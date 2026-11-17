@@ -16,6 +16,8 @@
  *                   no commit for this many days (default 14; `--all` shows it)
  *  - `staleWorktreeDays` unregistered work idle longer than this many days is
  *                   "possibly abandoned" in `status` and the footer (default 3)
+ *  - `fullSuite`    `session` (default) | `train`: with `train`, sessions defer the
+ *                   full suite and `fleet land` is the one full-suite run
  *
  * Validation is strict (`z.strictObject`): an unknown key is an error NAMING it.
  * Commands are argv arrays only — a shell string in a tier or a check is a
@@ -59,6 +61,16 @@ export const MAX_HOT_FILES = 200;
 export const DEFAULT_ARCHIVE_IGNORE = Object.freeze(['node_modules/**', 'scripts/.claude-skills/**', '.claude/settings.local.json']);
 /** `land --serial`: how long one PR may wait for its required checks. */
 export const DEFAULT_SERIAL_TIMEOUT_MS = 60 * 60 * 1000;
+export const FULL_SUITE_MODES = Object.freeze(['session', 'train']);
+/** The words a session writes in its plan's test log under `fullSuite: "train"` — one spelling, so the log is greppable. */
+export const FULL_SUITE_LOG_LINE = 'full suite deferred to the train (fullSuite: train)';
+/** What `next` and `ready` tell a session under `fullSuite: "train"`. */
+export const fullSuiteDeferredLine = (cmd = 'fleet') => `TESTS: this repo defers the full suite to the train (.fleet.json fullSuite: "train"). Run the targeted and affected-file tests plus the required gates, then \`${cmd} ready\`; do NOT take the heavy slot for a full suite. Write in your plan's test log: "${FULL_SUITE_LOG_LINE}".`;
+/**
+ * `ctx.config.fullSuite`; `session` only when the key is absent. A config that fails to load throws its ConfigError like
+ * every other read of `ctx.config` (audit R1 H5): a malformed `.fleet.json` must never read as "the default mode".
+ */
+export const fullSuiteOf = (ctx) => ctx.config.fullSuite ?? 'session';
 const patternList = (what) => z.array(z.string(), { error: `must be an array of ${what}` }).max(MAX_HOT_FILES).optional();
 
 /** User-facing tier: the persisted tier minus `shell` (only a string testCommand may set it). */
@@ -98,6 +110,9 @@ const FleetFileSchema = z.strictObject({
   ghAccount: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/, 'must be a gh login name (letters, digits, - and _)')
     .refine((v) => !/^(gh[pousr]_|github_pat_)/i.test(v), 'looks like a token: ghAccount is a login NAME, never a credential').optional(),
   serialTimeoutMs: timeout().optional(),
+  // `train`: sessions run targeted + affected tests and the required gates, never the full suite; `fleet land` is the ONE
+  // full-suite run (consumer report 2026-11-15, item 1). `session` (default): each session runs it, as before.
+  fullSuite: z.enum(FULL_SUITE_MODES).optional(),
 });
 
 const issuePath = (i) => i.path.length ? i.path.join('.') : '(root)';
@@ -193,7 +208,7 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
       ...(cfg.requiredChecks ? { requiredChecks: cfg.requiredChecks } : {}),
       appendOnlyGlobs: cfg.appendOnlyGlobs ?? [], restackIgnore: cfg.restackIgnore ?? [],
       archiveIgnore: cfg.archiveIgnore ?? [...DEFAULT_ARCHIVE_IGNORE], serialTimeoutMs: cfg.serialTimeoutMs ?? DEFAULT_SERIAL_TIMEOUT_MS,
-      ghAccount: cfg.ghAccount ?? null,
+      ghAccount: cfg.ghAccount ?? null, fullSuite: cfg.fullSuite ?? 'session',
     },
   };
 }
@@ -285,12 +300,12 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
     baseBranch: base.baseBranch, testCommand: v.testCommand, mergeMethod: v.mergeMethod, checks: v.checks, worktreeRoot,
     hotFiles: v.hotFiles, hideIdleAfterDays: v.hideIdleAfterDays, staleWorktreeDays: v.staleWorktreeDays,
     ...(v.requiredChecks ? { requiredChecks: v.requiredChecks } : {}),
-    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs, ghAccount: v.ghAccount,
+    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs, ghAccount: v.ghAccount, fullSuite: v.fullSuite,
     sources: {
       baseBranch: base.source, testCommand: v.testCommandSource, mergeMethod: v.mergeMethodSource,
       checks: file.value?.checks ? 'config' : 'default', worktreeRoot: fromEnv ? 'env' : 'default',
       hotFiles: file.value?.hotFiles ? 'config' : 'default', hideIdleAfterDays: file.value?.hideIdleAfterDays ? 'config' : 'default',
-      staleWorktreeDays: file.value?.staleWorktreeDays ? 'config' : 'default',
+      staleWorktreeDays: file.value?.staleWorktreeDays ? 'config' : 'default', fullSuite: file.value?.fullSuite ? 'config' : 'default',
     },
   };
 }

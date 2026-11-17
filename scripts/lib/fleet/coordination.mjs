@@ -30,6 +30,8 @@ import { readUpstreamCache, renderUpstreamLine, upstreamQuiet, upstreamScript } 
 import { readRecordCache, renderRecordLine, recordQuiet } from './record-count.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
 import { leaseForNext, leaseStuckFooter } from './lease-cmd.mjs';
+import { fullSuiteDeferredLine, fullSuiteOf } from './config.mjs';
+import { decisionsForSession, renderSessionDecision } from './decisions.mjs';
 
 /**
  * The `checkpoint` fact profile for ONE session: its own merged evidence, its own
@@ -193,9 +195,16 @@ export function cmdNext(ctx, flags) {
   const recordLines = recordQuiet(recRead, ctx.now ?? new Date()) ? [] : [`FYI for the user/coordinator, not an action for this session: ${renderRecordLine(recRead, ctx.now ?? new Date(), ctx.cmd)}`];
   const fyi = [...prune.lines, ...unregistered, ...proposalLines, ...upstreamLines, ...recordLines, ...lease.lines];
   const stamp = noteStamp(r.item, ctx.now);
+  // `.fleet.json` fullSuite: "train" — this session's test plan is targeted + affected tests and the gates; the train runs the suite.
+  const fullSuite = fullSuiteOf(ctx);
+  const testLines = fullSuite === 'train' ? [fullSuiteDeferredLine(ctx.cmd)] : [];
+  // A user decision addressed to this session (test-plan / answer): quoted as the USER's words, apart from directives and
+  // obligations, and never a DO — it grants only its scope, never a merge, push, --override or deletion.
+  const mine = decisionsForSession(ctx.dir, id, ctx.now ?? new Date());
+  const decisionLines = mine.unusable ? [`user decisions: none shown — ${mine.unusable}`] : mine.decisions.flatMap(renderSessionDecision);
   return ok({
-    id, ...r.result, stamp, prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals, ...(upApplicable ? { upstream: upRead } : {}), records: recRead, lease: lease.lease,
-    text: [`next for ${id}:`, ...renderObligations(r.result, { cmd: ctx.cmd }).map((l) => `  ${l}`), ...fyi, `stamp: ${stamp}`].join('\n'),
+    id, ...r.result, stamp, fullSuite, decisionsUsable: !mine.unusable, decisionsUnusableReason: mine.unusable ?? null, decisions: mine.decisions.map((d) => ({ id: d.id, scope: d.scope, at: d.at, recordedBy: d.recordedBy.session, words: d.words })), prune: { state: prune.state, ...(prune.record ? { record: prune.record } : {}) }, proposals, ...(upApplicable ? { upstream: upRead } : {}), records: recRead, lease: lease.lease,
+    text: [`next for ${id}:`, ...renderObligations(r.result, { cmd: ctx.cmd }).map((l) => `  ${l}`), ...decisionLines, ...testLines, ...fyi, `stamp: ${stamp}`].join('\n'),
   });
 }
 

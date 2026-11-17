@@ -16,7 +16,7 @@ import path from 'node:path';
 import { ArgvError } from '../cli-io.mjs';
 import { exitCodeForSignal, runUnderLease } from './lease-run.mjs';
 import { runChild, describeSpawnFailure } from './lease-spawn.mjs';
-import { sampleTree } from './lease-cpu.mjs';
+import { cpuSaturationLine, machineCpu, sampleTree } from './lease-cpu.mjs';
 import { failed, ok, refused, selfId } from './commands.mjs';
 import { gitCommonDir, runGit } from './git-facts.mjs';
 import {
@@ -112,6 +112,8 @@ async function cmdRun(ctx, flags, positionals, { dir, repo }) {
     note: text(flags['--note']), waitMin, ceilingMin: timeoutMin, endTurn: flags['--end-turn'] === true, cmdName: ctx.cmd, log: say,
     pollMs: Number(ctx.env.FLEET_LEASE_POLL_MS) > 0 ? Number(ctx.env.FLEET_LEASE_POLL_MS) : undefined, // a test seam for the wait loop's interval only
     now: () => new Date(t0 + (Date.now() - r0)),
+    // Sampled after the grant and before the job starts, so the reading is the load that was ALREADY running.
+    onGranted: async () => { const warn = cpuSaturationLine(await machineCpu({ env: ctx.env }), { starting: true }); if (warn) say(warn); },
   }, ({ attach, signal }) => runChild({ cmd, args, signal, timeoutMs: timeoutMin ? timeoutMin * 60_000 : undefined, onSpawn: attach }));
 
   return leaseRunResult(res, { say, cmd, timeoutMin, cmdName: ctx.cmd });
@@ -184,9 +186,13 @@ export function cmdLease(ctx, flags, positionals) {
     const s = summarise(read, ctx.now, probe);
     // An unreadable or newer-version lease was not measured: a script reading the exit code must not take that for "free".
     if (!s.measured) return failed(renderStatus(s, { dir, now: ctx.now, repoKey: repo.repoKey, cmd: ctx.cmd }).join('\n'), { sub, dir, lease: s });
-    return holderTree(s, probe, ctx.env).then((tree) => {
+    return Promise.all([holderTree(s, probe, ctx.env), machineCpu({ env: ctx.env })]).then(([tree, cpu]) => {
       const lines = renderStatus(s, { dir, now: ctx.now, repoKey: repo.repoKey, cmd: ctx.cmd, tree });
-      return ok({ sub, dir, lease: s, ...(tree ? { tree } : {}), text: lines.join('\n') });
+      // The lease sees only leased work: whole-machine CPU is what shows load that took no lease (item 6).
+      const warn = cpuSaturationLine(cpu, { slotFree: s.heavy.state === 'free', holder: s.holder?.holder ?? null });
+      lines.push(cpu.measured ? `machine CPU: ${cpu.busyPct}% busy across ${cpu.cores} cores${cpu.sampleMs ? ` (sampled over ${cpu.sampleMs} ms)` : ''}` : `machine CPU: not measured (${cpu.reason})`);
+      if (warn) lines.push(warn);
+      return ok({ sub, dir, lease: s, cpu, ...(tree ? { tree } : {}), text: lines.join('\n') });
     });
   }
 

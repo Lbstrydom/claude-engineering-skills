@@ -108,7 +108,7 @@ export async function runUnderLease(opts, job) {
     endTurn = false, releaseToCiWindow = 0, windowRepo, cmdName = 'fleet', now = () => new Date(), random = Math.random,
     probe = defaultProbe(), signals = processSignals, transact = transactLease, log = () => {},
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)), forceExit = (code) => process.exit(code),
-    heartbeatMs = LIMITS.heartbeatMs, ceilingMin, cpuOf = (p) => processTreeActivity(p), timers = realTimers,
+    heartbeatMs = LIMITS.heartbeatMs, ceilingMin, cpuOf = (p) => processTreeActivity(p), timers = realTimers, onGranted = null,
   } = opts;
   const startedAt = now().getTime();
   const deadline = startedAt + Math.max(0, waitMin) * 60_000;
@@ -177,7 +177,13 @@ export async function runUnderLease(opts, job) {
   };
   const timer = heartbeatMs > 0 ? timers.every(heartbeatMs, beat) : null;
   let result; let threw = false; let thrown;
-  try { result = await job({ token, attach, signal: abort.signal }); } catch (e) { threw = true; thrown = e; }
+  try {
+    // Granted, the job not yet started: the caller's last look before it runs (the CPU-saturation warning, item 6). It runs
+    // INSIDE the protected lifecycle — signals are installed and the release below follows it — and is never fatal.
+    if (onGranted) { try { await onGranted(grant); } catch { /* a warning that cannot be computed is no reason not to run */ } }
+    // A stop signal during it: the job never starts, and the slot is released below like any other stop.
+    result = signalled ? {} : await job({ token, attach, signal: abort.signal });
+  } catch (e) { threw = true; thrown = e; }
   beating = false;
   if (timer) timers.cancel(timer);
 

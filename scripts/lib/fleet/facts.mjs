@@ -19,6 +19,7 @@ import { GH_TIMEOUT_MS, OPEN_PR_CHECK_ARGS, OPEN_PR_LIST_ARGS, listPullRequests,
 import { ghBatch } from './gh-batch.mjs';
 import { ConfigError } from './config.mjs';
 import { fleetDir, readSessions, readHold, listTrains } from './registry.mjs';
+import { stackBaseFor } from './stack-bases.mjs';
 import {
   DEFAULT_LEASE_MS, buildStatus, checkBlocksApproval, idleMsFrom, isIdleTip, liveness, mergedDone, workRemainingIn, worktreeOf,
 } from './overlap.mjs';
@@ -135,6 +136,7 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   const baseOidSnap = measure.ok ? measure.oid : tipOid.get(base) ?? null;
   const baseRev = baseOidSnap ?? base;
   const { changed, patchIds } = branchEvidence({ cwd, analyse: sel.analyse, tipOid, baseRev, patches });
+  const ownChanged = stackedEvidence({ cwd, dir, registry, analyse: sel.analyse, tipOid, base });
   for (const n of sel.skippedUntracked) changed[n] = { queried: false, files: [], reason: 'not requested: untracked branches are not analysed by this command' };
   // The budget covers EVERY per-ref analysis: the branches above AND the materialised PR refs below.
   const budget = Number.isInteger(maxBranches) && maxBranches >= 0 ? maxBranches - sel.analyse.size : Infinity;
@@ -159,7 +161,7 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
     base: { name: base, upstream: up.upstream, freshness: baseFreshness(cwd, { base, upstream: up.upstream }), measure },
     registry, hold: readHold(dir), trains: trainsRead.trains, trainsInvalid: trainsRead.invalid,
     worktrees: worktreeList,
-    branches, prs: prFacts, changed, patchIds,
+    branches, prs: prFacts, changed, patchIds, ownChanged,
     ...(branchesNotAnalysed ? { branchesNotAnalysed } : {}),
     ...(checks === false ? { checks: { queried: false, reason: 'not requested' } } : {}),
   };
@@ -221,6 +223,33 @@ function branchEvidence({ cwd, analyse, tipOid, baseRev, patches }) {
     if (patches) patchIds[n] = patchId(cwd, baseRev, rev);
   }
   return { changed, patchIds };
+}
+
+/**
+ * A session stacked on another unlanded branch (`claim --base <branch>`, the name in `source.baseRef`) is measured from
+ * its REAL fork point: the stack base's commit recorded AT CLAIM (stack-bases.mjs), so its own changed files are
+ * `forkOid...tip` and commits it inherited from the shared base are not its overlap (consumer report 2026-11-15, item 3).
+ * The commit, never the branch name: a base later fast-forwarded onto the session's work, or one that absorbed commits made
+ * before the claim, would otherwise make the session's own diff read empty (audit R1 H9, R2 H1, R3 H1/M1). Keyed by branch,
+ * beside `changed` (the from-base diff every other consumer reads). No usable record, or an unmeasurable diff, is
+ * `{queried:false, reason}`, and overlap falls back to the from-base diff — never to "no files".
+ */
+function stackedEvidence({ cwd, dir, registry, analyse, tipOid, base }) {
+  const own = {};
+  for (const s of registry.sessions) {
+    const b = s.source?.branch; const stack = s.source?.baseRef;
+    if (s.source?.kind !== 'branch' || !b || !stack || stack === base || stack === b || !analyse.has(b)) continue;
+    const fork = stackBaseFor(dir, s);
+    if (!fork.ok) { own[b] = { queried: false, files: [], reason: fork.reason, stackBase: stack }; continue; }
+    // The record must still be history of the base (audit R6 H1/M1, deliberated): a base rewound or force-pushed since may
+    // leave a recorded commit that holds the session's own work. Not an ancestor of the base's tip ⇒ conservative.
+    if (!runGit(['merge-base', '--is-ancestor', fork.oid, tipOid.get(stack) ?? `refs/heads/${stack}`], cwd).ok) {
+      own[b] = { queried: false, files: [], reason: `${stack} no longer contains the recorded fork point (rewritten or deleted since the claim)`, stackBase: stack };
+      continue;
+    }
+    own[b] = { ...changedFiles(cwd, fork.oid, tipOid.get(b) ?? b), stackBase: stack };
+  }
+  return own;
 }
 
 const mergeNotAnalysed = (a, b) => (!a && !b ? null
@@ -482,7 +511,8 @@ export function othersFor(facts, selfId, now, sessions = facts.registry.sessions
     const wt = facts.worktrees?.queried ? worktreeOf(facts.worktrees.worktrees ?? [], s.worktree, b) : null;
     const md = merged?.merged ? mergedDone(merged, workRemainingIn(facts, b ?? null, wt)) : null;
     return {
-      session: s, live: live && !md?.done, changedFiles: k && facts.changed?.[k]?.queried ? facts.changed[k].files : [],
+      session: s, live: live && !md?.done,
+      changedFiles: b && facts.ownChanged?.[b]?.queried && k === b ? facts.ownChanged[b].files : k && facts.changed?.[k]?.queried ? facts.changed[k].files : [],
       uncommittedFiles: u?.queried ? u.files : [], ...(u && !u.queried ? { uncommittedUnknown: u.reason } : {}),
       ...(live && md?.done ? { finished: md.note } : {}), ...(md && !md.done ? { mergedNote: md.note } : {}),
     };

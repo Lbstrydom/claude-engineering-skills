@@ -195,6 +195,7 @@
         "scripts/.claude-skills/lib/fleet/record-count.mjs",
         "scripts/.claude-skills/lib/fleet/registry.mjs",
         "scripts/.claude-skills/lib/fleet/serial.mjs",
+        "scripts/.claude-skills/lib/fleet/stack-bases.mjs",
         "scripts/.claude-skills/lib/fleet/telemetry-drain.mjs",
         "scripts/.claude-skills/lib/fleet/unregistered.mjs",
         "scripts/.claude-skills/lib/fleet/upstream-count.mjs",

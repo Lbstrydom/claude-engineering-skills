@@ -108,7 +108,9 @@ read main's new commit subjects (`git log --oneline HEAD..origin/main`) for your
 Guards that catch a change are named after the invariant they protect, not after the
 feature, so a name-targeted test run misses them, and a slow pre-push gate then fails
 late. Before a branch's first push, run the full test suite once in the background and
-read its failures; after that, targeted runs are fine.
+read its failures; after that, targeted runs are fine. **Exception:** where `.fleet.json` sets `fullSuite: "train"`, the
+branch runs its targeted and affected-file tests plus the required gates, and `fleet land` is its full-suite run
+(participant rule 4a) — so build a fast-tier probe early (`references/landing.md`) to catch what targeted runs miss.
 
 ## 7. Record the PRs you merge (the session log)
 
@@ -119,7 +121,10 @@ skill (its record catch-up reference); the coordinator's part:
 - **At launch, once**: record the user's standing permission in their exact words, on stdin —
   `node scripts/fleet.mjs decision record --scope record-catchup --words-file -`. It is a declaration, not verified
   authority: what makes a record commit safe is `ship-commit.mjs --record`'s docs-only check and the user's merge of the
-  record PR. No decision scope grants a merge, a push or an override.
+  record PR. No decision scope grants a merge, a push, an override or a deletion.
+- **A user's answer or test plan for a chip**: `decision record --scope answer|test-plan --to <chip id|all> --words-file -`
+  holds their exact words; that chip's `fleet next` quotes them as the USER's, apart from any directive. Relay it this way,
+  not by host message.
 - **Cadence**: after each `fleet land` (it prints the nudge), at every pass (`fleet status` shows
   `records: N merged PR(s) unrecorded`), and at end of day: `node scripts/ship-record.mjs catchup --write`, paste the
   plan lines it prints, commit with `ship-commit.mjs --record --decision <id>`, open a docs-only PR. The user merges it.
