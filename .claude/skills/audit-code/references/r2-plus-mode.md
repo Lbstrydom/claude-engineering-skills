@@ -63,7 +63,8 @@ PASSES="sustainability"  # always include
 
 # PLAN_FILE = the ONE plan path /audit-code was invoked with, assigned verbatim.
 # Not a glob: an assignment does not expand it, so the CLI would get the pattern itself.
-node scripts/openai-audit.mjs code "$PLAN_FILE" --round 2 --ledger .audit/$SID-ledger.json --diff .audit/$SID-diff.patch --changed $CHANGED --files $FILES --passes $PASSES --out .audit/$SID-r2-result.json 2>.audit/$SID-r2-stderr.log
+R=2  # this round's number
+node scripts/openai-audit.mjs code "$PLAN_FILE" --round $R --ledger .audit/$SID-ledger.json --diff .audit/$SID-diff.patch --changed $CHANGED --files $FILES --passes $PASSES --out .audit/$SID-r$R-result.json 2>.audit/$SID-r$R-stderr.log
 ```
 
 > **Session artifacts go in `.audit/`, not `/tmp/` (A3).** A `/tmp/...` path in

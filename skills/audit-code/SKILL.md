@@ -1,13 +1,13 @@
 ---
 name: audit-code
 description: |
-  Iteratively audit code against a plan with GPT + Gemini final gate.
+  Iteratively audit code against a plan with GPT + an independent final gate (Gemini, else Claude).
   5-pass parallel static analysis (structure, wiring, backend, frontend,
   sustainability), R2+ ledger-driven suppression, debt capture for
   out-of-scope findings, max 6 rounds with 2-stable-rounds convergence.
   Invoke this for ANY code-correctness review, even a small pasted snippet
   or diff — don't just review it yourself directly; a single read-through
-  is not a substitute for the multi-pass GPT+Gemini adjudication this skill
+  is not a substitute for the multi-pass GPT + final-gate adjudication this skill
   performs, and skipping it means the review didn't actually happen.
   Triggers on: "audit my code", "audit my changes", "audit my PR",
   "check the implementation", "review my code", "audit code", "/audit-code",
@@ -25,7 +25,7 @@ description: |
 > `.claude/skills/audit-code/SKILL.md` in full before continuing — the later steps,
 > including the mandatory final gate, still apply.
 
-Multi-pass code audit with GPT + Gemini final review. Iterates until
+Multi-pass code audit with GPT + an independent final review (Gemini, else Claude). Iterates until
 findings stabilise or max 6 rounds.
 
 **Input**: `$ARGUMENTS` — plan file path (the spec the code is being audited
@@ -54,8 +54,8 @@ Full contract: `references/input-acquisition.md`.
 Validate: plan file exists, the helper scripts resolve, and a GPT route is
 available — `OPENAI_API_KEY` **or** an active Azure profile
 (`AZURE_OPENAI_ENDPOINT`); ask which ROUTE exists, not whether one variable is
-set. Optional: `GEMINI_API_KEY` for Step 7 (falls back to Claude Opus when
-absent). `AUDIT_DB_URL` for cloud learning (optional).
+set. Step 7's final gate has its OWN route, checked now: `GEMINI_API_KEY`, else Azure
+Claude, else `ANTHROPIC_API_KEY`; with none, warn and continue (Step 7 degrades, never dies). `AUDIT_DB_URL` for cloud learning (optional).
 
 **If a prerequisite does not resolve, follow `references/prerequisite-ladder.md`
 — do not proceed as though it did, and do not die mid-flow.** It defines the
@@ -74,7 +74,7 @@ Kickoff card: `/audit-code — Starting | Plan: <path> | Max 6 rounds | SID: $SI
 
 When `--scope=full`, fetch the repo's symbol catalogue from architectural
 memory (if populated) and inline a "Symbol catalogue" section into the
-prompt context — it lets the auditor catch cross-file duplication that
+prompt context (POSIX shell only) — it lets the auditor catch cross-file duplication that
 diff-scope cannot see.
 
 ```bash
@@ -83,17 +83,23 @@ mkdir -p .audit
 # 1. Resolve repo identity + active snapshot. Read JSON with node, never jq (not in check-deps).
 node scripts/cross-skill.mjs resolve-repo-identity > .audit/repo-identity.json
 node scripts/cross-skill.mjs get-active-refresh-id --repo-uuid "$(node -p "require('./.audit/repo-identity.json').repoUuid")" > .audit/active-refresh.json
-# 2. Fetch top-N symbols, CARRYING the refresh id forward (ARCH_AUDIT_FULL_TOPN, default 200) — never retype it.
-REFRESH_ID=$(node -p "require('./.audit/active-refresh.json').refreshId")
-node scripts/cross-skill.mjs list-symbols-for-snapshot --json "{\"refreshId\":\"$REFRESH_ID\",\"limit\":200}"
+# 2. Fetch top-N symbols, CARRYING the refresh id forward — never retype it.
+#    Skip states (cloud:false, null refreshId, RPC_ERROR) fall through to no catalogue.
+REFRESH_ID=$(node -p "const r=require('./.audit/active-refresh.json');r.cloud===false?'':(r.refreshId||'')")
+TOPN="${ARCH_AUDIT_FULL_TOPN:-200}"
+rm -f .audit/symbol-catalogue.json
+if [ -n "$REFRESH_ID" ]; then
+  node scripts/cross-skill.mjs list-symbols-for-snapshot --json "{\"refreshId\":\"$REFRESH_ID\",\"limit\":$TOPN}" > .audit/symbol-catalogue.json \
+    || { echo "arch-memory: list-symbols failed (RPC_ERROR) — no catalogue" >&2; rm -f .audit/symbol-catalogue.json; }
+else echo "arch-memory: no active snapshot (cloud off or no refresh) — no catalogue" >&2; fi
 ```
 
-Format the rows as a `## Symbol catalogue (top N by domain)` section
+Read `.audit/symbol-catalogue.json` and format the rows as a `## Symbol catalogue (top N by domain)` section
 with `(domain alphabetical, symbol_name alphabetical)` ordering. Note
 truncation in the section header if `count == limit`.
 
-States: `cloud:false` or `refreshId:null` → skip section silently;
-`RPC_ERROR` → skip section, log warning to stderr. Advisory — never fail the run.
+The recipe handles the skip states itself (no `.audit/symbol-catalogue.json` ⇒ omit the
+section). Advisory — never fail the run.
 
 ---
 
@@ -174,10 +180,11 @@ before trusting the patch.** → `references/round-recipes.md` §untracked-file 
 ```bash
 # CHANGED = the exact files you edited this round, comma-separated, no globs:
 # the CLI splits on commas, so a pattern reaches it literally.
+R=2                                         # round number: bump it each later round so r$R files never overwrite an earlier round's
 CHANGED="scripts/openai-audit.mjs,tests/audit-skill-shell-recipes.test.mjs"
 FILES="$CHANGED"                            # + any dependent you also want in scope
 PASSES="sustainability"                     # e.g. sustainability,backend — per r2-plus-mode.md
-node scripts/openai-audit.mjs code "$PLAN_FILE" --round 2 --ledger .audit/$SID-ledger.json --diff .audit/$SID-diff.patch --changed "$CHANGED" --files "$FILES" --passes "$PASSES" --out .audit/$SID-r2-result.json 2>.audit/$SID-r2-stderr.log
+node scripts/openai-audit.mjs code "$PLAN_FILE" --round $R --ledger .audit/$SID-ledger.json --diff .audit/$SID-diff.patch --changed "$CHANGED" --files "$FILES" --passes "$PASSES" --out .audit/$SID-r$R-result.json 2>.audit/$SID-r$R-stderr.log
 ```
 
 **R2+'s scope is always the diff, not Round 1's `--scope`** — `--files` overrides
@@ -494,14 +501,7 @@ are candidates for resolution. Full prompt + resolver invocation:
 failed is a different thing from never-attempted (`references/verification-discipline.md`
 §7):
 
-| State | Meaning |
-|---|---|
-| `completed` | finished without error, applicable to the resolved scope — decoupled from finding count: a `completed` pass stays `completed` at 0, 1, or many findings |
-| `errored` | started, did not complete (exception, timeout, non-2xx from a provider) |
-| `ineligible` | does not apply to this repo's resolved language/scope (e.g. a frontend-specific pass on a backend-only diff) |
-| `unavailable` | a concrete missing prerequisite — e.g. `AUDIT_DB_URL` unset for the architectural-memory catalogue |
-| `not-reached` | the round's control flow did not get to this pass/wave before stopping (rare — see below) |
-| `uncovered` | **file-level, from the result's `_coverage`, never from a pass:** changed files the audit did not (fully) examine — an unrecognised file type, an unreadable file, a deleted source file, a partial (head-cut or windowed) read. NOT `ineligible`: `ineligible` is an EXPECTED scope exclusion, and labelling a C# diff that way is exactly how twelve `.cs` files went unaudited under an APPROVE |
+States: `completed` · `errored` · `unavailable` · `ineligible` · `not-reached` · `uncovered` (file-level, never `ineligible`). Definitions: `references/convergence-report.md` §named states.
 
 **Per-round record.** `arch-memory` is resolved once by Step 0.5 and carried into
 every round's census (`ineligible` under `--scope=diff`). The five passes and three
@@ -592,7 +592,7 @@ require a shared SSoT, a parity assertion, or a declared `data-engine-claim` sur
 
 ---
 
-## Step 7 — Gemini Independent Review (MANDATORY)
+## Step 7 — Final Independent Review (Gemini by default; MANDATORY)
 
 > **Coverage rides into the review automatically.** The transcript builder projects each round's `_coverage` (every file
 > short of full coverage, capped, plus a digest of the full ledger), and the review envelope opens with an **Audit Coverage**

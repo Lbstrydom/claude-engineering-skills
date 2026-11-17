@@ -1,7 +1,7 @@
 ---
 name: audit-plan
 description: |
-  Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.
+  Iteratively audit a plan file (docs/plans/*.md) with GPT + final gate (Gemini/Claude).
   Multi-round refinement with an acceptance-rate early-stop (3 rounds default).
   Ledger-driven suppression on R2+ rounds prevents finding churn.
   Judges the plan DOCUMENT before anyone builds it. "Was the plan actually
@@ -21,8 +21,8 @@ description: |
 > `.claude/skills/audit-plan/SKILL.md` in full before continuing — the later steps,
 > including the mandatory final gate, still apply.
 
-Iteratively refine a plan with GPT + Gemini final review until findings
-plateau, then gate with the independent reviewer.
+Iteratively refine a plan with GPT until findings plateau, then gate with the
+independent reviewer (Gemini/Claude).
 
 **Input**: `$ARGUMENTS` — either a plan file path (PLAN_AUDIT) or a task
 description with no path (PLAN_CYCLE: generate-then-audit).
@@ -210,13 +210,11 @@ finding ("specify the store step") belongs to the code audit. Record the call
 When stopping with deferrals, append a `## Out of Scope (Future)` section to
 the plan listing deferred concerns with rationale.
 
-**Step 6 (Gemini final review) is MANDATORY** after the last audit round,
-regardless of convergence. No-key degradation ladder (same as audit-code's
-`references/gemini-gate.md` — never a silent skip): Gemini → Claude Opus
-fallback → an **independent adversarial review agent** over the plan +
-findings (record its verdict in the same APPROVE/CONCERNS/REJECT shape) →
-only when none of those is available, output `FINAL_GATE_SKIPPED` and do
-not claim full final-gate validation.
+**Step 6 (final review) is MANDATORY** after the last audit round, regardless of
+convergence. No silent skip; ladder as audit-code's `references/gemini-gate.md`:
+Gemini → Opus → an **independent adversarial review agent** (same
+APPROVE/CONCERNS/REJECT shape) → else `FINAL_GATE_SKIPPED`, never claiming full
+final-gate validation.
 
 ---
 
@@ -263,7 +261,7 @@ default, 5 absolute).
 
 ---
 
-## Step 6 — Gemini Independent Review (MANDATORY)
+## Step 6 — Final Independent Review (MANDATORY)
 
 Run the final reviewer — the newest Gemini Pro by default (`latest-pro`, resolved at runtime; override with `FINAL_REVIEW_MODEL`) as the final gate. Falls back to Claude Opus when
 `GEMINI_API_KEY` is absent.
