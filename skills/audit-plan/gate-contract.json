@@ -185,6 +185,26 @@
     {
       "line": "Status card after every phase; summarise, never dump raw JSON; show every plan edit",
       "reason": "UX Rules, condensed from the former five-item list (skill size ratchet offset). Presentation guidance for the agent, not a gate; the previous wording was likewise undispositioned prose guidance."
+    },
+    {
+      "line": "Iteratively audit a plan file (docs/plans/*.md) with GPT + final gate (Gemini/Claude).",
+      "reason": "Wording/route-naming edit (debt 71f46acf3d3f): names the final gate as Gemini-else-Claude; documents the existing Step 7 degradation ladder, makes no new enforcement claim — the ladder itself is stated and covered in references/gemini-gate.md."
+    },
+    {
+      "line": "Iteratively refine a plan with GPT until findings plateau, then gate with the",
+      "reason": "Wording/route-naming edit (debt 71f46acf3d3f): names the final gate as Gemini-else-Claude; documents the existing Step 7 degradation ladder, makes no new enforcement claim — the ladder itself is stated and covered in references/gemini-gate.md."
+    },
+    {
+      "line": "convergence. No silent skip; ladder as audit-code's `references/gemini-gate.md`:",
+      "reason": "Wording/route-naming edit (debt 71f46acf3d3f): names the final gate as Gemini-else-Claude; documents the existing Step 7 degradation ladder, makes no new enforcement claim — the ladder itself is stated and covered in references/gemini-gate.md."
+    },
+    {
+      "line": "APPROVE/CONCERNS/REJECT shape) → else `FINAL_GATE_SKIPPED`, never claiming full",
+      "reason": "Wording/route-naming edit (debt 71f46acf3d3f): names the final gate as Gemini-else-Claude; documents the existing Step 7 degradation ladder, makes no new enforcement claim — the ladder itself is stated and covered in references/gemini-gate.md."
+    },
+    {
+      "line": "final-gate validation.",
+      "reason": "Wording/route-naming edit (debt 71f46acf3d3f): names the final gate as Gemini-else-Claude; documents the existing Step 7 degradation ladder, makes no new enforcement claim — the ladder itself is stated and covered in references/gemini-gate.md."
     }
   ]
 }
