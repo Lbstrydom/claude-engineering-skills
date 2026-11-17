@@ -109,8 +109,8 @@ graph LR
 **A. One argv parser (D1, D15): `scripts/lib/sync-argv.mjs`** (#5 SSOT, #12 validation, #15 error handling)
 - `parseSyncArgv(argv) → { flags:{dryRun,noPrompt,adoptOrphans,overwriteDiverged,allowRollback,allowStaleBase,quietLegacyCheck}, target, targetPath, errors:string[] }`.
   It is pure and never throws. **Input contract**: the CALLER passes `process.argv.slice(2)` (the same region `assertKnownFlags` reads with `from = 2`), never the full `process.argv`; a test pins that the node and script paths are never reported as positionals. The complete grammar, every case rejected before target resolution:
-  - **Region**: only tokens before the first `--` are read. Tokens after it are ignored, matching
-    `assertKnownFlags`. A bare positional before `--` (anything not a flag and not a value flag's
+  - **Region**: only tokens before the first `--` are read, and ANY token after it is an error (amended at
+    implementation, code-audit R1 H11/H18/H19: discarding `-- --dry-run` would turn a safety flag into a real sync). A bare positional before `--` (anything not a flag and not a value flag's
     value) is an error, because this CLI takes no positionals.
   - **Value flags** (`--target`, `--target-path`) accept `--flag value` and `--flag=value`. These are
     errors, never "absent": a missing value, an empty value (`--target ""`, `--target=`), and a value
