@@ -682,6 +682,54 @@
     {
       "line": "Optional observation-only shadow reviewer (`FINAL_REVIEW_SHADOW`) — never gates.",
       "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+    },
+    {
+      "line": "Iteratively audit code against a plan with GPT + an independent final gate (Gemini, else Claude).",
+      "reason": "Wording/route-naming edit (debt 71f46acf3d3f): names the final gate as Gemini-else-Claude; documents the existing Step 7 degradation ladder, makes no new enforcement claim — the ladder itself is stated and covered in references/gemini-gate.md."
+    },
+    {
+      "line": "is not a substitute for the multi-pass GPT + final-gate adjudication this skill",
+      "reason": "Wording/route-naming edit (debt 71f46acf3d3f): names the final gate as Gemini-else-Claude; documents the existing Step 7 degradation ladder, makes no new enforcement claim — the ladder itself is stated and covered in references/gemini-gate.md."
+    },
+    {
+      "line": "set. Step 7's final gate has its OWN route, checked now: `GEMINI_API_KEY`, else Azure",
+      "reason": "Wording/route-naming edit (debt 71f46acf3d3f): names the final gate as Gemini-else-Claude; documents the existing Step 7 degradation ladder, makes no new enforcement claim — the ladder itself is stated and covered in references/gemini-gate.md."
+    },
+    {
+      "line": "Claude, else `ANTHROPIC_API_KEY`; with none, warn and continue (Step 7 degrades, never dies). `AUDIT_DB_URL` for cloud learning (optional).",
+      "reason": "Wording/route-naming edit (debt 71f46acf3d3f): names the final gate as Gemini-else-Claude; documents the existing Step 7 degradation ladder, makes no new enforcement claim — the ladder itself is stated and covered in references/gemini-gate.md."
+    },
+    {
+      "line": "# Any failure below (a command, the JSON, or an {\"ok\":false} envelope such as RPC_ERROR — exit stays 0) ends as \"no catalogue\".",
+      "reason": "Part of the Step 0.5 / R2+ shell recipe (debts ec5c549be2df, b47aba3b9a8e, 842d3cf87b6a): the recipe's own `if`/`:?` chain is the behaviour; verified by running it live (happy path and an {\"ok\":false} envelope) and parsed by tests/skill-command-blocks-parse-under-powershell.test.mjs. No SKILL-text exit-code claim to bind."
+    },
+    {
+      "line": "TOPN=\"${ARCH_AUDIT_FULL_TOPN:-200}\"    # Read JSON with node, never jq (not in check-deps).",
+      "reason": "Part of the Step 0.5 / R2+ shell recipe (debts ec5c549be2df, b47aba3b9a8e, 842d3cf87b6a): the recipe's own `if`/`:?` chain is the behaviour; verified by running it live (happy path and an {\"ok\":false} envelope) and parsed by tests/skill-command-blocks-parse-under-powershell.test.mjs. No SKILL-text exit-code claim to bind."
+    },
+    {
+      "line": "node scripts/cross-skill.mjs get-active-refresh-id --repo-uuid \"$(node -p \"require('./.audit/repo-identity.json').repoUuid\")\" > .audit/active-refresh.json &&",
+      "reason": "Part of the Step 0.5 / R2+ shell recipe (debts ec5c549be2df, b47aba3b9a8e, 842d3cf87b6a): the recipe's own `if`/`:?` chain is the behaviour; verified by running it live (happy path and an {\"ok\":false} envelope) and parsed by tests/skill-command-blocks-parse-under-powershell.test.mjs. No SKILL-text exit-code claim to bind."
+    },
+    {
+      "line": "REFRESH_ID=$(node -p \"const r=require('./.audit/active-refresh.json');r.ok===false||r.cloud===false?'':(r.refreshId||'')\") && [ -n \"$REFRESH_ID\" ] &&",
+      "reason": "Part of the Step 0.5 / R2+ shell recipe (debts ec5c549be2df, b47aba3b9a8e, 842d3cf87b6a): the recipe's own `if`/`:?` chain is the behaviour; verified by running it live (happy path and an {\"ok\":false} envelope) and parsed by tests/skill-command-blocks-parse-under-powershell.test.mjs. No SKILL-text exit-code claim to bind."
+    },
+    {
+      "line": "node -e \"process.exitCode=require('./.audit/symbol-catalogue.json').ok===false?1:0\"",
+      "reason": "Part of the Step 0.5 / R2+ shell recipe (debts ec5c549be2df, b47aba3b9a8e, 842d3cf87b6a): the recipe's own `if`/`:?` chain is the behaviour; verified by running it live (happy path and an {\"ok\":false} envelope) and parsed by tests/skill-command-blocks-parse-under-powershell.test.mjs. No SKILL-text exit-code claim to bind."
+    },
+    {
+      "line": "section). Advisory — never fail the run.",
+      "reason": "Wording/route-naming edit (debt 71f46acf3d3f): names the final gate as Gemini-else-Claude; documents the existing Step 7 degradation ladder, makes no new enforcement claim — the ladder itself is stated and covered in references/gemini-gate.md."
+    },
+    {
+      "line": "R=\"${R:?set R to this round's number}\"       # required: r$R files never overwrite an earlier round's",
+      "reason": "Part of the Step 0.5 / R2+ shell recipe (debts ec5c549be2df, b47aba3b9a8e, 842d3cf87b6a): the recipe's own `if`/`:?` chain is the behaviour; verified by running it live (happy path and an {\"ok\":false} envelope) and parsed by tests/skill-command-blocks-parse-under-powershell.test.mjs. No SKILL-text exit-code claim to bind."
+    },
+    {
+      "line": "States: `completed` · `errored` · `unavailable` · `ineligible` · `not-reached` · `uncovered` (file-level, never `ineligible`). Definitions: `references/convergence-report.md` §named states.",
+      "reason": "Part of the Step 0.5 / R2+ shell recipe (debts ec5c549be2df, b47aba3b9a8e, 842d3cf87b6a): the recipe's own `if`/`:?` chain is the behaviour; verified by running it live (happy path and an {\"ok\":false} envelope) and parsed by tests/skill-command-blocks-parse-under-powershell.test.mjs. No SKILL-text exit-code claim to bind."
     }
   ]
 }

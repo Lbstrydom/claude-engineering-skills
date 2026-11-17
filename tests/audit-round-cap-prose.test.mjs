@@ -52,9 +52,9 @@ describe('cap numbers in prose equal the code constant', () => {
   });
 });
 
-/** The first fenced bash line in `md` that starts the given openai-audit invocation with `--round 2`. */
+/** The first fenced bash line in `md` that starts the given openai-audit invocation with `--round 2` (or the round-parameterised `--round $R`). */
 function publishedRound2Line(md, mode) {
-  const re = new RegExp(`^node scripts/openai-audit\\.mjs ${mode} "\\$PLAN_FILE"[^\\n]*--round 2[^\\n]*$`, 'm');
+  const re = new RegExp(`^node scripts/openai-audit\\.mjs ${mode} "\\$PLAN_FILE"[^\\n]*--round (?:2|\\$R)(?!\\w)[^\\n]*$`, 'm');
   const m = md.match(re);
   assert.ok(m, `no published R2 ${mode} command line found`);
   return m[0];
@@ -63,10 +63,10 @@ function publishedRound2Line(md, mode) {
 /** Split a published command line into argv, substituting placeholders; drops the shell redirect. */
 function toArgv(line, { planFile, sid, round }) {
   const noRedirect = line.replace(/\s2>\S+\s*$/, '');
-  const vars = { PLAN_FILE: planFile, SID: sid, CHANGED: 'a.mjs', FILES: 'a.mjs', PASSES: 'backend', SCOPE: 'diff' };
+  const vars = { PLAN_FILE: planFile, SID: sid, CHANGED: 'a.mjs', FILES: 'a.mjs', PASSES: 'backend', SCOPE: 'diff', R: String(round) };
   const substituted = noRedirect
     .replace(/\$\{?([A-Z_]+)\}?/g, (_, name) => vars[name] ?? name.toLowerCase())
-    .replace(/--round 2/, `--round ${round}`);
+    .replace(/--round 2(?!\w)/, `--round ${round}`);
   const out = [];
   for (const m of substituted.matchAll(/"([^"]*)"|(\S+)/g)) out.push(m[1] ?? m[2]);
   return out.slice(1); // drop the leading `node`

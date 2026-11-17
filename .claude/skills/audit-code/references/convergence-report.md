@@ -4,6 +4,19 @@ summary: Step 6–7 detail — census bookkeeping, example report card, source-r
 
 # Convergence report and final-gate detail — Steps 6–7
 
+## Step 6 — named states
+
+Per pass/wave/capability (`references/verification-discipline.md` §7):
+
+| State | Meaning |
+|---|---|
+| `completed` | finished without error, applicable to the resolved scope — decoupled from finding count: a `completed` pass stays `completed` at 0, 1, or many findings |
+| `errored` | started, did not complete (exception, timeout, non-2xx from a provider) |
+| `ineligible` | does not apply to this repo's resolved language/scope (e.g. a frontend-specific pass on a backend-only diff) |
+| `unavailable` | a concrete missing prerequisite — e.g. `AUDIT_DB_URL` unset for the architectural-memory catalogue |
+| `not-reached` | the round's control flow did not get to this pass/wave before stopping (rare — see below) |
+| `uncovered` | **file-level, from the result's `_coverage`, never from a pass:** changed files the audit did not (fully) examine — an unrecognised file type, an unreadable file, a deleted source file, a partial (head-cut or windowed) read. NOT `ineligible`: `ineligible` is an EXPECTED scope exclusion, and labelling a C# diff that way is exactly how twelve `.cs` files went unaudited under an APPROVE |
+
 ## Step 6 — the per-round execution record
 
 **A per-round execution record.** `arch-memory` is resolved **once**, by

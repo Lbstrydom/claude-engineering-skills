@@ -2,7 +2,7 @@
 summary: Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop.
 ---
 
-# Gemini Independent Review — Step 7 Protocol
+# Final Independent Review (Gemini by default) — Step 7 Protocol
 
 This is the canonical copy. Consuming skills carry a `references/gemini-gate.md`
 synced by `node scripts/sync-shared-audit-refs.mjs` and drift-checked in
