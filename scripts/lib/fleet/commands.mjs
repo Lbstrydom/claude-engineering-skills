@@ -343,7 +343,25 @@ export function stackBaseFrom(ctx, flags, branch) {
   if (b === branch) throw new ArgvError(`fleet claim: --base ${b} is this session's own branch — name the branch it is stacked on`);
   const h = headOf(ctx.cwd, `refs/heads/${b}`);
   if (!h.ok) throw new ArgvError(`fleet claim: --base ${b} is not a local branch — fetch or create it first (a stacked base is measured locally)`);
-  return { name: b, oid: h.oid };
+  return { name: b, oid: h.oid, ...forkPointCheck(ctx, b, h.oid, branch) };
+}
+
+/**
+ * Is the stack base's commit NOW a sound fork point for this session? Only when it is a STRICT ancestor of the session's
+ * head: the session then has commits of its own beyond it. An equal tip, or a base that contains the session's head, cannot
+ * be told apart from a base fast-forwarded onto the session's work (`X...S` would be empty and the session's files would all
+ * read as inherited), so nothing is recorded and overlap is measured from the repo base — the safe side. A fresh branch with
+ * no commits yet re-runs `claim --base` after its first commit. Run before the lock, like every other git fact claim reads.
+ * @returns {{refused?: string}}
+ */
+function forkPointCheck(ctx, base, baseOid, branch) {
+  if (!branch) return {}; // only a branch claim records a fork point
+  const head = headOf(ctx.cwd, `refs/heads/${branch}`);
+  const why = (r) => ({ refused: `fork point not recorded — ${r}; overlap is measured from ${ctx.config.baseBranch} (re-run claim --base ${base} after the session's first commit of its own)` });
+  if (!head.ok) return why(`${branch} could not be resolved`);
+  if (head.oid === baseOid) return why(`${branch} and ${base} point at the same commit, so ${branch} has no commits of its own to measure`);
+  if (!runGit(['merge-base', '--is-ancestor', baseOid, head.oid], ctx.cwd).ok) return why(`${base}'s tip is not an ancestor of ${branch} (it has moved on, or already contains ${branch}'s work)`);
+  return {};
 }
 
 export function cmdClaim(ctx, flags) {
@@ -393,6 +411,14 @@ export function cmdClaim(ctx, flags) {
     if (verdict.verdict === 'refused' || (verdict.verdict === 'blocked' && !overriding)) return { verdict, mode };
 
     const stamp = nowIso(ctx);
+    const fresh = mode === 'new';
+    const gen = fresh ? (cur ? cur.gen + 1 : 1) : cur.gen;
+    const kind = fresh ? 'branch' : cur.source.kind;
+    // The fork point (the stack base's COMMIT at claim, stack-bases.mjs): one immutable, create-only record per (id, gen, base),
+    // written FIRST under the lock, before any session record (the --override writes included), so a throw here leaves no
+    // session written. A repeat keeps the first; nothing is ever overwritten or deleted (audit R4/R5); un-stacking
+    // (--base <the repo base>) just stops naming one; a base that does not predate the session's own commits records none.
+    if (stackBase?.oid && !stackBase.refused && kind === 'branch') writeStackBase(ctx.dir, { id, gen, base: stackBase.name, oid: stackBase.oid, at: stamp });
     const known = [];
     if (overriding) {
       for (const c of blocking) {
@@ -401,16 +427,11 @@ export function cmdClaim(ctx, flags) {
         t.writeSession({ ...other, rev: other.rev + 1, updatedAt: stamp, knownOverlaps: [...other.knownOverlaps, { with: id, by: 'human (--override)', at: stamp, note: 'override of a blocked claim' }] });
       }
     }
-    const fresh = mode === 'new';
     const base = fresh
-      ? { gen: cur ? cur.gen + 1 : 1, ready: null, waitingOn: [], knownOverlaps: [], createdAt: stamp, state: 'working', startOid,
+      ? { gen, ready: null, waitingOn: [], knownOverlaps: [], createdAt: stamp, state: 'working', startOid,
         source: { kind: 'branch', branch, repo: null, prNumber: null, headRepo: null, headRef: branch, baseRef: stackBase?.name ?? ctx.config.baseBranch } }
       : { gen: cur.gen, ready: cur.ready, waitingOn: cur.waitingOn, knownOverlaps: cur.knownOverlaps, createdAt: cur.createdAt, state: cur.state, startOid: cur.startOid,
         source: stackBase && cur.source.kind === 'branch' ? { ...cur.source, baseRef: stackBase.name } : cur.source };
-    // The fork point (the stack base's COMMIT at claim, stack-bases.mjs): one immutable, create-only record per (id, gen, base),
-    // written before the session record under the same lock. A repeat keeps the first; nothing is ever overwritten or deleted
-    // (audit R4/R5), and un-stacking (--base <the repo base>) just stops naming one.
-    if (stackBase?.oid && base.source.kind === 'branch') writeStackBase(ctx.dir, { id, gen: base.gen, base: stackBase.name, oid: stackBase.oid, at: stamp });
     if (flags['--host-session'] !== undefined) writeHost(ctx.dir, { id, hostSession: flags['--host-session'], at: stamp });
     const record = t.writeSession({
       schemaVersion: 1, rev: cur ? cur.rev + 1 : 1, id, ...base,
@@ -423,6 +444,8 @@ export function cmdClaim(ctx, flags) {
   if (!tx.ok) return lockFailed();
   const v = tx.value;
   if (v.code === 'argv') throw new ArgvError(v.reason);
+  const forkRefused = v.record && v.record.source.kind === 'branch' ? stackBase?.refused : undefined;
+  if (forkRefused) process.stderr.write(`warning: fleet claim --base ${stackBase.name}: ${forkRefused}\n`);
   const text = renderClaimVerdict(v.verdict, { id, cmd: ctx.cmd, measure: facts.base.measure, baseName: ctx.config.baseBranch, sharedConfig: ctx.config })
     + (!start.ok && v.mode === 'new' && v.record ? `
 warning: startOid not recorded — ${start.reason}` : '')
@@ -433,6 +456,7 @@ warning: startOid not recorded — ${start.reason}` : '')
   return {
     ok: Boolean(good), code: good ? 'ok' : 'refused', id, mode: v.mode, verdict: v.verdict.verdict, overridden: Boolean(v.verdict.overridden),
     ...(!start.ok && v.mode === 'new' ? { startOidWarning: start.reason } : {}),
+    ...(forkRefused ? { stackBaseWarning: forkRefused } : {}),
     conflicts: v.verdict.conflicts, ...(v.verdict.reason ? { reason: v.verdict.reason } : {}), ...(v.record ? { record: v.record } : {}), text,
   };
 }

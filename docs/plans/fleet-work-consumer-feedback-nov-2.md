@@ -80,7 +80,10 @@ the pivot rule fired on this concern: a mutable record kept producing lifecycle 
 would let a base later fast-forwarded onto the session's work, or one that absorbed commits made before the claim, empty
 the session's own diff and hide its overlap (audit R1 H9, R2 H1/M2, R3 H1/M1 — a containment heuristic was tried first
 and could not tell those from a fresh branch). No usable record (claimed by an older fleet, or for an earlier claim) falls
-back to the from-base diff with a note, never to "no files". The base
+back to the from-base diff with a note, never to "no files". A record is written only when the base's commit is a STRICT
+ancestor of the session's head (#379 review): at an equal tip, or with a base that already contains the session's head, the
+own diff would be empty, so nothing is recorded, the claim says why on stderr, and a fresh branch re-runs `claim --base`
+after its first commit. The fork-point write is the first write under the lock, before the `--override` writes. The base
 need not be a registered session: the reported base was assembled by the coordinator and owned by none (deliberated, M5).
 What a mis-declared base can still do is bounded: it changes FILE evidence only, never declared-path conflicts, and an
 unrelated base only widens the diff. `changed` itself is unchanged, so check hooks

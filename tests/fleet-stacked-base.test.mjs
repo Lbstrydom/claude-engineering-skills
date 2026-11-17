@@ -76,11 +76,15 @@ describe('claim --base: overlap from the real fork point', () => {
     }
   });
 
-  /** `late` stacks on shared-base, commits its own files (before or after its claim), then the base absorbs them. */
+  /**
+   * `late` stacks on shared-base with one commit of its own, commits the clashing work (before or after its claim), then the
+   * base absorbs it. (A claim needs a commit of its own beyond the base to record a fork point — #379 review.)
+   */
   function absorbed({ commitBeforeClaim, swallow }) {
     const s = stackedFleet(1);
     const r = s.fx.repo;
     git(['checkout', '-q', '-b', 'late', 'shared-base'], r);
+    writeFile(r, 'late/own.txt', 'o\n'); git(['add', '--', 'late'], r); git(['commit', '-q', '-m', 'late own'], r);
     const commit = () => { writeFile(r, 'late/f.txt', 'l\n'); writeFile(r, 'child-1/f.txt', 'clash\n'); git(['add', '--', 'late', 'child-1'], r); git(['commit', '-q', '-m', 'late work'], r); };
     if (commitBeforeClaim) commit();
     assert.equal(s.f(['claim', '--id', 'late', '--intent', 'l', '--paths', 'late/**', '--base', 'shared-base']).status, 0);
@@ -111,6 +115,70 @@ describe('claim --base: overlap from the real fork point', () => {
     git(['checkout', '-q', 'main'], s.fx.repo);
     const it = s.f(['status', '--json']).json.status.items.find((x) => x.id === 'late');
     assert.ok(it.overlaps.some((o) => o.with === 'child-1' && o.files.includes('child-1/f.txt')), JSON.stringify(it.overlaps));
+  });
+
+  /** `late` off shared-base commits its own file and a clash with child-1, then the base absorbs it BEFORE the claim. */
+  function absorbedBeforeClaim(swallow) {
+    const s = stackedFleet(1);
+    const r = s.fx.repo;
+    git(['checkout', '-q', '-b', 'late', 'shared-base'], r);
+    writeFile(r, 'late/f.txt', 'l\n'); writeFile(r, 'child-1/f.txt', 'clash\n');
+    git(['add', '--', 'late', 'child-1'], r); git(['commit', '-q', '-m', 'late work'], r);
+    git(['checkout', '-q', 'main'], r);
+    swallow(r);
+    git(['checkout', '-q', 'late'], r);
+    const c = s.f(['claim', '--id', 'late', '--intent', 'l', '--paths', 'late/**', '--base', 'shared-base']);
+    git(['checkout', '-q', 'main'], r);
+    const records = fs.readdirSync(path.join(r, '.git', 'fleet', 'stack-bases'));
+    return { s, c, records, it: s.f(['status', '--json']).json.status.items.find((x) => x.id === 'late') };
+  }
+
+  for (const [what, swallow, why] of [
+    ['fast-forwarded onto the session\'s tip', ff, /late and shared-base point at the same commit/],
+    ['moved past the session\'s tip', past, /shared-base's tip is not an ancestor of late/],
+  ]) {
+    it(`a base ${what} BEFORE the claim: no fork point is recorded, overlap keeps the session's files, and it says why (#379 review)`, () => {
+      const { c, records, it } = absorbedBeforeClaim(swallow);
+      assert.equal(c.status, 0, c.stdout + c.stderr);
+      assert.match(c.stderr, /warning: fleet claim --base shared-base: fork point not recorded — /);
+      assert.match(c.stderr, why);
+      assert.equal(records.length, 1, `only child-1's record: ${records}`);
+      assert.equal(it.inherited, undefined, 'nothing is classed as inherited');
+      assert.ok(it.overlaps.some((o) => o.with === 'child-1' && o.files.includes('child-1/f.txt')), JSON.stringify(it.overlaps));
+    });
+  }
+
+  it('a fresh branch claimed at the base\'s tip records nothing until a re-claim after its first commit', () => {
+    const s = stackedFleet(1);
+    const r = s.fx.repo;
+    git(['checkout', '-q', '-b', 'fresh', 'shared-base'], r);
+    const c = s.f(['claim', '--id', 'fresh', '--intent', 'f', '--paths', 'fresh/**', '--base', 'shared-base', '--json']);
+    assert.equal(c.status, 0, c.stdout + c.stderr);
+    assert.match(c.json.stackBaseWarning, /point at the same commit/);
+    writeFile(r, 'fresh/f.txt', 'f\n'); git(['add', '--', 'fresh'], r); git(['commit', '-q', '-m', 'fresh'], r);
+    const again = s.f(['claim', '--id', 'fresh', '--base', 'shared-base']);
+    assert.equal(again.status, 0, again.stdout + again.stderr);
+    assert.doesNotMatch(again.stderr, /fork point not recorded/);
+    git(['checkout', '-q', 'main'], r);
+    const it = s.f(['status', '--json']).json.status.items.find((x) => x.id === 'fresh');
+    assert.deepEqual([...it.inherited].sort(), ['base/x.txt', 'base/y.txt']);
+  });
+
+  it('a fork-point write that throws on the --override path leaves no session written (#379 review)', () => {
+    const s = stackedFleet(1);
+    const r = s.fx.repo;
+    git(['checkout', '-q', '-b', 'ov', 'shared-base'], r);
+    writeFile(r, 'ov/f.txt', 'o\n'); git(['add', '--', 'ov'], r); git(['commit', '-q', '-m', 'ov'], r);
+    const claim = (extra) => s.f(['claim', '--id', 'ov', '--intent', 'o', '--paths', 'child-1/**', '--base', 'shared-base', ...extra]);
+    assert.notEqual(claim([]).status, 0, 'control: without --override the claim is blocked');
+    const sb = path.join(r, '.git', 'fleet', 'stack-bases');
+    fs.rmSync(sb, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.writeFileSync(sb, 'not a directory'); // writeStackBase's mkdir now throws
+    const before = JSON.stringify(sessionRec(s.fx, 'child-1'));
+    assert.notEqual(claim(['--override']).status, 0);
+    git(['checkout', '-q', 'main'], r);
+    assert.equal(JSON.stringify(sessionRec(s.fx, 'child-1')), before, 'the other session\'s knownOverlaps were not written');
+    assert.equal(sessionRec(s.fx, 'ov'), undefined, 'no session record for ov');
   });
 
   it('a base rewritten since the claim (recorded fork point no longer in it) is measured from the base, and said (audit R6)', () => {

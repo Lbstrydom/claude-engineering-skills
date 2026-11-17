@@ -19,6 +19,7 @@ You are one of several concurrent sessions coordinated by /fleet.
    Run it from INSIDE your worktree: a claim binds the branch and worktree it runs from. From elsewhere, add --worktree <path>.
    A warning that your id is not your bound branch means the claim went to the wrong place: fix it before working.
    Stacked on another UNLANDED branch? Add --base <that-branch>, so your overlap is measured from your real fork point.
+   It is recorded only once you have a commit of your own beyond that branch: claimed earlier, re-run the claim with --base.
    If the result is BLOCKED (exit 3), STOP and report which session overlaps. Do not retry, rename your id, or use --override.
 2. Renew your lease while working: node scripts/fleet.mjs touch
    Push your branch early (git push -u origin <your-branch>) and after each meaningful commit, and push an

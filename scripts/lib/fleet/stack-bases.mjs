@@ -59,7 +59,7 @@ export function stackBaseFor(dir, session) {
   const base = session.source?.baseRef;
   let raw;
   try { raw = JSON.parse(fs.readFileSync(fileFor(dir, session.id, session.gen, base), 'utf8')); } catch (e) {
-    return { ok: false, reason: e.code === 'ENOENT' ? 'no fork point recorded for this claim (an older fleet made it)' : `fork-point record unreadable (${e.message})` };
+    return { ok: false, reason: e.code === 'ENOENT' ? 'no fork point recorded for this claim (an older fleet made it, or the base did not predate the session\'s own commits at claim)' : `fork-point record unreadable (${e.message})` };
   }
   const p = StackBaseSchema.safeParse(raw);
   if (!p.success) return { ok: false, reason: 'fork-point record failed validation' };
