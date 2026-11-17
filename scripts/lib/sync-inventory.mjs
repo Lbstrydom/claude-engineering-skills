@@ -1,9 +1,24 @@
 /**
- * @fileoverview Side-effect-free inventory of files-to-sync per consumer.
+ * @fileoverview The ONE owner of "which files does a consumer receive" — the
+ * bundle inventory — consumed by BOTH the sync (`sync-to-repos.mjs`) and every
+ * library/verifier caller (isolation verifier, relocation guard, dependency
+ * derivation, `getSyncClosure`).
  *
- * Extracts the existing bundleForRepo/REPOS logic from sync-to-repos.mjs into
- * a library module so tests + the verifier CLI can import it without running
- * the sync main.  Plan §7 (R2 H2 fix).
+ * It used to exist twice: this module held a hand-kept mirror of lists that
+ * `sync-to-repos.mjs` also declared, with "keep in lock-step" comments and a
+ * parity test as the only thing standing between two independently editable
+ * copies of deployment inventory (debt 3627c83a). The sync is a source-only CLI
+ * and this module is side-effect free, so the dependency runs one way: the CLI
+ * imports from here. There is no second copy to drift.
+ *
+ * FAIL-CLOSED READS (debt 8e5974a92c98). `readSource` used to turn EVERY
+ * filesystem error into `null`, and the closure walker treats `null` as "no
+ * imports" — so an unreadable entry silently dropped its whole import subtree
+ * from the bundle, and the next sync's GC then deleted that subtree from every
+ * consumer. A file the walker visits is, by construction, a member of the
+ * universe enumerated from disk a moment earlier, so a read failure on it is a
+ * race or a fault, never a retirement: it throws. A declared entry point that
+ * is not on disk throws too (`MissingEntryPointError`).
  *
  * @module scripts/lib/sync-inventory
  */
@@ -14,60 +29,95 @@ import { enumerateSkillFiles, listSkillNames } from './skill-packaging.mjs';
 import { CONSUMER_REPOS } from './consumer-repos.mjs';
 import { collectImportClosure } from './module-graph.mjs';
 import {
-  CORE_ENTRY as CORE_ENTRY_ALL, LEARNING_ENTRY, ARCH_ENTRY, SYNC_ISOLATION_ENTRY, DEBT_ENTRY,
+  CORE_ENTRY, LEARNING_ENTRY, ARCH_ENTRY, SYNC_ISOLATION_ENTRY, DEBT_ENTRY,
 } from './sync-entry-lists.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
 
-
-// CORE_NON_IMPORTABLE lists modules that are documented runtime injection
-// points (callers `import()` them dynamically) so the static import-graph
-// walker cannot reach them. They are a SUBSET of the shared CORE_ENTRY
-// (sync-entry-lists.mjs, the one list); this array only marks which of them the
-// static walker cannot follow.
+// ── Canonical file sets ────────────────────────────────────────────────────
 //
-// NOTE: this used to also carry a `./lib/redact.mjs` entry (relative-form
-// duplicate of the absolute `scripts/lib/redact.mjs` below), on the theory
-// that different callers use each form. sync-to-repos.mjs's CORE_ENTRY only
-// ever lists the absolute form — and a bare `./lib/redact.mjs` entry point
-// normalises (in collectImportClosure) to the nonexistent repo-root path
-// `lib/redact.mjs`, which silently entered every consumer's file list as a
-// phantom entry (readFile returns null, but the path stays in `visited`,
-// so it surfaced in `files` and in `bundleDeps()`'s external-package scan
-// with nothing to read). Removed; the closure reaches redact.mjs's own
-// dynamic imports via the entries below regardless.
-const CORE_NON_IMPORTABLE = [
-  'scripts/lib/redact.mjs',
-  // Arm-eval framework — reached only via dynamic imports in cross-skill.mjs
-  // and openai-audit.mjs, so the walker cannot follow. Authoritative list is
-  // sync-to-repos.mjs; keep in lock-step.
-  'scripts/lib/arm-eval/run.mjs',
-  'scripts/lib/arm-eval/decision.mjs',
-  'scripts/lib/arm-eval/toggle.mjs',
-  'scripts/lib/store/arm-eval.mjs',
-  'scripts/lib/persona-test/semantic-compare.mjs',
-  // Bash-shelled from persona-test/click-test SKILL.mds (`node
-  // scripts/lib/device-presets.mjs prep|prep-matrix`) — never statically
-  // imported, so the walker can't reach it. Mirrors sync-to-repos.mjs.
-  'scripts/lib/device-presets.mjs',
-  // Loaded by .claude/hooks/legacy-surface-advisory.mjs through a COMPUTED
-  // two-layout candidate path (path.join + pathToFileURL), so the static import
-  // walker cannot reach it. Without this entry the hook ships but its inspector
-  // does not, and loadInspector() returns null -- the advisory is silently dead,
-  // which is the exact failure being fixed. Keep in lock-step across both files.
-  'scripts/lib/install/legacy-surfaces.mjs',
+// The audit-loop deployment is NOT a hand-maintained file list. Each bundle
+// declares only its ENTRY POINTS — scripts invoked directly (CLIs, hooks)
+// plus the few modules reached solely via a *computed* dynamic import, which
+// static analysis cannot follow. Every lib/* dependency is auto-resolved by
+// walking the ESM import graph (see resolveBundle / collectImportClosure).
+//
+// Why: a new lib module imported by a synced script used to need a manual
+// CORE_SCRIPTS entry, or the consumer repo broke at runtime with
+// ERR_MODULE_NOT_FOUND. The walker eliminates that drift — the first static
+// or string-literal `import` of a module pulls it into every bundle that
+// reaches it, with no edit here.
+//
+// ASSETS are non-importable leaves (read via fs, or generated): they carry
+// no import edges, so the walker cannot discover them — listed explicitly.
+
+/**
+ * Non-importable core assets — read via fs or generated, never `import`ed,
+ * so the import-graph walker cannot reach them.
+ */
+const CORE_ASSETS = [
+  // Regenerated at the start of every `npm run sync` (see writeManifest);
+  // consumer repos read it to detect stale audit-tool files vs upstream.
+  'scripts/.sync-manifest.json',
+  // fs-read by lib/dashboard/collect-reference.mjs (flows.json) and
+  // lib/dashboard/load-assets.mjs (css/js) — never imported.
+  'scripts/lib/dashboard/flows.json',
+  'scripts/lib/dashboard/assets/dashboard.css',
+  'scripts/lib/dashboard/assets/dashboard.js',
+  // Authoritative HTML-attribute contract for persona-test consistency mode.
+  // Referenced by skills/persona-test/SKILL.md Phase 3b + references/consistency-mode.md;
+  // consumer-app frontend devs read it to author their data-engine-* annotations.
+  'docs/reference/consistency-contract.md',
+  // Tiered-pipeline OSS call budgets. `lib/oss-call-policy.mjs` reads this via
+  // `new URL('./oss-call-policy.json', import.meta.url)` — a module-relative fs
+  // read, so the import walker never sees it and it did not ship. The reader
+  // deliberately THROWS rather than falling back to a default budget, so in a
+  // consumer the tiered shadow died with
+  // `[oss-call-policy] failed to read .../scripts/.claude-skills/lib/oss-call-policy.json: ENOENT`
+  // and every affected run recorded `fallback_legacy` — 15 wasted observations
+  // in the Phase-14 window before the cause was traced (2026-07-18).
+  'scripts/lib/oss-call-policy.json',
+  // The bundle's npm-dependency declaration (generate-bundle-deps.mjs). JSON
+  // fs-read by check-setup, so the import walker cannot discover it.
+  'scripts/lib/bundle-deps.json',
+  // Which audit-store views are time-windowed — same fs-read blind spot as the two
+  // above (`lib/store/windowed-views.mjs` reads it). Without it the Home dashboard
+  // reads every queue as `windowed: 'unknown'` and all five chips lose their delta,
+  // Q3/debt/upstream included, which are not windowed. It describes the SHARED
+  // store's views, so it is one declaration everywhere, not per-repo config; root
+  // rather than `.audit-loop/`, whose isolation guards against `supabase db push`.
+  '.windowed-views.json',
+  // postgres-parity M4 — setup-postgres.mjs reads compat-bootstrap.sql via
+  // fs (the import-graph walker can't follow fs reads). Migrations are
+  // similarly fs-read; ship the whole directory so `--migrate` works on
+  // consumer repos without them needing this repo cloned.
+  'scripts/lib/db/compat-bootstrap.sql',
+  // `--adopt`'s schema contract. Same fs-read blind spot as the two above, but
+  // it failed differently: `runAdopt` hard-aborts at its entrypoint when the
+  // manifest is missing, so `--adopt` — the documented one-time bootstrap for a
+  // pre-provisioned DB — could not run in ANY consumer repo. It lives under
+  // `tests/fixtures/` here because that is where it is generated and asserted;
+  // for a consumer it is pure runtime. The sync loop remaps it to
+  // `.audit-loop/expected-schema.json` via sync-path-map.
+  'tests/fixtures/expected-schema.json',
 ];
 
-// The importable half is DERIVED from the one shared list (sync-entry-lists.mjs): everything the
-// static walker can reach. Only the dynamic-import-only subset above is declared here, and
-// tests/sync-inventory-parity.test.mjs asserts it is a subset of the shared CORE_ENTRY.
-const CORE_ENTRY = CORE_ENTRY_ALL.filter((e) => !CORE_NON_IMPORTABLE.includes(e));
-
-
-
-
-
-function syncMigrations() {
+/**
+ * Enumerate `supabase/migrations/*.sql` at sync time so newly-added
+ * migrations ship to consumer repos automatically. Returns an empty
+ * array if the directory doesn't exist (graceful — running in a
+ * non-canonical repo).
+ *
+ * Important — destination path is `.audit-loop/migrations/<f>` in the
+ * consumer repo, NOT `supabase/migrations/<f>`. This isolates audit-loop
+ * infrastructure migrations from any consumer-app Supabase product
+ * migrations: a careless `supabase db push` from the consumer won't pick
+ * them up and apply them against the wrong Supabase project (see
+ * `reference_supabase_project.md` — audit-loop uses a dedicated project).
+ * The src path remap is handled by the sync loop (search for
+ * `.audit-loop/migrations` in the loop body).
+ */
+export function syncMigrations() {
   const dir = path.join(REPO_ROOT, 'supabase', 'migrations');
   try {
     return fs.readdirSync(dir)
@@ -79,8 +129,7 @@ function syncMigrations() {
     // such directory. Every other errno is not: EACCES on an existing directory,
     // an I/O failure, or a mis-resolved REPO_ROOT all previously returned `[]`,
     // which is indistinguishable from "no migrations" and ships a bundle with
-    // the schema silently missing. Same expected-absence-vs-real-failure split
-    // as audit-clean.mjs's BENIGN_FS_CODES.
+    // the schema silently missing.
     if (err.code === 'ENOENT') return [];
     throw new Error(
       `syncMigrations: cannot read ${dir} (${err.code || err.message}). Refusing to report an empty `
@@ -90,53 +139,34 @@ function syncMigrations() {
   }
 }
 
-function buildSkillFiles() {
-  const out = [];
-  const skillsDir = path.join(REPO_ROOT, 'skills');
-  for (const name of listSkillNames(skillsDir)) {
-    const skillDir = path.join(skillsDir, name);
-    const files = enumerateSkillFiles(skillDir, { strict: true });
-    for (const rel of files) {
-      out.push(`.claude/skills/${name}/${rel}`);
-    }
+// ── Import-graph resolution ────────────────────────────────────────────────
+
+/** A bundle file the walker visited could not be read — never reported as "no imports". */
+export class SourceReadError extends Error {
+  constructor(rel, cause) {
+    super(`sync inventory: cannot read ${rel} (${cause?.code || cause?.message}). Refusing to resolve a bundle `
+      + 'that silently omits its import subtree — that subtree would then be deleted from every consumer by GC.', { cause });
+    this.name = 'SourceReadError';
+    this.path = rel;
+    this.code = cause?.code ?? null;
   }
-  return out;
 }
 
-const EDITOR_FILES = ['.vscode/mcp.json'];
-const CLAUDE_CODE_FILES = [
-  '.claude/hooks/arch-memory-check.sh',
-  // Authoritative list is sync-to-repos.mjs; keep in lock-step.
-  '.claude/hooks/install-cloud-deps.sh',
-  '.claude/settings.json',
-];
+/** A declared entry point is not on disk — its whole subtree would vanish from the bundle. */
+export class MissingEntryPointError extends Error {
+  constructor(missing) {
+    super(`sync inventory: ${missing.length} declared entry point(s) are not on disk: ${missing.join(', ')}. `
+      + 'Fix the entry list (scripts/lib/sync-entry-lists.mjs) or restore the file; refusing to ship a bundle without them.');
+    this.name = 'MissingEntryPointError';
+    this.missing = missing;
+  }
+}
 
-const CORE_ASSETS = [
-  'scripts/.sync-manifest.json',
-  'scripts/lib/dashboard/flows.json',
-  'scripts/lib/dashboard/assets/dashboard.css',
-  'scripts/lib/dashboard/assets/dashboard.js',
-  'docs/reference/consistency-contract.md',
-  // Tiered-pipeline OSS call budgets — read via a module-relative fs read
-  // (`new URL('./oss-call-policy.json', import.meta.url)`), so the import
-  // walker never sees it. Authoritative list is sync-to-repos.mjs; keep in
-  // lock-step.
-  'scripts/lib/oss-call-policy.json',
-  // The bundle's own npm-dependency declaration, generated by
-  // `generate-bundle-deps.mjs` from the import graph. An ASSET rather than a
-  // walker discovery: it is JSON read by `check-setup.mjs` via a
-  // module-relative fs read, so nothing imports it and the closure walk
-  // cannot find it. Authoritative list is sync-to-repos.mjs; keep in lock-step.
-  'scripts/lib/bundle-deps.json',
-  'scripts/lib/db/compat-bootstrap.sql',
-  // `--adopt`'s schema contract, fs-read by setup-postgres.mjs. Authoritative
-  // list is sync-to-repos.mjs; keep in lock-step.
-  'tests/fixtures/expected-schema.json',
-  // The windowed-view declaration, fs-read by lib/store/windowed-views.mjs for
-  // the Home dashboard. Authoritative list is sync-to-repos.mjs; keep in lock-step.
-  '.windowed-views.json',
-];
-
+/**
+ * Build the repo-relative path universe under scripts/ and .claude/ — the
+ * file set `resolveSpecifier` probes for extension/index resolution.
+ * @returns {Set<string>}
+ */
 function buildFileUniverse() {
   const out = new Set();
   const SKIP = new Set(['node_modules', '.git', '.audit', '.audit-loop']);
@@ -162,39 +192,140 @@ function getFileUniverse() {
   return _fileUniverseCache;
 }
 
-export function readSource(rel) {
-  try { return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf-8'); }
-  catch { return null; }
+/**
+ * Read one bundle source file. THROWS `SourceReadError` on every failure,
+ * ENOENT included (see the module header for why absence is not a valid answer
+ * for a file the walker visits).
+ * @param {string} rel
+ * @param {{read?: (abs: string) => string}} [opts]
+ * @returns {string}
+ */
+export function readSource(rel, { read = (abs) => fs.readFileSync(abs, 'utf-8') } = {}) {
+  try { return read(path.join(REPO_ROOT, rel)); } catch (err) { throw new SourceReadError(rel, err); }
 }
 
-function resolveBundle(entryPoints, assets = []) {
+/**
+ * Resolve a bundle to its full file list: the transitive import closure of
+ * its entry points, plus its non-importable assets.
+ * @param {string[]} entryPoints
+ * @param {string[]} [assets]
+ * @param {{exists?: (abs: string) => boolean, readFile?: (rel: string) => string}} [seams]
+ * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>, external: Array<{from:string,specifier:string,pkg:string}>}}
+ */
+export function resolveBundle(entryPoints, assets = [], { exists = fs.existsSync, readFile = readSource } = {}) {
+  const missing = entryPoints.filter((e) => !exists(path.join(REPO_ROOT, e)));
+  if (missing.length) throw new MissingEntryPointError(missing);
   const { files, unresolved, external } = collectImportClosure({
-    entryPoints,
-    repoFiles: getFileUniverse(),
-    readFile: readSource,
+    entryPoints, repoFiles: getFileUniverse(), readFile,
   });
   return { files: [...new Set([...files, ...assets])], unresolved, external };
 }
 
-// @duplicate-justification: target=scripts/sync-to-repos.mjs:bundleForRepo reason=deliberate mirror per this module's own header ("Extracts the existing bundleForRepo/REPOS logic from sync-to-repos.mjs into a library module so tests + the verifier CLI can import it without running the sync main") — sync-to-repos.mjs is the authoritative CLI entry point and cannot be imported as a library without triggering its own main(), so this is a source-only, side-effect-free re-implementation, kept in lock-step by tests/sync-inventory-parity.test.mjs's array-equality assertions rather than by sharing code.
-function bundleForRepo() {
+/**
+ * `unresolved` entries worth surfacing — a path-like specifier that didn't
+ * resolve to a repo file is a genuinely missing dependency. Specifiers
+ * carrying `${`, backticks or whitespace are template-literal parser noise
+ * (a regex catching a string fragment of source) and are filtered out.
+ * @param {Array<{from:string,specifier:string}>} unresolved
+ * @returns {Array<{from:string,specifier:string}>}
+ */
+export function realMissingDeps(unresolved) {
+  return (unresolved || []).filter(u =>
+    !/[\s`${}]/.test(u.specifier)
+    && (u.specifier.startsWith('./') || u.specifier.startsWith('../'))
+  );
+}
+
+/**
+ * Skill files synced to Claude Code (.claude/skills/). Phase B.2: replaced
+ * the hardcoded SKILL.md list with allowlist-based enumeration — new skills
+ * + references/ + examples/ auto-register without editing this file.
+ *
+ * Phase 4 of ai-context-sync dropped the .github/skills/ surface from the
+ * default; the `--keep-github-skills` escape hatch that could still opt a
+ * sync back into mirroring it was removed entirely 2026-07-28
+ * (docs/plans/refactor-skill-governance.md) — this function now only ever
+ * produces `.claude/skills/` entries.
+ */
+export function buildSkillFiles() {
+  const out = [];
+  const skillsDir = path.join(REPO_ROOT, 'skills');
+  for (const name of listSkillNames(skillsDir)) {
+    const skillDir = path.join(skillsDir, name);
+    const files = enumerateSkillFiles(skillDir, { strict: true });
+    for (const rel of files) {
+      out.push(`.claude/skills/${name}/${rel}`);
+    }
+  }
+  return out;
+}
+
+/** Editor config files — MCP server wiring for VSCode Copilot Chat */
+const EDITOR_FILES = [
+  '.vscode/mcp.json',
+];
+
+/**
+ * Claude Code project hooks + settings. The arch-memory-check hook
+ * auto-fires the architectural-memory pre-fix consultation on every
+ * UserPromptSubmit when an intent verb is detected. Settings are
+ * deep-merged into the consumer's existing .claude/settings.json (so
+ * local permissions/dirs are preserved) — only the `hooks` key is
+ * added/updated.
+ */
+const CLAUDE_CODE_FILES = [
+  '.claude/hooks/arch-memory-check.sh',
+  // SessionStart dependency install for cloud sessions (npm/pnpm/yarn by
+  // lockfile, + Playwright's browser only when the repo declares it as a
+  // dependency). A cloud "Setup script" runs before repo checkout and fails
+  // there with ENOENT on package.json; this hook runs after checkout instead
+  // and is a no-op outside CLAUDE_CODE_REMOTE. Zero imports, fully portable.
+  // Authoritative list is sync-to-repos.mjs; keep sync-inventory.mjs in lock-step.
+  '.claude/hooks/install-cloud-deps.sh',
+  '.claude/settings.json',
+];
+
+// ── Repo configuration ─────────────────────────────────────────────────────
+
+// Non-code surfaces — skills, editor + Claude Code config. Not importable,
+// so appended after the import-graph closure. (The .github/prompts/ Copilot
+// prompt-shim surface was RETIRED 2026-07-21: Copilot Agent Skills are GA and
+// read .claude/skills natively, and since VS Code 1.109 skills surface as
+// /name slash commands in the SAME namespace as prompt files — same-basename
+// shims collided with their own skills. See the Copilot-compat audit.)
+// (composed in bundleForRepo: skills + editor + Claude Code config)
+
+/**
+ * Compute the synced file list for one consumer repo: the import-graph
+ * closure of its entry-point bundles + core assets + non-code surfaces.
+ * Every consumer gets every bundle — see the DEBT_ENTRY comment above for
+ * why the previous per-repo carve-out was removed.
+ *
+ * Repo identity (name/alias/path) lives in lib/consumer-repos.mjs as the
+ * single source of truth — only the file-set composition is sync-specific.
+ *
+ * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>}}
+ */
+export function bundleForRepo() {
   const entries = [
-    ...CORE_ENTRY, ...CORE_NON_IMPORTABLE, ...LEARNING_ENTRY, ...ARCH_ENTRY,
-    ...SYNC_ISOLATION_ENTRY, ...DEBT_ENTRY,
+    ...CORE_ENTRY, ...LEARNING_ENTRY, ...ARCH_ENTRY, ...SYNC_ISOLATION_ENTRY, ...DEBT_ENTRY,
   ];
   const assets = [...CORE_ASSETS, ...syncMigrations()];
   const { files, unresolved, external } = resolveBundle(entries, assets);
-  const skillFiles = buildSkillFiles();
-  const nonCode = [...skillFiles, ...EDITOR_FILES, ...CLAUDE_CODE_FILES];
+  const nonCode = [...buildSkillFiles(), ...EDITOR_FILES, ...CLAUDE_CODE_FILES];
   return { files: [...files, ...nonCode], unresolved, external };
 }
 
 /**
- * Return the full source-relative file list for the named consumer.
- *
- * @param {string} aliasOrName — 'ai' / 'wine' / 'ai-organiser' / 'wine-cellar-app'
- * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>, external: Array<{from:string,specifier:string,pkg:string}>, name: string, alias: string}}
+ * The version-contract subset: the core + arch closure plus the same assets
+ * (migrations included). These are the files consumers must keep in lockstep;
+ * the learning/debt bundles are optional additions and not part of it.
+ * @returns {{files: string[], unresolved: object[], external: object[]}}
  */
+export function versionContractBundle() {
+  return resolveBundle([...CORE_ENTRY, ...ARCH_ENTRY], [...CORE_ASSETS, ...syncMigrations()]);
+}
+
 /**
  * The bundle every consumer receives, independent of which consumer.
  *
@@ -214,6 +345,12 @@ export function getSyncClosure() {
   return bundleForRepo();
 }
 
+/**
+ * Return the full source-relative file list for the named consumer.
+ *
+ * @param {string} aliasOrName — 'ai' / 'wine' / 'ai-organiser' / 'wine-cellar-app'
+ * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>, external: Array<{from:string,specifier:string,pkg:string}>, name: string, alias: string}}
+ */
 export function getSyncInventoryForRepo(aliasOrName) {
   const repo = CONSUMER_REPOS.find((r) => r.alias === aliasOrName || r.name === aliasOrName);
   if (!repo) throw new Error(`getSyncInventoryForRepo: unknown consumer "${aliasOrName}". Known: ${CONSUMER_REPOS.map((r) => r.alias).join(', ')}`);
@@ -236,7 +373,7 @@ export function getAllConsumerInventories() {
 }
 
 export const _internals = {
-  CORE_ENTRY, CORE_NON_IMPORTABLE, LEARNING_ENTRY, ARCH_ENTRY, DEBT_ENTRY,
+  CORE_ENTRY, LEARNING_ENTRY, ARCH_ENTRY, DEBT_ENTRY,
   SYNC_ISOLATION_ENTRY, CORE_ASSETS, EDITOR_FILES, CLAUDE_CODE_FILES,
   bundleForRepo, syncMigrations, buildSkillFiles,
   REPO_ROOT,

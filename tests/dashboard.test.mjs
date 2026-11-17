@@ -498,7 +498,7 @@ test('every dashboard module is reached by the sync import closure', () => {
 
   // Non-importable assets carry no import edges — the walker cannot see
   // them, so they must be declared in CORE_ASSETS in sync-to-repos.mjs.
-  const syncSrc = fs.readFileSync(path.join(repoRoot, 'scripts/sync-to-repos.mjs'), 'utf-8');
+  const syncSrc = fs.readFileSync(path.join(repoRoot, 'scripts/lib/sync-inventory.mjs'), 'utf-8');
   for (const asset of [
     'scripts/lib/dashboard/flows.json',
     'scripts/lib/dashboard/assets/dashboard.css',

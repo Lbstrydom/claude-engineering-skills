@@ -23,16 +23,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _internals } from '../scripts/lib/sync-isolation-verify.mjs';
+import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-// The entry arrays live in the one shared list (sync-entry-lists.mjs); the sync's own source holds the rest.
-const SYNC_SRC = fs.readFileSync(path.join(ROOT, 'scripts/sync-to-repos.mjs'), 'utf8')
-  + fs.readFileSync(path.join(ROOT, 'scripts/lib/sync-entry-lists.mjs'), 'utf8');
+// The COMPUTED bundle, not source text (debt f307dfbf6320): a `scripts/<x>` mentioned only in a comment satisfied the old
+// `source.includes(...)` predicate while shipping nothing, which is exactly the failure this test exists to catch.
+const CLOSURE = new Set(getSyncClosure().files.map((f) => f.replaceAll('\\', '/')));
 const SYNC_INVENTORY_SRC = fs.readFileSync(path.join(ROOT, 'scripts/lib/sync-inventory.mjs'), 'utf8');
+const SYNC_SRC = fs.readFileSync(path.join(ROOT, 'scripts/lib/sync-entry-lists.mjs'), 'utf8') + SYNC_INVENTORY_SRC;
 
 describe('CLI_SMOKE_SET ↔ sync-to-repos parity', () => {
   test('every CLI_SMOKE_SET entry is declared as a synced script', () => {
-    const undeclared = _internals.CLI_SMOKE_SET.filter(rel => !SYNC_SRC.includes(`scripts/${rel}`));
+    assert.ok(CLOSURE.size > 1000 && CLOSURE.has('scripts/doctor.mjs'), 'vacuous-pass guard: the computed bundle is populated');
+    const undeclared = _internals.CLI_SMOKE_SET.filter(rel => !CLOSURE.has(`scripts/${rel}`));
     assert.deepEqual(
       undeclared, [],
       'These CLIs are asserted to be PRESENT in every consumer but are not declared in ' +
@@ -41,6 +44,13 @@ describe('CLI_SMOKE_SET ↔ sync-to-repos parity', () => {
       'or remove them from CLI_SMOKE_SET (correct when the CLI is a source-repo-only tool ' +
       '— see the model-eval / verify-anchor-contract notes in sync-isolation-verify.mjs).',
     );
+  });
+
+  test('negative control: a path mentioned only in a COMMENT passes the old text predicate but is not in the bundle', () => {
+    const fake = 'scripts/a-cli-nobody-ships.mjs';
+    const oldTextPredicate = (src) => src.includes(fake);
+    assert.equal(oldTextPredicate(`// TODO: ship ${fake} some day\n`), true, 'the old predicate accepts prose');
+    assert.equal(CLOSURE.has(fake), false, 'the computed bundle does not');
   });
 
   test('every CLI_SMOKE_SET entry actually exists in this repo', () => {

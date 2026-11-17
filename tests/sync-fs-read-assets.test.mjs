@@ -43,8 +43,9 @@ const ASSET_URL_RE = /new URL\(\s*['"`](\.\/[^'"`]+\.(?!mjs)[a-z0-9]+)['"`]\s*,\
 
 describe('sync: module-relative fs-read assets are declared', () => {
   it('every `new URL(./asset, import.meta.url)` target under scripts/lib is in a sync array', () => {
-    const syncSrc = fs.readFileSync(
-      path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf-8');
+    // The inventory has ONE owner (lib/sync-inventory.mjs) plus the shared entry lists; the CLI declares none.
+    const syncSrc = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-inventory.mjs'), 'utf-8')
+      + fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-entry-lists.mjs'), 'utf-8');
 
     // Array-element-shaped occurrence, so a mention inside a comment or a doc
     // URL cannot satisfy the assertion. Same approach as sync-packaging.test.mjs.

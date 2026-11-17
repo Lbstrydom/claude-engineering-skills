@@ -64,9 +64,9 @@ describe('expected-schema manifest — sync path mapping', () => {
 
 describe('expected-schema manifest — declared in the sync closure', () => {
   it('sync-to-repos ships it (an fs-read asset the import walker cannot see)', () => {
-    const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf-8');
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-inventory.mjs'), 'utf-8');
     assert.ok(src.includes(`'${SRC}'`),
-      `${SRC} must be declared in sync-to-repos.mjs — the import-graph walker never sees an fs read`);
+      `${SRC} must be declared in lib/sync-inventory.mjs — the import-graph walker never sees an fs read`);
   });
 
   it('the source manifest actually exists to be shipped', () => {

@@ -91,8 +91,8 @@ describe('sync packaging — setup-postgres + compat-bootstrap + migrations', ()
     }
   });
 
-  it('scripts/sync-to-repos.mjs declares setup-postgres.mjs + compat-bootstrap + migrations in the routing arrays', () => {
-    const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf-8')
+  it('lib/sync-inventory.mjs declares setup-postgres.mjs + compat-bootstrap + migrations in the routing arrays', () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-inventory.mjs'), 'utf-8')
       + fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-entry-lists.mjs'), 'utf-8');
 
     // Each helper greps the source for an array-element-shaped occurrence
@@ -112,7 +112,7 @@ describe('sync packaging — setup-postgres + compat-bootstrap + migrations', ()
     // Look for the helper definition with a non-trivial body — proves the
     // dynamic ship-the-whole-directory pattern is wired in.
     assert.match(src, /function\s+syncMigrations\s*\(\s*\)\s*\{[\s\S]*supabase\/migrations[\s\S]*\}/,
-      'sync-to-repos.mjs must define syncMigrations() that enumerates supabase/migrations/*.sql');
+      'lib/sync-inventory.mjs must define syncMigrations() that enumerates supabase/migrations/*.sql');
   });
 
   it('no caller imports the legacy supabase-js package any more (M4 dep removal)', () => {

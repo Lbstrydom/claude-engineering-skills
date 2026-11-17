@@ -179,7 +179,7 @@ describe('content-derived ownership (the manifest is no longer the only proof)',
     // a second predicate is the duplicate-definition drift this repo keeps
     // paying for. The comparand must come from the same functions the write
     // path uses — all THREE of them.
-    const region = between(/const srcContent = .*readSource\(srcRel\)/, /classifyOwnership\(\{/);
+    const region = between(/const srcContent = .*readSourceOrNull\(srcRel\)/, /classifyOwnership\(\{/);
     assert.match(region, /injectUpstreamBanner/);
     assert.match(region, /rewriteCommandSurface/);
 
@@ -190,7 +190,7 @@ describe('content-derived ownership (the manifest is no longer the only proof)',
     // that disagree on line endings, demoting a provably-owned orphan to a
     // collision that aborts the consumer's entire bundle.
     assert.match(
-      SRC, /const srcContent = canonicaliseOutboundEol\(dstRel, readSource\(srcRel\)\)/,
+      SRC, /const srcContent = canonicaliseOutboundEol\(dstRel, readSourceOrNull\(srcRel\)\)/,
       'the ownership comparand must be EOL-folded exactly as the write path folds it',
     );
     assert.match(

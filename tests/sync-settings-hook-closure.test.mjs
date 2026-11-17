@@ -41,13 +41,10 @@ function registeredHooks() {
   return found;
 }
 
+// The inventory has ONE owner now (lib/sync-inventory.mjs + the shared entry lists); the CLI declares none.
 function syncListText() {
-  return [
-    fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf-8')
-      + fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-entry-lists.mjs'), 'utf-8'),
-    fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-inventory.mjs'), 'utf-8')
-      + fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-entry-lists.mjs'), 'utf-8'),
-  ];
+  return fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-inventory.mjs'), 'utf-8')
+    + fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-entry-lists.mjs'), 'utf-8');
 }
 
 describe('synced settings.json hook closure', () => {
@@ -62,14 +59,12 @@ describe('synced settings.json hook closure', () => {
     }
   });
 
-  it('every registered hook is in BOTH sync lists, else it ships to no consumer', () => {
-    const [toRepos, inventory] = syncListText();
+  it('every registered hook is in the sync inventory, else it ships to no consumer', () => {
+    const inventory = syncListText();
     const missing = [];
     for (const h of registeredHooks()) {
       const entry = `.claude/hooks/${h}`;
-      const inA = toRepos.includes(entry);
-      const inB = inventory.includes(entry);
-      if (!inA || !inB) missing.push(`${h} [sync-to-repos:${inA}, sync-inventory:${inB}]`);
+      if (!inventory.includes(entry)) missing.push(h);
     }
     assert.deepEqual(missing, [], `registered but not shipped: ${missing.join(', ')}`);
   });
