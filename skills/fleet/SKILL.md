@@ -123,7 +123,7 @@ args, 3 blocked/refused, 4 a train ran red (land). `--json` to parse.
 
 ## Config — optional `.fleet.json` at the repo root
 
-Never synced; read from the checkout you run in, so commit it. Keys, defaults, a monorepo example: `references/config.md`.
+Never synced; read from the checkout you run in, so commit it. Every key is optional; keys, defaults, a monorepo example: `references/config.md`.
 
 Every verb records one counts-only usage event; `FLEET_TELEMETRY=off` disables it (`references/telemetry.md`).
 
