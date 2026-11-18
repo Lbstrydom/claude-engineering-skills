@@ -12,7 +12,7 @@ const o = (c) => c.repeat(40);
 const T = '2026-11-18T10:00:00.000Z';
 const OUT = (over = {}) => ({ status: 'landed', code: 'merged', verdict: 'verified', mergeOid: o('a'), parent: o('b'), chainIndex: 1, attribution: 'this-run', gate: 'passed', ...over });
 const step = (id, over = {}) => ({ id, prNumber: 1, repo: 'o/n', testedOid: o('1'), step: 'pending', head: o('1'), accounted: [o('1')], updates: 0, priorHead: null, mergedOid: null, note: null, at: T, ...over });
-const sbPolicy = (ids, chain = [o('b')]) => ({ name: 'ship-batch', grantVersion: 1, remote: 'origin', candidateTree: o('7'), baseChain: chain, members: Object.fromEntries(ids.map((i) => [i, { tree: o('7'), worktree: null }])), excluded: [] });
+const sbPolicy = (ids, chain = [o('b')]) => ({ name: 'ship-batch', grantVersion: 'v1', remote: 'origin', candidateTree: o('7'), baseChain: chain, members: Object.fromEntries(ids.map((i) => [i, { tree: o('7'), worktree: null }])), excluded: [] });
 const run = (steps, policy, extra = {}) => ({ schemaVersion: 1, trainId: 't-20260101000000-aaaa', startedAt: T, updatedAt: T, timeoutMs: 1000, base: 'main', remote: 'origin', steps, policy, outcome: null, ...extra });
 
 describe('FAULTS', () => {
@@ -127,7 +127,7 @@ describe('validatePolicyRun: the load-time invariants (§2.1)', () => {
   });
   it('a rollup run is exactly one step named by its branch; rollup ci is required, equal to attempt.ci, and bound to the candidate', () => {
     const cand = { oid: o('1'), tree: o('7') };
-    const roll = { name: 'rollup', grantVersion: 1, remote: 'origin', candidateTree: o('7'), baseChain: [o('b')], excluded: [], members: [{ id: 'm', branch: 'm', head: o('2'), tree: o('3'), runId: null, gate: 'passed', finalReview: null }], rollup: { branch: 'rollup/20261118-1', repo: 'o/n', prNumber: 5, candidate: cand } };
+    const roll = { name: 'rollup', grantVersion: 'v1', remote: 'origin', candidateTree: o('7'), baseChain: [o('b')], excluded: [], members: [{ id: 'm', branch: 'm', head: o('2'), tree: o('3'), runId: null, gate: 'passed', finalReview: null }], rollup: { branch: 'rollup/20261118-1', repo: 'o/n', prNumber: 5, candidate: cand } };
     assert.match(validatePolicyRun(run([step('a'), step('b')], roll)), /exactly one step/);
     const ci = { head: o('1'), tree: o('7'), observedAt: T, checks: [{ name: 'ci', conclusion: 'success' }] };
     const base = step('rollup/20261118-1', { step: 'merged', mergedOid: o('c'), attempt: { head: o('1'), at: T, ghExit: 0, doneAt: T, ci } });

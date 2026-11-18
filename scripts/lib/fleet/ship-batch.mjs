@@ -27,7 +27,7 @@ import { ciVerdict } from '../ci-verdict.mjs';
 import { AI_TRAILER_KEYS, parseMessageTrailers } from '../commit-trailers.mjs';
 import { OID_RE } from './contracts.mjs';
 import { assertManaged, fleetDir, readTrain } from './registry.mjs';
-import { buildStatusFrom, gatherFacts } from './facts.mjs';
+import { buildStatusFrom, gatherFacts, payloadFromStatus } from './facts.mjs';
 import { describeVerdict, observeRequiredChecks, requiredInventory } from './required-checks.mjs';
 import { readShipBatchGrant, GRANT_VERSION } from './coordinator-grant.mjs';
 import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
@@ -128,11 +128,11 @@ export function listReadyMembers(ctx) {
     // build takes it (`item.pr`), so the PR facts come from there before the session's own (a pr-kind source).
     const pr = status.items.find((i) => i.id === id)?.pr ?? null;
     return {
-      id, kind: pr ? 'pr' : s.source.kind, repo: pr?.repo ?? s.source.repo, prNumber: pr?.number ?? s.source.prNumber,
+      id, gen: s.gen, rev: s.rev, headRepo: pr?.headRepo ?? s.source.headRepo ?? null, kind: pr ? 'pr' : s.source.kind, repo: pr?.repo ?? s.source.repo, prNumber: pr?.number ?? s.source.prNumber,
       baseRef: pr?.baseRef ?? s.source.baseRef, branch: s.source.branch, oid: s.ready?.oid ?? null, worktree: s.worktree ?? null,
     };
   });
-  return { ok: true, members };
+  return { ok: true, members, payload: payloadFromStatus(status) };
 }
 
 /**
@@ -382,11 +382,11 @@ function trainMismatch(dir, trainId, batch) {
 }
 
 /** The per-member lines and the first line of the result, from the SERIAL RECORD only (§2.4). */
-export function summaryText(run, trainId, extra = []) {
+export function summaryText(run, trainId, extra = [], label = 'ship-batch') {
   const members = run.steps;
   const res = run.finalized?.result ?? summariseRun(run, { tailTree: null, stoppedReason: run.outcome?.status === 'stopped' ? run.outcome.reason : null });
   const lines = [
-    ...res.provenance, `ship-batch ${trainId}: ${res.first}`,
+    ...res.provenance, `${label} ${trainId}: ${res.first}`,
     ...members.map((m) => {
       const o = m.outcome;
       const what = o ? `${o.status}/${o.code}${o.verdict ? `/${o.verdict}` : ''}` : `${m.step}`;

@@ -58,6 +58,16 @@ describe('renderPrEntry', () => {
     assert.match(renderPrEntry(PR, { ...FACTS, trailers: { kind: 'ai-no-gate' } }, { repo: 'o/r' }), /AI-\* trailers present, no valid AI-Gate/);
     assert.match(renderPrEntry(PR, { ...FACTS, trailers: { kind: 'none' } }, { repo: 'o/r' }), /no AI-\* trailers\./);
   });
+  it('a fleet rollup squash is listed as a SELF-DECLARED manifest, unverified, and the entry stays byte-deterministic; no manifest leaves the bytes untouched', () => {
+    const r = { ok: true, stage: 'final', rollupId: 'rollup/20261118-1', members: [{ id: 'a', head: 'a'.repeat(40), gate: 'passed' }, { id: 'b', head: 'b'.repeat(40), gate: null }] };
+    const a = renderPrEntry(PR, { ...FACTS, rollup: r }, { repo: 'o/r' });
+    assert.equal(a, renderPrEntry(PR, { ...FACTS, rollup: { ...r } }, { repo: 'o/r' }));
+    assert.match(a, /self-declared fleet-rollup\/v1 manifest \(final\) for rollup\/20261118-1 naming 2 members: a@a{12} \(gate passed\), b@b{12}\. UNVERIFIED/);
+    assert.equal(renderPrEntry(PR, { ...FACTS, rollup: null }, { repo: 'o/r' }), renderPrEntry(PR, FACTS, { repo: 'o/r' }), 'no manifest: today\'s bytes');
+  });
+  it('a malformed manifest is "could not be read", never zero members', () => {
+    assert.match(renderPrEntry(PR, { ...FACTS, rollup: { ok: false, reason: 'not JSON' } }, { repo: 'o/r' }), /fleet-rollup\/v1 block that could not be read \(not JSON\)/);
+  });
   it('summarises past 20 files', () => {
     const files = Array.from({ length: 25 }, (_, i) => `scripts/f${i}.mjs`);
     assert.match(renderPrEntry(PR, { ...FACTS, files }, { repo: 'o/r' }), /\+5 more across `scripts`/);

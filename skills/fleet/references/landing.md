@@ -126,3 +126,26 @@ check that imports the synced tooling (`scripts/.claude-skills/`, gitignored)
 will not find it there either.
 
 - **File overlap** is three-dot (`base...branch`), taken from the FRESHER of the local base and its upstream (`--fetch` refreshes it); uncommitted edits in live sessions' worktrees count as advisory evidence.
+
+## Rollup landing: ONE PR per batch (`landing: "rollup"`)
+
+CI runs on `pull_request`, so the saving comes from chips NOT opening PRs: a branch push triggers no full CI in any repo (measured
+2026-11-18), and a draft PR still triggers it. With `.fleet.json` `"landing": "rollup"`, a chip ends at **branch pushed, then
+`fleet ready`** (its pre-authorised ship steps stay: they put the `AI-*` trailers on the head). `next` and `ready` print a `LANDING:`
+line saying so. You land the batch with the user's standing grant (`references/ship-batch.md`), and nothing needs a GitHub setting.
+
+1. `fleet land --rollup [--select a,b] [--hold c]`: each ready member is admitted (the child re-check, and its remote branch tip
+   equal to its ready oid). A member that fails is **held** with its reason, never failed; two members touching one path never share
+   a rollup (the later is held, and lands in the next after its restack and any re-audit). The candidate is the ordinary train build
+   with each member squashed under a message that names it and carries **no `AI-*` trailer**, and the pre-land tiers run on it.
+2. `fleet land --approve <train> --rollup` re-admits every member, requires the base to be where the candidate was built, pushes
+   `rollup/<date>-<n>`, opens ONE PR (provisional manifest as its body), waits for the required checks, then merges with
+   `--squash --match-head-commit <candidate oid>`, never `--auto`. The squash body is the FINAL manifest (each member against its
+   own head, tree and gate; the rollup's CI against the candidate tree). Resume: `land --resume <train> --rollup`.
+3. **Red rollup**: the candidate, logs, branch and PR stay. Eject a suspect and rebuild: `land --rollup --hold <member>`. There is no
+   automatic bisect, and a green rebuild without a member does not prove it at fault.
+4. **Base race**: if the base moves before the merge the run stops `base-moved`; rebuild (pinning the head does not pin the base).
+5. **After the landing**, member PRs (if any) are closed "superseded by #N" only when the squash tree equals the candidate tree
+   and only if their head is still the admitted one; an `untested-base`, `tree-mismatch` or `wrong-target` landing closes nothing and
+   marks no session done: verify each member against the landed tree by hand. One rollup is live per repo; a rollup that never
+   requested a merge is superseded by the next build.

@@ -104,6 +104,7 @@ export function multiFx(n, { messages = [] } = {}) {
     const id = `m${k}`; const pr = PR + k - 1;
     const head = addBranch(fx.repo, id, { [`f${k}.txt`]: `f${k}\n` }, messages[k - 1]);
     git(['push', '-q', 'origin', `${head}:refs/pull/${pr}/head`], fx.repo);
+    git(['push', '-q', 'origin', `${head}:refs/heads/${id}`], fx.repo); // the branch itself: a rollup member is admitted by its remote branch tip
     git(['checkout', '-q', id], fx.repo);
     assert.equal(f(['claim', '--id', id, '--intent', id, '--paths', `f${k}.txt`]).status, 0);
     assert.equal(f(['ready', '--id', id]).status, 0);

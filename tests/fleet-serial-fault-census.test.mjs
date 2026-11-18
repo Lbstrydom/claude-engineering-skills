@@ -32,7 +32,8 @@ function bodyOf(src, name) {
 /** Does a function body hold a call to `stop(` that is not a member of an identifier (so `unstoppable(` and `.stop(` pass)? */
 const callsStop = (body) => /(^|[^\w.$])stop\s*\(/.test(body);
 /** Every string literal that equals or contains `--auto` as an argument token. */
-const autoLiterals = (src) => [...src.matchAll(/(['"`])((?:\\.|(?!\1).)*)\1/g)].map((m) => m[2]).filter((t) => /(^|\s)--auto(\s|=|$)/.test(t));
+const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const autoLiterals = (src) => [...stripComments(src).matchAll(/(['"`])((?:\\.|(?!\1).)*)\1/g)].map((m) => m[2]).filter((t) => /(^|\s)--auto(\s|=|$)/.test(t));
 
 const MEMBER_STEP_FUNCTIONS = ['stepMember', 'policyMerge', 'mergedObserved', 'readBackStep', 'treeIdentity'];
 
@@ -69,5 +70,6 @@ describe('--auto is never sent (literals census; stated limit: a flag built at r
     assert.equal(autoLiterals("const a = ['pr', 'merge', '--auto', '--squash'];").length, 1);
     assert.equal(autoLiterals('const a = "gh pr merge --auto --squash";').length, 1);
     assert.equal(autoLiterals("const a = ['--automatic', '--squash'];").length, 0);
+    assert.equal(autoLiterals("/** never `--auto` */\n// also '--auto' here\nconst a = ['--squash'];").length, 0, 'prose in comments is not an argv');
   });
 });

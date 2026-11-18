@@ -606,8 +606,8 @@ export function approveSerial({ cwd, trainId, acceptRerun = false, requiredCheck
     const r = readTrain(dir, trainId);
     if (!r.ok) return { ok: false, code: 'refused', reason: `train ${trainId}: ${r.reason}` };
     const t = r.train;
-    if (t.mergeMethod !== 'pr') return { ok: false, code: 'refused', reason: `--serial lands PRs one at a time; train ${trainId} is ${t.mergeMethod}` };
     if (t.landing === 'rollup') return { ok: false, code: 'refused', reason: `train ${trainId} is a rollup: approve it with land --approve ${trainId} --rollup` };
+    if (t.mergeMethod !== 'pr') return { ok: false, code: 'refused', reason: `--serial lands PRs one at a time; train ${trainId} is ${t.mergeMethod}` };
     const elig = approvable(t, { acceptRerun });
     if (!elig.ok) return { ok: false, code: 'refused', reason: elig.reason, needsAcceptRerun: elig.needsAcceptRerun === true };
     const shallow = deps.git(['rev-parse', '--is-shallow-repository'], cwd);

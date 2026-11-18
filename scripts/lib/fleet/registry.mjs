@@ -123,10 +123,18 @@ export const TrainSchema = z.strictObject({
   reconciledFrom: z.string().nullable().optional(),
   outcome: z.looseObject({}).nullable().optional(),
   notes: z.array(z.string()).optional(),
+  // A rollup train (docs/plans/ship-batch-member-outcomes.md section 2.9): `landing` marks it, `rollup` is the operation record of its push and PR.
+  landing: z.literal('rollup').optional(),
+  rollup: z.strictObject({
+    branch: z.string().min(1), repo: z.string().min(1), candidate: z.strictObject({ oid: OidSchema, tree: OidSchema }),
+    phase: z.enum(['push-intent', 'pushed', 'pr-intent', 'pr-open', 'run-started']), prNumber: z.number().int().positive().nullable(),
+    superseded: z.string().nullable().optional(),
+    closures: z.array(z.strictObject({ prNumber: z.number().int().positive(), head: OidSchema, status: z.enum(['pending', 'closed', 'failed', 'skipped-head-moved']), reason: z.string().max(300).nullable() })).optional(),
+  }).optional(),
 });
 
 /** Fields that legitimately change after first write (phase-like). Everything else is write-once. */
-const MUTABLE_TRAIN_FIELDS = new Set(['phase', 'updatedAt', 'result', 'reconciledFrom', 'outcome', 'notes']);
+const MUTABLE_TRAIN_FIELDS = new Set(['phase', 'updatedAt', 'result', 'reconciledFrom', 'outcome', 'notes', 'rollup']);
 const APPEND_ONLY_TRAIN_FIELDS = new Set(['tierResults']);
 
 export class RegistryError extends Error {

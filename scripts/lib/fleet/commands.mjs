@@ -35,7 +35,7 @@ import { renderChipPrompt, renderOpenTrains } from './render-train.mjs';
 import { WaitingOnSchema, listTrains, probesDir, quarantine, transact } from './registry.mjs';
 import { readySet, testedTogether, testedTogetherLine } from './tested-together.mjs';
 import { writeStackBase } from './stack-bases.mjs';
-import { FULL_SUITE_LOG_LINE, fullSuiteOf } from './config.mjs';
+import { FULL_SUITE_LOG_LINE, fullSuiteOf, landingOf, landingRollupLine } from './config.mjs';
 import {
   buildStatusFrom, gatherFacts, leaseMsFrom, othersFor, withMergedEvidence, readyChecks, resolveUpstream, statusChecks,
 } from './facts.mjs';
@@ -586,7 +586,8 @@ export function cmdReady(ctx, flags) {
   // fullSuite: "train": the mark says the full suite is the train's, so the deferral is on record where the session reads it.
   const deferred = fullSuiteOf(ctx) === 'train';
   const suiteLine = deferred ? [`full suite: deferred to the train (.fleet.json fullSuite: "train") — \`${ctx.cmd} land\` is its one full-suite run; your plan's test log says "${FULL_SUITE_LOG_LINE}"`] : [];
-  return ok({ id, record: tx.value.record, checks: gate.results, fullSuite: deferred ? 'deferred-to-train' : 'session', ...(unpushed ? { unpushed } : {}), text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...pushLine, ...suiteLine].join('\n') });
+  const landingLine = landingOf(ctx) === 'rollup' ? [landingRollupLine(ctx.cmd)] : [];
+  return ok({ id, record: tx.value.record, checks: gate.results, fullSuite: deferred ? 'deferred-to-train' : 'session', ...(unpushed ? { unpushed } : {}), text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...pushLine, ...suiteLine, ...landingLine].join('\n') });
 }
 
 /**

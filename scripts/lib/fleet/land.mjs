@@ -15,6 +15,7 @@ import { abandonTrain, branchOfRef, buildTrain, defaultDeps, resumeTrain, withTr
 import { approveTrain, confirmTrain, reconcileTrain } from './train-approve.mjs';
 import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
 import { approveShipBatch, buildShipBatch, readShipBatch, resumeShipBatch } from './ship-batch.mjs';
+import { approveRollup, buildRollup, resumeRollup } from './rollup-land.mjs';
 import { redTierLines } from './tier-failure.mjs';
 import { LAND_RECORD_NUDGE, invalidateRecordCache, recordCommandFor } from './record-count.mjs';
 import { unregisteredCacheDir } from './unregistered.mjs';
@@ -77,7 +78,26 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
     if (modes.length && modes[0] !== '--approve' && modes[0] !== '--resume') throw new ArgvError('fleet land: --ship-batch applies to a build, --approve or --resume (a recovery verb never needs the grant)');
     if (flags['--serial'] || flags['--dry-run'] || flags['--tier'] !== undefined || flags['--accept-rerun'] || flags['--include-stale']) throw new ArgvError('fleet land: --ship-batch is always serial and always builds a real train: it cannot be combined with --serial/--dry-run/--tier/--accept-rerun/--include-stale');
   }
+  if (flags['--rollup']) {
+    if (modes.length && modes[0] !== '--approve' && modes[0] !== '--resume') throw new ArgvError('fleet land: --rollup applies to a build, --approve or --resume');
+    if (flags['--serial'] || flags['--ship-batch'] || flags['--dry-run'] || flags['--tier'] !== undefined || flags['--accept-rerun'] || flags['--include-stale']) throw new ArgvError('fleet land: --rollup always builds a real train: it cannot be combined with --serial/--ship-batch/--dry-run/--tier/--accept-rerun/--include-stale');
+    if (flags['--hold'] !== undefined && modes.length) throw new ArgvError('fleet land: --hold applies only when building a rollup (a held member needs a rebuild)');
+  } else if (flags['--hold'] !== undefined) throw new ArgvError('fleet land: --hold applies only with --rollup');
   const { cwd, cmd } = ctx; // NOTE: ctx.config is lazy — manifest-driven verbs below never touch it
+
+  if (flags['--rollup'] && modes[0] === '--approve') {
+    const r = approveRollup({ cwd, dir: ctx.dir, trainId: validId(flags['--approve']), deps, serialOpts: { ...configuredRequiredChecks(ctx), timeoutMs: serialTimeout(ctx) } });
+    return withRecordNudge(r.text ? r : withText(r, `REFUSED: ${r.reason}`), cmd, ctx);
+  }
+  if (flags['--rollup'] && modes[0] === '--resume') {
+    const trainId = validId(flags['--resume']);
+    const r = resumeRollup({ cwd, dir: ctx.dir, trainId, deps, serialOpts: configuredRequiredChecks(ctx) });
+    return withRecordNudge(r.text ? r : withText(r, `REFUSED: ${r.reason}`), cmd, ctx);
+  }
+  if (flags['--rollup']) {
+    const r = buildRollup(ctx, flags, deps, { parseSelect });
+    return r.text ? r : withText(r, `REFUSED: ${r.reason}`);
+  }
 
   if (flags['--ship-batch'] && modes[0] === '--approve') {
     // The ONE land that needs no chat go-ahead, and only for a train this verb built under the grant (docs/plans/coordinator-aggregate-ship.md section 2.4).
@@ -210,7 +230,12 @@ function build(ctx, flags, deps) {
     ? `full suite: .fleet.json fullSuite: "train" defers it to the train; this train's pre-land tiers ran: ${ranTiers.join(', ')}${r.train.result === 'green' || r.train.result === 'green-after-rerun' ? '' : ' — NOT green, so the deferred suite has not passed'}` : null;
   const notes = [staleNote, suiteNote].filter(Boolean);
   const withStale = (x) => (notes.length ? { ...x, ...(staleNote ? { staleReady } : {}), text: `${x.text}\n${notes.join('\n')}` } : x);
-  if (!r.ok) return withStale({ ...r, text: `${r.code === 'error' ? 'ERROR' : 'REFUSED'}: ${r.reason}` });
+  if (!r.ok) {
+    // A rollup repo's chips open no PR: say what lands them (only under `landing: "rollup"`; the text is unchanged otherwise).
+    let rollupHint = '';
+    try { rollupHint = /has no open PR/.test(String(r.reason)) && config.landing === 'rollup' ? ` — this repo lands by rollup: ${cmd} land --rollup` : ''; } catch { rollupHint = ''; }
+    return withStale({ ...r, text: `${r.code === 'error' ? 'ERROR' : 'REFUSED'}: ${r.reason}${rollupHint}` });
+  }
   if (r.dryRun) return withStale({ ...r, code: 'ok', text: renderDryRun(r) });
   return withStale(finishBuilt(r, cmd));
 }

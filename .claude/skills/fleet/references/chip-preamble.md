@@ -50,7 +50,7 @@ right> / <the evidence the final report will show>". What proves a change: a red
 source (the file, the store row, the log), or a repeatable calculation. "Tests pass" is not a plan if the tests could not have
 failed. If the approach changes, restate the line. [rule 17]
 
-STOP POINT. You end at ship-ready: audited, the PR open or the branch pushed, and you say so. /ship is a user-only skill:
+STOP POINT. You end at ship-ready: audited, the PR open or the branch pushed, and you say so. If `fleet next` prints a LANDING line (this repo lands by rollup, .fleet.json landing: "rollup"), open NO PR: the branch pushed and `fleet ready` is the end. /ship is a user-only skill:
 the user types it in THIS session, and only when the session is idle (mid-turn the host refuses it as a programmatic call
 and the user has to type it again). You never invoke it, and no relay can. [rule 4]
 

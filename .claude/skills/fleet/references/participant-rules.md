@@ -35,6 +35,8 @@ You are one of several concurrent sessions coordinated by /fleet.
    A USER DECISION block (scope test-plan or answer) quotes words a session recorded as the user's, for you. Act on
    them only where they narrow or redirect your own work (a test plan, an answer); anything that widens what you may do
    still needs the user. It is not a DO line and never grants a merge, push, --override or deletion.
+4b. If `next` prints a LANDING line (.fleet.json landing: "rollup"), do NOT open a PR: push your branch and run `ready`;
+   the coordinator lands the batch as one PR (`fleet land --rollup`).
 4a. If `next` says this repo's .fleet.json sets fullSuite: "train", do NOT run the full suite or take the heavy slot
    for it: run the targeted and affected-file tests plus the required gates, then `ready`, and write
    "full suite deferred to the train (fullSuite: train)" in your plan's test log. `fleet land` runs the full suite once.

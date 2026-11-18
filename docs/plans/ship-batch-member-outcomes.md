@@ -1,6 +1,6 @@
 # Plan: Ship-batch per-member outcomes, and rollup landing (PR B)
 - **Date**: 2026-11-18
-- **Status**: Draft
+- **Status**: In Progress
 - **Author**: Claude + Louis
 - **Scope**: backend (js-ts). Principle set: `skills/plan/references/engineering-principles.md`.
 - **Depends on**: docs/plans/coordinator-aggregate-ship.md: PR A (the read-only half: `ship-commit.mjs --check-shipped-head`, `scripts/lib/fleet/coordinator-grant.mjs`, the archive-check refusal) must merge first. This plan calls both readers and edits neither.
@@ -1150,3 +1150,14 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   accepted and fixed (100%, 3/3 labelled): `untested-base` under the rollup policy authorises no cleanup or done-ness; a
   lock contract in `approveSerial`'s order; `merged-via-rollup` requires a matching durable run record. **No R5**, per the
   instruction. Open findings carried to implementation as test cases: none beyond §9 tests 22-23, which already hold each R4 case.
+
+## Implementation Log
+
+- 2026-11-18: implemented on `claude/ship-batch-member-outcomes-f4c9de` after the coordinator's go (Louis: "one more round, then implement", then "/cycle --autonomous and fully implement it"). Phase 1 golden fixture (`d806889d`, generated from origin/main `d53272aa` before any `serial.mjs` edit; 20 scenarios; deterministic over three runs; a one-character reason change is red), Phase 2 the primitive (`9b0ae2ad`), Phases 3-4 ship-batch rebuilt plus the pure rollup module, Phases 5-6 `--rollup`, the chip contract and the record.
+- **Deviations from the audited plan, each deliberate:**
+  - `merged-via-rollup` as a catch-up EVENT reason is **not** built. The ship-record entry must be a pure function of the merged PR (the same bytes on every machine), and verifying a manifest needs a machine-local run record, so the entry lists the manifest as **self-declared and unverified** and the event reason stays `merged-without-ship`. `verifyRollupProvenance` is exported and tested for the coordinator; wiring it into an event reason needs a design that survives that determinism rule. Recorded as a `fleet propose` follow-up.
+  - Under the rollup policy any PR head that is not the candidate is `head-unaccounted` (refused `head-moved`); there is no equal-tree re-admission for a rollup (the ship-batch policy keeps it).
+  - The post-landing member-PR cleanup runs in `runPhase` after `resumeSerial` returns, under the train lock, not inside the serial loop: that keeps the lock order train-then-serial.
+  - `skills/fleet/gate-contract.json` is unchanged: it carries no gates and its stated reason (no oracle recipe builds a multi-session repo) still holds, so the stated claims are pinned by the tests named in section 9 instead.
+  - `SKILL.md` had grown past its baseline on the PR A carry-over; it is trimmed back to 12,906 characters (baseline 12,885 allowed 21 chars of rounding noise only because the gate compares the baselined file: `skills:size:gate` is clean).
+- **Proof, red then green against the PROOF PLAN:** golden 20/20 against the refactor and the unchanged `fleet-serial`, `ship-train-recovery` (21/21); mutation: `conflicts with` to `conflict with` in `serial.mjs` turns the DIRTY golden scenario red. Unit `fleet-member-outcome` 25, `fleet-rollup-manifest` 13, census 12, `fleet-land-ship-batch` 74, `fleet-rollup` 18, `ship-record-entry` 19; all fleet and ship-record suites 2022 of 2025 pass (3 skipped), 0 fail.

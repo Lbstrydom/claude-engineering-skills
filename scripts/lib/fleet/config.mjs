@@ -62,6 +62,10 @@ export const DEFAULT_ARCHIVE_IGNORE = Object.freeze(['node_modules/**', 'scripts
 /** `land --serial`: how long one PR may wait for its required checks. */
 export const DEFAULT_SERIAL_TIMEOUT_MS = 60 * 60 * 1000;
 export const FULL_SUITE_MODES = Object.freeze(['session', 'train']);
+/** `.fleet.json` `landing`: `pr` (default, a PR per chip) or `rollup` (chips push a branch and `fleet ready`; the coordinator lands them as ONE PR). */
+export const LANDING_MODES = Object.freeze(['pr', 'rollup']);
+/** What `next` and `ready` tell a chip under `landing: "rollup"`. */
+export const landingRollupLine = (cmd = 'fleet') => `LANDING: this repo lands by rollup (.fleet.json landing: "rollup"): after \`${cmd} ready\` do NOT open a PR; the coordinator lands it with \`${cmd} land --rollup\`.`;
 /** The words a session writes in its plan's test log under `fullSuite: "train"` — one spelling, so the log is greppable. */
 export const FULL_SUITE_LOG_LINE = 'full suite deferred to the train (fullSuite: train)';
 /** What `next` and `ready` tell a session under `fullSuite: "train"`. */
@@ -71,6 +75,7 @@ export const fullSuiteDeferredLine = (cmd = 'fleet') => `TESTS: this repo defers
  * every other read of `ctx.config` (audit R1 H5): a malformed `.fleet.json` must never read as "the default mode".
  */
 export const fullSuiteOf = (ctx) => ctx.config.fullSuite ?? 'session';
+export const landingOf = (ctx) => ctx.config.landing ?? 'pr';
 const patternList = (what) => z.array(z.string(), { error: `must be an array of ${what}` }).max(MAX_HOT_FILES).optional();
 
 /** User-facing tier: the persisted tier minus `shell` (only a string testCommand may set it). */
@@ -113,6 +118,7 @@ const FleetFileSchema = z.strictObject({
   // `train`: sessions run targeted + affected tests and the required gates, never the full suite; `fleet land` is the ONE
   // full-suite run (consumer report 2026-11-15, item 1). `session` (default): each session runs it, as before.
   fullSuite: z.enum(FULL_SUITE_MODES).optional(),
+  landing: z.enum(LANDING_MODES).optional(),
 });
 
 const issuePath = (i) => i.path.length ? i.path.join('.') : '(root)';
@@ -208,7 +214,7 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
       ...(cfg.requiredChecks ? { requiredChecks: cfg.requiredChecks } : {}),
       appendOnlyGlobs: cfg.appendOnlyGlobs ?? [], restackIgnore: cfg.restackIgnore ?? [],
       archiveIgnore: cfg.archiveIgnore ?? [...DEFAULT_ARCHIVE_IGNORE], serialTimeoutMs: cfg.serialTimeoutMs ?? DEFAULT_SERIAL_TIMEOUT_MS,
-      ghAccount: cfg.ghAccount ?? null, fullSuite: cfg.fullSuite ?? 'session',
+      ghAccount: cfg.ghAccount ?? null, fullSuite: cfg.fullSuite ?? 'session', landing: cfg.landing ?? 'pr',
     },
   };
 }
@@ -300,7 +306,7 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
     baseBranch: base.baseBranch, testCommand: v.testCommand, mergeMethod: v.mergeMethod, checks: v.checks, worktreeRoot,
     hotFiles: v.hotFiles, hideIdleAfterDays: v.hideIdleAfterDays, staleWorktreeDays: v.staleWorktreeDays,
     ...(v.requiredChecks ? { requiredChecks: v.requiredChecks } : {}),
-    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs, ghAccount: v.ghAccount, fullSuite: v.fullSuite,
+    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs, ghAccount: v.ghAccount, fullSuite: v.fullSuite, landing: v.landing,
     sources: {
       baseBranch: base.source, testCommand: v.testCommandSource, mergeMethod: v.mergeMethodSource,
       checks: file.value?.checks ? 'config' : 'default', worktreeRoot: fromEnv ? 'env' : 'default',

@@ -52,21 +52,35 @@ open, not a draft, on the right base, head equal to the ready oid, and not stack
 ship commit's own message, copied from the git object, and read back after the merge (trailers as a multiset, subject, body).
 Never hand-write gate evidence or re-run a refused check to find a pass.
 
-## During the merge
+## During the merge: one outcome per member
 
-Each member merges serially with `--match-head-commit`, and before every merge the grant, the base tip and the member are
-re-checked. A stop never rolls back what already merged: it is resumable with `land --resume <train> --ship-batch`.
+Each member merges serially with `--squash --match-head-commit <full oid>` (never `--auto`). Before every merge the grant, the
+member (the same admission as the build), the base tip and the branch rules are re-checked. The live head is proven by **tree**: a
+head that is not the tested one but carries the tested tree is admitted at that head (its own provenance is re-checked and its own
+message copied); any other tree is `refused/head-moved`. A stop never rolls back what already merged: `land --resume <train>
+--ship-batch` re-enters. The serial record `fleet/serial/<train>.json` is the only mutable per-member truth; the build record is
+write-once.
 
-| State | Outcome |
+Each member ends in one outcome: **landed** (verdict `verified`, `provenance-lost`, `untested-base` or `wrong-target`), **refused**
+(its own code; terminal for this run, never retried into a pass), **skipped** (merged by someone else) or **not-run** (a read
+failed: resumable). A failed read is never a measured defect.
+
+| Case | Outcome |
 |---|---|
-| grant absent or mismatched | nothing merged; today's plain `land` (with the user's go-ahead) is a SEPARATE invocation |
-| store off, GitHub unreachable | every member `needs-user`; nothing merged |
-| one member fails a row, at the build OR at its own merge (a flipped CI verdict, a gone worktree) | it is skipped as `needs-user` and waits for `/ship`; the rest land; the result is ok when something landed and nothing was lost. `land --resume <train> --ship-batch` re-checks the skipped ones |
-| grant revoked mid-batch (`grant-revoked`) | stop before the next merge; merged members stay merged |
-| base moved by a foreign commit (`base-moved`) | stop; rebuild the train (a new build, a new combined test) |
-| member behind the base (`behind-base`) | skipped as `needs-user`; **never `update-branch`** (it would put an unshipped commit on the ship head). A repo that requires up-to-date branches lands the first member of a build and skips the rest until the user restacks them |
-| a foreign commit landed in the merge window (`landed-on-untested-base`) | reported loudly, batch stops, remaining members rebuild |
-| squash lost the trailers (`provenance-lost`) | reported loudly; the merge stands; file it with `fleet propose` |
-| interrupted after the merge | `--resume` adopts the merge from GitHub, verifies it, never merges twice |
+| grant absent or mismatched | nothing merged; plain `land` (with the user's go-ahead) is a SEPARATE invocation |
+| one member fails a row, at the build OR at its own merge (CI, child, closed, draft, retargeted, DIRTY, BEHIND, checks failed) | **refused** with that code; the rest still land. A BEHIND member is never `update-branch`ed (it would put an unshipped commit on the ship head) |
+| a read fails (PR view, tree, message, checks still pending at the deadline) | **not-run**; the rest land; the result is resumable (exit 3) |
+| grant revoked, base moved, merge queue present, rules unreadable | run stop before the next merge; merged members stay merged; rebuild after `base-moved` |
+| a merge request whose answer was lost or not observed | `merge-unconfirmed`: the run stops; a resume replays nothing inside the request window, and never while the PR is queued |
+| a PR merged by someone else | **skipped** plus a persisted `halt`: no further member lands in this run; rebuild |
+| a foreign commit in the merge window (`untested-base`), a wrong target branch | **landed** with that verdict and a `halt`; ok false |
+| the squash lost the trailers (`provenance-lost`) | landed; ok false; file it with `fleet propose` |
+| interrupted after the merge | `--resume` adopts it from GitHub, reads it back, never merges twice |
+
+**The landed set is stated honestly.** `combination` is `tested` only when every member landed and the final base tree equals the
+combined tested tree; `subset` when a member did not land (each landed member was tested alone, the combination was not);
+`different` or `unverified` otherwise. Members come from path-disjoint claims, so the untested part is semantic interaction only. A
+`provenance-lost` member leaves `combination` alone and still makes the result not ok. A finalized run is a read-only summary:
+resuming it reads nothing remote.
 
 Exit codes follow `fleet land`: 0 ok, 3 refused or stopped, 4 a train that ran red.
