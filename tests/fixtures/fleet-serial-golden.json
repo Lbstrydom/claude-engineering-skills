@@ -1,0 +1,4069 @@
+{
+  "_source": "d53272aa1484",
+  "_command": "UPDATE_GOLDEN=1 GOLDEN_SOURCE=<sha> node --test tests/fleet-serial-golden.test.mjs",
+  "_note": "generated from origin/main serial.mjs before the member-outcome refactor; never regenerate from the refactored code",
+  "scenarios": {
+    "clean: waits for the check, merges exactly the tested head": {
+      "argv": [
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+        ],
+        [
+          "api",
+          "repos/o/n/rules/branches/main"
+        ],
+        [
+          "api",
+          "repos/o/n/branches/main"
+        ],
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "headRefOid"
+        ],
+        [
+          "pr",
+          "checks",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "name,state,bucket,completedAt"
+        ],
+        [
+          "pr",
+          "merge",
+          "21",
+          "-R",
+          "o/n",
+          "--squash",
+          "--match-head-commit",
+          "<tested>"
+        ]
+      ],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 60000,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "merged",
+            "head": "<tested>",
+            "accounted": [
+              "<tested>"
+            ],
+            "updates": 0,
+            "priorHead": null,
+            "mergedOid": "<oid>",
+            "note": null,
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "landed",
+          "reason": "every PR observed merged",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": true,
+        "code": "ok",
+        "trainId": "<train>",
+        "run": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "landed": true,
+        "train": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "createdAt": "<time>",
+          "updatedAt": "<time>",
+          "phase": "landed",
+          "baseOid": "<oid>",
+          "sources": [
+            {
+              "id": "feat",
+              "gen": 1,
+              "rev": 2,
+              "oid": "<tested>",
+              "kind": "branch",
+              "repo": "o/n",
+              "prNumber": 21,
+              "headRepo": "o/n",
+              "baseRef": "main",
+              "baseRefOid": "<oid>"
+            }
+          ],
+          "mergeMethod": "pr",
+          "destination": {
+            "remote": "origin",
+            "fetchUrl": "<path>",
+            "pushUrl": "<path>",
+            "ref": "refs/heads/main",
+            "expectedOid": "<oid>"
+          },
+          "testCommand": [
+            {
+              "name": "ok",
+              "command": [
+                "node",
+                "-e",
+                "0"
+              ],
+              "stage": "pre-land"
+            }
+          ],
+          "candidate": {
+            "oid": "<oid>",
+            "tree": "<oid>"
+          },
+          "depsChanged": false,
+          "result": "green",
+          "tierResults": [
+            {
+              "name": "ok",
+              "result": "green",
+              "stage": "pre-land",
+              "startedAt": "<time>",
+              "endedAt": "<time>",
+              "logPath": "<path>"
+            }
+          ],
+          "deferredTiers": [],
+          "checkResults": [],
+          "worktree": "<path>",
+          "outcome": {
+            "serial": true,
+            "merges": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "testedOid": "<tested>",
+                "mergedHead": "<tested>",
+                "mergeCommit": "<oid>"
+              }
+            ],
+            "landedAt": "<time>"
+          },
+          "notes": []
+        }
+      }
+    },
+    "behind: update-branch, proves the updated head, merges it": {
+      "argv": [
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+        ],
+        [
+          "api",
+          "-X",
+          "PUT",
+          "repos/o/n/pulls/21/update-branch",
+          "-f",
+          "expected_head_sha=<tested>"
+        ],
+        [
+          "api",
+          "repos/o/n/rules/branches/main"
+        ],
+        [
+          "api",
+          "repos/o/n/branches/main"
+        ],
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "headRefOid"
+        ],
+        [
+          "pr",
+          "checks",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "name,state,bucket,completedAt"
+        ],
+        [
+          "pr",
+          "merge",
+          "21",
+          "-R",
+          "o/n",
+          "--squash",
+          "--match-head-commit",
+          "<updated>"
+        ]
+      ],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 60000,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "merged",
+            "head": "<updated>",
+            "accounted": [
+              "<tested>",
+              "<updated>"
+            ],
+            "updates": 1,
+            "priorHead": "<tested>",
+            "mergedOid": "<oid>",
+            "note": null,
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "landed",
+          "reason": "every PR observed merged",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": true,
+        "code": "ok",
+        "trainId": "<train>",
+        "run": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<updated>",
+              "accounted": [
+                "<tested>",
+                "<updated>"
+              ],
+              "updates": 1,
+              "priorHead": "<tested>",
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "landed": true,
+        "train": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "createdAt": "<time>",
+          "updatedAt": "<time>",
+          "phase": "landed",
+          "baseOid": "<oid>",
+          "sources": [
+            {
+              "id": "feat",
+              "gen": 1,
+              "rev": 2,
+              "oid": "<tested>",
+              "kind": "branch",
+              "repo": "o/n",
+              "prNumber": 21,
+              "headRepo": "o/n",
+              "baseRef": "main",
+              "baseRefOid": "<oid>"
+            }
+          ],
+          "mergeMethod": "pr",
+          "destination": {
+            "remote": "origin",
+            "fetchUrl": "<path>",
+            "pushUrl": "<path>",
+            "ref": "refs/heads/main",
+            "expectedOid": "<oid>"
+          },
+          "testCommand": [
+            {
+              "name": "ok",
+              "command": [
+                "node",
+                "-e",
+                "0"
+              ],
+              "stage": "pre-land"
+            }
+          ],
+          "candidate": {
+            "oid": "<oid>",
+            "tree": "<oid>"
+          },
+          "depsChanged": false,
+          "result": "green",
+          "tierResults": [
+            {
+              "name": "ok",
+              "result": "green",
+              "stage": "pre-land",
+              "startedAt": "<time>",
+              "endedAt": "<time>",
+              "logPath": "<path>"
+            }
+          ],
+          "deferredTiers": [],
+          "checkResults": [],
+          "worktree": "<path>",
+          "outcome": {
+            "serial": true,
+            "merges": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "testedOid": "<tested>",
+                "mergedHead": "<updated>",
+                "mergeCommit": "<oid>"
+              }
+            ],
+            "landedAt": "<time>"
+          },
+          "notes": []
+        }
+      }
+    },
+    "foreign content in the updated head stops the run": {
+      "argv": [
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+        ],
+        [
+          "api",
+          "-X",
+          "PUT",
+          "repos/o/n/pulls/21/update-branch",
+          "-f",
+          "expected_head_sha=<tested>"
+        ]
+      ],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 60000,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "update",
+            "head": "<tested>",
+            "accounted": [
+              "<tested>"
+            ],
+            "updates": 1,
+            "priorHead": "<tested>",
+            "mergedOid": null,
+            "note": "PR #21: head <updated:short> is UNACCOUNTED (<updated:short> carries content beyond a clean merge of the base) — approve a new train",
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "stopped",
+          "reason": "PR #21: head <updated:short> is UNACCOUNTED (<updated:short> carries content beyond a clean merge of the base) — approve a new train",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": false,
+        "code": "refused",
+        "reason": "PR #21: head <updated:short> is UNACCOUNTED (<updated:short> carries content beyond a clean merge of the base) — approve a new train",
+        "trainId": "<train>",
+        "run": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "update",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 1,
+              "priorHead": "<tested>",
+              "mergedOid": null,
+              "note": "PR #21: head <updated:short> is UNACCOUNTED (<updated:short> carries content beyond a clean merge of the base) — approve a new train",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: head <updated:short> is UNACCOUNTED (<updated:short> carries content beyond a clean merge of the base) — approve a new train",
+            "at": "<time>"
+          }
+        },
+        "resumable": true
+      }
+    },
+    "crash after update-branch: resume proves the head and lands": {
+      "first": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "-X",
+            "PUT",
+            "repos/o/n/pulls/21/update-branch",
+            "-f",
+            "expected_head_sha=<tested>"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<updated>",
+              "accounted": [
+                "<tested>",
+                "<updated>"
+              ],
+              "updates": 0,
+              "priorHead": "<tested>",
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21: update not yet visible after 0s — --resume to continue",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "update",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": "<tested>",
+                "mergedOid": null,
+                "note": "PR #21: update not yet visible after 0s — --resume to continue",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21: update not yet visible after 0s — --resume to continue",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "second": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ],
+          [
+            "pr",
+            "merge",
+            "21",
+            "-R",
+            "o/n",
+            "--squash",
+            "--match-head-commit",
+            "<updated>"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<updated>",
+              "accounted": [
+                "<tested>",
+                "<updated>"
+              ],
+              "updates": 0,
+              "priorHead": "<tested>",
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": true,
+          "code": "ok",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "merged",
+                "head": "<updated>",
+                "accounted": [
+                  "<tested>",
+                  "<updated>"
+                ],
+                "updates": 0,
+                "priorHead": "<tested>",
+                "mergedOid": "<oid>",
+                "note": null,
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "landed",
+              "reason": "every PR observed merged",
+              "at": "<time>"
+            }
+          },
+          "landed": true,
+          "train": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "createdAt": "<time>",
+            "updatedAt": "<time>",
+            "phase": "landed",
+            "baseOid": "<oid>",
+            "sources": [
+              {
+                "id": "feat",
+                "gen": 1,
+                "rev": 2,
+                "oid": "<tested>",
+                "kind": "branch",
+                "repo": "o/n",
+                "prNumber": 21,
+                "headRepo": "o/n",
+                "baseRef": "main",
+                "baseRefOid": "<oid>"
+              }
+            ],
+            "mergeMethod": "pr",
+            "destination": {
+              "remote": "origin",
+              "fetchUrl": "<path>",
+              "pushUrl": "<path>",
+              "ref": "refs/heads/main",
+              "expectedOid": "<oid>"
+            },
+            "testCommand": [
+              {
+                "name": "ok",
+                "command": [
+                  "node",
+                  "-e",
+                  "0"
+                ],
+                "stage": "pre-land"
+              }
+            ],
+            "candidate": {
+              "oid": "<oid>",
+              "tree": "<oid>"
+            },
+            "depsChanged": false,
+            "result": "green",
+            "tierResults": [
+              {
+                "name": "ok",
+                "result": "green",
+                "stage": "pre-land",
+                "startedAt": "<time>",
+                "endedAt": "<time>",
+                "logPath": "<path>"
+              }
+            ],
+            "deferredTiers": [],
+            "checkResults": [],
+            "worktree": "<path>",
+            "outcome": {
+              "serial": true,
+              "merges": [
+                {
+                  "id": "feat",
+                  "prNumber": 21,
+                  "testedOid": "<tested>",
+                  "mergedHead": "<updated>",
+                  "mergeCommit": "<oid>"
+                }
+              ],
+              "landedAt": "<time>"
+            },
+            "notes": []
+          }
+        }
+      }
+    },
+    "DIRTY stops with the restack remedy": {
+      "argv": [
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+        ]
+      ],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 60000,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "pending",
+            "head": "<tested>",
+            "accounted": [
+              "<tested>"
+            ],
+            "updates": 0,
+            "priorHead": null,
+            "mergedOid": null,
+            "note": "PR #21 now conflicts with main — run `fleet restack feat` and push, then --resume",
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "stopped",
+          "reason": "PR #21 now conflicts with main — run `fleet restack feat` and push, then --resume",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": false,
+        "code": "refused",
+        "reason": "PR #21 now conflicts with main — run `fleet restack feat` and push, then --resume",
+        "trainId": "<train>",
+        "run": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "pending",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21 now conflicts with main — run `fleet restack feat` and push, then --resume",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21 now conflicts with main — run `fleet restack feat` and push, then --resume",
+            "at": "<time>"
+          }
+        },
+        "resumable": true
+      }
+    },
+    "a never-registered required check times out by name": {
+      "argv": [
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+        ],
+        [
+          "api",
+          "repos/o/n/rules/branches/main"
+        ],
+        [
+          "api",
+          "repos/o/n/branches/main"
+        ],
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "headRefOid"
+        ],
+        [
+          "pr",
+          "checks",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "name,state,bucket,completedAt"
+        ]
+      ],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 30,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "wait",
+            "head": "<tested>",
+            "accounted": [
+              "<tested>"
+            ],
+            "updates": 0,
+            "priorHead": null,
+            "mergedOid": null,
+            "note": "PR #21: required checks still missing after 0 min (missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "stopped",
+          "reason": "PR #21: required checks still missing after 0 min (missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": false,
+        "code": "refused",
+        "reason": "PR #21: required checks still missing after 0 min (missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
+        "trainId": "<train>",
+        "run": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 30,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "wait",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: required checks still missing after 0 min (missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: required checks still missing after 0 min (missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
+            "at": "<time>"
+          }
+        },
+        "resumable": true
+      }
+    },
+    "a failed required check stops the run": {
+      "argv": [
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+        ],
+        [
+          "api",
+          "repos/o/n/rules/branches/main"
+        ],
+        [
+          "api",
+          "repos/o/n/branches/main"
+        ],
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "headRefOid"
+        ],
+        [
+          "pr",
+          "checks",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "name,state,bucket,completedAt"
+        ]
+      ],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 60000,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "wait",
+            "head": "<tested>",
+            "accounted": [
+              "<tested>"
+            ],
+            "updates": 0,
+            "priorHead": null,
+            "mergedOid": null,
+            "note": "PR #21 required checks failed: ci",
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "stopped",
+          "reason": "PR #21 required checks failed: ci",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": false,
+        "code": "refused",
+        "reason": "PR #21 required checks failed: ci",
+        "trainId": "<train>",
+        "run": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "wait",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21 required checks failed: ci",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21 required checks failed: ci",
+            "at": "<time>"
+          }
+        },
+        "resumable": true
+      }
+    },
+    "an unreadable PR view stops the run": {
+      "argv": [],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 60000,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "pending",
+            "head": "<tested>",
+            "accounted": [
+              "<tested>"
+            ],
+            "updates": 0,
+            "priorHead": null,
+            "mergedOid": null,
+            "note": "PR #21: cannot read it (gh failed)",
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "stopped",
+          "reason": "PR #21: cannot read it (gh failed)",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": false,
+        "code": "refused",
+        "reason": "PR #21: cannot read it (gh failed)",
+        "trainId": "<train>",
+        "run": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "pending",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: cannot read it (gh failed)",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: cannot read it (gh failed)",
+            "at": "<time>"
+          }
+        },
+        "resumable": true
+      }
+    },
+    "a closed PR, a draft and a retarget each stop the run": {
+      "closed": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "pending",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21 is CLOSED",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21 is CLOSED",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21 is CLOSED",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "pending",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21 is CLOSED",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21 is CLOSED",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "draft": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "pending",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21 is a draft",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21 is a draft",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21 is a draft",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "pending",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21 is a draft",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21 is a draft",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "retargeted": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "pending",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21 now targets other, not main",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21 now targets other, not main",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21 now targets other, not main",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "pending",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21 now targets other, not main",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21 now targets other, not main",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      }
+    },
+    "a PR merged outside the run, at an unaccounted head, stops the run": {
+      "argv": [
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+        ]
+      ],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 60000,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "pending",
+            "head": "<tested>",
+            "accounted": [
+              "<tested>"
+            ],
+            "updates": 0,
+            "priorHead": null,
+            "mergedOid": null,
+            "note": "PR #21 was merged at cccccccccccc, a head this run did not account for — check it by hand",
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "stopped",
+          "reason": "PR #21 was merged at cccccccccccc, a head this run did not account for — check it by hand",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": false,
+        "code": "refused",
+        "reason": "PR #21 was merged at cccccccccccc, a head this run did not account for — check it by hand",
+        "trainId": "<train>",
+        "run": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "pending",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21 was merged at cccccccccccc, a head this run did not account for — check it by hand",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21 was merged at cccccccccccc, a head this run did not account for — check it by hand",
+            "at": "<time>"
+          }
+        },
+        "resumable": true
+      }
+    },
+    "a PR already merged at the tested head is observed, not re-merged": {
+      "argv": [
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+        ]
+      ],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 60000,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "merged",
+            "head": "<tested>",
+            "accounted": [
+              "<tested>"
+            ],
+            "updates": 0,
+            "priorHead": null,
+            "mergedOid": "<oid>",
+            "note": null,
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "landed",
+          "reason": "every PR observed merged",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": true,
+        "code": "ok",
+        "trainId": "<train>",
+        "run": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "landed": true,
+        "train": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "createdAt": "<time>",
+          "updatedAt": "<time>",
+          "phase": "landed",
+          "baseOid": "<oid>",
+          "sources": [
+            {
+              "id": "feat",
+              "gen": 1,
+              "rev": 2,
+              "oid": "<tested>",
+              "kind": "branch",
+              "repo": "o/n",
+              "prNumber": 21,
+              "headRepo": "o/n",
+              "baseRef": "main",
+              "baseRefOid": "<oid>"
+            }
+          ],
+          "mergeMethod": "pr",
+          "destination": {
+            "remote": "origin",
+            "fetchUrl": "<path>",
+            "pushUrl": "<path>",
+            "ref": "refs/heads/main",
+            "expectedOid": "<oid>"
+          },
+          "testCommand": [
+            {
+              "name": "ok",
+              "command": [
+                "node",
+                "-e",
+                "0"
+              ],
+              "stage": "pre-land"
+            }
+          ],
+          "candidate": {
+            "oid": "<oid>",
+            "tree": "<oid>"
+          },
+          "depsChanged": false,
+          "result": "green",
+          "tierResults": [
+            {
+              "name": "ok",
+              "result": "green",
+              "stage": "pre-land",
+              "startedAt": "<time>",
+              "endedAt": "<time>",
+              "logPath": "<path>"
+            }
+          ],
+          "deferredTiers": [],
+          "checkResults": [],
+          "worktree": "<path>",
+          "outcome": {
+            "serial": true,
+            "merges": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "testedOid": "<tested>",
+                "mergedHead": "<tested>",
+                "mergeCommit": "<oid>"
+              }
+            ],
+            "landedAt": "<time>"
+          },
+          "notes": []
+        }
+      }
+    },
+    "a merge call that fails stops the run": {
+      "argv": [
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+        ],
+        [
+          "api",
+          "repos/o/n/rules/branches/main"
+        ],
+        [
+          "api",
+          "repos/o/n/branches/main"
+        ],
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "headRefOid"
+        ],
+        [
+          "pr",
+          "checks",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "name,state,bucket,completedAt"
+        ],
+        [
+          "pr",
+          "merge",
+          "21",
+          "-R",
+          "o/n",
+          "--squash",
+          "--match-head-commit",
+          "<tested>"
+        ]
+      ],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 60000,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "merge",
+            "head": "<tested>",
+            "accounted": [
+              "<tested>"
+            ],
+            "updates": 0,
+            "priorHead": null,
+            "mergedOid": null,
+            "note": "PR #21: gh pr merge failed (gh failed)",
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "stopped",
+          "reason": "PR #21: gh pr merge failed (gh failed)",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": false,
+        "code": "refused",
+        "reason": "PR #21: gh pr merge failed (gh failed)",
+        "trainId": "<train>",
+        "run": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merge",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: gh pr merge failed (gh failed)",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: gh pr merge failed (gh failed)",
+            "at": "<time>"
+          }
+        },
+        "resumable": true
+      }
+    },
+    "a merge that is accepted but never observed stops the run": {
+      "argv": [
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+        ],
+        [
+          "api",
+          "repos/o/n/rules/branches/main"
+        ],
+        [
+          "api",
+          "repos/o/n/branches/main"
+        ],
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "headRefOid"
+        ],
+        [
+          "pr",
+          "checks",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "name,state,bucket,completedAt"
+        ],
+        [
+          "pr",
+          "merge",
+          "21",
+          "-R",
+          "o/n",
+          "--squash",
+          "--match-head-commit",
+          "<tested>"
+        ]
+      ],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 60000,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "merge",
+            "head": "<tested>",
+            "accounted": [
+              "<tested>"
+            ],
+            "updates": 0,
+            "priorHead": null,
+            "mergedOid": null,
+            "note": "PR #21: merge accepted but not observed merged after 0s — check branch rules / merge queue, then --resume",
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "stopped",
+          "reason": "PR #21: merge accepted but not observed merged after 0s — check branch rules / merge queue, then --resume",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": false,
+        "code": "refused",
+        "reason": "PR #21: merge accepted but not observed merged after 0s — check branch rules / merge queue, then --resume",
+        "trainId": "<train>",
+        "run": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merge",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: merge accepted but not observed merged after 0s — check branch rules / merge queue, then --resume",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: merge accepted but not observed merged after 0s — check branch rules / merge queue, then --resume",
+            "at": "<time>"
+          }
+        },
+        "resumable": true
+      }
+    },
+    "a second runner is refused while the lease is held": {
+      "argv": [
+        [
+          "pr",
+          "view",
+          "21",
+          "-R",
+          "o/n",
+          "--json",
+          "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+        ]
+      ],
+      "record": {
+        "schemaVersion": 1,
+        "trainId": "<train>",
+        "startedAt": "<time>",
+        "updatedAt": "<time>",
+        "timeoutMs": 60000,
+        "base": "main",
+        "remote": "origin",
+        "steps": [
+          {
+            "id": "feat",
+            "prNumber": 21,
+            "repo": "o/n",
+            "testedOid": "<tested>",
+            "step": "pending",
+            "head": "<tested>",
+            "accounted": [
+              "<tested>"
+            ],
+            "updates": 0,
+            "priorHead": null,
+            "mergedOid": null,
+            "note": "PR #21 now conflicts with main — run `fleet restack feat` and push, then --resume",
+            "at": "<time>"
+          }
+        ],
+        "outcome": {
+          "status": "stopped",
+          "reason": "PR #21 now conflicts with main — run `fleet restack feat` and push, then --resume",
+          "at": "<time>"
+        }
+      },
+      "result": {
+        "ok": false,
+        "code": "error",
+        "reason": "another process is landing <train> serially (serial/<train>.lock is held)"
+      }
+    },
+    "messageFor: absent, null and a message produce the pinned merge argv": {
+      "absent": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ],
+          [
+            "pr",
+            "merge",
+            "21",
+            "-R",
+            "o/n",
+            "--squash",
+            "--match-head-commit",
+            "<tested>"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": true,
+          "code": "ok",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "merged",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": "<oid>",
+                "note": null,
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "landed",
+              "reason": "every PR observed merged",
+              "at": "<time>"
+            }
+          },
+          "landed": true,
+          "train": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "createdAt": "<time>",
+            "updatedAt": "<time>",
+            "phase": "landed",
+            "baseOid": "<oid>",
+            "sources": [
+              {
+                "id": "feat",
+                "gen": 1,
+                "rev": 2,
+                "oid": "<tested>",
+                "kind": "branch",
+                "repo": "o/n",
+                "prNumber": 21,
+                "headRepo": "o/n",
+                "baseRef": "main",
+                "baseRefOid": "<oid>"
+              }
+            ],
+            "mergeMethod": "pr",
+            "destination": {
+              "remote": "origin",
+              "fetchUrl": "<path>",
+              "pushUrl": "<path>",
+              "ref": "refs/heads/main",
+              "expectedOid": "<oid>"
+            },
+            "testCommand": [
+              {
+                "name": "ok",
+                "command": [
+                  "node",
+                  "-e",
+                  "0"
+                ],
+                "stage": "pre-land"
+              }
+            ],
+            "candidate": {
+              "oid": "<oid>",
+              "tree": "<oid>"
+            },
+            "depsChanged": false,
+            "result": "green",
+            "tierResults": [
+              {
+                "name": "ok",
+                "result": "green",
+                "stage": "pre-land",
+                "startedAt": "<time>",
+                "endedAt": "<time>",
+                "logPath": "<path>"
+              }
+            ],
+            "deferredTiers": [],
+            "checkResults": [],
+            "worktree": "<path>",
+            "outcome": {
+              "serial": true,
+              "merges": [
+                {
+                  "id": "feat",
+                  "prNumber": 21,
+                  "testedOid": "<tested>",
+                  "mergedHead": "<tested>",
+                  "mergeCommit": "<oid>"
+                }
+              ],
+              "landedAt": "<time>"
+            },
+            "notes": []
+          }
+        }
+      },
+      "null": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "wait",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: this run requires a squash message and messageFor returned none",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: this run requires a squash message and messageFor returned none",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21: this run requires a squash message and messageFor returned none",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "wait",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21: this run requires a squash message and messageFor returned none",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21: this run requires a squash message and messageFor returned none",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "message": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ],
+          [
+            "pr",
+            "merge",
+            "21",
+            "-R",
+            "o/n",
+            "--squash",
+            "--subject",
+            "feat: the thing (#21)",
+            "--body-file",
+            "<msgfile>",
+            "--match-head-commit",
+            "<tested>"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": true,
+          "code": "ok",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "merged",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": "<oid>",
+                "note": null,
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "landed",
+              "reason": "every PR observed merged",
+              "at": "<time>"
+            }
+          },
+          "landed": true,
+          "train": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "createdAt": "<time>",
+            "updatedAt": "<time>",
+            "phase": "landed",
+            "baseOid": "<oid>",
+            "sources": [
+              {
+                "id": "feat",
+                "gen": 1,
+                "rev": 2,
+                "oid": "<tested>",
+                "kind": "branch",
+                "repo": "o/n",
+                "prNumber": 21,
+                "headRepo": "o/n",
+                "baseRef": "main",
+                "baseRefOid": "<oid>"
+              }
+            ],
+            "mergeMethod": "pr",
+            "destination": {
+              "remote": "origin",
+              "fetchUrl": "<path>",
+              "pushUrl": "<path>",
+              "ref": "refs/heads/main",
+              "expectedOid": "<oid>"
+            },
+            "testCommand": [
+              {
+                "name": "ok",
+                "command": [
+                  "node",
+                  "-e",
+                  "0"
+                ],
+                "stage": "pre-land"
+              }
+            ],
+            "candidate": {
+              "oid": "<oid>",
+              "tree": "<oid>"
+            },
+            "depsChanged": false,
+            "result": "green",
+            "tierResults": [
+              {
+                "name": "ok",
+                "result": "green",
+                "stage": "pre-land",
+                "startedAt": "<time>",
+                "endedAt": "<time>",
+                "logPath": "<path>"
+              }
+            ],
+            "deferredTiers": [],
+            "checkResults": [],
+            "worktree": "<path>",
+            "outcome": {
+              "serial": true,
+              "merges": [
+                {
+                  "id": "feat",
+                  "prNumber": 21,
+                  "testedOid": "<tested>",
+                  "mergedHead": "<tested>",
+                  "mergeCommit": "<oid>"
+                }
+              ],
+              "landedAt": "<time>"
+            },
+            "notes": []
+          }
+        }
+      }
+    },
+    "messageFor: a stop, a throw and bad shapes each stop before the merge": {
+      "stop": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "wait",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: no run covers this head",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: no run covers this head",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21: no run covers this head",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "wait",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21: no run covers this head",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21: no run covers this head",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "throw": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "wait",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: messageFor failed: store exploded",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: messageFor failed: store exploded",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21: messageFor failed: store exploded",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "wait",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21: messageFor failed: store exploded",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21: messageFor failed: store exploded",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "empty-subject": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "wait",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: messageFor returned an unusable subject or body",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: messageFor returned an unusable subject or body",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21: messageFor returned an unusable subject or body",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "wait",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21: messageFor returned an unusable subject or body",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21: messageFor returned an unusable subject or body",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "multiline": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "wait",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: messageFor returned an unusable subject or body",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: messageFor returned an unusable subject or body",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21: messageFor returned an unusable subject or body",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "wait",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21: messageFor returned an unusable subject or body",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21: messageFor returned an unusable subject or body",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "nul-body": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "wait",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: messageFor returned an unusable subject or body",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: messageFor returned an unusable subject or body",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21: messageFor returned an unusable subject or body",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "wait",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21: messageFor returned an unusable subject or body",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21: messageFor returned an unusable subject or body",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "no-body": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "wait",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: messageFor returned an unrecognised answer",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: messageFor returned an unrecognised answer",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21: messageFor returned an unrecognised answer",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "wait",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21: messageFor returned an unrecognised answer",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21: messageFor returned an unrecognised answer",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "string": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "wait",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: messageFor returned an unrecognised answer",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: messageFor returned an unrecognised answer",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21: messageFor returned an unrecognised answer",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "wait",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21: messageFor returned an unrecognised answer",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21: messageFor returned an unrecognised answer",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "null": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "wait",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": null,
+              "note": "PR #21: this run requires a squash message and messageFor returned none",
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "stopped",
+            "reason": "PR #21: this run requires a squash message and messageFor returned none",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21: this run requires a squash message and messageFor returned none",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "wait",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21: this run requires a squash message and messageFor returned none",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21: this run requires a squash message and messageFor returned none",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      }
+    },
+    "messageRequired: a run approved with a provider cannot resume without one": {
+      "approved": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "PR #21 now conflicts with main — run `fleet restack feat` and push, then --resume",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "pending",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21 now conflicts with main — run `fleet restack feat` and push, then --resume",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "PR #21 now conflicts with main — run `fleet restack feat` and push, then --resume",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "raw": {
+        "argv": [],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": false,
+          "code": "refused",
+          "reason": "this run was started with a squash-message provider (ship-train land) and may only merge with one; resume it with the same tool: node scripts/ship-train.mjs land --train <train> --resume",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "pending",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": null,
+                "note": "PR #21 now conflicts with main — run `fleet restack feat` and push, then --resume",
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "stopped",
+              "reason": "this run was started with a squash-message provider (ship-train land) and may only merge with one; resume it with the same tool: node scripts/ship-train.mjs land --train <train> --resume",
+              "at": "<time>"
+            }
+          },
+          "resumable": true
+        }
+      },
+      "again": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ],
+          [
+            "pr",
+            "merge",
+            "21",
+            "-R",
+            "o/n",
+            "--squash",
+            "--subject",
+            "s (#21)",
+            "--body-file",
+            "<msgfile>",
+            "--match-head-commit",
+            "<tested>"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "messageRequired": true,
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": true,
+          "code": "ok",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "messageRequired": true,
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "merged",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": "<oid>",
+                "note": null,
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "landed",
+              "reason": "every PR observed merged",
+              "at": "<time>"
+            }
+          },
+          "landed": true,
+          "train": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "createdAt": "<time>",
+            "updatedAt": "<time>",
+            "phase": "landed",
+            "baseOid": "<oid>",
+            "sources": [
+              {
+                "id": "feat",
+                "gen": 1,
+                "rev": 2,
+                "oid": "<tested>",
+                "kind": "branch",
+                "repo": "o/n",
+                "prNumber": 21,
+                "headRepo": "o/n",
+                "baseRef": "main",
+                "baseRefOid": "<oid>"
+              }
+            ],
+            "mergeMethod": "pr",
+            "destination": {
+              "remote": "origin",
+              "fetchUrl": "<path>",
+              "pushUrl": "<path>",
+              "ref": "refs/heads/main",
+              "expectedOid": "<oid>"
+            },
+            "testCommand": [
+              {
+                "name": "ok",
+                "command": [
+                  "node",
+                  "-e",
+                  "0"
+                ],
+                "stage": "pre-land"
+              }
+            ],
+            "candidate": {
+              "oid": "<oid>",
+              "tree": "<oid>"
+            },
+            "depsChanged": false,
+            "result": "green",
+            "tierResults": [
+              {
+                "name": "ok",
+                "result": "green",
+                "stage": "pre-land",
+                "startedAt": "<time>",
+                "endedAt": "<time>",
+                "logPath": "<path>"
+              }
+            ],
+            "deferredTiers": [],
+            "checkResults": [],
+            "worktree": "<path>",
+            "outcome": {
+              "serial": true,
+              "merges": [
+                {
+                  "id": "feat",
+                  "prNumber": 21,
+                  "testedOid": "<tested>",
+                  "mergedHead": "<tested>",
+                  "mergeCommit": "<oid>"
+                }
+              ],
+              "landedAt": "<time>"
+            },
+            "notes": []
+          }
+        }
+      }
+    },
+    "crash before and after the merge submission: the retry observes or re-decides": {
+      "beforeThrown": "simulated process death",
+      "beforeRetry": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ],
+          [
+            "api",
+            "repos/o/n/rules/branches/main"
+          ],
+          [
+            "api",
+            "repos/o/n/branches/main"
+          ],
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "headRefOid"
+          ],
+          [
+            "pr",
+            "checks",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "name,state,bucket,completedAt"
+          ],
+          [
+            "pr",
+            "merge",
+            "21",
+            "-R",
+            "o/n",
+            "--squash",
+            "--match-head-commit",
+            "<tested>"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": true,
+          "code": "ok",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "merged",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": "<oid>",
+                "note": null,
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "landed",
+              "reason": "every PR observed merged",
+              "at": "<time>"
+            }
+          },
+          "landed": true,
+          "train": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "createdAt": "<time>",
+            "updatedAt": "<time>",
+            "phase": "landed",
+            "baseOid": "<oid>",
+            "sources": [
+              {
+                "id": "feat",
+                "gen": 1,
+                "rev": 2,
+                "oid": "<tested>",
+                "kind": "branch",
+                "repo": "o/n",
+                "prNumber": 21,
+                "headRepo": "o/n",
+                "baseRef": "main",
+                "baseRefOid": "<oid>"
+              }
+            ],
+            "mergeMethod": "pr",
+            "destination": {
+              "remote": "origin",
+              "fetchUrl": "<path>",
+              "pushUrl": "<path>",
+              "ref": "refs/heads/main",
+              "expectedOid": "<oid>"
+            },
+            "testCommand": [
+              {
+                "name": "ok",
+                "command": [
+                  "node",
+                  "-e",
+                  "0"
+                ],
+                "stage": "pre-land"
+              }
+            ],
+            "candidate": {
+              "oid": "<oid>",
+              "tree": "<oid>"
+            },
+            "depsChanged": false,
+            "result": "green",
+            "tierResults": [
+              {
+                "name": "ok",
+                "result": "green",
+                "stage": "pre-land",
+                "startedAt": "<time>",
+                "endedAt": "<time>",
+                "logPath": "<path>"
+              }
+            ],
+            "deferredTiers": [],
+            "checkResults": [],
+            "worktree": "<path>",
+            "outcome": {
+              "serial": true,
+              "merges": [
+                {
+                  "id": "feat",
+                  "prNumber": 21,
+                  "testedOid": "<tested>",
+                  "mergedHead": "<tested>",
+                  "mergeCommit": "<oid>"
+                }
+              ],
+              "landedAt": "<time>"
+            },
+            "notes": []
+          }
+        }
+      },
+      "afterThrown": "simulated process death",
+      "afterRetry": {
+        "argv": [
+          [
+            "pr",
+            "view",
+            "21",
+            "-R",
+            "o/n",
+            "--json",
+            "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
+          ]
+        ],
+        "record": {
+          "schemaVersion": 1,
+          "trainId": "<train>",
+          "startedAt": "<time>",
+          "updatedAt": "<time>",
+          "timeoutMs": 60000,
+          "base": "main",
+          "remote": "origin",
+          "steps": [
+            {
+              "id": "feat",
+              "prNumber": 21,
+              "repo": "o/n",
+              "testedOid": "<tested>",
+              "step": "merged",
+              "head": "<tested>",
+              "accounted": [
+                "<tested>"
+              ],
+              "updates": 0,
+              "priorHead": null,
+              "mergedOid": "<oid>",
+              "note": null,
+              "at": "<time>"
+            }
+          ],
+          "outcome": {
+            "status": "landed",
+            "reason": "every PR observed merged",
+            "at": "<time>"
+          }
+        },
+        "result": {
+          "ok": true,
+          "code": "ok",
+          "trainId": "<train>",
+          "run": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "startedAt": "<time>",
+            "updatedAt": "<time>",
+            "timeoutMs": 60000,
+            "base": "main",
+            "remote": "origin",
+            "steps": [
+              {
+                "id": "feat",
+                "prNumber": 21,
+                "repo": "o/n",
+                "testedOid": "<tested>",
+                "step": "merged",
+                "head": "<tested>",
+                "accounted": [
+                  "<tested>"
+                ],
+                "updates": 0,
+                "priorHead": null,
+                "mergedOid": "<oid>",
+                "note": null,
+                "at": "<time>"
+              }
+            ],
+            "outcome": {
+              "status": "landed",
+              "reason": "every PR observed merged",
+              "at": "<time>"
+            }
+          },
+          "landed": true,
+          "train": {
+            "schemaVersion": 1,
+            "trainId": "<train>",
+            "createdAt": "<time>",
+            "updatedAt": "<time>",
+            "phase": "landed",
+            "baseOid": "<oid>",
+            "sources": [
+              {
+                "id": "feat",
+                "gen": 1,
+                "rev": 2,
+                "oid": "<tested>",
+                "kind": "branch",
+                "repo": "o/n",
+                "prNumber": 21,
+                "headRepo": "o/n",
+                "baseRef": "main",
+                "baseRefOid": "<oid>"
+              }
+            ],
+            "mergeMethod": "pr",
+            "destination": {
+              "remote": "origin",
+              "fetchUrl": "<path>",
+              "pushUrl": "<path>",
+              "ref": "refs/heads/main",
+              "expectedOid": "<oid>"
+            },
+            "testCommand": [
+              {
+                "name": "ok",
+                "command": [
+                  "node",
+                  "-e",
+                  "0"
+                ],
+                "stage": "pre-land"
+              }
+            ],
+            "candidate": {
+              "oid": "<oid>",
+              "tree": "<oid>"
+            },
+            "depsChanged": false,
+            "result": "green",
+            "tierResults": [
+              {
+                "name": "ok",
+                "result": "green",
+                "stage": "pre-land",
+                "startedAt": "<time>",
+                "endedAt": "<time>",
+                "logPath": "<path>"
+              }
+            ],
+            "deferredTiers": [],
+            "checkResults": [],
+            "worktree": "<path>",
+            "outcome": {
+              "serial": true,
+              "merges": [
+                {
+                  "id": "feat",
+                  "prNumber": 21,
+                  "testedOid": "<tested>",
+                  "mergedHead": "<tested>",
+                  "mergeCommit": "<oid>"
+                }
+              ],
+              "landedAt": "<time>"
+            },
+            "notes": []
+          }
+        }
+      }
+    }
+  }
+}
