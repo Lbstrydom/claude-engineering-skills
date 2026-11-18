@@ -14,8 +14,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkShippedHead, parseRawZ, parseTrailerLines, isPlainBranch, SHIPPED_HEAD_SCHEMA } from '../scripts/lib/ship-shipped-head.mjs';
+import { checkShippedHead as checkReal, parseRawZ, parseTrailerLines, isPlainBranch, SHIPPED_HEAD_SCHEMA } from '../scripts/lib/ship-shipped-head.mjs';
 
+/** Every check that is not ABOUT the live base runs OFFLINE, explicitly (the default verifies the live base against the remote). */
+const checkShippedHead = (o) => checkReal({ verifyBase: false, ...o });
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUN = '981fc79a-0fbb-447a-a294-b0c0217dab71';
 const tmpDirs = [];
@@ -295,7 +297,7 @@ describe('--check-shipped-head: the real CLI boundary (store off)', () => {
     env: { ...process.env, AUDIT_DB_URL: '', LEARNING_DISABLE: '1', AZURE_OPENAI_ENDPOINT: '' },
   });
   it('prints exactly one v1 JSON envelope and exits 2: with the store off the evidence row refuses, with its reason', () => {
-    const r = run(['--check-shipped-head', '--head', m.head, '--json'], m.dir);
+    const r = run(['--check-shipped-head', '--head', m.head, '--offline', '--json'], m.dir);
     assert.equal(r.status, 2, r.stderr);
     const env = JSON.parse(r.stdout);
     assert.equal(env.schema, SHIPPED_HEAD_SCHEMA);
@@ -351,7 +353,7 @@ describe('--check-shipped-head: a PR into a NON-default branch (code-audit round
     shipDocs(dir);
     const head = commit(dir, `ship y\n\n${TRAILERS()}`);
     writeMarkers(dir, { auditedTree, auditedSha, branch: 'claude/y' });
-    const against = (baseBranch) => checkShippedHead({ repoRoot: dir, head, baseBranch, store: store({ auditedTree }) });
+    const against = (baseBranch) => checkShippedHead({ repoRoot: dir, head, baseBranch, store: store({ auditedTree, row: { branch: 'claude/y' } }) });
     const wrong = await against(null); // origin/HEAD names main: develop's policy file reads as this member's change
     assert.ok(failing(wrong).includes('repo-policy'), 'measured against main it WOULD refuse: the instrument sees the file');
     const right = await against('develop');
@@ -379,7 +381,7 @@ describe('--check-shipped-head: the LIVE base (code-audit round 5)', () => {
   }
   it('a local origin/main equal to the live branch is checked normally (the control)', async () => {
     const { dir, head, auditedTree } = await withRemote();
-    const env = await checkShippedHead({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', verifyBase: true, store: store({ auditedTree }) });
+    const env = await checkReal({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', store: store({ auditedTree }) });
     assert.equal(env.ok, true, env.refusals.join(' | '));
   });
   it('a STALE local origin/main (the live branch moved) is refused before anything is measured against it', async () => {
@@ -391,7 +393,7 @@ describe('--check-shipped-head: the LIVE base (code-audit round 5)', () => {
     write(other, 'landed.txt', 'someone landed this\n');
     commit(other, 'someone else landed');
     git(other, 'push', '-q', 'origin', 'main');
-    const env = await checkShippedHead({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', verifyBase: true, store: store({ auditedTree }) });
+    const env = await checkReal({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', store: store({ auditedTree }) });
     assert.equal(env.ok, false);
     assert.deepEqual(failing(env), ['base']);
     assert.match(reason(env, 'base'), /fetch first/);
@@ -399,15 +401,38 @@ describe('--check-shipped-head: the LIVE base (code-audit round 5)', () => {
   it('an unreachable remote is a refusal, never a pass', async () => {
     const { dir, head, auditedTree } = await withRemote();
     git(dir, 'remote', 'set-url', 'origin', path.join(os.tmpdir(), 'no-such-remote-dir'));
-    const env = await checkShippedHead({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', verifyBase: true, store: store({ auditedTree }) });
+    const env = await checkReal({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', store: store({ auditedTree }) });
     assert.deepEqual(failing(env), ['base']);
     assert.match(reason(env, 'base'), /could not be read/);
   });
-  it('without --verify-base the live branch is not consulted (the caller opted out; the default stays offline)', async () => {
+  it('with verifyBase:false (the CLI\'s --offline) the live branch is not consulted, and the envelope says so', async () => {
     const { dir, head, auditedTree } = await withRemote();
     git(dir, 'remote', 'set-url', 'origin', path.join(os.tmpdir(), 'no-such-remote-dir'));
-    const env = await checkShippedHead({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', store: store({ auditedTree }) });
+    const env = await checkReal({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', verifyBase: false, store: store({ auditedTree }) });
     assert.equal(env.ok, true, env.refusals.join(' | '));
+    assert.equal(env.baseVerified, false);
+  });
+  it('by DEFAULT the live base is verified, with no --base named: the branch <remote>/HEAD names', async () => {
+    const { dir, head, auditedTree } = await withRemote();
+    const env = await checkReal({ repoRoot: dir, head, store: store({ auditedTree }) });
+    assert.equal(env.ok, true, env.refusals.join(' | '));
+    assert.equal(env.baseVerified, true);
+  });
+  it('no --base and no <remote>/HEAD: the default branch cannot be determined, so it refuses and asks for --base', async () => {
+    const { dir, head, auditedTree } = await withRemote();
+    git(dir, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+    const env = await checkReal({ repoRoot: dir, head, store: store({ auditedTree }) });
+    assert.deepEqual(failing(env), ['base']);
+    assert.match(reason(env, 'base'), /pass --base/);
+  });
+  it('a base that moves WHILE the check runs is refused (measured against two bases)', async () => {
+    const { dir, head, auditedTree } = await withRemote();
+    const racy = store({ auditedTree });
+    const real = racy.runFacts;
+    racy.runFacts = async (id) => { const other = git(dir, 'commit-tree', '-m', 'moved', `${git(dir, 'rev-parse', 'origin/main')}^{tree}`); git(dir, 'update-ref', 'refs/remotes/origin/main', other); return real(id); };
+    const env = await checkReal({ repoRoot: dir, head, store: racy });
+    assert.deepEqual(failing(env), ['base']);
+    assert.match(reason(env, 'base'), /moved while the check was running/);
   });
 });
 
@@ -427,7 +452,7 @@ describe('--check-shipped-head: a destination remote that is not origin (code-au
     shipDocs(dir);
     const head = commit(dir, `ship z\n\n${TRAILERS()}`);
     writeMarkers(dir, { auditedTree, auditedSha, branch: 'claude/z' });
-    const against = (remote) => checkShippedHead({ repoRoot: dir, head, baseBranch: 'develop', remote, store: store({ auditedTree }) });
+    const against = (remote) => checkShippedHead({ repoRoot: dir, head, baseBranch: 'develop', remote, store: store({ auditedTree, row: { branch: 'claude/z' } }) });
     const wrong = await against('origin'); // there is no origin/develop here: the instrument must say so, not guess
     assert.equal(wrong.ok, false, 'a base that cannot be resolved is a refusal, never a pass');
     const right = await against('upstream');
@@ -491,11 +516,11 @@ describe('--check-shipped-head: modes, submodule config and the head race (code-
   });
 });
 
-describe('--check-shipped-head: --verify-base needs a base (code-audit round 6)', () => {
-  it('--verify-base without --base is refused by the CLI, never silently ignored', () => {
+describe('--check-shipped-head: the CLI verifies the live base unless told --offline', () => {
+  it('--verify-base is no longer a flag: it is refused by name (the default IS verification)', () => {
     const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'ship-commit.mjs'), '--check-shipped-head', '--head', 'a'.repeat(40), '--verify-base', '--json'], { encoding: 'utf-8', windowsHide: true });
     assert.equal(r.status, 2, r.stderr);
-    assert.match(JSON.parse(r.stdout).refusals.join(' '), /--verify-base needs --base/);
+    assert.match(JSON.parse(r.stdout).refusals.join(' '), /unknown flag/);
   });
 });
 
@@ -517,8 +542,52 @@ describe('storyline incidents 2026-11-18 (the tree, not the sha)', () => {
     assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
     assert.match(reason(env, 'post-audit-delta'), /scripts\/first\.mjs/);
   });
-  it('the docs-only delta is a POLICY exception the grammar names, never tree equality: a head whose tree equals the audited one passes with "equals", a ship-doc delta passes as "ship-step edit"', async () => {
+  it('a ship-doc delta passes as a named POLICY exception ("ship-step edit"), never as tree equality', async () => {
     const { env } = await member();
     assert.match(reason(env, 'post-audit-delta'), /ship-step edit/);
+  });
+});
+
+describe('--check-shipped-head: the dispatcher and the runner (PR A audit round 1)', () => {
+  it('--check-shipped-head after the -- terminator, or as the VALUE of an option, is not a mode switch', async () => {
+    const { isShippedHeadMode } = await import('../scripts/lib/ship-shipped-head.mjs');
+    const values = ['--message-file', '--skill'];
+    assert.equal(isShippedHeadMode(['--check-shipped-head', '--head', 'abc'], values), true);
+    assert.equal(isShippedHeadMode(['--', '--check-shipped-head'], values), false, 'after the terminator it is an operand');
+    assert.equal(isShippedHeadMode(['--message-file', '--check-shipped-head'], values), false, 'it is the VALUE of --message-file');
+    assert.equal(isShippedHeadMode(['--gate', 'passed'], values), false);
+  });
+  it('the real ship-commit CLI treats `--message-file --check-shipped-head` as a commit invocation, not the checker', () => {
+    const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'ship-commit.mjs'), '--message-file', '--check-shipped-head'], { encoding: 'utf-8', windowsHide: true });
+    assert.doesNotMatch(r.stdout + r.stderr, /shipped-head\/v1/);
+  });
+  it('the git runner sanitizes the environment and bounds every call, ls-remote included; a timeout is reported, not swallowed', async () => {
+    const { makeRunner, GIT_TIMEOUT_MS, LS_REMOTE_TIMEOUT_MS } = await import('../scripts/lib/ship-shipped-head.mjs');
+    const seen = [];
+    const spawn = (cmd, args, o) => { seen.push({ args, o }); return { status: null, error: Object.assign(new Error('t'), { code: 'ETIMEDOUT' }), stdout: '', stderr: '' }; };
+    const before = process.env.GIT_DIR;
+    process.env.GIT_DIR = path.join(os.tmpdir(), 'somewhere-else');
+    try {
+      const run = makeRunner(ROOT, { spawn });
+      const r = run(['ls-remote', 'origin', 'refs/heads/main']);
+      run(['rev-parse', 'HEAD']);
+      assert.equal(r.timedOut, true);
+      assert.equal(r.status, null);
+      assert.equal(seen[0].o.timeout, LS_REMOTE_TIMEOUT_MS);
+      assert.equal(seen[1].o.timeout, GIT_TIMEOUT_MS);
+      assert.equal(Object.keys(seen[0].o.env).some((k) => k.toUpperCase() === 'GIT_DIR'), false, 'an inherited GIT_DIR must not reach git');
+    } finally { if (before === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = before; }
+  });
+  it('an equal-tree head reports "equals" (the delta is empty), independently of the ship-doc case', async () => {
+    const { dir } = makeRepo();
+    write(dir, 'scripts/a.mjs', 'export const a = 2; // audited\n');
+    const auditedSha = commit(dir, 'audited work');
+    const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
+    git(dir, 'commit', '-q', '--allow-empty', '-m', `ship x\n\n${TRAILERS()}`);
+    const head = git(dir, 'rev-parse', 'HEAD');
+    writeMarkers(dir, { auditedTree, auditedSha });
+    const env = await checkShippedHead({ repoRoot: dir, head, store: store({ auditedTree }) });
+    assert.equal(env.ok, true, env.refusals.join(' | '));
+    assert.match(reason(env, 'post-audit-delta'), /equals the audited tree/);
   });
 });

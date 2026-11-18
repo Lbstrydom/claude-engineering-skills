@@ -86,6 +86,8 @@ const LEGACY_LOG_REL = 'status.md';
 const MAX_DIFF_CELLS = 4_000_000;
 /** ...and a document, or an insertion, longer than this many lines (a pure insertion has n*m = 0, so cells alone bound nothing). */
 const MAX_DIFF_LINES = 200_000;
+/** A whole document larger than this is refused BEFORE it is split or diffed (the bound on the unchanged part too). */
+const MAX_DOC_CHARS = 8_000_000;
 
 /** `[first, last)` line range (0-based) of the Implementation Log section, or null when the text has none. */
 function logRange(ls) {
@@ -164,8 +166,10 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
   if (status !== 'M') return `change status ${JSON.stringify(status)} is not a ship-step edit (only an added entry or a modified plan or status.md)`;
   if (!regular(oldMode) || !regular(newMode)) return `${rel} is not a plain regular-file edit (mode ${oldMode ?? 'unknown'} -> ${newMode ?? 'unknown'})`;
   if (typeof oldText !== 'string' || typeof newText !== 'string') return 'the file text on one side could not be read, so nothing was checked';
+  if (oldText.length > MAX_DOC_CHARS || newText.length > MAX_DOC_CHARS) return `${rel} is too large to verify (over ${MAX_DOC_CHARS} characters), so it refuses`;
   const a = lines(oldText);
   const b = lines(newText);
+  if (a.length > MAX_DIFF_LINES * 2 || b.length > MAX_DIFF_LINES * 2) return `${rel} is too large to verify (over ${MAX_DIFF_LINES * 2} lines), so it refuses`;
   if (rel === LEGACY_LOG_REL) {
     // Insert-only, before the first entry heading: the old tail (from that heading) survives verbatim at the end, and the old
     // head survives in order inside the new head.
@@ -195,6 +199,11 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
     for (let i = r.oldAt; i < r.oldAt + r.oldN; i++) if (!(blankOk(a, i, logA) || i === stA)) return `${rel}: existing line ${i + 1} was changed or removed (only the Status field may change; the ${LOG_HEADING} is append-only)`;
     for (let j = r.newAt; j < r.newAt + r.newN; j++) if (!(j === stB || (logB !== null && j >= logB[0] && j < logB[1]) || (logA === null && logB !== null && isBlank(b[j]) && j === logB[0] - 1))) return `${rel}: line ${j + 1} was added outside the Status field and the ${LOG_HEADING}`;
   }
+  // What the ship ADDS must not change how the rest of the document renders: an HTML comment or a code fence it opens and does not
+  // close would swallow everything after the log (or the section that follows it).
+  const added = runs.flatMap((r) => b.slice(r.newAt, r.newAt + r.newN)).join('\n');
+  if ((added.match(/<!--/g) ?? []).length !== (added.match(/-->/g) ?? []).length) return `${rel}: the added text opens or closes an HTML comment it does not balance`;
+  if ((added.split('\n').filter((l) => /^ {0,3}(`{3,}|~{3,})/.test(l)).length) % 2 !== 0) return `${rel}: the added text opens or closes a code fence it does not balance`;
   // A log the ship CREATES must be APPENDED: the last section, in an insertion that starts AFTER every non-blank line of the old
   // document. A heading dropped into the middle of the document, or inside the final section ahead of its own text, would
   // otherwise turn old prose into "log".

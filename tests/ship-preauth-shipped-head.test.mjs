@@ -104,6 +104,8 @@ describe('evaluateShippedHead: each condition fails ALONE with its own reason', 
     ['evidence: store row unreadable', (f) => { f.runRow = null; f.runRowWhy = 'cloud store is off'; }, ['evidence', 'final-review'], /cloud store is off/],
     ['evidence: run belongs to another repository', (f) => { f.runRow = runRow({ repoId: 'repo-row-2' }); }, 'evidence', /another repository/],
     ['evidence: this repository could not be resolved', (f) => { f.repoId = null; }, 'evidence', /repository identity/],
+    ['evidence: the marker is from BEFORE the audit converged (round 3 < converged-after 4)', (f) => { f.evidence = evidence({ round: 3 }); f.finalReview = finalReview({ round: 3 }); }, 'evidence', /from before it converged/],
+    ['evidence: the store records the run on another branch', (f) => { f.runRow = runRow({ branch: 'claude/other' }); }, 'evidence', /store records the run on branch/],
     ['evidence: store audited tree differs from the marker', (f) => { f.runRow = runRow({ auditedTree: OTHER_TREE }); }, 'evidence', /audited tree/],
     ['final-review: no marker', (f) => { f.finalReview = { ok: false, reason: 'absent' }; }, 'final-review', /absent/],
     ['final-review: for another tree', (f) => { f.finalReview = finalReview({ auditedTree: OTHER_TREE }); }, 'final-review', /different audited tree/],
@@ -269,6 +271,20 @@ describe('isShipStepDelta: the hardened grammar (code-audit round 1)', () => {
   it('blank lines are NOT a free pass: a whitespace change outside the log refuses; the separator above a created log is allowed', () => {
     assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD.replace('## Context', '\n## Context') }), /added outside the Status field|existing line/);
     assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD + '\n## Implementation Log\n- shipped\n' }), null);
+  });
+  it('text the ship ADDS that opens an HTML comment it does not close refuses (it would swallow what follows the log)', () => {
+    const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Later\ntext after\n';
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('- r1\n', '- r1\n- r2 <!-- never closed\n') }), /HTML comment it does not balance/);
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('- r1\n', '- r1\n- r2 <!-- a closed note -->\n') }), null, 'a balanced comment is fine (the control)');
+  });
+  it('text the ship adds that opens a code fence it does not close refuses', () => {
+    const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nunclosed\n' }), /code fence it does not balance/);
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nclosed\n```\n' }), null);
+  });
+  it('a whole document over the size bound refuses BEFORE it is split, even when almost all of it is unchanged', () => {
+    const huge = 'x'.repeat(9_000_000);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: huge, newText: huge + '\n' }), /too large to verify/);
   });
   it('an unknown mode refuses (never a pass)', () => {
     assert.match(isShipStepDelta({ status: 'A', rel: entryName, newText: 'x' }), /not a regular file \(mode unknown\)/);

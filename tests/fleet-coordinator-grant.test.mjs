@@ -84,6 +84,9 @@ describe('parseShipBatchGrant: everything else refuses, with its own code', () =
   it('text after the marker BEYOND the next heading is another section and does not matter', () => {
     assert.equal(parseShipBatchGrant(wrap(dated)).ok, true);
   });
+  it('a backtick fence whose INFO STRING holds a backtick is not an opener (CommonMark), so it cannot hide a real grant', () => {
+    assert.equal(parseShipBatchGrant(`\`\`\`js \`x\`\nnot a fence\n\n${dated}\n`).ok, true);
+  });
   it('a ### heading AFTER the marker is still INSIDE the level-2 grant section: its text is refused, not skipped', () => {
     const r = parseShipBatchGrant(wrap(dated).replace(`${GRANT_MARKER}\n`, `${GRANT_MARKER}\n\n### Exception\n\nNothing lands on Fridays.\n`));
     assert.equal(r.code, 'grant-mismatch');
@@ -136,6 +139,17 @@ describe('readShipBatchGrant: the file', () => {
     const r = readShipBatchGrant({ file: path.join(os.tmpdir(), 'no-such-dir-xyz', 'CLAUDE.md') });
     assert.equal(r.code, 'grant-absent');
     assert.match(r.reason, /could not be read/);
+  });
+  it('FAILS CLOSED when the account database cannot answer: no home, no grant location, grant-absent (never os.homedir())', async () => {
+    const os2 = await import('node:os');
+    const real = os2.default.userInfo;
+    os2.default.userInfo = () => { throw new Error('no passwd entry'); };
+    try {
+      assert.equal(defaultGrantFile(), null);
+      const r = readShipBatchGrant();
+      assert.deepEqual([r.ok, r.code], [false, 'grant-absent']);
+      assert.match(r.reason, /no trusted home/);
+    } finally { os2.default.userInfo = real; }
   });
   it('the default location is the ACCOUNT\'s home, and neither an env var nor HOME/USERPROFILE can redirect it', () => {
     const keys = ['FLEET_GRANT_FILE', 'HOME', 'USERPROFILE'];

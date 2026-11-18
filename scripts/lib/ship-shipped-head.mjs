@@ -16,6 +16,7 @@
  */
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { sanitizeGitEnv } from './git-env-sanitize.mjs';
 import { resolveEvidence, isContentVerifiable } from './commit-trailers.mjs';
 import { readFinalReviewMarker } from './final-review-marker.mjs';
 import {
@@ -25,7 +26,11 @@ import { isShipStepDelta } from './ship-record/authority.mjs';
 import { assertKnownFlags, finishAndExit } from './cli-io.mjs';
 
 export const SHIPPED_HEAD_SCHEMA = 'shipped-head/v1';
-const KNOWN_FLAGS = Object.freeze(['--check-shipped-head', '--head', '--base', '--remote', '--verify-base', '--json']);
+export const GIT_TIMEOUT_MS = 120_000;
+export const LS_REMOTE_TIMEOUT_MS = 30_000;
+const KNOWN_FLAGS = Object.freeze(['--check-shipped-head', '--head', '--base', '--remote', '--offline', '--json']);
+/** The flags that take a value: an argument following one is its VALUE, never a mode switch. */
+const VALUE_FLAGS = new Set(['--head', '--base', '--remote']);
 /** git-check-ref-format's rules for a branch name (the value is an argv element, never a shell string, so `+` and the like are fine). */
 export function isPlainBranch(n) {
   return typeof n === 'string' && n.length > 0 && !/[\x00-\x20\x7f~^:?*\[\\]/.test(n) && !n.includes('..') && !n.includes('@{') && !n.includes('//')
@@ -35,6 +40,20 @@ const REMOTE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const SHA_RE = /^[0-9a-f]{7,64}$/i;
 const SHIP_TEXT_PATH_RE = /^(?:docs\/plans\/[^/]+\.md|status\.md)$/;
+
+/**
+ * Is this invocation `--check-shipped-head`? The token counts only as a FLAG of the invocation: before any `--` terminator, and not as
+ * the value of an option that takes one (`--message-file --check-shipped-head` names a file). `valueFlags` are the CALLER's own
+ * value-taking options, so the dispatcher in ship-commit.mjs and this module agree on what a value is.
+ * @param {string[]} argv `process.argv.slice(2)`
+ * @param {Iterable<string>} [valueFlags]
+ */
+export function isShippedHeadMode(argv, valueFlags = []) {
+  const values = new Set([...valueFlags, ...VALUE_FLAGS]);
+  const end = argv.indexOf('--');
+  const region = end < 0 ? argv : argv.slice(0, end);
+  return region.some((a, k) => a === '--check-shipped-head' && !(k > 0 && values.has(region[k - 1])));
+}
 
 /** `git interpret-trailers --parse` output → `[{key, value}]` (split at the first colon). Pure. */
 export function parseTrailerLines(text) {
@@ -65,10 +84,13 @@ export function parseRawZ(out) {
  * The git runner for one worktree: `(args, {input}) => {status, stdout, stderr}`. Arguments are an argv array (no shell), so a
  * path with metacharacters or a newline is just an argument. Large outputs are allowed: a name list can be long.
  */
-export function makeRunner(cwd) {
-  return (args, { input } = {}) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf-8', windowsHide: true, input, maxBuffer: 256 * 1024 * 1024 });
-    return { status: r.error ? null : r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error };
+export function makeRunner(cwd, { spawn = spawnSync, timeoutMs = GIT_TIMEOUT_MS } = {}) {
+  // The environment is sanitized: a GIT_DIR / GIT_WORK_TREE inherited from a hook or a parent process must never redirect this
+  // check to another checkout. Every call is time-bounded; a timeout reads as a failed command (status null) with `timedOut` set.
+  const env = sanitizeGitEnv(cwd);
+  return (args, { input, timeout } = {}) => {
+    const r = spawn('git', args, { cwd, env, encoding: 'utf-8', windowsHide: true, input, maxBuffer: 256 * 1024 * 1024, timeout: timeout ?? (args[0] === 'ls-remote' ? LS_REMOTE_TIMEOUT_MS : timeoutMs) });
+    return { status: r.error ? null : r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error, timedOut: r.error?.code === 'ETIMEDOUT' };
   };
 }
 
@@ -149,7 +171,7 @@ export function createStoreAdapter() {
  * @param {{repoRoot: string, head: string, run?: Function, store?: ReturnType<typeof createStoreAdapter>}} o
  * @returns {Promise<{schema: string, ok: boolean, head: string, runId: string|null, gate: string|null, conditions: object[], refusals: string[]}>}
  */
-export async function checkShippedHead({ repoRoot, head, baseBranch = null, remote = 'origin', verifyBase = false, run = makeRunner(repoRoot), store = createStoreAdapter() }) {
+export async function checkShippedHead({ repoRoot, head, baseBranch = null, remote = 'origin', verifyBase = true, run = makeRunner(repoRoot), store = createStoreAdapter() }) {
   const envelope = (v, headOid) => ({ schema: SHIPPED_HEAD_SCHEMA, ok: v.ok, head: headOid, runId: v.runId ?? null, gate: v.gate ?? null, conditions: v.conditions, refusals: v.refusals });
   const pre = (id, reason) => ({ ok: false, runId: null, gate: null, conditions: [{ id, ok: false, reason }], refusals: [`${id}: ${reason}`] });
 
@@ -160,15 +182,26 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
   if (checkedOut.status !== 0 || String(checkedOut.stdout).trim() !== headOid) {
     return envelope(pre('head', `the member worktree has ${String(checkedOut.stdout).trim().slice(0, 12) || 'no HEAD'} checked out, not ${headOid.slice(0, 12)}: the local evidence markers belong to the checked-out head`), headOid);
   }
-  // The change is measured against a LOCAL remote-tracking ref. When the caller asks (`--verify-base`), that ref must equal the live
-  // branch on the remote, or the "change" it measures is whatever a stale fetch left behind. Unreadable is a refusal, never a pass.
-  if (verifyBase && baseBranch) {
-    const live = run(['ls-remote', remote, `refs/heads/${baseBranch}`]);
+  // The change is measured against a LOCAL remote-tracking ref, so by DEFAULT that ref must equal the live branch on the remote, or
+  // the "change" it measures is whatever a stale fetch left behind. Unreadable (or timed out) is a refusal, never a pass. The caller
+  // can opt out (`--offline`), and then says so: the envelope carries `baseVerified: false`. With no `--base` the branch is the one
+  // `<remote>/HEAD` names; if that cannot be determined the check refuses and asks for `--base`.
+  let baseRefName = baseBranch;
+  if (verifyBase && !baseRefName) {
+    const sym = run(['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`]);
+    const full = sym.status === 0 ? String(sym.stdout).trim() : '';
+    baseRefName = full.startsWith(`refs/remotes/${remote}/`) ? full.slice(`refs/remotes/${remote}/`.length) : null;
+    if (!baseRefName) return envelope(pre('base', `the default branch of ${remote} could not be determined (no refs/remotes/${remote}/HEAD): pass --base <branch>, or --offline to measure against whatever is local`), headOid);
+  }
+  let baseOidAtStart = null;
+  if (verifyBase) {
+    const live = run(['ls-remote', remote, `refs/heads/${baseRefName}`]);
     const liveOid = live.status === 0 ? String(live.stdout).trim().split(/\s+/)[0] : '';
-    const local = run(['rev-parse', '--verify', `refs/remotes/${remote}/${baseBranch}`]);
+    const local = run(['rev-parse', '--verify', `refs/remotes/${remote}/${baseRefName}`]);
     const localOid = local.status === 0 ? String(local.stdout).trim() : '';
-    if (!/^[0-9a-f]{40,64}$/.test(liveOid)) return envelope(pre('base', `the live ${remote}/${baseBranch} could not be read, so the change cannot be measured against it`), headOid);
-    if (localOid !== liveOid) return envelope(pre('base', `refs/remotes/${remote}/${baseBranch} is ${localOid.slice(0, 12) || 'absent'} but the live branch is ${liveOid.slice(0, 12)}: fetch first, then re-check`), headOid);
+    if (!/^[0-9a-f]{40,64}$/.test(liveOid)) return envelope(pre('base', `the live ${remote}/${baseRefName} could not be read${live.timedOut ? ' (timed out)' : ''}, so the change cannot be measured against it`), headOid);
+    if (localOid !== liveOid) return envelope(pre('base', `refs/remotes/${remote}/${baseRefName} is ${localOid.slice(0, 12) || 'absent'} but the live branch is ${liveOid.slice(0, 12)}: fetch first, then re-check`), headOid);
+    baseOidAtStart = localOid;
   }
   // Resolved ONCE, from the verified oid: nothing below reads HEAD again, so a worktree that switches commits mid-check cannot
   // make the facts describe two different heads.
@@ -212,7 +245,12 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
   // The markers and the store were read over time: if HEAD moved while they were, none of it describes the head that was asked about.
   const after = run(['rev-parse', '--verify', 'HEAD']);
   if (after.status !== 0 || String(after.stdout).trim() !== headOid) return envelope(pre('head', 'HEAD moved while the check was running: nothing it read can be trusted'), headOid);
-  return envelope(verdict, headOid);
+  // ...and so is the base ref the change was measured against: it was verified once, so it must still be what it was.
+  if (baseOidAtStart) {
+    const again = run(['rev-parse', '--verify', `refs/remotes/${remote}/${baseRefName}`]);
+    if (again.status !== 0 || String(again.stdout).trim() !== baseOidAtStart) return envelope(pre('base', `refs/remotes/${remote}/${baseRefName} moved while the check was running: the change was measured against two different bases`), headOid);
+  }
+  return { ...envelope(verdict, headOid), baseVerified: verifyBase };
 }
 
 /**
@@ -227,9 +265,9 @@ export async function runShippedHeadCli(argv, { cwd = process.cwd(), store } = {
   const baseBranch = bi >= 0 ? argv[bi + 1] : null;
   const ri = argv.indexOf('--remote');
   const remote = ri >= 0 ? argv[ri + 1] : 'origin';
-  const verifyBase = argv.includes('--verify-base');
+  const verifyBase = !argv.includes('--offline');
   const valueOf = (k) => (i >= 0 && k === i + 1) || (bi >= 0 && k === bi + 1) || (ri >= 0 && k === ri + 1);
-  const others = argv.filter((a, k) => a !== '--check-shipped-head' && a !== '--json' && a !== '--head' && a !== '--base' && a !== '--remote' && a !== '--verify-base' && !valueOf(k));
+  const others = argv.filter((a, k) => a !== '--check-shipped-head' && a !== '--json' && a !== '--head' && a !== '--base' && a !== '--remote' && a !== '--offline' && !valueOf(k));
   const bad = (reason) => {
     if (json) process.stdout.write(`${JSON.stringify({ schema: SHIPPED_HEAD_SCHEMA, ok: false, head: head ?? null, runId: null, gate: null, conditions: [{ id: 'args', ok: false, reason }], refusals: [`args: ${reason}`] })}\n`);
     process.stderr.write(`AGENT FIX: --check-shipped-head: ${reason}. Usage: --check-shipped-head --head <oid> [--json], alone, from the member's worktree.\n`);
@@ -238,7 +276,6 @@ export async function runShippedHeadCli(argv, { cwd = process.cwd(), store } = {
   // An unknown flag is refused by NAME before anything runs: a read-only check must never silently ignore what was asked of it.
   try { assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'ship-commit --check-shipped-head', from: 0 }); } catch (e) { return bad(`${e.message.split('. ')[0]}; a standalone read-only check cannot be combined with other flags`); }
   if (head === undefined || head.startsWith('--') || !SHA_RE.test(head)) return bad('--head needs a commit oid');
-  if (verifyBase && bi < 0) return bad('--verify-base needs --base: with no named branch there is no live ref to compare');
   if (ri >= 0 && (remote === undefined || remote.startsWith('--') || !REMOTE_RE.test(remote))) return bad('--remote needs a plain remote name');
   if (bi >= 0 && (baseBranch === undefined || baseBranch.startsWith('--') || !isPlainBranch(baseBranch))) return bad('--base needs a valid branch name');
   if (others.length > 0) return bad(`a standalone read-only check cannot be combined with ${others.join(' ')}`);

@@ -17,6 +17,8 @@ import { sourceRelToDestRel } from '../scripts/lib/sync-path-map.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const norm = (p) => String(p).replace(/\\/g, '/');
+const GENERATED_ABSENT_OK = new Set(['scripts/.sync-manifest.json']);
+const missing = [];
 const NEW_MODULES = [
   'scripts/lib/ship-shipped-head.mjs',
   'scripts/lib/store/ship-run-facts.mjs',
@@ -44,12 +46,14 @@ describe('in a relocated layout', () => {
     tmp = fs.mkdtempSync(path.join(ROOT, '.claude', 'tmp', 'reloc-'));
     for (const f of getSyncClosure().files.map(norm)) {
       if (!f.startsWith('scripts/') || !/\.(mjs|js|json)$/.test(f)) continue;
-      // A closure entry may be a generated file this checkout has not produced (`.sync-manifest.json`): the code is what matters.
-      if (!fs.existsSync(path.join(ROOT, f))) continue;
+      // ONLY the documented generated artifacts may be absent; any other missing closure file is a broken checkout, and a relocated
+      // test over it would prove nothing.
+      if (!fs.existsSync(path.join(ROOT, f))) { if (GENERATED_ABSENT_OK.has(f)) continue; missing.push(f); continue; }
       const dest = path.join(tmp, sourceRelToDestRel(f));
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(path.join(ROOT, f), dest);
     }
+    assert.deepEqual(missing, [], 'closure files absent from this checkout (only generated artifacts may be)');
     repo = fs.mkdtempSync(path.join(tmp, 'consumer-'));
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
   });
@@ -86,7 +90,7 @@ describe('in a relocated layout', () => {
     fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
     g('add', 'a.txt'); g('commit', '-q', '-m', 'one');
     const head = g('rev-parse', 'HEAD').stdout.trim();
-    const r = run(reloc('scripts/ship-commit.mjs'), ['--check-shipped-head', '--head', head, '--json']);
+    const r = run(reloc('scripts/ship-commit.mjs'), ['--check-shipped-head', '--head', head, '--offline', '--json']);
     assert.equal(r.status, 2, r.stderr);
     const env = JSON.parse(r.stdout);
     assert.equal(env.ok, false);

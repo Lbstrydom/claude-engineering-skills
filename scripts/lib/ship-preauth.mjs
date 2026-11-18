@@ -190,6 +190,8 @@ export function evaluateShippedHead(f = {}) {
   } else if (ev.auditedBranch !== f.currentBranch) c.push(row('evidence', false, `the audit evidence is for branch ${JSON.stringify(ev.auditedBranch)}, not ${JSON.stringify(f.currentBranch)}`));
   else if (!rr) c.push(row('evidence', false, `no audit_runs row could be read for the run (${f.runRowWhy ?? 'cloud off, unreachable, or run not found'})`));
   else if (!Number.isInteger(rr.roundConvergedAfter)) c.push(row('evidence', false, 'audit_runs.round_converged_after is null: the audit did not converge'));
+  else if (!Number.isInteger(ev.round) || ev.round < rr.roundConvergedAfter) c.push(row('evidence', false, `the evidence marker is round ${ev.round ?? 'unknown'} but the store says the audit converged after round ${rr.roundConvergedAfter}: the marker is from before it converged`));
+  else if (rr.branch != null && rr.branch !== f.currentBranch) c.push(row('evidence', false, `the store records the run on branch ${JSON.stringify(rr.branch)}, this worktree is on ${JSON.stringify(f.currentBranch)}`));
   else if (f.repoId == null || rr.repoId == null) c.push(row('evidence', false, `the repository identity could not be established (this repo: ${JSON.stringify(f.repoId ?? null)}, the run's repo: ${JSON.stringify(rr.repoId ?? null)})`));
   else if (rr.repoId !== f.repoId) c.push(row('evidence', false, 'the run belongs to another repository'));
   else if (rr.auditedTree == null || ev.auditedTree == null) c.push(row('evidence', false, `the audited tree is not recorded on both sides (store: ${rr.auditedTree == null ? 'none, a row from before audited-tree identity' : 'yes'}; marker: ${ev.auditedTree == null ? 'none' : 'yes'}), so the run cannot be bound to the tree the review approved`));
