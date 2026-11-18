@@ -80,6 +80,8 @@ describe('the banner is a PLACEMENT, not a substring (audit R1 H2/H5)', () => {
     assert.equal(owned(`export {};\n// ${BANNER}\n`), false, 'a banner NOT on the first content line is not the injected one');
     assert.equal(owned(`${BANNER} is how we start a plain sentence\n`), false, 'no comment prefix: not an injected banner (audit R2 H2)');
     assert.equal(owned(`/* ${BANNER} */\n`), false, 'only the comment tokens injectUpstreamBanner emits');
+    assert.equal(owned(`// ${BANNER} is how we start a plain sentence\n`), false, 'a comment that STARTS with the marker but goes on in consumer words (audit R3 H2)');
+    assert.equal(owned(`// ${BANNER}\r\nexport {};\r\n`), true, 'CRLF files carry the same banner');
   });
 });
 

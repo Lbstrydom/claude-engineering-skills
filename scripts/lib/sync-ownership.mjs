@@ -83,8 +83,7 @@ export function classifyOwnership({ destContent, sourceContent, bannerMarker }) 
   // The banner is a PLACEMENT, not a substring: `injectUpstreamBanner` puts it on the first content line (below a shebang). A
   // consumer's own file that merely QUOTES the marker (docs, a string literal) is not proof of anything.
   if (typeof bannerMarker === 'string' && bannerMarker.length > 0
-      && /^(?:\/\/|#)[ \t]*/.test(firstContentLine(destContent))
-      && firstContentLine(destContent).replace(/^(?:\/\/|#)[ \t]*/, '').startsWith(bannerMarker)) {
+      && ['// ', '# '].some((token) => firstContentLine(destContent).replace(/\r$/, '') === token + bannerMarker)) {
     return { provable: true, evidence: 'banner' };
   }
   if (typeof sourceContent === 'string' && sourceContent.length > 0

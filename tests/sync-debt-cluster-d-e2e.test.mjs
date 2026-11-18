@@ -91,6 +91,7 @@ describe('the write loop and gc, one consumer, four syncs', () => {
     fs.writeFileSync(path.join(root, MANIFEST), JSON.stringify(m, null, 2) + '\n');
 
     const second = await sync(root);
+    assert.equal(second.code, 0, whySyncFailed(second)); // holds are not errors
     assert.equal(fs.readFileSync(heldAbs, 'utf8'), crlf, 'a held path was rewritten by the EOL repair (the parent repaired before consulting the override)');
     assert.match(second.text, /hold\s+\.claude\/skills\/plan\/SKILL\.md/);
     assert.equal(fs.existsSync(path.join(root, EDITED)), true, 'gc deleted a retired file the consumer had edited');
@@ -105,6 +106,7 @@ describe('the write loop and gc, one consumer, four syncs', () => {
 
     // ── --overwrite-diverged deletes the EDITED one (recorded), and still never the malformed-base one
     const third = await sync(root, ['--overwrite-diverged']);
+    assert.equal(third.code, 0, whySyncFailed(third));
     assert.equal(fs.existsSync(path.join(root, EDITED)), false, 'the consented deletion did not happen');
     assert.equal(fs.existsSync(path.join(root, ODD)), true, 'a malformed ownership record must never be deleted, flag or not');
     const r3 = readJson(root, '.sync-receipt.json').recentSyncs[0];
