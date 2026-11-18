@@ -498,6 +498,7 @@ oid, and for needs-user members "type /ship in that session".
 | `tests/fleet-member-outcome.test.mjs` | create | every row of the `classifyMerged` table; the `OutcomeSchema` union negatives; the `validatePolicyRun` invariants |
 | `tests/fleet-land-ship-batch.test.mjs` | modify | rebuilt on the public surface (§9); the old sidecar-state assertions go |
 | `tests/helpers/fleet-serial-fx.mjs` | modify | a recording fake `gh`; tree-equal re-push and tree-differs fixtures |
+| `docs/plans/coordinator-aggregate-ship.md` | modify | one line in §2.3 recording that PR A's residual (1) is closed: Louis accepted on 2026-11-18, verbatim "deletions can /ship - in a crisis we can always roll back from github" (relayed by CES: Coordinator), so a deletion in an audited diff may self-ship. Edited here, not on #394's pinned head; the exact line is placed against `origin/main` after the merge |
 | `.claude/skills/fleet/**` | regenerate | `npm run skills:regenerate` (close-out) |
 
 Every path above is repo-relative. PR A's files (`scripts/lib/ship-shipped-head.mjs`, `scripts/lib/ship-preauth.mjs`,
