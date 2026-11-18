@@ -42,6 +42,18 @@
  * @typedef {'banner'|'identical-to-source'|'unreadable'|'none'} OwnershipEvidence
  */
 
+/** First line of actual content, skipping a leading shebang line (the same rule `injectUpstreamBanner` places the banner by). */
+function firstContentLine(content) {
+  let c = content;
+  if (c.startsWith('#!')) {
+    const nl = c.indexOf('\n');
+    if (nl === -1) return '';
+    c = c.slice(nl + 1);
+  }
+  const nl = c.indexOf('\n');
+  return nl === -1 ? c : c.slice(0, nl);
+}
+
 /**
  * Classify a single destination file's provenance from its content.
  *
@@ -68,8 +80,10 @@ export function classifyOwnership({ destContent, sourceContent, bannerMarker }) 
   }
   // Guard against a falsy/empty marker matching everything — `''.includes` is
   // vacuously true, which would make every file "provably ours".
+  // The banner is a PLACEMENT, not a substring: `injectUpstreamBanner` puts it on the first content line (below a shebang). A
+  // consumer's own file that merely QUOTES the marker (docs, a string literal) is not proof of anything.
   if (typeof bannerMarker === 'string' && bannerMarker.length > 0
-      && destContent.includes(bannerMarker)) {
+      && firstContentLine(destContent).replace(/^(?:\/\/|#)[ \t]*/, '').startsWith(bannerMarker)) {
     return { provable: true, evidence: 'banner' };
   }
   if (typeof sourceContent === 'string' && sourceContent.length > 0

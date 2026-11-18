@@ -120,6 +120,37 @@ export function planGarbageCollection({ priorFiles, intendedDests, toolingDir, e
   return { deletions, orphanedTracked, unsafeKeys, divergedHeld, unknownBaseHeld, alreadyAbsent, probeFailed, probedHash };
 }
 
+/**
+ * The manifest's base for each destination this run was responsible for (debt 4e0763d54f00). PURE.
+ *
+ * A path WRITTEN (or confirmed equal) this run takes the hash of the exact bytes handed to the write, never a re-read of the
+ * disk: re-reading after the loop recorded a concurrent edit as OUR base, and the base is what the divergence gate compares
+ * against. A path NOT written (refused, held, failed, source absent) carries its PRIOR entry forward, and only while it is still
+ * there; a failed one with no carried base keeps the journal. A path in neither set is omitted: a base is never invented.
+ *
+ * @param {object} a
+ * @param {Iterable<string>} a.intendedDests
+ * @param {Set<string>} a.notWrittenByUs
+ * @param {Map<string, string>} a.writtenHash
+ * @param {Set<string>} a.failedWrites
+ * @param {(rel: string) => string|undefined} a.carriedFor   the prior manifest entry (either layout)
+ * @param {(rel: string) => boolean} a.stillThere
+ * @param {(rel: string) => boolean} a.mayStillExist
+ * @returns {{files: Record<string, string>, keepJournal: boolean}}
+ */
+export function selectManifestBases({ intendedDests, notWrittenByUs, writtenHash, failedWrites, carriedFor, stillThere, mayStillExist: mayExist }) {
+  const files = {};
+  let keepJournal = false;
+  for (const rel of intendedDests) {
+    if (notWrittenByUs.has(rel)) {
+      const carried = carriedFor(rel);
+      if (carried && stillThere(rel)) files[rel] = carried;
+      else if (failedWrites.has(rel) && mayExist(rel)) keepJournal = true;
+    } else if (writtenHash.has(rel)) files[rel] = writtenHash.get(rel);
+  }
+  return { files, keepJournal };
+}
+
 /** The one stored hash form: `sha256:` + 64 lowercase hex. */
 export function isManifestHash(v) { return typeof v === 'string' && /^sha256:[0-9a-f]{64}$/.test(v); }
 

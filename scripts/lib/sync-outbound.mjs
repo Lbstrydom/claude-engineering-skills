@@ -112,6 +112,9 @@ export function decideUnmanifested({ srcRel, dstRel, destContent, sourceText, re
   const { provable, evidence } = classifyOwnership({ destContent, sourceContent: expected, bannerMarker });
   if (provable) return { disposition: 'owned', evidence };
   // A rewritten file's earlier versions cannot be rebuilt from a source blob, so this is asked only when nothing was rewritten.
-  if (expected !== null && !hits && priorUpstreamMatches?.() === true) return { disposition: 'owned', evidence: 'prior-upstream' };
+  // Never for an empty or unreadable destination: those are rejected above on purpose and no history can rehabilitate them.
+  if (expected !== null && !hits && typeof destContent === 'string' && destContent.length > 0 && priorUpstreamMatches?.() === true) {
+    return { disposition: 'owned', evidence: 'prior-upstream' };
+  }
   return { disposition: 'collision' };
 }

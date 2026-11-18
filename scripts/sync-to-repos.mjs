@@ -56,7 +56,7 @@ import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { hookEpilogueLines } from './lib/prepush-hook-version.mjs';
 import { computeEolPins, renderEolPinLines } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
-import { planGarbageCollection, executeGarbageCollection, countCitations, carriedForFailedDeletions, mayStillExist, SYNC_RUN_ARTIFACTS } from './lib/sync-gc.mjs';
+import { planGarbageCollection, executeGarbageCollection, selectManifestBases, countCitations, carriedForFailedDeletions, mayStillExist, SYNC_RUN_ARTIFACTS } from './lib/sync-gc.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { retireLegacyCopilotBlock } from './lib/sync-legacy-copilot-block.mjs';
@@ -1099,7 +1099,7 @@ async function main() {
       const verdict = decideUnmanifested({
         srcRel, dstRel, destContent: dest.state === 'present' ? dest.content : null, sourceText: readSourceOrNull(srcRel),
         rewriteConfig, bannerMarker: BANNER_MARKER,
-        priorUpstreamMatches: () => priorUpstream.matches(srcRel, crypto.createHash('sha256').update(fs.readFileSync(path.join(repo.path, dstRel))).digest('hex')),
+        priorUpstreamMatches: () => { const h = hashConsumerFile(repo.path, dstRel); return h.state === 'present' ? priorUpstream.matches(srcRel, h.hash.slice('sha256:'.length)) : null; },
       });
       if (verdict.disposition === 'owned') contentOwned.push({ dstRel, evidence: verdict.evidence });
       else if (verdict.disposition === 'shared-merge') sharedMerge.push(dstRel);
@@ -1207,7 +1207,9 @@ async function main() {
       // REPLACED), pin guard, rewriter, banner — the same bytes the ownership scan compares against.
       let rendered;
       try {
-        rendered = renderOutbound({ srcRel, dstRel, srcContent, existingContent: coOwnedJson && dstExists ? fs.readFileSync(dstPath, 'utf-8') : null, rewriteConfig });
+        const existing = coOwnedJson && dstExists ? readConsumerFile(repo.path, dstRel) : null; // contained: a link in the path is refused
+        if (existing && existing.state !== 'present') throw new Error(`existing file is ${existing.state} (${existing.reason ?? existing.message ?? existing.code})`);
+        rendered = renderOutbound({ srcRel, dstRel, srcContent, existingContent: existing ? existing.content : null, rewriteConfig });
       } catch (err) {
         console.log(`  ${R}ERR${X}  ${dstRel}: ${dstRel.endsWith('.json') ? 'JSON merge' : 'render'} failed: ${err.message?.slice(0, 100)}`);
         repoErrors++; totalErrors++; failedWrites.add(dstRel);
@@ -1485,31 +1487,18 @@ async function main() {
           ...receiptOverridesHeld.map((h) => h.path),
           ...failedWrites, ...skippedWrites,
         ]);
-        const consumerFileMap = {};
-        for (const dstRel of intendedDests) {
-          if (notWrittenByUs.has(dstRel)) {
-            const carried = priorFiles[dstRel]
-              ?? (priorLayout === 'legacy' ? priorFiles[intendedWrites.get(dstRel)] : undefined);
-            // …but only while the file is still THERE. Carrying a base for a
-            // destination that is absent makes the manifest assert delivery of
-            // something the consumer does not have, and the manifest is the
-            // record every later reader trusts. Reachable through the HOLD
-            // branch specifically: `matchOverride` fires before any disk test,
-            // so an override on a path the consumer has since deleted would
-            // carry a stale base forward for ever. (REFUSE cannot reach it —
-            // a refusal requires a diverged disk hash, which requires the file.)
-            // Omitting is also operationally free: with no base,
-            // `classifyAgainstBase` returns NO_BASE, which is the same WRITE
-            // decision an absent file already produces.
-            const stillThere = fs.existsSync(path.join(repo.path, dstRel));
-            if (carried && stillThere) consumerFileMap[dstRel] = carried;
-            else if (failedWrites.has(dstRel) && mayStillExist(path.join(repo.path, dstRel))) keepJournal = true;
-            continue;
-          }
-          // The base is what WE wrote, not whatever is on disk after the loop: re-reading recorded a concurrent edit as ours. A path
-          // in neither set is omitted (never invent a base); the post-condition below still checks the manifest against the disk.
-          if (writtenHash.has(dstRel)) consumerFileMap[dstRel] = writtenHash.get(dstRel);
-        }
+        // Pure selection (lib/sync-gc.mjs `selectManifestBases`): a WRITTEN path takes the hash of the bytes just written, never a
+        // re-read of the disk; a path we did not write carries its PRIOR entry forward while it is still there (carrying one for an
+        // absent destination makes the manifest assert delivery of something the consumer does not have), and a failed write with no
+        // base keeps the journal. A path in neither set is omitted: a base is never invented (verified 2026-08-29: recording the
+        // consumer's bytes as our base laundered one-time consent into a standing base and reverted 16 SKILL.md).
+        const { files: consumerFileMap, keepJournal: keepJournalNow } = selectManifestBases({
+          intendedDests, notWrittenByUs, writtenHash, failedWrites,
+          carriedFor: (rel) => priorFiles[rel] ?? (priorLayout === 'legacy' ? priorFiles[intendedWrites.get(rel)] : undefined),
+          stillThere: (rel) => fs.existsSync(path.join(repo.path, rel)),
+          mayStillExist: (rel) => mayStillExist(path.join(repo.path, rel)),
+        });
+        if (keepJournalNow) keepJournal = true;
         Object.assign(consumerFileMap, carriedForFailedDeletions([...gcResult.failed,
           ...(gcSkipped ? [...gcPlan.deletions, ...gcPlan.divergedHeld, ...gcPlan.unknownBaseHeld, ...gcPlan.probeFailed.map((f) => f.path)] : retiredHeld).map((p) => ({ path: p }))], priorFiles,
           (rel) => mayStillExist(path.join(repo.path, rel))));
