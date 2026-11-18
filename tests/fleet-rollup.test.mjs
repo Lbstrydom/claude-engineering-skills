@@ -17,6 +17,7 @@ import { readSerial } from '../scripts/lib/fleet/serial.mjs';
 import { CANONICAL_GRANT } from '../scripts/lib/fleet/coordinator-grant.mjs';
 import { resolveConfig, landingRollupLine } from '../scripts/lib/fleet/config.mjs';
 import { approveTrain } from '../scripts/lib/fleet/train-approve.mjs';
+import { patchTrain } from '../scripts/lib/fleet/train.mjs';
 import { buildRollup, approveRollup, resumeRollup, readRollupRecord, rollupTrainProblem } from '../scripts/lib/fleet/rollup-land.mjs';
 import { approveSerial } from '../scripts/lib/fleet/serial.mjs';
 import { parseRollupManifest } from '../scripts/lib/fleet/rollup.mjs';
@@ -555,5 +556,36 @@ describe('audit round 3: a closed PR is reconciled against its head too (R3-H2, 
     assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'skipped-head-moved');
     const r3 = resume(f, w, b2.trainId);
     assert.match(r3.text, new RegExp(`superseded rollup PR #${oldPr}: skipped-head-moved`), 'reported on every run until an operator resolves it');
+  });
+});
+
+describe('audit round 4: merged superseded PRs and unrecordable outcomes are told apart (R4-M1, M2)', () => {
+  function twoRollups() {
+    const f = fixture(1);
+    const w = world(f); w.checks = 'pending';
+    const b1 = build(f, w);
+    approve(f, w, { trainId: b1.trainId, serialOpts: { timeoutMs: 30 } });
+    const oldPr = readTrain(f.dir, b1.trainId).train.rollup.prNumber;
+    w.checks = 'pass';
+    const b2 = build(f, w);
+    return { f, w, b1, b2, oldPr, rp: w.allPrs.find((p) => p.number === oldPr) };
+  }
+  it('a superseded PR that was MERGED at another head says it cannot be reopened and must be checked against the base', () => {
+    const { f, w, b1, b2, rp } = twoRollups();
+    rp.state = 'MERGED'; rp.head = 'e'.repeat(40);
+    const r = approve(f, w, { trainId: b2.trainId });
+    assert.match(r.text, /was MERGED at head e{12}, not the admitted [0-9a-f]{12}: check that work against the base by hand \(a merged PR cannot be reopened\)/);
+    assert.doesNotMatch(r.text, /gh pr reopen/);
+    assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'skipped-head-moved');
+  });
+  it('an outcome that cannot be persisted (the old train no longer records the supersession) is reported, not swallowed', () => {
+    const { f, w, b1, b2, oldPr } = twoRollups();
+    const orig = w.gh;
+    w.gh = (args) => {
+      if (args[1] === 'close' && Number(args[2]) === oldPr) { const cur = readTrain(f.dir, b1.trainId).train; patchTrain(f.dir, b1.trainId, { rollup: { ...cur.rollup, superseded: 't-20200101000000-ffff' } }, depsWith(orig)); }
+      return orig(args);
+    };
+    const r = approve(f, w, { trainId: b2.trainId });
+    assert.match(r.text, new RegExp(`the outcome of superseded rollup PR #${oldPr} \\(closed\\) could not be recorded: train .* no longer records this supersession or candidate`));
   });
 });
