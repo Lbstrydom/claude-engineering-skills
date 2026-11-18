@@ -152,8 +152,8 @@ and every variant is a `z.strictObject`:
 |---|---|---|---|
 | `landed` | **yes** | `merged` | `verdict` (one of the four below), `mergeOid`, `parent` (the measured first parent), `chainIndex` (an integer, or `null` when the verdict does not extend the chain), `attribution`, `gate` |
 | `refused` | **yes** for this run | `pr-closed`, `pr-draft`, `pr-retargeted`, `conflict`, `behind-base`, `head-moved`, `checks-failed`, `shipped-head-refused`, `ci-refused`, `message-invalid` | `reason`, and `trees: {tested, seen}` for `head-moved` |
-| `skipped` | **yes** | `merged-externally` | `mergeOid` (or `null`, which needs `reason`), `seenHead` |
-| `not-run` | **no** | `pr-unreadable`, `checks-pending`, `tree-unreadable`, `message-unreadable`, `head-churn`, `merge-unconfirmed`, `awaiting-read-back` | `reason` |
+| `skipped` | **yes** | `merged-externally` | `mergeOid` (always non-null), `seenHead` |
+| `not-run` | **no** | `pr-unreadable`, `checks-pending`, `tree-unreadable`, `message-unreadable`, `head-churn`, `merge-unconfirmed`, `awaiting-read-back`, `awaiting-merge-evidence` | `reason` |
 
 The fields in the evidence column:
 
@@ -313,8 +313,14 @@ and it is the **only** reader of `state === 'MERGED'`:
 | `merge`, `attempt.ghExit === 0` | `=== attempt.head` | merged, `attribution: this-run`; the read-back follows |
 | `merge`, `ghExit` non-zero or null (crash, lost response) | `=== attempt.head` | merged, `attribution: unknown`; the read-back follows. The content is the admitted head either way, and the read-back judges the message, so an external merge of the same head with another message reads `provenance-lost` |
 | `merge` | `!== attempt.head` | `skipped/merged-externally` with `mergeOid` and `seenHead` recorded, then the run fault `base-moved` |
-| `pending`, `wait` or `update` (no intent) | any | `skipped/merged-externally` with `mergeOid` and `seenHead`; the next member's base check then stops the run |
-| any, with no merge oid reported | any | the outcome is `not-run/awaiting-read-back` when the phase is `merge`, else `skipped` with `mergeOid: null` and a reason; resume re-views |
+| `pending`, `wait` or `update` (no intent) | any | `skipped/merged-externally` with `mergeOid` and `seenHead`, then the run fault `base-moved` |
+| `merge`, no merge oid reported | any | `not-run/awaiting-read-back`, run stop; resume re-views for the oid |
+| `pending`, `wait` or `update`, no merge oid reported | any | `not-run/awaiting-merge-evidence`, run stop; resume re-views and then applies the row above |
+
+**An external merge always stops the run** (R3-H1), including on the last member. It put a commit on the base that the chain
+does not hold, so no later merge and no `ok` result may rest on that chain. Independently, **before computing the result**,
+the loop reads the live base tip once more. When it is not `baseChain.at(-1)`, the run fault is `base-moved`, and the summary
+lists the observed tip next to the chain tail.
 
 `attribution: unknown` is printed in the summary and is never shown as `this-run`. Under no policy, the table collapses to
 today's two branches, with the same texts.
@@ -376,12 +382,18 @@ The plain serial runner (`land --approve --serial`, `land --resume`) and `ship-t
 ### 2.6 Resume and idempotency after a crash
 
 Each step is written as an intent before the remote action and as a result after it. Under a policy, resume first runs
-`validatePolicyRun` (§2.1), then re-reads the grant (`run/grant-revoked` refuses), then walks the steps in order. For each
-step it decides by `(step, outcome)`:
+`validatePolicyRun` (§2.1).
+
+**A fully terminal run** (every member terminal, and the run outcome not a stop) is a **read-only historical summary**
+(R3-M1). Resume reads nothing remote, re-checks neither the grant nor the rules, and prints the stored summary with the
+stored exit code. A grant revoked after completion changes nothing, because no mutation is possible.
+
+**Otherwise**, before the first remote mutation, resume re-reads the grant (`run/grant-revoked` refuses) and the branch
+rules, then walks the steps in order. For each step it decides by `(step, outcome)`:
 
 | phase | outcome | resume does |
 |---|---|---|
-| any | terminal | nothing. A closed batch re-run prints the same summary and performs no remote action |
+| any | terminal | nothing (see "A fully terminal run" below) |
 | `merged` | `not-run/awaiting-read-back` | re-view for the merge oid if it is missing, then repeat the read-back |
 | `merge` | `not-run/merge-unconfirmed` or null | view, then `classifyMerged`. An OPEN PR goes back to admission (the synchronous-merge guarantee, §2.3); nothing is replayed without a fresh admission |
 | `pending`, `update` or `wait` | not-run or null | full admission at the current head |
@@ -616,6 +628,13 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
         merge, and an unreadable rules answer gives `rules-unreadable`;
       - a `merge-unconfirmed` member with `isInMergeQueue: true` on resume gives `merge-queued`, with no second merge call;
       - the intent record written with `at` validates and is reconciled after a crash right after it was written.
+  12. **External merge, last member, missing oid:**
+      - an external merge of the LAST member gives `skipped/merged-externally`, then a `base-moved` stop, and `ok: false`;
+      - a foreign commit pushed to the base after the last landed member gives `base-moved` at the final base read;
+      - a pre-intent MERGED with no oid gives `not-run/awaiting-merge-evidence`, and a resume with the oid gives `skipped`,
+        then a stop.
+  13. **Closed run:** a fully terminal run resumed with the grant revoked and the rules API unavailable prints the same
+      summary and exit code, with zero remote reads.
 - **Byte identity:** `tests/fleet-serial-golden.test.mjs`, plus the unchanged `tests/fleet-serial.test.mjs` and
   `tests/ship-train-recovery.test.mjs`.
 
