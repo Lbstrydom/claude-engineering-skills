@@ -195,16 +195,18 @@ describe('H3 corollary — a failed write on a file owned only by adoption stays
 });
 
 describe('H2 — gc never deletes through a link out of the consumer', () => {
-  it('a junctioned tooling dir: the outside file survives and the run fails', async () => {
+  it('a junctioned tooling SUBDIRECTORY: the outside file survives and the run fails', async () => {
+    // A junctioned tooling dir ITSELF is now refused earlier, at the per-consumer lock (tests/sync-debt-cluster-e2e.test.mjs).
+    // This pins the later line of defence, gc's own containment, which needs the run to get past the lock.
     const root = makeConsumer('h2');
     const first = await sync(root);
     assert.equal(first.code, 0, whySyncFailed(first));
     const outside = path.join(tmp, 'h2-outside');
-    const tooling = path.join(root, 'scripts', '.claude-skills');
-    fs.cpSync(tooling, outside, { recursive: true });
+    const tooling = path.join(root, 'scripts', '.claude-skills', 'lib');
+    fs.cpSync(tooling, path.join(outside, 'lib'), { recursive: true });
     fs.writeFileSync(path.join(outside, 'lib', 'retired-by-upstream.mjs'), '// NOT the consumer repo\n');
     fs.rmSync(tooling, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    fs.symlinkSync(outside, tooling, 'junction');   // 'junction' is ignored on posix (a dir symlink)
+    fs.symlinkSync(path.join(outside, 'lib'), tooling, 'junction');   // 'junction' is ignored on posix (a dir symlink)
     recordPriorKey(root, RETIRED, '// retired\n');
     try {
       const r = await sync(root);
@@ -219,16 +221,18 @@ describe('H2 — gc never deletes through a link out of the consumer', () => {
   });
 });
 
-describe('H7 — a failed managed-block write fails the run', () => {
-  it('.gitattributes cannot be written → non-zero exit', async () => {
+describe('H7 — an unusable managed-block file fails the run', () => {
+  it('.gitattributes is a non-empty directory → non-zero exit, named, BEFORE any write', async () => {
     const root = makeConsumer('h7');
-    // Injection, portable: the atomic rename onto an existing non-empty
-    // directory fails on every platform.
+    // Injection, portable. It used to surface as a failed WRITE at the end of the run; since the preflight read became
+    // tri-state (debt 8fca02c6915a) the unreadable entry is refused up front, so nothing is delivered and nothing is
+    // overwritten. The run must still fail loudly, never report success.
     fs.mkdirSync(path.join(root, '.gitattributes'));
     fs.writeFileSync(path.join(root, '.gitattributes', 'x'), 'x');
     const r = await sync(root);
-    assert.match(r.text, /\.gitattributes write failed/, 'positive control: the injected failure did not happen');
-    assert.notEqual(r.code, 0, 'a failed managed-block write was reported as success');
+    assert.match(r.text, /\.gitattributes preflight: unreadable/, 'positive control: the injected failure did not happen');
+    assert.notEqual(r.code, 0, 'an unusable managed-block file was reported as success');
+    assert.equal(fs.existsSync(path.join(root, 'scripts', '.claude-skills', 'lib')), false, 'the abort precedes the write loop');
   });
 });
 

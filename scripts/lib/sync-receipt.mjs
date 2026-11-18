@@ -417,3 +417,67 @@ export function appendReceiptEntry(prior, entry, limit = RECEIPT_HISTORY_LIMIT) 
     recentSyncs: retained,
   };
 }
+
+/** Identity of one receipt entry: its COMPLETE content, so an in-place edit of any field reads as a different entry. */
+const entryKey = (e) => JSON.stringify(e ?? null);
+const entryLabel = (e) => `${e?.syncedAt ?? '?'}@${String(e?.source?.commitSha ?? '?').slice(0, 7)}`;
+
+/**
+ * Commit a sync's receipt entry onto the record that is on disk NOW (debts
+ * d6003d6472e6, ad2fd650d8bd; plan docs/plans/sync-to-repos-debt-cluster.md §2 D).
+ *
+ * The receipt used to be read once, before the copy loop, and rewritten from that
+ * snapshot at the end — so anything that changed it in between was overwritten,
+ * and a failed write was only logged although the rollback guard reads the latest
+ * entry. Every cooperating writer is this CLI, serialised by the per-consumer
+ * lock, so the only way the file can change under a run is an UNSUPPORTED
+ * external modification (a `git checkout`/`merge`/`pull` of this tracked file in
+ * the consumer). That is detected and disclosed here, never claimed prevented:
+ * Node has no compare-and-rename, so the window between the re-read and the
+ * rename is not closed.
+ *
+ * PURE: the caller injects the read and the write.
+ *
+ * Outcomes (`error` says whether the caller must count a TARGET ERROR):
+ *   written     no change since the start snapshot; appended
+ *   merged      changed, but every start entry is still present; appended onto the fresh record   (error)
+ *   unchanged   nothing worth recording
+ *   unsupported the record is from a NEWER bundle; not touched                                       (no error: as before)
+ *   declined    the fresh record is unreadable/malformed, or lost an entry the run started with     (error)
+ *   failed      the write itself failed                                                              (error)
+ *
+ * @param {object} args
+ * @param {{entries: object[]}} args.start     `readSyncReceipt` of what the run began with
+ * @param {object} args.entry                  from `buildReceiptEntry`
+ * @param {() => {state: string, json?: any, message?: string, reason?: string, code?: string|null}} args.read  fresh read (consumer-io JSON states)
+ * @param {(text: string) => void} args.write
+ * @returns {{outcome: 'written'|'merged'|'unchanged'|'unsupported'|'declined'|'failed', error: boolean, reason?: string, receipt?: object, kept?: number}}
+ */
+export function commitReceipt({ start, entry, read, write }) {
+  const fresh = read();
+  if (fresh.state !== 'absent' && fresh.state !== 'present') {
+    return { outcome: 'declined', error: true, reason: `${RECEIPT_PATH} is ${fresh.state} at commit (${fresh.message ?? fresh.reason ?? fresh.code}); nothing written` };
+  }
+  const base = readSyncReceipt(fresh.state === 'present' ? fresh.json : null);
+  if (base.status === 'unsupported') return { outcome: 'unsupported', error: false, reason: `version ${base.version}`, version: base.version };
+  if (base.status === 'unreadable') return { outcome: 'declined', error: true, reason: `${RECEIPT_PATH} is not a receipt at commit; nothing written` };
+  const freshKeys = new Set(base.entries.map(entryKey));
+  const missing = (start?.entries ?? []).filter((e) => !freshKeys.has(entryKey(e)));
+  if (missing.length) {
+    return {
+      outcome: 'declined', error: true,
+      reason: `${RECEIPT_PATH} lost ${missing.length} entr${missing.length === 1 ? 'y' : 'ies'} this run started with `
+        + `(${missing.map(entryLabel).join(', ')}, or edited in place) — probably a git checkout/merge of the file during the run; nothing written, so neither history is overwritten`,
+    };
+  }
+  const changed = base.entries.length !== (start?.entries ?? []).length || base.entries.some((e, i) => entryKey(e) !== entryKey(start.entries[i]));
+  if (!receiptShouldWrite(latestReceiptEntry(base), entry)) return { outcome: 'unchanged', error: false };
+  const receipt = appendReceiptEntry(base, entry);
+  try { write(JSON.stringify(receipt, null, 2) + '\n'); } catch (err) {
+    return { outcome: 'failed', error: true, reason: `${RECEIPT_PATH} write failed: ${String(err?.message ?? err).slice(0, 100)}` };
+  }
+  return changed
+    ? { outcome: 'merged', error: true, receipt, kept: receipt.recentSyncs.length - 1,
+      reason: `${RECEIPT_PATH} changed outside this sync during the run (a git operation on the consumer?) — merged onto the current record; re-run sync to re-validate` }
+    : { outcome: 'written', error: false, receipt, kept: receipt.recentSyncs.length - 1 };
+}

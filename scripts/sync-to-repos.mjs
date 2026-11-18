@@ -44,20 +44,19 @@ import {
 } from './lib/sync-overrides.mjs';
 import { guardPinDowngrades, assertNoPinDowngrade } from './lib/sync-pin-guard.mjs';
 import {
-  RECEIPT_PATH, RECEIPT_VERSION, buildReceiptEntry, receiptShouldWrite,
-  readSyncReceipt, latestReceiptEntry, appendReceiptEntry, detectSourceRollback,
+  RECEIPT_PATH, RECEIPT_VERSION, buildReceiptEntry, readSyncReceipt, latestReceiptEntry, commitReceipt,
 } from './lib/sync-receipt.mjs';
+import { readConsumerFile, readConsumerJson, writeConsumerFile, removeConsumerFile, acquireConsumerLock } from './lib/sync-consumer-io.mjs';
+import { createConfirmPrompt } from './lib/sync-prompt.mjs';
 import { describeSafeToCommit } from './lib/sync-status.mjs';
 import { describeUnmeasuredTargets, enforceBaseLagForTarget } from './lib/sync-base-lag.mjs';
 import { describeRunSummary } from './lib/sync-run-summary.mjs';
-import { createGitAncestry, planRollbackResponse } from './lib/sync-rollback-guard.mjs';
+import { createGitAncestry, planRollbackResponse, rollbackAgainstStamps, manifestStamp } from './lib/sync-rollback-guard.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { hookEpilogueLines } from './lib/prepush-hook-version.mjs';
 import { computeEolPins, renderEolPinLines, canonicaliseOutboundEol } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
-import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { deepMerge } from './lib/json-merge.mjs';
-import { assertContainedDestination } from './lib/install/safe-destination.mjs';
 import { planGarbageCollection, executeGarbageCollection, countCitations, carriedForFailedDeletions, mayStillExist, SYNC_RUN_ARTIFACTS } from './lib/sync-gc.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
@@ -790,6 +789,21 @@ async function main() {
     if (!baseLag.proceed) { totalErrors++; console.log(''); continue; }
     if (!baseLag.measured) unmeasuredTargets.push({ name: repo.name, outcome: baseLag.outcome, applyVerdict: baseLag.applyVerdict });
 
+    // One sync at a time writes into a consumer (pre-push syncs from several worktrees race on payload, manifest and
+    // receipt). Held until the receipt is committed (released below); a dry run writes nothing and takes no lock.
+    let lock = null;
+    let manifestWritten = false; // read after the lock is released (the summary), so declared outside the try
+    if (!DRY_RUN) {
+      try { lock = await acquireConsumerLock(repo.path); } catch (err) {
+        console.log(`  ${R}SKIP${X}  ${repo.name}: ${err.code === 'LOCK_TIMEOUT' ? `another sync is writing into it (${err.message})` : `cannot take the sync lock: ${err.message}`}`);
+        totalErrors++; console.log(''); continue;
+      }
+    }
+    // A read that is not `absent`/`present` (or a path containment refused) is never read as "no file".
+    const unusable = (r, what) => (['unreadable', 'malformed', 'refused'].includes(r.state)
+      ? (console.log(`  ${R}ABORT${X}  ${what}: ${r.state} (${r.reason ?? r.message ?? r.code}) — not treated as absent`), true) : false);
+    try { // the per-consumer lock is released in the matching `finally` (after the receipt commit)
+
     // ── Pre-flight: stale .github/skills/ shadow detection ────────────────
     // Runs unconditionally (including --dry-run) since it uses the INTENDED
     // bundle contents, not post-write disk state — round-2 Gemini gate H1.
@@ -892,7 +906,7 @@ async function main() {
 
     // Read the consumer's prior manifest BEFORE any write. Used for both
     // ownership preflight (collision detection) and GC (deletions).
-    const priorManifestPath = path.join(repo.path, LAYOUT_CONSTANTS.MANIFEST_PATH);
+    let priorManifestPath = path.join(repo.path, LAYOUT_CONSTANTS.MANIFEST_PATH); // re-pointed at the contained path on write
     let priorManifest = null;
     try {
       if (fs.existsSync(priorManifestPath)) {
@@ -928,16 +942,16 @@ async function main() {
     // overridden path SINCE" answerable at all. Absent or malformed reads as
     // "no prior knowledge" — no `upstreamMoved` claim is made from it, because
     // an unknown is not a no.
-    const receiptPath = path.join(repo.path, RECEIPT_PATH);
-    let priorReceiptRaw = null;
-    try {
-      if (fs.existsSync(receiptPath)) {
-        priorReceiptRaw = JSON.parse(fs.readFileSync(receiptPath, 'utf-8'));
-      }
-    } catch { /* unreadable prior receipt — no prior knowledge, never a claim */ }
+    // An ABSENT receipt is "no prior knowledge". An unreadable, malformed or refused one is not: it is the rollback
+    // guard's own history, and the late write would replace it. Resolve it (a merge conflict in this tracked file is the
+    // usual cause: git checkout it or fix the conflict) — do not delete it.
+    const rcptRead = readConsumerJson(repo.path, RECEIPT_PATH);
+    if (unusable(rcptRead, RECEIPT_PATH)) { totalErrors++; console.log(''); continue; }
+    const priorReceiptRaw = rcptRead.state === 'present' ? rcptRead.json : null;
     // Normalised here, so v1 (one object) and v2 (a list) answer the same
     // question the same way, and a FUTURE version is reported rather than read.
     const priorReceipt = readSyncReceipt(priorReceiptRaw);
+    if (priorReceipt.status === 'unreadable') { console.log(`  ${R}ABORT${X}  ${RECEIPT_PATH}: valid JSON but not a receipt — refusing to replace it`); totalErrors++; console.log(''); continue; }
     const priorReceiptHeld = new Map();
     for (const h of latestReceiptEntry(priorReceipt)?.overridesHeld || []) {
       if (h && typeof h.path === 'string') priorReceiptHeld.set(h.path, h);
@@ -946,8 +960,8 @@ async function main() {
     // Would this sync move the consumer BACKWARDS? A pre-push hook fires before
     // the remote accepts, so a rejected push from a stale tree used to rewrite
     // every consumer and log it as a success — see lib/sync-rollback-guard.mjs.
-    const rollback = detectSourceRollback(
-      latestReceiptEntry(priorReceipt), sourceGitMeta?.commitSha ?? null, createGitAncestry(SOURCE_ROOT),
+    const rollback = rollbackAgainstStamps(
+      [latestReceiptEntry(priorReceipt), manifestStamp(priorManifest)], sourceGitMeta?.commitSha ?? null, createGitAncestry(SOURCE_ROOT),
     );
     const rollbackPlan = planRollbackResponse(rollback, {
       repoName: repo.name, allowRollback: ALLOW_ROLLBACK, colors: { R, Y, D, X },
@@ -969,13 +983,8 @@ async function main() {
     //
     // Advisory only: it explains a state the collision guard already handles,
     // and a stale watermark must never block a legitimate sync.
-    const watermarkPath = path.join(repo.path, LAYOUT_CONSTANTS.OWNERSHIP_WATERMARK);
-    let watermark = null;
-    try {
-      if (fs.existsSync(watermarkPath)) {
-        watermark = JSON.parse(fs.readFileSync(watermarkPath, 'utf-8'));
-      }
-    } catch { /* corrupt watermark — treat as missing, never block */ }
+    const wm = readConsumerJson(repo.path, LAYOUT_CONSTANTS.OWNERSHIP_WATERMARK);
+    const watermark = wm.state === 'present' ? wm.json : null; // advisory: absent/corrupt reads as no watermark, never blocks
     const regression = detectOwnershipRegression(watermark, priorManifest);
     if (regression) {
       console.log(`  ${R}ownership record regressed${X} — the manifest moved backwards since our last sync.`);
@@ -994,11 +1003,11 @@ async function main() {
     // Pre-flight #1: gitignore managed-block well-formedness. Abort BEFORE
     // any write if the block is in a malformed state — fail-fast prevents
     // a half-installed tree paired with stale ignores.
-    const giPath = path.join(repo.path, '.gitignore');
-    let priorGitignore = null;
-    try {
-      priorGitignore = fs.existsSync(giPath) ? fs.readFileSync(giPath, 'utf-8') : null;
-    } catch { priorGitignore = null; }
+    // Only ABSENT means no file: an existing .gitignore that cannot be read must never be rebuilt from nothing, which
+    // would replace the consumer's whole file with just the managed block.
+    const giRead = readConsumerFile(repo.path, LAYOUT_CONSTANTS.GITIGNORE_PATH);
+    if (unusable(giRead, '.gitignore preflight')) { totalErrors++; console.log(''); continue; }
+    const priorGitignore = giRead.state === 'present' ? giRead.content : null;
     const giPreview = updateManagedBlock(
       priorGitignore,
       [
@@ -1041,11 +1050,9 @@ async function main() {
     // so a new tracked surface with no covering glob aborts here instead of
     // shipping perpetual churn. (scripts/.claude-skills/** is gitignored and
     // therefore exempt; see `isPinExempt`.)
-    const gaPath = path.join(repo.path, '.gitattributes');
-    let priorGitattributes = null;
-    try {
-      priorGitattributes = fs.existsSync(gaPath) ? fs.readFileSync(gaPath, 'utf-8') : null;
-    } catch { priorGitattributes = null; }
+    const gaRead = readConsumerFile(repo.path, LAYOUT_CONSTANTS.GITATTRIBUTES_PATH);
+    if (unusable(gaRead, '.gitattributes preflight')) { totalErrors++; console.log(''); continue; }
+    const priorGitattributes = gaRead.state === 'present' ? gaRead.content : null;
     const eolPins = computeEolPins(repo.files.map(sourceRelToDestRel));
     if (eolPins.uncovered.length) {
       console.log(`  ${R}ABORT${X}  .gitattributes preflight: ${eolPins.uncovered.length} trackable synced destination(s) have no EOL pin.`);
@@ -1073,16 +1080,10 @@ async function main() {
       const dstRel = sourceRelToDestRel(srcRel);
       intendedWrites.set(dstRel, srcRel);
     }
-    const inProgressJournalPath = path.join(repo.path, LAYOUT_CONSTANTS.IN_PROGRESS_JOURNAL);
-    let journalDestinations = new Set();
-    if (fs.existsSync(inProgressJournalPath)) {
-      try {
-        const journal = JSON.parse(fs.readFileSync(inProgressJournalPath, 'utf-8'));
-        if (Array.isArray(journal.destinations)) {
-          for (const d of journal.destinations) journalDestinations.add(d);
-        }
-      } catch { /* malformed journal — treat as empty */ }
-    }
+    const journalRead = readConsumerJson(repo.path, LAYOUT_CONSTANTS.IN_PROGRESS_JOURNAL);
+    if (journalRead.state === 'refused') { unusable(journalRead, LAYOUT_CONSTANTS.IN_PROGRESS_JOURNAL); totalErrors++; console.log(''); continue; }
+    // recovery state only: an unreadable/malformed journal reads as empty (unproven files then collide, which is the safe side)
+    const journalDestinations = new Set(journalRead.state === 'present' && Array.isArray(journalRead.json.destinations) ? journalRead.json.destinations : []);
     const collisions = [];
     const inventoryOwned = []; // non-relocating managed surfaces absent from prior manifest
     const contentOwned = [];   // orphans proved ours by their own bytes (see sync-ownership.mjs)
@@ -1208,13 +1209,10 @@ async function main() {
     // first-migration can be recognised next run.
     if (!DRY_RUN) {
       try {
-        atomicWriteFileSync(
-          inProgressJournalPath,
-          JSON.stringify({
-            startedAt: new Date().toISOString(),
-            destinations: [...intendedWrites.keys()],
-          }, null, 2) + '\n',
-        );
+        writeConsumerFile(repo.path, LAYOUT_CONSTANTS.IN_PROGRESS_JOURNAL, JSON.stringify({
+          startedAt: new Date().toISOString(),
+          destinations: [...intendedWrites.keys()],
+        }, null, 2) + '\n');
       } catch (err) {
         console.log(`  ${Y}journal write failed${X}: ${err.message?.slice(0, 100)}`);
       }
@@ -1370,8 +1368,7 @@ async function main() {
       }
       if (eolOnlyDiff) {
         try {
-          const safeDst = assertContainedDestination({ root: repo.path, relPath: dstRel });
-          atomicWriteFileSync(safeDst, outContent);
+          writeConsumerFile(repo.path, dstRel, outContent);
           repoEolOnly++;
           console.log(`  ${D}eol${X}   ${dstRel} ${D}(rewrote CRLF → LF; content unchanged)${X}`);
         } catch (err) {
@@ -1463,17 +1460,15 @@ async function main() {
         }
       } else {
         try {
-          // S2 layer 2 — the ONLY write site, so the guard lives here rather
-          // than being restated per branch. Canonicalising the target ROOT is
+          // S2 layer 2 — containment lives in writeConsumerFile (lib/sync-consumer-io.mjs), the one write seam for
+          // EVERY consumer write, payload and bookkeeping alike. Canonicalising the target ROOT is
           // necessary but not sufficient: a managed destination beneath it
           // (`.claude/`, `scripts/.claude-skills/`, …) can itself be a symlink
           // or Windows junction pointing outside, and we would follow it and
           // overwrite files the operator never named. Re-derived from
           // (repo.path, dstRel) rather than trusting the precomputed dstPath,
           // so the value written is the value validated.
-          const safeDst = assertContainedDestination({ root: repo.path, relPath: dstRel });
-          fs.mkdirSync(path.dirname(safeDst), { recursive: true });
-          atomicWriteFileSync(safeDst, outContent);
+          writeConsumerFile(repo.path, dstRel, outContent); // contains, creates parents, writes atomically
         } catch (err) {
           console.log(`  ${R}ERR${X}  ${dstRel}: ${err.message}`);
           repoErrors++; totalErrors++; failedWrites.add(dstRel);
@@ -1526,7 +1521,6 @@ async function main() {
     // them — and the next run classifies each as an unowned collision and
     // aborts the WHOLE target, so the consumer silently stops receiving every
     // future update. A failure here is therefore a failed sync, not a warning.
-    let manifestWritten = false;
     let keepJournal = false;   // a failed write with no prior base must stay adoptable next run
     // Declared outside the try so the post-condition below can read the map
     // that was actually written, rather than re-deriving it from the manifest
@@ -1610,7 +1604,7 @@ async function main() {
             ? null
             : repo.files.some((srcRel) => sourceDirtyPaths.has(srcRel)),
         });
-        atomicWriteFileSync(priorManifestPath, JSON.stringify(consumerManifest, null, 2) + '\n');
+        priorManifestPath = writeConsumerFile(repo.path, LAYOUT_CONSTANTS.MANIFEST_PATH, JSON.stringify(consumerManifest, null, 2) + '\n');
         manifestWritten = true;
         consumerFileMapForCheck = consumerFileMap;
         // The COMMITTED ownership sidecar, derived from the same destination
@@ -1622,10 +1616,7 @@ async function main() {
         // the watermark below: it is diagnostic metadata, and a failure here
         // must not fail a sync whose payload landed.
         try {
-          atomicWriteFileSync(
-            path.join(repo.path, OWNED_SIDECAR_RELATIVE_PATH),
-            JSON.stringify(buildOwnedSidecar(Object.keys(consumerFileMap)), null, 2) + '\n',
-          );
+          writeConsumerFile(repo.path, OWNED_SIDECAR_RELATIVE_PATH, JSON.stringify(buildOwnedSidecar(Object.keys(consumerFileMap)), null, 2) + '\n');
         } catch (err) {
           console.log(`  ${Y}ownership sidecar write failed${X} ${D}(consumers cannot tell upstream-owned files apart offline): ${err.message?.slice(0, 80)}${X}`);
         }
@@ -1634,13 +1625,10 @@ async function main() {
         // ownership of a record that does not exist. A failure here degrades
         // detection on the NEXT run but must not fail a sync that succeeded.
         try {
-          atomicWriteFileSync(
-            watermarkPath,
-            JSON.stringify({
-              generatedAt: consumerManifest.generatedAt,
-              fileCount: Object.keys(consumerFileMap).length,
-            }, null, 2) + '\n',
-          );
+          writeConsumerFile(repo.path, LAYOUT_CONSTANTS.OWNERSHIP_WATERMARK, JSON.stringify({
+            generatedAt: consumerManifest.generatedAt,
+            fileCount: Object.keys(consumerFileMap).length,
+          }, null, 2) + '\n');
         } catch (err) {
           console.log(`  ${Y}watermark write failed${X} ${D}(rollback detection degraded next run): ${err.message?.slice(0, 80)}${X}`);
         }
@@ -1687,7 +1675,7 @@ async function main() {
     // ── Apply managed .gitattributes block (EOL pins; preflight validated) ──
     if (!DRY_RUN && gaPreview.action !== 'noop') {
       try {
-        atomicWriteFileSync(gaPath, gaPreview.content);
+        writeConsumerFile(repo.path, LAYOUT_CONSTANTS.GITATTRIBUTES_PATH, gaPreview.content);
       } catch (err) {
         console.log(`  ${R}.gitattributes write failed${X}: ${err.message?.slice(0, 120)}`);
         repoErrors++; totalErrors++;
@@ -1697,7 +1685,7 @@ async function main() {
     // ── Apply managed .gitignore block (preflight already validated) ───────
     if (!DRY_RUN && giPreview.action !== 'noop') {
       try {
-        atomicWriteFileSync(giPath, giPreview.content);
+        writeConsumerFile(repo.path, LAYOUT_CONSTANTS.GITIGNORE_PATH, giPreview.content);
       } catch (err) {
         console.log(`  ${R}.gitignore write failed${X}: ${err.message?.slice(0, 120)}`);
         repoErrors++; totalErrors++;
@@ -1743,8 +1731,7 @@ async function main() {
     // Also kept when a write FAILED on a file owned only through this run's
     // adoption (no prior base): the journal is then its only ownership record.
     if (!DRY_RUN && manifestWritten && !keepJournal) {
-      try { fs.unlinkSync(inProgressJournalPath); }
-      catch (err) { if (err.code !== 'ENOENT') { /* leave dangling — next run will reconcile */ } }
+      removeConsumerFile(repo.path, LAYOUT_CONSTANTS.IN_PROGRESS_JOURNAL); // a failure leaves it dangling: the next run reconciles
     }
 
     // ── Divergence refusals — the loud half of the guard ───────────────────
@@ -1793,31 +1780,37 @@ async function main() {
           legacyRetired: receiptLegacyRetired,
           unchanged: repoUnchanged,
         });
-        if (priorReceipt.status === 'unsupported') {
-          // A NEWER bundle wrote this file. Rewriting it in a shape this code
-          // understands would destroy a record it cannot read — the exact loss
-          // the append-only change exists to end. Decline, and say why.
-          console.log(`  ${Y}receipt not written${X} ${D}(${RECEIPT_PATH} is version ${priorReceipt.version}, `
-            + `newer than this bundle's v${RECEIPT_VERSION}; refusing to overwrite a record it cannot merge — `
-            + `sync from a current bundle, or move the file aside)${X}`);
-        } else if (receiptShouldWrite(latestReceiptEntry(priorReceipt), entry)) {
-          const receipt = appendReceiptEntry(priorReceipt, entry);
-          atomicWriteFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
-          const carried = receipt.recentSyncs.length - 1;
+        // commitReceipt re-reads the record at commit time (an external git operation during the run is detected, not
+        // overwritten) and a failure is a TARGET ERROR: the rollback guard reads this record.
+        const committed = commitReceipt({
+          start: priorReceipt, entry,
+          read: () => readConsumerJson(repo.path, RECEIPT_PATH),
+          write: (text) => writeConsumerFile(repo.path, RECEIPT_PATH, text),
+        });
+        if (committed.outcome === 'unsupported') {
+          // A NEWER bundle wrote this file; rewriting it would destroy a record this code cannot read.
+          console.log(`  ${Y}receipt not written${X} ${D}(${RECEIPT_PATH} is version ${committed.version}, newer than this bundle's v${RECEIPT_VERSION}; sync from a current bundle)${X}`);
+        } else if (committed.error) {
+          console.log(`  ${R}receipt ${committed.outcome}${X} ${D}${committed.reason}${X}`);
+          repoErrors++; totalErrors++;
+        }
+        if (committed.receipt) {
           console.log(`  ${D}receipt${X} ${RECEIPT_PATH} updated ${D}(commit it — it is the in-repo record that this sync ran`
-            + `${carried > 0 ? `; ${carried} earlier sync${carried === 1 ? '' : 's'} kept` : ''})${X}`);
+            + `${committed.kept > 0 ? `; ${committed.kept} earlier sync${committed.kept === 1 ? '' : 's'} kept` : ''})${X}`);
         }
       } catch (err) {
         // Advisory: the trace failing must not fail a sync that succeeded, but
         // it must never be silent either — a missing trace is the condition
         // this whole mechanism exists to end.
-        console.log(`  ${Y}receipt write failed${X} ${D}(this sync left no in-repo trace): ${err.message?.slice(0, 100)}${X}`);
+        console.log(`  ${R}receipt failed${X} ${D}(this sync left no in-repo trace): ${err.message?.slice(0, 100)}${X}`);
+        repoErrors++; totalErrors++;
       }
     }
 
     // Record the receipt + sidecar's own hashes too (patchManifestWithExtraHashes's header, /audit-code round 2 M1). The SAME list gc
     // skips (SYNC_RUN_ARTIFACTS): recorded here, they are in the next run's prior manifest without being payload, and are no orphans.
     if (!DRY_RUN && manifestWritten) patchManifestWithExtraHashes(priorManifestPath, SYNC_RUN_ARTIFACTS.map((rel) => ({ rel, abs: path.join(repo.path, rel) })));
+    } finally { await lock?.release(); } // awaited: the file must be gone before this target is done
     const parts = [];
     if (repoNew > 0) parts.push(`${G}+${repoNew} new${X}`);
     if (repoUpdated > 0) parts.push(`${Y}~${repoUpdated} updated${X}`);
@@ -1968,16 +1961,7 @@ async function maybePromptSharedCloudUpdate({ sourceRepoDir, stdio }) {
 
   // CREATED or UPDATED — delegate to lib's runSetupCloud, with a readline
   // prompt scoped to the sync flow.
-  const readline = await import('node:readline');
-  const prompt = (q) => new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: stdio });
-    rl.question(q, (answer) => {
-      rl.close();
-      // R1-audit M3/M13: accept only empty (default Y) or explicit y/yes.
-      const a = answer.trim().toLowerCase();
-      resolve(a === '' || a === 'y' || a === 'yes');
-    });
-  });
+  const prompt = createConfirmPrompt({ output: stdio }); // always settles: EOF/Ctrl-D declines instead of hanging
   stdio.write('\n');
   await runSetupCloud({ prompt, sourceRepoDir, stdio, autoYes: false });
 }

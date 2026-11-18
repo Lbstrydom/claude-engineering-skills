@@ -48,6 +48,9 @@ export const LAYOUT_CONSTANTS = Object.freeze({
   // manifest keys only) cannot delete it.
   // See docs/plans/sync-ownership-from-content.md.
   OWNERSHIP_WATERMARK: 'scripts/.claude-skills/.sync-watermark.json',
+  // Per-consumer exclusion: one sync at a time writes into a given consumer (lib/sync-consumer-io.mjs
+  // acquireConsumerLock). Inside the gitignored tooling dir, never in a manifest, so GC cannot delete it.
+  SYNC_LOCK: 'scripts/.claude-skills/.sync.lock',
 });
 
 /**
