@@ -144,7 +144,9 @@ describe('H4 — a failed gc deletion is an error, stays tracked, and is retried
     const failed = await sync(root);
     assert.notEqual(failed.code, 0, `a failed gc deletion must fail the run:\n${failed.text.slice(-1500)}`);
     assert.ok(fs.existsSync(abs), 'positive control: the injected entry should still be there');
-    assert.match(failed.text, /gc FAILED\s+scripts\/\.claude-skills\/lib\/retired-by-upstream\.mjs/, 'the failed path is not named');
+    // The divergence probe (debt 489588c47264) now reads the candidate BEFORE any unlink, so an entry that cannot be read is
+    // reported as `gc SKIPPED` (no gc for the target: nothing is deleted on a guess) rather than as a failed unlink.
+    assert.match(failed.text, /gc (?:FAILED|SKIPPED)\s+scripts\/\.claude-skills\/lib\/retired-by-upstream\.mjs/, 'the failed path is not named');
     assert.ok(!(lastReceipt(root).gcDeleted || []).includes(RETIRED), 'receipt claims a deletion that did not happen');
     assert.ok(RETIRED in readJson(root, MANIFEST).files, 'manifest dropped a path it failed to delete — it can never be retried');
 
@@ -213,7 +215,7 @@ describe('H2 — gc never deletes through a link out of the consumer', () => {
       assert.ok(fs.existsSync(path.join(outside, 'lib', 'retired-by-upstream.mjs')),
         'gc deleted a file OUTSIDE the consumer through a junction');
       assert.notEqual(r.code, 0, `a refused gc deletion must fail the run:\n${r.text.slice(-1500)}`);
-      assert.match(r.text, /gc FAILED\s+scripts\/\.claude-skills\/lib\/retired-by-upstream\.mjs[^\n]*refused/,
+      assert.match(r.text, /gc (?:FAILED|SKIPPED)\s+scripts\/\.claude-skills\/lib\/retired-by-upstream\.mjs[^\n]*refused/,
         'the run failed, but not because containment refused the deletion');
     } finally {
       fs.rmSync(tooling, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });   // the link itself, never its target

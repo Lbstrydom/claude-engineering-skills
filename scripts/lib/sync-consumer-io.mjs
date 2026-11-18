@@ -38,6 +38,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { assertContainedDestination } from './install/safe-destination.mjs';
 import { atomicWriteFileSync } from './file-io.mjs';
 import { withFileLock } from './file-lock.mjs';
@@ -71,6 +72,19 @@ export function readConsumerJson(root, rel, seams) {
   const r = readConsumerFile(root, rel, seams);
   if (r.state !== 'present') return r;
   try { return { ...r, json: JSON.parse(r.content) }; } catch (err) { return { state: 'malformed', message: err.message }; }
+}
+
+/**
+ * Hash a consumer file's RAW bytes in the manifest's own form (`sha256:<hex>`), containing the path first. Never throws.
+ * @returns {{state: 'present', hash: string} | {state: 'absent'} | {state: 'refused'|'failed', reason: string}}
+ */
+export function hashConsumerFile(root, rel, { read = fs.readFileSync, contain = assertContainedDestination } = {}) {
+  let abs;
+  try { abs = contain({ root, relPath: rel }); } catch (err) { return { state: 'refused', reason: err.message }; }
+  try { return { state: 'present', hash: `sha256:${createHash('sha256').update(read(abs)).digest('hex')}` }; } catch (err) {
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return { state: 'absent' };
+    return { state: 'failed', reason: `${err?.code ?? 'error'}: ${err?.message ?? String(err)}` };
+  }
 }
 
 /**

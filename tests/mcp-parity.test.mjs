@@ -486,13 +486,16 @@ describe('deepMerge — KD-1 leaf-path authority (the gate\'s load-bearing premi
 });
 
 describe('deepMerge — production wiring (the seam Phase 0 created)', () => {
-  it('sync-to-repos.mjs imports deepMerge and declares no local copy', () => {
+  it('the sync\'s outbound renderer imports deepMerge and no sync file declares a local copy', () => {
     // Secondary DRY guard, in the shape of anthropic-client-migration.test.mjs.
     // The behavioural proof is the integration test below — this only catches a
-    // future refactor reintroducing a second spelling of the merge rule.
-    const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf8');
-    assert.match(src, /import\s*\{[^}]*\bdeepMerge\b[^}]*\}\s*from\s*'\.\/lib\/json-merge\.mjs'/);
-    assert.doesNotMatch(src, /^\s*function\s+deepMerge\s*\(/m, 'a local deepMerge copy was reintroduced');
+    // future refactor reintroducing a second spelling of the merge rule. The merge now lives in lib/sync-outbound.mjs
+    // (`renderOutbound`), the one function that renders what the sync writes.
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-outbound.mjs'), 'utf8');
+    assert.match(src, /import\s*\{[^}]*\bdeepMerge\b[^}]*\}\s*from\s*'\.\/json-merge\.mjs'/);
+    for (const f of ['scripts/sync-to-repos.mjs', 'scripts/lib/sync-outbound.mjs']) {
+      assert.doesNotMatch(fs.readFileSync(path.join(REPO_ROOT, f), 'utf8'), /^\s*function\s+deepMerge\s*\(/m, `a local deepMerge copy was reintroduced in ${f}`);
+    }
   });
 
   it('INTEGRATION: the real sync write path preserves consumer keys and overwrites leaves', () => {

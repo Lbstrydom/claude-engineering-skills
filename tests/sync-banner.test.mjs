@@ -83,11 +83,15 @@ describe('sync-banner — injectUpstreamBanner', () => {
 // rewrite→banner→hash sequence.
 describe('sync-banner — production integration in sync-to-repos.mjs', () => {
   it('imports + calls injectUpstreamBanner on outbound content', () => {
-    const src = fs.readFileSync(
-      fileURLToPath(new URL('../scripts/sync-to-repos.mjs', import.meta.url)), 'utf-8');
-    assert.ok(/import\s*\{[^}]*injectUpstreamBanner[^}]*\}\s*from\s*['"]\.\/lib\/sync-banner\.mjs['"]/.test(src),
-      'sync-to-repos must import injectUpstreamBanner');
-    assert.ok(src.includes('injectUpstreamBanner(outContent'),
-      'sync-to-repos must call injectUpstreamBanner(outContent, ...)');
+    // The outbound pipeline is ONE function now (lib/sync-outbound.mjs `renderOutbound`); the banner is its last stage, and the
+    // CLI's write loop renders through it.
+    const read = (rel) => fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8');
+    const outbound = read('../scripts/lib/sync-outbound.mjs');
+    assert.ok(/import\s*\{[^}]*injectUpstreamBanner[^}]*\}\s*from\s*['"]\.\/sync-banner\.mjs['"]/.test(outbound),
+      'renderOutbound must import injectUpstreamBanner');
+    assert.ok(outbound.includes('injectUpstreamBanner(rewritten.rewritten, dstRel)'),
+      'renderOutbound must call injectUpstreamBanner on the rewritten content');
+    assert.ok(/rendered = renderOutbound\(\{/.test(read('../scripts/sync-to-repos.mjs')),
+      'sync-to-repos must render outbound content through renderOutbound');
   });
 });

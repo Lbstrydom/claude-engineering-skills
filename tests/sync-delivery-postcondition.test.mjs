@@ -35,6 +35,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { findUndeliveredEntries } from '../scripts/lib/sync-manifest.mjs';
+import { selectManifestBases } from '../scripts/lib/sync-gc.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -107,13 +108,17 @@ test('call site: a held path is recorded only while its file is still on disk', 
   // consumer has since deleted would otherwise carry a stale base forward for
   // ever — the manifest asserting delivery of something absent. (A REFUSE
   // cannot reach it: refusal requires a diverged disk hash, hence the file.)
-  const block = /if \(notWrittenByUs\.has\(dstRel\)\) \{[\s\S]{0,1400}?\n {10}\}/.exec(SYNC_SRC);
-  assert.ok(block, 'could not locate the not-written-by-us branch');
-  assert.match(block[0], /existsSync/, 'the carried base must be gated on the file existing');
-  assert.match(
-    block[0], /if \(carried && \w+\) consumerFileMap\[dstRel\] = carried;/,
-    'both conditions must gate the write — carrying on either alone reintroduces the false claim',
-  );
+  // The rule now lives in the pure `selectManifestBases` (lib/sync-gc.mjs), so it is asserted by BEHAVIOUR: both conditions
+  // (a prior base AND the file still there) must hold for a carry, and the CLI must build its bases through it.
+  const h = 'sha256:' + 'c'.repeat(64);
+  const run = ({ carried, there }) => selectManifestBases({
+    intendedDests: ['held.txt'], notWrittenByUs: new Set(['held.txt']), writtenHash: new Map(), failedWrites: new Set(),
+    carriedFor: () => carried, stillThere: () => there, mayStillExist: () => there,
+  }).files;
+  assert.deepEqual(run({ carried: h, there: true }), { 'held.txt': h });
+  assert.deepEqual(run({ carried: h, there: false }), {}, 'the file is gone: carrying the base is the false claim');
+  assert.deepEqual(run({ carried: undefined, there: true }), {}, 'no prior base: never invent one');
+  assert.match(SYNC_SRC, /selectManifestBases\(\{/);
 });
 
 test('call site: the check runs on a REAL sync only, never on a dry run', () => {

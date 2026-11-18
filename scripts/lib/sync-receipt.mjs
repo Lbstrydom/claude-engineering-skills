@@ -134,7 +134,7 @@ const NOTE = 'Written by the claude-engineering-skills sync. Committed on purpos
  */
 export function buildReceiptEntry({
   syncedAt, source, created = [], updated = [], gcDeleted = [],
-  overridesHeld = [], divergedOverwritten = [], divergenceRefused = [], legacyRetired = [], unchanged = 0,
+  overridesHeld = [], divergedOverwritten = [], divergenceRefused = [], legacyRetired = [], retiredHeld = [], unchanged = 0,
 }) {
   const byPath = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   return {
@@ -170,6 +170,9 @@ export function buildReceiptEntry({
     // aac80849): a sync that changes a tracked consumer file must say so here,
     // or the change reaches `git status` with nothing attributing it.
     legacyRetired: [...legacyRetired].sort(byPath),
+    // Tooling files upstream RETIRED that the consumer had edited, so gc HELD them instead of deleting (`--overwrite-diverged`
+    // deletes). Standing state, so a repeat of the same list is not a reason to write a new entry.
+    retiredHeld: [...retiredHeld].sort(),
   };
 }
 
@@ -395,6 +398,7 @@ export function receiptShouldWrite(prevEntry, nextEntry) {
     divergedOverwritten: r.divergedOverwritten,
     divergenceRefused: r.divergenceRefused,
     legacyRetired: r.legacyRetired ?? [],
+    retiredHeld: r.retiredHeld ?? [],
   });
   return strip(prevEntry) !== strip(nextEntry);
 }
