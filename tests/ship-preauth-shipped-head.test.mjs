@@ -246,6 +246,21 @@ describe('isShipStepDelta: the hardened grammar (code-audit round 1)', () => {
     assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD, newMode: '120000' }), /regular-file edit/);
     assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD, oldMode: '100644', newMode: '100755' }), /regular-file edit/);
   });
+  it('a new log heading inserted INSIDE the final section (ahead of that section\'s own text) must be appended after the whole document', () => {
+    const sneaky = PLAN_OLD.replace('## Phase 1\nwork\n', '## Phase 1\n## Implementation Log\nwork\n');
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: sneaky }), /appended after the whole existing document|existing line/);
+  });
+  it('a log appended AFTER the final section\'s text is the legitimate shape (the control)', () => {
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD + '\n## Implementation Log\n- shipped\n' }), null);
+  });
+  it('a LARGE insertion is bounded (never an unbounded per-line rescan) and still correct under the cap', () => {
+    const big = Array.from({ length: 50_000 }, (_, i) => `- entry ${i}`).join('\n');
+    const t0 = Date.now();
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: `${PLAN_OLD}\n## Implementation Log\n${big}\n` }), null);
+    assert.ok(Date.now() - t0 < 5000, `a 50k-line log insertion took ${Date.now() - t0}ms`);
+    const huge = Array.from({ length: 250_000 }, (_, i) => `- entry ${i}`).join('\n');
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: `${PLAN_OLD}\n## Implementation Log\n${huge}\n` }), /too large/);
+  });
   it('an unknown mode refuses (never a pass)', () => {
     assert.match(isShipStepDelta({ status: 'A', rel: entryName, newText: 'x' }), /not a regular file \(mode unknown\)/);
   });

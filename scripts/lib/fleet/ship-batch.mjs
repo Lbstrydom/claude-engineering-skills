@@ -170,6 +170,8 @@ export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, 
   const cv = (ciFn ?? ((a) => ciVerdict({ run, ...a })))({ pr: member.prNumber, head: member.oid });
   const undeclared = cv.verdict === 'unverified' && /no ciVerdict workflow is declared/.test(String(cv.reason));
   if (cv.verdict !== 'full' && !undeclared) out.push(`ci: the full-suite run is ${cv.verdict} (${cv.reason ?? 'no reason'})`);
+  // Each absence alone is honest (no required checks configured; no workflow declared). BOTH together measure nothing at this head.
+  if (rc.verdict === 'none-required' && undeclared) out.push('ci: no required checks are configured and no full-suite workflow is declared, so nothing measured CI at this head');
   return out;
 }
 
@@ -288,6 +290,8 @@ export function readBackReasons(headMessage, squashMessage) {
 
 /** The hooks the serial runner takes for a ship-batch run. */
 export function makeShipBatchHooks({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError = null }) {
+  /** Bookkeeping failures the run could not return through the serial runner; withSummary reports them and the result is not ok. */
+  const errors = [];
   const checkChild = deps.shipBatch?.checkChild ?? runShippedHeadChild;
   const git = (args) => deps.git(args, cwd, { timeoutMs: 120_000 });
   const message = (oid) => { const r = git(['log', '-1', '--format=%B', oid]); return r.ok ? r.stdout : null; };
@@ -319,7 +323,7 @@ export function makeShipBatchHooks({ cwd, dir, trainId, deps, requiredChecks, re
     return { subject, body };
   };
 
-  const onMerged = ({ source, mergedOid }) => {
+  const onMergedInner = ({ source, mergedOid }) => {
     const rec = readShipBatch(dir, trainId);
     if (!rec.ok) return { stop: `ship-batch record: ${rec.reason}` };
     const member = rec.batch.members.find((m) => m.id === source.id);
@@ -344,8 +348,9 @@ export function makeShipBatchHooks({ cwd, dir, trainId, deps, requiredChecks, re
     patchBatch(dir, trainId, member.id, { state: 'verified', mergeOid: mergedOid, note: null }, { expectedTip: mergedOid });
     return null;
   };
-  const onSkip = ({ source, reason }) => { try { patchBatch(dir, trainId, source.id, { state: 'needs-user', note: String(reason).slice(0, 900) }); } catch { /* the serial record still holds the note */ } };
-  return { messageFor, onMerged, onSkip, noUpdate: true, shipBatch: true };
+  const onMerged = (a) => { try { return onMergedInner(a); } catch (e) { errors.push(`${a.source?.id}: read-back failed (${e.message})`); return { stop: `PR #${a.source?.prNumber}: the read-back failed (${e.message}) — --resume re-checks it` }; } };
+  const onSkip = ({ source, reason }) => { try { patchBatch(dir, trainId, source.id, { state: 'needs-user', note: String(reason).slice(0, 900) }); } catch (e) { errors.push(`${source.id}: could not record needs-user (${e.message})`); } };
+  return { messageFor, onMerged, onSkip, noUpdate: true, shipBatch: true, errors };
 }
 
 // ---- approve / resume / summary ---------------------------------------------------------------------------------------------
@@ -365,7 +370,7 @@ export function approveShipBatch({ cwd, dir, trainId, deps, serialOpts }) {
   const mismatch = trainMismatch(dir, trainId, rec.batch);
   if (mismatch) return refusedResult(`the ship-batch record does not describe train ${trainId}: ${mismatch}`);
   const hooks = makeShipBatchHooks({ cwd, dir, trainId, deps, requiredChecks: serialOpts?.requiredChecks, requiredChecksError: serialOpts?.requiredChecksError });
-  return withSummary(approveSerial({ cwd, trainId, deps, ...serialOpts, messageFor: hooks.messageFor, hooks }), dir, trainId);
+  return withSummary(approveSerial({ cwd, trainId, deps, ...serialOpts, messageFor: hooks.messageFor, hooks }), dir, trainId, hooks);
 }
 
 /** `land --resume <train> --ship-batch`. The grant and the base progression are re-checked before any further merge. */
@@ -377,25 +382,28 @@ export function resumeShipBatch({ cwd, dir, trainId, deps, serialOpts }) {
   const mismatch = trainMismatch(dir, trainId, rec.batch);
   if (mismatch) return refusedResult(`the ship-batch record does not describe train ${trainId}: ${mismatch}`);
   const hooks = makeShipBatchHooks({ cwd, dir, trainId, deps, requiredChecks: serialOpts?.requiredChecks, requiredChecksError: serialOpts?.requiredChecksError });
-  return withSummary(resumeSerial({ cwd, trainId, deps, ...serialOpts, messageFor: hooks.messageFor, hooks }), dir, trainId);
+  return withSummary(resumeSerial({ cwd, trainId, deps, ...serialOpts, messageFor: hooks.messageFor, hooks }), dir, trainId, hooks);
 }
 
 /** Fold the member states into the result and the verdict: a landed batch with a provenance-lost member is NOT ok. */
-function withSummary(r, dir, trainId) {
+function withSummary(r, dir, trainId, hooks = null) {
   const rec = readShipBatch(dir, trainId);
-  if (!rec.ok) return r;
+  // The record is the per-member truth: if it cannot be read after the run, the summary cannot be honest, so the result is NOT ok.
+  if (!rec.ok) return { ...r, ok: false, code: 'refused', reason: `the ship-batch record could not be read after the run (${rec.reason}): per-member outcomes are unknown`, text: `REFUSED: the ship-batch record could not be read after the run (${rec.reason}); per-member outcomes are unknown — check \`fleet land --resume ${trainId} --ship-batch\` and the merged PRs by hand` };
   const { members, excluded } = rec.batch;
   const lost = members.filter((m) => m.state === 'provenance-lost' || m.state === 'landed-on-untested-base');
   const landed = members.filter((m) => ['merged', 'verified', 'provenance-lost', 'landed-on-untested-base'].includes(m.state));
+  const bookkeeping = hooks?.errors ?? [];
   const needs = members.filter((m) => m.state === 'needs-user');
   const verified = members.filter((m) => m.state === 'verified');
   const lines = [
     `ship-batch ${trainId}: landed ${landed.length} of ${members.length} ship-ok member(s); needs-user ${excluded.length}`,
     ...members.map((m) => `  ${m.state.padEnd(24)} ${m.id} (PR #${m.prNumber})${m.mergeOid ? ` -> ${short(m.mergeOid)}` : ''}${m.note ? `  [${m.note}]` : ''}`),
     ...excluded.map((n) => `  needs-user               ${n.id}${n.prNumber ? ` (PR #${n.prNumber})` : ''}: ${n.reasons.join('; ')}  -> the user types /ship in that session`),
+    ...(bookkeeping.length ? [`bookkeeping failed (the result is not ok): ${bookkeeping.join('; ')}`] : []),
     ...(r.ok && !lost.length ? (needs.length ? [`partial: ${needs.length} member(s) wait for the user's /ship; the rest landed and verified. \`land --resume ${trainId} --ship-batch\` re-checks the waiting ones.`] : []) : r.reason ? [`stopped: ${r.reason}`] : []),
   ];
   // A partial landing (a member waits for the user) is ok when something landed and nothing was lost; nothing landed is not ok.
-  const ok = Boolean(r.ok) && lost.length === 0 && (r.partial ? verified.length > 0 : true);
+  const ok = Boolean(r.ok) && lost.length === 0 && bookkeeping.length === 0 && (r.partial ? verified.length > 0 : true);
   return { ...r, ok, code: ok ? 'ok' : (r.code === 'ok' ? 'refused' : r.code ?? 'refused'), ...(ok || r.reason ? {} : { reason: `provenance: ${lost.map((m) => `${m.id} ${m.state}`).join(', ')}` }), shipBatch: { members, excluded }, text: lines.join('\n') };
 }

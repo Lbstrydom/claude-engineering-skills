@@ -84,6 +84,11 @@ describe('parseShipBatchGrant: everything else refuses, with its own code', () =
   it('text after the marker BEYOND the next heading is another section and does not matter', () => {
     assert.equal(parseShipBatchGrant(wrap(dated)).ok, true);
   });
+  it('a ### heading AFTER the marker is still INSIDE the level-2 grant section: its text is refused, not skipped', () => {
+    const r = parseShipBatchGrant(wrap(dated).replace(`${GRANT_MARKER}\n`, `${GRANT_MARKER}\n\n### Exception\n\nNothing lands on Fridays.\n`));
+    assert.equal(r.code, 'grant-mismatch');
+    assert.match(r.reason, /text follows the marker/);
+  });
   it('a marker in the middle of a line is not a marker line: refused, and never throws', () => {
     const r = parseShipBatchGrant(`# x\n\nnote: ${GRANT_MARKER} (inline)\n`);
     assert.equal(r.ok, false);

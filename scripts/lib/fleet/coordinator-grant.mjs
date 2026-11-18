@@ -89,7 +89,8 @@ export function parseShipBatchGrant(text) {
   if (hi < 0) return { ok: false, code: 'grant-mismatch', reason: `the section heading ${JSON.stringify(GRANT_HEADING)} is not above the marker` };
   // The grant is the WHOLE section: nothing but blank lines may follow the marker before the next heading (a restriction added
   // there would otherwise be silently ignored).
-  const next = lines.findIndex((l, i) => i > mi && /^#{1,6} /.test(l));
+  // The grant is a level-2 section: it ends at the next heading of level 1 or 2. A `###` after the marker is INSIDE it.
+  const next = lines.findIndex((l, i) => i > mi && /^#{1,2} /.test(l));
   const tail = lines.slice(mi + 1, next < 0 ? lines.length : next);
   if (tail.some((l) => l.trim() !== '')) return { ok: false, code: 'grant-mismatch', reason: 'text follows the marker inside the grant section: the whole section must be the canonical grant, so a restriction added there is refused, never ignored' };
   const section = lines.slice(hi, mi + 1).join('\n');

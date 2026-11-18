@@ -23,7 +23,7 @@ import {
   splitCommitMessage, aiTrailerMultiset, readBackReasons, runShippedHeadChild, partitionMembers, buildShipBatch,
   approveShipBatch, resumeShipBatch, readShipBatch, writeShipBatch, SHIP_BATCH_SCHEMA, CHILD_SCHEMA,
 } from '../scripts/lib/fleet/ship-batch.mjs';
-import { resumeSerial } from '../scripts/lib/fleet/serial.mjs';
+import { approveSerial, resumeSerial } from '../scripts/lib/fleet/serial.mjs';
 
 after(cleanupFleetRoots);
 
@@ -565,11 +565,14 @@ describe('archive-check: a ready, unmerged member owes its evidence markers (pla
   it('a ready session with an open PR is owed: archiving would destroy the markers the batch re-check reads', () => {
     assert.match(shipEvidenceOwed({ ready: { oid: 'a'.repeat(40), at: 'x' } }, { number: 21 }), /PR #21 is ready but unmerged.*\.audit\//);
   });
-  it('not ready, no PR, or a PR that could not be queried: nothing is owed (the direction it must NOT fire)', () => {
+  it('not ready, or no PR at all: nothing is owed (the direction it must NOT fire)', () => {
     assert.equal(shipEvidenceOwed({ ready: null }, { number: 21 }), null);
     assert.equal(shipEvidenceOwed({ ready: { oid: 'a'.repeat(40) } }, null), null);
-    assert.equal(shipEvidenceOwed({ ready: { oid: 'a'.repeat(40) } }, { unknown: 'gh unavailable' }), null);
     assert.equal(shipEvidenceOwed(null, { number: 21 }), null);
+    assert.equal(shipEvidenceOwed({ ready: null }, { unknown: 'gh unavailable' }), null, 'a member that is not ready owes nothing even when the PR query failed');
+  });
+  it('a READY member whose PR could not be queried is UNCERTAIN, never clear to archive', () => {
+    assert.match(shipEvidenceOwed({ ready: { oid: 'a'.repeat(40) } }, { unknown: 'gh unavailable' }), /could not be queried \(gh unavailable\).*unknown/);
   });
 });
 
@@ -704,5 +707,67 @@ describe('a batch of two: the rest still land, and the base progression holds ac
     assert.equal(r2.ok, true, r2.text);
     assert.deepEqual(g.merges.map((m) => m[2]), ['22', '21'], 'the second member landed first, then the resumed first');
     assert.deepEqual(b.batch().members.map((m) => m.state), ['verified', 'verified']);
+  });
+});
+
+describe('code-audit round 2: member isolation, CI evidence policy, bookkeeping honesty', () => {
+  for (const [name, over, re] of [
+    ['a PR that became a DRAFT after the build', { state: 'OPEN', isDraft: true }, /is a draft/],
+    ['a PR that was CLOSED after the build', { state: 'CLOSED' }, /is CLOSED/],
+    ['a PR that now CONFLICTS with the base', { mergeStateStatus: 'DIRTY' }, /conflicts with main/],
+  ]) {
+    it(`${name}: a member problem SKIPS that member (needs-user), it does not stop a batch`, () => {
+      const b = batchFx();
+      const g = scriptedGh({ views: () => view(b.tested, over) });
+      const r = approve(b, g.gh);
+      assert.equal(b.member().state, 'needs-user');
+      assert.match(b.member().note, re);
+      assert.equal(r.ok, false, 'nothing landed, so not ok');
+      assert.equal(g.calls.some((c) => c[1] === 'merge'), false);
+    });
+  }
+  it('the same problems STOP a plain serial run exactly as before (the skip is ship-batch only)', () => {
+    const { fx, tested, trainId } = trainFx();
+    const g = scriptedGh({ views: () => view(tested, { mergeStateStatus: 'DIRTY' }) });
+    const r = approveSerial({ cwd: fx.repo, trainId, deps: depsWith(g.gh), sleep: () => {}, timings: fast, timeoutMs: 60_000 });
+    assert.match(r.reason, /conflicts with main/);
+    assert.equal(r.partial, undefined);
+  });
+
+  it('a PR observed MERGED at a head this run never accounted for is a stop, not "merged"', () => {
+    const b = batchFx();
+    let merged = false;
+    const { gh } = scriptedGh({
+      views: () => (merged ? view('9'.repeat(40), { state: 'MERGED', mergeCommit: { oid: 'e'.repeat(40) } }) : view(b.tested)),
+      onMerge: (args) => { squashFrom(b.fx, args); merged = true; return ok(); },
+    });
+    const r = approve(b, gh);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /did not account for/);
+    assert.notEqual(b.member().state, 'verified');
+  });
+
+  it('no required checks configured AND no full-suite workflow declared: together they measure NOTHING, so the member is needs-user', () => {
+    const none = { ok: true, status: 0, stdout: JSON.stringify([]), stderr: '' };
+    const ms = [{ id: 'a1', kind: 'pr', repo: REPO, prNumber: 21, baseRef: 'main', branch: 'a1', oid: 'a'.repeat(40), worktree: '/wt/a1' }];
+    const gh = (args) => (args[0] === 'pr' && args[1] === 'view' ? ok({ state: 'OPEN', isDraft: false, headRefOid: ms[0].oid, baseRefName: 'main' })
+      : args[0] === 'api' ? { ok: true, status: 0, stdout: JSON.stringify(/rules\/branches/.test(args[1]) ? [] : { protected: false }), stderr: '' } : none);
+    const undeclared = () => ({ verdict: 'unverified', reason: 'no ciVerdict workflow is declared in .test-tiers.json on main' });
+    const r = partitionMembers({ cwd: process.cwd(), members: ms, base: 'main', deps: { gh }, checkChild: () => ({ ok: true, reasons: [], envelope: {} }), requiredChecks: [], ciFn: undeclared });
+    assert.match(r.needsUser[0]?.reasons.join(' ') ?? 'NOT-REFUSED', /nothing measured CI/);
+    // The control: ONE source present is enough (the declared workflow is green).
+    const r2 = partitionMembers({ cwd: process.cwd(), members: ms, base: 'main', deps: { gh }, checkChild: () => ({ ok: true, reasons: [], envelope: {} }), requiredChecks: [], ciFn: () => ({ verdict: 'full' }) });
+    assert.equal(r2.ok.length, 1, JSON.stringify(r2.needsUser));
+  });
+
+  it('a ship-batch record that becomes unreadable DURING the run makes the result NOT ok, naming why (never the serial result unchanged)', () => {
+    const b = batchFx();
+    const sidecar = path.join(b.dir, 'shipbatch', `${b.trainId}.json`);
+    // The merge happens, then the record is corrupted before the read-back and the summary read it.
+    const g = ghFor(b, { onBeforeMerge: () => { /* the message was already requested */ } });
+    const gh = (args) => { const r = g.gh(args); if (args[0] === 'pr' && args[1] === 'merge') fs.writeFileSync(sidecar, '{ not json'); return r; };
+    const r = approve(b, gh);
+    assert.equal(r.ok, false);
+    assert.match(`${r.reason} ${r.text}`, /ship-batch record could not be read after the run|per-member outcomes are unknown/);
   });
 });

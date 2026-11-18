@@ -84,6 +84,8 @@ const STATUS_LINE_RE = /^- \*\*Status\*\*:/;
 const LEGACY_LOG_REL = 'status.md';
 /** Refuse a diff larger than this many LCS cells after the common prefix and suffix are trimmed: fail closed, never guess. */
 const MAX_DIFF_CELLS = 4_000_000;
+/** ...and a document, or an insertion, longer than this many lines (a pure insertion has n*m = 0, so cells alone bound nothing). */
+const MAX_DIFF_LINES = 200_000;
 
 /** `[first, last)` line range (0-based) of the Implementation Log section, or null when the text has none. */
 function logRange(ls) {
@@ -100,15 +102,6 @@ function statusIndex(ls) {
   return -1;
 }
 const isBlank = (l) => (l ?? '').trim() === '';
-/** May the 0-based OLD line `i` be changed or removed? Only the Status field (and blanks, which carry no content): the log is append-only. */
-const oldLineMayChange = (ls, i) => isBlank(ls[i]) || i === statusIndex(ls);
-/** May the 0-based NEW line `j` be added or changed? The Status field, a blank, or a line inside the Implementation Log. */
-function newLineMayExist(ls, j) {
-  if (isBlank(ls[j]) || j === statusIndex(ls)) return true;
-  const r = logRange(ls);
-  return r !== null && j >= r[0] && j < r[1];
-}
-
 /**
  * Changed line runs between two line arrays, as `{oldAt, oldN, newAt, newN}` (0-based starts). Common prefix and suffix are
  * trimmed first, so a one-line edit in a thousand-line plan costs one cell. `null` when what is left is too big to diff.
@@ -122,7 +115,7 @@ function diffRuns(a, b) {
   const n = ea - lo;
   const m = eb - lo;
   if (n === 0 && m === 0) return [];
-  if (n * m > MAX_DIFF_CELLS) return null;
+  if (n * m > MAX_DIFF_CELLS || n + m > MAX_DIFF_LINES) return null;
   // LCS table over the trimmed middle; walk it to emit maximal changed runs.
   const w = m + 1;
   const t = new Uint32Array((n + 1) * w);
@@ -189,16 +182,25 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
   const runs = diffRuns(a, b);
   if (runs === null) return `${rel} is too large to verify the delta line by line, so it refuses`;
   if (runs.length === 0) return null;
+  // The lookups are computed ONCE: a large insertion must not rescan the document per line.
+  const stA = statusIndex(a);
+  const stB = statusIndex(b);
+  const logA = logRange(a);
+  const logB = logRange(b);
   for (const r of runs) {
-    // APPEND-ONLY: an existing line may change only if it is the Status field. A log entry that is rewritten or deleted refuses.
-    for (let i = r.oldAt; i < r.oldAt + r.oldN; i++) if (!oldLineMayChange(a, i)) return `${rel}: existing line ${i + 1} was changed or removed (only the Status field may change; the ${LOG_HEADING} is append-only)`;
-    for (let j = r.newAt; j < r.newAt + r.newN; j++) if (!newLineMayExist(b, j)) return `${rel}: line ${j + 1} was added outside the Status field and the ${LOG_HEADING}`;
+    // APPEND-ONLY: an existing line may change only if it is the Status field (or a blank). A log entry rewritten or deleted refuses.
+    for (let i = r.oldAt; i < r.oldAt + r.oldN; i++) if (!(isBlank(a[i]) || i === stA)) return `${rel}: existing line ${i + 1} was changed or removed (only the Status field may change; the ${LOG_HEADING} is append-only)`;
+    for (let j = r.newAt; j < r.newAt + r.newN; j++) if (!(isBlank(b[j]) || j === stB || (logB !== null && j >= logB[0] && j < logB[1]))) return `${rel}: line ${j + 1} was added outside the Status field and the ${LOG_HEADING}`;
   }
-  // A log the ship CREATES must be the LAST section: a heading dropped into the middle of the document would otherwise turn the
-  // prose around it into "log".
-  if (logRange(a) === null) {
-    const created = logRange(b);
-    if (created !== null && created[1] !== b.length) return `${rel}: a new ${LOG_HEADING} must be the last section, not inserted mid-document`;
+  // A log the ship CREATES must be APPENDED: the last section, in an insertion that starts AFTER every non-blank line of the old
+  // document. A heading dropped into the middle of the document, or inside the final section ahead of its own text, would
+  // otherwise turn old prose into "log".
+  if (logA === null && logB !== null) {
+    if (logB[1] !== b.length) return `${rel}: a new ${LOG_HEADING} must be the last section, not inserted mid-document`;
+    let lastOld = a.length - 1;
+    while (lastOld >= 0 && isBlank(a[lastOld])) lastOld--;
+    const carrying = runs.find((r) => r.newAt <= logB[0] && logB[0] < r.newAt + r.newN);
+    if (!carrying || carrying.oldAt <= lastOld) return `${rel}: a new ${LOG_HEADING} must be appended after the whole existing document`;
   }
   return null;
 }

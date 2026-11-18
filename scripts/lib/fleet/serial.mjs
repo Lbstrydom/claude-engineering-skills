@@ -234,6 +234,12 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
     return stop(null, `this run belongs to a ship-batch (fleet/shipbatch/${trainId}.json) and may only be resumed with it: fleet land --resume ${trainId} --ship-batch`);
   }
   const skipped = [];
+  // A failure that is about ONE member. In a ship-batch the member is skipped and the run goes on; every other run stops, as always.
+  const memberFail = (i, s, reason) => {
+    if (hooks?.shipBatch !== true) return stop(i, reason);
+    setStep(i, { note: reason }); skipped.push({ id: s.id, prNumber: s.prNumber, reason }); hooks?.onSkip?.({ source: s, reason });
+    return null;
+  };
   const skipMember = (i, s, reason) => { setStep(i, { note: reason }); skipped.push({ id: s.id, prNumber: s.prNumber, reason }); hooks?.onSkip?.({ source: s, reason }); };
   const sweepFault = sweepMessageFiles(dir, trainId);
   if (sweepFault) return stop(null, sweepFault);
@@ -254,7 +260,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
       continue;
     }
     if (run.steps[i].note) setStep(i, { note: null });
-    for (;;) {
+    member: for (;;) {
       const s = run.steps[i];
       if (s.step === 'merged') break;
       const v = viewPr(deps, cwd, s);
@@ -266,13 +272,14 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
         { const seen = hooks?.onMerged?.({ source: s, mergedOid: d.mergeCommit?.oid ?? null }); if (seen?.stop) return stop(i, seen.stop); }
         break;
       }
-      if (String(d.state).toUpperCase() !== 'OPEN') return stop(i, `PR #${s.prNumber} is ${d.state}`);
-      if (d.isDraft === true) return stop(i, `PR #${s.prNumber} is a draft`);
-      if (d.baseRefName !== run.base) return stop(i, `PR #${s.prNumber} now targets ${d.baseRefName}, not ${run.base}`);
+      { // member-specific: the PR is closed, a draft or retargeted
+        const why = String(d.state).toUpperCase() !== 'OPEN' ? `PR #${s.prNumber} is ${d.state}` : d.isDraft === true ? `PR #${s.prNumber} is a draft` : d.baseRefName !== run.base ? `PR #${s.prNumber} now targets ${d.baseRefName}, not ${run.base}` : null;
+        if (why) { const f = memberFail(i, s, why); if (f) return f; break member; }
+      }
       const h = d.headRefOid;
       if (!s.accounted.includes(h)) {
         // Only an interrupted update of ours can explain a new head; prove it or stop.
-        if (s.step !== 'update' || !s.priorHead) return stop(i, `PR #${s.prNumber} head ${short(h)} is not one this run accounts for — someone pushed; approve a new train`);
+        if (s.step !== 'update' || !s.priorHead) { const f = memberFail(i, s, `PR #${s.prNumber} head ${short(h)} is not one this run accounts for — someone pushed; approve a new train`); if (f) return f; break member; }
         if (h === s.priorHead) { setStep(i, { step: 'pending' }); continue; } // the update never applied
         const c = classifyUpdatedHead({ deps, cwd, s, run, h, priorHead: s.priorHead });
         if (c.verdict === 'unverifiable') return stop(i, `PR #${s.prNumber}: could not verify the updated head (acquisition): ${c.reason}`);
@@ -281,7 +288,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
         continue;
       }
       const ms = String(d.mergeStateStatus ?? '').toUpperCase();
-      if (ms === 'DIRTY') return stop(i, `PR #${s.prNumber} now conflicts with ${run.base} — run \`${restackCmd(s.id)}\` and push, then --resume`);
+      if (ms === 'DIRTY') { const f = memberFail(i, s, `PR #${s.prNumber} now conflicts with ${run.base} — run \`${restackCmd(s.id)}\` and push, then --resume`); if (f) return f; break member; }
       if (ms === 'BEHIND' && hooks?.noUpdate) {
         // An update-branch would put an UNSHIPPED merge commit on the ship head (no AI-* trailers, a new head the chip never audited).
         skipMember(i, s, `behind-base: PR #${s.prNumber} is behind ${run.base}; a ship-batch never updates a branch on the remote — it waits for the user (restack, re-ship, or /ship)`);
@@ -315,7 +322,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
       for (;;) {
         verdict = observeRequiredChecks(cwd, { pr: s.prNumber, repo: s.repo, inventory: invFor(s.repo), expectHead: h, gh: deps.gh });
         if (verdict.verdict === 'pass' || verdict.verdict === 'none-required') break;
-        if (verdict.verdict === 'failed' || verdict.verdict === 'not-run') return stop(i, `PR #${s.prNumber} required checks ${describeVerdict(verdict)}`);
+        if (verdict.verdict === 'failed' || verdict.verdict === 'not-run') { const f = memberFail(i, s, `PR #${s.prNumber} required checks ${describeVerdict(verdict)}`); if (f) return f; break member; }
         if (verdict.headOid && verdict.headOid !== h) break; // the head moved: re-verify from the top
         if (verdict.inventory?.source === 'unknown') return stop(i, `PR #${s.prNumber}: ${verdict.reason}`);
         if (Date.now() >= deadline) {
@@ -355,6 +362,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
       for (;;) {
         const o = viewPr(deps, cwd, s);
         if (o.ok && String(o.doc.state).toUpperCase() === 'MERGED') {
+          if (o.doc.headRefOid && !s.accounted.includes(o.doc.headRefOid)) return stop(i, `PR #${s.prNumber} was observed merged at ${short(o.doc.headRefOid)}, a head this run did not account for — check it by hand`);
           setStep(i, { step: 'merged', mergedOid: o.doc.mergeCommit?.oid ?? null });
           const seen = hooks?.onMerged?.({ source: s, mergedOid: o.doc.mergeCommit?.oid ?? null });
           if (seen?.stop) return stop(i, seen.stop);

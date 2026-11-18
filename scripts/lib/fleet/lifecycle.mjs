@@ -239,12 +239,14 @@ export function archiveReport(ctx, { session = null, branch = session?.source?.b
 /**
  * Why a READY member with an open PR must not be archived yet, or null (docs/plans/coordinator-aggregate-ship.md section 2.2).
  * Pure. The coordinator's `land --ship-batch` re-check reads this worktree's gitignored `.audit/` markers, and archiving destroys
- * them, so the member would then wait for the user's `/ship`. A PR whose state is unknown (`pr.unknown`) says nothing.
+ * them, so the member would then wait for the user's `/ship`. A PR whose state could not be queried (`pr.unknown`) is UNCERTAIN, and
+ * a ready member under uncertainty is not clear to archive either.
  * @param {{ready?: object|null}|null} session
  * @param {{number?: number, unknown?: string}|null} pr
  */
 export function shipEvidenceOwed(session, pr) {
-  if (!session?.ready || !pr || pr.unknown) return null;
+  if (!session?.ready || !pr) return null;
+  if (pr.unknown) return `the PR state could not be queried (${pr.unknown}), so whether this ready member's local .audit/ evidence is still owed to a coordinator's land --ship-batch re-check is unknown: do not archive until it is`;
   return `PR #${pr.number} is ready but unmerged: this worktree's local .audit/ gate-evidence and final-review markers are what a coordinator's land --ship-batch re-check reads, and archiving destroys them — archive after the PR merges`;
 }
 
