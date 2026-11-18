@@ -266,6 +266,7 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
     runRow: runRes.row,
     runRowWhy: runRes.why ?? undefined,
     repoId: repoRes.repoId,
+    repoIdWhy: repoRes.why ?? undefined,
     finalReview: readFinalReviewMarker(repoRoot),
     delta: computePostAuditDelta(run, usable, changedPaths, headTree, baseRefName, remote, localBaseOid),
     changedPaths,
@@ -325,13 +326,17 @@ export async function runShippedHeadCli(argv, { cwd = process.cwd(), store } = {
   if (bi >= 0 && (baseBranch === undefined || baseBranch.startsWith('--') || !isPlainBranch(baseBranch))) return bad('--base needs a valid branch name');
   if (others.length > 0) return bad(`a standalone read-only check cannot be combined with ${others.join(' ')}`);
   const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, env: sanitizeGitEnv(cwd), encoding: 'utf-8', windowsHide: true, timeout: GIT_TIMEOUT_MS });
-  if (top.error || top.status !== 0) { process.stderr.write(`ship-commit: --check-shipped-head: not a git worktree (${(top.stderr || '').trim() || 'git failed'})\n`); return finishAndExit(1); }
+  // Exit 1 (the CHECKER failed) keeps the child contract too: with --json the same single envelope is printed, ok:false, so a machine
+  // caller never has to parse an empty stdout.
+  const errored = (reason) => {
+    if (json) process.stdout.write(`${JSON.stringify({ schema: SHIPPED_HEAD_SCHEMA, ok: false, head: head ?? null, runId: null, gate: null, conditions: [{ id: 'checker', ok: false, reason }], refusals: [`checker: ${reason}`] })}\n`);
+    process.stderr.write(`ship-commit: --check-shipped-head: ${reason}\n`);
+    return finishAndExit(1);
+  };
+  if (top.error || top.status !== 0) return errored(`not a git worktree (${(top.stderr || '').trim() || 'git failed'})`);
   const repoRoot = String(top.stdout).replace(/\r?\n$/, ''); // only git's own line terminator: a worktree directory name may end in a space
   let env;
-  try { env = await checkShippedHead({ repoRoot, head, baseBranch, remote, verifyBase, store }); } catch (e) {
-    process.stderr.write(`ship-commit: --check-shipped-head errored: ${e?.message ?? e}\n`);
-    return finishAndExit(1);
-  }
+  try { env = await checkShippedHead({ repoRoot, head, baseBranch, remote, verifyBase, store }); } catch (e) { return errored(`errored: ${e?.message ?? e}`); }
   if (json) process.stdout.write(`${JSON.stringify(env)}\n`);
   else process.stdout.write(`${[...renderShippedHeadConditions(env), `ship-commit: shipped head ${env.head.slice(0, 12)} ${env.ok ? 'SHIP-OK' : 'NEEDS-USER'}`].join('\n')}\n`);
   return finishAndExit(env.ok ? 0 : 2);

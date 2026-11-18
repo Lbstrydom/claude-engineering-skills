@@ -406,6 +406,12 @@ describe('--check-shipped-head: the real CLI boundary (store off)', () => {
     tmpDirs.push(d);
     const r = run(['--check-shipped-head', '--head', m.head], d);
     assert.equal(r.status, 1);
+    const j = run(['--check-shipped-head', '--head', m.head, '--json'], d);
+    assert.equal(j.status, 1);
+    const env = JSON.parse(j.stdout);
+    assert.equal(env.schema, SHIPPED_HEAD_SCHEMA);
+    assert.equal(env.ok, false);
+    assert.equal(env.conditions[0].id, 'checker');
   });
 });
 
@@ -679,6 +685,14 @@ describe('storyline incidents 2026-11-18 (the tree, not the sha)', () => {
 });
 
 describe('--check-shipped-head: the dispatcher and the runner (PR A audit round 1)', () => {
+  it('a repository-identity read failure carries its own reason into the refusal', async () => {
+    const { dir, head, auditedTree } = await member();
+    const bad = store({ auditedTree });
+    bad.repoId = async () => ({ repoId: null, why: 'the store read failed unexpectedly (ECONNRESET)' });
+    const env = await checkShippedHead({ repoRoot: dir, head, store: bad });
+    assert.ok(failing(env).includes('evidence'));
+    assert.match(reason(env, 'evidence'), /ECONNRESET/);
+  });
   it('--check-shipped-head after the -- terminator, or as the VALUE of an option, is not a mode switch', async () => {
     const { isShippedHeadMode } = await import('../scripts/lib/ship-shipped-head.mjs');
     const values = ['--message-file', '--skill'];
