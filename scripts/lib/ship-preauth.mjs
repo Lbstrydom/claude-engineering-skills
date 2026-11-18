@@ -253,3 +253,16 @@ export function gatherChangedPaths(run, tree) {
   if (!r || r.status !== 0) return null;
   return String(r.stdout ?? '').split('\0').filter(Boolean);
 }
+
+/**
+ * The fully-qualified default-branch ref the change set is measured against: `origin/HEAD`'s target, else the conventional
+ * `refs/remotes/origin/main` (never a local `main`; see gatherChangedPaths). One resolver for the head's merge base and for the
+ * AUDITED tree's, so the two candidate sets of the batch re-check are measured from the same base.
+ * @param {(args: string[]) => {status: number|null, stdout?: string}} run
+ * @returns {string}
+ */
+export function defaultBaseRef(run) {
+  const r = run(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+  const ref = r && r.status === 0 ? String(r.stdout ?? '').trim() : '';
+  return ref || 'refs/remotes/origin/main';
+}
