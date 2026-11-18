@@ -40,6 +40,8 @@ import { summariseRun } from './member-outcome.mjs';
 const CI_VERDICT_MODULE = ['..', 'ci-verdict.mjs'].join('/');
 let ciVerdictImpl = null;
 try { ciVerdictImpl = (await import(CI_VERDICT_MODULE)).ciVerdict; } catch { ciVerdictImpl = null; }
+/** Whether the full-suite verdict loaded: true in the source repo, false in a consumer (where it is not shipped). Tested in BOTH layouts. */
+export const CI_VERDICT_LOADED = ciVerdictImpl !== null;
 const UNDECLARED_CI = { verdict: 'unverified', reason: 'no ciVerdict workflow is declared (the full-suite verdict is a CES-only declaration)' };
 
 export const SHIP_BATCH_SCHEMA = 2;

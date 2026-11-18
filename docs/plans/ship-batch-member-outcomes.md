@@ -1176,3 +1176,17 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   plus a one-character negative control). Rounds 2-6 read their (small) fix diffs completely.
 - **Proof against the PROOF PLAN:** golden 20/20 against the refactor; unchanged `fleet-serial` and `ship-train-recovery` green; all fleet and
   ship-record suites 4317/4320 (3 skipped), 0 fail; `npm run guards:preflight` PASS.
+
+## CI fix (PR #395 full-suite, run 44390039181)
+
+- `full-suite` failed 3 files at `03da77a1`. The consumer-sync one is a real seam defect, and its fix is a deliberate design decision to be judged:
+  `ship-batch.mjs` statically imported `ci-verdict.mjs`, so the CES-only tier machinery (`ci-verdict.mjs`, `test-tier.mjs`, the CES default) entered
+  the consumer sync closure that `tests/ci-verdict.test.mjs` forbids. The edge is now an **optional** load by a computed specifier with top-level
+  await (`CI_VERDICT_LOADED`); absent, the verdict is the existing "no ciVerdict workflow is declared" case, which the member re-check already reads
+  as "nothing to measure" (and still refuses when neither required checks nor a workflow exist). Why a computed specifier is honest here and not a way
+  round the gate: the gate's purpose is that a consumer never RECEIVES the CES default, and that still holds (the closure check passes, and
+  `tests/sync-ship-batch-closure.test.mjs` proves in a relocated layout that `ci-verdict.mjs` is absent, `CI_VERDICT_LOADED` is false, a green
+  re-check passes and a no-evidence re-check refuses); the repo already names computed dynamic imports as the edges a static walk cannot follow
+  (`sync-inventory.mjs`), and the opposite edge (a module that MUST ship) is declared in an entry list. The residual: a future change listing
+  `ci-verdict.mjs` in a consumer entry list is caught by the same closure test, which this edge does not weaken. In the source repo the same test
+  proves the module loads.

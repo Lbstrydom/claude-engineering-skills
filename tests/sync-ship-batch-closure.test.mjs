@@ -80,6 +80,25 @@ describe('in a relocated layout', () => {
     assert.ok(fs.existsSync(resolved));
   });
 
+  it('a consumer genuinely lacks ci-verdict.mjs, and the member re-check reads "no workflow declared" instead of failing (the optional load is honest)', async () => {
+    assert.equal(fs.existsSync(reloc('scripts/lib/ci-verdict.mjs')), false, 'ci-verdict.mjs must NOT be in a consumer');
+    const mod = await import(pathToFileURL(reloc('scripts/lib/fleet/ship-batch.mjs')).href);
+    assert.equal(mod.CI_VERDICT_LOADED, false);
+    const ok = (doc) => ({ ok: true, status: 0, stdout: JSON.stringify(doc), stderr: '' });
+    const head = 'a'.repeat(40);
+    const gh = (args) => {
+      if (args[0] === 'pr' && args[1] === 'view') return ok({ state: 'OPEN', isDraft: false, headRefOid: head, baseRefName: 'main' });
+      if (args[0] === 'api') return ok(/rules\/branches/.test(args[1]) ? [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } }] : { protected: false });
+      if (args[0] === 'pr' && args[1] === 'checks') return ok([{ name: 'ci', bucket: 'pass', state: 'SUCCESS', completedAt: '2026-10-09T10:00:00Z' }]);
+      return { ok: false, status: 1, stdout: '', stderr: 'unexpected', reason: 'unexpected' };
+    };
+    const reasons = mod.ciAndIdentityReasons({ cwd: repo, member: { id: 'm', prNumber: 7, repo: 'o/n', oid: head }, base: 'main', deps: { gh } });
+    assert.deepEqual(reasons, [], 'green required checks and no declared full-suite workflow: nothing refuses');
+    // The other half of the honesty rule: with NO required checks either, nothing measured CI at this head, and that is a refusal.
+    const none = mod.ciAndIdentityReasons({ cwd: repo, member: { id: 'm', prNumber: 7, repo: 'o/n', oid: head }, base: 'main', requiredChecks: [], deps: { gh: (a) => (a[0] === 'api' ? ok(/rules\/branches/.test(a[1]) ? [] : { protected: false }) : gh(a)) } });
+    assert.ok(none.some((r) => /nothing measured CI at this head/.test(r)), none.join('|'));
+  });
+
   it('the relocated ship-commit answers --selfcheck-relocation', () => {
     const r = run(reloc('scripts/ship-commit.mjs'), ['--selfcheck-relocation']);
     assert.equal(r.status, 0, r.stderr);
@@ -117,5 +136,16 @@ describe('in a relocated layout', () => {
     const env = JSON.parse(r.stdout);
     assert.equal(env.ok, false);
     assert.ok(env.conditions.some((c) => c.id === 'evidence' && !c.ok), 'the evidence row must refuse');
+  });
+});
+
+describe('the source repo loads the full-suite verdict (the optional edge is not silently dead here)', () => {
+  it('CI_VERDICT_LOADED is true and the module it loads is the one next to the CLI', async () => {
+    const mod = await import('../scripts/lib/fleet/ship-batch.mjs');
+    assert.equal(mod.CI_VERDICT_LOADED, true);
+    assert.ok(fs.existsSync(path.join(ROOT, 'scripts/lib/ci-verdict.mjs')));
+    // With no ciFn injected, the real verdict runs: a repo whose .test-tiers.json declares a workflow is judged by it, never "undeclared".
+    const ci = await import('../scripts/lib/ci-verdict.mjs');
+    assert.equal(typeof ci.ciVerdict, 'function');
   });
 });
