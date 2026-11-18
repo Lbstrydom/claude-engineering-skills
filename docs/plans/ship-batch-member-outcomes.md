@@ -669,3 +669,13 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   recovery-contract edge cases inside this plan's own §2.3/§2.6. No round 4 was run: `--past-cap` is a human call, and this
   chip passes it to the coordinator with the handoff.
 - **Final review** (gemini, round 1 of 2): `APPROVE`, gate `approve` (blocking 0, debt 0), no new findings.
+- **Decision at the cap: STOP at cap, accepted by coordinator under Louis's plan-and-do** (CES: Coordinator, 2026-11-18). No
+  round 4. The 5 LOCAL? recovery-contract clusters carry into implementation as explicit test cases:
+
+  | Cluster | Findings | Test case (§9) |
+  |---|---|---|
+  | Conflicting Recovery State | R1-H4 | integration test 10: the four crash points, with outcomes equal to an uncrashed run and the per-PR merge counter at most 1 |
+  | Conflicting Recovery State | R3-H2 | integration test 12, case 3: a pre-intent MERGED with no oid gives `awaiting-merge-evidence`, then resume gives `skipped`, then a stop |
+  | Invalid Persisted Intent | R2-H3 | integration test 11, case 3: the intent with `at` validates and is reconciled after a crash right after it was written |
+  | Contradictory Exit Contract | R1-M1 | integration test 5: every §2.8 truth-table row asserted for `ok`, exit code, train phase, `combination` and the summary's first line |
+  | Contradictory Resume Contract | R3-M1 | integration test 13: a closed run with the grant revoked and the rules API down prints the same summary and exit code, with zero remote reads |
