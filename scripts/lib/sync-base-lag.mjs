@@ -375,14 +375,20 @@ function executeBaseLagPlan({ plan, facts, git, repoRoot, dryRun }) {
       ],
     };
   }
+  // Residual, stated (code audit R1 H3): the snapshot is a dangling commit, recoverable by name only until `git gc`, and an edit
+  // landing between the snapshot and the restore (two consecutive git calls) is not in it. This change only shrinks how many
+  // paths that window can touch; closing it needs a coordination protocol with the consumer's own editors.
   // The restore is the only destructive step, so it is made RECOVERABLE first: `git stash create` writes a commit of the tracked
   // changes (index and worktree) WITHOUT touching refs or the tree, and a failed fast-forward re-applies it. If the snapshot cannot
   // be taken, nothing is restored and the consumer is refused.
   let snapshot = null;
   if (plan.discard.length > 0) {
-    // The plan was made for ONE commit: restoring against another would discard changes it never classified.
+    // The plan was made for ONE commit on ONE branch: restoring against another would discard changes it never classified, and
+    // the fast-forward would advance a branch lag was never measured on (the same commit can sit under two branch names).
     const nowHead = git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
     if (!plan.headSha || !ok(nowHead) || nowHead.stdout.trim() !== plan.headSha) return refusedFastForward(repoRoot, target, 'HEAD moved since the plan was made; nothing was changed');
+    const nowBranch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+    if (!ok(nowBranch) || nowBranch.stdout.trim() !== facts.currentBranch) return refusedFastForward(repoRoot, target, 'the checked-out branch changed since the plan was made; nothing was changed');
     const snap = git(['stash', 'create']);
     if (snap.error || snap.status !== 0) return refusedFastForward(repoRoot, target, `could not snapshot the sync-written files before restoring them (${firstLine(snap)}); nothing was changed`);
     snapshot = snap.stdout.trim() || null;

@@ -349,6 +349,14 @@ describe('enforceBaseLag - real git', () => {
         return res;
       },
       /HEAD moved/, '.sync-receipt.json');
+    // Code audit R1 H2: the same COMMIT under another branch name is not the checkout lag was measured on.
+    refusesAndTouchesNothing('the attached BRANCH changed at the same commit between the plan and the restore: refused, nothing restored',
+      (w) => (cmd, args, o) => {
+        const res = run(cmd, args, o);
+        if (isDiff(args)) git(['checkout', '-q', '-b', 'feature-same-commit'], w.consumer);
+        return res;
+      },
+      /checked-out branch changed/, '.sync-receipt.json');
   });
   it('NEGATIVE CONTROL: the same lag with the human\'s own dirty file is REFUSED - nothing moved, nothing lost, remedy named', () => {
     const w = world();
