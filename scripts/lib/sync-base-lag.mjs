@@ -10,8 +10,11 @@
  *  - current / not on the base branch  -> proceed (silent: nothing to say)
  *  - could not be checked (no origin, offline, ...) -> proceed, SAID loudly: an unasked question is not a clean answer
  *  - behind, and the checkout is clean apart from files the sync itself wrote -> fast-forward it. The files the sync wrote are
- *    provenance-proved by `classifyRepo` (ownership AND content hash) and this very run rewrites them, so restoring them to HEAD
- *    first loses nothing; they are what stops `git merge --ff-only` (the receipt changes on every landed sync).
+ *    provenance-proved by `classifyRepo` (ownership AND content hash), so restoring one to HEAD first loses nothing; those the
+ *    fast-forward CHANGES are what stops `git merge --ff-only` (the receipt changes on every landed sync). ONLY those are restored:
+ *    git accepts a dirty path the fast-forward does not touch, and restoring it anyway put its bytes out of step with the manifest
+ *    base, so the divergence gate refused it `diverged-committed` on every later sync (storyline, 2026-11-18;
+ *    docs/plans/sync-refused-manifest-base.md). Which paths the fast-forward changes could not be read -> REFUSE, never "restore all".
  *  - behind with anything else dirty, or diverged (local commits origin lacks), or the fast-forward itself failing -> REFUSE the
  *    consumer, naming the exact remedy. `--allow-stale-base` accepts the stale base on purpose (and says so): `sync:pr` still
  *    refuses a stale base whose paths collided.
@@ -79,6 +82,44 @@ export const ok = (r) => !r.error && r.status === 0;
 export const why = (r) => (r.error?.message || `${r.stderr || ''}${r.stdout || ''}`.trim() || `exit ${r.status}`);
 
 /**
+ * The paths a fast-forward from `headSha` to `baseSha` CHANGES, from `git diff --name-only -z --no-renames`'s stdout. PURE.
+ *
+ * Complete or nothing: the list is NUL-TERMINATED, so a non-empty answer that does not end in NUL was cut short, and a name that
+ * decoded lossily (U+FFFD: two byte-distinct names can decode to one string) could stand for a path it is not. Either returns
+ * `null`, which `planBaseLag` reads as "do not know" and refuses, never as "no paths" (an empty list is `new Set()`).
+ *
+ * @param {string} stdout
+ * @returns {Set<string>|null}
+ */
+export function parseNameOnlyZ(stdout) {
+  const text = String(stdout ?? '');
+  if (text === '') return new Set();
+  if (!text.endsWith('\0')) return null;
+  const names = text.slice(0, -1).split('\0');
+  if (names.some((n) => n === '' || n.includes('\uFFFD'))) return null;
+  return new Set(names);
+}
+
+/**
+ * What the fast-forward from this checkout's HEAD to `baseSha` would change: both ends pinned to object ids, so the plan and the
+ * merge (`merge --ff-only <baseSha>`) speak about the same two commits. `paths: null` = could not be established.
+ * @param {Runner} run
+ * @param {string} repoRoot
+ * @param {string} baseSha
+ * @returns {{headSha: string|null, paths: Set<string>|null, error: string|null}}
+ */
+export function gatherFastForwardChanges(run, repoRoot, baseSha) {
+  const git = (args) => run('git', ['-C', repoRoot, ...args]);
+  const head = git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+  const headSha = ok(head) ? head.stdout.trim() : '';
+  if (!/^[0-9a-f]{40,64}$/.test(headSha)) return { headSha: null, paths: null, error: `resolve HEAD: ${why(head)}` };
+  const diff = git(['diff', '--name-only', '-z', '--no-renames', headSha, baseSha]);
+  if (!ok(diff)) return { headSha, paths: null, error: `git diff ${headSha.slice(0, 8)}..${baseSha.slice(0, 8)}: ${why(diff)}` };
+  const paths = parseNameOnlyZ(diff.stdout);
+  return { headSha, paths, error: paths ? null : 'the changed-path list was incomplete or held a path that did not decode cleanly' };
+}
+
+/**
  * The lag half of `gatherConsumerFacts` (lib/sync-pr.mjs), on its own: the freshly fetched base and where this checkout stands against it.
  * Also what the sync asks BEFORE writing (`lib/sync-base-lag.mjs`): it needs no branch or path facts, and must not pay a second
  * `ls-remote` for them.
@@ -141,16 +182,22 @@ const restorable = (e) => e.status !== '??';
 const RESTORABLE_BLOCK_TRANSITIONS = new Set(['block-only', 'unchanged']);
 
 /**
+ * `ffChanges` (`gatherFastForwardChanges`'s answer) is what narrows the restore: a sync-written file is restored ONLY when the
+ * fast-forward changes it, because git refuses a fast-forward only for a dirty path it would change, and any other restore puts
+ * the file's bytes out of step with the manifest base (the divergence gate then refuses it for good; docs/plans/sync-refused-
+ * manifest-base.md). It is only consulted when there is something to restore; absent or incomplete it REFUSES.
+ *
  * @param {{
  *   repoRoot: string, baseBranch: string, lag: ReturnType<typeof classifyBaseLag>, behindCount: number|null, aheadCount: number|null,
  *   classified: ReturnType<typeof import('../sync-status.mjs').classifyRepo>|null, allowStale?: boolean, why?: string|null,
  *   managedBlockTransition?: (relPath: string) => string,
+ *   ffChanges?: {headSha: string|null, paths: Set<string>|null, error?: string|null}|null,
  * }} input `classified` is only read for a checkout that is behind
  * @returns {BaseLagPlan}
  */
 export function planBaseLag({
   repoRoot, baseBranch, lag, behindCount, aheadCount, classified, allowStale = false, why = null,
-  managedBlockTransition = () => 'unverified',
+  managedBlockTransition = () => 'unverified', ffChanges = null,
 }) {
   if (lag === 'current' || lag === 'off-base') return { action: 'proceed' };
   if (lag === 'unknown') return { action: 'unchecked', detail: why ?? 'the base could not be compared' };
@@ -194,11 +241,19 @@ export function planBaseLag({
       remedy: `commit or stash those changes, then git -C ${q(repoRoot)} pull --ff-only, then re-run the sync (or --allow-stale-base to write onto the stale base on purpose)`,
     };
   }
-  return {
-    action: 'fast-forward',
-    discard: [...classified.syncOwned, ...blockRewritten].filter(restorable).map((e) => e.path),
-    behindCount,
-  };
+  const candidates = [...classified.syncOwned, ...blockRewritten].filter(restorable).map((e) => e.path);
+  if (candidates.length === 0) return { action: 'fast-forward', discard: [], kept: [], behindCount, headSha: ffChanges?.headSha ?? null };
+  const lossy = candidates.some((p) => p.includes('\uFFFD'));
+  if (!ffChanges || !ffChanges.paths || !ffChanges.headSha || lossy) {
+    const because = ffChanges?.error ?? (lossy ? 'a sync-written path did not decode cleanly' : 'it was not asked');
+    return {
+      action: 'refuse', reason: 'unreadable-status',
+      detail: `${detail}, and which files the fast-forward changes could not be read (${because}), so none of its sync-written changes can be safely restored or kept`,
+      remedy: `git -C ${q(repoRoot)} pull --ff-only; re-run the sync`,
+    };
+  }
+  const discard = candidates.filter((p) => ffChanges.paths.has(p));
+  return { action: 'fast-forward', discard, kept: candidates.filter((p) => !ffChanges.paths.has(p)), behindCount, headSha: ffChanges.headSha };
 }
 
 /**
@@ -277,7 +332,11 @@ function enforceBaseLagCore({ repoRoot, run, classify, dryRun = false, allowStal
   const managedBlockTransition = managedBlockReader
     ? managedBlockReader({ run, repoRoot, baseSha: facts.baseSha })
     : undefined;
-  const plan = planBaseLag({ repoRoot, baseBranch: facts.baseBranch, lag, behindCount: facts.behindCount, aheadCount: facts.aheadCount, classified, allowStale, managedBlockTransition });
+  // Only a checkout with something dirty has anything to restore, so only then is the diff worth asking for.
+  const ffChanges = lag === 'behind' && !allowStale && classified?.ok && !classified.clean
+    ? gatherFastForwardChanges(run, repoRoot, facts.baseSha)
+    : null;
+  const plan = planBaseLag({ repoRoot, baseBranch: facts.baseBranch, lag, behindCount: facts.behindCount, aheadCount: facts.aheadCount, classified, allowStale, managedBlockTransition, ffChanges });
   return { ...executeBaseLagPlan({ plan, facts, git, repoRoot, dryRun }), plan };
 }
 
@@ -302,7 +361,9 @@ function executeBaseLagPlan({ plan, facts, git, repoRoot, dryRun }) {
     default: break;
   }
   const target = `origin/${facts.baseBranch}`;
+  const kept = plan.kept?.length ?? 0;
   const note = plan.discard.length > 0 ? `restore ${plan.discard.length} sync-written file(s) to HEAD (this sync rewrites them), then ` : '';
+  const keptNote = kept > 0 ? `kept ${kept} sync-written file(s) the fast-forward does not touch` : '';
   // A dry run reports the fast-forward it WOULD do and does not perform it, so the counts that follow are read against the stale
   // base just as in the refusal branch above: reported, and not measured.
   if (dryRun) {
@@ -319,6 +380,9 @@ function executeBaseLagPlan({ plan, facts, git, repoRoot, dryRun }) {
   // be taken, nothing is restored and the consumer is refused.
   let snapshot = null;
   if (plan.discard.length > 0) {
+    // The plan was made for ONE commit: restoring against another would discard changes it never classified.
+    const nowHead = git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+    if (!plan.headSha || !ok(nowHead) || nowHead.stdout.trim() !== plan.headSha) return refusedFastForward(repoRoot, target, 'HEAD moved since the plan was made; nothing was changed');
     const snap = git(['stash', 'create']);
     if (snap.error || snap.status !== 0) return refusedFastForward(repoRoot, target, `could not snapshot the sync-written files before restoring them (${firstLine(snap)}); nothing was changed`);
     snapshot = snap.stdout.trim() || null;
@@ -327,7 +391,7 @@ function executeBaseLagPlan({ plan, facts, git, repoRoot, dryRun }) {
   }
   const merged = git(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', facts.baseSha]);
   if (merged.error || merged.status !== 0) return failedAfterRestore(git, repoRoot, target, snapshot, firstLine(merged));
-  return { ok: true, measured: true, outcome: 'fast-forwarded', lines: [`fast-forwarded ${plan.behindCount} commit(s) to ${target} ${facts.baseSha.slice(0, 8)}${plan.discard.length > 0 ? ` (restored ${plan.discard.length} sync-written file(s) first; this sync rewrites them${snapshot ? `; snapshot ${snapshot.slice(0, 8)} kept until git gc` : ''})` : ''}`] };
+  return { ok: true, measured: true, outcome: 'fast-forwarded', lines: [`fast-forwarded ${plan.behindCount} commit(s) to ${target} ${facts.baseSha.slice(0, 8)}${plan.discard.length > 0 ? ` (restored ${plan.discard.length} sync-written file(s) first; this sync rewrites them${snapshot ? `; snapshot ${snapshot.slice(0, 8)} kept until git gc` : ''}${keptNote ? `; ${keptNote}` : ''})` : keptNote ? ` (${keptNote})` : ''}`] };
 }
 
 const firstLine = (r) => (r.error?.message || `${r.stderr || ''}${r.stdout || ''}`.trim() || `exit ${r.status}`).split('\n')[0];

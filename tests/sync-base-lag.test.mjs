@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { classifyBaseLag, planBaseLag, enforceBaseLag, enforceBaseLagForTarget, describeUnmeasuredTargets } from '../scripts/lib/sync-base-lag.mjs';
+import { classifyBaseLag, planBaseLag, parseNameOnlyZ, enforceBaseLag, enforceBaseLagForTarget, describeUnmeasuredTargets } from '../scripts/lib/sync-base-lag.mjs';
 import { describeRunSummary } from '../scripts/lib/sync-run-summary.mjs';
 import { planConsumerPr, classifyBaseLag as classifyFromSyncPr, SKIP_REASON } from '../scripts/lib/sync-pr.mjs';
 import { spawnRunner } from '../scripts/lib/sync-pr.mjs';
@@ -52,6 +52,8 @@ describe('planBaseLag', () => {
   const clean = { ok: true, clean: true, syncOwned: [], needsReview: [], other: [], degraded: false };
   const own = (...paths) => paths.map((p) => ({ status: ' M', path: p, origPath: null }));
   const base = { repoRoot: 'C:/r', baseBranch: 'main', behindCount: 17, aheadCount: 0 };
+  /** What `gatherFastForwardChanges` answers: the fast-forward changes exactly these paths. */
+  const ff = (...paths) => ({ headSha: 'a'.repeat(40), paths: new Set(paths), error: null });
   it('current and off-base proceed silently; unknown proceeds but says it was not checked', () => {
     assert.deepEqual(planBaseLag({ ...base, lag: 'current', classified: null }), { action: 'proceed' });
     assert.deepEqual(planBaseLag({ ...base, lag: 'off-base', classified: null }), { action: 'proceed' });
@@ -60,14 +62,39 @@ describe('planBaseLag', () => {
     assert.match(u.detail, /no route/);
   });
   it('behind + clean -> fast-forward; behind + only sync-written files -> fast-forward, restoring them first', () => {
-    assert.deepEqual(planBaseLag({ ...base, lag: 'behind', classified: clean }), { action: 'fast-forward', discard: [], behindCount: 17 });
-    const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: own('.sync-receipt.json', '.claude/skills/plan/SKILL.md') } });
-    assert.deepEqual(p, { action: 'fast-forward', discard: ['.sync-receipt.json', '.claude/skills/plan/SKILL.md'], behindCount: 17 });
+    assert.deepEqual(planBaseLag({ ...base, lag: 'behind', classified: clean }), { action: 'fast-forward', discard: [], kept: [], behindCount: 17, headSha: null });
+    const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: own('.sync-receipt.json', '.claude/skills/plan/SKILL.md') }, ffChanges: ff('.sync-receipt.json', '.claude/skills/plan/SKILL.md') });
+    assert.deepEqual(p, { action: 'fast-forward', discard: ['.sync-receipt.json', '.claude/skills/plan/SKILL.md'], kept: [], behindCount: 17, headSha: 'a'.repeat(40) });
   });
   it('untracked sync output is left for the fast-forward to judge, never restored by path', () => {
     const entries = [{ status: '??', path: 'new.md', origPath: null }, { status: ' M', path: 'm.md', origPath: null }];
-    const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: entries } });
+    const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: entries }, ffChanges: ff('m.md', 'new.md') });
     assert.deepEqual(p.discard, ['m.md']);
+  });
+  // docs/plans/sync-refused-manifest-base.md: restore only what the fast-forward changes; anything it cannot establish refuses.
+  it('a sync-written file the fast-forward does not change is KEPT, not restored; an empty change list keeps them all', () => {
+    const classified = { ...clean, clean: false, syncOwned: own('a.md', 'b.md') };
+    const p = planBaseLag({ ...base, lag: 'behind', classified, ffChanges: ff('b.md', 'elsewhere.md') });
+    assert.deepEqual([p.action, p.discard, p.kept], ['fast-forward', ['b.md'], ['a.md']]);
+    const none = planBaseLag({ ...base, lag: 'behind', classified, ffChanges: ff() });
+    assert.deepEqual([none.action, none.discard, none.kept], ['fast-forward', [], ['a.md', 'b.md']]);
+  });
+  it('FAILS CLOSED: with something to restore, an unasked or unreadable change list refuses (never restores everything)', () => {
+    const classified = { ...clean, clean: false, syncOwned: own('a.md') };
+    for (const ffChanges of [undefined, null, { headSha: 'a'.repeat(40), paths: null, error: 'git diff: bad object' }, { headSha: null, paths: new Set(['a.md']), error: null }]) {
+      const p = planBaseLag({ ...base, lag: 'behind', classified, ffChanges });
+      assert.equal(p.action, 'refuse', JSON.stringify(ffChanges));
+      assert.equal(p.reason, 'unreadable-status');
+      assert.match(p.remedy, /pull --ff-only/);
+    }
+    assert.match(planBaseLag({ ...base, lag: 'behind', classified, ffChanges: { headSha: 'a'.repeat(40), paths: null, error: 'git diff: bad object' } }).detail, /bad object/);
+  });
+  it('FAILS CLOSED: a sync-written path that decoded lossily (U+FFFD) refuses even with a clean change list', () => {
+    const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: own('caf�.md') }, ffChanges: ff('x.md') });
+    assert.equal(p.action, 'refuse');
+  });
+  it('nothing to restore needs no change list: a clean checkout is never refused for lacking one', () => {
+    assert.equal(planBaseLag({ ...base, lag: 'behind', classified: clean, ffChanges: null }).action, 'fast-forward');
   });
   it('behind + ANY change that is not sync output -> refuse with the exact remedy and the files named', () => {
     const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: own('.sync-receipt.json'), other: own('src/mine.js') } });
@@ -107,7 +134,7 @@ describe('planBaseLag', () => {
   describe('the two managed-block files the sync writes into a consumer-owned file', () => {
     const behind = (entries, transition) => planBaseLag({
       ...base, lag: 'behind', classified: { ...clean, clean: false, other: entries },
-      managedBlockTransition: () => transition,
+      managedBlockTransition: () => transition, ffChanges: ff('.gitattributes', '.gitignore'),
     });
     it('a block-only edit is sync output: restored and rewritten, not a refusal', () => {
       for (const p of ['.gitattributes', '.gitignore']) {
@@ -143,6 +170,19 @@ describe('planBaseLag', () => {
       const r = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, other: own('.gitattributes') } });
       assert.equal(r.action, 'refuse');
     });
+  });
+});
+
+describe('parseNameOnlyZ', () => {
+  it('reads a NUL-terminated list exactly: spaces, newlines and non-ASCII names survive; empty output is an empty SET, not null', () => {
+    assert.deepEqual([...parseNameOnlyZ('a b.md\0line\nbreak.md\0café.md\0')], ['a b.md', 'line\nbreak.md', 'café.md']);
+    assert.deepEqual([...parseNameOnlyZ('')], []);
+    assert.ok(parseNameOnlyZ('') instanceof Set);
+  });
+  it('NEGATIVE CONTROL: a cut-short list, an empty name or a lossy name is null ("do not know"), never a shorter list', () => {
+    assert.equal(parseNameOnlyZ('a.md\0b.m'), null);
+    assert.equal(parseNameOnlyZ('a.md\0\0'), null);
+    assert.equal(parseNameOnlyZ('a�.md\0'), null);
   });
 });
 
@@ -229,6 +269,86 @@ describe('enforceBaseLag - real git', () => {
       assert.equal(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8'), '{"v":2,"landed":true}\n');
       assert.equal(git(['status', '--porcelain'], w.consumer), '');
     } finally { w.rm(); }
+  });
+  // docs/plans/sync-refused-manifest-base.md: the restore exists only to let `merge --ff-only` through, and git refuses a
+  // fast-forward only for a dirty path the fast-forward CHANGES. Restoring any other sync-written file to HEAD put its bytes
+  // out of step with the manifest base and the divergence gate then refused it `diverged-committed` on every later sync.
+  describe('only the sync-written files the fast-forward CHANGES are restored (storyline, 2026-11-18)', () => {
+    const syncOwned = (...entries) => () => ({ ok: true, clean: false, syncOwned: entries.map(([status, p]) => ({ status, path: p, origPath: null })), needsReview: [], other: [], degraded: false });
+    const mine = '{"v":1,"our last sync write":true}\n';
+    it('a dirty sync-written file the fast-forward does NOT touch keeps its bytes, and the kept file is said', () => {
+      const w = world();
+      try {
+        w.advance('more.js', 'x\n');
+        fs.writeFileSync(path.join(w.consumer, '.sync-receipt.json'), mine);
+        const r = enforceBaseLag({ repoRoot: w.consumer, run, classify: syncOwned([' M', '.sync-receipt.json']) });
+        assert.equal(r.outcome, 'fast-forwarded', r.lines.join('\n'));
+        assert.equal(w.head(), w.originHead());
+        assert.equal(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8'), mine, 'the file the fast-forward does not touch must keep its sync-written bytes');
+        assert.doesNotMatch(r.lines.join('\n'), /restored \d+ sync-written/);
+        assert.match(r.lines.join('\n'), /kept 1 sync-written file\(s\) the fast-forward does not touch/);
+      } finally { w.rm(); }
+    });
+    it('NEGATIVE CONTROL: the same file IS restored when the fast-forward changes it (the filter does not over-narrow)', () => {
+      const w = world();
+      try {
+        w.advance('.sync-receipt.json', '{"v":2,"landed":true}\n');
+        fs.writeFileSync(path.join(w.consumer, '.sync-receipt.json'), mine);
+        const r = enforceBaseLag({ repoRoot: w.consumer, run, classify: syncOwned([' M', '.sync-receipt.json']) });
+        assert.equal(r.outcome, 'fast-forwarded', r.lines.join('\n'));
+        assert.match(r.lines.join('\n'), /restored 1 sync-written file\(s\) first/);
+        assert.equal(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8'), '{"v":2,"landed":true}\n');
+      } finally { w.rm(); }
+    });
+    it('mixed: the touched file is restored, the untouched STAGED one keeps both its index and worktree bytes', () => {
+      const w = world();
+      try {
+        w.advance('.sync-receipt.json', '{"v":2,"landed":true}\n');
+        fs.writeFileSync(path.join(w.consumer, '.sync-receipt.json'), mine);
+        fs.writeFileSync(path.join(w.consumer, 'app.js'), 'staged sync output\n');
+        git(['add', 'app.js'], w.consumer);
+        const r = enforceBaseLag({ repoRoot: w.consumer, run, classify: syncOwned([' M', '.sync-receipt.json'], ['M ', 'app.js']) });
+        assert.equal(r.outcome, 'fast-forwarded', r.lines.join('\n'));
+        assert.match(r.lines.join('\n'), /restored 1 sync-written file\(s\) first/);
+        assert.match(r.lines.join('\n'), /kept 1 sync-written file\(s\) the fast-forward does not touch/);
+        assert.equal(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8'), '{"v":2,"landed":true}\n');
+        assert.equal(fs.readFileSync(path.join(w.consumer, 'app.js'), 'utf8'), 'staged sync output\n');
+        assert.equal(git(['show', ':app.js'], w.consumer), 'staged sync output', 'the INDEX blob of the kept file is untouched');
+      } finally { w.rm(); }
+    });
+    // Each refusal asserts on the tree, not the message: nothing may have been restored, moved or lost.
+    const refusesAndTouchesNothing = (name, wrapRun, expectLine, advanced = 'more.js') => it(name, () => {
+      const w = world();
+      try {
+        w.advance(advanced, advanced === 'more.js' ? 'x\n' : '{"v":2}\n');
+        fs.writeFileSync(path.join(w.consumer, '.sync-receipt.json'), mine);
+        const before = w.head();
+        const r = enforceBaseLag({ repoRoot: w.consumer, run: wrapRun(w), classify: syncOwned([' M', '.sync-receipt.json']) });
+        assert.deepEqual([r.ok, r.outcome], [false, 'refused'], r.lines.join('\n'));
+        assert.match(r.lines.join('\n'), expectLine);
+        // The "HEAD moved" case moves HEAD itself (that is the race under test), so assert on the OUTCOME: no fast-forward landed.
+        assert.notEqual(w.head(), w.originHead(), 'the fast-forward must not have landed');
+        if (!/HEAD moved/.test(r.lines.join('\n'))) assert.equal(w.head(), before, 'HEAD must not move');
+        assert.equal(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8'), mine, 'nothing may be restored');
+      } finally { w.rm(); }
+    });
+    const isDiff = (args) => args.includes('diff') && args.includes('--name-only');
+    refusesAndTouchesNothing('FAILS CLOSED: a diff that cannot be read refuses the fast-forward instead of restoring everything',
+      () => (cmd, args, o) => (isDiff(args) ? { status: 128, stdout: '', stderr: 'fatal: bad object', error: undefined } : run(cmd, args, o)),
+      /could not be read|unreadable/i);
+    refusesAndTouchesNothing('FAILS CLOSED: truncated -z output (no trailing NUL) is not a complete answer',
+      () => (cmd, args, o) => (isDiff(args) ? { status: 0, stdout: 'more.js', stderr: '' } : run(cmd, args, o)),
+      /could not be read|unreadable/i);
+    refusesAndTouchesNothing('FAILS CLOSED: a name that decoded lossily (U+FFFD) could collide with a byte-distinct one',
+      () => (cmd, args, o) => (isDiff(args) ? { status: 0, stdout: 'm�re.js\0', stderr: '' } : run(cmd, args, o)),
+      /could not be read|unreadable/i);
+    refusesAndTouchesNothing('HEAD moved between the plan and the restore: refused, nothing restored',
+      (w) => (cmd, args, o) => {
+        const res = run(cmd, args, o);
+        if (isDiff(args)) { fs.writeFileSync(path.join(w.consumer, 'drift.js'), 'd\n'); git(['add', 'drift.js'], w.consumer); git(['commit', '-q', '-m', 'HEAD moves'], w.consumer); }
+        return res;
+      },
+      /HEAD moved/, '.sync-receipt.json');
   });
   it('NEGATIVE CONTROL: the same lag with the human\'s own dirty file is REFUSED - nothing moved, nothing lost, remedy named', () => {
     const w = world();
@@ -581,6 +701,37 @@ describe('sync-to-repos.mjs CLI - the lag is asked before the first write', { ti
       assert.equal(w.head(), before, 'still a dry run');
       assert.equal(fs.existsSync(path.join(w.consumer, '.sync-receipt.json')), false, 'nothing written');
       assert.equal(fs.readFileSync(path.join(w.consumer, 'app.js'), 'utf8'), 'my unfinished edit\n');
+    } finally { w.rm(); }
+  });
+  // The storyline loop, end to end (docs/plans/sync-refused-manifest-base.md). A tracked, rewritten, sync-written file sits dirty
+  // (an earlier sync wrote it and nobody committed), HEAD holds an OLDER version, and origin then moves on with an unrelated
+  // commit. The base-lag step used to restore the file to HEAD's older bytes; the divergence gate then read disk != manifest
+  // base and refused it `diverged-committed`, for good.
+  it('a dirty sync-written file the fast-forward does not touch is NOT turned into a permanent divergence', async () => {
+    const SUBJECT = '.claude/skills/fleet/references/chip-preamble.md';
+    const w = staleConsumer({ dirty: false });
+    try {
+      git(['pull', '-q', '--ff-only', 'origin', 'main'], w.consumer);
+      const first = await runSyncCli(['--target-path', w.consumer, '--no-prompt']);
+      assert.equal(first.code, 0, whySyncFailed(first));
+      const written = fs.readFileSync(path.join(w.consumer, SUBJECT), 'utf8');
+      const manifestIgnored = (() => { try { git(['check-ignore', '-q', 'scripts/.sync-manifest.json'], w.consumer); return true; } catch { return false; } })();
+      assert.equal(manifestIgnored, true, 'positive control: the fixture manifest is gitignored, so a fast-forward cannot move the base');
+      // The sync PR landed with an OLDER version of the file, then a newer sync wrote `written` and nobody committed it.
+      fs.writeFileSync(path.join(w.consumer, SUBJECT), `${written}\n<!-- an earlier upstream version -->\n`);
+      git(['add', '-A'], w.consumer); git(['commit', '-q', '-m', 'sync PR landed (older version)'], w.consumer); git(['push', '-q', 'origin', 'main'], w.consumer);
+      fs.writeFileSync(path.join(w.consumer, SUBJECT), written);
+      assert.match(git(['status', '--porcelain'], w.consumer), new RegExp(`M ${SUBJECT}`), 'fixture: the subject is dirty, tracked, and equals the manifest base');
+      w.advance('unrelated-later.txt', 'origin moves on\n');
+      const second = await runSyncCli(['--target-path', w.consumer, '--no-prompt']);
+      const out = stripAnsi(second.out);
+      const story = out.split('\n').filter((l) => /base-lag|REFUSED|diverged|chip-preamble/.test(l)).join('\n');
+      assert.equal(second.code, 0, `sync 2 must succeed; relevant lines:\n${story}`);
+      assert.doesNotMatch(out, /diverged-committed|REFUSED \d+ file/);
+      assert.equal(fs.readFileSync(path.join(w.consumer, SUBJECT), 'utf8'), written);
+      const receipt = JSON.parse(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8')).recentSyncs[0];
+      assert.equal(receipt.divergenceRefused.length, 0);
+      assert.equal(fs.readFileSync(path.join(w.consumer, 'unrelated-later.txt'), 'utf8'), 'origin moves on\n', 'the fast-forward still landed');
     } finally { w.rm(); }
   });
   it('NEGATIVE CONTROL: a dry run of a CURRENT consumer carries no unmeasured label — the verdict is not printed unconditionally', async () => {
