@@ -71,7 +71,7 @@ function world(f, over = {}) {
         return { ok: true, status: 0, stdout: `https://github.com/${REPO}/pull/${w.rollupPr.number}\n`, stderr: '' };
       }
       const pr = Number(args[2]);
-      if (args[1] === 'close') { w.closes.push({ pr, args }); const m = w.memberPrs.get(pr); if (m) m.state = 'CLOSED'; return ok(); }
+      if (args[1] === 'close') { w.closes.push({ pr, args }); const m = w.memberPrs.get(pr); if (m) m.state = 'CLOSED'; const rp0 = (w.allPrs ?? []).find((x) => x.number === pr); if (rp0) rp0.state = 'CLOSED'; return ok(); }
       if (args[1] === 'checks') return { ok: w.checks === 'pass', status: w.checks === 'pass' ? 0 : 8, stdout: JSON.stringify([{ name: 'ci', bucket: w.checks, state: w.checks.toUpperCase(), completedAt: '2026-10-09T10:00:00Z' }]), stderr: '' };
       if (args[1] === 'view') {
         const rp = (w.allPrs ?? []).find((x) => x.number === pr);
@@ -464,11 +464,11 @@ describe('audit round 1: lifecycle, identity and cleanup guards', () => {
     w.gh = (args) => (args[1] === 'close' && Number(args[2]) === oldPr && w.closeFails ? { ok: false, status: 1, stdout: '', stderr: 'denied', reason: 'denied' } : orig(args));
     w.closeFails = true;
     const r = approve(f, w, { trainId: b2.trainId });
-    assert.match(r.text, new RegExp(`superseded rollup PR #${oldPr} could not be closed`));
+    assert.match(r.text, new RegExp(`superseded rollup PR #${oldPr}: failed \\(denied\\)`));
     assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'failed');
     w.closeFails = false;
     const again = resume(f, w, b2.trainId);
-    assert.doesNotMatch(again.text, /could not be closed/);
+    assert.doesNotMatch(again.text, /superseded rollup PR/);
     assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'closed');
   });
   it('a member PR whose head moved around the close is flagged with how to reopen it (R1-H8, H12)', () => {
@@ -490,5 +490,47 @@ describe('audit round 1: lifecycle, identity and cleanup guards', () => {
     assert.equal(TrainSchema.safeParse(withRollup).success, true);
     const { landing, ...noLanding } = withRollup;
     assert.equal(TrainSchema.safeParse(noLanding).success, false);
+  });
+});
+
+describe('audit round 2: a close is bound to the admitted head and VERIFIED (R2-H2, H3, M2-M4)', () => {
+  /** Two rollups where the first opened its PR but never requested a merge; returns what a close test needs. */
+  function superseded() {
+    const f = fixture(1);
+    const w = world(f); w.checks = 'pending';
+    const b1 = build(f, w);
+    approve(f, w, { trainId: b1.trainId, serialOpts: { timeoutMs: 30 } });
+    const oldPr = readTrain(f.dir, b1.trainId).train.rollup.prNumber;
+    w.checks = 'pass';
+    const b2 = build(f, w);
+    return { f, w, b1, b2, oldPr, old: () => w.allPrs.find((p) => p.number === oldPr) };
+  }
+  it('a superseded rollup PR whose head moved is NOT closed: skipped-head-moved, no close call, reported', () => {
+    const { f, w, b1, b2, oldPr, old } = superseded();
+    old().head = 'c'.repeat(40);
+    const r = approve(f, w, { trainId: b2.trainId });
+    assert.equal(w.calls.some((c) => c[1] === 'close' && Number(c[2]) === oldPr), false);
+    assert.match(r.text, new RegExp(`superseded rollup PR #${oldPr}: skipped-head-moved`));
+    assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'skipped-head-moved');
+  });
+  it('an unreadable or malformed answer AFTER the close leaves it unverified (failed), and the next run reconciles it as already closed', () => {
+    for (const bad of [{ ok: false, status: 1, stdout: '', stderr: 'x', reason: 'down' }, { ok: true, status: 0, stdout: '{"state":42}', stderr: '' }, { ok: true, status: 0, stdout: 'not json', stderr: '' }]) {
+      const { f, w, b1, b2, oldPr } = superseded();
+      const orig = w.gh;
+      let closed = false;
+      w.gh = (args) => {
+        if (args[1] === 'close' && Number(args[2]) === oldPr) closed = true;
+        if (closed && args[1] === 'view' && Number(args[2]) === oldPr && args[args.indexOf('--json') + 1] === 'state,headRefOid') { closed = 'seen'; return bad; }
+        return orig(args);
+      };
+      const r = approve(f, w, { trainId: b2.trainId });
+      assert.match(r.text, /the PR could not be read after the close, so the close is unverified/);
+      assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'failed');
+      w.gh = orig; // the next run reads the PR first: it is already closed, so it is reconciled without a second close
+      const closesBefore = w.calls.filter((c) => c[1] === 'close' && Number(c[2]) === oldPr).length;
+      resume(f, w, b2.trainId);
+      assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'closed');
+      assert.equal(w.calls.filter((c) => c[1] === 'close' && Number(c[2]) === oldPr).length, closesBefore, 'no second close of a PR that is already closed');
+    }
   });
 });

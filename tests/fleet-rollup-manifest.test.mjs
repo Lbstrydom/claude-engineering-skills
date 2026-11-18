@@ -81,7 +81,7 @@ describe('verifyRollupProvenance: a manifest in commit text is self-declared', (
   const body = renderRollupManifest({ stage: 'final', ...base, ci });
   const run = (over = {}) => ({
     policy: { name: 'rollup', rollup: { repo: 'o/n', prNumber: 9, branch: ID, candidate: { oid: o('c'), tree: o('d') } } },
-    steps: [{ attempt: { messageSha256: sha256Body(body) }, outcome: { status: 'landed', mergeOid: o('e') } }], ...over,
+    steps: [{ attempt: { messageSha256: sha256Body(body) }, outcome: { status: 'landed', verdict: 'verified', mergeOid: o('e') } }], ...over,
   });
   const pr = { repo: 'o/n', number: 9, mergeOid: o('e'), message: `fleet rollup ${ID}: 2 members\n\n${body}` };
   const manifest = parseRollupManifest(body).manifest;
@@ -93,6 +93,16 @@ describe('verifyRollupProvenance: a manifest in commit text is self-declared', (
       assert.equal(v.verified, false, name);
     }
     assert.equal(verifyRollupProvenance({ ...manifest, candidate: { oid: o('9') } }, run(), pr).verified, false);
+  });
+  it('only a VERIFIED landing establishes provenance: each other verdict, and a missing landing, is rejected (R2-H1, H4)', () => {
+    for (const verdict of ['tree-mismatch', 'wrong-target', 'untested-base', 'provenance-lost']) {
+      const r = run(); r.steps[0].outcome = { status: 'landed', verdict, mergeOid: o('e') };
+      const v = verifyRollupProvenance(manifest, r, pr);
+      assert.equal(v.verified, false, verdict);
+      assert.match(v.reason, /no verified landing/);
+    }
+    const r = run(); r.steps[0].outcome = { status: 'not-run', code: 'merge-unconfirmed' };
+    assert.equal(verifyRollupProvenance(manifest, r, pr).verified, false);
   });
   it('a provisional manifest never verifies', () => assert.equal(verifyRollupProvenance({ ...manifest, stage: 'provisional' }, run(), pr).verified, false));
   it('bodyOfMessage drops the subject and one blank line', () => assert.equal(bodyOfMessage('s\n\nb1\nb2\n'), 'b1\nb2'));

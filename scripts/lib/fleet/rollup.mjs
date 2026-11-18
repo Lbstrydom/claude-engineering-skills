@@ -103,10 +103,11 @@ export function verifyRollupProvenance(manifest, run, pr) {
   const p = run?.policy;
   const step = run?.steps?.[0];
   if (!p || p.name !== 'rollup' || !step) return { verified: false, reason: 'no local rollup run is available to check it against' };
-  const landed = step.outcome?.status === 'landed' ? step.outcome : null;
+  // Only a landing whose read-back VERIFIED (tree equal to the candidate, parent the tested base, message the pinned manifest) establishes provenance.
+  const landed = step.outcome?.status === 'landed' && step.outcome.verdict === 'verified' ? step.outcome : null;
   const checks = [
     [p.rollup.repo === pr.repo, 'the repository differs'], [p.rollup.prNumber === pr.number, 'the PR number differs'],
-    [landed?.mergeOid === pr.mergeOid, 'the merge oid differs'], [p.rollup.candidate.oid === manifest.candidate?.oid, 'the candidate differs'],
+    [Boolean(landed), 'the run has no verified landing'], [landed?.mergeOid === pr.mergeOid, 'the merge oid differs'], [p.rollup.candidate.oid === manifest.candidate?.oid, 'the candidate differs'],
     [p.rollup.branch === manifest.rollupId, 'the rollup id differs'], [Boolean(step.attempt?.messageSha256) && step.attempt.messageSha256 === sha256Body(bodyOfMessage(pr.message)), 'the manifest hash differs'],
   ];
   const bad = checks.find(([ok]) => !ok);

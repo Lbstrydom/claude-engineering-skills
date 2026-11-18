@@ -243,6 +243,34 @@ export function makeRollupPolicy({ cwd, trainId, deps, rec, train, branch, prNum
 
 // ---- the post-landing cleanup: close member PRs, bound to their admitted heads (R2-H3, R3-H2) --------------------------------------
 
+/**
+ * Close a PR ONLY while it still carries the admitted head, and verify the close (R2-H2, H3, M2-M4). `gh pr close` has no head
+ * condition, so a push between the read and the close cannot be excluded; it is DETECTED by a second read, which must parse and name
+ * the same head, else the close is UNVERIFIED (status `failed`, reconciled by the next run, which reads the PR first, so a close that
+ * landed before a crash is simply found already closed).
+ * @returns {{status: 'closed'|'failed'|'skipped-head-moved', reason: string|null}}
+ */
+function closeBoundToHead({ deps, cwd, repo, number, head, comment }) {
+  const read = () => {
+    const v = deps.gh(['pr', 'view', String(number), '-R', repo, '--json', 'state,headRefOid'], cwd);
+    try {
+      const d = v.ok ? JSON.parse(v.stdout) : null;
+      return d && typeof d.state === 'string' && OID_RE.test(String(d.headRefOid)) ? d : null;
+    } catch { return null; }
+  };
+  const before = read();
+  if (!before) return { status: 'failed', reason: 'the PR could not be read before the close' };
+  if (before.state.toUpperCase() !== 'OPEN') return { status: 'closed', reason: null }; // reconciled: nothing is left to close
+  if (before.headRefOid !== head) return { status: 'skipped-head-moved', reason: `the PR head is ${short(before.headRefOid)}, not the admitted ${short(head)}: it holds work that did not land` };
+  const x = deps.gh(['pr', 'close', String(number), '-R', repo, '--comment', comment], cwd);
+  if (!x.ok) return { status: 'failed', reason: String(x.reason ?? 'gh pr close failed').slice(0, 200) };
+  const after = read();
+  if (!after) return { status: 'failed', reason: 'the PR could not be read after the close, so the close is unverified: re-run to reconcile' };
+  if (after.headRefOid !== head) return { status: 'failed', reason: `the head moved to ${short(after.headRefOid)} around the close: gh pr reopen ${number} if those commits should stay open`.slice(0, 290) };
+  if (after.state.toUpperCase() === 'OPEN') return { status: 'failed', reason: 'the PR is still OPEN after the close: re-run to reconcile' };
+  return { status: 'closed', reason: null };
+}
+
 /** Member PRs are closed only when the candidate content is PROVEN on the base (verified or provenance-lost); never otherwise. */
 function closeMemberPrs({ cwd, dir, trainId, deps, run, result }) {
   const o = run.steps[0]?.outcome;
@@ -254,20 +282,7 @@ function closeMemberPrs({ cwd, dir, trainId, deps, run, result }) {
   const repoOf = (n) => t.train.sources.find((x) => x.prNumber === n)?.repo ?? t.train.rollup.repo;
   const next = [...pending.values()].map((c) => {
     if (c.status === 'closed' || c.status === 'skipped-head-moved') return c;
-    const v = deps.gh(['pr', 'view', String(c.prNumber), '-R', repoOf(c.prNumber), '--json', 'state,headRefOid'], cwd);
-    let doc = null;
-    try { doc = v.ok ? JSON.parse(v.stdout) : null; } catch { doc = null; }
-    if (!doc) return { ...c, status: 'failed', reason: String(v.reason ?? 'unreadable').slice(0, 200) };
-    if (String(doc.state).toUpperCase() !== 'OPEN') return { ...c, status: 'closed', reason: null };
-    if (doc.headRefOid !== c.head) return { ...c, status: 'skipped-head-moved', reason: `the PR head is ${short(doc.headRefOid)}, not the admitted ${short(c.head)}: it holds work that did not land` };
-    const x = deps.gh(['pr', 'close', String(c.prNumber), '-R', repoOf(c.prNumber), '--comment', `superseded by #${t.train.rollup.prNumber} (fleet rollup ${t.train.rollup.branch})`], cwd);
-    if (!x.ok) return { ...c, status: 'failed', reason: String(x.reason ?? 'gh pr close failed').slice(0, 200) };
-    // `gh pr close` carries no head condition, so a push between the read and the close cannot be excluded; it is DETECTED here.
-    const after = deps.gh(['pr', 'view', String(c.prNumber), '-R', repoOf(c.prNumber), '--json', 'state,headRefOid'], cwd);
-    let seen = null;
-    try { seen = after.ok ? JSON.parse(after.stdout) : null; } catch { seen = null; }
-    if (seen && seen.headRefOid && seen.headRefOid !== c.head) return { ...c, status: 'failed', reason: `the head moved to ${short(seen.headRefOid)} around the close: gh pr reopen ${c.prNumber} if those commits should stay open`.slice(0, 290) };
-    return { ...c, status: 'closed', reason: null };
+    return { ...c, ...closeBoundToHead({ deps, cwd, repo: repoOf(c.prNumber), number: c.prNumber, head: c.head, comment: `superseded by #${t.train.rollup.prNumber} (fleet rollup ${t.train.rollup.branch})` }) };
   });
   if (next.length) patchTrain(dir, trainId, { rollup: { ...t.train.rollup, closures: next } }, deps);
   const open = next.filter((c) => c.status !== 'closed');
@@ -420,11 +435,11 @@ function closeSuperseded({ cwd, dir, trainId, deps }) {
   if (!number) return lines;
   for (const old of listTrains(dir).trains) {
     if (old.rollup?.superseded !== trainId || !old.rollup.prNumber) continue;
-    if ((old.rollup.closures ?? []).some((c) => c.prNumber === old.rollup.prNumber && c.status === 'closed')) continue;
-    const x = deps.gh(['pr', 'close', String(old.rollup.prNumber), '-R', old.rollup.repo, '--comment', `superseded by #${number} (fleet rollup ${me.train.rollup.branch})`], cwd);
-    const entry = { prNumber: old.rollup.prNumber, head: old.rollup.candidate.oid, status: x.ok ? 'closed' : 'failed', reason: x.ok ? null : String(x.reason ?? 'gh pr close failed').slice(0, 200) };
+    if ((old.rollup.closures ?? []).some((c) => c.prNumber === old.rollup.prNumber && (c.status === 'closed' || c.status === 'skipped-head-moved'))) continue;
+    const r = closeBoundToHead({ deps, cwd, repo: old.rollup.repo, number: old.rollup.prNumber, head: old.rollup.candidate.oid, comment: `superseded by #${number} (fleet rollup ${me.train.rollup.branch})` });
+    const entry = { prNumber: old.rollup.prNumber, head: old.rollup.candidate.oid, status: r.status, reason: r.reason };
     withTrainLock(dir, () => patchTrain(dir, old.trainId, { rollup: { ...old.rollup, closures: [...(old.rollup.closures ?? []).filter((c) => c.prNumber !== entry.prNumber), entry] } }, deps));
-    if (!x.ok) lines.push(`  superseded rollup PR #${old.rollup.prNumber} could not be closed (${entry.reason}); the next approve or resume retries it`);
+        if (r.status !== 'closed') lines.push(`  superseded rollup PR #${old.rollup.prNumber}: ${r.status}${r.reason ? ` (${r.reason})` : ''}${r.status === 'failed' ? '; the next approve or resume reconciles it' : ''}`);
   }
   return lines;
 }
