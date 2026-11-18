@@ -5,8 +5,11 @@
 - **Scope**: backend (js-ts). Principle set: `skills/plan/references/engineering-principles.md`.
 - **Depends on**: docs/plans/coordinator-aggregate-ship.md: PR A (the read-only half: `ship-commit.mjs --check-shipped-head`, `scripts/lib/fleet/coordinator-grant.mjs`, the archive-check refusal) must merge first. This plan calls both readers and edits neither.
 - **Extended 2026-11-18** with `fleet land --rollup` (§2.9), on Louis's instruction: "Plan --rollup now, folded into PR B's plan, since PR B already rebuilds fleet land."
-- **Target domain(s)**: `fleet`, `tests`
-- ⚠ **Cross-domain work**: the `tests` domain is touched only through test files.
+- **Target domain(s)**: `fleet`, `ship`, `tests`
+- ⚠ **Cross-domain work**: the `tests` domain is touched only through test files. The one new `ship` edge,
+  `scripts/lib/ship-record/entry.mjs` importing `scripts/lib/fleet/rollup.mjs`, is allowed (`.audit-loop/domain-map.json`
+  `allowedDeps.ship` lists `fleet`) and has precedent (`ship-record/authority.mjs` and `facts.mjs` already import fleet).
+  Nothing in `fleet` imports `ship`.
 
 **Neighbourhood considered** (`get-neighbourhood`, k=8): every candidate banded `review`, the nearest being
 `classifyOutcome` (`scripts/model-eval-discovery.mjs:218`) and `computeGateDisposition`
@@ -169,9 +172,22 @@ The fields in the evidence column:
 **Load-time invariants.** These are checked by `validatePolicyRun(run)` on **every** read, before any remote action. A
 violation refuses the run as `record-inconsistent` and merges nothing.
 
-1. Step ids are unique. The `policy.members` keys equal the step ids exactly.
-2. `step === 'merged'` holds if and only if the outcome is one of: `landed`, `skipped`, or `not-run/awaiting-read-back`.
+1. Step ids are unique. **`policy` is a discriminated union on `name`** (R1-H1), and each variant has its own identity
+   invariant:
+   - `ship-batch`: the `policy.members` keys equal the step ids exactly (one step per member);
+   - `rollup`: exactly one step, whose id equals `policy.rollup.branch` and whose `testedOid` equals `policy.rollup.candidate.oid`;
+     `policy.members` is an ARRAY of member evidence records (§2.9.3), none of which is a step.
+   A record of one variant driven with the other variant's policy object refuses as `policy-mismatch`.
+2. **Phase and outcome are written together, as one pair** (R1-H8). The legal pairs are exactly:
+   - `step === 'merged'` with `landed`, `skipped`, or `not-run/awaiting-read-back`;
+   - `step === 'merge'` with `null` or `not-run/merge-unconfirmed`;
+   - `step` in `pending`, `wait`, `update` with `null`, a `refused` outcome, or a not-run code other than
+     `merge-unconfirmed` and `awaiting-read-back` (so `awaiting-merge-evidence` lives here).
+   Every classification in §2.3 returns a `{step, outcome}` pair from this list and is persisted by ONE `setStep`.
 3. The outcome `not-run/merge-unconfirmed` requires `step === 'merge'` and an `attempt`.
+6. **`finalized`** (R1-H6), an optional run field `{at, result}`, is written only after the final base read and the result
+   computation of §2.6, in one write. It requires every step to be terminal. The train patch comes after it and is
+   idempotent.
 4. **The chain is merge chronology, never step order.** A not-run member may land after later members, on a resume.
    `policy.baseChain[0]` is `B0`. For every k ≥ 1, exactly one landed member has `chainIndex === k`; its `mergeOid` equals
    `baseChain[k]`, and its `parent` equals `baseChain[k-1]`. Only the `verified` and `provenance-lost` verdicts take a
@@ -244,7 +260,17 @@ the run never advances past an unobserved merge.
 
 ### 2.3 Merge-time identity, attribution and the read-back: F3 and F6 in one place (#1, #13)
 
-**Admission has two kinds of input (R1-M2).** `admitMember(invariant, candidate)` in `ship-batch.mjs` takes:
+**Admission has two kinds of input (R1-M2), and a mode (R1-H5).** `admitMember(mode, invariant, candidate)` in
+`ship-batch.mjs` checks the evidence common to both modes (the grant, the full head oid, `head^{tree}`, the child envelope AT
+that head) and then the mode's own, as a zod discriminated union on `mode` with strict objects, so evidence cannot be borrowed
+across modes:
+
+- `ship-batch`: the PR identity at the head, and the member's CI verdicts at the head;
+- `rollup`: the remote branch tip equal to the head (`ls-remote`), and NO CI field: a candidate that carries one is
+  rejected. The rollup's CI is evidence about the CANDIDATE, bound to the one serial step at the candidate oid (§2.9.3),
+  never to a member.
+
+In `ship-batch` mode it takes:
 
 - **`invariant`**, fixed for the batch: the grant, `base`, `remote`, the tested oid `T`, the tested tree `TT`, the worktree
   path.
@@ -282,11 +308,20 @@ What GitHub guards, stated:
 when there is no merge queue (refused at approve, §2.6) and no auto-merge (never requested). The request either merged when it
 returned or it did not. GitHub does not complete a plain merge request later.
 
-A PR that a **later** `--resume` observes still OPEN, with `step === 'merge'`, therefore did not merge:
+A client that died or timed out cannot prove its request has finished server-side (R1-H2). So OPEN is read as "did not
+merge" only when it is **observed at least `MERGE_WAIT_MS` (120 s, `serial.mjs:52`) after `attempt.at`**. An earlier OPEN
+keeps `merge-unconfirmed` and stops the run again. A re-attempt is safe even if the first request were still executing,
+because of two fences that GitHub enforces, not the client:
+
+- **a PR merges at most once**: of two requests for one PR, at most one merges, and the other fails;
+- **every request for the member pins the same admitted head** with `--match-head-commit`, so whichever request merges, it
+  merges the admitted content.
+
+A failed replay (for example "already merged") is never itself a verdict: the loop re-views and `classifyMerged` decides,
+with `attribution: unknown`. Then:
 
 - the member returns to admission from the top;
-- a re-attempt still pins `--match-head-commit`;
-- a PR that has merged cannot be merged a second time.
+- a re-attempt still pins `--match-head-commit`.
 
 Within one run the loop never advances past an unobserved merge: `merge-unconfirmed` stops the run. A test kills the fake
 `gh` after it performed the merge and before it answered, then resumes: the member ends landed, and the fake counts exactly
@@ -309,14 +344,16 @@ branch's paths (PR A, C4). Admission proves two links: tested tree = merged tree
 **Attribution and observed state are separate (R1-H2).** `classifyMerged({ step, doc })` in `member-outcome.mjs` is pure,
 and it is the **only** reader of `state === 'MERGED'`:
 
-| phase when observed | `doc.headRefOid` | outcome |
+Each row is the `{step, outcome}` pair written in one `setStep` (§2.1 invariant 2):
+
+| phase when observed | `doc.headRefOid` | written pair |
 |---|---|---|
 | `merge`, `attempt.ghExit === 0` | `=== attempt.head` | merged, `attribution: this-run`; the read-back follows |
 | `merge`, `ghExit` non-zero or null (crash, lost response) | `=== attempt.head` | merged, `attribution: unknown`; the read-back follows. The content is the admitted head either way, and the read-back judges the message, so an external merge of the same head with another message reads `provenance-lost` |
-| `merge` | `!== attempt.head` | `skipped/merged-externally` with `mergeOid` and `seenHead` recorded, then the run fault `base-moved` |
-| `pending`, `wait` or `update` (no intent) | any | `skipped/merged-externally` with `mergeOid` and `seenHead`, then the run fault `base-moved` |
-| `merge`, no merge oid reported | any | `not-run/awaiting-read-back`, run stop; resume re-views for the oid |
-| `pending`, `wait` or `update`, no merge oid reported | any | `not-run/awaiting-merge-evidence`, run stop; resume re-views and then applies the row above |
+| `merge` | `!== attempt.head` | `merged` + `skipped/merged-externally` with `mergeOid` and `seenHead` recorded, then the run fault `base-moved` |
+| `pending`, `wait` or `update` (no intent) | any | `merged` + `skipped/merged-externally` with `mergeOid` and `seenHead`, then the run fault `base-moved` |
+| `merge`, no merge oid reported | any | `merged` + `not-run/awaiting-read-back`, run stop; resume re-views for the oid |
+| `pending`, `wait` or `update`, no merge oid reported | any | the phase unchanged + `not-run/awaiting-merge-evidence`, run stop; resume re-views and then applies the row above |
 
 **An external merge always stops the run** (R3-H1), including on the last member. It put a commit on the base that the chain
 does not hold, so no later merge and no `ok` result may rest on that chain. Independently, **before computing the result**,
@@ -385,8 +422,10 @@ The plain serial runner (`land --approve --serial`, `land --resume`) and `ship-t
 Each step is written as an intent before the remote action and as a result after it. Under a policy, resume first runs
 `validatePolicyRun` (§2.1).
 
-**A fully terminal run** (every member terminal, and the run outcome not a stop) is a **read-only historical summary**
-(R3-M1). Resume reads nothing remote, re-checks neither the grant nor the rules, and prints the stored summary with the
+**A finalized run** (`finalized` present, §2.1 invariant 6) is a **read-only historical summary** (R3-M1). A run whose
+members are all terminal but which has no `finalized` (a crash after the last member write) is NOT: resume performs the
+final base read and computes the result, both reads only, writes `finalized`, then repeats the idempotent train patch. A
+finalized run reads nothing remote, re-checks neither the grant nor the rules, and prints the stored summary with the
 stored exit code. A grant revoked after completion changes nothing, because no mutation is possible.
 
 **Otherwise**, before the first remote mutation, resume re-reads the grant (`run/grant-revoked` refuses) and the branch
@@ -396,7 +435,7 @@ rules, then walks the steps in order. For each step it decides by `(step, outcom
 |---|---|---|
 | any | terminal | nothing (see "A fully terminal run" below) |
 | `merged` | `not-run/awaiting-read-back` | re-view for the merge oid if it is missing, then repeat the read-back |
-| `merge` | `not-run/merge-unconfirmed` or null | view, then `classifyMerged`. An OPEN PR goes back to admission (the synchronous-merge guarantee, §2.3); nothing is replayed without a fresh admission |
+| `merge` | `not-run/merge-unconfirmed` or null | view, then `classifyMerged`. An OPEN PR observed at least `MERGE_WAIT_MS` after `attempt.at` goes back to admission (§2.3); an earlier OPEN stops again; nothing is replayed without a fresh admission |
 | `pending`, `update` or `wait` | not-run or null | full admission at the current head |
 
 The base branch's rules (`gh api repos/{o}/{r}/rules/branches/{base}`) are read at approve, **again before every merge**
@@ -455,6 +494,10 @@ Exit codes use fleet's existing mapping (`land.mjs`): 0 for ok, 3 for refused or
 | a run-scope stop with members still not-run | false | 3 | `awaiting-merge` | `subset` | `stopped: <reason>; resumable: land --resume <t> --ship-batch` |
 | every member terminal, none landed | false | 3 | `awaiting-merge` | `subset` | `nothing landed; every member needs the user` |
 | the loop completed (no run stop) with at least one member still `not-run` (for example `checks-pending`, `pr-unreadable`, `head-churn`), with or without landed members | false | 3, resumable | `awaiting-merge` | `subset` | `landed k of n; m not yet decided: land --resume <t> --ship-batch re-checks them` |
+
+**`landed` as a train phase means the content is on `run.base`** (R1-H6): it requires every member terminal and no landed
+verdict `wrong-target`. A `wrong-target` landing leaves the train `awaiting-merge`, so `deriveTrainDone` never marks its
+sessions done. `untested-base` content IS on the base, so it may complete the train, and the summary leads with it.
 
 After the first line, the summary prints one line per member: status, code, attribution, the read-back AI-Gate, the merge
 oid, and for needs-user members "type /ship in that session".
@@ -517,8 +560,17 @@ sequenceDiagram
    audited against its own tree; the combined content of a shared file was audited by nobody, and a targeted review would be
    new machinery for a case `fleet claim` already blocks (claims are path-disjoint). The held member lands in the next
    rollup, after its own restack and, if the restack changed its tree, a re-audit, which its next admission enforces.
-4. **One open rollup per repo.** The build refuses while another rollup train is `awaiting-merge`, naming it. A member in two
-   open rollups could otherwise land twice.
+4. **One live rollup per repo, with supersession** (R1-H4). Under the train lock, and holding the older rollup's
+   `serial/<t>.lock` without waiting (a held lock refuses as `rollup-in-progress`), the build classifies every other rollup
+   train that is not `landed` or `abandoned`:
+   - **supersedable**: approve never ran, or its serial run is stopped with the step in `pending`, `wait` or `update` and no
+     `attempt` (nothing was ever requested). The build patches it `abandoned` with the note `superseded by <new train>`.
+     Its worktree, manifest, branch and PR are kept; an abandoned train can no longer be approved or resumed (today's rule).
+     Its PR is closed "superseded by #M" by the NEW rollup's approve, once its own PR exists (§2.9.2 step 5);
+   - **blocking**: anything else (a step in `merge`, `merge-unconfirmed`, `awaiting-read-back`). The build refuses, naming
+     it: a merge may be in flight, and only its own resume may settle it.
+
+   A member therefore never sits in two live rollups.
 5. **The candidate** is `buildTrain` (`scripts/lib/fleet/train.mjs:280` (`d53272aa`)) unchanged in shape: base worktree,
    sources applied in order, candidate `{oid, tree}` recorded before any test, then the pre-land tiers. Two small
    parameters, both off on every other path:
@@ -535,6 +587,25 @@ sequenceDiagram
 
 #### 2.9.2 Approve: `fleet land --approve <t> --rollup`
 
+**The operation record** (R1-H7). Before the serial run exists, `approveRollup` persists its progress in an optional
+`TrainSchema` block, `rollup: {branch, repo, candidate: {oid, tree}, phase, prNumber, closures}`, written by `patchTrain`
+under the train lock. `branch`, `repo` and `candidate` are set once, at the first write, and never change. `phase` moves
+`push-intent` → `pushed` → `pr-intent` → `pr-open` → `run-started`. Each remote action is reconciled from the remote before it
+is retried:
+
+| phase on resume | reconciliation | then |
+|---|---|---|
+| `push-intent` | `ls-remote` the branch | absent: push again; at `candidate.oid`: `pushed`; any other oid: refuse `rollup-branch-foreign` |
+| `pr-intent` | `gh pr list --head <branch> --base <base> --state all --json number,state,headRefOid,baseRefName` | none: create; exactly one OPEN at `candidate.oid`: adopt its number; anything else (two, closed, merged, another head): refuse `rollup-pr-ambiguous` |
+| `pr-open` | none | write the serial run |
+| `run-started` | none | `resumeRollup` (the serial resume, §2.6) |
+
+**The entry points** (R1-H1): `approveSerial` refuses a train that carries `landing: 'rollup'`. The rollup serial run is
+created only by `startPolicyRun({dir, trainId, run})`, a new export of `serial.mjs` and the one writer of a fresh policy run:
+it validates the run with the schema and `validatePolicyRun`, refuses if a run file exists, and writes it. `approveShipBatch`
+uses it too, so the plain path through `approveSerial` keeps its golden bytes. `resumeRollup` passes the rollup policy;
+`land --resume <t>` without `--rollup` on a rollup run refuses with the hint, as §2.4 does for ship-batch.
+
 Under `withTrainLock`, `approveRollup`:
 
 1. checks that the train carries `landing: 'rollup'`, that it is approvable (`approvable`), and that the clone is not shallow;
@@ -544,9 +615,9 @@ Under `withTrainLock`, `approveRollup`:
 4. pushes the candidate to `refs/heads/rollup/<YYYYMMDD>-<n>` on the recorded `pushUrl` with
    `--force-with-lease=refs/heads/rollup/<YYYYMMDD>-<n>:` (the ref must not exist). `n` is the lowest free number read from
    `ls-remote`. The intent is written before the push and the result after it, as the direct modes do (`push-pending`);
-5. runs `gh pr create --base <base> --head rollup/<YYYYMMDD>-<n> --title <subject> --body-file <manifest>` and records the PR
-   number. A crash between the push and the create is resolved on resume by `gh pr list --head rollup/<...>`; a second
-   create is never sent while one exists;
+5. runs `gh pr create --base <base> --head rollup/<YYYYMMDD>-<n> --title <subject> --body-file <provisional manifest>` and
+   records the PR number (`pr-intent`, then `pr-open`, reconciled as in the table above). It then closes any rollup PR it
+   superseded (§2.9.1 step 4), recording each attempt in `rollup.closures`;
 6. writes the serial run: **one step**, `{id: 'rollup/<YYYYMMDD>-<n>', prNumber, repo, testedOid: candidate.oid, head:
    candidate.oid, accounted: [candidate.oid]}`, and `policy = {name: 'rollup', grantVersion, remote, candidateTree,
    baseChain: [expectedOid], members, excluded}`;
@@ -555,7 +626,8 @@ Under `withTrainLock`, `approveRollup`:
      tree equal to `candidateTree`. A member failing is a run fault (`member-refused:<id>`), never a member skip;
    - `baseCheck`: the live base tip equals `baseChain[0]`, or `base-moved`;
    - `allowUpdate: false`. A behind PR is never updated: a rollup is rebuilt instead (§2.9.5);
-   - `message`: the squash subject `fleet rollup <rollup id>: <k> members` and the manifest body (§2.9.3);
+   - `message`: the squash subject `fleet rollup <rollup id>: <k> members` and the FINAL manifest body (§2.9.3), rendered
+     after the required checks are green at the candidate oid;
    - `readBack`: `classifyMerged` (§2.3) on the one step, then the tree read-back. `verified` needs the squash parent equal to
      `baseChain[0]` and the squash tree equal to `candidateTree`.
 
@@ -575,9 +647,16 @@ Never `--auto`; never `--delete-branch` (a deletion is Louis's, and `--delete-br
 - **The rollup's CI evidence**, against the CANDIDATE tree, on the serial step's landed outcome: an optional `ci: {tree,
   checks: [{name, conclusion}], observedAt}`, filled from the `observeRequiredChecks` result the loop already has. It is
   allowed only under the `rollup` policy (`validatePolicyRun`).
-- **The manifest** (the PR body and the squash body, the same bytes) is rendered from those two records only: a human table,
-  then one fenced block `fleet-rollup/v1` (JSON: rollup id, base, candidate `{oid, tree}`, members, held). It names each
-  member's gate as that member's.
+- **The manifest has two stages** (R1-H3), both rendered by the pure `renderRollupManifest` from the records only:
+  - **provisional**, the PR body at create: the members and the held, with `"ci": "pending"` and `"stage": "provisional"`.
+    It is never edited afterwards, so no PR-body update can fail;
+  - **final**, the squash body: the same members plus the CI record, `"stage": "final"`, rendered only after the required
+    checks were observed green at exactly `candidate.oid` (the step's `head`). Its sha256 is written in the merge intent
+    (`attempt.messageSha256`, rollup policy only), and the read-back compares the squash body against it: a mismatch is
+    `provenance-lost`.
+  Each stage is a human table, then one fenced block `fleet-rollup/v1` (JSON: rollup id, stage, base, candidate `{oid,
+  tree}`, members, held, ci). It names each member's gate as that member's. Only a `final` manifest counts for the record
+  (§2.9.6).
 - **No `AI-*` trailer on the rollup commit, ever.** The squash carries `Fleet-Rollup: v1 <rollup id>` only. A single
   `AI-Gate` would claim one verdict for content no single audit read. The `AI-*` namespace stays reserved to
   `ship-commit.mjs` and `ship-train.mjs` (AGENTS.md §Commit provenance).
@@ -619,11 +698,14 @@ A rebuilt rollup is always a new branch, so a red or stale rollup's candidate an
   malformed manifest renders as "manifest unreadable", never as zero members.
 - The catch-up event for that PR uses the reason `merged-via-rollup`, not `merged-without-ship`. The members were shipped by
   their chips; the rollup itself was not `/ship`ped, and the entry says exactly that.
-- **Member PRs, if any** (a member that opened one before the repo switched to rollup): after `classifyMerged` returns
-  `landed` for the rollup step, and only then, each member PR that is still OPEN gets `gh pr close <n> --comment
-  "superseded by #N (fleet rollup <id>)"`. A failed close is reported in the summary and never undoes or re-runs the
-  landing. Never on `merge-unconfirmed`, `not-run` or a stop.
-- **Done-ness needs nothing new:** `deriveTrainDone` (`scripts/lib/fleet/overlap.mjs:589` (`d53272aa`)) marks a session done
+- **Member PRs, if any** (a member that opened one before the repo switched to rollup): only after the rollup run is
+  `finalized` with the step `landed` and a verdict of `verified`, `provenance-lost` or `untested-base` (the content is on
+  `run.base`; never `wrong-target`), each member PR that is still OPEN gets `gh pr close <n> --comment "superseded by #N
+  (fleet rollup <id>)"`. Progress is tracked per PR in `rollup.closures` (`pending`, `closed`, `failed` with the reason),
+  independently of the landing: resume retries `pending` and `failed` closes, re-reading each PR's state first, and a
+  closure never undoes or re-runs the landing. Never on `merge-unconfirmed`, `not-run` or a stop.
+- **Done-ness needs nothing new** beyond §2.8's rule that a `wrong-target` landing never makes the train `landed`:
+  `deriveTrainDone` (`scripts/lib/fleet/overlap.mjs:589` (`d53272aa`)) marks a session done
   when a `landed` train lists it as a source, and a rollup train's sources are exactly its admitted members. Held members are
   not sources.
 
@@ -693,7 +775,7 @@ changes.
 | File | Intent | What |
 |---|---|---|
 | `scripts/lib/fleet/member-outcome.mjs` | create | `FAULTS`, `OutcomeSchema` (a discriminated union), `classifyMerged`, `validatePolicyRun`, `combinationOf`, `summariseOutcomes`: pure, no I/O (#2, #11) |
-| `scripts/lib/fleet/serial.mjs` | modify | optional `outcome`, `attempt` and `policy` in the schemas; `stepMember` (no `stop` in scope) and the one result `switch`; policy plumbing; the merge-time re-read and tree identity under a policy; remove `hooks`, `memberFail`, `skipMember`, the `{skip}` answer and the sidecar-existence probe |
+| `scripts/lib/fleet/serial.mjs` | modify | optional `outcome`, `attempt` (with `messageSha256` under the rollup policy), `finalized` and `policy` (a union on `name`) in the schemas; `startPolicyRun`; `stepMember` (no `stop` in scope) and the one result `switch`; policy plumbing; the merge-time re-read and tree identity under a policy; remove `hooks`, `memberFail`, `skipMember`, the `{skip}` answer and the sidecar-existence probe |
 | `scripts/lib/fleet/ship-batch.mjs` | modify | `admitMember` (one predicate for build and merge); the write-once v2 build record; `makeShipBatchPolicy` (pure decisions, no writes); `approveShipBatch`/`resumeShipBatch` pass `policy`; the summary reads the serial record only; delete `patchBatch`, `onSkip`, `MEMBER_STATES` and the sidecar mutation |
 | `scripts/lib/fleet/land.mjs` | modify | the `--ship-batch` wiring as on `1cd2df21` (argv refusals, approve, resume, build) |
 | `scripts/lib/fleet/argv.mjs` | modify | the `--ship-batch` flag, as on `1cd2df21` |
@@ -711,7 +793,7 @@ changes.
 | `scripts/lib/fleet/rollup-land.mjs` | create | `buildRollup` (admission, holds, overlap, one-open-rollup, then `buildTrain`), `approveRollup` (re-admit, base check, push, PR create, the one-step serial run), `makeRollupPolicy`, the member-PR close after `landed` |
 | `scripts/lib/fleet/train.mjs` | modify | `applySources` takes the rollup message mode; `buildTrain` writes `landing: 'rollup'` when asked; the `pr` branch-only refusal gains the rollup hint under `landing: "rollup"` |
 | `scripts/lib/fleet/train-approve.mjs` | modify | `approveTrain`, `confirmTrain`, `reconcileTrain` refuse a train carrying `landing: 'rollup'` |
-| `scripts/lib/fleet/registry.mjs` | modify | `TrainSchema`: optional `landing: z.literal('rollup')` |
+| `scripts/lib/fleet/registry.mjs` | modify | `TrainSchema`: optional `landing: z.literal('rollup')` and the optional `rollup` operation block (§2.9.2) |
 | `scripts/lib/fleet/config.mjs` | modify | `.fleet.json` `landing: 'pr' \| 'rollup'` (optional, default `pr`) and the `LANDING:` line text |
 | `scripts/lib/fleet/commands.mjs` | modify | `fleet ready` and `fleet next` print the `LANDING:` line in rollup mode |
 | `scripts/lib/ship-record/entry.mjs` | modify | `renderPrEntry` lists the rollup members from the merge commit's manifest |
@@ -910,6 +992,22 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
       refused; a crash between the push and the PR create resumes with one PR, found by `gh pr list --head`.
   21. **Chip contract:** with `landing: "rollup"`, `fleet ready` and `fleet next` print the `LANDING:` line; without the key,
       their output is byte-identical to the golden capture.
+  22. **Round-1 recovery and contract cases:**
+      - cross-policy: a rollup run resumed with the ship-batch policy, and the reverse, refuse as `policy-mismatch`; a
+        plain `land --approve --serial` on a rollup train refuses;
+      - each classification is persisted and reloaded as a legal `{step, outcome}` pair, including an external merge before
+        intent with and without an oid;
+      - a delayed first merge request that completes after resume observed OPEN early: the early OPEN stops again, and at
+        most one merge lands, at the admitted head;
+      - the operation record: a crash after the push and after the PR create, each with a lost response, resumes into one
+        branch and one PR; two OPEN PRs for the branch refuse `rollup-pr-ambiguous`;
+      - supersession: a stopped, never-requested rollup is superseded and its PR closed by the replacement; a rollup with a
+        step in `merge` blocks the build; two concurrent builds yield one live rollup;
+      - finalization: a crash after the last member write and before `finalized` resumes into the final base read, the
+        result and the train patch; a `wrong-target` rollup is never `landed` and closes no member PR;
+      - admission modes: a rollup candidate carrying a CI field, and a ship-batch candidate without one, are rejected;
+      - the squash body is compared with `attempt.messageSha256`; a provisional manifest on `main` renders as
+        "manifest unreadable" in the record.
 - **Byte identity:** `tests/fleet-serial-golden.test.mjs`, plus the unchanged `tests/fleet-serial.test.mjs` and
   `tests/ship-train-recovery.test.mjs`.
 
