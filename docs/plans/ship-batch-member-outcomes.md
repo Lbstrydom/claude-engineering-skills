@@ -1105,3 +1105,24 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   | Invalid Persisted Intent | R2-H3 | integration test 11, case 3: the intent with `at` validates and is reconciled after a crash right after it was written |
   | Contradictory Exit Contract | R1-M1 | integration test 5: every §2.8 truth-table row asserted for `ok`, exit code, train phase, `combination` and the summary's first line |
   | Contradictory Resume Contract | R3-M1 | integration test 13: a closed run with the grant revoked and the rules API down prints the same summary and exit code, with zero remote reads |
+
+### Rollup extension (§2.9)
+
+- **/audit-plan, SID `audit-plan-1795017462738-65944`** (2026-11-18), after merging `origin/main` `d53272aa` (PR A #394).
+  GPT rounds (HIGH / MEDIUM): R1 8 / 1, R2 6 / 0, R3 4 / 0. Every finding was accepted and fixed (acceptance 100%, 19 of
+  19), recorded in the ledger and the cloud outcomes (9/9, 6/6, 4/4 labelled).
+- What each round fixed:
+  - **R1:** the policy is a union on `name` with `startPolicyRun` as the one writer; the OPEN-after-crash rule waits
+    `MERGE_WAIT_MS` and is fenced by GitHub's merge-at-most-once plus the pinned head; the two-stage manifest; rollup
+    supersession; per-mode admission evidence; `finalized`; the rollup operation record; phase and outcome written as one
+    legal pair; the `ship` domain edge.
+  - **R2:** `pr-open` adopts a matching serial run; the train patch is repeatable from `finalized.result`; post-landing
+    cleanup is a separate step; the CI record is persisted in the merge intent; the `tree-mismatch` verdict; the persisted
+    `halt`.
+  - **R3:** `tree-mismatch` authorises no cleanup and no done-ness; closures are bound to the admitted head; one rollup policy
+    constructor; `ci` and `trees` in the landed schema, validated by policy.
+- **The soft cap (3) stopped the loop, not convergence.** Structural card: "AT THE CAP WHILE PRODUCTIVE", HIGH 8→6→4, round 3
+  acceptance 100%; 1 structural (the manifest data flow, matched to an unrelated precedent in `upstream/dispositions.mjs`,
+  and fixed in R1-R2), 3 LOCAL?, 4 polish. No round 4 was run: the STOP / STRUCTURAL / CONTINUE call goes to the coordinator
+  with the handoff.
+- **Final review** (gemini, round 1 of 2): `APPROVE`, gate `approve` (blocking 0, debt 0), no new findings.
