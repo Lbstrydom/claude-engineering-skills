@@ -247,7 +247,8 @@ export function renderPreauthConditions(verdict) {
  */
 export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null, remote = 'origin') {
   const out = (args) => { const r = run(args); return r && r.status === 0 ? String(r.stdout ?? '').trim() : null; };
-  const defaultRef = baseBranch ? `refs/remotes/${remote}/${baseBranch}` : out(['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`]);
+  // ONE resolver for "the base": the head's change set and the audited tree's use the same function (defaultBaseRef), so they cannot disagree.
+  const defaultRef = defaultBaseRef(run, baseBranch, remote);
   // origin/HEAD is the authoritative default branch; `origin/main` is the conventional remote-tracking name when HEAD is unset.
   // A LOCAL `main` is never substituted: it can differ from the remote's, and an unverified base can hide what the PR changes.
   // Discovery and resolution are separate: once origin/HEAD NAMES the default branch, that branch's merge base is the only
@@ -255,7 +256,7 @@ export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null, 
   // `origin/main` is consulted only when origin/HEAD itself is unavailable.
   // FULLY QUALIFIED, never shortened: `origin/develop` can resolve to a LOCAL branch of that name (refs/heads/origin/develop is
   // searched before refs/remotes/), whose merge base with HEAD is HEAD itself and would hide every change.
-  const base = out(['merge-base', head, defaultRef || `refs/remotes/${remote}/main`]);
+  const base = out(['merge-base', head, defaultRef]);
   if (!base || !tree) return null;
   // `--ignore-submodules=none`: a `diff.ignoreSubmodules` setting must never hide a changed gitlink from a path gate.
   const r = run(['diff', '--name-only', '--no-renames', '--ignore-submodules=none', '-z', base, tree]);

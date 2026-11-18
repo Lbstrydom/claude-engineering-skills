@@ -274,7 +274,7 @@ describe('isShipStepDelta: the hardened grammar (code-audit round 1)', () => {
   });
   it('text the ship ADDS that opens an HTML comment it does not close refuses (it would swallow what follows the log)', () => {
     const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Later\ntext after\n';
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('- r1\n', '- r1\n- r2 <!-- never closed\n') }), /HTML comment it does not balance/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('- r1\n', '- r1\n- r2 <!-- never closed\n') }), /HTML comment it does not close/);
     assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('- r1\n', '- r1\n- r2 <!-- a closed note -->\n') }), null, 'a balanced comment is fine (the control)');
   });
   it('text the ship adds that opens a code fence it does not close refuses', () => {
@@ -296,7 +296,7 @@ describe('isShipStepDelta: markup balance in BOTH grammars (PR A audit round 2)'
     const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
     const bad = ['# Status', 'intro', '<!-- never closed', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
     const good = ['# Status', 'intro', '<!-- a closed note -->', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
-    assert.match(delta({ status: 'M', rel: 'status.md', oldText: old, newText: bad }), /HTML comment it does not balance/);
+    assert.match(delta({ status: 'M', rel: 'status.md', oldText: old, newText: bad }), /HTML comment it does not close/);
     assert.equal(delta({ status: 'M', rel: 'status.md', oldText: old, newText: good }), null, 'a balanced comment is fine (the control)');
   });
   it('a backtick fence closed by a TILDE fence is still unclosed (type must match), in both grammars', () => {
@@ -304,5 +304,18 @@ describe('isShipStepDelta: markup balance in BOTH grammars (PR A audit round 2)'
     assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\ncode\n~~~\n' }), /code fence/);
     assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````\n```\n' }), /code fence/, 'a shorter closer does not close a longer opener');
     assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````js\ncode\n````\n' }), null);
+  });
+});
+
+describe('isShipStepDelta: HTML comments are judged in DOCUMENT ORDER (PR A audit round 3)', () => {
+  const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Later\ntext after\n';
+  const add = (line) => withLog.replace('- r1\n', `- r1\n${line}\n`);
+  it('"-->" then "<!--" has EQUAL counts but leaves a comment open: refused', () => {
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('- r2 --> and <!-- unfinished') }), /closes an HTML comment it did not open/);
+  });
+  it('a closer with no opener is refused; an opener nested in an open comment is refused; a proper pair is fine', () => {
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('- r2 stray -->') }), /did not open/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('- r2 <!-- a <!-- b -->') }), /inside one it has not closed/);
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('- r2 <!-- a --> and <!-- b -->') }), null);
   });
 });

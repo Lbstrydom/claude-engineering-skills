@@ -96,7 +96,13 @@ const MAX_DOC_CHARS = 8_000_000;
  */
 function markupProblem(addedLines) {
   const text = addedLines.join('\n');
-  if ((text.match(/<!--/g) ?? []).length !== (text.match(/-->/g) ?? []).length) return 'opens or closes an HTML comment it does not balance';
+  // IN DOCUMENT ORDER: equal counts are not balance (`-->` then `<!--` leaves a comment open). A closer with no opener, an opener
+  // inside an open comment, and a comment still open at the end all refuse.
+  let inComment = false;
+  for (const m of text.matchAll(/<!--|-->/g)) {
+    if (m[0] === '<!--') { if (inComment) return 'opens an HTML comment inside one it has not closed'; inComment = true; } else { if (!inComment) return 'closes an HTML comment it did not open'; inComment = false; }
+  }
+  if (inComment) return 'opens an HTML comment it does not close';
   let open = null;
   for (const l of addedLines) {
     const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(l);

@@ -227,7 +227,7 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
 
   const runRes = verifiable ? await store.runFacts(evidence.runId) : { row: null, why: `there is no usable gate-evidence marker (state: ${evidence.state})` };
   const repoRes = await store.repoId(repoRoot);
-  const changedPaths = headTree ? gatherChangedPaths((a) => run(a), headTree, headOid, baseBranch, remote) : null;
+  const changedPaths = headTree ? gatherChangedPaths((a) => run(a), headTree, headOid, baseRefName, remote) : null;
   const usable = verifiable ? evidence : null;
 
   const verdict = evaluateShippedHead({
@@ -239,7 +239,7 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
     runRowWhy: runRes.why ?? undefined,
     repoId: repoRes.repoId,
     finalReview: readFinalReviewMarker(repoRoot),
-    delta: computePostAuditDelta(run, usable, changedPaths, headTree, baseBranch, remote),
+    delta: computePostAuditDelta(run, usable, changedPaths, headTree, baseRefName, remote),
     changedPaths,
   });
   // The markers and the store were read over time: if HEAD moved while they were, none of it describes the head that was asked about.
