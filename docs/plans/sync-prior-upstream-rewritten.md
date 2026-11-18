@@ -251,3 +251,7 @@ chip runs no local full suite (the `full-suite.yml` Actions run is the full run)
 - Design deltas from the audited plan: `acceptRaw` is now a necessary, not sufficient, condition for raw acceptance (the blob's own
   render must succeed with zero hits); `render` may return `{content, hits}`; a controlled fresh-repo e2e is the mandatory
   regression and the f3b37321 case is a labelled diagnostic plus a supplementary flow.
+
+## Implementation Log
+
+- 2026-11-18: merged #392 (9e3d58edec9a) — recorded by ship-record catch-up <!-- ship-record pr=392 -->

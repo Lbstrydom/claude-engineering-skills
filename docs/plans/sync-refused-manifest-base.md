@@ -213,3 +213,7 @@ then reads origin's manifest. Unchanged by this fix in either direction, and not
 - Final gate round 1: APPROVE (gemini-4-argon), blocking 0, debt 0.
 - Every fix landed with a test shown red on the old behaviour (negative controls in the commit history of
   `tests/sync-base-lag.test.mjs`).
+
+## Implementation Log
+
+- 2026-11-18: merged #390 (e93ccd78cfa6) — recorded by ship-record catch-up <!-- ship-record pr=390 -->
