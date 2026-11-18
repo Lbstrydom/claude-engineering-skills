@@ -825,7 +825,7 @@ changes.
 
 | File | Intent | What |
 |---|---|---|
-| `scripts/lib/fleet/member-outcome.mjs` | create | `FAULTS`, `OutcomeSchema` (a discriminated union), `classifyMerged`, `validatePolicyRun`, `combinationOf`, `summariseOutcomes`: pure, no I/O (#2, #11) |
+| `scripts/lib/fleet/member-outcome.mjs` | create | `FAULTS`, `OutcomeSchema` (a discriminated union), `classifyMerged`, `validatePolicyRun`, `combinationOf`, `summariseRun`: pure, no I/O (#2, #11) |
 | `scripts/lib/fleet/serial.mjs` | modify | optional `outcome`, `attempt` (with `messageSha256` under the rollup policy), `finalized` and `policy` (a union on `name`) in the schemas; `startPolicyRun`; `stepMember` (no `stop` in scope) and the one result `switch`; policy plumbing; the merge-time re-read and tree identity under a policy; remove `hooks`, `memberFail`, `skipMember`, the `{skip}` answer and the sidecar-existence probe |
 | `scripts/lib/fleet/ship-batch.mjs` | modify | `admitMember` (one predicate for build and merge); the write-once v2 build record; `makeShipBatchPolicy` (pure decisions, no writes); `approveShipBatch`/`resumeShipBatch` pass `policy`; the summary reads the serial record only; delete `patchBatch`, `onSkip`, `MEMBER_STATES` and the sidecar mutation |
 | `scripts/lib/fleet/land.mjs` | modify | the `--ship-batch` wiring as on `1cd2df21` (argv refusals, approve, resume, build) |
@@ -1190,3 +1190,5 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   (`sync-inventory.mjs`), and the opposite edge (a module that MUST ship) is declared in an entry list. The residual: a future change listing
   `ci-verdict.mjs` in a consumer entry list is caught by the same closure test, which this edge does not weaken. In the source repo the same test
   proves the module loads.
+
+- **Fail-closed, after the round on this fix (audit-code, fresh SID, scope diff over 03da77a1..):** the first version swallowed every load failure. `loadCiVerdict` now tells ABSENT (the requested module itself is missing: a consumer) from BROKEN (a syntax error, a missing transitive dependency, an initialisation error or a wrong export: rethrown; `ship-batch.mjs` records it and every member re-check REFUSES with the load error, so a broken verifier never reads as "nothing declared"). Where the verifier is absent, `declaredFullSuite` reads the repo's `.test-tiers.json`: a declared workflow, or a file that cannot be read, refuses (`ci-refused`); only a repo that declares nothing reads as "nothing to measure". Tests: `tests/fleet-ci-verdict-load.test.mjs` (absent, syntax, transitive, init, wrong export; the real verdict decides a member re-check with a controlled workflow fixture) and `tests/sync-ship-batch-closure.test.mjs` (a relocated consumer with a declared workflow, and with an unreadable declaration).

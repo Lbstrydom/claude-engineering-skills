@@ -99,6 +99,25 @@ describe('in a relocated layout', () => {
     assert.ok(none.some((r) => /nothing measured CI at this head/.test(r)), none.join('|'));
   });
 
+  it('a consumer whose .test-tiers.json DECLARES a full-suite workflow is refused, not read as "nothing declared" (the verifier is absent there)', async () => {
+    const mod = await import(pathToFileURL(reloc('scripts/lib/fleet/ship-batch.mjs')).href);
+    const ok = (doc) => ({ ok: true, status: 0, stdout: JSON.stringify(doc), stderr: '' });
+    const head = 'a'.repeat(40);
+    const gh = (args) => {
+      if (args[0] === 'pr' && args[1] === 'view') return ok({ state: 'OPEN', isDraft: false, headRefOid: head, baseRefName: 'main' });
+      if (args[0] === 'api') return ok(/rules\/branches/.test(args[1]) ? [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } }] : { protected: false });
+      if (args[0] === 'pr' && args[1] === 'checks') return ok([{ name: 'ci', bucket: 'pass', state: 'SUCCESS', completedAt: '2026-10-09T10:00:00Z' }]);
+      return { ok: false, status: 1, stdout: '', stderr: 'unexpected', reason: 'unexpected' };
+    };
+    const declared = fs.mkdtempSync(path.join(tmp, 'declared-'));
+    fs.writeFileSync(path.join(declared, '.test-tiers.json'), JSON.stringify({ ciVerdict: { workflow: '.github/workflows/full-suite.yml' } }));
+    const reasons = mod.ciAndIdentityReasons({ cwd: declared, member: { id: 'm', prNumber: 7, repo: 'o/n', oid: head }, base: 'main', deps: { gh } });
+    assert.ok(reasons.some((r) => /^ci: the full-suite run is unverified \(.*declares the full-suite workflow .*cannot be evaluated/.test(r)), reasons.join(' | '));
+    const broken = fs.mkdtempSync(path.join(tmp, 'broken-'));
+    fs.writeFileSync(path.join(broken, '.test-tiers.json'), '{ not json');
+    assert.ok(mod.ciAndIdentityReasons({ cwd: broken, member: { id: 'm', prNumber: 7, repo: 'o/n', oid: head }, base: 'main', deps: { gh } }).some((r) => /not valid JSON/.test(r)));
+  });
+
   it('the relocated ship-commit answers --selfcheck-relocation', () => {
     const r = run(reloc('scripts/ship-commit.mjs'), ['--selfcheck-relocation']);
     assert.equal(r.status, 0, r.stderr);
@@ -144,7 +163,7 @@ describe('the source repo loads the full-suite verdict (the optional edge is not
     const mod = await import('../scripts/lib/fleet/ship-batch.mjs');
     assert.equal(mod.CI_VERDICT_LOADED, true);
     assert.ok(fs.existsSync(path.join(ROOT, 'scripts/lib/ci-verdict.mjs')));
-    // With no ciFn injected, the real verdict runs: a repo whose .test-tiers.json declares a workflow is judged by it, never "undeclared".
+    // That the real verdict then DECIDES a member re-check is proven in tests/fleet-ci-verdict-load.test.mjs (a failed run refuses, a successful one passes).
     const ci = await import('../scripts/lib/ci-verdict.mjs');
     assert.equal(typeof ci.ciVerdict, 'function');
   });

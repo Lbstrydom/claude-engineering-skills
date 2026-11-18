@@ -20,7 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { AI_TRAILER_KEYS, parseMessageTrailers } from '../commit-trailers.mjs';
@@ -35,14 +35,50 @@ import { summariseRun } from './member-outcome.mjs';
 /**
  * The full-suite verdict (`.test-tiers.json` `ciVerdict`) is a CES-only declaration: `ci-verdict.mjs` and its tier machinery are NOT in the
  * consumer sync closure (tests/ci-verdict.test.mjs pins that), so it is loaded OPTIONALLY and by a computed specifier a closure walk does
- * not follow. Absent, the verdict is "no workflow declared" (nothing to measure), exactly what a consumer without one gets.
+ * not follow. Three outcomes, never conflated:
+ *   - the module is genuinely ABSENT (a consumer): `{impl: null, absent: true}`;
+ *   - it loads: its `ciVerdict` is returned (and validated to be a function);
+ *   - it is present but BROKEN (a syntax error, a missing TRANSITIVE dependency, an initialisation error, a wrong export): the error is
+ *     RETHROWN, never read as "absent". The caller below turns it into a refusal, so a broken verifier fails closed.
+ * @param {string} [url] the module to load (a test points it at fixtures)
+ * @returns {Promise<{impl: Function|null, absent: boolean}>}
  */
-const CI_VERDICT_MODULE = ['..', 'ci-verdict.mjs'].join('/');
+export async function loadCiVerdict(url = new URL('../ci-verdict.mjs', import.meta.url).href) {
+  let mod;
+  try { mod = await import(url); } catch (e) {
+    if (e?.code === 'ERR_MODULE_NOT_FOUND') {
+      // Node names the missing module and who asked for it: only a miss of the REQUESTED module is "absent"; a miss of anything it
+      // imports is a broken verifier.
+      const m = /Cannot find module '([^']+)'/.exec(String(e.message));
+      const missing = m ? (m[1].startsWith('file:') ? fileURLToPath(m[1]) : m[1]) : null;
+      if (missing && path.resolve(missing) === path.resolve(fileURLToPath(url))) return { impl: null, absent: true };
+    }
+    throw e;
+  }
+  if (typeof mod?.ciVerdict !== 'function') throw new Error(`${url} does not export a ciVerdict function`);
+  return { impl: mod.ciVerdict, absent: false };
+}
 let ciVerdictImpl = null;
-try { ciVerdictImpl = (await import(CI_VERDICT_MODULE)).ciVerdict; } catch { ciVerdictImpl = null; }
+let ciVerdictLoadError = null;
+try { ciVerdictImpl = (await loadCiVerdict()).impl; } catch (e) { ciVerdictLoadError = String(e?.message ?? e).split('\n')[0].slice(0, 300); }
 /** Whether the full-suite verdict loaded: true in the source repo, false in a consumer (where it is not shipped). Tested in BOTH layouts. */
 export const CI_VERDICT_LOADED = ciVerdictImpl !== null;
 const UNDECLARED_CI = { verdict: 'unverified', reason: 'no ciVerdict workflow is declared (the full-suite verdict is a CES-only declaration)' };
+
+/**
+ * Where the verifier is absent, is a full-suite workflow nevertheless DECLARED here? A repo that declares one but cannot have it
+ * evaluated must refuse, never read as "nothing declared": a present `.test-tiers.json` that names a `ciVerdict` workflow (or that cannot
+ * be read at all) is a declaration. @returns {{declared: boolean, reason?: string}}
+ */
+export function declaredFullSuite(cwd) {
+  const file = path.join(cwd, '.test-tiers.json');
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (e) { return e.code === 'ENOENT' ? { declared: false } : { declared: true, reason: `.test-tiers.json cannot be read (${e.code ?? e.message}), so whether a full-suite workflow is declared is unknown` }; }
+  let doc;
+  try { doc = JSON.parse(text); } catch { return { declared: true, reason: '.test-tiers.json is present but not valid JSON, so whether a full-suite workflow is declared is unknown' }; }
+  const wf = doc?.ciVerdict?.workflow;
+  return wf ? { declared: true, reason: `.test-tiers.json declares the full-suite workflow ${JSON.stringify(String(wf))}, but the verdict module is not available here, so it cannot be evaluated` } : { declared: false };
+}
 
 export const SHIP_BATCH_SCHEMA = 2;
 export const CHILD_SCHEMA = 'shipped-head/v1';
@@ -161,7 +197,7 @@ export function listReadyMembers(ctx) {
  * green at exactly that head, and where `.test-tiers.json` declares a full-suite workflow, that run is `full` (C8).
  * @returns {string[]} reasons it is not shippable (empty = green)
  */
-export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, requiredChecksError = null, ciFn }) {
+export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, requiredChecksError = null, ciFn, runFn }) {
   const out = [];
   const v = deps.gh(['pr', 'view', String(member.prNumber), '-R', member.repo, '--json', 'state,isDraft,headRefOid,baseRefName'], cwd);
   let doc = null;
@@ -177,8 +213,13 @@ export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, 
   if (rc.verdict !== 'pass' && rc.verdict !== 'none-required') out.push(`ci: required checks ${describeVerdict(rc)}`);
   // The full-suite workflow `.test-tiers.json` declares grades a merge separately (ciVerdict): where none is declared the
   // verdict says so, and that is "nothing to measure here", never a pass and never a refusal.
-  const run = (cmd, args) => spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 120_000, windowsHide: true });
-  const cv = (ciFn ?? (ciVerdictImpl ? (a) => ciVerdictImpl({ run, ...a }) : () => UNDECLARED_CI))({ pr: member.prNumber, head: member.oid });
+  const run = runFn ?? ((cmd, args) => spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 120_000, windowsHide: true }));
+  const target = { pr: member.prNumber, head: member.oid };
+  let cv;
+  if (ciFn) cv = ciFn(target);
+  else if (ciVerdictImpl) cv = ciVerdictImpl({ run, ...target });
+  else if (ciVerdictLoadError) cv = { verdict: 'unverified', reason: `the full-suite verdict module failed to load, so a declared workflow cannot be evaluated: ${ciVerdictLoadError}` };
+  else { const d = declaredFullSuite(cwd); cv = d.declared ? { verdict: 'unverified', reason: d.reason } : UNDECLARED_CI; }
   const undeclared = cv.verdict === 'unverified' && /no ciVerdict workflow is declared/.test(String(cv.reason));
   if (cv.verdict !== 'full' && !undeclared) out.push(`ci: the full-suite run is ${cv.verdict} (${cv.reason ?? 'no reason'})`);
   // Each absence alone is honest (no required checks configured; no workflow declared). BOTH together measure nothing at this head.
