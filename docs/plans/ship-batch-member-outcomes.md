@@ -154,7 +154,7 @@ and every variant is a `z.strictObject`:
 
 | status | terminal? | codes (closed per variant) | required evidence |
 |---|---|---|---|
-| `landed` | **yes** | `merged` | `verdict` (one of the four below), `mergeOid`, `parent` (the measured first parent), `chainIndex` (an integer, or `null` when the verdict does not extend the chain), `attribution`, `gate` |
+| `landed` | **yes** | `merged` | `verdict` (one of the verdicts below), `mergeOid`, `parent` (the measured first parent), `chainIndex` (an integer, or `null` when the verdict does not extend the chain), `attribution`, `gate`; optional `ci` and `trees` (see below) |
 | `refused` | **yes** for this run | `pr-closed`, `pr-draft`, `pr-retargeted`, `conflict`, `behind-base`, `head-moved`, `checks-failed`, `shipped-head-refused`, `ci-refused`, `message-invalid` | `reason`, and `trees: {tested, seen}` for `head-moved` |
 | `skipped` | **yes** | `merged-externally` | `mergeOid` (always non-null), `seenHead` |
 | `not-run` | **no** | `pr-unreadable`, `checks-pending`, `tree-unreadable`, `message-unreadable`, `head-churn`, `merge-unconfirmed`, `awaiting-read-back`, `awaiting-merge-evidence` | `reason` |
@@ -170,6 +170,11 @@ The fields in the evidence column:
     The outcome carries `trees: {expected, observed}`.
 - `attribution` is `this-run` or `unknown` (§2.3).
 - `gate` is the AI-Gate value read back from the squash, or `null`.
+- `ci` (R3-H4) is the strict object `{head, tree, checks: [{name, conclusion}], observedAt}`. The zod variant allows it, and
+  `validatePolicyRun` decides presence by policy: **required** on a rollup step's `landed` outcome and equal, field for
+  field, to that step's `attempt.ci`; **rejected** on any ship-batch outcome. `attempt` gains the matching optional
+  `ci` and `messageSha256`, with the same rule: present only under the rollup policy, and written in the intent.
+- `trees: {expected, observed}` is required with the `tree-mismatch` verdict and rejected with every other verdict.
 
 **Load-time invariants.** These are checked by `validatePolicyRun(run)` on **every** read, before any remote action. A
 violation refuses the run as `record-inconsistent` and merges nothing.
@@ -508,8 +513,8 @@ Exit codes use fleet's existing mapping (`land.mjs`): 0 for ok, 3 for refused or
 | the loop completed (no run stop) with at least one member still `not-run` (for example `checks-pending`, `pr-unreadable`, `head-churn`), with or without landed members | false | 3, resumable | `awaiting-merge` | `subset` | `landed k of n; m not yet decided: land --resume <t> --ship-batch re-checks them` |
 
 **`landed` as a train phase means the content is on `run.base`** (R1-H6): it requires every member terminal and no landed
-verdict `wrong-target`. A `wrong-target` landing leaves the train `awaiting-merge`, so `deriveTrainDone` never marks its
-sessions done. `untested-base` content IS on the base, so it may complete the train, and the summary leads with it.
+verdict `wrong-target` or `tree-mismatch` (R3-H1). Either leaves the train `awaiting-merge`, so `deriveTrainDone` never
+marks its sessions done. `untested-base` content IS on the base, so it may complete the train, and the summary leads with it.
 
 After the first line, the summary prints one line per member: status, code, attribution, the read-back AI-Gate, the merge
 oid, and for needs-user members "type /ship in that session".
@@ -631,8 +636,11 @@ Under `withTrainLock`, `approveRollup`:
    records the PR number (`pr-intent`, then `pr-open`, reconciled as in the table above). It then closes any rollup PR it
    superseded (§2.9.1 step 4), recording each attempt in `rollup.closures`;
 6. writes the serial run: **one step**, `{id: 'rollup/<YYYYMMDD>-<n>', prNumber, repo, testedOid: candidate.oid, head:
-   candidate.oid, accounted: [candidate.oid]}`, and `policy = {name: 'rollup', grantVersion, remote, candidateTree,
-   baseChain: [expectedOid], members, excluded}`;
+   candidate.oid, accounted: [candidate.oid]}`, and the policy built by ONE constructor, `rollupPolicyFrom(train)`, from the
+   immutable operation record (R3-H3). Its strict schema is `{name: 'rollup', grantVersion, remote, candidateTree,
+   baseChain: [expectedOid], members, excluded, rollup: {branch, repo, prNumber, candidate: {oid, tree}}}`. The `pr-open`
+   adoption of the table above compares exactly `rollup` (all four fields), `candidateTree` and the step identity, and
+   both the creation and the adoption path call the same constructor, so they cannot drift;
 7. hands the run to `runSerial` (§2.2-§2.6). The rollup policy answers:
    - `admit`: re-admit **every** member (the same `admitMember`), plus the PR head equal to the candidate oid and the head
      tree equal to `candidateTree`. A member failing is a run fault (`member-refused:<id>`), never a member skip;
@@ -716,12 +724,18 @@ A rebuilt rollup is always a new branch, so a red or stale rollup's candidate an
 - **Member PRs, if any** (a member that opened one before the repo switched to rollup) are closed by a **post-landing
   cleanup**, separate from the landing (R2-H3). The landing is immutable once `finalized`; the cleanup is its own step with
   its own record, `rollup.closures` in the train (`pending`, `closed`, `failed` with the reason):
-  - **when:** only after `finalized`, with the rollup step `landed` and its content on `run.base`: verdict `verified`,
-    `provenance-lost`, `untested-base` or `tree-mismatch`. A `halt` stops further MERGES, not cleanup; the member PRs are
-    superseded either way, because their content is on the base. Never on `wrong-target`, `merge-unconfirmed`, `not-run`,
-    or a stop before landing;
-  - **what:** for each member PR still OPEN, `gh pr close <n> --comment "superseded by #N (fleet rollup <id>)"`, after
-    re-reading its state;
+  - **when:** only after `finalized`, with the rollup step `landed` and the candidate content proven on `run.base`:
+    verdict `verified`, `provenance-lost` (the tree matched; only the message differs) or `untested-base` (GitHub applied the
+    tested squash onto a newer parent). A `halt` stops further MERGES, not this cleanup. **Never** on `tree-mismatch`
+    (R3-H1): a squash tree other than the candidate's does not prove any member's content landed, so neither the member PRs
+    nor the sessions are touched until a human verifies each member against the landed tree; the summary says so per
+    member. Never on `wrong-target`, `merge-unconfirmed`, `not-run`, or a stop before landing;
+  - **what** (R3-H2): each closure record is bound to `{repo, prNumber, head}`, the member's admitted head. Before closing,
+    the cleanup re-reads the PR. OPEN with `headRefOid === head`: `gh pr close <n> --comment "superseded by #N (fleet rollup
+    <id>)"`. Any other head: `skipped-head-moved`, never closed, and the summary tells the operator the PR holds work that
+    did not land. Unreadable: `failed`, retried. `gh pr close` has no server-side head condition, so a push in the moment
+    between the read and the close is not excluded. The residual is stated and bounded: a close deletes nothing, the branch
+    and its commits stay, the PR can be reopened, and the record keeps the head it judged;
   - **invocation and retry:** it runs at the end of `approveRollup`, and again on every `land --resume <t> --rollup`, for
     `pending` and `failed` entries only. These are the only remote calls a finalized rollup resume makes, and none of them
     touches the merge. The summary lists every closure that is not `closed`.
@@ -1033,8 +1047,12 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
       - crash before and after the serial write and before `run-started`: resume adopts a matching run once, and refuses a
         run with a different `prNumber` or candidate as `rollup-run-mismatch`;
       - crash after `finalized` and before the train patch: a resume applies the patch with zero remote reads;
-      - cleanup: a failed close is retried on resume without a merge call; an `untested-base` and a `tree-mismatch` rollup
-        still close member PRs; a `wrong-target` one closes none;
+      - cleanup: a failed close is retried on resume without a merge call; an `untested-base` rollup closes member PRs;
+        a `tree-mismatch` or `wrong-target` one closes none and leaves the train `awaiting-merge`, sessions not done;
+      - cleanup binding: a member PR whose head moved after admission is `skipped-head-moved` and stays open;
+      - policy constructor: creation and `pr-open` adoption produce byte-identical policies from one operation record;
+      - schema: a rollup `landed` without `ci`, a ship-batch outcome with `ci`, and a `ci` that differs from `attempt.ci`
+        each fail `validatePolicyRun`;
       - CI evidence: crash after the merge; the landed outcome's `ci` equals the intent's `attempt.ci` byte for byte;
       - `tree-mismatch`: a squash onto the right parent with another tree gives `landed/tree-mismatch` with both trees, a
         `halt`, and `ok: false`, at first read-back and at resume;
