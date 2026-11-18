@@ -126,6 +126,7 @@ describe('4e0763d54f00 — the manifest is built from what was written, not re-r
     assert.match(r.stdout, rehash, 'red evidence: the parent hashed the destination AFTER the loop');
     const now = fs.readFileSync(path.join(ROOT, 'scripts/sync-to-repos.mjs'), 'utf8');
     assert.doesNotMatch(now, rehash);
-    assert.match(now, /consumerFileMap\[dstRel\] = writtenHash\.get\(dstRel\)/);
+    assert.match(now, /selectManifestBases\(\{/, 'the CLI builds its bases through the pure selector');
+    assert.match(fs.readFileSync(path.join(ROOT, 'scripts/lib/sync-gc.mjs'), 'utf8'), /files\[rel\] = writtenHash\.get\(rel\)/);
   });
 });

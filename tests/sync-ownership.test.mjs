@@ -23,7 +23,8 @@ describe('classifyOwnership — adopts what is provably ours', () => {
     // The banner survives local edits, and an edited synced file is still OURS
     // (an in-place edit is a governance violation, not a change of authorship).
     const r = classifyOwnership({
-      destContent: `${BANNER}\nexport const x = 'locally edited';\n`,
+      // The banner as injectUpstreamBanner actually writes it: a comment on the FIRST content line (a placement, not a substring).
+      destContent: `// ${BANNER}\nexport const x = 'locally edited';\n`,
       sourceContent: 'export const x = 1;\n',
       bannerMarker: BANNER,
     });
@@ -42,7 +43,7 @@ describe('classifyOwnership — adopts what is provably ours', () => {
   test('the banner proof is checked BEFORE identity', () => {
     // Ordering matters for the evidence label the operator reads: a bannered
     // file that also matches should report the stronger, authorship-based proof.
-    const same = `${BANNER}\nexport const x = 1;\n`;
+    const same = `// ${BANNER}\nexport const x = 1;\n`;
     const r = classifyOwnership({ destContent: same, sourceContent: same, bannerMarker: BANNER });
     assert.equal(r.evidence, 'banner');
   });

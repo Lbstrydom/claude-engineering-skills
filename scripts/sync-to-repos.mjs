@@ -1495,7 +1495,8 @@ async function main() {
         const { files: consumerFileMap, keepJournal: keepJournalNow } = selectManifestBases({
           intendedDests, notWrittenByUs, writtenHash, failedWrites,
           carriedFor: (rel) => priorFiles[rel] ?? (priorLayout === 'legacy' ? priorFiles[intendedWrites.get(rel)] : undefined),
-          stillThere: (rel) => fs.existsSync(path.join(repo.path, rel)),
+          // Drop a carried base only on CONFIRMED absence: an existence probe that could not look (an inaccessible ancestor) is not "gone".
+          stillThere: (rel) => mayStillExist(path.join(repo.path, rel)),
           mayStillExist: (rel) => mayStillExist(path.join(repo.path, rel)),
         });
         if (keepJournalNow) keepJournal = true;
