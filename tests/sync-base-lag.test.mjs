@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { classifyBaseLag, planBaseLag, parseNameOnlyZ, realRunVerdictOf, enforceBaseLag, enforceBaseLagForTarget, describeUnmeasuredTargets } from '../scripts/lib/sync-base-lag.mjs';
 import { describeRunSummary } from '../scripts/lib/sync-run-summary.mjs';
@@ -405,6 +406,7 @@ describe('enforceBaseLag - real git', () => {
         assert.deepEqual([r.ok, r.outcome], [false, 'refused'], text);
         assert.match(text, /could NOT be re-applied automatically/);
         assert.doesNotMatch(text, /and \d+ more/, 'no truncated path list');
+        assert.ok(text.includes(`restore command: git -C '${w.consumer}' restore --source=`) || text.includes(`git -C '${w.consumer}' restore --source=`), 'the checkout path is single-quoted too, so $(...) in it is inert');
         for (const n of names) assert.ok(text.includes(`':(literal)${n.replace(/'/g, "'\\''")}'`), `${n} must appear single-quoted and literal in: ${text}`);
       } finally { w.rm(); }
     });
@@ -817,6 +819,9 @@ describe('sync-to-repos.mjs CLI - the lag is asked before the first write', { ti
       const first = await runSyncCli(['--target-path', w.consumer, '--no-prompt']);
       assert.equal(first.code, 0, whySyncFailed(first));
       const written = fs.readFileSync(path.join(w.consumer, SUBJECT), 'utf8');
+      const sha = (text) => `sha256:${createHash('sha256').update(text).digest('hex')}`;
+      const manifestEntry = () => JSON.parse(fs.readFileSync(path.join(w.consumer, 'scripts', '.sync-manifest.json'), 'utf8')).files[SUBJECT];
+      assert.equal(manifestEntry(), sha(written), 'precondition: the manifest base for the subject is the bytes sync 1 wrote');
       const manifestIgnored = (() => { try { git(['check-ignore', '-q', 'scripts/.sync-manifest.json'], w.consumer); return true; } catch { return false; } })();
       assert.equal(manifestIgnored, true, 'positive control: the fixture manifest is gitignored, so a fast-forward cannot move the base');
       // The sync PR landed with an OLDER version of the file, then a newer sync wrote `written` and nobody committed it.
@@ -831,6 +836,7 @@ describe('sync-to-repos.mjs CLI - the lag is asked before the first write', { ti
       assert.equal(second.code, 0, `sync 2 must succeed; relevant lines:\n${story}`);
       assert.doesNotMatch(out, /diverged-committed|REFUSED \d+ file/);
       assert.equal(fs.readFileSync(path.join(w.consumer, SUBJECT), 'utf8'), written);
+      assert.equal(manifestEntry(), sha(written), 'the manifest base still equals the file bytes after sync 2 (it was never moved by the restore)');
       const receipt = JSON.parse(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8')).recentSyncs[0];
       assert.equal(receipt.divergenceRefused.length, 0);
       assert.equal(fs.readFileSync(path.join(w.consumer, 'unrelated-later.txt'), 'utf8'), 'origin moves on\n', 'the fast-forward still landed');
