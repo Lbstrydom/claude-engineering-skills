@@ -167,6 +167,8 @@ const LIST_MAX = 5;
 
 /** A repository filename as a LITERAL pathspec: `a[1].md` must not also match `a1.md` (code audit R3 H1). */
 const lit = (p) => `:(literal)${p}`;
+/** POSIX single-quoting, so a recovery command pasted into a shell sees each path as exactly one argument (code audit R4). */
+const sq = (v) => `'${String(v).replace(/'/g, "'\\''")}'`;
 const q = (p) => `"${String(p).replace(/"/g, '\\"')}"`;
 const list = (paths) => `${paths.slice(0, LIST_MAX).join(', ')}${paths.length > LIST_MAX ? `, and ${paths.length - LIST_MAX} more` : ''}`;
 /** Tracked in-place changes are restorable from HEAD by path. Untracked files are left for `merge --ff-only` to judge (renames never get here: see planBaseLag). */
@@ -428,7 +430,7 @@ function failedAfterRestore(git, repoRoot, target, snapshot, restoredPaths, beca
     const staged = git(['restore', `--source=${snapshot}^2`, '--staged', '--', ...restoredPaths.map(lit)]);
     const back = staged.error || staged.status !== 0 ? staged : git(['restore', `--source=${snapshot}`, '--worktree', '--', ...restoredPaths.map(lit)]);
     recovery = back.error || back.status !== 0
-      ? ` The sync-written changes could NOT be re-applied automatically (${firstLine(back)}); they are in commit ${snapshot}: git -C ${q(repoRoot)} restore --source=${snapshot}^2 --staged -- ${list(restoredPaths.map(lit))} && git -C ${q(repoRoot)} restore --source=${snapshot} --worktree -- ${list(restoredPaths.map(lit))}.`
+      ? ` The sync-written changes could NOT be re-applied automatically (${firstLine(back)}); they are in commit ${snapshot}: git -C ${q(repoRoot)} restore --source=${snapshot}^2 --staged -- ${restoredPaths.map((x) => sq(lit(x))).join(' ')} && git -C ${q(repoRoot)} restore --source=${snapshot} --worktree -- ${restoredPaths.map((x) => sq(lit(x))).join(' ')}.`
       : ' The sync-written changes were put back as they were.';
   }
   return refusedFastForward(repoRoot, target, because, recovery);

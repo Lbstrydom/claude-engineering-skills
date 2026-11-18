@@ -390,6 +390,24 @@ describe('enforceBaseLag - real git', () => {
         assert.equal(git(['show', ':a1.md'], w.consumer), 'kept', 'nor was its staged state');
       } finally { w.rm(); }
     });
+    // Code audit R4: when automatic recovery itself fails, the printed command is complete and shell-safe.
+    it('a failed automatic recovery prints EVERY restored path, each as one single-quoted literal pathspec', () => {
+      const w = world();
+      try {
+        const names = ['a b.md', 'c$d.md', "e'f.md", 'g;h.md', 'i.md', 'j.md', 'k.md']; // 7: more than the old five-path truncation
+        for (const n of names) fs.writeFileSync(path.join(w.consumer, n), 'one\n');
+        git(['add', '.'], w.consumer); git(['commit', '-q', '-m', 'files'], w.consumer); git(['push', '-q', 'origin', 'main'], w.consumer);
+        for (const n of names) w.advance(n, 'upstream\n');
+        for (const n of names) fs.writeFileSync(path.join(w.consumer, n), 'ours\n');
+        const brokenRollback = (cmd, args, o) => (args.includes('merge') || args.some((a) => /\^2$/.test(a)) ? { status: 1, stdout: '', stderr: 'simulated failure' } : run(cmd, args, o));
+        const r = enforceBaseLag({ repoRoot: w.consumer, run: brokenRollback, classify: syncOwned(...names.map((n) => [' M', n])) });
+        const text = r.lines.join('\n');
+        assert.deepEqual([r.ok, r.outcome], [false, 'refused'], text);
+        assert.match(text, /could NOT be re-applied automatically/);
+        assert.doesNotMatch(text, /and \d+ more/, 'no truncated path list');
+        for (const n of names) assert.ok(text.includes(`':(literal)${n.replace(/'/g, "'\\''")}'`), `${n} must appear single-quoted and literal in: ${text}`);
+      } finally { w.rm(); }
+    });
     // Code audit R2 H2: the identity check guards EVERY mutation, including the merge of an all-kept plan (nothing restored)...
     refusesAndTouchesNothing('ALL-KEPT plan (nothing to restore): a branch switch at the same commit still refuses before the merge',
       (w) => (cmd, args, o) => {
