@@ -227,6 +227,11 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
   }
   // Resolved ONCE, from the verified oid: nothing below reads HEAD again, so a worktree that switches commits mid-check cannot
   // make the facts describe two different heads.
+  // The local base ref is a MUTABLE ref that two later calculations read: it is snapshotted once here, in BOTH modes, and compared
+  // again at the end, so a fetch between those reads refuses instead of letting the two candidate sets be measured from different bases.
+  const localBaseRef = defaultBaseRef((a) => run(a), baseRefName, remote);
+  const localBase0 = run(['rev-parse', '--verify', localBaseRef]);
+  const localBaseOid = localBase0.status === 0 ? String(localBase0.stdout).trim() : null;
   const treeRes = run(['rev-parse', '--verify', `${headOid}^{tree}`]);
   const headTree = treeRes.status === 0 ? String(treeRes.stdout).trim() : null;
 
@@ -270,7 +275,18 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
   // The evidence is bound to a BRANCH, and a checkout of another branch at the same commit leaves HEAD's oid unchanged.
   const branchAfter = run(['symbolic-ref', '--quiet', '--short', 'HEAD']);
   if ((branchAfter.status === 0 ? String(branchAfter.stdout).trim() : null) !== currentBranch) return envelope(pre('head', 'the checked-out branch changed while the check was running: the evidence was bound to another branch'), headOid);
-  // ...and so is the base ref the change was measured against: it was verified once, so it must still be what it was.
+  // ...and so is the local base ref both change sets were measured against (offline included).
+  if (localBaseOid) {
+    const localAgain = run(['rev-parse', '--verify', localBaseRef]);
+    if (localAgain.status !== 0 || String(localAgain.stdout).trim() !== localBaseOid) return envelope(pre('base', `${localBaseRef} moved while the check was running: the change sets were measured against different bases`), headOid);
+  }
+  // ...and the live default branch NAME, when it was taken from the remote rather than named by the caller.
+  if (verifyBase && !baseBranch) {
+    const symAgain = run(['ls-remote', '--symref', remote, 'HEAD']);
+    const m2 = symAgain.status === 0 ? /^ref: refs\/heads\/(.+)\tHEAD$/m.exec(String(symAgain.stdout)) : null;
+    if ((m2 ? m2[1].trim() : null) !== baseRefName) return envelope(pre('base', `the default branch of ${remote} changed (or could not be re-read) while the check was running: the PR's target is no longer ${baseRefName}`), headOid);
+  }
+  // ...and so is the verified base ref: it was verified once, so it must still be what it was.
   if (baseOidAtStart) {
     const again = run(['rev-parse', '--verify', `refs/remotes/${remote}/${baseRefName}`]);
     if (again.status !== 0 || String(again.stdout).trim() !== baseOidAtStart) return envelope(pre('base', `refs/remotes/${remote}/${baseRefName} moved while the check was running: the change was measured against two different bases`), headOid);

@@ -507,6 +507,25 @@ describe('--check-shipped-head: the LIVE base (code-audit round 5)', () => {
     assert.deepEqual(failing(env), ['base']);
     assert.match(reason(env, 'base'), /pass --base/);
   });
+  it('OFFLINE too: the local base ref moving between the two change-set calculations is refused', async () => {
+    const { dir, head, auditedTree } = await withRemote();
+    const racy = store({ auditedTree });
+    const real = racy.runFacts;
+    racy.runFacts = async (id) => { const other = git(dir, 'commit-tree', '-m', 'moved', `${git(dir, 'rev-parse', 'origin/main')}^{tree}`); git(dir, 'update-ref', 'refs/remotes/origin/main', other); return real(id); };
+    const env = await checkReal({ repoRoot: dir, head, baseBranch: 'main', verifyBase: false, store: racy });
+    assert.deepEqual(failing(env), ['base']);
+    assert.match(reason(env, 'base'), /moved while the check was running/);
+  });
+  it('with no --base, the remote default branch changing WHILE the check runs is refused (the PR target is no longer the one measured)', async () => {
+    const { dir, bare, head, auditedTree } = await withRemote();
+    git(dir, 'push', '-q', 'origin', 'main:develop');
+    const racy = store({ auditedTree });
+    const real = racy.runFacts;
+    racy.runFacts = async (id) => { spawnSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/develop'], { cwd: bare, encoding: 'utf-8', windowsHide: true }); return real(id); };
+    const env = await checkReal({ repoRoot: dir, head, store: racy });
+    assert.deepEqual(failing(env), ['base']);
+    assert.match(reason(env, 'base'), /default branch of origin changed/);
+  });
   it('a base that moves WHILE the check runs is refused (measured against two bases)', async () => {
     const { dir, head, auditedTree } = await withRemote();
     const racy = store({ auditedTree });
