@@ -575,3 +575,22 @@ export); the real-git `--check-shipped-head` suite; seven mutations of the merge
 re-check, first-parent check, read-back, `noUpdate`, selection) each turned the suite red, and the base-tip one first MISSED until a
 test moved the base DURING the run, which is why that test exists; the Tier 3 relocated-layout test copies the closure through the
 real path map and runs the relocated CLIs.
+
+### Code audit trail (`/audit-code --scope diff --base origin/main`, SID `audit-code-1794991985170-57032`)
+
+GPT rounds (HIGH / MEDIUM): R1 19 / 11, R2 7 / 4, R3 6 / 2, R4 5 / 1, R5 5 / 1, R6 1 / 1. Every finding was ruled in the ledger: fixed with a
+test, dismissed with a reason (a shared claim about the combined integration test that serial landing never relied on; a
+cross-repository read that the evaluator already refuses), or deferred with the honest-deferral fields (the server-side merge queue,
+proposal `p-20261118092842`-family, and the overlapping record/ship grammars).
+
+**The loop stopped at the soft cap (6), not at convergence.** The last round still raised 1 HIGH and 1 MEDIUM; both were fixed with a
+test, and that fix was NOT re-audited. The structural-or-stop card read 4 structural, 1 local and 50 polish clusters, with
+`serial.mjs` and `ship-batch.mjs` raised in all six rounds: the serial runner has no first-class per-member outcome model, so the
+ship-batch skip, hook and read-back semantics are bolted on through three seams. That is recorded as a follow-up
+(`fleet propose`), not hidden, and the call between STOP, STRUCTURAL and CONTINUE is the coordinator's and the user's.
+
+**Final review** (gemini, round 1 of 2): `APPROVE`, gate `approve` (blocking 0, debt 0). It carried a coverage note: "Code: PARTIAL,
+337 changed lines never shown", so the approval is of what it was shown.
+
+Gates: `npm run guards:preflight` PASS (36 steps) at the head named in the report. Not run here: the full suite (it runs in Actions
+for this repo) and `db:suites:gate`, `gates:poison`, which the preflight omits by design.
