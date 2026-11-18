@@ -144,12 +144,13 @@ describe('createPriorUpstreamResolver - rendered earlier versions (rewritten des
     assert.equal(r.stats.retainedBytes, 3 * 5000);
   });
 
-  it('a binary (NUL) blob: raw match still works; with acceptRaw:false the rendered question is unanswered (null)', () => {
+  it('a binary (NUL) blob: raw match works with NO render; once a render is requested it cannot be rendered, so it is unanswered (null), never a match', () => {
     const bin = makeSource([`a\0b\n`, `c\0d\n`], 'bin/x.dat');
     try {
       const r = createPriorUpstreamResolver({ sourceRoot: bin });
       const render = (t) => t;
-      assert.equal(r.matches('bin/x.dat', sha('a\0b\n'), { render, acceptRaw: true }), true);
+      assert.equal(r.matches('bin/x.dat', sha('a\0b\n')), true, 'raw-only caller');
+      assert.equal(r.matches('bin/x.dat', sha('a\0b\n'), { render, acceptRaw: true }), null, 'FAIL CLOSED: rewrite eligibility unknown');
       assert.equal(r.matches('bin/x.dat', sha('zzz'), { render, acceptRaw: false }), null);
     } finally { rm(bin); }
   });
@@ -163,6 +164,13 @@ describe('createPriorUpstreamResolver - rendered earlier versions (rewritten des
     assert.equal(r.matches(SRC, sha(V1), { render: asObj(cfgFor([])), acceptRaw: true }), true);
     // and a rendered match is unaffected
     assert.equal(r.matches(SRC, sha(renderWith(cfg)(V1)), { render: asObj(cfg), acceptRaw: true }), true);
+  });
+
+  it('audit-code R2 H2/H3: a RAW match is not accepted when the blob could not be rendered (render threw, or over the byte cap) - null, not true', () => {
+    const throwing = () => { throw new Error('boom'); };
+    assert.equal(createPriorUpstreamResolver({ sourceRoot: dir }).matches(SRC, sha(V1), { render: throwing, acceptRaw: true }), null);
+    assert.equal(createPriorUpstreamResolver({ sourceRoot: dir, maxRenderBlobBytes: 8 }).matches(SRC, sha(V1), { render: renderWith(cfg), acceptRaw: true }), null);
+    assert.equal(createPriorUpstreamResolver({ sourceRoot: dir }).matches(SRC, sha(V1), { acceptRaw: true }), true, 'positive control: a raw-only caller still matches');
   });
 
   it('audit-code R1 M1: even SMALL retained bodies own their allocation (not a slice of Node\'s shared pool)', () => {
@@ -248,25 +256,32 @@ function makeConsumer(label) {
 }
 
 /**
- * A controlled copy of THIS repository (HEAD, so it carries the code under test) whose fleet reference file gets a synthetic, known
- * two-commit history: v1 holds a rewritable command, v2 (HEAD) holds none. The CLI syncs FROM its own repository, so running the clone's
- * copy of the CLI makes the history the resolver reads a fixture, independent of how this repo's real history evolves.
+ * A controlled source REPOSITORY: this checkout's tracked working-tree files (so the code under test, committed or not, is what runs),
+ * committed as ONE fresh base commit, then a synthetic, known history for the fleet reference file: v1 holds a rewritable command, v2
+ * (HEAD) holds none. The CLI syncs FROM its own repository, so running this copy's CLI makes the history the resolver reads a fixture:
+ * complete (never shallow) and independent of how this repo's real history evolves.
  */
 function makeControlledSource(tail) {
-  const dir = fs.mkdtempSync(path.join(REPO_ROOT, '.claude', 'tmp', 'ces-ctl-src-'));
-  execFileSync('git', ['clone', '-q', '--no-hardlinks', REPO_ROOT, dir], { stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
-  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf-8' });
-  g('config', 'user.email', 't@example.com'); g('config', 'user.name', 't'); g('config', 'core.autocrlf', 'false');
-  // The clone carries HEAD; the code under test may be uncommitted. Overlay this checkout's tracked modifications so the clone's CLI is the one under test.
-  const dirty = execFileSync('git', ['-C', REPO_ROOT, 'diff', '--name-only', 'HEAD'], { encoding: 'utf-8' }).split('\n').filter((p) => p && fs.existsSync(path.join(REPO_ROOT, p)));
-  for (const p of dirty) fs.copyFileSync(path.join(REPO_ROOT, p), path.join(dir, p));
-  if (dirty.length) { g('add', '-A'); g('commit', '-q', '-m', 'overlay uncommitted work under test'); }
+  const parent = path.join(REPO_ROOT, '.claude', 'tmp'); // under the repo so node resolves its node_modules
+  fs.mkdirSync(parent, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(parent, 'ces-ctl-src-'));
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 });
+  g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@example.com'); g('config', 'user.name', 't'); g('config', 'core.autocrlf', 'false');
+  const tracked = execFileSync('git', ['-C', REPO_ROOT, 'ls-files', '-z'], { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }).split('\0').filter(Boolean);
+  for (const p of tracked) {
+    const from = path.join(REPO_ROOT, p);
+    if (!fs.existsSync(from) || !fs.statSync(from).isFile()) continue; // a deleted-but-unstaged file is simply absent from the copy
+    fs.mkdirSync(path.dirname(path.join(dir, p)), { recursive: true });
+    fs.copyFileSync(from, path.join(dir, p));
+  }
+  g('add', '-A'); g('commit', '-q', '--no-verify', '-m', 'base: copy of the code under test');
   const file = path.join(dir, FLEET_REL);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `# chip preamble (controlled v1)\nrun \`node scripts/${tail} --check\` before you start\n`);
-  g('add', '-A'); g('commit', '-q', '-m', 'controlled v1: rewritable command');
+  g('add', '-A'); g('commit', '-q', '--no-verify', '-m', 'controlled v1: rewritable command');
   const v1 = g('rev-parse', 'HEAD').trim();
   fs.writeFileSync(file, '# chip preamble (controlled v2)\nno command here any more\n');
-  g('add', '-A'); g('commit', '-q', '-m', 'controlled v2: no command');
+  g('add', '-A'); g('commit', '-q', '--no-verify', '-m', 'controlled v2: no command');
   return { dir, v1 };
 }
 
@@ -358,7 +373,7 @@ function describeFlow(title, { prepare, cleanup, skip }) {
 // 2: the MANDATORY regression, on a controlled source history (the current version has NO rewrite hits, the earlier one has: the
 // shape that makes raw acceptance depend on the HISTORICAL blob, not on the current file).
 describeFlow('controlled history: an earlier rewritten version is updated, a raw copy of it is not', {
-  skip: shallowReason,
+  skip: false,
   prepare: async () => {
     // any owned tail the bundle really ships: read it from the first sync's own inventory by probing the bundle layout
     const tail = fs.existsSync(path.join(REPO_ROOT, 'scripts', 'cross-skill.mjs')) ? 'cross-skill.mjs' : 'fleet.mjs';

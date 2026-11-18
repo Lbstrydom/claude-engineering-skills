@@ -680,7 +680,10 @@ export function createPriorUpstreamResolver({
         const rendered = render ? renderedInfo(o, render) : null;
         // Raw bytes count only when the pipeline would NOT have rewritten THIS blob (audit-code R1 H1-H3): a raw copy of a blob that has
         // rewrites is a consumer who removed them, whatever the current version of the file looks like.
-        if (acceptRaw && raw.includes(disk) && !(rendered && rendered.hits > 0)) return true; // one genuine upstream blob proves it, whatever else failed
+        // FAIL CLOSED (audit-code R2 H2/H3): when a render was requested but this blob could not be rendered (it threw, is binary, or is over
+        // a retention cap) its rewrite eligibility is unknown, so its raw bytes prove nothing: the answer is unanswered, never a match.
+        const rawEligible = acceptRaw && (!render || (rendered !== null && !(rendered.hits > 0)));
+        if (rawEligible && raw.includes(disk)) return true; // one genuine upstream blob proves it, whatever else failed
         if (render) {
           if (rendered === null) unanswered = true;
           else if (rendered.hashes.includes(disk)) return true;
