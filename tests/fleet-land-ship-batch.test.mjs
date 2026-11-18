@@ -452,6 +452,36 @@ describe('approveShipBatch: the merge, on the real serial runner', () => {
     assert.equal(readShipBatch(b.dir, b.trainId).ok, false);
   });
 
+  it('a sidecar naming another repository or PR number than the train merges is refused before any merge', () => {
+    for (const bad of [{ prNumber: 99 }, { repo: 'someone/else' }]) {
+      const b = batchFx();
+      const rec = readShipBatch(b.dir, b.trainId).batch;
+      writeShipBatch(b.dir, { ...rec, members: [{ ...rec.members[0], ...bad }] });
+      const g = ghFor(b);
+      const r = approve(b, g.gh);
+      assert.equal(r.ok, false, JSON.stringify(bad));
+      assert.match(r.reason, /does not describe train/);
+      assert.equal(g.merges.length, 0);
+    }
+  });
+
+  it('a PR GitHub reports MERGED before it reports the merge commit: recorded, completed from GitHub on --resume, then verified', () => {
+    const b = batchFx();
+    let squash = null; let reportOid = false;
+    const { gh } = scriptedGh({
+      views: () => (squash ? view(b.tested, { state: 'MERGED', mergeCommit: reportOid ? { oid: squash } : null }) : view(b.tested)),
+      onMerge: (args) => { squash = squashFrom(b.fx, args); return ok(); },
+    });
+    const r1 = approve(b, gh);
+    assert.equal(r1.ok, false);
+    assert.equal(b.member().state, 'merged', 'merged is recorded, the merge commit is not yet known');
+    reportOid = true; // GitHub catches up
+    const r2 = resume(b, gh);
+    assert.equal(r2.ok, true, r2.text);
+    assert.equal(b.member().state, 'verified');
+    assert.equal(b.member().mergeOid, squash, 'the null OID was replaced from GitHub, not reused');
+  });
+
   it('an unknown train (no sidecar) is refused: a plain train cannot borrow the grant', () => {
     const b = batchFx();
     fs.rmSync(path.join(b.dir, 'shipbatch', `${b.trainId}.json`), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });

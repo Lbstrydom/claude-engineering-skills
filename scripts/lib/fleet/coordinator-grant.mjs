@@ -85,6 +85,9 @@ export function parseShipBatchGrant(text) {
   const mi = exact[0];
   // A fence still open at the marker (by the CommonMark rules above) makes it an EXAMPLE, not a grant.
   if (fencedAt(lines, mi)) return { ok: false, code: 'grant-mismatch', reason: 'the grant marker sits inside a code fence: an example, not a grant' };
+  // ...and so does an HTML comment opened earlier and closed by the marker's own `-->`.
+  const before = lines.slice(0, mi).join('\n');
+  if (before.lastIndexOf('<!--') > before.lastIndexOf('-->')) return { ok: false, code: 'grant-mismatch', reason: 'the grant sits inside an HTML comment: not a grant' };
   const hi = lines.lastIndexOf(GRANT_HEADING, mi);
   if (hi < 0) return { ok: false, code: 'grant-mismatch', reason: `the section heading ${JSON.stringify(GRANT_HEADING)} is not above the marker` };
   // The grant is the WHOLE section: nothing but blank lines may follow the marker before the next heading (a restriction added

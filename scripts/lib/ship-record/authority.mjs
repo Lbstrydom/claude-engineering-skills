@@ -187,10 +187,13 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
   const stB = statusIndex(b);
   const logA = logRange(a);
   const logB = logRange(b);
+  // ONE log heading: a second one inserted ahead of the real log would make `logRange` select the new one and re-label old prose.
+  if (b.filter((l) => l === LOG_HEADING).length > 1) return `${rel}: more than one ${LOG_HEADING} heading`;
+  const blankOk = (ls, i, log) => isBlank(ls[i]) && log !== null && i >= log[0] && i < log[1];
   for (const r of runs) {
     // APPEND-ONLY: an existing line may change only if it is the Status field (or a blank). A log entry rewritten or deleted refuses.
-    for (let i = r.oldAt; i < r.oldAt + r.oldN; i++) if (!(isBlank(a[i]) || i === stA)) return `${rel}: existing line ${i + 1} was changed or removed (only the Status field may change; the ${LOG_HEADING} is append-only)`;
-    for (let j = r.newAt; j < r.newAt + r.newN; j++) if (!(isBlank(b[j]) || j === stB || (logB !== null && j >= logB[0] && j < logB[1]))) return `${rel}: line ${j + 1} was added outside the Status field and the ${LOG_HEADING}`;
+    for (let i = r.oldAt; i < r.oldAt + r.oldN; i++) if (!(blankOk(a, i, logA) || i === stA)) return `${rel}: existing line ${i + 1} was changed or removed (only the Status field may change; the ${LOG_HEADING} is append-only)`;
+    for (let j = r.newAt; j < r.newAt + r.newN; j++) if (!(j === stB || (logB !== null && j >= logB[0] && j < logB[1]) || (logA === null && logB !== null && isBlank(b[j]) && j === logB[0] - 1))) return `${rel}: line ${j + 1} was added outside the Status field and the ${LOG_HEADING}`;
   }
   // A log the ship CREATES must be APPENDED: the last section, in an insertion that starts AFTER every non-blank line of the old
   // document. A heading dropped into the middle of the document, or inside the final section ahead of its own text, would

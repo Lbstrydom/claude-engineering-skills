@@ -255,7 +255,14 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
   for (let i = 0; i < run.steps.length; i += 1) {
     if (run.steps[i].step === 'merged') {
       // A member merged on an earlier run whose read-back did not finish is read back now, never skipped (the hook is idempotent).
-      const again = hooks?.onMerged?.({ source: run.steps[i], mergedOid: run.steps[i].mergedOid });
+      // GitHub may not have reported the merge commit when the step was recorded: ask again before reading anything back.
+      let mergedOid = run.steps[i].mergedOid;
+      if (!mergedOid && hooks?.onMerged) {
+        const v = viewPr(deps, cwd, run.steps[i]);
+        mergedOid = v.ok ? (v.doc.mergeCommit?.oid ?? null) : null;
+        if (mergedOid) setStep(i, { mergedOid });
+      }
+      const again = hooks?.onMerged?.({ source: run.steps[i], mergedOid });
       if (again?.stop) return stop(i, again.stop);
       continue;
     }

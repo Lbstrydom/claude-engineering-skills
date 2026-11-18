@@ -110,6 +110,14 @@ describe('parseShipBatchGrant: everything else refuses, with its own code', () =
     const r = parseShipBatchGrant(wrap(dated.replace('Since 2026-11-18:', 'Since forever, except on Fridays:')));
     assert.equal(r.code, 'grant-mismatch');
   });
+  it('an HTML comment opened BEFORE the section and closed by the marker\'s own --> hides the grant: refused', () => {
+    const r = parseShipBatchGrant(`<!-- an old note\n${dated}\n`);
+    assert.deepEqual([r.ok, r.code], [false, 'grant-mismatch']);
+    assert.match(r.reason, /HTML comment/);
+  });
+  it('a CLOSED comment earlier in the file does not hide a real grant (the control)', () => {
+    assert.equal(parseShipBatchGrant(`<!-- an old note -->\n\n${dated}\n`).ok, true);
+  });
   it('the heading missing above the marker: refuses', () => {
     assert.equal(parseShipBatchGrant(wrap(dated.replace(GRANT_HEADING, '## Something else'))).code, 'grant-mismatch');
   });

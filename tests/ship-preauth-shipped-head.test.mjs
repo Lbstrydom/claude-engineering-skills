@@ -261,6 +261,15 @@ describe('isShipStepDelta: the hardened grammar (code-audit round 1)', () => {
     const huge = Array.from({ length: 250_000 }, (_, i) => `- entry ${i}`).join('\n');
     assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: `${PLAN_OLD}\n## Implementation Log\n${huge}\n` }), /too large/);
   });
+  it('a SECOND log heading inserted ahead of the real log cannot re-label old prose as "log"', () => {
+    const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
+    const sneaky = withLog.replace('## Phase 1\n', '## Implementation Log\nplanted prose\n## Phase 1\n');
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: sneaky }), /more than one .*Implementation Log/);
+  });
+  it('blank lines are NOT a free pass: a whitespace change outside the log refuses; the separator above a created log is allowed', () => {
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD.replace('## Context', '\n## Context') }), /added outside the Status field|existing line/);
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD + '\n## Implementation Log\n- shipped\n' }), null);
+  });
   it('an unknown mode refuses (never a pass)', () => {
     assert.match(isShipStepDelta({ status: 'A', rel: entryName, newText: 'x' }), /not a regular file \(mode unknown\)/);
   });

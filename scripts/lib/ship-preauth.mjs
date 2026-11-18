@@ -238,11 +238,13 @@ export function renderPreauthConditions(verdict) {
  * @param {string} tree the tree-ish the commit will carry (a tree id, or HEAD)
  * @param {string} [head] the commit whose fork point is measured (default HEAD). The batch re-check passes the commit it was asked
  *   about, so no later read depends on what HEAD happens to be.
+ * @param {string|null} [baseBranch] the branch the change targets (default: what `origin/HEAD` names). The batch re-check passes the
+ *   branch the PR actually targets, so a PR into a non-default branch is measured against THAT branch.
  * @returns {string[]|null}
  */
-export function gatherChangedPaths(run, tree, head = 'HEAD') {
+export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null) {
   const out = (args) => { const r = run(args); return r && r.status === 0 ? String(r.stdout ?? '').trim() : null; };
-  const defaultRef = out(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+  const defaultRef = baseBranch ? `refs/remotes/origin/${baseBranch}` : out(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
   // origin/HEAD is the authoritative default branch; `origin/main` is the conventional remote-tracking name when HEAD is unset.
   // A LOCAL `main` is never substituted: it can differ from the remote's, and an unverified base can hide what the PR changes.
   // Discovery and resolution are separate: once origin/HEAD NAMES the default branch, that branch's merge base is the only
@@ -263,9 +265,11 @@ export function gatherChangedPaths(run, tree, head = 'HEAD') {
  * `refs/remotes/origin/main` (never a local `main`; see gatherChangedPaths). One resolver for the head's merge base and for the
  * AUDITED tree's, so the two candidate sets of the batch re-check are measured from the same base.
  * @param {(args: string[]) => {status: number|null, stdout?: string}} run
+ * @param {string|null} [baseBranch] the branch the change targets, when it is not the default
  * @returns {string}
  */
-export function defaultBaseRef(run) {
+export function defaultBaseRef(run, baseBranch = null) {
+  if (baseBranch) return `refs/remotes/origin/${baseBranch}`;
   const r = run(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
   const ref = r && r.status === 0 ? String(r.stdout ?? '').trim() : '';
   return ref || 'refs/remotes/origin/main';

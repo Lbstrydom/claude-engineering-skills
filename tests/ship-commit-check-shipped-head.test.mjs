@@ -321,6 +321,29 @@ describe('--check-shipped-head: the real CLI boundary (store off)', () => {
   });
 });
 
+describe('--check-shipped-head: a PR into a NON-default branch (code-audit round 3)', () => {
+  it('is measured against the branch it targets: a policy file that develop already carries is not the member\'s change', async () => {
+    const { dir } = makeRepo();
+    // origin/develop = main + a commit that touches a policy file (the member did NOT make this change).
+    git(dir, 'checkout', '-q', '-b', 'develop');
+    write(dir, '.github/workflows/ci.yml', 'name: ci\n');
+    const dev = commit(dir, 'develop: ci');
+    git(dir, 'update-ref', 'refs/remotes/origin/develop', dev);
+    git(dir, 'checkout', '-q', '-b', 'claude/y');
+    write(dir, 'scripts/a.mjs', 'export const a = 3; // audited\n');
+    const auditedSha = commit(dir, 'audited work');
+    const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
+    shipDocs(dir);
+    const head = commit(dir, `ship y\n\n${TRAILERS()}`);
+    writeMarkers(dir, { auditedTree, auditedSha, branch: 'claude/y' });
+    const against = (baseBranch) => checkShippedHead({ repoRoot: dir, head, baseBranch, store: store({ auditedTree }) });
+    const wrong = await against(null); // origin/HEAD names main: develop's policy file reads as this member's change
+    assert.ok(failing(wrong).includes('repo-policy'), 'measured against main it WOULD refuse: the instrument sees the file');
+    const right = await against('develop');
+    assert.equal(right.ok, true, right.refusals.join(' | '));
+  });
+});
+
 describe('--check-shipped-head: modes, submodule config and the head race (code-audit round 1)', () => {
   const plumbMode = (dir, rel, mode, text) => {
     const blob = spawnSync('git', ['hash-object', '-w', '--stdin'], { cwd: dir, input: text, encoding: 'utf-8', windowsHide: true }).stdout.trim();

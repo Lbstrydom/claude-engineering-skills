@@ -156,6 +156,13 @@ describe('gatherChangedPaths', () => {
     return { status: 1, stdout: '' };
   };
 
+  it('a change that targets a NON-default branch is measured against THAT branch (the fully qualified ref), never origin/HEAD\'s', () => {
+    const seen = [];
+    const run = (args) => { seen.push(args.join(' ')); return { status: 0, stdout: args[0] === 'symbolic-ref' ? 'refs/remotes/origin/main' : args[0] === 'merge-base' ? 'basecommit' : 'a.txt\0' }; };
+    gatherChangedPaths(run, 'treeid', 'headid', 'develop');
+    assert.ok(seen.some((c) => c === 'merge-base headid refs/remotes/origin/develop'), seen.join('\n'));
+    assert.equal(seen.some((c) => c.startsWith('symbolic-ref')), false, 'origin/HEAD is not consulted when the target is named');
+  });
   it('diffs the merge base against the tree with --no-renames, so BOTH ends of a rename are listed', () => {
     const seen = [];
     const run = (args) => {
