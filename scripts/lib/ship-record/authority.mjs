@@ -131,7 +131,10 @@ const PLAIN_LOG_LINE_RE = /^ {0,3}(?:[-*+] \S|\d{1,9}[.)] \S|\*\*|\*[A-Za-z0-9]|
 /** Why this added log line is not plain, or null. */
 function plainLogLineProblem(l) {
   if (isBlank(l)) return null;
-  if (/^ {0,3}\[[^\]]*\]:/.test(l)) return 'is a link reference definition';
+  // A reference definition can sit INSIDE a container: strip any leading list markers (nested too) before looking for one.
+  let inner = l;
+  for (let i = 0; i < 8; i++) { const m = /^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+(.*)$/.exec(inner); if (!m) break; inner = m[1]; }
+  if (/^ {0,3}\[[^\]]*\]:/.test(inner)) return 'is a link reference definition';
   if (/^ {0,3}(?:=+|-{2,})\s*$/.test(l)) return 'is a setext heading underline or a thematic break';
   return PLAIN_LOG_LINE_RE.test(l) ? null : 'is not a plain list item or prose line';
 }

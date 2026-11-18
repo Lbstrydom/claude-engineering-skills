@@ -591,3 +591,5 @@ but were not re-audited. A member whose log needs a table, a code block or a lin
 (0 blocking, 2 debt, captured): a section-boundary edge case in the log range and a note that the markup/context rules are now partly
 redundant with the whitelist (kept deliberately as defence in depth). A single review over all seven files read `PARTIAL, 177 of 911
 changed lines never shown`, which is why it was split.
+
+**One round past the cap** (approved by the user to verify the pivot): R7 raised 2 HIGH, the same finding twice: a link reference definition nested in a list item (`- [x]: url`) passed the plain-line whitelist. Fixed with a test (six container shapes, red without the fix) and NOT re-audited: the user's ruling was exactly one round past the cap. The finding class (a Markdown construct the whitelist did not name) is therefore narrowed but not proved closed, and the PR carries that caveat.

@@ -406,3 +406,16 @@ describe('isShipStepDelta: section boundaries follow Markdown headings (PR A aud
     assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: old.replace('- r1\n', '- r1\n- r2\n') }), null);
   });
 });
+
+describe('isShipStepDelta: a reference definition INSIDE a container is still a definition (PR A, the round past the cap)', () => {
+  const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Next steps\nSee [proof] for details.\n';
+  const add = (line) => withLog.replace('- r1\n', `- r1\n${line}\n`);
+  for (const line of ['- [proof]: https://example.invalid', '* [proof]: https://example.invalid', '1. [proof]: https://example.invalid', '- - [proof]: https://example.invalid', '  - [proof]: https://example.invalid', '-\t[proof]: https://example.invalid']) {
+    it(`refuses ${JSON.stringify(line)}`, () => {
+      assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(line) }), /link reference definition/);
+    });
+  }
+  it('a list item that merely MENTIONS a bracket is fine (the control)', () => {
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('- see [proof] and [x](https://example.com) for details') }), null);
+  });
+});
