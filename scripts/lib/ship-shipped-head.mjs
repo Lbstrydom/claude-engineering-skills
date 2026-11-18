@@ -114,7 +114,7 @@ export function makeRunner(cwd, { spawn = spawnSync, timeoutMs = GIT_TIMEOUT_MS 
  * @param {string|null} [baseBranch] the branch the PR targets (default: `origin/HEAD`'s)
  * @returns {{ok: boolean, reason: string}}
  */
-export function computePostAuditDelta(run, evidence, headChanged, headTree, baseBranch = null, remote = 'origin') {
+export function computePostAuditDelta(run, evidence, headChanged, headTree, baseBranch = null, remote = 'origin', baseOid = null) {
   const no = (reason) => ({ ok: false, reason });
   const out = (args) => { const r = run(args); return r.status === 0 ? String(r.stdout).trim() : null; };
   if (!evidence) return no('no gate-evidence marker, so the audited tree is unknown');
@@ -124,7 +124,7 @@ export function computePostAuditDelta(run, evidence, headChanged, headTree, base
   const sha = evidence.auditedSha;
   if (!sha || out(['cat-file', '-t', `${sha}^{commit}`]) !== 'commit') return no('audited-sha-missing: the audited commit is unknown or not in this repository, so the audit\'s own fork point cannot be found');
   if (!Array.isArray(headChanged)) return no('the head\'s change set could not be resolved, so nothing was checked');
-  const base = defaultBaseRef((a) => run(a), baseBranch, remote);
+  const base = baseOid || defaultBaseRef((a) => run(a), baseBranch, remote);
   const fork = out(['merge-base', sha, base]);
   if (!fork) return no(`the audited commit's fork point against ${base} could not be resolved`);
   const pa = run(['diff', '--name-only', '--no-renames', '--ignore-submodules=none', '-z', fork, A]);
@@ -230,8 +230,9 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
   // The local base ref is a MUTABLE ref that two later calculations read: it is snapshotted once here, in BOTH modes, and compared
   // again at the end, so a fetch between those reads refuses instead of letting the two candidate sets be measured from different bases.
   const localBaseRef = defaultBaseRef((a) => run(a), baseRefName, remote);
-  const localBase0 = run(['rev-parse', '--verify', localBaseRef]);
+  const localBase0 = run(['rev-parse', '--verify', `${localBaseRef}^{commit}`]);
   const localBaseOid = localBase0.status === 0 ? String(localBase0.stdout).trim() : null;
+  if (!/^[0-9a-f]{40,64}$/.test(localBaseOid ?? '')) return envelope(pre('base', `${localBaseRef} does not resolve to a commit in this repository (fetch first, or pass --base): nothing can be measured against it`), headOid);
   const treeRes = run(['rev-parse', '--verify', `${headOid}^{tree}`]);
   const headTree = treeRes.status === 0 ? String(treeRes.stdout).trim() : null;
 
@@ -254,7 +255,7 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
 
   const runRes = verifiable ? await store.runFacts(evidence.runId) : { row: null, why: `there is no usable gate-evidence marker (state: ${evidence.state})` };
   const repoRes = await store.repoId(repoRoot);
-  const changedPaths = headTree ? gatherChangedPaths((a) => run(a), headTree, headOid, baseRefName, remote) : null;
+  const changedPaths = headTree ? gatherChangedPaths((a) => run(a), headTree, headOid, baseRefName, remote, localBaseOid) : null;
   const usable = verifiable ? evidence : null;
 
   const verdict = evaluateShippedHead({
@@ -266,7 +267,7 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
     runRowWhy: runRes.why ?? undefined,
     repoId: repoRes.repoId,
     finalReview: readFinalReviewMarker(repoRoot),
-    delta: computePostAuditDelta(run, usable, changedPaths, headTree, baseRefName, remote),
+    delta: computePostAuditDelta(run, usable, changedPaths, headTree, baseRefName, remote, localBaseOid),
     changedPaths,
   });
   // The markers and the store were read over time: if HEAD moved while they were, none of it describes the head that was asked about.
@@ -277,7 +278,7 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
   if ((branchAfter.status === 0 ? String(branchAfter.stdout).trim() : null) !== currentBranch) return envelope(pre('head', 'the checked-out branch changed while the check was running: the evidence was bound to another branch'), headOid);
   // ...and so is the local base ref both change sets were measured against (offline included).
   if (localBaseOid) {
-    const localAgain = run(['rev-parse', '--verify', localBaseRef]);
+    const localAgain = run(['rev-parse', '--verify', `${localBaseRef}^{commit}`]);
     if (localAgain.status !== 0 || String(localAgain.stdout).trim() !== localBaseOid) return envelope(pre('base', `${localBaseRef} moved while the check was running: the change sets were measured against different bases`), headOid);
   }
   // ...and the live default branch NAME, when it was taken from the remote rather than named by the caller.

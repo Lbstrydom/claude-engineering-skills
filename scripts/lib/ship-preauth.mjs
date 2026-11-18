@@ -244,12 +244,14 @@ export function renderPreauthConditions(verdict) {
  * @param {string|null} [baseBranch] the branch the change targets (default: what `<remote>/HEAD` names). The batch re-check passes the
  *   branch the PR actually targets, so a PR into a non-default branch is measured against THAT branch.
  * @param {string} [remote] the remote that branch lives on (the train's destination remote; default `origin`)
+ * @param {string|null} [baseOid] the base as an immutable commit id, when the caller resolved it once (wins over the ref)
  * @returns {string[]|null}
  */
-export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null, remote = 'origin') {
+export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null, remote = 'origin', baseOid = null) {
   const out = (args) => { const r = run(args); return r && r.status === 0 ? String(r.stdout ?? '').trim() : null; };
   // ONE resolver for "the base": the head's change set and the audited tree's use the same function (defaultBaseRef), so they cannot disagree.
-  const defaultRef = defaultBaseRef(run, baseBranch, remote);
+  // A caller that already resolved the base to an immutable commit id passes it, and the mutable ref is never read again.
+  const defaultRef = baseOid || defaultBaseRef(run, baseBranch, remote);
   // origin/HEAD is the authoritative default branch; `origin/main` is the conventional remote-tracking name when HEAD is unset.
   // A LOCAL `main` is never substituted: it can differ from the remote's, and an unverified base can hide what the PR changes.
   // Discovery and resolution are separate: once origin/HEAD NAMES the default branch, that branch's merge base is the only

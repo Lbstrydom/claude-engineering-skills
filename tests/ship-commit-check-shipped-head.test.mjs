@@ -469,6 +469,13 @@ describe('--check-shipped-head: the LIVE base (code-audit round 5)', () => {
     assert.deepEqual(failing(env), ['base']);
     assert.match(reason(env, 'base'), /fetch first/);
   });
+  it('OFFLINE with a local base ref that does not resolve refuses at once (a ref created mid-check could otherwise be measured twice)', async () => {
+    const { dir, head, auditedTree } = await withRemote();
+    git(dir, 'update-ref', '-d', 'refs/remotes/origin/main');
+    const env = await checkReal({ repoRoot: dir, head, baseBranch: 'main', verifyBase: false, store: store({ auditedTree }) });
+    assert.deepEqual(failing(env), ['base']);
+    assert.match(reason(env, 'base'), /does not resolve to a commit/);
+  });
   it('an unreachable remote is a refusal, never a pass', async () => {
     const { dir, head, auditedTree } = await withRemote();
     git(dir, 'remote', 'set-url', 'origin', path.join(os.tmpdir(), 'no-such-remote-dir'));
