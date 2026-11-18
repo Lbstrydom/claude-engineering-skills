@@ -118,6 +118,17 @@ describe('runShippedHeadChild: every way the child can fail is a refusal', () =>
       assert.match(r.reasons.join(' | '), re);
     });
   }
+  it('a child that judged only a PREFIX-equal commit is refused: the head must be the FULL requested oid', () => {
+    const other = H.slice(0, 12) + 'b'.repeat(28);
+    const r = runShippedHeadChild({ worktree: '/w', head: H, spawn: spawnOf({ status: 0, stdout: JSON.stringify({ ...good, head: other }) }), exists });
+    assert.equal(r.ok, false);
+    assert.match(r.reasons[0], /not the full commit/);
+  });
+  it('the destination remote and the target branch reach the child (and --verify-base with them)', () => {
+    let argv = null;
+    runShippedHeadChild({ worktree: '/w', head: H, base: 'develop', remote: 'origin', spawn: (cmd, args) => { argv = args; return { status: 0, stdout: JSON.stringify(good) }; }, exists });
+    assert.deepEqual(argv.slice(argv.indexOf('--base')), ['--base', 'develop', '--remote', 'origin', '--verify-base', '--json']);
+  });
   it('exit 2 carries the child\'s own refusals through', () => {
     const r = runShippedHeadChild({ worktree: '/w', head: H, spawn: spawnOf({ status: 2, stdout: JSON.stringify({ ...good, ok: false, refusals: ['trailers: AI-Gate is "waived"'] }) }), exists });
     assert.equal(r.ok, false);
@@ -143,6 +154,17 @@ describe('partitionMembers: only ship-ok members make the set', () => {
     checkChild: over.checkChild ?? childByWt({}), requiredChecks: undefined, ciFn: over.ciFn ?? (() => ({ verdict: 'full' })),
   });
 
+  it('the train\'s destination remote is handed to every child check (build time)', () => {
+    const seen = [];
+    const ms = [pr('a1')];
+    partitionMembers({
+      cwd: process.cwd(), members: ms, base: 'main', remote: 'origin', deps: { gh: ghAllGreen(ms) },
+      checkChild: (a) => { seen.push(a); return { ok: true, reasons: [], envelope: {} }; }, requiredChecks: undefined, ciFn: () => ({ verdict: 'full' }),
+    });
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].remote, 'origin');
+    assert.equal(seen[0].base, 'main');
+  });
   it('three clean members are all ship-ok', () => {
     const ms = [pr('a1'), pr('a2'), pr('a3')];
     const r = run(ms);
@@ -244,6 +266,8 @@ function ghFor(b, { mergeOpts = {}, onBeforeMerge, mergeStateStatus = 'CLEAN', s
   });
   return { gh, calls, merges, squash: () => squash };
 }
+// a 30 ms deadline: the required check never settles, which is the timeout path
+const resumeOrApprove = (b, gh) => approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), shipBatch: b.shipBatch }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 30 } });
 const approve = (b, gh, extra = {}) => approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), shipBatch: b.shipBatch, ...extra.deps }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000 } });
 const resume = (b, gh, extra = {}) => resumeShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), shipBatch: b.shipBatch, ...extra.deps }, serialOpts: { sleep: () => {}, timings: fast } });
 
@@ -463,6 +487,15 @@ describe('approveShipBatch: the merge, on the real serial runner', () => {
       assert.match(r.reason, /does not describe train/);
       assert.equal(g.merges.length, 0);
     }
+  });
+
+  it('a required check still PENDING at the deadline skips THAT member (needs-user); a plain run still stops', () => {
+    const b = batchFx();
+    const { gh } = scriptedGh({ views: () => view(b.tested), checks: [['pending']] });
+    const r = resumeOrApprove(b, gh);
+    assert.equal(r.ok, false);
+    assert.equal(b.member().state, 'needs-user');
+    assert.match(b.member().note, /required checks still/);
   });
 
   it('a PR GitHub reports MERGED before it reports the merge commit: recorded, completed from GitHub on --resume, then verified', () => {

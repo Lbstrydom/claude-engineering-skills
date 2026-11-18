@@ -34,6 +34,8 @@ import { approveSerial, resumeSerial } from './serial.mjs';
 export const SHIP_BATCH_SCHEMA = 1;
 export const CHILD_SCHEMA = 'shipped-head/v1';
 const CHILD_TIMEOUT_MS = 120_000;
+/** The remote every train is built against (lib/fleet/train.mjs). The built train is checked against it, so a change there fails loudly here. */
+const TRAIN_REMOTE = 'origin';
 
 const shipBatchDir = (dir) => path.join(dir, 'shipbatch');
 export const shipBatchPath = (dir, trainId) => assertManaged(dir, path.join(shipBatchDir(dir), `${trainId}.json`));
@@ -111,7 +113,7 @@ export const shipCommitPath = () => path.resolve(path.dirname(fileURLToPath(impo
 export function runShippedHeadChild({ worktree, head, base = null, remote = null, spawn = spawnSync, exists = fs.existsSync }) {
   const no = (reason, envelope = null) => ({ ok: false, reasons: [reason], envelope });
   if (!worktree || !exists(worktree)) return no('evidence-unavailable: the chip worktree is gone, so its local gate-evidence and final-review markers cannot be read');
-  const r = spawn(process.execPath, [shipCommitPath(), '--check-shipped-head', '--head', head, ...(base ? ['--base', base] : []), ...(remote ? ['--remote', remote] : []), '--json'], {
+  const r = spawn(process.execPath, [shipCommitPath(), '--check-shipped-head', '--head', head, ...(base ? ['--base', base] : []), ...(remote ? ['--remote', remote] : []), ...(base && remote ? ['--verify-base'] : []), '--json'], {
     cwd: worktree, encoding: 'utf-8', timeout: CHILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024,
   });
   if (r.error) return no(`checker-failed: ${r.error.code === 'ETIMEDOUT' ? `timed out after ${CHILD_TIMEOUT_MS / 1000}s` : r.error.message}`);
@@ -120,7 +122,7 @@ export function runShippedHeadChild({ worktree, head, base = null, remote = null
   let env;
   try { env = JSON.parse(String(r.stdout ?? '').trim()); } catch { return no('checker-failed: stdout is not exactly one JSON object'); }
   if (env?.schema !== CHILD_SCHEMA) return no(`checker-failed: schema ${JSON.stringify(env?.schema)} is not ${CHILD_SCHEMA}`);
-  if (typeof env.head !== 'string' || !env.head.startsWith(String(head).slice(0, 12)) || !String(head).startsWith(env.head.slice(0, 12))) return no(`checker-failed: it judged ${short(env.head)}, not ${short(head)}`, env);
+  if (!OID_RE_SB.test(String(head)) || env.head !== head) return no(`checker-failed: it judged ${short(env.head)}, not the full commit ${short(head)} (a prefix is not an identity)`, env);
   if (r.status === 0 && env.ok === true) return { ok: true, reasons: [], envelope: env };
   const refusals = Array.isArray(env.refusals) && env.refusals.length ? env.refusals : ['the checker refused without a reason'];
   return { ok: false, reasons: r.status === 0 ? ['checker-failed: exit 0 but ok is not true', ...refusals] : refusals, envelope: env };
@@ -231,7 +233,7 @@ export function buildShipBatch(ctx, flags, deps, buildFn, { parseSelect }) {
   const checkChild = deps.shipBatch?.checkChild ?? runShippedHeadChild;
   let rc = {};
   try { rc = { requiredChecks: ctx.config.requiredChecks }; } catch (e) { rc = { requiredChecksError: e.message }; }
-  const { ok, needsUser } = partitionMembers({ cwd, members, base, deps, checkChild, ciFn: deps.shipBatch?.ciVerdict, ...rc });
+  const { ok, needsUser } = partitionMembers({ cwd, members, base, remote: TRAIN_REMOTE, deps, checkChild, ciFn: deps.shipBatch?.ciVerdict, ...rc });
   const needsText = needsUser.map((n) => `  needs-user  ${n.id}${n.prNumber ? ` (PR #${n.prNumber})` : ''}: ${n.reasons.join('; ')}`);
   if (!ok.length) {
     return { ok: false, code: 'refused', reason: 'no member is ship-ok', needsUser, text: `REFUSED: no member is ship-ok — nothing was built, merged or changed\n${needsText.join('\n')}\nEach waits for the user to type /ship in its own session.` };
@@ -242,6 +244,7 @@ export function buildShipBatch(ctx, flags, deps, buildFn, { parseSelect }) {
   const dir = fleetDir(cwd);
   const t = readTrain(dir, r.trainId);
   if (!t.ok) return { ...r, ok: false, code: 'refused', reason: `the built train ${r.trainId} could not be read back (${t.reason})`, text: `REFUSED: the built train ${r.trainId} could not be read back (${t.reason}); no ship-batch record was written, so it cannot be approved with --ship-batch` };
+  if (t.train.destination.remote !== TRAIN_REMOTE) return { ...r, ok: false, code: 'refused', reason: `the train targets remote ${t.train.destination.remote}, but its members were verified against ${TRAIN_REMOTE}`, text: `REFUSED: the train targets remote ${t.train.destination.remote}, but its members were verified against ${TRAIN_REMOTE}; no ship-batch record was written` };
   writeShipBatch(dir, {
     schemaVersion: SHIP_BATCH_SCHEMA, trainId: r.trainId, grantVersion: GRANT_VERSION, checkedAt: ctx.now.toISOString(),
     base, remote: t.train.destination.remote,

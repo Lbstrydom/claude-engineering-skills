@@ -25,8 +25,12 @@ import { isShipStepDelta } from './ship-record/authority.mjs';
 import { assertKnownFlags, finishAndExit } from './cli-io.mjs';
 
 export const SHIPPED_HEAD_SCHEMA = 'shipped-head/v1';
-const KNOWN_FLAGS = Object.freeze(['--check-shipped-head', '--head', '--base', '--remote', '--json']);
-const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+const KNOWN_FLAGS = Object.freeze(['--check-shipped-head', '--head', '--base', '--remote', '--verify-base', '--json']);
+/** git-check-ref-format's rules for a branch name (the value is an argv element, never a shell string, so `+` and the like are fine). */
+export function isPlainBranch(n) {
+  return typeof n === 'string' && n.length > 0 && !/[\x00-\x20\x7f~^:?*\[\\]/.test(n) && !n.includes('..') && !n.includes('@{') && !n.includes('//')
+    && !n.startsWith('-') && !n.startsWith('/') && !n.endsWith('/') && !n.endsWith('.') && !n.endsWith('.lock') && n !== '@';
+}
 const REMOTE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const SHA_RE = /^[0-9a-f]{7,64}$/i;
@@ -145,7 +149,7 @@ export function createStoreAdapter() {
  * @param {{repoRoot: string, head: string, run?: Function, store?: ReturnType<typeof createStoreAdapter>}} o
  * @returns {Promise<{schema: string, ok: boolean, head: string, runId: string|null, gate: string|null, conditions: object[], refusals: string[]}>}
  */
-export async function checkShippedHead({ repoRoot, head, baseBranch = null, remote = 'origin', run = makeRunner(repoRoot), store = createStoreAdapter() }) {
+export async function checkShippedHead({ repoRoot, head, baseBranch = null, remote = 'origin', verifyBase = false, run = makeRunner(repoRoot), store = createStoreAdapter() }) {
   const envelope = (v, headOid) => ({ schema: SHIPPED_HEAD_SCHEMA, ok: v.ok, head: headOid, runId: v.runId ?? null, gate: v.gate ?? null, conditions: v.conditions, refusals: v.refusals });
   const pre = (id, reason) => ({ ok: false, runId: null, gate: null, conditions: [{ id, ok: false, reason }], refusals: [`${id}: ${reason}`] });
 
@@ -155,6 +159,16 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
   const checkedOut = run(['rev-parse', '--verify', 'HEAD']);
   if (checkedOut.status !== 0 || String(checkedOut.stdout).trim() !== headOid) {
     return envelope(pre('head', `the member worktree has ${String(checkedOut.stdout).trim().slice(0, 12) || 'no HEAD'} checked out, not ${headOid.slice(0, 12)}: the local evidence markers belong to the checked-out head`), headOid);
+  }
+  // The change is measured against a LOCAL remote-tracking ref. When the caller asks (`--verify-base`), that ref must equal the live
+  // branch on the remote, or the "change" it measures is whatever a stale fetch left behind. Unreadable is a refusal, never a pass.
+  if (verifyBase && baseBranch) {
+    const live = run(['ls-remote', remote, `refs/heads/${baseBranch}`]);
+    const liveOid = live.status === 0 ? String(live.stdout).trim().split(/\s+/)[0] : '';
+    const local = run(['rev-parse', '--verify', `refs/remotes/${remote}/${baseBranch}`]);
+    const localOid = local.status === 0 ? String(local.stdout).trim() : '';
+    if (!/^[0-9a-f]{40,64}$/.test(liveOid)) return envelope(pre('base', `the live ${remote}/${baseBranch} could not be read, so the change cannot be measured against it`), headOid);
+    if (localOid !== liveOid) return envelope(pre('base', `refs/remotes/${remote}/${baseBranch} is ${localOid.slice(0, 12) || 'absent'} but the live branch is ${liveOid.slice(0, 12)}: fetch first, then re-check`), headOid);
   }
   // Resolved ONCE, from the verified oid: nothing below reads HEAD again, so a worktree that switches commits mid-check cannot
   // make the facts describe two different heads.
@@ -213,8 +227,9 @@ export async function runShippedHeadCli(argv, { cwd = process.cwd(), store } = {
   const baseBranch = bi >= 0 ? argv[bi + 1] : null;
   const ri = argv.indexOf('--remote');
   const remote = ri >= 0 ? argv[ri + 1] : 'origin';
+  const verifyBase = argv.includes('--verify-base');
   const valueOf = (k) => (i >= 0 && k === i + 1) || (bi >= 0 && k === bi + 1) || (ri >= 0 && k === ri + 1);
-  const others = argv.filter((a, k) => a !== '--check-shipped-head' && a !== '--json' && a !== '--head' && a !== '--base' && a !== '--remote' && !valueOf(k));
+  const others = argv.filter((a, k) => a !== '--check-shipped-head' && a !== '--json' && a !== '--head' && a !== '--base' && a !== '--remote' && a !== '--verify-base' && !valueOf(k));
   const bad = (reason) => {
     if (json) process.stdout.write(`${JSON.stringify({ schema: SHIPPED_HEAD_SCHEMA, ok: false, head: head ?? null, runId: null, gate: null, conditions: [{ id: 'args', ok: false, reason }], refusals: [`args: ${reason}`] })}\n`);
     process.stderr.write(`AGENT FIX: --check-shipped-head: ${reason}. Usage: --check-shipped-head --head <oid> [--json], alone, from the member's worktree.\n`);
@@ -224,13 +239,13 @@ export async function runShippedHeadCli(argv, { cwd = process.cwd(), store } = {
   try { assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'ship-commit --check-shipped-head', from: 0 }); } catch (e) { return bad(`${e.message.split('. ')[0]}; a standalone read-only check cannot be combined with other flags`); }
   if (head === undefined || head.startsWith('--') || !SHA_RE.test(head)) return bad('--head needs a commit oid');
   if (ri >= 0 && (remote === undefined || remote.startsWith('--') || !REMOTE_RE.test(remote))) return bad('--remote needs a plain remote name');
-  if (bi >= 0 && (baseBranch === undefined || baseBranch.startsWith('--') || !BRANCH_RE.test(baseBranch) || baseBranch.includes('..'))) return bad('--base needs a plain branch name');
+  if (bi >= 0 && (baseBranch === undefined || baseBranch.startsWith('--') || !isPlainBranch(baseBranch))) return bad('--base needs a valid branch name');
   if (others.length > 0) return bad(`a standalone read-only check cannot be combined with ${others.join(' ')}`);
   const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf-8', windowsHide: true });
   if (top.error || top.status !== 0) { process.stderr.write(`ship-commit: --check-shipped-head: not a git worktree (${(top.stderr || '').trim() || 'git failed'})\n`); return finishAndExit(1); }
   const repoRoot = String(top.stdout).trim();
   let env;
-  try { env = await checkShippedHead({ repoRoot, head, baseBranch, remote, store }); } catch (e) {
+  try { env = await checkShippedHead({ repoRoot, head, baseBranch, remote, verifyBase, store }); } catch (e) {
     process.stderr.write(`ship-commit: --check-shipped-head errored: ${e?.message ?? e}\n`);
     return finishAndExit(1);
   }

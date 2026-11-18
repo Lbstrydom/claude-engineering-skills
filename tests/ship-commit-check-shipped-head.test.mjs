@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkShippedHead, parseRawZ, parseTrailerLines, SHIPPED_HEAD_SCHEMA } from '../scripts/lib/ship-shipped-head.mjs';
+import { checkShippedHead, parseRawZ, parseTrailerLines, isPlainBranch, SHIPPED_HEAD_SCHEMA } from '../scripts/lib/ship-shipped-head.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUN = '981fc79a-0fbb-447a-a294-b0c0217dab71';
@@ -315,6 +315,10 @@ describe('--check-shipped-head: the real CLI boundary (store off)', () => {
       assert.match(JSON.parse(r.stdout).refusals.join(' '), /cannot be combined with stray/);
     }
   });
+  it('a branch name with characters git allows but a narrow allowlist would not (release/v1+hotfix) is accepted; a git-illegal one is refused', () => {
+    for (const ok of ['release/v1+hotfix', 'feature/a_b', 'v2.0']) assert.equal(isPlainBranch(ok), true, ok);
+    for (const bad of ['', 'a..b', 'a b', '-x', 'a/', 'a.lock', 'a@{b', 'a~b', 'a:b', 'a//b', '@']) assert.equal(isPlainBranch(bad), false, JSON.stringify(bad));
+  });
   it('a malformed --base or --remote is refused by name', () => {
     assert.equal(run(['--check-shipped-head', '--head', m.head, '--base', '../x', '--json'], m.dir).status, 2);
     assert.equal(run(['--check-shipped-head', '--head', m.head, '--remote', '--json'], m.dir).status, 2);
@@ -352,6 +356,58 @@ describe('--check-shipped-head: a PR into a NON-default branch (code-audit round
     assert.ok(failing(wrong).includes('repo-policy'), 'measured against main it WOULD refuse: the instrument sees the file');
     const right = await against('develop');
     assert.equal(right.ok, true, right.refusals.join(' | '));
+  });
+});
+
+describe('--check-shipped-head: the LIVE base (code-audit round 5)', () => {
+  /** A member whose `origin` is a real bare repository, so `ls-remote` has something to answer. */
+  async function withRemote() {
+    const { dir } = makeRepo();
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'bare-'));
+    tmpDirs.push(bare);
+    spawnSync('git', ['init', '-q', '--bare', '-b', 'main', bare], { encoding: 'utf-8' });
+    git(dir, 'remote', 'add', 'origin', bare);
+    git(dir, 'push', '-q', 'origin', 'main');
+    git(dir, 'fetch', '-q', 'origin');
+    write(dir, 'scripts/a.mjs', 'export const a = 5; // audited\n');
+    const auditedSha = commit(dir, 'audited work');
+    const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
+    shipDocs(dir);
+    const head = commit(dir, `ship w\n\n${TRAILERS()}`);
+    writeMarkers(dir, { auditedTree, auditedSha });
+    return { dir, bare, head, auditedTree };
+  }
+  it('a local origin/main equal to the live branch is checked normally (the control)', async () => {
+    const { dir, head, auditedTree } = await withRemote();
+    const env = await checkShippedHead({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', verifyBase: true, store: store({ auditedTree }) });
+    assert.equal(env.ok, true, env.refusals.join(' | '));
+  });
+  it('a STALE local origin/main (the live branch moved) is refused before anything is measured against it', async () => {
+    const { dir, bare, head, auditedTree } = await withRemote();
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'other-'));
+    tmpDirs.push(other);
+    spawnSync('git', ['clone', '-q', bare, other], { encoding: 'utf-8' });
+    for (const [k, v] of [['user.email', 't@example.com'], ['user.name', 'T'], ['commit.gpgsign', 'false']]) git(other, 'config', k, v);
+    write(other, 'landed.txt', 'someone landed this\n');
+    commit(other, 'someone else landed');
+    git(other, 'push', '-q', 'origin', 'main');
+    const env = await checkShippedHead({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', verifyBase: true, store: store({ auditedTree }) });
+    assert.equal(env.ok, false);
+    assert.deepEqual(failing(env), ['base']);
+    assert.match(reason(env, 'base'), /fetch first/);
+  });
+  it('an unreachable remote is a refusal, never a pass', async () => {
+    const { dir, head, auditedTree } = await withRemote();
+    git(dir, 'remote', 'set-url', 'origin', path.join(os.tmpdir(), 'no-such-remote-dir'));
+    const env = await checkShippedHead({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', verifyBase: true, store: store({ auditedTree }) });
+    assert.deepEqual(failing(env), ['base']);
+    assert.match(reason(env, 'base'), /could not be read/);
+  });
+  it('without --verify-base the live branch is not consulted (the caller opted out; the default stays offline)', async () => {
+    const { dir, head, auditedTree } = await withRemote();
+    git(dir, 'remote', 'set-url', 'origin', path.join(os.tmpdir(), 'no-such-remote-dir'));
+    const env = await checkShippedHead({ repoRoot: dir, head, baseBranch: 'main', remote: 'origin', store: store({ auditedTree }) });
+    assert.equal(env.ok, true, env.refusals.join(' | '));
   });
 });
 

@@ -334,7 +334,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
         if (verdict.inventory?.source === 'unknown') return stop(i, `PR #${s.prNumber}: ${verdict.reason}`);
         if (Date.now() >= deadline) {
           const missing = verdict.names?.missing ?? [];
-          return stop(i, `PR #${s.prNumber}: required checks still ${verdict.verdict} after ${Math.round(run.timeoutMs / 60_000)} min (${describeVerdict(verdict)}${missing.length ? `; never registered on ${short(h)}: ${missing.join(', ')}` : ''}) — --resume to keep waiting`);
+          { const f = memberFail(i, s, `PR #${s.prNumber}: required checks still ${verdict.verdict} after ${Math.round(run.timeoutMs / 60_000)} min (${describeVerdict(verdict)}${missing.length ? `; never registered on ${short(h)}: ${missing.join(', ')}` : ''}) — --resume to keep waiting`); if (f) return f; break member; }
         }
         sleep(T.poll);
       }
