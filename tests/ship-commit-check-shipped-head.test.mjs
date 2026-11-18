@@ -498,3 +498,27 @@ describe('--check-shipped-head: --verify-base needs a base (code-audit round 6)'
     assert.match(JSON.parse(r.stdout).refusals.join(' '), /--verify-base needs --base/);
   });
 });
+
+describe('storyline incidents 2026-11-18 (the tree, not the sha)', () => {
+  it('(1) a branch REBUILT by a range cherry-pick that silently dropped its first commit is refused, though every remaining commit is intact', async () => {
+    const { dir } = makeRepo();
+    write(dir, 'scripts/first.mjs', 'export const first = 1;\n');
+    commit(dir, 'first commit');
+    write(dir, 'scripts/a.mjs', 'export const a = 2; // audited\n');
+    const auditedSha = commit(dir, 'second commit');
+    const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
+    // The rebuild: back to the base, re-pick only the second commit (the first is gone), then ship.
+    git(dir, 'reset', '-q', '--hard', 'refs/remotes/origin/main');
+    git(dir, 'cherry-pick', auditedSha);
+    shipDocs(dir);
+    const head = commit(dir, `ship x\n\n${TRAILERS()}`);
+    writeMarkers(dir, { auditedTree, auditedSha });
+    const env = await checkShippedHead({ repoRoot: dir, head, store: store({ auditedTree }) });
+    assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
+    assert.match(reason(env, 'post-audit-delta'), /scripts\/first\.mjs/);
+  });
+  it('the docs-only delta is a POLICY exception the grammar names, never tree equality: a head whose tree equals the audited one passes with "equals", a ship-doc delta passes as "ship-step edit"', async () => {
+    const { env } = await member();
+    assert.match(reason(env, 'post-audit-delta'), /ship-step edit/);
+  });
+});

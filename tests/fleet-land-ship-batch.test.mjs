@@ -888,3 +888,15 @@ describe('code-audit round 6: a PR merged by someone else is not this run\'s mer
     assert.equal(b.member().state, 'verified');
   });
 });
+
+describe('storyline incidents 2026-11-18: a green suite does not pin the head that merges', () => {
+  it('(2) the PR head differs from the tested head at MERGE time (a hook amended a file after the tests): needs-user, no merge', () => {
+    const b = batchFx();
+    const other = 'c'.repeat(40);
+    const { gh, calls } = scriptedGh({ views: () => view(other) });
+    const r = approve(b, gh);
+    assert.equal(r.ok, false);
+    assert.equal(calls.some((c) => c[1] === 'merge'), false);
+    assert.equal(b.member().state, 'needs-user');
+  });
+});
