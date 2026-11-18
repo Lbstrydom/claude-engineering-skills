@@ -903,6 +903,12 @@ async function main() {
     // itself we use the source paths directly.
     const ownedSourceTails = buildOwnedSourceTails(repo.files);
     const rewriteConfig = { ownedSourceTails };
+    // 2221 for rewritten destinations: an earlier source blob rendered by the SAME outbound renderer with THIS consumer's config.
+    // existingContent is null on purpose: a co-owned JSON surface must not fold today's disk into an "earlier version".
+    const priorRenderer = (srcRel, dstRel) => (text) => {
+      const r = renderOutbound({ srcRel, dstRel, srcContent: text, existingContent: null, rewriteConfig });
+      return { content: r.content, hits: r.rewrite.hits };
+    };
 
     // Read the consumer's prior manifest BEFORE any write. Used for both
     // ownership preflight (collision detection) and GC (deletions).
@@ -1099,7 +1105,7 @@ async function main() {
       const verdict = decideUnmanifested({
         srcRel, dstRel, destContent: dest.state === 'present' ? dest.content : null, sourceText: readSourceOrNull(srcRel),
         rewriteConfig, bannerMarker: BANNER_MARKER,
-        priorUpstreamMatches: () => { const h = hashConsumerFile(repo.path, dstRel); return h.state === 'present' ? priorUpstream.matches(srcRel, h.hash.slice('sha256:'.length)) : null; },
+        priorUpstreamMatches: ({ acceptRaw } = {}) => { const h = hashConsumerFile(repo.path, dstRel); return h.state === 'present' ? priorUpstream.matches(srcRel, h.hash.slice('sha256:'.length), { render: priorRenderer(srcRel, dstRel), acceptRaw: acceptRaw !== false }) : null; },
       });
       if (verdict.disposition === 'owned') contentOwned.push({ dstRel, evidence: verdict.evidence });
       else if (verdict.disposition === 'shared-merge') sharedMerge.push(dstRel);
@@ -1317,9 +1323,10 @@ async function main() {
       const vcs = (!override && baseState === BASE_STATE.DIVERGED)
         ? readDivergenceVcs(repo.path, dstRel, baseHash)
         : null;
-      // 2221: a diverged file that equals an EARLIER upstream version is stale, not edited. Asked only when the destination bytes are the
-      // source bytes (no rewrites) - a rewritten file's earlier versions cannot be rebuilt from the source blob.
-      if (vcs && !rewriteResult.hits) vcs.priorUpstream = priorUpstream.matches(srcRel, dstHash);
+      // 2221: a diverged file that equals an EARLIER upstream version is stale, not edited. A rewritten destination never holds raw source
+      // bytes, so each earlier blob is RENDERED through the same outbound pipeline (priorRenderer) and compared as rendered-to-rendered;
+      // RAW blob hashes count only when this destination has no rewrites, so a raw blob committed at a rewritten path stays a divergence.
+      if (vcs) vcs.priorUpstream = priorUpstream.matches(srcRel, dstHash, { render: priorRenderer(srcRel, dstRel), acceptRaw: !rewriteResult.hits });
       const decision = decideAction({
         baseState,
         vcs,
@@ -1828,6 +1835,7 @@ async function main() {
     hookLines: DRY_RUN ? [] : hookEpilogueLines(targetRepos),
   }, { R, G, Y, D, X })) console.log(line);
 
+  if (priorUpstream.stats.renderFailures) console.log(`${Y}⚠ ${priorUpstream.stats.renderFailures} earlier upstream version(s) could not be rendered${X} ${D}— a diverged file whose only evidence was such a version is refused as before; a renderer regression would look like this${X}`);
   if (priorUpstream.stats.exhausted) console.log(`${Y}⚠ prior-upstream history lookup budget exhausted${X} ${D}— later diverged files were refused as before; re-run after resolving the first ones${X}`);
   if (undeclaredDeps.length) console.log(`${Y}⚠ undeclared required bundle packages${X} ${D}(per consumer; each line above names the command):${X}\n  ${undeclaredDeps.join('\n  ')}`);
   // D2b — sync-time shared-cloud-config trigger. Skip on dry-run, errors,

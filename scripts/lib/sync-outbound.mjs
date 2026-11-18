@@ -89,7 +89,8 @@ export function renderOutbound({ srcRel, dstRel, srcContent, existingContent = n
  * @param {string|null} a.sourceText    the source file's text, null if unreadable (then only the banner can prove anything)
  * @param {object} a.rewriteConfig
  * @param {string} a.bannerMarker
- * @param {() => boolean|null} [a.priorUpstreamMatches]  true / false / null (unknown); asked last, only when no rewrite touched the file
+ * @param {(o: {acceptRaw: boolean}) => boolean|null} [a.priorUpstreamMatches]  true / false / null (unknown); asked last. `acceptRaw` is
+ *   false when a rewrite touched the file: only an earlier version RENDERED through the same pipeline may then count.
  * @returns {{disposition: 'owned'|'shared-merge'|'collision', evidence?: string, reason?: string}}
  */
 export function decideUnmanifested({ srcRel, dstRel, destContent, sourceText, rewriteConfig, bannerMarker, priorUpstreamMatches }) {
@@ -111,9 +112,10 @@ export function decideUnmanifested({ srcRel, dstRel, destContent, sourceText, re
   }
   const { provable, evidence } = classifyOwnership({ destContent, sourceContent: expected, bannerMarker });
   if (provable) return { disposition: 'owned', evidence };
-  // A rewritten file's earlier versions cannot be rebuilt from a source blob, so this is asked only when nothing was rewritten.
-  // Never for an empty or unreadable destination: those are rejected above on purpose and no history can rehabilitate them.
-  if (expected !== null && !hits && typeof destContent === 'string' && destContent.length > 0 && priorUpstreamMatches?.() === true) {
+  // The oracle is told whether RAW historical blobs may count: only when nothing was rewritten (a rewritten destination matches a
+  // RENDERED earlier version, never a raw blob). Never asked for an empty or unreadable destination: those are rejected above on
+  // purpose and no history can rehabilitate them.
+  if (expected !== null && typeof destContent === 'string' && destContent.length > 0 && priorUpstreamMatches?.({ acceptRaw: hits === 0 }) === true) {
     return { disposition: 'owned', evidence: 'prior-upstream' };
   }
   return { disposition: 'collision' };
