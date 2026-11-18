@@ -23,6 +23,7 @@ import {
   splitCommitMessage, aiTrailerMultiset, readBackReasons, runShippedHeadChild, partitionMembers, buildShipBatch,
   approveShipBatch, resumeShipBatch, readShipBatch, writeShipBatch, SHIP_BATCH_SCHEMA, CHILD_SCHEMA,
 } from '../scripts/lib/fleet/ship-batch.mjs';
+import { resumeSerial } from '../scripts/lib/fleet/serial.mjs';
 
 after(cleanupFleetRoots);
 
@@ -206,7 +207,13 @@ function batchFx(over = {}) {
   const grantFile = path.join(mkTmp('grant-'), 'CLAUDE.md');
   fs.writeFileSync(grantFile, `# rules\n\n${CANONICAL_GRANT.replace('Since <DATE>:', 'Since 2026-11-18:')}\n`);
   const childCalls = [];
-  const shipBatch = { grantFile, checkChild: (a) => { childCalls.push(a); return over.child ? over.child(a) : { ok: true, reasons: [], envelope: {} }; } };
+  const ciCalls = [];
+  const shipBatch = {
+    grantFile,
+    checkChild: (a) => { childCalls.push(a); return over.child ? over.child(a) : { ok: true, reasons: [], envelope: {} }; },
+    // The full-suite verdict `.test-tiers.json` declares; a test flips it to prove it is re-judged at merge time.
+    ciVerdict: (a) => { ciCalls.push(a); return over.ci ? over.ci(a) : { verdict: 'full' }; },
+  };
   writeShipBatch(dir, {
     schemaVersion: SHIP_BATCH_SCHEMA, trainId, grantVersion: 'v1', checkedAt: new Date().toISOString(), base: 'main',
     remote: t.destination.remote, expectedTip: t.destination.expectedOid,
@@ -332,19 +339,21 @@ describe('approveShipBatch: the merge, on the real serial runner', () => {
     const b = batchFx({ child: () => ({ ok: false, reasons: ['evidence-unavailable: the chip worktree is gone'], envelope: null }) });
     const g = ghFor(b);
     const r = approve(b, g.gh);
-    assert.equal(r.ok, false);
-    assert.match(r.reason, /needs-user: evidence-unavailable/);
+    assert.equal(r.ok, false, 'nothing landed, so the batch is not ok');
+    assert.match(r.text, /needs-user.*evidence-unavailable/);
     assert.equal(g.merges.length, 0);
+    assert.equal(b.member().state, 'needs-user');
   });
 
   it('a member BEHIND the base is never updated on the remote: it stops with behind-base and NO update-branch call is made', () => {
     const b = batchFx();
     const g = ghFor(b, { mergeStateStatus: 'BEHIND' });
     const r = approve(b, g.gh);
-    assert.equal(r.ok, false);
-    assert.match(r.reason, /behind-base/);
+    assert.equal(r.ok, false, 'nothing landed, so the batch is not ok');
+    assert.match(r.text, /behind-base/);
     assert.equal(g.calls.some((c) => c[0] === 'api' && c.includes('PUT')), false, 'no update-branch');
     assert.equal(g.merges.length, 0);
+    assert.equal(b.member().state, 'needs-user');
   });
 
   it('a foreign commit lands in the merge window: landed-on-untested-base, the batch stops and the result is NOT ok', () => {
@@ -366,6 +375,81 @@ describe('approveShipBatch: the merge, on the real serial runner', () => {
     assert.match(r.reason, /provenance: feat provenance-lost/);
     assert.match(r.text, /provenance-lost/);
     assert.equal(b.batch().expectedTip, g.squash());
+  });
+
+  it('the full-suite verdict is re-judged AT MERGE TIME: a verdict that flips after the build is needs-user, no merge', () => {
+    const b = batchFx({ ci: () => ({ verdict: 'pending', reason: 'queued after the build' }) });
+    const g = ghFor(b);
+    const r = approve(b, g.gh);
+    assert.equal(r.ok, false);
+    assert.match(r.text, /full-suite run is pending/);
+    assert.equal(g.merges.length, 0);
+    assert.equal(b.member().state, 'needs-user');
+  });
+
+  it('a run with a ship-batch record cannot be driven by ANOTHER tool\'s messageFor (no read-back, no no-update rule)', () => {
+    const b = batchFx();
+    const g1 = ghFor(b, { stayOpen: true });
+    approve(b, g1.gh); // leaves a serial run behind
+    const g2 = ghFor(b, { mergedFrom: g1.squash() });
+    const r = resumeSerial({ cwd: b.fx.repo, trainId: b.trainId, deps: depsWith(g2.gh), sleep: () => {}, timings: fast, messageFor: () => ({ subject: 'x', body: '' }) });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /belongs to a ship-batch/);
+    assert.equal(g2.merges.length, 0);
+  });
+
+  it('a rev-list that FAILED after the merge is retryable (state merged), never a confirmed landed-on-untested-base', () => {
+    const b = batchFx();
+    const g = ghFor(b);
+    let fail = true;
+    const base = depsWith(g.gh);
+    const deps = { ...base, git: (args, cwd, o) => (fail && args[0] === 'rev-list' && args.includes('--parents') ? { ok: false, status: 1, stdout: '', stderr: 'boom', reason: 'rev-list boom' } : base.git(args, cwd, o)) };
+    const r1 = approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...deps, shipBatch: b.shipBatch }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000 } });
+    assert.equal(r1.ok, false);
+    assert.equal(b.member().state, 'merged', 'not terminal: the read could not be done');
+    fail = false;
+    const r2 = resume(b, g.gh);
+    assert.equal(r2.ok, true, r2.text);
+    assert.equal(b.member().state, 'verified');
+  });
+
+  it('a commit message that could not be READ after the merge is retryable, not provenance-lost', () => {
+    const b = batchFx();
+    const g = ghFor(b);
+    let fail = true;
+    const base = depsWith(g.gh);
+    const deps = { ...base, git: (args, cwd, o) => (fail && args[0] === 'log' && args.includes('--format=%B') && args.at(-1) === g.squash() ? { ok: false, status: 1, stdout: '', stderr: '', reason: 'cannot read' } : base.git(args, cwd, o)) };
+    // the squash oid is only known once the merge ran: the wrapper compares lazily
+    const r1 = approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...deps, shipBatch: b.shipBatch }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000 } });
+    assert.equal(r1.ok, false);
+    assert.equal(b.member().state, 'merged');
+    fail = false;
+    assert.equal(resume(b, g.gh).ok, true);
+    assert.equal(b.member().state, 'verified');
+  });
+
+  it('a sidecar that is not about THIS train is refused before any merge', () => {
+    const b = batchFx();
+    const rec = readShipBatch(b.dir, b.trainId).batch;
+    writeShipBatch(b.dir, { ...rec, members: [{ ...rec.members[0], oid: 'f'.repeat(40) }] });
+    const g = ghFor(b);
+    const r = approve(b, g.gh);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /does not describe train/);
+    assert.equal(g.merges.length, 0);
+  });
+
+  it('a sidecar with an invalid member is unreadable (field-level validation), not trusted', () => {
+    const b = batchFx();
+    const rec = readShipBatch(b.dir, b.trainId).batch;
+    for (const bad of [{ state: 'launched' }, { oid: 'nope' }, { prNumber: 0 }, { id: '' }]) {
+      writeShipBatch(b.dir, { ...rec, members: [{ ...rec.members[0], ...bad }] });
+      const r = readShipBatch(b.dir, b.trainId);
+      assert.equal(r.ok, false, JSON.stringify(bad));
+      assert.match(r.reason, /invalid/);
+    }
+    writeShipBatch(b.dir, { ...rec, expectedTip: 'not-a-sha' });
+    assert.equal(readShipBatch(b.dir, b.trainId).ok, false);
   });
 
   it('an unknown train (no sidecar) is refused: a plain train cannot borrow the grant', () => {
@@ -486,5 +570,139 @@ describe('archive-check: a ready, unmerged member owes its evidence markers (pla
     assert.equal(shipEvidenceOwed({ ready: { oid: 'a'.repeat(40) } }, null), null);
     assert.equal(shipEvidenceOwed({ ready: { oid: 'a'.repeat(40) } }, { unknown: 'gh unavailable' }), null);
     assert.equal(shipEvidenceOwed(null, { number: 21 }), null);
+  });
+});
+
+// ---- two members: the "rest still land" promise and the base progression across merges ----------------------------------------
+import { addBranch, installFakeGh, makeFleetRepo, prRow, runFleet, scrubbedEnv } from './helpers/fleet-repo.mjs';
+import { RULES, BRANCH, check } from './helpers/fleet-serial-fx.mjs';
+
+const msgFor = (n) => MSG.replace('feat: the thing', `feat: thing ${n}`).replace('981fc79a-0fbb-447a-a294-b0c0217dab71', `0000000${n}-0fbb-447a-a294-b0c0217dab71`);
+
+function twoMemberFx() {
+  const fx = makeFleetRepo({ fleetConfig: { mergeMethod: 'pr', testCommand: { tiers: [{ name: 'ok', command: ['node', '-e', '0'] }] } } });
+  git(['add', '.fleet.json'], fx.repo); git(['commit', '-q', '-m', 'cfg'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+  const fake = installFakeGh(fx.root);
+  const env = scrubbedEnv({ FLEET_WORKTREE_ROOT: fx.wtRoot, ...fake.env }, { prependPath: [fake.bin] });
+  const f = (args) => runFleet(args, { cwd: fx.repo, env });
+  const base = git(['rev-parse', 'main'], fx.repo);
+  const heads = {};
+  for (const [id, n] of [['feat-a', 21], ['feat-b', 22]]) {
+    heads[id] = addBranch(fx.repo, id, { [`${id}.txt`]: `${id}\n` }, msgFor(n));
+    git(['push', '-q', 'origin', `${heads[id]}:refs/pull/${n}/head`], fx.repo);
+    git(['checkout', '-q', id], fx.repo);
+    assert.equal(f(['claim', '--id', id, '--intent', id, '--paths', `${id}.txt`]).status, 0);
+    assert.equal(f(['ready', '--id', id]).status, 0);
+    git(['checkout', '-q', 'main'], fx.repo);
+  }
+  const rows = [prRow({ number: 21, branch: 'feat-a', headOid: heads['feat-a'], baseOid: base }), prRow({ number: 22, branch: 'feat-b', headOid: heads['feat-b'], baseOid: base })];
+  fake.setState({ list: rows, view: { 21: rows[0], 22: rows[1] } });
+  const built = f(['land', '--json']);
+  assert.equal(built.status, 0, built.stdout + built.stderr);
+  return { fx, heads, trainId: built.json.train.trainId };
+}
+
+function twoBatch({ childFor = () => null } = {}) {
+  const { fx, heads, trainId } = twoMemberFx();
+  const dir = fleetDirOf(fx.repo);
+  const t = readTrain(dir, trainId).train;
+  const grantFile = path.join(mkTmp('grant2-'), 'CLAUDE.md');
+  fs.writeFileSync(grantFile, `${CANONICAL_GRANT}\n`);
+  const shipBatch = {
+    grantFile,
+    checkChild: ({ head }) => childFor(head) ?? { ok: true, reasons: [], envelope: {} },
+    ciVerdict: () => ({ verdict: 'full' }),
+  };
+  writeShipBatch(dir, {
+    schemaVersion: SHIP_BATCH_SCHEMA, trainId, grantVersion: 'v1', checkedAt: new Date().toISOString(), base: 'main',
+    remote: t.destination.remote, expectedTip: t.destination.expectedOid,
+    members: [['feat-a', 21], ['feat-b', 22]].map(([id, n]) => ({ id, prNumber: n, repo: REPO, oid: heads[id], worktree: fx.repo, state: 'pending', mergeOid: null, note: null })),
+    excluded: [],
+  });
+  return { fx, heads, trainId, dir, shipBatch, batch: () => readShipBatch(dir, trainId).batch };
+}
+
+/** A gh over TWO PRs: each is OPEN until its own merge, which makes a real squash (GitHub's message from --subject/--body-file). */
+function ghTwo(b) {
+  const squashes = {}; const merges = [];
+  const num = (args) => Number(args[2]);
+  const idOf = { 21: 'feat-a', 22: 'feat-b' };
+  const gh = (args) => {
+    if (args[0] === 'api' && /rules\/branches/.test(args[1])) return RULES;
+    if (args[0] === 'api' && /\/branches\//.test(args[1])) return BRANCH;
+    if (args[0] === 'pr' && args[1] === 'checks') return { ok: true, status: 0, stdout: JSON.stringify(check('pass')), stderr: '' };
+    if (args[0] === 'pr' && args[1] === 'view') {
+      const n = num(args); const head = b.heads[idOf[n]];
+      return ok(squashes[n] ? view(head, { state: 'MERGED', mergeCommit: { oid: squashes[n] } }) : view(head));
+    }
+    if (args[0] === 'pr' && args[1] === 'merge') { merges.push(args); const n = num(args); squashes[n] = squashFrom(b.fx, args); return ok(); }
+    return { ok: false, status: 1, stdout: '', stderr: `unexpected gh ${args.join(' ')}`, reason: 'unexpected' };
+  };
+  return { gh, merges, squashes };
+}
+const approveTwo = (b, gh, extra = {}) => approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), shipBatch: b.shipBatch, ...extra }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000 } });
+
+describe('a batch of two: the rest still land, and the base progression holds across merges', () => {
+  it('both verify: both land IN ORDER, the second on the first\'s squash, each carrying its own trailers; the train lands', () => {
+    const b = twoBatch();
+    const g = ghTwo(b);
+    const r = approveTwo(b, g.gh);
+    assert.equal(r.ok, true, r.text);
+    assert.equal(r.landed, true);
+    assert.deepEqual(g.merges.map((m) => m[2]), ['21', '22']);
+    const [a, c] = b.batch().members;
+    assert.deepEqual([a.state, c.state], ['verified', 'verified']);
+    assert.equal(git(['rev-parse', `${c.mergeOid}^`], b.fx.repo), a.mergeOid, 'the second squash sits directly on the first');
+    assert.equal(b.batch().expectedTip, c.mergeOid);
+    assert.match(git(['log', '-1', '--format=%B', a.mergeOid], b.fx.repo), /AI-Run-ID: 000000021-/);
+    assert.match(git(['log', '-1', '--format=%B', c.mergeOid], b.fx.repo), /AI-Run-ID: 000000022-/);
+  });
+
+  it('the FIRST member fails its re-check: it waits for /ship and the SECOND still lands (ok, partial, exit-0 shape)', () => {
+    const b = twoBatch();
+    b.shipBatch.checkChild = ({ head }) => (head === b.heads['feat-a'] ? { ok: false, reasons: ['trailers: AI-Gate is "waived"; only passed or converged may ship without the user'], envelope: null } : { ok: true, reasons: [], envelope: {} });
+    const g = ghTwo(b);
+    const r = approveTwo(b, g.gh);
+    assert.equal(r.ok, true, r.text);
+    assert.equal(r.landed, false, 'the train is not fully landed');
+    assert.deepEqual(g.merges.map((m) => m[2]), ['22'], 'only the verified member merged');
+    const [a, c] = b.batch().members;
+    assert.equal(a.state, 'needs-user');
+    assert.match(a.note, /waived/);
+    assert.equal(c.state, 'verified');
+    assert.match(r.text, /partial: 1 member\(s\) wait for the user's \/ship/);
+    assert.match(r.text, /needs-user\s+feat-a/);
+  });
+
+  it('a waived member is never merged under ANY order of the batch (the AI-Gate honesty control)', () => {
+    const b = twoBatch();
+    b.shipBatch.checkChild = ({ head }) => (head === b.heads['feat-b'] ? { ok: false, reasons: ['trailers: AI-Gate is "not-run"'], envelope: null } : { ok: true, reasons: [], envelope: {} });
+    const g = ghTwo(b);
+    approveTwo(b, g.gh);
+    assert.equal(g.merges.some((m) => m[2] === '22'), false);
+    assert.equal(b.batch().members[1].state, 'needs-user');
+  });
+
+  it('both refuse: nothing merges and the batch is not ok', () => {
+    const b = twoBatch({ childFor: () => ({ ok: false, reasons: ['evidence-unavailable: gone'], envelope: null }) });
+    const g = ghTwo(b);
+    const r = approveTwo(b, g.gh);
+    assert.equal(r.ok, false);
+    assert.equal(g.merges.length, 0);
+    assert.deepEqual(b.batch().members.map((m) => m.state), ['needs-user', 'needs-user']);
+  });
+
+  it('a skipped member is re-checked on --resume and lands once it verifies (nothing is lost by waiting)', () => {
+    const b = twoBatch();
+    let refuse = true;
+    b.shipBatch.checkChild = ({ head }) => (refuse && head === b.heads['feat-a'] ? { ok: false, reasons: ['evidence-unavailable: gone'], envelope: null } : { ok: true, reasons: [], envelope: {} });
+    const g = ghTwo(b);
+    approveTwo(b, g.gh);
+    assert.equal(b.batch().members[0].state, 'needs-user');
+    refuse = false; // the chip's worktree is back
+    const r2 = resumeShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(g.gh), shipBatch: b.shipBatch }, serialOpts: { sleep: () => {}, timings: fast } });
+    assert.equal(r2.ok, true, r2.text);
+    assert.deepEqual(g.merges.map((m) => m[2]), ['22', '21'], 'the second member landed first, then the resumed first');
+    assert.deepEqual(b.batch().members.map((m) => m.state), ['verified', 'verified']);
   });
 });

@@ -165,7 +165,7 @@ describe('gatherChangedPaths', () => {
       return { status: 0, stdout: 'CODEOWNERS\0docs/OWNERS\0' };
     };
     assert.deepEqual(gatherChangedPaths(run, 'deadbeef'), ['CODEOWNERS', 'docs/OWNERS']);
-    assert.ok(seen.some((c) => c === 'diff --name-only --no-renames -z abc123 deadbeef'), seen.join('\n'));
+    assert.ok(seen.some((c) => c === 'diff --name-only --no-renames --ignore-submodules=none -z abc123 deadbeef'), seen.join('\n'));
     // and the renamed-away CODEOWNERS is a policy path, so the ship is refused:
     const v = evaluatePreauthorisedShip({ ...GOOD(), changedPaths: ['CODEOWNERS', 'docs/OWNERS'] });
     assert.ok(failing(v).includes('repo-policy'));
@@ -406,7 +406,7 @@ describe('gatherChangedPaths: the authoritative default branch is never swapped 
   it('origin/HEAD names develop and resolves: the FULLY QUALIFIED ref is the base', () => {
     const { run, calls } = seq([['symbolic-ref', { status: 0, stdout: 'refs/remotes/origin/develop\n' }], ['merge-base HEAD refs/remotes/origin/develop', { status: 0, stdout: 'dev1\n' }], ['diff', { status: 0, stdout: 'a.mjs\0' }]]);
     assert.deepEqual(gatherChangedPaths(run, 'tree'), ['a.mjs']);
-    assert.ok(calls.includes('diff --name-only --no-renames -z dev1 tree'));
+    assert.ok(calls.includes('diff --name-only --no-renames --ignore-submodules=none -z dev1 tree'));
   });
 
   it('origin/HEAD unavailable: the fully qualified origin/main is the only fallback', () => {

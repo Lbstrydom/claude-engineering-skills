@@ -192,7 +192,8 @@ export function evaluateShippedHead(f = {}) {
   else if (!Number.isInteger(rr.roundConvergedAfter)) c.push(row('evidence', false, 'audit_runs.round_converged_after is null: the audit did not converge'));
   else if (f.repoId == null || rr.repoId == null) c.push(row('evidence', false, `the repository identity could not be established (this repo: ${JSON.stringify(f.repoId ?? null)}, the run's repo: ${JSON.stringify(rr.repoId ?? null)})`));
   else if (rr.repoId !== f.repoId) c.push(row('evidence', false, 'the run belongs to another repository'));
-  else if (rr.auditedTree != null && ev.auditedTree != null && rr.auditedTree !== ev.auditedTree) c.push(row('evidence', false, 'the store records a different audited tree for the run than the evidence marker names'));
+  else if (rr.auditedTree == null || ev.auditedTree == null) c.push(row('evidence', false, `the audited tree is not recorded on both sides (store: ${rr.auditedTree == null ? 'none, a row from before audited-tree identity' : 'yes'}; marker: ${ev.auditedTree == null ? 'none' : 'yes'}), so the run cannot be bound to the tree the review approved`));
+  else if (rr.auditedTree !== ev.auditedTree) c.push(row('evidence', false, 'the store records a different audited tree for the run than the evidence marker names'));
   else c.push(row('evidence', true, `run ${runId.slice(0, 8)} converged after round ${rr.roundConvergedAfter}, this repository, branch ${ev.auditedBranch}`));
 
   // 3. final review — bound to the SAME run, audited tree and round, saying APPROVE with result approve, and the store's
@@ -235,9 +236,11 @@ export function renderPreauthConditions(verdict) {
  *
  * @param {(args: string[]) => {status: number|null, stdout?: string}} run
  * @param {string} tree the tree-ish the commit will carry (a tree id, or HEAD)
+ * @param {string} [head] the commit whose fork point is measured (default HEAD). The batch re-check passes the commit it was asked
+ *   about, so no later read depends on what HEAD happens to be.
  * @returns {string[]|null}
  */
-export function gatherChangedPaths(run, tree) {
+export function gatherChangedPaths(run, tree, head = 'HEAD') {
   const out = (args) => { const r = run(args); return r && r.status === 0 ? String(r.stdout ?? '').trim() : null; };
   const defaultRef = out(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
   // origin/HEAD is the authoritative default branch; `origin/main` is the conventional remote-tracking name when HEAD is unset.
@@ -247,9 +250,10 @@ export function gatherChangedPaths(run, tree) {
   // `origin/main` is consulted only when origin/HEAD itself is unavailable.
   // FULLY QUALIFIED, never shortened: `origin/develop` can resolve to a LOCAL branch of that name (refs/heads/origin/develop is
   // searched before refs/remotes/), whose merge base with HEAD is HEAD itself and would hide every change.
-  const base = out(['merge-base', 'HEAD', defaultRef || 'refs/remotes/origin/main']);
+  const base = out(['merge-base', head, defaultRef || 'refs/remotes/origin/main']);
   if (!base || !tree) return null;
-  const r = run(['diff', '--name-only', '--no-renames', '-z', base, tree]);
+  // `--ignore-submodules=none`: a `diff.ignoreSubmodules` setting must never hide a changed gitlink from a path gate.
+  const r = run(['diff', '--name-only', '--no-renames', '--ignore-submodules=none', '-z', base, tree]);
   if (!r || r.status !== 0) return null;
   return String(r.stdout ?? '').split('\0').filter(Boolean);
 }

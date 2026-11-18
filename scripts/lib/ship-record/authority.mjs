@@ -92,13 +92,21 @@ function logRange(ls) {
   const k = ls.findIndex((l, n) => n > h && /^## /.test(l));
   return [h, k < 0 ? ls.length : k];
 }
-/** Is the 0-based line `i` inside the Status header line or the Implementation Log of `ls`? */
-function inShipRegion(ls, i) {
-  // A blank line carries no content: the blank separator the ship writes ahead of a new log heading sits outside the section.
-  if ((ls[i] ?? '').trim() === '') return true;
-  if (STATUS_LINE_RE.test(ls[i] ?? '')) return true;
+/** The plan's Status field: the FIRST `- **Status**:` line above the first `## ` heading (a look-alike lower down is body text). */
+function statusIndex(ls) {
+  const end = ls.findIndex((l) => /^## /.test(l));
+  const head = end < 0 ? ls.length : end;
+  for (let i = 0; i < head; i++) if (STATUS_LINE_RE.test(ls[i])) return i;
+  return -1;
+}
+const isBlank = (l) => (l ?? '').trim() === '';
+/** May the 0-based OLD line `i` be changed or removed? Only the Status field (and blanks, which carry no content): the log is append-only. */
+const oldLineMayChange = (ls, i) => isBlank(ls[i]) || i === statusIndex(ls);
+/** May the 0-based NEW line `j` be added or changed? The Status field, a blank, or a line inside the Implementation Log. */
+function newLineMayExist(ls, j) {
+  if (isBlank(ls[j]) || j === statusIndex(ls)) return true;
   const r = logRange(ls);
-  return r !== null && i >= r[0] && i < r[1];
+  return r !== null && j >= r[0] && j < r[1];
 }
 
 /**
@@ -149,14 +157,19 @@ function diffRuns(a, b) {
  * @param {{status: string, rel: string, oldText?: string|null, newText?: string|null}} d
  * @returns {string|null} why it is not a ship-step edit, or null when it is
  */
-export function isShipStepDelta({ status, rel, oldText = null, newText = null }) {
+export function isShipStepDelta({ status, rel, oldText = null, newText = null, oldMode = null, newMode = null }) {
   if (status === 'D') return 'deleted after the audit (a ship never deletes)';
+  // A ship writes REGULAR files. A symlink (120000) or a gitlink (160000) with the right name is not a status entry, and a mode
+  // change on an existing file is not a line edit; an unknown mode is a refusal, never a pass.
+  const regular = (m) => m === '100644';
   const entry = ENTRY_PATH_RE.exec(rel);
   if (entry) {
     if (status !== 'A') return 'an existing status entry was changed (an entry is immutable: it may only be a new file)';
+    if (!regular(newMode)) return `a status entry that is not a regular file (mode ${newMode ?? 'unknown'})`;
     return ENTRY_NAME_RE.test(entry[1]) ? null : 'a status entry whose name does not match <YYYY-MM-DD>-<HHMMSS>-<slug>.md';
   }
   if (status !== 'M') return `change status ${JSON.stringify(status)} is not a ship-step edit (only an added entry or a modified plan or status.md)`;
+  if (!regular(oldMode) || !regular(newMode)) return `${rel} is not a plain regular-file edit (mode ${oldMode ?? 'unknown'} -> ${newMode ?? 'unknown'})`;
   if (typeof oldText !== 'string' || typeof newText !== 'string') return 'the file text on one side could not be read, so nothing was checked';
   const a = lines(oldText);
   const b = lines(newText);
@@ -177,8 +190,15 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null })
   if (runs === null) return `${rel} is too large to verify the delta line by line, so it refuses`;
   if (runs.length === 0) return null;
   for (const r of runs) {
-    for (let i = r.oldAt; i < r.oldAt + r.oldN; i++) if (!inShipRegion(a, i)) return `${rel}: line ${i + 1} outside the Status line and the ${LOG_HEADING} was changed or removed`;
-    for (let j = r.newAt; j < r.newAt + r.newN; j++) if (!inShipRegion(b, j)) return `${rel}: line ${j + 1} outside the Status line and the ${LOG_HEADING} was added or changed`;
+    // APPEND-ONLY: an existing line may change only if it is the Status field. A log entry that is rewritten or deleted refuses.
+    for (let i = r.oldAt; i < r.oldAt + r.oldN; i++) if (!oldLineMayChange(a, i)) return `${rel}: existing line ${i + 1} was changed or removed (only the Status field may change; the ${LOG_HEADING} is append-only)`;
+    for (let j = r.newAt; j < r.newAt + r.newN; j++) if (!newLineMayExist(b, j)) return `${rel}: line ${j + 1} was added outside the Status field and the ${LOG_HEADING}`;
+  }
+  // A log the ship CREATES must be the LAST section: a heading dropped into the middle of the document would otherwise turn the
+  // prose around it into "log".
+  if (logRange(a) === null) {
+    const created = logRange(b);
+    if (created !== null && created[1] !== b.length) return `${rel}: a new ${LOG_HEADING} must be the last section, not inserted mid-document`;
   }
   return null;
 }

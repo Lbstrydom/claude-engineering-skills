@@ -76,6 +76,35 @@ describe('parseShipBatchGrant: everything else refuses, with its own code', () =
     assert.equal(r.code, 'grant-mismatch');
     assert.match(r.reason, /appears 2 times/);
   });
+  it('a restriction appended AFTER the marker, inside the section: refused, never ignored', () => {
+    const r = parseShipBatchGrant(`${wrap(dated).replace(`${GRANT_MARKER}\n`, `${GRANT_MARKER}\n\nExcept that nothing lands on Fridays.\n`)}`);
+    assert.equal(r.code, 'grant-mismatch');
+    assert.match(r.reason, /text follows the marker/);
+  });
+  it('text after the marker BEYOND the next heading is another section and does not matter', () => {
+    assert.equal(parseShipBatchGrant(wrap(dated)).ok, true);
+  });
+  it('a marker in the middle of a line is not a marker line: refused, and never throws', () => {
+    const r = parseShipBatchGrant(`# x\n\nnote: ${GRANT_MARKER} (inline)\n`);
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'grant-mismatch');
+    assert.match(r.reason, /line of its own/);
+  });
+  it('a fence is closed only by the SAME character and at least as many: a ~~~ line inside a ``` fence does not close it', () => {
+    const r = parseShipBatchGrant(`\`\`\`\n~~~\n${dated}\n`);
+    assert.deepEqual([r.ok, r.code], [false, 'grant-mismatch']);
+    assert.match(r.reason, /code fence/);
+  });
+  it('a shorter fence inside a longer one does not close it either', () => {
+    assert.equal(parseShipBatchGrant(`\`\`\`\`\n\`\`\`\n${dated}\n`).code, 'grant-mismatch');
+  });
+  it('a properly CLOSED fence earlier in the file does not hide a real grant after it', () => {
+    assert.equal(parseShipBatchGrant(`\`\`\`js\ncode\n\`\`\`\n\n${dated}\n`).ok, true);
+  });
+  it('"Since <anything>:" is NOT free text: only a date (or the placeholder) is ignored', () => {
+    const r = parseShipBatchGrant(wrap(dated.replace('Since 2026-11-18:', 'Since forever, except on Fridays:')));
+    assert.equal(r.code, 'grant-mismatch');
+  });
   it('the heading missing above the marker: refuses', () => {
     assert.equal(parseShipBatchGrant(wrap(dated.replace(GRANT_HEADING, '## Something else'))).code, 'grant-mismatch');
   });
@@ -95,10 +124,14 @@ describe('readShipBatchGrant: the file', () => {
     assert.equal(r.code, 'grant-absent');
     assert.match(r.reason, /could not be read/);
   });
-  it('the default location is the home directory, and an environment variable CANNOT redirect it', () => {
-    const before = process.env.FLEET_GRANT_FILE;
-    process.env.FLEET_GRANT_FILE = path.join(os.tmpdir(), 'attacker-written.md');
-    try { assert.equal(defaultGrantFile(), path.join(os.homedir(), '.claude', 'CLAUDE.md')); } finally { if (before === undefined) delete process.env.FLEET_GRANT_FILE; else process.env.FLEET_GRANT_FILE = before; }
+  it('the default location is the ACCOUNT\'s home, and neither an env var nor HOME/USERPROFILE can redirect it', () => {
+    const keys = ['FLEET_GRANT_FILE', 'HOME', 'USERPROFILE'];
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    const expected = path.join(os.userInfo().homedir, '.claude', 'CLAUDE.md');
+    try {
+      for (const k of keys) process.env[k] = path.join(os.tmpdir(), 'attacker-written');
+      assert.equal(defaultGrantFile(), expected);
+    } finally { for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
   });
 });
 

@@ -115,9 +115,10 @@ function sweepMessageFiles(dir, trainId) {
   return null;
 }
 
-/** Validate a `messageFor` answer. @returns {{kind: 'none'} | {kind: 'stop', reason: string} | {kind: 'message', subject: string, body: string}} */
-function readMessageAnswer(a) {
+/** Validate a `messageFor` answer. @returns {{kind: 'none'} | {kind: 'stop', reason: string} | {kind: 'skip', reason: string} | {kind: 'message', subject: string, body: string}} */
+function readMessageAnswer(a, allowSkip = false) {
   if (a === null || a === undefined) return { kind: 'none' };
+  if (allowSkip && typeof a === 'object' && typeof a.skip === 'string' && a.skip.length > 0 && a.stop === undefined && a.subject === undefined && a.body === undefined) return { kind: 'skip', reason: a.skip.slice(0, 900) };
   if (typeof a === 'object' && typeof a.stop === 'string' && a.stop.length > 0 && a.subject === undefined && a.body === undefined) return { kind: 'stop', reason: a.stop.slice(0, 900) };
   if (typeof a === 'object' && typeof a.subject === 'string' && typeof a.body === 'string' && a.stop === undefined) {
     // A subject is one line; an empty one would make gh fall back to its default title.
@@ -227,6 +228,13 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
     return { ok: false, code: 'refused', reason, trainId, run, resumable: true };
   };
   if (run.outcome?.status === 'landed') return { ok: true, code: 'ok', trainId, run, landed: true };
+  // A run with a ship-batch record (fleet/shipbatch/<train>.json) was approved under a grant and verifies every merge: it may only be
+  // driven with those hooks, never by another tool's messageFor that would merge without the read-back or the no-update rule.
+  if (fs.existsSync(path.join(dir, 'shipbatch', `${trainId}.json`)) && hooks?.shipBatch !== true) {
+    return stop(null, `this run belongs to a ship-batch (fleet/shipbatch/${trainId}.json) and may only be resumed with it: fleet land --resume ${trainId} --ship-batch`);
+  }
+  const skipped = [];
+  const skipMember = (i, s, reason) => { setStep(i, { note: reason }); skipped.push({ id: s.id, prNumber: s.prNumber, reason }); hooks?.onSkip?.({ source: s, reason }); };
   const sweepFault = sweepMessageFiles(dir, trainId);
   if (sweepFault) return stop(null, sweepFault);
   if (run.messageRequired && typeof messageFor !== 'function') {
@@ -276,7 +284,8 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
       if (ms === 'DIRTY') return stop(i, `PR #${s.prNumber} now conflicts with ${run.base} — run \`${restackCmd(s.id)}\` and push, then --resume`);
       if (ms === 'BEHIND' && hooks?.noUpdate) {
         // An update-branch would put an UNSHIPPED merge commit on the ship head (no AI-* trailers, a new head the chip never audited).
-        return stop(i, `behind-base: PR #${s.prNumber} is behind ${run.base}; a ship-batch never updates a branch on the remote — it waits for the user (restack, re-ship, or /ship)`);
+        skipMember(i, s, `behind-base: PR #${s.prNumber} is behind ${run.base}; a ship-batch never updates a branch on the remote — it waits for the user (restack, re-ship, or /ship)`);
+        break;
       }
       if (ms === 'BEHIND') {
         if (s.updates >= MAX_UPDATES_PER_PR) return stop(i, `PR #${s.prNumber} fell behind ${run.base} ${s.updates} times; the base is moving too fast — resume later`);
@@ -326,8 +335,9 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
       if (typeof messageFor === 'function') {
         let answer;
         try { answer = messageFor({ source: s, headOid: h, baseOid: baseTip({ deps, cwd, run }) }); } catch (e) { answer = { stop: `messageFor failed: ${e?.message ?? e}` }; }
-        message = readMessageAnswer(answer);
+        message = readMessageAnswer(answer, hooks?.shipBatch === true);
         if (message.kind === 'stop') return stop(i, `PR #${s.prNumber}: ${message.reason}`);
+        if (message.kind === 'skip') { skipMember(i, s, `PR #${s.prNumber}: ${message.reason}`); break; }
         if (message.kind === 'none' && run.messageRequired) return stop(i, `PR #${s.prNumber}: this run requires a squash message and messageFor returned none`);
       }
       setStep(i, { step: 'merge', head: h });
@@ -358,6 +368,11 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
         sleep(Math.min(T.updatePoll * 2, 5_000));
       }
     }
+  }
+  if (skipped.length) {
+    // Every member that could land did; the rest need the user. Not `landed` (the train stays awaiting-merge, resumable), and not a failure.
+    save({ outcome: { status: 'stopped', reason: `${skipped.length} member(s) need the user: ${skipped.map((x) => x.id).join(', ')}`.slice(0, 1900), at: now() } });
+    return { ok: true, code: 'ok', trainId, run, landed: false, partial: true, skipped, resumable: true };
   }
   save({ outcome: { status: 'landed', reason: 'every PR observed merged', at: now() } });
   return { ok: true, code: 'ok', trainId, run, landed: true };

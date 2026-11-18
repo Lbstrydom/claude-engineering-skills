@@ -38,13 +38,20 @@ export function parseTrailerLines(text) {
   });
 }
 
-/** `git diff --name-status --no-renames -z` output → `[{status, rel}]`. Pure. A malformed tail (odd token count) is dropped loudly: null. */
-export function parseNameStatusZ(out) {
+/**
+ * `git diff --raw --no-renames -z` output → `[{status, rel, oldMode, newMode}]`. Pure. Each record is a header token
+ * `:<oldmode> <newmode> <oldsha> <newsha> <status>` then the path token. A malformed stream (a token that is not a header, a header
+ * with no path) is null: nothing is guessed, and a caller treats null as "nothing was checked".
+ */
+export function parseRawZ(out) {
   const tok = String(out ?? '').split('\0');
   if (tok.length && tok[tok.length - 1] === '') tok.pop();
-  if (tok.length % 2 !== 0) return null;
   const rows = [];
-  for (let i = 0; i < tok.length; i += 2) rows.push({ status: tok[i].charAt(0), rel: tok[i + 1] });
+  for (let i = 0; i < tok.length; i += 2) {
+    const m = /^:(\d{6}) (\d{6}) [0-9a-f]+ [0-9a-f]+ ([A-Z])\d*$/.exec(tok[i] ?? '');
+    if (!m || tok[i + 1] === undefined) return null;
+    rows.push({ status: m[3], rel: tok[i + 1], oldMode: m[1], newMode: m[2] });
+  }
   return rows;
 }
 
@@ -69,9 +76,10 @@ export function makeRunner(cwd) {
  * @param {(args: string[], o?: object) => {status: number|null, stdout: string}} run
  * @param {{auditedTree?: string|null, auditedSha?: string|null}|null} evidence
  * @param {string[]|null} headChanged the paths the head changes against its fork point (null = unmeasured)
+ * @param {string|null} headTree the head's tree id, resolved ONCE from the checked head (never re-read from HEAD)
  * @returns {{ok: boolean, reason: string}}
  */
-export function computePostAuditDelta(run, evidence, headChanged) {
+export function computePostAuditDelta(run, evidence, headChanged, headTree) {
   const no = (reason) => ({ ok: false, reason });
   const out = (args) => { const r = run(args); return r.status === 0 ? String(r.stdout).trim() : null; };
   if (!evidence) return no('no gate-evidence marker, so the audited tree is unknown');
@@ -84,18 +92,18 @@ export function computePostAuditDelta(run, evidence, headChanged) {
   const base = defaultBaseRef((a) => run(a));
   const fork = out(['merge-base', sha, base]);
   if (!fork) return no(`the audited commit's fork point against ${base} could not be resolved`);
-  const pa = run(['diff', '--name-only', '--no-renames', '-z', fork, A]);
+  const pa = run(['diff', '--name-only', '--no-renames', '--ignore-submodules=none', '-z', fork, A]);
   if (pa.status !== 0) return no('the audited tree could not be diffed against its fork point');
   const candidate = new Set([...headChanged, ...String(pa.stdout).split('\0').filter(Boolean)]);
-  const headTree = out(['rev-parse', 'HEAD^{tree}']);
   if (!headTree) return no('the head tree could not be resolved');
-  const d = run(['diff', '--name-status', '--no-renames', '-z', A, headTree]);
+  // `--ignore-submodules=none`: a repository's `diff.ignoreSubmodules` / `.gitmodules` setting must never hide a changed gitlink.
+  const d = run(['diff', '--raw', '--no-renames', '--ignore-submodules=none', '-z', A, headTree]);
   if (d.status !== 0) return no('the audited tree could not be diffed against the head');
-  const rows = parseNameStatusZ(d.stdout);
-  if (rows === null) return no('the name-status output was malformed, so nothing was checked');
+  const rows = parseRawZ(d.stdout);
+  if (rows === null) return no('the raw diff output was malformed, so nothing was checked');
   const refused = [];
   let judged = 0;
-  for (const { status, rel } of rows) {
+  for (const { status, rel, oldMode, newMode } of rows) {
     if (!candidate.has(rel)) continue; // an upstream-only path (a rebase): not this member's change
     judged++;
     let oldText = null;
@@ -106,7 +114,7 @@ export function computePostAuditDelta(run, evidence, headChanged) {
       oldText = o.status === 0 ? o.stdout : null;
       newText = n.status === 0 ? n.stdout : null;
     }
-    const why = isShipStepDelta({ status, rel, oldText, newText });
+    const why = isShipStepDelta({ status, rel, oldText, newText, oldMode, newMode });
     if (why) refused.push(`${rel}: ${why}`);
   }
   if (refused.length) return no(`${refused.length} path(s) changed since the audit that /ship does not write: ${refused.slice(0, 3).join('; ')}${refused.length > 3 ? `; +${refused.length - 3} more` : ''}`);
@@ -145,6 +153,10 @@ export async function checkShippedHead({ repoRoot, head, run = makeRunner(repoRo
   if (checkedOut.status !== 0 || String(checkedOut.stdout).trim() !== headOid) {
     return envelope(pre('head', `the member worktree has ${String(checkedOut.stdout).trim().slice(0, 12) || 'no HEAD'} checked out, not ${headOid.slice(0, 12)}: the local evidence markers belong to the checked-out head`), headOid);
   }
+  // Resolved ONCE, from the verified oid: nothing below reads HEAD again, so a worktree that switches commits mid-check cannot
+  // make the facts describe two different heads.
+  const treeRes = run(['rev-parse', '--verify', `${headOid}^{tree}`]);
+  const headTree = treeRes.status === 0 ? String(treeRes.stdout).trim() : null;
 
   const msg = run(['log', '-1', '--format=%B', headOid]);
   let trailers = null;
@@ -165,7 +177,7 @@ export async function checkShippedHead({ repoRoot, head, run = makeRunner(repoRo
 
   const runRes = verifiable ? await store.runFacts(evidence.runId) : { row: null, why: `there is no usable gate-evidence marker (state: ${evidence.state})` };
   const repoRes = await store.repoId(repoRoot);
-  const changedPaths = gatherChangedPaths((a) => run(a), 'HEAD');
+  const changedPaths = headTree ? gatherChangedPaths((a) => run(a), headTree, headOid) : null;
   const usable = verifiable ? evidence : null;
 
   const verdict = evaluateShippedHead({
@@ -177,9 +189,12 @@ export async function checkShippedHead({ repoRoot, head, run = makeRunner(repoRo
     runRowWhy: runRes.why ?? undefined,
     repoId: repoRes.repoId,
     finalReview: readFinalReviewMarker(repoRoot),
-    delta: computePostAuditDelta(run, usable, changedPaths),
+    delta: computePostAuditDelta(run, usable, changedPaths, headTree),
     changedPaths,
   });
+  // The markers and the store were read over time: if HEAD moved while they were, none of it describes the head that was asked about.
+  const after = run(['rev-parse', '--verify', 'HEAD']);
+  if (after.status !== 0 || String(after.stdout).trim() !== headOid) return envelope(pre('head', 'HEAD moved while the check was running: nothing it read can be trusted'), headOid);
   return envelope(verdict, headOid);
 }
 

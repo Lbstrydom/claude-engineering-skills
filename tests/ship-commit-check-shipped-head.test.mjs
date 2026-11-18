@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkShippedHead, parseNameStatusZ, parseTrailerLines, SHIPPED_HEAD_SCHEMA } from '../scripts/lib/ship-shipped-head.mjs';
+import { checkShippedHead, parseRawZ, parseTrailerLines, SHIPPED_HEAD_SCHEMA } from '../scripts/lib/ship-shipped-head.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUN = '981fc79a-0fbb-447a-a294-b0c0217dab71';
@@ -90,15 +90,20 @@ async function member({ afterAudit, trailers, fr, auditedTreeOverride, mutateMar
 const failing = (env) => env.conditions.filter((c) => !c.ok).map((c) => c.id);
 const reason = (env, id) => env.conditions.find((c) => c.id === id)?.reason ?? '';
 
-describe('parseTrailerLines / parseNameStatusZ (pure)', () => {
+describe('parseTrailerLines / parseRawZ (pure)', () => {
   it('splits trailers at the first colon', () => {
     assert.deepEqual(parseTrailerLines('AI-Gate: converged\nAI-Models: a,b: c\n'), [{ key: 'AI-Gate', value: 'converged' }, { key: 'AI-Models', value: 'a,b: c' }]);
   });
-  it('parses NUL-delimited name-status, keeping a name with a newline whole', () => {
-    assert.deepEqual(parseNameStatusZ('M\0a\nb.txt\0A\0c.txt\0'), [{ status: 'M', rel: 'a\nb.txt' }, { status: 'A', rel: 'c.txt' }]);
+  const H1 = 'a'.repeat(40); const H2 = 'b'.repeat(40);
+  it('parses NUL-delimited raw records with their modes, keeping a name with a newline whole', () => {
+    assert.deepEqual(parseRawZ(`:100644 100644 ${H1} ${H2} M\0a\nb.txt\0:000000 120000 ${'0'.repeat(40)} ${H2} A\0c.txt\0`), [
+      { status: 'M', rel: 'a\nb.txt', oldMode: '100644', newMode: '100644' },
+      { status: 'A', rel: 'c.txt', oldMode: '000000', newMode: '120000' },
+    ]);
   });
-  it('an odd token count is malformed (null), never a short list', () => {
-    assert.equal(parseNameStatusZ('M\0a.txt\0A\0'), null);
+  it('a record with no path, or a token that is not a header, is malformed (null), never a short list', () => {
+    assert.equal(parseRawZ(`:100644 100644 ${H1} ${H2} M\0`), null);
+    assert.equal(parseRawZ('M\0a.txt\0'), null);
   });
 });
 
@@ -313,5 +318,61 @@ describe('--check-shipped-head: the real CLI boundary (store off)', () => {
     tmpDirs.push(d);
     const r = run(['--check-shipped-head', '--head', m.head], d);
     assert.equal(r.status, 1);
+  });
+});
+
+describe('--check-shipped-head: modes, submodule config and the head race (code-audit round 1)', () => {
+  const plumbMode = (dir, rel, mode, text) => {
+    const blob = spawnSync('git', ['hash-object', '-w', '--stdin'], { cwd: dir, input: text, encoding: 'utf-8', windowsHide: true }).stdout.trim();
+    git(dir, 'update-index', '--add', '--cacheinfo', `${mode},${blob},${rel}`);
+  };
+  const shipWith = async (mutate, { config = [] } = {}) => {
+    const { dir } = makeRepo();
+    for (const [k, v] of config) git(dir, 'config', k, v);
+    write(dir, 'scripts/a.mjs', 'export const a = 2; // audited\n');
+    const auditedSha = commit(dir, 'audited work');
+    const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
+    mutate(dir);
+    write(dir, 'docs/plans/x.md', `${PLAN.replace('Draft', 'Implemented')}\n## Implementation Log\n- shipped\n`);
+    git(dir, 'add', 'docs/plans'); // NOT docs/: that would stage the plumbing-only entries as deleted
+    git(dir, 'commit', '-q', '-m', `ship x\n\n${TRAILERS()}`);
+    const head = git(dir, 'rev-parse', 'HEAD');
+    writeMarkers(dir, { auditedTree, auditedSha });
+    return { dir, env: await checkShippedHead({ repoRoot: dir, head, store: store({ auditedTree }) }) };
+  };
+
+  it('a status entry named like an entry but stored as a SYMLINK is not a status entry: refused', async () => {
+    const { env } = await shipWith((d) => { plumbMode(d, 'docs/status/entries/2026-11-18-070000-ship-x.md', '120000', '../../../.env'); });
+    assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
+    assert.match(reason(env, 'post-audit-delta'), /not a regular file \(mode 120000\)/);
+  });
+
+  it('the same entry as a REGULAR file passes (the control for the symlink case)', async () => {
+    const { env } = await shipWith((d) => { plumbMode(d, 'docs/status/entries/2026-11-18-070000-ship-x.md', '100644', '## Ship x\nshipped\n'); });
+    assert.equal(env.ok, true, env.refusals.join(' | '));
+  });
+
+  it('a GITLINK added after the audit is refused even when the repository config says to ignore submodules', async () => {
+    const { env } = await shipWith((d) => { plumbMode(d, 'vendor/sub', '160000', ''); git(d, 'update-index', '--cacheinfo', `160000,${'a'.repeat(40)},vendor/sub`); }, { config: [['diff.ignoreSubmodules', 'all']] });
+    assert.ok(failing(env).includes('post-audit-delta'), env.refusals.join(' | '));
+    assert.match(reason(env, 'post-audit-delta'), /vendor\/sub/);
+  });
+
+  it('a HEAD that moves while the check runs is refused: nothing it read describes the head that was asked about', async () => {
+    const { dir } = makeRepo();
+    write(dir, 'scripts/a.mjs', 'export const a = 2; // audited\n');
+    const auditedSha = commit(dir, 'audited work');
+    const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
+    shipDocs(dir);
+    const head = commit(dir, `ship x\n\n${TRAILERS()}`);
+    writeMarkers(dir, { auditedTree, auditedSha });
+    // A store whose read moves HEAD: the worktree switches commits in the middle of the check.
+    const racy = store({ auditedTree });
+    const realFacts = racy.runFacts;
+    racy.runFacts = async (id) => { write(dir, 'later.txt', 'x\n'); commit(dir, 'a later commit'); return realFacts(id); };
+    const env = await checkShippedHead({ repoRoot: dir, head, store: racy });
+    assert.equal(env.ok, false);
+    assert.deepEqual(failing(env), ['head']);
+    assert.match(reason(env, 'head'), /moved while the check was running/);
   });
 });

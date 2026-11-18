@@ -148,69 +148,105 @@ describe('evaluateShippedHead: each condition fails ALONE with its own reason', 
 });
 
 // ---- the ship-step delta grammar (C4) --------------------------------------------------------------------------------------
+/** Modes default to a regular file on both sides: the mode rules are tested explicitly below. */
+const delta = (o) => isShipStepDelta({ oldMode: '100644', newMode: '100644', ...o });
 const PLAN_OLD = ['# Plan: X', '- **Status**: Draft', '', '## Context', 'body', '', '## Phase 1', 'work', ''].join('\n');
 const entryName = 'docs/status/entries/2026-11-18-070000-ship-x.md';
 
 describe('isShipStepDelta: what a ship may add after the audit', () => {
   it('(a) a new status entry file passes', () => {
-    assert.equal(isShipStepDelta({ status: 'A', rel: entryName, oldText: null, newText: '## Ship\nx\n' }), null);
+    assert.equal(delta({ status: 'A', rel: entryName, oldText: null, newText: '## Ship\nx\n' }), null);
   });
   it('(a) a status entry with a malformed name refuses', () => {
-    assert.match(isShipStepDelta({ status: 'A', rel: 'docs/status/entries/notes.md', oldText: null, newText: 'x' }), /name/);
+    assert.match(delta({ status: 'A', rel: 'docs/status/entries/notes.md', oldText: null, newText: 'x' }), /name/);
   });
   it('(a) an EXISTING entry being modified refuses (entries are immutable)', () => {
-    assert.match(isShipStepDelta({ status: 'M', rel: entryName, oldText: 'a', newText: 'b' }), /new file/);
+    assert.match(delta({ status: 'M', rel: entryName, oldText: 'a', newText: 'b' }), /new file/);
   });
   it('(c) a plan: Status line plus an appended Implementation Log passes', () => {
     const next = PLAN_OLD.replace('Draft', 'Implemented') + '\n## Implementation Log\n- shipped\n';
-    assert.equal(isShipStepDelta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), null);
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), null);
   });
   it('(c) a plan that ALREADY has a log may gain lines inside it', () => {
     const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
     const next = withLog + '- r2 shipped\n';
-    assert.equal(isShipStepDelta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: next }), null);
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: next }), null);
   });
   it('(c) the NORMAL case: a plan the branch changed before its audit gets only a ship edit after it', () => {
     // The audited tree already holds the branch edit (a Context line), and the ship adds Status + Log only.
     const audited = PLAN_OLD.replace('body', 'body, as audited');
     const next = audited.replace('Draft', 'Implemented') + '\n## Implementation Log\n- shipped\n';
-    assert.equal(isShipStepDelta({ status: 'M', rel: 'docs/plans/x.md', oldText: audited, newText: next }), null);
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: audited, newText: next }), null);
   });
   it('(c) a plan body edit outside Status and the log refuses', () => {
     const next = PLAN_OLD.replace('work', 'different work');
-    assert.match(isShipStepDelta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), /outside/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), /existing line \d+ was changed or removed/);
   });
   it('(c) a plan edit to the Status line AND a body line refuses on the body line', () => {
     const next = PLAN_OLD.replace('Draft', 'Implemented').replace('body', 'changed');
-    assert.match(isShipStepDelta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), /outside/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), /existing line \d+ was changed or removed/);
   });
   it('(c) deleting a body line refuses', () => {
     const next = PLAN_OLD.replace('body\n', '');
-    assert.match(isShipStepDelta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), /outside/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), /existing line \d+ was changed or removed/);
   });
   it('(c) CRLF on one side does not read as a whole-file change', () => {
     const next = (PLAN_OLD.replace('Draft', 'Implemented') + '\n## Implementation Log\n- shipped\n').replace(/\n/g, '\r\n');
-    assert.equal(isShipStepDelta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), null);
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), null);
   });
   it('(b) legacy status.md: lines inserted before the first entry pass; an edit below it refuses', () => {
     const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
     const good = ['# Status', 'intro', '', '## 2026-11-18 new entry', 'new body', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
     const bad = old.replace('old body', 'rewritten');
-    assert.equal(isShipStepDelta({ status: 'M', rel: 'status.md', oldText: old, newText: good }), null);
-    assert.match(isShipStepDelta({ status: 'M', rel: 'status.md', oldText: old, newText: bad }), /status\.md/);
+    assert.equal(delta({ status: 'M', rel: 'status.md', oldText: old, newText: good }), null);
+    assert.match(delta({ status: 'M', rel: 'status.md', oldText: old, newText: bad }), /status\.md/);
   });
   it('a delete refuses', () => {
-    assert.match(isShipStepDelta({ status: 'D', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: null }), /delet/);
+    assert.match(delta({ status: 'D', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: null }), /delet/);
   });
   it('a rename half refuses', () => {
-    assert.match(isShipStepDelta({ status: 'R', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD }), /status/);
+    assert.match(delta({ status: 'R', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD }), /status/);
   });
   it('code after the audit refuses', () => {
-    assert.match(isShipStepDelta({ status: 'M', rel: 'scripts/x.mjs', oldText: 'a', newText: 'b' }), /allowlist/);
+    assert.match(delta({ status: 'M', rel: 'scripts/x.mjs', oldText: 'a', newText: 'b' }), /allowlist/);
   });
   it('a file too large to verify refuses (fail closed)', () => {
     const big = Array.from({ length: 4000 }, (_, i) => `line ${i}`).join('\n');
     const bigNext = big.replace('line 2000', 'changed 2000');
-    assert.match(isShipStepDelta({ status: 'M', rel: 'docs/plans/x.md', oldText: big, newText: bigNext }), /too large|outside/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: big, newText: bigNext }), /too large|changed or removed/);
+  });
+});
+
+describe('isShipStepDelta: the hardened grammar (code-audit round 1)', () => {
+  const withLog = PLAN_OLD + '## Implementation Log\n- r1 first entry\n- r2 second entry\n';
+  it('the log is APPEND-ONLY: rewriting an existing entry refuses', () => {
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('r1 first entry', 'r1 REWRITTEN') }), /existing line \d+ was changed or removed.*append-only/);
+  });
+  it('the log is APPEND-ONLY: deleting an existing entry refuses', () => {
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('- r2 second entry\n', '') }), /append-only/);
+  });
+  it('a log the ship CREATES mid-document refuses: a heading dropped into Context must not turn the prose around it into "log"', () => {
+    const sneaky = PLAN_OLD.replace('body\n', 'body\n\n## Implementation Log\nsmuggled prose that is not a log\n');
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: sneaky }), /must be the last section/);
+  });
+  it('a look-alike Status line lower down is body text, not the Status field', () => {
+    const old = PLAN_OLD.replace('work', '- **Status**: Draft (a quoted example)');
+    const next = old.replace('(a quoted example)', '(rewritten)');
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: next }), /existing line \d+ was changed or removed/);
+  });
+  it('the plan\'s real Status field still changes (the control for the look-alike case)', () => {
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD.replace('Draft', 'Complete') }), null);
+  });
+  for (const mode of ['120000', '160000', '100755', null]) {
+    it(`an ADDED status entry with mode ${mode} is not a regular file: refuses`, () => {
+      assert.match(delta({ status: 'A', rel: entryName, oldText: null, newText: 'x', newMode: mode }), /not a regular file/);
+    });
+  }
+  it('a plan whose mode changed (or became a symlink) is not a plain line edit: refuses', () => {
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD, newMode: '120000' }), /regular-file edit/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD, oldMode: '100644', newMode: '100755' }), /regular-file edit/);
+  });
+  it('an unknown mode refuses (never a pass)', () => {
+    assert.match(isShipStepDelta({ status: 'A', rel: entryName, newText: 'x' }), /not a regular file \(mode unknown\)/);
   });
 });

@@ -61,10 +61,10 @@ re-checked. A stop never rolls back what already merged: it is resumable with `l
 |---|---|
 | grant absent or mismatched | nothing merged; today's plain `land` (with the user's go-ahead) is a SEPARATE invocation |
 | store off, GitHub unreachable | every member `needs-user`; nothing merged |
-| one member fails a row | it waits for `/ship`; the rest land |
+| one member fails a row, at the build OR at its own merge (a flipped CI verdict, a gone worktree) | it is skipped as `needs-user` and waits for `/ship`; the rest land; the result is ok when something landed and nothing was lost. `land --resume <train> --ship-batch` re-checks the skipped ones |
 | grant revoked mid-batch (`grant-revoked`) | stop before the next merge; merged members stay merged |
 | base moved by a foreign commit (`base-moved`) | stop; rebuild the train (a new build, a new combined test) |
-| member behind the base (`behind-base`) | stop; **never `update-branch`** (it would put an unshipped commit on the ship head). A repo that requires up-to-date branches lands one member per build until the user restacks |
+| member behind the base (`behind-base`) | skipped as `needs-user`; **never `update-branch`** (it would put an unshipped commit on the ship head). A repo that requires up-to-date branches lands the first member of a build and skips the rest until the user restacks them |
 | a foreign commit landed in the merge window (`landed-on-untested-base`) | reported loudly, batch stops, remaining members rebuild |
 | squash lost the trailers (`provenance-lost`) | reported loudly; the merge stands; file it with `fleet propose` |
 | interrupted after the merge | `--resume` adopts the merge from GitHub, verifies it, never merges twice |
