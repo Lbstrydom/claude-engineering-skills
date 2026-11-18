@@ -45,7 +45,7 @@ one run id) · `evidence` (the chip's own gate-evidence marker for that run and 
 repository) · `final-review` (bound to the same run, audited tree and round, APPROVE with result approve, corroborated by the
 store) · `post-audit-delta` (between the AUDITED tree and the head only a new status entry, a plan's Status line and its
 Implementation Log may differ; a change reverted to base is still inspected) · `sensitive-path`, `migration`, `repo-policy`.
-Fleet adds CI green at exactly the head (required checks, and the full-suite run where `.test-tiers.json` declares one), the PR
+Fleet adds CI green at exactly the head (EVERY required check of the base branch, so the repository must require its FULL suite: a repo whose required check is a lighter tier must not use ship-batch), the PR
 open, not a draft, on the right base, head equal to the ready oid, and not stacked.
 
 **It never raises a gate.** A `waived` or `not-run` member is `needs-user`; the verbs write no trailer; the squash message is the

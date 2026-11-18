@@ -98,7 +98,6 @@ Reused unchanged:
 - `observeRequiredChecks` and `requiredInventory` (`required-checks.mjs`);
 - `runShippedHeadChild` and the child contract (PR A);
 - `readShipBatchGrant` (PR A);
-- `ciVerdict`;
 - `parseMessageTrailers` and `AI_TRAILER_KEYS`;
 - `splitCommitMessage` and `readBackReasons` (moved as they are from `1cd2df21`);
 - `withFileLockSync`, `atomicWriteFileSync`, `patchTrain`, `withTrainLock`.
@@ -994,7 +993,7 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   6. **F6:**
      - the `invariant` object is deep-equal at build and at merge (a spy), and the `candidate` evidence is fresh at the live
        head;
-     - a full-suite verdict that turns red between build and merge gives `refused/ci-refused` (r1-H9);
+     - a required check that turns red between build and merge gives `refused/ci-refused` (r1-H9, now the only CI gate);
      - a child envelope head that matches only as a prefix is refused.
   7. **Tree identity and R1-H7:**
      - an equal-tree re-push gives admission at `L`, `--match-head-commit L`, and the message from `L`;
@@ -1177,18 +1176,21 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
 - **Proof against the PROOF PLAN:** golden 20/20 against the refactor; unchanged `fleet-serial` and `ship-train-recovery` green; all fleet and
   ship-record suites 4317/4320 (3 skipped), 0 fail; `npm run guards:preflight` PASS.
 
-## CI fix (PR #395 full-suite, run 44390039181)
+## CI: required checks only (PR #395 full-suite red, then Louis's decision (d), 2026-11-18)
 
-- `full-suite` failed 3 files at `03da77a1`. The consumer-sync one is a real seam defect, and its fix is a deliberate design decision to be judged:
-  `ship-batch.mjs` statically imported `ci-verdict.mjs`, so the CES-only tier machinery (`ci-verdict.mjs`, `test-tier.mjs`, the CES default) entered
-  the consumer sync closure that `tests/ci-verdict.test.mjs` forbids. The edge is now an **optional** load by a computed specifier with top-level
-  await (`CI_VERDICT_LOADED`); absent, the verdict is the existing "no ciVerdict workflow is declared" case, which the member re-check already reads
-  as "nothing to measure" (and still refuses when neither required checks nor a workflow exist). Why a computed specifier is honest here and not a way
-  round the gate: the gate's purpose is that a consumer never RECEIVES the CES default, and that still holds (the closure check passes, and
-  `tests/sync-ship-batch-closure.test.mjs` proves in a relocated layout that `ci-verdict.mjs` is absent, `CI_VERDICT_LOADED` is false, a green
-  re-check passes and a no-evidence re-check refuses); the repo already names computed dynamic imports as the edges a static walk cannot follow
-  (`sync-inventory.mjs`), and the opposite edge (a module that MUST ship) is declared in an entry list. The residual: a future change listing
-  `ci-verdict.mjs` in a consumer entry list is caught by the same closure test, which this edge does not weaken. In the source repo the same test
-  proves the module loads.
-
-- **Fail-closed, after the round on this fix (audit-code, fresh SID, scope diff over 03da77a1..):** the first version swallowed every load failure. `loadCiVerdict` now tells ABSENT (the requested module itself is missing: a consumer) from BROKEN (a syntax error, a missing transitive dependency, an initialisation error or a wrong export: rethrown; `ship-batch.mjs` records it and every member re-check REFUSES with the load error, so a broken verifier never reads as "nothing declared"). Where the verifier is absent, `declaredFullSuite` reads the repo's `.test-tiers.json`: a declared workflow, or a file that cannot be read, refuses (`ci-refused`); only a repo that declares nothing reads as "nothing to measure". Tests: `tests/fleet-ci-verdict-load.test.mjs` (absent, syntax, transitive, init, wrong export; the real verdict decides a member re-check with a controlled workflow fixture) and `tests/sync-ship-batch-closure.test.mjs` (a relocated consumer with a declared workflow, and with an unreadable declaration).
+- `full-suite` failed 3 files at `03da77a1`. The consumer-sync one was a real seam defect: `ship-batch.mjs` imported `ci-verdict.mjs`, so the
+  CES-only tier machinery (`ci-verdict.mjs`, `test-tier.mjs`, the CES default) entered the consumer sync closure that `tests/ci-verdict.test.mjs`
+  forbids. Two rounds of fixing the optional-load design (a computed-specifier import, then a fail-closed variant with a declaration fallback)
+  each surfaced the next layer: the fallback's "is a workflow declared?" decision was never authoritative, the outcome was matched by substring,
+  and a missing module could not be told from a damaged install. The design was the wrong shape.
+- **Decision (d):** ship-batch has **no separate full-suite verdict at all**. `ship-batch.mjs` carries no import of `ci-verdict.mjs`, static or
+  computed (`tests/sync-ship-batch-closure.test.mjs` reads its source and the sync closure to keep it so). Every member is gated on the base
+  branch's REQUIRED checks at exactly the member's head (`requiredInventory` and `observeRequiredChecks`): red, pending, missing or skipped
+  refuses; a required-check inventory that cannot be established (a `requiredChecks` config error) refuses; no required check configured at all
+  refuses ("nothing measured CI at this head"); only an observation that fails right now stays an unmeasured fact (`not-run`). Pinned by the
+  `CI: the base branch's REQUIRED checks are the gate` tests.
+- **Tier caveat, stated:** `ci-verdict` also distinguishes a FULL run from a branch-tier run (`test-tier/v1 full`). Dropping it makes ship-batch
+  rely on the required check BEING the full run. That is true in CES (main's ruleset requires `full-suite`, which runs the whole suite). A repo
+  where the required check is a lighter tier must not use ship-batch until that repo says the required check is its full run.
+- Earlier text in this plan that mentions a full-suite verdict (the F6 row, "Reused unchanged", test 6) describes the superseded `1cd2df21`
+  design and is kept as history; the behaviour is the one above.

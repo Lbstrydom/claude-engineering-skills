@@ -21,7 +21,7 @@ import { readSerial, resumeSerial } from '../scripts/lib/fleet/serial.mjs';
 import { CANONICAL_GRANT } from '../scripts/lib/fleet/coordinator-grant.mjs';
 import {
   splitCommitMessage, aiTrailerMultiset, readBackReasons, runShippedHeadChild, partitionMembers, buildShipBatch,
-  approveShipBatch, resumeShipBatch, writeShipBatch, SHIP_BATCH_SCHEMA, CHILD_SCHEMA, admitMember, readShipBatch,
+  approveShipBatch, resumeShipBatch, writeShipBatch, SHIP_BATCH_SCHEMA, CHILD_SCHEMA, admitMember, readShipBatch, ciAndIdentityReasons, admitShipBatchMember,
 } from '../scripts/lib/fleet/ship-batch.mjs';
 
 after(cleanupFleetRoots);
@@ -150,7 +150,7 @@ describe('partitionMembers: only ship-ok members make the set', () => {
   };
   const run = (members, over = {}) => partitionMembers({
     cwd: process.cwd(), members, base: 'main', remote: 'origin', requiredChecks: undefined,
-    deps: { gh: over.gh ?? ghAllGreen(members), shipBatch: { checkChild: over.checkChild ?? childByWt({}), ciVerdict: over.ciFn ?? (() => ({ verdict: 'full' })) } },
+    deps: { gh: over.gh ?? ghAllGreen(members), shipBatch: { checkChild: over.checkChild ?? childByWt({}) } },
   });
 
   it('the train\'s destination remote is handed to every child check (build time)', () => {
@@ -158,7 +158,7 @@ describe('partitionMembers: only ship-ok members make the set', () => {
     const ms = [pr('a1')];
     partitionMembers({
       cwd: process.cwd(), members: ms, base: 'main', remote: 'origin', requiredChecks: undefined,
-      deps: { gh: ghAllGreen(ms), shipBatch: { checkChild: (a) => { seen.push(a); return { ok: true, reasons: [], envelope: {} }; }, ciVerdict: () => ({ verdict: 'full' }) } },
+      deps: { gh: ghAllGreen(ms), shipBatch: { checkChild: (a) => { seen.push(a); return { ok: true, reasons: [], envelope: {} }; } } },
     });
     assert.equal(seen.length, 1);
     assert.equal(seen[0].remote, 'origin');
@@ -209,12 +209,6 @@ describe('partitionMembers: only ship-ok members make the set', () => {
     const gh = (args) => (args[1] === 'checks' ? { ok: false, status: 8, stdout: JSON.stringify([{ name: 'ci', bucket: 'fail', state: 'FAILURE', completedAt: '2026-10-09T10:00:00Z' }]), stderr: '' } : ghAllGreen(ms)(args));
     assert.match(run(ms, { gh }).needsUser[0].reasons.join(' '), /ci: required checks/);
   });
-  it('a declared full-suite workflow that is not `full` is needs-user; an UNDECLARED one is nothing to measure', () => {
-    const ms = [pr('a1')];
-    assert.match(run(ms, { ciFn: () => ({ verdict: 'pending', reason: 'queued' }) }).needsUser[0].reasons.join(' '), /full-suite run is pending/);
-    assert.match(run(ms, { ciFn: () => ({ verdict: 'unverified', reason: 'no ciVerdict workflow is declared in .test-tiers.json on main' }) }).ok[0].id, /a1/);
-    assert.match(run(ms, { ciFn: () => ({ verdict: 'unverified', reason: 'the Actions runs could not be read' }) }).needsUser[0].reasons.join(' '), /unverified/);
-  });
 });
 
 // ---- the repo-backed layers ----------------------------------------------------------------------------------------------------
@@ -233,7 +227,6 @@ function batch(n, over = {}) {
   const shipBatch = {
     grantFile,
     checkChild: (a) => { childCalls.push(a); return over.child ? over.child(a) : { ok: true, reasons: [], envelope: {} }; },
-    ciVerdict: (a) => (over.ci ? over.ci(a) : { verdict: 'full' }),
   };
   writeShipBatch(dir, {
     schemaVersion: SHIP_BATCH_SCHEMA, trainId, grantVersion: 'v1', checkedAt: new Date().toISOString(), base: 'main', remote: train.destination.remote,
@@ -416,12 +409,6 @@ describe('gate honesty: a waived or not-run member is never laundered into passe
     assert.equal(outcomeOf(b, 'm2').status, 'landed');
     assert.equal(r.ok, true);
     assert.equal(/aggregate/i.test(r.text), false);
-  });
-  it('the full-suite verdict turning red between build and merge is refused/ci-refused (r1-H9)', () => {
-    const b = batch(1, { ci: () => ({ verdict: 'failed', reason: 'run 7 failed' }) });
-    const r = approve(b, world(b).gh);
-    assert.deepEqual([outcomeOf(b, 'm1').status, outcomeOf(b, 'm1').code], ['refused', 'ci-refused']);
-    assert.equal(r.ok, false);
   });
 });
 
@@ -760,5 +747,50 @@ describe('audit round 1: persistence, queue, tip and resume guards', () => {
     assert.equal(r.ok, false);
     assert.equal(w.merges.length, 0);
     assert.equal(outcomeOf(b, 'm1').status, 'not-run', JSON.stringify(outcomeOf(b, 'm1')));
+  });
+});
+
+describe('CI: the base branch\'s REQUIRED checks are the gate (there is no separate full-suite verdict)', () => {
+  const HEAD = 'a'.repeat(40);
+  const member = { id: 'm', prNumber: 7, repo: REPO, oid: HEAD };
+  const ok = (doc) => ({ ok: true, status: 0, stdout: JSON.stringify(doc), stderr: '' });
+  /** A GitHub where the ruleset requires `required` and `pr checks` reports `rows`; `checksDown` makes the observation fail. */
+  const ghWith = ({ required = ['full-suite'], rows, checksDown = false }) => (args) => {
+    if (args[0] === 'pr' && args[1] === 'view') return ok({ state: 'OPEN', isDraft: false, headRefOid: HEAD, baseRefName: 'main' });
+    if (args[0] === 'api') return ok(/rules\/branches/.test(args[1]) ? (required.length ? [{ type: 'required_status_checks', parameters: { required_status_checks: required.map((context) => ({ context })) } }] : []) : { protected: false });
+    if (args[0] === 'pr' && args[1] === 'checks') return checksDown ? { ok: false, status: 1, stdout: '', stderr: 'gh down', reason: 'gh down' } : { ok: rows.every((r) => r.bucket === 'pass'), status: 0, stdout: JSON.stringify(rows), stderr: '' };
+    return { ok: false, status: 1, stdout: '', stderr: 'unexpected', reason: 'unexpected' };
+  };
+  const row = (bucket, name = 'full-suite') => ({ name, bucket, state: bucket.toUpperCase(), completedAt: '2026-10-09T10:00:00Z' });
+  const reasons = (g, extra = {}) => ciAndIdentityReasons({ cwd: process.cwd(), member, base: 'main', deps: { gh: g }, ...extra });
+  const admit = (g, extra = {}) => admitShipBatchMember({ cwd: process.cwd(), member, head: HEAD, base: 'main', remote: 'origin', deps: { gh: g, shipBatch: { checkChild: () => ({ ok: true, reasons: [], envelope: {} }) } }, ...extra });
+
+  it('a member whose required full-suite is GREEN is admitted', () => {
+    assert.deepEqual(reasons(ghWith({ rows: [row('pass')] })), []);
+    assert.equal(admit(ghWith({ rows: [row('pass')] })).ok, true);
+  });
+  it('red, pending, missing and skipped required checks each refuse, as ci-refused', () => {
+    for (const [name, rows, re] of [['red', [row('fail')], /failed/], ['pending', [row('pending')], /pending/], ['missing', [row('pass', 'some-other-check')], /missing/], ['no rows', [], /missing/], ['skipped', [row('skipping')], /not-run|skipped|never ran/i]]) {
+      const r = reasons(ghWith({ rows }));
+      assert.ok(r.length === 1 && /^ci: required checks /.test(r[0]) && re.test(r[0]), `${name}: ${r.join(' | ')}`);
+      const a = admit(ghWith({ rows }));
+      assert.deepEqual([a.ok, a.kind], [false, 'ci-refused'], name);
+    }
+  });
+  it('a requiredChecks config error refuses (ci-refused), it is not a retried read', () => {
+    const g = ghWith({ required: [], rows: [] });
+    const r = reasons(g, { requiredChecksError: '.fleet.json could not be loaded (bad json)' });
+    assert.ok(r.length === 1 && /^ci: the required-check inventory is unknown/.test(r[0]) && /bad json/.test(r[0]), r.join(' | '));
+    const a = admit(g, { requiredChecksError: '.fleet.json could not be loaded (bad json)' });
+    assert.deepEqual([a.ok, a.kind], [false, 'ci-refused']);
+  });
+  it('no required checks anywhere is a refusal: nothing measured CI at this head', () => {
+    const r = reasons(ghWith({ required: [], rows: [] }), { requiredChecks: [] });
+    assert.deepEqual(r, ['ci: no required checks are configured on main, so nothing measured CI at this head']);
+    assert.equal(admit(ghWith({ required: [], rows: [] }), { requiredChecks: [] }).kind, 'ci-refused');
+  });
+  it('a required check that cannot be OBSERVED right now is an unmeasured fact (pr-unreadable, not-run), never a refusal', () => {
+    const a = admit(ghWith({ rows: [], checksDown: true }));
+    assert.deepEqual([a.ok, a.kind], [false, 'pr-unreadable']);
   });
 });

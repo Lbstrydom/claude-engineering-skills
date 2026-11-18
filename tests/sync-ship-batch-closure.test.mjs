@@ -80,44 +80,6 @@ describe('in a relocated layout', () => {
     assert.ok(fs.existsSync(resolved));
   });
 
-  it('a consumer genuinely lacks ci-verdict.mjs, and the member re-check reads "no workflow declared" instead of failing (the optional load is honest)', async () => {
-    assert.equal(fs.existsSync(reloc('scripts/lib/ci-verdict.mjs')), false, 'ci-verdict.mjs must NOT be in a consumer');
-    const mod = await import(pathToFileURL(reloc('scripts/lib/fleet/ship-batch.mjs')).href);
-    assert.equal(mod.CI_VERDICT_LOADED, false);
-    const ok = (doc) => ({ ok: true, status: 0, stdout: JSON.stringify(doc), stderr: '' });
-    const head = 'a'.repeat(40);
-    const gh = (args) => {
-      if (args[0] === 'pr' && args[1] === 'view') return ok({ state: 'OPEN', isDraft: false, headRefOid: head, baseRefName: 'main' });
-      if (args[0] === 'api') return ok(/rules\/branches/.test(args[1]) ? [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } }] : { protected: false });
-      if (args[0] === 'pr' && args[1] === 'checks') return ok([{ name: 'ci', bucket: 'pass', state: 'SUCCESS', completedAt: '2026-10-09T10:00:00Z' }]);
-      return { ok: false, status: 1, stdout: '', stderr: 'unexpected', reason: 'unexpected' };
-    };
-    const reasons = mod.ciAndIdentityReasons({ cwd: repo, member: { id: 'm', prNumber: 7, repo: 'o/n', oid: head }, base: 'main', deps: { gh } });
-    assert.deepEqual(reasons, [], 'green required checks and no declared full-suite workflow: nothing refuses');
-    // The other half of the honesty rule: with NO required checks either, nothing measured CI at this head, and that is a refusal.
-    const none = mod.ciAndIdentityReasons({ cwd: repo, member: { id: 'm', prNumber: 7, repo: 'o/n', oid: head }, base: 'main', requiredChecks: [], deps: { gh: (a) => (a[0] === 'api' ? ok(/rules\/branches/.test(a[1]) ? [] : { protected: false }) : gh(a)) } });
-    assert.ok(none.some((r) => /nothing measured CI at this head/.test(r)), none.join('|'));
-  });
-
-  it('a consumer whose .test-tiers.json DECLARES a full-suite workflow is refused, not read as "nothing declared" (the verifier is absent there)', async () => {
-    const mod = await import(pathToFileURL(reloc('scripts/lib/fleet/ship-batch.mjs')).href);
-    const ok = (doc) => ({ ok: true, status: 0, stdout: JSON.stringify(doc), stderr: '' });
-    const head = 'a'.repeat(40);
-    const gh = (args) => {
-      if (args[0] === 'pr' && args[1] === 'view') return ok({ state: 'OPEN', isDraft: false, headRefOid: head, baseRefName: 'main' });
-      if (args[0] === 'api') return ok(/rules\/branches/.test(args[1]) ? [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } }] : { protected: false });
-      if (args[0] === 'pr' && args[1] === 'checks') return ok([{ name: 'ci', bucket: 'pass', state: 'SUCCESS', completedAt: '2026-10-09T10:00:00Z' }]);
-      return { ok: false, status: 1, stdout: '', stderr: 'unexpected', reason: 'unexpected' };
-    };
-    const declared = fs.mkdtempSync(path.join(tmp, 'declared-'));
-    fs.writeFileSync(path.join(declared, '.test-tiers.json'), JSON.stringify({ ciVerdict: { workflow: '.github/workflows/full-suite.yml' } }));
-    const reasons = mod.ciAndIdentityReasons({ cwd: declared, member: { id: 'm', prNumber: 7, repo: 'o/n', oid: head }, base: 'main', deps: { gh } });
-    assert.ok(reasons.some((r) => /^ci: the full-suite run is unverified \(.*declares the full-suite workflow .*cannot be evaluated/.test(r)), reasons.join(' | '));
-    const broken = fs.mkdtempSync(path.join(tmp, 'broken-'));
-    fs.writeFileSync(path.join(broken, '.test-tiers.json'), '{ not json');
-    assert.ok(mod.ciAndIdentityReasons({ cwd: broken, member: { id: 'm', prNumber: 7, repo: 'o/n', oid: head }, base: 'main', deps: { gh } }).some((r) => /not valid JSON/.test(r)));
-  });
-
   it('the relocated ship-commit answers --selfcheck-relocation', () => {
     const r = run(reloc('scripts/ship-commit.mjs'), ['--selfcheck-relocation']);
     assert.equal(r.status, 0, r.stderr);
@@ -158,13 +120,11 @@ describe('in a relocated layout', () => {
   });
 });
 
-describe('the source repo loads the full-suite verdict (the optional edge is not silently dead here)', () => {
-  it('CI_VERDICT_LOADED is true and the module it loads is the one next to the CLI', async () => {
-    const mod = await import('../scripts/lib/fleet/ship-batch.mjs');
-    assert.equal(mod.CI_VERDICT_LOADED, true);
-    assert.ok(fs.existsSync(path.join(ROOT, 'scripts/lib/ci-verdict.mjs')));
-    // That the real verdict then DECIDES a member re-check is proven in tests/fleet-ci-verdict-load.test.mjs (a failed run refuses, a successful one passes).
-    const ci = await import('../scripts/lib/ci-verdict.mjs');
-    assert.equal(typeof ci.ciVerdict, 'function');
+describe('ship-batch has no edge to the CES-only tier machinery, static or computed', () => {
+  it('its source never names ci-verdict, and the sync closure carries neither ci-verdict.mjs nor test-tier.mjs', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'scripts/lib/fleet/ship-batch.mjs'), 'utf8');
+    assert.equal(/ci-verdict|ciVerdict|test-tier/.test(src), false, 'ship-batch.mjs must not import (or compute an import of) the CES-only full-suite verdict');
+    const closure = new Set(getSyncClosure().files.map(norm));
+    for (const f of ['scripts/lib/ci-verdict.mjs', 'scripts/lib/test-tier.mjs']) assert.equal(closure.has(f), false, `${f} must not reach a consumer`);
   });
 });

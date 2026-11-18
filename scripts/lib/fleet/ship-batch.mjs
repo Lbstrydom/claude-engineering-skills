@@ -20,7 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { AI_TRAILER_KEYS, parseMessageTrailers } from '../commit-trailers.mjs';
@@ -31,54 +31,6 @@ import { describeVerdict, observeRequiredChecks, requiredInventory } from './req
 import { readShipBatchGrant, GRANT_VERSION } from './coordinator-grant.mjs';
 import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
 import { summariseRun } from './member-outcome.mjs';
-
-/**
- * The full-suite verdict (`.test-tiers.json` `ciVerdict`) is a CES-only declaration: `ci-verdict.mjs` and its tier machinery are NOT in the
- * consumer sync closure (tests/ci-verdict.test.mjs pins that), so it is loaded OPTIONALLY and by a computed specifier a closure walk does
- * not follow. Three outcomes, never conflated:
- *   - the module is genuinely ABSENT (a consumer): `{impl: null, absent: true}`;
- *   - it loads: its `ciVerdict` is returned (and validated to be a function);
- *   - it is present but BROKEN (a syntax error, a missing TRANSITIVE dependency, an initialisation error, a wrong export): the error is
- *     RETHROWN, never read as "absent". The caller below turns it into a refusal, so a broken verifier fails closed.
- * @param {string} [url] the module to load (a test points it at fixtures)
- * @returns {Promise<{impl: Function|null, absent: boolean}>}
- */
-export async function loadCiVerdict(url = new URL('../ci-verdict.mjs', import.meta.url).href) {
-  let mod;
-  try { mod = await import(url); } catch (e) {
-    if (e?.code === 'ERR_MODULE_NOT_FOUND') {
-      // Node names the missing module and who asked for it: only a miss of the REQUESTED module is "absent"; a miss of anything it
-      // imports is a broken verifier.
-      const m = /Cannot find module '([^']+)'/.exec(String(e.message));
-      const missing = m ? (m[1].startsWith('file:') ? fileURLToPath(m[1]) : m[1]) : null;
-      if (missing && path.resolve(missing) === path.resolve(fileURLToPath(url))) return { impl: null, absent: true };
-    }
-    throw e;
-  }
-  if (typeof mod?.ciVerdict !== 'function') throw new Error(`${url} does not export a ciVerdict function`);
-  return { impl: mod.ciVerdict, absent: false };
-}
-let ciVerdictImpl = null;
-let ciVerdictLoadError = null;
-try { ciVerdictImpl = (await loadCiVerdict()).impl; } catch (e) { ciVerdictLoadError = String(e?.message ?? e).split('\n')[0].slice(0, 300); }
-/** Whether the full-suite verdict loaded: true in the source repo, false in a consumer (where it is not shipped). Tested in BOTH layouts. */
-export const CI_VERDICT_LOADED = ciVerdictImpl !== null;
-const UNDECLARED_CI = { verdict: 'unverified', reason: 'no ciVerdict workflow is declared (the full-suite verdict is a CES-only declaration)' };
-
-/**
- * Where the verifier is absent, is a full-suite workflow nevertheless DECLARED here? A repo that declares one but cannot have it
- * evaluated must refuse, never read as "nothing declared": a present `.test-tiers.json` that names a `ciVerdict` workflow (or that cannot
- * be read at all) is a declaration. @returns {{declared: boolean, reason?: string}}
- */
-export function declaredFullSuite(cwd) {
-  const file = path.join(cwd, '.test-tiers.json');
-  let text;
-  try { text = fs.readFileSync(file, 'utf8'); } catch (e) { return e.code === 'ENOENT' ? { declared: false } : { declared: true, reason: `.test-tiers.json cannot be read (${e.code ?? e.message}), so whether a full-suite workflow is declared is unknown` }; }
-  let doc;
-  try { doc = JSON.parse(text); } catch { return { declared: true, reason: '.test-tiers.json is present but not valid JSON, so whether a full-suite workflow is declared is unknown' }; }
-  const wf = doc?.ciVerdict?.workflow;
-  return wf ? { declared: true, reason: `.test-tiers.json declares the full-suite workflow ${JSON.stringify(String(wf))}, but the verdict module is not available here, so it cannot be evaluated` } : { declared: false };
-}
 
 export const SHIP_BATCH_SCHEMA = 2;
 export const CHILD_SCHEMA = 'shipped-head/v1';
@@ -193,11 +145,12 @@ export function listReadyMembers(ctx) {
 }
 
 /**
- * C8 and C9 for one member, from GitHub: the PR is open, not a draft, and its head is the member's oid (C9); its required checks are
- * green at exactly that head, and where `.test-tiers.json` declares a full-suite workflow, that run is `full` (C8).
+ * C8 and C9 for one member, from GitHub: the PR is open, not a draft, and its head is the member's oid (C9); every REQUIRED check of the
+ * base branch is green at exactly that head (C8). There is no separate full-suite verdict here: the required check IS the CI gate, and
+ * whether it is the FULL run is the repository's own ruleset (docs/plans/ship-batch-member-outcomes.md, "CI: required checks only").
  * @returns {string[]} reasons it is not shippable (empty = green)
  */
-export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, requiredChecksError = null, ciFn, runFn }) {
+export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, requiredChecksError = null }) {
   const out = [];
   const v = deps.gh(['pr', 'view', String(member.prNumber), '-R', member.repo, '--json', 'state,isDraft,headRefOid,baseRefName'], cwd);
   let doc = null;
@@ -210,20 +163,11 @@ export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, 
   if (out.length) return out;
   const inv = requiredInventory(cwd, { repo: member.repo, base, configured: requiredChecks, configError: requiredChecksError, gh: deps.gh });
   const rc = observeRequiredChecks(cwd, { pr: member.prNumber, repo: member.repo, inventory: inv, expectHead: member.oid, gh: deps.gh });
-  if (rc.verdict !== 'pass' && rc.verdict !== 'none-required') out.push(`ci: required checks ${describeVerdict(rc)}`);
-  // The full-suite workflow `.test-tiers.json` declares grades a merge separately (ciVerdict): where none is declared the
-  // verdict says so, and that is "nothing to measure here", never a pass and never a refusal.
-  const run = runFn ?? ((cmd, args) => spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 120_000, windowsHide: true }));
-  const target = { pr: member.prNumber, head: member.oid };
-  let cv;
-  if (ciFn) cv = ciFn(target);
-  else if (ciVerdictImpl) cv = ciVerdictImpl({ run, ...target });
-  else if (ciVerdictLoadError) cv = { verdict: 'unverified', reason: `the full-suite verdict module failed to load, so a declared workflow cannot be evaluated: ${ciVerdictLoadError}` };
-  else { const d = declaredFullSuite(cwd); cv = d.declared ? { verdict: 'unverified', reason: d.reason } : UNDECLARED_CI; }
-  const undeclared = cv.verdict === 'unverified' && /no ciVerdict workflow is declared/.test(String(cv.reason));
-  if (cv.verdict !== 'full' && !undeclared) out.push(`ci: the full-suite run is ${cv.verdict} (${cv.reason ?? 'no reason'})`);
-  // Each absence alone is honest (no required checks configured; no workflow declared). BOTH together measure nothing at this head.
-  if (rc.verdict === 'none-required' && undeclared) out.push('ci: no required checks are configured and no full-suite workflow is declared, so nothing measured CI at this head');
+  // A required-check INVENTORY that cannot be established (a config error, an unreadable ruleset) is a persistent problem the member cannot
+  // fix by retrying: it refuses. A required check that could not be OBSERVED right now (a failed read) stays an unmeasured fact (not-run).
+  if (inv.source === 'unknown') out.push(`ci: the required-check inventory is unknown (${inv.reason ?? 'no reason'})`);
+  else if (rc.verdict === 'none-required') out.push(`ci: no required checks are configured on ${base}, so nothing measured CI at this head`);
+  else if (rc.verdict !== 'pass') out.push(`ci: required checks ${describeVerdict(rc)}`);
   return out;
 }
 
@@ -255,11 +199,11 @@ export function admitMember(mode, invariant, candidate) {
   return c.branchTip === c.head ? { ok: true } : { ok: false, kind: 'shipped-head-refused', reasons: [`branch-moved: the remote branch is ${short(c.branchTip)}, not the admitted head ${short(c.head)}`] };
 }
 
-/** Gather a ship-batch candidate at `head` (child, identity and CI), then judge it with `admitMember`. */
+/** Gather a ship-batch candidate at `head` (child, identity and required checks), then judge it with `admitMember`. */
 export function admitShipBatchMember({ cwd, member, head, base, remote, deps, requiredChecks, requiredChecksError }) {
   const checkChild = deps.shipBatch?.checkChild ?? runShippedHeadChild;
   const child = checkChild({ worktree: member.worktree, head, base, remote });
-  const identityAndCi = child.ok ? ciAndIdentityReasons({ cwd, member: { ...member, oid: head }, base, deps, requiredChecks, requiredChecksError, ciFn: deps.shipBatch?.ciVerdict }) : [];
+  const identityAndCi = child.ok ? ciAndIdentityReasons({ cwd, member: { ...member, oid: head }, base, deps, requiredChecks, requiredChecksError }) : [];
   return admitMember('ship-batch', { base, remote }, { mode: 'ship-batch', head, child, identityAndCi });
 }
 
