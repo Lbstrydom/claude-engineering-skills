@@ -21,14 +21,14 @@ export const ok = (doc) => ({ ok: true, status: 0, stdout: doc === undefined ? '
 export const check = (bucket) => [{ name: 'ci', bucket, state: bucket.toUpperCase(), completedAt: '2026-10-09T10:00:00Z' }];
 
 /** A pr-mode train with one ready session `feat` and a built (green) train. */
-export function trainFx() {
+export function trainFx({ message } = {}) {
   const fx = makeFleetRepo({ fleetConfig: { mergeMethod: 'pr', testCommand: { tiers: [{ name: 'ok', command: ['node', '-e', '0'] }] } } });
   git(['add', '.fleet.json'], fx.repo); git(['commit', '-q', '-m', 'cfg'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
   const fake = installFakeGh(fx.root);
   const env = scrubbedEnv({ FLEET_WORKTREE_ROOT: fx.wtRoot, ...fake.env }, { prependPath: [fake.bin] });
   const f = (args) => runFleet(args, { cwd: fx.repo, env });
   const base = git(['rev-parse', 'main'], fx.repo);
-  const tested = addBranch(fx.repo, 'feat', { 'f.txt': 'f\n' });
+  const tested = addBranch(fx.repo, 'feat', { 'f.txt': 'f\n' }, message);
   git(['push', '-q', 'origin', `${tested}:refs/pull/${PR}/head`], fx.repo);
   git(['checkout', '-q', 'feat'], fx.repo);
   assert.equal(f(['claim', '--id', 'feat', '--intent', 'feat', '--paths', 'f.txt']).status, 0);

@@ -204,15 +204,15 @@ export function classifyUpdatedHead({ deps, cwd, s, run, h, priorHead }) {
  * @param {{cwd: string, trainId: string, deps?: object, requiredChecks?: string[], requiredChecksError?: string|null,
  *   sleep?: (ms: number) => void, timings?: object, messageFor?: MessageFor}} a
  */
-export function runSerial({ cwd, trainId, deps = defaultDeps(), requiredChecks, requiredChecksError = null, sleep = sleepMs, timings = {}, messageFor }) {
+export function runSerial({ cwd, trainId, deps = defaultDeps(), requiredChecks, requiredChecksError = null, sleep = sleepMs, timings = {}, messageFor, hooks }) {
   const dir = fleetDir(cwd);
   const T = { poll: SERIAL_POLL_MS, updatePoll: UPDATE_POLL_MS, updateWait: UPDATE_WAIT_MS, mergeWait: MERGE_WAIT_MS, ...timings };
-  const lease = withFileLockSync(path.join(serialDir(dir), `${trainId}.lock`), { attempts: 1 }, () => loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T, messageFor }));
+  const lease = withFileLockSync(path.join(serialDir(dir), `${trainId}.lock`), { attempts: 1 }, () => loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T, messageFor, hooks }));
   if (!lease.ok) return { ok: false, code: 'error', reason: `another process is landing ${trainId} serially (serial/${trainId}.lock is held)` };
   return lease.value;
 }
 
-function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T, messageFor }) {
+function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T, messageFor, hooks }) {
   let run = readSerial(dir, trainId);
   if (!run.ok) return { ok: false, code: 'refused', reason: `train ${trainId}: ${run.reason}` };
   run = run.run;
@@ -230,7 +230,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
   const sweepFault = sweepMessageFiles(dir, trainId);
   if (sweepFault) return stop(null, sweepFault);
   if (run.messageRequired && typeof messageFor !== 'function') {
-    return stop(null, 'this run was started with a squash-message provider (ship-train land) and may only merge with one; resume it with the same tool: node scripts/ship-train.mjs land --train ' + trainId + ' --resume');
+    return stop(null, 'this run was started with a squash-message provider (ship-train land) and may only merge with one; resume it with the same tool: node scripts/ship-train.mjs land --train ' + trainId + ' --resume (a ship-batch run: fleet land --resume ' + trainId + ' --ship-batch)');
   }
   if (run.outcome) save({ outcome: null }); // a resumed stop re-enters
   const inventory = new Map();
@@ -239,7 +239,12 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
     return inventory.get(repo);
   };
   for (let i = 0; i < run.steps.length; i += 1) {
-    if (run.steps[i].step === 'merged') continue;
+    if (run.steps[i].step === 'merged') {
+      // A member merged on an earlier run whose read-back did not finish is read back now, never skipped (the hook is idempotent).
+      const again = hooks?.onMerged?.({ source: run.steps[i], mergedOid: run.steps[i].mergedOid });
+      if (again?.stop) return stop(i, again.stop);
+      continue;
+    }
     if (run.steps[i].note) setStep(i, { note: null });
     for (;;) {
       const s = run.steps[i];
@@ -250,6 +255,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
       if (String(d.state).toUpperCase() === 'MERGED') {
         if (!s.accounted.includes(d.headRefOid)) return stop(i, `PR #${s.prNumber} was merged at ${short(d.headRefOid)}, a head this run did not account for — check it by hand`);
         setStep(i, { step: 'merged', mergedOid: d.mergeCommit?.oid ?? null, head: d.headRefOid });
+        { const seen = hooks?.onMerged?.({ source: s, mergedOid: d.mergeCommit?.oid ?? null }); if (seen?.stop) return stop(i, seen.stop); }
         break;
       }
       if (String(d.state).toUpperCase() !== 'OPEN') return stop(i, `PR #${s.prNumber} is ${d.state}`);
@@ -268,6 +274,10 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
       }
       const ms = String(d.mergeStateStatus ?? '').toUpperCase();
       if (ms === 'DIRTY') return stop(i, `PR #${s.prNumber} now conflicts with ${run.base} — run \`${restackCmd(s.id)}\` and push, then --resume`);
+      if (ms === 'BEHIND' && hooks?.noUpdate) {
+        // An update-branch would put an UNSHIPPED merge commit on the ship head (no AI-* trailers, a new head the chip never audited).
+        return stop(i, `behind-base: PR #${s.prNumber} is behind ${run.base}; a ship-batch never updates a branch on the remote — it waits for the user (restack, re-ship, or /ship)`);
+      }
       if (ms === 'BEHIND') {
         if (s.updates >= MAX_UPDATES_PER_PR) return stop(i, `PR #${s.prNumber} fell behind ${run.base} ${s.updates} times; the base is moving too fast — resume later`);
         setStep(i, { step: 'update', priorHead: h, head: h });
@@ -334,7 +344,12 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
       const until = Date.now() + T.mergeWait;
       for (;;) {
         const o = viewPr(deps, cwd, s);
-        if (o.ok && String(o.doc.state).toUpperCase() === 'MERGED') { setStep(i, { step: 'merged', mergedOid: o.doc.mergeCommit?.oid ?? null }); break; }
+        if (o.ok && String(o.doc.state).toUpperCase() === 'MERGED') {
+          setStep(i, { step: 'merged', mergedOid: o.doc.mergeCommit?.oid ?? null });
+          const seen = hooks?.onMerged?.({ source: s, mergedOid: o.doc.mergeCommit?.oid ?? null });
+          if (seen?.stop) return stop(i, seen.stop);
+          break;
+        }
         if (Date.now() >= until) {
           return stop(i, m.ok
             ? `PR #${s.prNumber}: merge accepted but not observed merged after ${Math.round(T.mergeWait / 1000)}s — check branch rules / merge queue, then --resume`
@@ -354,7 +369,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
  * the serial record is created, and the loop runs. Re-entering a stopped run is
  * `land --resume <trainId>`.
  */
-export function approveSerial({ cwd, trainId, acceptRerun = false, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, timeoutMs, messageFor }) {
+export function approveSerial({ cwd, trainId, acceptRerun = false, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, timeoutMs, messageFor, hooks }) {
   const dir = fleetDir(cwd);
   const start = withTrainLock(dir, () => {
     const r = readTrain(dir, trainId);
@@ -382,13 +397,13 @@ export function approveSerial({ cwd, trainId, acceptRerun = false, requiredCheck
     return { ok: true };
   });
   if (!start.ok) return start;
-  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}), ...(messageFor ? { messageFor } : {}) }) });
+  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}), ...(messageFor ? { messageFor } : {}), ...(hooks ? { hooks } : {}) }) });
 }
 
 /** `land --resume <trainId>` for a train that has a serial run. */
-export function resumeSerial({ cwd, trainId, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, messageFor }) {
+export function resumeSerial({ cwd, trainId, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, messageFor, hooks }) {
   const dir = fleetDir(cwd);
-  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}), ...(messageFor ? { messageFor } : {}) }) });
+  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}), ...(messageFor ? { messageFor } : {}), ...(hooks ? { hooks } : {}) }) });
 }
 
 function finishSerial({ dir, trainId, deps, r }) {

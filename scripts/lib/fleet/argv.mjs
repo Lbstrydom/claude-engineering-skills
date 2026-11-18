@@ -42,7 +42,7 @@ export const VERBS = Object.freeze({
     value: ['--kind', '--for', '--pid', '--token', '--note', '--id', '--reason', '--from', '--until', '--hours', '--clear-window', '--limit', '--window', '--to', '--minutes', '--wait', '--timeout'], repeat: [], positionals: [1, 256],
   },
   land: {
-    bool: ['--json', '--dry-run', '--accept-rerun', '--serial', '--include-stale'],
+    bool: ['--json', '--dry-run', '--accept-rerun', '--serial', '--include-stale', '--ship-batch'],
     value: ['--select', '--tier', '--approve', '--confirm', '--reconcile', '--resume', '--abandon'], repeat: [], positionals: [0, 0],
   },
 });
