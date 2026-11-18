@@ -62,13 +62,15 @@ function shipDocs(dir) {
   write(dir, 'docs/plans/x.md', `${plan.replace('Draft', 'Implemented')}\n## Implementation Log\n- shipped\n`);
 }
 
+let LAST_AUDITED_SHA = null; // what the marker just written names: the store stub corroborates it, as a real converged row would
 function writeMarkers(dir, { auditedTree, auditedSha, branch = 'claude/x', fr = {} } = {}) {
+  LAST_AUDITED_SHA = auditedSha;
   write(dir, '.audit/last-audit-run.json', JSON.stringify({ runId: RUN, ts: new Date(Date.now() + 60_000).toISOString(), auditedTree, auditedSha, auditedBranch: branch, round: 4 }));
   write(dir, '.audit/last-final-review.json', JSON.stringify({ runId: RUN, auditedTree, round: 4, verdict: 'APPROVE', disposition: 'approve', ts: new Date().toISOString(), ...fr }));
 }
 
 const store = (over = {}) => ({
-  runFacts: async () => ({ row: { repoId: 'r1', roundConvergedAfter: 4, auditedSha: null, auditedTree: over.auditedTree ?? null, geminiVerdict: 'APPROVE', branch: 'claude/x', ...over.row }, why: null }),
+  runFacts: async () => ({ row: { repoId: 'r1', roundConvergedAfter: 4, auditedSha: over.auditedSha ?? LAST_AUDITED_SHA, auditedTree: over.auditedTree ?? null, geminiVerdict: 'APPROVE', branch: 'claude/x', ...over.row }, why: null }),
   repoId: async () => ({ repoId: 'r1', why: null }),
 });
 
@@ -603,5 +605,39 @@ describe('--check-shipped-head: worktree discovery uses the sanitized environmen
     const env = JSON.parse(r.stdout);
     assert.equal(env.head, mine.head, `it judged ${env.head}, the member's own head is ${mine.head}: ${r.stderr}`);
     assert.notEqual(failing(env)[0], 'head', 'the head must resolve in the member\'s own repository');
+  });
+});
+
+describe('--check-shipped-head: the live base is re-read at the END too (PR A audit round 6)', () => {
+  it('a force-push to the REMOTE while the store is read (the local ref untouched) is refused', async () => {
+    const dir0 = makeRepo();
+    const { dir } = dir0;
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'bare2-'));
+    tmpDirs.push(bare);
+    spawnSync('git', ['init', '-q', '--bare', '-b', 'main', bare], { encoding: 'utf-8' });
+    git(dir, 'remote', 'add', 'origin', bare);
+    git(dir, 'push', '-q', 'origin', 'main');
+    git(dir, 'fetch', '-q', 'origin');
+    write(dir, 'scripts/a.mjs', 'export const a = 6; // audited\n');
+    const auditedSha = commit(dir, 'audited work');
+    const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
+    shipDocs(dir);
+    const head = commit(dir, `ship v\n\n${TRAILERS()}`);
+    writeMarkers(dir, { auditedTree, auditedSha });
+    const racy = store({ auditedTree });
+    const real = racy.runFacts;
+    racy.runFacts = async (id) => {
+      const other = fs.mkdtempSync(path.join(os.tmpdir(), 'other2-'));
+      tmpDirs.push(other);
+      spawnSync('git', ['clone', '-q', bare, other], { encoding: 'utf-8' });
+      for (const [k, v] of [['user.email', 't@example.com'], ['user.name', 'T'], ['commit.gpgsign', 'false']]) git(other, 'config', k, v);
+      write(other, 'moved.txt', 'x\n');
+      commit(other, 'the remote moved');
+      git(other, 'push', '-q', 'origin', 'main');
+      return real(id);
+    };
+    const env = await checkReal({ repoRoot: dir, head, store: racy });
+    assert.deepEqual(failing(env), ['base']);
+    assert.match(reason(env, 'base'), /live .* changed|could not be re-read/);
   });
 });

@@ -196,6 +196,7 @@ export function evaluateShippedHead(f = {}) {
   else if (rr.repoId !== f.repoId) c.push(row('evidence', false, 'the run belongs to another repository'));
   else if (rr.auditedTree == null || ev.auditedTree == null) c.push(row('evidence', false, `the audited tree is not recorded on both sides (store: ${rr.auditedTree == null ? 'none, a row from before audited-tree identity' : 'yes'}; marker: ${ev.auditedTree == null ? 'none' : 'yes'}), so the run cannot be bound to the tree the review approved`));
   else if (rr.auditedTree !== ev.auditedTree) c.push(row('evidence', false, 'the store records a different audited tree for the run than the evidence marker names'));
+  else if (rr.auditedSha == null || ev.auditedSha == null || rr.auditedSha !== ev.auditedSha) c.push(row('evidence', false, `the audited COMMIT is not corroborated (store: ${rr.auditedSha ? rr.auditedSha.slice(0, 12) : 'none'}, marker: ${ev.auditedSha ? ev.auditedSha.slice(0, 12) : 'none'}): it picks the fork point the audited paths are measured from, so it must match what the store recorded`));
   else c.push(row('evidence', true, `run ${runId.slice(0, 8)} converged after round ${rr.roundConvergedAfter}, this repository, branch ${ev.auditedBranch}`));
 
   // 3. final review — bound to the SAME run, audited tree and round, saying APPROVE with result approve, and the store's

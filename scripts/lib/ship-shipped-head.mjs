@@ -249,6 +249,9 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
   if (baseOidAtStart) {
     const again = run(['rev-parse', '--verify', `refs/remotes/${remote}/${baseRefName}`]);
     if (again.status !== 0 || String(again.stdout).trim() !== baseOidAtStart) return envelope(pre('base', `refs/remotes/${remote}/${baseRefName} moved while the check was running: the change was measured against two different bases`), headOid);
+    // the LIVE branch too: a force-push to the remote during the store reads leaves the local ref untouched
+    const liveAgain = run(['ls-remote', remote, `refs/heads/${baseRefName}`]);
+    if (liveAgain.status !== 0 || String(liveAgain.stdout).trim().split(/\s+/)[0] !== baseOidAtStart) return envelope(pre('base', `the live ${remote}/${baseRefName} changed (or could not be re-read) while the check was running`), headOid);
   }
   return { ...envelope(verdict, headOid), baseVerified: verifyBase };
 }

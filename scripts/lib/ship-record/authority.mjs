@@ -119,6 +119,24 @@ function markupProblem(addedLines, { allowedHeading = null, allowHeadings = fals
 }
 
 /**
+ * THE PIVOT. Five audit rounds each found one more Markdown construct that can change how UNCHANGED text renders (an unclosed
+ * comment, a fence, a raw HTML block, a heading, a reference definition, a setext underline...). Modelling renderer behaviour
+ * construct by construct is unbounded, so the log is held to a WHITELIST instead: a line the ship adds inside the Implementation
+ * Log is a plain line: a list item (`- x`, `* x`, `+ x`, `1. x`), or prose that starts with a letter, a digit, `**`, a quote or
+ * an opening parenthesis, indented by at most three spaces. Anything else (a tag, a heading, a fence, a quote, a table row, a
+ * reference definition `[x]: y`, an underline `---`, a 4-space code line) is refused, and that member waits for the user's `/ship`.
+ * Fail closed: a log with a table or a code block costs the user one `/ship`, never an unaudited rendering change.
+ */
+const PLAIN_LOG_LINE_RE = /^ {0,3}(?:[-*+] \S|\d{1,9}[.)] \S|\*\*|\*[A-Za-z0-9]|_[A-Za-z0-9]|`(?!`)|[A-Za-z0-9"'(\u201c\u2018])/;
+/** Why this added log line is not plain, or null. */
+function plainLogLineProblem(l) {
+  if (isBlank(l)) return null;
+  if (/^ {0,3}\[[^\]]*\]:/.test(l)) return 'is a link reference definition';
+  if (/^ {0,3}(?:=+|-{2,})\s*$/.test(l)) return 'is a setext heading underline or a thematic break';
+  return PLAIN_LOG_LINE_RE.test(l) ? null : 'is not a plain list item or prose line';
+}
+
+/**
  * The RENDER CONTEXT at the start of every line of a document (plus its end): whether an HTML comment is open there, and which code
  * fence. Inside a fence an HTML comment is literal; inside a comment a fence is literal. Lets two versions of a document be compared
  * line by line for "does this edit change how an UNCHANGED line renders".
@@ -164,7 +182,9 @@ function contextProblem(a, b, runs) {
 function logRange(ls) {
   const h = ls.indexOf(LOG_HEADING);
   if (h < 0) return null;
-  const k = ls.findIndex((l, n) => n > h && /^## /.test(l));
+  // The section ends at the next heading of level 1 or 2: ATX (up to 3 spaces of indent, a space or tab after the hashes) or SETEXT
+  // (a text line underlined by === or ---).
+  const k = ls.findIndex((l, n) => n > h && (/^ {0,3}#{1,2}(?:[ \t]|$)/.test(l) || (l.trim() !== '' && /^ {0,3}(?:=+|-{2,})\s*$/.test(ls[n + 1] ?? ''))));
   return [h, k < 0 ? ls.length : k];
 }
 /** The plan's Status field: the FIRST `- **Status**:` line above the first `## ` heading (a look-alike lower down is body text). */
@@ -283,6 +303,16 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
   if (badMarkup) return `${rel}: the added text ${badMarkup}`;
   const badContext = contextProblem(a, b, runs);
   if (badContext) return `${rel}: ${badContext}`;
+  // ...and the pivot: every line added INSIDE the log must be a plain line (the log's own heading, when created, excepted).
+  if (logB !== null) {
+    for (const r of runs) {
+      for (let j = r.newAt; j < r.newAt + r.newN; j++) {
+        if (j < logB[0] || j >= logB[1] || j === logB[0] || j === stB) continue;
+        const why = plainLogLineProblem(b[j]);
+        if (why) return `${rel}: line ${j + 1} added to the ${LOG_HEADING} ${why} (only plain list items and prose may be added; the member waits for /ship)`;
+      }
+    }
+  }
   // A log the ship CREATES must be APPENDED: the last section, in an insertion that starts AFTER every non-blank line of the old
   // document. A heading dropped into the middle of the document, or inside the final section ahead of its own text, would
   // otherwise turn old prose into "log".

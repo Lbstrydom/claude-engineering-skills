@@ -29,7 +29,7 @@ const trailers = (over = {}) => {
 };
 const evidence = (extra = {}) => ({ runId: RUN, auditedTree: TREE, auditedSha: SHA, round: 4, auditedBranch: 'claude/x', ...extra });
 const finalReview = (extra = {}) => ({ ok: true, marker: { runId: RUN, auditedTree: TREE, round: 4, verdict: 'APPROVE', disposition: 'approve', ts: '2026-11-18T07:00:00.000Z', ...extra } });
-const runRow = (extra = {}) => ({ repoId: REPO, roundConvergedAfter: 4, auditedTree: TREE, geminiVerdict: 'APPROVE', ...extra });
+const runRow = (extra = {}) => ({ repoId: REPO, roundConvergedAfter: 4, auditedTree: TREE, auditedSha: SHA, geminiVerdict: 'APPROVE', ...extra });
 
 /** Facts under which every condition holds. */
 const GOOD = () => ({
@@ -104,6 +104,8 @@ describe('evaluateShippedHead: each condition fails ALONE with its own reason', 
     ['evidence: store row unreadable', (f) => { f.runRow = null; f.runRowWhy = 'cloud store is off'; }, ['evidence', 'final-review'], /cloud store is off/],
     ['evidence: run belongs to another repository', (f) => { f.runRow = runRow({ repoId: 'repo-row-2' }); }, 'evidence', /another repository/],
     ['evidence: this repository could not be resolved', (f) => { f.repoId = null; }, 'evidence', /repository identity/],
+    ['evidence: the store records a different audited COMMIT than the marker', (f) => { f.runRow = runRow({ auditedSha: 'f'.repeat(40) }); }, 'evidence', /audited COMMIT is not corroborated/],
+    ['evidence: the store recorded no audited commit', (f) => { f.runRow = runRow({ auditedSha: null }); }, 'evidence', /audited COMMIT is not corroborated/],
     ['evidence: the marker is from BEFORE the audit converged (round 3 < converged-after 4)', (f) => { f.evidence = evidence({ round: 3 }); f.finalReview = finalReview({ round: 3 }); }, 'evidence', /from before it converged/],
     ['evidence: the store records the run on another branch', (f) => { f.runRow = runRow({ branch: 'claude/other' }); }, 'evidence', /store records the run on branch/],
     ['evidence: store audited tree differs from the marker', (f) => { f.runRow = runRow({ auditedTree: OTHER_TREE }); }, 'evidence', /audited tree/],
@@ -280,7 +282,7 @@ describe('isShipStepDelta: the hardened grammar (code-audit round 1)', () => {
   it('text the ship adds that opens a code fence it does not close refuses', () => {
     const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
     assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nunclosed\n' }), /code fence it does not close/);
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nclosed\n```\n' }), null);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nclosed\n```\n' }), /not a plain list item or prose line/, 'a CLOSED fence is balanced, but a log line may not be a fence (the pivot)');
   });
   it('a whole document over the size bound refuses BEFORE it is split, even when almost all of it is unchanged', () => {
     const huge = 'x'.repeat(9_000_000);
@@ -303,7 +305,7 @@ describe('isShipStepDelta: markup balance in BOTH grammars (PR A audit round 2)'
     const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
     assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\ncode\n~~~\n' }), /code fence/);
     assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````\n```\n' }), /code fence/, 'a shorter closer does not close a longer opener');
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````js\ncode\n````\n' }), null);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````js\ncode\n````\n' }), /not a plain list item or prose line/);
   });
 });
 
@@ -330,8 +332,8 @@ describe('isShipStepDelta: markup is judged IN CONTEXT (PR A audit round 4)', ()
     const wrapped = withLog.replace('- r1 first entry\n', '<!--\n- r1 first entry\n-->\n');
     assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: wrapped }), /would render in a different context/);
   });
-  it('the same fences added AFTER every existing line, closed, are fine (the control)', () => {
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```\nexample\n```\n' }), null);
+  it('plain list items added AFTER every existing line are fine (the control), and so is prose', () => {
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '- r3 shipped\n\nA closing note in plain prose.\n' }), null);
   });
   it('the same holds for the legacy status.md log', () => {
     const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
@@ -352,12 +354,55 @@ describe('isShipStepDelta: raw HTML, headings and fenced delimiters (PR A audit 
   it('the ONE allowed heading is the log\'s own, when the ship creates the log (the control)', () => {
     assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD + '\n## Implementation Log\n- shipped\n' }), null);
   });
-  it('comment delimiters INSIDE a fenced block are literal: a balanced fenced HTML example containing "<!-- placeholder" is accepted', () => {
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('```html\n<!-- placeholder\n```') }), null);
+  it('a fenced HTML example in the log is refused: not for its comment (delimiters inside a fence are literal) but because a log line may not be a fence', () => {
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('```html\n<!-- placeholder\n```') }), /not a plain list item or prose line/);
   });
   it('the legacy status.md log still accepts a new ENTRY heading (its entries are headings)', () => {
     const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
     const good = ['# Status', 'intro', '', '## 2026-11-18 new entry', 'new body', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
     assert.equal(delta({ status: 'M', rel: 'status.md', oldText: old, newText: good }), null);
+  });
+});
+
+describe('isShipStepDelta: the PLAIN-LOG-LINE whitelist (PR A audit round 6, the pivot)', () => {
+  const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Next steps\nunchanged section\n';
+  const add = (line) => withLog.replace('- r1\n', `- r1\n${line}\n`);
+  for (const [name, line] of [
+    ['a link reference definition (it can re-point links elsewhere in the document)', '[ref]: https://example.com'],
+    ['a setext underline (it turns the line above into a heading)', '---'],
+    ['a setext underline of equals signs', '==='],
+    ['a block quote', '> quoted'],
+    ['a table row', '| a | b |'],
+    ['a 4-space indented code line', '    code'],
+    ['a raw HTML tag', '<div>'],
+  ]) {
+    it(`refuses ${name}`, () => {
+      assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(line) }), /link reference definition|setext|not a plain list item|raw HTML|added outside the Status field/);
+    });
+  }
+  for (const line of ['- a bullet', '* another', '+ plus', '1. numbered', '2) paren', 'Plain prose.', '**bold lead** then text', '`code` first', '(parenthesised)', '"quoted" start', '  - indented bullet']) {
+    it(`accepts a plain line: ${JSON.stringify(line)}`, () => {
+      assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(line) }), null);
+    });
+  }
+  it('a plain line added OUTSIDE the log is still refused by location (the whitelist is in addition to it)', () => {
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('unchanged section\n', 'unchanged section\nplain but in the wrong section\n') }), /added outside the Status field/);
+  });
+});
+
+describe('isShipStepDelta: section boundaries follow Markdown headings (PR A audit round 6)', () => {
+  it('a SETEXT heading after the log ends it: a plain line added below it is outside the log (refused by location)', () => {
+    const old = PLAN_OLD + '## Implementation Log\n- r1\nNext steps\n----------\nunchanged\n';
+    const next = old.replace('unchanged\n', 'unchanged\nplain but below the setext heading\n');
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: next }), /added outside the Status field/);
+  });
+  it('an INDENTED level-two ATX heading ends the log too', () => {
+    const old = PLAN_OLD + '## Implementation Log\n- r1\n   ## Indented heading\nunchanged\n';
+    const next = old.replace('unchanged\n', 'unchanged\nplain but below the heading\n');
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: next }), /added outside the Status field/);
+  });
+  it('a line added INSIDE the log, before such a heading, is still accepted (the control)', () => {
+    const old = PLAN_OLD + '## Implementation Log\n- r1\nNext steps\n----------\nunchanged\n';
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: old.replace('- r1\n', '- r1\n- r2\n') }), null);
   });
 });
