@@ -1,6 +1,6 @@
 /**
  * @fileoverview The coordinator batch re-check, as a PURE decision: `evaluateShippedHead` (scripts/lib/ship-preauth.mjs) and
- * the ship-step delta grammar `isShipStepDelta` (scripts/lib/ship-record/authority.mjs).
+ * the path-only post-audit delta `shipEntryRefusal` (scripts/lib/ship-shipped-head.mjs).
  * Plan: docs/plans/coordinator-aggregate-ship.md section 2.3 (C1-C5).
  *
  * Tier 1: every condition fails ALONE with its own reason, one row in which all hold, and the direction each rule must NOT
@@ -11,7 +11,9 @@ import assert from 'node:assert/strict';
 import {
   evaluateShippedHead, SHIPPED_HEAD_CONDITIONS, renderShippedHeadConditions,
 } from '../scripts/lib/ship-preauth.mjs';
-import { isShipStepDelta } from '../scripts/lib/ship-record/authority.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { shipEntryRefusal } from '../scripts/lib/ship-shipped-head.mjs';
 
 const RUN = '981fc79a-0fbb-447a-a294-b0c0217dab71';
 const OTHER_RUN = '11111111-2222-4333-8444-555555555555';
@@ -151,365 +153,45 @@ describe('evaluateShippedHead: each condition fails ALONE with its own reason', 
   });
 });
 
-// ---- the ship-step delta grammar (C4) --------------------------------------------------------------------------------------
-/** Modes default to a regular file on both sides: the mode rules are tested explicitly below. */
-const delta = (o) => isShipStepDelta({ oldMode: '100644', newMode: '100644', ...o });
-const PLAN_OLD = ['# Plan: X', '- **Status**: Draft', '', '## Context', 'body', '', '## Phase 1', 'work', ''].join('\n');
-const entryName = 'docs/status/entries/2026-11-18-070000-ship-x.md';
+// ---- the post-audit delta (C4): PATH-ONLY ------------------------------------------------------------------------------------
+const refusal = (o) => shipEntryRefusal({ newMode: '100644', ...o });
+const entry = 'docs/status/entries/2026-11-18-070000-ship-x.md';
 
-describe('isShipStepDelta: what a ship may add after the audit', () => {
-  it('(a) a new status entry file passes', () => {
-    assert.equal(delta({ status: 'A', rel: entryName, oldText: null, newText: '## Ship\nx\n' }), null);
+describe('shipEntryRefusal: the only change /ship may make after the audit is a NEW status entry file', () => {
+  it('an ADDED regular entry file passes', () => {
+    assert.equal(refusal({ status: 'A', rel: entry }), null);
   });
-  it('(a) a status entry with a malformed name refuses', () => {
-    assert.match(delta({ status: 'A', rel: 'docs/status/entries/notes.md', oldText: null, newText: 'x' }), /name/);
-  });
-  it('(a) an EXISTING entry being modified refuses (entries are immutable)', () => {
-    assert.match(delta({ status: 'M', rel: entryName, oldText: 'a', newText: 'b' }), /new file/);
-  });
-  it('(c) a plan: Status line plus an appended Implementation Log passes', () => {
-    const next = PLAN_OLD.replace('Draft', 'Implemented') + '\n## Implementation Log\n- shipped\n';
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), null);
-  });
-  it('(c) a plan that ALREADY has a log may gain lines inside it', () => {
-    const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
-    const next = withLog + '- r2 shipped\n';
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: next }), null);
-  });
-  it('(c) the NORMAL case: a plan the branch changed before its audit gets only a ship edit after it', () => {
-    // The audited tree already holds the branch edit (a Context line), and the ship adds Status + Log only.
-    const audited = PLAN_OLD.replace('body', 'body, as audited');
-    const next = audited.replace('Draft', 'Implemented') + '\n## Implementation Log\n- shipped\n';
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: audited, newText: next }), null);
-  });
-  it('(c) a plan body edit outside Status and the log refuses', () => {
-    const next = PLAN_OLD.replace('work', 'different work');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), /existing line \d+ was changed or removed/);
-  });
-  it('(c) a plan edit to the Status line AND a body line refuses on the body line', () => {
-    const next = PLAN_OLD.replace('Draft', 'Implemented').replace('body', 'changed');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), /existing line \d+ was changed or removed/);
-  });
-  it('(c) deleting a body line refuses', () => {
-    const next = PLAN_OLD.replace('body\n', '');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), /existing line \d+ was changed or removed/);
-  });
-  it('(c) CRLF on one side does not read as a whole-file change', () => {
-    const next = (PLAN_OLD.replace('Draft', 'Implemented') + '\n## Implementation Log\n- shipped\n').replace(/\n/g, '\r\n');
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: next }), null);
-  });
-  it('(b) legacy status.md: lines inserted before the first entry pass; an edit below it refuses', () => {
-    const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
-    const good = ['# Status', 'intro', '', '## 2026-11-18 new entry', 'new body', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
-    const bad = old.replace('old body', 'rewritten');
-    assert.equal(delta({ status: 'M', rel: 'status.md', oldText: old, newText: good }), null);
-    assert.match(delta({ status: 'M', rel: 'status.md', oldText: old, newText: bad }), /status\.md/);
-  });
-  it('a delete refuses', () => {
-    assert.match(delta({ status: 'D', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: null }), /delet/);
-  });
-  it('a rename half refuses', () => {
-    assert.match(delta({ status: 'R', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD }), /status/);
-  });
-  it('code after the audit refuses', () => {
-    assert.match(delta({ status: 'M', rel: 'scripts/x.mjs', oldText: 'a', newText: 'b' }), /allowlist/);
-  });
-  it('a file too large to verify refuses (fail closed)', () => {
-    const big = Array.from({ length: 4000 }, (_, i) => `line ${i}`).join('\n');
-    const bigNext = big.replace('line 2000', 'changed 2000');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: big, newText: bigNext }), /too large|changed or removed/);
-  });
-});
-
-describe('isShipStepDelta: the hardened grammar (code-audit round 1)', () => {
-  const withLog = PLAN_OLD + '## Implementation Log\n- r1 first entry\n- r2 second entry\n';
-  it('the log is APPEND-ONLY: rewriting an existing entry refuses', () => {
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('r1 first entry', 'r1 REWRITTEN') }), /existing line \d+ was changed or removed.*append-only/);
-  });
-  it('the log is APPEND-ONLY: deleting an existing entry refuses', () => {
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('- r2 second entry\n', '') }), /append-only/);
-  });
-  it('a log the ship CREATES mid-document refuses: a heading dropped into Context must not turn the prose around it into "log"', () => {
-    const sneaky = PLAN_OLD.replace('body\n', 'body\n\n## Implementation Log\nsmuggled prose that is not a log\n');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: sneaky }), /must be the last section/);
-  });
-  it('a look-alike Status line lower down is body text, not the Status field', () => {
-    const old = PLAN_OLD.replace('work', '- **Status**: Draft (a quoted example)');
-    const next = old.replace('(a quoted example)', '(rewritten)');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: next }), /existing line \d+ was changed or removed/);
-  });
-  it('the plan\'s real Status field still changes (the control for the look-alike case)', () => {
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD.replace('Draft', 'Complete') }), null);
-  });
-  for (const mode of ['120000', '160000', '100755', null]) {
-    it(`an ADDED status entry with mode ${mode} is not a regular file: refuses`, () => {
-      assert.match(delta({ status: 'A', rel: entryName, oldText: null, newText: 'x', newMode: mode }), /not a regular file/);
+  for (const status of ['M', 'D', 'R', 'C', 'T']) {
+    it(`status ${status} on an entry path refuses (only an ADD is allowed)`, () => {
+      assert.match(refusal({ status, rel: entry }), /only ADDING one is allowed/);
     });
   }
-  it('a plan whose mode changed (or became a symlink) is not a plain line edit: refuses', () => {
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD, newMode: '120000' }), /regular-file edit/);
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD, oldMode: '100644', newMode: '100755' }), /regular-file edit/);
-  });
-  it('a new log heading inserted INSIDE the final section (ahead of that section\'s own text) must be appended after the whole document', () => {
-    const sneaky = PLAN_OLD.replace('## Phase 1\nwork\n', '## Phase 1\n## Implementation Log\nwork\n');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: sneaky }), /appended after the whole existing document|existing line/);
-  });
-  it('a log appended AFTER the final section\'s text is the legitimate shape (the control)', () => {
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD + '\n## Implementation Log\n- shipped\n' }), null);
-  });
-  it('a LARGE insertion is bounded (never an unbounded per-line rescan) and still correct under the cap', () => {
-    const big = Array.from({ length: 50_000 }, (_, i) => `- entry ${i}`).join('\n');
-    const t0 = Date.now();
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: `${PLAN_OLD}\n## Implementation Log\n${big}\n` }), null);
-    assert.ok(Date.now() - t0 < 5000, `a 50k-line log insertion took ${Date.now() - t0}ms`);
-    const huge = Array.from({ length: 250_000 }, (_, i) => `- entry ${i}`).join('\n');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: `${PLAN_OLD}\n## Implementation Log\n${huge}\n` }), /too large/);
-  });
-  it('a SECOND log heading inserted ahead of the real log cannot re-label old prose as "log"', () => {
-    const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
-    const sneaky = withLog.replace('## Phase 1\n', '## Implementation Log\nplanted prose\n## Phase 1\n');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: sneaky }), /more than one .*Implementation Log/);
-  });
-  it('blank lines are NOT a free pass: a whitespace change outside the log refuses; the separator above a created log is allowed', () => {
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD.replace('## Context', '\n## Context') }), /added outside the Status field|existing line/);
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD + '\n## Implementation Log\n- shipped\n' }), null);
-  });
-  it('text the ship ADDS that opens an HTML comment it does not close refuses (it would swallow what follows the log)', () => {
-    const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Later\ntext after\n';
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('- r1\n', '- r1\n- r2 <!-- never closed\n') }), /HTML comment it does not close/);
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('- r1\n', '- r1\n- r2 <!-- a closed note -->\n') }), /contains "</, 'even a BALANCED comment is refused: the forbidden set rejects < outright');
-  });
-  it('text the ship adds that opens a code fence it does not close refuses', () => {
-    const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nunclosed\n' }), /code fence it does not close/);
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nclosed\n```\n' }), /contains/, 'a CLOSED fence is balanced, but a log line may not be a fence (the pivot)');
-  });
-  it('a whole document over the size bound refuses BEFORE it is split, even when almost all of it is unchanged', () => {
-    const huge = 'x'.repeat(9_000_000);
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: huge, newText: huge + '\n' }), /too large to verify/);
-  });
-  it('an unknown mode refuses (never a pass)', () => {
-    assert.match(isShipStepDelta({ status: 'A', rel: entryName, newText: 'x' }), /not a regular file \(mode unknown\)/);
-  });
-});
-
-describe('isShipStepDelta: markup balance in BOTH grammars (PR A audit round 2)', () => {
-  it('an HTML comment opened in status.md ABOVE the first entry is refused (it would swallow every entry below it)', () => {
-    const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
-    const bad = ['# Status', 'intro', '<!-- never closed', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
-    const good = ['# Status', 'intro', '<!-- a closed note -->', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
-    assert.match(delta({ status: 'M', rel: 'status.md', oldText: old, newText: bad }), /HTML comment it does not close/);
-    assert.equal(delta({ status: 'M', rel: 'status.md', oldText: old, newText: good }), null, 'a balanced comment is fine (the control)');
-  });
-  it('a backtick fence closed by a TILDE fence is still unclosed (type must match), in both grammars', () => {
-    const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\ncode\n~~~\n' }), /code fence it does not close|contains/);
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````\n```\n' }), /code fence it does not close|contains/, 'a shorter closer does not close a longer opener');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````js\ncode\n````\n' }), /contains/);
-  });
-});
-
-describe('isShipStepDelta: HTML comments are judged in DOCUMENT ORDER (PR A audit round 3)', () => {
-  const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Later\ntext after\n';
-  const add = (line) => withLog.replace('- r1\n', `- r1\n${line}\n`);
-  it('"-->" then "<!--" has EQUAL counts but leaves a comment open: refused', () => {
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('- r2 --> and <!-- unfinished') }), /closes an HTML comment it did not open/);
-  });
-  it('a closer with no opener is refused; an opener nested in an open comment is refused; a proper pair is fine', () => {
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('- r2 stray -->') }), /did not open/);
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('- r2 <!-- a <!-- b -->') }), /inside one it has not closed/);
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('- r2 <!-- a --> and <!-- b -->') }), /contains "</, 'a proper pair is balanced, and still refused by the forbidden set');
-  });
-});
-
-describe('isShipStepDelta: markup is judged IN CONTEXT (PR A audit round 4)', () => {
-  const withLog = PLAN_OLD + '## Implementation Log\n- r1 first entry\n- r2 audited paragraph\n';
-  it('two fence lines that BALANCE among the additions but surround an existing paragraph are refused (the paragraph would become code)', () => {
-    const surrounded = withLog.replace('- r2 audited paragraph\n', '```\n- r2 audited paragraph\n```\n');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: surrounded }), /would render in a different context/);
-  });
-  it('a comment pair that balances among the additions but wraps an existing line is refused', () => {
-    const wrapped = withLog.replace('- r1 first entry\n', '<!--\n- r1 first entry\n-->\n');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: wrapped }), /would render in a different context/);
-  });
-  it('plain list items added AFTER every existing line are fine (the control), and so is prose', () => {
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '- r3 shipped\n\nA closing note in plain prose.\n' }), null);
-  });
-  it('the same holds for the legacy status.md log', () => {
-    const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
-    const bad = ['# Status', '```', 'intro', '```', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
-    assert.match(delta({ status: 'M', rel: 'status.md', oldText: old, newText: bad }), /different context|rewritten|changed or removed/);
-  });
-});
-
-describe('isShipStepDelta: raw HTML, headings and fenced delimiters (PR A audit round 5)', () => {
-  const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Next steps\nunchanged section\n';
-  const add = (line) => withLog.replace('- r1\n', `- r1\n${line}\n`);
-  it('a raw HTML block started in the log (<pre>) is refused: it would swallow the unchanged section after it', () => {
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('<pre>') }), /raw HTML block/);
-  });
-  it('a heading added inside the log (any level, a tab after the hashes) is refused: it starts a new section', () => {
-    for (const h of ['# Revised scope', '## Sneaky', '###\tTabbed', '#']) assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(h) }), /adds a heading|added outside the Status field/, h);
-  });
-  it('the ONE allowed heading is the log\'s own, when the ship creates the log (the control)', () => {
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD + '\n## Implementation Log\n- shipped\n' }), null);
-  });
-  it('a fenced HTML example in the log is refused: not for its comment (delimiters inside a fence are literal) but because a log line may not be a fence', () => {
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('```html\n<!-- placeholder\n```') }), /contains/);
-  });
-  it('the legacy status.md log still accepts a new ENTRY heading (its entries are headings)', () => {
-    const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
-    const good = ['# Status', 'intro', '', '## 2026-11-18 new entry', 'new body', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
-    assert.equal(delta({ status: 'M', rel: 'status.md', oldText: old, newText: good }), null);
-  });
-});
-
-describe('isShipStepDelta: the PLAIN-LOG-LINE whitelist (PR A audit round 6, the pivot)', () => {
-  const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Next steps\nunchanged section\n';
-  const add = (line) => withLog.replace('- r1\n', `- r1\n${line}\n`);
-  for (const [name, line] of [
-    ['a link reference definition (it can re-point links elsewhere in the document)', '[ref]: https://example.com'],
-    ['a setext underline (it turns the line above into a heading)', '---'],
-    ['a setext underline of equals signs', '==='],
-    ['a block quote', '> quoted'],
-    ['a table row', '| a | b |'],
-    ['a 4-space indented code line', '    code'],
-    ['a raw HTML tag', '<div>'],
+  for (const [name, rel] of [
+    ['a plan edit', 'docs/plans/x.md'],
+    ['status.md', 'status.md'],
+    ['a source file', 'scripts/a.mjs'],
+    ['a file OUTSIDE the entries directory', 'docs/status/other.md'],
+    ['a nested path under the entries directory', 'docs/status/entries/sub/x.md'],
+    ['a non-markdown file in the entries directory', 'docs/status/entries/x.json'],
+    ['a look-alike directory', 'docs/status/entries-x/x.md'],
   ]) {
-    it(`refuses ${name}`, () => {
-      assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(line) }), /contains|setext|not a plain list item|added outside the Status field|starts with #|raw HTML block/);
+    it(`${name} refuses, even as an add`, () => {
+      assert.match(refusal({ status: 'A', rel }), /only a NEW docs\/status\/entries\/\*\.md file/);
     });
   }
-  for (const line of ['- a bullet', '* another', '+ plus', '1. numbered', '2) paren', 'Plain prose.', '(parenthesised)', '"quoted" start', '  - indented bullet']) {
-    it(`accepts a plain line: ${JSON.stringify(line)}`, () => {
-      assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(line) }), null);
+  for (const mode of ['120000', '160000', '100755', '040000', null]) {
+    it(`an added entry with mode ${mode} refuses (symlink, gitlink, executable, tree or unknown)`, () => {
+      assert.match(shipEntryRefusal({ status: 'A', rel: entry, newMode: mode }), /not a regular file/);
     });
   }
-  it('a plain line added OUTSIDE the log is still refused by location (the whitelist is in addition to it)', () => {
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog.replace('unchanged section\n', 'unchanged section\nplain but in the wrong section\n') }), /added outside the Status field/);
+  it('the entry CONTENT is never read: any bytes pass, because a new file cannot rewrite audited content', () => {
+    assert.equal(shipEntryRefusal.length, 1, 'the decision takes one object and has no text parameter');
+    assert.equal(refusal({ status: 'A', rel: entry, newText: '<!-- never closed [x]: https://example.invalid ``` *' }), null);
   });
-});
-
-describe('isShipStepDelta: section boundaries follow Markdown headings (PR A audit round 6)', () => {
-  it('a SETEXT heading after the log ends it: a plain line added below it is outside the log (refused by location)', () => {
-    const old = PLAN_OLD + '## Implementation Log\n- r1\nNext steps\n----------\nunchanged\n';
-    const next = old.replace('unchanged\n', 'unchanged\nplain but below the setext heading\n');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: next }), /added outside the Status field/);
-  });
-  it('an INDENTED level-two ATX heading ends the log too', () => {
-    const old = PLAN_OLD + '## Implementation Log\n- r1\n   ## Indented heading\nunchanged\n';
-    const next = old.replace('unchanged\n', 'unchanged\nplain but below the heading\n');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: next }), /added outside the Status field/);
-  });
-  it('a line added INSIDE the log, before such a heading, is still accepted (the control)', () => {
-    const old = PLAN_OLD + '## Implementation Log\n- r1\nNext steps\n----------\nunchanged\n';
-    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: old.replace('- r1\n', '- r1\n- r2\n') }), null);
-  });
-});
-
-describe('isShipStepDelta: a reference definition INSIDE a container is still a definition (PR A, the round past the cap)', () => {
-  const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Next steps\nSee [proof] for details.\n';
-  const add = (line) => withLog.replace('- r1\n', `- r1\n${line}\n`);
-  for (const line of ['- [proof]: https://example.invalid', '* [proof]: https://example.invalid', '1. [proof]: https://example.invalid', '- - [proof]: https://example.invalid', '  - [proof]: https://example.invalid', '-\t[proof]: https://example.invalid']) {
-    it(`refuses ${JSON.stringify(line)}`, () => {
-      assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(line) }), /contains "\["/);
-    });
-  }
-  it('a list item that merely mentions a bracket is refused too: the forbidden set is strict about [ and ] (the measured cost: 1.3% of real log lines)', () => {
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('- see [proof] and [x](https://example.com) for details') }), /contains "\["/);
-  });
-});
-
-// ---- the named forbidden set (audit past-cap round 2: "no Markdown metacharacters", chosen from what the ship writes) ----------------
-import fs from 'node:fs';
-import path from 'node:path';
-import { LOG_LINE_FORBIDDEN_CHARS, LOG_LINE_ALLOWED_INLINE } from '../scripts/lib/ship-record/authority.mjs';
-import { planLogSuggestion } from '../scripts/lib/ship-record/entry.mjs';
-
-describe('the log-line forbidden set: one named constant, every character refused, plain lines accepted', () => {
-  const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Next steps\nunchanged section\n';
-  const add = (line) => withLog.replace('- r1\n', `- r1\n${line}\n`);
-  const run = (line) => delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(line) });
-
-  it('the set is exactly [ ] < > | * _ and the backtick, and NO Markdown character is allowed inline', () => {
-    assert.deepEqual([...LOG_LINE_FORBIDDEN_CHARS], ['[', ']', '<', '>', '|', '*', '_', '`']);
-    assert.deepEqual([...LOG_LINE_ALLOWED_INLINE], []);
-    for (const c of LOG_LINE_ALLOWED_INLINE) assert.equal(LOG_LINE_FORBIDDEN_CHARS.includes(c), false, 'allowed and forbidden must not overlap');
-  });
-  for (const c of LOG_LINE_FORBIDDEN_CHARS) {
-    it(`refuses a line containing ${JSON.stringify(c)}, anywhere in it, in any list shape`, () => {
-      for (const line of [`- text ${c} more`, `prose ${c}`, `1. numbered ${c}`, `- ${c}at the start`]) assert.match(run(line), /contains|raw HTML block|starts a raw/, line);
-    });
-  }
-  for (const [name, line] of [['a run of three backticks', '- uses ``` inline'], ['a run of tildes', '- uses ~~~ inline'], ['a leading #', '# heading'], ['a leading # with indent', '   ## heading'], ['a thematic break', '* * *'], ['a setext underline', '==='], ['a dashed underline', '----']]) {
-    it(`refuses ${name}`, () => { assert.notEqual(run(line), null, line); });
-  }
-  it('accepts the plain shapes a ship writes: bullets, numbered items, prose, parentheses, quotes (one leading list marker is structure, not content)', () => {
-    for (const line of ['- a bullet', '* another', '+ plus', '1. numbered', '2) paren', 'Plain prose.', '(parenthesised)', '"quoted" start', '  - indented bullet', '- r8 fixed the setext boundary and refused the definition']) assert.equal(run(line), null, line);
-  });
-
-  it('PROOF against what the ship writes: the strict set refuses a measured majority of real log lines (the stated cost), and every refusal names a reason from the known set', () => {
-    const dir = path.join(import.meta.dirname, '..', 'docs', 'plans');
-    let total = 0; let refused = 0; let unexplained = 0;
-    for (const f of fs.readdirSync(dir)) {
-      if (!f.endsWith('.md')) continue;
-      const lines = fs.readFileSync(path.join(dir, f), 'utf8').split(/\r?\n/);
-      const i = lines.indexOf('## Implementation Log');
-      if (i < 0) continue;
-      const e = lines.findIndex((l, n) => n > i && /^## /.test(l));
-      for (const l of lines.slice(i + 1, e < 0 ? lines.length : e)) {
-        if (!l.trim()) continue;
-        total++;
-        const old = `${PLAN_OLD}## Implementation Log\n- r1\n`;
-        const r = delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: `${old}${l}\n` });
-        if (r !== null) { refused++; if (!/contains|setext|starts with #|not a plain|outside the Status field|raw HTML|heading|thematic|code fence/.test(r)) { unexplained++; process.stderr.write('UNEXPLAINED: ' + r + ' <= ' + l.slice(0, 80) + String.fromCharCode(10)); } }
-      }
-    }
-    assert.ok(total > 1000, `the corpus is real (${total} lines)`);
-    assert.equal(unexplained, 0, 'every refusal carries a reason from the named set');
-    // Measured 2026-11-18: 69.0%. A regression check on the stated cost, not a target: it fails if the set silently loosens or tightens a lot.
-    const pct = 100 * refused / total;
-    assert.ok(pct > 50 && pct < 90, `the strict set refuses ${pct.toFixed(1)}% of ${total} real log lines`);
-  });
-
-  describe('the strict set: one refuse-test per character (PR A, the final round)', () => {
-    for (const c of ['*', '_', '`']) {
-      it(`refuses ${JSON.stringify(c)} inside the line, so it cannot pair with a character on an adjacent unchanged line`, () => {
-        assert.match(run(`- text ${c}x more`), /contains/);
-        assert.match(run(`prose ${c}x`), /contains/);
-      });
-    }
-    it('a leading list marker is allowed, but the same character after it is not', () => {
-      assert.equal(run('* bullet marker'), null);
-      assert.notEqual(run('* * nested marker'), null);
-      assert.match(run('- **bold** lead'), /contains/);
-    });
-  });
-
-  describe('a one-hyphen setext underline (round 8 H1)', () => {
-    it('an added single "-" line is refused', () => {
-      assert.notEqual(run('-'), null);
-    });
-    it('a single "-" directly before the next heading is not hidden by the log boundary', () => {
-      const old = PLAN_OLD + '## Implementation Log\n- r1\nNext\n## Next steps\nKeep\n';
-      const bad = PLAN_OLD + '## Implementation Log\n- r1\nNext\n-\n## Next steps\nKeep\n';
-      assert.notEqual(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: bad }), null);
-    });
-  });
-
-  describe('legacy status.md: an inserted reference definition (round 8 H2/H4)', () => {
-    const old = ['# Status', 'intro [x]', '', '## 2026-11-17 old entry', 'body', ''].join('\n');
-    for (const line of ['[x]: https://example.invalid', '- [x]: https://example.invalid', '1. [x]: https://example.invalid', '  [x]: https://example.invalid']) {
-      it(`refuses ${JSON.stringify(line)}`, () => {
-        const next = ['# Status', 'intro [x]', line, '', '## 2026-11-17 old entry', 'body', ''].join('\n');
-        assert.notEqual(delta({ status: 'M', rel: 'status.md', oldText: old, newText: next }), null);
-      });
-    }
-  });
-
-  it('the line ship-record catch-up writes is NOT governed by this grammar: it carries an HTML marker, is accepted by the RECORD grammar, and is refused here (it never rides in a /ship commit)', () => {
-    const line = planLogSuggestion({ number: 21, mergeCommit: 'a'.repeat(40), mergedAt: '2026-11-18T10:00:00Z' });
-    assert.match(line, /<!-- ship-record pr=21 -->/);
-    assert.match(run(line), /contains "<"/);
+  it('NEGATIVE CONTROL: the content grammar cannot come back unnoticed (its module, its constants and its callers are gone)', async () => {
+    const mod = await import('../scripts/lib/ship-record/authority.mjs');
+    for (const gone of ['isShipStepDelta', 'LOG_LINE_FORBIDDEN_CHARS', 'LOG_LINE_ALLOWED_INLINE', 'plainLogLineProblem']) assert.equal(gone in mod, false, `${gone} must not exist`);
+    const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'scripts', 'lib', 'ship-shipped-head.mjs'), 'utf8');
+    assert.doesNotMatch(src, /isShipStepDelta|oldText|newText|\bshow\b.*headTree/, 'the delta check reads no file content');
   });
 });

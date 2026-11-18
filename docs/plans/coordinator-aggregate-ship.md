@@ -247,21 +247,17 @@ changed before its audit is handled the same way as any other path.
    (gc'd), refuse with `audited-tree-missing`. A path in neither set is an upstream-only change brought in by a rebase, and it is
    correctly excluded.
 3. An empty `D` is allowed. This is the `passed` case, where `T_H === A` on `P`.
-4. Each entry of `D` must be one of the following, or the whole condition refuses with that path named:
-   - **(a) Status entry.** `A` (added), the path is under `docs/status/entries/`, and the name matches `ENTRY_NAME_RE`
-     (`ship-record/state.mjs:41`).
-   - **(b) Legacy status log.** `M` on `status.md`, every hunk adds lines only, and every added line sits above the first
-     pre-existing entry heading. This is the prepend-only legacy log (`skills/ship/SKILL.md:580-585`).
-   - **(c) Plan file.** `M` on a file under `docs/plans/`. Every changed line, on both sides of every hunk, lies in one of two
-     regions: (i) the single `- **Status**:` header line, or (ii) the `## Implementation Log` section, from its heading to the
-     next `## ` heading or the end of file. A section created by the ship counts as an added region.
-   - Every `D` (delete), any rename half (`--no-renames` lists both ends) and every other path refuses.
-5. **A path changed both by the branch and after the audit is therefore legal ONLY inside the (a)-(c) regions.** A conflict
-   resolution anywhere else refuses, because it is unaudited code.
+4. The post-audit delta is **path-based only**: the single permitted entry of `D` is an ADDED (`A`, never `M`, `D`, `R` or `T`) regular
+   file (mode `100644`) matching `docs/status/entries/<name>.md`. Every other path refuses with that path named: a modified, deleted or
+   renamed entry, a file added outside the directory, a symlink or gitlink under it, a plan edit (Status or Implementation Log) and a
+   `status.md` edit. No content is parsed, so no Markdown grammar can be wrong. The entry's content is not checked either: a new file is
+   not part of the audited tree, so it cannot rewrite audited content, and what it says is the chip's own record, not a claim the audit relied on.
+   A repository still on a single legacy `status.md`, or a ship that edits the plan, therefore waits for the user's `/ship`.
+5. **A path changed both by the branch and after the audit is therefore legal ONLY as that added entry.** A conflict resolution
+   anywhere else refuses, because it is unaudited code.
 
-This is the record-commit allowlist in `ship-record/authority.mjs` `pathVerdict` (`:103-125`), tightened to the hunk level. The
-shared predicate is lifted out as `isShipStepDelta(path, oldText, newText)` and the record path calls it too, so ONE grammar
-defines a ship-doc edit.
+The plan `Status:` and `## Implementation Log` line move out of the pre-merge ship step: record catch-up adds them after the merge,
+which is where the repository already writes them for members that merge without a ship.
 
 **Fixtures (real git).** Each case is built in a temp repo:
 - a status-entry-only delta;
@@ -397,7 +393,7 @@ go-ahead. Every other `land --approve`, `--confirm`, `--override` and `--accept-
 
 ### 2.8 Docs every member ship still produces (unchanged, and still per member)
 - The status entry file under `docs/status/entries/`, written by the chip in ship Step 2 (`skills/ship/SKILL.md:580-598`).
-- The plan `Status:` and `## Implementation Log` entry, written by the chip in Step 5 (`:659-674`).
+- The plan `Status:` and `## Implementation Log` line is NOT written by the ship step any more: record catch-up adds it after the merge (see 2.3).
 - The ship commit with `AI-*` trailers, written by `ship-commit.mjs`.
 - The coordinator writes no per-member docs. Its only write is the record PR for members merged without a ship
   (coordinator-playbook §7, unchanged).
@@ -414,10 +410,9 @@ go-ahead. Every other `land --approve`, `--confirm`, `--override` and `--accept-
 ## 7. File-Level Plan
 
 ### 7b. Implementation Phases
-- **Phase 1: pure evaluator + shared ship-step delta grammar.** Files:
+- **Phase 1: pure evaluator + path-only post-audit delta.** Files:
   - `scripts/lib/ship-preauth.mjs` (modify: add `evaluateShippedHead`, `SHIPPED_HEAD_CONDITIONS`, `renderShippedHeadConditions`)
-  - `scripts/lib/ship-record/authority.mjs` (modify: lift the grammar into an exported `isShipStepDelta(path, oldText, newText)`;
-    `pathVerdict` calls it)
+  - `scripts/lib/ship-shipped-head.mjs` (the path-only `shipEntryRefusal`; `ship-record/authority.mjs` is NOT modified)
   - `tests/ship-preauth-shipped-head.test.mjs` (create)
 - **Phase 2: the `--check-shipped-head` read-only mode and its gatherer.** Files:
   - `scripts/lib/ship-shipped-head.mjs` (create: gathers `C1`-`C5` in the member worktree, plus the v1 envelope)
@@ -595,3 +590,5 @@ changed lines never shown`, which is why it was split.
 **One round past the cap** (approved by the user to verify the pivot): R7 raised 2 HIGH, the same finding twice: a link reference definition nested in a list item (`- [x]: url`) passed the plain-line whitelist. Fixed with a test (six container shapes, red without the fix) and NOT re-audited: the user's ruling was exactly one round past the cap. The finding class (a Markdown construct the whitelist did not name) is therefore narrowed but not proved closed, and the PR carries that caveat.
 
 **Final round, after narrowing the rule to no Markdown characters** (approved by the user: "narrow the whitelist and run one final round"): R8 raised 5 HIGH: a one-hyphen setext underline (H1), an inserted link reference definition in the legacy status.md log (H2, H4), and emphasis or code spans pairing across soft line breaks (H3, H5, which showed that the measured-exception variant that still allowed `*`, `_` and a single backtick was unsafe). All five fixed with tests and NOT re-audited (the ruling was one round past the cap). The forbidden set is now `[ ] < > | * _` and the backtick, one named constant `LOG_LINE_FORBIDDEN_CHARS` with `LOG_LINE_ALLOWED_INLINE` empty, after one leading list marker is stripped. Cost, measured over 3,950 real Implementation Log lines: 69.0% are refused (17.3% for the rejected variant), so most batch members will wait for the user's /ship. Rounds 1 to 8 raised HIGH 9, 3, 2, 1, 2, 3, 2, 5; the round-8 fixes are unaudited.
+
+**REWORK of PR A (the user's decision: "rework PR A").** Eight audit rounds (HIGH 9, 3, 2, 1, 2, 3, 2, 5) showed that a content grammar over Markdown cannot be closed: every round found one more construct that changes how unchanged text renders. The grammar is therefore deleted, not patched: `isShipStepDelta`, the plain-log-line rule, `LOG_LINE_FORBIDDEN_CHARS` and every helper behind them are gone, and `ship-record/authority.mjs` is back to main's version. The post-audit delta is now path-only (`shipEntryRefusal` in `ship-shipped-head.mjs`): an ADDED regular file `docs/status/entries/<name>.md` and nothing else. **Decision, content of the new entry: no check.** A new file is absent from the audited tree, so it cannot modify audited content, and the audit never relied on what it says. The cost is that the plan Status and Implementation Log line (and the legacy `status.md` insert) are no longer a ship-step edit: they are written by record catch-up after the merge, as for the members that merged without a ship. Tests: an added entry passes; a modified, deleted or renamed entry, a file added outside the directory, a plan Status edit, a log append, a `status.md` edit, a symlink and a gitlink under the directory each refuse; a negative control asserts the grammar module exports no longer exist. The earlier audit (SID `audit-code-1795000910440-83564`, rounds 1 to 8) audited the deleted design; the rework starts a fresh audit with its own round count.

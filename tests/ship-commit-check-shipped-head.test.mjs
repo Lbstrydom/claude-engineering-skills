@@ -55,11 +55,9 @@ const TRAILERS = (over = {}) => {
   return Object.entries(t).filter(([, v]) => v !== null).map(([k, v]) => `${k}: ${v}`).join('\n');
 };
 
-/** The ship step: a status entry plus the plan's Status and Implementation Log. */
+/** The ship step: ONE new status entry file. The plan's Status and Implementation Log are written by record catch-up after the merge, never here. */
 function shipDocs(dir) {
   write(dir, 'docs/status/entries/2026-11-18-070000-ship-x.md', '## Ship x\nshipped\n');
-  const plan = fs.readFileSync(path.join(dir, 'docs/plans/x.md'), 'utf8');
-  write(dir, 'docs/plans/x.md', `${plan.replace('Draft', 'Implemented')}\n## Implementation Log\n- shipped\n`);
 }
 
 let LAST_AUDITED_SHA = null; // what the marker just written names: the store stub corroborates it, as a real converged row would
@@ -118,7 +116,7 @@ describe('--check-shipped-head against real git: the member that should ship', (
     assert.equal(env.ok, true, env.refusals.join('\n'));
     assert.equal(env.gate, 'converged');
     assert.equal(env.runId, RUN);
-    assert.match(reason(env, 'post-audit-delta'), /ship-step edit/);
+    assert.match(reason(env, 'post-audit-delta'), /newly added status entry/);
   });
   it('a plan the branch ALREADY changed before the audit still takes a ship-only edit (the ambiguous case)', async () => {
     const { dir, base } = makeRepo();
@@ -220,7 +218,6 @@ describe('--check-shipped-head: what changed after the audit', () => {
       const auditedSha = commitIndex(dir, 'audited work with odd names');
       const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
       plumb(dir, name, 'changed after the audit\n');
-      write(dir, 'docs/plans/x.md', `${PLAN.replace('Draft', 'Implemented')}\n## Implementation Log\n- shipped\n`);
       write(dir, 'docs/status/entries/2026-11-18-070000-ship-x.md', '## Ship x\nshipped\n');
       const head = commitIndex(dir, `ship x\n\n${TRAILERS()}`, 'docs');
       writeMarkers(dir, { auditedTree, auditedSha });
@@ -237,6 +234,56 @@ describe('--check-shipped-head: what changed after the audit', () => {
     const { env } = await member({ afterAudit: (d) => { write(d, 'docs/plans/x.md', PLAN.replace('work', 'different work')); commit(d, 'plan body'); } });
     assert.deepEqual(failing(env), ['post-audit-delta']);
     assert.match(reason(env, 'post-audit-delta'), /docs\/plans\/x\.md/);
+  });
+  describe('the post-audit delta is path-only: an audited status entry may not be touched, only a new one added', () => {
+    const OLD = 'docs/status/entries/2026-11-17-old.md';
+    const run = async (mutate) => {
+      const { dir } = makeRepo();
+      write(dir, OLD, '## Old\naudited\n');
+      const auditedSha = commit(dir, 'audited work with an entry');
+      const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
+      mutate(dir);
+      const head = commit(dir, `ship x\n\n${TRAILERS()}`);
+      writeMarkers(dir, { auditedTree, auditedSha });
+      return { dir, env: await checkShippedHead({ repoRoot: dir, head, store: store({ auditedTree }) }) };
+    };
+    it('control: a NEW entry added beside the audited one passes', async () => {
+      const { env } = await run((d) => write(d, 'docs/status/entries/2026-11-18-new.md', '## New\n'));
+      assert.equal(env.ok, true, env.refusals.join(' | '));
+    });
+    it('a MODIFIED existing entry refuses, naming the path', async () => {
+      const { env } = await run((d) => write(d, OLD, '## Old\nrewritten\n'));
+      assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
+      assert.match(reason(env, 'post-audit-delta'), /2026-11-17-old\.md/);
+    });
+    it('a DELETED existing entry refuses', async () => {
+      const { env } = await run((d) => fs.rmSync(path.join(d, OLD), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+      assert.ok(failing(env).includes('post-audit-delta'), env.refusals.join(' | ')); // a delete-only branch also changes no path against base, so other rows may fail too
+      assert.match(reason(env, 'post-audit-delta'), /2026-11-17-old.md.*status D/);
+    });
+    it('a RENAMED existing entry refuses (a rename is a delete plus an add, never an add alone)', async () => {
+      const { env } = await run((d) => { git(d, 'mv', OLD, 'docs/status/entries/2026-11-18-renamed.md'); });
+      assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
+      assert.match(reason(env, 'post-audit-delta'), /2026-11-17-old\.md/);
+    });
+    it('a file ADDED outside the entries directory refuses', async () => {
+      const { env } = await run((d) => write(d, 'docs/status/elsewhere.md', 'x\n'));
+      assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
+      assert.match(reason(env, 'post-audit-delta'), /elsewhere\.md/);
+    });
+    it('a plan Status-only edit refuses (the plan is written by record catch-up after the merge, never by /ship)', async () => {
+      const { env } = await run((d) => write(d, 'docs/plans/x.md', PLAN.replace('Draft', 'Implemented')));
+      assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
+      assert.match(reason(env, 'post-audit-delta'), /docs\/plans\/x\.md/);
+    });
+    it('a plan Implementation Log append refuses', async () => {
+      const { env } = await run((d) => write(d, 'docs/plans/x.md', `${PLAN}\n## Implementation Log\n- shipped\n`));
+      assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
+    });
+    it('a status.md edit refuses', async () => {
+      const { env } = await run((d) => write(d, 'status.md', '# Status\n\n## 2026-11-18 entry\n'));
+      assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
+    });
   });
   it('an audited tree that is not in the repository refuses (audited-tree-missing), it does not pass vacuously', async () => {
     const { env } = await member({ auditedTreeOverride: '0'.repeat(40) });
@@ -474,8 +521,6 @@ describe('--check-shipped-head: modes, submodule config and the head race (code-
     const auditedSha = commit(dir, 'audited work');
     const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
     mutate(dir);
-    write(dir, 'docs/plans/x.md', `${PLAN.replace('Draft', 'Implemented')}\n## Implementation Log\n- shipped\n`);
-    git(dir, 'add', 'docs/plans'); // NOT docs/: that would stage the plumbing-only entries as deleted
     git(dir, 'commit', '-q', '-m', `ship x\n\n${TRAILERS()}`);
     const head = git(dir, 'rev-parse', 'HEAD');
     writeMarkers(dir, { auditedTree, auditedSha });
@@ -485,12 +530,18 @@ describe('--check-shipped-head: modes, submodule config and the head race (code-
   it('a status entry named like an entry but stored as a SYMLINK is not a status entry: refused', async () => {
     const { env } = await shipWith((d) => { plumbMode(d, 'docs/status/entries/2026-11-18-070000-ship-x.md', '120000', '../../../.env'); });
     assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
-    assert.match(reason(env, 'post-audit-delta'), /not a regular file \(mode 120000\)/);
+    assert.match(reason(env, 'post-audit-delta'), /mode 120000, not a regular file/);
   });
 
   it('the same entry as a REGULAR file passes (the control for the symlink case)', async () => {
     const { env } = await shipWith((d) => { plumbMode(d, 'docs/status/entries/2026-11-18-070000-ship-x.md', '100644', '## Ship x\nshipped\n'); });
     assert.equal(env.ok, true, env.refusals.join(' | '));
+  });
+
+  it('a GITLINK added UNDER the entries directory is refused (a path rule alone would have passed it)', async () => {
+    const { env } = await shipWith((d) => { git(d, 'update-index', '--add', '--cacheinfo', `160000,${'b'.repeat(40)},docs/status/entries/2026-11-18-070000-ship-x.md`); });
+    assert.ok(failing(env).includes('post-audit-delta'), env.refusals.join(' | '));
+    assert.match(reason(env, 'post-audit-delta'), /mode 160000, not a regular file/);
   });
 
   it('a GITLINK added after the audit is refused even when the repository config says to ignore submodules', async () => {
@@ -544,9 +595,9 @@ describe('storyline incidents 2026-11-18 (the tree, not the sha)', () => {
     assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
     assert.match(reason(env, 'post-audit-delta'), /scripts\/first\.mjs/);
   });
-  it('a ship-doc delta passes as a named POLICY exception ("ship-step edit"), never as tree equality', async () => {
+  it('a ship-doc delta passes as a named POLICY exception ("newly added status entry"), never as tree equality', async () => {
     const { env } = await member();
-    assert.match(reason(env, 'post-audit-delta'), /ship-step edit/);
+    assert.match(reason(env, 'post-audit-delta'), /newly added status entry/);
   });
 });
 

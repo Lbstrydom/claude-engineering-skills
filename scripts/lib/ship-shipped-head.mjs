@@ -22,7 +22,6 @@ import { readFinalReviewMarker } from './final-review-marker.mjs';
 import {
   evaluateShippedHead, renderShippedHeadConditions, gatherChangedPaths, defaultBaseRef,
 } from './ship-preauth.mjs';
-import { isShipStepDelta } from './ship-record/authority.mjs';
 import { assertKnownFlags, finishAndExit } from './cli-io.mjs';
 
 export const SHIPPED_HEAD_SCHEMA = 'shipped-head/v1';
@@ -39,7 +38,10 @@ export function isPlainBranch(n) {
 const REMOTE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const SHA_RE = /^[0-9a-f]{7,64}$/i;
-const SHIP_TEXT_PATH_RE = /^(?:docs\/plans\/[^/]+\.md|status\.md)$/;
+/** The ONLY path /ship may add between the audit and the head: a new status entry file. Path-based; no content is ever parsed. */
+export const SHIP_ENTRY_PATH_RE = /^docs\/status\/entries\/[^/]+\.md$/;
+/** The one mode a ship-added entry may have: a regular, non-executable file (never a symlink 120000, a gitlink 160000, or a tree). */
+export const SHIP_ENTRY_MODE = '100644';
 
 /**
  * Is this invocation `--check-shipped-head`? The token counts only as a FLAG of the invocation: before any `--` terminator, and not as
@@ -132,22 +134,27 @@ export function computePostAuditDelta(run, evidence, headChanged, headTree, base
   if (rows === null) return no('the raw diff output was malformed, so nothing was checked');
   const refused = [];
   let judged = 0;
-  for (const { status, rel, oldMode, newMode } of rows) {
+  for (const { status, rel, newMode } of rows) {
     if (!candidate.has(rel)) continue; // an upstream-only path (a rebase): not this member's change
     judged++;
-    let oldText = null;
-    let newText = null;
-    if (SHIP_TEXT_PATH_RE.test(rel) && status === 'M') {
-      const o = run(['show', `${A}:${rel}`]);
-      const n = run(['show', `${headTree}:${rel}`]);
-      oldText = o.status === 0 ? o.stdout : null;
-      newText = n.status === 0 ? n.stdout : null;
-    }
-    const why = isShipStepDelta({ status, rel, oldText, newText, oldMode, newMode });
+    const why = shipEntryRefusal({ status, rel, newMode });
     if (why) refused.push(`${rel}: ${why}`);
   }
   if (refused.length) return no(`${refused.length} path(s) changed since the audit that /ship does not write: ${refused.slice(0, 3).join('; ')}${refused.length > 3 ? `; +${refused.length - 3} more` : ''}`);
-  return { ok: true, reason: judged === 0 ? 'the head tree equals the audited tree on every path the branch touches' : `${judged} path(s) differ from the audited tree, each a ship-step edit` };
+  return { ok: true, reason: judged === 0 ? 'the head tree equals the audited tree on every path the branch touches' : `${judged} path(s) differ from the audited tree, each a newly added status entry` };
+}
+
+/**
+ * Why this changed path is not something /ship writes, or null. PATH-ONLY by design: the single permitted change is an ADDED
+ * regular file `docs/status/entries/<name>.md`. Content is never read, because a brand-new file cannot rewrite audited content
+ * (it is a separate file the audited tree did not contain), so there is nothing in it to verify against the audit.
+ * A modification, deletion, rename or type change anywhere, a plan edit and a status.md edit all refuse.
+ */
+export function shipEntryRefusal({ status, rel, newMode }) {
+  if (!SHIP_ENTRY_PATH_RE.test(rel)) return `changed since the audit, and only a NEW docs/status/entries/*.md file may be (status ${status})`;
+  if (status !== 'A') return `an existing status entry was changed (status ${status}); only ADDING one is allowed`;
+  if (newMode !== SHIP_ENTRY_MODE) return `the added entry has mode ${newMode}, not a regular file (${SHIP_ENTRY_MODE})`;
+  return null;
 }
 
 /**

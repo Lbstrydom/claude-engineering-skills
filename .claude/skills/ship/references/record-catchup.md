@@ -9,8 +9,8 @@ session-log entry, the plan's Implementation Log line, the `Backlog:` line and t
 2026-11-16: storyline's `status.md` untouched for 325 commits, wine-cellar-app's for 394). `ship-record.mjs` does the record
 half on its own, **without** `/ship`'s push or merge authority: it only CREATES files under `docs/status/entries/`.
 
-**A chip that shipped itself** (`ship-commit.mjs --preauthorised`) needs no entry here: its own ship commit added its log entry,
-and the catch-up oracle counts a PR whose merge added an entry as recorded. A coordinator can re-check such a head with
+**A chip that shipped itself** (`ship-commit.mjs --preauthorised`) needs no entry here: its own ship commit added its status entry
+file (the only change a re-check allows after the audit), and the plan's Implementation Log line is added HERE, after the merge. A coordinator can re-check such a head with
 `ship-commit.mjs --check-shipped-head`; landing a whole batch from it is still pending (a follow-up PR). `/ship` stays user-only.
 
 ## Who runs it

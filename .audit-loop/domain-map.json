@@ -267,7 +267,7 @@
     {
       "pattern": "scripts/lib/ship-shipped-head.mjs",
       "domain": "ship",
-      "_why": "The gathering half of `ship-commit.mjs --check-shipped-head` (docs/plans/coordinator-aggregate-ship.md): it reads the ship-step delta grammar from ship-record/authority.mjs, so it cannot sit in shared-lib (shared-lib may not import ship), and it is reached only from ship-commit.mjs, the scripts/ship*.mjs rule's own domain. Fleet reaches it as a child process (`ship-commit.mjs --check-shipped-head`), never by import."
+      "_why": "The gathering half of `ship-commit.mjs --check-shipped-head` (docs/plans/coordinator-aggregate-ship.md): it is ship-specific (the ship-step delta policy and the ship evidence markers), so it cannot sit in shared-lib (shared-lib may not import ship), and it is reached only from ship-commit.mjs, the scripts/ship*.mjs rule's own domain. Fleet reaches it as a child process (`ship-commit.mjs --check-shipped-head`), never by import."
     },
     {
       "pattern": "scripts/ship*.mjs",
