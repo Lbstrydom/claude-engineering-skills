@@ -16,12 +16,13 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 import { createPriorUpstreamResolver } from '../scripts/lib/sync-divergence.mjs';
 import { decideUnmanifested, renderOutbound } from '../scripts/lib/sync-outbound.mjs';
 import { buildOwnedSourceTailsFromConsumerManifest } from '../scripts/lib/sync-rewriter.mjs';
-import { seedInstalledDeps, runSyncCli, whySyncFailed, git } from './helpers/consumer-fixture.mjs';
+import { seedInstalledDeps, runSyncCli, whySyncFailed, git, syncExecOptions } from './helpers/consumer-fixture.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
@@ -153,6 +154,29 @@ describe('createPriorUpstreamResolver - rendered earlier versions (rewritten des
     } finally { rm(bin); }
   });
 
+  it('audit-code R1 H1-H3: raw acceptance is decided per HISTORICAL blob (its own rewrite hits), not by the current file', () => {
+    const asObj = (c) => (text) => { const r = renderOutbound({ srcRel: SRC, dstRel: SRC, srcContent: text, existingContent: null, rewriteConfig: c }); return { content: r.content, hits: r.rewrite.hits }; };
+    const r = createPriorUpstreamResolver({ sourceRoot: dir });
+    // acceptRaw:true models "the CURRENT version has no rewrites"; v1 itself DOES have them under cfg -> a raw v1 is a removed-rewrites edit
+    assert.equal(r.matches(SRC, sha(V1), { render: asObj(cfg), acceptRaw: true }), false, 'raw copy of a blob the pipeline would rewrite');
+    // the same blob under a config that rewrites nothing: its raw bytes ARE its render
+    assert.equal(r.matches(SRC, sha(V1), { render: asObj(cfgFor([])), acceptRaw: true }), true);
+    // and a rendered match is unaffected
+    assert.equal(r.matches(SRC, sha(renderWith(cfg)(V1)), { render: asObj(cfg), acceptRaw: true }), true);
+  });
+
+  it('audit-code R1 M1: even SMALL retained bodies own their allocation (not a slice of Node\'s shared pool)', () => {
+    const r = createPriorUpstreamResolver({ sourceRoot: dir });
+    r.matches(SRC, sha('nope'), { render: renderWith(cfg), acceptRaw: false });
+    for (const e of r._retained.values()) assert.equal(e.body.buffer.byteLength, e.body.length, 'a 60-byte body must not pin a pooled slab');
+  });
+
+  it('audit-code R1 M5: render failures are COUNTED, so a renderer regression is distinguishable from an ordinary refusal', () => {
+    const r = createPriorUpstreamResolver({ sourceRoot: dir });
+    assert.equal(r.matches(SRC, sha('x'), { render: () => { throw new Error('boom'); }, acceptRaw: false }), null);
+    assert.equal(r.stats.renderFailures, 3, 'one failure per historical blob');
+  });
+
   it('a shallow source stays null with render supplied (history incomplete)', () => {
     const shallow = path.join(os.tmpdir(), `prior-up-rw-shallow-${process.pid}-${Date.now()}`);
     try {
@@ -192,7 +216,21 @@ describe('decideUnmanifested - the oracle is asked acceptRaw:false for a rewritt
 // ───────────────────────── 2-4. the real CLI ─────────────────────────
 const SOURCE_IS_SHALLOW = execFileSync('git', ['-C', REPO_ROOT, 'rev-parse', '--is-shallow-repository'], { encoding: 'utf-8' }).trim() === 'true';
 const FLEET_REL = '.claude/skills/fleet/references/chip-preamble.md';
-const sourceBlob = (rev, rel = FLEET_REL) => execFileSync('git', ['-C', REPO_ROOT, 'show', `${rev}:${rel}`], { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 });
+const shallowReason = SOURCE_IS_SHALLOW && 'the source checkout is shallow: its history cannot answer the prior-upstream question (CI uses fetch-depth: 0)';
+const sourceBlob = (root, rev) => execFileSync('git', ['-C', root, 'show', `${rev}:${FLEET_REL}`], { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 });
+
+const execFileAsync = promisify(execFile);
+/** runSyncCli's result shape, for the CLI of a controlled source copy (runSyncCli itself is pinned to this repository's CLI). */
+async function runCliAt(cli, argv, cwd) {
+  const opts = syncExecOptions({ cwd });
+  try {
+    const { stdout, stderr } = await execFileAsync(process.execPath, [cli, ...argv], opts);
+    return { code: 0, stdout, stderr, out: stdout + stderr, signal: null, killed: false, timeoutMs: opts.timeout };
+  } catch (err) {
+    const stdout = err.stdout ?? ''; const stderr = err.stderr ?? '';
+    return { code: err.code, stdout, stderr, out: stdout + stderr, signal: err.signal ?? null, killed: err.killed === true || err.signal != null, timeoutMs: opts.timeout };
+  }
+}
 
 function makeConsumer(label) {
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `ces-prior-rw-${label}-`)));
@@ -209,33 +247,60 @@ function makeConsumer(label) {
   return { tmp, consumer };
 }
 
-/** Run the e2e flow for one earlier source revision of FLEET_REL. `check` receives helpers once the stale render is committed. */
-function describeFlow(title, { pickRev, skip }) {
+/**
+ * A controlled copy of THIS repository (HEAD, so it carries the code under test) whose fleet reference file gets a synthetic, known
+ * two-commit history: v1 holds a rewritable command, v2 (HEAD) holds none. The CLI syncs FROM its own repository, so running the clone's
+ * copy of the CLI makes the history the resolver reads a fixture, independent of how this repo's real history evolves.
+ */
+function makeControlledSource(tail) {
+  const dir = fs.mkdtempSync(path.join(REPO_ROOT, '.claude', 'tmp', 'ces-ctl-src-'));
+  execFileSync('git', ['clone', '-q', '--no-hardlinks', REPO_ROOT, dir], { stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf-8' });
+  g('config', 'user.email', 't@example.com'); g('config', 'user.name', 't'); g('config', 'core.autocrlf', 'false');
+  // The clone carries HEAD; the code under test may be uncommitted. Overlay this checkout's tracked modifications so the clone's CLI is the one under test.
+  const dirty = execFileSync('git', ['-C', REPO_ROOT, 'diff', '--name-only', 'HEAD'], { encoding: 'utf-8' }).split('\n').filter((p) => p && fs.existsSync(path.join(REPO_ROOT, p)));
+  for (const p of dirty) fs.copyFileSync(path.join(REPO_ROOT, p), path.join(dir, p));
+  if (dirty.length) { g('add', '-A'); g('commit', '-q', '-m', 'overlay uncommitted work under test'); }
+  const file = path.join(dir, FLEET_REL);
+  fs.writeFileSync(file, `# chip preamble (controlled v1)\nrun \`node scripts/${tail} --check\` before you start\n`);
+  g('add', '-A'); g('commit', '-q', '-m', 'controlled v1: rewritable command');
+  const v1 = g('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(file, '# chip preamble (controlled v2)\nno command here any more\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'controlled v2: no command');
+  return { dir, v1 };
+}
+
+/**
+ * The end-to-end flow for one source (`prepare()` -> {root, rev, tail?}): the consumer holds the earlier RENDERED version, committed.
+ * `currentHasHits` says whether HEAD's version of the file is itself rewritten (decides which raw rule the CLI applies).
+ */
+function describeFlow(title, { prepare, cleanup, skip }) {
   describe(title, { skip }, () => {
-    let tmp; let consumer; let rev; let current; let staleRender;
-    const sync = () => runSyncCli(['--target-path', consumer, '--no-prompt']);
-    const read = (rel = FLEET_REL) => fs.readFileSync(path.join(consumer, rel), 'utf-8');
+    let tmp; let consumer; let src; let current; let staleRender;
+    const sync = () => src.run(['--target-path', consumer, '--no-prompt']);
+    const read = () => fs.readFileSync(path.join(consumer, FLEET_REL), 'utf-8');
     const commit = (msg) => { git(['add', '-A'], consumer); git(['commit', '-m', msg, '--no-gpg-sign'], consumer); };
     const manifestPath = () => path.join(consumer, 'scripts', '.sync-manifest.json');
-    const renderFor = (srcContent) => {
-      const tails = buildOwnedSourceTailsFromConsumerManifest(JSON.parse(fs.readFileSync(manifestPath(), 'utf-8').replace(/^﻿/, '')));
-      return renderOutbound({ srcRel: FLEET_REL, dstRel: FLEET_REL, srcContent, existingContent: null, rewriteConfig: { ownedSourceTails: tails } });
-    };
+    const manifest = () => JSON.parse(fs.readFileSync(manifestPath(), 'utf-8').replace(/^﻿/, ''));
+    const renderFor = (srcContent) => renderOutbound({
+      srcRel: FLEET_REL, dstRel: FLEET_REL, srcContent, existingContent: null,
+      rewriteConfig: { ownedSourceTails: buildOwnedSourceTailsFromConsumerManifest(manifest()) },
+    });
+    const restore = () => { fs.writeFileSync(path.join(consumer, FLEET_REL), current); commit('restore'); };
 
     before(async () => {
+      src = await prepare();
       ({ tmp, consumer } = makeConsumer(title.slice(0, 8).replace(/\W/g, '')));
       const r = await sync();
       assert.equal(r.code, 0, whySyncFailed(r));
       current = read();
       commit('first sync');
     });
-    after(() => rm(tmp));
+    after(() => { rm(tmp); cleanup?.(src); });
 
-    it('fixture: an earlier version exists whose RENDER differs from the current outbound and which IS rewritten (positive controls)', () => {
-      rev = pickRev();
-      assert.ok(rev, 'no earlier rewritten version of the fleet reference file in this checkout - the test cannot be meaningful');
-      const r = renderFor(sourceBlob(rev));
-      assert.ok(r.rewrite.hits > 0, `the ${rev.slice(0, 8)} version must be a REWRITTEN file (hits ${r.rewrite.hits})`);
+    it('fixture: the earlier version IS rewritten by the pipeline and its render differs from the current outbound (positive controls)', () => {
+      const r = renderFor(sourceBlob(src.root, src.rev));
+      assert.ok(r.rewrite.hits > 0, `the ${src.rev.slice(0, 8)} version must be a REWRITTEN file (hits ${r.rewrite.hits})`);
       assert.notEqual(r.content, current.replace(/\r\n/g, '\n'), 'the earlier render must differ from the current outbound');
       staleRender = r.content;
     });
@@ -259,24 +324,22 @@ function describeFlow(title, { pickRev, skip }) {
       const r = await sync();
       assert.match(stripAnsi(r.out), /REFUSED/, stripAnsi(r.out).slice(-2500));
       assert.equal(read(), edited, 'the consumer edit must survive the refusal');
-      fs.writeFileSync(path.join(consumer, FLEET_REL), current);
-      commit('restore');
+      restore();
     });
 
-    it('NEGATIVE: the RAW (unrewritten) earlier blob committed at the rewritten path is a divergence, refused', async () => {
-      const raw = sourceBlob(rev);
+    it('NEGATIVE: the RAW (unrewritten) earlier blob committed at the path is a divergence, refused - whatever the CURRENT version looks like', async () => {
+      const raw = sourceBlob(src.root, src.rev);
       assert.notEqual(raw, staleRender, 'fixture control: raw and rendered differ');
       fs.writeFileSync(path.join(consumer, FLEET_REL), raw);
       commit('raw blob');
       const r = await sync();
       assert.match(stripAnsi(r.out), /REFUSED/, stripAnsi(r.out).slice(-2500));
       assert.equal(read(), raw);
-      fs.writeFileSync(path.join(consumer, FLEET_REL), current);
-      commit('restore 2');
+      restore();
     });
 
     it('an UNMANIFESTED orphan holding the earlier rendered version is proved ours by content (the real scan and resolver)', async () => {
-      const m = JSON.parse(fs.readFileSync(manifestPath(), 'utf-8').replace(/^﻿/, ''));
+      const m = manifest();
       assert.ok(m.files[FLEET_REL], 'fixture control: the path is in the manifest before we remove it');
       delete m.files[FLEET_REL];
       fs.writeFileSync(manifestPath(), `${JSON.stringify(m, null, 2)}\n`);
@@ -292,19 +355,21 @@ function describeFlow(title, { pickRev, skip }) {
   });
 }
 
-const shallowReason = SOURCE_IS_SHALLOW && 'the source checkout is shallow: its history cannot answer the prior-upstream question (CI uses fetch-depth: 0)';
-
-// 2: the mandatory regression. The most recent OLDER rewritten version is always far inside the resolver's 100-version bound.
-describeFlow('a rewritten stale snapshot (most recent older version) is updated, not refused', {
+// 2: the MANDATORY regression, on a controlled source history (the current version has NO rewrite hits, the earlier one has: the
+// shape that makes raw acceptance depend on the HISTORICAL blob, not on the current file).
+describeFlow('controlled history: an earlier rewritten version is updated, a raw copy of it is not', {
   skip: shallowReason,
-  pickRev: () => {
-    const revs = execFileSync('git', ['-C', REPO_ROOT, 'log', '--format=%H', '-n', '40', '--', FLEET_REL], { encoding: 'utf-8' }).split('\n').filter(Boolean);
-    const cur = fs.readFileSync(path.join(REPO_ROOT, FLEET_REL), 'utf-8').replace(/\r\n/g, '\n');
-    return revs.find((r) => sourceBlob(r).replace(/\r\n/g, '\n') !== cur);
+  prepare: async () => {
+    // any owned tail the bundle really ships: read it from the first sync's own inventory by probing the bundle layout
+    const tail = fs.existsSync(path.join(REPO_ROOT, 'scripts', 'cross-skill.mjs')) ? 'cross-skill.mjs' : 'fleet.mjs';
+    const { dir, v1 } = makeControlledSource(tail);
+    const cli = path.join(dir, 'scripts', 'sync-to-repos.mjs');
+    return { root: dir, rev: v1, run: (argv) => runCliAt(cli, argv, dir) };
   },
+  cleanup: (s) => rm(s.root),
 });
 
-// 3a: storyline's exact case. History-dependent BY DESIGN: it fails with a named operational signal if f3b37321 leaves the resolver's bound.
+// 3: storyline's exact case. History-dependent BY DESIGN (the commissioning task requires it): a labelled DIAGNOSTIC, not the regression.
 describe('DIAGNOSTIC (history-dependent): storyline\'s f3b37321 version is still inside the resolver\'s history bound', { skip: shallowReason }, () => {
   it('f3b37321 is among the last 100 versions of the path', () => {
     const oids = execFileSync('git', ['-C', REPO_ROOT, 'log', '-n', '100', '--no-renames', '--raw', '--no-abbrev', '--format=', '--', `:(literal)${FLEET_REL}`], { encoding: 'utf-8' })
@@ -315,5 +380,5 @@ describe('DIAGNOSTIC (history-dependent): storyline\'s f3b37321 version is still
 });
 describeFlow('storyline\'s case: the f3b37321-era rewritten render is updated, not refused', {
   skip: shallowReason,
-  pickRev: () => 'f3b37321',
+  prepare: async () => ({ root: REPO_ROOT, rev: 'f3b37321', run: (argv) => runSyncCli(argv) }),
 });

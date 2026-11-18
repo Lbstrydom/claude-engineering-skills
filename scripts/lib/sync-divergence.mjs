@@ -573,7 +573,7 @@ export function createPriorUpstreamResolver({
   const run = git ?? ((args, { input } = {}) => spawnSync('git', ['-C', sourceRoot, ...args], {
     windowsHide: true, maxBuffer: 256 * 1024 * 1024, env: sanitizeGitEnv(sourceRoot), ...(input ? { input } : {}),
   }));
-  const stats = { logCalls: 0, batchCalls: 0, blobsRead: 0, exhausted: false, retainedBytes: 0 };
+  const stats = { logCalls: 0, batchCalls: 0, blobsRead: 0, exhausted: false, retainedBytes: 0, renderFailures: 0 };
   /** @type {Map<string, {body: Buffer|null, binary: boolean}>} blob oid -> its OWN copy of the body (null: binary, over a cap, or never read) */
   const retained = new Map();
   /** @type {Map<string, string[]|null>} blob oid -> [sha256 of the LF bytes, sha256 of the CRLF form], null when unreadable */
@@ -637,22 +637,31 @@ export function createPriorUpstreamResolver({
       // Copy, never keep the subarray view: a view pins the WHOLE batch stdout allocation. Admission is checked BEFORE adding.
       const keep = !binary && body.length <= maxRenderBlobBytes && stats.retainedBytes + body.length <= maxRetainedBytes;
       if (keep) stats.retainedBytes += body.length;
-      retained.set(oid, { body: keep ? Buffer.from(body) : null, binary });
+      // allocUnsafeSlow: its own allocation. Buffer.from(small) is sliced from Node's shared 8 KiB pool, so a retained 100-byte body would
+      // pin a pool slab that retainedBytes does not count (audit-code R1 M1).
+      let copy = null;
+      if (keep) { copy = Buffer.allocUnsafeSlow(body.length); body.copy(copy); }
+      retained.set(oid, { body: copy, binary });
       const crlf = body.includes(0) ? null : Buffer.from(body.toString('latin1').replace(/\r?\n/g, '\r\n'), 'latin1');
       blobHashes.set(oid, [sha(body), crlf ? sha(crlf) : sha(body)]);
     }
     return true;
   }
 
-  /** Hashes (LF, CRLF) of `render(blob)`, or null when that blob cannot be rendered for any reason. Never cached: a render depends on the consumer. */
-  function renderedHashes(oid, render) {
+  /**
+   * `{hashes: [LF, CRLF], hits}` of `render(blob)`, or null when that blob cannot be rendered for any reason. `render` returns the
+   * rendered text, or `{content, hits}` (hits = how many rewrites the pipeline applied to THIS blob). Never cached: a render depends
+   * on the consumer. A failure is counted (`stats.renderFailures`) so a renderer regression is not silently a conservative refusal.
+   */
+  function renderedInfo(oid, render) {
     const entry = retained.get(oid);
     if (!entry || entry.body === null) return null;
     try {
-      const out = render(entry.body.toString('utf8'));
-      if (typeof out !== 'string') return null;
-      return [sha(out), sha(out.replace(/\r?\n/g, '\r\n'))];
-    } catch { return null; }
+      const r = render(entry.body.toString('utf8'));
+      const out = typeof r === 'string' ? r : r?.content;
+      if (typeof out !== 'string') { stats.renderFailures++; return null; }
+      return { hashes: [sha(out), sha(out.replace(/\r?\n/g, '\r\n'))], hits: typeof r === 'string' ? undefined : r.hits };
+    } catch { stats.renderFailures++; return null; }
   }
 
   return {
@@ -668,11 +677,13 @@ export function createPriorUpstreamResolver({
       for (const o of oids) {
         const raw = blobHashes.get(o);
         if (raw === null || raw === undefined) { unanswered = true; continue; }
-        if (acceptRaw && raw.includes(disk)) return true; // one genuine upstream blob proves it, whatever else failed
+        const rendered = render ? renderedInfo(o, render) : null;
+        // Raw bytes count only when the pipeline would NOT have rewritten THIS blob (audit-code R1 H1-H3): a raw copy of a blob that has
+        // rewrites is a consumer who removed them, whatever the current version of the file looks like.
+        if (acceptRaw && raw.includes(disk) && !(rendered && rendered.hits > 0)) return true; // one genuine upstream blob proves it, whatever else failed
         if (render) {
-          const rendered = renderedHashes(o, render);
           if (rendered === null) unanswered = true;
-          else if (rendered.includes(disk)) return true;
+          else if (rendered.hashes.includes(disk)) return true;
         }
       }
       return unanswered ? null : false;

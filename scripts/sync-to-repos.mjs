@@ -905,7 +905,10 @@ async function main() {
     const rewriteConfig = { ownedSourceTails };
     // 2221 for rewritten destinations: an earlier source blob rendered by the SAME outbound renderer with THIS consumer's config.
     // existingContent is null on purpose: a co-owned JSON surface must not fold today's disk into an "earlier version".
-    const priorRenderer = (srcRel, dstRel) => (text) => renderOutbound({ srcRel, dstRel, srcContent: text, existingContent: null, rewriteConfig }).content;
+    const priorRenderer = (srcRel, dstRel) => (text) => {
+      const r = renderOutbound({ srcRel, dstRel, srcContent: text, existingContent: null, rewriteConfig });
+      return { content: r.content, hits: r.rewrite.hits };
+    };
 
     // Read the consumer's prior manifest BEFORE any write. Used for both
     // ownership preflight (collision detection) and GC (deletions).
@@ -1832,6 +1835,7 @@ async function main() {
     hookLines: DRY_RUN ? [] : hookEpilogueLines(targetRepos),
   }, { R, G, Y, D, X })) console.log(line);
 
+  if (priorUpstream.stats.renderFailures) console.log(`${Y}⚠ ${priorUpstream.stats.renderFailures} earlier upstream version(s) could not be rendered${X} ${D}— those diverged files were refused as before; a renderer regression would look like this${X}`);
   if (priorUpstream.stats.exhausted) console.log(`${Y}⚠ prior-upstream history lookup budget exhausted${X} ${D}— later diverged files were refused as before; re-run after resolving the first ones${X}`);
   if (undeclaredDeps.length) console.log(`${Y}⚠ undeclared required bundle packages${X} ${D}(per consumer; each line above names the command):${X}\n  ${undeclaredDeps.join('\n  ')}`);
   // D2b — sync-time shared-cloud-config trigger. Skip on dry-run, errors,
