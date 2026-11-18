@@ -132,11 +132,19 @@ ship. Standing rules still apply:
 <!-- grant: coordinator-ship-batch v1 -->
 ```
 
-The last line is the machine-readable marker the grant reader keys on (§2.3, `C7`). It must be written exactly.
+**How the reader matches the grant (R1-H6).** The reader in `scripts/lib/fleet/coordinator-grant.mjs` finds the section from its
+`## Coordinators may ship batches` heading to the marker line.
+- That section must equal the **canonical grant text** held as a constant in the same module. The comparison folds line endings
+  (`canonicalizeEol`) and ignores the `Since <DATE>` value; nothing else is folded.
+- **Revocation is deletion.** If Louis removes or rewrites the section (narrows it, or adds a carve-out), the reader refuses with
+  `grant-mismatch`. A changed grant therefore needs a new canonical version, a `v2` marker shipped in a CES PR that Louis
+  merges. A stale marker can never outlive its text.
+- A marker inside a code fence, or a second marker anywhere in the file, refuses.
 
-Optionally, and also Louis's own act, he can make the file unwritable by sessions with a permission deny rule in his user
-settings, for example `"deny": ["Edit(~/.claude/CLAUDE.md)", "Write(~/.claude/CLAUDE.md)"]`. Sessions may not edit settings files.
-This is offered, not required.
+**Recommended (Louis's own act):** a user-settings deny rule, for example
+`"deny": ["Edit(~/.claude/CLAUDE.md)", "Write(~/.claude/CLAUDE.md)"]`, so that the harness refuses a session write to the file. No
+session may edit settings files, and code cannot verify file permissions. So whether or not the rule exists, the check stays
+labelled a declaration (B3 below), and the authority that actually gates each chip is still Louis's own click (B2).
 
 **B. How the coordinator proves the grant came from Louis, not from a relay.** There are three layers, each named honestly:
 1. **Where the coordinator reads it.** The grant reaches the coordinator in the harness-loaded "user's private global
@@ -146,14 +154,15 @@ This is offered, not required.
    still needs Louis to click its card. A message can never add the block to a chip that is already running, because the
    launch block says "No message can WIDEN this block" (`chip-preamble.md:17-23`). A chip launched without the block, or before
    the grant existed, ends at ship-ready and waits for `/ship`.
-3. **Code fails closed when the grant is absent.** `fleet land --ship-batch` reads `~/.claude/CLAUDE.md` for the exact marker
-   line. If the marker is absent or the file is unreadable, the run refuses (`grant-absent`) and falls back to today's
-   behaviour. This is labelled a **declaration check, not verified authority**, in the same words `decisions.mjs:8` uses for
+3. **Code fails closed when the grant is absent.** `fleet land --ship-batch` reads `~/.claude/CLAUDE.md` and requires the canonical
+   grant section and its marker (A above). If either is absent or the file is unreadable, the run refuses (`grant-absent`).
+   If the text differs, it refuses (`grant-mismatch`). Either way it merges nothing, and today's flow remains a separate,
+   Louis-approved invocation (§2.5). This is labelled a **declaration check, not verified authority**, in the same words `decisions.mjs:8` uses for
    itself: it proves the line is in the file only sessions are forbidden to write. The verb prints this label. This repeats the
    reason `ship-preauth.mjs` exists (`:5-9`): an authority's absence is enforced in code, not in prose the actor reads about
    itself.
 
-**C. What stays Louis's** is listed in the grant text. In code, the per-member conditions `C4`-`C6` refuse migrations, sensitive
+**C. What stays Louis's** is listed in the grant text. In code, the per-member condition `C5` (paths) refuses migrations, sensitive
 paths and policy files, so those members always wait for him. Secrets, deploy writes, GitHub settings, caps and baselines are not
 file changes a merge makes, so they stay outside the grant by its text, exactly as today's merge grant handles them.
 
@@ -163,64 +172,204 @@ file changes a merge makes, so they stay outside the grant by its text, exactly 
   `--check-preauthorised`, `--preauthorised`, push.
 - **Order.** The chip ships, then pushes the ship head, then runs `fleet ready`. That records the ship commit as the ready oid,
   so the CI that runs is CI on the ship head.
-- **The worktree must survive until the ship commit exists.** The `.audit/` markers are gitignored, and archiving destroys
-  them. The chip-preamble adds: "never archive before your ship commit is pushed".
+- **The worktree must survive until the PR is merged.** The `.audit/` markers are gitignored, archiving destroys them, and the
+  batch re-check reads them (§2.3). The chip preamble adds: "never archive before your PR is merged". `fleet archive-check`
+  gains the same refusal for a member that is ready but unmerged.
 
-### 2.3 Batch re-verification: `ship-commit.mjs --check-shipped-head <oid>` (new read-only mode, #1 DRY, #11 Testability)
-This mode lives in `ship-commit.mjs`, beside `--check-preauthorised` (`:154-194`), because that script already owns
-`readConvergence` and the trailer vocabulary. `fleet` calls it as a child process (domain rule above). It gathers facts and calls
-a **pure** `evaluateShippedHead(facts)`, added to `scripts/lib/ship-preauth.mjs` so that ONE module owns "may this ship
-without the user". It reuses that module's `row`, `isSensitivePath`, `isMigrationPath` and `isPolicyPath`.
+### 2.3 Batch re-verification: `ship-commit.mjs --check-shipped-head` (new read-only mode, #1 DRY, #11 Testability)
 
-The output is one row per condition, the same shape as `renderPreauthConditions`, plus a JSON envelope when `--json` is passed.
-Exit 0 means ship-ok and exit 2 means needs-user. It **fails closed**: any unknown fact is a refusal with its own reason, never a
-pass.
+**Where it runs, and why there.** The checker runs with **cwd = the member's own worktree**. Fleet knows that path because a
+claim binds the branch and worktree it runs from. The worktree is where the two local markers live that the ship-time check
+already bound:
+- `.audit/last-audit-run.json`, the gate evidence: `runId`, `auditedTree`, `round`, `auditedBranch`.
+- `.audit/last-final-review.json`, the final review (`final-review-marker.mjs:29`).
 
-| id | Condition (all on the member's head commit `H`, its tree `T_H`, the PR's base `B`) | Source |
+Re-reading them with the **same predicates** is what binds the run and the final review to THIS member (R1-H1, R1-H2). There is
+no second, weaker binding.
+
+If the worktree, or either marker, is gone, the member is `needs-user` with reason `evidence-unavailable`. So the chip preamble
+gains: **never archive before your PR is merged** (§2.2).
+
+The mode lives in `ship-commit.mjs`, next to `--check-preauthorised` (`:154-194`), because that file already owns
+`readConvergence` and the trailer vocabulary. Fleet calls it as a child process, per the domain rule above. It gathers facts and
+calls a **pure** `evaluateShippedHead(facts)`, added to `scripts/lib/ship-preauth.mjs` so that ONE module owns the question
+"may this ship without the user". That function reuses `row`, `matchFinalReviewMarker`, `isSensitivePath`, `isMigrationPath` and
+`isPolicyPath`. To keep the file under its size ratchet, the gatherer lives in `scripts/lib/ship-shipped-head.mjs`, so
+`ship-commit.mjs` gains only flag parsing and one call.
+
+**The child contract, v1 (R1-H4):**
+- **Argv:** `node <tooling>/ship-commit.mjs --check-shipped-head --head <oid> --json`. `<tooling>` is resolved by fleet relative to
+  its own module (`import.meta.url`), never as the literal `scripts/`, so it is right in a consumer too (`scripts/.claude-skills/`).
+- **Base:** the child resolves it itself, exactly as `gatherChangedPaths` does (`origin/HEAD`, else `refs/remotes/origin/main`,
+  fully qualified). It takes no fleet facts.
+- **Stdout:** exactly one JSON object:
+
+  ```json
+  {"schema":"shipped-head/v1","ok":true,"head":"<oid>","runId":"<uuid>","gate":"converged","conditions":[{"id":"C1","ok":true,"reason":"..."}]}
+  ```
+
+  Write it through `emit` / `await finishAndExit(code)`; an `ok:false` envelope sets a non-zero exit.
+- **Exit:** 0 = ship-ok, 2 = refused (each condition carries its reason), 1 = the checker errored.
+- **Fleet's reading of the result:** exit 1, a timeout, unparsable stdout, a `schema` other than v1, or `head` ≠ the oid asked
+  for all count as `needs-user`, reason `checker-failed: <detail>`. None of them is ever a pass.
+- **Ownership of the conditions:**
+  - The child owns `C1`-`C5`.
+  - Fleet owns `C7` (grant), `C8` (CI) and `C9` (identity), from facts it already holds (`verifyFacts`, `train-approve.mjs:90`).
+
+**The conditions.** `H` is the member's head commit, `T_H` its tree, `A` the audited tree. `P` is the set of paths the branch
+changes (`git diff --name-only --no-renames merge-base(H, base)..T_H`).
+
+| id | Condition | Source |
 |---|---|---|
-| `C1 trailers` | `git interpret-trailers --parse` of `H`'s message yields exactly one of each of these: `AI-Skill: ship`, `AI-Ship-Authority: launch-prompt`, `AI-Gate` ∈ {`passed`,`converged`}, `AI-Final-Review: approve`, `AI-Run-ID`. They must be **parseable trailers**, not inline text. | git object |
-| `C2 store` | `getAuditRunConvergence(AI-Run-ID).roundConvergedAfter` is an integer, and the run row's `audited_tree` is non-null. Cloud off or a failed query refuses with its reason. | store |
-| `C3 post-audit-delta` | Let `P` be the paths the branch changes (`gatherChangedPaths` semantics, `B`…`T_H`). For every `p ∈ P` whose blob differs between `audited_tree` and `T_H`, `p` must be ship-step-shaped. That means a new file under `docs/status/entries/`, or a plan file whose diff is confined to its `Status:` line and `## Implementation Log` section. This reuses `authority.mjs` `pathVerdict` (`:103`), lifted to a shared export. Upstream changes to paths outside `P` (a rebase) are ignored. A path changed both by the branch and after the audit refuses, because a conflict resolution is unaudited code. A missing `audited_tree` object (gc'd) refuses. | git trees |
-| `C4 sensitive-path` / `C5 migration` / `C6 repo-policy` | The existing predicates over `P`. An empty or unresolvable `P` refuses (`ship-preauth.mjs:104-110` semantics). | git + `sensitive-paths.mjs` |
-| `C7 grant` | Checked once per batch by `fleet land --ship-batch`, not per member (§2.1 B3). | `~/.claude/CLAUDE.md` |
-| `C8 ci` | `ciVerdict` (`ci-verdict.mjs:271`) for `requiredInventory` (`required-checks.mjs:100`) at **exactly `H`** is green. Unmeasured, pending or unknown refuses. | GitHub |
-| `C9 identity` | Registry ready oid, PR head and `H` are one oid. This is the existing `fleet land` invariant (`verifyFacts`, `train-approve.mjs:90`), restated as a row so a mismatch is named. | fleet registry + gh |
+| `C1 trailers` | `git interpret-trailers --parse` of `H`'s message yields exactly one each of `AI-Skill: ship`, `AI-Ship-Authority: launch-prompt`, `AI-Gate` ∈ {`passed`,`converged`}, `AI-Final-Review: approve` and `AI-Run-ID`. They must be **parseable trailers**: an inline-only block refuses. | git object |
+| `C2 evidence` | The worktree's gate-evidence marker is content-verifiable (`isContentVerifiable`), and its `runId` equals `AI-Run-ID`. Its `auditedBranch` equals `H`'s branch, and it is known (the `ship-preauth.mjs:78-89` rule). The store row for that run reads `roundConvergedAfter` as an integer (`getAuditRunConvergence`, `runs-findings.mjs:1956`). Its `repo_id` matches this repo by the store's own `repoIdentityMatches` (`runs-findings.mjs:279`). Cloud off, a failed query, or no row refuses with the reason. | marker + store |
+| `C3 final-review` | `matchFinalReviewMarker(evidence, readFinalReviewMarker(worktree))` binds the review to the same `runId`, `auditedTree` and `round` (`final-review-marker.mjs:273`). Its verdict must be `APPROVE` and its disposition `approve`, the same policy as `ship-preauth.mjs:95-102`. Corroboration: the run's stored `gemini_verdict` (`runs-findings.mjs:351`) must not contradict it. A stored REJECT or CONCERNS refuses; a null stored verdict refuses with `final-review-unrecorded`. | marker + store |
+| `C4 post-audit-delta` | The algorithm below. | git trees |
+| `C5 paths` | Three rows, `sensitive-path`, `migration` and `repo-policy`: the existing predicates over `P`. An empty or unresolvable `P` refuses (`ship-preauth.mjs:104-110`). | git + `sensitive-paths.mjs` |
+| `C7 grant` | Fleet checks this at build, at approve, at resume and before each merge (§2.1 B3, §2.4). | `~/.claude/CLAUDE.md` |
+| `C8 ci` | Two mechanisms, and both must be green at **exactly `H`** (final review G1). (1) The required status checks: `observeRequiredChecks` (`required-checks.mjs:193`) over `requiredInventory` (`:100`), which `train-approve.mjs` and `serial.mjs` already use. (2) Where `.test-tiers.json` declares a full-suite workflow, `ciVerdict` (`ci-verdict.mjs:271`) for that workflow's run on `H`. Unmeasured, pending or unknown on either refuses. | GitHub |
+| `C9 identity` | The registry ready oid, the PR head and `H` are one oid. | registry + gh |
 
-**Why `C1` and `C2` together.** A raw `git commit` can type trailers by hand. `ship-commit` refuses `AI-*` lines in its message
-input (`skills/ship/SKILL.md:768-769`), but nothing stops a non-ship-commit writer. `C2` re-derives the gate's backing fact from
-the store, so a forged `AI-Gate` with no converged run is caught. **Residual risk, stated:** `AI-Final-Review` has no store-side
-target identity (`ship-preauth.mjs:91-94`), so a hand-forged `approve` is caught only by convention. This is the same exposure a
-pre-authorised chip already has today, and the grant widens it by nothing. It is recorded as a follow-up, not hidden (§8).
+**`C4`, the post-audit delta (R1-H3).** It compares the **audited tree `A` with `T_H`**, never with the base, so a plan the branch
+changed before its audit is handled the same way as any other path.
+1. **Build the candidate set (R2-H2)** as `P* = P_head ∪ P_audit`:
+   - `P_head = P`, the paths the head changes against `merge-base(H, base)`;
+   - `P_audit` = `git diff --name-only --no-renames -z F A`. This diffs the audited **tree `A` itself** against **its own**
+     fork point `F = merge-base(audited_sha, base)` (R3-H3), so a dirty-tree audit's uncommitted change is included even when
+     `audited_sha's` tree is not `A`. `audited_sha` comes from the run's store row and is used only to find `F`; if it is null or
+     the commit is missing, refuse with `audited-sha-missing`.
+
+   Including `P_audit` catches an audited change that was later reverted to base, which drops out of `P_head`.
+2. Compute `D = git diff --name-status --no-renames -z A T_H -- <P*>`. **Every git call that takes candidate paths runs with
+   literal pathspecs (R3-H2)**: `GIT_LITERAL_PATHSPECS=1` is set on that child's own environment only, never exported into the
+   coordinator's shell, because it leaks into hooks (memory tripwire). All output is parsed NUL-delimited (`-z`). Fixtures cover
+   names with `[]`, `*?`, a leading `:(` magic prefix, and an embedded newline. `A` must exist as a tree object locally; if it is missing
+   (gc'd), refuse with `audited-tree-missing`. A path in neither set is an upstream-only change brought in by a rebase, and it is
+   correctly excluded.
+3. An empty `D` is allowed. This is the `passed` case, where `T_H === A` on `P`.
+4. Each entry of `D` must be one of the following, or the whole condition refuses with that path named:
+   - **(a) Status entry.** `A` (added), the path is under `docs/status/entries/`, and the name matches `ENTRY_NAME_RE`
+     (`ship-record/state.mjs:41`).
+   - **(b) Legacy status log.** `M` on `status.md`, every hunk adds lines only, and every added line sits above the first
+     pre-existing entry heading. This is the prepend-only legacy log (`skills/ship/SKILL.md:580-585`).
+   - **(c) Plan file.** `M` on a file under `docs/plans/`. Every changed line, on both sides of every hunk, lies in one of two
+     regions: (i) the single `- **Status**:` header line, or (ii) the `## Implementation Log` section, from its heading to the
+     next `## ` heading or the end of file. A section created by the ship counts as an added region.
+   - Every `D` (delete), any rename half (`--no-renames` lists both ends) and every other path refuses.
+5. **A path changed both by the branch and after the audit is therefore legal ONLY inside the (a)-(c) regions.** A conflict
+   resolution anywhere else refuses, because it is unaudited code.
+
+This is the record-commit allowlist in `ship-record/authority.mjs` `pathVerdict` (`:103-125`), tightened to the hunk level. The
+shared predicate is lifted out as `isShipStepDelta(path, oldText, newText)` and the record path calls it too, so ONE grammar
+defines a ship-doc edit.
+
+**Fixtures (real git).** Each case is built in a temp repo:
+- a status-entry-only delta;
+- a plan Status plus Log only, on a plan the branch already changed before its audit;
+- a plan edit outside both regions;
+- a code change after the audit;
+- a rebase that changes an untouched path;
+- an audited branch change reverted to base after the audit;
+- an audited **uncommitted** (dirty-tree) change reverted before shipping;
+- path names with pathspec metacharacters and newlines;
+- a rebase whose conflict resolution touches a branch path;
+- a delete;
+- a rename;
+- a gc'd `A`.
+
+**Residuals, stated.**
+- Audit **scope** coverage (did the run's passes read every path in `P`?) is not checked. Neither is it checked at today's ship
+  time, so the grant widens nothing.
+- A forged `AI-Final-Review` trailer is now caught by `C3`. A forged local marker is not, because a session that hand-writes
+  `.audit/` breaks AGENTS.md's rule outright. The same exposure exists today at ship time.
 
 ### 2.4 `fleet land --ship-batch` (extends land; no new verb, #18 Backward Compat)
-1. `C7`: read the grant. If it is absent, refuse the flag with `grant-absent`. Plain `fleet land` is unchanged.
-2. Build: for each ready member, run `--check-shipped-head` (`C1`-`C6`, `C9`). Mark each member `ship-ok` or `needs-user`, with
-   reasons.
-3. **Partition before integrating.** Exclude `needs-user` members, and any member stacked on one (`--base`), **before**
-   building the integration worktree, so the tested set equals the merged set. Then run the existing combined test once.
-4. Approve: re-run `C8` and `C9` at approval time (CI can flip). Merge each `ship-ok` member through the existing `messageFor`
-   seam (`serial.mjs:26,118`) with `subject` and `body` set to **`H`'s commit message, byte for byte** (`git log -1 --format=%B`).
-   The trailer block is then the last paragraph of the squash. It is copied from a git object, never composed, and so is not
-   "hand-written".
-5. **Read back.** After each merge, parse the squash commit's trailers and compare them with `H`'s, canonicalised against
-   `AI_TRAILER_KEYS` (`commit-trailers.mjs:30`). A mismatch is a **loud** `provenance-lost` row on that member: the merge already
-   happened and cannot be retried into honesty. The batch summary names it.
-6. Print the batch summary: `landed: N (passed a, converged b)` and `needs-user: M`, one line each with its refusals, the chip's
-   session link and the exact sentence "type /ship <plan> in this session". Then the existing record nudge
-   (`land.mjs:43-57`).
-   Self-shipped members are already "recorded" by `state.mjs:11-13`. The nudge therefore counts only members merged without a
-   ship: legacy, or `needs-user` members Louis later chose to merge without `/ship`.
+1. **Grant (`C7`).** Read the grant (§2.1 A, canonical-text match). If it is absent or mismatched, refuse with `grant-absent` or
+   `grant-mismatch`, merge nothing, and exit 2. Plain `fleet land` is unchanged.
+2. **Build.** For every ready member, run the child (`C1`-`C5`) and fleet's own `C8` and `C9`. Mark each member `ship-ok` or
+   `needs-user`, with its rows.
+3. **Partition, then integrate.** Exclude every `needs-user` member, and every member stacked on one (`--base`), **before**
+   building the integration worktree. The tested set is then the merged set. The existing train manifest records:
+   - the base oid;
+   - the ordered `ship-ok` heads;
+   - the excluded members with their reasons;
+   - a `shipBatch: {grantVersion, checkedAt}` stamp.
 
-Under the grant, `skills/fleet/SKILL.md:88` gains one sentence: `land --approve --ship-batch` may run without a chat go-ahead
-**only** for the `ship-ok` set; every other land still needs Louis.
+   Run the existing combined test once.
+4. **Approve** (`land --approve <train> --ship-batch`). These are the only steps that may run without a chat go-ahead.
+   - The manifest must carry the `shipBatch` stamp. A plain train cannot be approved with `--ship-batch`, and vice versa.
+   - **Re-read the grant (R2-H1)** at approve, at every `--resume`, and immediately before each merge. If it has been revoked or
+     changed, stop with `grant-revoked`: merged members stay merged and are listed, and the rest are `not-attempted`.
+   - **Base progression (R2-H3).** The manifest records the build-time base `B0`. After each successful merge it appends that
+     member's squash oid `Mi`. Before any merge or resume, the live base tip must be **exactly** the last recorded oid (`B0` if
+     none), and each `Mi`'s first parent must be its predecessor. Any foreign commit on the base refuses with `base-moved`, and
+     the coordinator rebuilds: a new build and a new combined test, with nothing reconciled. The combined test therefore stays
+     valid for the remaining members exactly when the only base movement is the batch's own merges, which are the heads it
+     tested. This extends the existing approval-eligibility check (`approvable`, `train-approve.mjs`) rather than adding a second
+     one. (R1-H5)
+   - **Immediately before each merge**, re-run the child for that member, and `C8`/`C9`. This is cheap and read-only. Then merge
+     with `gh pr merge --squash --match-head-commit <H>`, which is GitHub's server-side guard that the head did not move.
+   - Merges go through the **serial** path (`serial.mjs`), which persists per-member progress and resumes.
+   - **No remote branch update in `--ship-batch` mode** (final review G2). The serial runner's `update-branch` step
+     (`serial.mjs:274`) is disabled. That step would create an unshipped merge commit on the PR branch, which breaks `C1` and
+     `C9` and leaves the chip worktree behind. A member that is behind the base, or not cleanly mergeable at `H`, is
+     `needs-user` (`behind-base`). It is never mutated.
+   - **Durable per-member state (R3-H4)**, written to the manifest **before** each transition: `pending`, then
+     `merge-requested`, then `merged` (squash oid recorded), then `verified` (read-back passed) or `provenance-lost`.
+   - **Reconciliation** on resume, and on any uncertain merge result (a timeout or a non-zero exit): query
+     `gh pr view <n> --json state,mergeCommit,headRefOid`.
+     - A member in `merge-requested` that GitHub reports MERGED is adopted only if its `headRefOid` is `H`, its merge
+       commit's first parent is the expected tip, and its message passes the read-back. The member then advances to
+       `verified`, and the base progression appends its oid. That is how the batch's own unrecorded merge never reads as
+       `base-moved`.
+     - A member that GitHub reports not merged returns to `pending` and is re-checked.
+     - A member in `merged` but not `verified` is read back on resume, never skipped.
+   - **Base race (R3-H1).** `--match-head-commit` guards the head, not the base, and a server-enforced queue would be a GitHub
+     setting, which is Louis's (Out of Scope). The plan therefore **detects** the race rather than claiming to prevent it. After
+     each merge, if the squash's first parent is not the recorded tip, a foreign commit landed in the window, and the member
+     landed on an untested base. It is reported `landed-on-untested-base`, the batch stops (exit 2), and the remaining members
+     need a rebuild.
+   - If a merge fails, the run **stops** at that member. Members already merged stay merged and are listed as such. The rest are
+     listed `not-attempted`. `--resume` continues from the manifest, after re-checking.
+5. **Message (R1-H4, R1-M1).** Merge through the `messageFor` seam (`serial.mjs:26`, validated `:118-127`):
+   - `subject` = line 1 of `H`'s message (`git log -1 --format=%B H`, LF-normalised);
+   - `body` = **every** line after line 1, with exactly one leading blank line removed if one is present and trailing whitespace
+     trimmed. This is lossless (R2-M1): a message without a blank line after its subject loses nothing.
 
-### 2.5 Fallback when a member fails (#16)
-- A `needs-user` member stays open at its chip, untouched. That chip is idle at ship-ready, so Louis can type `/ship`.
-- The rest of the batch lands. A stacked dependent of a `needs-user` member waits with it (reason `blocked-by <id>`).
-- Nothing retries a refused condition, and nothing re-runs an audit to find a pass. The chip-preamble already forbids that
-  (`:63-64`); the batch verb has no retry path to offer.
-- If the grant is absent, the store is off, or CI is unmeasured, the whole batch degrades to today's flow: plain `fleet land`,
-  which needs Louis's go-ahead, then the record catch-up.
+   The trailer block is then the last paragraph of the squash. It is copied from a git object, never composed.
+6. **Read back.** The guarantee is **semantic, not byte-level**. After each merge, two things must hold:
+   - the squash commit's subject and LF-normalised, whitespace-trimmed body must equal the split above (non-trailer content is
+     retained);
+   - `git interpret-trailers --parse` of the squash commit must equal `H`'s parsed trailers as a canonical multiset over
+     `AI_TRAILER_KEYS` (`commit-trailers.mjs:30`). A mismatch is
+   a loud `provenance-lost` row on that member, and the batch exits 2. The merge has already happened, so the row tells the
+   coordinator to file it with `fleet propose`; it never tries to retry the merge into honesty.
+7. **Summary.**
+   - Landed members: `landed: N (passed a, converged b)`.
+   - `needs-user` members: one line each with its refusals, the chip's session link, and the exact sentence "type /ship <plan> in
+     this session".
+   - Then the existing record nudge (`land.mjs:43-57`). Self-shipped members are already "recorded" (`state.mjs:11-13`), so the
+     nudge counts only members merged without a ship.
+
+`skills/fleet/SKILL.md:88` gains exactly one exception: `land --approve --ship-batch` on a `shipBatch` train may run without a chat
+go-ahead. Every other `land --approve`, `--confirm`, `--override` and `--accept-rerun` still needs Louis.
+
+### 2.5 Fallback when a member fails: the state table (#16, R1-M2)
+
+| State | Who is affected | Outcome | Exit |
+|---|---|---|---|
+| Grant absent or mismatched | the whole batch | nothing merged; `grant-absent` or `grant-mismatch`. Today's flow is still available as a **separate** plain `fleet land` invocation, with Louis's go-ahead | 2 |
+| Store off or unreachable (`C2` cannot read) | every member | every member is `needs-user` (`store-unavailable`); nothing merged | 2 |
+| GitHub or CI unreachable (`C8` unmeasured for every member) | every member | every member is `needs-user` (`ci-unmeasured`); nothing merged | 2 |
+| A member refuses any of `C1`-`C9` | that member, plus members stacked on it | `needs-user` with its rows; the rest land | 0 if ≥1 member landed and no `provenance-lost`, else 2 |
+| Every member refuses | every member | nothing merged | 2 |
+| Merge failure mid-batch | the remaining members | stop; `--resume` | 2 |
+| `provenance-lost` on read-back | that member (already merged) | reported loudly; the remaining merges still run | 2 |
+
+- **No automatic fallback merge.** `--ship-batch` never runs a plain land, and a plain land never borrows the grant.
+- A `needs-user` member stays open at its idle chip for Louis's `/ship`.
+- Nothing retries a refused condition, and nothing re-runs an audit to find a pass. The chip preamble already forbids it
+  (`chip-preamble.md:63-64`), and the verb offers no such path.
 
 ### 2.6 AI-Gate honesty (invariants the implementation must hold)
 1. **No batch-level trailer anywhere.** Each squash carries exactly its own member's ship-commit block. The batch summary prints
@@ -265,22 +414,31 @@ Under the grant, `skills/fleet/SKILL.md:88` gains one sentence: `land --approve 
 ## 7. File-Level Plan
 
 ### 7b. Implementation Phases
-- **Phase 1: pure evaluator + shared path verdict.** Files:
+- **Phase 1: pure evaluator + shared ship-step delta grammar.** Files:
   - `scripts/lib/ship-preauth.mjs` (modify: add `evaluateShippedHead`, `SHIPPED_HEAD_CONDITIONS`, `renderShippedHeadConditions`)
-  - `scripts/lib/ship-record/authority.mjs` (modify: export the ship-step `pathVerdict` as `isShipStepPath`, with one caller
-    left in place)
+  - `scripts/lib/ship-record/authority.mjs` (modify: lift the grammar into an exported `isShipStepDelta(path, oldText, newText)`;
+    `pathVerdict` calls it)
   - `tests/ship-preauth-shipped-head.test.mjs` (create)
-- **Phase 2: the `ship-commit.mjs --check-shipped-head` read-only mode.** Files:
-  - `scripts/ship-commit.mjs` (modify: flag, gather `C1`-`C6`, `C9`, emit; `--selfcheck-relocation` already present)
-  - `tests/ship-commit-check-shipped-head.test.mjs` (create)
-  - `docs/reference/commit-provenance.md` (modify: a coordinator batch section; reading parseable vs inline trailers)
+- **Phase 2: the `--check-shipped-head` read-only mode and its gatherer.** Files:
+  - `scripts/lib/ship-shipped-head.mjs` (create: gathers `C1`-`C5` in the member worktree, plus the v1 envelope)
+  - `scripts/ship-commit.mjs` (modify: flag parsing and one call only, under the size ratchet; `--selfcheck-relocation` is
+    already present)
+  - `tests/ship-commit-check-shipped-head.test.mjs` (create: the real-git fixtures of §2.3)
+  - `docs/reference/commit-provenance.md` (modify: a coordinator-batch section; parseable vs inline trailers)
 - **Phase 3: `fleet land --ship-batch`, the grant reader, the merge message and read-back.** Files:
-  - `scripts/lib/fleet/coordinator-grant.mjs` (create: `readShipBatchGrant(path, fs)`, marker grammar, pure parse)
-  - `scripts/lib/fleet/land.mjs` (modify: the flag, partition before integrate, the summary)
-  - `scripts/lib/fleet/train-approve.mjs` (modify: re-check `C8`/`C9` at approve, route through `messageFor`, the read-back)
+  - `scripts/lib/fleet/coordinator-grant.mjs` (create: `readShipBatchGrant(path, fs)`, the canonical text, a pure parse)
+  - `scripts/lib/fleet/land.mjs` (modify: the flag, partition before integrate, the manifest stamp, the summary)
+  - `scripts/lib/fleet/train-approve.mjs` (modify: the stamp check, `base-moved`, the per-merge re-check, routing through
+    `messageFor`)
+  - `scripts/lib/fleet/serial.mjs` (modify: the read-back hook after each merge, the `provenance-lost` row)
+  - `scripts/lib/fleet/lifecycle.mjs` (modify: `cmdArchiveCheck`, `:287`, refuses for a ready, unmerged member)
   - `scripts/fleet.mjs` (modify: flag registration / `assertKnownFlags`)
   - `tests/fleet-land-ship-batch.test.mjs` (create)
   - `tests/fleet-coordinator-grant.test.mjs` (create)
+  - `tests/sync-ship-batch-closure.test.mjs` (create, **Tier 3, same commit**: the sync closure contains
+    `coordinator-grant.mjs` and `ship-shipped-head.mjs`; in a relocated `scripts/.claude-skills/` layout, fleet's child-path
+    resolution finds `ship-commit.mjs`; the relocated CLI answers `--selfcheck-relocation`; grant-absent and store-off refuse
+    there too)
 - **Phase 4: prose.** Files:
   - `skills/fleet/references/chip-preamble.md` (modify: block default under the grant; ship before `ready`; no archive before
     the ship commit)
@@ -321,7 +479,7 @@ Actions.
   attribution.
 - **The coordinator runs no member's ship steps.** The evidence lives in the chip's worktree, and two sessions writing one
   worktree is the shared-tree failure mode.
-- **`C3` may refuse more members than expected** when chips rebase after the audit onto changes to the same files. That is
+- **`C4` may refuse more members than expected** when chips rebase after the audit onto changes to the same files. That is
   correct, because a conflict resolution is unaudited. Measure the refusal mix on the first three batches before tuning anything.
 - **`AI-Final-Review` forgery residual** (§2.3) is recorded as a `fleet propose` follow-up: bind the final review to a store row
   with target identity.
@@ -336,16 +494,46 @@ Actions.
 
 | Behaviour | Oracle | Pass condition | Report evidence |
 |---|---|---|---|
-| `evaluateShippedHead` refuses each failing fact | A pure unit test per condition, in **both directions**: must fire on a forged trailer with no converged run, `waived`, `not-run`, an inline-only (unparseable) trailer block, a code path changed after the audit, a both-sides-changed path, a gc'd `audited_tree`, sensitive / migration / policy paths, an empty `P`, and unmeasured CI; must NOT fire on a status-entry-only delta, a plan-Implementation-Log-only delta, or an upstream rebase change outside `P` | Written red first against a stub returning ok, then green | Test names and counts, the red run output |
+| `evaluateShippedHead` refuses each failing fact | A pure unit test per condition, in **both directions**: must fire on a forged trailer with no converged run, `waived`, `not-run`, an inline-only (unparseable) trailer block, a code path changed after the audit, a both-sides-changed path, a gc'd `audited_tree`, sensitive / migration / policy paths, and an empty `P` (unmeasured CI is fleet's `C8`, tested in the approve row); must NOT fire on a status-entry-only delta, a plan-Implementation-Log-only delta, or an upstream rebase change outside `P` | Written red first against a stub returning ok, then green | Test names and counts, the red run output |
 | `--check-shipped-head` reads real git objects | A temp-repo integration test that builds ship-shaped commits with a mocked store | Exit 0 / 2 and the rows match | Test output |
-| The positive control against history | Run `--check-shipped-head` on `7ff8883a` (a real launch-prompt ship) | `C1` refuses on `AI-Final-Review` alone, because the trailer post-dates it. That proves the check is not vacuous. A fixture commit carrying every trailer passes `C1` | Command output, recorded in the Implementation Log |
+| The positive control against history | Run `--check-shipped-head` on `7ff8883a` (a real launch-prompt ship) | `C1` refuses on the missing `AI-Final-Review` trailer, which post-dates that commit, and `C2` refuses with `evidence-unavailable`, because the chip worktree is gone. That proves the check is not vacuous. A fixture worktree and commit carrying every trailer and marker pass `C1`-`C5` | Command output, recorded in the Implementation Log |
 | Negative control | `--check-shipped-head` on `ceea43d2` (a record commit, `not-run`) | Refuses `C1` | Command output |
 | Partition before integrate | A land test with three members (ok, needs-user, stacked-on-needs-user) | The integration worktree contains only the ok member, and its oids equal the merged set | Test output |
-| The squash message carries the trailers | A test asserting the **emitted** `gh pr merge` argv carries `--subject`/`--body` equal to `H`'s message bytes (assert the emitted request, not the config), plus a read-back mismatch test producing `provenance-lost` | Both | Test output |
-| Grant fails closed | Reader tests: absent file, no marker, marker with wrong version, marker inside a code fence elsewhere | Only the exact top-level line passes | Test output |
+| The squash message carries the trailers | (1) The **emitted** `gh pr merge` argv carries `--subject` and `--body` per the §2.4 split, tested on multiline bodies, a message with no blank line after its subject, a trailing newline and CRLF input. (2) A read-back test on a fixture squash commit built by `git commit-tree` with GitHub's message: the parsed trailer multiset equals `H`'s. (3) A mismatch fixture produces `provenance-lost` | All three | Test output |
+| Grant fails closed | Reader tests: absent file, unreadable file, no marker, wrong version, a section whose text differs from canonical (narrowed, carve-out added), a marker in a code fence, two markers, CRLF file | Only the canonical section passes | Test output |
+| Fresh verification at approve | Approve tests: base moved, a head moved between build and merge, a member whose CI flips red between build and approve, an interruption at each state transition (after merge-requested with GitHub merged and not merged, after merged before read-back), a base commit injected between the client check and the merge (`landed-on-untested-base`), a mid-batch merge failure followed by `--resume` with only the batch's own merges on the base (accepted), the same with a foreign commit in between (`base-moved`), and the grant revoked between build and approve and between two merges (`grant-revoked`) | As stated; resume skips merged members | Test output |
+| Child contract | Tests with a stub child returning exit 1, a timeout, non-JSON, the wrong schema, or the wrong head | Each gives `needs-user` / `checker-failed` | Test output |
+| The consumer sync contract (Tier 3) | `tests/sync-ship-batch-closure.test.mjs`, in the same commit as Phase 3 | The closure contains the new modules; the child resolves in the relocated layout | Test output |
 
 The live check, after merge, is the first real batch: `git log --format='%(trailers:key=AI-Ship-Authority)'` on each landed squash
 shows `launch-prompt` as a **parseable** trailer. That is the consumer-side verification.
 
 **Test log.** If `fleet next` reports `fullSuite: "train"`, write "full suite deferred to the train (fullSuite: train)". CES runs
 its full suite in Actions.
+
+## Out of Scope (Future)
+- **A server-enforced base binding for merges** (a GitHub merge queue or a ruleset): this is a GitHub settings change and
+  Louis's decision (R3-H1). Until then the batch detects a base race after the fact (`landed-on-untested-base`) and stops.
+- **A store-side final-review target identity**, so that `C3` does not depend on the chip worktree's local marker surviving:
+  recorded as a `fleet propose` follow-up (§2.3 residuals).
+- **Audit scope coverage** (did the run's passes read every path in `P`?): not checked at ship time today either.
+
+## Audit trail
+- **/audit-plan, SID `audit-plan-1794982045277-103580`** (2026-11-18). GPT rounds: R1 H7 M2, R2 H3 M1, R3 H4. Every finding was accepted and fixed:
+  acceptance 100% in each round, recorded in the ledger and the cloud outcomes.
+- **The soft cap (3) stopped the loop, not convergence.** The structural card at the cap read:
+  - "AT THE CAP WHILE PRODUCTIVE";
+  - one STRUCTURAL cluster, the base verification race, which is resolved here as detection plus an Out-of-Scope server-side
+    queue that is Louis's call;
+  - one LOCAL? cluster, the post-audit delta, which is resolved by the tree algorithm in §2.3 `C4`;
+  - two POLISH clusters.
+- **No round 4 was run.** The card is a human call. This chip has no user to answer it, so the call goes to the coordinator and
+  Louis with the handoff.
+- The mandatory final review follows.
+- **Final review** (gemini, round 1/2): `CONCERNS`, gate `approve_with_debt` (blocking 0, debt 3). All three findings were fixed in
+  the plan rather than carried as debt:
+  - G1: `C8` names both CI mechanisms;
+  - G2: no `update-branch` in batch mode;
+  - G3: stale condition ids and the `archive-check` file.
+
+  The gate was approved, so no round 2 was needed.
