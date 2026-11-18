@@ -138,15 +138,19 @@ A member's record is made of three separate fields:
 - The run's **`outcome.reason`** says why the run stopped. It is today's field. A run stop never writes onto a member: the
   faulting member keeps its own specific code, and every other open member keeps `outcome: null`.
 
-`step` also gains one optional field, `attempt: { head: Oid, ghExit: number|null, at }`. It is written before and after the
-`gh pr merge` call, and it is what attribution is decided from (§2.3).
+`step` also gains one optional field, `attempt: { head: Oid, at: Iso, ghExit: number|null, doneAt: Iso|null }`:
+
+- the intent write sets `head`, `at` (when the merge was about to be requested), `ghExit: null` and `doneAt: null`;
+- the result write keeps `head` and `at` and sets `ghExit` and `doneAt`.
+
+Attribution is decided from it (§2.3).
 
 `outcome` is a **discriminated union on `status`**. Each variant has its own closed code enum and its own required evidence,
 and every variant is a `z.strictObject`:
 
 | status | terminal? | codes (closed per variant) | required evidence |
 |---|---|---|---|
-| `landed` | **yes** | `merged` | `verdict` (one of the four below), `mergeOid`, `attribution`, `gate` |
+| `landed` | **yes** | `merged` | `verdict` (one of the four below), `mergeOid`, `parent` (the measured first parent), `chainIndex` (an integer, or `null` when the verdict does not extend the chain), `attribution`, `gate` |
 | `refused` | **yes** for this run | `pr-closed`, `pr-draft`, `pr-retargeted`, `conflict`, `behind-base`, `head-moved`, `checks-failed`, `shipped-head-refused`, `ci-refused`, `message-invalid` | `reason`, and `trees: {tested, seen}` for `head-moved` |
 | `skipped` | **yes** | `merged-externally` | `mergeOid` (or `null`, which needs `reason`), `seenHead` |
 | `not-run` | **no** | `pr-unreadable`, `checks-pending`, `tree-unreadable`, `message-unreadable`, `head-churn`, `merge-unconfirmed`, `awaiting-read-back` | `reason` |
@@ -167,8 +171,11 @@ violation refuses the run as `record-inconsistent` and merges nothing.
 1. Step ids are unique. The `policy.members` keys equal the step ids exactly.
 2. `step === 'merged'` holds if and only if the outcome is one of: `landed`, `skipped`, or `not-run/awaiting-read-back`.
 3. The outcome `not-run/merge-unconfirmed` requires `step === 'merge'` and an `attempt`.
-4. `policy.baseChain` equals `[B0, ...mergeOid of every landed member whose verdict is verified or provenance-lost, in step
-   order]`. The `untested-base` and `wrong-target` verdicts never extend the chain.
+4. **The chain is merge chronology, never step order.** A not-run member may land after later members, on a resume.
+   `policy.baseChain[0]` is `B0`. For every k ≥ 1, exactly one landed member has `chainIndex === k`; its `mergeOid` equals
+   `baseChain[k]`, and its `parent` equals `baseChain[k-1]`. Only the `verified` and `provenance-lost` verdicts take a
+   `chainIndex`. `untested-base` and `wrong-target` have `chainIndex: null` and never extend the chain. The final landed
+   tree is always read from `baseChain.at(-1)`.
 5. A landed or skipped member's `mergeOid` is not repeated elsewhere in the run.
 
 Rules a test pins, one test each:
@@ -228,7 +235,7 @@ literals.
 | `message-stop`, `message-required` (ship-train's `messageFor`) | run | n/a (a policy run never takes `messageFor`) | `:320`, `:321` |
 | `merged-observed` | per the §2.3 table | §2.3 | `:251` and the observation loop |
 | `merge-unconfirmed` (any gh merge whose result was not observed as MERGED: a non-zero exit, a timeout, a lost response) | **run** | not-run `merge-unconfirmed`, then stop | `:339`, both texts |
-| policy run answers: `grant-revoked`, `base-moved`, `read-back-unmeasured`, `record-inconsistent`, `internal-error` | run | stop | n/a |
+| policy run answers: `grant-revoked`, `base-moved`, `read-back-unmeasured`, `record-inconsistent`, `merge-queue-present`, `rules-unreadable`, `merge-queued`, `internal-error` | run | stop | n/a |
 | policy member answers: `shipped-head-refused`, `ci-refused`, `message-invalid`, `message-unreadable`, `tree-unreadable` | member | refused or not-run, per §2.1 | n/a |
 
 **There is no member-scope merge failure (R1-H1).** A failed `gh pr merge` proves nothing about whether the request landed, so
@@ -251,14 +258,16 @@ deep-equal between build and merge, `remote` included (r4-H1, r5-H4), and that e
 **The merge sequence under a policy** (the order is the contract):
 
 1. **Admit:** `admitMember(invariant, candidate@h)`.
-2. **Base chain:** the live base tip must equal `policy.baseChain.at(-1)`; otherwise the run fault `base-moved`.
+2. **Base chain and rules:**
+   - the live base tip must equal `policy.baseChain.at(-1)`; otherwise the run fault `base-moved`;
+   - the branch rules are re-read, which can give `merge-queue-present` or `rules-unreadable` (§2.6).
 3. **Final re-read** (R1-H7): `gh pr view --json state,isDraft,baseRefName,headRefOid,headRepository,mergeStateStatus`.
    - The PR must be OPEN, not a draft, `baseRefName === run.base`, from the same repository, and `headRefOid === h`.
    - A different head is `again`, counted toward `head-churn`.
    - Any other change gives that fault.
-4. **Write the intent:** `setStep(i, { step: 'merge', attempt: { head: h, ghExit: null } })`.
+4. **Write the intent:** `setStep(i, { step: 'merge', attempt: { head: h, at: now(), ghExit: null, doneAt: null } })`.
 5. **Merge:** `gh pr merge <n> -R <repo> --squash --subject … --body-file … --match-head-commit h`, never `--auto`.
-6. **Record the call:** `setStep(i, { attempt: { …, ghExit } })`.
+6. **Record the call:** `setStep(i, { attempt: { ...attempt, ghExit, doneAt: now() } })`.
 7. **Observe:** view until MERGED, or until the observation window ends, which gives `merge-unconfirmed`.
 
 What GitHub guards, stated:
@@ -320,7 +329,8 @@ today's two branches, with the same texts.
   - `provenance-lost`, when `reasons.length`;
   - `verified` otherwise.
 
-  Only `verified` and `provenance-lost` extend the chain, in the same write. `wrong-target` and `untested-base` stop the run.
+  Only `verified` and `provenance-lost` extend the chain, in the same write that sets `chainIndex = baseChain.length`.
+  `wrong-target` and `untested-base` stop the run.
 
 ### 2.4 One record: F2 made impossible (#5, #14 transaction safety)
 
@@ -376,9 +386,21 @@ step it decides by `(step, outcome)`:
 | `merge` | `not-run/merge-unconfirmed` or null | view, then `classifyMerged`. An OPEN PR goes back to admission (the synchronous-merge guarantee, §2.3); nothing is replayed without a fresh admission |
 | `pending`, `update` or `wait` | not-run or null | full admission at the current head |
 
-At approve, the base branch's rules are read (`gh api repos/{o}/{r}/rules/branches/{base}`). A `merge_queue` rule refuses the
-batch as `merge-queue-present`, and an unreadable answer refuses it as `rules-unreadable`. Nothing merges in either case,
-because the synchronous guarantee in §2.3 holds only without a queue (r5-H2). The grant path fails closed.
+The base branch's rules (`gh api repos/{o}/{r}/rules/branches/{base}`) are read at approve, **again before every merge**
+(merge sequence step 2), and on every resume. A `merge_queue` rule gives the run fault `merge-queue-present`, and an
+unreadable answer gives `rules-unreadable`. Nothing further merges, because the synchronous guarantee in §2.3 holds only
+without a queue (r5-H2).
+
+When resume reconciles a `merge-unconfirmed` member, it also reads `gh pr view --json isInMergeQueue`:
+
+- `true` stops the run as `merge-queued`. The PR is left in the queue for the operator and **never re-attempted**.
+- An unreadable answer stops the run.
+- Only `false`, together with a rules read that shows no queue, lets an OPEN PR return to admission.
+
+What stays unguarded: a queue rule enabled in the moments between the per-merge rules read and the merge request. Repository
+rules are Louis's settings, and no client read can close that window. The request then lands in the queue, is not observed
+as merged, and stops the run as `merge-unconfirmed`. The `isInMergeQueue` reconciliation above keeps it from being
+replayed. The grant path fails closed throughout.
 
 ### 2.7 The landed set, stated honestly: F5 and R1-H3
 
@@ -386,12 +408,20 @@ Louis's rule is: "a member failing its re-check refuses alone and the rest still
 from the combined-tested set, and individual tree equality cannot prove the combined result. The result's `combination` field
 is computed **only** from measurements:
 
-- **`tested`**: every member landed with verdict `verified`, AND `git rev-parse <last mergeOid>^{tree}` equals
-  `policy.candidateTree`. The final base tree is the very tree the combined test ran on.
-- **`different`**: every member landed and the trees were read, but they differ. An order effect or a squash nuance produced a
-  tree nobody tested. It is reported loudly.
-- **`subset`**: at least one member is not landed (refused, skipped or not-run). That combination was never tested.
-- **`unverified`**: a tree could not be read.
+`combination` describes **content only**: which members landed, and whether the trees match. Provenance verdicts are a
+separate axis (§2.8, `ok`). The classification is exhaustive, and the first rule that matches wins:
+
+1. **`subset`**: at least one member is not landed (refused, skipped or not-run). That combination was never tested.
+2. **`unverified`**: every member landed, but `<baseChain.at(-1)>^{tree}` or `candidateTree` could not be read. A landed
+   member off the chain (`untested-base`, `wrong-target`) also gives `unverified`, because the chain tail then does not
+   hold every member.
+3. **`tested`**: every member landed and the chain-tail tree equals `policy.candidateTree`. The final base tree is the very
+   tree the combined test ran on.
+4. **`different`**: every member landed and the trees were read, but they differ. An order effect or a squash nuance produced
+   a tree nobody tested. It is reported loudly.
+
+A `provenance-lost` member therefore leaves `combination` as `tested` when the trees match, and `ok` is false all the same
+(§2.8).
 
 `different`, `subset` and `unverified` are never shown as `tested`. In all three cases, each landed member still had its own
 required checks green at the exact head that merged, and the base chain proves that only the batch's own merges sat under it.
@@ -408,9 +438,10 @@ Exit codes use fleet's existing mapping (`land.mjs`): 0 for ok, 3 for refused or
 | every member landed `verified`, trees equal | true | 0 | `landed` (`finishSerial`) | `tested` | `landed n of n; final tree = the combined-tested tree` |
 | every member landed `verified`, trees differ or unreadable | false | 3 | `landed` (the merges happened) | `different` / `unverified` | `landed n of n; final tree is NOT the combined-tested tree: verify by hand` |
 | at least one landed `verified`; the rest terminal `refused` or `skipped`; no stop | true | 0 | `awaiting-merge` (unchanged from `1cd2df21`) | `subset` | `landed k of n: a SUBSET of the combined-tested set; m need the user (/ship in that session)` |
-| any landed verdict other than `verified` | false | 3 | `awaiting-merge`, or `landed` if every member merged | as computed | `PROVENANCE: <member> <verdict>` leads the summary |
+| any landed verdict other than `verified` (whatever the `combination`) | false | 3 | `awaiting-merge`, or `landed` if every member merged | as computed (§2.7) | `PROVENANCE: <member> <verdict>` leads the summary |
 | a run-scope stop with members still not-run | false | 3 | `awaiting-merge` | `subset` | `stopped: <reason>; resumable: land --resume <t> --ship-batch` |
 | every member terminal, none landed | false | 3 | `awaiting-merge` | `subset` | `nothing landed; every member needs the user` |
+| the loop completed (no run stop) with at least one member still `not-run` (for example `checks-pending`, `pr-unreadable`, `head-churn`), with or without landed members | false | 3, resumable | `awaiting-merge` | `subset` | `landed k of n; m not yet decided: land --resume <t> --ship-batch re-checks them` |
 
 After the first line, the summary prints one line per member: status, code, attribution, the read-back AI-Gate, the merge
 oid, and for needs-user members "type /ship in that session".
@@ -556,7 +587,11 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   5. **F5 and R1-H3:**
      - all members landed with the final tree equal to the candidate tree gives `tested`;
      - a forced candidate-tree mismatch gives `different` and `ok: false`;
-     - one member refused gives `subset` and `ok: true`.
+     - one member refused gives `subset` and `ok: true`;
+     - a `provenance-lost` member with equal trees gives `tested` and `ok: false`, and with unequal trees gives `different`;
+     - an unreadable middle member is resumed after a later member has landed: chain chronology is valid, and a second
+       resume plus the summary read the final tree from the chain tail;
+     - a loop that ends with one `not-run` member gives exit 3, resumable, both with and without a landed member.
   6. **F6:**
      - the `invariant` object is deep-equal at build and at merge (a spy), and the `candidate` evidence is fresh at the live
        head;
@@ -576,8 +611,11 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   10. **Crash resume:** the fake `gh` dies at four points: after the intent, during the merge (merged but no answer), after
       the merge, and after `merged`. Each resume ends in the outcomes of a run that never crashed, and the per-PR merge counter
       is at most 1.
-  11. **Merge queue:** a `merge_queue` rule gives `merge-queue-present`, and an unreadable rules answer gives
-      `rules-unreadable`. Neither merges anything.
+  11. **Merge queue:**
+      - a `merge_queue` rule at approve, or one enabled between members, gives `merge-queue-present` before the next
+        merge, and an unreadable rules answer gives `rules-unreadable`;
+      - a `merge-unconfirmed` member with `isInMergeQueue: true` on resume gives `merge-queued`, with no second merge call;
+      - the intent record written with `at` validates and is reconciled after a crash right after it was written.
 - **Byte identity:** `tests/fleet-serial-golden.test.mjs`, plus the unchanged `tests/fleet-serial.test.mjs` and
   `tests/ship-train-recovery.test.mjs`.
 
