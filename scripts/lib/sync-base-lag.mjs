@@ -332,8 +332,8 @@ function enforceBaseLagCore({ repoRoot, run, classify, dryRun = false, allowStal
   const managedBlockTransition = managedBlockReader
     ? managedBlockReader({ run, repoRoot, baseSha: facts.baseSha })
     : undefined;
-  // Only a checkout with something dirty has anything to restore, so only then is the diff worth asking for.
-  const ffChanges = lag === 'behind' && !allowStale && classified?.ok && !classified.clean
+  // HEAD is pinned for every fast-forward plan; the diff only matters when something is dirty, but it is the same two cheap calls.
+  const ffChanges = lag === 'behind' && !allowStale && classified?.ok
     ? gatherFastForwardChanges(run, repoRoot, facts.baseSha)
     : null;
   const plan = planBaseLag({ repoRoot, baseBranch: facts.baseBranch, lag, behindCount: facts.behindCount, aheadCount: facts.aheadCount, classified, allowStale, managedBlockTransition, ffChanges });
@@ -381,34 +381,41 @@ function executeBaseLagPlan({ plan, facts, git, repoRoot, dryRun }) {
   // The restore is the only destructive step, so it is made RECOVERABLE first: `git stash create` writes a commit of the tracked
   // changes (index and worktree) WITHOUT touching refs or the tree, and a failed fast-forward re-applies it. If the snapshot cannot
   // be taken, nothing is restored and the consumer is refused.
+  // The plan was made for ONE commit on ONE branch, so BOTH are re-read before anything is mutated, a clean or all-kept plan's
+  // merge included: restoring against another commit would discard changes it never classified, and the fast-forward would
+  // advance a branch lag was never measured on (the same commit can sit under two branch names).
+  const nowHead = git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+  if (!plan.headSha || !ok(nowHead) || nowHead.stdout.trim() !== plan.headSha) return refusedFastForward(repoRoot, target, 'HEAD moved since the plan was made; nothing was changed');
+  const nowBranch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+  if (!ok(nowBranch) || nowBranch.stdout.trim() !== facts.currentBranch) return refusedFastForward(repoRoot, target, 'the checked-out branch changed since the plan was made; nothing was changed');
   let snapshot = null;
   if (plan.discard.length > 0) {
-    // The plan was made for ONE commit on ONE branch: restoring against another would discard changes it never classified, and
-    // the fast-forward would advance a branch lag was never measured on (the same commit can sit under two branch names).
-    const nowHead = git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
-    if (!plan.headSha || !ok(nowHead) || nowHead.stdout.trim() !== plan.headSha) return refusedFastForward(repoRoot, target, 'HEAD moved since the plan was made; nothing was changed');
-    const nowBranch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
-    if (!ok(nowBranch) || nowBranch.stdout.trim() !== facts.currentBranch) return refusedFastForward(repoRoot, target, 'the checked-out branch changed since the plan was made; nothing was changed');
     const snap = git(['stash', 'create']);
     if (snap.error || snap.status !== 0) return refusedFastForward(repoRoot, target, `could not snapshot the sync-written files before restoring them (${firstLine(snap)}); nothing was changed`);
     snapshot = snap.stdout.trim() || null;
     const restored = git(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...plan.discard]);
-    if (restored.error || restored.status !== 0) return failedAfterRestore(git, repoRoot, target, snapshot, `could not restore the sync-written files (${firstLine(restored)})`);
+    if (restored.error || restored.status !== 0) return failedAfterRestore(git, repoRoot, target, snapshot, plan.discard, `could not restore the sync-written files (${firstLine(restored)})`);
   }
   const merged = git(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', facts.baseSha]);
-  if (merged.error || merged.status !== 0) return failedAfterRestore(git, repoRoot, target, snapshot, firstLine(merged));
+  if (merged.error || merged.status !== 0) return failedAfterRestore(git, repoRoot, target, snapshot, plan.discard, firstLine(merged));
   return { ok: true, measured: true, outcome: 'fast-forwarded', lines: [`fast-forwarded ${plan.behindCount} commit(s) to ${target} ${facts.baseSha.slice(0, 8)}${plan.discard.length > 0 ? ` (restored ${plan.discard.length} sync-written file(s) first; this sync rewrites them${snapshot ? `; snapshot ${snapshot.slice(0, 8)} kept until git gc` : ''}${keptNote ? `; ${keptNote}` : ''})` : keptNote ? ` (${keptNote})` : ''}`] };
 }
 
 const firstLine = (r) => (r.error?.message || `${r.stderr || ''}${r.stdout || ''}`.trim() || `exit ${r.status}`).split('\n')[0];
 
-/** A step after the restore failed: put the sync-written changes back, and say whether that worked. */
-function failedAfterRestore(git, repoRoot, target, snapshot, because) {
+/**
+ * A step after the restore failed: put the RESTORED paths back, and say whether that worked. Only the restored paths: the files
+ * the fast-forward does not touch were never restored, are still dirty, and a whole-snapshot `stash apply` would collide with
+ * them (code audit R2 H1). The snapshot's index commit (`<snap>^2`) carries each path's staged state, the snapshot itself its
+ * worktree bytes.
+ */
+function failedAfterRestore(git, repoRoot, target, snapshot, restoredPaths, because) {
   let recovery = '';
-  if (snapshot) {
-    const back = git(['stash', 'apply', '--index', '--quiet', snapshot]);
+  if (snapshot && restoredPaths.length > 0) {
+    const staged = git(['restore', `--source=${snapshot}^2`, '--staged', '--', ...restoredPaths]);
+    const back = staged.error || staged.status !== 0 ? staged : git(['restore', `--source=${snapshot}`, '--worktree', '--', ...restoredPaths]);
     recovery = back.error || back.status !== 0
-      ? ` The sync-written changes could NOT be re-applied automatically (${firstLine(back)}); they are in commit ${snapshot}: git -C ${q(repoRoot)} stash apply --index ${snapshot}.`
+      ? ` The sync-written changes could NOT be re-applied automatically (${firstLine(back)}); they are in commit ${snapshot}: git -C ${q(repoRoot)} restore --source=${snapshot}^2 --staged -- ${list(restoredPaths)} && git -C ${q(repoRoot)} restore --source=${snapshot} --worktree -- ${list(restoredPaths)}.`
       : ' The sync-written changes were put back as they were.';
   }
   return refusedFastForward(repoRoot, target, because, recovery);

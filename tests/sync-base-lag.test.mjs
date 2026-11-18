@@ -357,6 +357,49 @@ describe('enforceBaseLag - real git', () => {
         return res;
       },
       /checked-out branch changed/, '.sync-receipt.json');
+    // Code audit R2 H2: the identity check guards EVERY mutation, including the merge of an all-kept plan (nothing restored)...
+    refusesAndTouchesNothing('ALL-KEPT plan (nothing to restore): a branch switch at the same commit still refuses before the merge',
+      (w) => (cmd, args, o) => {
+        const res = run(cmd, args, o);
+        if (isDiff(args)) git(['checkout', '-q', '-b', 'feature-same-commit'], w.consumer);
+        return res;
+      },
+      /checked-out branch changed/);
+    // ...and a CLEAN checkout's.
+    it('CLEAN checkout: a branch switch at the same commit between the plan and the merge refuses, neither branch is advanced', () => {
+      const w = world();
+      try {
+        w.advance('more.js', 'x\n');
+        const before = w.head();
+        const swap = (cmd, args, o) => {
+          const res = run(cmd, args, o);
+          if (isDiff(args)) git(['checkout', '-q', '-b', 'feature-same-commit'], w.consumer);
+          return res;
+        };
+        const r = enforceBaseLag({ repoRoot: w.consumer, run: swap, classify: syncOwned() });
+        assert.deepEqual([r.ok, r.outcome], [false, 'refused'], r.lines.join('\n'));
+        assert.match(r.lines.join('\n'), /checked-out branch changed/);
+        assert.equal(w.head(), before);
+        assert.equal(git(['rev-parse', 'main'], w.consumer), before, 'main was not advanced either');
+      } finally { w.rm(); }
+    });
+    // Code audit R2 H1: a failed merge rolls back ONLY the restored paths; a kept (still dirty) file must not collide with it.
+    it('a failed merge puts the RESTORED file back (worktree and index) without colliding with a KEPT dirty file', () => {
+      const w = world();
+      try {
+        w.advance('.sync-receipt.json', '{"v":2,"landed":true}\n');
+        fs.writeFileSync(path.join(w.consumer, '.sync-receipt.json'), mine);
+        git(['add', '.sync-receipt.json'], w.consumer);
+        fs.writeFileSync(path.join(w.consumer, 'app.js'), 'kept sync output\n');
+        const failMerge = (cmd, args, o) => (args.includes('merge') ? { status: 1, stdout: '', stderr: 'simulated merge failure' } : run(cmd, args, o));
+        const r = enforceBaseLag({ repoRoot: w.consumer, run: failMerge, classify: syncOwned(['M ', '.sync-receipt.json'], [' M', 'app.js']) });
+        assert.deepEqual([r.ok, r.outcome], [false, 'refused'], r.lines.join('\n'));
+        assert.match(r.lines.join('\n'), /put back as they were/, r.lines.join('\n'));
+        assert.equal(fs.readFileSync(path.join(w.consumer, '.sync-receipt.json'), 'utf8'), mine, 'the restored file is back');
+        assert.equal(git(['show', ':.sync-receipt.json'], w.consumer), mine.trim(), 'and so is its STAGED state');
+        assert.equal(fs.readFileSync(path.join(w.consumer, 'app.js'), 'utf8'), 'kept sync output\n', 'the kept file is untouched');
+      } finally { w.rm(); }
+    });
   });
   it('NEGATIVE CONTROL: the same lag with the human\'s own dirty file is REFUSED - nothing moved, nothing lost, remedy named', () => {
     const w = world();
