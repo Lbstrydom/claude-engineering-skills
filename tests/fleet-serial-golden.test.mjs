@@ -35,7 +35,7 @@ function normaliser(labels) {
   return (value) => {
     let s = JSON.stringify(value ?? null);
     for (const [oid, label] of map) s = s.split(oid).join(label);
-    s = s.replace(/"\\?"?[A-Za-z]:[\\/][^"]*?\.msg"/g, '"<msgfile>"')
+    s = s.replace(/"\\?"?[A-Za-z]:[\\/][^"]*?\.msg"/g, '"<msgfile>"').replace(/"\/[^"]*?\.msg"/g, '"<msgfile>"')
       .replace(/[A-Za-z]:(?:\\\\|\\|\/)[^\s"']+/g, '<path>')
       .replace(/\/[^\s"']*\/fleet-[^\s"']+/g, '<path>')
       .replace(/t-\d{14}-[0-9a-f]+/g, '<train>')

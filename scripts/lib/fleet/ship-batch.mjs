@@ -23,7 +23,6 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
-import { ciVerdict } from '../ci-verdict.mjs';
 import { AI_TRAILER_KEYS, parseMessageTrailers } from '../commit-trailers.mjs';
 import { OID_RE } from './contracts.mjs';
 import { assertManaged, fleetDir, readTrain } from './registry.mjs';
@@ -32,6 +31,16 @@ import { describeVerdict, observeRequiredChecks, requiredInventory } from './req
 import { readShipBatchGrant, GRANT_VERSION } from './coordinator-grant.mjs';
 import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
 import { summariseRun } from './member-outcome.mjs';
+
+/**
+ * The full-suite verdict (`.test-tiers.json` `ciVerdict`) is a CES-only declaration: `ci-verdict.mjs` and its tier machinery are NOT in the
+ * consumer sync closure (tests/ci-verdict.test.mjs pins that), so it is loaded OPTIONALLY and by a computed specifier a closure walk does
+ * not follow. Absent, the verdict is "no workflow declared" (nothing to measure), exactly what a consumer without one gets.
+ */
+const CI_VERDICT_MODULE = ['..', 'ci-verdict.mjs'].join('/');
+let ciVerdictImpl = null;
+try { ciVerdictImpl = (await import(CI_VERDICT_MODULE)).ciVerdict; } catch { ciVerdictImpl = null; }
+const UNDECLARED_CI = { verdict: 'unverified', reason: 'no ciVerdict workflow is declared (the full-suite verdict is a CES-only declaration)' };
 
 export const SHIP_BATCH_SCHEMA = 2;
 export const CHILD_SCHEMA = 'shipped-head/v1';
@@ -167,7 +176,7 @@ export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, 
   // The full-suite workflow `.test-tiers.json` declares grades a merge separately (ciVerdict): where none is declared the
   // verdict says so, and that is "nothing to measure here", never a pass and never a refusal.
   const run = (cmd, args) => spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 120_000, windowsHide: true });
-  const cv = (ciFn ?? ((a) => ciVerdict({ run, ...a })))({ pr: member.prNumber, head: member.oid });
+  const cv = (ciFn ?? (ciVerdictImpl ? (a) => ciVerdictImpl({ run, ...a }) : () => UNDECLARED_CI))({ pr: member.prNumber, head: member.oid });
   const undeclared = cv.verdict === 'unverified' && /no ciVerdict workflow is declared/.test(String(cv.reason));
   if (cv.verdict !== 'full' && !undeclared) out.push(`ci: the full-suite run is ${cv.verdict} (${cv.reason ?? 'no reason'})`);
   // Each absence alone is honest (no required checks configured; no workflow declared). BOTH together measure nothing at this head.

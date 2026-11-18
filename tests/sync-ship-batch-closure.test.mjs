@@ -107,8 +107,12 @@ describe('in a relocated layout', () => {
     g('config', 'user.email', 't@example.com'); g('config', 'user.name', 'T'); g('config', 'commit.gpgsign', 'false');
     fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
     g('add', 'a.txt'); g('commit', '-q', '-m', 'one');
+    g('branch', '-M', 'main');
+    g('update-ref', 'refs/remotes/origin/main', g('rev-parse', 'HEAD').stdout.trim()); // the child measures the change against a base first
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'b\n');
+    g('add', 'b.txt'); g('commit', '-q', '-m', 'two');
     const head = g('rev-parse', 'HEAD').stdout.trim();
-    const r = run(reloc('scripts/ship-commit.mjs'), ['--check-shipped-head', '--head', head, '--json']);
+    const r = run(reloc('scripts/ship-commit.mjs'), ['--check-shipped-head', '--head', head, '--base', 'main', '--offline', '--json']);
     assert.equal(r.status, 2, r.stderr);
     const env = JSON.parse(r.stdout);
     assert.equal(env.ok, false);
