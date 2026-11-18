@@ -693,3 +693,72 @@ describe('admitMember: one predicate, strict evidence per mode (R1-H5)', () => {
     assert.throws(() => admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H.slice(0, 12), child, identityAndCi: [] }));
   });
 });
+
+describe('audit round 1: persistence, queue, tip and resume guards', () => {
+  it('an unreadable serial record is never an empty slot: a ship-batch approve refuses and leaves its bytes alone (R1-H1)', () => {
+    const b = batch(1);
+    const file = path.join(b.dir, 'serial', `${b.trainId}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{ not json');
+    const w = world(b);
+    const r = approve(b, w.gh);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /exists but cannot be read|cannot be read/);
+    assert.equal(fs.readFileSync(file, 'utf8'), '{ not json');
+    assert.equal(w.merges.length, 0);
+  });
+  it('a merge-queue answer that is not an explicit false leaves queue absence unproven (R1-M3, M14)', () => {
+    const b = batch(1);
+    const w = world(b, { mergeBehavior: () => ok() });
+    approve(b, w.gh);
+    for (const answer of [null, undefined, 'false']) {
+      const orig = w.gh;
+      const gh = (args) => (args[1] === 'view' && args[args.indexOf('--json') + 1] === 'isInMergeQueue' ? ok(answer === undefined ? {} : { isInMergeQueue: answer }) : orig(args));
+      const r = resume(b, gh);
+      assert.match(r.reason, /not an explicit false|merge queue/, String(answer));
+      assert.equal(w.merges.length, 1, 'never replayed on an unproven queue answer');
+    }
+  });
+  it('an unreadable base tip after the run is recoverable: no halt is persisted, and a resume finalizes (R1-M2, M13)', () => {
+    const b = batch(1);
+    const w = world(b);
+    let down = false;
+    w.mergeBehavior = ({ member, args, p }) => { p.mergeCommit = squashFrom(b, member, args); p.state = 'MERGED'; down = true; return ok(); };
+    const deps = depsWith(w.gh);
+    const git0 = deps.git;
+    const flaky = { ...deps, git: (args, cwd, o) => (down && args[0] === 'ls-remote' ? { ok: false, status: 1, stdout: '', stderr: 'net down', reason: 'net down' } : git0(args, cwd, o)) };
+    const r1 = approveShipBatch({ ...mk(b, w.gh), deps: { ...flaky, shipBatch: b.shipBatch } });
+    assert.equal(r1.ok, false);
+    assert.equal(serialOf(b).halt, undefined, 'an unreadable tip is not a proven mismatch');
+    assert.equal(serialOf(b).finalized, undefined);
+    down = false;
+    const r2 = resume(b, w.gh);
+    assert.equal(r2.ok, true, r2.text);
+    assert.ok(serialOf(b).finalized);
+  });
+  it('a resumed read-back is re-classified against the attempt: a merge at ANOTHER head with no oid is external, not ours (R1-H10)', () => {
+    const b = batch(1);
+    const other = 'd'.repeat(40);
+    const w = world(b, { mergeBehavior: ({ p }) => { p.state = 'MERGED'; p.head = other; p.mergeCommit = null; return ok(); } });
+    const r1 = approve(b, w.gh);
+    assert.equal(r1.ok, false);
+    assert.deepEqual([stepOf(b, 'm1').step, outcomeOf(b, 'm1').status, outcomeOf(b, 'm1').code], ['merged', 'not-run', 'awaiting-read-back']);
+    const p = w.prs.get(b.members[0].pr);
+    p.mergeCommit = squashFrom(b, b.members[0], ['--subject', 's', '--body-file', (() => { const f = path.join(mkTmp('b-'), 'b'); fs.writeFileSync(f, 'x'); return f; })(), b.members[0].head]);
+    const r2 = resume(b, w.gh);
+    assert.equal(r2.ok, false);
+    assert.equal(outcomeOf(b, 'm1').status, 'skipped', 'merged at a head the attempt did not name');
+    assert.equal(serialOf(b).halt.code, 'merged-externally');
+    assert.equal(w.merges.length, 1);
+  });
+  it('a PR view that keeps failing at the final re-read is a member fault, never an endless loop (R1-M1)', () => {
+    const b = batch(1);
+    const w = world(b);
+    let views = 0;
+    const gh = (args) => (args[1] === 'view' && args[args.indexOf('--json') + 1] !== 'isInMergeQueue' && ++views > 6 ? { ok: false, status: 1, stdout: '', stderr: 'boom', reason: 'gh failed' } : w.gh(args));
+    const r = approve(b, gh);
+    assert.equal(r.ok, false);
+    assert.equal(w.merges.length, 0);
+    assert.equal(outcomeOf(b, 'm1').status, 'not-run', JSON.stringify(outcomeOf(b, 'm1')));
+  });
+});

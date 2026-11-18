@@ -254,6 +254,13 @@ function readRules(st, s) {
   return { ok: true, queue: r.doc.some((x) => x?.type === 'merge_queue') };
 }
 
+/** Count one re-verification of member `s`; past `MAX_HEAD_CHURN` it is `not-run/head-churn`, never an endless loop (R1-M1, M9). */
+function bump(st, s, why) {
+  const n = (st.churn.get(s.id) ?? 0) + 1;
+  st.churn.set(s.id, n);
+  return n > MAX_HEAD_CHURN ? fault('head-churn', `PR #${s.prNumber}: re-verified ${n} times (${why})`) : AGAIN;
+}
+
 /** A head this run did not account for, under a policy: equal TREE = the tested content (re-admit at it); else head-moved (§2.3). */
 function treeIdentity(st, i, s, h) {
   const { deps, cwd, run, policy } = st;
@@ -266,7 +273,7 @@ function treeIdentity(st, i, s, h) {
   const seen = t.stdout.trim();
   if (seen !== tested) return fault('head-moved', `PR #${s.prNumber} head ${short(h)} carries tree ${short(seen)}, not the tested ${short(tested)}`, { trees: { tested, seen } });
   st.setStep(i, { head: h, accounted: [...s.accounted, h] }); // the tested content, re-pushed: admission runs again AT this head
-  return AGAIN;
+  return bump(st, s, 'the tested content was re-pushed');
 }
 
 /** The read-back of one merged member under a policy, then the ONE write that records landed (+ chain extension + halt). */
@@ -333,11 +340,7 @@ function policyMerge(st, i, h) {
   if (upper(d.state) !== 'OPEN') return fault('pr-closed', `PR #${s.prNumber} is ${d.state}`);
   if (d.isDraft === true) return fault('pr-draft', `PR #${s.prNumber} is a draft`);
   if (d.baseRefName !== run.base) return fault('pr-retargeted', `PR #${s.prNumber} now targets ${d.baseRefName}, not ${run.base}`);
-  if (d.headRefOid !== h) {
-    const n = (st.churn.get(s.id) ?? 0) + 1;
-    st.churn.set(s.id, n);
-    return n > MAX_HEAD_CHURN ? fault('head-churn', `PR #${s.prNumber}: the head changed ${n} times while it was being admitted`) : AGAIN;
-  }
+  if (d.headRefOid !== h) return bump(st, s, 'the head changed while it was being admitted');
   const attempt = { head: h, at: st.now(), ghExit: null, doneAt: null, ...(a.messageSha256 ? { messageSha256: a.messageSha256 } : {}), ...(a.ci ? { ci: a.ci } : {}) };
   commit(st, i, { step: 'merge', head: h, outcome: null, attempt });
   const mergeArgs = ['pr', 'merge', String(s.prNumber), '-R', s.repo, '--squash', '--subject', a.message.subject, '--body-file', null, '--match-head-commit', h];
@@ -370,7 +373,11 @@ function stepMember(st, i) {
   if (policy && s.step === 'merged') { // an earlier run merged it and its read-back did not finish: read back now, never skip
     const v = viewPr(deps, cwd, s);
     if (!v.ok) return fault('pr-unreadable', `PR #${s.prNumber}: cannot read it (${v.reason})`);
-    return upper(v.doc.state) === 'MERGED' ? readBackStep(st, i, { ...v.doc, mergeCommit: v.doc.mergeCommit ?? (s.mergedOid ? { oid: s.mergedOid } : null) }) : fault('read-back-unmeasured', `PR #${s.prNumber} is no longer MERGED (${v.doc.state}); verify it by hand`);
+    if (upper(v.doc.state) !== 'MERGED') return fault('read-back-unmeasured', `PR #${s.prNumber} is no longer MERGED (${v.doc.state}); verify it by hand`);
+    const doc = { ...v.doc, mergeCommit: v.doc.mergeCommit ?? (s.mergedOid ? { oid: s.mergedOid } : null) };
+    // The same table as the first observation, against the persisted attempt: a merge at ANOTHER head is external, whatever the phase says.
+    const c = classifyMerged({ step: { ...s, step: 'merge' }, doc });
+    return c.external || !c.mergeOid ? mergedObserved(st, i, doc) : readBackStep(st, i, doc);
   }
   const v = viewPr(deps, cwd, s);
   if (!v.ok) return fault('pr-unreadable', `PR #${s.prNumber}: cannot read it (${v.reason})`);
@@ -389,6 +396,7 @@ function stepMember(st, i) {
     const q = ghJson(deps, cwd, ['pr', 'view', String(s.prNumber), '-R', s.repo, '--json', 'isInMergeQueue']);
     if (!q.ok) return fault('merge-queued', `PR #${s.prNumber}: whether it sits in a merge queue could not be read (${q.reason})`);
     if (q.doc?.isInMergeQueue === true) return fault('merge-queued', `PR #${s.prNumber} sits in a merge queue: left for the operator, never re-attempted`);
+    if (q.doc?.isInMergeQueue !== false) return fault('merge-queued', `PR #${s.prNumber}: the merge-queue answer was not an explicit false (${JSON.stringify(q.doc?.isInMergeQueue ?? null)}), so queue absence is unproven`);
     st.setStep(i, { step: 'pending', outcome: null }); // the request resolved without merging: admission starts again from the top
   }
   const h = d.headRefOid;
@@ -443,10 +451,11 @@ function stepMember(st, i) {
     }
     sleep(T.poll);
   }
-  if (verdict.headOid && verdict.headOid !== h) return AGAIN;
+  if (verdict.headOid && verdict.headOid !== h) return policy ? bump(st, s, 'the head moved while the required checks were observed') : AGAIN;
   // ── merge exactly this head ──
   const again = viewPr(deps, cwd, s);
-  if (!again.ok || again.doc.headRefOid !== h) return AGAIN;
+  if (policy && !again.ok) return fault('pr-unreadable', `PR #${s.prNumber}: cannot read it (${again.reason})`);
+  if (!again.ok || again.doc.headRefOid !== h) return policy ? bump(st, s, 'the head changed while the checks were observed') : AGAIN;
   if (upper(again.doc.mergeStateStatus) === 'BEHIND') return AGAIN; // the base moved while we waited
   if (policy && upper(again.doc.state) === 'MERGED') return AGAIN; // merged while we waited: the top of the pass classifies it
   if (policy) return policyMerge(st, i, h);
@@ -499,6 +508,7 @@ function finalizeRun(st, stoppedReason) {
   if (chain.length > 1) {
     const r = deps.git(['rev-parse', `${chain.at(-1)}^{tree}`], cwd);
     tailTree = r.ok ? r.stdout.trim() : null;
+    if (!tailTree) return { finalized: false, summary: { ...summariseRun(run, { tailTree: null, stoppedReason }), ok: false, first: `the landed tree of ${chain.at(-1).slice(0, 12)} could not be read: --resume re-checks it` } };
   }
   const summary = summariseRun(run, { tailTree, stoppedReason });
   if (!done) return { finalized: false, summary };
@@ -575,6 +585,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
     const touched = run.policy.baseChain.length > 1 || Boolean(run.halt);
     if (touched && !run.halt) { // before the result: the live base must still be the chain tail (R3-H1)
       const tip = baseTip({ deps, cwd, run });
+      if (tip === null) return stop(null, `the base tip of ${run.base} could not be read after the run, so the chain cannot be verified: --resume re-checks it`);
       if (tip !== run.policy.baseChain.at(-1)) {
         save({ halt: { code: 'base-moved', member: run.steps.at(-1).id, at: now() } });
         return stop(null, `base-moved: the base is ${short(tip)}, the chain ends at ${short(run.policy.baseChain.at(-1))}: something else reached ${run.base} during the run`);
@@ -613,6 +624,8 @@ export function approveSerial({ cwd, trainId, acceptRerun = false, requiredCheck
     const shallow = deps.git(['rev-parse', '--is-shallow-repository'], cwd);
     if (!shallow.ok || shallow.stdout.trim() !== 'false') return { ok: false, code: 'refused', reason: 'serial landing needs full history to verify updated heads; this clone is shallow (or git could not say) — git fetch --unshallow' };
     if (readSerial(dir, trainId).ok) return { ok: false, code: 'refused', reason: `a serial run already exists for ${trainId} — use land --resume ${trainId}` };
+    // A POLICY run is created only on a CONFIRMED absence: an unreadable record is state we cannot see, never an empty slot (a plain run keeps today's behaviour).
+    if (policy) { const ex = readSerial(dir, trainId); if (!ex.absent) return { ok: false, code: 'refused', reason: `the serial record of ${trainId} exists but cannot be read (${ex.reason}): recover or quarantine it before a run is started` }; }
     const ver = verifyFacts({ cwd, train: t, dir, deps });
     if (!ver.ok) return { ok: false, code: 'refused', reason: ver.reason };
     const stamp = deps.now().toISOString();
@@ -645,7 +658,9 @@ export function resumeSerial({ cwd, trainId, requiredChecks, requiredChecksError
  */
 export function startPolicyRun({ dir, run }) {
   if (!run.policy) throw new Error('startPolicyRun writes policy runs only');
-  if (readSerial(dir, run.trainId).ok) return { ok: false, reason: `a serial run already exists for ${run.trainId}` };
+  const existing = readSerial(dir, run.trainId);
+  // Only a CONFIRMED absence permits creation: an invalid, unsupported or unreadable record is state we cannot see, never an empty slot.
+  if (!existing.absent) return { ok: false, reason: existing.ok ? `a serial run already exists for ${run.trainId}` : `the serial record of ${run.trainId} exists but cannot be read (${existing.reason}): recover or quarantine it before a run is started` };
   writeSerial(dir, run);
   return { ok: true };
 }

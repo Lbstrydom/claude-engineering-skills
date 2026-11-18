@@ -175,6 +175,7 @@ export function validatePolicyRun(run) {
       const codes = CODE_ENUMS[s.outcome.status];
       if (codes && !codes.includes(s.outcome.code)) return `step ${s.id}: code ${s.outcome.code} is not one of ${s.outcome.status}'s`;
     }
+    if (s.mergedOid && (s.outcome?.status === 'landed' || s.outcome?.status === 'skipped') && s.outcome.mergeOid !== s.mergedOid) return `step ${s.id}: mergedOid ${s.mergedOid.slice(0, 12)} is not its outcome's merge oid ${s.outcome.mergeOid.slice(0, 12)}`;
     if (!LEGAL_PAIRS(s)) return `step ${s.id}: phase ${s.step} with outcome ${s.outcome ? `${s.outcome.status}/${s.outcome.code}` : 'null'} is not a legal pair`;
     if (s.outcome?.status === 'not-run' && s.outcome.code === 'merge-unconfirmed' && !s.attempt) return `step ${s.id}: merge-unconfirmed needs an attempt`;
     const landed = s.outcome?.status === 'landed' ? s.outcome : null;
@@ -236,7 +237,9 @@ export function summariseRun(run, { tailTree, stoppedReason = null }) {
   const tails = [];
   let first;
   let ok;
-  if (stoppedReason && notRun.length) {
+  if (run.halt && notRun.length) {
+    ok = false; first = `halted: ${run.halt.code} on ${run.halt.member}; landed ${landed.length} of ${n}, ${notRun.length} not landed in this run: rebuild the train against the base as it is now (a resume does not continue a halted run)`;
+  } else if (stoppedReason && notRun.length) {
     ok = false; first = `stopped: ${stoppedReason}; resumable: land --resume ${run.trainId} ${rollup ? '--rollup' : '--ship-batch'}`;
   } else if (notRun.length) {
     ok = false; first = `landed ${landed.length} of ${n}; ${notRun.length} not yet decided: land --resume ${run.trainId} ${rollup ? '--rollup' : '--ship-batch'} re-checks them`;

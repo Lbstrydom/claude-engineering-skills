@@ -183,3 +183,20 @@ describe('combinationOf and summariseRun: the landed set stated honestly (§2.7,
     assert.equal(r.ok, false);
   });
 });
+
+describe('persisted-record consistency and guidance (R1-M4, M15)', () => {
+  it('a merged step whose mergedOid differs from its landed outcome\'s merge oid is invalid, even when the chain holds the outcome\'s', () => {
+    const p = sbPolicy(['a'], [o('b'), o('c')]);
+    const s = step('a', { step: 'merged', mergedOid: o('d'), outcome: OUT({ chainIndex: 1, parent: o('b'), mergeOid: o('c') }) });
+    assert.match(validatePolicyRun(run([s], p)), /mergedOid .* is not its outcome's merge oid/);
+    assert.equal(validatePolicyRun(run([{ ...s, mergedOid: o('c') }], p)), null);
+  });
+  it('a halted run with undecided members says rebuild, never "resume re-checks them"', () => {
+    const p = sbPolicy(['a', 'b'], [o('b')]);
+    const ext = step('a', { step: 'merged', mergedOid: o('c'), outcome: { status: 'skipped', code: 'merged-externally', mergeOid: o('c'), seenHead: o('9') } });
+    const r = summariseRun(run([ext, step('b', { outcome: { status: 'not-run', code: 'checks-pending', reason: 'r' } })], p, { halt: { code: 'merged-externally', member: 'a', at: T } }), { tailTree: null });
+    assert.match(r.first, /^halted: merged-externally on a; .* rebuild the train/);
+    assert.doesNotMatch(r.first, /re-checks them|resumable/);
+    assert.ok(r.tails.some((t) => /^HALT:/.test(t)));
+  });
+});

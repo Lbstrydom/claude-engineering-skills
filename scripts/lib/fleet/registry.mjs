@@ -131,6 +131,9 @@ export const TrainSchema = z.strictObject({
     superseded: z.string().nullable().optional(),
     closures: z.array(z.strictObject({ prNumber: z.number().int().positive(), head: OidSchema, status: z.enum(['pending', 'closed', 'failed', 'skipped-head-moved']), reason: z.string().max(300).nullable() })).optional(),
   }).optional(),
+}).superRefine((t, ctx) => {
+  // The operation record belongs to a rollup train and to no other (R1-M11).
+  if (t.rollup && t.landing !== 'rollup') ctx.addIssue({ code: 'custom', path: ['rollup'], message: 'a rollup operation record needs landing: rollup' });
 });
 
 /** Fields that legitimately change after first write (phase-like). Everything else is write-once. */

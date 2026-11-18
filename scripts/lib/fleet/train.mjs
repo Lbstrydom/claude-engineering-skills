@@ -391,7 +391,8 @@ function applySources({ wgit, dir, sources, mergeMethod, trainId, appendOnlyGlob
   const squashCommit = (s) => {
     if (!rollup) return wgit(['commit', '--no-verify', '--allow-empty', '-C', s.oid]);
     const subj = wgit(['log', '-1', '--format=%s', s.oid]);
-    return wgit(['commit', '--no-verify', '--allow-empty', '-m', rollupMessage({ subject: subj.ok ? subj.stdout.trim() : s.id, id: s.id, oid: s.oid })]);
+    if (!subj.ok) return { ...subj, reason: `the subject of ${s.id} (${s.oid.slice(0, 12)}) could not be read: ${subj.reason ?? 'git log failed'}` }; // never a substituted subject
+    return wgit(['commit', '--no-verify', '--allow-empty', '-m', rollupMessage({ subject: subj.stdout.trim(), id: s.id, oid: s.oid })]);
   };
   for (const s of sources) {
     const before = wgit(['rev-parse', 'HEAD']).stdout.trim();

@@ -26,7 +26,7 @@ import { GRANT_VERSION } from './coordinator-grant.mjs';
 import { readSerial, resumeSerial, startPolicyRun } from './serial.mjs';
 import { RollupPolicySchema } from './member-outcome.mjs';
 import {
-  admitMember, commitMessage, grantRefusal, listReadyMembers, runShippedHeadChild, summaryText,
+  admitMember, commitMessage, createOnly, grantRefusal, listReadyMembers, runShippedHeadChild, summaryText,
 } from './ship-batch.mjs';
 import {
   bodyOfMessage, overlapHolds, renderRollupManifest, rollupBranchName, sha256Body, ROLLUP_BRANCH_RE,
@@ -64,8 +64,7 @@ export function readRollupRecord(dir, trainId) {
 function writeRollupRecord(dir, rec) {
   const r = RollupRecordSchema.parse(rec);
   fs.mkdirSync(rollupDir(dir), { recursive: true });
-  if (fs.existsSync(rollupRecordPath(dir, r.trainId))) throw new Error(`the rollup record for ${r.trainId} already exists and is write-once`);
-  atomicWriteFileSync(rollupRecordPath(dir, r.trainId), `${JSON.stringify(r, null, 2)}\n`);
+  if (!createOnly(rollupRecordPath(dir, r.trainId), `${JSON.stringify(r, null, 2)}\n`).created) throw new Error(`the rollup record for ${r.trainId} already exists and is write-once`);
   return r;
 }
 
@@ -108,6 +107,7 @@ function liveRollups(dir) {
   for (const t of all.trains) {
     if (t.landing !== 'rollup' || LIVE_PHASES.has(t.phase)) continue;
     const run = readSerial(dir, t.trainId);
+    if (!run.ok && !run.absent) return { ok: false, reason: `the serial record of rollup ${t.trainId} cannot be read (${run.reason}): its merge state is unknown, so a new rollup is blocked until it is recovered` };
     const requested = run.ok && run.run.steps.some((s) => s.attempt || s.step === 'merge' || s.step === 'merged');
     if (requested) return { ok: false, reason: `rollup ${t.trainId} may have a merge in flight (${t.phase}): settle it with land --resume ${t.trainId} --rollup before building another` };
     supersede.push(t.trainId);
@@ -143,7 +143,7 @@ export function buildRollup(ctx, flags, deps, { parseSelect }) {
     admitted.push({ ...m, evidence: envelopeEvidence(a.child.envelope) });
   }
   // Overlap: two members that touch one path never share a rollup (the later one is held).
-  const withPaths = admitted.map((m) => { const d = deps.git(['diff', '--name-only', `${base}...${m.oid}`], cwd, { timeoutMs: 60_000 }); return { id: m.id, paths: d.ok ? d.stdout.split('\n').filter(Boolean) : null }; });
+  const withPaths = admitted.map((m) => { const d = deps.git(['diff', '--name-only', '--no-renames', `${base}...${m.oid}`], cwd, { timeoutMs: 60_000 }); return { id: m.id, paths: d.ok ? d.stdout.split('\n').filter(Boolean) : null }; });
   const unreadable = withPaths.filter((p) => p.paths === null).map((p) => p.id);
   for (const id of unreadable) held.push({ id, reason: 'paths-unreadable: the changed paths could not be read, so overlap cannot be excluded' });
   const ov = overlapHolds(withPaths.filter((p) => p.paths !== null), ctx.config.appendOnlyGlobs ?? []);
@@ -151,24 +151,31 @@ export function buildRollup(ctx, flags, deps, { parseSelect }) {
   const kept = admitted.filter((m) => ov.kept.includes(m.id));
   const heldText = held.map((h) => `  held  ${h.id}: ${h.reason}`);
   if (!kept.length) return { ok: false, code: 'refused', reason: 'no member is admitted', held, text: `REFUSED: no member is admitted to the rollup; nothing was built, pushed or changed\n${heldText.join('\n')}` };
-  const live = liveRollups(dir);
-  if (!live.ok) return refused(live.reason);
+  // ONE critical section (R1-H4): the live-rollup check, the build, the record and the supersession can never interleave with another build.
   const sources = kept.map((m) => ({ id: m.id, gen: m.gen, rev: m.rev, oid: m.oid, kind: m.kind === 'pr' ? 'pr' : 'branch', repo: m.repo ?? null, prNumber: m.prNumber ?? null, headRepo: m.headRepo ?? null, baseRef: m.baseRef ?? null, pr: null }));
-  const built = withTrainLock(dir, () => buildTrain({ cwd, config: { ...ctx.config, mergeMethod: 'direct-squash' }, sources, checkPayload: listed.payload ?? { sessions: [], overlaps: [] }, deps, rollup: true }));
-  if (!built.ok || !built.train) return { ...built, held, text: `${built.code === 'error' ? 'ERROR' : 'REFUSED'}: ${built.reason}${heldText.length ? `\n${heldText.join('\n')}` : ''}` };
-  const t = built.train;
-  const trees = kept.map((m) => deps.git(['rev-parse', `${m.oid}^{tree}`], cwd, { timeoutMs: 60_000 }));
-  const bad = trees.findIndex((x) => !x.ok);
-  if (!t.candidate?.tree || bad >= 0) return { ...built, ok: false, code: 'refused', reason: 'the candidate or a member tree could not be read', text: 'REFUSED: the candidate or a member tree could not be read; no rollup record was written', held };
-  writeRollupRecord(dir, {
-    schemaVersion: ROLLUP_RECORD_SCHEMA, trainId: t.trainId, grantVersion: GRANT_VERSION, checkedAt: ctx.now.toISOString(), base, remote: t.destination.remote, candidateTree: t.candidate.tree,
-    members: kept.map((m, i) => ({ id: m.id, branch: m.branch, head: m.oid, tree: trees[i].stdout.trim(), ...m.evidence, repo: m.repo ?? null, prNumber: m.prNumber ?? null, worktree: m.worktree ?? null })),
-    held,
+  const section = withTrainLock(dir, () => {
+    const live = liveRollups(dir);
+    if (!live.ok) return { fail: refused(live.reason) };
+    const built = buildTrain({ cwd, config: { ...ctx.config, mergeMethod: 'direct-squash' }, sources, checkPayload: listed.payload ?? { sessions: [], overlaps: [] }, deps, rollup: true });
+    if (!built.ok || !built.train) return { fail: { ...built, held, text: `${built.code === 'error' ? 'ERROR' : 'REFUSED'}: ${built.reason}${heldText.length ? `\n${heldText.join('\n')}` : ''}` } };
+    const train = built.train;
+    if (train.conflict) return { fail: { ok: false, code: 'refused', reason: `the candidate could not be built: ${train.conflict.reason} at ${train.conflict.sourceId}`, held, text: `REFUSED: the candidate could not be built (${train.conflict.reason} at ${train.conflict.sourceId}); no rollup record was written, nothing was pushed` } };
+    const trees = kept.map((m) => deps.git(['rev-parse', `${m.oid}^{tree}`], cwd, { timeoutMs: 60_000 }));
+    const bad = trees.findIndex((x) => !x.ok);
+    if (!train.candidate?.tree || bad >= 0) return { fail: { ...built, ok: false, code: 'refused', reason: 'the candidate or a member tree could not be read', text: 'REFUSED: the candidate or a member tree could not be read; no rollup record was written', held } };
+    writeRollupRecord(dir, {
+      schemaVersion: ROLLUP_RECORD_SCHEMA, trainId: train.trainId, grantVersion: GRANT_VERSION, checkedAt: ctx.now.toISOString(), base, remote: train.destination.remote, candidateTree: train.candidate.tree,
+      members: kept.map((m, i) => ({ id: m.id, branch: m.branch, head: m.oid, tree: trees[i].stdout.trim(), ...m.evidence, repo: m.repo ?? null, prNumber: m.prNumber ?? null, worktree: m.worktree ?? null })),
+      held,
+    });
+    for (const id of live.supersede) {
+      const old = readTrain(dir, id);
+      if (old.ok) patchTrain(dir, id, { phase: 'abandoned', result: 'none', notes: [`superseded by ${train.trainId}`], ...(old.train.rollup ? { rollup: { ...old.train.rollup, superseded: train.trainId } } : {}) }, deps);
+    }
+    return { t: train, live };
   });
-  for (const id of live.supersede) {
-    const old = readTrain(dir, id);
-    if (old.ok) patchTrain(dir, id, { phase: 'abandoned', result: 'none', notes: [`superseded by ${t.trainId}`], ...(old.train.rollup ? { rollup: { ...old.train.rollup, superseded: t.trainId } } : {}) }, deps);
-  }
+  if (section.fail) return section.fail;
+  const { t, live } = section;
   const lines = [
     `rollup ${t.trainId}: ${kept.length} member(s) admitted, ${held.length} held`, ...kept.map((m) => `  admitted  ${m.id} (${m.branch} @ ${short(m.oid)}, gate ${m.evidence.gate ?? '?'})`), ...heldText,
     ...(live.supersede.length ? [`superseded (never requested a merge; artifacts kept): ${live.supersede.join(', ')}`] : []),
@@ -207,7 +214,8 @@ export function makeRollupPolicy({ cwd, trainId, deps, rec, train, branch, prNum
       if (h !== train.candidate.oid || tree.stdout.trim() !== rec.candidateTree) return { ok: false, kind: 'member-refused', reason: `the rollup PR head ${short(h)} is not the tested candidate ${short(train.candidate.oid)}` };
       const inv = requiredInventory(cwd, { repo: s.repo, base: run.base, configured: requiredChecks, configError: requiredChecksError, gh: deps.gh });
       const obs = observeRequiredChecks(cwd, { pr: s.prNumber, repo: s.repo, inventory: inv, expectHead: h, gh: deps.gh });
-      if (obs.verdict !== 'pass' && obs.verdict !== 'none-required') return { ok: false, kind: 'ci-refused', reason: `the rollup's required checks are ${obs.verdict} at ${short(h)}` };
+      if (obs.verdict === 'none-required') return { ok: false, kind: 'ci-refused', reason: `no required checks are configured on ${run.base}, so nothing would measure the rollup's CI at ${short(h)}: declare them (branch rules or .fleet.json requiredChecks) before landing by rollup` };
+      if (obs.verdict !== 'pass') return { ok: false, kind: 'ci-refused', reason: `the rollup's required checks are ${obs.verdict} at ${short(h)}` };
       const checks = (obs.observed ?? []).filter((o) => !inv.names.length || inv.names.includes(o.name)).map((o) => ({ name: String(o.name), conclusion: String(o.bucket ?? o.state ?? 'unknown') }));
       const ci = { head: h, tree: rec.candidateTree, observedAt: deps.now().toISOString(), checks };
       const manifest = renderRollupManifest({
@@ -253,7 +261,13 @@ function closeMemberPrs({ cwd, dir, trainId, deps, run, result }) {
     if (String(doc.state).toUpperCase() !== 'OPEN') return { ...c, status: 'closed', reason: null };
     if (doc.headRefOid !== c.head) return { ...c, status: 'skipped-head-moved', reason: `the PR head is ${short(doc.headRefOid)}, not the admitted ${short(c.head)}: it holds work that did not land` };
     const x = deps.gh(['pr', 'close', String(c.prNumber), '-R', repoOf(c.prNumber), '--comment', `superseded by #${t.train.rollup.prNumber} (fleet rollup ${t.train.rollup.branch})`], cwd);
-    return x.ok ? { ...c, status: 'closed', reason: null } : { ...c, status: 'failed', reason: String(x.reason ?? 'gh pr close failed').slice(0, 200) };
+    if (!x.ok) return { ...c, status: 'failed', reason: String(x.reason ?? 'gh pr close failed').slice(0, 200) };
+    // `gh pr close` carries no head condition, so a push between the read and the close cannot be excluded; it is DETECTED here.
+    const after = deps.gh(['pr', 'view', String(c.prNumber), '-R', repoOf(c.prNumber), '--json', 'state,headRefOid'], cwd);
+    let seen = null;
+    try { seen = after.ok ? JSON.parse(after.stdout) : null; } catch { seen = null; }
+    if (seen && seen.headRefOid && seen.headRefOid !== c.head) return { ...c, status: 'failed', reason: `the head moved to ${short(seen.headRefOid)} around the close: gh pr reopen ${c.prNumber} if those commits should stay open`.slice(0, 290) };
+    return { ...c, status: 'closed', reason: null };
   });
   if (next.length) patchTrain(dir, trainId, { rollup: { ...t.train.rollup, closures: next } }, deps);
   const open = next.filter((c) => c.status !== 'closed');
@@ -261,6 +275,18 @@ function closeMemberPrs({ cwd, dir, trainId, deps, run, result }) {
 }
 
 // ---- approve / resume --------------------------------------------------------------------------------------------------------------
+
+/** Why the record is not about this train: the candidate, and every source in order (id, oid, repo, PR) against its member. @returns {string|null} */
+export function rollupTrainProblem(rec, train) {
+  if (train.candidate?.tree !== rec.candidateTree) return `the candidate tree ${short(train.candidate?.tree)} is not the recorded ${short(rec.candidateTree)}`;
+  if (train.sources.length !== rec.members.length) return `the record names ${rec.members.length} member(s), the train merges ${train.sources.length}`;
+  for (const [i, m] of rec.members.entries()) {
+    const src = train.sources[i];
+    if (src.id !== m.id || src.oid !== m.head) return `member ${i + 1} is ${m.id}@${short(m.head)} in the record but ${src.id}@${short(src.oid)} in the train`;
+    if ((src.repo ?? null) !== (m.repo ?? null) || (src.prNumber ?? null) !== (m.prNumber ?? null)) return `member ${m.id}: the record and the train name different PRs`;
+  }
+  return null;
+}
 
 function preflight({ dir, trainId, deps }) {
   const gr = grantRefusal(deps);
@@ -270,7 +296,9 @@ function preflight({ dir, trainId, deps }) {
   const t = readTrain(dir, trainId);
   if (!t.ok) return refused(`the train ${trainId} cannot be read (${t.reason})`);
   if (t.train.landing !== 'rollup') return refused(`train ${trainId} is not a rollup train`);
-  if (t.train.sources.length !== rec.rec.members.length || t.train.candidate?.tree !== rec.rec.candidateTree) return refused(`the rollup record does not describe train ${trainId}`);
+  if (t.train.phase === 'abandoned') return refused(`train ${trainId} is abandoned (superseded or abandoned by hand): it is never approved or resumed`);
+  const mismatch = rollupTrainProblem(rec.rec, t.train);
+  if (mismatch) return refused(`the rollup record does not describe train ${trainId}: ${mismatch}`);
   return { ok: true, rec: rec.rec, train: t.train };
 }
 
@@ -344,9 +372,6 @@ function advanceOperation({ cwd, dir, trainId, deps, rec, train0, serialOpts }) 
       number = l.rows[0].number;
     } else return refused(`rollup-pr-ambiguous: ${l.rows.length} PR(s) exist for ${op().branch}, not exactly one OPEN PR at the candidate`);
     t = patchTrain(dir, trainId, { rollup: { ...op(), phase: 'pr-open', prNumber: number } }, deps);
-    for (const old of listTrains(dir).trains) {
-      if (old.rollup?.superseded === trainId && old.rollup.prNumber) deps.gh(['pr', 'close', String(old.rollup.prNumber), '-R', old.rollup.repo, '--comment', `superseded by #${number} (fleet rollup ${op().branch})`], cwd);
-    }
   }
   if (op().phase === 'pr-open') {
     const existing = readSerial(dir, trainId);
@@ -369,18 +394,39 @@ function advanceOperation({ cwd, dir, trainId, deps, rec, train0, serialOpts }) 
   return { ok: true, train: t, rec };
 }
 
-function runPhase({ cwd, dir, trainId, deps, serialOpts, rec, train }) {
+function runPhase({ cwd, dir, trainId, deps, serialOpts, rec, train, supersededLines = [] }) {
   const policy = makeRollupPolicy({ cwd, trainId, deps, rec, train, branch: train.rollup.branch, prNumber: train.rollup.prNumber, requiredChecks: serialOpts?.requiredChecks, requiredChecksError: serialOpts?.requiredChecksError });
   const r = resumeSerial({ cwd, trainId, deps, ...serialOpts, policy });
   const rd = readSerial(dir, trainId);
   if (!rd.ok) return { ...r, ok: false, code: 'refused', reason: r.reason ?? rd.reason, text: `REFUSED: ${r.reason ?? rd.reason}` };
   const cleaned = rd.run.finalized ? withTrainLock(dir, () => closeMemberPrs({ cwd, dir, trainId, deps, run: rd.run, result: r })) : r;
-  const extra = [...(cleaned.cleanup ?? []).map((c) => `  member PR #${c.prNumber}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`), ...(!rd.run.finalized && r.reason ? [`stopped: ${r.reason}`] : [])];
+  const extra = [...supersededLines, ...(cleaned.cleanup ?? []).map((c) => `  member PR #${c.prNumber}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`), ...(!rd.run.finalized && r.reason ? [`stopped: ${r.reason}`] : [])];
   if (rd.run.steps[0]?.outcome?.status === 'not-run' && rd.run.steps[0].outcome.code === 'checks-pending') extra.push('the required checks have not finished: land --resume <train> --rollup keeps waiting');
   if (rd.run.steps[0]?.outcome?.code === 'checks-failed' || (r.reason && /checks-failed|required checks/.test(r.reason))) extra.push(`Eject a suspect and rebuild: land --rollup --hold <member>. A green rebuild without a member does NOT prove it at fault.`);
   const { res, text } = summaryText(rd.run, trainId, extra, 'rollup');
   const ok = Boolean(r.ok);
-  return { ...r, ok, code: ok ? 'ok' : 'refused', ...(ok || r.reason ? {} : { reason: res.first }), rollup: true, text };
+  return { ...r, ok, code: ok ? 'ok' : (r.code && r.code !== 'ok' ? r.code : 'refused'), ...(ok || r.reason ? {} : { reason: res.first }), rollup: true, text };
+}
+
+/**
+ * Close the rollup PRs this train superseded. Progress is durable on the OLD train (`rollup.closures`), each close is checked, and an
+ * outstanding one is retried on every approve and resume (R1-H9, M10). It never fails the landing: it reports.
+ * @returns {string[]} lines for the summary
+ */
+function closeSuperseded({ cwd, dir, trainId, deps }) {
+  const lines = [];
+  const me = readTrain(dir, trainId);
+  const number = me.ok ? me.train.rollup?.prNumber : null;
+  if (!number) return lines;
+  for (const old of listTrains(dir).trains) {
+    if (old.rollup?.superseded !== trainId || !old.rollup.prNumber) continue;
+    if ((old.rollup.closures ?? []).some((c) => c.prNumber === old.rollup.prNumber && c.status === 'closed')) continue;
+    const x = deps.gh(['pr', 'close', String(old.rollup.prNumber), '-R', old.rollup.repo, '--comment', `superseded by #${number} (fleet rollup ${me.train.rollup.branch})`], cwd);
+    const entry = { prNumber: old.rollup.prNumber, head: old.rollup.candidate.oid, status: x.ok ? 'closed' : 'failed', reason: x.ok ? null : String(x.reason ?? 'gh pr close failed').slice(0, 200) };
+    withTrainLock(dir, () => patchTrain(dir, old.trainId, { rollup: { ...old.rollup, closures: [...(old.rollup.closures ?? []).filter((c) => c.prNumber !== entry.prNumber), entry] } }, deps));
+    if (!x.ok) lines.push(`  superseded rollup PR #${old.rollup.prNumber} could not be closed (${entry.reason}); the next approve or resume retries it`);
+  }
+  return lines;
 }
 
 /** `land --approve <train> --rollup`. */
@@ -389,7 +435,7 @@ export function approveRollup({ cwd, dir, trainId, deps, serialOpts }) {
   if (!p.ok) return p;
   const adv = withTrainLock(dir, () => advanceOperation({ cwd, dir, trainId, deps, rec: p.rec, train0: readTrain(dir, trainId).train, serialOpts }));
   if (!adv.ok) return adv;
-  return runPhase({ cwd, dir, trainId, deps, serialOpts, rec: p.rec, train: adv.train });
+  return runPhase({ cwd, dir, trainId, deps, serialOpts, rec: p.rec, train: adv.train, supersededLines: closeSuperseded({ cwd, dir, trainId, deps }) });
 }
 
 /** `land --resume <train> --rollup`: a finalized run needs no grant and no remote read (R3-M1); otherwise the operation is reconciled first. */
@@ -398,7 +444,7 @@ export function resumeRollup({ cwd, dir, trainId, deps, serialOpts }) {
   const rec = readRollupRecord(dir, trainId);
   const tr = readTrain(dir, trainId);
   if (!rec.ok || !tr.ok || tr.train.landing !== 'rollup') return refused(`train ${trainId} is not a rollup`);
-  if (rd.ok && rd.run.finalized) return runPhase({ cwd, dir, trainId, deps, serialOpts, rec: rec.rec, train: tr.train });
+  if (rd.ok && rd.run.finalized) return runPhase({ cwd, dir, trainId, deps, serialOpts, rec: rec.rec, train: tr.train, supersededLines: closeSuperseded({ cwd, dir, trainId, deps }) });
   return approveRollup({ cwd, dir, trainId, deps, serialOpts });
 }
 

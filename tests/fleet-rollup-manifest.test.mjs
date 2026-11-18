@@ -83,12 +83,12 @@ describe('verifyRollupProvenance: a manifest in commit text is self-declared', (
     policy: { name: 'rollup', rollup: { repo: 'o/n', prNumber: 9, branch: ID, candidate: { oid: o('c'), tree: o('d') } } },
     steps: [{ attempt: { messageSha256: sha256Body(body) }, outcome: { status: 'landed', mergeOid: o('e') } }], ...over,
   });
-  const pr = { repo: 'o/n', number: 9, mergeOid: o('e'), body: `fleet rollup ${ID}: 2 members\n\n${body}` };
+  const pr = { repo: 'o/n', number: 9, mergeOid: o('e'), message: `fleet rollup ${ID}: 2 members\n\n${body}` };
   const manifest = parseRollupManifest(body).manifest;
   it('a genuine manifest with a matching run is verified', () => assert.deepEqual(verifyRollupProvenance(manifest, run(), pr), { verified: true, reason: 'matches the local rollup run' }));
   it('the same manifest with no run record (another machine, a pruned registry) stays unverified', () => assert.equal(verifyRollupProvenance(manifest, null, pr).verified, false));
   it('a forged manifest authored by an ordinary PR (any field differing) is unverified, each field named', () => {
-    for (const [name, p] of [['repo', { ...pr, repo: 'x/y' }], ['PR number', { ...pr, number: 10 }], ['merge oid', { ...pr, mergeOid: o('f') }], ['hash', { ...pr, body: `s\n\n${body}\nforged line` }]]) {
+    for (const [name, p] of [['repo', { ...pr, repo: 'x/y' }], ['PR number', { ...pr, number: 10 }], ['merge oid', { ...pr, mergeOid: o('f') }], ['hash', { ...pr, message: `s\n\n${body}\nforged line` }]]) {
       const v = verifyRollupProvenance(manifest, run(), p);
       assert.equal(v.verified, false, name);
     }
@@ -96,4 +96,16 @@ describe('verifyRollupProvenance: a manifest in commit text is self-declared', (
   });
   it('a provisional manifest never verifies', () => assert.equal(verifyRollupProvenance({ ...manifest, stage: 'provisional' }, run(), pr).verified, false));
   it('bodyOfMessage drops the subject and one blank line', () => assert.equal(bodyOfMessage('s\n\nb1\nb2\n'), 'b1\nb2'));
+});
+
+describe('stage-specific manifest invariants (R1-M5, M12)', () => {
+  const full = JSON.parse(parseRollupManifest(renderRollupManifest({ stage: 'final', ...base, ci })).ok ? JSON.stringify({ ...base, schema: 'fleet-rollup/v1', stage: 'final', ci }) : '{}');
+  const wrap = (doc) => `\`\`\`fleet-rollup/v1\n${JSON.stringify(doc)}\n\`\`\``;
+  it('a final manifest needs its CI record, a candidate, a base, a held list, and every member an id, a full head and a tree', () => {
+    assert.equal(parseRollupManifest(wrap(full)).ok, true);
+    for (const [name, doc] of [
+      ['no ci', { ...full, ci: undefined }], ['ci pending on a final', { ...full, ci: 'pending' }], ['no candidate', { ...full, candidate: undefined }], ['no base', { ...full, base: undefined }],
+      ['no held list', { ...full, held: undefined }], ['empty member id', { ...full, members: [{ ...members[0], id: '  ' }] }], ['member without a tree', { ...full, members: [{ ...members[0], tree: undefined }] }],
+    ]) assert.equal(parseRollupManifest(wrap(doc)).ok, false, name);
+  });
 });

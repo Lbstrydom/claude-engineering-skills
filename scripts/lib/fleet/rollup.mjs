@@ -83,7 +83,10 @@ export function parseRollupManifest(message) {
   try { doc = JSON.parse(m[1]); } catch { return { ok: false, reason: 'the manifest block is not JSON' }; }
   if (doc?.schema !== MANIFEST_SCHEMA || !['provisional', 'final'].includes(doc.stage)) return { ok: false, reason: 'not a fleet-rollup/v1 manifest' };
   if (typeof doc.rollupId !== 'string' || !ROLLUP_BRANCH_RE.test(doc.rollupId) || !Array.isArray(doc.members) || !doc.members.length) return { ok: false, reason: 'the manifest has no usable rollup id or members' };
-  for (const x of doc.members) if (!x || typeof x.id !== 'string' || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(String(x.head))) return { ok: false, reason: 'a manifest member has no id or full head' };
+  const OID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+  if (typeof doc.base !== 'string' || !doc.base || !OID.test(String(doc.candidate?.oid)) || !OID.test(String(doc.candidate?.tree)) || !Array.isArray(doc.held)) return { ok: false, reason: 'the manifest has no base, no candidate oid and tree, or no held list' };
+  for (const x of doc.members) if (!x || typeof x.id !== 'string' || !x.id.trim() || !OID.test(String(x.head)) || !OID.test(String(x.tree))) return { ok: false, reason: 'a manifest member has no id, full head or tree' };
+  if (doc.stage === 'final' && !(doc.ci && typeof doc.ci === 'object' && OID.test(String(doc.ci.head)) && OID.test(String(doc.ci.tree)) && Array.isArray(doc.ci.checks))) return { ok: false, reason: 'a final manifest carries no usable CI record' };
   return { ok: true, manifest: doc };
 }
 
@@ -92,7 +95,7 @@ export function parseRollupManifest(message) {
  * repo, PR, merge oid, candidate oid and manifest hash. Anything else keeps the manifest "unverified, self-declared".
  * @param {object} manifest  from `parseRollupManifest`
  * @param {object|null} run  the local serial run of a train carrying `landing: 'rollup'`, or null
- * @param {{repo: string, number: number, mergeOid: string, body: string}} pr  the merged PR's facts and the squash body
+ * @param {{repo: string, number: number, mergeOid: string, message: string}} pr  the merged PR's facts and the FULL squash commit message (subject and body)
  * @returns {{verified: boolean, reason: string}}
  */
 export function verifyRollupProvenance(manifest, run, pr) {
@@ -104,7 +107,7 @@ export function verifyRollupProvenance(manifest, run, pr) {
   const checks = [
     [p.rollup.repo === pr.repo, 'the repository differs'], [p.rollup.prNumber === pr.number, 'the PR number differs'],
     [landed?.mergeOid === pr.mergeOid, 'the merge oid differs'], [p.rollup.candidate.oid === manifest.candidate?.oid, 'the candidate differs'],
-    [p.rollup.branch === manifest.rollupId, 'the rollup id differs'], [Boolean(step.attempt?.messageSha256) && step.attempt.messageSha256 === sha256Body(bodyOfMessage(pr.body)), 'the manifest hash differs'],
+    [p.rollup.branch === manifest.rollupId, 'the rollup id differs'], [Boolean(step.attempt?.messageSha256) && step.attempt.messageSha256 === sha256Body(bodyOfMessage(pr.message)), 'the manifest hash differs'],
   ];
   const bad = checks.find(([ok]) => !ok);
   return bad ? { verified: false, reason: bad[1] } : { verified: true, reason: 'matches the local rollup run' };

@@ -12,12 +12,12 @@ import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots, makeFleetRepo, addBranch, installFakeGh, runFleet, scrubbedEnv } from './helpers/fleet-repo.mjs';
 import { REPO, ok, view, fast, depsWith, multiFx } from './helpers/fleet-serial-fx.mjs';
-import { readTrain } from '../scripts/lib/fleet/registry.mjs';
+import { readTrain, TrainSchema } from '../scripts/lib/fleet/registry.mjs';
 import { readSerial } from '../scripts/lib/fleet/serial.mjs';
 import { CANONICAL_GRANT } from '../scripts/lib/fleet/coordinator-grant.mjs';
 import { resolveConfig, landingRollupLine } from '../scripts/lib/fleet/config.mjs';
 import { approveTrain } from '../scripts/lib/fleet/train-approve.mjs';
-import { buildRollup, approveRollup, resumeRollup, readRollupRecord } from '../scripts/lib/fleet/rollup-land.mjs';
+import { buildRollup, approveRollup, resumeRollup, readRollupRecord, rollupTrainProblem } from '../scripts/lib/fleet/rollup-land.mjs';
 import { approveSerial } from '../scripts/lib/fleet/serial.mjs';
 import { parseRollupManifest } from '../scripts/lib/fleet/rollup.mjs';
 import { AI_TRAILER_KEYS, parseMessageTrailers } from '../scripts/lib/commit-trailers.mjs';
@@ -54,28 +54,31 @@ function fixture(n, over = {}) {
 function world(f, over = {}) {
   const w = {
     calls: [], merges: [], creates: [], closes: [], rollupPr: null, rules: RULES_JSON, checks: 'pass', memberPrs: new Map(f.members.map((m) => [m.pr, { state: 'OPEN', head: m.head }])),
-    createFails: false, listHides: false, mergeBehavior: over.mergeBehavior, squashExtra: over.squashExtra ?? null, repoView: over.repoView ?? 'o/n',
+    prsByBranch: new Map(), createFails: false, listHides: false, mergeBehavior: over.mergeBehavior, squashExtra: over.squashExtra ?? null, repoView: over.repoView ?? 'o/n',
     gh: (args) => {
       w.calls.push(args);
       if (args[0] === 'repo') return ok({ nameWithOwner: w.repoView });
       if (args[0] === 'api' && /rules\/branches/.test(args[1])) return { ok: true, status: 0, stdout: JSON.stringify(w.rules), stderr: '' };
       if (args[0] === 'api') return { ok: true, status: 0, stdout: JSON.stringify({ protected: false }), stderr: '' };
-      if (args[1] === 'list') return ok(w.rollupPr && !w.listHides ? [{ number: w.rollupPr.number, state: w.rollupPr.state, headRefOid: w.rollupPr.head, baseRefName: 'main' }] : []);
+      if (args[1] === 'list') { const pr0 = w.prsByBranch.get(args[args.indexOf('--head') + 1]); return ok(pr0 && !w.listHides ? [{ number: pr0.number, state: pr0.state, headRefOid: pr0.head, baseRefName: 'main' }] : []); }
       if (args[1] === 'create') {
         w.creates.push(args);
         if (w.createFails) return { ok: false, status: 1, stdout: '', stderr: 'boom', reason: 'gh pr create failed' };
         const head = git(['ls-remote', 'origin', `refs/heads/${args[args.indexOf('--head') + 1]}`], f.fx.repo).split(/\s+/)[0];
         w.rollupPr = { number: 100 + w.creates.length, state: 'OPEN', head, mergeCommit: null, body: fs.readFileSync(args[args.indexOf('--body-file') + 1], 'utf8') };
+        w.prsByBranch.set(args[args.indexOf('--head') + 1], w.rollupPr);
+        w.allPrs = [...(w.allPrs ?? []), w.rollupPr];
         return { ok: true, status: 0, stdout: `https://github.com/${REPO}/pull/${w.rollupPr.number}\n`, stderr: '' };
       }
       const pr = Number(args[2]);
       if (args[1] === 'close') { w.closes.push({ pr, args }); const m = w.memberPrs.get(pr); if (m) m.state = 'CLOSED'; return ok(); }
       if (args[1] === 'checks') return { ok: w.checks === 'pass', status: w.checks === 'pass' ? 0 : 8, stdout: JSON.stringify([{ name: 'ci', bucket: w.checks, state: w.checks.toUpperCase(), completedAt: '2026-10-09T10:00:00Z' }]), stderr: '' };
       if (args[1] === 'view') {
-        if (w.rollupPr && pr === w.rollupPr.number) {
+        const rp = (w.allPrs ?? []).find((x) => x.number === pr);
+        if (rp) {
           const want = args[args.indexOf('--json') + 1];
           if (want === 'isInMergeQueue') return ok({ isInMergeQueue: false });
-          return ok(view(w.rollupPr.head, { state: w.rollupPr.state, mergeCommit: w.rollupPr.mergeCommit ? { oid: w.rollupPr.mergeCommit } : null, url: `https://github.com/${REPO}/pull/${pr}` }));
+          return ok(view(rp.head, { state: rp.state, mergeCommit: rp.mergeCommit ? { oid: rp.mergeCommit } : null, url: `https://github.com/${REPO}/pull/${pr}` }));
         }
         const m = w.memberPrs.get(pr);
         return m ? ok({ ...view(m.head, { state: m.state }), headRefOid: m.head, state: m.state }) : { ok: false, status: 1, stdout: '', stderr: 'no such pr', reason: 'no such pr' };
@@ -384,5 +387,108 @@ describe('the chip-side contract: .fleet.json landing: "rollup"', () => {
   it('landing accepts only pr or rollup', () => {
     const fx = makeFleetRepo({ fleetConfig: { mergeMethod: 'pr', testCommand: { tiers: [{ name: 'ok', command: ['node', '-e', '0'] }] }, landing: 'nope' } });
     assert.throws(() => resolveConfig(fx.repo, { env: { ...process.env } }).landing, /landing/);
+  });
+});
+
+describe('audit round 1: lifecycle, identity and cleanup guards', () => {
+  it('an abandoned (superseded) rollup is never approved or resumed (R1-H3)', () => {
+    const f = fixture(1);
+    const w = world(f);
+    const b1 = build(f, w);
+    build(f, w); // supersedes b1
+    assert.equal(readTrain(f.dir, b1.trainId).train.phase, 'abandoned');
+    assert.match(approve(f, w, { trainId: b1.trainId }).reason, /is abandoned/);
+    assert.match(resume(f, w, b1.trainId).reason, /is abandoned/);
+    assert.equal(w.creates.length, 0);
+  });
+  it('the record must describe the train member by member, in order (R1-H5, H13)', () => {
+    const f = fixture(2);
+    const b = build(f, world(f));
+    const train = readTrain(f.dir, b.trainId).train;
+    const rec = readRollupRecord(f.dir, b.trainId).rec;
+    assert.equal(rollupTrainProblem(rec, train), null);
+    assert.match(rollupTrainProblem({ ...rec, members: [rec.members[1], rec.members[0]] }, train), /member 1 is m2@/);
+    assert.match(rollupTrainProblem({ ...rec, members: [{ ...rec.members[0], head: 'e'.repeat(40) }, rec.members[1]] }, train), /member 1 is m1@e{12}/);
+    assert.match(rollupTrainProblem({ ...rec, members: [{ ...rec.members[0], prNumber: 99, repo: 'x/y' }, rec.members[1]] }, train), /different PRs/);
+    assert.match(rollupTrainProblem({ ...rec, candidateTree: 'f'.repeat(40) }, train), /candidate tree/);
+    assert.match(rollupTrainProblem({ ...rec, members: [rec.members[0]] }, train), /names 1 member/);
+  });
+  it('no required checks configured: the rollup is refused as ci-refused, never merged on nothing (R1-H6); an unknown inventory stops the run', () => {
+    const f = fixture(1);
+    const w = world(f); w.rules = [];
+    const b = build(f, w);
+    const unknown = approve(f, w, { trainId: b.trainId });
+    assert.equal(unknown.ok, false);
+    assert.match(unknown.text, /neither rulesets nor branch protection require a status check/);
+    const g = fixture(1);
+    const w2 = world(g); w2.rules = []; // no ruleset requires a check, and the config says none are required either
+    const b2 = build(g, w2);
+    const r = approve(g, w2, { trainId: b2.trainId, serialOpts: { requiredChecks: [] } });
+    assert.equal(r.ok, false, r.text);
+    assert.equal(w2.merges.length, 0);
+    assert.deepEqual([runOf(g, b2.trainId).steps[0].outcome.status, runOf(g, b2.trainId).steps[0].outcome.code], ['refused', 'ci-refused']);
+    assert.match(runOf(g, b2.trainId).steps[0].outcome.reason, /no required checks are configured/);
+  });
+  it('the overlap read asks git for paths WITHOUT rename detection, so a rename source is never missed (R1-H7)', () => {
+    const f = fixture(2);
+    const w = world(f);
+    const deps = mkDeps(f, w);
+    const seen = [];
+    const git0 = deps.git;
+    deps.git = (args, cwd, o) => { if (args[0] === 'diff') seen.push(args); return git0(args, cwd, o); };
+    assert.equal(buildRollup(f.ctx, {}, deps, { parseSelect }).ok, true);
+    const ours = seen.filter((a) => a.some((x) => x.includes('...')));
+    assert.ok(ours.length === 2 && ours.every((a) => a.includes('--no-renames')), JSON.stringify(seen));
+  });
+  it('a candidate that cannot be built (a member subject unreadable) leaves no record and no half-built rollup (L1)', () => {
+    const f = fixture(1);
+    const w = world(f);
+    const deps = mkDeps(f, w);
+    const git0 = deps.git;
+    deps.git = (args, cwd, o) => (args.includes('log') && args.includes('--format=%s') ? { ok: false, status: 1, stdout: '', stderr: 'boom', reason: 'boom' } : git0(args, cwd, o));
+    const r = buildRollup(f.ctx, {}, deps, { parseSelect });
+    assert.equal(r.ok, false);
+    assert.match(r.text, /could not be built/);
+    assert.equal(fs.existsSync(path.join(f.dir, 'rollup')), false, 'no rollup record directory was written');
+  });
+  it('a superseded rollup PR that cannot be closed is reported, persisted on the old train and retried on the next resume (R1-H9, M10)', () => {
+    const f = fixture(1);
+    const w = world(f); w.checks = 'pending';
+    const b1 = build(f, w);
+    approve(f, w, { trainId: b1.trainId, serialOpts: { timeoutMs: 30 } }); // opens PR #101, never requests a merge
+    const oldPr = readTrain(f.dir, b1.trainId).train.rollup.prNumber;
+    w.checks = 'pass';
+    const b2 = build(f, w);
+    assert.match(b2.text, /superseded/);
+    const orig = w.gh;
+    w.gh = (args) => (args[1] === 'close' && Number(args[2]) === oldPr && w.closeFails ? { ok: false, status: 1, stdout: '', stderr: 'denied', reason: 'denied' } : orig(args));
+    w.closeFails = true;
+    const r = approve(f, w, { trainId: b2.trainId });
+    assert.match(r.text, new RegExp(`superseded rollup PR #${oldPr} could not be closed`));
+    assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'failed');
+    w.closeFails = false;
+    const again = resume(f, w, b2.trainId);
+    assert.doesNotMatch(again.text, /could not be closed/);
+    assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'closed');
+  });
+  it('a member PR whose head moved around the close is flagged with how to reopen it (R1-H8, H12)', () => {
+    const f = fixture(1, { prs: true });
+    const w = world(f);
+    const b = build(f, w);
+    const orig = w.gh;
+    let after = false;
+    w.gh = (args) => { const out = orig(args); if (args[1] === 'close') { after = true; w.memberPrs.get(f.members[0].pr).head = 'a'.repeat(40); } void after; return out; };
+    const r = approve(f, w, { trainId: b.trainId });
+    assert.match(r.text, /the head moved to a{12} around the close: gh pr reopen/);
+    assert.equal(readTrain(f.dir, b.trainId).train.rollup.closures[0].status, 'failed');
+  });
+  it('the operation record belongs to a rollup train only (R1-M11)', () => {
+    const f = fixture(1);
+    const b = build(f, world(f));
+    const t = readTrain(f.dir, b.trainId).train;
+    const withRollup = { ...t, rollup: { branch: 'rollup/20261118-1', repo: 'o/n', candidate: t.candidate, phase: 'pushed', prNumber: null } };
+    assert.equal(TrainSchema.safeParse(withRollup).success, true);
+    const { landing, ...noLanding } = withRollup;
+    assert.equal(TrainSchema.safeParse(noLanding).success, false);
   });
 });

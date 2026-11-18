@@ -78,12 +78,22 @@ export function readShipBatch(dir, trainId) {
   return r.data.trainId === trainId ? { ok: true, batch: r.data } : { ok: false, reason: 'the record belongs to another train' };
 }
 
+/**
+ * Create a file that must not exist: the bytes go to a temp file and are published with `link()`, which is atomic and fails with
+ * EEXIST instead of replacing anything (the existence check and the write are ONE operation). A write-once record's conflict is
+ * `{created: false}`, never an overwrite.
+ */
+export function createOnly(file, text) {
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, text);
+  try { fs.linkSync(tmp, file); return { created: true }; } catch (e) { if (e.code === 'EEXIST') return { created: false }; throw e; } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+}
+
 /** Write-once: an existing record is never replaced. */
 export function writeShipBatch(dir, batch) {
   const rec = ShipBatchRecordSchema.parse(batch);
   fs.mkdirSync(shipBatchDir(dir), { recursive: true });
-  if (fs.existsSync(shipBatchPath(dir, rec.trainId))) throw new Error(`the ship-batch record for ${rec.trainId} already exists and is write-once`);
-  atomicWriteFileSync(shipBatchPath(dir, rec.trainId), `${JSON.stringify(rec, null, 2)}\n`);
+  if (!createOnly(shipBatchPath(dir, rec.trainId), `${JSON.stringify(rec, null, 2)}\n`).created) throw new Error(`the ship-batch record for ${rec.trainId} already exists and is write-once`);
   return rec;
 }
 
@@ -177,7 +187,7 @@ const CandidateSchemas = {
  * `admitMember(mode, invariant, candidate)`. Both inputs are gathered by the caller AT the head being judged:
  *  - `invariant`: fixed for the batch: `{base, remote}`;
  *  - `candidate`: `{mode, head, child, ...}` bound to that head (`identityAndCi` for a ship-batch member, `branchTip` for a rollup member).
- * @returns {{ok: true} | {ok: false, kind: 'shipped-head-refused'|'ci-refused', reasons: string[]}}
+ * @returns {{ok: true} | {ok: false, kind: 'shipped-head-refused'|'ci-refused'|'pr-unreadable', reasons: string[]}}
  */
 export function admitMember(mode, invariant, candidate) {
   const schema = CandidateSchemas[mode];
@@ -185,7 +195,11 @@ export function admitMember(mode, invariant, candidate) {
   const c = schema.parse(candidate);
   if (!invariant?.base || !invariant?.remote) throw new Error('admission needs the invariant base and remote');
   if (!c.child.ok) return { ok: false, kind: 'shipped-head-refused', reasons: c.child.reasons };
-  if (mode === 'ship-batch') return c.identityAndCi.length ? { ok: false, kind: 'ci-refused', reasons: c.identityAndCi } : { ok: true };
+  if (mode === 'ship-batch') {
+    // A PR that could not be READ is an unmeasured fact (not-run), never a measured refusal (F4): it is retried, not refused.
+    if (c.identityAndCi.some((r) => /^identity: PR #\d+ cannot be read|^ci: required checks .*\bunknown\b/.test(r))) return { ok: false, kind: 'pr-unreadable', reasons: c.identityAndCi };
+    return c.identityAndCi.length ? { ok: false, kind: 'ci-refused', reasons: c.identityAndCi } : { ok: true };
+  }
   return c.branchTip === c.head ? { ok: true } : { ok: false, kind: 'shipped-head-refused', reasons: [`branch-moved: the remote branch is ${short(c.branchTip)}, not the admitted head ${short(c.head)}`] };
 }
 
@@ -405,7 +419,7 @@ function withSummary(r, dir, trainId) {
   const { res, text } = summaryText(rd.run, trainId, !rd.run.finalized && r.reason ? [`stopped: ${r.reason}`] : []);
   const ok = Boolean(r.ok);
   return {
-    ...r, ok, code: ok ? 'ok' : 'refused', ...(ok || r.reason ? {} : { reason: res.first }),
+    ...r, ok, code: ok ? 'ok' : (r.code && r.code !== 'ok' ? r.code : 'refused'), ...(ok || r.reason ? {} : { reason: res.first }),
     shipBatch: { members: rd.run.steps.map((m) => ({ id: m.id, prNumber: m.prNumber, step: m.step, outcome: m.outcome ?? null })), excluded: rd.run.policy?.excluded ?? [] }, text,
   };
 }
