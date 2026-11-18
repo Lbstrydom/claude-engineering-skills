@@ -74,6 +74,115 @@ export function planChangeIsRecordOnly(oldText, newText) {
   return { ok: true, inserted: lines_ };
 }
 
+// ---- the SHIP-step delta grammar (docs/plans/coordinator-aggregate-ship.md section 2.3, C4) --------------------------------
+// What /ship itself may change AFTER the audit: its own status entry, and a plan's `Status:` line and Implementation Log.
+// The coordinator batch re-check judges the audited tree against the shipped head with exactly this grammar, so a code change
+// after the audit can never ride in as "ship docs". Narrower than nothing, stricter than the record grammar above: the log
+// section here is free text (the ship writes prose), so the test is WHERE a line changed, never WHAT it says.
+
+const STATUS_LINE_RE = /^- \*\*Status\*\*:/;
+const LEGACY_LOG_REL = 'status.md';
+/** Refuse a diff larger than this many LCS cells after the common prefix and suffix are trimmed: fail closed, never guess. */
+const MAX_DIFF_CELLS = 4_000_000;
+
+/** `[first, last)` line range (0-based) of the Implementation Log section, or null when the text has none. */
+function logRange(ls) {
+  const h = ls.indexOf(LOG_HEADING);
+  if (h < 0) return null;
+  const k = ls.findIndex((l, n) => n > h && /^## /.test(l));
+  return [h, k < 0 ? ls.length : k];
+}
+/** Is the 0-based line `i` inside the Status header line or the Implementation Log of `ls`? */
+function inShipRegion(ls, i) {
+  // A blank line carries no content: the blank separator the ship writes ahead of a new log heading sits outside the section.
+  if ((ls[i] ?? '').trim() === '') return true;
+  if (STATUS_LINE_RE.test(ls[i] ?? '')) return true;
+  const r = logRange(ls);
+  return r !== null && i >= r[0] && i < r[1];
+}
+
+/**
+ * Changed line runs between two line arrays, as `{oldAt, oldN, newAt, newN}` (0-based starts). Common prefix and suffix are
+ * trimmed first, so a one-line edit in a thousand-line plan costs one cell. `null` when what is left is too big to diff.
+ */
+function diffRuns(a, b) {
+  let lo = 0;
+  while (lo < a.length && lo < b.length && a[lo] === b[lo]) lo++;
+  let ea = a.length;
+  let eb = b.length;
+  while (ea > lo && eb > lo && a[ea - 1] === b[eb - 1]) { ea--; eb--; }
+  const n = ea - lo;
+  const m = eb - lo;
+  if (n === 0 && m === 0) return [];
+  if (n * m > MAX_DIFF_CELLS) return null;
+  // LCS table over the trimmed middle; walk it to emit maximal changed runs.
+  const w = m + 1;
+  const t = new Uint32Array((n + 1) * w);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      t[i * w + j] = a[lo + i] === b[lo + j] ? t[(i + 1) * w + j + 1] + 1 : Math.max(t[(i + 1) * w + j], t[i * w + j + 1]);
+    }
+  }
+  const runs = [];
+  let i = 0;
+  let j = 0;
+  let open = null;
+  const close = () => { if (open) { runs.push(open); open = null; } };
+  while (i < n || j < m) {
+    if (i < n && j < m && a[lo + i] === b[lo + j]) { close(); i++; j++; continue; }
+    open ??= { oldAt: lo + i, oldN: 0, newAt: lo + j, newN: 0 };
+    if (j < m && (i >= n || t[i * w + j + 1] >= t[(i + 1) * w + j])) { open.newN++; j++; } else { open.oldN++; i++; }
+  }
+  close();
+  return runs;
+}
+
+/**
+ * Is this one path's change between the AUDITED tree and the SHIPPED head something /ship itself writes? Pure.
+ *
+ *   (a) `docs/status/entries/<entry-name>.md`  ADDED (an entry is immutable: modifying one refuses);
+ *   (b) `status.md` (the legacy log)           MODIFIED by inserting lines before its first `## ` entry heading only;
+ *   (c) `docs/plans/<name>.md`                 MODIFIED, every changed line (both sides) inside the `- **Status**:` line or the
+ *                                              `## Implementation Log` section (a log the ship creates counts as new region).
+ * Everything else, every delete and every rename half refuses. `status` is `git diff --name-status --no-renames`'s letter.
+ *
+ * @param {{status: string, rel: string, oldText?: string|null, newText?: string|null}} d
+ * @returns {string|null} why it is not a ship-step edit, or null when it is
+ */
+export function isShipStepDelta({ status, rel, oldText = null, newText = null }) {
+  if (status === 'D') return 'deleted after the audit (a ship never deletes)';
+  const entry = ENTRY_PATH_RE.exec(rel);
+  if (entry) {
+    if (status !== 'A') return 'an existing status entry was changed (an entry is immutable: it may only be a new file)';
+    return ENTRY_NAME_RE.test(entry[1]) ? null : 'a status entry whose name does not match <YYYY-MM-DD>-<HHMMSS>-<slug>.md';
+  }
+  if (status !== 'M') return `change status ${JSON.stringify(status)} is not a ship-step edit (only an added entry or a modified plan or status.md)`;
+  if (typeof oldText !== 'string' || typeof newText !== 'string') return 'the file text on one side could not be read, so nothing was checked';
+  const a = lines(oldText);
+  const b = lines(newText);
+  if (rel === LEGACY_LOG_REL) {
+    // Insert-only, before the first entry heading: the old tail (from that heading) survives verbatim at the end, and the old
+    // head survives in order inside the new head.
+    const h = a.findIndex((l) => /^## /.test(l));
+    if (h < 0) return `${LEGACY_LOG_REL} has no entry heading to insert before`;
+    const tail = a.slice(h);
+    const head = b.slice(0, b.length - tail.length);
+    if (b.length < tail.length || tail.some((l, k) => l !== b[head.length + k])) return `${LEGACY_LOG_REL}: an existing entry was changed or the insertion is below the first entry`;
+    let k = 0;
+    for (const l of head) if (k < h && l === a[k]) k++;
+    return k === h ? null : `${LEGACY_LOG_REL}: lines above the first entry were changed or removed`;
+  }
+  if (!PLAN_PATH_RE.test(rel)) return `${rel} is outside the ship-step allowlist (a new status entry, status.md, docs/plans/*.md)`;
+  const runs = diffRuns(a, b);
+  if (runs === null) return `${rel} is too large to verify the delta line by line, so it refuses`;
+  if (runs.length === 0) return null;
+  for (const r of runs) {
+    for (let i = r.oldAt; i < r.oldAt + r.oldN; i++) if (!inShipRegion(a, i)) return `${rel}: line ${i + 1} outside the Status line and the ${LOG_HEADING} was changed or removed`;
+    for (let j = r.newAt; j < r.newAt + r.newN; j++) if (!inShipRegion(b, j)) return `${rel}: line ${j + 1} outside the Status line and the ${LOG_HEADING} was added or changed`;
+  }
+  return null;
+}
+
 /**
  * @param {object} f
  * @param {string|null} f.gate the requested gate

@@ -52,6 +52,26 @@ export const isSensitivePath = (p) => classifyPath(p) === 'sensitive';
 const row = (id, ok, reason) => ({ id, ok, reason });
 
 /**
+ * The three path rows (sensitive, migration, repo-policy) over one change set. Shared by the chip's own pre-authorised ship and
+ * the coordinator's batch re-check, so the two cannot disagree about what a shippable change set is. An unresolvable or empty
+ * set fails all three: nothing was checked, and nothing may read as clean.
+ */
+function pathRows(changedPaths) {
+  const paths = Array.isArray(changedPaths) ? changedPaths : null;
+  const pathRow = (id, test, what) => {
+    if (!paths) return row(id, false, 'the changed paths could not be resolved (no merge base or tree), so nothing was checked');
+    if (paths.length === 0) return row(id, false, 'the branch changes no paths against the default branch: nothing to ship, and an empty set must not read as clean');
+    const hit = paths.filter(test);
+    return hit.length ? row(id, false, `${what}: ${hit.slice(0, 3).join(', ')}${hit.length > 3 ? `, +${hit.length - 3} more` : ''}`) : row(id, true, `none of ${paths.length} changed path(s)`);
+  };
+  return [
+    pathRow('sensitive-path', isSensitivePath, 'touches sensitive path(s)'),
+    pathRow('migration', isMigrationPath, 'touches a database migration'),
+    pathRow('repo-policy', isPolicyPath, 'touches repository-policy file(s) (.github/, CODEOWNERS, .test-tiers.json)'),
+  ];
+}
+
+/**
  * @param {object} f already-gathered facts
  * @param {string|null} f.gate the EFFECTIVE gate value (after every cap ship-commit applies)
  * @param {boolean} [f.noTests] --no-tests was passed (it caps the gate downward and is refused outright here)
@@ -102,19 +122,105 @@ export function evaluatePreauthorisedShip(f = {}) {
   else c.push(row('final-review', true, `APPROVE (result approve) on run ${ev.runId.slice(0, 8)}, round ${ev.round}, the audited tree`));
 
   // 4-6. paths. An unresolvable change set fails all three rather than passing them vacuously.
-  const paths = Array.isArray(f.changedPaths) ? f.changedPaths : null;
-  const pathRow = (id, test, what) => {
-    if (!paths) return row(id, false, 'the changed paths could not be resolved (no merge base or tree), so nothing was checked');
-    if (paths.length === 0) return row(id, false, 'the branch changes no paths against the default branch: nothing to ship, and an empty set must not read as clean');
-    const hit = paths.filter(test);
-    return hit.length ? row(id, false, `${what}: ${hit.slice(0, 3).join(', ')}${hit.length > 3 ? `, +${hit.length - 3} more` : ''}`) : row(id, true, `none of ${paths.length} changed path(s)`);
-  };
-  c.push(pathRow('sensitive-path', isSensitivePath, 'touches sensitive path(s)'));
-  c.push(pathRow('migration', isMigrationPath, 'touches a database migration'));
-  c.push(pathRow('repo-policy', isPolicyPath, 'touches repository-policy file(s) (.github/, CODEOWNERS, .test-tiers.json)'));
+  c.push(...pathRows(f.changedPaths));
 
   const refusals = c.filter((x) => !x.ok).map((x) => `${x.id}: ${x.reason}`);
   return { ok: refusals.length === 0, conditions: c, refusals };
+}
+
+/** The batch re-check's conditions, in the order they are reported (docs/plans/coordinator-aggregate-ship.md section 2.3, C1-C5). */
+export const SHIPPED_HEAD_CONDITIONS = Object.freeze([
+  'trailers', 'evidence', 'final-review', 'post-audit-delta', 'sensitive-path', 'migration', 'repo-policy',
+]);
+
+const AI_GATE_SHIPPABLE = new Set(['passed', 'converged']);
+
+/**
+ * May a coordinator land THIS already-shipped member without the user (docs/plans/coordinator-aggregate-ship.md section 2.3)?
+ * The chip ships itself through `ship-commit.mjs --preauthorised`; this re-judges the result from durable facts alone, at merge
+ * time, by an actor that is not the chip. **Pure** and **fail closed**: an unknown fact refuses with its own reason; the
+ * evaluator READS the member's gate and never raises it, so a `waived` or `not-run` member cannot become shippable here.
+ *
+ * @param {object} f already-gathered facts (lib/ship-shipped-head.mjs gathers them)
+ * @param {Array<{key: string, value: string}>|null} f.trailers the parsed trailers of the head commit's message, or null when unreadable
+ * @param {{runId: string, auditedTree?: string|null, round?: number|null, auditedBranch?: string|null}|null} f.evidence the member worktree's gate-evidence marker, when content-verifiable
+ * @param {string} [f.evidenceWhy] why `evidence` is null
+ * @param {string|null} f.currentBranch the branch checked out in the member worktree
+ * @param {{repoId: string|null, roundConvergedAfter: number|null, auditedTree?: string|null, geminiVerdict?: string|null}|null} f.runRow the store row for the run
+ * @param {string} [f.runRowWhy] why `runRow` is null
+ * @param {string|null} f.repoId this repository's row id in the store
+ * @param {ReturnType<typeof import('./final-review-marker.mjs').readFinalReviewMarker>|null} f.finalReview the member worktree's final-review marker
+ * @param {{ok: boolean, reason?: string}|null} f.delta the post-audit delta verdict (null = not measured)
+ * @param {string[]|null} f.changedPaths every path the branch changes against the default branch
+ * @returns {{ok: boolean, gate: string|null, runId: string|null, conditions: Array<{id: string, ok: boolean, reason: string}>, refusals: string[]}}
+ */
+export function evaluateShippedHead(f = {}) {
+  const c = [];
+  const tr = Array.isArray(f.trailers) ? f.trailers : null;
+  const all = (key) => (tr ?? []).filter((t) => t.key === key).map((t) => t.value);
+  const one = (key) => { const v = all(key); return v.length === 1 ? v[0] : null; };
+  const gate = one('AI-Gate');
+  const runId = one('AI-Run-ID');
+
+  // 1. trailers — parseable git trailers on the head commit, exactly one of each, and a shippable verified gate.
+  if (!tr) c.push(row('trailers', false, 'the head commit message could not be read, so its trailers were not checked'));
+  else {
+    const bad = [];
+    for (const key of ['AI-Skill', 'AI-Ship-Authority', 'AI-Gate', 'AI-Final-Review', 'AI-Run-ID']) {
+      const n = all(key).length;
+      if (n === 0) bad.push(`${key} is missing (an inline text block is not a trailer)`);
+      else if (n > 1) bad.push(`${key} appears ${n} times`);
+    }
+    if (one('AI-Skill') !== null && one('AI-Skill') !== 'ship') bad.push(`AI-Skill is ${JSON.stringify(one('AI-Skill'))}, not ship`);
+    if (one('AI-Ship-Authority') !== null && one('AI-Ship-Authority') !== 'launch-prompt') bad.push(`AI-Ship-Authority is ${JSON.stringify(one('AI-Ship-Authority'))}, not launch-prompt`);
+    if (gate !== null && !AI_GATE_SHIPPABLE.has(gate)) bad.push(`AI-Gate is ${JSON.stringify(gate)}; only passed or converged may ship without the user`);
+    if (one('AI-Final-Review') !== null && one('AI-Final-Review') !== 'approve') bad.push(`AI-Final-Review is ${JSON.stringify(one('AI-Final-Review'))}, not approve`);
+    c.push(bad.length ? row('trailers', false, bad.join('; ')) : row('trailers', true, `AI-Gate ${gate}, final review approve, launch-prompt ship, run ${runId.slice(0, 8)}`));
+  }
+
+  // 2. evidence — the SAME local marker the chip shipped against, bound to this run, this branch and this repository, and the
+  //    store's own record of that run. A trailer alone proves nothing: it is text any commit can carry.
+  const ev = f.evidence ?? null;
+  const rr = f.runRow ?? null;
+  if (!ev) c.push(row('evidence', false, `no usable gate-evidence marker in the member worktree (${f.evidenceWhy ?? 'absent, unreadable or not content-verifiable'}): evidence-unavailable`));
+  else if (runId === null) c.push(row('evidence', false, 'the head commit carries no single AI-Run-ID to bind the evidence to'));
+  else if (ev.runId !== runId) c.push(row('evidence', false, `the gate-evidence marker is run ${String(ev.runId).slice(0, 8)}, the commit's AI-Run-ID is ${runId.slice(0, 8)}`));
+  else if (typeof ev.auditedBranch !== 'string' || !ev.auditedBranch || typeof f.currentBranch !== 'string' || !f.currentBranch) {
+    c.push(row('evidence', false, `the branch identity is unknown (audit evidence: ${JSON.stringify(ev.auditedBranch ?? null)}, shipping: ${JSON.stringify(f.currentBranch ?? null)}); both must be known branch names`));
+  } else if (ev.auditedBranch !== f.currentBranch) c.push(row('evidence', false, `the audit evidence is for branch ${JSON.stringify(ev.auditedBranch)}, not ${JSON.stringify(f.currentBranch)}`));
+  else if (!rr) c.push(row('evidence', false, `no audit_runs row could be read for the run (${f.runRowWhy ?? 'cloud off, unreachable, or run not found'})`));
+  else if (!Number.isInteger(rr.roundConvergedAfter)) c.push(row('evidence', false, 'audit_runs.round_converged_after is null: the audit did not converge'));
+  else if (f.repoId == null || rr.repoId == null) c.push(row('evidence', false, `the repository identity could not be established (this repo: ${JSON.stringify(f.repoId ?? null)}, the run's repo: ${JSON.stringify(rr.repoId ?? null)})`));
+  else if (rr.repoId !== f.repoId) c.push(row('evidence', false, 'the run belongs to another repository'));
+  else if (rr.auditedTree != null && ev.auditedTree != null && rr.auditedTree !== ev.auditedTree) c.push(row('evidence', false, 'the store records a different audited tree for the run than the evidence marker names'));
+  else c.push(row('evidence', true, `run ${runId.slice(0, 8)} converged after round ${rr.roundConvergedAfter}, this repository, branch ${ev.auditedBranch}`));
+
+  // 3. final review — bound to the SAME run, audited tree and round, saying APPROVE with result approve, and the store's
+  //    recorded verdict must agree (it carries no target of its own, so it corroborates and never replaces the marker).
+  const fr = f.finalReview ?? null;
+  const bound = matchFinalReviewMarker(ev, fr);
+  if (!bound.ok) c.push(row('final-review', false, bound.reason));
+  else if (fr.marker.verdict !== 'APPROVE') c.push(row('final-review', false, `the recorded final review is ${fr.marker.verdict}, not APPROVE`));
+  else if (fr.marker.disposition == null) c.push(row('final-review', false, 'the final-review marker predates dispositions: re-run the final review'));
+  else if (fr.marker.disposition !== 'approve') c.push(row('final-review', false, `the recorded final-review result is ${fr.marker.disposition}, not approve`));
+  else if (!rr || rr.geminiVerdict == null) c.push(row('final-review', false, 'final-review-unrecorded: the store holds no final-review verdict for the run, so the marker is uncorroborated'));
+  else if (String(rr.geminiVerdict).toUpperCase() !== 'APPROVE') c.push(row('final-review', false, `the store records the run's final review as ${rr.geminiVerdict}, the marker says APPROVE`));
+  else c.push(row('final-review', true, `APPROVE (result approve) on run ${runId?.slice(0, 8)}, round ${ev.round}, the audited tree, corroborated by the store`));
+
+  // 4. the delta between the AUDITED tree and the shipped head is only what /ship itself writes.
+  if (!f.delta) c.push(row('post-audit-delta', false, 'the post-audit delta was not measured, so nothing was checked'));
+  else c.push(f.delta.ok ? row('post-audit-delta', true, f.delta.reason ?? 'only ship-step edits since the audit') : row('post-audit-delta', false, f.delta.reason ?? 'a change since the audit is not a ship-step edit'));
+
+  // 5. paths — the same three rows the chip's own ship ran.
+  c.push(...pathRows(f.changedPaths));
+
+  const refusals = c.filter((x) => !x.ok).map((x) => `${x.id}: ${x.reason}`);
+  return { ok: refusals.length === 0, gate, runId, conditions: c, refusals };
+}
+
+/** One printable line per batch re-check condition. */
+export function renderShippedHeadConditions(verdict) {
+  return verdict.conditions.map((x) => `  ${x.ok ? 'ok     ' : 'REFUSED'} ${x.id.padEnd(16)} ${x.reason}`);
 }
 
 /** One printable line per condition, for the preflight and for a refusal. */
