@@ -162,12 +162,21 @@ export function shipEntryRefusal({ status, rel, newMode }) {
  * @returns {{runFacts: (runId: string) => Promise<object>, repoId: (cwd: string) => Promise<object>}}
  */
 export function createStoreAdapter() {
+  // Loading the module and running the read are DIFFERENT failures and are reported as such: an import error is a missing or broken
+  // module, anything thrown by the read is an unexpected operational error, and neither reads as the other.
+  const load = async () => {
+    try { return { m: await import('./store/ship-run-facts.mjs'), why: null }; } catch (e) { return { m: null, why: `the store modules could not be loaded (${e?.code || e?.message || 'error'})` }; }
+  };
   return {
     async runFacts(runId) {
-      try { const m = await import('./store/ship-run-facts.mjs'); return await m.getShipRunFacts(runId); } catch (e) { return { row: null, why: `the store modules could not be loaded (${e?.code || e?.message || 'error'})` }; }
+      const { m, why } = await load();
+      if (!m) return { row: null, why };
+      try { return await m.getShipRunFacts(runId); } catch (e) { return { row: null, why: `the store read failed unexpectedly (${e?.code || e?.message || 'error'})` }; }
     },
     async repoId(cwd) {
-      try { const m = await import('./store/ship-run-facts.mjs'); return await m.getShipRepoId(cwd); } catch (e) { return { repoId: null, why: `the store modules could not be loaded (${e?.code || e?.message || 'error'})` }; }
+      const { m, why } = await load();
+      if (!m) return { repoId: null, why };
+      try { return await m.getShipRepoId(cwd); } catch (e) { return { repoId: null, why: `the store read failed unexpectedly (${e?.code || e?.message || 'error'})` }; }
     },
   };
 }
@@ -252,6 +261,9 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
   // The markers and the store were read over time: if HEAD moved while they were, none of it describes the head that was asked about.
   const after = run(['rev-parse', '--verify', 'HEAD']);
   if (after.status !== 0 || String(after.stdout).trim() !== headOid) return envelope(pre('head', 'HEAD moved while the check was running: nothing it read can be trusted'), headOid);
+  // The evidence is bound to a BRANCH, and a checkout of another branch at the same commit leaves HEAD's oid unchanged.
+  const branchAfter = run(['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  if ((branchAfter.status === 0 ? String(branchAfter.stdout).trim() : null) !== currentBranch) return envelope(pre('head', 'the checked-out branch changed while the check was running: the evidence was bound to another branch'), headOid);
   // ...and so is the base ref the change was measured against: it was verified once, so it must still be what it was.
   if (baseOidAtStart) {
     const again = run(['rev-parse', '--verify', `refs/remotes/${remote}/${baseRefName}`]);

@@ -75,7 +75,7 @@ chose to extend rather than add a sibling.
 **The chip ships itself; the coordinator lands and re-verifies.** This keeps the existing split:
 - The gate evidence and final-review marker live in the chip's worktree (`.audit/`, bound to its branch, `ship-preauth.mjs:78-89`).
   They can only be honestly read there.
-- The chip that made the change is the best-placed author of its own status entry and Implementation Log.
+- The chip that made the change is the best-placed author of its own status entry. The plan's Status and Implementation Log line are written by record catch-up after the merge (2.3).
 - The coordinator gets the batch verb (`fleet land`), extended to re-verify each member **from durable facts alone**: the commit's
   trailers, the store, CI, and git trees. Only members that verify are merged.
 
@@ -168,7 +168,7 @@ file changes a merge makes, so they stay outside the grant by its text, exactly 
 
 ### 2.2 Per-member ship (unchanged mechanism; the default flips)
 - `chip-preamble.md:57-65` and `:84`: the block becomes **default whenever the coordinator is acting under the grant**. Without
-  the grant it stays opt-in, as today. The ship steps are unchanged: status entry, Implementation Log,
+  the grant it stays opt-in, as today. The ship step is: status entry file only (the plan Status and Implementation Log move to catch-up, 2.3),
   `--check-preauthorised`, `--preauthorised`, push.
 - **Order.** The chip ships, then pushes the ship head, then runs `fleet ready`. That records the ship commit as the ready oid,
   so the CI that runs is CI on the ship head.
@@ -261,8 +261,8 @@ which is where the repository already writes them for members that merge without
 
 **Fixtures (real git).** Each case is built in a temp repo:
 - a status-entry-only delta;
-- a plan Status plus Log only, on a plan the branch already changed before its audit;
-- a plan edit outside both regions;
+- a plan Status edit, and an Implementation Log append, each REFUSED, on a plan the branch already changed before its audit;
+- a modified, a deleted and a renamed audited entry, a file added outside the entries directory, a symlink and a gitlink under it;
 - a code change after the audit;
 - a rebase that changes an untouched path;
 - an audited branch change reverted to base after the audit;
@@ -274,6 +274,8 @@ which is where the repository already writes them for members that merge without
 - a gc'd `A`.
 
 **Residuals, stated.**
+- **Deletions are not mechanically refused.** The grant text keeps "deletions" as the user's decision, but neither the chip's own `--preauthorised` ship nor this re-check refuses a member whose audited diff deletes tracked files: both share one path row set, and the audit read the deletion. Making the re-check stricter than the chip's own ship would be a behaviour change to main outside this PR, and the user decides whether a file removal inside an audited diff is a "deletion". Residual: a member that deletes files can land without the user. Follow-up, user's call.
+- **Self-shipped members and the plan's Implementation Log.** Catch-up counts a PR whose merge added a status entry as recorded, so with the plan lines moved out of the ship step a self-shipped member's plan log line would never be written. The re-check fails closed meanwhile (a ship that still edits the plan refuses and waits for `/ship`). The follow-up that closes it is: catch-up suggests the plan line for an in-band PR whose plan carries no marker, and `/ship` Step 5 skips the plan edit under `--preauthorised`. Not in this PR (it edits the `/ship` skill, which is size-ratcheted).
 - Audit **scope** coverage (did the run's passes read every path in `P`?) is not checked. Neither is it checked at today's ship
   time, so the grant widens nothing.
 - A forged `AI-Final-Review` trailer is now caught by `C3`. A forged local marker is not, because a session that hand-writes
@@ -534,6 +536,8 @@ its full suite in Actions.
   The gate was approved, so no round 2 was needed.
 
 ## Implementation Log
+
+> **Read the REWORK note at the end of this log first.** The delta-grammar rows and rounds below describe the DELETED content-grammar design and are kept as history; the current rule is path-only (2.3).
 
 **2026-11-18: SPLIT.** The plan was implemented in full on `claude/plan-coordinator-aggregate-ship-f258c2` (pushed, tag `pr-b-source`), and
 the user then decided to land it in two PRs ("Split it"). The code audit of the whole thing stopped at its round cap with the serial

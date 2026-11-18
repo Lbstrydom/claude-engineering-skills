@@ -25,8 +25,17 @@ after(() => { for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: tr
 
 const PLAN = ['# Plan: X', '- **Status**: Draft', '', '## Context', 'body', '', '## Phase 1', 'work', ''].join('\n');
 
+const EMPTY_GLOBAL_CONFIG = (() => { const f = path.join(os.tmpdir(), `shipped-head-empty-gitconfig-${process.pid}`); fs.writeFileSync(f, ""); return f; })();
+/** Fixture git must not inherit the caller's repository selection or global config (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, a global hook path ...). */
+function cleanGitEnv() {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
+  env.GIT_CONFIG_GLOBAL = EMPTY_GLOBAL_CONFIG; // an empty file: os.devNull is not a path git for Windows can open
+  return env;
+}
+
 function git(cwd, ...args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf-8', windowsHide: true });
+  const r = spawnSync('git', args, { cwd, env: cleanGitEnv(), encoding: 'utf-8', windowsHide: true });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout.trim();
 }
@@ -91,6 +100,17 @@ async function member({ afterAudit, trailers, fr, auditedTreeOverride, mutateMar
 }
 const failing = (env) => env.conditions.filter((c) => !c.ok).map((c) => c.id);
 const reason = (env, id) => env.conditions.find((c) => c.id === id)?.reason ?? '';
+
+describe('fixture isolation', () => {
+  it('fixture git ignores an inherited GIT_DIR / GIT_INDEX_FILE (a repo is still built where it was asked)', () => {
+    const keep = { d: process.env.GIT_DIR, i: process.env.GIT_INDEX_FILE };
+    process.env.GIT_DIR = path.join(os.tmpdir(), 'no-such-git-dir'); process.env.GIT_INDEX_FILE = path.join(os.tmpdir(), 'no-such-index');
+    try { const { dir } = makeRepo(); assert.ok(git(dir, 'rev-parse', '--git-dir').length > 0); assert.equal(fs.existsSync(path.join(dir, '.git')), true, 'the repository was created in the requested directory'); } finally {
+      if (keep.d === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = keep.d;
+      if (keep.i === undefined) delete process.env.GIT_INDEX_FILE; else process.env.GIT_INDEX_FILE = keep.i;
+    }
+  });
+});
 
 describe('parseTrailerLines / parseRawZ (pure)', () => {
   it('splits trailers at the first colon', () => {
@@ -566,6 +586,24 @@ describe('--check-shipped-head: modes, submodule config and the head race (code-
     assert.equal(env.ok, false);
     assert.deepEqual(failing(env), ['head']);
     assert.match(reason(env, 'head'), /moved while the check was running/);
+  });
+
+  it('a switch to ANOTHER BRANCH AT THE SAME COMMIT while the check runs is refused (the evidence is bound to a branch, HEAD\'s oid is unchanged)', async () => {
+    const { dir } = makeRepo();
+    write(dir, 'scripts/a.mjs', 'export const a = 2; // audited\n');
+    const auditedSha = commit(dir, 'audited work');
+    const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
+    shipDocs(dir);
+    const head = commit(dir, `ship x\n\n${TRAILERS()}`);
+    writeMarkers(dir, { auditedTree, auditedSha });
+    git(dir, 'branch', 'claude/other', head);
+    const racy = store({ auditedTree });
+    const realFacts = racy.runFacts;
+    racy.runFacts = async (id) => { git(dir, 'checkout', '-q', 'claude/other'); return realFacts(id); };
+    const env = await checkShippedHead({ repoRoot: dir, head, store: racy });
+    assert.equal(env.ok, false);
+    assert.deepEqual(failing(env), ['head']);
+    assert.match(reason(env, 'head'), /checked-out branch changed/);
   });
 });
 
