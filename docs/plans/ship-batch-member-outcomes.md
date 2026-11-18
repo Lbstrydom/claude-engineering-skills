@@ -648,3 +648,24 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
 | Tree identity, pin, attribution | tests 3, 7, 9, 10 | they pass; each mutation turns one red: skip the tree compare, pin `h` without the final re-read, treat `ghExit != 0` as not merged | a mutation table |
 | Never laundered | test 8, plus a mutation mapping `shipped-head-refused` to landed | red under the mutation | a mutation table |
 | Combination honesty | test 5, plus a mutation dropping the tree compare | red under the mutation | a mutation table |
+
+## Audit trail
+
+- **/audit-plan, SID `audit-plan-1795000656561-11828`** (2026-11-18). GPT rounds (HIGH / MEDIUM): R1 7 / 4, R2 3 / 2, R3 2 / 1.
+  Every finding was accepted and fixed in each round (acceptance 100%, 19 of 19), recorded in the ledger and the cloud
+  outcomes (11/11, 5/5, 3/3 labelled).
+- What each round fixed:
+  - **R1:** the merge is never advanced past an unobserved request; attribution is separated from the observed state;
+    `combination` is checked against the combined-tested tree; phase, outcome and stop reason are separate fields;
+    the outcome schema is a discriminated union with load-time invariants; an unreadable message is `not-run`;
+    the final re-read validates the target and draft status; there is a truth table; admission is split into invariant
+    inputs and head-bound evidence; F1 is enforced by structure (`stepMember`); head churn is bounded.
+  - **R2:** the chain is merge chronology; the queue rules are re-read per merge, with `isInMergeQueue` reconciliation;
+    the intent `at`; a not-run truth-table row; `combination` is exhaustive.
+  - **R3:** an external merge always stops the run, followed by a final base read; a missing-oid external merge is
+    non-terminal; a closed run is a read-only summary.
+- **The soft cap (3) stopped the loop, not convergence.** The structural card for round 4 read "AT THE CAP WHILE
+  PRODUCTIVE": HIGH 7→3→2, round 3 acceptance 100%, 0 structural, 0 polish, and 5 unclassifiable LOCAL? clusters, all
+  recovery-contract edge cases inside this plan's own §2.3/§2.6. No round 4 was run: `--past-cap` is a human call, and this
+  chip passes it to the coordinator with the handoff.
+- **Final review** (gemini, round 1 of 2): `APPROVE`, gate `approve` (blocking 0, debt 0), no new findings.
