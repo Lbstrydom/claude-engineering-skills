@@ -278,6 +278,21 @@ Since 2026-10-20 that condition requires the review's **result** (`disposition`)
 full) is refused, naming the result; `approve_with_debt` is refused too; a marker written before dispositions were recorded is
 refused with its own reason, `predates dispositions: re-run the final review`, distinct from `malformed`.
 
+### Re-checking a shipped head (`ship-commit.mjs --check-shipped-head`, from 2026-11-18)
+
+A chip that shipped itself carries the trailers above on its OWN head commit. `ship-commit.mjs --check-shipped-head --head <oid> --json`,
+run in that chip's worktree, re-judges that head from durable facts alone (`evaluateShippedHead`, plan
+`docs/plans/coordinator-aggregate-ship.md` section 2.3) and prints one `shipped-head/v1` JSON envelope: exit 0 ship-ok, 2 refused,
+1 the checker errored. What it does NOT do: it writes no trailer, it never raises a gate (`waived` and `not-run` are refused, never
+relabelled), and nothing merges. The only change allowed between the audited tree and the head is a newly ADDED regular file
+`docs/status/entries/<name>.md`, judged by path and mode alone (content is never parsed; a new file cannot rewrite audited content);
+any other difference, a plan or `status.md` edit included, refuses as `post-audit-delta`. The batch landing that will consume it (`fleet land --ship-batch`) is a follow-up PR.
+
+**Reading trailers off main.** A trailer is real only when git parses it: `git log --format='%(trailers:key=AI-Gate,valueonly)'`.
+Measured 2026-11-18 over the last 200 commits on main: 67 had an `AI-Gate:` line somewhere in the body, only 54 had one git parses,
+because the repository's squash setting (`COMMIT_MESSAGES`) concatenates every commit message and buries the ship commit's block.
+A count made with `--grep` is therefore a count of TEXT, not of provenance.
+
 ### The final-review result (`AI-Final-Review`, from 2026-10-20)
 
 A reviewed decision to ship with debt and a gate bypass used to look identical in git: both read `AI-Gate: waived`. The final

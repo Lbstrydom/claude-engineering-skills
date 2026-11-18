@@ -265,6 +265,11 @@
       "_why": "Ship record catch-up (docs/plans/ship-record-catchup.md): the verbs behind scripts/ship-record.mjs, which the scripts/ship*.mjs rule already tags ship. Imports fleet (gh plumbing), stores (ship_events) and shared-lib only; fleet reaches it as a child process, never by import."
     },
     {
+      "pattern": "scripts/lib/ship-shipped-head.mjs",
+      "domain": "ship",
+      "_why": "The gathering half of `ship-commit.mjs --check-shipped-head` (docs/plans/coordinator-aggregate-ship.md): it is ship-specific (the ship-step delta policy and the ship evidence markers), so it cannot sit in shared-lib (shared-lib may not import ship), and it is reached only from ship-commit.mjs, the scripts/ship*.mjs rule's own domain. Fleet reaches it as a child process (`ship-commit.mjs --check-shipped-head`), never by import."
+    },
+    {
       "pattern": "scripts/ship*.mjs",
       "domain": "ship"
     },

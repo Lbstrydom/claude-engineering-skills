@@ -156,6 +156,31 @@ describe('gatherChangedPaths', () => {
     return { status: 1, stdout: '' };
   };
 
+  it('a change that targets a NON-default branch is measured against THAT branch (the fully qualified ref), never origin/HEAD\'s', () => {
+    const seen = [];
+    const run = (args) => { seen.push(args.join(' ')); return { status: 0, stdout: args[0] === 'symbolic-ref' ? 'refs/remotes/origin/main' : args[0] === 'merge-base' ? 'basecommit' : 'a.txt\0' }; };
+    gatherChangedPaths(run, 'treeid', 'headid', 'develop');
+    assert.ok(seen.some((c) => c === 'merge-base headid refs/remotes/origin/develop'), seen.join('\n'));
+    assert.equal(seen.some((c) => c.startsWith('symbolic-ref')), false, 'origin/HEAD is not consulted when the target is named');
+  });
+  it('the base ref is on the DESTINATION remote, not a hardcoded origin', () => {
+    const seen = [];
+    const run = (args) => { seen.push(args.join(' ')); return { status: 0, stdout: args[0] === 'merge-base' ? 'basecommit' : 'a.txt\0' }; };
+    gatherChangedPaths(run, 'treeid', 'headid', 'develop', 'upstream');
+    assert.ok(seen.some((c) => c === 'merge-base headid refs/remotes/upstream/develop'), seen.join('\n'));
+    assert.equal(seen.some((c) => c.includes('refs/remotes/origin')), false);
+    const seen2 = [];
+    gatherChangedPaths((args) => { seen2.push(args.join(' ')); return { status: 1, stdout: '' }; }, 'treeid', 'headid', null, 'upstream');
+    assert.ok(seen2.some((c) => c === 'symbolic-ref --quiet refs/remotes/upstream/HEAD'), seen2.join('\n'));
+  });
+  it('a base resolved ONCE to a commit id is used as given: the mutable ref is never read again', () => {
+    const seen = [];
+    const OID = 'f'.repeat(40);
+    const run = (args) => { seen.push(args.join(' ')); return args[0] === 'merge-base' ? { status: 0, stdout: 'abc123\n' } : { status: 0, stdout: 'a.mjs\0' }; };
+    assert.deepEqual(gatherChangedPaths(run, 'deadbeef', 'headid', 'main', 'origin', OID), ['a.mjs']);
+    assert.ok(seen.includes(`merge-base headid ${OID}`), seen.join('\n'));
+    assert.equal(seen.some((c) => c.startsWith('symbolic-ref') || c.includes('refs/remotes')), false, seen.join('\n'));
+  });
   it('diffs the merge base against the tree with --no-renames, so BOTH ends of a rename are listed', () => {
     const seen = [];
     const run = (args) => {
@@ -165,7 +190,7 @@ describe('gatherChangedPaths', () => {
       return { status: 0, stdout: 'CODEOWNERS\0docs/OWNERS\0' };
     };
     assert.deepEqual(gatherChangedPaths(run, 'deadbeef'), ['CODEOWNERS', 'docs/OWNERS']);
-    assert.ok(seen.some((c) => c === 'diff --name-only --no-renames -z abc123 deadbeef'), seen.join('\n'));
+    assert.ok(seen.some((c) => c === 'diff --name-only --no-renames --ignore-submodules=none -z abc123 deadbeef'), seen.join('\n'));
     // and the renamed-away CODEOWNERS is a policy path, so the ship is refused:
     const v = evaluatePreauthorisedShip({ ...GOOD(), changedPaths: ['CODEOWNERS', 'docs/OWNERS'] });
     assert.ok(failing(v).includes('repo-policy'));
@@ -406,7 +431,7 @@ describe('gatherChangedPaths: the authoritative default branch is never swapped 
   it('origin/HEAD names develop and resolves: the FULLY QUALIFIED ref is the base', () => {
     const { run, calls } = seq([['symbolic-ref', { status: 0, stdout: 'refs/remotes/origin/develop\n' }], ['merge-base HEAD refs/remotes/origin/develop', { status: 0, stdout: 'dev1\n' }], ['diff', { status: 0, stdout: 'a.mjs\0' }]]);
     assert.deepEqual(gatherChangedPaths(run, 'tree'), ['a.mjs']);
-    assert.ok(calls.includes('diff --name-only --no-renames -z dev1 tree'));
+    assert.ok(calls.includes('diff --name-only --no-renames --ignore-submodules=none -z dev1 tree'));
   });
 
   it('origin/HEAD unavailable: the fully qualified origin/main is the only fallback', () => {

@@ -223,12 +223,31 @@ export function archiveReport(ctx, { session = null, branch = session?.source?.b
     const prs = listPullRequests(ctx.cwd, { env: ctx.env });
     pr = prs.queried ? prs.prs.find((p) => p.headRef === branch && !p.isCrossRepository) ?? null : { unknown: prs.reason };
   }
+  // A READY member whose PR is still open (docs/plans/coordinator-aggregate-ship.md section 2.2): a coordinator's re-check of a shipped head
+  // re-check reads this worktree's gitignored `.audit/` markers, and archiving destroys them, so the member would then wait
+  // for the user's /ship. Not a loss of commits (the unpushed probe above covers those): a reason the verdict is not CLEAN.
+  const owedEvidence = shipEvidenceOwed(session, pr);
+  if (owedEvidence) unverified.push(owedEvidence);
   const atRisk = Object.values(risks).some((l) => l.length);
   const verdict = atRisk ? 'AT RISK' : unverified.length ? 'UNVERIFIED' : 'CLEAN';
   // Proposals this session recorded and nobody has triaged yet. They live in the git common dir, so removing the
   // worktree loses none of them: this is a reminder of what is still owed, and it never changes the verdict.
   const proposals = scanIgnored && ctx.dir ? proposalsOwed(ctx.dir, session?.id ?? branch) : null;
   return { verdict, target: { session: session?.id ?? null, branch, worktree }, risks, unverified, pr, waitingOn: session?.waitingOn ?? [], sizes, stashes, owed: OWED, proposals };
+}
+
+/**
+ * Why a READY member with an open PR must not be archived yet, or null (docs/plans/coordinator-aggregate-ship.md section 2.2).
+ * Pure. A coordinator's re-check of a shipped head (`ship-commit.mjs --check-shipped-head`) reads this worktree's gitignored `.audit/` markers, and archiving destroys
+ * them, so the member would then wait for the user's `/ship`. A PR whose state could not be queried (`pr.unknown`) is UNCERTAIN, and
+ * a ready member under uncertainty is not clear to archive either.
+ * @param {{ready?: object|null}|null} session
+ * @param {{number?: number, unknown?: string}|null} pr
+ */
+export function shipEvidenceOwed(session, pr) {
+  if (!session?.ready || !pr) return null;
+  if (pr.unknown) return `the PR state could not be queried (${pr.unknown}), so whether this ready member's local .audit/ evidence is still owed to a coordinator's re-check of a shipped head is unknown: do not archive until it is`;
+  return `PR #${pr.number} is ready but unmerged: this worktree's local .audit/ gate-evidence and final-review markers are what a coordinator's re-check of a shipped head reads, and archiving destroys them — archive after the PR merges`;
 }
 
 /** The pending proposals `id` originated, from the shared store. An unreadable store is said, never "none". */
