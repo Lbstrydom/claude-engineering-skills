@@ -22,9 +22,10 @@ import {
   evaluateShippedHead, renderShippedHeadConditions, gatherChangedPaths, defaultBaseRef,
 } from './ship-preauth.mjs';
 import { isShipStepDelta } from './ship-record/authority.mjs';
-import { finishAndExit } from './cli-io.mjs';
+import { assertKnownFlags, finishAndExit } from './cli-io.mjs';
 
 export const SHIPPED_HEAD_SCHEMA = 'shipped-head/v1';
+const KNOWN_FLAGS = Object.freeze(['--check-shipped-head', '--head', '--json']);
 
 const SHA_RE = /^[0-9a-f]{7,64}$/i;
 const SHIP_TEXT_PATH_RE = /^(?:docs\/plans\/[^/]+\.md|status\.md)$/;
@@ -196,6 +197,8 @@ export async function runShippedHeadCli(argv, { cwd = process.cwd(), store } = {
     process.stderr.write(`AGENT FIX: --check-shipped-head: ${reason}. Usage: --check-shipped-head --head <oid> [--json], alone, from the member's worktree.\n`);
     return finishAndExit(2);
   };
+  // An unknown flag is refused by NAME before anything runs: a read-only check must never silently ignore what was asked of it.
+  try { assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'ship-commit --check-shipped-head', from: 0 }); } catch (e) { return bad(`${e.message.split('. ')[0]}; a standalone read-only check cannot be combined with other flags`); }
   if (head === undefined || head.startsWith('--') || !SHA_RE.test(head)) return bad('--head needs a commit oid');
   if (others.length > 0) return bad(`a standalone read-only check cannot be combined with ${others.join(' ')}`);
   const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf-8', windowsHide: true });

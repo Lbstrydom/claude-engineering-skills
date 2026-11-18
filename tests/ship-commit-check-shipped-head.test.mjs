@@ -19,7 +19,7 @@ import { checkShippedHead, parseNameStatusZ, parseTrailerLines, SHIPPED_HEAD_SCH
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUN = '981fc79a-0fbb-447a-a294-b0c0217dab71';
 const tmpDirs = [];
-after(() => { for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3 }); });
+after(() => { for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 const PLAN = ['# Plan: X', '- **Status**: Draft', '', '## Context', 'body', '', '## Phase 1', 'work', ''].join('\n');
 
@@ -221,7 +221,7 @@ describe('--check-shipped-head: what changed after the audit', () => {
     });
   }
   it('a delete after the audit refuses', async () => {
-    const { env } = await member({ afterAudit: (d) => { fs.rmSync(path.join(d, 'scripts/other.mjs')); commit(d, 'delete'); } });
+    const { env } = await member({ afterAudit: (d) => { fs.rmSync(path.join(d, 'scripts/other.mjs'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); commit(d, 'delete'); } });
     assert.deepEqual(failing(env), ['post-audit-delta']);
   });
   it('a plan body edit after the audit refuses', async () => {
@@ -238,12 +238,12 @@ describe('--check-shipped-head: what changed after the audit', () => {
 
 describe('--check-shipped-head: evidence and final review live in the member worktree', () => {
   it('a missing evidence marker is evidence-unavailable (a gone worktree fails closed)', async () => {
-    const { env } = await member({ mutateMarkers: (d) => fs.rmSync(path.join(d, '.audit/last-audit-run.json')) });
+    const { env } = await member({ mutateMarkers: (d) => fs.rmSync(path.join(d, '.audit/last-audit-run.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }) });
     assert.ok(failing(env).includes('evidence'));
     assert.match(reason(env, 'evidence'), /evidence-unavailable|no usable/);
   });
   it('a missing final-review marker refuses the final-review row', async () => {
-    const { env } = await member({ mutateMarkers: (d) => fs.rmSync(path.join(d, '.audit/last-final-review.json')) });
+    const { env } = await member({ mutateMarkers: (d) => fs.rmSync(path.join(d, '.audit/last-final-review.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }) });
     assert.deepEqual(failing(env), ['final-review']);
   });
   it('a final review for another round refuses', async () => {
@@ -287,7 +287,7 @@ describe('--check-shipped-head: the real CLI boundary (store off)', () => {
   const run = (args, cwd) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'ship-commit.mjs'), ...args], {
     cwd, encoding: 'utf-8', windowsHide: true,
     // An EMPTY DSN is the air-gap signal: the store is off whatever ~/.audit-loop.env says.
-    env: { ...process.env, AUDIT_DB_URL: '', AUDIT_DB_TEST_URL: '', LEARNING_DISABLE: '1', AZURE_OPENAI_ENDPOINT: '' },
+    env: { ...process.env, AUDIT_DB_URL: '', LEARNING_DISABLE: '1', AZURE_OPENAI_ENDPOINT: '' },
   });
   it('prints exactly one v1 JSON envelope and exits 2: with the store off the evidence row refuses, with its reason', () => {
     const r = run(['--check-shipped-head', '--head', m.head, '--json'], m.dir);

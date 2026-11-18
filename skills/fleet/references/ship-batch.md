@@ -6,8 +6,8 @@ summary: Landing shipped chips in one action — the standing grant, `land --shi
 
 `/ship` is user-only, so the user used to type it in every chip. Under a **standing grant** the user writes in their own
 `~/.claude/CLAUDE.md`, the chip ships itself and the coordinator lands the whole batch in ONE action. Anything that does not verify
-waits for the user's `/ship` in that chip, and the rest still lands. Design, audit trail and the full condition table:
-`docs/plans/coordinator-aggregate-ship.md` (source repo).
+waits for the user's `/ship` in that chip, and the rest still lands. The design, its audit trail and the full condition
+table are the source repo's `coordinator-aggregate-ship` plan (not synced to consumers).
 
 ## What the user wrote, and what it means
 

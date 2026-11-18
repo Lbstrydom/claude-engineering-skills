@@ -88,7 +88,7 @@ describe('readShipBatchGrant: the file', () => {
       const f = path.join(d, 'CLAUDE.md');
       fs.writeFileSync(f, wrap(dated));
       assert.equal(readShipBatchGrant({ file: f }).ok, true);
-    } finally { fs.rmSync(d, { recursive: true, force: true }); }
+    } finally { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
   it('a missing file is grant-absent with the path in the reason, never a throw', () => {
     const r = readShipBatchGrant({ file: path.join(os.tmpdir(), 'no-such-dir-xyz', 'CLAUDE.md') });

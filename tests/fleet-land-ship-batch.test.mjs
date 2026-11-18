@@ -33,7 +33,7 @@ const MSG = [
 ].join('\n');
 
 const tmpDirs = [];
-after(() => { for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3 }); });
+after(() => { for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 const mkTmp = (p) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); tmpDirs.push(d); return d; };
 
 // ---- (1) pure ----------------------------------------------------------------------------------------------------------------
@@ -269,7 +269,7 @@ describe('approveShipBatch: the merge, on the real serial runner', () => {
 
   it('GRANT ABSENT: nothing merges, nothing is built or changed', () => {
     const b = batchFx();
-    fs.rmSync(b.grantFile);
+    fs.rmSync(b.grantFile, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const g = ghFor(b);
     const r = approve(b, g.gh);
     assert.equal(r.ok, false);
@@ -290,7 +290,7 @@ describe('approveShipBatch: the merge, on the real serial runner', () => {
     let n = 0;
     const g = ghFor(b, { onBeforeMerge: () => {} });
     // Revoke at the first PR view after approval started (the serial loop reads the PR before it asks for the message).
-    const gh = (args) => { if (args[0] === 'pr' && args[1] === 'view' && n++ === 1) fs.rmSync(b.grantFile); return g.gh(args); };
+    const gh = (args) => { if (args[0] === 'pr' && args[1] === 'view' && n++ === 1) fs.rmSync(b.grantFile, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); return g.gh(args); };
     const r = approve(b, gh);
     assert.equal(r.ok, false);
     assert.match(r.reason, /grant-revoked/);
@@ -370,7 +370,7 @@ describe('approveShipBatch: the merge, on the real serial runner', () => {
 
   it('an unknown train (no sidecar) is refused: a plain train cannot borrow the grant', () => {
     const b = batchFx();
-    fs.rmSync(path.join(b.dir, 'shipbatch', `${b.trainId}.json`));
+    fs.rmSync(path.join(b.dir, 'shipbatch', `${b.trainId}.json`), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const r = approve(b, ghFor(b).gh);
     assert.equal(r.ok, false);
     assert.match(r.reason, /not a ship-batch train/);
@@ -442,7 +442,7 @@ describe('buildShipBatch: grant first, partition before the build', () => {
 
   it('without the grant the build is refused before ANY member is looked at (the child is never run, nothing is built)', () => {
     const b = batchFx();
-    fs.rmSync(b.grantFile);
+    fs.rmSync(b.grantFile, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     let built = false;
     const r = buildShipBatch(ctxFor(b.fx), {}, { ...depsWith(ghGreen(b.tested)), shipBatch: { ...b.shipBatch, members: membersOf(b) } }, () => { built = true; return { ok: true, trainId: 'x' }; }, { parseSelect });
     assert.equal(r.ok, false);

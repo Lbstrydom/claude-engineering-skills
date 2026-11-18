@@ -60,7 +60,7 @@ describe('in a relocated layout', () => {
     repo = fs.mkdtempSync(path.join(tmp, 'consumer-'));
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
   });
-  after(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 }); });
+  after(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   const run = (script, args, cwd = repo) => spawnSync(process.execPath, [script, ...args], {
     cwd, encoding: 'utf-8', windowsHide: true, timeout: 120_000,
