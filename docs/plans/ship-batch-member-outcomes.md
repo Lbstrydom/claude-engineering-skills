@@ -1,9 +1,10 @@
-# Plan: Ship-batch per-member outcomes (PR B)
+# Plan: Ship-batch per-member outcomes, and rollup landing (PR B)
 - **Date**: 2026-11-18
 - **Status**: Draft
 - **Author**: Claude + Louis
 - **Scope**: backend (js-ts). Principle set: `skills/plan/references/engineering-principles.md`.
 - **Depends on**: docs/plans/coordinator-aggregate-ship.md: PR A (the read-only half: `ship-commit.mjs --check-shipped-head`, `scripts/lib/fleet/coordinator-grant.mjs`, the archive-check refusal) must merge first. This plan calls both readers and edits neither.
+- **Extended 2026-11-18** with `fleet land --rollup` (§2.9), on Louis's instruction: "Plan --rollup now, folded into PR B's plan, since PR B already rebuilds fleet land."
 - **Target domain(s)**: `fleet`, `tests`
 - ⚠ **Cross-domain work**: the `tests` domain is touched only through test files.
 
@@ -458,6 +459,213 @@ Exit codes use fleet's existing mapping (`land.mjs`): 0 for ok, 3 for refused or
 After the first line, the summary prints one line per member: status, code, attribution, the read-back AI-Gate, the merge
 oid, and for needs-user members "type /ship in that session".
 
+### 2.9 Rollup landing: `fleet land --rollup` (Louis, 2026-11-18)
+
+**Scope, verbatim** (Louis, typed in CES: Coordinator, relayed 2026-11-18): "Plan --rollup now, folded into PR B's plan,
+since PR B already rebuilds fleet land." **Goal:** chips keep working in parallel, but a batch lands as ONE PR, so CI runs
+once per batch instead of once per chip.
+
+**Facts this design rests on** (measured by CES: Coordinator, 2026-11-18, from each repo's workflow triggers):
+
+- A branch push triggers no full CI in any repo. CES `full-suite.yml`, storyline `phase-gates.yml`, wine's checks and AIO
+  `ci.yml` run on `pull_request`, plus `push` to `main` for CES and storyline.
+- So the saving comes from chips **not opening PRs**. A draft PR still triggers `pull_request`.
+- Louis accepted, for every repo, one squash commit per batch on `main`; per-chip one-click revert is given up.
+- Louis rejected anything that needs GitHub to accept a substitute status: no injected statuses, no ruleset bypass. **Nothing
+  below needs a GitHub settings change.** The rollup PR passes the same required checks as any PR.
+
+**The one idea.** A rollup is an ordinary train whose candidate is **pushed and landed as one PR**, run by the serial runner
+of §2.2-§2.6 as a **one-step run under a `rollup` policy**. The members are not serial steps. They are the policy's
+`members`, each with its own evidence, and they land or not together, because they share one tree.
+
+```mermaid
+sequenceDiagram
+    participant C as coordinator
+    participant L as fleet land --rollup
+    participant G as git and gh
+    C->>L: land --rollup [--hold a,b]
+    L->>L: admit each ready member (admitMember); HOLD the ones that fail, with reasons
+    L->>G: build the candidate (buildTrain, rollup messages); run the pre-land tiers
+    C->>L: land --approve T --rollup
+    L->>G: push candidate to refs/heads/rollup/DATE-N (must not exist)
+    L->>G: gh pr create (body = the member manifest)
+    L->>G: wait for the required checks on the candidate head
+    L->>L: re-admit every member; base tip must equal the candidate parent
+    L->>G: gh pr merge N --squash --match-head-commit CANDIDATE (body = manifest)
+    L->>G: classifyMerged + tree read-back
+    L->>G: after MERGED is confirmed: close member PRs "superseded by #N"
+```
+
+#### 2.9.1 Build: `fleet land --rollup [--select ids] [--hold ids]`
+
+1. **Selection** is the existing `build()` selection (`scripts/lib/fleet/land.mjs:143-183` (`cf9d57cd`)): ready sessions in
+   landing order, `--select` narrowing them. `--hold a,b` removes named members and records them held with code
+   `held-by-coordinator`. A `--hold` id that is not ready is an argv error, like `--select`.
+2. **Admission per member**, before anything is built, with the one predicate `admitMember` of §2.3 (F6: the build and the
+   merge ask the same question):
+   - the member branch on the remote (`git ls-remote origin refs/heads/<branch>`) is exactly the ready oid. A branch that was
+     never pushed, or moved since `ready`, is held as `branch-not-pushed` or `head-moved`;
+   - the PR A child `ship-commit.mjs --check-shipped-head --head <oid> --verify-base --base <base>` in the member's worktree
+     is ship-ok. A refusal is held as `shipped-head-refused`, with the child's refusals copied. **`AI-Gate: waived` or
+     `not-run` therefore never enters a rollup** (the child refuses it), so nothing is laundered into passed;
+   - no member CI is asked for: in rollup mode there is none, and the rollup PR's checks replace it (§2.9.3).
+
+   A member that fails admission is **HELD, not failed**: excluded, with its reason in `policy.excluded`, and the rollup is
+   built without it. This is §2.1's per-member outcome at build time, recorded once, in the write-once build record.
+3. **Overlap.** Two admitted members whose changed-path sets (`git diff --name-only <base>...<oid>`) intersect, outside
+   `appendOnlyGlobs`, are **never in one rollup**. The later one in landing order is held as `overlap:<path>`. Each was
+   audited against its own tree; the combined content of a shared file was audited by nobody, and a targeted review would be
+   new machinery for a case `fleet claim` already blocks (claims are path-disjoint). The held member lands in the next
+   rollup, after its own restack and, if the restack changed its tree, a re-audit, which its next admission enforces.
+4. **One open rollup per repo.** The build refuses while another rollup train is `awaiting-merge`, naming it. A member in two
+   open rollups could otherwise land twice.
+5. **The candidate** is `buildTrain` (`scripts/lib/fleet/train.mjs:280` (`cf9d57cd`)) unchanged in shape: base worktree,
+   sources applied in order, candidate `{oid, tree}` recorded before any test, then the pre-land tiers. Two small
+   parameters, both off on every other path:
+   - `landing: 'rollup'` is written into the train manifest (an optional `TrainSchema` key). `approveTrain`, `confirmTrain`,
+     `reconcileTrain` and `approveSerial` refuse a train that carries it, so a rollup can never be pushed straight to the
+     base by a plain `land --approve`;
+   - each member is applied as `merge --squash` (as `pr` mode does, `train.mjs:392-393`) and committed with a **rollup
+     message**: the member's subject, then a `Fleet-Rollup-Member: <id> <full oid>` trailer, and **no `AI-*` trailer**. `-C`
+     is not used: it would copy the member's `AI-Gate` onto a commit whose tree nobody audited.
+
+   Branch-only sources are allowed (rollup members need no PR). `appendOnlyGlobs` union resolution applies, as in the direct
+   modes, because fleet pushes this very tree.
+6. A red tier, a conflict, or a refused build leaves the train as today: candidate and logs kept, nothing pushed.
+
+#### 2.9.2 Approve: `fleet land --approve <t> --rollup`
+
+Under `withTrainLock`, `approveRollup`:
+
+1. checks that the train carries `landing: 'rollup'`, that it is approvable (`approvable`), and that the clone is not shallow;
+2. re-admits every member (§2.9.1 step 2). **Any** member that fails now stops the approve as `member-refused:<id>`. A member
+   inside the candidate tree cannot be dropped from it: the remedy is a rebuild with `--hold <id>`;
+3. reads the base tip. It must equal `train.destination.expectedOid`, the candidate's parent; otherwise `base-moved`;
+4. pushes the candidate to `refs/heads/rollup/<YYYYMMDD>-<n>` on the recorded `pushUrl` with
+   `--force-with-lease=refs/heads/rollup/<YYYYMMDD>-<n>:` (the ref must not exist). `n` is the lowest free number read from
+   `ls-remote`. The intent is written before the push and the result after it, as the direct modes do (`push-pending`);
+5. runs `gh pr create --base <base> --head rollup/<YYYYMMDD>-<n> --title <subject> --body-file <manifest>` and records the PR
+   number. A crash between the push and the create is resolved on resume by `gh pr list --head rollup/<...>`; a second
+   create is never sent while one exists;
+6. writes the serial run: **one step**, `{id: 'rollup/<YYYYMMDD>-<n>', prNumber, repo, testedOid: candidate.oid, head:
+   candidate.oid, accounted: [candidate.oid]}`, and `policy = {name: 'rollup', grantVersion, remote, candidateTree,
+   baseChain: [expectedOid], members, excluded}`;
+7. hands the run to `runSerial` (§2.2-§2.6). The rollup policy answers:
+   - `admit`: re-admit **every** member (the same `admitMember`), plus the PR head equal to the candidate oid and the head
+     tree equal to `candidateTree`. A member failing is a run fault (`member-refused:<id>`), never a member skip;
+   - `baseCheck`: the live base tip equals `baseChain[0]`, or `base-moved`;
+   - `allowUpdate: false`. A behind PR is never updated: a rollup is rebuilt instead (§2.9.5);
+   - `message`: the squash subject `fleet rollup <rollup id>: <k> members` and the manifest body (§2.9.3);
+   - `readBack`: `classifyMerged` (§2.3) on the one step, then the tree read-back. `verified` needs the squash parent equal to
+     `baseChain[0]` and the squash tree equal to `candidateTree`.
+
+**The grant.** The rollup lands work the coordinator did not author, without the user's `/ship`, which is exactly what the
+ship-batch grant covers. So `approveRollup` reads the same `readShipBatchGrant` (PR A) and refuses without it. Rollup does not
+widen the grant: its members are self-shipped chips (§2.9.7), exactly the ship-batch members.
+
+The merge argv is `gh pr merge <N> -R <repo> --squash --match-head-commit <candidate full oid> --subject ... --body-file ...`.
+Never `--auto`; never `--delete-branch` (a deletion is Louis's, and `--delete-branch` closes stacked PRs).
+
+#### 2.9.3 Evidence honesty: two records, never one composed verdict
+
+- **The members' audit evidence**, each against its OWN head and tree, in `policy.members[i]`: `{id, branch, head, tree:
+  head^{tree}, runId, gate, finalReview, sessionId}`. `runId`, `gate` and the final-review condition come from the child's
+  `shipped-head/v1` envelope. The envelope has no audit SID field; `runId` is the store row that names it. This plan does
+  not change PR A's contract to add one.
+- **The rollup's CI evidence**, against the CANDIDATE tree, on the serial step's landed outcome: an optional `ci: {tree,
+  checks: [{name, conclusion}], observedAt}`, filled from the `observeRequiredChecks` result the loop already has. It is
+  allowed only under the `rollup` policy (`validatePolicyRun`).
+- **The manifest** (the PR body and the squash body, the same bytes) is rendered from those two records only: a human table,
+  then one fenced block `fleet-rollup/v1` (JSON: rollup id, base, candidate `{oid, tree}`, members, held). It names each
+  member's gate as that member's.
+- **No `AI-*` trailer on the rollup commit, ever.** The squash carries `Fleet-Rollup: v1 <rollup id>` only. A single
+  `AI-Gate` would claim one verdict for content no single audit read. The `AI-*` namespace stays reserved to
+  `ship-commit.mjs` and `ship-train.mjs` (AGENTS.md §Commit provenance).
+- Where provenance survives the squash: on `main`, the manifest; on GitHub, `refs/pull/<N>/head`, whose first-parent chain
+  holds one rollup-message commit per member (§2.9.1 step 5), each naming its member's full oid. The member branches are not
+  deleted.
+
+#### 2.9.4 Red rollup
+
+A required check that ends red stops the run as `checks-failed` (the existing fault). Nothing is cleaned up: the candidate
+worktree and the train manifest stay, and the rollup branch and PR stay open with their logs. The summary says:
+
+```
+stopped: checks-failed on rollup/<...> #N. Eject a suspect and rebuild: land --rollup --hold <member>.
+A green rebuild without <member> does NOT prove <member> at fault.
+```
+
+No automatic bisect. A rebuild is a new train, branch and PR (§2.9.5). The old PR is closed with "superseded by #M" once the
+new one is open, and never deleted.
+
+#### 2.9.5 The base race
+
+`--match-head-commit` pins the head, not the base. If `main` moves after the build:
+
+- before the merge, `baseCheck` stops the run as `base-moved`, and nothing merges. The remedy is a rebuild, which re-admits
+  every member against the new base and re-runs the tiers and the PR's CI. `fleet land --rollup` prints that line;
+- in the window between the last base read and the merge request, GitHub may squash onto a newer base. The read-back then
+  sees a parent other than `baseChain[0]` and records `landed` with verdict `untested-base`, `ok: false`, loudly (§2.3).
+  Detection only: the r1-H1 deferral, unchanged.
+
+A rebuilt rollup is always a new branch, so a red or stale rollup's candidate and logs survive for diagnosis.
+
+#### 2.9.6 Records
+
+- **One ship record for the rollup.** ship-record catch-up already writes one entry per merged PR from immutable facts
+  (`scripts/lib/ship-record/entry.mjs:1-18` (`cf9d57cd`)). The rollup PR is one PR. Its merge commit's message holds the
+  manifest and is immutable once merged, so `renderPrEntry` may read it. A new pure `parseRollupManifest(message)` (in
+  `scripts/lib/fleet/rollup.mjs`, imported by `entry.mjs`) lets the entry list every member: id, branch, head, gate. A
+  malformed manifest renders as "manifest unreadable", never as zero members.
+- The catch-up event for that PR uses the reason `merged-via-rollup`, not `merged-without-ship`. The members were shipped by
+  their chips; the rollup itself was not `/ship`ped, and the entry says exactly that.
+- **Member PRs, if any** (a member that opened one before the repo switched to rollup): after `classifyMerged` returns
+  `landed` for the rollup step, and only then, each member PR that is still OPEN gets `gh pr close <n> --comment
+  "superseded by #N (fleet rollup <id>)"`. A failed close is reported in the summary and never undoes or re-runs the
+  landing. Never on `merge-unconfirmed`, `not-run` or a stop.
+- **Done-ness needs nothing new:** `deriveTrainDone` (`scripts/lib/fleet/overlap.mjs:589` (`cf9d57cd`)) marks a session done
+  when a `landed` train lists it as a source, and a rollup train's sources are exactly its admitted members. Held members are
+  not sources.
+
+#### 2.9.7 The chip-side contract: `.fleet.json` `landing: "rollup"`
+
+- **Config:** `landing: z.enum(['pr', 'rollup']).optional()` in `scripts/lib/fleet/config.mjs`, default `pr`. Absent means
+  today's behaviour, byte for byte.
+- Under `landing: "rollup"`, a chip ends at **branch pushed, then `fleet ready`**, and does **not** open a PR. The
+  pre-authorised ship steps stay (the status entry, the plan's Implementation Log, `ship-commit.mjs --preauthorised`): they
+  put on the branch head the `AI-*` trailers that the child of §2.9.1 reads.
+- `fleet ready` and `fleet next` print one line in rollup mode: `LANDING: this repo lands by rollup (.fleet.json landing:
+  "rollup"): after ready, do NOT open a PR; the coordinator lands it with fleet land --rollup.` That line is what reaches
+  every chip, including one launched before the switch.
+- Plain `fleet land` in a rollup repo: the `pr`-mode refusal for a branch-only source (`train.mjs:253`) gains the hint `this
+  repo lands by rollup: fleet land --rollup`. Only under `landing: "rollup"`; the message is unchanged otherwise.
+- **Docs to change:**
+  - `skills/fleet/references/chip-preamble.md`: the TURN paragraph (opening a PR waits for a turn) and STOP POINT ("the PR
+    open or the branch pushed") gain the rollup case, and the PRE-AUTHORISED SHIP block ends at the push plus `fleet ready`
+    in rollup mode;
+  - `skills/fleet/references/participant-rules.md`: a new rule 4b, mirroring 4a: if `next` says the repo lands by rollup, do
+    not open a PR;
+  - `skills/fleet/references/landing.md`: the coordinator's `--rollup`, `--hold` and red-rollup procedure;
+  - `skills/fleet/SKILL.md` is over the 12,000-character skill-size line (13,035 measured), so it may not grow: the `land
+    --rollup` usage line is offset by trimming the same file, and `npm run skills:size:gate` proves it.
+
+#### 2.9.8 What stays byte-identical
+
+Every path without `--rollup` and without `landing: "rollup"`. The golden fixture of §2.5 covers the serial runner, and three
+more golden cases cover `buildTrain` (the `pr` and `direct-squash` messages unchanged), `approveTrain` on a non-rollup train,
+and the `fleet ready`/`next` output with no `landing` key. `TrainSchema` gains one optional key, so no existing manifest
+changes.
+
+#### Rollup right-sizing
+
+- **The band-aid:** tell chips to stop opening PRs, and let the coordinator open one PR by hand per batch. It saves the CI,
+  but nothing re-checks the members, the PR body is free text, and the evidence of n audits collapses into one commit.
+- **The over-built version:** a merge-queue service with automatic bisect, targeted cross-member review, per-member revert
+  commits, and status injection.
+- **Chosen:** one optional train key, one message mode in `applySources`, `approveRollup` (push, PR create, then the
+  existing serial runner with a `rollup` policy), one pure manifest module, one config key, one line in `ready`/`next`, and
+  the docs. Each piece answers one of the coordinator's eight requirements; none exists for a later one.
+
 ### Right-sizing
 
 - **The band-aid** would be a seventh round of site patches: more `memberFail` calls and more sidecar states. Six rounds
@@ -499,6 +707,21 @@ oid, and for needs-user members "type /ship in that session".
 | `tests/fleet-land-ship-batch.test.mjs` | modify | rebuilt on the public surface (§9); the old sidecar-state assertions go |
 | `tests/helpers/fleet-serial-fx.mjs` | modify | a recording fake `gh`; tree-equal re-push and tree-differs fixtures |
 | `docs/plans/coordinator-aggregate-ship.md` | modify | one line in §2.3 recording that PR A's residual (1) is closed: Louis accepted on 2026-11-18, verbatim "deletions can /ship - in a crisis we can always roll back from github" (relayed by CES: Coordinator), so a deletion in an audited diff may self-ship. Edited here, not on #394's pinned head; the exact line is placed against `origin/main` after the merge |
+| `scripts/lib/fleet/rollup.mjs` | create | `parseRollupManifest`, `renderRollupManifest`, `rollupBranchName`, `rollupMessage` (the member commit message with no `AI-*` trailer), `overlapHolds`: pure, no I/O (§2.9) |
+| `scripts/lib/fleet/rollup-land.mjs` | create | `buildRollup` (admission, holds, overlap, one-open-rollup, then `buildTrain`), `approveRollup` (re-admit, base check, push, PR create, the one-step serial run), `makeRollupPolicy`, the member-PR close after `landed` |
+| `scripts/lib/fleet/train.mjs` | modify | `applySources` takes the rollup message mode; `buildTrain` writes `landing: 'rollup'` when asked; the `pr` branch-only refusal gains the rollup hint under `landing: "rollup"` |
+| `scripts/lib/fleet/train-approve.mjs` | modify | `approveTrain`, `confirmTrain`, `reconcileTrain` refuse a train carrying `landing: 'rollup'` |
+| `scripts/lib/fleet/registry.mjs` | modify | `TrainSchema`: optional `landing: z.literal('rollup')` |
+| `scripts/lib/fleet/config.mjs` | modify | `.fleet.json` `landing: 'pr' \| 'rollup'` (optional, default `pr`) and the `LANDING:` line text |
+| `scripts/lib/fleet/commands.mjs` | modify | `fleet ready` and `fleet next` print the `LANDING:` line in rollup mode |
+| `scripts/lib/ship-record/entry.mjs` | modify | `renderPrEntry` lists the rollup members from the merge commit's manifest |
+| `scripts/lib/ship-record/commands.mjs` | modify | the event reason `merged-via-rollup` for a merge commit with a valid manifest |
+| `skills/fleet/references/landing.md` | modify | the coordinator procedure: `--rollup`, `--hold`, red rollup, base race |
+| `skills/fleet/references/chip-preamble.md` | modify | TURN, STOP POINT and PRE-AUTHORISED SHIP in rollup mode |
+| `skills/fleet/references/participant-rules.md` | modify | rule 4b |
+| `tests/fleet-rollup.test.mjs` | create | §9 tests 14-21 (fake `gh`, real git) |
+| `tests/fleet-rollup-manifest.test.mjs` | create | the manifest round trip, malformed manifests, the rollup message has no `AI-*` trailer |
+| `tests/ship-record-entry.test.mjs` | modify | a rollup merge commit lists its members; a malformed manifest renders "manifest unreadable" |
 | `.claude/skills/fleet/**` | regenerate | `npm run skills:regenerate` (close-out) |
 
 Every path above is repo-relative. PR A's files (`scripts/lib/ship-shipped-head.mjs`, `scripts/lib/ship-preauth.mjs`,
@@ -533,6 +756,27 @@ Files: `scripts/lib/fleet/ship-batch.mjs` (modify), `scripts/lib/fleet/land.mjs`
 Files: `skills/fleet/references/ship-batch.md` (modify), `skills/fleet/SKILL.md` (modify),
 `skills/fleet/gate-contract.json` (modify).
 
+**Phase 5: Rollup landing.**
+- Red tests first: `fleet-rollup-manifest`, then `fleet-rollup` tests 14-21, plus the three byte-identity golden cases of
+  §2.9.8, captured from `origin/main` before the first edit to `train.mjs`.
+- Then `rollup.mjs`, the train key and message mode, the approve refusals, `rollup-land.mjs`, and the land and argv wiring
+  (`--rollup`, `--hold`).
+
+Files: `scripts/lib/fleet/rollup.mjs` (create), `scripts/lib/fleet/rollup-land.mjs` (create),
+`scripts/lib/fleet/train.mjs` (modify), `scripts/lib/fleet/train-approve.mjs` (modify), `scripts/lib/fleet/registry.mjs`
+(modify), `scripts/lib/fleet/land.mjs` (modify), `scripts/lib/fleet/argv.mjs` (modify), `tests/fleet-rollup.test.mjs`
+(create), `tests/fleet-rollup-manifest.test.mjs` (create).
+
+**Phase 6: The chip-side contract and the record.**
+- The `landing` config key and the `LANDING:` line; the ship-record entry and event reason; the three reference docs and
+  the size-neutral SKILL.md line.
+
+Files: `scripts/lib/fleet/config.mjs` (modify), `scripts/lib/fleet/commands.mjs` (modify),
+`scripts/lib/ship-record/entry.mjs` (modify), `scripts/lib/ship-record/commands.mjs` (modify),
+`tests/ship-record-entry.test.mjs` (modify), `skills/fleet/references/landing.md` (modify),
+`skills/fleet/references/chip-preamble.md` (modify), `skills/fleet/references/participant-rules.md` (modify),
+`skills/fleet/SKILL.md` (modify).
+
 **Close-out (not a phase):** `npm run skills:regenerate`, `npm run skills:check`, the targeted tests above plus
 `tests/fleet-serial.test.mjs` and `tests/ship-train-recovery.test.mjs`, `npm run guards:preflight`. The full suite runs in
 Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordinator, who pushes it.
@@ -544,6 +788,9 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
     `serial.mjs`, and Phase 2 is audited against it.
 - **Cluster B**: Phases 3-4, fix-gate: final.
   - Coupling: ship-batch is the policy's only caller, and the runbook describes exactly that policy's outcomes.
+- **Cluster C**: Phases 5-6, fix-gate: final.
+  - Coupling: the rollup policy runs on the Cluster A primitive and reuses Cluster B's `admitMember`, so it is audited after
+    both. Phase 6 documents and records exactly what Phase 5 lands.
 - **Final gate**: the consolidated final review over the union diff, with the coverage note checked. Gemini saw only part of
   the diff last time, and the approval was scoped to what it was shown.
 
@@ -560,6 +807,12 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
 | `refused` is terminal, so a transient-looking refusal (for example CI red, then re-run green) cannot land in this run | Deliberate: a refusal is never retried into a pass; the user's `/ship` or a rebuild is the path |
 | A source census is brittle | The member-step structure enforces F1; the census only guards `--auto` in argv literals, has a positive control, and its limit is stated |
 | A partial batch leaves the train `awaiting-merge` | Unchanged from `1cd2df21`; the summary names the remedy. A new train phase would be a `TrainSchema` change, out of scope |
+
+| A rollup lands a combination no member audit read | Overlapping members never share a rollup (§2.9.1 step 3); the combined tree is tested by the pre-land tiers and the PR's required checks; the manifest names each member's gate as its own and the commit carries no `AI-*` trailer |
+| One bad member blocks the whole rollup at merge time | Deliberate: a member inside the tree cannot be dropped. The run stops naming it, and `--hold` rebuilds without it |
+| Per-chip revert is lost | Louis accepted it for every repo (2026-11-18); `refs/pull/<N>/head` keeps one commit per member for a manual revert |
+| `main` moves while the rollup's CI runs | `base-moved` before the merge, `untested-base` after it; each rebuild re-runs CI, which is the cost of not changing GitHub settings |
+| A chip launched before the switch opens a PR anyway | The `LANDING:` line in `ready`/`next` reaches it; an open member PR is admitted by its head and closed "superseded" only after the rollup is confirmed merged |
 
 **Deferred:**
 - a server-side merge queue (Louis's GitHub setting);
@@ -636,6 +889,27 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
         then a stop.
   13. **Closed run:** a fully terminal run resumed with the grant revoked and the rules API unavailable prints the same
       summary and exit code, with zero remote reads.
+  14. **Rollup build and holds:** three ready members; one has `AI-Gate: waived`, one an unpushed branch. Both are held with
+      `shipped-head-refused` and `branch-not-pushed`, and the rollup is built from the third. `--hold <id>` gives
+      `held-by-coordinator`. Two members touching one path give `overlap:<path>` on the later one, and an `appendOnlyGlobs`
+      path does not.
+  15. **Approve and merge:** the push argv carries the empty-lease `--force-with-lease`; one `gh pr create`; the serial run has
+      one step and `policy.name: 'rollup'`; the merge argv has `--squash --match-head-commit <candidate oid>`, no `--auto`, no
+      `--delete-branch`; the read-back gives `landed/verified` with the step's `ci.tree` equal to the candidate tree.
+  16. **Evidence honesty:** the rollup commit and every member commit on the rollup branch carry no `AI-*` trailer; each
+      `policy.members[i].tree` equals that member's own `head^{tree}`, never the candidate tree; the manifest parses back to
+      the two records.
+  17. **Member moved between build and merge:** a member branch re-pushed after the build stops the run as
+      `member-refused:<id>` with no merge call; a rebuild with `--hold <id>` lands the rest.
+  18. **Red rollup:** a failed required check gives `checks-failed`; the candidate worktree, the manifest, the rollup branch and
+      the PR remain; the summary carries the "does NOT prove" sentence; no automatic rebuild runs.
+  19. **Base race:** the base moves before the merge, giving `base-moved` and no merge call; a fake GitHub that squashes onto
+      a newer base gives `landed/untested-base` and `ok: false`.
+  20. **Records:** member PRs are closed with "superseded by #N" only after `landed`, and never after `merge-unconfirmed` or a
+      stop; a second build while a rollup is `awaiting-merge` is refused; a plain `land --approve` on a rollup train is
+      refused; a crash between the push and the PR create resumes with one PR, found by `gh pr list --head`.
+  21. **Chip contract:** with `landing: "rollup"`, `fleet ready` and `fleet next` print the `LANDING:` line; without the key,
+      their output is byte-identical to the golden capture.
 - **Byte identity:** `tests/fleet-serial-golden.test.mjs`, plus the unchanged `tests/fleet-serial.test.mjs` and
   `tests/ship-train-recovery.test.mjs`.
 
@@ -649,6 +923,9 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
 | Tree identity, pin, attribution | tests 3, 7, 9, 10 | they pass; each mutation turns one red: skip the tree compare, pin `h` without the final re-read, treat `ghExit != 0` as not merged | a mutation table |
 | Never laundered | test 8, plus a mutation mapping `shipped-head-refused` to landed | red under the mutation | a mutation table |
 | Combination honesty | test 5, plus a mutation dropping the tree compare | red under the mutation | a mutation table |
+| Rollup lands only admitted, unmoved members | tests 14, 15, 17, plus a mutation that skips the merge-time re-admit | red under the mutation | a mutation table |
+| No composed verdict | test 16, plus a mutation that builds member commits with `-C` | red under the mutation (an `AI-Gate` appears on the rollup branch) | a mutation table |
+| Non-rollup paths unchanged | the three §2.9.8 golden cases captured at `origin/main` before the `train.mjs` edit, plus test 21 | reproduced exactly | the capture commit sha, older than the first `train.mjs` edit |
 
 ## Audit trail
 
