@@ -339,3 +339,25 @@ describe('isShipStepDelta: markup is judged IN CONTEXT (PR A audit round 4)', ()
     assert.match(delta({ status: 'M', rel: 'status.md', oldText: old, newText: bad }), /different context|rewritten|changed or removed/);
   });
 });
+
+describe('isShipStepDelta: raw HTML, headings and fenced delimiters (PR A audit round 5)', () => {
+  const withLog = PLAN_OLD + '## Implementation Log\n- r1\n## Next steps\nunchanged section\n';
+  const add = (line) => withLog.replace('- r1\n', `- r1\n${line}\n`);
+  it('a raw HTML block started in the log (<pre>) is refused: it would swallow the unchanged section after it', () => {
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('<pre>') }), /raw HTML block/);
+  });
+  it('a heading added inside the log (any level, a tab after the hashes) is refused: it starts a new section', () => {
+    for (const h of ['# Revised scope', '## Sneaky', '###\tTabbed', '#']) assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(h) }), /adds a heading|added outside the Status field/, h);
+  });
+  it('the ONE allowed heading is the log\'s own, when the ship creates the log (the control)', () => {
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD + '\n## Implementation Log\n- shipped\n' }), null);
+  });
+  it('comment delimiters INSIDE a fenced block are literal: a balanced fenced HTML example containing "<!-- placeholder" is accepted', () => {
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('```html\n<!-- placeholder\n```') }), null);
+  });
+  it('the legacy status.md log still accepts a new ENTRY heading (its entries are headings)', () => {
+    const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
+    const good = ['# Status', 'intro', '', '## 2026-11-18 new entry', 'new body', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
+    assert.equal(delta({ status: 'M', rel: 'status.md', oldText: old, newText: good }), null);
+  });
+});

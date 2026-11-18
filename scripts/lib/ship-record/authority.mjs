@@ -90,25 +90,31 @@ const MAX_DIFF_LINES = 200_000;
 const MAX_DOC_CHARS = 8_000_000;
 
 /**
- * Why text the ship ADDS would change how the rest of the document renders, or null. An HTML comment it opens and does not close
- * swallows what follows; so does a code fence, judged by the CommonMark rules (same character, at least as many, nothing after).
+ * Why text the ship ADDS would change how the rest of the document renders, or null. Judged on the added lines in order:
+ *  - an HTML comment it opens and does not close swallows what follows (comment delimiters INSIDE a fenced block are literal text);
+ *  - a code fence it opens and does not close does too, by the CommonMark rules (same character, at least as many, nothing after);
+ *  - a raw HTML block it starts (a line that begins with a tag) can run on past the log, so a log entry may not begin a line with one;
+ *  - a heading it adds starts a new SECTION, so the one allowed heading is the log's own (`allowedHeading`); the legacy status log,
+ *    whose entries ARE headings, passes `allowHeadings`.
  * @param {string[]} addedLines
+ * @param {{allowedHeading?: string, allowHeadings?: boolean}} [o]
  */
-function markupProblem(addedLines) {
-  const text = addedLines.join('\n');
-  // IN DOCUMENT ORDER: equal counts are not balance (`-->` then `<!--` leaves a comment open). A closer with no opener, an opener
-  // inside an open comment, and a comment still open at the end all refuse.
+function markupProblem(addedLines, { allowedHeading = null, allowHeadings = false } = {}) {
   let inComment = false;
-  for (const m of text.matchAll(/<!--|-->/g)) {
-    if (m[0] === '<!--') { if (inComment) return 'opens an HTML comment inside one it has not closed'; inComment = true; } else { if (!inComment) return 'closes an HTML comment it did not open'; inComment = false; }
-  }
-  if (inComment) return 'opens an HTML comment it does not close';
   let open = null;
   for (const l of addedLines) {
     const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(l);
-    if (!m) continue;
-    if (!open) { if (!(m[1][0] === '`' && m[2].includes('`'))) open = { ch: m[1][0], len: m[1].length }; } else if (m[1][0] === open.ch && m[1].length >= open.len && m[2].trim() === '') open = null;
+    if (open) { if (m && m[1][0] === open.ch && m[1].length >= open.len && m[2].trim() === '') open = null; continue; }
+    if (!inComment) {
+      if (m) { if (!(m[1][0] === '`' && m[2].includes('`'))) open = { ch: m[1][0], len: m[1].length }; continue; }
+      if (/^ {0,3}<[A-Za-z/!?]/.test(l) && !/^ {0,3}<!--/.test(l)) return 'starts a raw HTML block (a log line may not begin with a tag)';
+      if (!allowHeadings && /^ {0,3}#{1,6}(\s|$)/.test(l) && l.trim() !== allowedHeading) return 'adds a heading, which starts a new section';
+    }
+    for (const t of l.matchAll(/<!--|-->/g)) {
+      if (t[0] === '<!--') { if (inComment) return 'opens an HTML comment inside one it has not closed'; inComment = true; } else { if (!inComment) return 'closes an HTML comment it did not open'; inComment = false; }
+    }
   }
+  if (inComment) return 'opens an HTML comment it does not close';
   return open ? 'opens a code fence it does not close' : null;
 }
 
@@ -247,7 +253,7 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
     const inserted = [];
     for (const l of head) { if (k < h && l === a[k]) k++; else inserted.push(l); }
     if (k !== h) return `${LEGACY_LOG_REL}: lines above the first entry were changed or removed`;
-    const bad = markupProblem(inserted);
+    const bad = markupProblem(inserted, { allowHeadings: true });
     if (bad) return `${LEGACY_LOG_REL}: the inserted text ${bad}`;
     const lruns = diffRuns(a, b);
     if (lruns === null) return `${LEGACY_LOG_REL} is too large to verify the delta line by line, so it refuses`;
@@ -273,7 +279,7 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
   }
   // What the ship ADDS must not change how the rest of the document renders: an HTML comment or a code fence it opens and does not
   // close would swallow everything after the log (or the section that follows it).
-  const badMarkup = markupProblem(runs.flatMap((r) => b.slice(r.newAt, r.newAt + r.newN)));
+  const badMarkup = markupProblem(runs.flatMap((r) => b.slice(r.newAt, r.newAt + r.newN)), { allowedHeading: LOG_HEADING });
   if (badMarkup) return `${rel}: the added text ${badMarkup}`;
   const badContext = contextProblem(a, b, runs);
   if (badContext) return `${rel}: ${badContext}`;
