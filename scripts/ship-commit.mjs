@@ -89,7 +89,7 @@ const KNOWN_FLAGS = new Set([
 ]);
 const KNOWN_BOOLEAN_FLAGS = new Set([
   '--no-run-id', '--no-tests', '--selfcheck-relocation', '--expect-detached',
-  '--check-migrations', '--preauthorised', '--check-preauthorised', '--record',
+  '--check-migrations', '--preauthorised', '--check-preauthorised', '--record', '--check-shipped-head',
 ]);
 
 function err(line) { process.stderr.write(`${line}\n`); }
@@ -251,6 +251,7 @@ async function main() {
   }
 
   if (process.argv.includes('--check-preauthorised')) return checkPreauthorised();
+  if (process.argv.includes('--check-shipped-head')) return (await import('./lib/ship-shipped-head.mjs')).runShippedHeadCli(process.argv.slice(2)); // coordinator batch re-check
 
   // ---- arg parse (unknown flag = taxonomy row 1) -------------------------
   const argv = process.argv.slice(2);
