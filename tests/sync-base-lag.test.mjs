@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { classifyBaseLag, planBaseLag, parseNameOnlyZ, enforceBaseLag, enforceBaseLagForTarget, describeUnmeasuredTargets } from '../scripts/lib/sync-base-lag.mjs';
+import { classifyBaseLag, planBaseLag, parseNameOnlyZ, realRunVerdictOf, enforceBaseLag, enforceBaseLagForTarget, describeUnmeasuredTargets } from '../scripts/lib/sync-base-lag.mjs';
 import { describeRunSummary } from '../scripts/lib/sync-run-summary.mjs';
 import { planConsumerPr, classifyBaseLag as classifyFromSyncPr, SKIP_REASON } from '../scripts/lib/sync-pr.mjs';
 import { spawnRunner } from '../scripts/lib/sync-pr.mjs';
@@ -62,7 +62,7 @@ describe('planBaseLag', () => {
     assert.match(u.detail, /no route/);
   });
   it('behind + clean -> fast-forward; behind + only sync-written files -> fast-forward, restoring them first', () => {
-    assert.deepEqual(planBaseLag({ ...base, lag: 'behind', classified: clean }), { action: 'fast-forward', discard: [], kept: [], behindCount: 17, headSha: null });
+    assert.deepEqual(planBaseLag({ ...base, lag: 'behind', classified: clean, ffChanges: ff() }), { action: 'fast-forward', discard: [], kept: [], behindCount: 17, headSha: 'a'.repeat(40) });
     const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: own('.sync-receipt.json', '.claude/skills/plan/SKILL.md') }, ffChanges: ff('.sync-receipt.json', '.claude/skills/plan/SKILL.md') });
     assert.deepEqual(p, { action: 'fast-forward', discard: ['.sync-receipt.json', '.claude/skills/plan/SKILL.md'], kept: [], behindCount: 17, headSha: 'a'.repeat(40) });
   });
@@ -93,8 +93,13 @@ describe('planBaseLag', () => {
     const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: own('caf�.md') }, ffChanges: ff('x.md') });
     assert.equal(p.action, 'refuse');
   });
-  it('nothing to restore needs no change list: a clean checkout is never refused for lacking one', () => {
-    assert.equal(planBaseLag({ ...base, lag: 'behind', classified: clean, ffChanges: null }).action, 'fast-forward');
+  it('nothing to restore needs no change LIST, but every fast-forward needs a pinned HEAD (code audit R3 H2): without one the plan refuses, dry run and real run alike', () => {
+    assert.equal(planBaseLag({ ...base, lag: 'behind', classified: clean, ffChanges: { headSha: 'a'.repeat(40), paths: null, error: 'x' } }).action, 'fast-forward');
+    for (const ffChanges of [null, undefined, { headSha: null, paths: new Set(), error: 'HEAD could not be pinned to a commit' }]) {
+      const p = planBaseLag({ ...base, lag: 'behind', classified: clean, ffChanges });
+      assert.deepEqual([p.action, p.reason], ['refuse', 'unreadable-status'], JSON.stringify(ffChanges));
+      assert.equal(realRunVerdictOf(p).safe, false, 'the dry-run verdict comes from the same plan, so it says NO as well');
+    }
   });
   it('behind + ANY change that is not sync output -> refuse with the exact remedy and the files named', () => {
     const p = planBaseLag({ ...base, lag: 'behind', classified: { ...clean, clean: false, syncOwned: own('.sync-receipt.json'), other: own('src/mine.js') } });
@@ -357,6 +362,34 @@ describe('enforceBaseLag - real git', () => {
         return res;
       },
       /checked-out branch changed/, '.sync-receipt.json');
+    // Code audit R3 H3: HEAD is pinned BEFORE the lag is measured, so a HEAD that moves between the lag count and the diff is refused.
+    refusesAndTouchesNothing('HEAD moved between the LAG measurement and the diff: refused, nothing restored',
+      (w) => {
+        let moved = false;
+        return (cmd, args, o) => {
+          const res = run(cmd, args, o);
+          if (!moved && args.includes('rev-list')) { moved = true; fs.writeFileSync(path.join(w.consumer, 'drift.js'), 'd\n'); git(['add', 'drift.js'], w.consumer); git(['commit', '-q', '-m', 'HEAD moves early'], w.consumer); }
+          return res;
+        };
+      },
+      /HEAD moved/, '.sync-receipt.json');
+    // Code audit R3 H1: a classified filename is a LITERAL pathspec, so `a[1].md` cannot also restore the kept `a1.md`.
+    it('a filename with glob metacharacters restores only itself: the kept look-alike keeps its index AND worktree bytes', () => {
+      const w = world();
+      try {
+        fs.writeFileSync(path.join(w.consumer, 'a[1].md'), 'one\n'); fs.writeFileSync(path.join(w.consumer, 'a1.md'), 'one\n');
+        git(['add', '.'], w.consumer); git(['commit', '-q', '-m', 'look-alikes'], w.consumer); git(['push', '-q', 'origin', 'main'], w.consumer);
+        w.advance('a[1].md', 'upstream\n');
+        fs.writeFileSync(path.join(w.consumer, 'a[1].md'), 'ours\n');
+        fs.writeFileSync(path.join(w.consumer, 'a1.md'), 'kept\n'); git(['add', 'a1.md'], w.consumer);
+        const r = enforceBaseLag({ repoRoot: w.consumer, run, classify: syncOwned([' M', 'a[1].md'], ['M ', 'a1.md']) });
+        assert.equal(r.outcome, 'fast-forwarded', r.lines.join('\n'));
+        assert.match(r.lines.join('\n'), /restored 1 sync-written file\(s\) first.*kept 1 sync-written file\(s\)/);
+        assert.equal(fs.readFileSync(path.join(w.consumer, 'a[1].md'), 'utf8'), 'upstream\n');
+        assert.equal(fs.readFileSync(path.join(w.consumer, 'a1.md'), 'utf8'), 'kept\n', 'the look-alike was NOT swept up by a glob');
+        assert.equal(git(['show', ':a1.md'], w.consumer), 'kept', 'nor was its staged state');
+      } finally { w.rm(); }
+    });
     // Code audit R2 H2: the identity check guards EVERY mutation, including the merge of an all-kept plan (nothing restored)...
     refusesAndTouchesNothing('ALL-KEPT plan (nothing to restore): a branch switch at the same commit still refuses before the merge',
       (w) => (cmd, args, o) => {

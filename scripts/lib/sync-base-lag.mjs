@@ -101,18 +101,18 @@ export function parseNameOnlyZ(stdout) {
 }
 
 /**
- * What the fast-forward from this checkout's HEAD to `baseSha` would change: both ends pinned to object ids, so the plan and the
- * merge (`merge --ff-only <baseSha>`) speak about the same two commits. `paths: null` = could not be established.
+ * What the fast-forward from `headSha` (pinned by `gatherBaseFacts`, BEFORE the lag was measured) to `baseSha` would change: both
+ * ends are object ids, so the plan and the merge (`merge --ff-only <baseSha>`) speak about the same two commits. `paths: null` =
+ * could not be established.
  * @param {Runner} run
  * @param {string} repoRoot
+ * @param {string|null} headSha
  * @param {string} baseSha
  * @returns {{headSha: string|null, paths: Set<string>|null, error: string|null}}
  */
-export function gatherFastForwardChanges(run, repoRoot, baseSha) {
+export function gatherFastForwardChanges(run, repoRoot, headSha, baseSha) {
   const git = (args) => run('git', ['-C', repoRoot, ...args]);
-  const head = git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
-  const headSha = ok(head) ? head.stdout.trim() : '';
-  if (!/^[0-9a-f]{40,64}$/.test(headSha)) return { headSha: null, paths: null, error: `resolve HEAD: ${why(head)}` };
+  if (!/^[0-9a-f]{40,64}$/.test(String(headSha ?? ''))) return { headSha: null, paths: null, error: 'HEAD could not be pinned to a commit' };
   const diff = git(['diff', '--name-only', '-z', '--no-renames', headSha, baseSha]);
   if (!ok(diff)) return { headSha, paths: null, error: `git diff ${headSha.slice(0, 8)}..${baseSha.slice(0, 8)}: ${why(diff)}` };
   const paths = parseNameOnlyZ(diff.stdout);
@@ -128,7 +128,7 @@ export function gatherFastForwardChanges(run, repoRoot, baseSha) {
  * @param {string} repoRoot
  * @param {{baseBranch?: string|null}} [opts]
  * @returns {{ok: false, step: string, error: string}
- *   | {ok: true, baseBranch: string, baseSha: string, currentBranch: string|null, aheadCount: number|null, behindCount: number|null}}
+ *   | {ok: true, baseBranch: string, baseSha: string, headSha: string|null, currentBranch: string|null, aheadCount: number|null, behindCount: number|null}}
  */
 export function gatherBaseFacts(run, repoRoot, { baseBranch = null } = {}) {
   const git = (args) => run('git', ['-C', repoRoot, ...args]);
@@ -146,21 +146,27 @@ export function gatherBaseFacts(run, repoRoot, { baseBranch = null } = {}) {
   const baseSha = ok(resolved) ? resolved.stdout.trim() : '';
   if (!/^[0-9a-f]{40,64}$/.test(baseSha)) return { ok: false, step: `resolve origin/${base}`, error: why(resolved) };
 
+  // HEAD is pinned to an oid FIRST and every count below is taken against it, so the lag verdict, the changed-path list and the
+  // executor's identity recheck all speak about ONE commit (a HEAD that moves mid-gather is refused, never half-measured).
+  const headResolved = git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+  const headSha = ok(headResolved) && /^[0-9a-f]{40,64}$/.test(headResolved.stdout.trim()) ? headResolved.stdout.trim() : null;
   const head = git(['rev-parse', '--abbrev-ref', 'HEAD']);
   const currentBranch = ok(head) ? head.stdout.trim() : null;
   const count = (range) => {
     const r = git(['rev-list', '--count', range]);
     return ok(r) && /^\d+$/.test(r.stdout.trim()) ? Number(r.stdout.trim()) : null;
   };
-  const aheadCount = count(`${baseSha}..HEAD`);
-  const behindCount = count(`HEAD..${baseSha}`);
-  return { ok: true, baseBranch: base, baseSha, currentBranch, aheadCount, behindCount };
+  const aheadCount = headSha ? count(`${baseSha}..${headSha}`) : null;
+  const behindCount = headSha ? count(`${headSha}..${baseSha}`) : null;
+  return { ok: true, baseBranch: base, baseSha, headSha, currentBranch, aheadCount, behindCount };
 }
 
 
 /** Shown in a refusal's file list; the rest is "and N more". */
 const LIST_MAX = 5;
 
+/** A repository filename as a LITERAL pathspec: `a[1].md` must not also match `a1.md` (code audit R3 H1). */
+const lit = (p) => `:(literal)${p}`;
 const q = (p) => `"${String(p).replace(/"/g, '\\"')}"`;
 const list = (paths) => `${paths.slice(0, LIST_MAX).join(', ')}${paths.length > LIST_MAX ? `, and ${paths.length - LIST_MAX} more` : ''}`;
 /** Tracked in-place changes are restorable from HEAD by path. Untracked files are left for `merge --ff-only` to judge (renames never get here: see planBaseLag). */
@@ -241,10 +247,17 @@ export function planBaseLag({
       remedy: `commit or stash those changes, then git -C ${q(repoRoot)} pull --ff-only, then re-run the sync (or --allow-stale-base to write onto the stale base on purpose)`,
     };
   }
+  if (!ffChanges?.headSha) {
+    return {
+      action: 'refuse', reason: 'unreadable-status',
+      detail: `${detail}, and its HEAD could not be pinned to a commit, so the fast-forward cannot be checked against what it was planned for`,
+      remedy: `git -C ${q(repoRoot)} pull --ff-only; re-run the sync`,
+    };
+  }
   const candidates = [...classified.syncOwned, ...blockRewritten].filter(restorable).map((e) => e.path);
-  if (candidates.length === 0) return { action: 'fast-forward', discard: [], kept: [], behindCount, headSha: ffChanges?.headSha ?? null };
+  if (candidates.length === 0) return { action: 'fast-forward', discard: [], kept: [], behindCount, headSha: ffChanges.headSha };
   const lossy = candidates.some((p) => p.includes('\uFFFD'));
-  if (!ffChanges || !ffChanges.paths || !ffChanges.headSha || lossy) {
+  if (!ffChanges.paths || lossy) {
     const because = ffChanges?.error ?? (lossy ? 'a sync-written path did not decode cleanly' : 'it was not asked');
     return {
       action: 'refuse', reason: 'unreadable-status',
@@ -334,7 +347,7 @@ function enforceBaseLagCore({ repoRoot, run, classify, dryRun = false, allowStal
     : undefined;
   // HEAD is pinned for every fast-forward plan; the diff only matters when something is dirty, but it is the same two cheap calls.
   const ffChanges = lag === 'behind' && !allowStale && classified?.ok
-    ? gatherFastForwardChanges(run, repoRoot, facts.baseSha)
+    ? gatherFastForwardChanges(run, repoRoot, facts.headSha, facts.baseSha)
     : null;
   const plan = planBaseLag({ repoRoot, baseBranch: facts.baseBranch, lag, behindCount: facts.behindCount, aheadCount: facts.aheadCount, classified, allowStale, managedBlockTransition, ffChanges });
   return { ...executeBaseLagPlan({ plan, facts, git, repoRoot, dryRun }), plan };
@@ -393,7 +406,7 @@ function executeBaseLagPlan({ plan, facts, git, repoRoot, dryRun }) {
     const snap = git(['stash', 'create']);
     if (snap.error || snap.status !== 0) return refusedFastForward(repoRoot, target, `could not snapshot the sync-written files before restoring them (${firstLine(snap)}); nothing was changed`);
     snapshot = snap.stdout.trim() || null;
-    const restored = git(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...plan.discard]);
+    const restored = git(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...plan.discard.map(lit)]);
     if (restored.error || restored.status !== 0) return failedAfterRestore(git, repoRoot, target, snapshot, plan.discard, `could not restore the sync-written files (${firstLine(restored)})`);
   }
   const merged = git(['merge', '--ff-only', '--no-overwrite-ignore', '--quiet', facts.baseSha]);
@@ -412,10 +425,10 @@ const firstLine = (r) => (r.error?.message || `${r.stderr || ''}${r.stdout || ''
 function failedAfterRestore(git, repoRoot, target, snapshot, restoredPaths, because) {
   let recovery = '';
   if (snapshot && restoredPaths.length > 0) {
-    const staged = git(['restore', `--source=${snapshot}^2`, '--staged', '--', ...restoredPaths]);
-    const back = staged.error || staged.status !== 0 ? staged : git(['restore', `--source=${snapshot}`, '--worktree', '--', ...restoredPaths]);
+    const staged = git(['restore', `--source=${snapshot}^2`, '--staged', '--', ...restoredPaths.map(lit)]);
+    const back = staged.error || staged.status !== 0 ? staged : git(['restore', `--source=${snapshot}`, '--worktree', '--', ...restoredPaths.map(lit)]);
     recovery = back.error || back.status !== 0
-      ? ` The sync-written changes could NOT be re-applied automatically (${firstLine(back)}); they are in commit ${snapshot}: git -C ${q(repoRoot)} restore --source=${snapshot}^2 --staged -- ${list(restoredPaths)} && git -C ${q(repoRoot)} restore --source=${snapshot} --worktree -- ${list(restoredPaths)}.`
+      ? ` The sync-written changes could NOT be re-applied automatically (${firstLine(back)}); they are in commit ${snapshot}: git -C ${q(repoRoot)} restore --source=${snapshot}^2 --staged -- ${list(restoredPaths.map(lit))} && git -C ${q(repoRoot)} restore --source=${snapshot} --worktree -- ${list(restoredPaths.map(lit))}.`
       : ' The sync-written changes were put back as they were.';
   }
   return refusedFastForward(repoRoot, target, because, recovery);
