@@ -262,13 +262,12 @@ function closeBoundToHead({ deps, cwd, repo, number, head, comment }) {
   if (!before) return { status: 'failed', reason: 'the PR could not be read before the close' };
   // State and head are reconciled TOGETHER: a PR that is already closed but carries a head other than the admitted one holds work that
   // did not land, so it is never recorded as a clean close (a close that landed before a crash, with the head unchanged, is).
-  if (before.headRefOid !== head) {
-    // OPEN, CLOSED and MERGED are told apart: a merged PR cannot be reopened, and its newer head may well have landed.
-    const merged = before.state.toUpperCase() === 'MERGED';
-    return { status: 'skipped-head-moved', reason: merged
-      ? `the PR was MERGED at head ${short(before.headRefOid)}, not the admitted ${short(head)}: check that work against the base by hand (a merged PR cannot be reopened)`
-      : `the PR (${before.state.toLowerCase()}) head is ${short(before.headRefOid)}, not the admitted ${short(head)}: it holds work that did not land; gh pr reopen ${number} if it should stay open` };
+  // OPEN, CLOSED and MERGED are told apart. A MERGED PR is never a clean close, whatever its head: something landed outside this run, so it
+  // is reported until an operator reconciles that merge against the base (a merged PR cannot be reopened).
+  if (before.state.toUpperCase() === 'MERGED') {
+    return { status: 'skipped-head-moved', reason: `the PR was MERGED${before.headRefOid === head ? ' at the admitted head' : ` at head ${short(before.headRefOid)}, not the admitted ${short(head)}`} outside this run: reconcile that merge against the base by hand (a merged PR cannot be reopened)` };
   }
+  if (before.headRefOid !== head) return { status: 'skipped-head-moved', reason: `the PR (${before.state.toLowerCase()}) head is ${short(before.headRefOid)}, not the admitted ${short(head)}: it holds work that did not land; gh pr reopen ${number} if it should stay open` };
   if (before.state.toUpperCase() !== 'OPEN') return { status: 'closed', reason: null }; // reconciled: nothing is left to close
   const x = deps.gh(['pr', 'close', String(number), '-R', repo, '--comment', comment], cwd);
   if (!x.ok) return { status: 'failed', reason: String(x.reason ?? 'gh pr close failed').slice(0, 200) };

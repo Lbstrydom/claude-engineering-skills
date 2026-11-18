@@ -574,7 +574,7 @@ describe('audit round 4: merged superseded PRs and unrecordable outcomes are tol
     const { f, w, b1, b2, rp } = twoRollups();
     rp.state = 'MERGED'; rp.head = 'e'.repeat(40);
     const r = approve(f, w, { trainId: b2.trainId });
-    assert.match(r.text, /was MERGED at head e{12}, not the admitted [0-9a-f]{12}: check that work against the base by hand \(a merged PR cannot be reopened\)/);
+    assert.match(r.text, /was MERGED at head e{12}, not the admitted [0-9a-f]{12} outside this run: reconcile that merge against the base by hand \(a merged PR cannot be reopened\)/);
     assert.doesNotMatch(r.text, /gh pr reopen/);
     assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'skipped-head-moved');
   });
@@ -587,5 +587,22 @@ describe('audit round 4: merged superseded PRs and unrecordable outcomes are tol
     };
     const r = approve(f, w, { trainId: b2.trainId });
     assert.match(r.text, new RegExp(`the outcome of superseded rollup PR #${oldPr} \\(closed\\) could not be recorded: train .* no longer records this supersession or candidate`));
+  });
+});
+
+describe('audit round 5: a MERGED superseded PR is never a clean close, whatever its head (R5-M1)', () => {
+  it('merged at the admitted head: reported as merged outside this run and recorded skipped, not closed', () => {
+    const f = fixture(1);
+    const w = world(f); w.checks = 'pending';
+    const b1 = build(f, w);
+    approve(f, w, { trainId: b1.trainId, serialOpts: { timeoutMs: 30 } });
+    const oldPr = readTrain(f.dir, b1.trainId).train.rollup.prNumber;
+    w.checks = 'pass';
+    const b2 = build(f, w);
+    w.allPrs.find((p) => p.number === oldPr).state = 'MERGED';
+    const r = approve(f, w, { trainId: b2.trainId });
+    assert.match(r.text, new RegExp());
+    assert.equal(w.closes.length, 0);
+    assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'skipped-head-moved');
   });
 });
