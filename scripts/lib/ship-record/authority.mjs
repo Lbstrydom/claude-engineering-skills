@@ -125,33 +125,39 @@ function markupProblem(addedLines, { allowedHeading = null, allowHeadings = fals
  * unaudited rendering change.
  */
 /**
- * THE SET A LOG LINE MAY NOT CONTAIN. It deliberately does NOT model Markdown: it rejects every character and sequence that Markdown
- * could interpret ACROSS lines or blocks, so no later construct has to be named and no audit round has to find the next one. Chosen
- * from measurement (3,950 Implementation Log lines in docs/plans, 2026-11-18) and from one question: can this make an UNCHANGED line
- * elsewhere in the document render differently?
+ * THE SET A LOG LINE MAY NOT CONTAIN. It deliberately does NOT model Markdown: it rejects every character that Markdown could
+ * interpret, so no later construct has to be named and no audit round has to find the next one. The rule is the user's ("no Markdown
+ * metacharacters at all"), and the audit confirmed why a measured exception is not safe: inline emphasis and code spans can span soft
+ * line breaks inside one paragraph, so even `*`, `_` and a single backtick can change how an adjacent UNCHANGED line renders.
  *   - `[` `]`   links, images, footnotes and reference definitions (a definition re-points links ANYWHERE in the document);
  *   - `<` `>`   raw HTML, HTML blocks and comments (which swallow what follows), autolinks, block quotes;
  *   - `|`       table rows;
- *   - a run of 3+ backticks or tildes   a code fence, which swallows what follows;
- *   - a leading `#`   a heading (a new section);
- *   - an underline (`---`, `===`) or a thematic break (`* * *`)   a setext heading or a structural break.
- * A leading list marker (`- `, `* `, `+ `, `1. `) and indentation of at most three spaces are the only structure a line may carry.
+ *   - `*` `_` `\``   emphasis and code spans, which can pair with a character on an adjacent unchanged line of the same paragraph;
+ *   - a run of 3+ backticks or tildes (a fence; already covered by the backtick) and a leading `#` (a heading);
+ *   - an underline (`-`, `---`, `===`) or a thematic break (`* * *`).
+ * ONE leading list marker (`- `, `* `, `+ `, `1. `) is stripped before the characters are checked, so a bullet is still a bullet.
+ * COST, measured 2026-11-18 over 3,950 Implementation Log lines in docs/plans: this set refuses 69.0% of them (a log with code
+ * identifiers or bold text is common); the earlier measured-exception variant refused 17.3% and is what a round of the audit rejected.
+ * A member whose log is refused waits for the user's /ship: the cost of being closed by construction.
  */
-export const LOG_LINE_FORBIDDEN_CHARS = Object.freeze(['[', ']', '<', '>', '|']);
-/**
- * What is ALLOWED even though it is Markdown, and why: inline emphasis (`*`, `_`) and single backticks only ever act WITHIN their own
- * block (a list item or a paragraph ends at a blank line or the next item), so they cannot change how another line renders. They are
- * measured in 49.6% (backtick), 23.4% (`*`) and 8.2% (`_`) of real log lines: refusing them would make roughly half of all ships
- * wait for the user's /ship for no safety gain. To make the rule STRICT, move them into LOG_LINE_FORBIDDEN_CHARS: one line.
- */
-export const LOG_LINE_ALLOWED_INLINE = Object.freeze(['*', '_', '`']);
+export const LOG_LINE_FORBIDDEN_CHARS = Object.freeze(['[', ']', '<', '>', '|', '*', '_', '`']);
+/** Markdown characters that ARE allowed in a log line: none. (Kept as a named constant so the decision is one visible line.) */
+export const LOG_LINE_ALLOWED_INLINE = Object.freeze([]);
 const LOG_LINE_FORBIDDEN_RUN_RE = /`{3,}|~{3,}/;
 const LOG_LINE_START_RE = /^ {0,3}(?:[-*+] \S|\d{1,9}[.)] \S|[^\s#>=\-|])/;
-const LOG_LINE_BREAK_RE = /^ {0,3}(?:(?:=+|-{2,})|([-*_])(?: *\1){2,})\s*$/;
+const LOG_LINE_BREAK_RE = /^ {0,3}(?:(?:=+|-+)|([-*_])(?: *\1){2,})\s*$/;
+/** Is this line a link reference definition, alone or inside list markers (nested too)? It re-points reference links ANYWHERE in the document. */
+function isReferenceDefinition(l) {
+  let inner = l;
+  for (let i = 0; i < 8; i++) { const m = /^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+(.*)$/.exec(inner); if (!m) break; inner = m[1]; }
+  return /^ {0,3}\[[^\]]*\]:/.test(inner);
+}
 /** Why this added log line is not plain, or null. */
 function plainLogLineProblem(l) {
   if (isBlank(l)) return null;
-  for (const c of LOG_LINE_FORBIDDEN_CHARS) if (l.includes(c)) return `contains ${JSON.stringify(c)}, which Markdown can interpret across lines`;
+  // The ONE leading list marker is structure, not content; everything after it is checked.
+  const content = l.replace(/^ {0,3}(?:[-*+]|\d{1,9}[.)])(?= )/, '');
+  for (const c of LOG_LINE_FORBIDDEN_CHARS) if (content.includes(c)) return `contains ${JSON.stringify(c)}, which Markdown can interpret`;
   if (LOG_LINE_FORBIDDEN_RUN_RE.test(l)) return 'contains a run of backticks or tildes, which can open a code fence';
   if (LOG_LINE_BREAK_RE.test(l)) return 'is a setext heading underline or a thematic break';
   if (/^ {0,3}#/.test(l)) return 'starts with #, which makes a heading';
@@ -206,7 +212,7 @@ function logRange(ls) {
   if (h < 0) return null;
   // The section ends at the next heading of level 1 or 2: ATX (up to 3 spaces of indent, a space or tab after the hashes) or SETEXT
   // (a text line underlined by === or ---).
-  const k = ls.findIndex((l, n) => n > h && (/^ {0,3}#{1,2}(?:[ \t]|$)/.test(l) || (l.trim() !== '' && /^ {0,3}(?:=+|-{2,})\s*$/.test(ls[n + 1] ?? ''))));
+  const k = ls.findIndex((l, n) => n > h && (/^ {0,3}#{1,2}(?:[ \t]|$)/.test(l) || (l.trim() !== '' && /^ {0,3}(?:=+|-+)\s*$/.test(ls[n + 1] ?? ''))));
   return [h, k < 0 ? ls.length : k];
 }
 /** The plan's Status field: the FIRST `- **Status**:` line above the first `## ` heading (a look-alike lower down is body text). */
@@ -295,6 +301,8 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
     const inserted = [];
     for (const l of head) { if (k < h && l === a[k]) k++; else inserted.push(l); }
     if (k !== h) return `${LEGACY_LOG_REL}: lines above the first entry were changed or removed`;
+    const def = inserted.find((l) => isReferenceDefinition(l));
+    if (def !== undefined) return `${LEGACY_LOG_REL}: an inserted line is a link reference definition, which would re-point links already in the file`;
     const bad = markupProblem(inserted, { allowHeadings: true });
     if (bad) return `${LEGACY_LOG_REL}: the inserted text ${bad}`;
     const lruns = diffRuns(a, b);

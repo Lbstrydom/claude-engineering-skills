@@ -282,7 +282,7 @@ describe('isShipStepDelta: the hardened grammar (code-audit round 1)', () => {
   it('text the ship adds that opens a code fence it does not close refuses', () => {
     const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
     assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nunclosed\n' }), /code fence it does not close/);
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nclosed\n```\n' }), /contains a run of backticks or tildes/, 'a CLOSED fence is balanced, but a log line may not be a fence (the pivot)');
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nclosed\n```\n' }), /contains/, 'a CLOSED fence is balanced, but a log line may not be a fence (the pivot)');
   });
   it('a whole document over the size bound refuses BEFORE it is split, even when almost all of it is unchanged', () => {
     const huge = 'x'.repeat(9_000_000);
@@ -303,9 +303,9 @@ describe('isShipStepDelta: markup balance in BOTH grammars (PR A audit round 2)'
   });
   it('a backtick fence closed by a TILDE fence is still unclosed (type must match), in both grammars', () => {
     const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\ncode\n~~~\n' }), /code fence/);
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````\n```\n' }), /code fence/, 'a shorter closer does not close a longer opener');
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````js\ncode\n````\n' }), /contains a run of backticks or tildes/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\ncode\n~~~\n' }), /code fence it does not close|contains/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````\n```\n' }), /code fence it does not close|contains/, 'a shorter closer does not close a longer opener');
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````js\ncode\n````\n' }), /contains/);
   });
 });
 
@@ -355,7 +355,7 @@ describe('isShipStepDelta: raw HTML, headings and fenced delimiters (PR A audit 
     assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: PLAN_OLD, newText: PLAN_OLD + '\n## Implementation Log\n- shipped\n' }), null);
   });
   it('a fenced HTML example in the log is refused: not for its comment (delimiters inside a fence are literal) but because a log line may not be a fence', () => {
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('```html\n<!-- placeholder\n```') }), /contains a run of backticks or tildes/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('```html\n<!-- placeholder\n```') }), /contains/);
   });
   it('the legacy status.md log still accepts a new ENTRY heading (its entries are headings)', () => {
     const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
@@ -380,7 +380,7 @@ describe('isShipStepDelta: the PLAIN-LOG-LINE whitelist (PR A audit round 6, the
       assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(line) }), /contains|setext|not a plain list item|added outside the Status field|starts with #|raw HTML block/);
     });
   }
-  for (const line of ['- a bullet', '* another', '+ plus', '1. numbered', '2) paren', 'Plain prose.', '**bold lead** then text', '`code` first', '(parenthesised)', '"quoted" start', '  - indented bullet']) {
+  for (const line of ['- a bullet', '* another', '+ plus', '1. numbered', '2) paren', 'Plain prose.', '(parenthesised)', '"quoted" start', '  - indented bullet']) {
     it(`accepts a plain line: ${JSON.stringify(line)}`, () => {
       assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(line) }), null);
     });
@@ -431,9 +431,9 @@ describe('the log-line forbidden set: one named constant, every character refuse
   const add = (line) => withLog.replace('- r1\n', `- r1\n${line}\n`);
   const run = (line) => delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add(line) });
 
-  it('the set is exactly [ ] < > | (and the allowed inline markers are the three that cannot cross a block)', () => {
-    assert.deepEqual([...LOG_LINE_FORBIDDEN_CHARS], ['[', ']', '<', '>', '|']);
-    assert.deepEqual([...LOG_LINE_ALLOWED_INLINE], ['*', '_', '`']);
+  it('the set is exactly [ ] < > | * _ and the backtick, and NO Markdown character is allowed inline', () => {
+    assert.deepEqual([...LOG_LINE_FORBIDDEN_CHARS], ['[', ']', '<', '>', '|', '*', '_', '`']);
+    assert.deepEqual([...LOG_LINE_ALLOWED_INLINE], []);
     for (const c of LOG_LINE_ALLOWED_INLINE) assert.equal(LOG_LINE_FORBIDDEN_CHARS.includes(c), false, 'allowed and forbidden must not overlap');
   });
   for (const c of LOG_LINE_FORBIDDEN_CHARS) {
@@ -444,13 +444,13 @@ describe('the log-line forbidden set: one named constant, every character refuse
   for (const [name, line] of [['a run of three backticks', '- uses ``` inline'], ['a run of tildes', '- uses ~~~ inline'], ['a leading #', '# heading'], ['a leading # with indent', '   ## heading'], ['a thematic break', '* * *'], ['a setext underline', '==='], ['a dashed underline', '----']]) {
     it(`refuses ${name}`, () => { assert.notEqual(run(line), null, line); });
   }
-  it('accepts the plain shapes a ship writes: bullets, numbered items, prose, emphasis, single backticks, parentheses, quotes', () => {
-    for (const line of ['- a bullet', '* another', '+ plus', '1. numbered', '2) paren', 'Plain prose.', '**bold lead** then text', '- uses `code` and *emphasis* and snake_case', '(parenthesised)', '"quoted" start', '  - indented bullet']) assert.equal(run(line), null, line);
+  it('accepts the plain shapes a ship writes: bullets, numbered items, prose, parentheses, quotes (one leading list marker is structure, not content)', () => {
+    for (const line of ['- a bullet', '* another', '+ plus', '1. numbered', '2) paren', 'Plain prose.', '(parenthesised)', '"quoted" start', '  - indented bullet', '- r8 fixed the setext boundary and refused the definition']) assert.equal(run(line), null, line);
   });
 
-  it('PROOF against what the ship writes: of every Implementation Log line in docs/plans, the set refuses only lines with a forbidden character, a fence run or a leading #, and the strict alternative (also refusing * _ and backticks) would refuse far more', () => {
+  it('PROOF against what the ship writes: the strict set refuses a measured majority of real log lines (the stated cost), and every refusal names a reason from the known set', () => {
     const dir = path.join(import.meta.dirname, '..', 'docs', 'plans');
-    let total = 0; let refused = 0; let strictRefused = 0;
+    let total = 0; let refused = 0; let unexplained = 0;
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith('.md')) continue;
       const lines = fs.readFileSync(path.join(dir, f), 'utf8').split(/\r?\n/);
@@ -461,15 +461,50 @@ describe('the log-line forbidden set: one named constant, every character refuse
         if (!l.trim()) continue;
         total++;
         const old = `${PLAN_OLD}## Implementation Log\n- r1\n`;
-        const bad = delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: `${old}${l}\n` }) !== null;
-        if (bad) refused++;
-        if (bad || /[*_`]/.test(l)) strictRefused++;
+        const r = delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: `${old}${l}\n` });
+        if (r !== null) { refused++; if (!/contains|setext|starts with #|not a plain|outside the Status field|raw HTML|heading|thematic|code fence/.test(r)) { unexplained++; process.stderr.write('UNEXPLAINED: ' + r + ' <= ' + l.slice(0, 80) + String.fromCharCode(10)); } }
       }
     }
     assert.ok(total > 1000, `the corpus is real (${total} lines)`);
-    // The measured costs, as a regression check: the chosen set refuses a minority, and strictness would refuse a clear majority.
-    assert.ok(refused / total < 0.5, `the chosen set refuses ${(100 * refused / total).toFixed(1)}% of ${total} real log lines`);
-    assert.ok(strictRefused / total > refused / total + 0.2, `the strict alternative refuses ${(100 * strictRefused / total).toFixed(1)}%: it is the cost of making * _ and backticks forbidden too`);
+    assert.equal(unexplained, 0, 'every refusal carries a reason from the named set');
+    // Measured 2026-11-18: 69.0%. A regression check on the stated cost, not a target: it fails if the set silently loosens or tightens a lot.
+    const pct = 100 * refused / total;
+    assert.ok(pct > 50 && pct < 90, `the strict set refuses ${pct.toFixed(1)}% of ${total} real log lines`);
+  });
+
+  describe('the strict set: one refuse-test per character (PR A, the final round)', () => {
+    for (const c of ['*', '_', '`']) {
+      it(`refuses ${JSON.stringify(c)} inside the line, so it cannot pair with a character on an adjacent unchanged line`, () => {
+        assert.match(run(`- text ${c}x more`), /contains/);
+        assert.match(run(`prose ${c}x`), /contains/);
+      });
+    }
+    it('a leading list marker is allowed, but the same character after it is not', () => {
+      assert.equal(run('* bullet marker'), null);
+      assert.notEqual(run('* * nested marker'), null);
+      assert.match(run('- **bold** lead'), /contains/);
+    });
+  });
+
+  describe('a one-hyphen setext underline (round 8 H1)', () => {
+    it('an added single "-" line is refused', () => {
+      assert.notEqual(run('-'), null);
+    });
+    it('a single "-" directly before the next heading is not hidden by the log boundary', () => {
+      const old = PLAN_OLD + '## Implementation Log\n- r1\nNext\n## Next steps\nKeep\n';
+      const bad = PLAN_OLD + '## Implementation Log\n- r1\nNext\n-\n## Next steps\nKeep\n';
+      assert.notEqual(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: old, newText: bad }), null);
+    });
+  });
+
+  describe('legacy status.md: an inserted reference definition (round 8 H2/H4)', () => {
+    const old = ['# Status', 'intro [x]', '', '## 2026-11-17 old entry', 'body', ''].join('\n');
+    for (const line of ['[x]: https://example.invalid', '- [x]: https://example.invalid', '1. [x]: https://example.invalid', '  [x]: https://example.invalid']) {
+      it(`refuses ${JSON.stringify(line)}`, () => {
+        const next = ['# Status', 'intro [x]', line, '', '## 2026-11-17 old entry', 'body', ''].join('\n');
+        assert.notEqual(delta({ status: 'M', rel: 'status.md', oldText: old, newText: next }), null);
+      });
+    }
   });
 
   it('the line ship-record catch-up writes is NOT governed by this grammar: it carries an HTML marker, is accepted by the RECORD grammar, and is refused here (it never rides in a /ship commit)', () => {
