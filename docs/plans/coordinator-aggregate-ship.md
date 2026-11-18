@@ -573,3 +573,21 @@ that moves mid-check, and the two storyline incidents of 2026-11-18 (a range che
 differs, so it refuses; the PR head differing from the tested head). Mutation checks of the evaluator's rows each turned the suite red.
 The relocated-layout test copies the sync closure through the real path map and runs the relocated CLI. **Not in this PR, so not proved
 here:** the merge-time re-read of the PR head and the head-identity check (`C9`); they belong to PR B's `land --ship-batch`.
+
+### Code audit trail, PR A (`/audit-code --scope diff --base origin/main`, SID `audit-code-1795000910440-83564`)
+
+GPT rounds (HIGH / MEDIUM): R1 9 / 14, R2 3 / 1, R3 2 / 1, R4 1 / 1, R5 2 / 1, R6 3 / 1. Every finding is ruled in the ledger (fixed with a
+test; dismissed with a reason; or deferred with the honest-deferral fields: the batch design finding belongs to PR B, and the two
+overlapping record/ship grammars are recorded debt).
+
+**The loop stopped at the soft cap (6), not at convergence.** Rounds 2 to 6 were one family: the ship-step grammar kept being asked to
+model a further Markdown construct that can change how unchanged text renders (comments, fences, raw HTML, headings, reference
+definitions, setext). Round 6 therefore PIVOTED instead of patching: a line the ship adds inside the Implementation Log must be a plain
+list item or prose line (`PLAIN_LOG_LINE_RE`), and the live remote base is re-read at the end of the check. Round 6's fixes are tested
+but were not re-audited. A member whose log needs a table, a code block or a link reference waits for the user's `/ship`.
+
+**Final review** (gemini, round 1 of 2) in two disjoint batches so that every changed line was shown: both coverage notes read `FULL`
+(batch 1: 4 files, 494 changed lines; batch 2: 3 files, all whole). Batch 1 `APPROVE`; batch 2 `CONCERNS`, gate `approve_with_debt`
+(0 blocking, 2 debt, captured): a section-boundary edge case in the log range and a note that the markup/context rules are now partly
+redundant with the whitelist (kept deliberately as defence in depth). A single review over all seven files read `PARTIAL, 177 of 911
+changed lines never shown`, which is why it was split.
