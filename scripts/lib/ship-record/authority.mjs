@@ -119,24 +119,43 @@ function markupProblem(addedLines, { allowedHeading = null, allowHeadings = fals
 }
 
 /**
- * THE PIVOT. Five audit rounds each found one more Markdown construct that can change how UNCHANGED text renders (an unclosed
- * comment, a fence, a raw HTML block, a heading, a reference definition, a setext underline...). Modelling renderer behaviour
- * construct by construct is unbounded, so the log is held to a WHITELIST instead: a line the ship adds inside the Implementation
- * Log is a plain line: a list item (`- x`, `* x`, `+ x`, `1. x`), or prose that starts with a letter, a digit, `**`, a quote or
- * an opening parenthesis, indented by at most three spaces. Anything else (a tag, a heading, a fence, a quote, a table row, a
- * reference definition `[x]: y`, an underline `---`, a 4-space code line) is refused, and that member waits for the user's `/ship`.
- * Fail closed: a log with a table or a code block costs the user one `/ship`, never an unaudited rendering change.
+ * THE PIVOT (audit rounds 6 and 7). Each round found one more Markdown construct that can change how UNCHANGED text renders, so the
+ * rule stopped modelling the renderer: a line the ship adds inside the Implementation Log may not contain what Markdown could
+ * interpret across lines (the set named below). A log that needs a table, a link or a code block costs the user one `/ship`, never an
+ * unaudited rendering change.
  */
-const PLAIN_LOG_LINE_RE = /^ {0,3}(?:[-*+] \S|\d{1,9}[.)] \S|\*\*|\*[A-Za-z0-9]|_[A-Za-z0-9]|`(?!`)|[A-Za-z0-9"'(\u201c\u2018])/;
+/**
+ * THE SET A LOG LINE MAY NOT CONTAIN. It deliberately does NOT model Markdown: it rejects every character and sequence that Markdown
+ * could interpret ACROSS lines or blocks, so no later construct has to be named and no audit round has to find the next one. Chosen
+ * from measurement (3,950 Implementation Log lines in docs/plans, 2026-11-18) and from one question: can this make an UNCHANGED line
+ * elsewhere in the document render differently?
+ *   - `[` `]`   links, images, footnotes and reference definitions (a definition re-points links ANYWHERE in the document);
+ *   - `<` `>`   raw HTML, HTML blocks and comments (which swallow what follows), autolinks, block quotes;
+ *   - `|`       table rows;
+ *   - a run of 3+ backticks or tildes   a code fence, which swallows what follows;
+ *   - a leading `#`   a heading (a new section);
+ *   - an underline (`---`, `===`) or a thematic break (`* * *`)   a setext heading or a structural break.
+ * A leading list marker (`- `, `* `, `+ `, `1. `) and indentation of at most three spaces are the only structure a line may carry.
+ */
+export const LOG_LINE_FORBIDDEN_CHARS = Object.freeze(['[', ']', '<', '>', '|']);
+/**
+ * What is ALLOWED even though it is Markdown, and why: inline emphasis (`*`, `_`) and single backticks only ever act WITHIN their own
+ * block (a list item or a paragraph ends at a blank line or the next item), so they cannot change how another line renders. They are
+ * measured in 49.6% (backtick), 23.4% (`*`) and 8.2% (`_`) of real log lines: refusing them would make roughly half of all ships
+ * wait for the user's /ship for no safety gain. To make the rule STRICT, move them into LOG_LINE_FORBIDDEN_CHARS: one line.
+ */
+export const LOG_LINE_ALLOWED_INLINE = Object.freeze(['*', '_', '`']);
+const LOG_LINE_FORBIDDEN_RUN_RE = /`{3,}|~{3,}/;
+const LOG_LINE_START_RE = /^ {0,3}(?:[-*+] \S|\d{1,9}[.)] \S|[^\s#>=\-|])/;
+const LOG_LINE_BREAK_RE = /^ {0,3}(?:(?:=+|-{2,})|([-*_])(?: *\1){2,})\s*$/;
 /** Why this added log line is not plain, or null. */
 function plainLogLineProblem(l) {
   if (isBlank(l)) return null;
-  // A reference definition can sit INSIDE a container: strip any leading list markers (nested too) before looking for one.
-  let inner = l;
-  for (let i = 0; i < 8; i++) { const m = /^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+(.*)$/.exec(inner); if (!m) break; inner = m[1]; }
-  if (/^ {0,3}\[[^\]]*\]:/.test(inner)) return 'is a link reference definition';
-  if (/^ {0,3}(?:=+|-{2,})\s*$/.test(l)) return 'is a setext heading underline or a thematic break';
-  return PLAIN_LOG_LINE_RE.test(l) ? null : 'is not a plain list item or prose line';
+  for (const c of LOG_LINE_FORBIDDEN_CHARS) if (l.includes(c)) return `contains ${JSON.stringify(c)}, which Markdown can interpret across lines`;
+  if (LOG_LINE_FORBIDDEN_RUN_RE.test(l)) return 'contains a run of backticks or tildes, which can open a code fence';
+  if (LOG_LINE_BREAK_RE.test(l)) return 'is a setext heading underline or a thematic break';
+  if (/^ {0,3}#/.test(l)) return 'starts with #, which makes a heading';
+  return LOG_LINE_START_RE.test(l) ? null : 'is not a plain list item or prose line';
 }
 
 /**
