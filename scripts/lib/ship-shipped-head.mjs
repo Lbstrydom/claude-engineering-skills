@@ -208,10 +208,12 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, remo
   // `<remote>/HEAD` names; if that cannot be determined the check refuses and asks for `--base`.
   let baseRefName = baseBranch;
   if (verifyBase && !baseRefName) {
-    const sym = run(['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`]);
-    const full = sym.status === 0 ? String(sym.stdout).trim() : '';
-    baseRefName = full.startsWith(`refs/remotes/${remote}/`) ? full.slice(`refs/remotes/${remote}/`.length) : null;
-    if (!baseRefName) return envelope(pre('base', `the default branch of ${remote} could not be determined (no refs/remotes/${remote}/HEAD): pass --base <branch>, or --offline to measure against whatever is local`), headOid);
+    // The default branch is asked of the REMOTE (`ls-remote --symref`), never of the local `refs/remotes/<remote>/HEAD`, which a rename
+    // of the default branch leaves stale: verifying the tip of a stale branch name verifies nothing about what the PR targets.
+    const sym = run(['ls-remote', '--symref', remote, 'HEAD']);
+    const m = sym.status === 0 ? /^ref: refs\/heads\/(.+)\tHEAD$/m.exec(String(sym.stdout)) : null;
+    baseRefName = m ? m[1].trim() : null;
+    if (!baseRefName || !isPlainBranch(baseRefName)) return envelope(pre('base', `the default branch of ${remote} could not be read from the remote${sym.timedOut ? ' (timed out)' : ''}: pass --base <branch>, or --offline to measure against whatever is local`), headOid);
   }
   let baseOidAtStart = null;
   if (verifyBase) {

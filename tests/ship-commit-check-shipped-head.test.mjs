@@ -489,9 +489,20 @@ describe('--check-shipped-head: the LIVE base (code-audit round 5)', () => {
     assert.equal(env.ok, true, env.refusals.join(' | '));
     assert.equal(env.baseVerified, true);
   });
-  it('no --base and no <remote>/HEAD: the default branch cannot be determined, so it refuses and asks for --base', async () => {
+  it('no --base: the default branch is asked of the REMOTE, so a deleted or STALE local <remote>/HEAD decides nothing', async () => {
     const { dir, head, auditedTree } = await withRemote();
     git(dir, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+    const gone = await checkReal({ repoRoot: dir, head, store: store({ auditedTree }) });
+    assert.equal(gone.ok, true, gone.refusals.join(' | '));
+    assert.equal(gone.baseVerified, true);
+    git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/renamed-away');
+    const stale = await checkReal({ repoRoot: dir, head, store: store({ auditedTree }) });
+    assert.equal(stale.ok, true, stale.refusals.join(' | '));
+    assert.equal(stale.baseVerified, true);
+  });
+  it('no --base and a remote that cannot say its default branch: refuses and asks for --base', async () => {
+    const { dir, head, auditedTree } = await withRemote();
+    git(dir, 'remote', 'set-url', 'origin', path.join(os.tmpdir(), 'shipped-head-no-such-remote'));
     const env = await checkReal({ repoRoot: dir, head, store: store({ auditedTree }) });
     assert.deepEqual(failing(env), ['base']);
     assert.match(reason(env, 'base'), /pass --base/);
