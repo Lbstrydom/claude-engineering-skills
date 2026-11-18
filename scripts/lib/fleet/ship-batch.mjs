@@ -108,10 +108,10 @@ export const shipCommitPath = () => path.resolve(path.dirname(fileURLToPath(impo
  * @param {{worktree: string|null, head: string, spawn?: Function, exists?: Function}} a
  * @returns {{ok: boolean, reasons: string[], envelope: object|null}}
  */
-export function runShippedHeadChild({ worktree, head, base = null, spawn = spawnSync, exists = fs.existsSync }) {
+export function runShippedHeadChild({ worktree, head, base = null, remote = null, spawn = spawnSync, exists = fs.existsSync }) {
   const no = (reason, envelope = null) => ({ ok: false, reasons: [reason], envelope });
   if (!worktree || !exists(worktree)) return no('evidence-unavailable: the chip worktree is gone, so its local gate-evidence and final-review markers cannot be read');
-  const r = spawn(process.execPath, [shipCommitPath(), '--check-shipped-head', '--head', head, ...(base ? ['--base', base] : []), '--json'], {
+  const r = spawn(process.execPath, [shipCommitPath(), '--check-shipped-head', '--head', head, ...(base ? ['--base', base] : []), ...(remote ? ['--remote', remote] : []), '--json'], {
     cwd: worktree, encoding: 'utf-8', timeout: CHILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024,
   });
   if (r.error) return no(`checker-failed: ${r.error.code === 'ETIMEDOUT' ? `timed out after ${CHILD_TIMEOUT_MS / 1000}s` : r.error.message}`);
@@ -181,7 +181,7 @@ export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, 
  * condition is needs-user with every reason; nothing here throws.
  * @returns {{ok: Array<object>, needsUser: Array<{id: string, reasons: string[]}>}}
  */
-export function partitionMembers({ cwd, members, base, deps, checkChild, requiredChecks, requiredChecksError, ciFn }) {
+export function partitionMembers({ cwd, members, base, remote = null, deps, checkChild, requiredChecks, requiredChecksError, ciFn }) {
   const ok = [];
   const needsUser = [];
   for (const m of members) {
@@ -190,7 +190,7 @@ export function partitionMembers({ cwd, members, base, deps, checkChild, require
     else if (m.baseRef && m.baseRef !== base) reasons.push(`stacked: the PR targets ${m.baseRef}, not ${base}`);
     if (!m.oid) reasons.push('no ready oid recorded');
     if (reasons.length === 0) {
-      const child = checkChild({ worktree: m.worktree, head: m.oid, base });
+      const child = checkChild({ worktree: m.worktree, head: m.oid, base, remote });
       if (!child.ok) reasons.push(...child.reasons);
       reasons.push(...ciAndIdentityReasons({ cwd, member: m, base, deps, requiredChecks, requiredChecksError, ciFn }));
     }
@@ -241,10 +241,11 @@ export function buildShipBatch(ctx, flags, deps, buildFn, { parseSelect }) {
   if (!r.ok || !r.trainId) return { ...r, needsUser, text: `${r.text}${needsText.length ? `\n${needsText.join('\n')}` : ''}` };
   const dir = fleetDir(cwd);
   const t = readTrain(dir, r.trainId);
+  if (!t.ok) return { ...r, ok: false, code: 'refused', reason: `the built train ${r.trainId} could not be read back (${t.reason})`, text: `REFUSED: the built train ${r.trainId} could not be read back (${t.reason}); no ship-batch record was written, so it cannot be approved with --ship-batch` };
   writeShipBatch(dir, {
     schemaVersion: SHIP_BATCH_SCHEMA, trainId: r.trainId, grantVersion: GRANT_VERSION, checkedAt: ctx.now.toISOString(),
-    base, remote: t.ok ? t.train.destination.remote : null,
-    expectedTip: t.ok ? t.train.destination.expectedOid : null,
+    base, remote: t.train.destination.remote,
+    expectedTip: t.train.destination.expectedOid,
     members: ok.map((m) => ({ id: m.id, prNumber: m.prNumber, repo: m.repo, oid: m.oid, worktree: m.worktree, state: 'pending', mergeOid: null, note: null })),
     excluded: needsUser,
   });
@@ -310,7 +311,7 @@ export function makeShipBatchHooks({ cwd, dir, trainId, deps, requiredChecks, re
     // MEMBER problems SKIP the member: it waits for the user's /ship, and the members that still verify land.
     const needsUser = (why) => { patchBatch(dir, trainId, member.id, { state: 'needs-user', note: String(why).slice(0, 900) }); return { skip: `needs-user: ${why}` }; };
     if (headOid !== member.oid) return needsUser(`PR #${source.prNumber} head ${short(headOid)} is not the verified ship head ${short(member.oid)}`);
-    const c = checkChild({ worktree: member.worktree, head: headOid, base: rec.batch.base });
+    const c = checkChild({ worktree: member.worktree, head: headOid, base: rec.batch.base, remote: rec.batch.remote });
     if (!c.ok) return needsUser(c.reasons.join('; '));
     // The CI and identity facts at the head that is about to merge: the serial runner waited for the REQUIRED checks, but the
     // full-suite verdict `.test-tiers.json` declares is judged only here and at the build, and it can change in between.

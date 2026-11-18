@@ -238,13 +238,14 @@ export function renderPreauthConditions(verdict) {
  * @param {string} tree the tree-ish the commit will carry (a tree id, or HEAD)
  * @param {string} [head] the commit whose fork point is measured (default HEAD). The batch re-check passes the commit it was asked
  *   about, so no later read depends on what HEAD happens to be.
- * @param {string|null} [baseBranch] the branch the change targets (default: what `origin/HEAD` names). The batch re-check passes the
+ * @param {string|null} [baseBranch] the branch the change targets (default: what `<remote>/HEAD` names). The batch re-check passes the
  *   branch the PR actually targets, so a PR into a non-default branch is measured against THAT branch.
+ * @param {string} [remote] the remote that branch lives on (the train's destination remote; default `origin`)
  * @returns {string[]|null}
  */
-export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null) {
+export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null, remote = 'origin') {
   const out = (args) => { const r = run(args); return r && r.status === 0 ? String(r.stdout ?? '').trim() : null; };
-  const defaultRef = baseBranch ? `refs/remotes/origin/${baseBranch}` : out(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+  const defaultRef = baseBranch ? `refs/remotes/${remote}/${baseBranch}` : out(['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`]);
   // origin/HEAD is the authoritative default branch; `origin/main` is the conventional remote-tracking name when HEAD is unset.
   // A LOCAL `main` is never substituted: it can differ from the remote's, and an unverified base can hide what the PR changes.
   // Discovery and resolution are separate: once origin/HEAD NAMES the default branch, that branch's merge base is the only
@@ -252,7 +253,7 @@ export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null) 
   // `origin/main` is consulted only when origin/HEAD itself is unavailable.
   // FULLY QUALIFIED, never shortened: `origin/develop` can resolve to a LOCAL branch of that name (refs/heads/origin/develop is
   // searched before refs/remotes/), whose merge base with HEAD is HEAD itself and would hide every change.
-  const base = out(['merge-base', head, defaultRef || 'refs/remotes/origin/main']);
+  const base = out(['merge-base', head, defaultRef || `refs/remotes/${remote}/main`]);
   if (!base || !tree) return null;
   // `--ignore-submodules=none`: a `diff.ignoreSubmodules` setting must never hide a changed gitlink from a path gate.
   const r = run(['diff', '--name-only', '--no-renames', '--ignore-submodules=none', '-z', base, tree]);
@@ -268,9 +269,9 @@ export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null) 
  * @param {string|null} [baseBranch] the branch the change targets, when it is not the default
  * @returns {string}
  */
-export function defaultBaseRef(run, baseBranch = null) {
-  if (baseBranch) return `refs/remotes/origin/${baseBranch}`;
-  const r = run(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+export function defaultBaseRef(run, baseBranch = null, remote = 'origin') {
+  if (baseBranch) return `refs/remotes/${remote}/${baseBranch}`;
+  const r = run(['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`]);
   const ref = r && r.status === 0 ? String(r.stdout ?? '').trim() : '';
-  return ref || 'refs/remotes/origin/main';
+  return ref || `refs/remotes/${remote}/main`;
 }

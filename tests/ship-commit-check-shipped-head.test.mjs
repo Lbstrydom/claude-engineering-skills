@@ -308,6 +308,17 @@ describe('--check-shipped-head: the real CLI boundary (store off)', () => {
     assert.equal(r.status, 2);
     assert.equal(JSON.parse(r.stdout).ok, false);
   });
+  it('an unexpected FIRST argument is refused, with and without --base (the value-skipping must not swallow index 0)', () => {
+    for (const args of [['stray', '--check-shipped-head', '--head', m.head, '--json'], ['--check-shipped-head', '--head', m.head, 'stray', '--json'], ['stray', '--check-shipped-head', '--head', m.head, '--base', 'main', '--json']]) {
+      const r = run(args, m.dir);
+      assert.equal(r.status, 2, `${args.join(' ')} => ${r.stdout}${r.stderr}`);
+      assert.match(JSON.parse(r.stdout).refusals.join(' '), /cannot be combined with stray/);
+    }
+  });
+  it('a malformed --base or --remote is refused by name', () => {
+    assert.equal(run(['--check-shipped-head', '--head', m.head, '--base', '../x', '--json'], m.dir).status, 2);
+    assert.equal(run(['--check-shipped-head', '--head', m.head, '--remote', '--json'], m.dir).status, 2);
+  });
   it('cannot be combined with commit arguments', () => {
     const r = run(['--check-shipped-head', '--head', m.head, '--gate', 'converged'], m.dir);
     assert.equal(r.status, 2);
@@ -340,6 +351,30 @@ describe('--check-shipped-head: a PR into a NON-default branch (code-audit round
     const wrong = await against(null); // origin/HEAD names main: develop's policy file reads as this member's change
     assert.ok(failing(wrong).includes('repo-policy'), 'measured against main it WOULD refuse: the instrument sees the file');
     const right = await against('develop');
+    assert.equal(right.ok, true, right.refusals.join(' | '));
+  });
+});
+
+describe('--check-shipped-head: a destination remote that is not origin (code-audit round 4)', () => {
+  it('measures against <remote>/<branch>: the same member ships against upstream/develop with origin/* refs ABSENT', async () => {
+    const { dir } = makeRepo();
+    git(dir, 'checkout', '-q', '-b', 'develop');
+    write(dir, '.github/workflows/ci.yml', 'name: ci\n');
+    const dev = commit(dir, 'develop: ci');
+    git(dir, 'update-ref', 'refs/remotes/upstream/develop', dev);
+    for (const ref of ['refs/remotes/origin/main']) git(dir, 'update-ref', '-d', ref);
+    git(dir, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+    git(dir, 'checkout', '-q', '-b', 'claude/z');
+    write(dir, 'scripts/a.mjs', 'export const a = 4; // audited\n');
+    const auditedSha = commit(dir, 'audited work');
+    const auditedTree = git(dir, 'rev-parse', 'HEAD^{tree}');
+    shipDocs(dir);
+    const head = commit(dir, `ship z\n\n${TRAILERS()}`);
+    writeMarkers(dir, { auditedTree, auditedSha, branch: 'claude/z' });
+    const against = (remote) => checkShippedHead({ repoRoot: dir, head, baseBranch: 'develop', remote, store: store({ auditedTree }) });
+    const wrong = await against('origin'); // there is no origin/develop here: the instrument must say so, not guess
+    assert.equal(wrong.ok, false, 'a base that cannot be resolved is a refusal, never a pass');
+    const right = await against('upstream');
     assert.equal(right.ok, true, right.refusals.join(' | '));
   });
 });

@@ -25,8 +25,9 @@ import { isShipStepDelta } from './ship-record/authority.mjs';
 import { assertKnownFlags, finishAndExit } from './cli-io.mjs';
 
 export const SHIPPED_HEAD_SCHEMA = 'shipped-head/v1';
-const KNOWN_FLAGS = Object.freeze(['--check-shipped-head', '--head', '--base', '--json']);
+const KNOWN_FLAGS = Object.freeze(['--check-shipped-head', '--head', '--base', '--remote', '--json']);
 const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+const REMOTE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const SHA_RE = /^[0-9a-f]{7,64}$/i;
 const SHIP_TEXT_PATH_RE = /^(?:docs\/plans\/[^/]+\.md|status\.md)$/;
@@ -81,7 +82,7 @@ export function makeRunner(cwd) {
  * @param {string|null} [baseBranch] the branch the PR targets (default: `origin/HEAD`'s)
  * @returns {{ok: boolean, reason: string}}
  */
-export function computePostAuditDelta(run, evidence, headChanged, headTree, baseBranch = null) {
+export function computePostAuditDelta(run, evidence, headChanged, headTree, baseBranch = null, remote = 'origin') {
   const no = (reason) => ({ ok: false, reason });
   const out = (args) => { const r = run(args); return r.status === 0 ? String(r.stdout).trim() : null; };
   if (!evidence) return no('no gate-evidence marker, so the audited tree is unknown');
@@ -91,7 +92,7 @@ export function computePostAuditDelta(run, evidence, headChanged, headTree, base
   const sha = evidence.auditedSha;
   if (!sha || out(['cat-file', '-t', `${sha}^{commit}`]) !== 'commit') return no('audited-sha-missing: the audited commit is unknown or not in this repository, so the audit\'s own fork point cannot be found');
   if (!Array.isArray(headChanged)) return no('the head\'s change set could not be resolved, so nothing was checked');
-  const base = defaultBaseRef((a) => run(a), baseBranch);
+  const base = defaultBaseRef((a) => run(a), baseBranch, remote);
   const fork = out(['merge-base', sha, base]);
   if (!fork) return no(`the audited commit's fork point against ${base} could not be resolved`);
   const pa = run(['diff', '--name-only', '--no-renames', '--ignore-submodules=none', '-z', fork, A]);
@@ -144,7 +145,7 @@ export function createStoreAdapter() {
  * @param {{repoRoot: string, head: string, run?: Function, store?: ReturnType<typeof createStoreAdapter>}} o
  * @returns {Promise<{schema: string, ok: boolean, head: string, runId: string|null, gate: string|null, conditions: object[], refusals: string[]}>}
  */
-export async function checkShippedHead({ repoRoot, head, baseBranch = null, run = makeRunner(repoRoot), store = createStoreAdapter() }) {
+export async function checkShippedHead({ repoRoot, head, baseBranch = null, remote = 'origin', run = makeRunner(repoRoot), store = createStoreAdapter() }) {
   const envelope = (v, headOid) => ({ schema: SHIPPED_HEAD_SCHEMA, ok: v.ok, head: headOid, runId: v.runId ?? null, gate: v.gate ?? null, conditions: v.conditions, refusals: v.refusals });
   const pre = (id, reason) => ({ ok: false, runId: null, gate: null, conditions: [{ id, ok: false, reason }], refusals: [`${id}: ${reason}`] });
 
@@ -179,7 +180,7 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, run 
 
   const runRes = verifiable ? await store.runFacts(evidence.runId) : { row: null, why: `there is no usable gate-evidence marker (state: ${evidence.state})` };
   const repoRes = await store.repoId(repoRoot);
-  const changedPaths = headTree ? gatherChangedPaths((a) => run(a), headTree, headOid, baseBranch) : null;
+  const changedPaths = headTree ? gatherChangedPaths((a) => run(a), headTree, headOid, baseBranch, remote) : null;
   const usable = verifiable ? evidence : null;
 
   const verdict = evaluateShippedHead({
@@ -191,7 +192,7 @@ export async function checkShippedHead({ repoRoot, head, baseBranch = null, run 
     runRowWhy: runRes.why ?? undefined,
     repoId: repoRes.repoId,
     finalReview: readFinalReviewMarker(repoRoot),
-    delta: computePostAuditDelta(run, usable, changedPaths, headTree, baseBranch),
+    delta: computePostAuditDelta(run, usable, changedPaths, headTree, baseBranch, remote),
     changedPaths,
   });
   // The markers and the store were read over time: if HEAD moved while they were, none of it describes the head that was asked about.
@@ -210,7 +211,10 @@ export async function runShippedHeadCli(argv, { cwd = process.cwd(), store } = {
   const head = i >= 0 ? argv[i + 1] : undefined;
   const bi = argv.indexOf('--base');
   const baseBranch = bi >= 0 ? argv[bi + 1] : null;
-  const others = argv.filter((a, k) => a !== '--check-shipped-head' && a !== '--json' && a !== '--head' && a !== '--base' && k !== i + 1 && k !== bi + 1);
+  const ri = argv.indexOf('--remote');
+  const remote = ri >= 0 ? argv[ri + 1] : 'origin';
+  const valueOf = (k) => (i >= 0 && k === i + 1) || (bi >= 0 && k === bi + 1) || (ri >= 0 && k === ri + 1);
+  const others = argv.filter((a, k) => a !== '--check-shipped-head' && a !== '--json' && a !== '--head' && a !== '--base' && a !== '--remote' && !valueOf(k));
   const bad = (reason) => {
     if (json) process.stdout.write(`${JSON.stringify({ schema: SHIPPED_HEAD_SCHEMA, ok: false, head: head ?? null, runId: null, gate: null, conditions: [{ id: 'args', ok: false, reason }], refusals: [`args: ${reason}`] })}\n`);
     process.stderr.write(`AGENT FIX: --check-shipped-head: ${reason}. Usage: --check-shipped-head --head <oid> [--json], alone, from the member's worktree.\n`);
@@ -219,13 +223,14 @@ export async function runShippedHeadCli(argv, { cwd = process.cwd(), store } = {
   // An unknown flag is refused by NAME before anything runs: a read-only check must never silently ignore what was asked of it.
   try { assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'ship-commit --check-shipped-head', from: 0 }); } catch (e) { return bad(`${e.message.split('. ')[0]}; a standalone read-only check cannot be combined with other flags`); }
   if (head === undefined || head.startsWith('--') || !SHA_RE.test(head)) return bad('--head needs a commit oid');
+  if (ri >= 0 && (remote === undefined || remote.startsWith('--') || !REMOTE_RE.test(remote))) return bad('--remote needs a plain remote name');
   if (bi >= 0 && (baseBranch === undefined || baseBranch.startsWith('--') || !BRANCH_RE.test(baseBranch) || baseBranch.includes('..'))) return bad('--base needs a plain branch name');
   if (others.length > 0) return bad(`a standalone read-only check cannot be combined with ${others.join(' ')}`);
   const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf-8', windowsHide: true });
   if (top.error || top.status !== 0) { process.stderr.write(`ship-commit: --check-shipped-head: not a git worktree (${(top.stderr || '').trim() || 'git failed'})\n`); return finishAndExit(1); }
   const repoRoot = String(top.stdout).trim();
   let env;
-  try { env = await checkShippedHead({ repoRoot, head, baseBranch, store }); } catch (e) {
+  try { env = await checkShippedHead({ repoRoot, head, baseBranch, remote, store }); } catch (e) {
     process.stderr.write(`ship-commit: --check-shipped-head errored: ${e?.message ?? e}\n`);
     return finishAndExit(1);
   }

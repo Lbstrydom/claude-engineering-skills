@@ -271,7 +271,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
       const s = run.steps[i];
       if (s.step === 'merged') break;
       const v = viewPr(deps, cwd, s);
-      if (!v.ok) return stop(i, `PR #${s.prNumber}: cannot read it (${v.reason})`);
+      if (!v.ok) { const f = memberFail(i, s, `PR #${s.prNumber}: cannot read it (${v.reason})`); if (f) return f; break member; }
       const d = v.doc;
       if (String(d.state).toUpperCase() === 'MERGED') {
         if (!s.accounted.includes(d.headRefOid)) return stop(i, `PR #${s.prNumber} was merged at ${short(d.headRefOid)}, a head this run did not account for — check it by hand`);

@@ -482,6 +482,17 @@ describe('approveShipBatch: the merge, on the real serial runner', () => {
     assert.equal(b.member().mergeOid, squash, 'the null OID was replaced from GitHub, not reused');
   });
 
+  it('the LAST member losing the base race stays lost on resume: the result is never quietly ok', () => {
+    const b = batchFx();
+    const g = ghFor(b, { mergeOpts: { foreignFirst: true } });
+    const r1 = approve(b, g.gh);
+    assert.equal(r1.ok, false);
+    assert.equal(b.member().state, 'landed-on-untested-base');
+    const r2 = resume(b, g.gh);
+    assert.equal(r2.ok, false, 'a resumed, otherwise complete run must still report the untested base');
+    assert.match(r2.reason ?? r2.text, /landed-on-untested-base/);
+  });
+
   it('an unknown train (no sidecar) is refused: a plain train cannot borrow the grant', () => {
     const b = batchFx();
     fs.rmSync(path.join(b.dir, 'shipbatch', `${b.trainId}.json`), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -576,6 +587,16 @@ describe('buildShipBatch: grant first, partition before the build', () => {
     assert.equal(r.shipBatch, true);
     assert.match(r.text, new RegExp(`land --approve ${b.trainId} --ship-batch`));
     assert.equal(readShipBatch(b.dir, b.trainId).batch.members[0].state, 'pending');
+  });
+
+  it('a built train that cannot be READ back is a failed build: no sidecar of nulls, no approval command', () => {
+    const b = batchFx();
+    const buildFn = () => ({ ok: true, trainId: 't-20261118000000-abcd', text: 'built' });
+    const r = buildShipBatch(ctxFor(b.fx), {}, { ...depsWith(ghGreen(b.tested)), shipBatch: { ...b.shipBatch, members: membersOf(b), ciVerdict: () => ({ verdict: 'full' }) } }, buildFn, { parseSelect });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /could not be read back/);
+    assert.doesNotMatch(r.text, /land --approve/);
+    assert.equal(readShipBatch(b.dir, 't-20261118000000-abcd').ok, false, 'no record was written for it');
   });
 
   it('every member refused: nothing is built, nothing is merged, and each is told to wait for /ship', () => {
@@ -676,6 +697,17 @@ function ghTwo(b) {
 const approveTwo = (b, gh, extra = {}) => approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), shipBatch: b.shipBatch, ...extra }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000 } });
 
 describe('a batch of two: the rest still land, and the base progression holds across merges', () => {
+  it('a PR that cannot be READ skips THAT member (needs-user); the other still lands', () => {
+    const b = twoBatch();
+    const g = ghTwo(b);
+    const gh = (args) => (args[0] === 'pr' && args[1] === 'view' && args[2] === '21' ? { ok: false, status: 1, stdout: '', stderr: 'HTTP 502', reason: 'HTTP 502' } : g.gh(args));
+    const r = approveTwo(b, gh);
+    assert.equal(r.ok, true, r.text);
+    assert.deepEqual(g.merges.map((m) => m[2]), ['22']);
+    assert.equal(b.batch().members[0].state, 'needs-user');
+    assert.match(b.batch().members[0].note, /cannot read it/);
+  });
+
   it('both verify: both land IN ORDER, the second on the first\'s squash, each carrying its own trailers; the train lands', () => {
     const b = twoBatch();
     const g = ghTwo(b);

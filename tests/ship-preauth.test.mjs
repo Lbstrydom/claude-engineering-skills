@@ -163,6 +163,16 @@ describe('gatherChangedPaths', () => {
     assert.ok(seen.some((c) => c === 'merge-base headid refs/remotes/origin/develop'), seen.join('\n'));
     assert.equal(seen.some((c) => c.startsWith('symbolic-ref')), false, 'origin/HEAD is not consulted when the target is named');
   });
+  it('the base ref is on the DESTINATION remote, not a hardcoded origin', () => {
+    const seen = [];
+    const run = (args) => { seen.push(args.join(' ')); return { status: 0, stdout: args[0] === 'merge-base' ? 'basecommit' : 'a.txt\0' }; };
+    gatherChangedPaths(run, 'treeid', 'headid', 'develop', 'upstream');
+    assert.ok(seen.some((c) => c === 'merge-base headid refs/remotes/upstream/develop'), seen.join('\n'));
+    assert.equal(seen.some((c) => c.includes('refs/remotes/origin')), false);
+    const seen2 = [];
+    gatherChangedPaths((args) => { seen2.push(args.join(' ')); return { status: 1, stdout: '' }; }, 'treeid', 'headid', null, 'upstream');
+    assert.ok(seen2.some((c) => c === 'symbolic-ref --quiet refs/remotes/upstream/HEAD'), seen2.join('\n'));
+  });
   it('diffs the merge base against the tree with --no-renames, so BOTH ends of a rename are listed', () => {
     const seen = [];
     const run = (args) => {
