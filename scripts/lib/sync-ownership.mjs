@@ -84,6 +84,7 @@ export function describeEvidence(evidence) {
   switch (evidence) {
     case 'banner': return 'carries our upstream-owned banner — provably ours';
     case 'identical-to-source': return 'byte-identical to source — adopting discards nothing';
+    case 'prior-upstream': return 'byte-identical to an EARLIER upstream version — a stale snapshot, not an edit';
     case 'unreadable': return 'unreadable';
     default: return 'no banner, and differs from source';
   }

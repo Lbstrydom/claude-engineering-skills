@@ -29,10 +29,10 @@ import {
 } from './lib/sync-manifest.mjs';
 import { buildOwnedSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './lib/sync-owned-sidecar.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
-import { sourceRelToDestRel, LAYOUT_CONSTANTS } from './lib/sync-path-map.mjs';
-import { rewriteCommandSurface, buildOwnedSourceTails } from './lib/sync-rewriter.mjs';
-import { injectUpstreamBanner, BANNER_BODY } from './lib/sync-banner.mjs';
-import { classifyOwnership, describeEvidence } from './lib/sync-ownership.mjs';
+import { sourceRelToDestRel, isCoOwnedJsonDest, LAYOUT_CONSTANTS } from './lib/sync-path-map.mjs';
+import { buildOwnedSourceTails } from './lib/sync-rewriter.mjs';
+import { BANNER_BODY } from './lib/sync-banner.mjs';
+import { describeEvidence } from './lib/sync-ownership.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import {
   BASE_STATE, ACTION, classifyAgainstBase, decideAction, describeReason, readDivergenceVcs, createPriorUpstreamResolver,
@@ -42,11 +42,11 @@ import {
 import {
   OVERRIDES_PATH, loadOverrides, matchOverride, renderGitignoreExtras,
 } from './lib/sync-overrides.mjs';
-import { guardPinDowngrades, assertNoPinDowngrade } from './lib/sync-pin-guard.mjs';
 import {
   RECEIPT_PATH, RECEIPT_VERSION, buildReceiptEntry, readSyncReceipt, latestReceiptEntry, commitReceipt,
 } from './lib/sync-receipt.mjs';
-import { readConsumerFile, readConsumerJson, writeConsumerFile, removeConsumerFile, acquireConsumerLock } from './lib/sync-consumer-io.mjs';
+import { readConsumerFile, readConsumerJson, writeConsumerFile, removeConsumerFile, acquireConsumerLock, hashConsumerFile } from './lib/sync-consumer-io.mjs';
+import { renderOutbound, decideUnmanifested } from './lib/sync-outbound.mjs';
 import { createConfirmPrompt } from './lib/sync-prompt.mjs';
 import { describeSafeToCommit } from './lib/sync-status.mjs';
 import { describeUnmeasuredTargets, enforceBaseLagForTarget } from './lib/sync-base-lag.mjs';
@@ -54,9 +54,8 @@ import { describeRunSummary } from './lib/sync-run-summary.mjs';
 import { createGitAncestry, planRollbackResponse, rollbackAgainstStamps, manifestStamp } from './lib/sync-rollback-guard.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { hookEpilogueLines } from './lib/prepush-hook-version.mjs';
-import { computeEolPins, renderEolPinLines, canonicaliseOutboundEol } from './lib/sync-eol-pins.mjs';
+import { computeEolPins, renderEolPinLines } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
-import { deepMerge } from './lib/json-merge.mjs';
 import { planGarbageCollection, executeGarbageCollection, countCitations, carriedForFailedDeletions, mayStillExist, SYNC_RUN_ARTIFACTS } from './lib/sync-gc.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
@@ -779,6 +778,7 @@ async function main() {
     const receiptOverridesHeld = [];
     const receiptDivergedOverwritten = [];
     const divergenceRefusals = [];
+    const writtenHash = new Map();    // dst -> sha256 of the exact bytes written (or confirmed equal on disk): the manifest base
     const failedWrites = new Set();   // ERR'd destinations: their base is carried forward, never re-hashed
     const skippedWrites = new Set();  // source absent: likewise carried, but not a reason to keep the journal
 
@@ -1085,70 +1085,28 @@ async function main() {
     // recovery state only: an unreadable/malformed journal reads as empty (unproven files then collide, which is the safe side)
     const journalDestinations = new Set(journalRead.state === 'present' && Array.isArray(journalRead.json.destinations) ? journalRead.json.destinations : []);
     const collisions = [];
-    const inventoryOwned = []; // non-relocating managed surfaces absent from prior manifest
-    const contentOwned = [];   // orphans proved ours by their own bytes (see sync-ownership.mjs)
-    for (const [dstRel] of intendedWrites) {
-      const dstAbsPath = path.join(repo.path, dstRel);
-      if (!fs.existsSync(dstAbsPath)) continue;
-      // Layout-aware ownership lookup: check both the destination key
-      // (isolated layout) and the source-derived legacy key.
-      const ownedAsIsolated = Object.prototype.hasOwnProperty.call(priorFiles, dstRel);
-      const ownedAsLegacyMap = priorLayout === 'legacy' &&
-        Object.prototype.hasOwnProperty.call(priorFiles, intendedWrites.get(dstRel));
-      const ownedByInterruptedRun = journalDestinations.has(dstRel);
-      // Inventory-ownership (root fix for incomplete legacy manifests): a file
-      // we intend to write whose dest == src (a NON-relocating managed surface
-      // — .claude/skills/**, .github/prompts/**, editor configs, the manifest
-      // itself) is ours by namespace definition. Older sync versions never
-      // recorded these in the manifest, so the prior-manifest test
-      // false-positives on the first isolated migration. This is safe: those
-      // paths are our exclusive managed namespace, and the two genuinely
-      // co-owned configs (.claude/settings.json, .vscode/mcp.json) are written
-      // via deepMerge, which preserves consumer keys regardless of this claim.
-      // The relocating namespace (scripts/.claude-skills/**, dst != src) is NOT
-      // covered — a foreign file there still aborts, preserving real collision
-      // protection.
-      const ownedByInventoryNonRelocating =
-        !ownedAsIsolated && !ownedAsLegacyMap && dstRel === intendedWrites.get(dstRel);
-      if (!ownedAsIsolated && !ownedAsLegacyMap && !ownedByInterruptedRun) {
-        if (ownedByInventoryNonRelocating) { inventoryOwned.push(dstRel); continue; }
-        // Content-derived ownership. The manifest is a TRACKED file that a
-        // merge or reset can roll backwards while the gitignored files it
-        // describes survive, so "absent from the manifest" is NOT evidence a
-        // file is foreign. The bytes are evidence: our banner cannot be forged
-        // by a consumer-authored file, and content identical to what we would
-        // write makes adoption a no-op. Everything else still collides.
-        const srcRel = intendedWrites.get(dstRel);
-        let destContent = null;
-        try { destContent = fs.readFileSync(dstAbsPath, 'utf-8'); } catch { /* fails closed */ }
-        // Build the byte-identity comparand with the SAME pipeline the write
-        // path uses, rather than re-deriving "is this file rewritten /
-        // banner-injected?" as a second predicate — that duplicate definition
-        // is exactly the drift this repo keeps paying for. For `.sql`
-        // migrations both steps are no-ops, so this reduces to source bytes;
-        // for tooling the banner proof fires first anyway.
-        // Folded exactly as the write path folds it — see the note above: this
-        // comparand must stay byte-identical to what we would write, and the
-        // write path now emits LF regardless of the checkout's line endings.
-        const srcContent = canonicaliseOutboundEol(dstRel, readSourceOrNull(srcRel));
-        let expected = null;
-        if (srcContent !== null) {
-          expected = injectUpstreamBanner(
-            rewriteCommandSurface({ relPath: dstRel, content: srcContent, config: rewriteConfig }).rewritten,
-            dstRel,
-          );
-        }
-        const { provable, evidence } = classifyOwnership({
-          destContent,
-          sourceContent: expected,
-          bannerMarker: BANNER_MARKER,
-        });
-        if (provable) contentOwned.push({ dstRel, evidence });
-        else collisions.push(dstRel);
-      }
+    const sharedMerge = []; // shared config surfaces: MERGED (consumer keys preserved), never claimed as ours
+    const contentOwned = []; // orphans proved ours by evidence: our banner, byte-identity, or an EARLIER upstream version
+    for (const [dstRel, srcRel] of intendedWrites) {
+      if (!fs.existsSync(path.join(repo.path, dstRel))) continue;
+      // Manifest (either layout) or an interrupted run's journal already vouches for it.
+      if (Object.prototype.hasOwnProperty.call(priorFiles, dstRel) || journalDestinations.has(dstRel)
+        || (priorLayout === 'legacy' && Object.prototype.hasOwnProperty.call(priorFiles, srcRel))) continue;
+      // Same path in and out (`dst === src`) is NOT evidence: a consumer's own `.claude/skills/<name>/SKILL.md` has it too.
+      // Ownership is proved by the bytes (lib/sync-outbound.mjs `decideUnmanifested`, built on the SAME renderer the write
+      // loop uses, so a byte-identical orphan is recognised whatever its type); a shared config surface is merged instead.
+      const dest = readConsumerFile(repo.path, dstRel);
+      const verdict = decideUnmanifested({
+        srcRel, dstRel, destContent: dest.state === 'present' ? dest.content : null, sourceText: readSourceOrNull(srcRel),
+        rewriteConfig, bannerMarker: BANNER_MARKER,
+        priorUpstreamMatches: () => priorUpstream.matches(srcRel, crypto.createHash('sha256').update(fs.readFileSync(path.join(repo.path, dstRel))).digest('hex')),
+      });
+      if (verdict.disposition === 'owned') contentOwned.push({ dstRel, evidence: verdict.evidence });
+      else if (verdict.disposition === 'shared-merge') sharedMerge.push(dstRel);
+      else collisions.push(dstRel);
     }
-    if (inventoryOwned.length && !DRY_RUN) {
-      console.log(`  ${Y}note${X}  ${inventoryOwned.length} managed-surface file(s) not in prior manifest — treating as owned (legacy manifest predates skill/prompt tracking).`);
+    if (sharedMerge.length && !DRY_RUN) {
+      console.log(`  ${D}merge${X}  ${sharedMerge.length} shared config surface(s) not in the prior manifest — consumer keys preserved: ${sharedMerge.join(', ')}`);
     }
     if (contentOwned.length) {
       // Reported every run, never silent. This path exists because the manifest
@@ -1243,72 +1201,22 @@ async function main() {
         continue;
       }
 
-      // Fold to LF before ANYTHING hashes, compares or writes it, so the bytes a
-      // consumer receives are a function of committed source rather than of which
-      // checkout ran the sync. Without this the sync shipped CRLF from a Windows
-      // worktree while the same run wrote a `.gitattributes` block pinning
-      // those very paths to `text eol=lf`. See canonicaliseOutboundEol.
-      let outContent = canonicaliseOutboundEol(dstRel, srcContent);
-      const isJson = dstRel.endsWith('.json');
       const dstExists = fs.existsSync(dstPath);
-
-      if (isJson) {
-        // Existing deepMerge behaviour preserved for JSON; rewriter runs
-        // AFTER merge on the final value (plan §2 KD #9 + Gemini v3 G4 fix).
-        //
-        // The `!dstExists` branch is NOT a no-op, and adding it fixed a real
-        // one-time churn: the first sync used to write the RAW source bytes
-        // (`"args": ["a", "b"]` on one line) while every later sync wrote
-        // `JSON.stringify(merged, null, 2)` (the array expanded), so `.vscode/
-        // mcp.json` and `.claude/settings.json` always reported `upd` on a
-        // consumer's SECOND sync and were stable only from the third. A write
-        // whose bytes depend on whether the file already existed is the same
-        // "two regenerations differ" smell the generated-artifact policy exists
-        // to remove. Canonicalising both paths through one stringify makes the
-        // output a function of the source alone. (Pre-existing; surfaced by the
-        // idempotency assertion in tests/sync-target-path.test.mjs.)
-        try {
-          const src = JSON.parse(srcContent);
-          const existingJson = dstExists ? JSON.parse(fs.readFileSync(dstPath, 'utf-8')) : null;
-          const merged = existingJson ? deepMerge(existingJson, src) : src;
-          // Supply-chain invariant: a merge may never move a server launcher
-          // from a pinned local path to an unpinned network fetch. `deepMerge`
-          // gives a source leaf authority and replaces arrays wholesale, so
-          // upstream's `npx -y …@latest` silently un-pinned a consumer that had
-          // deliberately pointed at node_modules (report 5b1a121e). Guard, then
-          // an INDEPENDENT post-condition on the final value — a check that
-          // shares its only implementation with the thing it checks proves
-          // nothing.
-          const guarded = guardPinDowngrades(existingJson, merged);
-          if (guarded.held.length) {
-            const names = guarded.held.map((h) => `${h.key}.${h.server}`).join(', ');
-            console.log(`  ${Y}pinned${X} ${dstRel} ${D}— kept this repo's pinned launcher for ${names} (upstream's is an unpinned fetch)${X}`);
-          }
-          assertNoPinDowngrade({ relPath: dstRel, existing: existingJson, outbound: guarded.value });
-          outContent = JSON.stringify(guarded.value, null, 2) + '\n';
-        } catch (err) {
-          console.log(`  ${R}ERR${X}  ${dstRel}: JSON merge failed: ${err.message?.slice(0, 100)}`);
-          repoErrors++; totalErrors++; failedWrites.add(dstRel);
-          continue;
-        }
+      const coOwnedJson = isCoOwnedJsonDest(srcRel);
+      // ONE renderer (lib/sync-outbound.mjs): EOL fold, JSON stage (merge only for a shared surface; an upstream-exclusive JSON is
+      // REPLACED), pin guard, rewriter, banner — the same bytes the ownership scan compares against.
+      let rendered;
+      try {
+        rendered = renderOutbound({ srcRel, dstRel, srcContent, existingContent: coOwnedJson && dstExists ? fs.readFileSync(dstPath, 'utf-8') : null, rewriteConfig });
+      } catch (err) {
+        console.log(`  ${R}ERR${X}  ${dstRel}: ${dstRel.endsWith('.json') ? 'JSON merge' : 'render'} failed: ${err.message?.slice(0, 100)}`);
+        repoErrors++; totalErrors++; failedWrites.add(dstRel);
+        continue;
       }
-
-      const rewriteResult = rewriteCommandSurface({
-        relPath: dstRel,
-        content: outContent,
-        config: rewriteConfig,
-      });
-      outContent = rewriteResult.rewritten;
+      if (rendered.pinsHeld.length) console.log(`  ${Y}pinned${X} ${dstRel} ${D}— kept this repo's pinned launcher for ${rendered.pinsHeld.map((h) => `${h.key}.${h.server}`).join(', ')} (upstream's is an unpinned fetch)${X}`);
+      const outContent = rendered.content;
+      const rewriteResult = rendered.rewrite;
       if (rewriteResult.changed) repoRewrites++;
-
-      // Inject the "UPSTREAM-OWNED — do not edit" banner into relocated,
-      // comment-capable tooling (scripts/.claude-skills/**) so an agent can't
-      // open the synced copy to patch it without being told to fix upstream +
-      // re-sync (consumer-deployment-hardening). No-op for tracked
-      // skills/prompts and JSON. Runs BEFORE the hash so the manifest matches
-      // what we write (idempotent — source is banner-free, so re-sync is a
-      // no-op "unchanged").
-      outContent = injectUpstreamBanner(outContent, dstRel);
 
       // Compute hashes against final outbound content (so the manifest's
       // hashes match what we actually write).
@@ -1318,6 +1226,7 @@ async function main() {
         : null;
 
       if (srcHash === dstHash) {
+        writtenHash.set(dstRel, `sha256:${srcHash}`); // the disk bytes ARE the outbound bytes
         repoUnchanged++; totalUnchanged++;
         continue;
       }
@@ -1359,7 +1268,11 @@ async function main() {
       // take before the divergence gate precisely because the content is
       // identical modulo line endings — by definition not consumer content, so
       // there is nothing a rewrite can destroy.
-      const eolOnlyDiff = dstExists
+      // The override decision comes FIRST: a path the consumer declared held is not rewritten for any reason, line endings
+      // included (it falls through to the gate, which HOLDs and records it).
+      const bookkeeping = isSyncBookkeeping(dstRel);
+      const override = bookkeeping ? null : matchOverride(dstRel, overridesDoc.overrides);
+      const eolOnlyDiff = dstExists && !override
         && eolInsensitiveEqual(outContent, fs.readFileSync(dstPath));
       if (eolOnlyDiff && DRY_RUN) {
         repoUnchanged++; totalUnchanged++;
@@ -1369,6 +1282,7 @@ async function main() {
       if (eolOnlyDiff) {
         try {
           writeConsumerFile(repo.path, dstRel, outContent);
+          writtenHash.set(dstRel, `sha256:${srcHash}`);
           repoEolOnly++;
           console.log(`  ${D}eol${X}   ${dstRel} ${D}(rewrote CRLF → LF; content unchanged)${X}`);
         } catch (err) {
@@ -1391,8 +1305,6 @@ async function main() {
       // and so differs on EVERY run, which would print "overwrote consumer
       // content" on every sync of every consumer and train the operator to
       // ignore the one line that matters.
-      const bookkeeping = isSyncBookkeeping(dstRel);
-      const override = bookkeeping ? null : matchOverride(dstRel, overridesDoc.overrides);
       const baseHash = priorFiles[dstRel] ?? (priorLayout === 'legacy' ? priorFiles[srcRel] : undefined);
       const baseState = bookkeeping ? BASE_STATE.PRISTINE : classifyAgainstBase({
         baseHash,
@@ -1422,7 +1334,7 @@ async function main() {
         // receipt. Why, and the measured four-run table: `classifyHeldStaleness`.
         const staleness = classifyHeldStaleness({
           baseHash, priorHeldSha: priorReceiptHeld.get(dstRel)?.upstreamSha,
-          outboundHash: srcHash, outboundDependsOnDisk: isJson && dstExists,
+          outboundHash: srcHash, outboundDependsOnDisk: coOwnedJson && dstExists,
         });
         receiptOverridesHeld.push({ path: dstRel, reason: override.reason, upstreamSha: srcHash,
           upstreamMoved: staleness.moved, upstreamMovedBasis: staleness.basis });
@@ -1476,6 +1388,7 @@ async function main() {
         }
       }
 
+      writtenHash.set(dstRel, `sha256:${srcHash}`); // the exact bytes just handed to the write (all rendering stages applied)
       if (isNew) { repoNew++; totalNew++; if (!bookkeeping) receiptCreated.push(dstRel); }
       else { repoUpdated++; totalUpdated++; if (!bookkeeping) receiptUpdated.push(dstRel); }
       if (decision.action === ACTION.WRITE_LOUD) {
@@ -1491,6 +1404,7 @@ async function main() {
     const gcPlan = planGarbageCollection({
       priorFiles, intendedDests, toolingDir: LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR,
       exists: (rel) => fs.existsSync(path.join(repo.path, rel)),
+      probe: (rel) => hashConsumerFile(repo.path, rel), // a retired file the consumer EDITED is held, as the write path never overwrites one
     });
     const { orphanedTracked } = gcPlan;
     if (orphanedTracked.length) {
@@ -1502,17 +1416,28 @@ async function main() {
         console.log(`    ${D}${f}${X} ${hint}`);
       }
     }
-    let gcResult = { deleted: [], absent: [], failed: [] };
-    if (gcPlan.deletions.length && DRY_RUN) {
-      console.log(`  ${D}gc dry-run: ${gcPlan.deletions.length} file(s) would be deleted${X}`);
-    } else if (gcPlan.deletions.length) {
-      gcResult = executeGarbageCollection({ root: repo.path, deletions: gcPlan.deletions });
+    // A probe that could not answer (refused / unreadable) skips GC for the WHOLE target: nothing is deleted on a guess.
+    const gcSkipped = gcPlan.probeFailed.length > 0;
+    const gcRun = gcSkipped ? [] : [...gcPlan.deletions, ...(OVERWRITE_DIVERGED ? gcPlan.divergedHeld : [])];
+    let gcResult = { deleted: [], absent: [], held: [], failed: [] };
+    if (gcRun.length && DRY_RUN) {
+      console.log(`  ${D}gc dry-run: ${gcRun.length} file(s) would be deleted${X}`);
+    } else if (gcRun.length) {
+      gcResult = executeGarbageCollection({ root: repo.path, deletions: gcRun, expectHash: Object.fromEntries(gcRun.map((rel) => [rel, gcPlan.probedHash[rel]])) });
       repoGcDeletions = gcResult.deleted.length;
       if (repoGcDeletions) console.log(`  ${D}gc: removed ${repoGcDeletions} stale file(s)${X}`);
+      for (const rel of gcResult.deleted) if (gcPlan.divergedHeld.includes(rel)) receiptDivergedOverwritten.push({ path: rel, reason: 'diverged-retired-upstream' });
     }
+    // Retired but NOT deleted: edited locally (deleted only under --overwrite-diverged), a malformed ownership record (never
+    // deleted), or changed between the probe and the unlink. Their prior manifest entries are carried forward, below.
+    const retiredHeld = gcSkipped ? [] : [...(OVERWRITE_DIVERGED ? [] : gcPlan.divergedHeld), ...gcPlan.unknownBaseHeld, ...gcResult.held];
+    for (const f of gcPlan.divergedHeld.filter((x) => retiredHeld.includes(x))) console.log(`  ${D}hold${X}  ${f} ${D}(upstream retired it, but this copy was edited locally; --overwrite-diverged deletes it)${X}`);
+    for (const f of gcPlan.unknownBaseHeld) console.log(`  ${D}hold${X}  ${f} ${D}(its ownership record is malformed; delete it by hand if it is ours)${X}`);
+    for (const f of gcResult.held) console.log(`  ${D}hold${X}  ${f} ${D}(changed between the check and the delete)${X}`);
+    for (const f of gcPlan.probeFailed) console.log(`  ${R}gc SKIPPED${X} ${f.path} ${D}(${f.reason.slice(0, 160)}) — no gc this run: nothing is deleted on a guess${X}`);
     for (const f of gcResult.failed) console.log(`  ${R}gc FAILED${X} ${f.path} ${D}(${f.reason.slice(0, 160)}; still tracked — the next run retries)${X}`);
     for (const k of gcPlan.unsafeKeys) console.log(`  ${R}gc REFUSED${X} ${k} ${D}(manifest key is not a plain relative path — nothing this sync writes; dropped)${X}`);
-    if (gcResult.failed.length || gcPlan.unsafeKeys.length) { repoErrors++; totalErrors++; }
+    if (gcResult.failed.length || gcPlan.unsafeKeys.length || gcSkipped) { repoErrors++; totalErrors++; }
 
     // ── Commit point: write per-consumer manifest with layout: 'isolated' ──
     //
@@ -1581,12 +1506,12 @@ async function main() {
             else if (failedWrites.has(dstRel) && mayStillExist(path.join(repo.path, dstRel))) keepJournal = true;
             continue;
           }
-          const abs = path.join(repo.path, dstRel);
-          if (!fs.existsSync(abs)) continue;
-          const buf = fs.readFileSync(abs);
-          consumerFileMap[dstRel] = 'sha256:' + crypto.createHash('sha256').update(buf).digest('hex');
+          // The base is what WE wrote, not whatever is on disk after the loop: re-reading recorded a concurrent edit as ours. A path
+          // in neither set is omitted (never invent a base); the post-condition below still checks the manifest against the disk.
+          if (writtenHash.has(dstRel)) consumerFileMap[dstRel] = writtenHash.get(dstRel);
         }
-        Object.assign(consumerFileMap, carriedForFailedDeletions(gcResult.failed, priorFiles,
+        Object.assign(consumerFileMap, carriedForFailedDeletions([...gcResult.failed,
+          ...(gcSkipped ? [...gcPlan.deletions, ...gcPlan.divergedHeld, ...gcPlan.unknownBaseHeld, ...gcPlan.probeFailed.map((f) => f.path)] : retiredHeld).map((p) => ({ path: p }))], priorFiles,
           (rel) => mayStillExist(path.join(repo.path, rel))));
         // Field-ownership contract (which fields describe the consumer vs the
         // source) lives in `buildConsumerManifest` — extracted so it is
@@ -1778,6 +1703,7 @@ async function main() {
           divergedOverwritten: receiptDivergedOverwritten,
           divergenceRefused: divergenceRefusals,
           legacyRetired: receiptLegacyRetired,
+          retiredHeld,
           unchanged: repoUnchanged,
         });
         // commitReceipt re-reads the record at commit time (an external git operation during the run is detected, not

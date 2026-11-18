@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf-8');
+const OUTBOUND = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'sync-outbound.mjs'), 'utf-8');
 
 /** Source region between two anchors — lets us assert on ORDERING, not just presence. */
 function between(startRe, endRe) {
@@ -168,9 +169,10 @@ describe('content-derived ownership (the manifest is no longer the only proof)',
     // The manifest is a TRACKED file a merge can roll backwards while the
     // gitignored files it describes survive, so "absent from the manifest" is
     // not evidence a file is foreign. The bytes are.
-    assert.match(SRC, /import \{[^}]*classifyOwnership[^}]*\} from '\.\/lib\/sync-ownership\.mjs'/);
-    assert.match(SRC, /classifyOwnership\(\{/);
-    assert.match(SRC, /if \(provable\) contentOwned\.push/,
+    // The decision lives in lib/sync-outbound.mjs `decideUnmanifested` (which calls classifyOwnership); the CLI only acts on it.
+    assert.match(SRC, /import \{[^}]*decideUnmanifested[^}]*\} from '\.\/lib\/sync-outbound\.mjs'/);
+    assert.match(OUTBOUND, /classifyOwnership\(\{/);
+    assert.match(SRC, /if \(verdict\.disposition === 'owned'\) contentOwned\.push/,
       'a provably-owned orphan must be adopted, not collided');
   });
 
@@ -179,9 +181,12 @@ describe('content-derived ownership (the manifest is no longer the only proof)',
     // a second predicate is the duplicate-definition drift this repo keeps
     // paying for. The comparand must come from the same functions the write
     // path uses — all THREE of them.
-    const region = between(/const srcContent = .*readSourceOrNull\(srcRel\)/, /classifyOwnership\(\{/);
-    assert.match(region, /injectUpstreamBanner/);
-    assert.match(region, /rewriteCommandSurface/);
+    // Now ONE renderer (lib/sync-outbound.mjs `renderOutbound`) feeds both the comparand and the write loop, and it runs all
+    // the stages: EOL fold, JSON stage, rewriter, banner.
+    const decide = OUTBOUND.slice(OUTBOUND.indexOf('export function decideUnmanifested'));
+    assert.match(decide, /renderOutbound\(\{/, 'the comparand must be built by the SAME function the write loop uses');
+    assert.match(OUTBOUND, /injectUpstreamBanner/);
+    assert.match(OUTBOUND, /rewriteCommandSurface/);
 
     // The outbound EOL fold is the third, added 2026-09-02. Assert BOTH sites
     // rather than just this one: folding here while the write path did not
@@ -190,13 +195,11 @@ describe('content-derived ownership (the manifest is no longer the only proof)',
     // that disagree on line endings, demoting a provably-owned orphan to a
     // collision that aborts the consumer's entire bundle.
     assert.match(
-      SRC, /const srcContent = canonicaliseOutboundEol\(dstRel, readSourceOrNull\(srcRel\)\)/,
-      'the ownership comparand must be EOL-folded exactly as the write path folds it',
+      OUTBOUND, /let out = canonicaliseOutboundEol\(dstRel, srcContent\)/,
+      'the ONE renderer must fold outbound content, so the comparand and the write path fold identically',
     );
-    assert.match(
-      SRC, /let outContent = canonicaliseOutboundEol\(dstRel, srcContent\)/,
-      'the write path must fold outbound content, or the comparand above folds for nothing',
-    );
+    assert.match(SRC, /rendered = renderOutbound\(\{/, 'the write loop must render through it');
+    assert.doesNotMatch(SRC, /canonicaliseOutboundEol\(/, 'the CLI must not carry a second folding step of its own');
   });
 
   it('still collides on anything not provably ours — the guard is not weakened', () => {

@@ -54,6 +54,20 @@ export const LAYOUT_CONSTANTS = Object.freeze({
 });
 
 /**
+ * Is this source path a JSON file whose destination is the CONSUMER'S OWN config namespace (`.claude/settings.json`,
+ * `.vscode/mcp.json`, `.windowed-views.json`, the manifest)? Those, and only those, are merged with the consumer's
+ * content. A JSON file the layout RELOCATES (`scripts/lib/oss-call-policy.json`, `.audit-loop/expected-schema.json`) is
+ * upstream-exclusive: it is replaced, so a key upstream deletes is actually deleted downstream. Derived from the layout
+ * map itself, so a newly relocated JSON asset is upstream-exclusive by default with no list to forget.
+ *
+ * @param {string} srcRel
+ * @returns {boolean}
+ */
+export function isCoOwnedJsonDest(srcRel) {
+  return typeof srcRel === 'string' && srcRel.endsWith('.json') && sourceRelToDestRel(srcRel) === normalise(srcRel);
+}
+
+/**
  * The consumer-owned files into which the sync writes a MANAGED BLOCK, rather
  * than copying a destination.
  *

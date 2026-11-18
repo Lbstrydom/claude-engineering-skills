@@ -31,6 +31,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 import { assertContainedDestination } from './install/safe-destination.mjs';
@@ -74,23 +75,53 @@ function isPlainRelativeKey(key) {
  * @param {object} args
  * @param {Record<string, string>} args.priorFiles  prior manifest `files`
  * @param {Set<string>} args.intendedDests          destinations written/held this run
+ * ## The divergence question (debt 489588c47264)
+ *
+ * With a `probe`, a tooling-dir candidate is not deleted blindly: the write path never overwrites a file the consumer has
+ * edited since we last wrote it, and GC now asks the same thing of a file upstream RETIRED. The probe answers
+ * `{state:'present', hash}` (the `sha256:<hex>` form the manifest stores) / `absent` / `refused` / `failed`:
+ *
+ *   deletions        present, hash === the manifest base                     (the consumer never touched it)
+ *   divergedHeld     present, hash differs from a valid base                 (an edited retired file: kept; `--overwrite-diverged` deletes)
+ *   unknownBaseHeld  the stored base is not a valid hash                      (invalid provenance: NEVER deleted, with or without the flag)
+ *   alreadyAbsent    absent                                                   (the goal state; the manifest entry is simply dropped)
+ *   probeFailed      refused or failed                                        (the caller skips GC for this target entirely)
+ *
+ * Without a `probe` every candidate is a deletion (the pre-existing behaviour, kept for callers that have no disk to ask).
+ *
  * @param {string} args.toolingDir                  e.g. `scripts/.claude-skills`
  * @param {(rel: string) => boolean} args.exists
- * @returns {{deletions: string[], orphanedTracked: string[], unsafeKeys: string[]}}
+ * @param {(rel: string) => {state: 'present', hash: string} | {state: 'absent'} | {state: 'refused'|'failed', reason?: string}} [args.probe]
+ * @returns {{deletions: string[], orphanedTracked: string[], unsafeKeys: string[], divergedHeld: string[], unknownBaseHeld: string[], alreadyAbsent: string[], probeFailed: Array<{path: string, reason: string}>, probedHash: Record<string, string>}}
  */
-export function planGarbageCollection({ priorFiles, intendedDests, toolingDir, exists }) {
+export function planGarbageCollection({ priorFiles, intendedDests, toolingDir, exists, probe }) {
   const prefix = `${toolingDir}/`;
   const deletions = [];
   const orphanedTracked = [];
   const unsafeKeys = [];
+  const divergedHeld = [];
+  const unknownBaseHeld = [];
+  const alreadyAbsent = [];
+  const probeFailed = [];
+  const probedHash = {}; // the hash each present candidate was PLANNED against: executeGarbageCollection re-checks it before the unlink
   for (const key of Object.keys(priorFiles || {})) {
     if (intendedDests.has(key) || SYNC_RUN_ARTIFACTS.includes(key)) continue;
     if (!isPlainRelativeKey(key)) unsafeKeys.push(key);
-    else if (key.startsWith(prefix)) deletions.push(key);
-    else if (exists(key)) orphanedTracked.push(key);
+    else if (key.startsWith(prefix)) {
+      if (typeof probe !== 'function') { deletions.push(key); continue; }
+      const seen = probe(key);
+      if (seen.state === 'absent') alreadyAbsent.push(key);
+      else if (seen.state !== 'present') probeFailed.push({ path: key, reason: `${seen.state}${seen.reason ? `: ${seen.reason}` : ''}` });
+      else if (probedHash[key] = seen.hash, !isManifestHash(priorFiles[key])) unknownBaseHeld.push(key);
+      else if (seen.hash === priorFiles[key]) deletions.push(key);
+      else divergedHeld.push(key);
+    } else if (exists(key)) orphanedTracked.push(key);
   }
-  return { deletions, orphanedTracked, unsafeKeys };
+  return { deletions, orphanedTracked, unsafeKeys, divergedHeld, unknownBaseHeld, alreadyAbsent, probeFailed, probedHash };
 }
+
+/** The one stored hash form: `sha256:` + 64 lowercase hex. */
+export function isManifestHash(v) { return typeof v === 'string' && /^sha256:[0-9a-f]{64}$/.test(v); }
 
 /**
  * Delete each planned path through the containment oracle, recording an
@@ -105,13 +136,19 @@ export function planGarbageCollection({ priorFiles, intendedDests, toolingDir, e
  * @param {string[]} args.deletions
  * @param {(p: string) => void} [args.unlink]
  * @param {(a: {root: string, relPath: string}) => string} [args.contain]
- * @returns {{deleted: string[], absent: string[], failed: Array<{path: string, reason: string}>}}
+ * @param {Record<string, string>} [args.expectHash]  per path, the `sha256:` form the plan was made against: the bytes are
+ *   re-hashed IMMEDIATELY before the unlink and a mismatch is HELD (`changed-since-probe`), so the probe-to-unlink window is one
+ *   read-compare-unlink, not the whole GC loop. An edit landing inside that last window is the stated residual.
+ * @param {(abs: string) => string} [args.hashFile]
+ * @returns {{deleted: string[], absent: string[], held: string[], failed: Array<{path: string, reason: string}>}}
  */
 export function executeGarbageCollection({
   root, deletions, unlink = fs.unlinkSync, contain = assertContainedDestination,
+  expectHash = {}, hashFile = (abs) => `sha256:${createHash('sha256').update(fs.readFileSync(abs)).digest('hex')}`,
 }) {
   const deleted = [];
   const absent = [];
+  const held = [];
   const failed = [];
   for (const rel of deletions) {
     let abs;
@@ -121,6 +158,15 @@ export function executeGarbageCollection({
       failed.push({ path: rel, reason: `refused: ${err.message}` });
       continue;
     }
+    if (expectHash[rel]) {
+      try {
+        if (hashFile(abs) !== expectHash[rel]) { held.push(rel); continue; }
+      } catch (err) {
+        if (err?.code === 'ENOENT') { absent.push(rel); continue; }
+        failed.push({ path: rel, reason: `${err?.code ?? 'error'}: ${err?.message ?? String(err)}` });
+        continue;
+      }
+    }
     try {
       unlink(abs);
       deleted.push(rel);
@@ -129,7 +175,7 @@ export function executeGarbageCollection({
       else failed.push({ path: rel, reason: `${err?.code ?? 'error'}: ${err?.message ?? String(err)}` });
     }
   }
-  return { deleted, absent, failed };
+  return { deleted, absent, held, failed };
 }
 
 /**
