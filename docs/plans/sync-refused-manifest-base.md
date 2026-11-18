@@ -201,3 +201,15 @@ then reads origin's manifest. Unchanged by this fix in either direction, and not
 - R2 GPT: H:1, lossy U+FFFD path identity, accepted (fail closed). Acceptance 100%.
 - R3 GPT: READY_TO_IMPLEMENT H:0 M:0 L:0 (exit 0).
 - Final gate round 1: APPROVE (gemini-4-argon), blocking 0, debt 0. Converged; no further rounds.
+
+## Code audit trail (`/audit-code --scope diff`, SID `audit-code-1794981117127-64336`)
+
+- R1 H:3 M:1: H1/M1 (touched file's incoming bytes vs base) dismissed by GPT deliberation, tracked as `p-20261118050838-b759`; H3
+  (snapshot-to-restore race) severity-adjusted to MEDIUM, debt captured, `p-20261118060147-1077`; H2 (branch identity) fixed.
+- R2 H:2 (rollback collided with kept files; identity check only when restoring) fixed. R3 H:3 (literal pathspecs, unpinned HEAD
+  refused at planning, HEAD pinned before the lag) fixed. R4 H:1 M:1 (complete shell-safe recovery command) fixed. R5 H:1 M:1
+  (quote the checkout path; assert the manifest base in the CLI e2e) fixed.
+- R6 (the cap): PASS H:0 M:0 L:0. Structural card: 0 structural, 12 polish; STOP taken (one clean round at the cap, not two).
+- Final gate round 1: APPROVE (gemini-4-argon), blocking 0, debt 0.
+- Every fix landed with a test shown red on the old behaviour (negative controls in the commit history of
+  `tests/sync-base-lag.test.mjs`).
