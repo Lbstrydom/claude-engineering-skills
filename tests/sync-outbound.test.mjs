@@ -101,7 +101,7 @@ describe('decideUnmanifested — ownership needs EVIDENCE (ae70a5d51c16, 77c9176
     assert.deepEqual([v.disposition, v.evidence], ['owned', 'banner']);
   });
 
-  it('identical to an EARLIER upstream version: owned, but only when asked last and only when nothing was rewritten', () => {
+  it('identical to an EARLIER upstream version: owned, but only when asked last (a rewritten file is asked too; see sync-prior-upstream-rewritten.test.mjs)', () => {
     let asked = 0;
     const stale = decideUnmanifested({ ...base, srcRel: '.claude/skills/plan/SKILL.md', dstRel: '.claude/skills/plan/SKILL.md', destContent: '# an older upstream\n', sourceText: '# upstream plan\n', priorUpstreamMatches: () => { asked++; return true; } });
     assert.deepEqual([stale.disposition, stale.evidence, asked], ['owned', 'prior-upstream', 1]);

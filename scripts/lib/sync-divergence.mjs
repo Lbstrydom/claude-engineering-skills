@@ -553,20 +553,29 @@ export function formatRefusalReport(refusals, { repoPath, receiptPath, overrides
  * is spent, or any git call fails, the answer is `null` - which `decideAction` reads as today's refusal. The result is never
  * `false` for "could not look", so an unanswered question cannot be mistaken for a negative one.
  *
- * Only meaningful for a file whose destination bytes are the source bytes (no path rewrites): a rewritten file's earlier versions
- * were rewritten differently and cannot be reconstructed from the source blob, so the caller does not ask about those.
+ * A REWRITTEN destination (path rewrites, banner, JSON re-serialisation) never holds raw source bytes, so the caller passes a
+ * `render` (and `acceptRaw: false` when this destination has rewrites, so a raw blob never counts there) that turns an earlier source blob into the bytes today's outbound pipeline would have produced from it; the disk hash is then
+ * compared against those RENDERED bytes too. Equality with an upstream-derived render is the same evidence as equality with a raw blob
+ * (nothing the consumer typed can be lost); it is NOT proof the sync once deployed those bytes. Retained blob bodies are COPIED and byte-
+ * capped (`maxRenderBlobBytes` per blob, `maxRetainedBytes` in total); a blob that cannot be rendered for ANY reason (binary, over a cap,
+ * the render threw) leaves the question unanswered, so the answer is `null`, never `false`.
  *
- * @param {{sourceRoot: string, perPathMax?: number, totalBudget?: number,
+ * @param {{sourceRoot: string, perPathMax?: number, totalBudget?: number, maxRenderBlobBytes?: number, maxRetainedBytes?: number,
  *   git?: (args: string[], opts?: {input?: Buffer}) => {status: number|null, stdout: Buffer, error?: Error}}} opts - `git` is a test seam
- * @returns {{matches: (srcRel: string, diskHash: string|null|undefined) => boolean|null,
- *   stats: {logCalls: number, batchCalls: number, blobsRead: number, exhausted: boolean}}}
+ * @returns {{matches: (srcRel: string, diskHash: string|null|undefined, opts?: {render?: (text: string) => string, acceptRaw?: boolean}) => boolean|null,
+ *   stats: {logCalls: number, batchCalls: number, blobsRead: number, exhausted: boolean, retainedBytes: number},
+ *   _retained: Map<string, {body: Buffer|null, binary: boolean}>}}
  */
-export function createPriorUpstreamResolver({ sourceRoot, perPathMax = 100, totalBudget = 2000, git }) {
+export function createPriorUpstreamResolver({
+  sourceRoot, perPathMax = 100, totalBudget = 2000, maxRenderBlobBytes = 2 * 1024 * 1024, maxRetainedBytes = 64 * 1024 * 1024, git,
+}) {
   // The environment is sanitised: an inherited GIT_DIR / GIT_OBJECT_DIRECTORY outranks `-C` and would answer for another repository (audit R2 H1).
   const run = git ?? ((args, { input } = {}) => spawnSync('git', ['-C', sourceRoot, ...args], {
     windowsHide: true, maxBuffer: 256 * 1024 * 1024, env: sanitizeGitEnv(sourceRoot), ...(input ? { input } : {}),
   }));
-  const stats = { logCalls: 0, batchCalls: 0, blobsRead: 0, exhausted: false };
+  const stats = { logCalls: 0, batchCalls: 0, blobsRead: 0, exhausted: false, retainedBytes: 0 };
+  /** @type {Map<string, {body: Buffer|null, binary: boolean}>} blob oid -> its OWN copy of the body (null: binary, over a cap, or never read) */
+  const retained = new Map();
   /** @type {Map<string, string[]|null>} blob oid -> [sha256 of the LF bytes, sha256 of the CRLF form], null when unreadable */
   const blobHashes = new Map();
   /** @type {Map<string, string[]|null>} source path -> blob oids ever held there, null when history was unreadable */
@@ -624,21 +633,49 @@ export function createPriorUpstreamResolver({ sourceRoot, perPathMax = 100, tota
       const body = out.subarray(nl + 1, nl + 1 + size);
       pos = nl + 1 + size + 1;
       stats.blobsRead++;
+      const binary = body.includes(0);
+      // Copy, never keep the subarray view: a view pins the WHOLE batch stdout allocation. Admission is checked BEFORE adding.
+      const keep = !binary && body.length <= maxRenderBlobBytes && stats.retainedBytes + body.length <= maxRetainedBytes;
+      if (keep) stats.retainedBytes += body.length;
+      retained.set(oid, { body: keep ? Buffer.from(body) : null, binary });
       const crlf = body.includes(0) ? null : Buffer.from(body.toString('latin1').replace(/\r?\n/g, '\r\n'), 'latin1');
       blobHashes.set(oid, [sha(body), crlf ? sha(crlf) : sha(body)]);
     }
     return true;
   }
 
+  /** Hashes (LF, CRLF) of `render(blob)`, or null when that blob cannot be rendered for any reason. Never cached: a render depends on the consumer. */
+  function renderedHashes(oid, render) {
+    const entry = retained.get(oid);
+    if (!entry || entry.body === null) return null;
+    try {
+      const out = render(entry.body.toString('utf8'));
+      if (typeof out !== 'string') return null;
+      return [sha(out), sha(out.replace(/\r?\n/g, '\r\n'))];
+    } catch { return null; }
+  }
+
   return {
     stats,
-    matches(srcRel, diskHash) {
+    _retained: retained,
+    matches(srcRel, diskHash, { render, acceptRaw = true } = {}) {
       const disk = typeof diskHash === 'string' ? diskHash.replace(/^sha256:/, '') : null;
       if (!disk) return null;
       const oids = blobsOf(srcRel);
       if (!oids) return null;
       if (!load(oids)) return null;
-      return oids.some((o) => blobHashes.get(o)?.includes(disk)) ? true : (oids.some((o) => blobHashes.get(o) === null) ? null : false);
+      let unanswered = !render && !acceptRaw; // nothing was asked of any blob: that is not a negative
+      for (const o of oids) {
+        const raw = blobHashes.get(o);
+        if (raw === null || raw === undefined) { unanswered = true; continue; }
+        if (acceptRaw && raw.includes(disk)) return true; // one genuine upstream blob proves it, whatever else failed
+        if (render) {
+          const rendered = renderedHashes(o, render);
+          if (rendered === null) unanswered = true;
+          else if (rendered.includes(disk)) return true;
+        }
+      }
+      return unanswered ? null : false;
     },
   };
 }
