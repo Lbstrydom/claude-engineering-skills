@@ -251,7 +251,7 @@ async function main() {
   }
 
   if (process.argv.includes('--check-preauthorised')) return checkPreauthorised();
-  if (process.argv.includes('--check-shipped-head')) return (await import('./lib/ship-shipped-head.mjs')).runShippedHeadCli(process.argv.slice(2)); // coordinator batch re-check
+  { const m = await import('./lib/ship-shipped-head.mjs'); if (m.isShippedHeadMode(process.argv.slice(2), KNOWN_FLAGS)) return m.runShippedHeadCli(process.argv.slice(2)); } // re-check of a shipped head
 
   // ---- arg parse (unknown flag = taxonomy row 1) -------------------------
   const argv = process.argv.slice(2);

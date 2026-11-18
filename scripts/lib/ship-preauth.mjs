@@ -190,10 +190,13 @@ export function evaluateShippedHead(f = {}) {
   } else if (ev.auditedBranch !== f.currentBranch) c.push(row('evidence', false, `the audit evidence is for branch ${JSON.stringify(ev.auditedBranch)}, not ${JSON.stringify(f.currentBranch)}`));
   else if (!rr) c.push(row('evidence', false, `no audit_runs row could be read for the run (${f.runRowWhy ?? 'cloud off, unreachable, or run not found'})`));
   else if (!Number.isInteger(rr.roundConvergedAfter)) c.push(row('evidence', false, 'audit_runs.round_converged_after is null: the audit did not converge'));
-  else if (f.repoId == null || rr.repoId == null) c.push(row('evidence', false, `the repository identity could not be established (this repo: ${JSON.stringify(f.repoId ?? null)}, the run's repo: ${JSON.stringify(rr.repoId ?? null)})`));
+  else if (!Number.isInteger(ev.round) || ev.round < rr.roundConvergedAfter) c.push(row('evidence', false, `the evidence marker is round ${ev.round ?? 'unknown'} but the store says the audit converged after round ${rr.roundConvergedAfter}: the marker is from before it converged`));
+  else if (rr.branch != null && rr.branch !== f.currentBranch) c.push(row('evidence', false, `the store records the run on branch ${JSON.stringify(rr.branch)}, this worktree is on ${JSON.stringify(f.currentBranch)}`));
+  else if (f.repoId == null || rr.repoId == null) c.push(row('evidence', false, `the repository identity could not be established${f.repoIdWhy ? ` (${f.repoIdWhy})` : ''} (this repo:${JSON.stringify(f.repoId ?? null)}, the run's repo: ${JSON.stringify(rr.repoId ?? null)})`));
   else if (rr.repoId !== f.repoId) c.push(row('evidence', false, 'the run belongs to another repository'));
   else if (rr.auditedTree == null || ev.auditedTree == null) c.push(row('evidence', false, `the audited tree is not recorded on both sides (store: ${rr.auditedTree == null ? 'none, a row from before audited-tree identity' : 'yes'}; marker: ${ev.auditedTree == null ? 'none' : 'yes'}), so the run cannot be bound to the tree the review approved`));
   else if (rr.auditedTree !== ev.auditedTree) c.push(row('evidence', false, 'the store records a different audited tree for the run than the evidence marker names'));
+  else if (rr.auditedSha == null || ev.auditedSha == null || rr.auditedSha !== ev.auditedSha) c.push(row('evidence', false, `the audited COMMIT is not corroborated (store: ${rr.auditedSha ? rr.auditedSha.slice(0, 12) : 'none'}, marker: ${ev.auditedSha ? ev.auditedSha.slice(0, 12) : 'none'}): it picks the fork point the audited paths are measured from, so it must match what the store recorded`));
   else c.push(row('evidence', true, `run ${runId.slice(0, 8)} converged after round ${rr.roundConvergedAfter}, this repository, branch ${ev.auditedBranch}`));
 
   // 3. final review — bound to the SAME run, audited tree and round, saying APPROVE with result approve, and the store's
@@ -241,11 +244,14 @@ export function renderPreauthConditions(verdict) {
  * @param {string|null} [baseBranch] the branch the change targets (default: what `<remote>/HEAD` names). The batch re-check passes the
  *   branch the PR actually targets, so a PR into a non-default branch is measured against THAT branch.
  * @param {string} [remote] the remote that branch lives on (the train's destination remote; default `origin`)
+ * @param {string|null} [baseOid] the base as an immutable commit id, when the caller resolved it once (wins over the ref)
  * @returns {string[]|null}
  */
-export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null, remote = 'origin') {
+export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null, remote = 'origin', baseOid = null) {
   const out = (args) => { const r = run(args); return r && r.status === 0 ? String(r.stdout ?? '').trim() : null; };
-  const defaultRef = baseBranch ? `refs/remotes/${remote}/${baseBranch}` : out(['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`]);
+  // ONE resolver for "the base": the head's change set and the audited tree's use the same function (defaultBaseRef), so they cannot disagree.
+  // A caller that already resolved the base to an immutable commit id passes it, and the mutable ref is never read again.
+  const defaultRef = baseOid || defaultBaseRef(run, baseBranch, remote);
   // origin/HEAD is the authoritative default branch; `origin/main` is the conventional remote-tracking name when HEAD is unset.
   // A LOCAL `main` is never substituted: it can differ from the remote's, and an unverified base can hide what the PR changes.
   // Discovery and resolution are separate: once origin/HEAD NAMES the default branch, that branch's merge base is the only
@@ -253,7 +259,7 @@ export function gatherChangedPaths(run, tree, head = 'HEAD', baseBranch = null, 
   // `origin/main` is consulted only when origin/HEAD itself is unavailable.
   // FULLY QUALIFIED, never shortened: `origin/develop` can resolve to a LOCAL branch of that name (refs/heads/origin/develop is
   // searched before refs/remotes/), whose merge base with HEAD is HEAD itself and would hide every change.
-  const base = out(['merge-base', head, defaultRef || `refs/remotes/${remote}/main`]);
+  const base = out(['merge-base', head, defaultRef]);
   if (!base || !tree) return null;
   // `--ignore-submodules=none`: a `diff.ignoreSubmodules` setting must never hide a changed gitlink from a path gate.
   const r = run(['diff', '--name-only', '--no-renames', '--ignore-submodules=none', '-z', base, tree]);

@@ -21,6 +21,15 @@ user's decision; the coordinator rules that govern when to bring it to them are 
   failed, or skip-worktree/assume-unchanged files hide edits from git). Run it
   before archiving a worktree: archiving can empty gitignored folders such as
   `.claude/tmp`.
+- **Did a squash-merged branch fully land? Ask GitHub, not a diff.** Match the evidence to the
+  decision: before retiring a branch, `gh pr view <n> --json state,headRefOid` must say `MERGED`
+  with a head equal to the local tip (`git rev-parse <branch>`). Then nothing exists only on this
+  disk. Content diffs give the wrong answer here: `git log --cherry-pick` lists every squashed
+  commit as unmerged, a diff scoped to the squash's files cannot see a commit the squash never got,
+  and a diff scoped to the branch's files flags every later edit to main. Only when the local tip
+  moved past the merged head, rebuild the expected tree,
+  `git merge-tree --write-tree --merge-base <merge-base> <squash>^ <branch>`, and compare it with
+  `git rev-parse <squash>^{tree}`; a conflict means unknown: keep a ref and look, never a pass.
 - `fleet prune` is read-only by default. It lists the local branches (and their
   worktrees) that can be removed with nothing lost, with the exact commands, and
   runs none of them. `fleet prune --apply` runs exactly that list, nothing else:

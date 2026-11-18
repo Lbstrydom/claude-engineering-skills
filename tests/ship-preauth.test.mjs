@@ -173,6 +173,14 @@ describe('gatherChangedPaths', () => {
     gatherChangedPaths((args) => { seen2.push(args.join(' ')); return { status: 1, stdout: '' }; }, 'treeid', 'headid', null, 'upstream');
     assert.ok(seen2.some((c) => c === 'symbolic-ref --quiet refs/remotes/upstream/HEAD'), seen2.join('\n'));
   });
+  it('a base resolved ONCE to a commit id is used as given: the mutable ref is never read again', () => {
+    const seen = [];
+    const OID = 'f'.repeat(40);
+    const run = (args) => { seen.push(args.join(' ')); return args[0] === 'merge-base' ? { status: 0, stdout: 'abc123\n' } : { status: 0, stdout: 'a.mjs\0' }; };
+    assert.deepEqual(gatherChangedPaths(run, 'deadbeef', 'headid', 'main', 'origin', OID), ['a.mjs']);
+    assert.ok(seen.includes(`merge-base headid ${OID}`), seen.join('\n'));
+    assert.equal(seen.some((c) => c.startsWith('symbolic-ref') || c.includes('refs/remotes')), false, seen.join('\n'));
+  });
   it('diffs the merge base against the tree with --no-renames, so BOTH ends of a rename are listed', () => {
     const seen = [];
     const run = (args) => {

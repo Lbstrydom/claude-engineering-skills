@@ -33,6 +33,11 @@ Use `--merge` only when the user has said to merge this PR; a `/cycle --autonomo
 The merge is `gh pr merge <n> --squash --match-head-commit <sha>` with the sha the checks passed on, so a push after the wait is rejected
 by GitHub. A merge that did not reach `MERGED`, or whose read-back failed (`merge-unconfirmed`, exit 1), is not reported as merged.
 
+Reading a run by hand: a run-level status is a summary, not a cause. Read `jobs[]` (conclusion, `startedAt`, `completedAt`)
+before interpreting it. `createdAt` is when the run was QUEUED, so an elapsed time is `startedAt` to now, read from the clock. `cancelled`
+says the run stopped, not why: supersession, a concurrency group and a job timeout all report it, so name the cause only when something
+states it, and keep your repo's own signatures for each cause locally, not here.
+
 ## Other flags
 
 `--repo owner/name` (gh resolves the checkout's repo otherwise; `origin` is never assumed) · `--gh-account <name>` runs gh as that signed-in

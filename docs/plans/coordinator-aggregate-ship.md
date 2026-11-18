@@ -75,7 +75,7 @@ chose to extend rather than add a sibling.
 **The chip ships itself; the coordinator lands and re-verifies.** This keeps the existing split:
 - The gate evidence and final-review marker live in the chip's worktree (`.audit/`, bound to its branch, `ship-preauth.mjs:78-89`).
   They can only be honestly read there.
-- The chip that made the change is the best-placed author of its own status entry and Implementation Log.
+- The chip that made the change is the best-placed author of its own status entry. The plan's Status and Implementation Log line are written by record catch-up after the merge (2.3).
 - The coordinator gets the batch verb (`fleet land`), extended to re-verify each member **from durable facts alone**: the commit's
   trailers, the store, CI, and git trees. Only members that verify are merged.
 
@@ -168,7 +168,7 @@ file changes a merge makes, so they stay outside the grant by its text, exactly 
 
 ### 2.2 Per-member ship (unchanged mechanism; the default flips)
 - `chip-preamble.md:57-65` and `:84`: the block becomes **default whenever the coordinator is acting under the grant**. Without
-  the grant it stays opt-in, as today. The ship steps are unchanged: status entry, Implementation Log,
+  the grant it stays opt-in, as today. The ship step is: status entry file only (the plan Status and Implementation Log move to catch-up, 2.3),
   `--check-preauthorised`, `--preauthorised`, push.
 - **Order.** The chip ships, then pushes the ship head, then runs `fleet ready`. That records the ship commit as the ready oid,
   so the CI that runs is CI on the ship head.
@@ -247,26 +247,22 @@ changed before its audit is handled the same way as any other path.
    (gc'd), refuse with `audited-tree-missing`. A path in neither set is an upstream-only change brought in by a rebase, and it is
    correctly excluded.
 3. An empty `D` is allowed. This is the `passed` case, where `T_H === A` on `P`.
-4. Each entry of `D` must be one of the following, or the whole condition refuses with that path named:
-   - **(a) Status entry.** `A` (added), the path is under `docs/status/entries/`, and the name matches `ENTRY_NAME_RE`
-     (`ship-record/state.mjs:41`).
-   - **(b) Legacy status log.** `M` on `status.md`, every hunk adds lines only, and every added line sits above the first
-     pre-existing entry heading. This is the prepend-only legacy log (`skills/ship/SKILL.md:580-585`).
-   - **(c) Plan file.** `M` on a file under `docs/plans/`. Every changed line, on both sides of every hunk, lies in one of two
-     regions: (i) the single `- **Status**:` header line, or (ii) the `## Implementation Log` section, from its heading to the
-     next `## ` heading or the end of file. A section created by the ship counts as an added region.
-   - Every `D` (delete), any rename half (`--no-renames` lists both ends) and every other path refuses.
-5. **A path changed both by the branch and after the audit is therefore legal ONLY inside the (a)-(c) regions.** A conflict
-   resolution anywhere else refuses, because it is unaudited code.
+4. The post-audit delta is **path-based only**: the single permitted entry of `D` is an ADDED (`A`, never `M`, `D`, `R` or `T`) regular
+   file (mode `100644`) matching `docs/status/entries/<name>.md`. Every other path refuses with that path named: a modified, deleted or
+   renamed entry, a file added outside the directory, a symlink or gitlink under it, a plan edit (Status or Implementation Log) and a
+   `status.md` edit. No content is parsed, so no Markdown grammar can be wrong. The entry's content is not checked either: a new file is
+   not part of the audited tree, so it cannot rewrite audited content, and what it says is the chip's own record, not a claim the audit relied on.
+   A repository still on a single legacy `status.md`, or a ship that edits the plan, therefore waits for the user's `/ship`.
+5. **A path changed both by the branch and after the audit is therefore legal ONLY as that added entry.** A conflict resolution
+   anywhere else refuses, because it is unaudited code.
 
-This is the record-commit allowlist in `ship-record/authority.mjs` `pathVerdict` (`:103-125`), tightened to the hunk level. The
-shared predicate is lifted out as `isShipStepDelta(path, oldText, newText)` and the record path calls it too, so ONE grammar
-defines a ship-doc edit.
+The plan `Status:` and `## Implementation Log` line move out of the pre-merge ship step: record catch-up adds them after the merge,
+which is where the repository already writes them for members that merge without a ship.
 
 **Fixtures (real git).** Each case is built in a temp repo:
 - a status-entry-only delta;
-- a plan Status plus Log only, on a plan the branch already changed before its audit;
-- a plan edit outside both regions;
+- a plan Status edit, and an Implementation Log append, each REFUSED, on a plan the branch already changed before its audit;
+- a modified, a deleted and a renamed audited entry, a file added outside the entries directory, a symlink and a gitlink under it;
 - a code change after the audit;
 - a rebase that changes an untouched path;
 - an audited branch change reverted to base after the audit;
@@ -278,6 +274,8 @@ defines a ship-doc edit.
 - a gc'd `A`.
 
 **Residuals, stated.**
+- **Deletions are not mechanically refused.** The grant text keeps "deletions" as the user's decision, but neither the chip's own `--preauthorised` ship nor this re-check refuses a member whose audited diff deletes tracked files: both share one path row set, and the audit read the deletion. Making the re-check stricter than the chip's own ship would be a behaviour change to main outside this PR, and the user decides whether a file removal inside an audited diff is a "deletion". Residual: a member that deletes files can land without the user. Follow-up, user's call.
+- **Self-shipped members and the plan's Implementation Log.** Catch-up counts a PR whose merge added a status entry as recorded, so with the plan lines moved out of the ship step a self-shipped member's plan log line would never be written. The re-check fails closed meanwhile (a ship that still edits the plan refuses and waits for `/ship`). The follow-up that closes it is: catch-up suggests the plan line for an in-band PR whose plan carries no marker, and `/ship` Step 5 skips the plan edit under `--preauthorised`. Not in this PR (it edits the `/ship` skill, which is size-ratcheted).
 - Audit **scope** coverage (did the run's passes read every path in `P`?) is not checked. Neither is it checked at today's ship
   time, so the grant widens nothing.
 - A forged `AI-Final-Review` trailer is now caught by `C3`. A forged local marker is not, because a session that hand-writes
@@ -397,7 +395,7 @@ go-ahead. Every other `land --approve`, `--confirm`, `--override` and `--accept-
 
 ### 2.8 Docs every member ship still produces (unchanged, and still per member)
 - The status entry file under `docs/status/entries/`, written by the chip in ship Step 2 (`skills/ship/SKILL.md:580-598`).
-- The plan `Status:` and `## Implementation Log` entry, written by the chip in Step 5 (`:659-674`).
+- The plan `Status:` and `## Implementation Log` line is NOT written by the ship step any more: record catch-up adds it after the merge (see 2.3).
 - The ship commit with `AI-*` trailers, written by `ship-commit.mjs`.
 - The coordinator writes no per-member docs. Its only write is the record PR for members merged without a ship
   (coordinator-playbook §7, unchanged).
@@ -414,10 +412,9 @@ go-ahead. Every other `land --approve`, `--confirm`, `--override` and `--accept-
 ## 7. File-Level Plan
 
 ### 7b. Implementation Phases
-- **Phase 1: pure evaluator + shared ship-step delta grammar.** Files:
+- **Phase 1: pure evaluator + path-only post-audit delta.** Files:
   - `scripts/lib/ship-preauth.mjs` (modify: add `evaluateShippedHead`, `SHIPPED_HEAD_CONDITIONS`, `renderShippedHeadConditions`)
-  - `scripts/lib/ship-record/authority.mjs` (modify: lift the grammar into an exported `isShipStepDelta(path, oldText, newText)`;
-    `pathVerdict` calls it)
+  - `scripts/lib/ship-shipped-head.mjs` (the path-only `shipEntryRefusal`; `ship-record/authority.mjs` is NOT modified)
   - `tests/ship-preauth-shipped-head.test.mjs` (create)
 - **Phase 2: the `--check-shipped-head` read-only mode and its gatherer.** Files:
   - `scripts/lib/ship-shipped-head.mjs` (create: gathers `C1`-`C5` in the member worktree, plus the v1 envelope)
@@ -540,57 +537,64 @@ its full suite in Actions.
 
 ## Implementation Log
 
-**2026-11-18 — implemented on Sonnet after the coordinator's "go" (the user's words: "Yes, go").** Audited plan above; where the
-code differs from the audited text, the code is right and this section is the record. Nothing in `~/.claude/CLAUDE.md` was touched:
-the grant stays a draft in section 2.1 for the user to paste (a test pins that the pasted text is the text the reader accepts).
+> **Read the REWORK note at the end of this log first.** The delta-grammar rows and rounds below describe the DELETED content-grammar design and are kept as history; the current rule is path-only (2.3).
 
-Built: `evaluateShippedHead` + `isShipStepDelta` (`scripts/lib/ship-preauth.mjs`, `scripts/lib/ship-record/authority.mjs`);
-`ship-commit.mjs --check-shipped-head` with its gatherer (`scripts/lib/ship-shipped-head.mjs`) and two store reads
-(`scripts/lib/store/ship-run-facts.mjs`); the grant reader (`scripts/lib/fleet/coordinator-grant.mjs`); `fleet land --ship-batch`
-(`scripts/lib/fleet/ship-batch.mjs`, with three seams in `serial.mjs`: `hooks.onMerged`, `hooks.noUpdate`, and the resume hint);
-the ready-but-unmerged archive refusal (`shipEvidenceOwed`, `lifecycle.mjs`); the runbook `skills/fleet/references/ship-batch.md`.
+**2026-11-18: SPLIT.** The plan was implemented in full on `claude/plan-coordinator-aggregate-ship-f258c2` (pushed, tag `pr-b-source`), and
+the user then decided to land it in two PRs ("Split it"). The code audit of the whole thing stopped at its round cap with the serial
+runner raised in all six rounds: it has no per-member outcome model, so the batch's skip, hook and read-back semantics are bolted on
+through three seams. So:
 
-Deviations from the audited text (each deliberate):
+- **PR A (this one): the read-only half.** `ship-commit.mjs --check-shipped-head` and its gatherer (`scripts/lib/ship-shipped-head.mjs`),
+  the two store reads (`scripts/lib/store/ship-run-facts.mjs`), `evaluateShippedHead` and the shared path rows
+  (`scripts/lib/ship-preauth.mjs`), the ship-step delta grammar `isShipStepDelta` (`scripts/lib/ship-record/authority.mjs`), the grant
+  READER (`scripts/lib/fleet/coordinator-grant.mjs`), and the archive-check refusal `shipEvidenceOwed` (`scripts/lib/fleet/lifecycle.mjs`).
+  Sections 2.1 (the reader only), 2.3 and 2.2 (the archive part) of this plan are what it delivers. Nothing merges, writes a trailer, or
+  calls the grant reader yet.
+- **PR B (not opened): `fleet land --ship-batch`** and its `serial.mjs` seams (section 2.4 and 2.5). It waits for a small plan that gives
+  the serial runner a real per-member outcome primitive (proposal recorded from the audit's structural card). The grant text in section
+  2.1 must NOT be pasted into `~/.claude/CLAUDE.md` until PR B lands: it names a command that does not exist yet.
+
+Deviations from the audited text, for what PR A contains (each deliberate):
 
 | Plan said | Code does | Why |
 |---|---|---|
-| a `shipBatch` stamp in the train manifest | a sidecar `fleet/shipbatch/<train>.json` (members, expected base tip, per-member state) | the strict `TrainSchema` stays untouched, like serial's own record |
-| `GIT_LITERAL_PATHSPECS=1` on the child | NO pathspecs at all: `git diff --name-status -z A T_H` lists every path and the candidate set filters it in code; file text is read as `A:<path>` | a name with glob or magic characters can then never be misread, and there is no env var to leak into hooks |
-| `isShipStepDelta` replaces `pathVerdict`'s grammar | a new exported grammar beside it; `pathVerdict` is unchanged | the record grammar is narrower (log lines must match `PLAN_LOG_LINE_RE`), and a shared one would have changed record behaviour |
-| refusals exit 2 | fleet's own convention: 3 refused or stopped, 4 a train that ran red; the child `--check-shipped-head` keeps 0 / 2 / 1 | `fleet land` already maps its result codes this way |
-| `C8`: `ciVerdict` AND `observeRequiredChecks` | both, but `ciVerdict` only where `.test-tiers.json` declares a workflow ("no ciVerdict workflow is declared" is "nothing to measure", never a pass) | a consumer with no declared workflow must not refuse everything |
-| the store row's `audited_tree` must match | must match WHEN the store holds one; a null is tolerated | the marker's tree is the binding; the store row only corroborates (a pre-2026-07-19 row has none) |
-| `skills/ship/SKILL.md` and `coordination.md` get a line each | NOT edited; the sentence lives in `skills/ship/references/record-catchup.md` and `ship-batch.md` | `skills:size:gate` sits +182 over its baseline on ship/SKILL.md (tolerance 200) and coordination.md is at 11,969 of 12,000; neither may grow and raising a baseline is not this chip's call |
-| `fleet/SKILL.md` gains a row and an exception | done, offset by tightening existing prose in the same file (no rule dropped) | same ratchet |
-| `archive-check` refuses via `cmdArchiveCheck` | `shipEvidenceOwed(session, pr)` feeds `archiveReport`'s `unverified` list, so the verdict is UNVERIFIED | no new verdict value; the existing refusal path carries it |
+| `GIT_LITERAL_PATHSPECS=1` on the child | NO pathspecs at all: `git diff --raw -z A T_H` lists every path and the candidate set filters it in code; file text is read as `A:<path>` | a name with glob or magic characters can never be misread, and no env var leaks into hooks |
+| `isShipStepDelta` replaces `pathVerdict`'s grammar | a new exported grammar beside it; `pathVerdict` is unchanged | the record grammar is narrower (log lines must match `PLAN_LOG_LINE_RE`) and a shared one would have changed record behaviour |
+| the store row's `audited_tree` must match | it must be recorded on BOTH the marker and the store row, and equal (a row from before audited-tree identity refuses) | a code-audit finding: a null is not a binding |
+| the post-audit delta | append-only Implementation Log, ONE log heading, a created log must be appended after the whole document, only the Status field may change, regular-file modes only, `--ignore-submodules=none`, a size bound | each was a code-audit finding with a test |
+| the change set is measured against `origin/HEAD` | against `refs/remotes/<remote>/<branch>` the PR targets (`--base`, `--remote`), and with `--verify-base` the local ref must equal the LIVE branch | a stale or wrong base would define "the change" |
+| `archive-check` refuses via `cmdArchiveCheck` | `shipEvidenceOwed(session, pr)` feeds `archiveReport`'s `unverified` list (verdict UNVERIFIED); a PR that could not be queried is uncertain, not clear | no new verdict value |
 
-Known limits, stated: **a repository that requires up-to-date branches lands ONE member per build** (after the first merge the next
-reads BEHIND, and a ship-batch never updates a branch on the remote: `behind-base`). Three of the odd-path-name fixtures
-(`*`, a leading `:(`, a newline) cannot exist on a Windows git index and are SKIPPED there, not passed; the pure NUL parser is
-tested separately, and POSIX CI runs them. The final-review marker is still local to the chip worktree (follow-up
-`p-20261118061826-7f07`). `--no-verify` was not used.
+Proof: red-then-green for `evaluateShippedHead` and `isShipStepDelta` (the first run failed on the missing export); real-git fixtures for
+a dirty-tree audit, a change reverted to base, an upstream-only rebase, a symlink status entry, a gitlink under
+`diff.ignoreSubmodules=all`, odd path names, a non-default and a non-origin base, a stale local base against a real bare remote, a HEAD
+that moves mid-check, and the two storyline incidents of 2026-11-18 (a range cherry-pick that dropped its first commit: the tree
+differs, so it refuses; the PR head differing from the tested head). Mutation checks of the evaluator's rows each turned the suite red.
+The relocated-layout test copies the sync closure through the real path map and runs the relocated CLI. **Not in this PR, so not proved
+here:** the merge-time re-read of the PR head and the head-identity check (`C9`); they belong to PR B's `land --ship-batch`.
 
-Proof, against the PROOF PLAN: red-then-green for `evaluateShippedHead` / `isShipStepDelta` (the first run failed on the missing
-export); the real-git `--check-shipped-head` suite; seven mutations of the merge path (grant re-read, base-tip check, child
-re-check, first-parent check, read-back, `noUpdate`, selection) each turned the suite red, and the base-tip one first MISSED until a
-test moved the base DURING the run, which is why that test exists; the Tier 3 relocated-layout test copies the closure through the
-real path map and runs the relocated CLIs.
+### Code audit trail, PR A (`/audit-code --scope diff --base origin/main`, SID `audit-code-1795000910440-83564`)
 
-### Code audit trail (`/audit-code --scope diff --base origin/main`, SID `audit-code-1794991985170-57032`)
+GPT rounds (HIGH / MEDIUM): R1 9 / 14, R2 3 / 1, R3 2 / 1, R4 1 / 1, R5 2 / 1, R6 3 / 1. Every finding is ruled in the ledger (fixed with a
+test; dismissed with a reason; or deferred with the honest-deferral fields: the batch design finding belongs to PR B, and the two
+overlapping record/ship grammars are recorded debt).
 
-GPT rounds (HIGH / MEDIUM): R1 19 / 11, R2 7 / 4, R3 6 / 2, R4 5 / 1, R5 5 / 1, R6 1 / 1. Every finding was ruled in the ledger: fixed with a
-test, dismissed with a reason (a shared claim about the combined integration test that serial landing never relied on; a
-cross-repository read that the evaluator already refuses), or deferred with the honest-deferral fields (the server-side merge queue,
-proposal `p-20261118092842`-family, and the overlapping record/ship grammars).
+**The loop stopped at the soft cap (6), not at convergence.** Rounds 2 to 6 were one family: the ship-step grammar kept being asked to
+model a further Markdown construct that can change how unchanged text renders (comments, fences, raw HTML, headings, reference
+definitions, setext). Round 6 therefore PIVOTED instead of patching: a line the ship adds inside the Implementation Log must be a plain
+list item or prose line (`PLAIN_LOG_LINE_RE`), and the live remote base is re-read at the end of the check. Round 6's fixes are tested
+but were not re-audited. A member whose log needs a table, a code block or a link reference waits for the user's `/ship`.
 
-**The loop stopped at the soft cap (6), not at convergence.** The last round still raised 1 HIGH and 1 MEDIUM; both were fixed with a
-test, and that fix was NOT re-audited. The structural-or-stop card read 4 structural, 1 local and 50 polish clusters, with
-`serial.mjs` and `ship-batch.mjs` raised in all six rounds: the serial runner has no first-class per-member outcome model, so the
-ship-batch skip, hook and read-back semantics are bolted on through three seams. That is recorded as a follow-up
-(`fleet propose`), not hidden, and the call between STOP, STRUCTURAL and CONTINUE is the coordinator's and the user's.
+**Final review** (gemini, round 1 of 2) in two disjoint batches so that every changed line was shown: both coverage notes read `FULL`
+(batch 1: 4 files, 494 changed lines; batch 2: 3 files, all whole). Batch 1 `APPROVE`; batch 2 `CONCERNS`, gate `approve_with_debt`
+(0 blocking, 2 debt, captured): a section-boundary edge case in the log range and a note that the markup/context rules are now partly
+redundant with the whitelist (kept deliberately as defence in depth). A single review over all seven files read `PARTIAL, 177 of 911
+changed lines never shown`, which is why it was split.
 
-**Final review** (gemini, round 1 of 2): `APPROVE`, gate `approve` (blocking 0, debt 0). It carried a coverage note: "Code: PARTIAL,
-337 changed lines never shown", so the approval is of what it was shown.
+**One round past the cap** (approved by the user to verify the pivot): R7 raised 2 HIGH, the same finding twice: a link reference definition nested in a list item (`- [x]: url`) passed the plain-line whitelist. Fixed with a test (six container shapes, red without the fix) and NOT re-audited: the user's ruling was exactly one round past the cap. The finding class (a Markdown construct the whitelist did not name) is therefore narrowed but not proved closed, and the PR carries that caveat.
 
-Gates: `npm run guards:preflight` PASS (36 steps) at the head named in the report. Not run here: the full suite (it runs in Actions
-for this repo) and `db:suites:gate`, `gates:poison`, which the preflight omits by design.
+**Final round, after narrowing the rule to no Markdown characters** (approved by the user: "narrow the whitelist and run one final round"): R8 raised 5 HIGH: a one-hyphen setext underline (H1), an inserted link reference definition in the legacy status.md log (H2, H4), and emphasis or code spans pairing across soft line breaks (H3, H5, which showed that the measured-exception variant that still allowed `*`, `_` and a single backtick was unsafe). All five fixed with tests and NOT re-audited (the ruling was one round past the cap). The forbidden set is now `[ ] < > | * _` and the backtick, one named constant `LOG_LINE_FORBIDDEN_CHARS` with `LOG_LINE_ALLOWED_INLINE` empty, after one leading list marker is stripped. Cost, measured over 3,950 real Implementation Log lines: 69.0% are refused (17.3% for the rejected variant), so most batch members will wait for the user's /ship. Rounds 1 to 8 raised HIGH 9, 3, 2, 1, 2, 3, 2, 5; the round-8 fixes are unaudited.
+
+**REWORK of PR A (the user's decision: "rework PR A").** Eight audit rounds (HIGH 9, 3, 2, 1, 2, 3, 2, 5) showed that a content grammar over Markdown cannot be closed: every round found one more construct that changes how unchanged text renders. The grammar is therefore deleted, not patched: `isShipStepDelta`, the plain-log-line rule, `LOG_LINE_FORBIDDEN_CHARS` and every helper behind them are gone, and `ship-record/authority.mjs` is back to main's version. The post-audit delta is now path-only (`shipEntryRefusal` in `ship-shipped-head.mjs`): an ADDED regular file `docs/status/entries/<name>.md` and nothing else. **Decision, content of the new entry: no check.** A new file is absent from the audited tree, so it cannot modify audited content, and the audit never relied on what it says. The cost is that the plan Status and Implementation Log line (and the legacy `status.md` insert) are no longer a ship-step edit: they are written by record catch-up after the merge, as for the members that merged without a ship. Tests: an added entry passes; a modified, deleted or renamed entry, a file added outside the directory, a plan Status edit, a log append, a `status.md` edit, a symlink and a gitlink under the directory each refuse; a negative control asserts the grammar module exports no longer exist. The earlier audit (SID `audit-code-1795000910440-83564`, rounds 1 to 8) audited the deleted design; the rework starts a fresh audit with its own round count.
+
+**Fresh audit of the reworked PR A** (SID `audit-code-1795011593962-68156`, its own round count; the earlier eight rounds audited the deleted grammar). Round 1: 5 HIGH, 11 MEDIUM, 1 LOW (full PR diff). Rulings: 3 fixed (branch identity at the end of the check, import-versus-read error separation, isolated fixture git), 3 deferred with reasons to PR B or a follow-up (batch-landing design M1/M4/M5, grant-reader HTML blocks M7), 2 residuals stated in section 2.3 (file deletions are not mechanically refused; self-shipped members' plan lines need a catch-up follow-up), the rest dismissed with a reason each (run row read by id is compared by the evaluator; fork PRs are other branches; the grant tail is already checked; new entry content is unchecked by decision). Round 2: 1 HIGH invalid as stated (JS `$` does not match before a trailing newline) but its neighbour was real (an embedded newline passed): entry names now use the repository's own `ENTRY_NAME_RE`. Rounds 3 to 5 were one family, the base the change is measured against: the default branch is asked of the remote (not a stale local symref) and re-read at the end, and the base is resolved ONCE to a commit id and passed to both change-set calculations, in both modes. Round 6: PASS, 0 HIGH, 1 MEDIUM, 1 LOW (JSON envelope on checker errors, repository lookup reason), fixed with tests and not re-audited (cap 6). `_convergence`: converged. **Final gate:** gemini, three disjoint batches (6 source files; the two large test files; the four remaining test files), each `Code: FULL`, each `APPROVE` (blocking 0, debt 0). Round HIGH counts: 5, 1, 1, 2, 2, 0.

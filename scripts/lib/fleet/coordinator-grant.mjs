@@ -1,6 +1,8 @@
 /**
  * @fileoverview The standing grant that lets a coordinator land a batch of pre-authorised chips (`fleet land --ship-batch`),
- * and the reader that checks it (docs/plans/coordinator-aggregate-ship.md section 2.1).
+ * and the reader that checks it (docs/plans/coordinator-aggregate-ship.md section 2.1). **This module is the READER only:** the batch
+ * landing that consumes it is a follow-up PR (it waits on a per-member outcome primitive for the serial runner), so nothing calls
+ * `readShipBatchGrant` yet and the grant text below must not be pasted into `~/.claude/CLAUDE.md` until that lands.
  *
  * **A declaration check, not verified authority.** Louis writes the grant into his own `~/.claude/CLAUDE.md`; no session edits
  * that file. Code cannot prove who wrote a line, so this proves only that the CURRENT canonical text is in the file the harness
@@ -60,6 +62,8 @@ function fencedAt(lines, upTo) {
   for (let i = 0; i < upTo; i++) {
     const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[i]);
     if (!m) continue;
+    // CommonMark: the info string of a BACKTICK fence may not contain a backtick, so such a line is not an opener at all.
+    if (!open && m[1][0] === '`' && m[2].includes('`')) continue;
     if (!open) open = { ch: m[1][0], len: m[1].length };
     else if (m[1][0] === open.ch && m[1].length >= open.len && m[2].trim() === '') open = null;
   }
@@ -105,13 +109,16 @@ export function parseShipBatchGrant(text) {
  * The path Louis's instructions live at. NOT overridable from the environment, deliberately: a session that can set an env var
  * (`HOME` on POSIX, `USERPROFILE` on Windows, which is what `os.homedir()` reads first) could point the check at a file it wrote
  * itself, and the whole check is that the text sits where only Louis writes. The account database answers instead
- * (`os.userInfo().homedir`); `os.homedir()` is only the fallback for a platform that cannot answer.
+ * (`os.userInfo().homedir`); when it cannot answer there is no trusted location and the grant is absent.
  * Tests and in-process callers pass `file` explicitly.
  */
 export function defaultGrantFile() {
-  let home;
+  let home = null;
   try { home = os.userInfo().homedir; } catch { home = null; }
-  return path.join(home || os.homedir(), '.claude', 'CLAUDE.md');
+  // FAIL CLOSED: when the account database cannot answer there is no trusted home, and `os.homedir()` would read the very
+  // environment variables this function refuses to trust. No location means no grant.
+  if (typeof home !== 'string' || home.trim() === '') return null;
+  return path.join(home, '.claude', 'CLAUDE.md');
 }
 
 /**
@@ -119,6 +126,7 @@ export function defaultGrantFile() {
  * @param {{file?: string, fsMod?: {readFileSync: Function}}} [o]
  */
 export function readShipBatchGrant({ file = defaultGrantFile(), fsMod = fs } = {}) {
+  if (!file) return { ok: false, code: 'grant-absent', reason: 'no trusted home directory could be determined from the account database, so there is no grant location to read' };
   let text = null;
   try { text = fsMod.readFileSync(file, 'utf-8'); } catch (e) { return { ok: false, code: 'grant-absent', reason: `the grant file ${file} could not be read (${e?.code ?? e?.message ?? 'error'})` }; }
   return parseShipBatchGrant(text);
