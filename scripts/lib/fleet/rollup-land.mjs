@@ -260,8 +260,10 @@ function closeBoundToHead({ deps, cwd, repo, number, head, comment }) {
   };
   const before = read();
   if (!before) return { status: 'failed', reason: 'the PR could not be read before the close' };
+  // State and head are reconciled TOGETHER: a PR that is already closed but carries a head other than the admitted one holds work that
+  // did not land, so it is never recorded as a clean close (a close that landed before a crash, with the head unchanged, is).
+  if (before.headRefOid !== head) return { status: 'skipped-head-moved', reason: `the PR (${before.state.toLowerCase()}) head is ${short(before.headRefOid)}, not the admitted ${short(head)}: it holds work that did not land; gh pr reopen ${number} if it should stay open` };
   if (before.state.toUpperCase() !== 'OPEN') return { status: 'closed', reason: null }; // reconciled: nothing is left to close
-  if (before.headRefOid !== head) return { status: 'skipped-head-moved', reason: `the PR head is ${short(before.headRefOid)}, not the admitted ${short(head)}: it holds work that did not land` };
   const x = deps.gh(['pr', 'close', String(number), '-R', repo, '--comment', comment], cwd);
   if (!x.ok) return { status: 'failed', reason: String(x.reason ?? 'gh pr close failed').slice(0, 200) };
   const after = read();
@@ -435,10 +437,16 @@ function closeSuperseded({ cwd, dir, trainId, deps }) {
   if (!number) return lines;
   for (const old of listTrains(dir).trains) {
     if (old.rollup?.superseded !== trainId || !old.rollup.prNumber) continue;
-    if ((old.rollup.closures ?? []).some((c) => c.prNumber === old.rollup.prNumber && (c.status === 'closed' || c.status === 'skipped-head-moved'))) continue;
+    if ((old.rollup.closures ?? []).some((c) => c.prNumber === old.rollup.prNumber && c.status === 'closed')) continue;
+    const prior = (old.rollup.closures ?? []).find((c) => c.prNumber === old.rollup.prNumber && c.status === 'skipped-head-moved');
+    if (prior) { lines.push(`  superseded rollup PR #${old.rollup.prNumber}: skipped-head-moved (${prior.reason ?? 'its head is not the admitted one'}); resolve it by hand, it is never closed automatically`); continue; }
     const r = closeBoundToHead({ deps, cwd, repo: old.rollup.repo, number: old.rollup.prNumber, head: old.rollup.candidate.oid, comment: `superseded by #${number} (fleet rollup ${me.train.rollup.branch})` });
     const entry = { prNumber: old.rollup.prNumber, head: old.rollup.candidate.oid, status: r.status, reason: r.reason };
-    withTrainLock(dir, () => patchTrain(dir, old.trainId, { rollup: { ...old.rollup, closures: [...(old.rollup.closures ?? []).filter((c) => c.prNumber !== entry.prNumber), entry] } }, deps));
+    withTrainLock(dir, () => {
+      const cur = readTrain(dir, old.trainId); // re-read under the lock: the snapshot above may be stale
+      if (!cur.ok || !cur.train.rollup || cur.train.rollup.superseded !== trainId || cur.train.rollup.candidate.oid !== entry.head) return;
+      patchTrain(dir, old.trainId, { rollup: { ...cur.train.rollup, closures: [...(cur.train.rollup.closures ?? []).filter((c) => c.prNumber !== entry.prNumber), entry] } }, deps);
+    });
         if (r.status !== 'closed') lines.push(`  superseded rollup PR #${old.rollup.prNumber}: ${r.status}${r.reason ? ` (${r.reason})` : ''}${r.status === 'failed' ? '; the next approve or resume reconciles it' : ''}`);
   }
   return lines;

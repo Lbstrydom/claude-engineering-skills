@@ -534,3 +534,26 @@ describe('audit round 2: a close is bound to the admitted head and VERIFIED (R2-
     }
   });
 });
+
+describe('audit round 3: a closed PR is reconciled against its head too (R3-H2, H3)', () => {
+  it('a close followed by a head movement is never cleared by the next run: it becomes skipped-head-moved and is reported until resolved', () => {
+    const f = fixture(1);
+    const w = world(f); w.checks = 'pending';
+    const b1 = build(f, w);
+    approve(f, w, { trainId: b1.trainId, serialOpts: { timeoutMs: 30 } });
+    const oldPr = readTrain(f.dir, b1.trainId).train.rollup.prNumber;
+    w.checks = 'pass';
+    const b2 = build(f, w);
+    const rp = w.allPrs.find((p) => p.number === oldPr);
+    const orig = w.gh;
+    w.gh = (args) => { const out = orig(args); if (args[1] === 'close' && Number(args[2]) === oldPr) rp.head = 'c'.repeat(40); return out; }; // work is pushed around the close
+    const r1 = approve(f, w, { trainId: b2.trainId });
+    assert.match(r1.text, new RegExp(`superseded rollup PR #${oldPr}: failed \\(the head moved to c{12} around the close`));
+    assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'failed');
+    const r2 = resume(f, w, b2.trainId); // the PR is now CLOSED with a foreign head: it must NOT read as a clean close
+    assert.match(r2.text, new RegExp(`superseded rollup PR #${oldPr}: skipped-head-moved`));
+    assert.equal(readTrain(f.dir, b1.trainId).train.rollup.closures.at(-1).status, 'skipped-head-moved');
+    const r3 = resume(f, w, b2.trainId);
+    assert.match(r3.text, new RegExp(`superseded rollup PR #${oldPr}: skipped-head-moved`), 'reported on every run until an operator resolves it');
+  });
+});
