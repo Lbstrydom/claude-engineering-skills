@@ -498,14 +498,14 @@ sequenceDiagram
 
 #### 2.9.1 Build: `fleet land --rollup [--select ids] [--hold ids]`
 
-1. **Selection** is the existing `build()` selection (`scripts/lib/fleet/land.mjs:143-183` (`cf9d57cd`)): ready sessions in
+1. **Selection** is the existing `build()` selection (`scripts/lib/fleet/land.mjs:143-183` (`d53272aa`)): ready sessions in
    landing order, `--select` narrowing them. `--hold a,b` removes named members and records them held with code
    `held-by-coordinator`. A `--hold` id that is not ready is an argv error, like `--select`.
 2. **Admission per member**, before anything is built, with the one predicate `admitMember` of §2.3 (F6: the build and the
    merge ask the same question):
    - the member branch on the remote (`git ls-remote origin refs/heads/<branch>`) is exactly the ready oid. A branch that was
      never pushed, or moved since `ready`, is held as `branch-not-pushed` or `head-moved`;
-   - the PR A child `ship-commit.mjs --check-shipped-head --head <oid> --verify-base --base <base>` in the member's worktree
+   - the PR A child `ship-commit.mjs --check-shipped-head --head <oid> --base <base> --remote origin --json` in the member's worktree
      is ship-ok. A refusal is held as `shipped-head-refused`, with the child's refusals copied. **`AI-Gate: waived` or
      `not-run` therefore never enters a rollup** (the child refuses it), so nothing is laundered into passed;
    - no member CI is asked for: in rollup mode there is none, and the rollup PR's checks replace it (§2.9.3).
@@ -519,7 +519,7 @@ sequenceDiagram
    rollup, after its own restack and, if the restack changed its tree, a re-audit, which its next admission enforces.
 4. **One open rollup per repo.** The build refuses while another rollup train is `awaiting-merge`, naming it. A member in two
    open rollups could otherwise land twice.
-5. **The candidate** is `buildTrain` (`scripts/lib/fleet/train.mjs:280` (`cf9d57cd`)) unchanged in shape: base worktree,
+5. **The candidate** is `buildTrain` (`scripts/lib/fleet/train.mjs:280` (`d53272aa`)) unchanged in shape: base worktree,
    sources applied in order, candidate `{oid, tree}` recorded before any test, then the pre-land tiers. Two small
    parameters, both off on every other path:
    - `landing: 'rollup'` is written into the train manifest (an optional `TrainSchema` key). `approveTrain`, `confirmTrain`,
@@ -613,7 +613,7 @@ A rebuilt rollup is always a new branch, so a red or stale rollup's candidate an
 #### 2.9.6 Records
 
 - **One ship record for the rollup.** ship-record catch-up already writes one entry per merged PR from immutable facts
-  (`scripts/lib/ship-record/entry.mjs:1-18` (`cf9d57cd`)). The rollup PR is one PR. Its merge commit's message holds the
+  (`scripts/lib/ship-record/entry.mjs:1-18` (`d53272aa`)). The rollup PR is one PR. Its merge commit's message holds the
   manifest and is immutable once merged, so `renderPrEntry` may read it. A new pure `parseRollupManifest(message)` (in
   `scripts/lib/fleet/rollup.mjs`, imported by `entry.mjs`) lets the entry list every member: id, branch, head, gate. A
   malformed manifest renders as "manifest unreadable", never as zero members.
@@ -623,7 +623,7 @@ A rebuilt rollup is always a new branch, so a red or stale rollup's candidate an
   `landed` for the rollup step, and only then, each member PR that is still OPEN gets `gh pr close <n> --comment
   "superseded by #N (fleet rollup <id>)"`. A failed close is reported in the summary and never undoes or re-runs the
   landing. Never on `merge-unconfirmed`, `not-run` or a stop.
-- **Done-ness needs nothing new:** `deriveTrainDone` (`scripts/lib/fleet/overlap.mjs:589` (`cf9d57cd`)) marks a session done
+- **Done-ness needs nothing new:** `deriveTrainDone` (`scripts/lib/fleet/overlap.mjs:589` (`d53272aa`)) marks a session done
   when a `landed` train lists it as a source, and a rollup train's sources are exactly its admitted members. Held members are
   not sources.
 
