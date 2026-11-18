@@ -278,6 +278,20 @@ Since 2026-10-20 that condition requires the review's **result** (`disposition`)
 full) is refused, naming the result; `approve_with_debt` is refused too; a marker written before dispositions were recorded is
 refused with its own reason, `predates dispositions: re-run the final review`, distinct from `malformed`.
 
+### Landing shipped chips in one action (`land --ship-batch`, from 2026-11-18)
+
+A chip that shipped itself carries the trailers above on its OWN head commit. A coordinator's `fleet land --ship-batch`
+(`skills/fleet/references/ship-batch.md`, plan `docs/plans/coordinator-aggregate-ship.md`) re-judges each member at merge time with
+`ship-commit.mjs --check-shipped-head` (`evaluateShippedHead`) and merges the ones that verify with the head commit's own message, so
+the squash carries the same trailers. What it does NOT do: it writes no trailer, it never raises a gate (`waived` and `not-run` are
+refused, never relabelled), and a batch has no gate of its own: there is no aggregate `AI-Gate`, each squash carries its member's.
+
+**Reading trailers off main.** A trailer is real only when git parses it: `git log --format='%(trailers:key=AI-Gate,valueonly)'`.
+Measured 2026-11-18 over the last 200 commits on main: 67 had an `AI-Gate:` line somewhere in the body, only 54 had one git parses,
+because the repository's squash setting (`COMMIT_MESSAGES`) concatenates every commit message and buries the ship commit's block.
+A count made with `--grep` is therefore a count of TEXT, not of provenance. After a batch, the read-back (`provenance-lost`) is the
+check that the trailers survived; it compares the squash's AI-* trailers with the head's as a multiset.
+
 ### The final-review result (`AI-Final-Review`, from 2026-10-20)
 
 A reviewed decision to ship with debt and a gate bypass used to look identical in git: both read `AI-Gate: waived`. The final

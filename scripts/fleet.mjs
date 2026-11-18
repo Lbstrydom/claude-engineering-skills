@@ -30,6 +30,7 @@
  *   restack [<branch>] [--replace]  replay a branch's own commits onto the base (patch-id checked)
  *   land [--select a,b] [--dry-run] build + test one combined train
  *   land --approve|--confirm|--reconcile|--resume|--abandon <trainId>
+ *   land --ship-batch | --approve|--resume <trainId> --ship-batch   land chips that shipped themselves, under the user's standing grant
  *
  * Exit codes: 0 ok · 1 error (incl. lock not acquired) · 2 argv · 3 blocked/refused.
  * Every known-verb invocation also spools one telemetry event (lib/fleet/telemetry.mjs;

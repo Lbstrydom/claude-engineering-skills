@@ -1,6 +1,6 @@
 # Plan: Coordinator-owned aggregate ship (one ship action per batch)
 - **Date**: 2026-11-18
-- **Status**: Draft
+- **Status**: In Progress
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI scripts + skill prose; no UI). Stack `js-ts`.
 - **Target domain(s)**: `fleet`, `ship`, `skills-content`, `docs`
@@ -537,3 +537,41 @@ its full suite in Actions.
   - G3: stale condition ids and the `archive-check` file.
 
   The gate was approved, so no round 2 was needed.
+
+## Implementation Log
+
+**2026-11-18 — implemented on Sonnet after the coordinator's "go" (the user's words: "Yes, go").** Audited plan above; where the
+code differs from the audited text, the code is right and this section is the record. Nothing in `~/.claude/CLAUDE.md` was touched:
+the grant stays a draft in section 2.1 for the user to paste (a test pins that the pasted text is the text the reader accepts).
+
+Built: `evaluateShippedHead` + `isShipStepDelta` (`scripts/lib/ship-preauth.mjs`, `scripts/lib/ship-record/authority.mjs`);
+`ship-commit.mjs --check-shipped-head` with its gatherer (`scripts/lib/ship-shipped-head.mjs`) and two store reads
+(`scripts/lib/store/ship-run-facts.mjs`); the grant reader (`scripts/lib/fleet/coordinator-grant.mjs`); `fleet land --ship-batch`
+(`scripts/lib/fleet/ship-batch.mjs`, with three seams in `serial.mjs`: `hooks.onMerged`, `hooks.noUpdate`, and the resume hint);
+the ready-but-unmerged archive refusal (`shipEvidenceOwed`, `lifecycle.mjs`); the runbook `skills/fleet/references/ship-batch.md`.
+
+Deviations from the audited text (each deliberate):
+
+| Plan said | Code does | Why |
+|---|---|---|
+| a `shipBatch` stamp in the train manifest | a sidecar `fleet/shipbatch/<train>.json` (members, expected base tip, per-member state) | the strict `TrainSchema` stays untouched, like serial's own record |
+| `GIT_LITERAL_PATHSPECS=1` on the child | NO pathspecs at all: `git diff --name-status -z A T_H` lists every path and the candidate set filters it in code; file text is read as `A:<path>` | a name with glob or magic characters can then never be misread, and there is no env var to leak into hooks |
+| `isShipStepDelta` replaces `pathVerdict`'s grammar | a new exported grammar beside it; `pathVerdict` is unchanged | the record grammar is narrower (log lines must match `PLAN_LOG_LINE_RE`), and a shared one would have changed record behaviour |
+| refusals exit 2 | fleet's own convention: 3 refused or stopped, 4 a train that ran red; the child `--check-shipped-head` keeps 0 / 2 / 1 | `fleet land` already maps its result codes this way |
+| `C8`: `ciVerdict` AND `observeRequiredChecks` | both, but `ciVerdict` only where `.test-tiers.json` declares a workflow ("no ciVerdict workflow is declared" is "nothing to measure", never a pass) | a consumer with no declared workflow must not refuse everything |
+| the store row's `audited_tree` must match | must match WHEN the store holds one; a null is tolerated | the marker's tree is the binding; the store row only corroborates (a pre-2026-07-19 row has none) |
+| `skills/ship/SKILL.md` and `coordination.md` get a line each | NOT edited; the sentence lives in `skills/ship/references/record-catchup.md` and `ship-batch.md` | `skills:size:gate` sits +182 over its baseline on ship/SKILL.md (tolerance 200) and coordination.md is at 11,969 of 12,000; neither may grow and raising a baseline is not this chip's call |
+| `fleet/SKILL.md` gains a row and an exception | done, offset by tightening existing prose in the same file (no rule dropped) | same ratchet |
+| `archive-check` refuses via `cmdArchiveCheck` | `shipEvidenceOwed(session, pr)` feeds `archiveReport`'s `unverified` list, so the verdict is UNVERIFIED | no new verdict value; the existing refusal path carries it |
+
+Known limits, stated: **a repository that requires up-to-date branches lands ONE member per build** (after the first merge the next
+reads BEHIND, and a ship-batch never updates a branch on the remote: `behind-base`). Three of the odd-path-name fixtures
+(`*`, a leading `:(`, a newline) cannot exist on a Windows git index and are SKIPPED there, not passed; the pure NUL parser is
+tested separately, and POSIX CI runs them. The final-review marker is still local to the chip worktree (follow-up
+`p-20261118061826-7f07`). `--no-verify` was not used.
+
+Proof, against the PROOF PLAN: red-then-green for `evaluateShippedHead` / `isShipStepDelta` (the first run failed on the missing
+export); the real-git `--check-shipped-head` suite; seven mutations of the merge path (grant re-read, base-tip check, child
+re-check, first-parent check, read-back, `noUpdate`, selection) each turned the suite red, and the base-tip one first MISSED until a
+test moved the base DURING the run, which is why that test exists; the Tier 3 relocated-layout test copies the closure through the
+real path map and runs the relocated CLIs.

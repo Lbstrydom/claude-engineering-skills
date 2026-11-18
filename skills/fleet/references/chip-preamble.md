@@ -62,7 +62,9 @@ audited tree and round with result approve (not approve-with-debt, not blocked);
 repository-policy file (.github/, CODEOWNERS, .test-tiers.json). The commit path re-checks all of it and refuses (exit 2)
 otherwise; if any condition refuses, stop and tell the user to type /ship PLAN_PATH in this session. Never hand-write gate
 evidence or re-run to find a pass. Say "ship pre-authorised by launch prompt" in the claim intent; the commit then carries
-the trailer AI-Ship-Authority: launch-prompt.]
+the trailer AI-Ship-Authority: launch-prompt. Order: ship, push the ship head, THEN `fleet ready` (the ready oid is the ship
+head, so CI runs on it). Never archive this worktree before your PR is merged: the coordinator's re-check reads its .audit/
+markers, and without them you wait for the user's /ship.]
 
 RECORDS. You never run the record catch-up (ship-record.mjs) or write a session-log entry for another PR: the coordinator
 owns that for the repo (coordinator-playbook §7). [rule 8]
@@ -81,5 +83,6 @@ converged only with the artifact beside it (commit sha, PR number, CI run id or 
 - **Fill ROUTE_CHOICE with one route.** The chip must not choose it (rule 3).
 - **Keep the model handoff for `/cycle --autonomous` chips**: the planning turn runs on the strong model and the chip stops
   after `/audit-plan`; you switch its model and reply "go" (rule 16).
-- **A pre-authorised ship is a launch-prompt decision, not a default.** Leave the bracketed block out and the chip ends at
-  ship-ready as before. The coded check, not the chip's own reading of the list, decides at commit time.
+- **A pre-authorised ship is a launch-prompt decision.** Include the bracketed block by default ONLY when the user's own
+  instructions carry the standing coordinator-ship grant (`references/ship-batch.md`); otherwise leave it out and the chip ends
+  at ship-ready as before. The coded check, not the chip's own reading of the list, decides at commit time.

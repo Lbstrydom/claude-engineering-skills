@@ -20,7 +20,7 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Out-of-diff audit noise — a pre-existing tag (8a) and changed-chunk scoping (1c)](./audit-out-of-diff-noise.md) | `In Progress` | 8a and the 1c mechanism are built (1c is OFF by default); the recall campaign below has not run, so 1c stays… |
-| [Coordinator-owned aggregate ship (one ship action per batch)](./coordinator-aggregate-ship.md) | `Draft` |  |
+| [Coordinator-owned aggregate ship (one ship action per batch)](./coordinator-aggregate-ship.md) | `In Progress` |  |
 | [Size floor for `arch:duplicates` and the drift score](./duplicate-min-lines-floor.md) | `In Progress` |  |
 | [Fable 5.2 vs Opus 5.5 on coordinator-grade decisions](./fable-vs-opus-decision-eval.md) | `Approved` |  |
 | [fleet — the rest of a work consumer's November run report](./fleet-work-consumer-feedback-nov-2.md) | `In Progress` | implemented on branch `claude/fleet-feedback-batch2`, PR pending |

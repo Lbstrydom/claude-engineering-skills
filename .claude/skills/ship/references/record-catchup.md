@@ -9,6 +9,11 @@ session-log entry, the plan's Implementation Log line, the `Backlog:` line and t
 2026-11-16: storyline's `status.md` untouched for 325 commits, wine-cellar-app's for 394). `ship-record.mjs` does the record
 half on its own, **without** `/ship`'s push or merge authority: it only CREATES files under `docs/status/entries/`.
 
+**A chip that shipped itself** (`ship-commit.mjs --preauthorised`, under the user's standing coordinator grant) needs no entry
+here: its own ship commit added its log entry, and `fleet land --ship-batch` lands it with that commit's message (the catch-up
+oracle counts a PR whose merge added an entry as recorded). `/ship` itself stays user-only; the batch runbook is
+`skills/fleet/references/ship-batch.md`.
+
 ## Who runs it
 
 **One owner per repo: the fleet coordinator.** Chips never run it. Two runs on one machine serialise on a lock; two on two
