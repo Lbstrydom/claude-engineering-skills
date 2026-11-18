@@ -1161,3 +1161,18 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   - `skills/fleet/gate-contract.json` is unchanged: it carries no gates and its stated reason (no oracle recipe builds a multi-session repo) still holds, so the stated claims are pinned by the tests named in section 9 instead.
   - `SKILL.md` carried PR A's growth past its baseline; the rollup usage line is offset by trims elsewhere in the file, and `npm run skills:size:gate` is clean (no baseline was raised).
 - **Proof, red then green against the PROOF PLAN:** golden 20/20 against the refactor and the unchanged `fleet-serial`, `ship-train-recovery` (21/21); mutation: `conflicts with` to `conflict with` in `serial.mjs` turns the DIRTY golden scenario red. Unit `fleet-member-outcome` 25, `fleet-rollup-manifest` 13, census 12, `fleet-land-ship-batch` 74, `fleet-rollup` 18, `ship-record-entry` 19; all fleet and ship-record suites 2022 of 2025 pass (3 skipped), 0 fail.
+
+## Code audit trail
+
+- **/audit-code, SID `audit-code-1795028282052-47728`** (2026-11-18), `--scope diff --base d53272aa` (the whole branch against main), six rounds.
+  GPT HIGH per round 10, 3, 3, 0, 0, 0 (distinct; the round-1 list also carried 3 duplicates), MEDIUM 17 / 5 / 1 / 2 / 1 / 0. Every finding was triaged and
+  ledgered (31/31, 8/8, 4/4, 2/2, 1/1 labelled). Fixed: all but four dismissals with reasons (R1-M8 the schema version is deliberate per section 6,
+  R1-M17 an adjacency bound, R2-M1 the train lock across `buildTrain` matches plain `land`, R3-H1 the unconditional `gh pr close` is an accepted
+  residual the close now DETECTS and reconciles). Rounds 4, 5 and 6 each reported `converged`, round 6 with zero findings.
+- **Final review** (gemini, round 1 of 2): `APPROVE`, gate `approve` (blocking 0, debt 0), no new findings, none wrongly dismissed.
+- **Coverage, stated:** round 1 read 41 of 43 changed files in full; the two it could not (`docs/plans/ship-batch-member-outcomes.md`, 98 KB, audited by
+  /audit-plan with its own final review, and `tests/fixtures/fleet-serial-golden.json`, 110 KB of generated data) were windowed, so the final review
+  notes `Code: PARTIAL, 3329 changed line(s) never shown`. The fixture's oracle is its own test (deterministic over three runs from origin/main code,
+  plus a one-character negative control). Rounds 2-6 read their (small) fix diffs completely.
+- **Proof against the PROOF PLAN:** golden 20/20 against the refactor; unchanged `fleet-serial` and `ship-train-recovery` green; all fleet and
+  ship-record suites 4317/4320 (3 skipped), 0 fail; `npm run guards:preflight` PASS.
