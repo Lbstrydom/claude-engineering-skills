@@ -89,6 +89,12 @@ describe('in a relocated layout', () => {
     g('config', 'user.email', 't@example.com'); g('config', 'user.name', 'T'); g('config', 'commit.gpgsign', 'false');
     fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
     g('add', 'a.txt'); g('commit', '-q', '-m', 'one');
+    // A base the change is measured against must exist (the check refuses at once without one, before it reads any evidence): the
+    // property under test is the EVIDENCE row with the store off, so the base is given and the head is a second commit on top of it.
+    g('update-ref', 'refs/remotes/origin/main', g('rev-parse', 'HEAD').stdout.trim());
+    g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'b' + String.fromCharCode(10));
+    g('add', 'b.txt'); g('commit', '-q', '-m', 'two');
     const head = g('rev-parse', 'HEAD').stdout.trim();
     const r = run(reloc('scripts/ship-commit.mjs'), ['--check-shipped-head', '--head', head, '--offline', '--json']);
     assert.equal(r.status, 2, r.stderr);
