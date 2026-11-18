@@ -154,7 +154,7 @@ describe('build: holds, never failures', () => {
   });
   it('the grant is read first: without it nothing is looked at or built', () => {
     const f = fixture(1);
-    fs.rmSync(f.grantFile, { force: true });
+    fs.rmSync(f.grantFile, { force: true, maxRetries: 3, retryDelay: 50 });
     const r = build(f, world(f));
     assert.equal(r.ok, false);
     assert.match(r.reason, /grant-absent/);
@@ -290,7 +290,7 @@ describe('operation recovery: each remote action is reconciled before it is retr
     const b = build(f, w);
     const first = approve(f, w, { trainId: b.trainId });
     assert.equal(first.ok, true);
-    fs.rmSync(f.grantFile, { force: true });
+    fs.rmSync(f.grantFile, { force: true, maxRetries: 3, retryDelay: 50 });
     w.rules = 'not json';
     const before = w.calls.length;
     const again = resume(f, w, b.trainId);

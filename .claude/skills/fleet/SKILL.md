@@ -79,7 +79,7 @@ args, 3 blocked/refused, 4 a train ran red (land). `--json` to parse.
    per task; `--paths` binds to the `--task` before it.
 2. **Go away** — each chip registers itself, works, marks `ready`.
 3. **Status** — show the user the table: intent, state, WAITING (human items
-   first), overlaps, duplicate patches, proposed landing order. Overlap is three-dot (`references/landing.md`). Merged, landed or idle untracked branches hide behind one `N hidden` line (`--all` shows them).
+   first), overlaps, duplicate patches, proposed landing order. Overlap is three-dot (`references/landing.md`). Merged, landed or idle untracked branches hide behind `N hidden` (`--all` shows them).
 4. **Land** — `land` builds an integration worktree off the base, applies every
    ready head, runs the configured test command once (rerun once if red) and
    prints the result plus the exact approve command. It never touches the base.
@@ -115,14 +115,15 @@ args, 3 blocked/refused, 4 a train ran red (land). `--json` to parse.
   desktop session list, pinned and dormant sessions included, for a session whose
   cwd is it; if one exists, do not remove it. Both verbs also refuse
   while another worktree's `core.hooksPath` points inside it: run the printed re-point command first.
-- Each `FYI` line in `next` or the footer, and the machine lease line, is information, not a `DO`: relay it; never claim, archive or prune on it alone.
-- Coordinating, not participating (chip authority, routing, ship-ready end state, consumer sync, titles, archive sweeps, push lanes): `references/coordination.md`; the why: `references/coordination-rationale.md`.
+- Each `FYI` line in `next` or the footer (prune counts, unregistered work, pending proposals, upstream issues) and the
+  machine lease line are information, not a `DO`: relay them; never claim, archive or prune on one alone.
+- Coordinating, not participating (chip authority, routing, ship-ready end state, consumer sync, titles, sweeps, push lanes): `references/coordination.md`; the why: `references/coordination-rationale.md`.
 - **Background runs** go under `node scripts/run-heartbeat.mjs run …`, with `watch` armed on Monitor; STALE or UNKNOWN is never healthy, an expired watcher is no verdict: `references/background-runs.md`.
-- pr-mode `land --approve` refuses a draft or a failed or SKIPPED required check (a skipped one never ran) and prints WAIT above a merge whose required checks are missing or pending: relay those lines. A head moved since `ready` reads `ready (stale)`: re-run `ready`. Interrupted `land`/`--serial`/`restack`: `references/landing.md`.
+- pr-mode `land --approve` refuses a draft or a required check that failed or was SKIPPED (a skipped check never ran) and prints WAIT above a merge whose required checks are missing or pending: relay those lines. A head moved since `ready` reads `ready (stale)`: re-run `ready`. Interrupted `land`/`--serial`/`restack`: `references/landing.md`.
 
 ## Config — optional `.fleet.json` at the repo root
 
-Never synced; read from the checkout you run in, so commit it. Every key is optional; keys, defaults, a monorepo example: `references/config.md`.
+Never synced; read from the checkout you run in, so commit it. Keys, defaults, a monorepo example: `references/config.md`.
 
 Every verb records one counts-only usage event; `FLEET_TELEMETRY=off` disables it (`references/telemetry.md`).
 
