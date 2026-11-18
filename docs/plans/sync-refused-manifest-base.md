@@ -1,6 +1,6 @@
 # Plan: the base-lag restore must not manufacture a divergence
 - **Date**: 2026-11-18
-- **Status**: Draft
+- **Status**: Approved
 - **Author**: Claude + Louis
 - **Scope**: backend (Node ESM CLI lib `scripts/lib/sync-base-lag.mjs`; stack `js-ts`)
 - **Target domain(s)**: `install`
@@ -71,10 +71,23 @@ fast-forward CHANGES. So restore exactly `discard ∩ changedBy(HEAD, baseSha)`;
 place. It still holds bytes equal to our manifest base, so the write loop classifies it PRISTINE (unchanged, or an ordinary
 update), exactly as if no lag had existed.
 
-- New pure helper `parseNameOnlyZ(stdout)` and a fact `ffChangedPaths` gathered in `gatherBaseFacts` (or right after it, only
-  when `lag === 'behind'`): `git diff --name-only -z --no-renames HEAD <baseSha>`. `-z` so a path with spaces or non-ASCII is
-  read exactly, not C-quoted; `--no-renames` so a rename is listed as its two real paths (both may be in the tree);
-  `core.quotePath` is irrelevant under `-z`.
+- **Pin both ends.** `gatherBaseFacts` already resolves `baseSha` to an oid, and `executeBaseLagPlan` already merges that oid
+  (`merge --ff-only … facts.baseSha`, `sync-base-lag.mjs:328`, `ceea43d2`), not a ref. It additionally resolves `headSha`
+  (`rev-parse --verify HEAD^{commit}`). The changed-path fact is computed between those two oids, and immediately before the
+  restore the executor re-reads `rev-parse HEAD`; if it no longer equals `headSha`, it refuses (nothing restored) rather than
+  restoring against a plan made for another commit. Syncs into one consumer are already serialised by the per-consumer lock
+  (#387). A human editing the tree inside the plan-to-restore window is a pre-existing residual of the restore, which this
+  change narrows (fewer paths destroyed) and does not widen.
+- New pure helper `parseNameOnlyZ(stdout)` and a fact `ffChangedPaths`, gathered only when `lag === 'behind'`:
+  `git diff --name-only -z --no-renames <headSha> <baseSha>`. `-z` so a path with spaces, a newline or non-ASCII is read
+  exactly, not C-quoted; `--no-renames` so a rename is listed as its two real paths. **Same decoding as the other side**:
+  `classifyRepo` reads `git status --porcelain=v1 -z` through `spawnSync(..., {encoding: 'utf-8'})` and `parsePorcelainZ`
+  (`scripts/sync-status.mjs:100-112`, `ceea43d2`); the diff is read with the same encoding, so both sides are the same decoding
+  of git's bytes and compare by string equality. **Lossy names fail closed**: UTF-8 decoding maps invalid bytes to U+FFFD, so two
+  byte-distinct names can decode to one string and an untouched file could be selected for restore. If any decoded path in the
+  diff output OR in `discard` contains U+FFFD, the fact is `null` (refuse; nothing restored). That also refuses a name that
+  genuinely contains U+FFFD: conservative, and vanishingly rare in a synced bundle. **Complete or nothing**: a non-zero exit, a
+  spawn error, or non-empty output that does not end in NUL makes the fact `null`.
 - `planBaseLag` takes `ffChangedPaths: Set<string> | null` and returns `discard` filtered to it. **Fails closed**: `null` (the
   diff could not be read) REFUSES the fast-forward (`reason: 'unreadable-status'`, remedy names `git pull --ff-only`), the same
   shape as an unreadable classification. Falling back to "restore everything" would be today's bug; an unasked question is not
@@ -82,6 +95,16 @@ update), exactly as if no lag had existed.
 - Path comparison: both sides are git's own repo-relative, forward-slash output (`classifyRepo` reads `git status`), so the
   match is exact string equality. Not case-folded: git reports the index's casing on both sides, and folding would make a
   case-only rename on Windows match a path it does not name.
+- **Index safety is unchanged and already enforced.** `discard` is built only from `classified.syncOwned`, and
+  `classifyDirtyEntries` admits an entry there only when `hasUnambiguousIndexState` holds
+  (`scripts/lib/sync-status.mjs:120-126,201`, `ceea43d2`): a status with a real change in BOTH columns (`MM`, `AM`) is never
+  sync-owned, so the staged state of every path in `discard` is either HEAD or the verified sync bytes. The narrowing removes
+  paths from the restore; it adds none.
+- **Which manifest the gate reads.** `enforceBaseLagForTarget` runs at `sync-to-repos.mjs:788`; the prior manifest is read
+  after it, at `:909` (`ceea43d2`), and the consumer manifest is gitignored by the sync's managed `.gitignore` block (storyline
+  `.gitignore:20`). So the fast-forward cannot change the base the divergence gate reads, and a kept file's bytes still equal
+  that base. Stated assumption: a consumer that still TRACKS its manifest (the legacy shape `sync-ownership.mjs` describes) could
+  have it changed by the fast-forward; that shape is outside this fix and is listed in §5.
 - The receipt and the other sync bookkeeping files are unaffected: they change on every landed sync, so when they are dirty
   they are normally ALSO changed by the fast-forward, and they are restored exactly as today.
 - Messages: `realRunVerdictOf` and the `fast-forwarded` line already print `plan.discard.length`; they now count the narrowed
@@ -117,17 +140,23 @@ already exists):
    dirty bytes** (red today: restored to HEAD). The fixture's `classify` stub reports F as `syncOwned`, as `classifyRepo` does.
 2. **Still restores what blocks the fast-forward**: same, but origin's commit changes F → F is restored and the fast-forward
    succeeds (green today and after; guards against over-narrowing).
-3. **Mixed**: two dirty sync-owned files, one touched, one not → only the touched one is restored; the fast-forwarded line names
-   the kept count.
-4. **Fail closed**: a `run` that fails the `git diff --name-only` call → plan is `refuse` / `unreadable-status`, nothing is
-   restored (asserted on the tree bytes, not on the message).
-5. **Pure**: `parseNameOnlyZ` on a `-z` buffer with a space, a non-ASCII name and a trailing NUL; `planBaseLag` with
-   `ffChangedPaths: null` refuses, with an empty set keeps everything.
+3. **Mixed**: two dirty sync-owned files, one touched (worktree-dirty, ` M`) and one untouched and STAGED (`M `) → only the
+   touched one is restored; the staged untouched one keeps both its index and worktree bytes; the fast-forwarded line names the
+   kept count.
+4. **Fail closed**: a `run` that fails the `git diff --name-only` call, or returns output without a trailing NUL → plan is
+   `refuse` / `unreadable-status`, nothing is restored (asserted on the tree bytes, not on the message).
+5. **HEAD moved**: a `run` whose second `rev-parse HEAD` returns a different oid → refused, nothing restored.
+6. **Pure**: `parseNameOnlyZ` on a `-z` buffer with a space, a newline-containing name, a non-ASCII name and a trailing NUL, and
+   on a truncated buffer (→ `null`); a diff output or a `discard` entry containing U+FFFD (→ refuse, nothing restored; the
+   injected `run` returns the decoded form, so this is tested on Windows too, where a real non-UTF-8 name cannot be created);
+   `planBaseLag` with `ffChangedPaths: null` refuses, with an empty set keeps everything.
 
 **End to end through the CLI** (extends the existing `sync-to-repos.mjs CLI - the lag is asked before the first write` block,
 which already drives the real CLI against a lagging clone): sync 1 writes the bundle and is NOT committed; origin advances with
 an unrelated commit; sync 2 must exit 0 with `divergenceRefused` empty and the formerly-dirty subject's manifest entry equal to
-its bytes. Red today: sync 2 refuses the subject `diverged-committed`, which is the storyline loop exactly.
+its bytes. Red today: sync 2 refuses the subject `diverged-committed`, which is the storyline loop exactly. The test first
+asserts `git check-ignore` reports the fixture's manifest ignored, so it cannot pass against a tracked-manifest layout by
+accident.
 
 **Kept as a regression guard**: `tests/sync-refused-manifest-base-e2e.test.mjs` (the falsification above), so the next time
 this claim is raised the answer is a test name, not a third investigation. It costs ~21 s; it joins `npm test` via the normal
@@ -145,6 +174,9 @@ If origin's bytes are an EARLIER sync's output (an older sync PR landing after a
 base and the gate refuses it, the same loop by another route. That needs the prior-upstream check to cover rewritten files
 (§6). Rarer than the reproduced case: it needs two syncs and an out-of-order PR merge.
 
+A consumer that still TRACKS `scripts/.sync-manifest.json` (legacy) can have its base moved by the fast-forward itself; the gate
+then reads origin's manifest. Unchanged by this fix in either direction, and not the storyline case (its manifest is ignored).
+
 ## 6. Findings recorded with `fleet propose` (not folded)
 
 - The prior-upstream recognition (proposal 2221) is skipped for any rewritten destination
@@ -159,3 +191,13 @@ base and the gate refuses it, the same loop by another route. That needs the pri
 - Tests 1, 3 and the CLI e2e red on `ceea43d2`, green after; 2, 4 and 5 green; the negative control reproduced.
 - `/audit-code` converged with the final-review gate.
 - No change to `selectManifestBases`, the manifest writer or the divergence decision table.
+
+## Audit trail
+
+- `/audit-plan` SID `audit-plan-1794979244762-105124`, 2026-11-18.
+- R1 GPT: NEEDS_REVISION H:3 M:1. Accepted H1 (manifest read order traced), H3 (pinned HEAD/base oids, HEAD recheck), M1
+  (same `-z` decoding, complete-or-nothing); H2 (index safety) rebutted, overruled by GPT deliberation
+  (`hasUnambiguousIndexState` already keeps `MM`/`AM` out of `syncOwned`). Acceptance 75%.
+- R2 GPT: H:1, lossy U+FFFD path identity, accepted (fail closed). Acceptance 100%.
+- R3 GPT: READY_TO_IMPLEMENT H:0 M:0 L:0 (exit 0).
+- Final gate round 1: APPROVE (gemini-4-argon), blocking 0, debt 0. Converged; no further rounds.
