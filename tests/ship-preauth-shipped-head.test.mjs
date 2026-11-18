@@ -174,6 +174,8 @@ describe('shipEntryRefusal: the only change /ship may make after the audit is a 
     ['a nested path under the entries directory', 'docs/status/entries/sub/x.md'],
     ['a non-markdown file in the entries directory', 'docs/status/entries/x.json'],
     ['a look-alike directory', 'docs/status/entries-x/x.md'],
+    ['a name with a trailing newline (JS $ does not match before it)', 'docs/status/entries/x.md' + String.fromCharCode(10)],
+    ['a name with an embedded newline', 'docs/status/entries/a' + String.fromCharCode(10) + 'b.md'],
   ]) {
     it(`${name} refuses, even as an add`, () => {
       assert.match(refusal({ status: 'A', rel }), /only a NEW docs\/status\/entries\/\*\.md file/);

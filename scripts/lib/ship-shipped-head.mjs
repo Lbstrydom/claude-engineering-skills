@@ -4,7 +4,8 @@
  * `evaluateShippedHead` (lib/ship-preauth.mjs); this module only gathers its facts, in the MEMBER'S OWN worktree, where the
  * two local markers it binds to (the gate evidence and the final-review marker) can honestly be read.
  *
- * **The child contract, v1.** Argv `--check-shipped-head --head <oid> [--json]`, cwd = the member worktree. Stdout is exactly one
+ * **The child contract, v1.** Argv `--check-shipped-head --head <oid> --json`, cwd = the member worktree (a machine caller ALWAYS passes `--json`; without it
+ * the output is the human-readable condition list). With `--json` stdout is exactly one
  * JSON object `{schema:'shipped-head/v1', ok, head, runId, gate, conditions:[{id, ok, reason}], refusals}`. Exit 0 = ship-ok,
  * 2 = refused (or an argument the caller can correct), 1 = the checker itself errored. A caller treats exit 1, a timeout,
  * unparsable stdout, another schema, or a different `head` as REFUSED, never as a pass.
@@ -23,6 +24,7 @@ import {
   evaluateShippedHead, renderShippedHeadConditions, gatherChangedPaths, defaultBaseRef,
 } from './ship-preauth.mjs';
 import { assertKnownFlags, finishAndExit } from './cli-io.mjs';
+import { ENTRY_NAME_RE } from './ship-record/state.mjs';
 
 export const SHIPPED_HEAD_SCHEMA = 'shipped-head/v1';
 export const GIT_TIMEOUT_MS = 120_000;
@@ -39,7 +41,9 @@ const REMOTE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const SHA_RE = /^[0-9a-f]{7,64}$/i;
 /** The ONLY path /ship may add between the audit and the head: a new status entry file. Path-based; no content is ever parsed. */
-export const SHIP_ENTRY_PATH_RE = /^docs\/status\/entries\/[^/]+\.md$/;
+const ENTRIES_PREFIX = 'docs/status/entries/';
+/** A status entry path: the entries directory plus a name in the repository's OWN entry-name grammar (no newline, no nesting, nothing else). */
+export const isShipEntryPath = (rel) => typeof rel === 'string' && rel.startsWith(ENTRIES_PREFIX) && ENTRY_NAME_RE.test(rel.slice(ENTRIES_PREFIX.length));
 /** The one mode a ship-added entry may have: a regular, non-executable file (never a symlink 120000, a gitlink 160000, or a tree). */
 export const SHIP_ENTRY_MODE = '100644';
 
@@ -151,7 +155,7 @@ export function computePostAuditDelta(run, evidence, headChanged, headTree, base
  * A modification, deletion, rename or type change anywhere, a plan edit and a status.md edit all refuse.
  */
 export function shipEntryRefusal({ status, rel, newMode }) {
-  if (!SHIP_ENTRY_PATH_RE.test(rel)) return `changed since the audit, and only a NEW docs/status/entries/*.md file may be (status ${status})`;
+  if (!isShipEntryPath(rel)) return `changed since the audit, and only a NEW docs/status/entries/*.md file may be (status ${status})`;
   if (status !== 'A') return `an existing status entry was changed (status ${status}); only ADDING one is allowed`;
   if (newMode !== SHIP_ENTRY_MODE) return `the added entry has mode ${newMode}, not a regular file (${SHIP_ENTRY_MODE})`;
   return null;
@@ -303,7 +307,7 @@ export async function runShippedHeadCli(argv, { cwd = process.cwd(), store } = {
   if (others.length > 0) return bad(`a standalone read-only check cannot be combined with ${others.join(' ')}`);
   const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, env: sanitizeGitEnv(cwd), encoding: 'utf-8', windowsHide: true, timeout: GIT_TIMEOUT_MS });
   if (top.error || top.status !== 0) { process.stderr.write(`ship-commit: --check-shipped-head: not a git worktree (${(top.stderr || '').trim() || 'git failed'})\n`); return finishAndExit(1); }
-  const repoRoot = String(top.stdout).trim();
+  const repoRoot = String(top.stdout).replace(/\r?\n$/, ''); // only git's own line terminator: a worktree directory name may end in a space
   let env;
   try { env = await checkShippedHead({ repoRoot, head, baseBranch, remote, verifyBase, store }); } catch (e) {
     process.stderr.write(`ship-commit: --check-shipped-head errored: ${e?.message ?? e}\n`);

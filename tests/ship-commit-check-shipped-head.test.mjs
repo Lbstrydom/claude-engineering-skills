@@ -21,11 +21,13 @@ const checkShippedHead = (o) => checkReal({ verifyBase: false, ...o });
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUN = '981fc79a-0fbb-447a-a294-b0c0217dab71';
 const tmpDirs = [];
-after(() => { for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+after(() => { fs.rmSync(EMPTY_GLOBAL_CONFIG_DIR, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 const PLAN = ['# Plan: X', '- **Status**: Draft', '', '## Context', 'body', '', '## Phase 1', 'work', ''].join('\n');
 
-const EMPTY_GLOBAL_CONFIG = (() => { const f = path.join(os.tmpdir(), `shipped-head-empty-gitconfig-${process.pid}`); fs.writeFileSync(f, ""); return f; })();
+const EMPTY_GLOBAL_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'shipped-head-gitconfig-'));
+const EMPTY_GLOBAL_CONFIG = path.join(EMPTY_GLOBAL_CONFIG_DIR, 'empty');
+fs.writeFileSync(EMPTY_GLOBAL_CONFIG, '');
 /** Fixture git must not inherit the caller's repository selection or global config (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, a global hook path ...). */
 function cleanGitEnv() {
   const env = {};
@@ -256,7 +258,7 @@ describe('--check-shipped-head: what changed after the audit', () => {
     assert.match(reason(env, 'post-audit-delta'), /docs\/plans\/x\.md/);
   });
   describe('the post-audit delta is path-only: an audited status entry may not be touched, only a new one added', () => {
-    const OLD = 'docs/status/entries/2026-11-17-old.md';
+    const OLD = 'docs/status/entries/2026-11-17-010000-old.md';
     const run = async (mutate) => {
       const { dir } = makeRepo();
       write(dir, OLD, '## Old\naudited\n');
@@ -268,23 +270,23 @@ describe('--check-shipped-head: what changed after the audit', () => {
       return { dir, env: await checkShippedHead({ repoRoot: dir, head, store: store({ auditedTree }) }) };
     };
     it('control: a NEW entry added beside the audited one passes', async () => {
-      const { env } = await run((d) => write(d, 'docs/status/entries/2026-11-18-new.md', '## New\n'));
+      const { env } = await run((d) => write(d, 'docs/status/entries/2026-11-18-080000-new.md', '## New\n'));
       assert.equal(env.ok, true, env.refusals.join(' | '));
     });
     it('a MODIFIED existing entry refuses, naming the path', async () => {
       const { env } = await run((d) => write(d, OLD, '## Old\nrewritten\n'));
       assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
-      assert.match(reason(env, 'post-audit-delta'), /2026-11-17-old\.md/);
+      assert.match(reason(env, 'post-audit-delta'), /2026-11-17-010000-old\.md/);
     });
     it('a DELETED existing entry refuses', async () => {
       const { env } = await run((d) => fs.rmSync(path.join(d, OLD), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
       assert.ok(failing(env).includes('post-audit-delta'), env.refusals.join(' | ')); // a delete-only branch also changes no path against base, so other rows may fail too
-      assert.match(reason(env, 'post-audit-delta'), /2026-11-17-old.md.*status D/);
+      assert.match(reason(env, 'post-audit-delta'), /2026-11-17-010000-old.md.*status D/);
     });
     it('a RENAMED existing entry refuses (a rename is a delete plus an add, never an add alone)', async () => {
-      const { env } = await run((d) => { git(d, 'mv', OLD, 'docs/status/entries/2026-11-18-renamed.md'); });
+      const { env } = await run((d) => { git(d, 'mv', OLD, 'docs/status/entries/2026-11-18-090000-renamed.md'); });
       assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
-      assert.match(reason(env, 'post-audit-delta'), /2026-11-17-old\.md/);
+      assert.match(reason(env, 'post-audit-delta'), /2026-11-17-010000-old\.md/);
     });
     it('a file ADDED outside the entries directory refuses', async () => {
       const { env } = await run((d) => write(d, 'docs/status/elsewhere.md', 'x\n'));
