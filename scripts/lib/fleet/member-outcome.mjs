@@ -56,7 +56,7 @@ const CODE_ENUMS = { refused: REFUSED_CODES, 'not-run': NOT_RUN_CODES };
 export const isTerminal = (o) => Boolean(o) && o.status !== 'not-run';
 
 const Excluded = z.strictObject({ id: z.string().min(1), prNumber: z.number().int().positive().nullable(), reasons: z.array(z.string()) });
-const Common = { grantVersion: z.number().int().positive(), remote: z.string().min(1), candidateTree: Oid, baseChain: z.array(Oid).min(1), excluded: z.array(Excluded) };
+const Common = { grantVersion: z.string().min(1), remote: z.string().min(1), candidateTree: Oid, baseChain: z.array(Oid).min(1), excluded: z.array(Excluded) };
 export const ShipBatchPolicySchema = z.strictObject({
   name: z.literal('ship-batch'), ...Common,
   members: z.record(z.string().min(1), z.strictObject({ tree: Oid, worktree: z.string().nullable() })),

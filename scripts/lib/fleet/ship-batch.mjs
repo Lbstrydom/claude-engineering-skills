@@ -1,16 +1,15 @@
 /**
  * @fileoverview `fleet land --ship-batch` — land the already-shipped members of a batch with ONE coordinator action
- * (docs/plans/coordinator-aggregate-ship.md section 2.4).
+ * (docs/plans/coordinator-aggregate-ship.md section 2.4), rebuilt on the per-member outcome primitive of the serial runner
+ * (docs/plans/ship-batch-member-outcomes.md).
  *
  * Each chip shipped itself (`ship-commit.mjs --preauthorised`); this re-verifies each member from durable facts, lands only
- * the members that verify, and leaves the rest open for the user's `/ship`. It extends the train and the serial runner rather
- * than replacing them:
+ * the members that verify, and leaves the rest open for the user's `/ship`.
  *
- *   build   grant -> per-member child check (+ CI + identity) -> PARTITION -> the existing train build over the ok members only
- *           -> a sidecar record `fleet/shipbatch/<trainId>.json` (the strict TrainSchema is untouched).
- *   approve the existing serial runner, with three seams this module supplies: `messageFor` (the grant re-read, the base-tip
- *           check, the child re-check and the member's own ship commit message), `onMerged` (the read-back) and `noUpdate`
- *           (a member behind the base is never mutated on the remote).
+ *   build   grant -> `admitMember` per member -> PARTITION -> the existing train build over the admitted members only
+ *           -> a WRITE-ONCE record `fleet/shipbatch/<trainId>.json` (v2, strict; never patched).
+ *   approve the existing serial runner with a `policy`: pure decisions (`admit`, `readBack`, `testedTree`, `grantRefusal`) the
+ *           loop asks and never writes through. The serial record is the only mutable per-member truth, with one writer.
  *
  * **Provenance is copied, never composed.** The squash message is the head commit's own message; after each merge the squash is
  * read back and its AI-* trailers compared with the head's. Nothing here writes a trailer, and nothing raises a gate: a
@@ -22,80 +21,70 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { ciVerdict } from '../ci-verdict.mjs';
 import { AI_TRAILER_KEYS, parseMessageTrailers } from '../commit-trailers.mjs';
+import { OID_RE } from './contracts.mjs';
 import { assertManaged, fleetDir, readTrain } from './registry.mjs';
 import { buildStatusFrom, gatherFacts } from './facts.mjs';
 import { describeVerdict, observeRequiredChecks, requiredInventory } from './required-checks.mjs';
 import { readShipBatchGrant, GRANT_VERSION } from './coordinator-grant.mjs';
-import { approveSerial, resumeSerial } from './serial.mjs';
+import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
+import { summariseRun } from './member-outcome.mjs';
 
-export const SHIP_BATCH_SCHEMA = 1;
+export const SHIP_BATCH_SCHEMA = 2;
 export const CHILD_SCHEMA = 'shipped-head/v1';
 const CHILD_TIMEOUT_MS = 120_000;
 /** The remote every train is built against (lib/fleet/train.mjs). The built train is checked against it, so a change there fails loudly here. */
 const TRAIN_REMOTE = 'origin';
+const Oid = z.string().regex(OID_RE);
 
 const shipBatchDir = (dir) => path.join(dir, 'shipbatch');
 export const shipBatchPath = (dir, trainId) => assertManaged(dir, path.join(shipBatchDir(dir), `${trainId}.json`));
 const short = (o) => String(o ?? '?').slice(0, 12);
 
-/** @returns {{ok: true, batch: object} | {ok: false, reason: string, absent?: boolean}} */
-const OID_RE_SB = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-export const MEMBER_STATES = Object.freeze(['pending', 'needs-user', 'merge-requested', 'merged', 'verified', 'provenance-lost', 'landed-on-untested-base', 'merged-externally']);
+// ---- the build record: write-once, strict (R1-M7) ---------------------------------------------------------------------------
 
-/** Field-level validation of a sidecar record. @returns {string|null} what is wrong, or null */
-export function shipBatchProblem(b, trainId) {
-  if (!b || b.schemaVersion !== SHIP_BATCH_SCHEMA || b.trainId !== trainId) return 'the record is malformed or of a version this fleet does not understand';
-  if (!Array.isArray(b.members) || !b.members.length || !Array.isArray(b.excluded)) return 'members/excluded are missing';
-  if (typeof b.base !== 'string' || !b.base || typeof b.remote !== 'string' || !b.remote) return 'base or remote is missing';
-  if (b.expectedTip !== null && !OID_RE_SB.test(String(b.expectedTip))) return 'expectedTip is not a commit id';
-  const seen = new Set();
-  for (const m of b.members) {
-    if (!m || typeof m.id !== 'string' || !m.id || seen.has(m.id)) return `a member has a missing or duplicate id (${JSON.stringify(m?.id)})`;
-    seen.add(m.id);
-    if (!Number.isInteger(m.prNumber) || m.prNumber < 1 || typeof m.repo !== 'string' || !m.repo) return `member ${m.id}: prNumber/repo are not valid`;
-    if (!OID_RE_SB.test(String(m.oid))) return `member ${m.id}: oid is not a commit id`;
-    if (!MEMBER_STATES.includes(m.state)) return `member ${m.id}: state ${JSON.stringify(m.state)} is not one of ${MEMBER_STATES.join(', ')}`;
-    if (m.mergeOid !== null && !OID_RE_SB.test(String(m.mergeOid))) return `member ${m.id}: mergeOid is not a commit id`;
-  }
-  return null;
-}
+export const ShipBatchRecordSchema = z.strictObject({
+  schemaVersion: z.literal(SHIP_BATCH_SCHEMA), trainId: z.string().min(1), grantVersion: z.string().min(1), checkedAt: z.string().min(1),
+  base: z.string().min(1), remote: z.string().min(1), candidateTree: Oid,
+  members: z.array(z.strictObject({ id: z.string().min(1), repo: z.string().min(1), prNumber: z.number().int().positive(), oid: Oid, tree: Oid, worktree: z.string().nullable() })).min(1),
+  excluded: z.array(z.strictObject({ id: z.string().min(1), prNumber: z.number().int().positive().nullable(), reasons: z.array(z.string()) })),
+});
 
-/** The record must describe THIS train: every member is one of its sources, at the very head it recorded. */
+/** The record must describe THIS train: every identity field of every source, the count, and the candidate tree. @returns {string|null} */
 export function shipBatchTrainProblem(batch, train) {
+  if ((train.sources ?? []).length !== batch.members.length) return `the record names ${batch.members.length} member(s), the train merges ${(train.sources ?? []).length}`;
   for (const m of batch.members) {
     const src = (train.sources ?? []).find((x) => x.id === m.id);
     if (!src) return `member ${m.id} is not a source of the train`;
     if (src.oid !== m.oid) return `member ${m.id}: the record names ${short(m.oid)}, the train tested ${short(src.oid)}`;
     if (src.repo !== m.repo || src.prNumber !== m.prNumber) return `member ${m.id}: the record names ${m.repo}#${m.prNumber}, the train merges ${src.repo}#${src.prNumber}`;
   }
+  if (train.candidate?.tree !== batch.candidateTree) return `the record's candidate tree ${short(batch.candidateTree)} is not the train's ${short(train.candidate?.tree)}`;
   return null;
 }
 
+/** @returns {{ok: true, batch: object} | {ok: false, reason: string, absent?: boolean}} */
 export function readShipBatch(dir, trainId) {
   let text;
   try { text = fs.readFileSync(shipBatchPath(dir, trainId), 'utf-8'); } catch (e) { return { ok: false, absent: e.code === 'ENOENT', reason: e.code === 'ENOENT' ? 'no ship-batch record' : `unreadable: ${e.message}` }; }
-  try {
-    const b = JSON.parse(text);
-    const why = shipBatchProblem(b, trainId);
-    return why ? { ok: false, reason: `the ship-batch record is invalid: ${why}` } : { ok: true, batch: b };
-  } catch (e) { return { ok: false, reason: `malformed JSON: ${e.message}` }; }
+  let raw;
+  try { raw = JSON.parse(text); } catch (e) { return { ok: false, reason: `malformed JSON: ${e.message}` }; }
+  if (raw?.schemaVersion !== SHIP_BATCH_SCHEMA) return { ok: false, reason: `the record is of a version this fleet does not understand (${JSON.stringify(raw?.schemaVersion)})` };
+  const r = ShipBatchRecordSchema.safeParse(raw);
+  if (!r.success) return { ok: false, reason: `the ship-batch record is invalid: ${r.error.issues.slice(0, 2).map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}` };
+  return r.data.trainId === trainId ? { ok: true, batch: r.data } : { ok: false, reason: 'the record belongs to another train' };
 }
 
+/** Write-once: an existing record is never replaced. */
 export function writeShipBatch(dir, batch) {
+  const rec = ShipBatchRecordSchema.parse(batch);
   fs.mkdirSync(shipBatchDir(dir), { recursive: true });
-  atomicWriteFileSync(shipBatchPath(dir, batch.trainId), `${JSON.stringify(batch, null, 2)}\n`);
-  return batch;
-}
-
-/** Patch one member (and optionally the batch's expected base tip) in the sidecar. Returns the updated batch. */
-function patchBatch(dir, trainId, memberId, memberPatch, batchPatch = {}) {
-  const r = readShipBatch(dir, trainId);
-  if (!r.ok) throw new Error(`ship-batch record for ${trainId}: ${r.reason}`);
-  const b = { ...r.batch, ...batchPatch, members: r.batch.members.map((m) => (m.id === memberId ? { ...m, ...memberPatch } : m)) };
-  return writeShipBatch(dir, b);
+  if (fs.existsSync(shipBatchPath(dir, rec.trainId))) throw new Error(`the ship-batch record for ${rec.trainId} already exists and is write-once`);
+  atomicWriteFileSync(shipBatchPath(dir, rec.trainId), `${JSON.stringify(rec, null, 2)}\n`);
+  return rec;
 }
 
 // ---- the child: `ship-commit.mjs --check-shipped-head` in the member's own worktree -----------------------------------------
@@ -104,16 +93,14 @@ function patchBatch(dir, trainId, memberId, memberPatch, batchPatch = {}) {
 export const shipCommitPath = () => path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'ship-commit.mjs');
 
 /**
- * Run the member re-check and read its v1 envelope. Fail closed: a missing worktree, a spawn error, exit 1, a timeout, output
- * that is not exactly one JSON object, another schema, or another head are all REFUSED, each with its own reason.
- *
- * @param {{worktree: string|null, head: string, spawn?: Function, exists?: Function}} a
+ * Run the member re-check and read its v1 envelope. Fail closed: a missing worktree, a spawn error, exit 1, a timeout,
+ * output that is not exactly one JSON object, another schema, or another head are all REFUSED, each with its own reason.
  * @returns {{ok: boolean, reasons: string[], envelope: object|null}}
  */
 export function runShippedHeadChild({ worktree, head, base = null, remote = null, spawn = spawnSync, exists = fs.existsSync }) {
   const no = (reason, envelope = null) => ({ ok: false, reasons: [reason], envelope });
   if (!worktree || !exists(worktree)) return no('evidence-unavailable: the chip worktree is gone, so its local gate-evidence and final-review markers cannot be read');
-  const r = spawn(process.execPath, [shipCommitPath(), '--check-shipped-head', '--head', head, ...(base ? ['--base', base] : []), ...(remote ? ['--remote', remote] : []), ...(base && remote ? ['--verify-base'] : []), '--json'], {
+  const r = spawn(process.execPath, [shipCommitPath(), '--check-shipped-head', '--head', head, ...(base ? ['--base', base] : []), ...(remote ? ['--remote', remote] : []), '--json'], {
     cwd: worktree, encoding: 'utf-8', timeout: CHILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024,
   });
   if (r.error) return no(`checker-failed: ${r.error.code === 'ETIMEDOUT' ? `timed out after ${CHILD_TIMEOUT_MS / 1000}s` : r.error.message}`);
@@ -122,7 +109,7 @@ export function runShippedHeadChild({ worktree, head, base = null, remote = null
   let env;
   try { env = JSON.parse(String(r.stdout ?? '').trim()); } catch { return no('checker-failed: stdout is not exactly one JSON object'); }
   if (env?.schema !== CHILD_SCHEMA) return no(`checker-failed: schema ${JSON.stringify(env?.schema)} is not ${CHILD_SCHEMA}`);
-  if (!OID_RE_SB.test(String(head)) || env.head !== head) return no(`checker-failed: it judged ${short(env.head)}, not the full commit ${short(head)} (a prefix is not an identity)`, env);
+  if (!OID_RE.test(String(head)) || env.head !== head) return no(`checker-failed: it judged ${short(env.head)}, not the full commit ${short(head)} (a prefix is not an identity)`, env);
   if (r.status === 0 && env.ok === true) return { ok: true, reasons: [], envelope: env };
   const refusals = Array.isArray(env.refusals) && env.refusals.length ? env.refusals : ['the checker refused without a reason'];
   return { ok: false, reasons: r.status === 0 ? ['checker-failed: exit 0 but ok is not true', ...refusals] : refusals, envelope: env };
@@ -149,7 +136,7 @@ export function listReadyMembers(ctx) {
 }
 
 /**
- * C8 and C9 for one member, from GitHub: the PR is open, not a draft, and its head is the ready oid (C9); its required checks are
+ * C8 and C9 for one member, from GitHub: the PR is open, not a draft, and its head is the member's oid (C9); its required checks are
  * green at exactly that head, and where `.test-tiers.json` declares a full-suite workflow, that run is `full` (C8).
  * @returns {string[]} reasons it is not shippable (empty = green)
  */
@@ -178,12 +165,44 @@ export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, 
   return out;
 }
 
+// ---- admission: ONE predicate for the build and the merge, by mode (R1-F6, R1-H5) -------------------------------------------
+
+/** The head-bound evidence of each admission mode, strict, so evidence cannot be borrowed across modes (§2.3). */
+const CandidateSchemas = {
+  'ship-batch': z.strictObject({ mode: z.literal('ship-batch'), head: Oid, child: z.any(), identityAndCi: z.array(z.string()) }),
+  rollup: z.strictObject({ mode: z.literal('rollup'), head: Oid, child: z.any(), branchTip: Oid.nullable() }),
+};
+
 /**
- * Partition the ready members into ship-ok and needs-user. A member that is not a PR, is stacked or retargeted, or fails any
- * condition is needs-user with every reason; nothing here throws.
- * @returns {{ok: Array<object>, needsUser: Array<{id: string, reasons: string[]}>}}
+ * `admitMember(mode, invariant, candidate)`. Both inputs are gathered by the caller AT the head being judged:
+ *  - `invariant`: fixed for the batch: `{base, remote}`;
+ *  - `candidate`: `{mode, head, child, ...}` bound to that head (`identityAndCi` for a ship-batch member, `branchTip` for a rollup member).
+ * @returns {{ok: true} | {ok: false, kind: 'shipped-head-refused'|'ci-refused', reasons: string[]}}
  */
-export function partitionMembers({ cwd, members, base, remote = null, deps, checkChild, requiredChecks, requiredChecksError, ciFn }) {
+export function admitMember(mode, invariant, candidate) {
+  const schema = CandidateSchemas[mode];
+  if (!schema) throw new Error(`unknown admission mode ${JSON.stringify(mode)}`);
+  const c = schema.parse(candidate);
+  if (!invariant?.base || !invariant?.remote) throw new Error('admission needs the invariant base and remote');
+  if (!c.child.ok) return { ok: false, kind: 'shipped-head-refused', reasons: c.child.reasons };
+  if (mode === 'ship-batch') return c.identityAndCi.length ? { ok: false, kind: 'ci-refused', reasons: c.identityAndCi } : { ok: true };
+  return c.branchTip === c.head ? { ok: true } : { ok: false, kind: 'shipped-head-refused', reasons: [`branch-moved: the remote branch is ${short(c.branchTip)}, not the admitted head ${short(c.head)}`] };
+}
+
+/** Gather a ship-batch candidate at `head` (child, identity and CI), then judge it with `admitMember`. */
+export function admitShipBatchMember({ cwd, member, head, base, remote, deps, requiredChecks, requiredChecksError }) {
+  const checkChild = deps.shipBatch?.checkChild ?? runShippedHeadChild;
+  const child = checkChild({ worktree: member.worktree, head, base, remote });
+  const identityAndCi = child.ok ? ciAndIdentityReasons({ cwd, member: { ...member, oid: head }, base, deps, requiredChecks, requiredChecksError, ciFn: deps.shipBatch?.ciVerdict }) : [];
+  return admitMember('ship-batch', { base, remote }, { mode: 'ship-batch', head, child, identityAndCi });
+}
+
+/**
+ * Partition the ready members into admitted and needs-user. A member that is not a PR, is stacked or retargeted, or fails any
+ * condition is needs-user with every reason; nothing here throws.
+ * @returns {{ok: Array<object>, needsUser: Array<{id: string, prNumber: number|null, reasons: string[]}>}}
+ */
+export function partitionMembers({ cwd, members, base, remote = null, deps, requiredChecks, requiredChecksError }) {
   const ok = [];
   const needsUser = [];
   for (const m of members) {
@@ -192,9 +211,8 @@ export function partitionMembers({ cwd, members, base, remote = null, deps, chec
     else if (m.baseRef && m.baseRef !== base) reasons.push(`stacked: the PR targets ${m.baseRef}, not ${base}`);
     if (!m.oid) reasons.push('no ready oid recorded');
     if (reasons.length === 0) {
-      const child = checkChild({ worktree: m.worktree, head: m.oid, base, remote });
-      if (!child.ok) reasons.push(...child.reasons);
-      reasons.push(...ciAndIdentityReasons({ cwd, member: m, base, deps, requiredChecks, requiredChecksError, ciFn }));
+      const a = admitShipBatchMember({ cwd, member: m, head: m.oid, base, remote, deps, requiredChecks, requiredChecksError });
+      if (!a.ok) reasons.push(...a.reasons);
     }
     if (reasons.length) needsUser.push({ id: m.id, prNumber: m.prNumber ?? null, reasons });
     else ok.push(m);
@@ -214,7 +232,7 @@ export function grantRefusal(deps) {
 
 /**
  * `fleet land --ship-batch` (build). `buildFn(ctx, flags, deps)` is land.mjs's own train build, so tests, the tiers and the
- * integration worktree are exactly what a plain `land` runs — over the ship-ok members only.
+ * integration worktree are exactly what a plain `land` runs — over the admitted members only.
  */
 export function buildShipBatch(ctx, flags, deps, buildFn, { parseSelect }) {
   const { cwd, cmd } = ctx;
@@ -230,10 +248,9 @@ export function buildShipBatch(ctx, flags, deps, buildFn, { parseSelect }) {
   }
   if (!members.length) return refusedResult('nothing is ready to land', 'REFUSED: nothing is ready to land (a session must be `ready`, its head not moved since, and ahead of the base)');
   const base = ctx.config.baseBranch;
-  const checkChild = deps.shipBatch?.checkChild ?? runShippedHeadChild;
   let rc = {};
   try { rc = { requiredChecks: ctx.config.requiredChecks }; } catch (e) { rc = { requiredChecksError: e.message }; }
-  const { ok, needsUser } = partitionMembers({ cwd, members, base, remote: TRAIN_REMOTE, deps, checkChild, ciFn: deps.shipBatch?.ciVerdict, ...rc });
+  const { ok, needsUser } = partitionMembers({ cwd, members, base, remote: TRAIN_REMOTE, deps, ...rc });
   const needsText = needsUser.map((n) => `  needs-user  ${n.id}${n.prNumber ? ` (PR #${n.prNumber})` : ''}: ${n.reasons.join('; ')}`);
   if (!ok.length) {
     return { ok: false, code: 'refused', reason: 'no member is ship-ok', needsUser, text: `REFUSED: no member is ship-ok — nothing was built, merged or changed\n${needsText.join('\n')}\nEach waits for the user to type /ship in its own session.` };
@@ -245,11 +262,14 @@ export function buildShipBatch(ctx, flags, deps, buildFn, { parseSelect }) {
   const t = readTrain(dir, r.trainId);
   if (!t.ok) return { ...r, ok: false, code: 'refused', reason: `the built train ${r.trainId} could not be read back (${t.reason})`, text: `REFUSED: the built train ${r.trainId} could not be read back (${t.reason}); no ship-batch record was written, so it cannot be approved with --ship-batch` };
   if (t.train.destination.remote !== TRAIN_REMOTE) return { ...r, ok: false, code: 'refused', reason: `the train targets remote ${t.train.destination.remote}, but its members were verified against ${TRAIN_REMOTE}`, text: `REFUSED: the train targets remote ${t.train.destination.remote}, but its members were verified against ${TRAIN_REMOTE}; no ship-batch record was written` };
+  if (!t.train.candidate?.tree) return { ...r, ok: false, code: 'refused', reason: 'the built train has no candidate tree', text: 'REFUSED: the built train has no candidate tree, so the combined-tested tree cannot be recorded; no ship-batch record was written' };
+  const trees = ok.map((m) => deps.git(['rev-parse', `${m.oid}^{tree}`], cwd, { timeoutMs: 60_000 }));
+  const bad = trees.findIndex((x) => !x.ok);
+  if (bad >= 0) return { ...r, ok: false, code: 'refused', reason: `the tree of ${ok[bad].id} could not be read`, text: `REFUSED: the tree of member ${ok[bad].id} (${short(ok[bad].oid)}) could not be read; no ship-batch record was written` };
   writeShipBatch(dir, {
-    schemaVersion: SHIP_BATCH_SCHEMA, trainId: r.trainId, grantVersion: GRANT_VERSION, checkedAt: ctx.now.toISOString(),
-    base, remote: t.train.destination.remote,
-    expectedTip: t.train.destination.expectedOid,
-    members: ok.map((m) => ({ id: m.id, prNumber: m.prNumber, repo: m.repo, oid: m.oid, worktree: m.worktree, state: 'pending', mergeOid: null, note: null })),
+    schemaVersion: SHIP_BATCH_SCHEMA, trainId: r.trainId, grantVersion: GRANT_VERSION, checkedAt: ctx.now.toISOString(), base, remote: t.train.destination.remote,
+    candidateTree: t.train.candidate.tree,
+    members: ok.map((m, i) => ({ id: m.id, repo: m.repo, prNumber: m.prNumber, oid: m.oid, tree: trees[i].stdout.trim(), worktree: m.worktree })),
     excluded: needsUser,
   });
   const lines = [
@@ -261,7 +281,7 @@ export function buildShipBatch(ctx, flags, deps, buildFn, { parseSelect }) {
   return { ...r, shipBatch: true, needsUser, text: lines.join('\n') };
 }
 
-// ---- merge: the seams the serial runner calls -----------------------------------------------------------------------------
+// ---- the commit message, and the read-back ------------------------------------------------------------------------------------
 
 /** line 1 = subject; everything after = body with exactly ONE leading blank line removed and trailing whitespace trimmed. Lossless. */
 export function splitCommitMessage(message) {
@@ -276,6 +296,12 @@ export function splitCommitMessage(message) {
 export function aiTrailerMultiset(message) {
   const p = parseMessageTrailers(message);
   return (p.isTrailerBlock ? p.trailers : []).filter((t) => AI_TRAILER_KEYS.includes(t.key)).map((t) => `${t.key}: ${t.value}`).sort();
+}
+
+/** The AI-Gate value of a message, or null. */
+export function gateOfMessage(message) {
+  const p = parseMessageTrailers(message);
+  return (p.isTrailerBlock ? p.trailers : []).find((t) => t.key === 'AI-Gate')?.value ?? null;
 }
 
 /** Does the squash commit's message carry the head's provenance? Subject (minus a GitHub ` (#N)`), body and the AI-* multiset. */
@@ -293,129 +319,127 @@ export function readBackReasons(headMessage, squashMessage) {
   return out;
 }
 
-/** The hooks the serial runner takes for a ship-batch run. */
-export function makeShipBatchHooks({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError = null }) {
-  /** Bookkeeping failures the run could not return through the serial runner; withSummary reports them and the result is not ok. */
-  const errors = [];
-  const checkChild = deps.shipBatch?.checkChild ?? runShippedHeadChild;
+/** `git log -1 --format=%B <oid>`, or null when it cannot be read. */
+export const commitMessage = (deps, cwd, oid) => { const r = deps.git(['log', '-1', '--format=%B', oid], cwd, { timeoutMs: 120_000 }); return r.ok ? r.stdout : null; };
+
+/**
+ * The measured read-back of one merge (pure of the run; reads git): the squash's first parent and tree, its message against the
+ * head's, the AI-Gate it carries, and the PR's base. A read that fails is `{measured: false, why}`, never a verdict (F4).
+ */
+export function measureReadBack({ cwd, deps, remote, base, headOid, mergeOid, doc }) {
   const git = (args) => deps.git(args, cwd, { timeoutMs: 120_000 });
-  const message = (oid) => { const r = git(['log', '-1', '--format=%B', oid]); return r.ok ? r.stdout : null; };
-
-  const messageFor = ({ source, headOid, baseOid }) => {
-    const gr = grantRefusal(deps);
-    if (gr) return { stop: `grant-revoked: ${gr.reason}` };
-    const rec = readShipBatch(dir, trainId);
-    if (!rec.ok) return { stop: `ship-batch record: ${rec.reason}` };
-    const member = rec.batch.members.find((m) => m.id === source.id);
-    if (!member) return { stop: `${source.id} is not a ship-batch member` };
-    // GLOBAL problems STOP the run (they say something about the base or the grant, and no later member is safer).
-    if (!baseOid) return { stop: 'base-moved: the base tip could not be read, so the base progression cannot be verified' };
-    if (baseOid !== rec.batch.expectedTip) return { stop: `base-moved: the base is ${short(baseOid)}, the batch expects ${short(rec.batch.expectedTip)} (a commit that is not this batch's own landed): rebuild the train` };
-    // MEMBER problems SKIP the member: it waits for the user's /ship, and the members that still verify land.
-    const needsUser = (why) => { patchBatch(dir, trainId, member.id, { state: 'needs-user', note: String(why).slice(0, 900) }); return { skip: `needs-user: ${why}` }; };
-    if (headOid !== member.oid) return needsUser(`PR #${source.prNumber} head ${short(headOid)} is not the verified ship head ${short(member.oid)}`);
-    const c = checkChild({ worktree: member.worktree, head: headOid, base: rec.batch.base, remote: rec.batch.remote });
-    if (!c.ok) return needsUser(c.reasons.join('; '));
-    // The CI and identity facts at the head that is about to merge: the serial runner waited for the REQUIRED checks, but the
-    // full-suite verdict `.test-tiers.json` declares is judged only here and at the build, and it can change in between.
-    const live = ciAndIdentityReasons({ cwd, member: { ...member, baseRef: rec.batch.base }, base: rec.batch.base, deps, requiredChecks, requiredChecksError, ciFn: deps.shipBatch?.ciVerdict });
-    if (live.length) return needsUser(live.join('; '));
-    const msg = message(headOid);
-    if (msg === null) return needsUser(`the ship commit ${short(headOid)} is not readable locally, so its message cannot be copied`);
-    const { subject, body } = splitCommitMessage(msg);
-    if (!subject.trim()) return needsUser('the ship commit has an empty subject');
-    patchBatch(dir, trainId, member.id, { state: 'merge-requested' });
-    return { subject, body };
+  const f = git(['fetch', '--no-tags', remote, `refs/heads/${base}`]);
+  if (!f.ok) return { measured: false, why: `the base could not be fetched (${f.reason})` };
+  const parents = git(['rev-list', '--parents', '-n', '1', mergeOid]);
+  if (!parents.ok) return { measured: false, why: `the parent of ${short(mergeOid)} could not be read (${parents.reason ?? 'rev-list failed'})` };
+  const tree = git(['rev-parse', `${mergeOid}^{tree}`]);
+  if (!tree.ok) return { measured: false, why: `the tree of ${short(mergeOid)} could not be read` };
+  const squash = commitMessage(deps, cwd, mergeOid);
+  const head = commitMessage(deps, cwd, headOid);
+  if (squash === null || head === null) return { measured: false, why: 'a commit message could not be read' };
+  return {
+    measured: true, firstParent: parents.stdout.trim().split(/\s+/)[1] ?? null, tree: tree.stdout.trim(),
+    reasons: readBackReasons(head, squash), gate: gateOfMessage(squash), baseRefName: doc?.baseRefName ?? null,
   };
+}
 
-  const onMergedInner = ({ source, mergedOid }) => {
-    const rec = readShipBatch(dir, trainId);
-    if (!rec.ok) return { stop: `ship-batch record: ${rec.reason}` };
-    const member = rec.batch.members.find((m) => m.id === source.id);
-    if (!member || ['verified', 'provenance-lost', 'landed-on-untested-base', 'merged-externally'].includes(member.state)) return null;
-    // A PR this run never asked to merge (still pending, or skipped as needs-user) that is MERGED anyway was merged by someone else:
-    // it is recorded as that, never adopted as this run's verified merge. The base moved with it, so the next member's base check
-    // stops the batch and the train is rebuilt.
-    if (member.state === 'pending' || member.state === 'needs-user') {
-      patchBatch(dir, trainId, member.id, { state: 'merged-externally', mergeOid: mergedOid ?? null, note: 'merged by someone else, not by this run: its provenance was not produced by the batch' });
-      return null;
-    }
-    if (!mergedOid) { patchBatch(dir, trainId, member.id, { state: 'merged', note: 'merge commit not reported' }); return { stop: `PR #${source.prNumber} merged but GitHub reported no merge commit: verify it by hand` }; }
-    const f = git(['fetch', '--no-tags', rec.batch.remote, `refs/heads/${rec.batch.base}`]);
-    if (!f.ok) { patchBatch(dir, trainId, member.id, { state: 'merged', mergeOid: mergedOid, note: 'read-back not done' }); return { stop: `PR #${source.prNumber} merged at ${short(mergedOid)} but the base could not be fetched to verify it (${f.reason}) — --resume re-checks it` }; }
-    const parents = git(['rev-list', '--parents', '-n', '1', mergedOid]);
-    if (!parents.ok) { patchBatch(dir, trainId, member.id, { state: 'merged', mergeOid: mergedOid, note: `read-back not done: ${String(parents.reason ?? 'rev-list failed').slice(0, 200)}` }); return { stop: `PR #${source.prNumber} merged at ${short(mergedOid)} but its parent could not be read (${parents.reason ?? 'rev-list failed'}) — --resume re-checks it` }; }
-    const first = parents.stdout.trim().split(/\s+/)[1] ?? null;
-    if (first !== rec.batch.expectedTip) {
-      patchBatch(dir, trainId, member.id, { state: 'landed-on-untested-base', mergeOid: mergedOid, note: `first parent ${short(first)}, expected ${short(rec.batch.expectedTip)}` });
-      return { stop: `landed-on-untested-base: PR #${source.prNumber} landed on ${short(first)}, not the tested ${short(rec.batch.expectedTip)} — a foreign commit reached the base in the merge window; the remaining members need a rebuild` };
-    }
-    const squash = message(mergedOid);
-    const head = message(member.oid);
-    // A message that could not be READ is retryable (a stop, state merged); only two messages that were read and differ are a confirmed loss.
-    if (squash === null || head === null) { patchBatch(dir, trainId, member.id, { state: 'merged', mergeOid: mergedOid, note: 'read-back not done: a commit message could not be read' }); return { stop: `PR #${source.prNumber} merged at ${short(mergedOid)} but a commit message could not be read to verify it — --resume re-checks it` }; }
-    const why = readBackReasons(head, squash);
-    // The squash IS the new base tip either way: the merge happened, and the next member's base check starts from it.
-    if (why.length) { patchBatch(dir, trainId, member.id, { state: 'provenance-lost', mergeOid: mergedOid, note: why.join('; ').slice(0, 900) }, { expectedTip: mergedOid }); return null; }
-    patchBatch(dir, trainId, member.id, { state: 'verified', mergeOid: mergedOid, note: null }, { expectedTip: mergedOid });
-    return null;
+// ---- the policy: pure decisions the serial loop asks, and never writes through ---------------------------------------------
+
+/**
+ * The ship-batch policy: `persisted` is the block approve writes into the serial record; the functions are what the loop asks.
+ * Nothing here writes. @param {{cwd: string, dir: string, trainId: string, deps: object, rec: object, train: object, requiredChecks?: string[], requiredChecksError?: string|null}} a
+ */
+export function makeShipBatchPolicy({ cwd, trainId, deps, rec, train, requiredChecks, requiredChecksError = null }) {
+  return {
+    name: 'ship-batch',
+    treeIdentity: true,
+    persisted: {
+      name: 'ship-batch', grantVersion: rec.grantVersion, remote: rec.remote, candidateTree: rec.candidateTree, baseChain: [train.destination.expectedOid],
+      members: Object.fromEntries(rec.members.map((m) => [m.id, { tree: m.tree, worktree: m.worktree }])), excluded: rec.excluded,
+    },
+    grantRefusal: () => grantRefusal(deps),
+    testedTree: (run, s) => run.policy.members[s.id]?.tree ?? null,
+    admit: ({ s, h, run }) => {
+      const m = run.policy.members[s.id];
+      const a = admitShipBatchMember({ cwd, member: { id: s.id, prNumber: s.prNumber, repo: s.repo, worktree: m?.worktree ?? null }, head: h, base: run.base, remote: run.remote, deps, requiredChecks, requiredChecksError });
+      if (!a.ok) return { ok: false, kind: a.kind, reason: a.reasons.join('; ') };
+      const msg = commitMessage(deps, cwd, h);
+      if (msg === null) return { ok: false, kind: 'message-unreadable', reason: `the ship commit ${short(h)} is not readable locally, so its message cannot be copied` };
+      const { subject, body } = splitCommitMessage(msg);
+      if (!subject.trim()) return { ok: false, kind: 'message-invalid', reason: 'the ship commit has an empty subject' };
+      return { ok: true, message: { subject, body } };
+    },
+    readBack: ({ s, mergeOid, doc, run }) => measureReadBack({ cwd, deps, remote: run.remote, base: run.base, headOid: s.attempt?.head ?? s.head, mergeOid, doc }),
   };
-  const onMerged = (a) => { try { return onMergedInner(a); } catch (e) { errors.push(`${a.source?.id}: read-back failed (${e.message})`); return { stop: `PR #${a.source?.prNumber}: the read-back failed (${e.message}) — --resume re-checks it` }; } };
-  const onSkip = ({ source, reason }) => { try { patchBatch(dir, trainId, source.id, { state: 'needs-user', note: String(reason).slice(0, 900) }); } catch (e) { errors.push(`${source.id}: could not record needs-user (${e.message})`); } };
-  return { messageFor, onMerged, onSkip, noUpdate: true, shipBatch: true, errors };
 }
 
 // ---- approve / resume / summary ---------------------------------------------------------------------------------------------
 
-/** Why the sidecar is not about the train it is filed under, or null. */
+/** Why the build record is not about the train it is filed under, or null. */
 function trainMismatch(dir, trainId, batch) {
   const t = readTrain(dir, trainId);
   return t.ok ? shipBatchTrainProblem(batch, t.train) : `the train cannot be read (${t.reason})`;
 }
 
-/** `land --approve <train> --ship-batch`. */
-export function approveShipBatch({ cwd, dir, trainId, deps, serialOpts }) {
+/** The per-member lines and the first line of the result, from the SERIAL RECORD only (§2.4). */
+export function summaryText(run, trainId, extra = []) {
+  const members = run.steps;
+  const res = run.finalized?.result ?? summariseRun(run, { tailTree: null, stoppedReason: run.outcome?.status === 'stopped' ? run.outcome.reason : null });
+  const lines = [
+    ...res.provenance, `ship-batch ${trainId}: ${res.first}`,
+    ...members.map((m) => {
+      const o = m.outcome;
+      const what = o ? `${o.status}/${o.code}${o.verdict ? `/${o.verdict}` : ''}` : `${m.step}`;
+      return `  ${what.padEnd(34)} ${m.id} (PR #${m.prNumber})${o?.attribution === 'unknown' ? '  [attribution: unknown]' : ''}${o?.gate ? `  AI-Gate: ${o.gate}` : ''}${o?.mergeOid ? ` -> ${short(o.mergeOid)}` : ''}${o?.reason ? `  [${o.reason}]` : ''}`;
+    }),
+    ...(run.policy?.excluded ?? []).map((n) => `  needs-user${' '.repeat(24)} ${n.id}${n.prNumber ? ` (PR #${n.prNumber})` : ''}: ${n.reasons.join('; ')}  -> the user types /ship in that session`),
+    ...res.tails, ...extra,
+  ];
+  return { res, text: lines.join('\n') };
+}
+
+/** Fold the serial run into the result: the verdict is the run's own, and the text is rendered from the serial record only. */
+function withSummary(r, dir, trainId) {
+  const rd = readSerial(dir, trainId);
+  if (!rd.ok) return { ...r, ok: false, code: 'refused', reason: r.reason ?? `the serial record could not be read after the run (${rd.reason})`, text: `REFUSED: ${r.reason ?? rd.reason}` };
+  const { res, text } = summaryText(rd.run, trainId, !rd.run.finalized && r.reason ? [`stopped: ${r.reason}`] : []);
+  const ok = Boolean(r.ok);
+  return {
+    ...r, ok, code: ok ? 'ok' : 'refused', ...(ok || r.reason ? {} : { reason: res.first }),
+    shipBatch: { members: rd.run.steps.map((m) => ({ id: m.id, prNumber: m.prNumber, step: m.step, outcome: m.outcome ?? null })), excluded: rd.run.policy?.excluded ?? [] }, text,
+  };
+}
+
+function preflight({ dir, trainId, deps }) {
   const gr = grantRefusal(deps);
   if (gr) return refusedResult(gr.reason);
   const rec = readShipBatch(dir, trainId);
   if (!rec.ok) return refusedResult(`train ${trainId} is not a ship-batch train (${rec.reason}): build it with \`land --ship-batch\`, or approve a plain train with the user's go-ahead`);
-  const mismatch = trainMismatch(dir, trainId, rec.batch);
+  const t = readTrain(dir, trainId);
+  if (!t.ok) return refusedResult(`the train ${trainId} cannot be read (${t.reason})`);
+  const mismatch = shipBatchTrainProblem(rec.batch, t.train);
   if (mismatch) return refusedResult(`the ship-batch record does not describe train ${trainId}: ${mismatch}`);
-  const hooks = makeShipBatchHooks({ cwd, dir, trainId, deps, requiredChecks: serialOpts?.requiredChecks, requiredChecksError: serialOpts?.requiredChecksError });
-  return withSummary(approveSerial({ cwd, trainId, deps, ...serialOpts, messageFor: hooks.messageFor, hooks }), dir, trainId, hooks);
+  return { ok: true, rec: rec.batch, train: t.train };
+}
+
+/** `land --approve <train> --ship-batch`. */
+export function approveShipBatch({ cwd, dir, trainId, deps, serialOpts }) {
+  const p = preflight({ dir, trainId, deps });
+  if (!p.ok) return p;
+  const policy = makeShipBatchPolicy({ cwd, trainId, deps, rec: p.rec, train: p.train, requiredChecks: serialOpts?.requiredChecks, requiredChecksError: serialOpts?.requiredChecksError });
+  return withSummary(approveSerial({ cwd, trainId, deps, ...serialOpts, policy }), dir, trainId);
 }
 
 /** `land --resume <train> --ship-batch`. The grant and the base progression are re-checked before any further merge. */
 export function resumeShipBatch({ cwd, dir, trainId, deps, serialOpts }) {
-  const gr = grantRefusal(deps);
-  if (gr) return refusedResult(gr.reason);
+  const rd = readSerial(dir, trainId);
+  // A fully finalized run is a historical summary: it needs no grant, no rules and no remote read (R3-M1).
+  const finalized = rd.ok && rd.run.finalized;
+  const p = finalized ? null : preflight({ dir, trainId, deps });
+  if (p && !p.ok) return p;
   const rec = readShipBatch(dir, trainId);
-  if (!rec.ok) return refusedResult(`train ${trainId} is not a ship-batch train (${rec.reason})`);
-  const mismatch = trainMismatch(dir, trainId, rec.batch);
-  if (mismatch) return refusedResult(`the ship-batch record does not describe train ${trainId}: ${mismatch}`);
-  const hooks = makeShipBatchHooks({ cwd, dir, trainId, deps, requiredChecks: serialOpts?.requiredChecks, requiredChecksError: serialOpts?.requiredChecksError });
-  return withSummary(resumeSerial({ cwd, trainId, deps, ...serialOpts, messageFor: hooks.messageFor, hooks }), dir, trainId, hooks);
-}
-
-/** Fold the member states into the result and the verdict: a landed batch with a provenance-lost member is NOT ok. */
-function withSummary(r, dir, trainId, hooks = null) {
-  const rec = readShipBatch(dir, trainId);
-  // The record is the per-member truth: if it cannot be read after the run, the summary cannot be honest, so the result is NOT ok.
-  if (!rec.ok) return { ...r, ok: false, code: 'refused', reason: `the ship-batch record could not be read after the run (${rec.reason}): per-member outcomes are unknown`, text: `REFUSED: the ship-batch record could not be read after the run (${rec.reason}); per-member outcomes are unknown — check \`fleet land --resume ${trainId} --ship-batch\` and the merged PRs by hand` };
-  const { members, excluded } = rec.batch;
-  const lost = members.filter((m) => m.state === 'provenance-lost' || m.state === 'landed-on-untested-base');
-  const landed = members.filter((m) => ['merged', 'verified', 'provenance-lost', 'landed-on-untested-base', 'merged-externally'].includes(m.state));
-  const bookkeeping = hooks?.errors ?? [];
-  const needs = members.filter((m) => m.state === 'needs-user');
-  const verified = members.filter((m) => m.state === 'verified');
-  const lines = [
-    `ship-batch ${trainId}: landed ${landed.length} of ${members.length} ship-ok member(s); needs-user ${excluded.length}`,
-    ...members.map((m) => `  ${m.state.padEnd(24)} ${m.id} (PR #${m.prNumber})${m.mergeOid ? ` -> ${short(m.mergeOid)}` : ''}${m.note ? `  [${m.note}]` : ''}`),
-    ...excluded.map((n) => `  needs-user               ${n.id}${n.prNumber ? ` (PR #${n.prNumber})` : ''}: ${n.reasons.join('; ')}  -> the user types /ship in that session`),
-    ...(bookkeeping.length ? [`bookkeeping failed (the result is not ok): ${bookkeeping.join('; ')}`] : []),
-    ...(r.ok && !lost.length ? (needs.length ? [`partial: ${needs.length} member(s) wait for the user's /ship; the rest landed and verified. \`land --resume ${trainId} --ship-batch\` re-checks the waiting ones.`] : []) : r.reason ? [`stopped: ${r.reason}`] : []),
-  ];
-  // A partial landing (a member waits for the user) is ok when something landed and nothing was lost; nothing landed is not ok.
-  const ok = Boolean(r.ok) && lost.length === 0 && bookkeeping.length === 0 && (r.partial ? verified.length > 0 : true);
-  return { ...r, ok, code: ok ? 'ok' : (r.code === 'ok' ? 'refused' : r.code ?? 'refused'), ...(ok || r.reason ? {} : { reason: `provenance: ${lost.map((m) => `${m.id} ${m.state}`).join(', ')}` }), shipBatch: { members, excluded }, text: lines.join('\n') };
+  const t = readTrain(dir, trainId);
+  if (!rec.ok || !t.ok) return refusedResult(`train ${trainId} is not a ship-batch train (${rec.ok ? t.reason : rec.reason})`);
+  const policy = makeShipBatchPolicy({ cwd, trainId, deps, rec: rec.batch, train: t.train, requiredChecks: serialOpts?.requiredChecks, requiredChecksError: serialOpts?.requiredChecksError });
+  return withSummary(resumeSerial({ cwd, trainId, deps, ...serialOpts, policy }), dir, trainId);
 }

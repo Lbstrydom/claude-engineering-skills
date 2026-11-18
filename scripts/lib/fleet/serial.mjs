@@ -329,6 +329,7 @@ function policyMerge(st, i, h) {
   const re = viewPr(deps, cwd, s);
   if (!re.ok) return fault('pr-unreadable', `PR #${s.prNumber}: cannot read it (${re.reason})`);
   const d = re.doc;
+  if (upper(d.state) === 'MERGED') return mergedObserved(st, i, d);
   if (upper(d.state) !== 'OPEN') return fault('pr-closed', `PR #${s.prNumber} is ${d.state}`);
   if (d.isDraft === true) return fault('pr-draft', `PR #${s.prNumber} is a draft`);
   if (d.baseRefName !== run.base) return fault('pr-retargeted', `PR #${s.prNumber} now targets ${d.baseRefName}, not ${run.base}`);
@@ -447,6 +448,7 @@ function stepMember(st, i) {
   const again = viewPr(deps, cwd, s);
   if (!again.ok || again.doc.headRefOid !== h) return AGAIN;
   if (upper(again.doc.mergeStateStatus) === 'BEHIND') return AGAIN; // the base moved while we waited
+  if (policy && upper(again.doc.state) === 'MERGED') return AGAIN; // merged while we waited: the top of the pass classifies it
   if (policy) return policyMerge(st, i, h);
   // The message is decided here, on the head that is about to be merged, so a refusal stops the run
   // BEFORE this merge and nothing stale is ever replayed.

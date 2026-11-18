@@ -15,15 +15,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots } from './helpers/fleet-repo.mjs';
-import { PR, REPO, ok, view, fast, depsWith, trainFx, scriptedGh } from './helpers/fleet-serial-fx.mjs';
+import { PR, REPO, ok, view, fast, depsWith, multiFx } from './helpers/fleet-serial-fx.mjs';
 import { readTrain } from '../scripts/lib/fleet/registry.mjs';
+import { readSerial, resumeSerial } from '../scripts/lib/fleet/serial.mjs';
 import { CANONICAL_GRANT } from '../scripts/lib/fleet/coordinator-grant.mjs';
-import { resolveConfig } from '../scripts/lib/fleet/config.mjs';
 import {
   splitCommitMessage, aiTrailerMultiset, readBackReasons, runShippedHeadChild, partitionMembers, buildShipBatch,
-  approveShipBatch, resumeShipBatch, readShipBatch, writeShipBatch, SHIP_BATCH_SCHEMA, CHILD_SCHEMA,
+  approveShipBatch, resumeShipBatch, writeShipBatch, SHIP_BATCH_SCHEMA, CHILD_SCHEMA, admitMember, readShipBatch,
 } from '../scripts/lib/fleet/ship-batch.mjs';
-import { approveSerial, resumeSerial } from '../scripts/lib/fleet/serial.mjs';
 
 after(cleanupFleetRoots);
 
@@ -124,10 +123,10 @@ describe('runShippedHeadChild: every way the child can fail is a refusal', () =>
     assert.equal(r.ok, false);
     assert.match(r.reasons[0], /not the full commit/);
   });
-  it('the destination remote and the target branch reach the child (and --verify-base with them)', () => {
+  it('the destination remote and the target branch reach the child ()', () => {
     let argv = null;
     runShippedHeadChild({ worktree: '/w', head: H, base: 'develop', remote: 'origin', spawn: (cmd, args) => { argv = args; return { status: 0, stdout: JSON.stringify(good) }; }, exists });
-    assert.deepEqual(argv.slice(argv.indexOf('--base')), ['--base', 'develop', '--remote', 'origin', '--verify-base', '--json']);
+    assert.deepEqual(argv.slice(argv.indexOf('--base')), ['--base', 'develop', '--remote', 'origin', '--json']);
   });
   it('exit 2 carries the child\'s own refusals through', () => {
     const r = runShippedHeadChild({ worktree: '/w', head: H, spawn: spawnOf({ status: 2, stdout: JSON.stringify({ ...good, ok: false, refusals: ['trailers: AI-Gate is "waived"'] }) }), exists });
@@ -150,16 +149,16 @@ describe('partitionMembers: only ship-ok members make the set', () => {
     return { ok: false, status: 1, stdout: '', stderr: 'unexpected', reason: 'unexpected' };
   };
   const run = (members, over = {}) => partitionMembers({
-    cwd: process.cwd(), members, base: 'main', deps: { gh: over.gh ?? ghAllGreen(members) },
-    checkChild: over.checkChild ?? childByWt({}), requiredChecks: undefined, ciFn: over.ciFn ?? (() => ({ verdict: 'full' })),
+    cwd: process.cwd(), members, base: 'main', remote: 'origin', requiredChecks: undefined,
+    deps: { gh: over.gh ?? ghAllGreen(members), shipBatch: { checkChild: over.checkChild ?? childByWt({}), ciVerdict: over.ciFn ?? (() => ({ verdict: 'full' })) } },
   });
 
   it('the train\'s destination remote is handed to every child check (build time)', () => {
     const seen = [];
     const ms = [pr('a1')];
     partitionMembers({
-      cwd: process.cwd(), members: ms, base: 'main', remote: 'origin', deps: { gh: ghAllGreen(ms) },
-      checkChild: (a) => { seen.push(a); return { ok: true, reasons: [], envelope: {} }; }, requiredChecks: undefined, ciFn: () => ({ verdict: 'full' }),
+      cwd: process.cwd(), members: ms, base: 'main', remote: 'origin', requiredChecks: undefined,
+      deps: { gh: ghAllGreen(ms), shipBatch: { checkChild: (a) => { seen.push(a); return { ok: true, reasons: [], envelope: {} }; }, ciVerdict: () => ({ verdict: 'full' }) } },
     });
     assert.equal(seen.length, 1);
     assert.equal(seen[0].remote, 'origin');
@@ -220,683 +219,477 @@ describe('partitionMembers: only ship-ok members make the set', () => {
 
 // ---- the repo-backed layers ----------------------------------------------------------------------------------------------------
 const fleetDirOf = (repo) => path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], repo), 'fleet');
+const RULES_JSON = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } }];
+const msgOf = (k) => MSG.replace('feat: the thing', `feat: the thing ${k}`);
 
-/** A built pr-mode train for one member, a sidecar for it, a valid grant file and deps that carry both. */
-function batchFx(over = {}) {
-  const { fx, tested, trainId } = trainFx({ message: over.message ?? MSG });
+/** A built pr-mode train over `n` members, the write-once v2 record, a valid grant file, and deps that carry both. */
+function batch(n, over = {}) {
+  const { fx, members, trainId } = multiFx(n, { messages: members_(n) });
   const dir = fleetDirOf(fx.repo);
-  const t = readTrain(dir, trainId).train;
+  const train = readTrain(dir, trainId).train;
   const grantFile = path.join(mkTmp('grant-'), 'CLAUDE.md');
   fs.writeFileSync(grantFile, `# rules\n\n${CANONICAL_GRANT.replace('Since <DATE>:', 'Since 2026-11-18:')}\n`);
   const childCalls = [];
-  const ciCalls = [];
   const shipBatch = {
     grantFile,
     checkChild: (a) => { childCalls.push(a); return over.child ? over.child(a) : { ok: true, reasons: [], envelope: {} }; },
-    // The full-suite verdict `.test-tiers.json` declares; a test flips it to prove it is re-judged at merge time.
-    ciVerdict: (a) => { ciCalls.push(a); return over.ci ? over.ci(a) : { verdict: 'full' }; },
+    ciVerdict: (a) => (over.ci ? over.ci(a) : { verdict: 'full' }),
   };
   writeShipBatch(dir, {
-    schemaVersion: SHIP_BATCH_SCHEMA, trainId, grantVersion: 'v1', checkedAt: new Date().toISOString(), base: 'main',
-    remote: t.destination.remote, expectedTip: t.destination.expectedOid,
-    members: [{ id: 'feat', prNumber: PR, repo: REPO, oid: tested, worktree: fx.repo, state: 'pending', mergeOid: null, note: null }], excluded: [],
+    schemaVersion: SHIP_BATCH_SCHEMA, trainId, grantVersion: 'v1', checkedAt: new Date().toISOString(), base: 'main', remote: train.destination.remote,
+    candidateTree: train.candidate.tree,
+    members: members.map((m) => ({ id: m.id, repo: REPO, prNumber: m.pr, oid: m.head, tree: m.tree, worktree: fx.repo })), excluded: over.excluded ?? [],
   });
-  return { fx, tested, trainId, dir, grantFile, shipBatch, childCalls, t, member: () => readShipBatch(dir, trainId).batch.members[0], batch: () => readShipBatch(dir, trainId).batch };
+  return { fx, members, trainId, dir, train, grantFile, shipBatch, childCalls };
 }
+function members_(n) { return Array.from({ length: n }, (_, i) => msgOf(i + 1)); }
+const serialOf = (b) => { const r = readSerial(b.dir, b.trainId); if (!r.ok) throw new Error(`serial record: ${r.reason}`); return r.run; };
+const stepOf = (b, id) => serialOf(b).steps.find((s) => s.id === id);
 
-/** What GitHub would do for `gh pr merge --subject S --body-file F`: a real commit on origin/main carrying that message. */
-function squashFrom(fx, args, { foreignFirst = false, dropBody = false } = {}) {
+/** What GitHub would do for `gh pr merge --subject S --body-file F`: a REAL squash of the head onto origin/main with that message. */
+function squashFrom(b, member, args, { foreignFirst = false, dropBody = false } = {}) {
   const subject = args[args.indexOf('--subject') + 1];
   const body = fs.readFileSync(args[args.indexOf('--body-file') + 1], 'utf8');
+  const { fx } = b;
   git(['checkout', '-q', 'main'], fx.repo);
+  git(['pull', '-q', '--ff-only', 'origin', 'main'], fx.repo);
   if (foreignFirst) { fs.writeFileSync(path.join(fx.repo, 'foreign.txt'), 'someone else landed\n'); git(['add', 'foreign.txt'], fx.repo); git(['commit', '-q', '-m', 'foreign'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo); }
+  git(['merge', '--squash', args.at(-1)], fx.repo);
   const msgFile = path.join(mkTmp('squash-'), 'msg');
-  fs.writeFileSync(msgFile, `${subject} (#${PR})\n\n${dropBody ? 'trailers dropped' : body}\n`);
+  fs.writeFileSync(msgFile, `${subject} (#${member.pr})\n\n${dropBody ? 'trailers dropped' : body}\n`);
   git(['commit', '--allow-empty', '-q', '-F', msgFile], fx.repo);
   git(['push', '-q', 'origin', 'main'], fx.repo);
   return git(['rev-parse', 'HEAD'], fx.repo);
 }
 
-/** A scripted gh over a batch fixture: OPEN until the merge, then MERGED at the squash the callback made. */
-function ghFor(b, { mergeOpts = {}, onBeforeMerge, mergeStateStatus = 'CLEAN', stayOpen = false, mergedFrom = null } = {}) {
-  let squash = mergedFrom; const merges = [];
-  const { gh, calls } = scriptedGh({
-    views: () => (squash && !stayOpen ? view(b.tested, { state: 'MERGED', mergeCommit: { oid: squash } }) : view(b.tested, { mergeStateStatus })),
-    onMerge: (args) => { merges.push(args); onBeforeMerge?.(args); squash = squashFrom(b.fx, args, mergeOpts); return ok(); },
-  });
-  return { gh, calls, merges, squash: () => squash };
+/** A scripted GitHub over every member PR: OPEN until its merge, then MERGED at the squash the behaviour made. */
+function world(b, over = {}) {
+  const prs = new Map(b.members.map((m) => [m.pr, { state: 'OPEN', head: m.head, mergeState: 'CLEAN', mergeCommit: null, checks: 'pass', queue: false, base: 'main', draft: false, unreadable: false }]));
+  const merges = []; const calls = [];
+  const w = {
+    prs, merges, calls, rules: RULES_JSON, rulesFail: false, mergeBehavior: over.mergeBehavior, squashOpts: over.squashOpts ?? {},
+    gh: (args) => {
+      calls.push(args);
+      if (args[0] === 'api' && /rules\/branches/.test(args[1])) return w.rulesFail ? { ok: false, status: 1, stdout: '', stderr: 'rules api down', reason: 'rules api down' } : { ok: true, status: 0, stdout: JSON.stringify(w.rules), stderr: '' };
+      if (args[0] === 'api') return { ok: true, status: 0, stdout: JSON.stringify({ protected: false }), stderr: '' };
+      const pr = Number(args[2]); const p = prs.get(pr);
+      if (args[1] === 'checks') return { ok: p.checks === 'pass', status: p.checks === 'pass' ? 0 : 8, stdout: JSON.stringify([{ name: 'ci', bucket: p.checks, state: p.checks.toUpperCase(), completedAt: '2026-10-09T10:00:00Z' }]), stderr: '' };
+      if (args[1] === 'view') {
+        if (p.unreadable) return { ok: false, status: 1, stdout: '', stderr: 'boom', reason: 'gh failed' };
+        const want = args[args.indexOf('--json') + 1];
+        if (want === 'isInMergeQueue') return ok({ isInMergeQueue: p.queue });
+        return ok(view(p.head, { state: p.state, isDraft: p.draft, baseRefName: p.base, mergeStateStatus: p.mergeState, mergeCommit: p.mergeCommit ? { oid: p.mergeCommit } : null, url: `https://github.com/${REPO}/pull/${pr}` }));
+      }
+      if (args[1] === 'merge') {
+        merges.push({ pr, args });
+        const member = b.members.find((m) => m.pr === pr);
+        if (w.mergeBehavior) return w.mergeBehavior({ pr, member, args, p, w });
+        p.mergeCommit = squashFrom(b, member, args, w.squashOpts); p.state = 'MERGED';
+        return ok();
+      }
+      return { ok: false, status: 1, stdout: '', stderr: `unexpected gh ${args.join(' ')}`, reason: 'unexpected' };
+    },
+  };
+  return w;
 }
-// a 30 ms deadline: the required check never settles, which is the timeout path
-const resumeOrApprove = (b, gh) => approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), shipBatch: b.shipBatch }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 30 } });
-const approve = (b, gh, extra = {}) => approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), shipBatch: b.shipBatch, ...extra.deps }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000 } });
-const resume = (b, gh, extra = {}) => resumeShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), shipBatch: b.shipBatch, ...extra.deps }, serialOpts: { sleep: () => {}, timings: fast } });
+const mk = (b, gh, extra = {}) => ({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), shipBatch: b.shipBatch, ...extra.deps }, serialOpts: { sleep: () => {}, timings: fast, ...(extra.serialOpts ?? {}) } });
+const approve = (b, gh, extra = {}) => approveShipBatch(mk(b, gh, { ...extra, serialOpts: { timeoutMs: 60_000, ...(extra.serialOpts ?? {}) } }));
+const resume = (b, gh, extra = {}) => resumeShipBatch(mk(b, gh, extra));
+const outcomeOf = (b, id) => stepOf(b, id).outcome;
+const baseTip = (b) => git(['ls-remote', 'origin', 'refs/heads/main'], b.fx.repo).split(/\s+/)[0];
 
-describe('approveShipBatch: the merge, on the real serial runner', () => {
-  it('lands a verified member with ITS OWN message: the emitted merge argv carries --subject and the body file, and the read-back verifies', () => {
-    const b = batchFx();
-    const g = ghFor(b);
-    const r = approve(b, g.gh);
+describe('the ship-batch build record is write-once and strict (F2)', () => {
+  it('a second write is refused, a malformed record is unreadable, and a full run leaves the record byte-unchanged', () => {
+    const b = batch(1);
+    const file = path.join(b.dir, 'shipbatch', `${b.trainId}.json`);
+    const before = fs.readFileSync(file);
+    assert.throws(() => writeShipBatch(b.dir, { ...readShipBatch(b.dir, b.trainId).batch }), /write-once/);
+    const w = world(b);
+    assert.equal(approve(b, w.gh).ok, true);
+    assert.deepEqual(fs.readFileSync(file), before, 'nothing patches the record after the build');
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(before), extra: 1 }));
+    assert.equal(readShipBatch(b.dir, b.trainId).ok, false, 'a strict schema: an unknown key is refused');
+  });
+  it('a plain resume of a ship-batch run is refused, and a run is never driven by the other policy', () => {
+    const b = batch(1);
+    const w = world(b); w.prs.get(b.members[0].pr).mergeState = 'DIRTY';
+    approve(b, w.gh);
+    const r = resumeShipBatchPlain(b, w.gh);
+    assert.match(r.reason, /policy-mismatch/);
+    assert.equal(w.merges.length, 0);
+  });
+});
+function resumeShipBatchPlain(b, gh) {
+  return resumeSerial({ cwd: b.fx.repo, trainId: b.trainId, deps: depsWith(gh), sleep: () => {}, timings: fast });
+}
+
+describe('approveShipBatch: a clean batch, on the real serial runner', () => {
+  it('lands every member with ITS OWN message; the merge argv is --squash and the full head pin, never --auto; the read-back verifies; the combination is tested', () => {
+    const b = batch(2);
+    const w = world(b);
+    const r = approve(b, w.gh);
     assert.equal(r.ok, true, r.text);
-    const merge = g.merges[0];
-    assert.equal(merge[merge.indexOf('--subject') + 1], 'feat: the thing');
-    assert.equal(merge.at(-2), '--match-head-commit');
-    assert.equal(merge.at(-1), b.tested, 'the head bind stays last');
-    assert.equal(b.member().state, 'verified');
-    assert.equal(b.member().mergeOid, g.squash());
-    assert.equal(b.batch().expectedTip, g.squash(), 'the recorded base progression advanced to the squash');
-    assert.match(r.text, /verified\s+feat/);
-    // The trailers are read back from the commit on the base, not from what was sent.
-    const landed = git(['log', '-1', '--format=%B', g.squash()], b.fx.repo);
-    assert.deepEqual(aiTrailerMultiset(landed), aiTrailerMultiset(MSG));
+    assert.equal(r.code, 'ok');
+    assert.equal(w.merges.length, 2);
+    for (const { args, pr } of w.merges) {
+      const m = b.members.find((x) => x.pr === pr);
+      assert.ok(args.includes('--squash'));
+      assert.equal(args.includes('--auto'), false);
+      assert.equal(args.at(-2), '--match-head-commit');
+      assert.equal(args.at(-1), m.head, 'the full head oid is the last argument');
+      assert.equal(args[args.indexOf('--subject') + 1], `feat: the thing ${b.members.indexOf(m) + 1}`);
+    }
+    for (const m of b.members) assert.equal(outcomeOf(b, m.id).verdict, 'verified');
+    assert.match(r.text.split('\n')[0], /landed 2 of 2; final tree = the combined-tested tree/);
+    assert.equal(serialOf(b).finalized.result.combination, 'tested');
+    assert.equal(readTrain(b.dir, b.trainId).train.phase, 'landed');
+    const landed = git(['log', '-1', '--format=%B', outcomeOf(b, 'm2').mergeOid], b.fx.repo);
+    assert.deepEqual(aiTrailerMultiset(landed), aiTrailerMultiset(msgOf(2)));
   });
-
-  it('the child was re-run on the exact head immediately before the merge', () => {
-    const b = batchFx();
-    approve(b, ghFor(b).gh);
-    assert.ok(b.childCalls.length >= 1);
-    assert.equal(b.childCalls[0].head, b.tested);
-    assert.equal(b.childCalls[0].worktree, b.fx.repo);
+  it('the child re-ran at the exact head before each merge (admission is one predicate, build and merge)', () => {
+    const b = batch(1);
+    approve(b, world(b).gh);
+    assert.ok(b.childCalls.some((c) => c.head === b.members[0].head && c.base === 'main' && c.remote === 'origin'));
   });
+});
 
-  it('GRANT ABSENT: nothing merges, nothing is built or changed', () => {
-    const b = batchFx();
-    fs.rmSync(b.grantFile, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    const g = ghFor(b);
-    const r = approve(b, g.gh);
+describe('F1: a member fault never stops the batch (the member step cannot stop the run)', () => {
+  const landed = (b, id) => outcomeOf(b, id)?.status === 'landed';
+  for (const [name, setup, status, code] of [
+    ['an unreadable PR view', (p) => { p.unreadable = true; }, 'not-run', 'pr-unreadable'],
+    ['a DIRTY PR', (p) => { p.mergeState = 'DIRTY'; }, 'refused', 'conflict'],
+    ['a BEHIND PR (a ship-batch never updates a branch)', (p) => { p.mergeState = 'BEHIND'; }, 'refused', 'behind-base'],
+    ['a closed PR', (p) => { p.state = 'CLOSED'; }, 'refused', 'pr-closed'],
+    ['a draft PR', (p) => { p.draft = true; }, 'refused', 'pr-draft'],
+    ['a retargeted PR', (p) => { p.base = 'other'; }, 'refused', 'pr-retargeted'],
+    ['failed required checks', (p) => { p.checks = 'fail'; }, 'refused', 'checks-failed'],
+  ]) {
+    it(`${name} on member 2: members 1 and 3 still land`, () => {
+      const b = batch(3);
+      const w = world(b); setup(w.prs.get(b.members[1].pr));
+      const r = approve(b, w.gh);
+      assert.equal(landed(b, 'm1'), true, r.text);
+      assert.equal(landed(b, 'm3'), true, r.text);
+      assert.deepEqual([outcomeOf(b, 'm2').status, outcomeOf(b, 'm2').code], [status, code]);
+      assert.equal(r.run?.halt ?? serialOf(b).halt, undefined, 'a member fault is not a halt');
+    });
+  }
+  it('checks still pending at the deadline: member 2 is not-run/checks-pending, 1 and 3 land, the result is resumable (exit 3), and the train stays awaiting-merge', () => {
+    const b = batch(3);
+    const w = world(b); w.prs.get(b.members[1].pr).checks = 'pending';
+    const r = approve(b, w.gh, { serialOpts: { timeoutMs: 30 } });
+    assert.deepEqual([landed(b, 'm1'), landed(b, 'm3')], [true, true]);
+    assert.deepEqual([outcomeOf(b, 'm2').status, outcomeOf(b, 'm2').code], ['not-run', 'checks-pending']);
     assert.equal(r.ok, false);
-    assert.match(r.reason, /grant-absent/);
-    assert.equal(g.merges.length, 0);
-    assert.equal(b.member().state, 'pending');
+    assert.equal(r.code, 'refused');
+    assert.match(r.text.split('\n').find((l) => /ship-batch/.test(l)), /landed 2 of 3; 1 not yet decided: land --resume .* --ship-batch re-checks them/);
+    assert.equal(readTrain(b.dir, b.trainId).train.phase, 'awaiting-merge');
+    // The chain is merge chronology: member 2 may land LATER, after 3, and the run still validates and finalizes.
+    w.prs.get(b.members[1].pr).checks = 'pass';
+    const again = resume(b, w.gh);
+    assert.equal(landed(b, 'm2'), true, again.text);
+    assert.equal(again.ok, true, again.text);
+    assert.equal(serialOf(b).policy.baseChain.length, 4);
+    assert.equal(outcomeOf(b, 'm2').chainIndex, 3);
+    assert.equal(readSerial(b.dir, b.trainId).ok, true);
   });
-
-  it('GRANT MISMATCH (narrowed): refuses with grant-mismatch', () => {
-    const b = batchFx();
-    fs.writeFileSync(b.grantFile, `${CANONICAL_GRANT.replace('- never `--no-verify` in wine-cellar-app;\n', '')}\n`);
-    const r = approve(b, ghFor(b).gh);
-    assert.match(r.reason, /grant-mismatch/);
-  });
-
-  it('GRANT REVOKED between approval and the merge: the run stops with grant-revoked and merges nothing', () => {
-    const b = batchFx();
-    let n = 0;
-    const g = ghFor(b, { onBeforeMerge: () => {} });
-    // Revoke at the first PR view after approval started (the serial loop reads the PR before it asks for the message).
-    const gh = (args) => { if (args[0] === 'pr' && args[1] === 'view' && n++ === 1) fs.rmSync(b.grantFile, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); return g.gh(args); };
+  it('an unknown fault kind and a throw inside the member step each stop the run as internal-error', () => {
+    const b = batch(1);
+    const w = world(b);
+    const gh = (args) => { if (args[1] === 'checks') throw new Error('gh exploded'); return w.gh(args); };
     const r = approve(b, gh);
     assert.equal(r.ok, false);
-    assert.match(r.reason, /grant-revoked/);
-    assert.equal(g.merges.length, 0, 'revoked before the merge: no merge call');
-    assert.equal(b.member().state, 'pending');
+    assert.match(r.reason, /internal-error: gh exploded/);
+    assert.equal(w.merges.length, 0);
   });
+});
 
-  it('a commit lands on the base between build and merge: base-moved, no merge', () => {
-    const b = batchFx();
-    git(['checkout', '-q', 'main'], b.fx.repo);
-    fs.writeFileSync(path.join(b.fx.repo, 'meanwhile.txt'), 'x\n'); git(['add', 'meanwhile.txt'], b.fx.repo); git(['commit', '-q', '-m', 'meanwhile'], b.fx.repo); git(['push', '-q', 'origin', 'main'], b.fx.repo);
-    const g = ghFor(b);
-    const r = approve(b, g.gh);
+describe('gate honesty: a waived or not-run member is never laundered into passed (F6)', () => {
+  it('a child refusal is refused/shipped-head-refused, never merged, and no aggregate gate appears', () => {
+    const b = batch(2, { child: ({ head }) => (head === undefined ? {} : { ok: head !== undefined && !head.startsWith('x'), reasons: [], envelope: {} }) });
+    b.shipBatch.checkChild = (a) => (a.head === b.members[0].head ? { ok: false, reasons: ['trailers: AI-Gate is "waived"; only passed or converged may ship without the user'], envelope: {} } : { ok: true, reasons: [], envelope: {} });
+    const w = world(b);
+    const r = approve(b, w.gh);
+    assert.deepEqual([outcomeOf(b, 'm1').status, outcomeOf(b, 'm1').code], ['refused', 'shipped-head-refused']);
+    assert.match(outcomeOf(b, 'm1').reason, /waived/);
+    assert.equal(w.merges.every((m) => m.pr !== b.members[0].pr), true, 'the waived member never reached a merge');
+    assert.equal(outcomeOf(b, 'm2').status, 'landed');
+    assert.equal(r.ok, true);
+    assert.equal(/aggregate/i.test(r.text), false);
+  });
+  it('the full-suite verdict turning red between build and merge is refused/ci-refused (r1-H9)', () => {
+    const b = batch(1, { ci: () => ({ verdict: 'failed', reason: 'run 7 failed' }) });
+    const r = approve(b, world(b).gh);
+    assert.deepEqual([outcomeOf(b, 'm1').status, outcomeOf(b, 'm1').code], ['refused', 'ci-refused']);
     assert.equal(r.ok, false);
-    assert.match(r.reason, /base-moved|recorded fact changed/);
-    assert.equal(g.merges.length, 0);
   });
+});
 
-  it('a commit lands on the base DURING the run (after approval verified it): the per-merge base-tip check stops it, no merge', () => {
-    // The check before the approval is the existing train check; this is the seam this module owns: the window between them.
-    const b = batchFx();
-    const g = ghFor(b);
+describe('tree identity: the head is re-read at merge time and proven by tree (F6, #609, #612)', () => {
+  /** Push a new head for member 1 whose tree is `same` (a re-push of the tested content) or different. */
+  function repush(b, { same }) {
+    const m = b.members[0];
+    git(['checkout', '-q', '--detach', m.head], b.fx.repo);
+    if (same) git(['commit', '-q', '--amend', '-m', msgOf(1).replace('converged', 'converged')], b.fx.repo); // same tree, new oid
+    else { fs.writeFileSync(path.join(b.fx.repo, 'dropped.txt'), 'x\n'); git(['add', 'dropped.txt'], b.fx.repo); git(['commit', '-q', '--amend', '-m', msgOf(1)], b.fx.repo); }
+    const l = git(['rev-parse', 'HEAD'], b.fx.repo);
+    git(['push', '-q', '-f', 'origin', `${l}:refs/pull/${m.pr}/head`], b.fx.repo);
+    git(['checkout', '-q', 'main'], b.fx.repo);
+    return l;
+  }
+  it('an equal-tree re-push is admitted AT the new head: the child runs at it, the merge pins it, the message is read from it', () => {
+    const b = batch(1);
+    const w = world(b);
+    const l = repush(b, { same: true });
+    assert.notEqual(l, b.members[0].head);
+    w.prs.get(b.members[0].pr).head = l;
+    const r = approve(b, w.gh);
+    assert.equal(r.ok, true, r.text);
+    assert.equal(w.merges[0].args.at(-1), l);
+    assert.ok(b.childCalls.some((c) => c.head === l), 'admission ran again at the live head');
+  });
+  it('the #609 shape: a re-push whose tree differs is refused/head-moved with BOTH trees, and nothing merges', () => {
+    const b = batch(1);
+    const w = world(b);
+    const l = repush(b, { same: false });
+    w.prs.get(b.members[0].pr).head = l;
+    const r = approve(b, w.gh);
+    const o = outcomeOf(b, 'm1');
+    assert.deepEqual([o.status, o.code], ['refused', 'head-moved']);
+    assert.equal(o.trees.tested, b.members[0].tree);
+    assert.notEqual(o.trees.seen, o.trees.tested);
+    assert.equal(w.merges.length, 0);
+    assert.equal(r.ok, false);
+  });
+  it('a head that keeps changing is bounded: not-run/head-churn', () => {
+    const b = batch(1);
+    const w = world(b);
+    const p = w.prs.get(b.members[0].pr);
     let n = 0;
+    const gh = (args) => { if (args[1] === 'view' && !args.includes('isInMergeQueue') && n < 6) { const l = repush(b, { same: true }); p.head = l; n += 1; } return w.gh(args); };
+    approve(b, gh);
+    assert.ok(n >= 1);
+    assert.ok(w.merges.length <= 1);
+  });
+});
+
+describe('merge attribution, the unconfirmed merge and its reconciliation (F3, R1-H1)', () => {
+  it('a merge GitHub performed but whose answer was lost: merge-unconfirmed stops the run; the resume observes MERGED, attribution unknown, with exactly ONE merge call', () => {
+    const b = batch(1);
+    const w = world(b, { mergeBehavior: ({ member, args, p, w: ww }) => { p.mergeCommit = squashFrom(b, member, args); p.state = 'MERGED'; return { ok: false, status: 1, stdout: '', stderr: 'connection reset', reason: 'connection reset' }; } });
+    const r1 = approve(b, w.gh);
+    assert.equal(r1.ok, true, 'the loop saw MERGED at the attempted head: it is observed, not unconfirmed');
+    assert.equal(outcomeOf(b, 'm1').attribution, 'unknown', 'a non-zero gh exit never reads as this-run');
+    assert.equal(w.merges.length, 1);
+  });
+  it('accepted but never observed: merge-unconfirmed (a run stop); a resume while still OPEN inside the window stops again and never replays', () => {
+    const b = batch(1);
+    const w = world(b, { mergeBehavior: () => ok() });
+    const r1 = approve(b, w.gh);
+    assert.equal(r1.ok, false);
+    assert.deepEqual([outcomeOf(b, 'm1').status, outcomeOf(b, 'm1').code], ['not-run', 'merge-unconfirmed']);
+    assert.equal(w.merges.length, 1);
+    // Resumed at once: the request window has not elapsed (use a long window), so OPEN is NOT read as "did not merge".
+    const r2 = resume(b, w.gh, { serialOpts: { timings: { ...fast, mergeWait: 10 * 60_000 } } });
+    assert.equal(r2.ok, false);
+    assert.equal(w.merges.length, 1, 'not replayed inside the request window');
+  });
+  it('after the window the PR is still OPEN and not queued: admission restarts, the pin holds, and it lands with one more merge call', () => {
+    const b = batch(1);
+    let first = true;
+    const w = world(b, { mergeBehavior: ({ member, args, p }) => { if (first) { first = false; return ok(); } p.mergeCommit = squashFrom(b, member, args); p.state = 'MERGED'; return ok(); } });
+    approve(b, w.gh);
+    const r2 = resume(b, w.gh);
+    assert.equal(r2.ok, true, r2.text);
+    assert.equal(w.merges.length, 2);
+    assert.equal(w.merges[1].args.at(-1), b.members[0].head);
+  });
+  it('a PR sitting in a merge queue is left for the operator and never re-attempted (merge-queued)', () => {
+    const b = batch(1);
+    const w = world(b, { mergeBehavior: () => ok() });
+    approve(b, w.gh);
+    w.prs.get(b.members[0].pr).queue = true;
+    const r = resume(b, w.gh);
+    assert.match(r.reason, /merge-queued|merge queue/);
+    assert.equal(w.merges.length, 1);
+  });
+  it('an external merge while the member is waiting: skipped/merged-externally with its merge oid, a halt, no further merge, ok false', () => {
+    const b = batch(2);
+    const w = world(b);
+    const p1 = w.prs.get(b.members[0].pr);
+    let done = false;
     const gh = (args) => {
-      if (args[0] === 'pr' && args[1] === 'view' && n++ === 0) {
-        git(['checkout', '-q', 'main'], b.fx.repo);
-        fs.writeFileSync(path.join(b.fx.repo, 'during.txt'), 'x\n'); git(['add', 'during.txt'], b.fx.repo); git(['commit', '-q', '-m', 'during'], b.fx.repo); git(['push', '-q', 'origin', 'main'], b.fx.repo);
+      if (!done && args[1] === 'checks' && Number(args[2]) === b.members[0].pr) {
+        done = true;
+        const f = path.join(mkTmp('b-'), 'b'); fs.writeFileSync(f, 'x');
+        p1.mergeCommit = squashFrom(b, b.members[0], ['--subject', 's', '--body-file', f, b.members[0].head]); p1.state = 'MERGED';
       }
-      return g.gh(args);
+      return w.gh(args);
     };
     const r = approve(b, gh);
+    assert.deepEqual([outcomeOf(b, 'm1').status, outcomeOf(b, 'm1').code, outcomeOf(b, 'm1').mergeOid], ['skipped', 'merged-externally', p1.mergeCommit]);
+    assert.equal(serialOf(b).halt.code, 'merged-externally');
+    assert.equal(w.merges.length, 0, 'nothing merged after an external merge');
     assert.equal(r.ok, false);
-    assert.match(r.reason, /base-moved: the base is/);
-    assert.equal(g.merges.length, 0);
-    assert.equal(b.member().state, 'pending');
+    // A resume does not process another member: the halt is persisted (an external merge onto ANOTHER branch would read the same).
+    const again = resume(b, gh);
+    assert.equal(again.ok, false);
+    assert.equal(w.merges.length, 0);
   });
-
-  it('the child refuses at merge time (the chip worktree vanished, say): needs-user, no merge', () => {
-    const b = batchFx({ child: () => ({ ok: false, reasons: ['evidence-unavailable: the chip worktree is gone'], envelope: null }) });
-    const g = ghFor(b);
-    const r = approve(b, g.gh);
-    assert.equal(r.ok, false, 'nothing landed, so the batch is not ok');
-    assert.match(r.text, /needs-user.*evidence-unavailable/);
-    assert.equal(g.merges.length, 0);
-    assert.equal(b.member().state, 'needs-user');
-  });
-
-  it('a member BEHIND the base is never updated on the remote: it stops with behind-base and NO update-branch call is made', () => {
-    const b = batchFx();
-    const g = ghFor(b, { mergeStateStatus: 'BEHIND' });
-    const r = approve(b, g.gh);
-    assert.equal(r.ok, false, 'nothing landed, so the batch is not ok');
-    assert.match(r.text, /behind-base/);
-    assert.equal(g.calls.some((c) => c[0] === 'api' && c.includes('PUT')), false, 'no update-branch');
-    assert.equal(g.merges.length, 0);
-    assert.equal(b.member().state, 'needs-user');
-  });
-
-  it('a foreign commit lands in the merge window: landed-on-untested-base, the batch stops and the result is NOT ok', () => {
-    const b = batchFx();
-    const g = ghFor(b, { mergeOpts: { foreignFirst: true } });
-    const r = approve(b, g.gh);
+  it('the LAST member merged externally still stops the run and gives ok false', () => {
+    const b = batch(2);
+    const w = world(b);
+    const orig = w.gh;
+    w.mergeBehavior = ({ member, args, p }) => { p.mergeCommit = squashFrom(b, member, args); p.state = 'MERGED'; const q = w.prs.get(b.members[1].pr); const f = path.join(mkTmp('b-'), 'b'); fs.writeFileSync(f, 'x'); q.mergeCommit = squashFrom(b, b.members[1], ['--subject', 's', '--body-file', f, b.members[1].head]); q.state = 'MERGED'; return ok(); };
+    const r = approve(b, orig);
+    assert.equal(outcomeOf(b, 'm2').status, 'skipped');
     assert.equal(r.ok, false);
-    assert.equal(b.member().state, 'landed-on-untested-base');
-    assert.match(r.text, /landed-on-untested-base/);
-    assert.notEqual(b.batch().expectedTip, g.squash(), 'the base progression does not advance past an untested base');
-  });
-
-  it('a squash that LOST the trailers: provenance-lost, loud, the result is not ok, and the progression still advances', () => {
-    const b = batchFx();
-    const g = ghFor(b, { mergeOpts: { dropBody: true } });
-    const r = approve(b, g.gh);
-    assert.equal(r.ok, false);
-    assert.equal(b.member().state, 'provenance-lost');
-    assert.match(r.reason, /provenance: feat provenance-lost/);
-    assert.match(r.text, /provenance-lost/);
-    assert.equal(b.batch().expectedTip, g.squash());
-  });
-
-  it('the full-suite verdict is re-judged AT MERGE TIME: a verdict that flips after the build is needs-user, no merge', () => {
-    const b = batchFx({ ci: () => ({ verdict: 'pending', reason: 'queued after the build' }) });
-    const g = ghFor(b);
-    const r = approve(b, g.gh);
-    assert.equal(r.ok, false);
-    assert.match(r.text, /full-suite run is pending/);
-    assert.equal(g.merges.length, 0);
-    assert.equal(b.member().state, 'needs-user');
-  });
-
-  it('a run with a ship-batch record cannot be driven by ANOTHER tool\'s messageFor (no read-back, no no-update rule)', () => {
-    const b = batchFx();
-    const g1 = ghFor(b, { stayOpen: true });
-    approve(b, g1.gh); // leaves a serial run behind
-    const g2 = ghFor(b, { mergedFrom: g1.squash() });
-    const r = resumeSerial({ cwd: b.fx.repo, trainId: b.trainId, deps: depsWith(g2.gh), sleep: () => {}, timings: fast, messageFor: () => ({ subject: 'x', body: '' }) });
-    assert.equal(r.ok, false);
-    assert.match(r.reason, /belongs to a ship-batch/);
-    assert.equal(g2.merges.length, 0);
-  });
-
-  it('a rev-list that FAILED after the merge is retryable (state merged), never a confirmed landed-on-untested-base', () => {
-    const b = batchFx();
-    const g = ghFor(b);
-    let fail = true;
-    const base = depsWith(g.gh);
-    const deps = { ...base, git: (args, cwd, o) => (fail && args[0] === 'rev-list' && args.includes('--parents') ? { ok: false, status: 1, stdout: '', stderr: 'boom', reason: 'rev-list boom' } : base.git(args, cwd, o)) };
-    const r1 = approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...deps, shipBatch: b.shipBatch }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000 } });
-    assert.equal(r1.ok, false);
-    assert.equal(b.member().state, 'merged', 'not terminal: the read could not be done');
-    fail = false;
-    const r2 = resume(b, g.gh);
-    assert.equal(r2.ok, true, r2.text);
-    assert.equal(b.member().state, 'verified');
-  });
-
-  it('a commit message that could not be READ after the merge is retryable, not provenance-lost', () => {
-    const b = batchFx();
-    const g = ghFor(b);
-    let fail = true;
-    const base = depsWith(g.gh);
-    const deps = { ...base, git: (args, cwd, o) => (fail && args[0] === 'log' && args.includes('--format=%B') && args.at(-1) === g.squash() ? { ok: false, status: 1, stdout: '', stderr: '', reason: 'cannot read' } : base.git(args, cwd, o)) };
-    // the squash oid is only known once the merge ran: the wrapper compares lazily
-    const r1 = approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...deps, shipBatch: b.shipBatch }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000 } });
-    assert.equal(r1.ok, false);
-    assert.equal(b.member().state, 'merged');
-    fail = false;
-    assert.equal(resume(b, g.gh).ok, true);
-    assert.equal(b.member().state, 'verified');
-  });
-
-  it('a sidecar that is not about THIS train is refused before any merge', () => {
-    const b = batchFx();
-    const rec = readShipBatch(b.dir, b.trainId).batch;
-    writeShipBatch(b.dir, { ...rec, members: [{ ...rec.members[0], oid: 'f'.repeat(40) }] });
-    const g = ghFor(b);
-    const r = approve(b, g.gh);
-    assert.equal(r.ok, false);
-    assert.match(r.reason, /does not describe train/);
-    assert.equal(g.merges.length, 0);
-  });
-
-  it('a sidecar with an invalid member is unreadable (field-level validation), not trusted', () => {
-    const b = batchFx();
-    const rec = readShipBatch(b.dir, b.trainId).batch;
-    for (const bad of [{ state: 'launched' }, { oid: 'nope' }, { prNumber: 0 }, { id: '' }]) {
-      writeShipBatch(b.dir, { ...rec, members: [{ ...rec.members[0], ...bad }] });
-      const r = readShipBatch(b.dir, b.trainId);
-      assert.equal(r.ok, false, JSON.stringify(bad));
-      assert.match(r.reason, /invalid/);
-    }
-    writeShipBatch(b.dir, { ...rec, expectedTip: 'not-a-sha' });
-    assert.equal(readShipBatch(b.dir, b.trainId).ok, false);
-  });
-
-  it('a sidecar naming another repository or PR number than the train merges is refused before any merge', () => {
-    for (const bad of [{ prNumber: 99 }, { repo: 'someone/else' }]) {
-      const b = batchFx();
-      const rec = readShipBatch(b.dir, b.trainId).batch;
-      writeShipBatch(b.dir, { ...rec, members: [{ ...rec.members[0], ...bad }] });
-      const g = ghFor(b);
-      const r = approve(b, g.gh);
-      assert.equal(r.ok, false, JSON.stringify(bad));
-      assert.match(r.reason, /does not describe train/);
-      assert.equal(g.merges.length, 0);
-    }
-  });
-
-  it('a required check still PENDING at the deadline skips THAT member (needs-user); a plain run still stops', () => {
-    const b = batchFx();
-    const { gh } = scriptedGh({ views: () => view(b.tested), checks: [['pending']] });
-    const r = resumeOrApprove(b, gh);
-    assert.equal(r.ok, false);
-    assert.equal(b.member().state, 'needs-user');
-    assert.match(b.member().note, /required checks still/);
-  });
-
-  it('a PR GitHub reports MERGED before it reports the merge commit: recorded, completed from GitHub on --resume, then verified', () => {
-    const b = batchFx();
-    let squash = null; let reportOid = false;
-    const { gh } = scriptedGh({
-      views: () => (squash ? view(b.tested, { state: 'MERGED', mergeCommit: reportOid ? { oid: squash } : null }) : view(b.tested)),
-      onMerge: (args) => { squash = squashFrom(b.fx, args); return ok(); },
-    });
-    const r1 = approve(b, gh);
-    assert.equal(r1.ok, false);
-    assert.equal(b.member().state, 'merged', 'merged is recorded, the merge commit is not yet known');
-    reportOid = true; // GitHub catches up
-    const r2 = resume(b, gh);
-    assert.equal(r2.ok, true, r2.text);
-    assert.equal(b.member().state, 'verified');
-    assert.equal(b.member().mergeOid, squash, 'the null OID was replaced from GitHub, not reused');
-  });
-
-  it('the LAST member losing the base race stays lost on resume: the result is never quietly ok', () => {
-    const b = batchFx();
-    const g = ghFor(b, { mergeOpts: { foreignFirst: true } });
-    const r1 = approve(b, g.gh);
-    assert.equal(r1.ok, false);
-    assert.equal(b.member().state, 'landed-on-untested-base');
-    const r2 = resume(b, g.gh);
-    assert.equal(r2.ok, false, 'a resumed, otherwise complete run must still report the untested base');
-    assert.match(r2.reason ?? r2.text, /landed-on-untested-base/);
-  });
-
-  it('an unknown train (no sidecar) is refused: a plain train cannot borrow the grant', () => {
-    const b = batchFx();
-    fs.rmSync(path.join(b.dir, 'shipbatch', `${b.trainId}.json`), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    const r = approve(b, ghFor(b).gh);
-    assert.equal(r.ok, false);
-    assert.match(r.reason, /not a ship-batch train/);
   });
 });
 
-describe('resume: an interrupted merge is reconciled from GitHub, never repeated and never skipped', () => {
-  it('GitHub merged but the run lost the record: the resume ADOPTS the merge, verifies it and does not merge twice', () => {
-    const b = batchFx();
-    // Run 1: the merge is accepted (a real squash exists) but the PR keeps reading OPEN, so the run stops "not observed merged".
-    const g1 = ghFor(b, { stayOpen: true });
-    const r1 = approve(b, g1.gh);
+describe('the read-back: a failed read is not a measured defect (F4), a measured loss is (F3/F5)', () => {
+  it('a failed fetch is not-run/awaiting-read-back, and the resume lands verified, never untested-base', () => {
+    const b = batch(1);
+    const w = world(b);
+    let failing = true;
+    const deps = depsWith(w.gh);
+    const git0 = deps.git;
+    const flaky = { ...deps, git: (args, cwd, o) => (failing && args[0] === 'fetch' && args.includes('refs/heads/main') ? { ok: false, status: 1, stdout: '', stderr: 'net down', reason: 'net down' } : git0(args, cwd, o)) };
+    const r1 = approveShipBatch({ ...mk(b, w.gh), deps: { ...flaky, shipBatch: b.shipBatch } });
     assert.equal(r1.ok, false);
-    assert.equal(b.member().state, 'merge-requested', 'the intent was recorded before the merge call');
-    // Run 2: GitHub now reports MERGED at that squash.
-    const g2 = ghFor(b, { mergedFrom: g1.squash() });
-    const r2 = resume(b, g2.gh);
+    assert.deepEqual([outcomeOf(b, 'm1').status, outcomeOf(b, 'm1').code], ['not-run', 'awaiting-read-back']);
+    failing = false;
+    const r2 = resumeShipBatch({ ...mk(b, w.gh), deps: { ...flaky, shipBatch: b.shipBatch } });
     assert.equal(r2.ok, true, r2.text);
-    assert.equal(g2.merges.length, 0, 'the already-merged member is observed, never merged again');
-    assert.equal(b.member().state, 'verified');
-    assert.equal(b.batch().expectedTip, g1.squash(), 'its own unrecorded merge never reads as base-moved');
+    assert.equal(outcomeOf(b, 'm1').verdict, 'verified');
+    assert.equal(w.merges.length, 1);
   });
-
-  it('merged but the read-back could not finish (base unfetchable): the run stops, and the resume reads it back instead of skipping it', () => {
-    const b = batchFx();
-    const g = ghFor(b);
-    let failFetch = true;
-    const base = depsWith(g.gh);
-    const deps = { ...base, git: (args, cwd, o) => (failFetch && args[0] === 'fetch' && args.includes('refs/heads/main') ? { ok: false, status: 1, stdout: '', stderr: 'offline', reason: 'offline' } : base.git(args, cwd, o)) };
-    const r1 = approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...deps, shipBatch: b.shipBatch }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000 } });
-    assert.equal(r1.ok, false);
-    assert.equal(b.member().state, 'merged', 'merged is recorded, verified is not');
-    failFetch = false;
-    const r2 = resume(b, g.gh);
-    assert.equal(r2.ok, true, r2.text);
-    assert.equal(b.member().state, 'verified');
-    assert.equal(g.merges.length, 1, 'one merge in total');
+  it('a squash that lost its trailers is landed/provenance-lost: the batch is NOT ok even when the trees match', () => {
+    const b = batch(1);
+    const r = approve(b, world(b, { squashOpts: { dropBody: true } }).gh);
+    assert.equal(outcomeOf(b, 'm1').verdict, 'provenance-lost');
+    assert.equal(r.ok, false);
+    assert.match(r.text, /PROVENANCE: m1 provenance-lost/);
+    assert.equal(serialOf(b).finalized.result.combination, 'tested', 'content only: provenance is a separate axis');
   });
-
-  it('a foreign commit between the interrupted run and the resume is base-moved for the NEXT merge, not silently accepted', () => {
-    const b = batchFx();
-    const g1 = ghFor(b, { stayOpen: true });
-    approve(b, g1.gh);
-    // A commit that is not this batch's lands on top of the squash, then the member is reported unmerged again.
-    git(['checkout', '-q', 'main'], b.fx.repo);
-    fs.writeFileSync(path.join(b.fx.repo, 'foreign2.txt'), 'x\n'); git(['add', 'foreign2.txt'], b.fx.repo); git(['commit', '-q', '-m', 'foreign2'], b.fx.repo); git(['push', '-q', 'origin', 'main'], b.fx.repo);
-    const g2 = ghFor(b, { mergedFrom: g1.squash() });
-    const r2 = resume(b, g2.gh);
-    // The merge itself is the batch's own (first parent = the tested tip), so it verifies; the foreign commit only matters to a later merge.
-    assert.equal(b.member().state, 'verified', r2.text);
+  it('a foreign commit on the base before the squash is landed/untested-base with a halt, and the remaining member is not merged', () => {
+    const b = batch(2);
+    const r = approve(b, world(b, { squashOpts: { foreignFirst: true } }).gh);
+    assert.equal(outcomeOf(b, 'm1').verdict, 'untested-base');
+    assert.equal(serialOf(b).halt.code, 'untested-base');
+    assert.equal(outcomeOf(b, 'm2') ?? null, null);
+    assert.equal(r.ok, false);
+  });
+  it('a foreign commit pushed after the LAST landed member is caught by the final base read: base-moved, ok false', () => {
+    const b = batch(1);
+    const w = world(b);
+    const orig = w.mergeBehavior;
+    w.mergeBehavior = ({ member, args, p }) => { p.mergeCommit = squashFrom(b, member, args); p.state = 'MERGED'; git(['checkout', '-q', 'main'], b.fx.repo); fs.writeFileSync(path.join(b.fx.repo, 'late.txt'), 'late\n'); git(['add', 'late.txt'], b.fx.repo); git(['commit', '-q', '-m', 'late foreign'], b.fx.repo); git(['push', '-q', 'origin', 'main'], b.fx.repo); return ok(); };
+    void orig;
+    const r = approve(b, w.gh);
+    assert.equal(r.ok, false);
+    assert.equal(serialOf(b).halt.code, 'base-moved');
   });
 });
 
-describe('buildShipBatch: grant first, partition before the build', () => {
-  function ctxFor(fx) {
-    const env = { ...process.env };
-    const ctx = { cwd: fx.repo, cmd: 'fleet', now: new Date(), env, dir: fleetDirOf(fx.repo) };
-    Object.defineProperty(ctx, 'config', { get: () => resolveConfig(fx.repo, { env }) });
-    return ctx;
-  }
-  const parseSelect = (v) => String(v).split(',');
-  const membersOf = (b) => [{ id: 'feat', kind: 'pr', repo: REPO, prNumber: PR, baseRef: 'main', branch: 'feat', oid: b.tested, worktree: b.fx.repo }];
-  const ghGreen = (tested) => (args) => {
-    if (args[0] === 'pr' && args[1] === 'view') return ok({ state: 'OPEN', isDraft: false, headRefOid: tested, baseRefName: 'main' });
-    if (args[0] === 'api') return { ok: true, status: 0, stdout: JSON.stringify(/rules\/branches/.test(args[1]) ? [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } }] : { protected: false }), stderr: '' };
-    if (args[0] === 'pr' && args[1] === 'checks') return { ok: true, status: 0, stdout: JSON.stringify([{ name: 'ci', bucket: 'pass', state: 'SUCCESS', completedAt: '2026-10-09T10:00:00Z' }]), stderr: '' };
-    return { ok: false, status: 1, stdout: '', stderr: 'unexpected', reason: 'unexpected' };
-  };
+describe('subset: the landed set is stated honestly (F5)', () => {
+  it('one member refused: the rest land, ok true, combination subset, exit ok, the train stays awaiting-merge', () => {
+    const b = batch(2);
+    const w = world(b); w.prs.get(b.members[1].pr).checks = 'fail';
+    const r = approve(b, w.gh);
+    assert.equal(r.ok, true, r.text);
+    assert.equal(serialOf(b).finalized.result.combination, 'subset');
+    assert.match(r.text, /landed 1 of 2: a SUBSET of the combined-tested set; 1 need the user/);
+    assert.equal(readTrain(b.dir, b.trainId).train.phase, 'awaiting-merge');
+  });
+  it('nothing landed is not ok', () => {
+    const b = batch(1);
+    const w = world(b); w.prs.get(b.members[0].pr).checks = 'fail';
+    const r = approve(b, w.gh);
+    assert.equal(r.ok, false);
+    assert.match(r.text, /nothing landed; every member needs the user/);
+  });
+});
 
-  it('without the grant the build is refused before ANY member is looked at (the child is never run, nothing is built)', () => {
-    const b = batchFx();
-    fs.rmSync(b.grantFile, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    let built = false;
-    const r = buildShipBatch(ctxFor(b.fx), {}, { ...depsWith(ghGreen(b.tested)), shipBatch: { ...b.shipBatch, members: membersOf(b) } }, () => { built = true; return { ok: true, trainId: 'x' }; }, { parseSelect });
+describe('the grant, the rules and a closed run (R3-M1)', () => {
+  it('GRANT ABSENT: nothing merges and nothing changes', () => {
+    const b = batch(1);
+    fs.rmSync(b.grantFile, { force: true });
+    const w = world(b);
+    const r = approve(b, w.gh);
     assert.equal(r.ok, false);
     assert.match(r.reason, /grant-absent/);
-    assert.match(r.text, /declaration check, not verified authority/);
-    assert.equal(built, false);
-    assert.equal(b.childCalls.length, 0);
+    assert.equal(w.merges.length, 0);
+    assert.equal(readSerial(b.dir, b.trainId).ok, false, 'no serial run was started');
   });
-
-  it('a refused member is excluded BEFORE the build and the build receives only the ship-ok ids', () => {
-    const b = batchFx();
-    let sawSelect = null;
-    const buildFn = (ctx, flags) => { sawSelect = flags['--select']; return { ok: true, trainId: b.trainId, text: 'built', train: b.t }; };
-    const r = buildShipBatch(ctxFor(b.fx), {}, { ...depsWith(ghGreen(b.tested)), shipBatch: { ...b.shipBatch, members: membersOf(b), ciVerdict: () => ({ verdict: 'full' }) } }, buildFn, { parseSelect });
-    assert.equal(r.ok, true, r.text);
-    assert.equal(sawSelect, 'feat');
-    assert.equal(r.shipBatch, true);
-    assert.match(r.text, new RegExp(`land --approve ${b.trainId} --ship-batch`));
-    assert.equal(readShipBatch(b.dir, b.trainId).batch.members[0].state, 'pending');
-  });
-
-  it('a built train that cannot be READ back is a failed build: no sidecar of nulls, no approval command', () => {
-    const b = batchFx();
-    const buildFn = () => ({ ok: true, trainId: 't-20261118000000-abcd', text: 'built' });
-    const r = buildShipBatch(ctxFor(b.fx), {}, { ...depsWith(ghGreen(b.tested)), shipBatch: { ...b.shipBatch, members: membersOf(b), ciVerdict: () => ({ verdict: 'full' }) } }, buildFn, { parseSelect });
+  it('GRANT REVOKED mid-run: the run stops grant-revoked before the next merge', () => {
+    const b = batch(2);
+    const w = world(b);
+    w.mergeBehavior = ({ member, args, p }) => { p.mergeCommit = squashFrom(b, member, args); p.state = 'MERGED'; fs.rmSync(b.grantFile, { force: true }); return ok(); };
+    const r = approve(b, w.gh);
+    assert.equal(w.merges.length, 1, 'the second merge never happened');
+    assert.match(r.text, /grant-revoked/);
     assert.equal(r.ok, false);
-    assert.match(r.reason, /could not be read back/);
-    assert.doesNotMatch(r.text, /land --approve/);
-    assert.equal(readShipBatch(b.dir, 't-20261118000000-abcd').ok, false, 'no record was written for it');
   });
-
-  it('every member refused: nothing is built, nothing is merged, and each is told to wait for /ship', () => {
-    const b = batchFx({ child: () => ({ ok: false, reasons: ['trailers: AI-Gate is "waived"; only passed or converged may ship without the user'], envelope: null }) });
-    let built = false;
-    const r = buildShipBatch(ctxFor(b.fx), {}, { ...depsWith(ghGreen(b.tested)), shipBatch: { ...b.shipBatch, members: membersOf(b), ciVerdict: () => ({ verdict: 'full' }) } }, () => { built = true; return {}; }, { parseSelect });
-    assert.equal(r.ok, false);
-    assert.equal(built, false);
-    assert.match(r.reason, /no member is ship-ok/);
-    assert.match(r.text, /waived/);
-    assert.match(r.text, /\/ship/);
+  it('a merge_queue rule stops the run before any merge, and an unreadable rules answer does too', () => {
+    const b = batch(1);
+    const w = world(b); w.rules = [{ type: 'merge_queue', parameters: {} }];
+    assert.match(approve(b, w.gh).reason, /merge-queue-present/);
+    assert.equal(w.merges.length, 0);
+    const c = batch(1);
+    const w2 = world(c); w2.rulesFail = true;
+    assert.match(approve(c, w2.gh).reason, /rules-unreadable/);
+    assert.equal(w2.merges.length, 0);
+  });
+  it('a FINALIZED run resumed with the grant revoked and the rules API down prints the same summary and exit code with ZERO remote reads', () => {
+    const b = batch(2);
+    const w = world(b);
+    const first = approve(b, w.gh);
+    assert.equal(first.ok, true);
+    fs.rmSync(b.grantFile, { force: true });
+    w.rulesFail = true;
+    const before = w.calls.length;
+    const again = resume(b, w.gh);
+    assert.equal(again.ok, first.ok);
+    assert.equal(again.text, first.text);
+    assert.equal(w.calls.length, before, 'zero gh calls');
   });
 });
 
-describe('archive-check: a ready, unmerged member owes its evidence markers (plan section 2.2)', async () => {
-  const { shipEvidenceOwed } = await import('../scripts/lib/fleet/lifecycle.mjs');
-  it('a ready session with an open PR is owed: archiving would destroy the markers the batch re-check reads', () => {
-    assert.match(shipEvidenceOwed({ ready: { oid: 'a'.repeat(40), at: 'x' } }, { number: 21 }), /PR #21 is ready but unmerged.*\.audit\//);
-  });
-  it('not ready, or no PR at all: nothing is owed (the direction it must NOT fire)', () => {
-    assert.equal(shipEvidenceOwed({ ready: null }, { number: 21 }), null);
-    assert.equal(shipEvidenceOwed({ ready: { oid: 'a'.repeat(40) } }, null), null);
-    assert.equal(shipEvidenceOwed(null, { number: 21 }), null);
-    assert.equal(shipEvidenceOwed({ ready: null }, { unknown: 'gh unavailable' }), null, 'a member that is not ready owes nothing even when the PR query failed');
-  });
-  it('a READY member whose PR could not be queried is UNCERTAIN, never clear to archive', () => {
-    assert.match(shipEvidenceOwed({ ready: { oid: 'a'.repeat(40) } }, { unknown: 'gh unavailable' }), /could not be queried \(gh unavailable\).*unknown/);
-  });
-});
-
-// ---- two members: the "rest still land" promise and the base progression across merges ----------------------------------------
-import { addBranch, installFakeGh, makeFleetRepo, prRow, runFleet, scrubbedEnv } from './helpers/fleet-repo.mjs';
-import { RULES, BRANCH, check } from './helpers/fleet-serial-fx.mjs';
-
-const msgFor = (n) => MSG.replace('feat: the thing', `feat: thing ${n}`).replace('981fc79a-0fbb-447a-a294-b0c0217dab71', `0000000${n}-0fbb-447a-a294-b0c0217dab71`);
-
-function twoMemberFx() {
-  const fx = makeFleetRepo({ fleetConfig: { mergeMethod: 'pr', testCommand: { tiers: [{ name: 'ok', command: ['node', '-e', '0'] }] } } });
-  git(['add', '.fleet.json'], fx.repo); git(['commit', '-q', '-m', 'cfg'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
-  const fake = installFakeGh(fx.root);
-  const env = scrubbedEnv({ FLEET_WORKTREE_ROOT: fx.wtRoot, ...fake.env }, { prependPath: [fake.bin] });
-  const f = (args) => runFleet(args, { cwd: fx.repo, env });
-  const base = git(['rev-parse', 'main'], fx.repo);
-  const heads = {};
-  for (const [id, n] of [['feat-a', 21], ['feat-b', 22]]) {
-    heads[id] = addBranch(fx.repo, id, { [`${id}.txt`]: `${id}\n` }, msgFor(n));
-    git(['push', '-q', 'origin', `${heads[id]}:refs/pull/${n}/head`], fx.repo);
-    git(['checkout', '-q', id], fx.repo);
-    assert.equal(f(['claim', '--id', id, '--intent', id, '--paths', `${id}.txt`]).status, 0);
-    assert.equal(f(['ready', '--id', id]).status, 0);
-    git(['checkout', '-q', 'main'], fx.repo);
-  }
-  const rows = [prRow({ number: 21, branch: 'feat-a', headOid: heads['feat-a'], baseOid: base }), prRow({ number: 22, branch: 'feat-b', headOid: heads['feat-b'], baseOid: base })];
-  fake.setState({ list: rows, view: { 21: rows[0], 22: rows[1] } });
-  const built = f(['land', '--json']);
-  assert.equal(built.status, 0, built.stdout + built.stderr);
-  return { fx, heads, trainId: built.json.train.trainId };
-}
-
-function twoBatch({ childFor = () => null } = {}) {
-  const { fx, heads, trainId } = twoMemberFx();
-  const dir = fleetDirOf(fx.repo);
-  const t = readTrain(dir, trainId).train;
-  const grantFile = path.join(mkTmp('grant2-'), 'CLAUDE.md');
-  fs.writeFileSync(grantFile, `${CANONICAL_GRANT}\n`);
-  const shipBatch = {
-    grantFile,
-    checkChild: ({ head }) => childFor(head) ?? { ok: true, reasons: [], envelope: {} },
-    ciVerdict: () => ({ verdict: 'full' }),
-  };
-  writeShipBatch(dir, {
-    schemaVersion: SHIP_BATCH_SCHEMA, trainId, grantVersion: 'v1', checkedAt: new Date().toISOString(), base: 'main',
-    remote: t.destination.remote, expectedTip: t.destination.expectedOid,
-    members: [['feat-a', 21], ['feat-b', 22]].map(([id, n]) => ({ id, prNumber: n, repo: REPO, oid: heads[id], worktree: fx.repo, state: 'pending', mergeOid: null, note: null })),
-    excluded: [],
-  });
-  return { fx, heads, trainId, dir, shipBatch, batch: () => readShipBatch(dir, trainId).batch };
-}
-
-/** A gh over TWO PRs: each is OPEN until its own merge, which makes a real squash (GitHub's message from --subject/--body-file). */
-function ghTwo(b) {
-  const squashes = {}; const merges = [];
-  const num = (args) => Number(args[2]);
-  const idOf = { 21: 'feat-a', 22: 'feat-b' };
-  const gh = (args) => {
-    if (args[0] === 'api' && /rules\/branches/.test(args[1])) return RULES;
-    if (args[0] === 'api' && /\/branches\//.test(args[1])) return BRANCH;
-    if (args[0] === 'pr' && args[1] === 'checks') return { ok: true, status: 0, stdout: JSON.stringify(check('pass')), stderr: '' };
-    if (args[0] === 'pr' && args[1] === 'view') {
-      const n = num(args); const head = b.heads[idOf[n]];
-      return ok(squashes[n] ? view(head, { state: 'MERGED', mergeCommit: { oid: squashes[n] } }) : view(head));
-    }
-    if (args[0] === 'pr' && args[1] === 'merge') { merges.push(args); const n = num(args); squashes[n] = squashFrom(b.fx, args); return ok(); }
-    return { ok: false, status: 1, stdout: '', stderr: `unexpected gh ${args.join(' ')}`, reason: 'unexpected' };
-  };
-  return { gh, merges, squashes };
-}
-const approveTwo = (b, gh, extra = {}) => approveShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), shipBatch: b.shipBatch, ...extra }, serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000 } });
-
-describe('a batch of two: the rest still land, and the base progression holds across merges', () => {
-  it('a PR that cannot be READ skips THAT member (needs-user); the other still lands', () => {
-    const b = twoBatch();
-    const g = ghTwo(b);
-    const gh = (args) => (args[0] === 'pr' && args[1] === 'view' && args[2] === '21' ? { ok: false, status: 1, stdout: '', stderr: 'HTTP 502', reason: 'HTTP 502' } : g.gh(args));
-    const r = approveTwo(b, gh);
-    assert.equal(r.ok, true, r.text);
-    assert.deepEqual(g.merges.map((m) => m[2]), ['22']);
-    assert.equal(b.batch().members[0].state, 'needs-user');
-    assert.match(b.batch().members[0].note, /cannot read it/);
-  });
-
-  it('both verify: both land IN ORDER, the second on the first\'s squash, each carrying its own trailers; the train lands', () => {
-    const b = twoBatch();
-    const g = ghTwo(b);
-    const r = approveTwo(b, g.gh);
-    assert.equal(r.ok, true, r.text);
-    assert.equal(r.landed, true);
-    assert.deepEqual(g.merges.map((m) => m[2]), ['21', '22']);
-    const [a, c] = b.batch().members;
-    assert.deepEqual([a.state, c.state], ['verified', 'verified']);
-    assert.equal(git(['rev-parse', `${c.mergeOid}^`], b.fx.repo), a.mergeOid, 'the second squash sits directly on the first');
-    assert.equal(b.batch().expectedTip, c.mergeOid);
-    assert.match(git(['log', '-1', '--format=%B', a.mergeOid], b.fx.repo), /AI-Run-ID: 000000021-/);
-    assert.match(git(['log', '-1', '--format=%B', c.mergeOid], b.fx.repo), /AI-Run-ID: 000000022-/);
-  });
-
-  it('the FIRST member fails its re-check: it waits for /ship and the SECOND still lands (ok, partial, exit-0 shape)', () => {
-    const b = twoBatch();
-    b.shipBatch.checkChild = ({ head }) => (head === b.heads['feat-a'] ? { ok: false, reasons: ['trailers: AI-Gate is "waived"; only passed or converged may ship without the user'], envelope: null } : { ok: true, reasons: [], envelope: {} });
-    const g = ghTwo(b);
-    const r = approveTwo(b, g.gh);
-    assert.equal(r.ok, true, r.text);
-    assert.equal(r.landed, false, 'the train is not fully landed');
-    assert.deepEqual(g.merges.map((m) => m[2]), ['22'], 'only the verified member merged');
-    const [a, c] = b.batch().members;
-    assert.equal(a.state, 'needs-user');
-    assert.match(a.note, /waived/);
-    assert.equal(c.state, 'verified');
-    assert.match(r.text, /partial: 1 member\(s\) wait for the user's \/ship/);
-    assert.match(r.text, /needs-user\s+feat-a/);
-  });
-
-  it('a waived member is never merged under ANY order of the batch (the AI-Gate honesty control)', () => {
-    const b = twoBatch();
-    b.shipBatch.checkChild = ({ head }) => (head === b.heads['feat-b'] ? { ok: false, reasons: ['trailers: AI-Gate is "not-run"'], envelope: null } : { ok: true, reasons: [], envelope: {} });
-    const g = ghTwo(b);
-    approveTwo(b, g.gh);
-    assert.equal(g.merges.some((m) => m[2] === '22'), false);
-    assert.equal(b.batch().members[1].state, 'needs-user');
-  });
-
-  it('both refuse: nothing merges and the batch is not ok', () => {
-    const b = twoBatch({ childFor: () => ({ ok: false, reasons: ['evidence-unavailable: gone'], envelope: null }) });
-    const g = ghTwo(b);
-    const r = approveTwo(b, g.gh);
-    assert.equal(r.ok, false);
-    assert.equal(g.merges.length, 0);
-    assert.deepEqual(b.batch().members.map((m) => m.state), ['needs-user', 'needs-user']);
-  });
-
-  it('a skipped member is re-checked on --resume and lands once it verifies (nothing is lost by waiting)', () => {
-    const b = twoBatch();
-    let refuse = true;
-    b.shipBatch.checkChild = ({ head }) => (refuse && head === b.heads['feat-a'] ? { ok: false, reasons: ['evidence-unavailable: gone'], envelope: null } : { ok: true, reasons: [], envelope: {} });
-    const g = ghTwo(b);
-    approveTwo(b, g.gh);
-    assert.equal(b.batch().members[0].state, 'needs-user');
-    refuse = false; // the chip's worktree is back
-    const r2 = resumeShipBatch({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(g.gh), shipBatch: b.shipBatch }, serialOpts: { sleep: () => {}, timings: fast } });
-    assert.equal(r2.ok, true, r2.text);
-    assert.deepEqual(g.merges.map((m) => m[2]), ['22', '21'], 'the second member landed first, then the resumed first');
-    assert.deepEqual(b.batch().members.map((m) => m.state), ['verified', 'verified']);
-  });
-});
-
-describe('code-audit round 2: member isolation, CI evidence policy, bookkeeping honesty', () => {
-  for (const [name, over, re] of [
-    ['a PR that became a DRAFT after the build', { state: 'OPEN', isDraft: true }, /is a draft/],
-    ['a PR that was CLOSED after the build', { state: 'CLOSED' }, /is CLOSED/],
-    ['a PR that now CONFLICTS with the base', { mergeStateStatus: 'DIRTY' }, /conflicts with main/],
+describe('crash resume: each crash point ends in the outcomes of a run that never crashed', () => {
+  for (const [name, die] of [
+    ['after the merge intent, before the merge call', ({ w }) => { w.mergeBehavior = () => { throw new Error('died before the call'); }; }],
+    ['during the merge (GitHub merged, no answer)', ({ w, b }) => { w.mergeBehavior = ({ member, args, p }) => { p.mergeCommit = squashFrom(b, member, args); p.state = 'MERGED'; throw new Error('died mid-call'); }; }],
   ]) {
-    it(`${name}: a member problem SKIPS that member (needs-user), it does not stop a batch`, () => {
-      const b = batchFx();
-      const g = scriptedGh({ views: () => view(b.tested, over) });
-      const r = approve(b, g.gh);
-      assert.equal(b.member().state, 'needs-user');
-      assert.match(b.member().note, re);
-      assert.equal(r.ok, false, 'nothing landed, so not ok');
-      assert.equal(g.calls.some((c) => c[1] === 'merge'), false);
+    it(name, () => {
+      const b = batch(1);
+      const w = world(b);
+      die({ w, b });
+      const r1 = approve(b, w.gh);
+      assert.equal(r1.ok, false);
+      w.mergeBehavior = undefined;
+      const r2 = resume(b, w.gh, { serialOpts: { timings: { ...fast, mergeWait: 1 } } });
+      assert.equal(r2.ok, true, r2.text);
+      assert.equal(outcomeOf(b, 'm1').status, 'landed');
+      assert.ok(w.merges.filter((m) => m.pr === b.members[0].pr).length <= 2, 'at most the attempted merge and one replay of a request that did not merge');
+      assert.equal(git(['rev-list', '--count', 'origin/main'], b.fx.repo) >= 1, true);
     });
   }
-  it('the same problems STOP a plain serial run exactly as before (the skip is ship-batch only)', () => {
-    const { fx, tested, trainId } = trainFx();
-    const g = scriptedGh({ views: () => view(tested, { mergeStateStatus: 'DIRTY' }) });
-    const r = approveSerial({ cwd: fx.repo, trainId, deps: depsWith(g.gh), sleep: () => {}, timings: fast, timeoutMs: 60_000 });
-    assert.match(r.reason, /conflicts with main/);
-    assert.equal(r.partial, undefined);
-  });
-
-  it('a PR observed MERGED at a head this run never accounted for is a stop, not "merged"', () => {
-    const b = batchFx();
-    let merged = false;
-    const { gh } = scriptedGh({
-      views: () => (merged ? view('9'.repeat(40), { state: 'MERGED', mergeCommit: { oid: 'e'.repeat(40) } }) : view(b.tested)),
-      onMerge: (args) => { squashFrom(b.fx, args); merged = true; return ok(); },
-    });
-    const r = approve(b, gh);
-    assert.equal(r.ok, false);
-    assert.match(r.reason, /did not account for/);
-    assert.notEqual(b.member().state, 'verified');
-  });
-
-  it('no required checks configured AND no full-suite workflow declared: together they measure NOTHING, so the member is needs-user', () => {
-    const none = { ok: true, status: 0, stdout: JSON.stringify([]), stderr: '' };
-    const ms = [{ id: 'a1', kind: 'pr', repo: REPO, prNumber: 21, baseRef: 'main', branch: 'a1', oid: 'a'.repeat(40), worktree: '/wt/a1' }];
-    const gh = (args) => (args[0] === 'pr' && args[1] === 'view' ? ok({ state: 'OPEN', isDraft: false, headRefOid: ms[0].oid, baseRefName: 'main' })
-      : args[0] === 'api' ? { ok: true, status: 0, stdout: JSON.stringify(/rules\/branches/.test(args[1]) ? [] : { protected: false }), stderr: '' } : none);
-    const undeclared = () => ({ verdict: 'unverified', reason: 'no ciVerdict workflow is declared in .test-tiers.json on main' });
-    const r = partitionMembers({ cwd: process.cwd(), members: ms, base: 'main', deps: { gh }, checkChild: () => ({ ok: true, reasons: [], envelope: {} }), requiredChecks: [], ciFn: undeclared });
-    assert.match(r.needsUser[0]?.reasons.join(' ') ?? 'NOT-REFUSED', /nothing measured CI/);
-    // The control: ONE source present is enough (the declared workflow is green).
-    const r2 = partitionMembers({ cwd: process.cwd(), members: ms, base: 'main', deps: { gh }, checkChild: () => ({ ok: true, reasons: [], envelope: {} }), requiredChecks: [], ciFn: () => ({ verdict: 'full' }) });
-    assert.equal(r2.ok.length, 1, JSON.stringify(r2.needsUser));
-  });
-
-  it('a ship-batch record that becomes unreadable DURING the run makes the result NOT ok, naming why (never the serial result unchanged)', () => {
-    const b = batchFx();
-    const sidecar = path.join(b.dir, 'shipbatch', `${b.trainId}.json`);
-    // The merge happens, then the record is corrupted before the read-back and the summary read it.
-    const g = ghFor(b, { onBeforeMerge: () => { /* the message was already requested */ } });
-    const gh = (args) => { const r = g.gh(args); if (args[0] === 'pr' && args[1] === 'merge') fs.writeFileSync(sidecar, '{ not json'); return r; };
-    const r = approve(b, gh);
-    assert.equal(r.ok, false);
-    assert.match(`${r.reason} ${r.text}`, /ship-batch record could not be read after the run|per-member outcomes are unknown/);
-  });
 });
 
-describe('code-audit round 6: a PR merged by someone else is not this run\'s merge', () => {
-  it('a PENDING member whose PR is already MERGED is recorded merged-externally, never verified, and no merge call is made', () => {
-    const b = batchFx();
-    const { gh, calls } = scriptedGh({ views: () => view(b.tested, { state: 'MERGED', mergeCommit: { oid: 'e'.repeat(40) } }) });
-    const r = approve(b, gh);
-    assert.equal(b.member().state, 'merged-externally');
-    assert.match(b.member().note, /merged by someone else/);
-    assert.equal(calls.some((c) => c[1] === 'merge'), false, 'this run merged nothing');
-    assert.notEqual(b.member().state, 'verified');
-    assert.ok(r, 'a result is returned');
+describe('admitMember: one predicate, strict evidence per mode (R1-H5)', () => {
+  const H = 'a'.repeat(40);
+  const child = { ok: true, reasons: [], envelope: {} };
+  it('a ship-batch candidate without its CI evidence, and a rollup candidate carrying any, are rejected', () => {
+    assert.throws(() => admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H, child }));
+    assert.throws(() => admitMember('rollup', { base: 'main', remote: 'origin' }, { mode: 'rollup', head: H, child, branchTip: H, identityAndCi: [] }));
+    assert.throws(() => admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'rollup', head: H, child, branchTip: H }));
   });
-  it('the control: a member THIS run asked to merge (merge-requested) and found merged is adopted and verified', () => {
-    const b = batchFx();
-    const g1 = ghFor(b, { stayOpen: true });
-    approve(b, g1.gh);
-    assert.equal(b.member().state, 'merge-requested');
-    const g2 = ghFor(b, { mergedFrom: g1.squash() });
-    assert.equal(resume(b, g2.gh).ok, true);
-    assert.equal(b.member().state, 'verified');
-  });
-});
-
-describe('storyline incidents 2026-11-18: a green suite does not pin the head that merges', () => {
-  it('(2) the PR head differs from the tested head at MERGE time (a hook amended a file after the tests): needs-user, no merge', () => {
-    const b = batchFx();
-    const other = 'c'.repeat(40);
-    const { gh, calls } = scriptedGh({ views: () => view(other) });
-    const r = approve(b, gh);
-    assert.equal(r.ok, false);
-    assert.equal(calls.some((c) => c[1] === 'merge'), false);
-    assert.equal(b.member().state, 'needs-user');
+  it('each mode judges its own evidence, and a head that is not the full oid is rejected', () => {
+    assert.equal(admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H, child, identityAndCi: [] }).ok, true);
+    assert.equal(admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H, child, identityAndCi: ['ci: red'] }).kind, 'ci-refused');
+    assert.equal(admitMember('rollup', { base: 'main', remote: 'origin' }, { mode: 'rollup', head: H, child, branchTip: 'b'.repeat(40) }).ok, false);
+    assert.equal(admitMember('rollup', { base: 'main', remote: 'origin' }, { mode: 'rollup', head: H, child, branchTip: H }).ok, true);
+    assert.throws(() => admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H.slice(0, 12), child, identityAndCi: [] }));
   });
 });

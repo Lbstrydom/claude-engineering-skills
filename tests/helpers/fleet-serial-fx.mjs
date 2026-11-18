@@ -87,3 +87,32 @@ export function scriptedGh({ views, checks = [['pass']], onUpdate = () => ok({})
 export const view = (head, over = {}) => ({ state: 'OPEN', isDraft: false, headRefOid: head, baseRefName: 'main', mergeStateStatus: 'CLEAN', mergeCommit: null, url: `https://github.com/${REPO}/pull/${PR}`, ...over });
 export const fast = { poll: 1, updatePoll: 1, updateWait: 200, mergeWait: 200 };
 export const depsWith = (gh) => defaultDeps({ gh, log: () => {} });
+
+/**
+ * A pr-mode train over `n` ready sessions `m1..mn` (PRs 21..), each adding its own file, so the claims are path-disjoint (as
+ * `fleet claim` requires) and the built train has `n` sources in landing order. Returns what a ship-batch test needs.
+ */
+export function multiFx(n, { messages = [] } = {}) {
+  const fx = makeFleetRepo({ fleetConfig: { mergeMethod: 'pr', testCommand: { tiers: [{ name: 'ok', command: ['node', '-e', '0'] }] } } });
+  git(['add', '.fleet.json'], fx.repo); git(['commit', '-q', '-m', 'cfg'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+  const fake = installFakeGh(fx.root);
+  const env = scrubbedEnv({ FLEET_WORKTREE_ROOT: fx.wtRoot, ...fake.env }, { prependPath: [fake.bin] });
+  const f = (args) => runFleet(args, { cwd: fx.repo, env });
+  const base = git(['rev-parse', 'main'], fx.repo);
+  const members = [];
+  for (let k = 1; k <= n; k += 1) {
+    const id = `m${k}`; const pr = PR + k - 1;
+    const head = addBranch(fx.repo, id, { [`f${k}.txt`]: `f${k}\n` }, messages[k - 1]);
+    git(['push', '-q', 'origin', `${head}:refs/pull/${pr}/head`], fx.repo);
+    git(['checkout', '-q', id], fx.repo);
+    assert.equal(f(['claim', '--id', id, '--intent', id, '--paths', `f${k}.txt`]).status, 0);
+    assert.equal(f(['ready', '--id', id]).status, 0);
+    git(['checkout', '-q', 'main'], fx.repo);
+    members.push({ id, pr, head, tree: git(['rev-parse', `${head}^{tree}`], fx.repo) });
+  }
+  const rows = members.map((m) => prRow({ number: m.pr, branch: m.id, headOid: m.head, baseOid: base }));
+  fake.setState({ list: rows, view: Object.fromEntries(rows.map((r) => [r.number, r])) });
+  const built = f(['land', '--json']);
+  assert.equal(built.status, 0, built.stdout + built.stderr);
+  return { fx, base, members, trainId: built.json.train.trainId };
+}
