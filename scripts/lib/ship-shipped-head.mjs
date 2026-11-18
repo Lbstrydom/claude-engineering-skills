@@ -238,6 +238,7 @@ export async function runShippedHeadCli(argv, { cwd = process.cwd(), store } = {
   // An unknown flag is refused by NAME before anything runs: a read-only check must never silently ignore what was asked of it.
   try { assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'ship-commit --check-shipped-head', from: 0 }); } catch (e) { return bad(`${e.message.split('. ')[0]}; a standalone read-only check cannot be combined with other flags`); }
   if (head === undefined || head.startsWith('--') || !SHA_RE.test(head)) return bad('--head needs a commit oid');
+  if (verifyBase && bi < 0) return bad('--verify-base needs --base: with no named branch there is no live ref to compare');
   if (ri >= 0 && (remote === undefined || remote.startsWith('--') || !REMOTE_RE.test(remote))) return bad('--remote needs a plain remote name');
   if (bi >= 0 && (baseBranch === undefined || baseBranch.startsWith('--') || !isPlainBranch(baseBranch))) return bad('--base needs a valid branch name');
   if (others.length > 0) return bad(`a standalone read-only check cannot be combined with ${others.join(' ')}`);

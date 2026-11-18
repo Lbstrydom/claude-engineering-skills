@@ -866,3 +866,25 @@ describe('code-audit round 2: member isolation, CI evidence policy, bookkeeping 
     assert.match(`${r.reason} ${r.text}`, /ship-batch record could not be read after the run|per-member outcomes are unknown/);
   });
 });
+
+describe('code-audit round 6: a PR merged by someone else is not this run\'s merge', () => {
+  it('a PENDING member whose PR is already MERGED is recorded merged-externally, never verified, and no merge call is made', () => {
+    const b = batchFx();
+    const { gh, calls } = scriptedGh({ views: () => view(b.tested, { state: 'MERGED', mergeCommit: { oid: 'e'.repeat(40) } }) });
+    const r = approve(b, gh);
+    assert.equal(b.member().state, 'merged-externally');
+    assert.match(b.member().note, /merged by someone else/);
+    assert.equal(calls.some((c) => c[1] === 'merge'), false, 'this run merged nothing');
+    assert.notEqual(b.member().state, 'verified');
+    assert.ok(r, 'a result is returned');
+  });
+  it('the control: a member THIS run asked to merge (merge-requested) and found merged is adopted and verified', () => {
+    const b = batchFx();
+    const g1 = ghFor(b, { stayOpen: true });
+    approve(b, g1.gh);
+    assert.equal(b.member().state, 'merge-requested');
+    const g2 = ghFor(b, { mergedFrom: g1.squash() });
+    assert.equal(resume(b, g2.gh).ok, true);
+    assert.equal(b.member().state, 'verified');
+  });
+});

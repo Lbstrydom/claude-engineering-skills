@@ -43,7 +43,7 @@ const short = (o) => String(o ?? '?').slice(0, 12);
 
 /** @returns {{ok: true, batch: object} | {ok: false, reason: string, absent?: boolean}} */
 const OID_RE_SB = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-export const MEMBER_STATES = Object.freeze(['pending', 'needs-user', 'merge-requested', 'merged', 'verified', 'provenance-lost', 'landed-on-untested-base']);
+export const MEMBER_STATES = Object.freeze(['pending', 'needs-user', 'merge-requested', 'merged', 'verified', 'provenance-lost', 'landed-on-untested-base', 'merged-externally']);
 
 /** Field-level validation of a sidecar record. @returns {string|null} what is wrong, or null */
 export function shipBatchProblem(b, trainId) {
@@ -332,7 +332,14 @@ export function makeShipBatchHooks({ cwd, dir, trainId, deps, requiredChecks, re
     const rec = readShipBatch(dir, trainId);
     if (!rec.ok) return { stop: `ship-batch record: ${rec.reason}` };
     const member = rec.batch.members.find((m) => m.id === source.id);
-    if (!member || ['verified', 'provenance-lost', 'landed-on-untested-base'].includes(member.state)) return null;
+    if (!member || ['verified', 'provenance-lost', 'landed-on-untested-base', 'merged-externally'].includes(member.state)) return null;
+    // A PR this run never asked to merge (still pending, or skipped as needs-user) that is MERGED anyway was merged by someone else:
+    // it is recorded as that, never adopted as this run's verified merge. The base moved with it, so the next member's base check
+    // stops the batch and the train is rebuilt.
+    if (member.state === 'pending' || member.state === 'needs-user') {
+      patchBatch(dir, trainId, member.id, { state: 'merged-externally', mergeOid: mergedOid ?? null, note: 'merged by someone else, not by this run: its provenance was not produced by the batch' });
+      return null;
+    }
     if (!mergedOid) { patchBatch(dir, trainId, member.id, { state: 'merged', note: 'merge commit not reported' }); return { stop: `PR #${source.prNumber} merged but GitHub reported no merge commit: verify it by hand` }; }
     const f = git(['fetch', '--no-tags', rec.batch.remote, `refs/heads/${rec.batch.base}`]);
     if (!f.ok) { patchBatch(dir, trainId, member.id, { state: 'merged', mergeOid: mergedOid, note: 'read-back not done' }); return { stop: `PR #${source.prNumber} merged at ${short(mergedOid)} but the base could not be fetched to verify it (${f.reason}) — --resume re-checks it` }; }
@@ -397,7 +404,7 @@ function withSummary(r, dir, trainId, hooks = null) {
   if (!rec.ok) return { ...r, ok: false, code: 'refused', reason: `the ship-batch record could not be read after the run (${rec.reason}): per-member outcomes are unknown`, text: `REFUSED: the ship-batch record could not be read after the run (${rec.reason}); per-member outcomes are unknown — check \`fleet land --resume ${trainId} --ship-batch\` and the merged PRs by hand` };
   const { members, excluded } = rec.batch;
   const lost = members.filter((m) => m.state === 'provenance-lost' || m.state === 'landed-on-untested-base');
-  const landed = members.filter((m) => ['merged', 'verified', 'provenance-lost', 'landed-on-untested-base'].includes(m.state));
+  const landed = members.filter((m) => ['merged', 'verified', 'provenance-lost', 'landed-on-untested-base', 'merged-externally'].includes(m.state));
   const bookkeeping = hooks?.errors ?? [];
   const needs = members.filter((m) => m.state === 'needs-user');
   const verified = members.filter((m) => m.state === 'verified');

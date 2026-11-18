@@ -490,3 +490,11 @@ describe('--check-shipped-head: modes, submodule config and the head race (code-
     assert.match(reason(env, 'head'), /moved while the check was running/);
   });
 });
+
+describe('--check-shipped-head: --verify-base needs a base (code-audit round 6)', () => {
+  it('--verify-base without --base is refused by the CLI, never silently ignored', () => {
+    const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'ship-commit.mjs'), '--check-shipped-head', '--head', 'a'.repeat(40), '--verify-base', '--json'], { encoding: 'utf-8', windowsHide: true });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(JSON.parse(r.stdout).refusals.join(' '), /--verify-base needs --base/);
+  });
+});
