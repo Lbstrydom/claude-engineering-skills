@@ -165,7 +165,9 @@ The fields in the evidence column:
   - `verified`;
   - `provenance-lost`: the squash dropped or changed an AI-* trailer, the subject or the body;
   - `untested-base`: the squash's first parent is not the chain tail;
-  - `wrong-target`: the merged PR's base branch is not `run.base`.
+  - `wrong-target`: the merged PR's base branch is not `run.base`;
+  - `tree-mismatch` (rollup policy only, R2-H5): the parent is the chain tail, but the squash tree is not `candidateTree`.
+    The outcome carries `trees: {expected, observed}`.
 - `attribution` is `this-run` or `unknown` (§2.3).
 - `gate` is the AI-Gate value read back from the squash, or `null`.
 
@@ -186,12 +188,17 @@ violation refuses the run as `record-inconsistent` and merges nothing.
    Every classification in §2.3 returns a `{step, outcome}` pair from this list and is persisted by ONE `setStep`.
 3. The outcome `not-run/merge-unconfirmed` requires `step === 'merge'` and an `attempt`.
 6. **`finalized`** (R1-H6), an optional run field `{at, result}`, is written only after the final base read and the result
-   computation of §2.6, in one write. It requires every step to be terminal. The train patch comes after it and is
-   idempotent.
+   computation of §2.6, in one write. It requires every step to be terminal, or a `halt`. The train patch comes after it,
+   is a pure function of `finalized.result`, and is idempotent, so it can be repeated (R2-H2).
+7. **`halt`** (R2-H6), an optional run field `{code, member, at}`, is the persisted, non-resumable disposition of a
+   chain-invalidating observation: an external merge (`skipped/merged-externally`), or a landed verdict of `wrong-target`,
+   `untested-base` or `tree-mismatch`. It is written in the SAME `setStep` as that member's outcome. Once present, no
+   step may enter `merge`, the result is `ok: false`, and resume never processes another member: it finalizes. The remaining
+   members land only through a NEW train, built against the base as it now is. A halt cannot be cleared.
 4. **The chain is merge chronology, never step order.** A not-run member may land after later members, on a resume.
    `policy.baseChain[0]` is `B0`. For every k ≥ 1, exactly one landed member has `chainIndex === k`; its `mergeOid` equals
    `baseChain[k]`, and its `parent` equals `baseChain[k-1]`. Only the `verified` and `provenance-lost` verdicts take a
-   `chainIndex`. `untested-base` and `wrong-target` have `chainIndex: null` and never extend the chain. The final landed
+   `chainIndex`. `untested-base`, `wrong-target` and `tree-mismatch` have `chainIndex: null` and never extend the chain. The final landed
    tree is always read from `baseChain.at(-1)`.
 5. A landed or skipped member's `mergeOid` is not repeated elsewhere in the run.
 
@@ -355,7 +362,9 @@ Each row is the `{step, outcome}` pair written in one `setStep` (§2.1 invariant
 | `merge`, no merge oid reported | any | `merged` + `not-run/awaiting-read-back`, run stop; resume re-views for the oid |
 | `pending`, `wait` or `update`, no merge oid reported | any | the phase unchanged + `not-run/awaiting-merge-evidence`, run stop; resume re-views and then applies the row above |
 
-**An external merge always stops the run** (R3-H1), including on the last member. It put a commit on the base that the chain
+**An external merge always stops the run** (R3-H1), including on the last member, and writes the `halt` with its outcome
+(R2-H6). The halt is what a resume reads first, so an external merge onto ANOTHER branch, which leaves the intended base
+equal to the chain tail and would pass a base check, still ends the run. It put a commit on the base that the chain
 does not hold, so no later merge and no `ok` result may rest on that chain. Independently, **before computing the result**,
 the loop reads the live base tip once more. When it is not `baseChain.at(-1)`, the run fault is `base-moved`, and the summary
 lists the observed tip next to the chain tail.
@@ -370,11 +379,12 @@ today's two branches, with the same texts.
 - `{ measured: true, firstParent, reasons, gate, baseRefName }` gives `landed` with the first matching verdict:
   - `wrong-target`, when `baseRefName !== run.base`;
   - `untested-base`, when `firstParent !== chain tail`;
+  - `tree-mismatch`, under the rollup policy, when the squash tree is not `candidateTree`;
   - `provenance-lost`, when `reasons.length`;
   - `verified` otherwise.
 
   Only `verified` and `provenance-lost` extend the chain, in the same write that sets `chainIndex = baseChain.length`.
-  `wrong-target` and `untested-base` stop the run.
+  `wrong-target`, `untested-base` and `tree-mismatch` write the `halt` (§2.1 invariant 7) in the same write and stop the run.
 
 ### 2.4 One record: F2 made impossible (#5, #14 transaction safety)
 
@@ -425,8 +435,10 @@ Each step is written as an intent before the remote action and as a result after
 **A finalized run** (`finalized` present, §2.1 invariant 6) is a **read-only historical summary** (R3-M1). A run whose
 members are all terminal but which has no `finalized` (a crash after the last member write) is NOT: resume performs the
 final base read and computes the result, both reads only, writes `finalized`, then repeats the idempotent train patch. A
-finalized run reads nothing remote, re-checks neither the grant nor the rules, and prints the stored summary with the
-stored exit code. A grant revoked after completion changes nothing, because no mutation is possible.
+finalized run repeats only the idempotent, local train patch from `finalized.result` (R2-H2), reads nothing remote for the
+landing, re-checks neither the grant nor the rules, and prints the stored summary with the
+stored exit code. A grant revoked after completion changes nothing, because no landing mutation is possible. The only
+remote calls it may still make are the rollup's post-landing cleanup (§2.9.6), which closes member PRs and never merges.
 
 **Otherwise**, before the first remote mutation, resume re-reads the grant (`run/grant-revoked` refuses) and the branch
 rules, then walks the steps in order. For each step it decides by `(step, outcome)`:
@@ -597,7 +609,7 @@ is retried:
 |---|---|---|
 | `push-intent` | `ls-remote` the branch | absent: push again; at `candidate.oid`: `pushed`; any other oid: refuse `rollup-branch-foreign` |
 | `pr-intent` | `gh pr list --head <branch> --base <base> --state all --json number,state,headRefOid,baseRefName` | none: create; exactly one OPEN at `candidate.oid`: adopt its number; anything else (two, closed, merged, another head): refuse `rollup-pr-ambiguous` |
-| `pr-open` | none | write the serial run |
+| `pr-open` | read `serial/<t>.json` | absent: `startPolicyRun`; present: validate it (schema and `validatePolicyRun`) and compare its immutable identity (train id, the step id equal to `branch`, `prNumber`, `testedOid` equal to `candidate.oid`, `policy.rollup`) with the operation record. Equal: adopt it and patch `run-started` (R2-H1). Different: refuse `rollup-run-mismatch` |
 | `run-started` | none | `resumeRollup` (the serial resume, §2.6) |
 
 **The entry points** (R1-H1): `approveSerial` refuses a train that carries `landing: 'rollup'`. The rollup serial run is
@@ -644,9 +656,12 @@ Never `--auto`; never `--delete-branch` (a deletion is Louis's, and `--delete-br
   head^{tree}, runId, gate, finalReview, sessionId}`. `runId`, `gate` and the final-review condition come from the child's
   `shipped-head/v1` envelope. The envelope has no audit SID field; `runId` is the store row that names it. This plan does
   not change PR A's contract to add one.
-- **The rollup's CI evidence**, against the CANDIDATE tree, on the serial step's landed outcome: an optional `ci: {tree,
-  checks: [{name, conclusion}], observedAt}`, filled from the `observeRequiredChecks` result the loop already has. It is
-  allowed only under the `rollup` policy (`validatePolicyRun`).
+- **The rollup's CI evidence**, against the CANDIDATE: `ci: {head, tree, checks: [{name, conclusion}], observedAt}`, from the
+  `observeRequiredChecks` result the loop already has. It is **persisted in the merge intent** (`attempt.ci`, written in
+  the same `setStep` as `attempt.head` and `attempt.messageSha256`), so a crash after the merge loses nothing (R2-H4). The
+  landed outcome copies `attempt.ci` byte for byte. `validatePolicyRun` requires `attempt.ci.head === step.testedOid ===
+  policy.rollup.candidate.oid` and `attempt.ci.tree === candidateTree`, and allows `ci` only under the `rollup` policy.
+  The final manifest is rendered from `attempt.ci`, so its pinned sha256 also covers the CI record.
 - **The manifest has two stages** (R1-H3), both rendered by the pure `renderRollupManifest` from the records only:
   - **provisional**, the PR body at create: the members and the held, with `"ci": "pending"` and `"stage": "provisional"`.
     It is never edited afterwards, so no PR-body update can fail;
@@ -698,12 +713,18 @@ A rebuilt rollup is always a new branch, so a red or stale rollup's candidate an
   malformed manifest renders as "manifest unreadable", never as zero members.
 - The catch-up event for that PR uses the reason `merged-via-rollup`, not `merged-without-ship`. The members were shipped by
   their chips; the rollup itself was not `/ship`ped, and the entry says exactly that.
-- **Member PRs, if any** (a member that opened one before the repo switched to rollup): only after the rollup run is
-  `finalized` with the step `landed` and a verdict of `verified`, `provenance-lost` or `untested-base` (the content is on
-  `run.base`; never `wrong-target`), each member PR that is still OPEN gets `gh pr close <n> --comment "superseded by #N
-  (fleet rollup <id>)"`. Progress is tracked per PR in `rollup.closures` (`pending`, `closed`, `failed` with the reason),
-  independently of the landing: resume retries `pending` and `failed` closes, re-reading each PR's state first, and a
-  closure never undoes or re-runs the landing. Never on `merge-unconfirmed`, `not-run` or a stop.
+- **Member PRs, if any** (a member that opened one before the repo switched to rollup) are closed by a **post-landing
+  cleanup**, separate from the landing (R2-H3). The landing is immutable once `finalized`; the cleanup is its own step with
+  its own record, `rollup.closures` in the train (`pending`, `closed`, `failed` with the reason):
+  - **when:** only after `finalized`, with the rollup step `landed` and its content on `run.base`: verdict `verified`,
+    `provenance-lost`, `untested-base` or `tree-mismatch`. A `halt` stops further MERGES, not cleanup; the member PRs are
+    superseded either way, because their content is on the base. Never on `wrong-target`, `merge-unconfirmed`, `not-run`,
+    or a stop before landing;
+  - **what:** for each member PR still OPEN, `gh pr close <n> --comment "superseded by #N (fleet rollup <id>)"`, after
+    re-reading its state;
+  - **invocation and retry:** it runs at the end of `approveRollup`, and again on every `land --resume <t> --rollup`, for
+    `pending` and `failed` entries only. These are the only remote calls a finalized rollup resume makes, and none of them
+    touches the merge. The summary lists every closure that is not `closed`.
 - **Done-ness needs nothing new** beyond §2.8's rule that a `wrong-target` landing never makes the train `landed`:
   `deriveTrainDone` (`scripts/lib/fleet/overlap.mjs:589` (`d53272aa`)) marks a session done
   when a `landed` train lists it as a source, and a rollup train's sources are exactly its admitted members. Held members are
@@ -1008,6 +1029,17 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
       - admission modes: a rollup candidate carrying a CI field, and a ship-batch candidate without one, are rejected;
       - the squash body is compared with `attempt.messageSha256`; a provisional manifest on `main` renders as
         "manifest unreadable" in the record.
+  23. **Round-2 recovery cases:**
+      - crash before and after the serial write and before `run-started`: resume adopts a matching run once, and refuses a
+        run with a different `prNumber` or candidate as `rollup-run-mismatch`;
+      - crash after `finalized` and before the train patch: a resume applies the patch with zero remote reads;
+      - cleanup: a failed close is retried on resume without a merge call; an `untested-base` and a `tree-mismatch` rollup
+        still close member PRs; a `wrong-target` one closes none;
+      - CI evidence: crash after the merge; the landed outcome's `ci` equals the intent's `attempt.ci` byte for byte;
+      - `tree-mismatch`: a squash onto the right parent with another tree gives `landed/tree-mismatch` with both trees, a
+        `halt`, and `ok: false`, at first read-back and at resume;
+      - halt: an external merge of member 1 onto ANOTHER branch, the intended base unchanged, then resume: no further
+        merge call, `ok: false`, the summary names the halt.
 - **Byte identity:** `tests/fleet-serial-golden.test.mjs`, plus the unchanged `tests/fleet-serial.test.mjs` and
   `tests/ship-train-recovery.test.mjs`.
 
