@@ -1835,7 +1835,7 @@ async function main() {
     hookLines: DRY_RUN ? [] : hookEpilogueLines(targetRepos),
   }, { R, G, Y, D, X })) console.log(line);
 
-  if (priorUpstream.stats.renderFailures) console.log(`${Y}⚠ ${priorUpstream.stats.renderFailures} earlier upstream version(s) could not be rendered${X} ${D}— those diverged files were refused as before; a renderer regression would look like this${X}`);
+  if (priorUpstream.stats.renderFailures) console.log(`${Y}⚠ ${priorUpstream.stats.renderFailures} earlier upstream version(s) could not be rendered${X} ${D}— a diverged file whose only evidence was such a version is refused as before; a renderer regression would look like this${X}`);
   if (priorUpstream.stats.exhausted) console.log(`${Y}⚠ prior-upstream history lookup budget exhausted${X} ${D}— later diverged files were refused as before; re-run after resolving the first ones${X}`);
   if (undeclaredDeps.length) console.log(`${Y}⚠ undeclared required bundle packages${X} ${D}(per consumer; each line above names the command):${X}\n  ${undeclaredDeps.join('\n  ')}`);
   // D2b — sync-time shared-cloud-config trigger. Skip on dry-run, errors,
