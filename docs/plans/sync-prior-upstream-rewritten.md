@@ -233,3 +233,21 @@ chip runs no local full suite (the `full-suite.yml` Actions run is the full run)
   round came back clean (H 3 -> 1 -> 1, each accepted or overruled in deliberation).
 - Final gate round 1 (`--mode plan`, run `3800874b`): **APPROVE** (gemini-4-argon), gate `approve`, blocking 0, debt 0, wrongly
   dismissed 0. Converged; no further rounds.
+
+## Code audit trail (`/audit-code --scope diff`, SID `audit-code-1795001812266-97592`)
+
+- R1 H:3 M:7: raw acceptance decided per HISTORICAL blob (`render` returns `{content, hits}`; a raw copy of a blob the pipeline
+  would rewrite is a divergence whatever the current file looks like), retained bodies use `allocUnsafeSlow`, render failures are
+  counted and warned, and the mandatory e2e moved to a controlled source history. GPT deliberation OVERRULED M2 (retention policy)
+  and M7 (one-line `stripAnsi`) and ruled a COMPROMISE on M3/M6 (taken). Acceptance 80%.
+- R2 H:3 M:2: a raw match is NOT accepted when a render was requested but the blob could not be rendered (threw, binary, over a
+  cap): fail closed. The mandatory e2e builds a fresh source repository from the tracked files plus a synthetic history (no
+  shallow skip, no dependence on this repo's history). Acceptance 80%.
+- R3 PASS L:1 (warning wording) fixed. R4 PASS H:0 M:0 L:0, stable 2/2.
+- Final gate round 1: **APPROVE** (gemini-4-argon), blocking 0, debt 0.
+- Negative controls (each seen red, then restored green): the parent sources `e93ccd78` (5 e2e/unit cases red); the skip re-inserted
+  at the wiring site (storyline and mandatory e2e red); `Buffer.from` view retained (copy test red); per-blob hits check removed
+  (unit + controlled e2e red); fail-closed raw rule reverted (2 unit cases red).
+- Design deltas from the audited plan: `acceptRaw` is now a necessary, not sufficient, condition for raw acceptance (the blob's own
+  render must succeed with zero hits); `render` may return `{content, hits}`; a controlled fresh-repo e2e is the mandatory
+  regression and the f3b37321 case is a labelled diagnostic plus a supplementary flow.
