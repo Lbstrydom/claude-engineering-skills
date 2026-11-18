@@ -319,3 +319,23 @@ describe('isShipStepDelta: HTML comments are judged in DOCUMENT ORDER (PR A audi
     assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: add('- r2 <!-- a --> and <!-- b -->') }), null);
   });
 });
+
+describe('isShipStepDelta: markup is judged IN CONTEXT (PR A audit round 4)', () => {
+  const withLog = PLAN_OLD + '## Implementation Log\n- r1 first entry\n- r2 audited paragraph\n';
+  it('two fence lines that BALANCE among the additions but surround an existing paragraph are refused (the paragraph would become code)', () => {
+    const surrounded = withLog.replace('- r2 audited paragraph\n', '```\n- r2 audited paragraph\n```\n');
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: surrounded }), /would render in a different context/);
+  });
+  it('a comment pair that balances among the additions but wraps an existing line is refused', () => {
+    const wrapped = withLog.replace('- r1 first entry\n', '<!--\n- r1 first entry\n-->\n');
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: wrapped }), /would render in a different context/);
+  });
+  it('the same fences added AFTER every existing line, closed, are fine (the control)', () => {
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```\nexample\n```\n' }), null);
+  });
+  it('the same holds for the legacy status.md log', () => {
+    const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
+    const bad = ['# Status', '```', 'intro', '```', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
+    assert.match(delta({ status: 'M', rel: 'status.md', oldText: old, newText: bad }), /different context|rewritten|changed or removed/);
+  });
+});

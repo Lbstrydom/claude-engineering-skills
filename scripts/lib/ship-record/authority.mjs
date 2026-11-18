@@ -112,6 +112,48 @@ function markupProblem(addedLines) {
   return open ? 'opens a code fence it does not close' : null;
 }
 
+/**
+ * The RENDER CONTEXT at the start of every line of a document (plus its end): whether an HTML comment is open there, and which code
+ * fence. Inside a fence an HTML comment is literal; inside a comment a fence is literal. Lets two versions of a document be compared
+ * line by line for "does this edit change how an UNCHANGED line renders".
+ * @returns {string[]} one context string per line, then one for the end of the document
+ */
+function contexts(ls) {
+  const out = [];
+  let inComment = false;
+  let fence = null;
+  for (const l of ls) {
+    out.push(`${inComment ? 'c' : ''}${fence ? `${fence.ch}${fence.len}` : ''}`);
+    if (inComment) { const k = l.indexOf('-->'); if (k >= 0) { inComment = false; if (l.indexOf('<!--', k + 3) >= 0 && l.indexOf('-->', l.indexOf('<!--', k + 3)) < 0) inComment = true; } continue; }
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(l);
+    if (fence) { if (m && m[1][0] === fence.ch && m[1].length >= fence.len && m[2].trim() === '') fence = null; continue; }
+    if (m) { if (!(m[1][0] === '`' && m[2].includes('`'))) fence = { ch: m[1][0], len: m[1].length }; continue; }
+    const o = l.lastIndexOf('<!--');
+    if (o >= 0 && l.indexOf('-->', o + 4) < 0) inComment = true;
+  }
+  out.push(`${inComment ? 'c' : ''}${fence ? `${fence.ch}${fence.len}` : ''}`);
+  return out;
+}
+
+/**
+ * Does the edit change how any line it did NOT touch renders? Each unchanged old line is paired with its new line (through the
+ * diff runs) and their contexts compared, and so are the document ends: two fence lines that "balance" among the additions but
+ * surround an existing paragraph still turn that paragraph into code, and this sees it. null when nothing unchanged moved context.
+ */
+function contextProblem(a, b, runs) {
+  const ca = contexts(a);
+  const cb = contexts(b);
+  let i = 0;
+  let j = 0;
+  const same = () => ca[i] === cb[j];
+  for (const r of runs) {
+    while (i < r.oldAt) { if (!same()) return `an unchanged line (${i + 1}) would render in a different context (an HTML comment or code fence now surrounds it)`; i++; j++; }
+    i += r.oldN; j += r.newN;
+  }
+  while (i < a.length) { if (!same()) return `an unchanged line (${i + 1}) would render in a different context (an HTML comment or code fence now surrounds it)`; i++; j++; }
+  return ca[ca.length - 1] === cb[cb.length - 1] ? null : 'the document would END inside an HTML comment or code fence it did not end in before';
+}
+
 /** `[first, last)` line range (0-based) of the Implementation Log section, or null when the text has none. */
 function logRange(ls) {
   const h = ls.indexOf(LOG_HEADING);
@@ -206,7 +248,11 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
     for (const l of head) { if (k < h && l === a[k]) k++; else inserted.push(l); }
     if (k !== h) return `${LEGACY_LOG_REL}: lines above the first entry were changed or removed`;
     const bad = markupProblem(inserted);
-    return bad ? `${LEGACY_LOG_REL}: the inserted text ${bad}` : null;
+    if (bad) return `${LEGACY_LOG_REL}: the inserted text ${bad}`;
+    const lruns = diffRuns(a, b);
+    if (lruns === null) return `${LEGACY_LOG_REL} is too large to verify the delta line by line, so it refuses`;
+    const ctx = contextProblem(a, b, lruns);
+    return ctx ? `${LEGACY_LOG_REL}: ${ctx}` : null;
   }
   if (!PLAN_PATH_RE.test(rel)) return `${rel} is outside the ship-step allowlist (a new status entry, status.md, docs/plans/*.md)`;
   const runs = diffRuns(a, b);
@@ -229,6 +275,8 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
   // close would swallow everything after the log (or the section that follows it).
   const badMarkup = markupProblem(runs.flatMap((r) => b.slice(r.newAt, r.newAt + r.newN)));
   if (badMarkup) return `${rel}: the added text ${badMarkup}`;
+  const badContext = contextProblem(a, b, runs);
+  if (badContext) return `${rel}: ${badContext}`;
   // A log the ship CREATES must be APPENDED: the last section, in an insertion that starts AFTER every non-blank line of the old
   // document. A heading dropped into the middle of the document, or inside the final section ahead of its own text, would
   // otherwise turn old prose into "log".
