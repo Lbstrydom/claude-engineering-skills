@@ -591,3 +591,17 @@ describe('--check-shipped-head: the dispatcher and the runner (PR A audit round 
     assert.match(reason(env, 'post-audit-delta'), /equals the audited tree/);
   });
 });
+
+describe('--check-shipped-head: worktree discovery uses the sanitized environment too (PR A audit round 2)', () => {
+  it('a GIT_DIR / GIT_WORK_TREE inherited from a hook or a parent cannot point the CLI at another checkout', async () => {
+    const mine = await member({});
+    const { dir: other } = makeRepo();
+    const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'ship-commit.mjs'), '--check-shipped-head', '--head', mine.head, '--offline', '--json'], {
+      cwd: mine.dir, encoding: 'utf-8', windowsHide: true,
+      env: { ...process.env, GIT_DIR: path.join(other, '.git'), GIT_WORK_TREE: other, AUDIT_DB_URL: '', LEARNING_DISABLE: '1', AZURE_OPENAI_ENDPOINT: '' },
+    });
+    const env = JSON.parse(r.stdout);
+    assert.equal(env.head, mine.head, `it judged ${env.head}, the member's own head is ${mine.head}: ${r.stderr}`);
+    assert.notEqual(failing(env)[0], 'head', 'the head must resolve in the member\'s own repository');
+  });
+});

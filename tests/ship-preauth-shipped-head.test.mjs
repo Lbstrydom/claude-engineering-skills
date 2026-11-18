@@ -279,7 +279,7 @@ describe('isShipStepDelta: the hardened grammar (code-audit round 1)', () => {
   });
   it('text the ship adds that opens a code fence it does not close refuses', () => {
     const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
-    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nunclosed\n' }), /code fence it does not balance/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nunclosed\n' }), /code fence it does not close/);
     assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\nclosed\n```\n' }), null);
   });
   it('a whole document over the size bound refuses BEFORE it is split, even when almost all of it is unchanged', () => {
@@ -288,5 +288,21 @@ describe('isShipStepDelta: the hardened grammar (code-audit round 1)', () => {
   });
   it('an unknown mode refuses (never a pass)', () => {
     assert.match(isShipStepDelta({ status: 'A', rel: entryName, newText: 'x' }), /not a regular file \(mode unknown\)/);
+  });
+});
+
+describe('isShipStepDelta: markup balance in BOTH grammars (PR A audit round 2)', () => {
+  it('an HTML comment opened in status.md ABOVE the first entry is refused (it would swallow every entry below it)', () => {
+    const old = ['# Status', 'intro', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
+    const bad = ['# Status', 'intro', '<!-- never closed', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
+    const good = ['# Status', 'intro', '<!-- a closed note -->', '', '## 2026-11-17 old entry', 'old body', ''].join('\n');
+    assert.match(delta({ status: 'M', rel: 'status.md', oldText: old, newText: bad }), /HTML comment it does not balance/);
+    assert.equal(delta({ status: 'M', rel: 'status.md', oldText: old, newText: good }), null, 'a balanced comment is fine (the control)');
+  });
+  it('a backtick fence closed by a TILDE fence is still unclosed (type must match), in both grammars', () => {
+    const withLog = PLAN_OLD + '## Implementation Log\n- r1\n';
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '```js\ncode\n~~~\n' }), /code fence/);
+    assert.match(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````\n```\n' }), /code fence/, 'a shorter closer does not close a longer opener');
+    assert.equal(delta({ status: 'M', rel: 'docs/plans/x.md', oldText: withLog, newText: withLog + '````js\ncode\n````\n' }), null);
   });
 });

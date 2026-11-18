@@ -89,6 +89,23 @@ const MAX_DIFF_LINES = 200_000;
 /** A whole document larger than this is refused BEFORE it is split or diffed (the bound on the unchanged part too). */
 const MAX_DOC_CHARS = 8_000_000;
 
+/**
+ * Why text the ship ADDS would change how the rest of the document renders, or null. An HTML comment it opens and does not close
+ * swallows what follows; so does a code fence, judged by the CommonMark rules (same character, at least as many, nothing after).
+ * @param {string[]} addedLines
+ */
+function markupProblem(addedLines) {
+  const text = addedLines.join('\n');
+  if ((text.match(/<!--/g) ?? []).length !== (text.match(/-->/g) ?? []).length) return 'opens or closes an HTML comment it does not balance';
+  let open = null;
+  for (const l of addedLines) {
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(l);
+    if (!m) continue;
+    if (!open) { if (!(m[1][0] === '`' && m[2].includes('`'))) open = { ch: m[1][0], len: m[1].length }; } else if (m[1][0] === open.ch && m[1].length >= open.len && m[2].trim() === '') open = null;
+  }
+  return open ? 'opens a code fence it does not close' : null;
+}
+
 /** `[first, last)` line range (0-based) of the Implementation Log section, or null when the text has none. */
 function logRange(ls) {
   const h = ls.indexOf(LOG_HEADING);
@@ -179,8 +196,11 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
     const head = b.slice(0, b.length - tail.length);
     if (b.length < tail.length || tail.some((l, k) => l !== b[head.length + k])) return `${LEGACY_LOG_REL}: an existing entry was changed or the insertion is below the first entry`;
     let k = 0;
-    for (const l of head) if (k < h && l === a[k]) k++;
-    return k === h ? null : `${LEGACY_LOG_REL}: lines above the first entry were changed or removed`;
+    const inserted = [];
+    for (const l of head) { if (k < h && l === a[k]) k++; else inserted.push(l); }
+    if (k !== h) return `${LEGACY_LOG_REL}: lines above the first entry were changed or removed`;
+    const bad = markupProblem(inserted);
+    return bad ? `${LEGACY_LOG_REL}: the inserted text ${bad}` : null;
   }
   if (!PLAN_PATH_RE.test(rel)) return `${rel} is outside the ship-step allowlist (a new status entry, status.md, docs/plans/*.md)`;
   const runs = diffRuns(a, b);
@@ -201,9 +221,8 @@ export function isShipStepDelta({ status, rel, oldText = null, newText = null, o
   }
   // What the ship ADDS must not change how the rest of the document renders: an HTML comment or a code fence it opens and does not
   // close would swallow everything after the log (or the section that follows it).
-  const added = runs.flatMap((r) => b.slice(r.newAt, r.newAt + r.newN)).join('\n');
-  if ((added.match(/<!--/g) ?? []).length !== (added.match(/-->/g) ?? []).length) return `${rel}: the added text opens or closes an HTML comment it does not balance`;
-  if ((added.split('\n').filter((l) => /^ {0,3}(`{3,}|~{3,})/.test(l)).length) % 2 !== 0) return `${rel}: the added text opens or closes a code fence it does not balance`;
+  const badMarkup = markupProblem(runs.flatMap((r) => b.slice(r.newAt, r.newAt + r.newN)));
+  if (badMarkup) return `${rel}: the added text ${badMarkup}`;
   // A log the ship CREATES must be APPENDED: the last section, in an insertion that starts AFTER every non-blank line of the old
   // document. A heading dropped into the middle of the document, or inside the final section ahead of its own text, would
   // otherwise turn old prose into "log".

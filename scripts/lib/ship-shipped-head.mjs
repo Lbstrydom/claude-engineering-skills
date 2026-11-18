@@ -279,7 +279,7 @@ export async function runShippedHeadCli(argv, { cwd = process.cwd(), store } = {
   if (ri >= 0 && (remote === undefined || remote.startsWith('--') || !REMOTE_RE.test(remote))) return bad('--remote needs a plain remote name');
   if (bi >= 0 && (baseBranch === undefined || baseBranch.startsWith('--') || !isPlainBranch(baseBranch))) return bad('--base needs a valid branch name');
   if (others.length > 0) return bad(`a standalone read-only check cannot be combined with ${others.join(' ')}`);
-  const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf-8', windowsHide: true });
+  const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, env: sanitizeGitEnv(cwd), encoding: 'utf-8', windowsHide: true, timeout: GIT_TIMEOUT_MS });
   if (top.error || top.status !== 0) { process.stderr.write(`ship-commit: --check-shipped-head: not a git worktree (${(top.stderr || '').trim() || 'git failed'})\n`); return finishAndExit(1); }
   const repoRoot = String(top.stdout).trim();
   let env;
