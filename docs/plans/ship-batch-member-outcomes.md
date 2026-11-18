@@ -513,7 +513,8 @@ Exit codes use fleet's existing mapping (`land.mjs`): 0 for ok, 3 for refused or
 | the loop completed (no run stop) with at least one member still `not-run` (for example `checks-pending`, `pr-unreadable`, `head-churn`), with or without landed members | false | 3, resumable | `awaiting-merge` | `subset` | `landed k of n; m not yet decided: land --resume <t> --ship-batch re-checks them` |
 
 **`landed` as a train phase means the content is on `run.base`** (R1-H6): it requires every member terminal and no landed
-verdict `wrong-target` or `tree-mismatch` (R3-H1). Either leaves the train `awaiting-merge`, so `deriveTrainDone` never
+verdict `wrong-target` or `tree-mismatch` (R3-H1), and, under the rollup policy only, no `untested-base` (R4-H1; a ship-batch
+member's `untested-base` stays as §2.3 states, because its own head was proven by tree identity). Either leaves the train `awaiting-merge`, so `deriveTrainDone` never
 marks its sessions done. `untested-base` content IS on the base, so it may complete the train, and the summary leads with it.
 
 After the first line, the summary prints one line per member: status, code, attribution, the read-back AI-Gate, the merge
@@ -623,7 +624,14 @@ it validates the run with the schema and `validatePolicyRun`, refuses if a run f
 uses it too, so the plain path through `approveSerial` keeps its golden bytes. `resumeRollup` passes the rollup policy;
 `land --resume <t>` without `--rollup` on a rollup run refuses with the hint, as §2.4 does for ship-batch.
 
-Under `withTrainLock`, `approveRollup`:
+**The lock contract** (R4-H2), the same order as `approveSerial` today (`serial.mjs:402-433`): the train lock
+(`withTrainLock`) is held only for the short, local steps (the checks, the operation-record patches, writing the serial
+run) and is **released before** `runSerial`, which takes `serial/<t>.lock`. Finalization reacquires the train lock for the
+idempotent train patch (§2.6). The order is always train lock, then serial lock, and the serial lock is never held while
+the train lock is taken. No lock is re-entered. A test uses the real lock implementation and drives approve, a crash in
+each phase, and the resume without re-entry or inversion.
+
+Under `withTrainLock` (released before the serial run), `approveRollup`:
 
 1. checks that the train carries `landing: 'rollup'`, that it is approvable (`approvable`), and that the clone is not shallow;
 2. re-admits every member (§2.9.1 step 2). **Any** member that fails now stops the approve as `member-refused:<id>`. A member
@@ -717,19 +725,27 @@ A rebuilt rollup is always a new branch, so a red or stale rollup's candidate an
 - **One ship record for the rollup.** ship-record catch-up already writes one entry per merged PR from immutable facts
   (`scripts/lib/ship-record/entry.mjs:1-18` (`d53272aa`)). The rollup PR is one PR. Its merge commit's message holds the
   manifest and is immutable once merged, so `renderPrEntry` may read it. A new pure `parseRollupManifest(message)` (in
-  `scripts/lib/fleet/rollup.mjs`, imported by `entry.mjs`) lets the entry list every member: id, branch, head, gate. A
-  malformed manifest renders as "manifest unreadable", never as zero members.
-- The catch-up event for that PR uses the reason `merged-via-rollup`, not `merged-without-ship`. The members were shipped by
-  their chips; the rollup itself was not `/ship`ped, and the entry says exactly that.
+  `scripts/lib/fleet/rollup.mjs`, imported by `entry.mjs`) parses the manifest and a second pure function,
+  `verifyRollupProvenance(manifest, run, pr)`, decides whether it is verified. The entry lists members (id, branch, head,
+  gate) only for a verified manifest. A malformed manifest renders as "manifest unreadable", never as zero members.
+- **A manifest in commit text is self-declared** (R4-H3): any PR can author one. So the catch-up reason `merged-via-rollup`
+  requires **verified** provenance: a durable local run, `fleet/serial/<t>.json` of a train carrying `landing: 'rollup'`,
+  whose `policy.rollup.repo`, step `prNumber`, landed `mergeOid`, `policy.rollup.candidate.oid` and `attempt.messageSha256`
+  (the hash of the manifest body) all equal the merged PR's facts and the commit message's hash. When that run is
+  unavailable (another machine, a pruned registry) or any field differs, the entry keeps the reason `merged-without-ship`
+  and lists the manifest under "unverified, self-declared", never as members. The members were shipped by their chips; the
+  rollup itself was not `/ship`ped, and a verified entry says exactly that.
 - **Member PRs, if any** (a member that opened one before the repo switched to rollup) are closed by a **post-landing
   cleanup**, separate from the landing (R2-H3). The landing is immutable once `finalized`; the cleanup is its own step with
   its own record, `rollup.closures` in the train (`pending`, `closed`, `failed` with the reason):
-  - **when:** only after `finalized`, with the rollup step `landed` and the candidate content proven on `run.base`:
-    verdict `verified`, `provenance-lost` (the tree matched; only the message differs) or `untested-base` (GitHub applied the
-    tested squash onto a newer parent). A `halt` stops further MERGES, not this cleanup. **Never** on `tree-mismatch`
-    (R3-H1): a squash tree other than the candidate's does not prove any member's content landed, so neither the member PRs
-    nor the sessions are touched until a human verifies each member against the landed tree; the summary says so per
-    member. Never on `wrong-target`, `merge-unconfirmed`, `not-run`, or a stop before landing;
+  - **when:** only after `finalized`, with the rollup step `landed` and the candidate content PROVEN on `run.base`, which
+    only a squash tree equal to `candidateTree` proves: verdict `verified`, or `provenance-lost` (the tree matched; only the
+    message differs). A `halt` stops further MERGES, not this cleanup. **Never** on `tree-mismatch` (R3-H1) and **never**
+    on `untested-base` (R4-H1): the read-back chose `untested-base` from the parent alone, so it does not establish that the
+    squash tree holds the candidate's changes. For both, neither the member PRs nor the sessions are touched. The summary
+    lists each member with its admitted head and the landed tree, and the human verifies each member against that tree,
+    then closes the PRs and the sessions by hand. No automatic path substitutes for that adjudication, and no new verb is
+    added for it (right-sizing: the case is rare, and the residual is a PR left open, never one wrongly closed). Never on `wrong-target`, `merge-unconfirmed`, `not-run`, or a stop before landing;
   - **what** (R3-H2): each closure record is bound to `{repo, prNumber, head}`, the member's admitted head. Before closing,
     the cleanup re-reads the PR. OPEN with `headRefOid === head`: `gh pr close <n> --comment "superseded by #N (fleet rollup
     <id>)"`. Any other head: `skipped-head-moved`, never closed, and the summary tells the operator the PR holds work that
@@ -1042,13 +1058,17 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
         result and the train patch; a `wrong-target` rollup is never `landed` and closes no member PR;
       - admission modes: a rollup candidate carrying a CI field, and a ship-batch candidate without one, are rejected;
       - the squash body is compared with `attempt.messageSha256`; a provisional manifest on `main` renders as
-        "manifest unreadable" in the record.
+        "manifest unreadable" in the record;
+      - a syntactically valid FORGED manifest authored by an ordinary PR, and a genuine one whose run record is unavailable,
+        both keep `merged-without-ship` and list the manifest as unverified; a genuine one with a matching run gives
+        `merged-via-rollup`;
   23. **Round-2 recovery cases:**
       - crash before and after the serial write and before `run-started`: resume adopts a matching run once, and refuses a
         run with a different `prNumber` or candidate as `rollup-run-mismatch`;
       - crash after `finalized` and before the train patch: a resume applies the patch with zero remote reads;
-      - cleanup: a failed close is retried on resume without a merge call; an `untested-base` rollup closes member PRs;
-        a `tree-mismatch` or `wrong-target` one closes none and leaves the train `awaiting-merge`, sessions not done;
+      - cleanup: a failed close is retried on resume without a merge call; a `verified` or `provenance-lost` rollup closes
+        member PRs; an `untested-base` squash that omits or changes a member's content, a `tree-mismatch` and a `wrong-target`
+        close none and leave the train `awaiting-merge`, sessions not done;
       - cleanup binding: a member PR whose head moved after admission is `skipped-head-moved` and stays open;
       - policy constructor: creation and `pr-open` adoption produce byte-identical policies from one operation record;
       - schema: a rollup `landed` without `ci`, a ship-batch outcome with `ci`, and a `ci` that differs from `attempt.ci`
@@ -1126,3 +1146,7 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   and fixed in R1-R2), 3 LOCAL?, 4 polish. No round 4 was run: the STOP / STRUCTURAL / CONTINUE call goes to the coordinator
   with the handoff.
 - **Final review** (gemini, round 1 of 2): `APPROVE`, gate `approve` (blocking 0, debt 0), no new findings.
+- **R4, past the cap** (`--past-cap "Louis approved one more round, then implement"`, 2026-11-18): HIGH 3 / MEDIUM 0, all
+  accepted and fixed (100%, 3/3 labelled): `untested-base` under the rollup policy authorises no cleanup or done-ness; a
+  lock contract in `approveSerial`'s order; `merged-via-rollup` requires a matching durable run record. **No R5**, per the
+  instruction. Open findings carried to implementation as test cases: none beyond §9 tests 22-23, which already hold each R4 case.
