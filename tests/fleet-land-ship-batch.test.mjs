@@ -614,7 +614,7 @@ describe('subset: the landed set is stated honestly (F5)', () => {
 describe('the grant, the rules and a closed run (R3-M1)', () => {
   it('GRANT ABSENT: nothing merges and nothing changes', () => {
     const b = batch(1);
-    fs.rmSync(b.grantFile, { force: true, maxRetries: 3, retryDelay: 50 });
+    fs.rmSync(b.grantFile, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const w = world(b);
     const r = approve(b, w.gh);
     assert.equal(r.ok, false);
@@ -625,7 +625,7 @@ describe('the grant, the rules and a closed run (R3-M1)', () => {
   it('GRANT REVOKED mid-run: the run stops grant-revoked before the next merge', () => {
     const b = batch(2);
     const w = world(b);
-    w.mergeBehavior = ({ member, args, p }) => { p.mergeCommit = squashFrom(b, member, args); p.state = 'MERGED'; fs.rmSync(b.grantFile, { force: true, maxRetries: 3, retryDelay: 50 }); return ok(); };
+    w.mergeBehavior = ({ member, args, p }) => { p.mergeCommit = squashFrom(b, member, args); p.state = 'MERGED'; fs.rmSync(b.grantFile, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); return ok(); };
     const r = approve(b, w.gh);
     assert.equal(w.merges.length, 1, 'the second merge never happened');
     assert.match(r.text, /grant-revoked/);
@@ -646,7 +646,7 @@ describe('the grant, the rules and a closed run (R3-M1)', () => {
     const w = world(b);
     const first = approve(b, w.gh);
     assert.equal(first.ok, true);
-    fs.rmSync(b.grantFile, { force: true, maxRetries: 3, retryDelay: 50 });
+    fs.rmSync(b.grantFile, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     w.rulesFail = true;
     const before = w.calls.length;
     const again = resume(b, w.gh);
