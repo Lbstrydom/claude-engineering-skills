@@ -23,7 +23,7 @@ import { archiveReport } from './lifecycle.mjs';
 import { hooksPathDependents, hooksPathRefusals } from './hooks-path-guard.mjs';
 import { gitCommonDir, runGit } from './git-facts.mjs';
 import { renderCommand } from './shell-quote.mjs';
-import { transact } from './registry.mjs';
+import { readSessions, transact } from './registry.mjs';
 import { lastActivity, provablyIdle } from './unregistered.mjs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -31,6 +31,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const SELF_SWEEPING_PREFIXES = Object.freeze([SANDBOX_PREFIX, CONSUMER_SNAPSHOT_PREFIX]);
 /** A reflog longer than this is kept as unverified rather than read in part. */
 export const MAX_REFLOG_LINES = 1000;
+/** Bytes read from a reflog or FETCH_HEAD, and distinct commit ids checked, before the registration is kept as unverified. */
+export const MAX_EVIDENCE_BYTES = 1_000_000;
+export const MAX_EVIDENCE_IDS = 2000;
 const MAX_REF_ENTRIES = 5000;
 const OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const ZERO = /^0+$/;
@@ -82,6 +85,8 @@ export function registrationHistory(ctx, w, { git = runGit } = {}) {
   // The reflog and per-worktree refs are read as files, which is how the files backend stores them. Another ref storage (reftable)
   // keeps them elsewhere, so "no file" would read as "nothing to lose": fail closed instead.
   const fmt = git(['config', '--get', 'extensions.refstorage'], ctx.cwd);
+  // `git config --get` exits 1 for an UNSET key; any other failure means the format is unknown, which is not "files".
+  if (!fmt.ok && fmt.status !== 1) return { ok: false, kept: `registration not verified: the ref storage format could not be read (${fmt.reason ?? 'git config failed'})` };
   if (fmt.ok && String(fmt.stdout).trim() && String(fmt.stdout).trim() !== 'files') return { ok: false, kept: `registration not verified: ref storage is ${String(fmt.stdout).trim()}, whose reflog and per-worktree refs are not inspected here` };
   const admin = adminDirOf(c.dir, w.path);
   if (!admin.ok) return { ok: false, kept: `registration not verified: ${admin.reason}` };
@@ -94,6 +99,8 @@ export function registrationHistory(ctx, w, { git = runGit } = {}) {
   if (!w.head || !OID.test(w.head)) return { ok: false, kept: `registration not verified: its HEAD is ${w.head ?? 'not listed'}` };
   ids.add(w.head);
   let log = '';
+  const tooBig = (f) => { try { return fs.statSync(f).size > MAX_EVIDENCE_BYTES; } catch { return false; } };
+  if (tooBig(path.join(admin.dir, 'logs', 'HEAD'))) return { ok: false, kept: `registration not verified: its HEAD reflog is larger than ${MAX_EVIDENCE_BYTES} bytes` };
   try { log = fs.readFileSync(path.join(admin.dir, 'logs', 'HEAD'), 'utf8'); } catch (e) { if (e.code !== 'ENOENT') return { ok: false, kept: `registration not verified: cannot read its HEAD reflog (${e.code ?? e.message})` }; }
   const lines = log.split('\n').filter(Boolean);
   if (lines.length > MAX_REFLOG_LINES) return { ok: false, kept: `registration not verified: its HEAD reflog has ${lines.length} entries (more than ${MAX_REFLOG_LINES})` };
@@ -109,6 +116,7 @@ export function registrationHistory(ctx, w, { git = runGit } = {}) {
     ids.add(orig);
   } catch (e) { if (e.code !== 'ENOENT') return { ok: false, kept: `registration not verified: cannot read ORIG_HEAD (${e.code ?? e.message})` }; }
   // FETCH_HEAD is per-worktree and lists fetched commits (first column) that no ref need hold.
+  if (tooBig(path.join(admin.dir, 'FETCH_HEAD'))) return { ok: false, kept: `registration not verified: its FETCH_HEAD is larger than ${MAX_EVIDENCE_BYTES} bytes` };
   try {
     for (const line of fs.readFileSync(path.join(admin.dir, 'FETCH_HEAD'), 'utf8').split('\n').filter(Boolean)) {
       const id = line.split(/\s/)[0];
@@ -116,7 +124,12 @@ export function registrationHistory(ctx, w, { git = runGit } = {}) {
       ids.add(id);
     }
   } catch (e) { if (e.code !== 'ENOENT') return { ok: false, kept: `registration not verified: cannot read FETCH_HEAD (${e.code ?? e.message})` }; }
-  // ONE call for the whole set: an id that is not a commit makes rev-list fail, which is "unverified" (kept), never "nothing there".
+  if (ids.size > MAX_EVIDENCE_IDS) return { ok: false, kept: `registration not verified: ${ids.size} distinct commit ids (more than ${MAX_EVIDENCE_IDS})` };
+  // Every id must BE a commit (rev-list alone would accept a blob or tree): one batch call, one line per id.
+  const types = git(['cat-file', '--batch-check=%(objecttype)'], ctx.cwd, { input: `${[...ids].join('\n')}\n` });
+  const kinds = types.ok ? String(types.stdout).split('\n').filter(Boolean) : [];
+  if (!types.ok || kinds.length !== ids.size || kinds.some((k) => k !== 'commit')) return { ok: false, kept: 'registration not verified: an id in HEAD, its reflog, ORIG_HEAD or FETCH_HEAD is missing or is not a commit' };
+  // Reachability for the whole set in ONE call; a failure is "unverified" (kept), never "nothing there".
   const rl = git(['rev-list', '--max-count=20', ...ids, '--not', '--remotes'], ctx.cwd);
   if (!rl.ok) return { ok: false, kept: `registration not verified: an id in HEAD, its reflog, ORIG_HEAD or FETCH_HEAD is not a commit here, or git failed (${rl.reason})` };
   const n = String(rl.stdout).split('\n').filter(Boolean).length;
@@ -134,6 +147,9 @@ const risksOf = (r) => Object.entries(r.risks).filter(([, v]) => v.length);
  */
 export function planDetached(ctx, { worktrees, mainCheckout, here, staleMs, nowMs, past, deadlineAt, clock, git = runGit, report = archiveReport }) {
   const out = empty();
+  // A worktree a fleet session registered is its owner's, whatever git says; an unreadable registry cannot rule that out.
+  const reg = readSessions(ctx.dir);
+  const ownerOf = (wp) => reg.sessions.find((x) => x.worktree && samePath(x.worktree, wp));
   for (const w of worktrees) {
     if (w.bare) continue;
     const gone = w.prunable || w.missing;
@@ -148,6 +164,9 @@ export function planDetached(ctx, { worktrees, mainCheckout, here, staleMs, nowM
       if (h.ok) out.stale.push({ path: w.path, head: w.head, reason: w.prunableReason ?? 'directory gone' }); else keep(h.kept);
       continue;
     }
+    if (!reg.complete) { keep('the session registry is unreadable, so "no registered session" cannot be shown'); continue; }
+    const session = ownerOf(w.path);
+    if (session) { keep(`registered to session ${session.id}`); continue; }
     const owner = selfSweeper(w.path);
     if (owner) { keep(`a pre-push sandbox (${owner}…): the next push's sweep removes it, and prune never races its owner`); continue; }
     if (past()) { out.unjudged += 1; continue; }

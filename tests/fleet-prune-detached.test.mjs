@@ -237,6 +237,59 @@ describe('registration evidence beyond the reflog (audit R1)', () => {
     assert.match(r.kept, /ref storage is reftable/);
   });
 
+  test('R3 H1/H3: a failing `git config` is "format unknown" (kept), only exit 1 means unset (control)', () => {
+    const w = world();
+    const dir = w.add('wt-a');
+    const wt = listWorktrees(w.fx.repo).worktrees.find((x) => path.resolve(x.path) === path.resolve(dir));
+    const failing = (status) => (args, cwd, o) => (args[0] === 'config' ? { ok: false, stdout: '', stderr: 'boom', status, reason: 'boom' } : runGit(args, cwd, o));
+    assert.equal(registrationHistory(w.ctx, wt, { git: failing(1) }).ok, true, 'exit 1 = unset');
+    const r = registrationHistory(w.ctx, wt, { git: failing(128) });
+    assert.equal(r.ok, false);
+    assert.match(r.kept, /ref storage format could not be read/);
+  });
+
+  test('R3 M3: an id that is not a commit (a blob in FETCH_HEAD) keeps it; a missing object keeps it; control: a commit id passes', () => {
+    const w = world();
+    const blob = git(['rev-parse', 'HEAD:a.txt'], w.fx.repo);
+    const mk = (name, line) => {
+      const dir = w.add(name);
+      fs.writeFileSync(path.join(w.adminOf(dir), 'logs', 'HEAD'), '');
+      fs.writeFileSync(path.join(w.adminOf(dir), 'FETCH_HEAD'), `${line}\n`);
+      return dir;
+    };
+    const asBlob = mk('wt-blob', `${blob}\t\tx`);
+    const missing = mk('wt-missing', `${'1'.repeat(40)}\t\tx`);
+    const asCommit = mk('wt-commit', `${w.pushed}\t\tx`);
+    const d = w.plan();
+    assert.match(w.kept(d, asBlob), /missing or is not a commit/);
+    assert.match(w.kept(d, missing), /missing or is not a commit/);
+    assert.ok(w.cand(d, asCommit), 'control');
+  });
+
+  test('R3 M1: an oversized FETCH_HEAD is kept as unverified, not read', () => {
+    const w = world();
+    const dir = w.add('wt-big');
+    fs.writeFileSync(path.join(w.adminOf(dir), 'FETCH_HEAD'), `${w.pushed}\t\tx\n`.repeat(30_000));
+    assert.match(w.kept(w.plan(), dir), /FETCH_HEAD is larger than/);
+  });
+
+  test('R3 H2/M2: a worktree a fleet session registered is not a candidate at PLANNING (control: another session elsewhere)', () => {
+    const w = world();
+    const dir = w.add('wt-owned');
+    const other = w.add('wt-free');
+    const iso = (ms) => new Date(ms).toISOString();
+    const session = (id, worktree) => ({
+      schemaVersion: 1, rev: 1, id, source: { kind: 'branch', branch: id, repo: null, prNumber: null, headRepo: null, headRef: id, baseRef: 'main' },
+      worktree, intent: 'x', paths: [], state: 'working', gen: 1, startOid: '0'.repeat(40), waitingOn: [], ready: null, knownOverlaps: [],
+      leaseExpiresAt: iso(Date.now() + 3_600_000), updatedAt: iso(Date.now()), createdAt: iso(Date.now()),
+    });
+    transact(w.ctx.dir, (t) => { t.writeSession(session('owner', dir)); });
+    const d = w.plan();
+    assert.match(w.kept(d, dir), /registered to session owner/);
+    assert.equal(w.cand(d, dir), undefined);
+    assert.ok(w.cand(d, other), 'control');
+  });
+
   test('M4: a spent budget counts stale registrations as unjudged, never as listed or kept', () => {
     const w = world();
     const gone = w.add('wt-gone');
