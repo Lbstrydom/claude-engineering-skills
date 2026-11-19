@@ -11,7 +11,8 @@ import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots, commitFile, installFakeGh, makeFleetRepo, runFleet, scrubbedEnv } from './helpers/fleet-repo.mjs';
 import { fleetDir } from '../scripts/lib/fleet/registry.mjs';
-import { listWorktrees } from '../scripts/lib/fleet/git-facts.mjs';
+import { listWorktrees, runGit } from '../scripts/lib/fleet/git-facts.mjs';
+import { transact } from '../scripts/lib/fleet/registry.mjs';
 import { applyDetached, planDetached, registrationHistory, renderDetached } from '../scripts/lib/fleet/prune-detached.mjs';
 
 after(cleanupFleetRoots);
@@ -213,6 +214,29 @@ describe('registration evidence beyond the reflog (audit R1)', () => {
     assert.match(text, /git worktree prune is NOT offered/);
   });
 
+  test('R2 H1/H3: an unjudged registration also withholds git worktree prune (it would be deleted with the judged ones)', () => {
+    const w = world();
+    const judged = w.add('wt-gone-judged');
+    rmGone(judged);
+    const d = w.plan();
+    assert.match(renderDetached(d).join('\n'), /^ {6}git worktree prune$/m, 'control: all judged, offered');
+    const text = renderDetached({ ...d, unjudged: 1 }).join('\n');
+    assert.doesNotMatch(text, /^ {6}git worktree prune$/m);
+    assert.match(text, /not judged within the budget/);
+  });
+
+  test('R2 H2: a repository whose ref storage is not "files" is kept as unverified, never read as "no reflog" (control: files)', () => {
+    const w = world();
+    const dir = w.add('wt-a');
+    const wt = listWorktrees(w.fx.repo).worktrees.find((x) => path.resolve(x.path) === path.resolve(dir));
+    const stub = (format) => (args, cwd, o) => (args[0] === 'config' && args.includes('extensions.refstorage') ? { ok: Boolean(format), stdout: `${format}\n`, stderr: '', status: format ? 0 : 1 } : runGit(args, cwd, o));
+    assert.equal(registrationHistory(w.ctx, wt, { git: stub('files') }).ok, true);
+    assert.equal(registrationHistory(w.ctx, wt, { git: stub('') }).ok, true, 'unset = files');
+    const r = registrationHistory(w.ctx, wt, { git: stub('reftable') });
+    assert.equal(r.ok, false);
+    assert.match(r.kept, /ref storage is reftable/);
+  });
+
   test('M4: a spent budget counts stale registrations as unjudged, never as listed or kept', () => {
     const w = world();
     const gone = w.add('wt-gone');
@@ -269,12 +293,29 @@ describe('apply re-checks everything at apply time', () => {
     assert.match(a.results[0].reason, /registration changed since it was judged/);
     assert.equal(fs.existsSync(dir), true);
   });
-  test('a registered session on the worktree after planning → skipped; locked after planning → skipped', () => {
+  test('locked after planning → skipped', () => {
     const w = world();
     const dir = w.add('wt-a');
     const d = w.plan({ now: Date.now() + past });
     git(['worktree', 'lock', dir], w.fx.repo);
     assert.match(applyDetached(w.ctx, d, { list: listWorktrees, staleMs: 3 * DAY, clock: () => Date.now() + past }).results[0].reason, /locked/);
+  });
+  test('R2 M1: a session registered on the worktree after planning → skipped (control: another session elsewhere does not block)', () => {
+    const w = world();
+    const dir = w.add('wt-a');
+    const iso = (ms) => new Date(ms).toISOString();
+    const session = (id, worktree) => ({
+      schemaVersion: 1, rev: 1, id, source: { kind: 'branch', branch: id, repo: null, prNumber: null, headRepo: null, headRef: id, baseRef: 'main' },
+      worktree, intent: 'x', paths: [], state: 'working', gen: 1, startOid: '0'.repeat(40), waitingOn: [], ready: null, knownOverlaps: [],
+      leaseExpiresAt: iso(Date.now() + 3_600_000), updatedAt: iso(Date.now()), createdAt: iso(Date.now()),
+    });
+    const d = w.plan({ now: Date.now() + past });
+    transact(w.ctx.dir, (t) => { t.writeSession(session('elsewhere', path.join(w.fx.root, 'somewhere-else'))); });
+    const apply = () => applyDetached(w.ctx, d, { list: listWorktrees, staleMs: 3 * DAY, clock: () => Date.now() + past });
+    transact(w.ctx.dir, (t) => { t.writeSession(session('mine', dir)); });
+    const a = apply();
+    assert.match(a.results[0].reason, /a session has registered this worktree/);
+    assert.equal(fs.existsSync(dir), true);
   });
 
   test('freshness, both flag settings: fresh-in-plan is skipped without --include-fresh and removed with it; activity AFTER the plan is skipped even with it', () => {

@@ -79,6 +79,10 @@ function anyRefFile(dir) {
 export function registrationHistory(ctx, w, { git = runGit } = {}) {
   const c = gitCommonDir(ctx.cwd);
   if (!c.ok) return { ok: false, kept: `the git common dir could not be read (${c.reason})` };
+  // The reflog and per-worktree refs are read as files, which is how the files backend stores them. Another ref storage (reftable)
+  // keeps them elsewhere, so "no file" would read as "nothing to lose": fail closed instead.
+  const fmt = git(['config', '--get', 'extensions.refstorage'], ctx.cwd);
+  if (fmt.ok && String(fmt.stdout).trim() && String(fmt.stdout).trim() !== 'files') return { ok: false, kept: `registration not verified: ref storage is ${String(fmt.stdout).trim()}, whose reflog and per-worktree refs are not inspected here` };
   const admin = adminDirOf(c.dir, w.path);
   if (!admin.ok) return { ok: false, kept: `registration not verified: ${admin.reason}` };
   const refs = anyRefFile(path.join(admin.dir, 'refs'));
@@ -239,7 +243,9 @@ export function renderDetached(d) {
     lines.push('', `stale registrations (${d.stale.length}) — directory gone; listed only: \`--apply\` never runs \`git worktree prune\`, which is repository-wide and removes EVERY prunable entry git lists, these and any other:`);
     for (const s of d.stale) lines.push(`  ${s.path} · HEAD ${String(s.head).slice(0, 12)} — its history is held by a remote-tracking ref`);
     for (const e of goneKept) lines.push(`  kept: ${e.path}: ${e.reason}`);
-    if (d.stale.length && !goneKept.length) lines.push('      git worktree prune');
+    // Offered only when EVERY registration was judged: one kept or still unjudged would be deleted with the rest.
+    if (d.stale.length && !goneKept.length && !d.unjudged) lines.push('      git worktree prune');
+    else if (d.unjudged && !goneKept.length) lines.push(`      git worktree prune is NOT offered: ${plural(d.unjudged, 'registration')} (or worktree) not judged within the budget could be deleted with the rest. Re-run \`fleet prune\` unbudgeted.`);
     else if (goneKept.length) lines.push(`      git worktree prune is NOT offered: it would also delete the ${plural(goneKept.length, 'registration')} kept above, whose history only they hold. Rescue those commits first (e.g. \`git branch rescue-<n> <sha>\`), then re-run \`fleet prune\`.`);
   }
   return lines;

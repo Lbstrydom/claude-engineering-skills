@@ -127,7 +127,7 @@ export function pruneStatusLine(rec, cmd = 'fleet', alert = null) {
  * @returns {{crossed: boolean, lowerBound: boolean, why: string[], applyRemovable: number, stale: number}}
  */
 export function pruneAlertCrossed(rec, alert) {
-  const none = { crossed: false, lowerBound: false, why: [], applyRemovable: 0, stale: 0, staleKept: 0 };
+  const none = { crossed: false, lowerBound: false, why: [], applyRemovable: 0, stale: 0, staleKept: 0, unjudged: 0 };
   if (!alert || !rec) return none;
   const applyRemovable = rec.detached.removable + (rec.complete ? rec.removable : 0);
   const total = applyRemovable + rec.detached.stale;
@@ -135,7 +135,7 @@ export function pruneAlertCrossed(rec, alert) {
   const why = [];
   if (alert.removable && total >= alert.removable) why.push(`${lowerBound ? '≥' : ''}${total} removable (limit ${alert.removable}): ${applyRemovable} branch/worktree removal${applyRemovable === 1 ? '' : 's'}, ${rec.detached.stale} stale registration${rec.detached.stale === 1 ? '' : 's'}`);
   if (alert.worktrees && rec.worktrees !== null && rec.worktrees >= alert.worktrees) why.push(`${rec.worktrees} registered worktrees (limit ${alert.worktrees})`);
-  return { crossed: why.length > 0, lowerBound, why, applyRemovable, stale: rec.detached.stale, staleKept: rec.detached.staleKept };
+  return { crossed: why.length > 0, lowerBound, why, applyRemovable, stale: rec.detached.stale, staleKept: rec.detached.staleKept, unjudged: rec.detached.unjudged };
 }
 
 /** The ASK `fleet next` prints when the threshold is crossed: what to show the user, and only the action that can address what crossed. */
@@ -144,7 +144,7 @@ export function pruneAlertLine(rec, alert, cmd = 'fleet') {
   if (!c.crossed) return null;
   const asks = [];
   if (c.applyRemovable > 0) asks.push(`whether to run \`${cmd} prune --apply\``);
-  if (c.stale > 0 && c.staleKept === 0) asks.push(`whether to run \`git worktree prune\` by hand (repository-wide: it removes every prunable entry git lists; \`${cmd} prune\` names them)`);
+  if (c.stale > 0 && c.staleKept === 0 && !c.unjudged) asks.push(`whether to run \`git worktree prune\` by hand (repository-wide: it removes every prunable entry git lists; \`${cmd} prune\` names them)`);
   if (c.staleKept > 0) asks.push(`which of the ${c.staleKept} kept stale registration(s) to rescue first (\`${cmd} prune\` names them; the repository-wide \`git worktree prune\` is withheld while they exist)`);
   if (!asks.length) asks.push(`which worktrees to retire (\`${cmd} prune\` lists what is kept and why)`);
   return `ASK for the coordinator's next pass, not an action for this session: prune threshold crossed — ${c.why.join('; ')} — show the user \`${cmd} prune\` (read-only) and ask ${asks.join(' and ')}; removal is the user's decision`;
