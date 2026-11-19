@@ -64,7 +64,7 @@ substitute when the GPT legs have no route, and which of `AUDIT_DEGRADED` /
 `AUDIT_NOT_RUN` to report so a run that did not happen stays distinguishable
 from one that passed.
 
-Initialise session ID: `SID=audit-code-$(node -e "process.stdout.write(Date.now()+'-'+process.pid)")` — epoch ms plus a PID, so two sessions started in the same second get separate result, stderr and ledger files (a bare `$(date +%s)` gave both the same ones).
+Initialise session ID: `SID=audit-code-$(node -e "process.stdout.write(Date.now()+'-'+process.pid)")` — epoch ms plus a PID, so concurrent sessions never share result, stderr or ledger files.
 
 Kickoff card: `/audit-code — Starting | Plan: <path> | Max 6 rounds | SID: $SID`.
 

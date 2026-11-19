@@ -145,6 +145,39 @@ export function configureCallRecords({ repoRoot = process.cwd(), identity, resum
   return { ok: true };
 }
 
+/** Decide whether `--resume` is allowed at all. @returns {string|null} the refusal, or null */
+export function resumeRefusal({ resume, mode, tiered }) {
+  if (!resume) return null;
+  if (mode !== 'code') return `--resume applies to code audits only (resume-unsupported:${mode ?? 'none'})`;
+  return tiered ? '--resume is not supported with the tiered pipeline (resume-unsupported:tiered)' : null;
+}
+
+/** main()'s check: a refused `--resume` is a usage error (stderr, exit 1). Returns whether `--resume` was passed. */
+export function parseResumeFlag(args, { mode, tiered }) {
+  const resume = args.includes('--resume');
+  const refusal = resumeRefusal({ resume, mode, tiered });
+  if (refusal) { process.stderr.write(`Error: ${refusal}
+`); process.exit(1); }
+  return resume;
+}
+
+/** configureCallRecords for a run context; a refused resume is a usage error: message on stderr, exit 1 (nothing has been written to stdout yet). */
+export function configureForRun(ctx, opts) {
+  const cfg = configureCallRecords({
+    repoRoot: process.cwd(),
+    identity: { auditedTree: ctx.auditedTree, auditSessionId: opts.auditIdentity?.auditSessionId ?? null, auditRound: opts.auditIdentity?.auditRound ?? null },
+    resume: opts.resume === true,
+  });
+  if (!cfg.ok) { process.stderr.write(`Error: ${cfg.reason}
+`); process.exit(1); }
+}
+
+/** Stamp a finished result with the run's resume summary (no-op when records were off). */
+export function withResumeSummary(result) {
+  const sum = resumeSummary();
+  return sum && result && typeof result === 'object' ? { ...result, _resume: sum } : result;
+}
+
 export const callRecordsActive = () => state.enabled;
 export const isResuming = () => state.enabled && state.resume;
 export function noteLiveCall() { if (state.enabled) state.live++; }

@@ -304,10 +304,10 @@ Stability uses `_hash` for exact cross-round matching:
 | Same file/concern recurs 3 rounds running | **Pivot**: stop, propose a new design (`references/pivot-rule.md`) |
 | Round 6, not stable | Run the structural-or-stop card, present it to the operator, then REQUIRED Step 7 |
 
-**Max 6 rounds for code audits, 8 absolute — enforced by `openai-audit.mjs`.** Round 7 exits `4` (`CAPPED`): a stop for a
-human call, never a retry. At round 6 without convergence run
-`node scripts/audit-structural-card.mjs --sid "$SID" --mode code --plan "$PLAN_FILE"` and present the card
-(STOP / STRUCTURAL / CONTINUE); continuing is the operator's call (`references/round-cap-and-structural-card.md`).
+**Max 6 rounds for code audits, 8 absolute — enforced by `openai-audit.mjs`.** Round 7 exits `4` (`CAPPED`) with
+a structural-or-stop card: a stop for a human call, never a retry. At round 6 without convergence run
+`node scripts/audit-structural-card.mjs --sid "$SID" --mode code --plan "$PLAN_FILE"` and present the card to the
+operator (STOP / STRUCTURAL / CONTINUE); continuing is their call (`references/round-cap-and-structural-card.md`).
 
 **Step 7 (Gemini final review) is MANDATORY** after the last audit round,
 regardless of convergence. No-key degradation ladder (`references/gemini-gate.md`
