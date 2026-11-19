@@ -35,7 +35,8 @@ describe('summarisePrune — counts only what the plan holds', () => {
       review: review({ postMerge: [rev(true), rev(false)], noPr: [rev(true)] }), orphans: { roots: [], dirs: [{ path: 'p', kind: 'empty' }] },
     }), AT);
     assert.deepEqual(r, {
-      schemaVersion: 1, at: AT, complete: true, removable: 3, fresh: 1, kept: 1, unjudged: 0, orphans: 1,
+      schemaVersion: 2, at: AT, complete: true, removable: 3, fresh: 1, kept: 1, unjudged: 0, orphans: 1,
+      detached: { removable: 0, fresh: 0, kept: 0, stale: 0, unjudged: 0 }, worktrees: null,
       review: { postMerge: 2, postMergeOnBase: 1, noPr: 1, noPrOnBase: 1, unjudged: 0 },
     });
   });
@@ -80,8 +81,12 @@ describe('the derived cache', () => {
     const rec = summarisePrune(plan({ candidates: [cand()] }), AT);
     assert.deepEqual(writePruneCache(d, rec), { ok: true });
     assert.deepEqual(readPruneCache(d), { state: 'ok', record: rec });
-    fs.writeFileSync(path.join(d, PRUNE_CACHE_FILE), JSON.stringify({ ...rec, schemaVersion: 2 }));
+    fs.writeFileSync(path.join(d, PRUNE_CACHE_FILE), JSON.stringify({ ...rec, schemaVersion: 99 }));
     assert.equal(readPruneCache(d).state, 'unreadable');
+    // A v1 file (no detached block) is unreadable too: `next` then says unmeasured and one `status` run heals it.
+    const { detached, worktrees, ...v1 } = rec;
+    fs.writeFileSync(path.join(d, PRUNE_CACHE_FILE), JSON.stringify({ ...v1, schemaVersion: 1 }));
+    assert.deepEqual(readPruneCache(d), { state: 'unreadable', reason: 'schema mismatch' });
     // A count known to be wrong is REPLACED by an unmeasured record, never left readable as ok.
     assert.deepEqual(writePruneCache(d, rec), { ok: true });
     assert.deepEqual(invalidatePruneCache(d, 'prune --apply changed the branches', AT), { ok: true });

@@ -59,6 +59,7 @@ import { branchRefFiles, lastActivity, provablyIdle } from './unregistered.mjs';
 import { renderOrphans, scanOrphanDirs } from './prune-orphans.mjs';
 import { invalidatePruneCache, summarisePrune, writePruneCache } from './prune-summary.mjs';
 import { unregisteredCacheDir } from './unregistered.mjs';
+import { applyDetached, emptyDetached, planDetached, renderDetached, renderDetachedApplied } from './prune-detached.mjs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -137,7 +138,7 @@ export function planPrune(ctx, { facts = null, report = archiveReport, deadlineA
   const git = clippedGit(rawGit, deadlineAt, clock);
   if (!hctx.prsComplete) notJudged.push('the open-PR list is incomplete or was not read, so no branch can be shown to have no open PR');
   // Without the worktree list a branch's checkout cannot be found, so no branch is judged removable.
-  if (!wt.queried) return { candidates, excluded, notJudged: [...notJudged, `the worktree list could not be read (${wt.reason}), so no branch can be shown to be checked out nowhere`], complete: false, unjudged, review, orphans: null, upstreamGone: [] };
+  if (!wt.queried) return { candidates, excluded, notJudged: [...notJudged, `the worktree list could not be read (${wt.reason}), so no branch can be shown to be checked out nowhere`], complete: false, unjudged, review, orphans: null, upstreamGone: [], detached: emptyDetached(), registered: null };
   const staleMs = (ctx.config.staleWorktreeDays ?? DEFAULT_STALE_WORKTREE_DAYS) * DAY_MS;
   // Every `branch.*` config key, read once (names only; matched in JS, so no regex escaping of branch names). Exit 1
   // is git's "no match" — none at all; any other failure is UNREAD (null), never "no config".
@@ -268,10 +269,12 @@ export function planPrune(ctx, { facts = null, report = archiveReport, deadlineA
       ...ev,
     });
   }
+  // Worktrees no branch names: detached HEADs and registrations whose directory is gone (docs/plans/fleet-hygiene.md §1.1).
+  const detached = planDetached(ctx, { worktrees: wt.worktrees, mainCheckout, here, staleMs, nowMs, past, deadlineAt, clock, git, report });
   const roots = [...new Set([mainCheckout ? path.join(mainCheckout, '.claude', 'worktrees') : null, ctx.config.worktreeRoot].filter(Boolean))];
   // The orphan scan is a filesystem walk under its own entry caps (ORPHAN_WALK), so it needs no deadline; the
   // upstream read is git, so it goes through the clipped runner (past the deadline it is simply not shown).
-  return { candidates, excluded, notJudged, complete: hctx.prsComplete, unjudged, review, orphans: scanOrphanDirs({ roots, worktrees: wt.worktrees, archiveIgnore: ctx.config.archiveIgnore ?? [] }), upstreamGone: upstreamGoneBranches(ctx.cwd, { git }) };
+  return { candidates, excluded, notJudged, complete: hctx.prsComplete, unjudged, review, detached, registered: wt.worktrees.filter((w) => !w.bare).length, orphans: scanOrphanDirs({ roots, worktrees: wt.worktrees, archiveIgnore: ctx.config.archiveIgnore ?? [] }), upstreamGone: upstreamGoneBranches(ctx.cwd, { git }) };
 }
 
 /** Local branches whose upstream is gone (`%(upstream:track)` = `[gone]`). Display only: a deleted remote is not evidence the commits landed. */
@@ -327,7 +330,7 @@ const keptLines = (p) => (p.excluded.length
  * @param {ReturnType<typeof planPrune>} plan
  * @param {{remote?: boolean, git?: typeof runGit, tipOf?: typeof headOf, remoteOf?: typeof remoteRefOid}} [opts] test seams
  */
-export function applyPrune(ctx, plan, { remote = false, includeFresh = false, git = runGit, tipOf = headOf, remoteOf = remoteRefOid, list = listWorktrees, report = archiveReport } = {}) {
+export function applyPrune(ctx, plan, { remote = false, includeFresh = false, git = runGit, tipOf = headOf, remoteOf = remoteRefOid, list = listWorktrees, report = archiveReport, clock = Date.now } = {}) {
   const results = [];
   for (const c of plan.candidates) {
     const res = { branch: c.branch, status: 'removed', done: [], doneKinds: [], reason: null, remote: null };
@@ -374,6 +377,7 @@ export function applyPrune(ctx, plan, { remote = false, includeFresh = false, gi
     else if (remote && c.remoteStep) res.remote = deleteRemote(ctx, c, { git, remoteOf });
     results.push(res);
   }
+  const detached = applyDetached(ctx, plan.detached, { includeFresh, git, list, report, clock, staleMs: (ctx.config?.staleWorktreeDays ?? DEFAULT_STALE_WORKTREE_DAYS) * DAY_MS });
   const count = (pred) => results.filter(pred).length;
   return {
     results,
@@ -382,6 +386,7 @@ export function applyPrune(ctx, plan, { remote = false, includeFresh = false, gi
       failed: count((r) => r.status === 'failed' || r.remote?.status === 'failed'),
       remoteDeleted: count((r) => r.remote?.status === 'deleted'),
     },
+    detached,
   };
 }
 
@@ -405,8 +410,8 @@ export function renderPrune(p, cmd = null) {
     if (c.remoteNote) lines.push(`    # ${c.remoteNote}`);
   }
   if (p.unjudged) lines.push(`  not judged: ${plural(p.unjudged, 'branch', 'branches')} reached after the budget was spent`);
-  lines.push(...keptLines(p), ...reviewLines(p), ...goneLines(p), ...renderOrphans(p.orphans));
-  if (p.candidates.length && cmd) lines.push('', `to run exactly these (local only): ${cmd} prune --apply   ·   add --remote for the leased remote deletes`);
+  lines.push(...keptLines(p), ...reviewLines(p), ...renderDetached(p.detached), ...goneLines(p), ...renderOrphans(p.orphans));
+  if ((p.candidates.length || p.detached?.candidates.length) && cmd) lines.push('', `to run exactly these (local only): ${cmd} prune --apply   ·   add --remote for the leased remote deletes`);
   lines.push('', SESSION_LIST_CHECK);
   return lines.join('\n');
 }
@@ -415,7 +420,8 @@ export function renderPrune(p, cmd = null) {
 const removedWhat = (r) => [r.doneKinds?.includes('worktree') ? 'worktree' : null, 'branch', r.doneKinds?.includes('config') ? 'its config' : null].filter(Boolean).join(' + ');
 
 function renderApplied(p, a) {
-  const { removed, skipped, failed, remoteDeleted } = a.counts;
+  const dc = a.detached?.counts ?? { removed: 0, skipped: 0, failed: 0 };
+  const removed = a.counts.removed + dc.removed; const skipped = a.counts.skipped + dc.skipped; const failed = a.counts.failed + dc.failed; const { remoteDeleted } = a.counts;
   const lines = [`fleet prune --apply — removed ${removed}, skipped ${skipped}, failed ${failed}${remoteDeleted ? `, ${remoteDeleted} remote deleted` : ''}`];
   for (const n of p.notJudged) lines.push(`  not judged: ${n}`);
   for (const r of a.results) {
@@ -423,7 +429,9 @@ function renderApplied(p, a) {
     const rem = !r.remote ? '' : r.remote.status === 'deleted' ? '; remote deleted' : r.remote.status === 'already-gone' ? '; remote already gone' : `; remote FAILED — ${r.remote.reason}`;
     lines.push(`  ${r.branch}: ${what}${rem}`);
   }
-  lines.push(...keptLines(p), ...goneLines(p), ...renderOrphans(p.orphans), '', `${SESSION_LIST_CHECK} — a required agent step this command cannot perform`);
+  const dl = renderDetachedApplied(a.detached);
+  if (dl.length) lines.push('', 'detached worktrees:', ...dl);
+  lines.push(...keptLines(p), ...renderDetached({ ...p.detached, candidates: [] }), ...goneLines(p), ...renderOrphans(p.orphans), '', `${SESSION_LIST_CHECK} — a required agent step this command cannot perform`);
   return lines.join('\n');
 }
 
@@ -446,6 +454,7 @@ export function cmdPrune(ctx, flags = {}) {
   const applied = applyPrune(ctx, p, { remote, includeFresh });
   const inv = invalidatePruneCache(unregisteredCacheDir(ctx.cwd), 'prune --apply changed the branches since the last count', new Date(ctx.now ?? Date.now()).toISOString());
   const text = renderApplied(p, applied) + (inv.ok ? '' : `\nwarning: the prune-count cache could not be invalidated (${inv.reason}); next may relay a stale count until \`${ctx.cmd} status\` runs`);
-  if (applied.counts.failed) return { ok: false, code: 'error', reason: `${applied.counts.failed} removal(s) failed`, prune: p, applied, text };
+  const failedTotal = applied.counts.failed + (applied.detached?.counts.failed ?? 0);
+  if (failedTotal) return { ok: false, code: 'error', reason: `${failedTotal} removal(s) failed`, prune: p, applied, text };
   return ok({ prune: p, applied, text });
 }

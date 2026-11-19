@@ -180,7 +180,7 @@ export function statusPrune(ctx, facts, observedAt, { plan = planPrune, write = 
     w = invalidatePruneCache(dir, reason, observedAt);
     record = { complete: false, reason };
   }
-  return { record, line: pruneStatusLine(record, ctx.cmd), warning: w.ok ? null : `prune-count cache not written (${w.reason})` };
+  return { record, line: pruneStatusLine(record, ctx.cmd, ctx.config?.pruneAlert ?? null), warning: w.ok ? null : `prune-count cache not written (${w.reason})` };
 }
 
 /**
