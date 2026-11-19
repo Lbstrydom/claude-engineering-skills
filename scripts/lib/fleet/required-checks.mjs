@@ -360,10 +360,11 @@ const NON_CI_RULE_TYPES = Object.freeze(new Set([
  * @param {{gh: Function, cwd?: string}} deps
  * @returns {{tag: string, head?: string, code?: string, names?: object, required?: object[], wrongApp?: object, fault?: {kind: string, detail: string}}}
  */
-export function assessRequiredCi({ repo, prNumber, expectedBase, expectedHead, configAssertion }, deps) {
-  const cwd = deps?.cwd ?? '.';
-  const ctx = { expectedBase, expectedHead };
+export function assessRequiredCi(args, deps) {
   try {
+    const { repo, prNumber, expectedBase, expectedHead, configAssertion } = args ?? {};
+    const cwd = deps?.cwd ?? '.';
+    const ctx = { expectedBase, expectedHead };
     const pr1 = readPrCandidate(deps, cwd, { repo, prNumber });
     if (!pr1.ok) return fromFault(pr1);
     const code1 = ineligibleCode(pr1.value, ctx);
@@ -398,16 +399,16 @@ export function assessRequiredCi({ repo, prNumber, expectedBase, expectedHead, c
       const clash = statuses.value.filter((s) => lowered.has(s.context.toLowerCase())).map((s) => show(s.context, 60));
       if (clash.length) return unknownOf('status-context-present', `a commit status shares the required context ${[...new Set(clash)].join(', ')}: a status carries no app id, so identity cannot be established`);
 
-      const names = { failed: [], 'not-run': [], missing: [], pending: [] }; const wrongApp = {}; const passed = [];
+      const names = { failed: [], 'not-run': [], missing: [], pending: [] }; const wrongApp = new Map(); const passed = [];
       for (const pair of pairs) {
         const r = assessPair(pair, runs.value);
         if (r.fault) return { tag: 'unknown', fault: r.fault };
         if (r.cls === 'passed') passed.push({ name: pair.context, conclusion: 'success', appId: pair.integrationId });
-        else { names[r.cls].push(pair.context); if (r.wrongApp?.length) wrongApp[pair.context] = r.wrongApp; }
+        else { names[r.cls].push(pair.context); if (r.wrongApp?.length) wrongApp.set(pair.context, r.wrongApp); }
       }
       const worst = ['failed', 'not-run', 'missing', 'pending'].find((k) => names[k].length);
       evidence = worst
-        ? { tag: worst, head: expectedHead, names, ...(Object.keys(wrongApp).length ? { wrongApp } : {}) }
+        ? { tag: worst, head: expectedHead, names, ...(wrongApp.size ? { wrongApp: Object.fromEntries(wrongApp) } : {}) }
         : { tag: 'passed', head: expectedHead, required: passed };
     }
 

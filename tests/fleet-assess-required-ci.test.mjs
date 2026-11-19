@@ -147,6 +147,13 @@ describe('the observation: failed, not-run, missing, pending, and every doubt un
     assert.equal(one(run(1, 'full-suite', 'completed', 'success', null)).tag, 'missing');
     assert.equal(one().tag, 'missing');
   });
+  it('a required context named like an object prototype key is an ordinary name (wrongApp keeps it as an own property)', () => {
+    const rules = fixture('ces-rules-main.json'); rules[0].parameters.required_status_checks[0].context = '__proto__';
+    const e = assess(cesScenario({ rules, checkRuns: runs(run(1, '__proto__', 'completed', 'success', 999)) })).evidence;
+    assert.equal(e.tag, 'missing');
+    assert.deepEqual(Object.keys(e.wrongApp), ['__proto__']);
+    assert.deepEqual(e.names.missing, ['__proto__']);
+  });
   it('queued, in_progress, waiting, requested and pending are pending', () => {
     for (const s of ['queued', 'in_progress', 'waiting', 'requested', 'pending']) assert.equal(one(run(1, 'full-suite', s)).tag, 'pending', s);
   });
@@ -244,6 +251,7 @@ describe('the contract: a closed set, no action, no throw', () => {
     assert.equal(assessRequiredCi({ repo: REPO, prNumber: 395, expectedBase: 'main', expectedHead: HEAD }, {}).tag, 'unknown');
     assert.equal(assessRequiredCi({ repo: 'nope', prNumber: -1, expectedBase: 'main', expectedHead: HEAD }, githubFake(cesScenario()).deps).tag, 'unknown');
     assert.equal(assessRequiredCi({}, undefined).tag, 'unknown');
+    for (const bad of [null, undefined, 7, 'x']) assert.equal(assessRequiredCi(bad, githubFake(cesScenario()).deps).tag, 'unknown', String(bad));
   });
   it('positive and negative controls together: the passing scenario permits, and each single mutation of it does not (an always-refuse or always-permit oracle fails one side)', () => {
     assert.equal(decideCiAdmission(assess(cesScenario()).evidence).disposition, 'permit');
