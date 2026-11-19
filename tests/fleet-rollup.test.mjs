@@ -448,6 +448,16 @@ describe('audit round 1: lifecycle, identity and cleanup guards', () => {
     assert.equal(w3.merges.length, 0, 'the default oracle is the stub: nothing may merge');
     assert.match(r3.text, /unimplemented-oracle/);
   });
+  it('a permitting oracle answer: passed must carry its required list (else a run stop); a proven none-required needs none (final review G1)', () => {
+    const mk = (evidence) => { const f = fixture(1); const w = world(f); const b = build(f, w); const r = approve(f, w, { trainId: b.trainId, serialOpts: { requiredChecks: [] }, deps: { assessCi: ({ expectedHead }) => ({ ...evidence, head: expectedHead }) } }); return { r, w }; };
+    const bare = mk({ tag: 'none-required' }); // no required array at all: the proof-only shape
+    assert.equal(bare.r.ok, true, bare.r.text);
+    assert.equal(bare.w.merges.length, 1);
+    const noList = mk({ tag: 'passed' }); // passed without naming what passed
+    assert.equal(noList.r.ok, false);
+    assert.equal(noList.w.merges.length, 0);
+    assert.ok(noList.r.text.includes('no required-check list'), noList.r.text);
+  });
   it('the overlap read asks git for paths WITHOUT rename detection, so a rename source is never missed (R1-H7)', () => {
     const f = fixture(2);
     const w = world(f);
