@@ -76,7 +76,7 @@ as *pass*. Patching sites produced the next hole each round.
 | M6 | `branches/no-such-branch` | `404 Branch not found`, exit 1 | Branch existence is provable. |
 | M7 | storyline (other account), both endpoints | `404 Not Found` | A 404 is also "you cannot see it". 404 is never "absent". |
 | M8 | `rules/branches/main?per_page=1 --paginate --slurp` (WCA) | 4 pages, one rule each, `Link: rel="next"` | Pagination is real; `--paginate --slurp` returns an array of pages. |
-| M9 | `commits/{sha}/check-runs?per_page=10 --paginate --slurp` (WCA) | 4 pages, each `total_count: 31`, lengths 10/10/10/1 | Completeness is checkable: sum of lengths == `total_count`. |
+| M9 | `commits/{sha}/check-runs?per_page=10 --paginate --slurp` (WCA) | 4 pages, each `total_count: 31`, lengths 10/10/10/1 | `total_count` is reported on every page, so a single page proves its own completeness (`length === total_count`). |
 | M10 | `commits/90c60bf2/check-runs` (CES #395 head) | `full-suite` app 15368 `completed/success`; `auto-merge` `completed/skipped` | Head-SHA observation carries `app.id`, `head_sha`, `status`, `conclusion`. |
 | M11 | `commits/1f0a5263/check-runs?filter=latest` (WCA) | `Dependency audit` returned twice (success 11-19, failure 11-18), different `check_suite.id` | **`filter=latest` does not collapse same-name runs across suites.** No documented resolution rule is fixture-proven, so a conflict fails closed. |
 | M12 | `commits/90c60bf2/status` | `state: "pending"`, `total_count: 0` | The combined-status `state` is "pending" with zero statuses: never read it as a verdict. |
@@ -105,7 +105,7 @@ graph LR
     B["ship-batch admit (build + merge)"]
     R["rollup admit (build + merge)"]
   end
-  F["github-ci-facts.mjs: every gh read, zod-validated, paginated, typed faults"]
+  F["github-ci-facts.mjs: every gh read, zod-validated, one page, typed faults"]
   O["assessRequiredCi: closed evidence tag"]
   D["decideCiAdmission: permit | refuse-member | retry | stop-run"]
   A --> O
@@ -156,7 +156,8 @@ the proven-empty path):
 2. `api repos/{r}/branches/{b}` → schema. 404 or any failure → `unknown(transport)` (M6, M7). `protection.enabled === true`
    → `unknown(unsupported-classic-protection)`. `enabled === false` with non-empty `contexts`/`checks` →
    `unknown(malformed)` (a contradiction is not a fact).
-3. `api --paginate --slurp repos/{r}/rules/branches/{b}?per_page=100` → schema per rule. Required pairs = every
+3. `api repos/{r}/rules/branches/{b}?per_page=100` → ONE page, schema per rule; a full page (100 rules) is
+   `unknown(too-many-results)`, so no page beyond the first is ever fetched (R2-M1). Required pairs = every
    `{context, integration_id}` of every `required_status_checks` rule. A requirement with no positive-integer
    `integration_id` → `unknown(unsupported-unpinned-requirement)`.
 4. Config assertion (§2.5). Mismatch → `unknown(config-drift)` with the diff.
@@ -169,11 +170,19 @@ the proven-empty path):
    `unknown(too-many-results)`. **Any status whose `context` is a required context → `unknown(status-context-present)`**: a
    status carries no app id the oracle can compare with the pin, and GitHub's rule for a same-name status beside a pinned
    check run is not fixture-proven, so identity cannot be established (R1-H3). Statuses with other contexts are ignored.
-8. Per required pair: candidates = runs with `name === context && app.id === integration_id`.
-   - none → `missing` (same-name runs from other apps → `wrongApp`);
-   - any candidate not `completed` → `pending` (a re-run in flight);
-   - all completed → classify each conclusion; one class → that class; two or more classes →
-     `unknown(duplicate-conflict)` (M11); an unrecognised conclusion string → `unknown(unknown-conclusion)`.
+8. Per required pair: candidates = runs with `name === context && app.id === integration_id`. Both domains are closed
+   (R2-M2), and the schema enforces the pairing:
+   - `status` ∈ {`queued`, `in_progress`, `waiting`, `requested`, `pending`, `completed`}; anything else →
+     `unknown(unknown-conclusion)`;
+   - `conclusion` is `null` exactly when `status !== 'completed'`, else one of {`success`, `failure`, `cancelled`,
+     `timed_out`, `startup_failure`, `skipped`, `neutral`, `stale`, `action_required`}; an unknown value or an illegal pair
+     (completed with null, unfinished with a conclusion) → `unknown(malformed)` or `unknown(unknown-conclusion)`.
+
+   **Every candidate is classified first** (pass / failed / not-run / pending, or a fault); only then is the pair decided,
+   in this order: any fault → `unknown` (it wins over a pending sibling); no candidates → `missing` (same-name runs from
+   other apps → `wrongApp`); any `pending` → `pending` (a re-run in flight); all completed in one class → that class; two
+   or more completed classes → `unknown(duplicate-conflict)` (M11). Tests include a pending run beside a malformed completed
+   one (→ `unknown`) and beside a valid failure (→ `pending`, the failure listed).
 9. **Final re-read, for every tag that could permit and every CI tag** (`none-required` included, R1-H2): repeat step 1.
    Head no longer `expectedHead` → `ineligible head-moved`; any other eligibility change → the new `ineligible` code;
    a malformed or failed read → `unknown`. Only after this step is a tag returned.
@@ -244,10 +253,18 @@ assert no `gh pr merge` call; the census (§9) only asserts that no other `'pr',
   that `fleet land --approve <t> --serial` is the executor that re-assesses before each merge, and (c) the landing docs state
   that a human-run merge is gated by GitHub's own ruleset alone, which counts a SKIPPED required check as satisfied
   (wine-cellar-app #802), so `--serial` is the safe path (R1-H1).
+- **The base is not server-pinned, and the plan does not claim it is (R2-H1).** `gh pr merge` binds the head
+  (`--match-head-commit`) but has no base condition, so a PR retargeted after the final read (§2.1 step 9) can merge into
+  another base with the same head. No client-side mechanism prevents that; a GitHub merge queue would, and it is a setting
+  (Louis's; proposal `p-20261118092842`). What fleet guarantees instead is **detection that halts**: policy runs already read
+  the merged PR back and record `wrong-target`, halting the run (`readBackStep`, `scripts/lib/fleet/serial.mjs:301
+  (90c60bf2)`); plain serial gains the same check when it observes MERGED (`baseRefName !== run.base` → run stop
+  `wrong-target`, never `NEXT`). A test retargets between the final read and the merge and asserts the halt and that no
+  further member merges.
 - Head pinning freezes the CONTENT, not the POLICY: a ruleset change between assessment and merge is not caught by the pin.
   The merge-site re-assessment narrows that window to the gap between two API calls; it does not close it, and the docs say so.
 - The tested-tree and provenance checks (`treeIdentity`, the base chain, `baseRefOid`) stay where they are and separate.
-- `readRules` (`serial.mjs:251`, merge-queue detection) moves onto the adapter's paginated rules read, so the base's rules are
+- `readRules` (`serial.mjs:251`, merge-queue detection) moves onto the adapter's one-page rules read, so the base's rules are
   read one way.
 
 Discovery guard (§9): a source census asserts that `mergeWithCiPermit` holds the only `'pr', 'merge'` call under
@@ -266,9 +283,9 @@ Discovery guard (§9): a source census asserts that `mergeWithCiPermit` holds th
 - Validate: zod 4 `z.object` over the DECISION fields only; unrelated extra keys tolerated (no `.strict()`, deliberately:
   GitHub adds fields). Failure → `malformed`, with the zod issue path.
 - Pagination: **no multi-page observation.** Check runs and statuses are one `per_page=100` page whose completeness is proven
-  on that page (§2.1 steps 6-7). Rules are read with `--paginate --slurp` and must come back as exactly ONE page (M8 shows
-  `--slurp` returns one array per page); two or more pages → `too-many-results`. A `gh` too old for `--slurp` exits non-zero →
-  `transport`. Measured sizes: a PR head carries 2 check runs in CES (M10), the busiest measured commit 31 (M11, a main tip
+  on that page (§2.1 steps 6-7); rules are one `per_page=100` page and a full page is `too-many-results` (§2.1 step 3). No
+  read uses `--paginate`, so nothing past the first page is ever fetched or buffered (M8 proves pagination exists; it is
+  refused, not followed). Measured sizes: a PR head carries 2 check runs in CES (M10), the busiest measured commit 31 (M11, a main tip
   with scheduled workflows); rules number 1-4 (M4). A repo past those limits stops loudly and names the limit.
 
 `CI_FAULT_KINDS` (closed): `transport`, `malformed`, `too-many-results`, `unsupported-classic-protection`,
@@ -418,7 +435,7 @@ docs/plans/ship-batch-member-outcomes.md (modify).
 **Phase 2 — the GitHub-facts adapter and fixtures**: the four readers, schemas, pagination and transport faults over the
 recorded fixtures. Files: scripts/lib/fleet/github-ci-facts.mjs (create), tests/fixtures/fleet/github-ci/ces-branch-main.json
 (create), tests/fixtures/fleet/github-ci/ces-rules-main.json (create), tests/fixtures/fleet/github-ci/wca-rules-main.json
-(create), tests/fixtures/fleet/github-ci/aio-branch-main.json (create), tests/fixtures/fleet/github-ci/wca-rules-paged.json
+(create), tests/fixtures/fleet/github-ci/aio-branch-main.json (create), tests/fixtures/fleet/github-ci/wca-rules-page1.json
 (create), tests/fixtures/fleet/github-ci/wca-check-runs-paged.json (create), tests/fixtures/fleet/github-ci/ces-check-runs-395.json
 (create), tests/fixtures/fleet/github-ci/wca-check-runs-duplicate.json (create), tests/fixtures/fleet/github-ci/ces-statuses-395.json
 (create), tests/fleet-github-ci-facts.test.mjs (create).
@@ -491,7 +508,7 @@ enters the consumer closure) + `npm run bundle:deps:check`, `npm run guards:pref
 
   Rows: classic-only (enabled) · ruleset-only · mixed (ruleset + classic enabled) · proven-empty · ambiguous 404 (rules `[]`
   + branch 404, M5) · 403 on rules · config drift (`["full-suite"]` vs ruleset `["full-suite","lint"]`) · incomplete
-  results (required check absent from a page whose `total_count` exceeds its length; rules on two pages) · duplicate run id ·
+  results (required check absent from a page whose `total_count` exceeds its length; a full page of 100 rules) · duplicate run id ·
   `isDraft` missing · skipped · neutral · wrong app (same name, app 999) · same-context status beside a passing pinned run ·
   duplicate runs (success + failure, M11) · head moved mid-observation · eligibility changed during the branch/rules reads on
   the proven-empty path (draft, retargeted, head) · stale green on resume (green at assessment 1, failed at the merge-site
