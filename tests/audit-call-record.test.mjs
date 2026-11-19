@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
-import { callGPT, safeCallGPT, effectiveRequestFor } from '../scripts/lib/audit/llm-helpers.mjs';
+import { callGPT, safeCallGPT, effectiveRequestFor, setModel, wireModel } from '../scripts/lib/audit/llm-helpers.mjs';
 import {
   configureCallRecords, resumeSummary, _resetCallRecordsForTests, requestKeyFor, canonicalJson, pruneCallRecords,
   lookupCallRecord, writeCallRecord, CALL_RECORD_ROOT_REL,
@@ -32,7 +32,7 @@ function client({ failFor = [] } = {}) {
       parse: async (params) => {
         const prompt = params.input.map((m) => m.content).join('|');
         calls.push(prompt);
-        if (failFor.some((f) => prompt.includes(f))) { const e = new Error('quota'); e.status = 400; throw e; }
+        if (failFor.some((f) => prompt.includes(f))) { const e = new Error('rate limited'); e.status = 429; throw e; }
         return { status: 'completed', output: [], output_parsed: { findings: [prompt.slice(-6)] }, usage: USAGE, model: 'served-model' };
       },
     },
@@ -169,6 +169,58 @@ describe('call records: what is never recorded and what reads as a miss', () => 
     const r = await call(client(), 'X');
     assert.equal(r.result.findings.length, 1);
     assert.equal(resumeSummary().recordWriteFailures, 1);
+  });
+});
+
+describe('call records: review hardening (audit r1)', () => {
+  it('the record never stores the prompt text (only its hash)', async () => {
+    cfg(); await call(client(), 'SECRET-SOURCE-EXCERPT');
+    const dir = path.join(root, CALL_RECORD_ROOT_REL, TREE, 'audit-code-1-2-r1');
+    const text = fs.readFileSync(path.join(dir, fs.readdirSync(dir)[0]), 'utf8');
+    assert.ok(!text.includes('SECRET-SOURCE-EXCERPT'), 'prompt text must not be persisted');
+    assert.match(text, /inputSha256/);
+  });
+
+  it('two clients on different base URLs are two routes (H2)', () => {
+    const o = { system: 's', messages: [{ role: 'user', content: 'u' }], schema: Schema, schemaName: 'x' };
+    const a = requestKeyFor({ route: effectiveRequestFor(o, { baseURL: 'https://a.example/v1' }).route });
+    const b = requestKeyFor({ route: effectiveRequestFor(o, { baseURL: 'https://b.example/v1' }).route });
+    assert.notEqual(a.requestKey, b.requestKey);
+  });
+
+  it('a different model and a different schema shape force the call live', async () => {
+    cfg(); await call(client(), 'MODELCASE');
+    const before = wireModel();
+    try {
+      setModel('some-other-model'); cfg({ resume: true });
+      assert.equal((await call(client(), 'MODELCASE')).replayed, undefined, 'model changed');
+    } finally { setModel(before); }
+    cfg({ resume: true });
+    const Other = z.object({ findings: z.array(z.string()), extra: z.string().nullable() }).strict();
+    assert.equal((await call(client(), 'MODELCASE', { schema: Other })).replayed, undefined, 'schema content changed under the same name');
+    cfg({ resume: true });
+    assert.equal((await call(client(), 'MODELCASE')).replayed, true, 'control');
+  });
+
+  it('a schema-invalid provider response is never recorded', async () => {
+    cfg();
+    const bad = { responses: { parse: async () => ({ status: 'completed', output: [], output_parsed: { findings: 'not-an-array' }, usage: USAGE }) } };
+    await call(bad, 'BADSHAPE').catch(() => {});
+    const dir = path.join(root, CALL_RECORD_ROOT_REL, TREE, 'audit-code-1-2-r1');
+    assert.deepEqual(fs.readdirSync(dir), []);
+  });
+
+  it('an empty record directory is not resumable (M6)', () => {
+    cfg();                                               // creates the directory, records nothing
+    assert.match(cfg({ resume: true }).reason, /nothing to resume/);
+  });
+
+  it('a write touches the tree directory so an active audit stays newest (M1/M5)', async () => {
+    cfg();
+    const tree = path.join(root, CALL_RECORD_ROOT_REL, TREE);
+    const old = new Date(Date.now() - 3600_000); fs.utimesSync(tree, old, old);
+    await call(client(), 'HEARTBEAT');
+    assert.ok(fs.statSync(tree).mtimeMs > old.getTime() + 1000);
   });
 });
 

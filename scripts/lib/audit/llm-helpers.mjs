@@ -43,7 +43,7 @@ import { PASS_PROMPTS } from '../prompt-seeds.mjs';
 import { openaiConfig, azureConfig } from '../config.mjs';
 import { capReasoning } from '../reasoning-ceiling.mjs';
 import { supportsReasoningEffort } from '../model-resolver.mjs';
-import { requestKeyFor, lookupCallRecord, writeCallRecord, callRecordsActive, noteLiveCall } from './call-record.mjs';
+import { requestKeyFor, lookupCallRecord, writeCallRecord, callRecordsActive, noteLiveCall, sha256, canonicalJson } from './call-record.mjs';
 import { azureThrottle } from '../azure-throttle.mjs';
 import { classifyResponsesSupport } from '../openai-responses-capability.mjs';
 
@@ -245,7 +245,7 @@ const TIMEOUT_MS_CAP = openaiConfig.timeoutMsCap;
  * key hashes the same object, so a param added here is in the key with no second list to drift (plan §3.1, R1-H1).
  * `route` is the identity the params cannot carry: one model string on two backends is two requests.
  */
-export function effectiveRequestFor(opts) {
+export function effectiveRequestFor(opts, openai = null) {
   const { schema, schemaName, reasoning, maxTokens, timeoutMs } = opts;
   const effort = capReasoning(reasoning ?? REASONING_EFFORT, REASONING_EFFORT);
   const tokens = maxTokens ?? MAX_OUTPUT_TOKENS_CAP;
@@ -261,9 +261,12 @@ export function effectiveRequestFor(opts) {
   if (supportsReasoningEffort(wm)) {
     requestParams.reasoning = { effort };
   }
+  // The endpoint is the SUPPLIED CLIENT's own base URL when it exposes one (two clients on different base URLs are two
+  // routes), else the configured one.
+  const clientBase = typeof openai?.baseURL === 'string' ? openai.baseURL : null;
   const route = azureConfig.active
-    ? { transport: 'azure', endpoint: azureConfig.openaiEndpoint, deployment: azureConfig.gptDeployment, apiVersion: azureConfig.apiVersion }
-    : { transport: 'openai', endpoint: process.env.OPENAI_BASE_URL || 'https://api.openai.com', deployment: null, apiVersion: null };
+    ? { transport: 'azure', endpoint: clientBase ?? azureConfig.openaiEndpoint, deployment: azureConfig.gptDeployment, apiVersion: azureConfig.apiVersion }
+    : { transport: 'openai', endpoint: clientBase ?? (process.env.OPENAI_BASE_URL || 'https://api.openai.com'), deployment: null, apiVersion: null };
   return { requestParams, effort, tokens, timeout, input, wm, route };
 }
 
@@ -432,8 +435,13 @@ export async function callGPT(openai, opts) {
   let recordKey = null;
   if (callRecordsActive() && opts.schema) {
     try {
-      const e = effectiveRequestFor(opts);
-      recordKey = requestKeyFor({ route: e.route, api: _responsesUnsupported ? 'chat' : 'responses', request: e.requestParams, schemaName: opts.schemaName });
+      const e = effectiveRequestFor(opts, openai);
+      // The prompt is hashed, never stored: the envelope keeps the key fields so a hit can be re-verified, and prompts hold
+      // source excerpts. The transport (Responses vs chat fallback) is deliberately NOT in the key: it is decided DURING the
+      // live call, so keying on it before the call stores a fallback result under the wrong key. Same prompt, model, params
+      // and schema is the same logical request whichever API served it.
+      const { input: promptInput, ...paramsWithoutPrompt } = e.requestParams;
+      recordKey = requestKeyFor({ route: e.route, request: paramsWithoutPrompt, inputSha256: sha256(canonicalJson(promptInput)), schemaName: opts.schemaName });
       const hit = lookupCallRecord(recordKey.requestKey, opts.schema);
       if (hit) {
         process.stderr.write(`  [${opts.passName ?? 'call'}] replayed from call record (no API call)

@@ -101,7 +101,9 @@ export function configureCallRecords({ repoRoot = process.cwd(), identity, resum
   if (missing) { log(`recording off for this run: ${missing}`); return { ok: true }; }
   const rootDir = path.join(repoRoot, CALL_RECORD_ROOT_REL);
   const dir = dirFor(rootDir, identity);
-  if (resume && !fs.existsSync(dir)) return { ok: false, reason: `nothing to resume for ${identity.auditSessionId} round ${identity.auditRound} at this tree` };
+  // A directory alone proves nothing: a run that lost every call leaves an empty one. Resumable = at least one finished call recorded.
+  const hasRecords = (() => { try { return fs.readdirSync(dir).some((f) => f.endsWith('.json')); } catch { return false; } })();
+  if (resume && !hasRecords) return { ok: false, reason: `nothing to resume for ${identity.auditSessionId} round ${identity.auditRound} at this tree` };
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   } catch (err) {
@@ -164,6 +166,9 @@ export function writeCallRecord(requestKey, keyFields, response) {
       response, recordedAt: new Date().toISOString(), // informational only: never keyed, never read by replay
     }));
     state.writes++;
+    // Heartbeat: an active audit keeps its tree newest by mtime, so another process's retention pass (which orders by mtime and
+    // keeps the newest N) does not remove it. A pruned tree only costs a replay: lookups miss and calls go live.
+    try { const now = new Date(); fs.utimesSync(path.dirname(state.dir), now, now); } catch { /* best effort */ }
     return true;
   } catch (err) {
     state.writeFailures++;
