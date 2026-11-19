@@ -260,3 +260,22 @@ describe('the contract: a closed set, no action, no throw', () => {
     for (const m of mutations) assert.notEqual(decideCiAdmission(assess(cesScenario(m)).evidence).disposition, 'permit', JSON.stringify(Object.keys(m)));
   });
 });
+
+describe('the post-merge phase (Amendment A item 2) and its closed domain', () => {
+  const pr = fixture('ces-pr-395-view.json');
+  const merged = (over = {}) => ({ ...pr, state: 'MERGED', ...over });
+  it('a MERGED PR into the base at the head, with the pinned check green, is passed; the same PR OPEN is ineligible not-merged', () => {
+    assert.equal(assess(cesScenario({ pr: merged() }), { phase: 'post-merge' }).evidence.tag, 'passed');
+    assert.deepEqual(kinds(assess(cesScenario(), { phase: 'post-merge' }).evidence), ['ineligible', 'not-merged']);
+  });
+  it('post-merge: another base or another head is ineligible, and a skipped or pending check is not passed', () => {
+    assert.deepEqual(kinds(assess(cesScenario({ pr: merged({ baseRefName: 'develop' }) }), { phase: 'post-merge' }).evidence), ['ineligible', 'retargeted']);
+    assert.deepEqual(kinds(assess(cesScenario({ pr: merged({ headRefOid: OTHER_HEAD }) }), { phase: 'post-merge' }).evidence), ['ineligible', 'head-moved']);
+    assert.equal(assess(cesScenario({ pr: merged(), checkRuns: runs(run(1, 'full-suite', 'completed', 'skipped')) }), { phase: 'post-merge' }).evidence.tag, 'not-run');
+    assert.equal(assess(cesScenario({ pr: merged(), checkRuns: runs(run(1, 'full-suite', 'in_progress')) }), { phase: 'post-merge' }).evidence.tag, 'pending');
+  });
+  it('the pre-merge phase refuses a MERGED PR, and an unknown phase is unknown(malformed), never silently pre-merge', () => {
+    assert.deepEqual(kinds(assess(cesScenario({ pr: merged() }), { phase: 'pre-merge' }).evidence), ['ineligible', 'merged']);
+    for (const phase of ['later', 'post_merge', 7, null]) assert.deepEqual(kinds(assess(cesScenario(), { phase }).evidence), ['unknown', 'malformed'], String(phase));
+  });
+});

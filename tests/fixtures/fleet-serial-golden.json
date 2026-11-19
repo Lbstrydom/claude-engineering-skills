@@ -1,7 +1,8 @@
 {
-  "_source": "92b17e27d896",
+  "_source": "9bc2ccd9a3c2",
+  "_baseline": "d53272aa1484",
   "_command": "UPDATE_GOLDEN=1 GOLDEN_SOURCE=<sha> node --test tests/fleet-serial-golden.test.mjs",
-  "_note": "generated from origin/main serial.mjs before the member-outcome refactor; never regenerate from the refactored code",
+  "_note": "Pinned from origin/main d53272aa (the member-outcome refactor, #395). Regenerated ONCE for ci-evidence-oracle PR 2: only the argv entries of the OLD CI reads (pr checks, api rules/branches, pr view headRefOid) leave the lists, and two CI stop reasons change (a failed required check; a never-registered required check). Every other scenario, every merge argv included, is byte-identical to d53272aa (verified by a scripted diff, recorded in docs/plans/ci-evidence-oracle.md Implementation Log). Regenerate again only with the same discipline.",
   "scenarios": {
     "clean: waits for the check, merges exactly the tested head": {
       "argv": [

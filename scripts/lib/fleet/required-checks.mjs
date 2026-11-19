@@ -170,7 +170,8 @@ export function assessRequiredCi(args, deps) {
   try {
     const { repo, prNumber, expectedBase, expectedHead, configAssertion, phase } = args ?? {};
     const cwd = deps?.cwd ?? '.';
-    const ctx = { expectedBase, expectedHead, phase: phase === 'post-merge' ? 'post-merge' : 'pre-merge' };
+    if (phase !== undefined && phase !== 'pre-merge' && phase !== 'post-merge') return unknownOf('malformed', `the oracle was asked for the phase ${show(phase, 40)}, which is neither pre-merge nor post-merge`);
+    const ctx = { expectedBase, expectedHead, phase: phase ?? 'pre-merge' };
     const pr1 = readPrCandidate(deps, cwd, { repo, prNumber });
     if (!pr1.ok) return fromFault(pr1);
     const code1 = ineligibleCode(pr1.value, ctx);

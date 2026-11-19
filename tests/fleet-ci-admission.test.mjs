@@ -111,6 +111,26 @@ describe('the table row by row: the REAL oracle gives the stated evidence, and t
   });
 });
 
+describe('the proven-empty path re-validates eligibility too (it returns none-required only after the FINAL PR read)', () => {
+  const emptyOver = (w, mutate) => ({ branch: branchDoc({ protected: false }), rules: () => { mutate(w); return []; }, checkRuns: { total_count: 0, check_runs: [] } });
+  for (const [name, mutate, code] of [['a draft', (w) => { w.draft = true; }, 'draft'], ['a retarget', (w) => { w.prBase = 'develop'; }, 'retargeted'], ['the PR closed', (w) => { w.state = 'CLOSED'; }, 'closed'], ['a head move', (w) => { w.prHead = OTHER_HEAD; }, 'head-moved']]) {
+    it(`${name} appearing during the branch and rules reads is ineligible ${code}, never none-required`, () => {
+      const head = 'a'.repeat(40);
+      const g = github({ head, base: 'b'.repeat(40), over: (w) => emptyOver(w, mutate) });
+      const e = assessRequiredCi({ repo: REPO, prNumber: 21, expectedBase: 'main', expectedHead: head }, g.deps);
+      assert.deepEqual([e.tag, e.code], ['ineligible', code]);
+      assert.notEqual(decideCiAdmission(e).disposition, 'permit');
+    });
+  }
+  it('through the serial runner: zero merges when the PR turns draft during the proven-empty assessment', () => {
+    const { fx, tested, base, trainId } = trainFx();
+    const g = github({ head: tested, base, over: (w) => emptyOver(w, (x) => { x.draft = true; }) });
+    const r = approveSerial({ cwd: fx.repo, trainId, deps: depsWith(g.gh), ...APPROVE, timeoutMs: 40 });
+    assert.equal(g.merges.length, 0);
+    assert.equal(r.ok, false);
+  });
+});
+
 describe('land approve (pr mode): only a permit prints a plan; every other row refuses with NO plan and NO awaiting-merge', () => {
   const approve = (over, config) => {
     const { fx, tested, base, trainId } = trainFx();
@@ -299,6 +319,10 @@ describe('ship-batch (the policy serial runner), with the REAL oracle', () => {
       assert.equal(r.ok, false, String(r.text).slice(0, 300));
       const rec = readSerial(b.dir, b.trainId).run;
       assert.ok(!rec.steps.some((s) => s.outcome?.status === 'landed'));
+      const o = rec.steps[0].outcome;
+      if (row.disposition === 'stop-run') { assert.equal(rec.outcome?.status, 'stopped'); assert.match(rec.outcome.reason, /CI evidence unknown|rules-unreadable/, 'a policy run reads the rules itself first (merge-queue exclusion): an unreadable rules answer is a run stop there too'); assert.ok(o === null || o === undefined, 'a RUN stop records nothing against the member'); }
+      else if (row.disposition === 'refuse-member') assert.deepEqual([o.status, o.code], ['refused', 'checks-failed']);
+      else assert.deepEqual([o.status, o.code], ['not-run', 'checks-pending']);
     });
   }
   it('STALE GREEN across a resume: first approve stops on pending, the resume sees red -> no merge', () => {

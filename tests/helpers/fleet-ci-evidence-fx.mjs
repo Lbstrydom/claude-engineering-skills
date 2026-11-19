@@ -36,6 +36,9 @@ export function evidenceFromBucket(bucket, head) {
 export function requiredEvidence({ rules, rulesFail = false, bucket, head, observedName = 'ci' }) {
   if (rulesFail) return ev.unknown('transport', 'rules api down');
   if (!Array.isArray(rules)) return ev.unknown('malformed', 'the world scripts no rules answer');
+  const NON_CI = ['deletion', 'non_fast_forward', 'pull_request', 'creation', 'update', 'required_linear_history', 'required_signatures', 'required_status_checks'];
+  const unsupported = rules.map((r) => r.type).filter((t) => !NON_CI.includes(t));
+  if (unsupported.length) return ev.unknown('unsupported-rule-type', `the world scripts the rule type(s) ${unsupported.join(', ')}`);
   const required = rules.filter((r) => r.type === 'required_status_checks').flatMap((r) => r.parameters.required_status_checks.map((c) => c.context));
   if (!required.length) return ev.noneRequired(head);
   const unobserved = required.filter((c) => c !== observedName);

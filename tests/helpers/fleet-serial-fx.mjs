@@ -82,7 +82,8 @@ export function scriptedGh({ views, checks = [['pass']], onUpdate = () => ok({})
     const doc = last ?? (typeof views === 'function' ? views() : views[0]);
     if (phase === 'post-merge') { // the merged PR: the same view, now MERGED, with the scripted checks
       if (String(doc.state).toUpperCase() !== 'MERGED') return ev.ineligible('not-merged');
-      return doc.baseRefName === expectedBase && doc.headRefOid === expectedHead ? evidenceFromBucket('pass', expectedHead) : ev.ineligible('head-moved', doc.headRefOid);
+      if (doc.baseRefName !== expectedBase) return ev.ineligible('retargeted');
+      return doc.headRefOid === expectedHead ? evidenceFromBucket(bucket, expectedHead) : ev.ineligible('head-moved', doc.headRefOid); // the scripted bucket decides, so a merge whose checks turned red is representable
     }
     if (String(doc.state).toUpperCase() === 'MERGED') return ev.ineligible('merged');
     if (String(doc.state).toUpperCase() !== 'OPEN') return ev.ineligible('closed');

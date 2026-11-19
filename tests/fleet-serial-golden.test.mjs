@@ -1,8 +1,8 @@
 /**
  * @fileoverview The byte-identity proof for the plain serial runner (docs/plans/ship-batch-member-outcomes.md §2.5).
  *
- * `tests/fixtures/fleet-serial-golden.json` was GENERATED from `origin/main`'s `serial.mjs`, BEFORE the member-outcome refactor
- * touched it. Each scenario drives the runner through a scripted `gh` and the real git (the same fixtures as
+ * `tests/fixtures/fleet-serial-golden.json` was GENERATED from `origin/main`'s `serial.mjs` (d53272aa), BEFORE the member-outcome refactor
+ * touched it, and was regenerated ONCE for the CI-evidence oracle (its header says exactly what changed: only the old CI reads and two CI stop reasons). Each scenario drives the runner through a scripted `gh` and the real git (the same fixtures as
  * `fleet-serial.test.mjs` and `ship-train-recovery.test.mjs`) and snapshots three things: the `gh` argv list, the final serial
  * record, and the result object (timestamps, oids, train ids and paths normalised to labels).
  *
@@ -229,7 +229,7 @@ describe('serial runner: byte identity with origin/main (golden)', () => {
     it('UPDATE_GOLDEN=1: writes the fixture from the code under test', () => {
       const scenarios = {};
       for (const [name, fn] of Object.entries(SCENARIOS)) scenarios[name] = fn();
-      const header = { _source: process.env.GOLDEN_SOURCE ?? 'unspecified', _command: 'UPDATE_GOLDEN=1 GOLDEN_SOURCE=<sha> node --test tests/fleet-serial-golden.test.mjs', _note: 'generated from origin/main serial.mjs before the member-outcome refactor; never regenerate from the refactored code' };
+      const header = { _source: process.env.GOLDEN_SOURCE ?? 'unspecified', _command: 'UPDATE_GOLDEN=1 GOLDEN_SOURCE=<sha> node --test tests/fleet-serial-golden.test.mjs', _baseline: 'd53272aa1484', _note: "Pinned from origin/main d53272aa (the member-outcome refactor, #395). Regenerated ONCE for ci-evidence-oracle PR 2: only the argv entries of the OLD CI reads (pr checks, api rules/branches, pr view headRefOid) leave the lists, and two CI stop reasons change (a failed required check; a never-registered required check). Every other scenario, every merge argv included, is byte-identical to d53272aa (verified by a scripted diff, recorded in docs/plans/ci-evidence-oracle.md Implementation Log). Regenerate again only with the same discipline." };
       fs.mkdirSync(path.dirname(FIXTURE), { recursive: true });
       fs.writeFileSync(FIXTURE, `${JSON.stringify({ ...header, scenarios }, null, 2)}\n`);
     });

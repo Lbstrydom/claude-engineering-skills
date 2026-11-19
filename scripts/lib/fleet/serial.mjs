@@ -455,6 +455,9 @@ function stepMember(st, i) {
   if (upper(d.state) === 'MERGED') {
     if (policy) return mergedObserved(st, i, d);
     if (!s.accounted.includes(d.headRefOid)) return fault('merged-unaccounted', `PR #${s.prNumber} was merged at ${short(d.headRefOid)}, a head this run did not account for — check it by hand`);
+    // A PR observed MERGED at an accounted head is verified BEFORE `merged` is persisted (a resume skips merged steps, so an unverified merge must never reach that state).
+    const pv = verifyMergedCi(st, s, d, d.headRefOid);
+    if (!pv.ok) return fault('merged-unverified', pv.reason);
     st.setStep(i, { step: 'merged', mergedOid: d.mergeCommit?.oid ?? null, head: d.headRefOid });
     return NEXT;
   }
@@ -553,9 +556,10 @@ function stepMember(st, i) {
   for (;;) {
     const o = viewPr(deps, cwd, s);
     if (o.ok && upper(o.doc.state) === 'MERGED') {
+      const pv = verifyMergedCi(st, s, o.doc, h); // verified first: on failure the step stays `merge`, so a resume observes the MERGED PR and verifies again
+      if (!pv.ok) return fault('merged-unverified', pv.reason);
       st.setStep(i, { step: 'merged', mergedOid: o.doc.mergeCommit?.oid ?? null });
-      const pv = verifyMergedCi(st, s, o.doc, h);
-      return pv.ok ? NEXT : fault('merged-unverified', pv.reason);
+      return NEXT;
     }
     if (Date.now() >= until) {
       return fault('merge-unconfirmed', m.ok

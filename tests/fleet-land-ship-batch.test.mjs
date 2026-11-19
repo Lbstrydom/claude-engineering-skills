@@ -465,9 +465,11 @@ describe('tree identity: the head is re-read at merge time and proven by tree (F
     let n = 0;
     const gh = (args) => { if (args[1] === 'view' && !args.includes('isInMergeQueue') && n < 6) { const l = repush(b, { same: true }); p.head = l; n += 1; } return w.gh(args); };
     gh.assessCi = w.gh.assessCi;
-    approve(b, gh);
+    const r = approve(b, gh);
     assert.ok(n >= 1);
     assert.ok(w.merges.length <= 1);
+    assert.equal(r.ok, false, 'a churning head is never a clean success');
+    assert.ok(outcomeOf(b, 'm1')?.status !== 'landed' || w.merges.length === 1, 'landed only with exactly one merge');
   });
 });
 
