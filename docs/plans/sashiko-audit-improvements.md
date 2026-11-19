@@ -1,6 +1,6 @@
 # Plan: Sashiko-inspired audit improvements (audit --resume, contested-finding verification, defect corpus)
 - **Date**: 2026-11-19
-- **Status**: Draft
+- **Status**: Audited (ready to implement on the coordinator's go)
 - **Author**: Claude + Louis
 - **Proposal**: `p-20261118213122-bc4c` (theme `audit-quality`), approved by Louis 2026-11-18 for after #395 landed (main at `1df6fbfb`).
 - **Scope**: backend (js-ts). Principle set: `skills/plan/references/engineering-principles.md`.
@@ -553,6 +553,51 @@ Tier 3 seam: the CLI is synced, so the relocation/import test lands in the same 
 
 ---
 
+### 4.8 Amendment (coordinator triage of F2, proposal `p-20261119110124-49c0`, folded into PR B): an extra round continues the SID
+
+**The defect** (§1.3, measured): PR #395's four "one more round" runs each started a **fresh SID at round 1**. So they had:
+- no ledger, and therefore no R2+ rulings injection or suppression;
+- no `_priorRuling` links;
+- a round cap that restarted every time.
+
+`round-cap.mjs:13-15 (1df6fbfb)` states the limit: the cap counts `--round` within one session, and a new session id
+restarts the count.
+
+**The rule.** A further round on the **same change** (the same plan, branch and diff base) continues the existing SID. It
+runs as `--round <N+1> --ledger .audit/$SID-ledger.json`, with the R2+ diff and changed-file arguments of Step 2.
+- A fresh SID is correct only for a **different subject**: a new plan, or a re-scoped base the old ledger does not
+  describe. When a fresh SID is started, the round card says why, in one line, as
+  `new SID: <reason>`.
+- A further round that would cross the soft cap is the structural card's CONTINUE choice. It goes through
+  `--past-cap "<reason>"`, which is a human call. **A fresh SID is never a way around the cap.**
+
+**Where it lands.**
+- `skills/audit-code/SKILL.md`, Step 2: one line next to the SID initialisation, offset within the size baseline. The
+  detail goes in `references/round-cap-and-structural-card.md` (`/audit-code`'s reference) under a new heading,
+  *"Another round" continues the SID*.
+- `/audit-plan` already has the same flow. Its copy of `round-cap-and-structural-card.md` is generated from the same
+  canonical, `docs/audit/shared-references/`, if the file is one of the shared refs. Otherwise the line is added to both
+  skills' references. The implementation checks which applies with `sync-shared-audit-refs.mjs`.
+- **Coordinator wording.** `skills/fleet/references/coordinator-playbook.md` gains one relay template. When asking a chip
+  for a further audit round, the coordinator says:
+  > *"Run one more /audit-code round on the same SID: `--round <N+1> --ledger .audit/<SID>-ledger.json`. Do not start a
+  > new SID. If that crosses the soft cap, show me the structural card instead."*
+  - `skills/fleet/**` is not in the fleet-hygiene chip's claim (`scripts/lib/fleet/**`, `scripts/fleet.mjs`). The PR B
+    claim adds `skills/fleet/references/coordinator-playbook.md` and re-runs `fleet claim`, and a BLOCKED result stops
+    the work and is reported.
+
+**What it is.** It is prose guidance, a nudge and not a gate. Enforcement would need `openai-audit.mjs` to recognise "the
+same change under a new SID". That is a heuristic over diff bases and plan paths, and it could refuse a legitimate new
+audit. It is out of scope, and §11 says so.
+
+**Test.**
+- `tests/skill-reference-format` (the existing `skills:check`) covers the new heading's `summary:` row.
+- One assertion in an existing skill-content test, or a new `tests/audit-code-round-continuation.test.mjs`, requires
+  SKILL.md Step 2 and the playbook to both contain the `--round <N+1> --ledger` continuation form. This is a red→green
+  pair: absent on `main`, present on the branch.
+
+---
+
 ## 5. PR C: defect corpus (miner drop report, suites, subsets)
 
 ### 5.1 Miner (`scripts/defect-harvest.mjs`, extended; no second miner)
@@ -679,7 +724,7 @@ Tier 3 seam: the CLI is synced, so the relocation/import test lands in the same 
 
 ### 5.4 Growing the corpus, and who labels it
 This PR ships the miner, the schema and the scorer. The **first mined batch** goes into a worksheet,
-`docs/experiments/audit-effectiveness/kd-mining-2026-11.md`, in the existing `kd-curation-worksheet.md` format, with each
+`docs/experiments/audit-effectiveness/kd-mining-2026-11.md` (planned), in the existing `kd-curation-worksheet.md` format, with each
 candidate's fix subject, introducer, diff stats and drop context.
 - Entries enter `known-defects.json` only from rows Louis marks accepted, in this PR if he reviews it in time, or
   otherwise in a follow-up.
@@ -736,7 +781,7 @@ candidate's fix subject, introducer, diff stats and drop context.
 `scripts/defect-harvest.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` (`validateCorpus`, the subset pool,
 `CORPUS_LOADER_VERSION`), `scripts/model-eval-auditor.mjs` (flags, filter), `scripts/lib/model-eval/deterministic-scorer.mjs`,
 `scripts/lib/model-eval/verdict.mjs` (stamp match), `docs/experiments/audit-effectiveness/known-defects.json` (v4: `subsets`,
-the version bump), `docs/experiments/audit-effectiveness/kd-mining-2026-11.md` (new worksheet), `docs/runbooks/model-eval-harness.md`
+the version bump), `docs/experiments/audit-effectiveness/kd-mining-2026-11.md` (planned) (new worksheet), `docs/runbooks/model-eval-harness.md`
 (Step 5: the miner, the suites, `--subset`), and tests. `scripts/model-eval-auditor.mjs` is near the 1,000-line ratchet, so
 logic goes in the lib module.
 
@@ -759,7 +804,8 @@ logic goes in the lib module.
 - **A**: `scripts/lib/audit/{call-record,llm-helpers,legacy-production-audit,pass-result-cache,planless-intent,findings-pipeline,gate-evidence}.mjs`,
   `scripts/openai-audit.mjs`, `skills/audit-code/**`, `docs/reference/environment-variables.md`, `tests/*call-record*`, `tests/*resume*`.
 - **B**: `scripts/verify-findings.mjs`, `scripts/lib/audit/contested-findings.mjs`, `scripts/lib/schemas.mjs`, `scripts/write-ledger-entries.mjs`,
-  `skills/audit-code/**`, `package.json`, `scripts/.cli-catalog.json`, `tests/*contested*`, `tests/verify-findings*`.
+  `skills/audit-code/**`, `skills/audit-plan/references/round-cap-and-structural-card.md` (if not shared), `docs/audit/shared-references/**` (if shared),
+  `skills/fleet/references/coordinator-playbook.md` (§4.8), `package.json`, `scripts/.cli-catalog.json`, `tests/*contested*`, `tests/verify-findings*`, `tests/audit-code-round-continuation*`.
 - **C**: `scripts/defect-harvest.mjs`, `scripts/model-eval-auditor.mjs`, `scripts/lib/model-eval/**`, `docs/experiments/audit-effectiveness/**`,
   `docs/runbooks/model-eval-harness.md`, `tests/*defect*`, `tests/*known-defect*`, `tests/model-eval-subset*`.
 - `skills/audit-code/**` is shared by A and B. They are sequential, so B rebases on A.
@@ -778,7 +824,7 @@ logic goes in the lib module.
 ## 9. Findings (each recorded with `fleet propose`)
 - **F1** (folded into PR C): `stratifiedSelectKDs` can draw `invalidated` KD-013. Evidence: no reader of `invalidated` in
   model-eval (grep at `1df6fbfb`).
-- **F2** (proposed, not built): the CI-seam rounds of PR #395 each ran as a **fresh SID at r1**, so there was no ledger,
+- **F2** (FOLDED into PR B by the coordinator, §4.8; was proposed): the CI-seam rounds of PR #395 each ran as a **fresh SID at r1**, so there was no ledger,
   R2+ suppression or rulings, and the cap restarted. "One more round" should continue the SID. This is a skill/coordinator
   process fix.
 - **F3** (proposed): one concern raised by several passes (`be-services` + `Sustainability` + `Quickfix`) survives
@@ -803,7 +849,8 @@ expected saving from A and B is **expected, not measured**.
 - Final-review `wrongly_dismissed` items as a verification contest kind. They stay on the gemini-gate Step 7.1
   deliberation path, which nothing here depends on (R3-H2).
 - A stored, verdict-bearing expect_clean result: that needs a `VERDICTS` contract change, and folding the false-positive rate into promotion needs data to set a threshold (R3-H3).
-- F2, F3 and F5.
+- F3 (queued after PR B) and F5 (Louis's call; `known-defects.candidates.json` is left untouched).
+- Enforcing SID continuation in code (§4.8): it would be a heuristic that could refuse a legitimate new audit.
 
 ## Audit trail
 - **/audit-plan, SID `audit-plan-1795086122232-96060`** (2026-11-19). GPT rounds (HIGH / MEDIUM): R1 10 / 2, R2 4 / 3, R3 3 / 2. Every finding
@@ -822,7 +869,10 @@ expected saving from A and B is **expected, not measured**.
   dismissed findings. Both non-blocking items were folded in rather than carried as debt:
   - G1 (MEDIUM): the two-pass triage ordering for kind-1 contests, in §4.4 Skill.
   - G2 (LOW): test 6a was split into a missing-directory arm and an envelope-mismatch arm.
-  No second final-review round, because nothing blocking remained.
+  No second final-review round was needed for the original text; see the amendment's review below.
+- **Amendment (2026-11-19, coordinator triage):** F2 folded into PR B as §4.8, and the out-of-scope list was updated. It was
+  written after the GPT cap, so the final review's round 2 (`--prior`) reviewed it: `APPROVE`, gate `approve` (blocking 0, debt 0), with no new and no wrongly dismissed findings. **The plan audit
+  is closed.**
 
 ## Implementation log
 _(filled during /cycle code)_
