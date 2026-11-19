@@ -10,6 +10,7 @@
 import { runAuditGenerationArm } from './arm-generation.mjs';
 import { scoreExpectCleanCase, summarizeExpectClean } from './corpus-selection.mjs';
 
+const SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH']);
 const norm = (f) => String(f).replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
 
 /**
@@ -33,26 +34,36 @@ export function toScorable(findings, files) {
  * @returns {Promise<{perCase: object[], summary: object, usageEvents: object[], budgetStop: object|null}>}
  */
 export async function runExpectCleanReport({ runId, arm, route, cases, scope, passes, meter = null, generate = runAuditGenerationArm }) {
-  const perCase = []; const usageEvents = []; let budgetStop = null;
+  const perCase = []; const usageEvents = []; let budgetStop = null; let unaccounted = 0;
   // Serialised: generation chdirs into the case's repo, which is process-global state.
   for (const kdCase of cases) {
     const kdId = kdCase.hiddenGroundTruth.kdId;
     const files = kdCase.visibleInput.files;
-    let scored;
+    let scored; let gen = null;
     try {
-      const gen = await generate({ arm, auditInput: { diff: kdCase.visibleInput.diff, files, repoRoot: kdCase.repoRoot }, route, runId, role: 'auditor', scope, passes });
-      usageEvents.push(gen.usageEvent);
-      meter?.record(gen.usageEvent.costUsd);
-      scored = scoreExpectCleanCase({ findings: toScorable(gen.findings, files) }, files);
+      gen = await generate({ arm, auditInput: { diff: kdCase.visibleInput.diff, files, repoRoot: kdCase.repoRoot }, route, runId, role: 'auditor', scope, passes });
     } catch (err) {
-      // A generation that could not complete is `failed` (unmeasured, in the denominator), never clean.
+      // A generation that could not complete is `failed` (unmeasured, in the denominator), never clean. It may still have been billed,
+      // so the meter is told the cost is UNKNOWN and the report says its cost is incomplete.
       process.stderr.write(`  [expect-clean] ${kdId}: generation failed: ${err.message}\n`);
-      scored = { outcome: 'failed', passes: [] };
+      unaccounted += 1;
       meter?.record(null);
     }
+    if (gen) {
+      usageEvents.push(gen.usageEvent);
+      meter?.record(gen.usageEvent.costUsd); // paid for whatever scoring says: recorded once, outside the scoring try
+      try {
+        // Every entry must be a finding with a valid severity: a malformed one makes the case unmeasured, never clean.
+        if (!Array.isArray(gen.findings) || !gen.findings.every((f) => f && typeof f === 'object' && SEVERITIES.has(f.severity))) throw new Error('malformed finding in the generation result');
+        scored = scoreExpectCleanCase({ findings: toScorable(gen.findings, files) }, files);
+      } catch (err) {
+        process.stderr.write(`  [expect-clean] ${kdId}: result unusable: ${err.message}\n`);
+        scored = { outcome: 'failed', passes: [] };
+      }
+    } else scored = { outcome: 'failed', passes: [] };
     perCase.push({ kdId, ...scored });
     const stop = meter?.check();
     if (stop?.stop) { budgetStop = { reason: stop.reason, casesCompleted: perCase.length, casesPlanned: cases.length }; break; }
   }
-  return { perCase, summary: summarizeExpectClean(perCase), usageEvents, budgetStop };
+  return { perCase, summary: summarizeExpectClean(perCase), usageEvents, budgetStop, unaccounted };
 }

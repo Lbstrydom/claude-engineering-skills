@@ -24,7 +24,9 @@ const run = (cases, byDiff, extra = {}) => runExpectCleanReport({ runId: 'r', ar
 
 describe('toScorable: generation findings carry affectedFiles, not file', () => {
   it('a finding naming a case file is attributed to it, case-folded and slash-normalised', () => {
-    assert.deepEqual(toScorable([finding('HIGH', { _primaryFile: 'SRC\A.js', affectedFiles: [] })], ['src/a.js']), [{ file: 'SRC\A.js', severity: 'HIGH', pass: 'be' }]);
+    const f = finding('HIGH', { _primaryFile: 'x\\y.js', affectedFiles: ['SRC\\A.js'] });
+    assert.equal(f.affectedFiles[0].includes('\\'), true, 'the fixture really holds a backslash');
+    assert.equal(toScorable([f], ['src/a.js'])[0].file, 'SRC\\A.js', 'matched through normalisation, not by falling back to the first name');
   });
   it('a finding naming no file is attributed to the case, so an unattributable MEDIUM+ cannot flatter the candidate', () => {
     assert.equal(toScorable([{ severity: 'MEDIUM' }], ['src/a.js'])[0].file, 'src/a.js');
@@ -61,6 +63,19 @@ describe('runExpectCleanReport: the real generation arm, scored judge-free (G1)'
   it('a malformed generation result (findings not an array) is failed, not clean', async () => {
     const r = await runExpectCleanReport({ runId: 'r', arm: {}, route: {}, cases: [kase('K1')], generate: async () => ({ findings: undefined, usageEvent: usage() }) });
     assert.equal(r.perCase[0].outcome, 'failed');
+  });
+  it('a malformed entry inside the findings array makes the case failed, never clean (r6 H1)', async () => {
+    for (const bad of [[{}], [null], [{ severity: 'SEVERE' }]]) {
+      const r = await run([kase('K1')], { 'diff for K1': bad });
+      assert.equal(r.perCase[0].outcome, 'failed', JSON.stringify(bad));
+    }
+  });
+  it('a call is metered once whatever scoring says; a failed call is metered as unknown and flagged unaccounted (r6 M2/M3/M4)', async () => {
+    const recorded = [];
+    const meter = { record: (c) => recorded.push(c), check: () => ({ stop: false }) };
+    const r = await run([kase('K1'), kase('K2')], { 'diff for K1': [{}], 'diff for K2': new Error('429') }, { meter });
+    assert.deepEqual(recorded, [0.1, null]);
+    assert.equal(r.unaccounted, 1);
   });
   it('the budget meter is fed every call and stops the run between cases', async () => {
     const recorded = [];
