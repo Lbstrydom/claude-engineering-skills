@@ -59,9 +59,9 @@ A present detached worktree is judged in this order; the first rule that fires d
    Ignored files count as a risk unless the repo's `archiveIgnore` declares them regenerable — the same rule
    `archive-check` applies, since `git worktree remove` deletes ignored files without asking.
 
-A `prunable` entry (directory gone) is judged by rule 6 only — the directory cannot be inspected, so its HEAD,
-reflog and per-worktree refs are the whole evidence; its HEAD comes from the listing. Removable ones are listed under
-"stale registrations"; a locked one is kept (git's lock; git would skip it anyway).
+A `prunable` entry (directory gone) is **not judged** (the 2026-11-19 cut): what its admin dir (index, reflog, refs) still
+holds is an open-ended question that three audit rounds kept re-opening. It is listed and counted under "stale
+registrations — registration only, nothing judged", locked or not, with no safety claim and no removal offered.
 
 `applyPrune` runs detached candidates after branch candidates, each under `fleet/.lock`, re-checking **at apply
 time** everything the plan judged: still listed, still detached, HEAD unchanged, not locked, `archiveReport` still
@@ -76,9 +76,8 @@ flag accepts what was shown, never what happened since.
 
 **`--apply` never runs `git worktree prune`.** It is repository-wide, and no lock fleet holds serialises other git
 processes, so a registration another process makes prunable between any check and the command would lose its
-history unjudged. Stale registrations are therefore **listed only**, with their evidence and the printed command
-`git worktree prune` plus the note that it affects every prunable entry, for the user to run by hand. They still
-count toward the threshold (§1.2) — the ASK is how they reach a person.
+history unjudged. Stale registrations are therefore **listed only**, labelled "registration only, nothing judged"; the
+command is neither run nor printed. They still count toward the threshold (§1.2) — the ASK is how they reach a person.
 
 Every step is an argv array executed without a shell (`runGit(argv.slice(1))`, as today) and displayed through
 `renderCommand` (`shell-quote.mjs`); a path with spaces or quotes is data in both.
@@ -131,8 +130,8 @@ One pure function, `pruneAlertCrossed(record, alert)` → `{crossed, lowerBound,
 `ASK (for the coordinator's next pass, not an action for this session): prune threshold crossed — <why> — show the user `fleet prune` (read-only) and ask <action>`.
 `<why>` names the parts separately (`N apply-removable (branches + detached), M stale registrations, W registered`).
 `<action>` follows what can act on them: apply-removable > 0 → "whether to run `fleet prune --apply`"; stale
-registrations > 0 → "whether to run `git worktree prune` by hand (repository-wide; `fleet prune` lists every entry it
-affects)"; both → both clauses; only the worktrees side crossed with nothing removable → "which worktrees to retire
+registrations > 0 → "which of the N stale registration(s) to look at (`fleet prune` lists them as registration only,
+nothing judged)" — `git worktree prune` is never named; both → both clauses; only the worktrees side crossed with nothing removable → "which worktrees to retire
 (`fleet prune` lists what is kept and why)". Tests: stale-only, candidate-only, mixed, worktrees-only.
 `fleet status`'s prune line appends `· threshold crossed (<why>)`. Removal stays the user's: no code path removes.
 
@@ -207,9 +206,8 @@ prints the ASK and one below prints none; a fake gh that answers only the declar
 1. **Detached, red→green** (`fleet-prune.test.mjs`, real repo via `makeFleetRepo`): worktree `add --detach` at a
    commit on `origin/main` → candidate with `git worktree remove <path>`; at an unpushed commit → kept naming
    `1 unpushed`; dirty → kept naming the file; locked → skipped; basename `ces-prepush-…` → kept naming the sweep;
-   directory deleted → stale registration with the printed `git worktree prune`; directory deleted but its reflog
-   holds an unpushed commit → kept; directory deleted, reflog emptied, HEAD unpushed → kept (pushed-HEAD control →
-   listed); a detached worktree whose only reflog entry moved from an unpushed commit to a pushed one → kept
+   directory deleted → listed as a stale registration, whatever it holds (no `git worktree prune` printed, nothing
+   "kept"); a detached worktree whose only reflog entry moved from an unpushed commit to a pushed one → kept
    (control: both pushed → candidate); a `refs/bisect/*` in the admin dir → kept; an ignored file outside `archiveIgnore` → kept;
    a path with a space and a quote → executed as argv, rendered quoted. **Negative control:** the same fixture with the
    worktree on a branch is judged by the branch path exactly as before (existing tests unchanged).
@@ -217,7 +215,8 @@ prints the ASK and one below prints none; a fake gh that answers only the declar
    after the plan → skipped; freshness, both flag settings: fresh-in-plan unchanged (skipped without the flag,
    removed with it), activity after the plan on a non-fresh candidate (skipped with and without the flag), a
    fresh-in-plan candidate whose activity advanced (skipped with the flag); stale registrations → `--apply` never
-   invokes `worktree prune` (asserted on the git call log), the command is printed. Each with the passing control
+   invokes `worktree prune` (asserted on the registrations still listed afterwards); a git call that runs into the budget
+   inside the history check reads as unjudged, never kept. Each with the passing control
    (unchanged state → removed).
 3. **Threshold and cache** (`fleet-prune-summary.test.mjs`, plus `status`→`next` through the real cache): boundary
    at exactly 25 / 30 crosses, 24 / 29 does not; `pruneAlert:false` never; incomplete branch half with 25 detached
@@ -253,4 +252,4 @@ prints the ASK and one below prints none; a fake gh that answers only the declar
 
 - Built as planned; deviations: `registrationHistory` also reads `ORIG_HEAD` and the per-worktree `FETCH_HEAD`, checks every id is a commit in one `cat-file --batch-check`, fails closed on a non-`files` ref storage and on oversized evidence; the report withholds `git worktree prune` whenever any registration is kept or unjudged; planning reads the session registry for present worktrees; the ASK is evaluated before the incomplete and empty returns; `gatherFacts` validates `ghIdentity`.
 - `/audit-code` (SID `audit-code-1795089128590-78448`): R1 H12 M10 (13 fixed, 5 dismissed, 4 deferred, 1 coverage bound), R2 H3 M1 (all fixed), R3 H3 M3 (all fixed), R4 H3 M2. **Stopped at round 4: the same seam (what a registration alone holds, for a worktree whose directory is gone) produced new HIGHs in four rounds running.** Open, accepted, unfixed: a missing worktree's own index can hold staged content (R4 H1/H3); session ownership is checked after the gone-worktree branch (R4 H2/M1); a budget exhausted inside the history check reads as kept, not unjudged (R4 M2).
-- Structural cut proposed (needs a decision): make stale registrations LIST-ONLY with no safety claim: drop `registrationHistory` for the gone class, never print `git worktree prune`, and keep counting them toward the threshold. That removes the open-ended "prove a deleted worktree lost nothing" enumeration and leaves `registrationHistory` to present worktrees, where `archiveReport` already covers the index.
+- Structural cut (decided by the coordinator, applied 2026-11-19): make stale registrations LIST-ONLY with no safety claim: drop `registrationHistory` for the gone class, never print `git worktree prune`, and keep counting them toward the threshold. That removes the open-ended "prove a deleted worktree lost nothing" enumeration and leaves `registrationHistory` to present worktrees, where `archiveReport` already covers the index.

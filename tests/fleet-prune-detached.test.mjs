@@ -125,45 +125,51 @@ describe('detached worktrees: removable only with nothing lost', () => {
   });
 });
 
-describe('stale registrations (directory gone): listed only', () => {
-  test('a registration whose history is held remotely is LISTED with the manual command; one holding an unpushed commit is kept; none is touched', () => {
+describe('stale registrations (directory gone): registration only, nothing judged', () => {
+  const rmGone = (dir) => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  test('every registration whose directory is gone is LISTED and counted, whatever it holds; no removal command is printed; none is touched', () => {
     const w = world();
     const gone = w.add('wt-gone');
     const goneUnpushed = w.add('wt-gone-unpushed');
     commitFile(goneUnpushed, 'u.txt', 'u\n', 'only in this registration');
-    fs.rmSync(gone, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    fs.rmSync(goneUnpushed, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    rmGone(gone); rmGone(goneUnpushed);
     const d = w.plan();
-    assert.ok(w.stale(d, gone), 'listed');
-    assert.equal(w.stale(d, goneUnpushed), undefined);
-    assert.match(w.kept(d, goneUnpushed), /reachable only through this registration/);
+    assert.ok(w.stale(d, gone) && w.stale(d, goneUnpushed), 'both listed, neither judged');
+    assert.equal(d.excluded.length, 0, 'nothing is "kept": that would imply it was examined');
     const text = renderDetached(d).join('\n');
-    assert.match(text, /git worktree prune/);
-    assert.match(text, /repository-wide/);
+    assert.match(text, /registration only, nothing judged/);
+    assert.doesNotMatch(text, /git worktree prune/, 'never printed, not even to say it is withheld');
+    assert.doesNotMatch(text, /held by a remote-tracking ref|safe/i);
     // --apply never runs `git worktree prune`: both registrations are still there afterwards.
     const a = applyDetached(w.ctx, d, { list: listWorktrees, staleMs: 3 * DAY });
     assert.deepEqual(a.results, []);
     const listed = listWorktrees(w.fx.repo).worktrees.map((x) => path.resolve(x.path));
     assert.ok(listed.includes(path.resolve(gone)) && listed.includes(path.resolve(goneUnpushed)));
   });
-});
 
-describe('stale registration, reflog expired: the listed HEAD is the whole evidence', () => {
-  test('directory gone + empty reflog + unpushed HEAD → kept; same with a pushed HEAD → listed (control)', () => {
+  test('a locked registration whose directory is gone is still listed and counted', () => {
     const w = world();
-    const unpushed = w.add('wt-gone-empty-unpushed');
-    commitFile(unpushed, 'u.txt', 'u\n', 'unpushed');
-    const admin1 = w.adminOf(unpushed);
-    const pushed = w.add('wt-gone-empty-pushed');
-    const admin2 = w.adminOf(pushed);
-    fs.writeFileSync(path.join(admin1, 'logs', 'HEAD'), '');
-    fs.writeFileSync(path.join(admin2, 'logs', 'HEAD'), '');
-    fs.rmSync(unpushed, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    fs.rmSync(pushed, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    const d = w.plan();
-    assert.equal(w.stale(d, unpushed), undefined);
-    assert.match(w.kept(d, unpushed), /reachable only through this registration/);
-    assert.ok(w.stale(d, pushed), 'control');
+    const dir = w.add('wt-gone-locked');
+    git(['worktree', 'lock', dir], w.fx.repo);
+    rmGone(dir);
+    assert.ok(w.stale(w.plan(), dir));
+  });
+
+  test('a registration whose directory is gone is listed even when it had a branch checked out', () => {
+    const w = world();
+    const dir = path.join(w.fx.root, 'wt-attached');
+    git(['worktree', 'add', '-q', '-b', 'attached', dir, w.pushed], w.fx.repo);
+    rmGone(dir);
+    assert.ok(w.stale(w.plan(), dir));
+  });
+
+  test('a spent budget does not change it: nothing is judged, so nothing is unjudged either', () => {
+    const w = world();
+    const gone = w.add('wt-gone');
+    rmGone(gone);
+    const wt = listWorktrees(w.fx.repo);
+    const d = planDetached(w.ctx, { worktrees: wt.worktrees, mainCheckout: w.fx.repo, here: { ok: false }, staleMs: 3 * DAY, nowMs: Date.now(), past: () => true, deadlineAt: 0, clock: Date.now });
+    assert.deepEqual([d.stale.length, d.excluded.length, d.unjudged], [1, 0, 0]);
   });
 });
 
@@ -184,45 +190,6 @@ describe('registration evidence beyond the reflog (audit R1)', () => {
     const d = w.plan();
     assert.match(w.kept(d, fetched), /reachable only through this registration/);
     assert.ok(w.cand(d, control));
-  });
-
-  test('H5: a registration whose directory is gone is judged even when it had a branch checked out', () => {
-    const w = world();
-    const dir = path.join(w.fx.root, 'wt-attached');
-    git(['worktree', 'add', '-q', '-b', 'attached', dir, w.pushed], w.fx.repo);
-    rmGone(dir);
-    assert.ok(w.stale(w.plan(), dir), 'listed as a stale registration (its tip is pushed)');
-    const dir2 = path.join(w.fx.root, 'wt-attached-unpushed');
-    git(['worktree', 'add', '-q', '-b', 'attached2', dir2, w.pushed], w.fx.repo);
-    commitFile(dir2, 'u.txt', 'u\n', 'unpushed on a branch');
-    rmGone(dir2);
-    const d = w.plan();
-    assert.equal(w.stale(d, dir2), undefined);
-    assert.match(w.kept(d, dir2), /reachable only through this registration/);
-  });
-
-  test('H1: with a kept stale registration the report withholds git worktree prune and says why; with none kept it prints it (control)', () => {
-    const w = world();
-    const gone = w.add('wt-gone');
-    rmGone(gone);
-    assert.match(renderDetached(w.plan()).join('\n'), /^ {6}git worktree prune$/m);
-    const lost = w.add('wt-gone-unpushed');
-    commitFile(lost, 'u.txt', 'u\n', 'only here');
-    rmGone(lost);
-    const text = renderDetached(w.plan()).join('\n');
-    assert.doesNotMatch(text, /^ {6}git worktree prune$/m);
-    assert.match(text, /git worktree prune is NOT offered/);
-  });
-
-  test('R2 H1/H3: an unjudged registration also withholds git worktree prune (it would be deleted with the judged ones)', () => {
-    const w = world();
-    const judged = w.add('wt-gone-judged');
-    rmGone(judged);
-    const d = w.plan();
-    assert.match(renderDetached(d).join('\n'), /^ {6}git worktree prune$/m, 'control: all judged, offered');
-    const text = renderDetached({ ...d, unjudged: 1 }).join('\n');
-    assert.doesNotMatch(text, /^ {6}git worktree prune$/m);
-    assert.match(text, /not judged within the budget/);
   });
 
   test('R2 H2: a repository whose ref storage is not "files" is kept as unverified, never read as "no reflog" (control: files)', () => {
@@ -290,13 +257,18 @@ describe('registration evidence beyond the reflog (audit R1)', () => {
     assert.ok(w.cand(d, other), 'control');
   });
 
-  test('M4: a spent budget counts stale registrations as unjudged, never as listed or kept', () => {
+  test('M2: a git call that runs into the budget inside the history check is UNJUDGED, never kept (control: budget left → kept with its reason)', () => {
     const w = world();
-    const gone = w.add('wt-gone');
-    rmGone(gone);
-    const wt = listWorktrees(w.fx.repo);
-    const d = planDetached(w.ctx, { worktrees: wt.worktrees, mainCheckout: w.fx.repo, here: { ok: false }, staleMs: 3 * DAY, nowMs: Date.now(), past: () => true, deadlineAt: 0, clock: Date.now });
-    assert.deepEqual([d.stale.length, d.excluded.length, d.unjudged], [0, 0, 1]);
+    const dir = w.add('wt-a');
+    const wt = () => listWorktrees(w.fx.repo);
+    const plan = (git, past) => planDetached(w.ctx, { worktrees: wt().worktrees, mainCheckout: w.fx.repo, here: { ok: false }, staleMs: 3 * DAY, nowMs: Date.now(), past, deadlineAt: null, clock: Date.now, git });
+    let spent = false;
+    const failing = (args, cwd, o) => (args[0] === 'config' && args.includes('extensions.refstorage') ? (spent = true, { ok: false, stdout: '', stderr: 'timeout', status: 128, reason: 'timed out' }) : runGit(args, cwd, o));
+    const d = plan(failing, () => spent);
+    assert.deepEqual([d.excluded.length, d.candidates.length, d.unjudged], [0, 0, 1]);
+    const control = plan((args, cwd, o) => (args[0] === 'config' && args.includes('extensions.refstorage') ? { ok: false, stdout: '', stderr: 'x', status: 128, reason: 'x' } : runGit(args, cwd, o)), () => false);
+    assert.match(w.kept(control, dir), /ref storage format could not be read/);
+    assert.equal(control.unjudged, 0);
   });
 });
 

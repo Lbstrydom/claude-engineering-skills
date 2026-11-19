@@ -528,7 +528,7 @@ describe('fleet prune — cluster B additions (plan §2.6 x, y; the removal bind
     const fx = makeFleetRepo({ fleetConfig: { archiveIgnore: ['node_modules/**', '.claude/**'] } });
     git(['branch', 'at-base', 'main'], fx.repo);
     git(['worktree', 'add', '-q', path.join(fx.root, 'wt-at-base'), 'at-base'], fx.repo);
-    const ctx = { cwd: fx.repo, config: { baseBranch: 'main', archiveIgnore: ['node_modules/**', '.claude/**'], staleWorktreeDays: 3 }, now: new Date(), env: scrubbedEnv({ FLEET_TELEMETRY: 'off' }), cmd: 'fleet' };
+    const ctx = { cwd: fx.repo, dir: fleetDir(fx.repo), config: { baseBranch: 'main', archiveIgnore: ['node_modules/**', '.claude/**'], staleWorktreeDays: 3 }, now: new Date(), env: scrubbedEnv({ FLEET_TELEMETRY: 'off' }), cmd: 'fleet' };
     const facts = gatherFacts({ cwd: fx.repo, config: ctx.config, now: ctx.now, env: ctx.env, prs: false });
     facts.prs = { queried: true, complete: true, prs: [] }; // no open PRs: the hide rule's precondition
     const judge = (f) => planPrune(ctx, { facts: f });

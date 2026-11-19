@@ -18,6 +18,7 @@ import { pruneNext, pruneNextLines } from '../scripts/lib/fleet/coordination.mjs
 import { statusPrune } from '../scripts/lib/fleet/commands.mjs';
 import { planPrune } from '../scripts/lib/fleet/prune.mjs';
 import { resolveConfig } from '../scripts/lib/fleet/config.mjs';
+import { fleetDir } from '../scripts/lib/fleet/registry.mjs';
 
 after(cleanupFleetRoots);
 
@@ -36,7 +37,7 @@ describe('summarisePrune — counts only what the plan holds', () => {
     }), AT);
     assert.deepEqual(r, {
       schemaVersion: 2, at: AT, complete: true, removable: 3, fresh: 1, kept: 1, unjudged: 0, orphans: 1,
-      detached: { removable: 0, fresh: 0, kept: 0, stale: 0, staleKept: 0, unjudged: 0 }, worktrees: null,
+      detached: { removable: 0, fresh: 0, kept: 0, stale: 0, unjudged: 0 }, worktrees: null,
       review: { postMerge: 2, postMergeOnBase: 1, noPr: 1, noPrOnBase: 1, unjudged: 0 },
     });
   });
@@ -164,7 +165,7 @@ describe('planPrune under a deadline', () => {
     const saved = { ...process.env };
     try {
       Object.assign(process.env, env);
-      const ctx = { cwd: fx.repo, config: resolveConfig(fx.repo, { env }), now: new Date(), env, cmd: 'fleet' };
+      const ctx = { cwd: fx.repo, dir: fleetDir(fx.repo), config: resolveConfig(fx.repo, { env }), now: new Date(), env, cmd: 'fleet' };
       const p = planPrune(ctx, { deadlineAt: 0 });
       assert.equal(p.complete, true);
       assert.equal(p.candidates.length, 0);
@@ -234,7 +235,7 @@ describe('pruneAlertCrossed / pruneAlertLine — the ASK threshold', () => {
   const A = { removable: 25, worktrees: 30 };
   const R = (o = {}) => {
     const { detached, ...rest } = o;
-    return { ...summarisePrune(plan(), AT), ...rest, detached: { removable: 0, fresh: 0, kept: 0, stale: 0, staleKept: 0, unjudged: 0, ...(detached ?? {}) } };
+    return { ...summarisePrune(plan(), AT), ...rest, detached: { removable: 0, fresh: 0, kept: 0, stale: 0, unjudged: 0, ...(detached ?? {}) } };
   };
   test('boundary: exactly 25 removable / 30 registered crosses, one less does not (each side alone)', () => {
     assert.equal(pruneAlertCrossed(R({ removable: 25 }), A).crossed, true);
@@ -257,19 +258,20 @@ describe('pruneAlertCrossed / pruneAlertLine — the ASK threshold', () => {
     assert.equal(pruneAlertCrossed(R({ complete: false, reason: 'x', removable: 40 }), A).crossed, false, 'branch-only count under an incomplete list is not a measurement');
     const cut = pruneAlertCrossed(R({ detached: { removable: 20, unjudged: 10 } }), A);
     assert.deepEqual([cut.crossed, cut.lowerBound], [false, true], 'under the limit with 10 unjudged is "not shown crossed"');
-    assert.match(pruneAlertLine(R({ detached: { removable: 25, unjudged: 3 } }), A), /≥25 removable/);
+    assert.match(pruneAlertLine(R({ detached: { removable: 25, unjudged: 3 } }), A), /≥25 to review/);
   });
   test('the ASK offers only the action that can address what crossed: stale-only, candidate-only, mixed, worktrees-only', () => {
     const stale = pruneAlertLine(R({ detached: { stale: 25 } }), A);
     assert.match(stale, /^ASK /);
-    assert.match(stale, /git worktree prune/);
+    assert.doesNotMatch(stale, /worktree prune/);
+    assert.match(stale, /registration only, nothing judged/);
     assert.doesNotMatch(stale, /prune --apply/);
     const cand = pruneAlertLine(R({ removable: 25 }), A);
     assert.match(cand, /prune --apply/);
     assert.doesNotMatch(cand, /git worktree prune/);
     const mixed = pruneAlertLine(R({ removable: 20, detached: { removable: 2, stale: 4 } }), A);
     assert.match(mixed, /prune --apply/);
-    assert.match(mixed, /git worktree prune/);
+    assert.doesNotMatch(mixed, /worktree prune/);
     const only = pruneAlertLine(R({ worktrees: 31 }), A);
     assert.match(only, /which worktrees to retire/);
     assert.doesNotMatch(only, /prune --apply|git worktree prune/);
@@ -289,12 +291,13 @@ describe('pruneAlertCrossed / pruneAlertLine — the ASK threshold', () => {
     assert.match(pruneStatusLine(incomplete, 'fleet', A), /^prune: unmeasured .* · threshold crossed/);
     assert.doesNotMatch(pruneStatusLine(R({ worktrees: 5 }), 'fleet', A), /threshold/);
   });
-  test('H1/H9: with a kept stale registration the ASK never offers the repository-wide git worktree prune', () => {
-    const l = pruneAlertLine(R({ detached: { stale: 25, staleKept: 1 } }), A);
-    assert.doesNotMatch(l, /whether to run `git worktree prune/);
-    assert.match(l, /rescue first/);
-    assert.match(l, /withheld/);
-    assert.match(pruneAlertLine(R({ detached: { stale: 25, staleKept: 0 } }), A), /whether to run `git worktree prune`/, 'control: nothing kept, so it is offered');
+  test('stale registrations count toward the threshold but the ASK never names git worktree prune and says nothing was judged', () => {
+    const l = pruneAlertLine(R({ detached: { stale: 25 } }), A);
+    assert.ok(l, 'stale registrations alone cross the threshold');
+    assert.doesNotMatch(l, /worktree prune/);
+    assert.match(l, /registration only, nothing judged/);
+    assert.doesNotMatch(l, /--apply/, 'control: no removal is offered when nothing removable exists');
+    assert.match(pruneAlertLine(R({ removable: 25 }), A), /--apply/, 'control: a judged candidate still offers it');
   });
   test('next relays it after the FYI line, only for a fresh complete-or-not record; the status line says so too; v1 cache → unmeasured, no ASK', () => {
     const rec = R({ removable: 25 });
@@ -303,7 +306,7 @@ describe('pruneAlertCrossed / pruneAlertLine — the ASK threshold', () => {
     assert.match(lines[0], /^FYI /);
     assert.match(lines[1], /^ASK /);
     assert.equal(pruneNext(null, NOW, 'fleet', { read: () => ({ state: 'ok', record: rec }), alert: null }).lines.length, 1, 'off: FYI only');
-    assert.match(pruneStatusLine(rec, 'fleet', A), /threshold crossed \(25 removable \(limit 25\)/);
+    assert.match(pruneStatusLine(rec, 'fleet', A), /threshold crossed \(25 to review \(limit 25\)/);
     assert.doesNotMatch(pruneStatusLine(rec, 'fleet', null), /threshold/);
     const old = pruneNext(null, NOW, 'fleet', { read: () => ({ state: 'unreadable', reason: 'schema mismatch' }), alert: A }).lines;
     assert.match(old[0], /unmeasured/);

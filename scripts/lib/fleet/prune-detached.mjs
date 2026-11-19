@@ -9,9 +9,9 @@
  * per-worktree ref or interrupted operation in its admin dir. `git worktree remove` deletes that admin dir with the
  * worktree, so history only it holds would go with it.
  *
- * Never removed here, only listed: a registration whose directory is gone. `git worktree prune` is repository-wide, and no lock
- * fleet holds serialises other git processes, so a registration another process makes prunable between a check and the command
- * would lose its history unjudged. The command is printed for a person to run.
+ * Listed and counted, never judged: a registration whose directory is gone. What its admin dir (index, reflog, refs) still holds
+ * is an open-ended question, and `git worktree prune` is repository-wide, so no safety claim is made, no removal command is
+ * printed and none is run.
  *
  * @module scripts/lib/fleet/prune-detached
  */
@@ -157,13 +157,10 @@ export function planDetached(ctx, { worktrees, mainCheckout, here, staleMs, nowM
     if (!gone && (w.branch || !w.detached)) continue;
     if (samePath(w.path, mainCheckout) || (here.ok && samePath(w.path, here.dir))) continue;
     const keep = (reason) => out.excluded.push({ path: w.path, head: w.head, gone, reason });
+    // Registration only: nothing is judged. Whether its admin dir (index, reflog, refs) holds anything is an open-ended question
+    // this report does not answer, so it is counted and listed, never called safe to remove.
+    if (gone) { out.stale.push({ path: w.path, head: w.head, reason: w.prunableReason ?? 'git lists it prunable' }); continue; }
     if (w.locked) { keep('locked (in use)'); continue; }
-    if (gone) {
-      if (past()) { out.unjudged += 1; continue; }
-      const h = registrationHistory(ctx, w, { git });
-      if (h.ok) out.stale.push({ path: w.path, head: w.head, reason: w.prunableReason ?? 'directory gone' }); else keep(h.kept);
-      continue;
-    }
     if (!reg.complete) { keep('the session registry is unreadable, so "no registered session" cannot be shown'); continue; }
     const session = ownerOf(w.path);
     if (session) { keep(`registered to session ${session.id}`); continue; }
@@ -177,7 +174,8 @@ export function planDetached(ctx, { worktrees, mainCheckout, here, staleMs, nowM
     const hooks = hooksPathRefusals(hooksPathDependents(w.path, worktrees, { git }), w.path);
     if (hooks.length) { keep(hooks.join('; ')); continue; }
     const h = registrationHistory(ctx, w, { git });
-    if (!h.ok) { keep(h.kept); continue; }
+    // A check that ran into the budget is unjudged, never kept: "kept" would read as examined.
+    if (!h.ok) { if (past()) out.unjudged += 1; else keep(h.kept); continue; }
     const tip = git(['show', '-s', '--format=%ct', w.head], ctx.cwd);
     const tipTime = tip.ok && Number.isFinite(Number(String(tip.stdout).trim())) ? Number(String(tip.stdout).trim()) * 1000 : null;
     const act = lastActivity({ worktree: w.path, tipTime });
@@ -257,15 +255,9 @@ export function renderDetached(d) {
   const kept = d.excluded.filter((e) => !e.gone);
   if (kept.length) lines.push('', `detached worktrees kept (${kept.length}) — look before removing:`, ...kept.map((e) => `  ${e.path}: ${e.reason}`));
   if (d.unjudged) lines.push(`  not judged: ${plural(d.unjudged, 'detached worktree')} reached after the budget was spent`);
-  const goneKept = d.excluded.filter((e) => e.gone);
-  if (d.stale.length || goneKept.length) {
-    lines.push('', `stale registrations (${d.stale.length}) — directory gone; listed only: \`--apply\` never runs \`git worktree prune\`, which is repository-wide and removes EVERY prunable entry git lists, these and any other:`);
-    for (const s of d.stale) lines.push(`  ${s.path} · HEAD ${String(s.head).slice(0, 12)} — its history is held by a remote-tracking ref`);
-    for (const e of goneKept) lines.push(`  kept: ${e.path}: ${e.reason}`);
-    // Offered only when EVERY registration was judged: one kept or still unjudged would be deleted with the rest.
-    if (d.stale.length && !goneKept.length && !d.unjudged) lines.push('      git worktree prune');
-    else if (d.unjudged && !goneKept.length) lines.push(`      git worktree prune is NOT offered: ${plural(d.unjudged, 'registration')} (or worktree) not judged within the budget could be deleted with the rest. Re-run \`fleet prune\` unbudgeted.`);
-    else if (goneKept.length) lines.push(`      git worktree prune is NOT offered: it would also delete the ${plural(goneKept.length, 'registration')} kept above, whose history only they hold. Rescue those commits first (e.g. \`git branch rescue-<n> <sha>\`), then re-run \`fleet prune\`.`);
+  if (d.stale.length) {
+    lines.push('', `stale registrations (${d.stale.length}) — registration only, nothing judged (git lists them prunable, usually because the directory is gone; nothing is checked, so none is offered for removal):`);
+    for (const s of d.stale) lines.push(`  ${s.path} · HEAD ${String(s.head).slice(0, 12)}`);
   }
   return lines;
 }
