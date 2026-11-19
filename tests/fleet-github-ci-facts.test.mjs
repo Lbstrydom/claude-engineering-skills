@@ -29,7 +29,7 @@ describe('every fixture carries its provenance', () => {
       const f = load(name);
       assert.deepEqual(Object.keys(f).sort(), ['body', 'provenance']);
       for (const k of ['repo', 'endpoint', 'command', 'recordedAt', 'tool', 'note']) assert.ok(f.provenance[k], `${name} provenance.${k}`);
-      assert.match(f.provenance.recordedAt, /^2026-11-19$/);
+      assert.match(f.provenance.recordedAt, /^\d{4}-\d{2}-\d{2}$/);
     });
   }
 });

@@ -55,8 +55,9 @@ export function githubFake(scenario, { onMerge, repo = REPO, base = 'main', head
     if (args[0] === 'api') {
       const p = args[1];
       const at = `repos/${repo}/`;
-      if (p === `${at}rules/branches/${base}?per_page=100`) return asRes(scenario.rules);
-      if (p === `${at}branches/${base}`) return asRes(scenario.branch);
+      const b = encodeURIComponent(base); // the readers encode the branch name, so the fake expects the encoded path
+      if (p === `${at}rules/branches/${b}?per_page=100`) return asRes(scenario.rules);
+      if (p === `${at}branches/${b}`) return asRes(scenario.branch);
       if (p === `${at}commits/${head}/check-runs?filter=latest&per_page=100`) return asRes(scenario.checkRuns);
       if (p === `${at}commits/${head}/statuses?per_page=100`) return asRes(scenario.statuses);
     }
