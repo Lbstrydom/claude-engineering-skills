@@ -27,7 +27,7 @@ import { modelFamily } from './lib/model-resolver.mjs';
 import { execFileSync } from 'node:child_process';
 import {
   VERIFY_SCHEMA_VERSION, VerdictModelSchema, VerifyArtifactSchema, selectContested, buildEvidencePack, runTestItem,
-  validateVerdict, verifierPrompt, validateVerifyItem, triageLine,
+  validateVerdict, verifierPrompt, validateVerifyItem, checkArtifactIdentity, triageLine,
 } from './lib/audit/contested-findings.mjs';
 
 const KNOWN_FLAGS = ['--sid', '--round', '--triage', '--max', '--run-test', '--model', '--out', '--check', '--selfcheck-relocation'];
@@ -71,6 +71,8 @@ export async function verifyMain(args, deps = {}) {
     const artifact = readJson(path.resolve(repoRoot, args.check), 'artifact');
     const shape = VerifyArtifactSchema.safeParse(artifact);
     if (!shape.success) return { exit: 2, envelope: { ok: false, error: `artifact fails its schema: ${shape.error.issues[0]?.message} at ${shape.error.issues[0]?.path.join('.')}` }, lines: [] };
+    const who = checkArtifactIdentity(artifact, { resultPath });
+    if (!who.ok) return { exit: 2, envelope: { ok: false, error: `artifact does not belong to this round: ${who.reason}` }, lines: [] };
     const lines = []; const routed = []; const invalid = [];
     for (const item of artifact.items) {
       const id = item?.source?.findingId;

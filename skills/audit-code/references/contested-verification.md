@@ -20,11 +20,10 @@ or dismisses a finding, and `adjudicationOutcome` still comes from your triage.
    node scripts/verify-findings.mjs --sid "$SID" --round $R --check .audit/$SID-r$R-verify.json
    ```
 
-   `--check` re-validates each item against the repo and prints a `[verify: ...]` line **only for items that still validate**.
+   `--check` validates each stored item (schema, sid/round, result-file hash, pack hash, verdict against its pack) and prints a `[verify: ...]` line **only for items that still validate**.
    Show triage those lines, never the raw artifact. Optional: `--max N` (default 10), `--run-test <tracked test path>` (at most two, named by you).
-3. **Final triage.** Update the same triage file. A row that uses a verdict (for example a dismissal citing `refuted`) adds
-   `"reliesOn": {"artifact": "<the --out path>", "packHash": "<the item's packHash>", "verdict": "refuted"}`.
-   `write-ledger-entries.mjs` re-validates that item and refuses the whole batch if it no longer holds (`re-triage`).
+3. **Final triage.** Update the same triage file with your decision for each verified row, citing the artifact in `why`.
+   Nothing binds a ruling to the artifact in v1: the ledger records your decision, not the verdict.
 4. **Rebuttal** receives only the `inconclusive`, `over-cap` and `failed` items, as today.
 
 ## What a verdict means
@@ -57,9 +56,11 @@ Exit `0` complete, `3` at least one item `failed` (INCOMPLETE: re-run), `2` bad 
 - Cited code (lines +/-40), an identifier grep over the working tree, history of the cited range (pinned to the HEAD sha, always
   redacted) and any `--run-test` summary, each through one acquisition boundary: sensitive and repo-escaping paths are withheld
   (the artifact records a hash, never the path), text is redacted and capped, the assembled pack is egress-checked.
-- A **flip** (present, absent, present with no file change) is claimed only when the rounds carry `_auditedSha`; a flip whose
+- A **flip** (present, absent, present with no file change) is claimed only when the rounds carry `_auditedTree` (compared as trees); a flip whose
   latest appearance is before round N is listed in `notSelected`.
 - Each round result is stamped with `_auditedTree`. A result without one (a round run before this stamp existed) is refused, and
   an edit between the round and the verification voids the run (exit 2).
 - `--run-test` output and history items are context for the model and triage; neither can be the quoted proof.
+- v1 checks the stored artifact; it does not rebuild the evidence from the repo, so a forged pack with a recomputed hash is not
+  caught (follow-up in the plan's Implementation Log).
 - The final-review `wrongly_dismissed` items keep their own protocol (`references/gemini-gate.md`).

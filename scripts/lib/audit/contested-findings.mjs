@@ -15,7 +15,6 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { z } from 'zod';
 import { canonicalJson, sha256 } from './call-record.mjs';
-import { captureTargetIdentity } from './target-identity.mjs';
 import { resolveAndClassify, formatSkipLog } from '../sensitive-paths.mjs';
 import { redactSecrets, assertEgressSafe } from '../sensitive-egress-gate.mjs';
 import { generateTopicId, populateFindingMetadata } from '../ledger.mjs';
@@ -192,7 +191,6 @@ function withheld(provenance, p) {
   const hash = skipHash(p);
   return { provenance: { ...provenance, path: `withheld:${hash}` }, text: `[withheld: sensitive path ${hash}]`, eligible: false };
 }
-const isWithheld = (it) => it.eligible === false && /^\[withheld: sensitive path [0-9a-f]+\]$/.test(it.text);
 
 /** Is this path readable as evidence? Follows symlinks (INC-001); sensitive, escaping and unresolvable all withhold. */
 function readable(p, repoRoot) {
@@ -375,7 +373,7 @@ export function verifierPrompt(finding, pack) {
  * @param {{repoRoot: string, resultPath: string, headSha?: string}} opts
  * @returns {{ok: boolean, reason?: string, item?: object}}
  */
-export function validateVerifyItem(artifact, findingId, { repoRoot, resultPath }) {
+export function checkArtifactIdentity(artifact, { resultPath }) {
   const parsed = VerifyArtifactSchema.safeParse(artifact);
   if (!parsed.success) return { ok: false, reason: `schema: ${parsed.error.issues[0]?.message ?? 'invalid'} at ${parsed.error.issues[0]?.path.join('.')}` };
   const a = parsed.data;
@@ -384,6 +382,13 @@ export function validateVerifyItem(artifact, findingId, { repoRoot, resultPath }
   let raw;
   try { raw = fs.readFileSync(path.resolve(resultPath)); } catch (e) { return { ok: false, reason: `cannot read result: ${e.message}` }; }
   if (sha256(raw) !== a.resultSha256) return { ok: false, reason: 'result file changed since verification (hash mismatch)' };
+  return { ok: true, a, raw };
+}
+
+export function validateVerifyItem(artifact, findingId, { repoRoot, resultPath }) {
+  const id = checkArtifactIdentity(artifact, { resultPath });
+  if (!id.ok) return id;
+  const { a, raw } = id;
   const findings = JSON.parse(raw.toString('utf-8')).findings ?? [];
   const finding = findings.find((f) => f.id === findingId);
   if (!finding) return { ok: false, reason: `finding ${findingId} is not in round ${a.round}` };
@@ -396,55 +401,18 @@ export function validateVerifyItem(artifact, findingId, { repoRoot, resultPath }
   const { pack, packHash } = item.evidence;
   if (sha256(canonicalJson(pack)) !== packHash) return { ok: false, reason: 'packHash mismatch (pack edited or corrupted)' };
 
-  // Provenance re-acquisition: the evidence is rebuilt from the repo, never taken from the file.
-  const tree = captureTargetIdentity(repoRoot).auditedTree;
-  const ctx = { repoRoot, headSha: a.headSha };
-  const rebuilt = [];
+  // v1 checks the stored artifact only. Re-acquiring evidence from the repo (so a forged pack is caught) was cut: see the
+  // plan's Implementation Log. Test output, history and the finding's own text can never be eligible proof.
   for (const it of pack) {
-    const p = it.provenance;
-    let again;
-    if (p.source === 'finding') again = findingItem(finding);
-    else if (p.source === 'test') { if (it.eligible !== false) return { ok: false, reason: `evidence ${it.tag} (test output) cannot be eligible` }; again = it; } // output cannot be reconstructed, so it can never back a verdict
-    else if (isWithheld(it) && /^withheld:[0-9a-f]+$/.test(p.path ?? '')) again = it; // nothing was read; a forged edit is not a withheld marker
-    else {
-      if ((p.source === 'code' || p.source === 'grep') && tree !== a.evidenceTree) return { ok: false, reason: 'tree moved since verification' };
-      try { again = acquire(p, ctx); } catch (e) { return { ok: false, reason: `re-acquisition failed: ${e.message}` }; }
-    }
-    if (again.text !== it.text || again.eligible !== it.eligible || canonicalJson(again.provenance) !== canonicalJson(p)) {
-      return { ok: false, reason: `evidence ${it.tag} does not match what the repo yields for its provenance` };
-    }
-    rebuilt.push({ tag: it.tag, ...again });
+    if (['test', 'history', 'finding'].includes(it.provenance.source) && it.eligible !== false) return { ok: false, reason: `evidence ${it.tag} (${it.provenance.source}) cannot be eligible` };
   }
   if (item.state === 'verified') {
-    const re = validateVerdict({ verdict: item.verdict, evidenceRefs: item.evidence.refs, quote: item.evidence.quote }, rebuilt);
-    if (!re.backed || re.verdict !== item.verdict) return { ok: false, reason: `stored verdict no longer validates (${re.demotionRule ?? 'not backed'})` };
+    const re = validateVerdict({ verdict: item.verdict, evidenceRefs: item.evidence.refs, quote: item.evidence.quote }, pack);
+    if (!re.backed || re.verdict !== item.verdict) return { ok: false, reason: `stored verdict does not validate against its pack (${re.demotionRule ?? 'not backed'})` };
   }
   return { ok: true, item };
 }
 
-/**
- * The ledger writer's whole use of verification. Looks only at triage rows that declare `reliesOn`; returns the first
- * refusal message, or null. A row without `reliesOn` never reaches this code.
- *
- * @param {object} triage
- * @param {{resultPath: string, repoRoot?: string}} opts
- * @returns {string|null}
- */
-export function checkReliance(triage, { resultPath, repoRoot = process.cwd() }) {
-  for (const [id, row] of Object.entries(triage)) {
-    const r = row?.reliesOn;
-    if (r === undefined) continue;
-    const fail = (why) => `triage row ${id} relied on verification that no longer validates (${why}): re-triage`;
-    if (!r || typeof r.artifact !== 'string' || typeof r.packHash !== 'string' || typeof r.verdict !== 'string') return `triage row ${id}: reliesOn must be {artifact, packHash, verdict}`;
-    let artifact;
-    try { artifact = JSON.parse(fs.readFileSync(path.resolve(repoRoot, r.artifact), 'utf-8')); } catch (e) { return fail(`artifact unreadable: ${e.message}`); }
-    const v = validateVerifyItem(artifact, id, { repoRoot, resultPath });
-    if (!v.ok) return fail(v.reason);
-    if (v.item.evidence.packHash !== r.packHash) return fail('packHash differs from the one triage relied on');
-    if (r.verdict !== v.item.verdict) return fail(`verdict is now ${v.item.verdict}, triage relied on ${r.verdict}`);
-  }
-  return null;
-}
 
 /** The `[verify: …]` line triage sees, for an item that passed `validateVerifyItem`. */
 export function triageLine(findingId, item) {

@@ -373,13 +373,6 @@ async function main() {
     );
   }
 
-  // A row that used a verification verdict names it with `reliesOn`; refuse the batch if that no longer validates.
-  if (Object.values(triage).some((t) => t?.reliesOn !== undefined)) {
-    const { checkReliance } = await import('./lib/audit/contested-findings.mjs');
-    const refusal = checkReliance(triage, { resultPath });
-    if (refusal) throw new ArgvError(`write-ledger-entries: ${refusal}. Nothing was written.`);
-  }
-
   const written = [];
   const writtenTopicIds = [];
   const pending = [];
@@ -433,7 +426,6 @@ async function main() {
       // A newConcern decision is recorded against the prior it was ruled
       // distinct from, so it can be audited later; see LedgerCoreFields.
       ...(t.newConcern === true && f._priorRuling?.topicId ? { newConcernOf: f._priorRuling.topicId } : {}),
-      ...(t.reliesOn ? { reliesOn: { artifact: t.reliesOn.artifact, packHash: t.reliesOn.packHash, ...(t.reliesOn.verdict ? { verdict: t.reliesOn.verdict } : {}) } } : {}),
       resolvedRound: round,
       pass: f._pass,                               // matches the populateFindingMetadata arg above
     });

@@ -198,7 +198,7 @@ describe('verify-findings: states, exit codes and the cap', () => {
   });
 });
 
-describe('the artifact boundary (validateVerifyItem, --check, and the ledger writer)', () => {
+describe('the artifact boundary (validateVerifyItem and --check)', () => {
   let repo; let resultPath; let art;
   beforeEach(async () => {
     repo = makeVerifyRepo({ 'src/a.js': SRC });
@@ -227,24 +227,10 @@ describe('the artifact boundary (validateVerifyItem, --check, and the ledger wri
     const a = art(); a.items[0].evidence.pack[1].text += ' extra';
     assert.match(check(a).reason, /packHash mismatch/);
   });
-  it('tamper control: a fabricated quote in a cited code item with a RECOMPUTED packHash is refused by re-acquisition', () => {
-    const a = art();
-    const it = a.items[0];
-    it.evidence.pack[1].text += '\nif (never) { /* fabricated line that refutes the finding */ }';
-    it.evidence.quote = 'fabricated line that refutes the finding';
-    reHash(a, 'H1');
-    const r = check(a);
-    assert.equal(r.ok, false);
-    assert.match(r.reason, /does not match what the repo yields/);
-  });
   it('the schema rejects an artifact with an unknown key', () => assert.match(check({ ...art(), extra: 1 }).reason, /^schema/));
-  it('the tree moving after verification refuses an item that relies on current code', () => {
-    repo.write('src/a.js', `${SRC}// moved\n`);
-    assert.match(check(art()).reason, /tree moved/);
-  });
-  it('a stored verdict that no longer validates is refused (a quote that is not in the re-acquired items)', () => {
+  it('a stored verdict whose quote is not in its pack is refused', () => {
     const a = art(); a.items[0].evidence.quote = 'a long quote that the code does not contain';
-    assert.match(check(a).reason, /no longer validates/);
+    assert.match(check(a).reason, /does not validate against its pack/);
   });
 
   describe('--check shows triage only what still validates', () => {
@@ -252,11 +238,26 @@ describe('the artifact boundary (validateVerifyItem, --check, and the ledger wri
       const r = await verifyMain({ sid: SID, round: 1, check: '.audit/v.json' }, { repoRoot: repo.root });
       assert.equal(r.envelope.lines.filter((l) => l.includes('[verify: refuted')).length, 2);
       assert.deepEqual(r.lines, [], 'stdout carries one JSON envelope, not loose lines');
-      repo.write('src/a.js', `${SRC}// moved\n`);
-      const moved = await verifyMain({ sid: SID, round: 1, check: '.audit/v.json' }, { repoRoot: repo.root });
-      assert.equal(moved.envelope.lines.filter((l) => l.includes('[verify:')).length, 0);
-      assert.equal(moved.exit, 3, 'an item that no longer validates fails the check and is routed to rebuttal');
-      assert.deepEqual(moved.envelope.invalid.map((i) => i.findingId).sort(), ['H1', 'H2']);
+      fs.appendFileSync(resultPath, ' ');
+      const edited = await verifyMain({ sid: SID, round: 1, check: '.audit/v.json' }, { repoRoot: repo.root });
+      assert.equal(edited.exit, 2, 'an artifact whose result file changed is refused as a whole');
+      assert.match(edited.envelope.error, /hash mismatch/);
+      const a = art(); a.items[0].evidence.quote = 'a long quote that the pack does not contain';
+      repo.audit('badquote.json', a);
+      fs.writeFileSync(resultPath, fs.readFileSync(resultPath, 'utf-8').trimEnd());
+      const bad = await verifyMain({ sid: SID, round: 1, check: '.audit/badquote.json' }, { repoRoot: repo.root });
+      assert.equal(bad.exit, 3, 'an item that does not validate fails the check and is routed to rebuttal');
+      assert.deepEqual(bad.envelope.invalid.map((i) => i.findingId), ['H1']);
+    });
+  });
+
+  describe('round-4 hardening', () => {
+    it('--check of an item-less artifact from another session is refused, not passed', async () => {
+      const a = art(); a.sid = 'audit-code-9-9'; a.items = []; a.counts = { verified: 0, inconclusive: 0, overCap: 0, failed: 0 };
+      repo.audit('other.json', a);
+      const r = await verifyMain({ sid: SID, round: 1, check: '.audit/other.json' }, { repoRoot: repo.root });
+      assert.equal(r.exit, 2);
+      assert.match(r.envelope.error, /does not belong to this round/);
     });
   });
 
@@ -285,43 +286,14 @@ describe('the artifact boundary (validateVerifyItem, --check, and the ledger wri
   });
 
   describe('the ledger writer: verification is evidence, never a ruling', () => {
-    const WRITE = path.join(REPO_ROOT, 'scripts', 'write-ledger-entries.mjs');
-    const write = (triage) => {
-      repo.audit('t2.json', triage);
-      return spawnSync(process.execPath, [WRITE, '--result', resultPath, '--ledger', path.join(repo.root, '.audit', `${SID}-ledger.json`), '--triage', path.join(repo.root, '.audit', 't2.json'), '--no-finalize'], { cwd: repo.root, encoding: 'utf-8', env: { ...process.env, AUDIT_DB_URL: '' } });
-    };
-    const ledger = () => JSON.parse(fs.readFileSync(path.join(repo.root, '.audit', `${SID}-ledger.json`), 'utf-8')).entries;
-    const row = (over = {}) => ({ outcome: 'accepted', state: 'planned', ruling: 'sustain', why: 'valid, scheduled', ...over });
-
-    it('a refuted verdict with an accepted triage yields an accepted entry; only declared reliance leaves a pointer, and no verification data is copied', () => {
-      const packHash = art().items[0].evidence.packHash;
-      const r = write({ H1: row({ reliesOn: { artifact: '.audit/v.json', packHash, verdict: 'refuted' } }), H2: row() });
+    it('a refuted verdict with an accepted triage yields an accepted entry, and no verification data reaches the ledger', () => {
+      const WRITE = path.join(REPO_ROOT, 'scripts', 'write-ledger-entries.mjs');
+      repo.audit('t2.json', { H1: { outcome: 'accepted', state: 'planned', ruling: 'sustain', why: 'valid, scheduled' }, H2: { outcome: 'accepted', state: 'planned', ruling: 'sustain', why: 'valid' } });
+      const r = spawnSync(process.execPath, [WRITE, '--result', resultPath, '--ledger', path.join(repo.root, '.audit', `${SID}-ledger.json`), '--triage', path.join(repo.root, '.audit', 't2.json'), '--no-finalize'], { cwd: repo.root, encoding: 'utf-8', env: { ...process.env, AUDIT_DB_URL: '' } });
       assert.equal(r.status, 0, r.stderr);
-      const [e1, e2] = ledger();
-      assert.equal(e1.adjudicationOutcome, 'accepted');
-      assert.deepEqual(e1.reliesOn, { artifact: '.audit/v.json', packHash, verdict: 'refuted' });
-      assert.equal(e2.reliesOn, undefined);
-      assert.ok(!JSON.stringify(ledger()).includes('quote'), 'no verification data in the ledger');
-    });
-    it('a row that relies on verification which no longer validates refuses the WHOLE batch; rows without reliesOn write normally', () => {
-      const packHash = art().items[0].evidence.packHash;
-      repo.write('src/a.js', `${SRC}// moved after verification\n`);
-      const refused = write({ H1: row({ outcome: 'dismissed', ruling: 'overrule', dismissReasonClass: 'false-positive', reliesOn: { artifact: '.audit/v.json', packHash, verdict: 'refuted' } }), H2: row() });
-      assert.equal(refused.status, 2);
-      assert.match(refused.stderr, /triage row H1 relied on verification that no longer validates .*re-triage/);
-      assert.equal(fs.existsSync(path.join(repo.root, '.audit', `${SID}-ledger.json`)), false, 'nothing was written');
-      const ok = write({ H1: row(), H2: row() });
-      assert.equal(ok.status, 0, ok.stderr);
-    });
-    it('a reliesOn that omits the verdict, or names a different one, refuses the batch', () => {
-      const packHash = art().items[0].evidence.packHash;
-      assert.match(write({ H1: row({ reliesOn: { artifact: '.audit/v.json', packHash } }), H2: row() }).stderr, /must be \{artifact, packHash, verdict\}/);
-      assert.match(write({ H1: row({ reliesOn: { artifact: '.audit/v.json', packHash, verdict: 'confirmed' } }), H2: row() }).stderr, /verdict is now refuted/);
-    });
-    it('a reliesOn whose packHash is not the artifact\'s refuses the batch', () => {
-      const r = write({ H1: row({ reliesOn: { artifact: '.audit/v.json', packHash: 'not-the-hash', verdict: 'refuted' } }), H2: row() });
-      assert.equal(r.status, 2);
-      assert.match(r.stderr, /packHash differs/);
+      const entries = JSON.parse(fs.readFileSync(path.join(repo.root, '.audit', `${SID}-ledger.json`), 'utf-8')).entries;
+      assert.deepEqual(entries.map((e) => e.adjudicationOutcome), ['accepted', 'accepted']);
+      assert.ok(!JSON.stringify(entries).includes('quote') && !JSON.stringify(entries).includes('reliesOn'));
     });
   });
 });
