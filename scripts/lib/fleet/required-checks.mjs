@@ -21,6 +21,7 @@
  * @module scripts/lib/fleet/required-checks
  */
 import { classifyGhFailure, ghSpawnFailure, spawnGh } from './gh-facts.mjs';
+import { readBranchProtection, readBranchRules, readCheckRuns, readCommitStatuses, readPrCandidate } from './github-ci-facts.mjs';
 
 /** `gh pr checks --json` fields requested (all real — see the recorded fixture). */
 export const CHECKS_FIELDS = Object.freeze(['name', 'state', 'bucket', 'completedAt']);
@@ -280,4 +281,128 @@ export function describeEvidence(evidence, decision = decideCiAdmission(evidence
   if (evidence?.tag === 'ineligible') return `the PR is not a merge candidate (${show(evidence.code)})`;
   if (decision.disposition === 'permit') return `required checks ${decision.tag}`;
   return `required checks ${decision.tag}${names.length ? `: ${names.join('; ')}` : ''}`;
+}
+
+// ---- the oracle: assessRequiredCi (docs/plans/ci-evidence-oracle.md section 2.1) -------------------------------------------------
+
+/** A check run's `conclusion`, as the class it counts as. A conclusion not listed is `unknown-conclusion`, never a guess. */
+const CONCLUSION_CLASS = Object.freeze({
+  success: 'passed', failure: 'failed', cancelled: 'failed', timed_out: 'failed', startup_failure: 'failed',
+  skipped: 'not-run', neutral: 'not-run', stale: 'not-run', action_required: 'not-run',
+});
+const OPEN_STATUSES = Object.freeze(['queued', 'in_progress', 'waiting', 'requested', 'pending']);
+
+const unknownOf = (kind, detail) => ({ tag: 'unknown', fault: { kind, detail } });
+const fromFault = (r) => ({ tag: 'unknown', fault: r.fault });
+
+/** Why a PR is not a merge candidate at the expected base and head, or null. The ONE copy of the eligibility rule. */
+function ineligibleCode(pr, { expectedBase, expectedHead }) {
+  const state = pr.state.toUpperCase();
+  if (state === 'MERGED') return 'merged';
+  if (state !== 'OPEN') return 'closed';
+  if (pr.isDraft) return 'draft';
+  if (pr.baseRefName !== expectedBase) return 'retargeted';
+  if (pr.headRefOid !== expectedHead) return 'head-moved';
+  return null;
+}
+
+/** The config assertion (section 2.5): exact agreement with GitHub's required contexts, or a typed fault. `undefined` asserts nothing. */
+function configFault(assertion, contexts) {
+  if (!assertion) return null;
+  if (assertion.error) return { kind: 'config-error', detail: `.fleet.json could not be loaded: ${show(assertion.error, 200)}` };
+  const want = assertion.requiredChecks;
+  if (want === undefined) return null;
+  if (!Array.isArray(want) || want.some((x) => typeof x !== 'string' || !x)) return { kind: 'config-error', detail: '.fleet.json requiredChecks is not a list of check names' };
+  const have = new Set(contexts); const asked = new Set(want);
+  const missingFromGithub = [...asked].filter((x) => !have.has(x)).sort();
+  const missingFromConfig = [...have].filter((x) => !asked.has(x)).sort();
+  if (!missingFromGithub.length && !missingFromConfig.length) return null;
+  return { kind: 'config-drift', detail: `.fleet.json requiredChecks disagrees with GitHub: configured but not required by GitHub [${missingFromGithub.map((x) => show(x, 60)).join(', ')}]; required by GitHub but not configured [${missingFromConfig.map((x) => show(x, 60)).join(', ')}]` };
+}
+
+/** One required pair against the runs of its head: a class, or a fault. Both status and conclusion domains are closed. */
+function assessPair(pair, runs) {
+  const same = runs.filter((r) => r.name === pair.context);
+  const mine = same.filter((r) => r.appId === pair.integrationId);
+  const classes = [];
+  for (const r of mine) {
+    if (r.status !== 'completed' && !OPEN_STATUSES.includes(r.status)) return { fault: { kind: 'unknown-conclusion', detail: `check run ${r.id} (${show(pair.context, 60)}) has the status ${show(r.status, 40)}` } };
+    if ((r.status === 'completed') !== (r.conclusion !== null)) return { fault: { kind: 'malformed', detail: `check run ${r.id} (${show(pair.context, 60)}) is ${show(r.status, 40)} with the conclusion ${show(r.conclusion, 40)}` } };
+    if (r.status !== 'completed') { classes.push('pending'); continue; }
+    const c = CONCLUSION_CLASS[r.conclusion];
+    if (!c) return { fault: { kind: 'unknown-conclusion', detail: `check run ${r.id} (${show(pair.context, 60)}) concluded ${show(r.conclusion, 40)}` } };
+    classes.push(c);
+  }
+  if (!mine.length) return { cls: 'missing', wrongApp: [...new Set(same.map((r) => r.appId))] };
+  if (classes.includes('pending')) return { cls: 'pending' };
+  const kinds = [...new Set(classes)];
+  if (kinds.length > 1) return { fault: { kind: 'duplicate-conflict', detail: `${show(pair.context, 60)} has runs from the pinned app that disagree (${kinds.join(', ')})` } };
+  return { cls: kinds[0] };
+}
+
+/**
+ * THE oracle: the CI evidence for PR `prNumber` at `expectedHead`, as ONE value from the closed tag set. It reads (in this order, each
+ * step needing the last): the PR, the branch (proving it exists and that classic protection is off), the rules, the config assertion, the
+ * check runs and statuses of the immutable head, and the PR again. It never returns an action and never throws; every doubt is `unknown`.
+ * @param {{repo: string, prNumber: number, expectedBase: string, expectedHead: string, configAssertion?: {requiredChecks?: string[], error?: string|null}}} a
+ * @param {{gh: Function, cwd?: string}} deps
+ * @returns {{tag: string, head?: string, code?: string, names?: object, required?: object[], wrongApp?: object, fault?: {kind: string, detail: string}}}
+ */
+export function assessRequiredCi({ repo, prNumber, expectedBase, expectedHead, configAssertion }, deps) {
+  const cwd = deps?.cwd ?? '.';
+  const ctx = { expectedBase, expectedHead };
+  try {
+    const pr1 = readPrCandidate(deps, cwd, { repo, prNumber });
+    if (!pr1.ok) return fromFault(pr1);
+    const code1 = ineligibleCode(pr1.value, ctx);
+    if (code1) return { tag: 'ineligible', code: code1, head: pr1.value.headRefOid };
+
+    const branch = readBranchProtection(deps, cwd, { repo, base: expectedBase });
+    if (!branch.ok) return fromFault(branch);
+    if (branch.value.classicEnabled) return unknownOf('unsupported-classic-protection', `classic branch protection is enabled on ${show(expectedBase, 60)}: fleet reads rulesets only, so pin the requirement in a ruleset`);
+
+    const rules = readBranchRules(deps, cwd, { repo, base: expectedBase });
+    if (!rules.ok) return fromFault(rules);
+    const unpinned = rules.value.pairs.filter((p) => p.integrationId === null).map((p) => show(p.context, 60));
+    if (unpinned.length) return unknownOf('unsupported-unpinned-requirement', `required without a pinned integration: ${unpinned.join(', ')} (a check cannot be matched to an app, so identity cannot be established)`);
+    const seen = new Set();
+    const pairs = rules.value.pairs.filter((p) => { const k = `${p.context}\u0000${p.integrationId}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    const contexts = [...new Set(pairs.map((p) => p.context))];
+
+    const cf = configFault(configAssertion, contexts);
+    if (cf) return { tag: 'unknown', fault: cf };
+
+    let evidence;
+    if (!pairs.length) {
+      evidence = { tag: 'none-required', head: expectedHead, required: [], proof: `the branch ${show(expectedBase, 60)} exists, classic protection is off and no required_status_checks rule applies` };
+    } else {
+      const runs = readCheckRuns(deps, cwd, { repo, head: expectedHead });
+      if (!runs.ok) return fromFault(runs);
+      const statuses = readCommitStatuses(deps, cwd, { repo, head: expectedHead });
+      if (!statuses.ok) return fromFault(statuses);
+      const clash = statuses.value.filter((s) => contexts.includes(s.context)).map((s) => show(s.context, 60));
+      if (clash.length) return unknownOf('status-context-present', `a commit status shares the required context ${[...new Set(clash)].join(', ')}: a status carries no app id, so identity cannot be established`);
+
+      const names = { failed: [], 'not-run': [], missing: [], pending: [] }; const wrongApp = {}; const passed = [];
+      for (const pair of pairs) {
+        const r = assessPair(pair, runs.value);
+        if (r.fault) return { tag: 'unknown', fault: r.fault };
+        if (r.cls === 'passed') passed.push({ name: pair.context, conclusion: 'success', appId: pair.integrationId });
+        else { names[r.cls].push(pair.context); if (r.wrongApp?.length) wrongApp[pair.context] = r.wrongApp; }
+      }
+      const worst = ['failed', 'not-run', 'missing', 'pending'].find((k) => names[k].length);
+      evidence = worst
+        ? { tag: worst, head: expectedHead, names, ...(Object.keys(wrongApp).length ? { wrongApp } : {}) }
+        : { tag: 'passed', head: expectedHead, required: passed };
+    }
+
+    // The final re-read, for EVERY outcome (a proven-empty inventory included): the evidence stands only if the PR is still this candidate.
+    const pr2 = readPrCandidate(deps, cwd, { repo, prNumber });
+    if (!pr2.ok) return fromFault(pr2);
+    const code2 = ineligibleCode(pr2.value, ctx);
+    if (code2) return { tag: 'ineligible', code: code2, head: pr2.value.headRefOid };
+    return evidence;
+  } catch (e) {
+    return unknownOf('unexpected-tag', `the oracle threw: ${show(e?.message ?? e)}`);
+  }
 }

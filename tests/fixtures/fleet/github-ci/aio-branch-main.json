@@ -1,0 +1,109 @@
+{
+  "provenance": {
+    "repo": "Lbstrydom/ai-organiser",
+    "endpoint": "GET repos/{r}/branches/main",
+    "command": "gh api -i repos/Lbstrydom/ai-organiser/branches/main",
+    "recordedAt": "2026-11-19",
+    "tool": "gh 2.78.0, owner token",
+    "note": "protected:false, classic off: the proven-empty branch answer."
+  },
+  "body": {
+    "name": "main",
+    "commit": {
+      "sha": "c2e489aef3333f05c803141717dcc8c5a85af5b0",
+      "node_id": "C_kwDOQ6_f09oAKGMyZTQ4OWFlZjMzMzNmMDVjODAzMTQxNzE3ZGNjOGM1YTg1YWY1YjA",
+      "commit": {
+        "author": {
+          "name": "Louis Strydom",
+          "email": "77991486+Lbstrydom@users.noreply.github.com",
+          "date": "2026-11-16T18:52:52Z"
+        },
+        "committer": {
+          "name": "GitHub",
+          "email": "noreply@github.com",
+          "date": "2026-11-16T18:52:52Z"
+        },
+        "message": "chore(sync): bundle sync from Lbstrydom/claude-engineering-skills c38fb2f6 (#116)\n\nCommits the tracked artifacts of the claude-engineering-skills sync at c38fb2f6\n(1 sync-owned path(s), content verified against scripts/.sync-manifest.json).\nOpened by `npm run sync:pr` in the upstream repo; the sync itself never commits here.\n\nSync-Bundle: c38fb2f6782b8b199c2503838f271fc39929f4a7",
+        "tree": {
+          "sha": "976f5f47d0dfc42188efedf19b60bf40618a7a8e",
+          "url": "https://api.github.com/repos/Lbstrydom/ai-organiser/git/trees/976f5f47d0dfc42188efedf19b60bf40618a7a8e"
+        },
+        "url": "https://api.github.com/repos/Lbstrydom/ai-organiser/git/commits/c2e489aef3333f05c803141717dcc8c5a85af5b0",
+        "comment_count": 0,
+        "verification": {
+          "verified": true,
+          "reason": "valid",
+          "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJq+1EECRC1aQ7uu5UhlAAAtwkQAC5Tua6GefhoSzbxIeoda/0T\nFnYpB6a5Gp0PVniCoIWqTjJamFWoV3agdtjnFn05ueJp2l9BmGRTtWifiBq+Gd/m\nnBrqW+u5g3qENIWwnvwViJ8Vc/n6z7L0VKyivBo2Al0fyzTDOIPmehUoiud271x1\nIW8NCBQVEh79mcXVzaJ3QgDwVbeRhlazfBBeqJg18MMH87ppV5gDRJc5UtoUMWl4\nlyHSjAqNWj8ouGFhL9n1zEso3Gwso2xCde8aDQnckMhhVzrnzta4yavvOK5k3k88\nrAThiKGxSFk9H2woqE9pY6dvTqdZAZYYF21j4616ZLHuM1ldsNIAMHnB8NNB2sjz\n88f5RiuQ+K/zYTtZEPn9ori4vq3P3hRvAdreN23Zg3okPQmyl+LsFZM77/kLmCY0\nX5GluxIsbvmtT6P9lwcRyoB6h7vkkgYXEQmomePecG6BEJrpS7s2f1245K/izS/l\ninY1q0zM+ITYo5SyF1GYdhSZmUKTsmpP34dhifulCLJgNSXDJYmBAAA6dzDtSRpP\n4JVWUtrvU2x9BMHS9M2KYyxHJEFHsvl7fEh+wSHJv5TOVfZLwXByUhegSg/WxCgy\nehkT7+zaUtDkOCij8JtdyZzIcaSLEMVgFiBHSSdss6kFHm3IkPdjXbnf8159baof\nYRLBkhXW9tlaGIR1oIRe\n=IeEV\n-----END PGP SIGNATURE-----\n",
+          "payload": "tree 976f5f47d0dfc42188efedf19b60bf40618a7a8e\nparent a6be280e55a15a08c35d1d14197acec6755752e6\nauthor Louis Strydom <77991486+Lbstrydom@users.noreply.github.com> 1794855172 +0100\ncommitter GitHub <noreply@github.com> 1794855172 +0100\n\nchore(sync): bundle sync from Lbstrydom/claude-engineering-skills c38fb2f6 (#116)\n\nCommits the tracked artifacts of the claude-engineering-skills sync at c38fb2f6\n(1 sync-owned path(s), content verified against scripts/.sync-manifest.json).\nOpened by `npm run sync:pr` in the upstream repo; the sync itself never commits here.\n\nSync-Bundle: c38fb2f6782b8b199c2503838f271fc39929f4a7",
+          "verified_at": "2026-11-16T18:52:52Z"
+        }
+      },
+      "url": "https://api.github.com/repos/Lbstrydom/ai-organiser/commits/c2e489aef3333f05c803141717dcc8c5a85af5b0",
+      "html_url": "https://github.com/Lbstrydom/ai-organiser/commit/c2e489aef3333f05c803141717dcc8c5a85af5b0",
+      "comments_url": "https://api.github.com/repos/Lbstrydom/ai-organiser/commits/c2e489aef3333f05c803141717dcc8c5a85af5b0/comments",
+      "author": {
+        "login": "Lbstrydom",
+        "id": 77991486,
+        "node_id": "MDQ6VXNlcjc3OTkxNDg2",
+        "avatar_url": "https://avatars.githubusercontent.com/u/77991486?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/Lbstrydom",
+        "html_url": "https://github.com/Lbstrydom",
+        "followers_url": "https://api.github.com/users/Lbstrydom/followers",
+        "following_url": "https://api.github.com/users/Lbstrydom/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Lbstrydom/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/Lbstrydom/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Lbstrydom/subscriptions",
+        "organizations_url": "https://api.github.com/users/Lbstrydom/orgs",
+        "repos_url": "https://api.github.com/users/Lbstrydom/repos",
+        "events_url": "https://api.github.com/users/Lbstrydom/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/Lbstrydom/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "committer": {
+        "login": "web-flow",
+        "id": 19864447,
+        "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/web-flow",
+        "html_url": "https://github.com/web-flow",
+        "followers_url": "https://api.github.com/users/web-flow/followers",
+        "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+        "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+        "organizations_url": "https://api.github.com/users/web-flow/orgs",
+        "repos_url": "https://api.github.com/users/web-flow/repos",
+        "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/web-flow/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "parents": [
+        {
+          "sha": "a6be280e55a15a08c35d1d14197acec6755752e6",
+          "url": "https://api.github.com/repos/Lbstrydom/ai-organiser/commits/a6be280e55a15a08c35d1d14197acec6755752e6",
+          "html_url": "https://github.com/Lbstrydom/ai-organiser/commit/a6be280e55a15a08c35d1d14197acec6755752e6"
+        }
+      ]
+    },
+    "_links": {
+      "self": "https://api.github.com/repos/Lbstrydom/ai-organiser/branches/main",
+      "html": "https://github.com/Lbstrydom/ai-organiser/tree/main"
+    },
+    "protected": false,
+    "protection": {
+      "enabled": false,
+      "required_status_checks": {
+        "enforcement_level": "off",
+        "contexts": [],
+        "checks": []
+      }
+    },
+    "protection_url": "https://api.github.com/repos/Lbstrydom/ai-organiser/branches/main/protection"
+  }
+}

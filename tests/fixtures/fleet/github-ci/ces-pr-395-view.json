@@ -1,0 +1,18 @@
+{
+  "provenance": {
+    "repo": "Lbstrydom/claude-engineering-skills",
+    "endpoint": "gh pr view 395 --json headRefOid,isDraft,state,baseRefName,baseRefOid,mergeStateStatus",
+    "command": "gh pr view 395 -R Lbstrydom/claude-engineering-skills --json headRefOid,isDraft,state,baseRefName,baseRefOid,mergeStateStatus",
+    "recordedAt": "2026-11-19",
+    "tool": "gh 2.78.0, owner token",
+    "note": "The PR view decision fields."
+  },
+  "body": {
+    "baseRefName": "main",
+    "baseRefOid": "d53272aa1484c1b707a3882204fbcb56318bf8d0",
+    "headRefOid": "90c60bf286f891ad6fe2168321a30fbe843921a6",
+    "isDraft": false,
+    "mergeStateStatus": "CLEAN",
+    "state": "OPEN"
+  }
+}

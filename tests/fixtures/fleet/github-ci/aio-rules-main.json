@@ -1,0 +1,11 @@
+{
+  "provenance": {
+    "repo": "Lbstrydom/ai-organiser",
+    "endpoint": "GET repos/{r}/rules/branches/main",
+    "command": "gh api -i repos/Lbstrydom/ai-organiser/rules/branches/main",
+    "recordedAt": "2026-11-19",
+    "tool": "gh 2.78.0, owner token",
+    "note": "An empty list: with the branch read, this is the proven-empty inventory."
+  },
+  "body": []
+}

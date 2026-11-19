@@ -1,0 +1,28 @@
+{
+  "provenance": {
+    "repo": "Lbstrydom/claude-engineering-skills",
+    "endpoint": "GET repos/{r}/rules/branches/main",
+    "command": "gh api -i repos/Lbstrydom/claude-engineering-skills/rules/branches/main",
+    "recordedAt": "2026-11-19",
+    "tool": "gh 2.78.0, owner token",
+    "note": "One required_status_checks rule: full-suite pinned to integration_id 15368 (GitHub Actions)."
+  },
+  "body": [
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "full-suite",
+            "integration_id": 15368
+          }
+        ]
+      },
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "Lbstrydom/claude-engineering-skills",
+      "ruleset_id": 25077114
+    }
+  ]
+}

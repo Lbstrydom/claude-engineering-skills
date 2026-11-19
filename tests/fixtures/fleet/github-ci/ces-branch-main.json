@@ -1,0 +1,109 @@
+{
+  "provenance": {
+    "repo": "Lbstrydom/claude-engineering-skills",
+    "endpoint": "GET repos/{r}/branches/main",
+    "command": "gh api -i repos/Lbstrydom/claude-engineering-skills/branches/main",
+    "recordedAt": "2026-11-19",
+    "tool": "gh 2.78.0, owner token",
+    "note": "protected:true is set by a RULESET alone; classic protection is off: protection.enabled false, contexts and checks empty."
+  },
+  "body": {
+    "name": "main",
+    "commit": {
+      "sha": "d53272aa1484c1b707a3882204fbcb56318bf8d0",
+      "node_id": "C_kwDORwyg79oAKGQ1MzI3MmFhMTQ4NGMxYjcwN2EzODgyMjA0ZmJjYjU2MzE4YmY4ZDA",
+      "commit": {
+        "author": {
+          "name": "Louis Strydom",
+          "email": "77991486+Lbstrydom@users.noreply.github.com",
+          "date": "2026-11-18T15:54:45Z"
+        },
+        "committer": {
+          "name": "GitHub",
+          "email": "noreply@github.com",
+          "date": "2026-11-18T15:54:45Z"
+        },
+        "message": "feat(ship): --check-shipped-head, the read-only half of the coordinator aggregate ship (PR A) (#394)\n\n* feat(ship): ship-commit --check-shipped-head, the grant reader and the archive refusal (PR A of the coordinator aggregate ship)\n\n* fix(ship): PR A audit round 1 - live base by default, fail-closed grant home, dispatcher, markup balance, bounds, sanitized git env\n\n* fix(ship): PR A audit round 2 - one markup rule for both grammars, sanitized worktree discovery\n\n* fix(ship): PR A audit round 3 - one base resolution, comments in document order\n\n* fix(ship): PR A audit round 4 - markup judged in context\n\n* fix(ship): PR A audit round 5 - raw HTML, headings, fenced delimiters\n\n* fix(ship): PR A audit round 6 - plain-log-line whitelist (the pivot), live base re-read, audited-commit binding, heading-aware log end\n\n* docs(plan): PR A code audit trail\n\n* fix(ship): PR A past-cap round - reference definitions inside list containers\n\n* fix(ship): the log-line forbidden set as one named constant (no cross-line Markdown characters)\n\n* fix(ship): PR A final round - strict log-line set (no Markdown characters), one-hyphen setext, legacy reference definitions\n\n* refactor(ship): PR A rework - path-only post-audit delta (added docs/status/entries file only); delete the Markdown content grammar\n\n* fix(ship): PR A rework audit round 1 - branch identity re-check, split import/read errors, isolated fixture git, plan contract aligned\n\n* fix(ship): PR A rework audit round 2 - entry names in the repo's own grammar, worktree path, contract text, fixture cleanup\n\n* fix(ship): PR A rework audit round 3 - the default branch is asked of the remote, not of a possibly stale local symref\n\n* fix(ship): PR A rework audit round 4 - local base snapshot in both modes, default branch re-read\n\n* fix(ship): PR A rework audit round 5 - the base is resolved once to a commit id and passed to both calculations\n\n* fix(ship): PR A rework audit round 6 - JSON envelope on checker errors, repository lookup reason carried\n\n* docs(plan): PR A rework audit trail\n\n* test(ship): the relocated store-off check needs a base (the round-5 base guard refuses first)",
+        "tree": {
+          "sha": "5da9c446c71f4f81434c7a195cd531a2ff14d264",
+          "url": "https://api.github.com/repos/Lbstrydom/claude-engineering-skills/git/trees/5da9c446c71f4f81434c7a195cd531a2ff14d264"
+        },
+        "url": "https://api.github.com/repos/Lbstrydom/claude-engineering-skills/git/commits/d53272aa1484c1b707a3882204fbcb56318bf8d0",
+        "comment_count": 0,
+        "verification": {
+          "verified": true,
+          "reason": "valid",
+          "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJq/cpFCRC1aQ7uu5UhlAAAAQIQAGJgeAynqEW4ePUzsx56LUav\n+ql0N415amg1z0JK3LtlLM9RDIRzEZBCfrqJPGPNcqpJPQHPWHR5DTm4MeCPhHpe\nooEkfioKwGfK7s4hLeYRYdn87X0UUjcPC252s3PiBLLf858nbQopRizWKLdENUwf\nhVMJWGcHCSEYynG/tBgbkRhmg5Boyw7c5ttcMs6UhH36kC3aTj+rGDNk4ID7D790\ndFuU0vrc9s3QF7OXWG54gCMreKO9UBkjT4BQlm3uOaKR1Y8YC2wKLsySfdenTsQd\nY4E20u53mFMSDlMvYAC0Bevxed8kbpsWxLgXDVrAsAhkxUgBckwolNfgc8oblAtt\nN12l+EXUElR3kE8aNuNzblFhIVV+JCRm3JQgLxYjt0OtPEJUovTg4XVJWd9QSNo7\naOtsRaR9kKqE8pEgY5/6DQqjdsgr4iLpA0vCuQaPVas9D4sHnpf0xXBvEn1EDpAO\nehjEm/+6pcnLMYE/YzaVY/fb8KwrZ4DpbrSCNW1uqqDd8LuZf2FuxoiTvR51Ay9p\noP1vXIVQM1Jh9MumFKn3Dcl4wwodi+2mofoRZ5jFpXHaGpaTXqNvXW4VueMwPnXW\nlS5jgUYcOBTxa/MlQY5IRnVgWCCAQg4PT6+AwJE6Wl5HD870o8RNr2pOkzaghdTL\nSt1OYww23wkTs5jwV3aJ\n=dNDq\n-----END PGP SIGNATURE-----\n",
+          "payload": "tree 5da9c446c71f4f81434c7a195cd531a2ff14d264\nparent cf9d57cd7504d8749aafa87600b76e7b9b2efe70\nauthor Louis Strydom <77991486+Lbstrydom@users.noreply.github.com> 1795017285 +0100\ncommitter GitHub <noreply@github.com> 1795017285 +0100\n\nfeat(ship): --check-shipped-head, the read-only half of the coordinator aggregate ship (PR A) (#394)\n\n* feat(ship): ship-commit --check-shipped-head, the grant reader and the archive refusal (PR A of the coordinator aggregate ship)\n\n* fix(ship): PR A audit round 1 - live base by default, fail-closed grant home, dispatcher, markup balance, bounds, sanitized git env\n\n* fix(ship): PR A audit round 2 - one markup rule for both grammars, sanitized worktree discovery\n\n* fix(ship): PR A audit round 3 - one base resolution, comments in document order\n\n* fix(ship): PR A audit round 4 - markup judged in context\n\n* fix(ship): PR A audit round 5 - raw HTML, headings, fenced delimiters\n\n* fix(ship): PR A audit round 6 - plain-log-line whitelist (the pivot), live base re-read, audited-commit binding, heading-aware log end\n\n* docs(plan): PR A code audit trail\n\n* fix(ship): PR A past-cap round - reference definitions inside list containers\n\n* fix(ship): the log-line forbidden set as one named constant (no cross-line Markdown characters)\n\n* fix(ship): PR A final round - strict log-line set (no Markdown characters), one-hyphen setext, legacy reference definitions\n\n* refactor(ship): PR A rework - path-only post-audit delta (added docs/status/entries file only); delete the Markdown content grammar\n\n* fix(ship): PR A rework audit round 1 - branch identity re-check, split import/read errors, isolated fixture git, plan contract aligned\n\n* fix(ship): PR A rework audit round 2 - entry names in the repo's own grammar, worktree path, contract text, fixture cleanup\n\n* fix(ship): PR A rework audit round 3 - the default branch is asked of the remote, not of a possibly stale local symref\n\n* fix(ship): PR A rework audit round 4 - local base snapshot in both modes, default branch re-read\n\n* fix(ship): PR A rework audit round 5 - the base is resolved once to a commit id and passed to both calculations\n\n* fix(ship): PR A rework audit round 6 - JSON envelope on checker errors, repository lookup reason carried\n\n* docs(plan): PR A rework audit trail\n\n* test(ship): the relocated store-off check needs a base (the round-5 base guard refuses first)",
+          "verified_at": "2026-11-18T15:54:45Z"
+        }
+      },
+      "url": "https://api.github.com/repos/Lbstrydom/claude-engineering-skills/commits/d53272aa1484c1b707a3882204fbcb56318bf8d0",
+      "html_url": "https://github.com/Lbstrydom/claude-engineering-skills/commit/d53272aa1484c1b707a3882204fbcb56318bf8d0",
+      "comments_url": "https://api.github.com/repos/Lbstrydom/claude-engineering-skills/commits/d53272aa1484c1b707a3882204fbcb56318bf8d0/comments",
+      "author": {
+        "login": "Lbstrydom",
+        "id": 77991486,
+        "node_id": "MDQ6VXNlcjc3OTkxNDg2",
+        "avatar_url": "https://avatars.githubusercontent.com/u/77991486?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/Lbstrydom",
+        "html_url": "https://github.com/Lbstrydom",
+        "followers_url": "https://api.github.com/users/Lbstrydom/followers",
+        "following_url": "https://api.github.com/users/Lbstrydom/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Lbstrydom/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/Lbstrydom/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Lbstrydom/subscriptions",
+        "organizations_url": "https://api.github.com/users/Lbstrydom/orgs",
+        "repos_url": "https://api.github.com/users/Lbstrydom/repos",
+        "events_url": "https://api.github.com/users/Lbstrydom/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/Lbstrydom/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "committer": {
+        "login": "web-flow",
+        "id": 19864447,
+        "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/web-flow",
+        "html_url": "https://github.com/web-flow",
+        "followers_url": "https://api.github.com/users/web-flow/followers",
+        "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+        "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+        "organizations_url": "https://api.github.com/users/web-flow/orgs",
+        "repos_url": "https://api.github.com/users/web-flow/repos",
+        "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/web-flow/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "parents": [
+        {
+          "sha": "cf9d57cd7504d8749aafa87600b76e7b9b2efe70",
+          "url": "https://api.github.com/repos/Lbstrydom/claude-engineering-skills/commits/cf9d57cd7504d8749aafa87600b76e7b9b2efe70",
+          "html_url": "https://github.com/Lbstrydom/claude-engineering-skills/commit/cf9d57cd7504d8749aafa87600b76e7b9b2efe70"
+        }
+      ]
+    },
+    "_links": {
+      "self": "https://api.github.com/repos/Lbstrydom/claude-engineering-skills/branches/main",
+      "html": "https://github.com/Lbstrydom/claude-engineering-skills/tree/main"
+    },
+    "protected": true,
+    "protection": {
+      "enabled": false,
+      "required_status_checks": {
+        "enforcement_level": "off",
+        "contexts": [],
+        "checks": []
+      }
+    },
+    "protection_url": "https://api.github.com/repos/Lbstrydom/claude-engineering-skills/branches/main/protection"
+  }
+}
