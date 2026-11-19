@@ -910,3 +910,8 @@ expected saving from A and B is **expected, not measured**.
   Revisit with a design that has one trust boundary, as its own plan.
 - **Other deviations:** PR #395's saved rows hold no auditor dispute or claimable flip, so the real-row test uses its four dismissed
   ledger entries as author disputes. History and `--run-test` items are context for the model, never quotable proof.
+
+## Implementation Log
+
+- 2026-11-19: merged #398 (729ee42e7b86) — recorded by ship-record catch-up <!-- ship-record pr=398 -->
+- 2026-11-19: merged #400 (544bbc145b04) — recorded by ship-record catch-up <!-- ship-record pr=400 -->
