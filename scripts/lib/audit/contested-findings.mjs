@@ -34,7 +34,7 @@ const MAX_CODE_ITEMS = 2;
 const MAX_TEST_ITEMS = 2;
 const GIT_TIMEOUT_MS = 20000;
 const TEST_TIMEOUT_MS = 120000;
-const TEST_GLOB = /(^|\/)(tests?|__tests__)\/.+\.test\.(mjs|js|cjs)$|\.test\.(mjs|js|cjs)$/;
+const TEST_GLOB = /(^|\/)(tests?|__tests__)\/|\.test\./;
 
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 const nonWs = (s) => String(s ?? '').replace(/\s+/g, '').length;
