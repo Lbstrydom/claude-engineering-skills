@@ -165,3 +165,16 @@ describe('loading an expect_clean case (hermetic fixture repo, r1 M11)', () => {
     assert.throws(() => loadCorpusCase({ kdEntry: kd({ files: ['not/in/the/diff.js'] }), repoRoots: [root] }), (e) => e instanceof CorpusCaseUnavailable && e.reason === 'declared_files_not_in_diff');
   });
 });
+
+describe('the git fixture environment (audit r4 M1/M2)', () => {
+  it('drops every inherited GIT_* variable, including config injection and repo-local overrides', async () => {
+    const { makeGitFixtureEnv } = await import('./helpers/git-fixture-env.mjs');
+    const saved = { ...process.env };
+    Object.assign(process.env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'init.defaultObjectFormat', GIT_CONFIG_VALUE_0: 'sha256', GIT_DIR: '/nowhere', GIT_WORK_TREE: '/nowhere', GIT_INDEX_FILE: '/nowhere/i' });
+    const fx = makeGitFixtureEnv();
+    try {
+      for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) assert.equal(Object.hasOwn(fx.env, k), false, k);
+      assert.equal(fx.env.GIT_CONFIG_NOSYSTEM, '1', 'control: the helper still sets its own');
+    } finally { fx.cleanup(); for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); }
+  });
+});
