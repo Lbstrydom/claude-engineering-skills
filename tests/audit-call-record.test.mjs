@@ -205,14 +205,27 @@ describe('call records: review hardening (audit r1)', () => {
   it('a schema-invalid provider response is never recorded', async () => {
     cfg();
     const bad = { responses: { parse: async () => ({ status: 'completed', output: [], output_parsed: { findings: 'not-an-array' }, usage: USAGE }) } };
-    await call(bad, 'BADSHAPE').catch(() => {});
+    await assert.rejects(call(bad, 'BADSHAPE'), /findings is string/);
     const dir = path.join(root, CALL_RECORD_ROOT_REL, TREE, 'audit-code-1-2-r1');
     assert.deepEqual(fs.readdirSync(dir), []);
   });
 
-  it('an empty record directory is not resumable (M6)', () => {
+  it('an empty directory, junk files and a corrupt record are not resumable (M6)', () => {
     cfg();                                               // creates the directory, records nothing
     assert.match(cfg({ resume: true }).reason, /nothing to resume/);
+    const dir = path.join(root, CALL_RECORD_ROOT_REL, TREE, 'audit-code-1-2-r1');
+    fs.writeFileSync(path.join(dir, 'junk.json'), '{}');
+    fs.writeFileSync(path.join(dir, 'f'.repeat(64) + '.json'), '{not json');
+    fs.writeFileSync(path.join(dir, 'e'.repeat(64) + '.json'), JSON.stringify({ requestKey: 'e'.repeat(64), auditedTree: TREE, auditSessionId: 'other', auditRound: 1, response: { result: {} } }));
+    assert.match(cfg({ resume: true }).reason, /nothing to resume/);
+  });
+
+  it('an unreadable (non-directory) record path is reported, not folded into empty', () => {
+    cfg();
+    const dir = path.join(root, CALL_RECORD_ROOT_REL, TREE, 'audit-code-1-2-r1');
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.writeFileSync(dir, 'a file where the directory should be');
+    assert.match(cfg({ resume: true }).reason, /unreadable|unusable/);
   });
 
   it('a write touches the tree directory so an active audit stays newest (M1/M5)', async () => {

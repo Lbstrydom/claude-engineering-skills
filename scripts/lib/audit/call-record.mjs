@@ -87,6 +87,26 @@ export function pruneCallRecords(rootDir, currentTree, keep = DEFAULT_KEEP) {
 }
 
 /**
+ * How many envelopes in `dir` could replay for this identity: a `<sha256>.json` whose parsed envelope names itself and carries
+ * this tree/SID/round. An absent directory is zero; any other read error is reported, never folded into "empty".
+ * (The schema check stays at lookup, where the schema is known.)
+ */
+function countUsableRecords(dir, identity) {
+  let names;
+  try { names = fs.readdirSync(dir); } catch (err) { return err.code === 'ENOENT' ? { count: 0 } : { count: 0, error: err.code || err.message }; }
+  let count = 0;
+  for (const name of names) {
+    if (!/^[0-9a-f]{64}\.json$/.test(name)) continue;
+    try {
+      const env = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+      if (env.requestKey === name.slice(0, -5) && env.auditedTree === identity.auditedTree
+        && env.auditSessionId === identity.auditSessionId && env.auditRound === identity.auditRound && env.response?.result !== undefined) count++;
+    } catch { /* unparseable: not a usable record */ }
+  }
+  return { count };
+}
+
+/**
  * Configure recording for this process.
  * @returns {{ok:true}|{ok:false, reason:string}} — `ok:false` is a refusal only when `resume` was asked for.
  */
@@ -102,8 +122,11 @@ export function configureCallRecords({ repoRoot = process.cwd(), identity, resum
   const rootDir = path.join(repoRoot, CALL_RECORD_ROOT_REL);
   const dir = dirFor(rootDir, identity);
   // A directory alone proves nothing: a run that lost every call leaves an empty one. Resumable = at least one finished call recorded.
-  const hasRecords = (() => { try { return fs.readdirSync(dir).some((f) => f.endsWith('.json')); } catch { return false; } })();
-  if (resume && !hasRecords) return { ok: false, reason: `nothing to resume for ${identity.auditSessionId} round ${identity.auditRound} at this tree` };
+  if (resume) {
+    const found = countUsableRecords(dir, identity);
+    if (found.error) return { ok: false, reason: `cannot resume: record directory unreadable (${found.error})` };
+    if (found.count === 0) return { ok: false, reason: `nothing to resume for ${identity.auditSessionId} round ${identity.auditRound} at this tree` };
+  }
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   } catch (err) {
