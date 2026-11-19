@@ -730,6 +730,22 @@
     {
       "line": "States: `completed` · `errored` · `unavailable` · `ineligible` · `not-reached` · `uncovered` (file-level, never `ineligible`). Definitions: `references/convergence-report.md` §named states.",
       "reason": "Part of the Step 0.5 / R2+ shell recipe (debts ec5c549be2df, b47aba3b9a8e, 842d3cf87b6a): the recipe's own `if`/`:?` chain is the behaviour; verified by running it live (happy path and an {\"ok\":false} envelope) and parsed by tests/skill-command-blocks-parse-under-powershell.test.mjs. No SKILL-text exit-code claim to bind."
+    },
+    {
+      "line": "Initialise session ID: `SID=audit-code-$(node -e \"process.stdout.write(Date.now()+'-'+process.pid)\")` — epoch ms plus a PID, so concurrent sessions get separate files. A further round on the same change keeps this SID (`--round N+1 --ledger`, `references/round-cap-and-structural-card.md`).",
+      "reason": "Operator guidance (sashiko PR B, plan section 4.8): a further round on the same change continues the SID. Prose nudge, not a gate; code cannot tell the same change under a new SID from a legitimate new audit, so nothing exits on it (the cap itself is enforced separately by the round-cap gate)."
+    },
+    {
+      "line": "HIGH and MEDIUM: ALWAYS GPT deliberation (after verification, below). LOW: Claude decides locally.",
+      "reason": "Restates the existing tiered-rebuttal table in one line; the verification step before it is advisory triage input, and the deliberation obligation is unchanged. No new exit code."
+    },
+    {
+      "line": "`inconclusive`, `over-cap` and `failed` items, and any verdict you still dispute, to rebuttal (`references/contested-verification.md`):",
+      "reason": "Routes verification items to the existing rebuttal step. Agent-followed routing; verify-findings' own exit codes are covered by tests/verify-findings-cli.test.mjs, not by this sentence."
+    },
+    {
+      "line": "| `references/contested-verification.md` | Quoted-line verification of contested findings: flow, item states, exit codes. | Step 3 - a finding is disputed or re-raised after a dismissal. |",
+      "reason": "Reference-index row for references/contested-verification.md; the row text is a summary that skills:check byte-matches against the reference's frontmatter. Descriptive, no enforcement claim."
     }
   ]
 }

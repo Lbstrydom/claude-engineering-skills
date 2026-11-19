@@ -5,7 +5,7 @@ summary: Quoted-line verification of contested findings: flow, item states, exit
 # Contested-finding verification
 
 A finding the author disputes, or the auditor re-raises after a dismissal, used to cost a whole extra round to see whether it
-came back. `scripts/verify-findings.mjs` instead gives each such finding one deterministic evidence pack and one model call, so a
+came back. `node scripts/verify-findings.mjs` instead gives each such finding one deterministic evidence pack and one model call, so a
 quoted line decides it inside the round. **A verdict is evidence for triage and is not a ruling**: nothing here writes the ledger
 or dismisses a finding, and `adjudicationOutcome` still comes from your triage.
 

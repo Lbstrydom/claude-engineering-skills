@@ -155,6 +155,7 @@
         "scripts/.claude-skills/lib/arm-eval/judge.mjs",
         "scripts/.claude-skills/lib/audit-arms.mjs",
         "scripts/.claude-skills/lib/audit-shadow.mjs",
+        "scripts/.claude-skills/lib/audit/contested-findings.mjs",
         "scripts/.claude-skills/lib/audit/detector.mjs",
         "scripts/.claude-skills/lib/audit/discovery-prompts.mjs",
         "scripts/.claude-skills/lib/audit/event-wiring-corpus.mjs",

@@ -1096,9 +1096,7 @@ export const LedgerEntrySchema = z.object({
   originalSeverity: z.enum(['HIGH', 'MEDIUM', 'LOW']),
   ruling: z.enum(['sustain', 'overrule', 'compromise', 'defer']),
   rulingRationale: z.string(),
-  resolvedRound: z.number(),
-  // A pointer to the verify artifact this ruling relied on (scripts/verify-findings.mjs); no verification data is copied here.
-  reliesOn: z.object({ artifact: z.string(), packHash: z.string(), verdict: z.enum(['confirmed', 'refuted', 'inconclusive']).optional() }).optional(),
+  resolvedRound: z.number(), reliesOn: z.object({ artifact: z.string(), packHash: z.string(), verdict: z.enum(['confirmed', 'refuted', 'inconclusive']).optional() }).optional(), // pointer to the verify artifact a ruling relied on; no verification data is copied
 });
 
 /**
