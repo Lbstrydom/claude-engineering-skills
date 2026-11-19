@@ -43,6 +43,7 @@ import { PASS_PROMPTS } from '../prompt-seeds.mjs';
 import { openaiConfig, azureConfig } from '../config.mjs';
 import { capReasoning } from '../reasoning-ceiling.mjs';
 import { supportsReasoningEffort } from '../model-resolver.mjs';
+import { requestKeyFor, lookupCallRecord, writeCallRecord, callRecordsActive, noteLiveCall, sha256, canonicalJson } from './call-record.mjs';
 import { azureThrottle } from '../azure-throttle.mjs';
 import { classifyResponsesSupport } from '../openai-responses-capability.mjs';
 
@@ -240,20 +241,44 @@ const MAX_OUTPUT_TOKENS_CAP = openaiConfig.maxOutputTokensCap;
 const TIMEOUT_MS_CAP = openaiConfig.timeoutMsCap;
 
 /**
+ * The ONE description of what a structured call sends: `_callGPTOnce` hands `requestParams` to the SDK and the call-record
+ * key hashes the same object, so a param added here is in the key with no second list to drift (plan §3.1, R1-H1).
+ * `route` is the identity the params cannot carry: one model string on two backends is two requests.
+ */
+export function effectiveRequestFor(opts, openai = null) {
+  const { schema, schemaName, reasoning, maxTokens, timeoutMs } = opts;
+  const effort = capReasoning(reasoning ?? REASONING_EFFORT, REASONING_EFFORT);
+  const tokens = maxTokens ?? MAX_OUTPUT_TOKENS_CAP;
+  const timeout = timeoutMs ?? TIMEOUT_MS_CAP;
+  const input = normalisePromptInput(opts);
+  const wm = wireModel();
+  const requestParams = {
+    model: wm,
+    input,
+    text: { format: zodTextFormat(schema, schemaName) },
+    max_output_tokens: tokens
+  };
+  if (supportsReasoningEffort(wm)) {
+    requestParams.reasoning = { effort };
+  }
+  // The endpoint is the SUPPLIED CLIENT's own base URL when it exposes one (two clients on different base URLs are two
+  // routes), else the configured one.
+  const clientBase = typeof openai?.baseURL === 'string' ? openai.baseURL : null;
+  const route = azureConfig.active
+    ? { transport: 'azure', endpoint: clientBase ?? azureConfig.openaiEndpoint, deployment: azureConfig.gptDeployment, apiVersion: azureConfig.apiVersion }
+    : { transport: 'openai', endpoint: clientBase ?? (process.env.OPENAI_BASE_URL || 'https://api.openai.com'), deployment: null, apiVersion: null };
+  return { requestParams, effort, tokens, timeout, input, wm, route };
+}
+
+/**
  * Make a single GPT call with structured output. Detects incomplete/truncated
  * responses and throws LlmError with usage attached.
  */
 export async function _callGPTOnce(openai, opts) {
-  const { schema, schemaName, reasoning, maxTokens, timeoutMs, passName } = opts;
-  const effort = capReasoning(reasoning ?? REASONING_EFFORT, REASONING_EFFORT);
-  const tokens = maxTokens ?? MAX_OUTPUT_TOKENS_CAP;
-  const timeout = timeoutMs ?? TIMEOUT_MS_CAP;
-
-  // Normalise prompt input ONCE — throws config-category LlmError on hybrid.
-  // This deliberately happens OUTSIDE the try/catch below so it propagates
-  // unwrapped (the try block re-throws structured LlmErrors anyway, but the
-  // config check here makes the failure unmissable for callers).
-  const input = normalisePromptInput(opts);
+  const { schema, schemaName, passName } = opts;
+  // Prompt normalisation throws a config-category LlmError on hybrid input. It happens OUTSIDE the try/catch below so it
+  // propagates unwrapped (the try block re-throws structured LlmErrors anyway, but this makes the failure unmissable).
+  const { requestParams, effort, tokens, timeout, input, wm } = effectiveRequestFor(opts);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -264,18 +289,6 @@ export async function _callGPTOnce(openai, opts) {
   }
 
   try {
-    const wm = wireModel();
-    const requestParams = {
-      model: wm,
-      input,
-      text: { format: zodTextFormat(schema, schemaName) },
-      max_output_tokens: tokens
-    };
-
-    if (supportsReasoningEffort(wm)) {
-      requestParams.reasoning = { effort };
-    }
-
     const response = await parseStructured(
       openai, requestParams, { signal: controller.signal },
       { model: wm, input, schema, schemaName, effort, tokens },
@@ -416,6 +429,33 @@ export async function callGPT(openai, opts) {
   // until it happens. An explicit `opts.maxRetries` overrides both.
   const ceiling = opts.maxRetries ?? Math.max(RETRY_MAX_ATTEMPTS, RETRY_429_MAX_ATTEMPTS);
 
+  // Call records (`--resume`, plan docs/plans/sashiko-audit-improvements.md §3). Replay happens only under --resume; a
+  // SUCCESSFUL call is recorded below. Key computation must never fail the audit: a config error is rethrown by the live
+  // path, so on any failure here we simply go live without a record.
+  let recordKey = null;
+  if (callRecordsActive() && opts.schema) {
+    try {
+      const e = effectiveRequestFor(opts, openai);
+      // The prompt is hashed, never stored: the envelope keeps the key fields so a hit can be re-verified, and prompts hold
+      // source excerpts. The transport (Responses vs chat fallback) is deliberately NOT in the key: it is decided DURING the
+      // live call, so keying on it before the call stores a fallback result under the wrong key. Same prompt, model, params
+      // and schema is the same logical request whichever API served it.
+      const { input: promptInput, ...paramsWithoutPrompt } = e.requestParams;
+      recordKey = requestKeyFor({ route: e.route, request: paramsWithoutPrompt, inputSha256: sha256(canonicalJson(promptInput)), schemaName: opts.schemaName });
+      const hit = lookupCallRecord(recordKey.requestKey, opts.schema);
+      if (hit) {
+        process.stderr.write(`  [${opts.passName ?? 'call'}] replayed from call record (no API call)
+`);
+        return {
+          result: hit.result,
+          usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0, replayed: true },
+          latencyMs: 0, reasoningEffort: hit.reasoningEffort, model: hit.model, replayed: true,
+        };
+      }
+    } catch { recordKey = null; }
+    noteLiveCall();
+  }
+
   for (let attempt = 0; attempt <= ceiling; attempt++) {
     try {
       const result = await _callGPTOnce(openai, opts);
@@ -429,6 +469,7 @@ export async function callGPT(openai, opts) {
         result._attempts = attempt + 1;
       }
       recordGptCall({ result, opts });   // metadata-only provenance; never throws
+      if (recordKey) writeCallRecord(recordKey.requestKey, recordKey.keyFields, { result: result.result, usage: result.usage, model: result.model, reasoningEffort: result.reasoningEffort });
       return result;
     } catch (err) {
       lastErr = err;

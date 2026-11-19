@@ -105,6 +105,8 @@ govern.
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
 | `LEARNING_DISABLE` | No | — | Set to `1` to disable all adaptive-learning live behaviour and telemetry recording (single env-var kill switch). |
+| `AUDIT_CALL_RECORD` | No | on | `0` disables the per-call request/response records `openai-audit.mjs code --resume` replays (and so refuses `--resume`). Detail: `skills/audit-code/references/resume.md`. |
+| `AUDIT_CALL_RECORD_KEEP` | No | `5` | How many audited-tree record directories to keep; the current tree is never pruned. |
 | `FLEET_CACHE` | No | on | `off` disables /fleet's commit-id cache (`<git-common-dir>/fleet-cache/oid-results.json`): merge-bases, changed files, patch-ids and counts keyed by full object ids, which cannot go stale. Off only for tests that count git processes, or to rule the cache out while debugging. |
 | `FLEET_TELEMETRY` | No | on | `off` (or `0`/`false`) stops /fleet spooling one usage event per verb and spawning the drain to `fleet_events`. `LEARNING_DISABLE=1` also stops it. Detail: `skills/fleet/references/telemetry.md`. |
 | `LEARNING_REPO_NAME` | Required for weekly-review | — | Per-repo gate for `weekly-review.mjs`. Aborts if missing — prevents cross-tenant data leakage in the digest issue body. **Must be the `owner/repo` slug** (matches `audit_repos.name`, derived from the git origin URL via `resolveRepoIdentity()`) — the bare repo name silently misses the lookup (`{posted:false, reason:'unknown-repo'}`), which is exactly how this sat broken for weeks in every consumer before 2026-07-22. `install.mjs`/`setup.mjs` now derive it automatically; don't hand-type it. |
