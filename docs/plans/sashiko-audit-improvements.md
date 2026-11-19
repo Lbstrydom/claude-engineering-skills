@@ -895,3 +895,18 @@ expected saving from A and B is **expected, not measured**.
     the CLI refusals; the full-run path is exercised by the existing suites only.
   - `scripts/openai-audit.mjs` stays inside its size baseline: the CLI wiring lives in `call-record.mjs` (`parseResumeFlag`,
     `configureForRun`, `withResumeSummary`), and a refused resume is `stderr` + exit 1.
+
+### PR B: contested-finding verification (branch `claude/sashiko-pr-b-verify`, 2026-11-19)
+- **Audit:** /audit-code SID `audit-code-1795116431839-48428`. GPT HIGH/MEDIUM: R1 6/20, R2 5/5, R3 5/7 (every valid finding fixed;
+  R1 dismissed H9 and M17). New HIGHs kept arriving in one seam (the verify artifact boundary, `--check` and the ledger `reliesOn`
+  binding), so the coordinator cut PR B to a smaller v1 instead of a round 4 on that design.
+- **Shipped (v1):** `scripts/verify-findings.mjs` and `scripts/lib/audit/contested-findings.mjs`: contest selection, the evidence
+  pack behind one acquisition boundary, one verdict call per finding, the code-checked eligibility rule (`validateVerdict`), a
+  strict artifact schema, and `--check` over the stored artifact (schema, sid/round, result hash, pack hash, verdict against its
+  pack). Round results now carry `_auditedTree` and `_auditedSha`; verification refuses an unstamped round.
+- **Cut, recorded as debt:** the ledger `reliesOn` binding (and the writer's refusal), provenance re-acquisition and the tree check in
+  `validateVerifyItem`, with their tests. **Reason: the artifact + `reliesOn` + re-acquisition boundary produced new HIGHs in R1-R3.**
+  Residual risk: a forged pack with a recomputed `packHash` is not detected, and a ruling is not bound to the verdict it used.
+  Revisit with a design that has one trust boundary, as its own plan.
+- **Other deviations:** PR #395's saved rows hold no auditor dispute or claimable flip, so the real-row test uses its four dismissed
+  ledger entries as author disputes. History and `--run-test` items are context for the model, never quotable proof.

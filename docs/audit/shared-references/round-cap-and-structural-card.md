@@ -34,6 +34,20 @@ brief, no provider call. It is the GPT sibling of the Gemini gate's 2-round cap.
 
 The cap counts the `--round` you pass within one session id. It is a per-invocation guard.
 
+## "Another round" continues the SID
+
+The cap counts rounds within one session id, so a fresh SID restarts it, and a fresh SID at round 1 also has no ledger (no
+rulings injection, no `_priorRuling` links). PR #395's four "one more round" runs each started a new SID for that reason.
+
+- A further round on the **same change** (same plan, branch and diff base) continues the SID:
+  `--round <N+1> --ledger .audit/<SID>-ledger.json`, with the R2+ diff and changed-file arguments.
+- A new SID is for a **different subject** (a new plan, or a re-scoped base the old ledger does not describe). Say so on the
+  round card: `new SID: <reason>`.
+- A round that would cross the soft cap is the card's CONTINUE choice, through `--past-cap "<reason>"`. A new SID is not a
+  way around the cap.
+
+This is guidance for the operator, not a gate: code cannot tell "the same change under a new SID" from a legitimate new audit.
+
 ## The structural-or-stop card
 
 At the soft cap an audit that has not converged is usually not short of rigour; it is chasing something the
