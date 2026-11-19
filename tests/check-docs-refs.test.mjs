@@ -322,7 +322,7 @@ describe('check-docs-refs / exclusions', () => {
 
   it('excludes the research CORPUS', () => {
     assert.equal(
-      isExcluded('docs/experiments/audit-effectiveness/known-defects.candidates.json')?.id,
+      isExcluded('docs/experiments/audit-effectiveness/known-defects.json')?.id,
       'CORPUS',
     );
   });

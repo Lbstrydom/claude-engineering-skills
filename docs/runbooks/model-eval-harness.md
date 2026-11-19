@@ -273,7 +273,7 @@ identifier character, so the lookbehind costs no real recall. Confirmed by
 mechanically re-running the deterministic corpus gates (diff-size, egress,
 path-mention — no LLM calls) over all 331 already-harvested-but-uncurated
 `claude-engineering-skills` rows in
-`docs/experiments/audit-effectiveness/known-defects.candidates.json`: clean
+the retired candidates snapshot (last at git `2a4e6135`; the miner now regenerates candidates): clean
 (gate-passing) candidates went 88 → 146 after this fix alone. **The 6/8
 corpus gap was never a candidate-supply problem — it was almost entirely this
 gate.**

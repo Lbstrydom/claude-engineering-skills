@@ -22,7 +22,7 @@ scales linearly with corpus size (each entry runs 5-pass generation for BOTH
 candidate and baseline, plus blind judging).
 
 Source pool: 89 unique buggy commits in
-`known-defects.candidates.json` now pass all three deterministic gates
+the retired candidates snapshot (`git show 2a4e6135:docs/experiments/audit-effectiveness/known-defects.candidates.json`) now pass all three deterministic gates
 (diff ≤ 200K chars, `assertEgressSafe`, `findSensitivePathMentions`).
 Ranked shortlist below = best 8 by fix-shape/surgical-ness/confidence.
 
