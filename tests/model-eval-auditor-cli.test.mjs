@@ -96,6 +96,7 @@ describe('model-eval-auditor.mjs — CLI preflight', () => {
       fs.writeFileSync(path.join(dir, 'a.txt'), 'line1\n');
       g(['add', '.']);
       g(['commit', '-q', '-m', 'initial']);
+      const initialSha = g(['rev-parse', 'HEAD']).trim(); // a real commit for the entry's fixCommit
       fs.writeFileSync(path.join(dir, '.env'), 'SECRET=abc123\n');
       g(['add', '.']);
       g(['commit', '-q', '-m', 'add env']);
@@ -106,7 +107,7 @@ describe('model-eval-auditor.mjs — CLI preflight', () => {
       fs.writeFileSync(corpusPath, JSON.stringify({
         version: 1,
         defects: [{
-          id: 'KD-TEST-EGRESS', repo: repoName, buggyCommit: sha, files: ['.env'],
+          id: 'KD-TEST-EGRESS', repo: repoName, buggyCommit: sha, fixCommit: initialSha, files: ['.env'],
           defectDesc: 'x', expectedFindingRubric: 'y', severity: 'HIGH',
         }],
       }));
