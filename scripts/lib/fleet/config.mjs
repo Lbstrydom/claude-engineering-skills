@@ -106,7 +106,8 @@ const FleetFileSchema = z.strictObject({
   hotFiles: z.array(z.string(), { error: 'must be an array of path patterns' }).max(MAX_HOT_FILES).optional(),
   hideIdleAfterDays: z.number().int('must be a whole number of days').min(1).max(3650).optional(),
   staleWorktreeDays: z.number().int('must be a whole number of days').min(1).max(3650).optional(),
-  // Absent = "not declared" (inventory comes from rulesets, else unknown); [] = "this repo requires none".
+  // An ASSERTION, never the inventory: GitHub (rulesets) defines what is required. Absent = no assertion; ["a","b"] = GitHub must require exactly {a,b}
+  // or the run stops with the diff (config-drift); [] = GitHub must require nothing. It never substitutes for an unreadable GitHub answer.
   requiredChecks: z.array(z.string().min(1), { error: 'must be an array of check names' }).max(200).optional(),
   appendOnlyGlobs: patternList('path patterns'),
   restackIgnore: patternList('path patterns'),

@@ -37,7 +37,9 @@ export function emptyScenario(over = {}) {
   return cesScenario({ branch: fixture('aio-branch-main.json'), rules: fixture('aio-rules-main.json'), checkRuns: { total_count: 0, check_runs: [] }, ...over });
 }
 
-const asRes = (answer) => (answer && answer.__fail
+const resolve = (answer) => (typeof answer === 'function' ? answer() : answer); // an endpoint's answer may be a function of the world's state
+const asRes = (raw) => { const answer = resolve(raw); return asResolved(answer); };
+const asResolved = (answer) => (answer && answer.__fail
   ? { ok: false, status: answer.__fail.status, stdout: answer.__fail.stdout ?? '', stderr: answer.__fail.stderr, reason: 'gh failed' }
   : { ok: true, status: 0, stdout: JSON.stringify(answer), stderr: '' });
 

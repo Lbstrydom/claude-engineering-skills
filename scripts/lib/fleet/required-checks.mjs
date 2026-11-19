@@ -30,7 +30,7 @@ export const CI_FAULT_KINDS = Object.freeze([
 ]);
 
 /** The closed `ineligible` codes. `head-moved` is the only one a caller may retry. */
-export const CI_INELIGIBLE_CODES = Object.freeze(['closed', 'merged', 'draft', 'retargeted', 'head-moved']);
+export const CI_INELIGIBLE_CODES = Object.freeze(['closed', 'merged', 'draft', 'retargeted', 'head-moved', 'not-merged']);
 
 /** The closed disposition set. */
 export const CI_DISPOSITIONS = Object.freeze(['permit', 'refuse-member', 'retry', 'stop-run']);
@@ -83,9 +83,17 @@ const OPEN_STATUSES = Object.freeze(['queued', 'in_progress', 'waiting', 'reques
 const unknownOf = (kind, detail) => ({ tag: 'unknown', fault: { kind, detail } });
 const fromFault = (r) => ({ tag: 'unknown', fault: r.fault });
 
-/** Why a PR is not a merge candidate at the expected base and head, or null. The ONE copy of the eligibility rule. */
-function ineligibleCode(pr, { expectedBase, expectedHead }) {
+/**
+ * Why a PR is not a merge candidate at the expected base and head, or null. The ONE copy of the eligibility rule. In the `post-merge` phase (the
+ * verification after a merge, docs/plans/ci-evidence-oracle.md Amendment A) the PR must be MERGED, into the expected base, from the expected head.
+ */
+function ineligibleCode(pr, { expectedBase, expectedHead, phase }) {
   const state = pr.state.toUpperCase();
+  if (phase === 'post-merge') {
+    if (state !== 'MERGED') return 'not-merged';
+    if (pr.baseRefName !== expectedBase) return 'retargeted';
+    return pr.headRefOid === expectedHead ? null : 'head-moved';
+  }
   if (state === 'MERGED') return 'merged';
   if (state !== 'OPEN') return 'closed';
   if (pr.isDraft) return 'draft';
@@ -154,15 +162,15 @@ export function askCiOracle(oracle, args, deps) {
  * THE oracle: the CI evidence for PR `prNumber` at `expectedHead`, as ONE value from the closed tag set. It reads (in this order, each
  * step needing the last): the PR, the branch (proving it exists and that classic protection is off), the rules, the config assertion, the
  * check runs and statuses of the immutable head, and the PR again. It never returns an action and never throws; every doubt is `unknown`.
- * @param {{repo: string, prNumber: number, expectedBase: string, expectedHead: string, configAssertion?: {requiredChecks?: string[], error?: string|null}}} a
+ * @param {{repo: string, prNumber: number, expectedBase: string, expectedHead: string, phase?: 'pre-merge'|'post-merge', configAssertion?: {requiredChecks?: string[], error?: string|null}}} a
  * @param {{gh: Function, cwd?: string}} deps
  * @returns {{tag: string, head?: string, code?: string, names?: object, required?: object[], wrongApp?: object, fault?: {kind: string, detail: string}}}
  */
 export function assessRequiredCi(args, deps) {
   try {
-    const { repo, prNumber, expectedBase, expectedHead, configAssertion } = args ?? {};
+    const { repo, prNumber, expectedBase, expectedHead, configAssertion, phase } = args ?? {};
     const cwd = deps?.cwd ?? '.';
-    const ctx = { expectedBase, expectedHead };
+    const ctx = { expectedBase, expectedHead, phase: phase === 'post-merge' ? 'post-merge' : 'pre-merge' };
     const pr1 = readPrCandidate(deps, cwd, { repo, prNumber });
     if (!pr1.ok) return fromFault(pr1);
     const code1 = ineligibleCode(pr1.value, ctx);

@@ -119,7 +119,7 @@ args, 3 blocked/refused, 4 a train ran red (land). `--json` to parse.
   machine lease line are information, not a `DO`: relay them; never claim, archive or prune on one alone.
 - Coordinating, not participating (chip authority, routing, ship-ready end state, consumer sync, titles, sweeps, push lanes): `references/coordination.md`; the why: `references/coordination-rationale.md`.
 - **Background runs** go under `node scripts/run-heartbeat.mjs run …`, with `watch` armed on Monitor; STALE or UNKNOWN is never healthy, an expired watcher is no verdict: `references/background-runs.md`.
-- pr-mode `land --approve` refuses a draft or a required check that failed or was SKIPPED (a skipped check never ran) and prints WAIT above a merge whose required checks are missing or pending: relay those lines. A head moved since `ready` reads `ready (stale)`: re-run `ready`. Interrupted `land`/`--serial`/`restack`: `references/landing.md`.
+- pr-mode `land --approve` prints a plan ONLY when every PR's required checks passed (a skipped check never ran; pending, missing and unknown refuse, with no plan): relay the refusal, approve again when green, and prefer `--serial`, which re-assesses before each merge. A head moved since `ready` reads `ready (stale)`: re-run `ready`. Interrupted `land`/`--serial`/`restack`: `references/landing.md`.
 
 ## Config — optional `.fleet.json` at the repo root
 

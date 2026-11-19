@@ -849,4 +849,3 @@ describe('CI: the admission is the evidence oracle disposition (docs/plans/ci-ev
     assert.ok(a.reasons[0].includes('transport'), a.reasons[0]);
   });
 });
-});

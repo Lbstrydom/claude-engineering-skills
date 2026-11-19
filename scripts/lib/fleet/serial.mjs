@@ -278,6 +278,22 @@ export function mergeWithCiPermit(st, s, h, { extraArgs = [], beforeMerge } = {}
 }
 
 /**
+ * Post-merge verification (docs/plans/ci-evidence-oracle.md Amendment A item 2), from FRESH reads of a PR just observed MERGED: it merged into the
+ * run's base, from the admitted head, and the required checks of that head are proven successes NOW (the oracle's `post-merge` phase). A DETECTIVE
+ * control with a stated limit: it reads the state now, not at the instant GitHub accepted the merge. Anything not proven (a pending run included) fails.
+ * @returns {{ok: true} | {ok: false, reason: string}}
+ */
+function verifyMergedCi(st, s, doc, head) {
+  const reasons = [];
+  if (doc.baseRefName !== st.run.base) reasons.push(`it merged into ${doc.baseRefName ?? 'an unreadable base'}, not ${st.run.base}`);
+  if (doc.headRefOid !== head) reasons.push(`it merged at head ${short(doc.headRefOid)}, not the admitted ${short(head)}`);
+  const evidence = askCiOracle(st.deps.assessCi, { repo: s.repo, prNumber: s.prNumber, expectedBase: st.run.base, expectedHead: head, phase: 'post-merge', configAssertion: st.configAssertion }, { ...st.deps, cwd: st.cwd });
+  const d = decideCiAdmission(evidence);
+  if (d.disposition !== 'permit') reasons.push(`the required checks behind it are not proven successes now (${describeEvidence(evidence, d)})`);
+  return reasons.length ? { ok: false, reason: `merged-unverified: PR #${s.prNumber} is MERGED but ${reasons.join('; ')} — do not report it as landed; check it by hand` } : { ok: true };
+}
+
+/**
  * A non-permitting CI decision as a member-step result (`where`: 'wait' while polling, 'merge' at the merge site). `null` means "keep waiting".
  * Plain serial stops the run on every fault (its reason text); a policy run maps the fault kind through `FAULTS`.
  */
@@ -332,18 +348,23 @@ function readBackStep(st, i, doc) {
     return fault('read-back-unmeasured', `PR #${s.prNumber} merged at ${short(mergeOid)} but its read-back could not be measured (${rb.why}) — --resume re-checks it`);
   }
   const chain = run.policy.baseChain;
-  const v = verdictOf({ readBack: rb, runBase: run.base, chainTail: chain.at(-1), candidateTree: policy.name === 'rollup' ? run.policy.candidateTree : null });
+  let v = verdictOf({ readBack: rb, runBase: run.base, chainTail: chain.at(-1), candidateTree: policy.name === 'rollup' ? run.policy.candidateTree : null });
+  let unverified = null;
+  if (CHAIN_VERDICTS.includes(v.verdict)) { // the merge is where it should be: now prove the CI behind it
+    const pv = verifyMergedCi(st, s, doc, s.attempt?.head ?? s.head);
+    if (!pv.ok) { v = { verdict: 'merged-unverified' }; unverified = pv.reason; }
+  }
   const onChain = CHAIN_VERDICTS.includes(v.verdict);
   const outcome = {
     status: 'landed', code: 'merged', verdict: v.verdict, mergeOid, parent: rb.firstParent ?? null, chainIndex: onChain ? chain.length : null,
     attribution: s.attempt?.ghExit === 0 ? 'this-run' : 'unknown', gate: rb.gate ?? null,
-    ...(rb.reasons?.length ? { reason: rb.reasons.join('; ').slice(0, 900) } : {}),
+    ...(unverified ? { reason: unverified.slice(0, 900) } : rb.reasons?.length ? { reason: rb.reasons.join('; ').slice(0, 900) } : {}),
     ...(policy.name === 'rollup' && s.attempt?.ci ? { ci: s.attempt.ci } : {}), ...(v.trees ? { trees: v.trees } : {}),
   };
   const halt = HALT_VERDICTS.includes(v.verdict) ? { halt: { code: v.verdict, member: s.id, at: st.now() } } : {};
   commit(st, i, { step: 'merged', mergedOid: mergeOid, head: doc.headRefOid ?? s.head, outcome }, { ...(onChain ? { policy: { ...run.policy, baseChain: [...chain, mergeOid] } } : {}), ...halt });
   if (!halt.halt) return NEXT;
-  const why = { 'wrong-target': `PR #${s.prNumber} merged into ${rb.baseRefName}, not ${run.base}`, 'untested-base': `landed-on-untested-base: PR #${s.prNumber} landed on ${short(rb.firstParent)}, not the tested ${short(chain.at(-1))} — a foreign commit reached the base in the merge window; the remaining members need a rebuild`, 'tree-mismatch': `PR #${s.prNumber} landed with tree ${short(rb.tree)}, not the candidate's ${short(v.trees?.expected)}: verify each member against the landed tree` }[v.verdict];
+  const why = { 'merged-unverified': unverified, 'wrong-target': `PR #${s.prNumber} merged into ${rb.baseRefName}, not ${run.base}`, 'untested-base': `landed-on-untested-base: PR #${s.prNumber} landed on ${short(rb.firstParent)}, not the tested ${short(chain.at(-1))} — a foreign commit reached the base in the merge window; the remaining members need a rebuild`, 'tree-mismatch': `PR #${s.prNumber} landed with tree ${short(rb.tree)}, not the candidate's ${short(v.trees?.expected)}: verify each member against the landed tree` }[v.verdict];
   return fault('base-moved', why);
 }
 
@@ -531,7 +552,11 @@ function stepMember(st, i) {
   const until = Date.now() + T.mergeWait;
   for (;;) {
     const o = viewPr(deps, cwd, s);
-    if (o.ok && upper(o.doc.state) === 'MERGED') { st.setStep(i, { step: 'merged', mergedOid: o.doc.mergeCommit?.oid ?? null }); return NEXT; }
+    if (o.ok && upper(o.doc.state) === 'MERGED') {
+      st.setStep(i, { step: 'merged', mergedOid: o.doc.mergeCommit?.oid ?? null });
+      const pv = verifyMergedCi(st, s, o.doc, h);
+      return pv.ok ? NEXT : fault('merged-unverified', pv.reason);
+    }
     if (Date.now() >= until) {
       return fault('merge-unconfirmed', m.ok
         ? `PR #${s.prNumber}: merge accepted but not observed merged after ${Math.round(T.mergeWait / 1000)}s — check branch rules / merge queue, then --resume`
