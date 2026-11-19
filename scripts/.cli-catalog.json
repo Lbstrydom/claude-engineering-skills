@@ -906,6 +906,10 @@
       "description": "/visual-audit runner: computed-style checks against the visual contract.",
       "category": "audit"
     },
+    "scripts/verify-findings.mjs": {
+      "description": "Verify contested audit findings: evidence pack + one verdict per finding for triage to weigh; --check re-validates an artifact.",
+      "category": "audit"
+    },
     "scripts/write-code-outcomes.mjs": {
       "description": "Record a final audit round's triage outcomes to the learning store.",
       "category": "learning"

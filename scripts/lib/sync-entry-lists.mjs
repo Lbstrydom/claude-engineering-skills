@@ -118,6 +118,8 @@ export const CORE_ENTRY = [
   // `../../scripts/shared.mjs` — a specifier the command rewriter cannot
   // relocate, so the documented step could not run in a consumer at all.
   'scripts/write-ledger-entries.mjs',
+  // /audit-code's contested-finding verification (Step 3). An ENTRY POINT the skill names by path.
+  'scripts/verify-findings.mjs',
   // Step 5.0b's full-scope detector census. An ENTRY POINT nothing imports:
   // convergence.mjs takes the detector RESULT as a parameter, so the import
   // walker never reaches this file and it was absent from every consumer while

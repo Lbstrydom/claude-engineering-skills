@@ -76,8 +76,11 @@ export function parseResultPath(outPath) {
  * @param {unknown} [diffBase]
  * @returns {T}
  */
-export function stampAuditRound(result, round, diffBase = null) {
+export function stampAuditRound(result, round, diffBase = null, identity = null) {
   if (result && typeof result === 'object' && Number.isInteger(round) && round >= 1) result.round = round;
+  // The audited target (tree + sha), so a later verifier can prove it reads the bytes this round read.
+  if (result && typeof result === 'object' && typeof identity?.auditedTree === 'string' && identity.auditedTree) result._auditedTree = identity.auditedTree;
+  if (result && typeof result === 'object' && isFullObjectId(identity?.auditedSha)) result._auditedSha = identity.auditedSha;
   if (result && typeof result === 'object' && isFullObjectId(diffBase)) result._diffBase = diffBase;
   return result;
 }

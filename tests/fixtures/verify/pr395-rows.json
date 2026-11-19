@@ -1,0 +1,1200 @@
+{
+ "source": {
+  "sid": "audit-code-1795028282052-47728",
+  "files": ".audit/audit-code-1795028282052-47728-r1..r3-result.json, audit-code-1795028282052-47728-ledger.json (PR #395, trimmed to the fields selectContested reads)"
+ },
+ "rounds": [
+  {
+   "round": 1,
+   "findings": [
+    {
+     "id": "H1",
+     "severity": "HIGH",
+     "category": "[be-services] Persistence safety",
+     "section": "scripts/lib/fleet/serial.mjs: startPolicyRun",
+     "detail": "Every unsuccessful readSerial result is treated as a missing record, so malformed, unsupported, or unreadable existing state can be overwritten. This is related to the separate fail-open serial read in rollup-land.mjs.",
+     "_hash": "04114434",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/serial.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/serial.mjs"
+     ]
+    },
+    {
+     "id": "H2",
+     "severity": "HIGH",
+     "category": "[be-services] Missing error handling",
+     "section": "scripts/lib/fleet/rollup-land.mjs: liveRollups",
+     "detail": "An invalid or unreadable serial record is treated as though the run never requested a merge. This is related to the separate fail-open serial read in startPolicyRun.",
+     "_hash": "cdd9e856",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "H3",
+     "severity": "HIGH",
+     "category": "[be-services] Superseded train remains executable",
+     "section": "scripts/lib/fleet/rollup-land.mjs: preflight, advanceOperation",
+     "detail": "Superseded trains are marked abandoned, but preflight does not reject that phase; an existing rollup operation also bypasses approvable().",
+     "_hash": "b552a135",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "H4",
+     "severity": "HIGH",
+     "category": "[be-services] Race condition",
+     "section": "scripts/lib/fleet/rollup-land.mjs: buildRollup",
+     "detail": "The one-live-rollup check occurs before the train lock, while creation and supersession occur after the lock is released.",
+     "_hash": "756bce22",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "H5",
+     "severity": "HIGH",
+     "category": "[be-services] Incomplete identity validation",
+     "section": "scripts/lib/fleet/rollup-land.mjs: preflight and closeMemberPrs",
+     "detail": "Preflight binds the record to its train using only member count and candidate tree, allowing differing source identities or OIDs to pass those checks.",
+     "_hash": "87dfc948",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "H6",
+     "severity": "HIGH",
+     "category": "[be-services] Incomplete CI verification",
+     "section": "scripts/lib/fleet/rollup-land.mjs: makeRollupPolicy.admit",
+     "detail": "Admission accepts none-required without other CI evidence, including when the checks list is empty.",
+     "_hash": "3b6af2b9",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "H7",
+     "severity": "HIGH",
+     "category": "[be-services] Incomplete overlap detection",
+     "section": "scripts/lib/fleet/rollup-land.mjs: buildRollup changed-path collection",
+     "detail": "git diff --name-only can report only the destination of a detected rename, missing overlap with another member editing the rename's source path.",
+     "_hash": "8c9765a4",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "H8",
+     "severity": "HIGH",
+     "category": "[be-services] Race condition",
+     "section": "scripts/lib/fleet/rollup-land.mjs: closeMemberPrs",
+     "detail": "The member PR head is checked in one GitHub request and closed in a later request, allowing a push between the two.",
+     "_hash": "de3e2c16",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "H9",
+     "severity": "HIGH",
+     "category": "[be-services] Silent write failure",
+     "section": "scripts/lib/fleet/rollup-land.mjs: advanceOperation superseded PR cleanup",
+     "detail": "The operation advances to pr-open before closing superseded rollups, and the gh pr close results are ignored.",
+     "_hash": "c878077e",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "H10",
+     "severity": "HIGH",
+     "category": "[be-services] Incorrect resume classification",
+     "section": "scripts/lib/fleet/member-outcome.mjs: classifyMerged",
+     "detail": "A MERGED observation without a merge OID advances the step to merged with awaiting-read-back; the reviewer identified incorrect classification when resuming with the OID and the same attempted head.",
+     "_hash": "bee7e149",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/member-outcome.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/member-outcome.mjs"
+     ]
+    },
+    {
+     "id": "M1",
+     "severity": "MEDIUM",
+     "category": "[be-services] Unbounded retry",
+     "section": "scripts/lib/fleet/serial.mjs: stepMember final PR re-read and loop",
+     "detail": "A failed final PR view returns AGAIN, so repeated failures at that point can loop indefinitely even if earlier reads and checks succeed.",
+     "_hash": "bd8592e6",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/serial.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/serial.mjs"
+     ]
+    },
+    {
+     "id": "M2",
+     "severity": "MEDIUM",
+     "category": "[be-services] Incorrect failure classification",
+     "section": "scripts/lib/fleet/serial.mjs: loop final base-tip check",
+     "detail": "After a merge, a null baseTip is handled like a verified different tip and persists a base-moved halt.",
+     "_hash": "4cc244a6",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/serial.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/serial.mjs"
+     ]
+    },
+    {
+     "id": "M3",
+     "severity": "MEDIUM",
+     "category": "[be-services] Missing response validation",
+     "section": "scripts/lib/fleet/serial.mjs: stepMember unconfirmed-merge reconciliation",
+     "detail": "Reconciliation rejects only isInMergeQueue === true, treating missing or null values as proof that the PR is not queued.",
+     "_hash": "f89e1e88",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/serial.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/serial.mjs"
+     ]
+    },
+    {
+     "id": "M4",
+     "severity": "MEDIUM",
+     "category": "[be-services] Incomplete state validation",
+     "section": "scripts/lib/fleet/member-outcome.mjs: validatePolicyRun",
+     "detail": "Validation can accept a merged step whose mergedOid differs from its landed outcome's mergeOid when the base chain contains the latter.",
+     "_hash": "cde5e193",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/member-outcome.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/member-outcome.mjs"
+     ]
+    },
+    {
+     "id": "M5",
+     "severity": "MEDIUM",
+     "category": "[be-services] Input validation",
+     "section": "scripts/lib/fleet/rollup.mjs: parseRollupManifest and renderRollupManifest",
+     "detail": "The parser accepts final manifests without a candidate or CI record and accepts an empty member ID.",
+     "_hash": "de3e6c9a",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup.mjs"
+     ]
+    },
+    {
+     "id": "H11",
+     "severity": "HIGH",
+     "category": "[Sustainability] Persistence error handling",
+     "section": "scripts/lib/fleet/serial.mjs: startPolicyRun; scripts/lib/fleet/rollup-land.mjs: liveRollups",
+     "detail": "Both paths treat an unsuccessful readSerial result as absence. startPolicyRun can overwrite an existing invalid or unreadable record, while liveRollups can treat a merge in flight as absent.",
+     "_hash": "16efa648",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/serial.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/serial.mjs",
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "H12",
+     "severity": "HIGH",
+     "category": "[Sustainability] Concurrency",
+     "section": "scripts/lib/fleet/rollup-land.mjs: closeMemberPrs",
+     "detail": "Cleanup reads a member PR's head and then issues a separate unconditional close, allowing the head to change between calls.",
+     "_hash": "241b14c1",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "H13",
+     "severity": "HIGH",
+     "category": "[Sustainability] Incomplete identity validation",
+     "section": "scripts/lib/fleet/rollup-land.mjs: preflight and makeRollupPolicy",
+     "detail": "Preflight checks member count and candidate tree but does not establish that recorded member IDs, heads, branches and repositories correspond to the train sources.",
+     "_hash": "dc92d30f",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "M6",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Outcome propagation",
+     "section": "scripts/lib/fleet/ship-batch.mjs: withSummary; scripts/lib/fleet/rollup-land.mjs: runPhase",
+     "detail": "Both wrappers replace every non-ok serial result code with 'refused', discarding distinct incomplete outcomes.",
+     "_hash": "2921989b",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/ship-batch.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/ship-batch.mjs",
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "M7",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Persistence",
+     "section": "scripts/lib/fleet/ship-batch.mjs: writeShipBatch; scripts/lib/fleet/rollup-land.mjs: writeRollupRecord",
+     "detail": "Write-once records use an existence check followed by an atomic replacement write; the check and write are not atomic together.",
+     "_hash": "9fe803bc",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/ship-batch.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/ship-batch.mjs",
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "M8",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Persistence compatibility",
+     "section": "Plan §6 — serial record schema version",
+     "detail": "Policy-run records retain schema version 1 despite introducing keys that older strict readers reject.",
+     "_hash": "0262e32d",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "plan §6 — serial record schema version",
+     "affectedFiles": [
+      "plan §6 — serial record schema version"
+     ]
+    },
+    {
+     "id": "M9",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Unbounded retry",
+     "section": "scripts/lib/fleet/serial.mjs: stepMember and loop",
+     "detail": "Several paths, including failed final PR views, changed heads and tree identity checks, return AGAIN without consistently advancing the policy retry accounting.",
+     "_hash": "28400eec",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/serial.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/serial.mjs"
+     ]
+    },
+    {
+     "id": "M10",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Error swallowing",
+     "section": "scripts/lib/fleet/rollup-land.mjs: advanceOperation",
+     "detail": "The result of closing a superseded rollup PR is ignored after the new operation advances to pr-open; subsequent resumes do not retry that closure.",
+     "_hash": "c18afc22",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ]
+    },
+    {
+     "id": "M11",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Persistence integrity",
+     "section": "scripts/lib/fleet/registry.mjs: Train schema and MUTABLE_TRAIN_FIELDS",
+     "detail": "The schema independently permits landing and rollup to be absent, while the entire rollup object is mutable; it does not encode their relationship.",
+     "_hash": "32b9a088",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/registry.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/registry.mjs"
+     ]
+    },
+    {
+     "id": "M12",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Incomplete validation",
+     "section": "scripts/lib/fleet/rollup.mjs: parseRollupManifest",
+     "detail": "The parser accepts a final manifest containing only a rollup ID and member IDs and heads, without requiring candidate, base, member trees, held list or final CI evidence.",
+     "_hash": "81945f42",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup.mjs"
+     ]
+    },
+    {
+     "id": "M13",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Error handling",
+     "section": "scripts/lib/fleet/serial.mjs: loop final base check and finalizeRun",
+     "detail": "An unreadable base tip is treated as a proven mismatch and persisted as a base-moved halt; finalizeRun also finalizes when rev-parse cannot read the relevant state.",
+     "_hash": "4a82fd57",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/serial.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/serial.mjs"
+     ]
+    },
+    {
+     "id": "M14",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Defensive validation",
+     "section": "scripts/lib/fleet/serial.mjs: stepMember merge-queue reconciliation",
+     "detail": "The queue check refuses only when isInMergeQueue is exactly true; missing, null or malformed values are treated as evidence that the PR is not queued.",
+     "_hash": "38e1e0d7",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/serial.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/serial.mjs"
+     ]
+    },
+    {
+     "id": "M15",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Misleading recovery guidance",
+     "section": "scripts/lib/fleet/member-outcome.mjs: summariseRun",
+     "detail": "A halted run with undecided members can be told both to resume and that no further member can land and the run must be rebuilt.",
+     "_hash": "d90f7fac",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/member-outcome.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/member-outcome.mjs"
+     ]
+    },
+    {
+     "id": "M16",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Ambiguous API contract",
+     "section": "scripts/lib/fleet/rollup.mjs: verifyRollupProvenance",
+     "detail": "The documented pr.body parameter is a squash body, but verification passes it to bodyOfMessage, which discards a subject line; tests instead supply a complete commit message.",
+     "_hash": "eaf8668d",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup.mjs"
+     ]
+    },
+    {
+     "id": "L1",
+     "severity": "LOW",
+     "category": "[Quickfix] Masked Error",
+     "section": "scripts/lib/fleet/train.mjs: squashCommit",
+     "detail": "When reading a rollup member's commit subject fails, squashCommit silently substitutes the member ID and continues building the candidate. This masks the Git failure rather than diagnosing why the admitted commit could not be read.",
+     "_hash": "a9bd5da9",
+     "_pass": "Quickfix",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/train.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/train.mjs"
+     ]
+    },
+    {
+     "id": "M17",
+     "severity": "MEDIUM",
+     "category": "[Adjacency] coverage incomplete — control did not fully run",
+     "section": "scripts/lib/fleet/serial.mjs",
+     "detail": "ADJACENCY_INCOMPLETE (enumeration-bound): maxContainers=129 reached — remaining files not enumerated: scripts/lib/fleet/serial.mjs, scripts/lib/fleet/ship-batch.mjs, scripts/lib/fleet/train-approve.mjs, scripts/lib/fleet/train.mjs, scripts/lib/ship-record/entry.mjs, scripts/lib/ship-record/facts.mjs, tests/fleet-land-ship-batch.test.mjs, tests/fleet-member-outcome.test.mjs, tests/fleet-rollup-manifest.test.mjs, tests/fleet-rollup.test.mjs (+5 more)",
+     "_hash": "c78bd7ab",
+     "_pass": "Adjacency",
+     "_primaryFile": "scripts/lib/fleet/serial.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/serial.mjs"
+     ]
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "findings": [
+    {
+     "id": "H1",
+     "severity": "HIGH",
+     "category": "[be-services] Incorrect provenance verification",
+     "section": "scripts/lib/fleet/rollup.mjs — verifyRollupProvenance",
+     "detail": "The verifier accepts any outcome with status `landed`, including outcomes whose verdict is `tree-mismatch`, `wrong-target`, or `untested-base`.",
+     "_hash": "6f074f12",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "ec611e919a6e",
+      "score": 0.109,
+      "category": "[Sustainability] Ambiguous API contract"
+     }
+    },
+    {
+     "id": "H2",
+     "severity": "HIGH",
+     "category": "[be-services] Unsafe cleanup mutation",
+     "section": "scripts/lib/fleet/rollup-land.mjs — closeSuperseded",
+     "detail": "Superseded rollup PRs are closed without checking their live head, so a PR with newly pushed work can be closed when its replacement is approved.",
+     "_hash": "7b313985",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "88e59dcf9b33",
+      "score": 0.133,
+      "category": "[be-services] Race condition"
+     }
+    },
+    {
+     "id": "H3",
+     "severity": "HIGH",
+     "category": "[be-services] Unverified cleanup mutation",
+     "section": "scripts/lib/fleet/rollup-land.mjs — closeMemberPrs post-close verification",
+     "detail": "After closing a member PR, an unreadable or malformed post-close response is treated as status `closed`, preventing reliable verification of the cleanup.",
+     "_hash": "3f46ba17",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "88e59dcf9b33",
+      "score": 0.2,
+      "category": "[be-services] Race condition"
+     }
+    },
+    {
+     "id": "M1",
+     "severity": "MEDIUM",
+     "category": "[be-services] Lock contention",
+     "section": "scripts/lib/fleet/rollup-land.mjs — rollup build critical section",
+     "detail": "The train-wide lock is held across `buildTrain`, including candidate construction and potentially long provisioning and test work.",
+     "_hash": "1e24a7ed",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "8bf1d1fd23f1",
+      "score": 0.139,
+      "category": "[be-services] Race condition"
+     }
+    },
+    {
+     "id": "H4",
+     "severity": "HIGH",
+     "category": "[Sustainability] Incorrect provenance verification",
+     "section": "scripts/lib/fleet/rollup.mjs — verifyRollupProvenance",
+     "detail": "Provenance verification accepts any landed outcome without checking its read-back verdict, including tree-mismatch, wrong-target, and untested-base verdicts.",
+     "_hash": "5e322873",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "f0a010a61022",
+      "score": 0.108,
+      "category": "[be-services] Input validation"
+     }
+    },
+    {
+     "id": "M2",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Missing error handling",
+     "section": "scripts/lib/fleet/rollup-land.mjs — closeMemberPrs",
+     "detail": "A failed or malformed post-close PR view is recorded as status `closed`, even though that view is needed to detect a head change.",
+     "_hash": "f38db07d",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "b3db317c5881",
+      "score": 0.227,
+      "category": "[be-services] Missing error handling"
+     }
+    },
+    {
+     "id": "M3",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Unsafe cleanup",
+     "section": "scripts/lib/fleet/rollup-land.mjs — closeSuperseded",
+     "detail": "Superseded rollup PRs are closed without checking whether their current head matches the recorded candidate, and without a post-close head observation.",
+     "_hash": "d8eb892a",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "dd9b8844bf4f",
+      "score": 0.189,
+      "category": "[Sustainability] Concurrency"
+     }
+    },
+    {
+     "id": "M4",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Non-idempotent recovery",
+     "section": "scripts/lib/fleet/rollup-land.mjs — closeSuperseded",
+     "detail": "The remote close happens before its success is persisted. If the process stops between those operations, the next run attempts to close the PR again rather than reconciling its remote state.",
+     "_hash": "230eb56b",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "ed4a02221f39",
+      "score": 0.133,
+      "category": "[be-services] Silent write failure"
+     }
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "findings": [
+    {
+     "id": "H1",
+     "severity": "HIGH",
+     "category": "[be-services] Race condition",
+     "section": "scripts/lib/fleet/rollup-land.mjs: closeBoundToHead",
+     "detail": "If a contributor pushes a new commit after the initial head read but before `gh pr close`, cleanup closes a PR containing work that did not land. The second read can detect the mismatch, but it cannot prevent the destructive close; a crash or failed read can also prevent the warning from being delivered.",
+     "_hash": "8942d7a7",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "65d140e0fc11",
+      "score": 0.131,
+      "category": "[Sustainability] Missing error handling"
+     }
+    },
+    {
+     "id": "H2",
+     "severity": "HIGH",
+     "category": "[be-services] Incorrect reconciliation",
+     "section": "scripts/lib/fleet/rollup-land.mjs: closeBoundToHead before-state handling",
+     "detail": "The new `before.state.toUpperCase() !== 'OPEN'` branch returns `closed` before comparing the head. For example, if the head moves around a close and the post-close read reports `failed`, the next resume sees the closed PR and records success even though its head still contains unlanded commits. The same loss of evidence occurs if the process crashes after the close.",
+     "_hash": "342f6d6f",
+     "_pass": "be-services",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "65d140e0fc11",
+      "score": 0.156,
+      "category": "[Sustainability] Missing error handling"
+     }
+    },
+    {
+     "id": "H3",
+     "severity": "HIGH",
+     "category": "[Sustainability] Cleanup reconciliation",
+     "section": "scripts/lib/fleet/rollup-land.mjs — closeBoundToHead",
+     "detail": "If the post-close read detects that the head moved, the function returns a failure warning. On the next run, however, the non-OPEN check returns `closed` before comparing the head, clearing that warning even though the PR may contain work that did not land.",
+     "_hash": "350ec668",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "65d140e0fc11",
+      "score": 0.173,
+      "category": "[Sustainability] Missing error handling"
+     }
+    },
+    {
+     "id": "M1",
+     "severity": "MEDIUM",
+     "category": "[Sustainability] Stale state persistence",
+     "section": "scripts/lib/fleet/rollup-land.mjs — superseded rollup cleanup",
+     "detail": "The cleanup reads `old` from `listTrains` before the GitHub calls, then acquires the train lock and writes a rollup object spread from that stale snapshot. The lock does not protect updates made between the initial read and the write.",
+     "_hash": "28b9f98d",
+     "_pass": "Sustainability",
+     "_sourceModel": "gpt-6.1-terra",
+     "_primaryFile": "scripts/lib/fleet/rollup-land.mjs",
+     "affectedFiles": [
+      "scripts/lib/fleet/rollup-land.mjs"
+     ],
+     "_priorRuling": {
+      "topicId": "dd9b8844bf4f",
+      "score": 0.191,
+      "category": "[Sustainability] Concurrency"
+     }
+    }
+   ]
+  }
+ ],
+ "ledger": {
+  "entries": [
+   {
+    "topicId": "95311a2e490c",
+    "latestFindingId": "H1",
+    "semanticHash": "04114434",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/serial.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "b3db317c5881",
+    "latestFindingId": "H2",
+    "semanticHash": "cdd9e856",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "a04566e5d5c9",
+    "latestFindingId": "H3",
+    "semanticHash": "b552a135",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "8bf1d1fd23f1",
+    "latestFindingId": "H4",
+    "semanticHash": "756bce22",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "c3adc7dba8a8",
+    "latestFindingId": "H5",
+    "semanticHash": "87dfc948",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "6e0fbb823a77",
+    "latestFindingId": "H6",
+    "semanticHash": "3b6af2b9",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "7b784e025661",
+    "latestFindingId": "H7",
+    "semanticHash": "8c9765a4",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "ed4a02221f39",
+    "latestFindingId": "H9",
+    "semanticHash": "c878077e",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "8f6717a00744",
+    "latestFindingId": "H10",
+    "semanticHash": "bee7e149",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/member-outcome.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "9893f7811006",
+    "latestFindingId": "H11",
+    "semanticHash": "16efa648",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/serial.mjs",
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "573ae04b608b",
+    "latestFindingId": "H13",
+    "semanticHash": "dc92d30f",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "a418a56c8e7e",
+    "latestFindingId": "M1",
+    "semanticHash": "bd8592e6",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/serial.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "b358bf9c5007",
+    "latestFindingId": "M2",
+    "semanticHash": "4cc244a6",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/serial.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "2d6992cc74f8",
+    "latestFindingId": "M3",
+    "semanticHash": "f89e1e88",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/serial.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "2ecdf9aeac6e",
+    "latestFindingId": "M4",
+    "semanticHash": "cde5e193",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/member-outcome.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "f0a010a61022",
+    "latestFindingId": "M5",
+    "semanticHash": "de3e6c9a",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "080e66e33cdb",
+    "latestFindingId": "M6",
+    "semanticHash": "2921989b",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/ship-batch.mjs",
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "ec7b37f781a2",
+    "latestFindingId": "M7",
+    "semanticHash": "9fe803bc",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/ship-batch.mjs",
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "c7c97339b1c0",
+    "latestFindingId": "M9",
+    "semanticHash": "28400eec",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/serial.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "5d7351858115",
+    "latestFindingId": "M10",
+    "semanticHash": "c18afc22",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "aa53dca2c52f",
+    "latestFindingId": "M11",
+    "semanticHash": "32b9a088",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/registry.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "44ff639f602f",
+    "latestFindingId": "M12",
+    "semanticHash": "81945f42",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "f123a0c93711",
+    "latestFindingId": "M13",
+    "semanticHash": "4a82fd57",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/serial.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "9c191bd5c542",
+    "latestFindingId": "M14",
+    "semanticHash": "38e1e0d7",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/serial.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "ee194a47bca5",
+    "latestFindingId": "M15",
+    "semanticHash": "d90f7fac",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/member-outcome.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "ec611e919a6e",
+    "latestFindingId": "M16",
+    "semanticHash": "eaf8668d",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "887c590c868f",
+    "latestFindingId": "L1",
+    "semanticHash": "a9bd5da9",
+    "adjudicationOutcome": "accepted",
+    "severity": "LOW",
+    "affectedFiles": [
+     "scripts/lib/fleet/train.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "88e59dcf9b33",
+    "latestFindingId": "H8",
+    "semanticHash": "de3e2c16",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "dd9b8844bf4f",
+    "latestFindingId": "H12",
+    "semanticHash": "241b14c1",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "c2434aa394c0",
+    "latestFindingId": "M8",
+    "semanticHash": "0262e32d",
+    "adjudicationOutcome": "dismissed",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "plan §6 — serial record schema version"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "ded566064f31",
+    "latestFindingId": "M17",
+    "semanticHash": "c78bd7ab",
+    "adjudicationOutcome": "dismissed",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/serial.mjs"
+    ],
+    "resolvedRound": 1
+   },
+   {
+    "topicId": "1910cf53a556",
+    "latestFindingId": "H1",
+    "semanticHash": "6f074f12",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup.mjs"
+    ],
+    "resolvedRound": 2
+   },
+   {
+    "topicId": "955dbf2e37f2",
+    "latestFindingId": "H2",
+    "semanticHash": "7b313985",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 2
+   },
+   {
+    "topicId": "cb9acb3b09a2",
+    "latestFindingId": "H3",
+    "semanticHash": "3f46ba17",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 2
+   },
+   {
+    "topicId": "8a993bbad43b",
+    "latestFindingId": "M1",
+    "semanticHash": "1e24a7ed",
+    "adjudicationOutcome": "dismissed",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 2
+   },
+   {
+    "topicId": "a806384b79e8",
+    "latestFindingId": "H4",
+    "semanticHash": "5e322873",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup.mjs"
+    ],
+    "resolvedRound": 2
+   },
+   {
+    "topicId": "65d140e0fc11",
+    "latestFindingId": "M2",
+    "semanticHash": "f38db07d",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 2
+   },
+   {
+    "topicId": "1a406f80bfe5",
+    "latestFindingId": "M3",
+    "semanticHash": "d8eb892a",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 2
+   },
+   {
+    "topicId": "eaf252f416ff",
+    "latestFindingId": "M4",
+    "semanticHash": "230eb56b",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 2
+   },
+   {
+    "topicId": "c82edc21f684",
+    "latestFindingId": "H1",
+    "semanticHash": "8942d7a7",
+    "adjudicationOutcome": "dismissed",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 3
+   },
+   {
+    "topicId": "523b0ec04e8b",
+    "latestFindingId": "H2",
+    "semanticHash": "342f6d6f",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 3
+   },
+   {
+    "topicId": "24539e9453e4",
+    "latestFindingId": "H3",
+    "semanticHash": "350ec668",
+    "adjudicationOutcome": "accepted",
+    "severity": "HIGH",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 3
+   },
+   {
+    "topicId": "97446e9182fd",
+    "latestFindingId": "M1",
+    "semanticHash": "28b9f98d",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 3
+   },
+   {
+    "topicId": "b96171b7f771",
+    "latestFindingId": "M1",
+    "semanticHash": "6d27bdc3",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 4
+   },
+   {
+    "topicId": "bbcb8a4b21e4",
+    "latestFindingId": "M2",
+    "semanticHash": "9a167372",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 4
+   },
+   {
+    "topicId": "247a02fff426",
+    "latestFindingId": "M1",
+    "semanticHash": "9b6cad3b",
+    "adjudicationOutcome": "accepted",
+    "severity": "MEDIUM",
+    "affectedFiles": [
+     "scripts/lib/fleet/rollup-land.mjs"
+    ],
+    "resolvedRound": 5
+   }
+  ]
+ }
+}

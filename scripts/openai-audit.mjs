@@ -523,7 +523,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
   // only by the CLI's main(). Without it, a flipped flag routed fully-mocked
   // test harnesses into real multi-provider execution.
   if (tieredAuditConfig.pipelineEnabled && ctx.allowTiered) {
-    const mergedResult = withResumeSummary(stampRunNotices(stampAuditRound(applyCanaryToUnsupportedPipeline(await runTieredAuditPipeline(ctx)), opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts));
+    const mergedResult = withResumeSummary(stampRunNotices(stampAuditRound(applyCanaryToUnsupportedPipeline(await runTieredAuditPipeline(ctx)), opts.round, opts.coverageChanged ? opts.auditBaseCommit : null, ctx), opts));
     printAuditResult(mergedResult, { outFile, jsonMode });
     return mergedResult;
   }
@@ -533,7 +533,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
     ? runTieredShadowComparison({ ctx, legacyResultPromise, runTieredAuditPipeline }).catch(() => {})
     : null;
 
-  const mergedResult = withResumeSummary(stampRunNotices(stampAuditRound(await legacyResultPromise, opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts));
+  const mergedResult = withResumeSummary(stampRunNotices(stampAuditRound(await legacyResultPromise, opts.round, opts.coverageChanged ? opts.auditBaseCommit : null, ctx), opts));
   if (shadowTask) await shadowTask;
 
   printAuditResult(mergedResult, { outFile, jsonMode });

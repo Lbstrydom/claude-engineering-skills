@@ -24,6 +24,7 @@
     "audit:plan": "node scripts/openai-audit.mjs plan",
     "audit:code": "node scripts/openai-audit.mjs code",
     "audit:rebuttal": "node scripts/openai-audit.mjs rebuttal",
+    "audit:verify-findings": "node scripts/verify-findings.mjs",
     "audit:gemini-review": "node scripts/gemini-review.mjs review",
     "audit:gemini-ping": "node scripts/gemini-review.mjs ping",
     "final-review:set": "node scripts/gemini-review.mjs set-provider",

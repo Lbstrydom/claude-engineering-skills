@@ -64,7 +64,7 @@ substitute when the GPT legs have no route, and which of `AUDIT_DEGRADED` /
 `AUDIT_NOT_RUN` to report so a run that did not happen stays distinguishable
 from one that passed.
 
-Initialise session ID: `SID=audit-code-$(node -e "process.stdout.write(Date.now()+'-'+process.pid)")` — epoch ms plus a PID, so concurrent sessions get separate result, stderr and ledger files.
+Initialise session ID: `SID=audit-code-$(node -e "process.stdout.write(Date.now()+'-'+process.pid)")` — epoch ms plus a PID, so concurrent sessions get separate files. A further round on the same change keeps this SID (`--round N+1 --ledger`, `references/round-cap-and-structural-card.md`).
 
 Kickoff card: `/audit-code — Starting | Plan: <path> | Max 6 rounds | SID: $SID`.
 
@@ -271,13 +271,11 @@ Each finding has `is_mechanical: true/false` from GPT:
 
 ### Tiered rebuttal (when action=rebut)
 
-| Severity | Deliberation |
-|---|---|
-| HIGH | ALWAYS send to GPT deliberation |
-| MEDIUM | ALWAYS send to GPT deliberation |
-| LOW | Claude decides locally |
+HIGH and MEDIUM: ALWAYS GPT deliberation (after verification, below). LOW: Claude decides locally.
 
-Only send rebuttal if rebut HIGH or MEDIUM findings exist:
+Settle a contested HIGH/MEDIUM finding with a quoted line first: `node scripts/verify-findings.mjs --sid "$SID" --round N
+--triage <file> --out .audit/$SID-rN-verify.json`, then `--check` it. A verdict is evidence for triage, not a ruling; send
+`inconclusive`, `over-cap` and `failed` items, and any verdict you still dispute, to rebuttal (`references/contested-verification.md`):
 
 ```bash
 REBUTTAL_FILE=.claude/tmp/rebuttal.md   # the rebuttal text you wrote for the disputed finding(s)
@@ -347,12 +345,10 @@ Three linked dismissals hard-suppress the next raise. See `references/ledger-for
 
 ## Step 3.5b — Record Triage Outcomes (closes the adaptive-learning loop)
 
-**Automatic — no manual step.** `write-ledger-entries.mjs` labels the round it just
-triaged (once every finding has a ruling), and each R2+ `openai-audit.mjs` invocation
-re-checks the prior round idempotently, so the **final** round is labelled too. It
-bridges the ledger → `finding_adjudication_events` + `audit_pass_stats` +
-`audit_findings` + `audit_runs.labeled` (cloud) and `.audit/outcomes.jsonl` (local
-bandit reward). Best-effort: a failure logs `[finalize] WARN` and the audit proceeds.
+**Automatic.** `write-ledger-entries.mjs` labels the round it just triaged, and each R2+
+`openai-audit.mjs` re-checks the prior round idempotently, so the **final** round is labelled
+too (cloud tables, and `.audit/outcomes.jsonl` locally). Best-effort: a failure logs
+`[finalize] WARN` and the audit proceeds.
 
 **Manual fallback — only if that WARN appeared**, or on **non-Claude-Code / cloud-off
 CI** where the orchestrator path didn't fire (inside `/cycle` it is fully covered):
@@ -375,7 +371,7 @@ audits suppress them automatically. Eligible candidates: Step 3 triage
 findings with `action = defer`.
 
 > **A rejected capture is a lost suppression.** An over-cap rationale is rejected and the run exits non-zero: any deferral that fails to land is never suppressed in a future audit — so `9 of 15 captured` is a failure, not a ship.
-> Read the `Rejected entries:` listing, fix what it names, then re-run (capture is idempotent). Do not shorten a rationale to fit the 4000-char limit — the Step 3 honest-deferral requirement above (root cause + rejected minimal fix + residual risk + independence) is the point, and the limit is sized to it.
+> Read the `Rejected entries:` listing, fix what it names, re-run (idempotent). Do not shorten a rationale to fit the 4000-char limit: the Step 3 honest-deferral requirement is the point.
 
 Full per-reason field requirements, capture flow, sensitivity-scan rules,
 and status card format: `references/debt-capture.md`.
@@ -588,10 +584,9 @@ require a shared SSoT, a parity assertion, or a declared `data-engine-claim` sur
 
 ## Step 7 — Final Independent Review (Gemini by default; MANDATORY)
 
-> **Coverage rides into the review automatically.** The transcript builder projects each round's `_coverage` (every file
-> short of full coverage, capped, plus a digest of the full ledger), and the review envelope opens with an **Audit Coverage**
-> note naming what was NOT examined. Do not summarise it away in `--summary`; if the note is present the reviewer was told,
-> and an APPROVE over it is an APPROVE of the examined files only. A coverage gap is not itself release-blocking.
+> **Coverage rides into the review automatically.** The transcript builder projects each round's `_coverage`, and the
+> review envelope opens with an **Audit Coverage** note naming what was NOT examined. Keep it in `--summary`: an APPROVE
+> over it is an APPROVE of the examined files only. A coverage gap is not itself release-blocking.
 
 Run the final reviewer — the newest Gemini Pro by default (`latest-pro`, resolved at runtime; override with `FINAL_REVIEW_MODEL`) as the final gate. Falls back to Claude Opus when
 `GEMINI_API_KEY` is absent.
@@ -700,6 +695,7 @@ situations — read them only when the trigger applies.
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 7 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
 | `references/round-cap-and-structural-card.md` | Enforced GPT round cap (plan 3/5, code 6/8), exit 4 CAPPED, and the structural-or-stop card read at the cap. | A round exited 4, OR the audit reached round 6 without converging. |
 | `references/resume.md` | --resume - finish an INCOMPLETE round by replaying the passes that completed, so a 429 or timeout does not re-pay them. | A round ended INCOMPLETE from 429/timeout passes. |
+| `references/contested-verification.md` | Quoted-line verification of contested findings: flow, item states, exit codes. | Step 3 - a finding is disputed or re-raised after a dismissal. |
 | `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — a prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
 | `references/pivot-rule.md` | Pivot rule - findings recurring in one file or concern for 3 consecutive rounds mean rethink the design, not loop. | Step 3 - same file or concern accepted in 3 consecutive rounds. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. ALSO Step 6 — about to emit the convergence report's pass/wave census, to apply §7's named-state rule. |

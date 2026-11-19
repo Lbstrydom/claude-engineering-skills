@@ -98,6 +98,7 @@ const CLI_SMOKE_SET = [
   // Context Summary); its --selfcheck-relocation handler existed but was
   // unverified in consumers until Cluster B (self-hosted-runner-management.md).
   'actions-runner-doctor.mjs',
+  'verify-findings.mjs', // contested-finding verification; declared in sync-entry-lists.mjs CORE_ENTRY (verified before adding)
   // Scheduled-workflow cadence doctor — declared in sync-to-repos.mjs CORE_ENTRY
   // (verified before adding: this set asserts CONSUMER PRESENCE, so membership
   // without that declaration fails gate 4 in every consumer).
