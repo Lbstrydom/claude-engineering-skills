@@ -142,3 +142,13 @@ skill (its record catch-up reference); the coordinator's part:
   `/ship` entries. Two things a record PR can share are NOT conflict-free — a pasted plan line and the one-time floor —
   which is why there is exactly one writer per repo (you): keep one record PR open at a time, and floor once.
 - **`records: UNMEASURED` is not zero**: fix what it names (`--fetch`, `origin/HEAD`, a re-sync) before reading it.
+
+## 8. Asking a chip for another audit round
+
+A further `/audit-code` round on the same change continues the chip's SID; a fresh SID restarts the round count and drops the
+ledger (PR #395's four extra rounds each did). Relay it this way:
+
+> Run one more /audit-code round on the same SID: `--round <N+1> --ledger .audit/<SID>-ledger.json`. Do not start a new SID.
+> If that crosses the soft cap, show me the structural card instead.
+
+A new SID is for a different subject only (a new plan, or a re-scoped base); the chip says `new SID: <reason>` on its round card.
