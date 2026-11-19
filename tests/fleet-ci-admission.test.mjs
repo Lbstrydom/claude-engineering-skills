@@ -39,11 +39,11 @@ const branchDoc = (over = {}) => ({ protected: true, protection: { enabled: fals
  * One scripted GitHub for PR `pr` of `REPO`, at `head`. `world.merged` flips when `gh pr merge` runs; `over` replaces endpoint answers (a value, a
  * `{__fail}` or a function of the world, so a row can change the evidence BETWEEN two assessments). The PR document is whatever `world.pr(w)` says.
  */
-function github({ head, base, pr = 21, over = {} }) {
+function github({ head, base, pr = 21, over = {}, squash = null }) {
   const w = { merged: false, mergedBase: 'main', mergedHead: head, runReads: 0, prHead: head, draft: false, prBase: 'main', state: 'OPEN' };
   const doc = () => ({
     state: w.merged ? 'MERGED' : w.state, isDraft: w.draft, headRefOid: w.merged ? w.mergedHead : w.prHead, baseRefName: w.merged ? w.mergedBase : w.prBase, baseRefOid: base,
-    mergeStateStatus: 'CLEAN', mergeCommit: w.merged ? { oid: 'e'.repeat(40) } : null, url: `https://github.com/${REPO}/pull/${pr}`,
+    mergeStateStatus: 'CLEAN', mergeCommit: w.merged ? { oid: w.mergeOid ?? 'e'.repeat(40) } : null, url: `https://github.com/${REPO}/pull/${pr}`,
   });
   const o = typeof over === 'function' ? over(w) : over; // a function of the world lets a row change the evidence BETWEEN two assessments
   const scenario = {
@@ -53,7 +53,7 @@ function github({ head, base, pr = 21, over = {} }) {
     checkRuns: o.checkRuns ?? (() => { w.runReads += 1; return runsDoc(head, {}); }),
     statuses: o.statuses ?? [],
   };
-  const g = githubFake(scenario, { repo: REPO, head, prNumber: pr, onMerge: () => { w.merged = true; return ok(); } });
+  const g = githubFake(scenario, { repo: REPO, head, prNumber: pr, onMerge: (args) => { if (squash) w.mergeOid = squash(args); w.merged = true; return ok(); } });
   return { w, ...g };
 }
 
@@ -212,10 +212,12 @@ describe('land --approve --serial (plain): the oracle gates the merge, and ZERO 
     let red = false;
     const first = serial((h) => ({ checkRuns: () => (red ? runsDoc(h, { conclusion: 'failure' }) : runsDoc(h, { status: 'in_progress' })) }));
     assert.equal(first.g.merges.length, 0);
+    assert.match(first.r.reason, /required checks still pending|checks-pending|pending/, 'the first run stopped waiting on pending CI');
     red = true;
     const g2 = github({ head: first.tested, base: 'b'.repeat(40), over: { checkRuns: () => runsDoc(first.tested, { conclusion: 'failure' }) } });
     const r2 = resumeSerial({ cwd: first.fx.repo, trainId: first.trainId, deps: depsWith(g2.gh), sleep: () => {}, timings: fast });
     assert.equal(r2.ok, false);
+    assert.match(r2.reason, /required checks failed/, 'the resume re-assessed and saw red');
     assert.equal(g2.merges.length, 0);
   });
   it('a draft or a retarget appearing between the wait loop and the merge site -> no merge (Amendment A item 1)', () => {
@@ -300,7 +302,18 @@ describe('ship-batch (the policy serial runner), with the REAL oracle', () => {
     const shipBatch = { grantFile, checkChild: () => ({ ok: true, reasons: [], envelope: {} }) };
     const baseOid = train.destination.expectedOid;
     // One fake per member PR (each has its own head), dispatched by PR number; a merge makes that member's PR MERGED.
-    const fakes = new Map(members.map((m) => [m.pr, github({ head: m.head, base: baseOid, pr: m.pr, over: typeof over === 'function' ? (w) => over(m, w) : over })]));
+    /** What GitHub does for `gh pr merge --subject S --body-file F`: a REAL squash of the head onto origin/main with that message. */
+    const squashFor = (m) => (args) => {
+      const subject = args[args.indexOf('--subject') + 1];
+      const body = fs.readFileSync(args[args.indexOf('--body-file') + 1], 'utf8');
+      git(['checkout', '-q', 'main'], fx.repo); git(['pull', '-q', '--ff-only', 'origin', 'main'], fx.repo);
+      git(['merge', '--squash', args.at(-1)], fx.repo);
+      const msgFile = path.join(mkTmp('squash-'), 'msg');
+      fs.writeFileSync(msgFile, `${subject} (#${m.pr})\n\n${body}\n`);
+      git(['commit', '--allow-empty', '-q', '-F', msgFile], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+      return git(['rev-parse', 'HEAD'], fx.repo);
+    };
+    const fakes = new Map(members.map((m) => [m.pr, github({ head: m.head, base: baseOid, pr: m.pr, squash: squashFor(m), over: typeof over === 'function' ? (w) => over(m, w) : over })]));
     const all = [];
     const first = fakes.get(members[0].pr);
     const gh = (args) => {
@@ -325,14 +338,38 @@ describe('ship-batch (the policy serial runner), with the REAL oracle', () => {
       else assert.deepEqual([o.status, o.code], ['not-run', 'checks-pending']);
     });
   }
+  for (const row of POSITIVE) {
+    it(`control: ${row.name} -> approveShipBatch merges every member exactly once and the run lands verified (a real squash, the real oracle, post-merge verification)`, () => {
+      const b = batch(2, (m) => row.over(m.head));
+      const r = approveShipBatch(mk(b));
+      assert.equal(r.ok, true, String(r.text).slice(0, 400));
+      assert.equal(b.merges.length, 2);
+      const rec = readSerial(b.dir, b.trainId).run;
+      assert.deepEqual(rec.steps.map((s) => [s.outcome.status, s.outcome.verdict]), [['landed', 'verified'], ['landed', 'verified']]);
+    });
+  }
+  it('resumeShipBatch control: pending at the first approve, green at the resume -> the resume merges exactly once', () => {
+    let green = false;
+    const b = batch(1, (m) => ({ checkRuns: () => (green ? runsDoc(m.head, {}) : runsDoc(m.head, { status: 'in_progress' })) }));
+    const r1 = approveShipBatch(mk(b));
+    assert.equal(r1.ok, false);
+    assert.equal(b.merges.length, 0);
+    assert.deepEqual([readSerial(b.dir, b.trainId).run.steps[0].outcome.status, readSerial(b.dir, b.trainId).run.steps[0].outcome.code], ['not-run', 'checks-pending'], 'the first run stopped waiting on pending CI');
+    green = true;
+    const r2 = resumeShipBatch(mk(b));
+    assert.equal(r2.ok, true, String(r2.text).slice(0, 400));
+    assert.equal(b.merges.length, 1);
+  });
   it('STALE GREEN across a resume: first approve stops on pending, the resume sees red -> no merge', () => {
     let red = false;
     const b = batch(1, (m) => ({ checkRuns: () => (red ? runsDoc(m.head, { conclusion: 'failure' }) : runsDoc(m.head, { status: 'in_progress' })) }));
     approveShipBatch(mk(b));
+    assert.equal(readSerial(b.dir, b.trainId).run.steps[0].outcome.code, 'checks-pending', 'the first run stopped waiting on pending CI');
     red = true;
     const r = resumeShipBatch(mk(b));
     assert.equal(b.merges.length, 0);
     assert.equal(r.ok, false);
+    assert.equal(readSerial(b.dir, b.trainId).run.steps[0].outcome.code, 'checks-failed', 'the resume re-assessed and saw red');
   });
 });
 

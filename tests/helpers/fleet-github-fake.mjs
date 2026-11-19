@@ -75,8 +75,8 @@ export function githubFake(scenario, { onMerge, repo = REPO, base = 'main', head
  */
 export function ciApiState({ repo = 'o/n', base = 'main', heads, required = ['ci'], conclusion = 'success', status = 'completed' } = {}) {
   const api = {
-    [`GET repos/${repo}/branches/${base}`]: { body: { protected: required.length > 0, protection: { enabled: false, required_status_checks: { contexts: [], checks: [] } } } },
-    [`GET repos/${repo}/rules/branches/${base}?per_page=100`]: { body: required.length ? [{ type: 'required_status_checks', parameters: { required_status_checks: required.map((context) => ({ context, integration_id: 15368 })) } }] : [] },
+    [`GET repos/${repo}/branches/${encodeURIComponent(base)}`]: { body: { protected: required.length > 0, protection: { enabled: false, required_status_checks: { contexts: [], checks: [] } } } },
+    [`GET repos/${repo}/rules/branches/${encodeURIComponent(base)}?per_page=100`]: { body: required.length ? [{ type: 'required_status_checks', parameters: { required_status_checks: required.map((context) => ({ context, integration_id: 15368 })) } }] : [] },
   };
   for (const head of heads) {
     api[`GET repos/${repo}/commits/${head}/check-runs?filter=latest&per_page=100`] = { body: { total_count: required.length, check_runs: required.map((name, i) => ({ id: i + 1, name, status, conclusion: status === 'completed' ? conclusion : null, head_sha: head, app: { id: 15368 } })) } };
