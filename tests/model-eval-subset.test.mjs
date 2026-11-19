@@ -126,7 +126,7 @@ describe('expect_clean scoring is judge-free and strict', () => {
     assert.equal(scoreExpectCleanCase({ findings: [{ file: 'a.js', severity: 'LOW' }, { file: 'other.js', severity: 'HIGH' }] }, files).outcome, 'clean', 'LOW, or a file outside the case, is not a false positive');
   });
   it('malformed output is failed, never clean (r1 H6/H7)', () => {
-    for (const bad of [{}, { findings: null }, { findings: 'none' }, { findings: [{ severity: 'HIGH' }] }, { findings: [{ file: 'a.js' }] }, 'ok', 42]) {
+    for (const bad of [{ findings: [{ file: 'a.js', severity: 'HIGH ' }] }, { findings: [{ file: 'a.js', severity: 'high' }] }, {}, { findings: null }, { findings: 'none' }, { findings: [{ severity: 'HIGH' }] }, { findings: [{ file: 'a.js' }] }, 'ok', 42]) {
       assert.equal(scoreExpectCleanCase(bad, ['a.js']).outcome, 'failed', JSON.stringify(bad));
     }
     assert.equal(scoreExpectCleanCase({ findings: [] }, ['a.js']).outcome, 'clean', 'control: a valid empty array is clean');
@@ -146,14 +146,15 @@ describe('expect_clean scoring is judge-free and strict', () => {
 describe('loading an expect_clean case (hermetic fixture repo, r1 M11)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kd-fixture-'));
   const root = path.join(dir, 'fixture-repo');
-  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
-  const g = (...a) => execFileSync('git', ['-C', root, '-c', 'core.autocrlf=false', ...a], { encoding: 'utf8', env }).trim();
+  const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-empty-'));
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(emptyDir, 'none'), GIT_TEMPLATE_DIR: emptyDir, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const g = (...a) => execFileSync('git', ['-C', root, '-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${emptyDir}`, ...a], { encoding: 'utf8', env }).trim();
   fs.mkdirSync(root);
   g('init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(root, 'base.js'), 'export const a = 1;\n'); g('add', '-A'); g('commit', '-q', '-m', 'base');
   fs.writeFileSync(path.join(root, 'clean.js'), 'export const c = 2;\n'); g('add', '-A'); g('commit', '-q', '-m', 'add clean.js');
   const head = g('rev-parse', 'HEAD');
-  after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+  after(() => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(emptyDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
   const kd = (over = {}) => ({ id: 'KD-960', repo: 'fixture-repo', suite: 'expect_clean', commit: head, files: ['clean.js'], rationale: 'r', ...over });
   it('uses `commit`, hides no rubric, and keeps the declared-files-in-diff invariant', () => {
     const r = loadCorpusCase({ kdEntry: kd(), repoRoots: [root] });

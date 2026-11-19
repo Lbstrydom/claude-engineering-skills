@@ -172,7 +172,9 @@ function classifyCommit(git, rec, ctx) {
     const rel = ancestry(git, p.buggyCommit, sha);
     if (rel !== 'ancestor') { filtered.push({ buggyCommit: p.buggyCommit, reason: rel === 'not-ancestor' ? 'introducer-not-ancestor' : 'introducer-unresolvable' }); continue; }
     // H3: a detect/missed case loads the INTRODUCER's diff, so that diff must fit the loader's bound too.
-    if (diffChars(git, p.buggyCommit) > ctx.maxDiffChars) { filtered.push({ buggyCommit: p.buggyCommit, reason: 'introducer-diff-too-large' }); continue; }
+    const introChars = diffChars(git, p.buggyCommit);
+    if (introChars < 0) { filtered.push({ buggyCommit: p.buggyCommit, reason: 'introducer-diff-unreadable' }); continue; }
+    if (introChars > ctx.maxDiffChars) { filtered.push({ buggyCommit: p.buggyCommit, reason: 'introducer-diff-too-large' }); continue; }
     // The introducer must touch a file the fix touches. A commit whose files cannot be read is kept: unknown is not disjoint.
     const introFiles = filesFor(git, p.buggyCommit);
     if (introFiles.length > 0 && p.files.length > 0 && !introFiles.some((f) => p.files.includes(f))) { filtered.push({ buggyCommit: p.buggyCommit, reason: 'introducer-disjoint-files' }); continue; }

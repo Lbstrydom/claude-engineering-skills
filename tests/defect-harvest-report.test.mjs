@@ -12,8 +12,9 @@ import path from 'node:path';
 import { harvestWithReport, buildInputs, serializeReport, loadCuratedSet, MINER_VERSION } from '../scripts/defect-harvest.mjs';
 
 let root; const sha = {};
-const ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' };
-const git = (...a) => execFileSync('git', ['-C', root, '-c', 'core.autocrlf=false', ...a], { encoding: 'utf8', env: ENV }).trim();
+const EMPTY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'git-empty-'));
+const ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(EMPTY_DIR, 'none'), GIT_TEMPLATE_DIR: EMPTY_DIR, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' };
+const git = (...a) => execFileSync('git', ['-C', root, '-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${EMPTY_DIR}`, ...a], { encoding: 'utf8', env: ENV }).trim();
 const write = (f, text) => fs.writeFileSync(path.join(root, f), text);
 function commit(name, msg) { git('add', '-A'); git('commit', '-q', '-m', msg); sha[name] = git('rev-parse', 'HEAD'); }
 
@@ -86,6 +87,12 @@ describe('every commit ends in exactly one terminal outcome', () => {
 });
 
 describe('git failures are not evidence (audit r1 H4/M7/H9)', () => {
+  it('an unreadable introducer diff is filtered as unreadable, never passed as size 0 (r2 M1/M2)', () => {
+    const base = (args) => git(...args);
+    const failIntro = (args) => { if (args[0] === 'show' && args.includes('--format=') && sha.c1.startsWith(args[args.length - 1])) throw new Error('cannot read'); return base(args); };
+    const r = run({}, { git: failIntro });
+    assert.ok(outcomeOf(r, 'c3').filtered.some((f) => f.reason === 'introducer-diff-unreadable'), JSON.stringify(outcomeOf(r, 'c3')));
+  });
   it('only exit status 1 means not-an-ancestor; any other failure propagates', () => {
     const base = (args) => git(...args);
     const failing = (status, stderr) => (args) => { if (args[0] === 'merge-base') throw Object.assign(new Error('boom'), { status, stderr }); return base(args); };

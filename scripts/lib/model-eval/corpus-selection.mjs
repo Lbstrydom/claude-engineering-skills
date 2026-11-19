@@ -139,6 +139,7 @@ export function stampMismatch(a, b) {
 }
 
 const BLOCKING = new Set(['MEDIUM', 'HIGH']);
+const SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH']);
 /**
  * Judge-free expect_clean scoring (sashiko's rule): zero findings at MEDIUM or above on the case's files is `clean`; any such
  * finding is a `false_positive` (its pass recorded); a run that failed is `failed` and counts in the denominator, never as clean.
@@ -148,7 +149,7 @@ const normFile = (f) => String(f).replaceAll('\\', '/').replace(/^\.\//, '').toL
 export function scoreExpectCleanCase(out, files) {
   // Malformed output is `failed` (unmeasured), never `clean`: an incomplete generation must not look like a clean audit.
   if (!out || typeof out !== 'object' || out.failed || !Array.isArray(out.findings)
-    || !out.findings.every((f) => f && typeof f === 'object' && typeof f.file === 'string' && typeof f.severity === 'string')) return { outcome: 'failed', passes: [] };
+    || !out.findings.every((f) => f && typeof f === 'object' && typeof f.file === 'string' && SEVERITIES.has(f.severity))) return { outcome: 'failed', passes: [] };
   const want = new Set(files.map(normFile));
   const hits = out.findings.filter((f) => BLOCKING.has(f.severity) && want.has(normFile(f.file)));
   return hits.length === 0 ? { outcome: 'clean', passes: [] } : { outcome: 'false_positive', passes: [...new Set(hits.map((h) => h.pass ?? 'unknown'))] };
