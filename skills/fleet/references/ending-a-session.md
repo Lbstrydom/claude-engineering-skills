@@ -67,6 +67,7 @@ user's decision; the coordinator rules that govern when to bring it to them are 
   says so. Its output ends with the session-list check line:
   before running any printed removal, check the desktop session list (pinned and
   dormant sessions included) for a session whose cwd is that worktree.
+- **Detached worktrees and stale registrations.** `prune` also judges worktrees no branch names. A detached worktree is removable only when it is clean (ignored files and unpushed commits count) and every commit its registration alone can reach (its HEAD, both ids of each HEAD-reflog entry, `ORIG_HEAD`) is held by a remote-tracking ref, with no per-worktree ref in its admin dir. A pre-push sandbox (`ces-prepush-…`) is kept for its own sweep. A registration whose directory is gone is only LISTED and counted, as "registration only, nothing judged": no removal is offered for it, and `--apply` never runs the repository-wide `git worktree prune`. `--apply` re-checks all of this under the lock, and `--include-fresh` covers only what the plan showed, never activity since.
 - **The prune count reaches you without running prune.** `fleet status` plans a
   prune under a 30 s budget and prints one `prune:` line (removable, fresh,
   review classes, orphan directories). It writes the count to
@@ -76,8 +77,7 @@ user's decision; the coordinator rules that govern when to bring it to them are 
   with the reason, never 0. A budget-cut count is a lower bound (`≥N`, with how
   many were not judged). A count over 24 h old, or missing, asks for a `status`
   run. `prune --apply`, or a status run that could not plan, replaces the count
-  with an unmeasured one, never leaving the old number readable. Bring the list to the user on a cadence;
-  removal stays their decision.
+  with an unmeasured one, never leaving the old number readable. Past the repo's `pruneAlert` threshold (`references/config.md`), `fleet next` adds an `ASK` line: show the user `fleet prune` and ask. Removal stays their decision.
 - `fleet archive <worktree|branch|id>` is a dry run by default: what it would
   snapshot, and every refusal. `--apply` snapshots the worktree's committed,
   staged, unstaged and untracked state into a local `archive/*` tag, verifies the

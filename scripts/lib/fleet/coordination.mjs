@@ -24,7 +24,7 @@ import {
 } from './directives.mjs';
 import { deriveObligations, renderObligations } from './obligations.mjs';
 import { readUnregisteredCache, unregisteredCacheDir } from './unregistered.mjs';
-import { pruneCountText, pruneIsEmpty, readPruneCache } from './prune-summary.mjs';
+import { pruneAlertLine, pruneCountText, pruneIsEmpty, readPruneCache } from './prune-summary.mjs';
 import { proposalsLine, proposalsQuiet, readProposalsSummary } from './proposals.mjs';
 import { readUpstreamCache, renderUpstreamLine, upstreamQuiet, upstreamScript } from './upstream-count.mjs';
 import { readRecordCache, renderRecordLine, recordQuiet } from './record-count.mjs';
@@ -143,7 +143,7 @@ export const PRUNE_CACHE_MAX_AGE_MS = UNREGISTERED_CACHE_MAX_AGE_MS;
  * removal is the user's decision). Missing, unreadable or stale is UNMEASURED and says how to re-measure; a complete
  * count of nothing is silent. Never throws.
  */
-export function pruneNext(dir, now, cmd = 'fleet', { read = readPruneCache } = {}) {
+export function pruneNext(dir, now, cmd = 'fleet', { read = readPruneCache, alert = null } = {}) {
   const status = `${cmd} status`;
   const refresh = (why) => [`prune count unmeasured: ${why} — run \`${status}\` (read-only) to refresh`];
   try {
@@ -154,9 +154,12 @@ export function pruneNext(dir, now, cmd = 'fleet', { read = readPruneCache } = {
     const age = (now instanceof Date ? now.getTime() : Date.now()) - Date.parse(rec.at);
     // A record from the future (a clock moved back) has no knowable age: re-measure rather than relay it as fresh.
     if (!Number.isFinite(age) || age < 0 || age > PRUNE_CACHE_MAX_AGE_MS) return { state: 'stale', record: rec, lines: refresh(Number.isFinite(age) && age >= 0 ? `last measured ${ageText(age)} ago` : 'its age is unknown') };
-    if (!rec.complete) return { state: 'ok', record: rec, lines: [`FYI for the user/coordinator: prune count unmeasured (${rec.reason}) — \`${status}\` (read-only) re-measures`] };
-    if (pruneIsEmpty(rec)) return { state: 'ok', record: rec, lines: [] };
-    return { state: 'ok', record: rec, lines: [`FYI for the user/coordinator, not an action for this session: ${pruneCountText(rec)} — \`${cmd} prune\` (read-only) lists them (measured ${ageText(age)} ago)`] };
+    // The alert reads what WAS measured (detached judging and the registered count need no PR list), so it is evaluated
+    // before the incomplete and empty returns, never after them.
+    const ask = pruneAlertLine(rec, alert, cmd);
+    if (!rec.complete) return { state: 'ok', record: rec, lines: [`FYI for the user/coordinator: prune count unmeasured (${rec.reason}) — \`${status}\` (read-only) re-measures`, ...(ask ? [ask] : [])] };
+    if (pruneIsEmpty(rec)) return { state: 'ok', record: rec, lines: ask ? [ask] : [] };
+    return { state: 'ok', record: rec, lines: [`FYI for the user/coordinator, not an action for this session: ${pruneCountText(rec)} — \`${cmd} prune\` (read-only) lists them (measured ${ageText(age)} ago)`, ...(ask ? [ask] : [])] };
   } catch (e) {
     return { state: 'unreadable', lines: [`prune count not derived (${e.message})`] };
   }
@@ -177,7 +180,7 @@ export function cmdNext(ctx, flags) {
   const r = obligationsFor(ctx, id);
   if (!r.ok) return refused(r.reason);
   const dir = unregisteredCacheDir(ctx.cwd);
-  const prune = pruneNext(dir, ctx.now, ctx.cmd);
+  const prune = pruneNext(dir, ctx.now, ctx.cmd, { alert: ctx.config.pruneAlert ?? null });
   let unregistered;
   try { unregistered = unregisteredFooter(dir, ctx.now, ctx.cmd); } catch (e) { unregistered = [`unregistered-work footer not derived (${e.message})`]; }
   // The findings queue (information for the coordinator, never an action for this session); silent only when measured, complete and empty.

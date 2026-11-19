@@ -128,7 +128,7 @@ export function runShippedHeadChild({ worktree, head, base = null, remote = null
 
 /** Every ready, landable session in landing order, with what the re-check needs. */
 export function listReadyMembers(ctx) {
-  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env });
+  const facts = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, ghIdentity: 'ambient' /* mutates as the ambient account until p-20261119105615-d6fb */ });
   if (!facts.registry.complete) return { ok: false, reason: `registry incomplete (${facts.registry.invalid.map((i) => i.file).join(', ')}) — a train is never built on partial data` };
   const status = buildStatusFrom(facts);
   const members = status.landingOrder.map((id) => {

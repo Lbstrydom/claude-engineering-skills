@@ -12,12 +12,13 @@ import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import { addBranch, cleanupFleetRoots, installFakeGh, makeFleetRepo, runFleet, scrubbedEnv } from './helpers/fleet-repo.mjs';
 import {
-  PRUNE_CACHE_FILE, invalidatePruneCache, pruneStatusLine, readPruneCache, summarisePrune, writePruneCache,
+  PRUNE_CACHE_FILE, invalidatePruneCache, pruneIsEmpty, pruneAlertCrossed, pruneAlertLine, pruneStatusLine, readPruneCache, summarisePrune, writePruneCache,
 } from '../scripts/lib/fleet/prune-summary.mjs';
-import { pruneNextLines } from '../scripts/lib/fleet/coordination.mjs';
+import { pruneNext, pruneNextLines } from '../scripts/lib/fleet/coordination.mjs';
 import { statusPrune } from '../scripts/lib/fleet/commands.mjs';
 import { planPrune } from '../scripts/lib/fleet/prune.mjs';
 import { resolveConfig } from '../scripts/lib/fleet/config.mjs';
+import { fleetDir } from '../scripts/lib/fleet/registry.mjs';
 
 after(cleanupFleetRoots);
 
@@ -35,7 +36,8 @@ describe('summarisePrune — counts only what the plan holds', () => {
       review: review({ postMerge: [rev(true), rev(false)], noPr: [rev(true)] }), orphans: { roots: [], dirs: [{ path: 'p', kind: 'empty' }] },
     }), AT);
     assert.deepEqual(r, {
-      schemaVersion: 1, at: AT, complete: true, removable: 3, fresh: 1, kept: 1, unjudged: 0, orphans: 1,
+      schemaVersion: 2, at: AT, complete: true, removable: 3, fresh: 1, kept: 1, unjudged: 0, orphans: 1,
+      detached: { removable: 0, fresh: 0, kept: 0, stale: 0, unjudged: 0 }, worktrees: null,
       review: { postMerge: 2, postMergeOnBase: 1, noPr: 1, noPrOnBase: 1, unjudged: 0 },
     });
   });
@@ -80,8 +82,12 @@ describe('the derived cache', () => {
     const rec = summarisePrune(plan({ candidates: [cand()] }), AT);
     assert.deepEqual(writePruneCache(d, rec), { ok: true });
     assert.deepEqual(readPruneCache(d), { state: 'ok', record: rec });
-    fs.writeFileSync(path.join(d, PRUNE_CACHE_FILE), JSON.stringify({ ...rec, schemaVersion: 2 }));
+    fs.writeFileSync(path.join(d, PRUNE_CACHE_FILE), JSON.stringify({ ...rec, schemaVersion: 99 }));
     assert.equal(readPruneCache(d).state, 'unreadable');
+    // A v1 file (no detached block) is unreadable too: `next` then says unmeasured and one `status` run heals it.
+    const { detached, worktrees, ...v1 } = rec;
+    fs.writeFileSync(path.join(d, PRUNE_CACHE_FILE), JSON.stringify({ ...v1, schemaVersion: 1 }));
+    assert.deepEqual(readPruneCache(d), { state: 'unreadable', reason: 'schema mismatch' });
     // A count known to be wrong is REPLACED by an unmeasured record, never left readable as ok.
     assert.deepEqual(writePruneCache(d, rec), { ok: true });
     assert.deepEqual(invalidatePruneCache(d, 'prune --apply changed the branches', AT), { ok: true });
@@ -159,7 +165,7 @@ describe('planPrune under a deadline', () => {
     const saved = { ...process.env };
     try {
       Object.assign(process.env, env);
-      const ctx = { cwd: fx.repo, config: resolveConfig(fx.repo, { env }), now: new Date(), env, cmd: 'fleet' };
+      const ctx = { cwd: fx.repo, dir: fleetDir(fx.repo), config: resolveConfig(fx.repo, { env }), now: new Date(), env, cmd: 'fleet' };
       const p = planPrune(ctx, { deadlineAt: 0 });
       assert.equal(p.complete, true);
       assert.equal(p.candidates.length, 0);
@@ -222,5 +228,105 @@ describe('CLI — status computes, next relays', () => {
     const rec = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
     assert.equal(rec.complete, false);
     assert.match(rec.reason, /prune --apply/);
+  });
+});
+
+describe('pruneAlertCrossed / pruneAlertLine — the ASK threshold', () => {
+  const A = { removable: 25, worktrees: 30 };
+  const R = (o = {}) => {
+    const { detached, ...rest } = o;
+    return { ...summarisePrune(plan(), AT), ...rest, detached: { removable: 0, fresh: 0, kept: 0, stale: 0, unjudged: 0, ...(detached ?? {}) } };
+  };
+  test('boundary: exactly 25 removable / 30 registered crosses, one less does not (each side alone)', () => {
+    assert.equal(pruneAlertCrossed(R({ removable: 25 }), A).crossed, true);
+    assert.equal(pruneAlertCrossed(R({ removable: 24 }), A).crossed, false);
+    assert.equal(pruneAlertCrossed(R({ worktrees: 30 }), A).crossed, true);
+    assert.equal(pruneAlertCrossed(R({ worktrees: 29 }), A).crossed, false);
+  });
+  test('detached worktrees and stale registrations count toward the removable side (the 77-branch census undercounted without them)', () => {
+    assert.equal(pruneAlertCrossed(R({ removable: 20, detached: { removable: 3, stale: 2 } }), A).crossed, true);
+    assert.equal(pruneAlertCrossed(R({ removable: 20, detached: { removable: 3, stale: 1 } }), A).crossed, false);
+  });
+  test('off (null) never crosses; an unreadable worktree list (null count) never crosses on that side', () => {
+    assert.equal(pruneAlertCrossed(R({ removable: 999, worktrees: 999 }), null).crossed, false);
+    assert.equal(pruneAlertCrossed(R({ worktrees: null }), A).crossed, false);
+  });
+  test('an incomplete branch half is not counted, but detached judging still is; unjudged makes it a LOWER bound, never "below"', () => {
+    const incomplete = R({ complete: false, reason: 'no PR list', removable: 40, detached: { removable: 25 } });
+    const c = pruneAlertCrossed(incomplete, A);
+    assert.deepEqual([c.crossed, c.lowerBound, c.applyRemovable], [true, true, 25], 'only the detached half counts');
+    assert.equal(pruneAlertCrossed(R({ complete: false, reason: 'x', removable: 40 }), A).crossed, false, 'branch-only count under an incomplete list is not a measurement');
+    const cut = pruneAlertCrossed(R({ detached: { removable: 20, unjudged: 10 } }), A);
+    assert.deepEqual([cut.crossed, cut.lowerBound], [false, true], 'under the limit with 10 unjudged is "not shown crossed"');
+    assert.match(pruneAlertLine(R({ detached: { removable: 25, unjudged: 3 } }), A), /≥25 to review/);
+  });
+  test('the ASK offers only the action that can address what crossed: stale-only, candidate-only, mixed, worktrees-only', () => {
+    const stale = pruneAlertLine(R({ detached: { stale: 25 } }), A);
+    assert.match(stale, /^ASK /);
+    assert.doesNotMatch(stale, /worktree prune/);
+    assert.match(stale, /registration only, nothing judged/);
+    assert.doesNotMatch(stale, /prune --apply/);
+    const cand = pruneAlertLine(R({ removable: 25 }), A);
+    assert.match(cand, /prune --apply/);
+    assert.doesNotMatch(cand, /git worktree prune/);
+    const mixed = pruneAlertLine(R({ removable: 20, detached: { removable: 2, stale: 4 } }), A);
+    assert.match(mixed, /prune --apply/);
+    assert.doesNotMatch(mixed, /worktree prune/);
+    const only = pruneAlertLine(R({ worktrees: 31 }), A);
+    assert.match(only, /which worktrees to retire/);
+    assert.doesNotMatch(only, /prune --apply|git worktree prune/);
+    assert.equal(pruneAlertLine(R({ removable: 24, worktrees: 29 }), A), null);
+  });
+  test('H4/M2: the alert is NOT swallowed by the incomplete or empty early returns (next and status both)', () => {
+    const next = (rec, alert = A) => pruneNext(null, NOW, 'fleet', { read: () => ({ state: 'ok', record: rec }), alert }).lines;
+    const incomplete = R({ complete: false, reason: 'no PR list', detached: { removable: 25 } });
+    assert.ok(next(incomplete).some((l) => /^ASK /.test(l)), 'incomplete branch half, detached half over the limit');
+    assert.ok(next(incomplete).some((l) => /unmeasured/.test(l)), 'and the unmeasured line is still there');
+    assert.ok(next(R({ complete: false, reason: 'x', worktrees: 40 })).some((l) => /^ASK .*40 registered worktrees/.test(l)), 'incomplete, registered count over the limit');
+    const empty = R({ worktrees: 31 });
+    assert.equal(pruneIsEmpty(empty), true);
+    assert.deepEqual(next(empty).map((l) => l.slice(0, 4)), ['ASK ']);
+    assert.deepEqual(next(R({ worktrees: 5 })), [], 'control: empty and under the limit stays silent');
+    assert.match(pruneStatusLine(empty, 'fleet', A), /^prune: nothing removable, nothing to review · threshold crossed \(31 registered worktrees/);
+    assert.match(pruneStatusLine(incomplete, 'fleet', A), /^prune: unmeasured .* · threshold crossed/);
+    assert.doesNotMatch(pruneStatusLine(R({ worktrees: 5 }), 'fleet', A), /threshold/);
+  });
+  test('stale registrations count toward the threshold but the ASK never names git worktree prune and says nothing was judged', () => {
+    const l = pruneAlertLine(R({ detached: { stale: 25 } }), A);
+    assert.ok(l, 'stale registrations alone cross the threshold');
+    assert.doesNotMatch(l, /worktree prune/);
+    assert.match(l, /registration only, nothing judged/);
+    assert.doesNotMatch(l, /--apply/, 'control: no removal is offered when nothing removable exists');
+    assert.match(pruneAlertLine(R({ removable: 25 }), A), /--apply/, 'control: a judged candidate still offers it');
+  });
+  test('next relays it after the FYI line, only for a fresh complete-or-not record; the status line says so too; v1 cache → unmeasured, no ASK', () => {
+    const rec = R({ removable: 25 });
+    const lines = pruneNext(null, NOW, 'fleet', { read: () => ({ state: 'ok', record: rec }), alert: A }).lines;
+    assert.equal(lines.length, 2);
+    assert.match(lines[0], /^FYI /);
+    assert.match(lines[1], /^ASK /);
+    assert.equal(pruneNext(null, NOW, 'fleet', { read: () => ({ state: 'ok', record: rec }), alert: null }).lines.length, 1, 'off: FYI only');
+    assert.match(pruneStatusLine(rec, 'fleet', A), /threshold crossed \(25 to review \(limit 25\)/);
+    assert.doesNotMatch(pruneStatusLine(rec, 'fleet', null), /threshold/);
+    const old = pruneNext(null, NOW, 'fleet', { read: () => ({ state: 'unreadable', reason: 'schema mismatch' }), alert: A }).lines;
+    assert.match(old[0], /unmeasured/);
+    assert.equal(old.some((l) => /^ASK /.test(l)), false);
+  });
+  test('CLI end to end: a repo with pruneAlert {worktrees: 3} prints the ASK after status (4 registered ≥ 3); pruneAlert:false does not', () => {
+    const run = (fleetConfig) => {
+      const fx = makeFleetRepo({ fleetConfig });
+      git(['add', '.fleet.json'], fx.repo); git(['commit', '-q', '-m', 'fleet config'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+      const fake = installFakeGh(fx.root);
+      const env = scrubbedEnv({ FLEET_WORKTREE_ROOT: fx.wtRoot, FLEET_TELEMETRY: 'off', ...fake.env }, { prependPath: [fake.bin] });
+      for (const n of ['one', 'two']) git(['worktree', 'add', '-q', '--detach', path.join(fx.root, `wt-${n}`)], fx.repo);
+      const f = (args) => runFleet(args, { cwd: fx.repo, env });
+      const mine = path.join(fx.root, 'wt-mine');
+      git(['worktree', 'add', '-q', '-b', 'mine', mine, 'main'], fx.repo);
+      assert.equal(runFleet(['claim', '--intent', 'mine', '--paths', 'm.txt'], { cwd: mine, env }).status, 0);
+      assert.equal(f(['status', '--json']).status, 0);
+      return runFleet(['next', '--json'], { cwd: mine, env }).json.text;
+    };
+    assert.match(run({ pruneAlert: { worktrees: 3 } }), /^ASK for the coordinator's next pass.*4 registered worktrees \(limit 3\)/m);
+    assert.doesNotMatch(run({ pruneAlert: false }), /^ASK /m);
   });
 });

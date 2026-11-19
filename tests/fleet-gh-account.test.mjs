@@ -10,7 +10,8 @@ import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots, installFakeGh, makeFleetRepo, runFleet, scrubbedEnv, tmpRoot } from './helpers/fleet-repo.mjs';
 import { GH_AUTH_TIMEOUT_MS, GH_TOKEN_VARS, UNAVAILABLE_TOKEN, _resetGhAccountCache, ghAccountToken, ghEnvFor } from '../scripts/lib/fleet/gh-account.mjs';
-import { parseFleetConfig } from '../scripts/lib/fleet/config.mjs';
+import { parseFleetConfig, resolveConfig } from '../scripts/lib/fleet/config.mjs';
+import { gatherFacts } from '../scripts/lib/fleet/facts.mjs';
 import { ghUnknownLine } from '../scripts/lib/fleet/handover-render.mjs';
 
 after(cleanupFleetRoots);
@@ -149,5 +150,75 @@ describe('the handover probe uses the declared account — real CLI, fake gh', (
     assert.match(m.scope.repos[0].gh.reason, /gh account ghost-acct is not available/);
     assert.match(r.json.text, /sign in to gh as ghost-acct/);
     assert.doesNotMatch(tokensSeen(w), /AMBIENT-TOKEN/, 'the ambient account never answered for a repo that declared another');
+  });
+});
+
+describe('status and prune read PRs as the declared account (gatherFacts) — real CLI, fake gh that only the declared account can read', () => {
+  function world(fleetConfig) {
+    const fx = makeFleetRepo({ fleetConfig });
+    if (fleetConfig) { git(['add', '.fleet.json'], fx.repo); git(['commit', '-q', '-m', 'fleet config'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo); }
+    const gh = installFakeGh(fx.root);
+    gh.setState({ list: [], view: {}, merged: [], accounts: { 'storyline-acct': 'TOKEN-DECLARED' }, requireToken: 'TOKEN-DECLARED' });
+    const A = tmpRoot('gh-acct-'); fs.mkdirSync(path.join(A, 'projects'), { recursive: true });
+    const log = path.join(tmpRoot('gh-log-'), 'tokens.log');
+    const env = scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: A, CLAUDE_AUDIT_LOOP_DIR: '', GH_TOKEN: 'AMBIENT-TOKEN', FAKE_GH_TOKEN_LOG: log, ...gh.env }, { prependPath: [gh.bin] });
+    return { fx, env, log };
+  }
+  const prCalls = (w) => (fs.existsSync(w.log) ? fs.readFileSync(w.log, 'utf8') : '').split('\n').filter((l) => l.startsWith('pr '));
+
+  it('control (red before this change): a repo with NO ghAccount that the ambient account cannot read is UNMEASURED, and prune says so', () => {
+    const w = world(null);
+    const s = runFleet(['status', '--json'], { cwd: w.fx.repo, env: w.env });
+    assert.equal(s.json.status.sources.prs.queried, false);
+    assert.match(String(s.json.status.sources.prs.reason), /Could not resolve|not read|repository/i);
+    const p = runFleet(['prune', '--json'], { cwd: w.fx.repo, env: w.env });
+    assert.equal(p.json.prune.complete, false);
+  });
+  it('declared: status reads the PR list as the declared account (queried:true), and no pr call ever carries the ambient token', () => {
+    const w = world({ ghAccount: 'storyline-acct' });
+    const s = runFleet(['status', '--json'], { cwd: w.fx.repo, env: w.env });
+    assert.equal(s.json.status.sources.prs.queried, true, JSON.stringify(s.json.status.sources.prs));
+    assert.ok(prCalls(w).length > 0);
+    assert.ok(prCalls(w).every((l) => l.endsWith('TOKEN-DECLARED')), prCalls(w).join('\n'));
+    const p = runFleet(['prune', '--json'], { cwd: w.fx.repo, env: w.env });
+    assert.equal(p.json.prune.complete, true, 'prune can now judge the repo');
+  });
+  it('declared but unavailable: the reason names the account and the ambient token is never used', () => {
+    const w = world({ ghAccount: 'ghost-acct' });
+    const s = runFleet(['status', '--json'], { cwd: w.fx.repo, env: w.env });
+    assert.equal(s.json.status.sources.prs.queried, false);
+    assert.match(String(s.json.status.sources.prs.reason), /gh account ghost-acct is not available/);
+    assert.ok(prCalls(w).every((l) => !l.includes('AMBIENT-TOKEN')));
+  });
+});
+
+describe('mutating workflows keep ONE identity: land and ship-batch read PRs as the ambient account (until p-20261119105615-d6fb)', () => {
+  it('gatherFacts: ghIdentity "ambient" probes with the ambient token, the default with the declared one; both mutating callers pass "ambient"', () => {
+    const fx = makeFleetRepo({ fleetConfig: { ghAccount: 'storyline-acct' } });
+    git(['add', '.fleet.json'], fx.repo); git(['commit', '-q', '-m', 'fleet config'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
+    const gh = installFakeGh(fx.root);
+    gh.setState({ list: [], view: {}, merged: [], accounts: { 'storyline-acct': 'TOKEN-DECLARED' } });
+    const log = path.join(tmpRoot('gh-log-'), 'tokens.log');
+    const env = scrubbedEnv({ FLEET_TELEMETRY: 'off', GH_TOKEN: 'AMBIENT-TOKEN', FAKE_GH_TOKEN_LOG: log, ...gh.env }, { prependPath: [gh.bin] });
+    const config = resolveConfig(fx.repo, { env });
+    const seen = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '').split('\n').filter((l) => l.startsWith('pr ')).map((l) => l.split(' ').at(-1));
+    const run = (extra) => { fs.rmSync(log, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); gatherFacts({ cwd: fx.repo, config, now: new Date(), env, ...extra }); return [...new Set(seen())]; };
+    assert.deepEqual(run({}), ['TOKEN-DECLARED'], 'default: the declared account');
+    assert.deepEqual(run({ ghIdentity: 'ambient' }), ['AMBIENT-TOKEN'], 'ambient: the signed-in account, as before this change');
+    assert.throws(() => gatherFacts({ cwd: fx.repo, config, now: new Date(), env, ghIdentity: 'Ambient' }), /ghIdentity must be/, 'an unknown mode is refused, never read as ambient');
+    // Every gatherFacts call in the two mutating workflows that carries the full config opts out of the declared account.
+    // Found by balanced parentheses, so a call split over several lines cannot escape.
+    for (const f of ['land.mjs', 'ship-batch.mjs']) {
+      const src = fs.readFileSync(new URL(`../scripts/lib/fleet/${f}`, import.meta.url), 'utf8');
+      const calls = [];
+      for (let i = src.indexOf('gatherFacts({'); i !== -1; i = src.indexOf('gatherFacts({', i + 1)) {
+        let depth = 0; let j = i + 'gatherFacts'.length;
+        do { if (src[j] === '(') depth += 1; else if (src[j] === ')') depth -= 1; j += 1; } while (depth > 0 && j < src.length);
+        const call = src.slice(i, j);
+        if (/config(: ctx\.config)?\s*[,}]/.test(call) && !/hotFiles/.test(call)) calls.push(call);
+      }
+      assert.ok(calls.length >= 1, `${f}: found its full-config gatherFacts call`);
+      for (const c of calls) assert.match(c, /ghIdentity: 'ambient'/, `${f}: ${c.slice(0, 80)}`);
+    }
   });
 });

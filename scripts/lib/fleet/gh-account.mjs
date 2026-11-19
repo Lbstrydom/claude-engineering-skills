@@ -1,10 +1,15 @@
 /**
  * @fileoverview Each repo's own gh account (docs/plans/fleet-handover-winddown.md §2.10, proposal 3ca0).
  *
- * Prepare's PR probe asks `gh` as whichever account happens to be signed in. A repo that only another signed-in account can read
- * (storyline needs `louis-strydom_wartsila`) then printed its PR state UNMEASURED. The repo declares the account NAME in its own
+ * A PR probe asks `gh` as whichever account happens to be signed in. A repo that only another signed-in account can read
+ * (storyline needs `louis-strydom_wartsila`) then read its PR state as UNMEASURED. The repo declares the account NAME in its own
  * `.fleet.json` (`ghAccount`); `gh` already holds that account's credential, so nothing secret is stored: the token is read with
  * `gh auth token --user <name>` and handed to the probe's child process in that child's environment only.
+ *
+ * Who reads `ghAccount` (the complete list; anything else runs as the ambient account): `gatherFacts` (facts.mjs, so `status`, `prune`
+ * and `next`'s caches; `land` and `ship-batch` opt OUT with `ghIdentity: 'ambient'` because they mutate as the ambient account),
+ * `handover`, and `ci-merge` through its own `--gh-account` flag, never the config key. The train's gh calls (train.mjs `ghRun`) do not
+ * (proposal p-20261119105615-d6fb).
  *
  * Every variable gh reads a credential from is set together (`GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`,
  * `GITHUB_ENTERPRISE_TOKEN`), so an inherited credential for ANY host cannot override the declared identity. The token is never
