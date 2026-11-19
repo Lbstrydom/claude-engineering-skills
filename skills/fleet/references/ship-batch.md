@@ -88,8 +88,6 @@ resuming it reads nothing remote.
 
 Exit codes follow `fleet land`: 0 ok, 3 refused or stopped, 4 a train that ran red.
 
-## CI evidence: ONE oracle, and what works today
+## CI evidence
 
-Every admission asks `deps.assessCi` for evidence from a closed tag set (`passed`, `none-required`, `failed`, `not-run`, `missing`, `pending`, `ineligible`, `unknown`) and maps it with ONE table (`decideCiAdmission`): only `passed` and a PROVEN `none-required` permit. (the CES plan: ci-evidence-oracle, source repo only).
-
-**Until that plan's PR 2 lands, the oracle is a stub that establishes nothing, so `--ship-batch` and `--rollup` always stop at the first CI check: they cannot merge.** The builds exclude or stop, the approves stop at run scope with zero merges. Plain `land --serial` and `land --approve` are unchanged by this and still use the older required-checks reader.
+Every admission and every merge uses the ONE CI-evidence oracle and ONE disposition table (see landing.md, "Required checks must have RUN"): only passed and a proven none-required permit; a failed or never-run check refuses that member; pending or missing waits; anything unknown stops the RUN. ship-batch and rollup re-assess immediately before each merge and verify it after (merged-unverified is a halt).

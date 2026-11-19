@@ -186,6 +186,7 @@
         "scripts/.claude-skills/lib/fleet/contracts.mjs",
         "scripts/.claude-skills/lib/fleet/decisions.mjs",
         "scripts/.claude-skills/lib/fleet/directives.mjs",
+        "scripts/.claude-skills/lib/fleet/github-ci-facts.mjs",
         "scripts/.claude-skills/lib/fleet/handover-context.mjs",
         "scripts/.claude-skills/lib/fleet/handover-winddown.mjs",
         "scripts/.claude-skills/lib/fleet/handover.mjs",

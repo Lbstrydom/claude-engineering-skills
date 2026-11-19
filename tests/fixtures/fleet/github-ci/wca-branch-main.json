@@ -1,0 +1,109 @@
+{
+  "provenance": {
+    "repo": "Lbstrydom/wine-cellar-app",
+    "endpoint": "GET repos/{r}/branches/main",
+    "command": "gh api -i repos/Lbstrydom/wine-cellar-app/branches/main",
+    "recordedAt": "2026-11-19",
+    "tool": "gh 2.78.0, owner token",
+    "note": "Same shape as CES: a ruleset, no classic protection."
+  },
+  "body": {
+    "name": "main",
+    "commit": {
+      "sha": "1f0a5263f779267f1f3cf0a555da667099f092c8",
+      "node_id": "C_kwDOQsRZctoAKDFmMGE1MjYzZjc3OTI2N2YxZjNjZjBhNTU1ZGE2NjcwOTlmMDkyYzg",
+      "commit": {
+        "author": {
+          "name": "Louis Strydom",
+          "email": "77991486+Lbstrydom@users.noreply.github.com",
+          "date": "2026-11-17T12:26:30Z"
+        },
+        "committer": {
+          "name": "GitHub",
+          "email": "noreply@github.com",
+          "date": "2026-11-17T12:26:30Z"
+        },
+        "message": "chore(sync): bundle sync from Lbstrydom/claude-engineering-skills f3b37321 (#1387)\n\n## Summary\n\nTracked artifacts of the bundle sync from\n`Lbstrydom/claude-engineering-skills` at\nhttps://github.com/Lbstrydom/claude-engineering-skills/commit/f3b37321d6f3b5815fb3c820d93f92e9f39dad25,\nfor consumer `wine-cellar-app`.\n\nEvery path below was classified **sync-owned** by `sync-status.mjs` —\nowned by the sync AND byte-identical to the hash the sync recorded — so\nnothing here is a hand edit:\n\n- `scripts/.sync-owned.json`\n\n_Opened by `npm run sync:pr` from the upstream repo. Auto-merge is NOT\narmed: merge it by hand once the checks pass._\n\nAI-Models: none",
+        "tree": {
+          "sha": "7fc0f911b6c76d48eb473bfb283dd0698a1a0768",
+          "url": "https://api.github.com/repos/Lbstrydom/wine-cellar-app/git/trees/7fc0f911b6c76d48eb473bfb283dd0698a1a0768"
+        },
+        "url": "https://api.github.com/repos/Lbstrydom/wine-cellar-app/git/commits/1f0a5263f779267f1f3cf0a555da667099f092c8",
+        "comment_count": 0,
+        "verification": {
+          "verified": true,
+          "reason": "valid",
+          "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJq/Ef2CRC1aQ7uu5UhlAAAhrAQAK9NLYAJTpkX4PH69P/lOhUw\nJs6Rxtx67wboHEHQdgHRmIkzoFm4grxjoogR8nZkdNVQphbaPicYnGfDNHDN+4Jb\n3s2LCkrTMcBajsXsdhTsrjiuoGenNeVhCPUkAHB+ykGIFmEPzGxmCKqFdh/0v4Fl\nD7qEQYnsxGRZd/buCoFRVj/pz7DDDfr8zP01lMWWBoZ5S4mzy77GIzkAjOh9bZxE\nUzPfVMz4wqUeuCfI9gQoavJPDJCmXrGZCAiKucok5DYvdpYzZM9/KEsaDPGsHJ5L\nKp61BiuOSMaUxAw58cGyDJcfx6QZBRjoYyA58Go8U3Sd6UaSoq3DOAJm485amE7E\nuxmiZRRSyJTvsCgHfqCl9rb6g+g7+FMoB+14rmShY33LN7eADlI2Rd6oCy2GIA20\nSCZMaJMLMgGjNVBmocJJI3yixkMuT0s6HA4gRO7mNd8ebeBp73tWDqRDr61BjKaI\nNND0OaBSs3CpdasMEBxSIuLUzfpVdlWRwnVBNVcBRJ86W22K0viSGU3L3/iN4hMd\nO1kdxwZNF+XV+DhYGw1hDAwIUVdlXrMb8BXcMj/TEsXkrp7rjbRIe1ypWTw1eSCN\nUgeQE3egg7UoDLfBR6Yzvxo14ajAsbIj4uQz9SSJEIF7CgkFdp7SHUecbWjo25L/\nVzGkowmJZclDFAI73nM2\n=qk4C\n-----END PGP SIGNATURE-----\n",
+          "payload": "tree 7fc0f911b6c76d48eb473bfb283dd0698a1a0768\nparent 466ae17fd8c4601ca500c109a4ed6e8444af3183\nauthor Louis Strydom <77991486+Lbstrydom@users.noreply.github.com> 1794918390 +0100\ncommitter GitHub <noreply@github.com> 1794918390 +0100\n\nchore(sync): bundle sync from Lbstrydom/claude-engineering-skills f3b37321 (#1387)\n\n## Summary\n\nTracked artifacts of the bundle sync from\n`Lbstrydom/claude-engineering-skills` at\nhttps://github.com/Lbstrydom/claude-engineering-skills/commit/f3b37321d6f3b5815fb3c820d93f92e9f39dad25,\nfor consumer `wine-cellar-app`.\n\nEvery path below was classified **sync-owned** by `sync-status.mjs` —\nowned by the sync AND byte-identical to the hash the sync recorded — so\nnothing here is a hand edit:\n\n- `scripts/.sync-owned.json`\n\n_Opened by `npm run sync:pr` from the upstream repo. Auto-merge is NOT\narmed: merge it by hand once the checks pass._\n\nAI-Models: none",
+          "verified_at": "2026-11-17T12:26:31Z"
+        }
+      },
+      "url": "https://api.github.com/repos/Lbstrydom/wine-cellar-app/commits/1f0a5263f779267f1f3cf0a555da667099f092c8",
+      "html_url": "https://github.com/Lbstrydom/wine-cellar-app/commit/1f0a5263f779267f1f3cf0a555da667099f092c8",
+      "comments_url": "https://api.github.com/repos/Lbstrydom/wine-cellar-app/commits/1f0a5263f779267f1f3cf0a555da667099f092c8/comments",
+      "author": {
+        "login": "Lbstrydom",
+        "id": 77991486,
+        "node_id": "MDQ6VXNlcjc3OTkxNDg2",
+        "avatar_url": "https://avatars.githubusercontent.com/u/77991486?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/Lbstrydom",
+        "html_url": "https://github.com/Lbstrydom",
+        "followers_url": "https://api.github.com/users/Lbstrydom/followers",
+        "following_url": "https://api.github.com/users/Lbstrydom/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Lbstrydom/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/Lbstrydom/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Lbstrydom/subscriptions",
+        "organizations_url": "https://api.github.com/users/Lbstrydom/orgs",
+        "repos_url": "https://api.github.com/users/Lbstrydom/repos",
+        "events_url": "https://api.github.com/users/Lbstrydom/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/Lbstrydom/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "committer": {
+        "login": "web-flow",
+        "id": 19864447,
+        "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/web-flow",
+        "html_url": "https://github.com/web-flow",
+        "followers_url": "https://api.github.com/users/web-flow/followers",
+        "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+        "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+        "organizations_url": "https://api.github.com/users/web-flow/orgs",
+        "repos_url": "https://api.github.com/users/web-flow/repos",
+        "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/web-flow/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "parents": [
+        {
+          "sha": "466ae17fd8c4601ca500c109a4ed6e8444af3183",
+          "url": "https://api.github.com/repos/Lbstrydom/wine-cellar-app/commits/466ae17fd8c4601ca500c109a4ed6e8444af3183",
+          "html_url": "https://github.com/Lbstrydom/wine-cellar-app/commit/466ae17fd8c4601ca500c109a4ed6e8444af3183"
+        }
+      ]
+    },
+    "_links": {
+      "self": "https://api.github.com/repos/Lbstrydom/wine-cellar-app/branches/main",
+      "html": "https://github.com/Lbstrydom/wine-cellar-app/tree/main"
+    },
+    "protected": true,
+    "protection": {
+      "enabled": false,
+      "required_status_checks": {
+        "enforcement_level": "off",
+        "contexts": [],
+        "checks": []
+      }
+    },
+    "protection_url": "https://api.github.com/repos/Lbstrydom/wine-cellar-app/branches/main/protection"
+  }
+}

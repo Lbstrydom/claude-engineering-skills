@@ -6,26 +6,30 @@ summary: Landing beyond one combined run — required checks that ran, serial la
 
 ## Required checks must have RUN
 
-GitHub counts a SKIPPED check as satisfying a required check, so a PR made
-ready after draft-time runs were skipped can merge seconds later on checks that
-never ran. fleet asks three questions apart:
+GitHub counts a SKIPPED check as satisfying a required check, so a PR made ready after draft-time runs were skipped can merge seconds later on checks
+that never ran. fleet asks ONE oracle (`assessRequiredCi`) and maps its answer with ONE table (`decideCiAdmission`); every landing path uses both.
 
-- **Inventory**: which checks are required. It reads rulesets
-  (`rules/branches/<base>`) AND classic branch protection (`branches/<base>`),
-  plus `.fleet.json` `requiredChecks`. If either GitHub source cannot be read and
-  the config declares nothing, the inventory is `unknown`, never "none".
-  `"requiredChecks": []` is the only way to say none are required.
-- **Observation**: every check on the PR head. A required check observed as
-  skipped is `not-run`; one never observed is `missing`.
-- **Head binding**: the head is read before and after observing; if it moves,
-  the answer is `unknown`.
+- **GitHub defines what is required**: the rulesets that apply to the base (`rules/branches/<base>`, one page) once the branch itself has been read
+  (a missing branch's rules read is `[]`, which proves nothing). Classic branch protection ENABLED, a requirement with no pinned app, a rule type the
+  oracle does not read (`workflows`, `code_scanning`, a merge queue, a future type), a same-name commit status, more than one page of results, and
+  duplicate same-name runs that disagree are all UNSUPPORTED: the run stops, never "none required".
+- **`.fleet.json` `requiredChecks` is an ASSERTION**, not a source: the set must equal what GitHub requires, or the run stops and prints the diff. It never
+  fills in for a GitHub read that failed. `[]` asserts none. CES asserts `["full-suite"]`, so if its ruleset ever stops requiring it, landing stops
+  instead of reading "none required".
+- **Observation**: the check runs of the immutable head, matched by name AND pinned app. skipped, neutral and stale are `not-run`, never success.
+- **Dispositions**: only `passed` and a PROVEN `none-required` permit. failed and not-run refuse the member; pending and missing wait; ANYTHING unknown
+  stops the RUN (not one member). pr-mode `land --approve` now refuses unless every PR permits: it prints NO plan on a check that has not passed (it used
+  to print a runnable plan with a WAIT line).
 
-pr-mode `land --approve` refuses a draft PR and a `failed` or `not-run` required
-check. `missing`, `pending` and `unknown` print a `WAIT` line above that merge
-command. `status` warns on a draft with auto-merge armed (marking it ready merges
-it on draft-time checks), and on a green, CLEAN, auto-merge-armed PR still
-unmerged after 15 minutes (re-arm it). Limit: checks are matched by name; `gh`
-does not say which app produced an observed check.
+**What fleet does NOT guarantee.** The evidence is point-in-time. `land --approve` prints commands a human runs later; a later `gh pr merge` does not
+re-assess, and GitHub's own ruleset counts a skipped check as satisfied, so `land --approve <t> --serial` (which re-assesses immediately before each
+merge and verifies it after) is the safe executor. Even then a retarget or a CI re-run in the gap between the last read and `gh pr merge` is narrowed
+and only partly detected after the fact (the post-merge check reads the state NOW), never closed by fleet. Closing it is repository policy: a merge queue
+(the only server-side re-evaluation at merge time) with required checks that cannot be skipped. fleet does not build a merge-queue path; a base whose rules
+carry one stops the run. A merge that fails its post-merge verification is `merged-unverified`: a loud stop, never reported as landed.
+
+`status` warns on a draft with auto-merge armed (marking it ready merges it on draft-time checks), and on a green, CLEAN, auto-merge-armed PR still unmerged
+after 15 minutes (re-arm it).
 
 ## A fast-tier probe, before the full train
 

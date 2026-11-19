@@ -1,4 +1,7 @@
 {
+  "requiredChecks": [
+    "full-suite"
+  ],
   "hotFiles": [
     "docs/plans/README.md",
     ".file-size-baseline.json",

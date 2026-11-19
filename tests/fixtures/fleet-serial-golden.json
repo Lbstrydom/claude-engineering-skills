@@ -1,7 +1,8 @@
 {
-  "_source": "d53272aa1484",
+  "_source": "9bc2ccd9a3c2",
+  "_baseline": "d53272aa1484",
   "_command": "UPDATE_GOLDEN=1 GOLDEN_SOURCE=<sha> node --test tests/fleet-serial-golden.test.mjs",
-  "_note": "generated from origin/main serial.mjs before the member-outcome refactor; never regenerate from the refactored code",
+  "_note": "Pinned from origin/main d53272aa (the member-outcome refactor, #395). Regenerated ONCE for ci-evidence-oracle PR 2: only the argv entries of the OLD CI reads (pr checks, api rules/branches, pr view headRefOid) leave the lists, and two CI stop reasons change (a failed required check; a never-registered required check). Every other scenario, every merge argv included, is byte-identical to d53272aa (verified by a scripted diff, recorded in docs/plans/ci-evidence-oracle.md Implementation Log). Regenerate again only with the same discipline.",
   "scenarios": {
     "clean: waits for the check, merges exactly the tested head": {
       "argv": [
@@ -13,32 +14,6 @@
           "o/n",
           "--json",
           "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-        ],
-        [
-          "api",
-          "repos/o/n/rules/branches/main"
-        ],
-        [
-          "api",
-          "repos/o/n/branches/main"
-        ],
-        [
-          "pr",
-          "view",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "headRefOid"
-        ],
-        [
-          "pr",
-          "checks",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "name,state,bucket,completedAt"
         ],
         [
           "pr",
@@ -214,32 +189,6 @@
           "repos/o/n/pulls/21/update-branch",
           "-f",
           "expected_head_sha=<tested>"
-        ],
-        [
-          "api",
-          "repos/o/n/rules/branches/main"
-        ],
-        [
-          "api",
-          "repos/o/n/branches/main"
-        ],
-        [
-          "pr",
-          "view",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "headRefOid"
-        ],
-        [
-          "pr",
-          "checks",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "name,state,bucket,completedAt"
         ],
         [
           "pr",
@@ -597,32 +546,6 @@
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
           ],
           [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
-          ],
-          [
             "pr",
             "merge",
             "21",
@@ -875,32 +798,6 @@
           "o/n",
           "--json",
           "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-        ],
-        [
-          "api",
-          "repos/o/n/rules/branches/main"
-        ],
-        [
-          "api",
-          "repos/o/n/branches/main"
-        ],
-        [
-          "pr",
-          "view",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "headRefOid"
-        ],
-        [
-          "pr",
-          "checks",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "name,state,bucket,completedAt"
         ]
       ],
       "record": {
@@ -925,20 +822,20 @@
             "updates": 0,
             "priorHead": null,
             "mergedOid": null,
-            "note": "PR #21: required checks still missing after 0 min (missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
+            "note": "PR #21: required checks still missing after 0 min (required checks missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
             "at": "<time>"
           }
         ],
         "outcome": {
           "status": "stopped",
-          "reason": "PR #21: required checks still missing after 0 min (missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
+          "reason": "PR #21: required checks still missing after 0 min (required checks missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
           "at": "<time>"
         }
       },
       "result": {
         "ok": false,
         "code": "refused",
-        "reason": "PR #21: required checks still missing after 0 min (missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
+        "reason": "PR #21: required checks still missing after 0 min (required checks missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
         "trainId": "<train>",
         "run": {
           "schemaVersion": 1,
@@ -962,13 +859,13 @@
               "updates": 0,
               "priorHead": null,
               "mergedOid": null,
-              "note": "PR #21: required checks still missing after 0 min (missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
+              "note": "PR #21: required checks still missing after 0 min (required checks missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
               "at": "<time>"
             }
           ],
           "outcome": {
             "status": "stopped",
-            "reason": "PR #21: required checks still missing after 0 min (missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
+            "reason": "PR #21: required checks still missing after 0 min (required checks missing: ci; never registered on <tested:short>: ci) — --resume to keep waiting",
             "at": "<time>"
           }
         },
@@ -985,32 +882,6 @@
           "o/n",
           "--json",
           "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-        ],
-        [
-          "api",
-          "repos/o/n/rules/branches/main"
-        ],
-        [
-          "api",
-          "repos/o/n/branches/main"
-        ],
-        [
-          "pr",
-          "view",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "headRefOid"
-        ],
-        [
-          "pr",
-          "checks",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "name,state,bucket,completedAt"
         ]
       ],
       "record": {
@@ -1035,20 +906,20 @@
             "updates": 0,
             "priorHead": null,
             "mergedOid": null,
-            "note": "PR #21 required checks failed: ci",
+            "note": "PR #21: required checks failed: ci",
             "at": "<time>"
           }
         ],
         "outcome": {
           "status": "stopped",
-          "reason": "PR #21 required checks failed: ci",
+          "reason": "PR #21: required checks failed: ci",
           "at": "<time>"
         }
       },
       "result": {
         "ok": false,
         "code": "refused",
-        "reason": "PR #21 required checks failed: ci",
+        "reason": "PR #21: required checks failed: ci",
         "trainId": "<train>",
         "run": {
           "schemaVersion": 1,
@@ -1072,13 +943,13 @@
               "updates": 0,
               "priorHead": null,
               "mergedOid": null,
-              "note": "PR #21 required checks failed: ci",
+              "note": "PR #21: required checks failed: ci",
               "at": "<time>"
             }
           ],
           "outcome": {
             "status": "stopped",
-            "reason": "PR #21 required checks failed: ci",
+            "reason": "PR #21: required checks failed: ci",
             "at": "<time>"
           }
         },
@@ -1666,32 +1537,6 @@
           "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
         ],
         [
-          "api",
-          "repos/o/n/rules/branches/main"
-        ],
-        [
-          "api",
-          "repos/o/n/branches/main"
-        ],
-        [
-          "pr",
-          "view",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "headRefOid"
-        ],
-        [
-          "pr",
-          "checks",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "name,state,bucket,completedAt"
-        ],
-        [
           "pr",
           "merge",
           "21",
@@ -1784,32 +1629,6 @@
           "o/n",
           "--json",
           "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-        ],
-        [
-          "api",
-          "repos/o/n/rules/branches/main"
-        ],
-        [
-          "api",
-          "repos/o/n/branches/main"
-        ],
-        [
-          "pr",
-          "view",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "headRefOid"
-        ],
-        [
-          "pr",
-          "checks",
-          "21",
-          "-R",
-          "o/n",
-          "--json",
-          "name,state,bucket,completedAt"
         ],
         [
           "pr",
@@ -1955,32 +1774,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ],
           [
             "pr",
@@ -2148,32 +1941,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ]
         ],
         "record": {
@@ -2260,32 +2027,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ],
           [
             "pr",
@@ -2461,32 +2202,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ]
         ],
         "record": {
@@ -2573,32 +2288,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ]
         ],
         "record": {
@@ -2685,32 +2374,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ]
         ],
         "record": {
@@ -2797,32 +2460,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ]
         ],
         "record": {
@@ -2909,32 +2546,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ]
         ],
         "record": {
@@ -3021,32 +2632,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ]
         ],
         "record": {
@@ -3133,32 +2718,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ]
         ],
         "record": {
@@ -3245,32 +2804,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ]
         ],
         "record": {
@@ -3523,32 +3056,6 @@
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
           ],
           [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
-          ],
-          [
             "pr",
             "merge",
             "21",
@@ -3723,32 +3230,6 @@
             "o/n",
             "--json",
             "state,isDraft,headRefOid,baseRefName,mergeStateStatus,mergeCommit,url"
-          ],
-          [
-            "api",
-            "repos/o/n/rules/branches/main"
-          ],
-          [
-            "api",
-            "repos/o/n/branches/main"
-          ],
-          [
-            "pr",
-            "view",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "headRefOid"
-          ],
-          [
-            "pr",
-            "checks",
-            "21",
-            "-R",
-            "o/n",
-            "--json",
-            "name,state,bucket,completedAt"
           ],
           [
             "pr",

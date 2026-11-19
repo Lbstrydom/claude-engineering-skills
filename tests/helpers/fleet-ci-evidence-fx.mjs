@@ -36,6 +36,9 @@ export function evidenceFromBucket(bucket, head) {
 export function requiredEvidence({ rules, rulesFail = false, bucket, head, observedName = 'ci' }) {
   if (rulesFail) return ev.unknown('transport', 'rules api down');
   if (!Array.isArray(rules)) return ev.unknown('malformed', 'the world scripts no rules answer');
+  const NON_CI = ['deletion', 'non_fast_forward', 'pull_request', 'creation', 'update', 'required_linear_history', 'required_signatures', 'required_status_checks'];
+  const unsupported = rules.map((r) => r.type).filter((t) => !NON_CI.includes(t));
+  if (unsupported.length) return ev.unknown('unsupported-rule-type', `the world scripts the rule type(s) ${unsupported.join(', ')}`);
   const required = rules.filter((r) => r.type === 'required_status_checks').flatMap((r) => r.parameters.required_status_checks.map((c) => c.context));
   if (!required.length) return ev.noneRequired(head);
   const unobserved = required.filter((c) => c !== observedName);
@@ -50,10 +53,16 @@ export function requiredEvidence({ rules, rulesFail = false, bucket, head, obser
  * ruleset answer, `w.rulesFail` a GitHub that will not answer. Mirrors the read order of the real oracle: eligibility first, then CI.
  */
 export function oracleOf(w) {
-  return ({ prNumber, expectedBase, expectedHead }) => {
+  return ({ prNumber, expectedBase, expectedHead, phase }) => {
     const p = w.prs.get(prNumber);
     if (!p) return ev.unknown('malformed', `no scripted PR ${prNumber}`);
     if (p.unreadable) return ev.unknown('transport', 'PR view failed');
+    if (phase === 'post-merge') {
+      if (p.state !== 'MERGED') return ev.ineligible('not-merged');
+      if (p.base !== expectedBase) return ev.ineligible('retargeted');
+      if (p.head !== expectedHead) return ev.ineligible('head-moved', p.head);
+      return requiredEvidence({ rules: w.rules, rulesFail: w.rulesFail, bucket: p.checks, head: expectedHead });
+    }
     if (p.state === 'MERGED') return ev.ineligible('merged');
     if (p.state !== 'OPEN') return ev.ineligible('closed');
     if (typeof p.draft !== 'boolean') return ev.unknown('malformed', 'the scripted PR has no boolean isDraft');

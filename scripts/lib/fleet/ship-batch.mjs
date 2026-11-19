@@ -27,7 +27,7 @@ import { AI_TRAILER_KEYS, parseMessageTrailers } from '../commit-trailers.mjs';
 import { OID_RE } from './contracts.mjs';
 import { assertManaged, fleetDir, readTrain } from './registry.mjs';
 import { buildStatusFrom, gatherFacts, payloadFromStatus } from './facts.mjs';
-import { decideCiAdmission, describeEvidence, unimplementedOracle } from './required-checks.mjs';
+import { askCiOracle, decideCiAdmission, describeEvidence } from './required-checks.mjs';
 import { readShipBatchGrant, GRANT_VERSION } from './coordinator-grant.mjs';
 import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
 import { summariseRun } from './member-outcome.mjs';
@@ -145,18 +145,13 @@ export function listReadyMembers(ctx) {
 }
 
 /**
- * C8 and C9 for one member from GitHub, as a DISPOSITION. The evidence comes from ONE oracle (`deps.assessCi`, default the PR-1 stub
- * that establishes nothing, so a production run stops) and the disposition from ONE table (`decideCiAdmission`); nothing here reads
+ * C8 and C9 for one member from GitHub, as a DISPOSITION. The evidence comes from ONE oracle (`deps.assessCi`, default `assessRequiredCi`) and the disposition from ONE table (`decideCiAdmission`); nothing here reads
  * a reason string (docs/plans/ci-evidence-oracle.md §2.2). The member's identity (open, not a draft, the base, the head) is part of
  * the evidence (`ineligible`), not a second read here.
  * @returns {{disposition: string, tag: string, fault?: object, code?: string, reason: string, evidence: object}}
  */
 export function ciDecisionFor({ cwd, member, head, base, deps, requiredChecks, requiredChecksError = null }) {
-  const oracle = deps.assessCi ?? unimplementedOracle;
-  let evidence;
-  try {
-    evidence = oracle({ repo: member.repo, prNumber: member.prNumber, expectedBase: base, expectedHead: head, configAssertion: { requiredChecks, error: requiredChecksError } }, { ...deps, cwd });
-  } catch (e) { evidence = { tag: 'unknown', fault: { kind: 'unexpected-tag', detail: `the CI oracle threw: ${String(e?.message ?? e).slice(0, 300)}` } }; }
+  const evidence = askCiOracle(deps.assessCi, { repo: member.repo, prNumber: member.prNumber, expectedBase: base, expectedHead: head, configAssertion: { requiredChecks, error: requiredChecksError } }, { ...deps, cwd });
   const d = decideCiAdmission(evidence);
   return { ...d, reason: `PR #${member.prNumber}: ${describeEvidence(evidence, d)}`, evidence };
 }

@@ -46,7 +46,8 @@ import { TRAIN_ID_RE, assertManaged, fleetDir, readTrain } from './registry.mjs'
 import { approvable } from './overlap.mjs';
 import { branchOfRef, defaultDeps, patchTrain, withTrainLock } from './train.mjs';
 import { verifyFacts } from './train-approve.mjs';
-import { describeVerdict, observeRequiredChecks, requiredInventory } from './required-checks.mjs';
+import { askCiOracle, decideCiAdmission, describeEvidence } from './required-checks.mjs';
+import { readBranchRules } from './github-ci-facts.mjs';
 import { renderCommand } from './shell-quote.mjs';
 import {
   AttemptSchema, CHAIN_VERDICTS, FAULTS, FinalizedSchema, HALT_VERDICTS, HaltSchema, MAX_HEAD_CHURN, OutcomeSchema, PolicySchema,
@@ -247,11 +248,71 @@ function commit(st, i, patch, extra = {}) {
   return st.save({ ...extra, steps: st.run.steps.map((s, j) => (j === i ? { ...s, ...patch, at: st.now() } : s)) });
 }
 
-/** The branch rules of the base: `{ok, queue}`. A merge queue makes a merge unobservable (the synchronous guarantee, §2.3). */
+/** The branch rules of the base: `{ok, queue}`, read by the ONE adapter. A merge queue makes a merge unobservable (the synchronous guarantee, §2.3). */
 function readRules(st, s) {
-  const r = ghJson(st.deps, st.cwd, ['api', `repos/${s.repo}/rules/branches/${st.run.base}`]);
-  if (!r.ok || !Array.isArray(r.doc)) return { ok: false, reason: r.reason ?? 'the rules answer was not a list' };
-  return { ok: true, queue: r.doc.some((x) => x?.type === 'merge_queue') };
+  const r = readBranchRules(st.deps, st.cwd, { repo: s.repo, base: st.run.base });
+  return r.ok ? { ok: true, queue: r.value.types.includes('merge_queue') } : { ok: false, reason: `${r.fault.kind}: ${r.fault.detail}` };
+}
+
+/** The CI evidence for member `s` at head `h`, asked through the one wrapper (the injected oracle in a test, else `assessRequiredCi`). */
+function assessCiFor(st, s, h) {
+  return askCiOracle(st.deps.assessCi, { repo: s.repo, prNumber: s.prNumber, expectedBase: st.run.base, expectedHead: h, configAssertion: st.configAssertion }, { ...st.deps, cwd: st.cwd });
+}
+
+/**
+ * THE ONLY fleet `gh pr merge` (docs/plans/ci-evidence-oracle.md section 2.3). It asks the oracle FRESH, maps the evidence with the one table,
+ * and only on `permit` (with evidence for exactly this head) runs `beforeMerge` and then the merge, pinning `--match-head-commit` to the
+ * EVIDENCE's head. The caller passes the squash subject and body, never a head: it cannot pin a head the evidence was not read at.
+ * @returns {{attempted: false, evidence: object, decision: object} | {attempted: true, evidence: object, m: object}}
+ */
+export function mergeWithCiPermit(st, s, h, { extraArgs = [], beforeMerge } = {}) {
+  const evidence = assessCiFor(st, s, h);
+  let decision = decideCiAdmission(evidence);
+  if (decision.disposition === 'permit' && evidence.head !== h) {
+    decision = { disposition: 'stop-run', tag: decision.tag, fault: { kind: 'unexpected-tag', detail: `the permitting evidence is for ${String(evidence.head).slice(0, 12)}, not the head ${String(h).slice(0, 12)} about to merge` } };
+  }
+  if (decision.disposition !== 'permit') return { attempted: false, evidence, decision };
+  if (beforeMerge) beforeMerge(evidence);
+  const m = st.deps.gh(['pr', 'merge', String(s.prNumber), '-R', s.repo, '--squash', ...extraArgs, '--match-head-commit', evidence.head], st.cwd);
+  return { attempted: true, evidence, m };
+}
+
+/**
+ * Post-merge verification (docs/plans/ci-evidence-oracle.md Amendment A item 2), from FRESH reads of a PR just observed MERGED: it merged into the
+ * run's base, from the admitted head, and the required checks of that head are proven successes NOW (the oracle's `post-merge` phase). A DETECTIVE
+ * control with a stated limit: it reads the state now, not at the instant GitHub accepted the merge. Anything not proven (a pending run included) fails.
+ * @returns {{ok: true} | {ok: false, reason: string}}
+ */
+function verifyMergedCi(st, s, doc, head) {
+  const reasons = [];
+  if (doc.baseRefName !== st.run.base) reasons.push(`it merged into ${doc.baseRefName ?? 'an unreadable base'}, not ${st.run.base}`);
+  if (doc.headRefOid !== head) reasons.push(`it merged at head ${short(doc.headRefOid)}, not the admitted ${short(head)}`);
+  const evidence = askCiOracle(st.deps.assessCi, { repo: s.repo, prNumber: s.prNumber, expectedBase: st.run.base, expectedHead: head, phase: 'post-merge', configAssertion: st.configAssertion }, { ...st.deps, cwd: st.cwd });
+  const d = decideCiAdmission(evidence);
+  if (d.disposition !== 'permit') reasons.push(`the required checks behind it are not proven successes now (${describeEvidence(evidence, d)})`);
+  return reasons.length ? { ok: false, reason: `merged-unverified: PR #${s.prNumber} is MERGED but ${reasons.join('; ')} — do not report it as landed; check it by hand` } : { ok: true };
+}
+
+/**
+ * A non-permitting CI decision as a member-step result (`where`: 'wait' while polling, 'merge' at the merge site). `null` means "keep waiting".
+ * Plain serial stops the run on every fault (its reason text); a policy run maps the fault kind through `FAULTS`.
+ */
+function ciStepResult(st, s, evidence, d, where) {
+  const why = `PR #${s.prNumber}: ${describeEvidence(evidence, d)}`;
+  const policy = Boolean(st.policy);
+  if (d.disposition === 'stop-run') return fault('ci-evidence-unknown', why);
+  if (d.disposition === 'retry') {
+    if (evidence.tag === 'ineligible') return bump(st, s, 'the head moved while the CI evidence was read');
+    if (where === 'wait') return null;
+    return policy ? fault('ci-retry', why) : AGAIN;
+  }
+  if (evidence.tag === 'ineligible') {
+    if (evidence.code === 'closed') return fault('pr-closed', `PR #${s.prNumber} is closed`);
+    if (evidence.code === 'draft') return fault('pr-draft', `PR #${s.prNumber} is a draft`);
+    if (evidence.code === 'retargeted') return fault('pr-retargeted', `PR #${s.prNumber} now targets another branch than ${st.run.base}`);
+    return bump(st, s, `the PR was observed ${evidence.code} while the CI evidence was read`); // merged: the top of the next pass classifies it
+  }
+  return fault('checks-failed', why); // failed or not-run: the required checks are red or never ran
 }
 
 /** Count one re-verification of member `s`; past `MAX_HEAD_CHURN` it is `not-run/head-churn`, never an endless loop (R1-M1, M9). */
@@ -287,18 +348,23 @@ function readBackStep(st, i, doc) {
     return fault('read-back-unmeasured', `PR #${s.prNumber} merged at ${short(mergeOid)} but its read-back could not be measured (${rb.why}) — --resume re-checks it`);
   }
   const chain = run.policy.baseChain;
-  const v = verdictOf({ readBack: rb, runBase: run.base, chainTail: chain.at(-1), candidateTree: policy.name === 'rollup' ? run.policy.candidateTree : null });
+  let v = verdictOf({ readBack: rb, runBase: run.base, chainTail: chain.at(-1), candidateTree: policy.name === 'rollup' ? run.policy.candidateTree : null });
+  let unverified = null;
+  if (CHAIN_VERDICTS.includes(v.verdict)) { // the merge is where it should be: now prove the CI behind it
+    const pv = verifyMergedCi(st, s, doc, s.attempt?.head ?? s.head);
+    if (!pv.ok) { v = { verdict: 'merged-unverified' }; unverified = pv.reason; }
+  }
   const onChain = CHAIN_VERDICTS.includes(v.verdict);
   const outcome = {
     status: 'landed', code: 'merged', verdict: v.verdict, mergeOid, parent: rb.firstParent ?? null, chainIndex: onChain ? chain.length : null,
     attribution: s.attempt?.ghExit === 0 ? 'this-run' : 'unknown', gate: rb.gate ?? null,
-    ...(rb.reasons?.length ? { reason: rb.reasons.join('; ').slice(0, 900) } : {}),
+    ...(unverified ? { reason: unverified.slice(0, 900) } : rb.reasons?.length ? { reason: rb.reasons.join('; ').slice(0, 900) } : {}),
     ...(policy.name === 'rollup' && s.attempt?.ci ? { ci: s.attempt.ci } : {}), ...(v.trees ? { trees: v.trees } : {}),
   };
   const halt = HALT_VERDICTS.includes(v.verdict) ? { halt: { code: v.verdict, member: s.id, at: st.now() } } : {};
   commit(st, i, { step: 'merged', mergedOid: mergeOid, head: doc.headRefOid ?? s.head, outcome }, { ...(onChain ? { policy: { ...run.policy, baseChain: [...chain, mergeOid] } } : {}), ...halt });
   if (!halt.halt) return NEXT;
-  const why = { 'wrong-target': `PR #${s.prNumber} merged into ${rb.baseRefName}, not ${run.base}`, 'untested-base': `landed-on-untested-base: PR #${s.prNumber} landed on ${short(rb.firstParent)}, not the tested ${short(chain.at(-1))} — a foreign commit reached the base in the merge window; the remaining members need a rebuild`, 'tree-mismatch': `PR #${s.prNumber} landed with tree ${short(rb.tree)}, not the candidate's ${short(v.trees?.expected)}: verify each member against the landed tree` }[v.verdict];
+  const why = { 'merged-unverified': unverified, 'wrong-target': `PR #${s.prNumber} merged into ${rb.baseRefName}, not ${run.base}`, 'untested-base': `landed-on-untested-base: PR #${s.prNumber} landed on ${short(rb.firstParent)}, not the tested ${short(chain.at(-1))} — a foreign commit reached the base in the merge window; the remaining members need a rebuild`, 'tree-mismatch': `PR #${s.prNumber} landed with tree ${short(rb.tree)}, not the candidate's ${short(v.trees?.expected)}: verify each member against the landed tree` }[v.verdict];
   return fault('base-moved', why);
 }
 
@@ -341,14 +407,18 @@ function policyMerge(st, i, h) {
   if (d.isDraft === true) return fault('pr-draft', `PR #${s.prNumber} is a draft`);
   if (d.baseRefName !== run.base) return fault('pr-retargeted', `PR #${s.prNumber} now targets ${d.baseRefName}, not ${run.base}`);
   if (d.headRefOid !== h) return bump(st, s, 'the head changed while it was being admitted');
-  const attempt = { head: h, at: st.now(), ghExit: null, doneAt: null, ...(a.messageSha256 ? { messageSha256: a.messageSha256 } : {}), ...(a.ci ? { ci: a.ci } : {}) };
-  commit(st, i, { step: 'merge', head: h, outcome: null, attempt });
-  const mergeArgs = ['pr', 'merge', String(s.prNumber), '-R', s.repo, '--squash', '--subject', a.message.subject, '--body-file', null, '--match-head-commit', h];
+  let attempt = { head: h, at: st.now(), ghExit: null, doneAt: null, ...(a.messageSha256 ? { messageSha256: a.messageSha256 } : {}), ...(a.ci ? { ci: a.ci } : {}) };
   const bodyFile = messagePath(st.dir, run.trainId, s.prNumber);
-  mergeArgs[mergeArgs.indexOf('--body-file') + 1] = bodyFile;
   atomicWriteFileSync(bodyFile, a.message.body);
-  let m;
-  try { m = deps.gh(mergeArgs, cwd); } finally { retrySync(() => fs.rmSync(bodyFile, { force: true })); }
+  let res;
+  try {
+    res = mergeWithCiPermit(st, s, h, {
+      extraArgs: ['--subject', a.message.subject, '--body-file', bodyFile],
+      beforeMerge: (e) => { attempt = { ...attempt, head: e.head }; commit(st, i, { step: 'merge', head: e.head, outcome: null, attempt }); },
+    });
+  } finally { retrySync(() => fs.rmSync(bodyFile, { force: true })); }
+  if (!res.attempted) return ciStepResult(st, s, res.evidence, res.decision, 'merge') ?? AGAIN;
+  const m = res.m;
   st.setStep(i, { attempt: { ...attempt, ghExit: m.ok ? 0 : (Number.isInteger(m.status) && m.status !== 0 ? m.status : 1), doneAt: st.now() } });
   const until = Date.now() + T.mergeWait;
   for (;;) {
@@ -385,6 +455,10 @@ function stepMember(st, i) {
   if (upper(d.state) === 'MERGED') {
     if (policy) return mergedObserved(st, i, d);
     if (!s.accounted.includes(d.headRefOid)) return fault('merged-unaccounted', `PR #${s.prNumber} was merged at ${short(d.headRefOid)}, a head this run did not account for — check it by hand`);
+    // A PR observed MERGED at an accounted head is verified BEFORE `merged` is persisted (a resume skips merged steps, so an unverified merge must never reach that state).
+    // The head to verify against is the one this run PINNED when a merge was requested (step `merge`), not whatever head the PR shows now.
+    const pv = verifyMergedCi(st, s, d, s.step === 'merge' && s.head ? s.head : d.headRefOid);
+    if (!pv.ok) return fault('merged-unverified', pv.reason);
     st.setStep(i, { step: 'merged', mergedOid: d.mergeCommit?.oid ?? null, head: d.headRefOid });
     return NEXT;
   }
@@ -438,20 +512,18 @@ function stepMember(st, i) {
   // ── wait for required checks on this exact head ──
   if (st.run.steps[i].step !== 'wait' && st.run.steps[i].step !== 'merge') st.setStep(i, { step: 'wait', head: h });
   const deadline = Date.now() + run.timeoutMs;
-  let verdict;
   for (;;) {
-    verdict = observeRequiredChecks(cwd, { pr: s.prNumber, repo: s.repo, inventory: st.invFor(s.repo), expectHead: h, gh: deps.gh });
-    if (verdict.verdict === 'pass' || verdict.verdict === 'none-required') break;
-    if (verdict.verdict === 'failed' || verdict.verdict === 'not-run') return fault('checks-failed', `PR #${s.prNumber} required checks ${describeVerdict(verdict)}`);
-    if (verdict.headOid && verdict.headOid !== h) break; // the head moved: re-verify from the top
-    if (verdict.inventory?.source === 'unknown') return fault('checks-inventory-unknown', `PR #${s.prNumber}: ${verdict.reason}`);
+    const ev = assessCiFor(st, s, h);
+    const d = decideCiAdmission(ev);
+    if (d.disposition === 'permit') break;
+    const r = ciStepResult(st, s, ev, d, 'wait');
+    if (r) return r;
     if (Date.now() >= deadline) {
-      const missing = verdict.names?.missing ?? [];
-      return fault('checks-pending-deadline', `PR #${s.prNumber}: required checks still ${verdict.verdict} after ${Math.round(run.timeoutMs / 60_000)} min (${describeVerdict(verdict)}${missing.length ? `; never registered on ${short(h)}: ${missing.join(', ')}` : ''}) — --resume to keep waiting`);
+      const missing = ev.names?.missing ?? [];
+      return fault('checks-pending-deadline', `PR #${s.prNumber}: required checks still ${ev.tag} after ${Math.round(run.timeoutMs / 60_000)} min (${describeEvidence(ev, d)}${missing.length ? `; never registered on ${short(h)}: ${missing.join(', ')}` : ''}) — --resume to keep waiting`);
     }
     sleep(T.poll);
   }
-  if (verdict.headOid && verdict.headOid !== h) return policy ? bump(st, s, 'the head moved while the required checks were observed') : AGAIN;
   // ── merge exactly this head ──
   const again = viewPr(deps, cwd, s);
   if (policy && !again.ok) return fault('pr-unreadable', `PR #${s.prNumber}: cannot read it (${again.reason})`);
@@ -469,21 +541,27 @@ function stepMember(st, i) {
     if (message.kind === 'stop') return fault('message-stop', `PR #${s.prNumber}: ${message.reason}`);
     if (message.kind === 'none' && run.messageRequired) return fault('message-stop', `PR #${s.prNumber}: this run requires a squash message and messageFor returned none`);
   }
-  st.setStep(i, { step: 'merge', head: h });
-  const mergeArgs = ['pr', 'merge', String(s.prNumber), '-R', s.repo, '--squash', '--match-head-commit', h];
+  const extraArgs = [];
   let bodyFile = null;
   if (message.kind === 'message') {
     // gh reads --body-file during the call, so the file lives exactly that long.
     bodyFile = messagePath(st.dir, st.trainId, s.prNumber);
     atomicWriteFileSync(bodyFile, message.body);
-    mergeArgs.splice(mergeArgs.indexOf('--match-head-commit'), 0, '--subject', message.subject, '--body-file', bodyFile);
+    extraArgs.push('--subject', message.subject, '--body-file', bodyFile);
   }
-  let m;
-  try { m = deps.gh(mergeArgs, cwd); } finally { if (bodyFile) retrySync(() => fs.rmSync(bodyFile, { force: true })); }
+  let res;
+  try { res = mergeWithCiPermit(st, s, h, { extraArgs, beforeMerge: (e) => st.setStep(i, { step: 'merge', head: e.head }) }); } finally { if (bodyFile) retrySync(() => fs.rmSync(bodyFile, { force: true })); }
+  if (!res.attempted) return ciStepResult(st, s, res.evidence, res.decision, 'merge') ?? AGAIN;
+  const m = res.m;
   const until = Date.now() + T.mergeWait;
   for (;;) {
     const o = viewPr(deps, cwd, s);
-    if (o.ok && upper(o.doc.state) === 'MERGED') { st.setStep(i, { step: 'merged', mergedOid: o.doc.mergeCommit?.oid ?? null }); return NEXT; }
+    if (o.ok && upper(o.doc.state) === 'MERGED') {
+      const pv = verifyMergedCi(st, s, o.doc, h); // verified first: on failure the step stays `merge`, so a resume observes the MERGED PR and verifies again
+      if (!pv.ok) return fault('merged-unverified', pv.reason);
+      st.setStep(i, { step: 'merged', mergedOid: o.doc.mergeCommit?.oid ?? null });
+      return NEXT;
+    }
     if (Date.now() >= until) {
       return fault('merge-unconfirmed', m.ok
         ? `PR #${s.prNumber}: merge accepted but not observed merged after ${Math.round(T.mergeWait / 1000)}s — check branch rules / merge queue, then --resume`
@@ -523,7 +601,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
   const now = () => deps.now().toISOString();
   const save = (patch) => { run = writeSerial(dir, { ...run, ...patch, updatedAt: now() }); st.run = run; return run; };
   const setStep = (i, patch) => save({ steps: run.steps.map((s, j) => (j === i ? { ...s, ...patch, at: now() } : s)) });
-  const st = { cwd, dir, trainId, deps, T, sleep, policy, messageFor, run, now, save, setStep, churn: new Map(), invFor: null };
+  const st = { cwd, dir, trainId, deps, T, sleep, policy, messageFor, run, now, save, setStep, churn: new Map(), configAssertion: null };
   // A stop KEEPS the step it happened in (an 'update' intent must survive to be recognised on resume);
   // only the note and the run outcome record why.
   const stop = (i, reason) => {
@@ -555,11 +633,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
       if (rules.queue) return stop(null, `merge-queue-present: ${run.base} has a merge queue, so a merge could not be observed synchronously`);
     }
   }
-  const inventory = new Map();
-  st.invFor = (repo) => {
-    if (!inventory.has(repo)) inventory.set(repo, requiredInventory(cwd, { repo, base: run.base, configured: requiredChecks, configError: requiredChecksError, gh: deps.gh }));
-    return inventory.get(repo);
-  };
+  st.configAssertion = { requiredChecks, error: requiredChecksError };
   for (let i = 0; i < run.steps.length; i += 1) {
     if (policy ? (isTerminal(run.steps[i].outcome) || run.halt) : run.steps[i].step === 'merged') continue;
     if (!policy && run.steps[i].note) setStep(i, { note: null });

@@ -114,9 +114,14 @@ function squash(f, args, extraFile = null) {
 }
 
 /** The oracle of the rollup world: the ROLLUP PR's eligibility, then the world's required checks (`w.rules`, `w.checks`, `w.rulesFail`). */
-const assessRollupCi = (w) => ({ prNumber, expectedBase, expectedHead }) => {
+const assessRollupCi = (w) => ({ prNumber, expectedBase, expectedHead, phase }) => {
   const rp = (w.allPrs ?? []).find((x) => x.number === prNumber);
   if (!rp) return ev.unknown('malformed', `no scripted rollup PR #${prNumber}`);
+  if (phase === 'post-merge') {
+    if (rp.state !== 'MERGED') return ev.ineligible('not-merged');
+    if ((rp.base ?? 'main') !== expectedBase) return ev.ineligible('retargeted');
+    return rp.head === expectedHead ? requiredEvidence({ rules: w.rules, rulesFail: w.rulesFail, bucket: w.checks, head: expectedHead }) : ev.ineligible('head-moved', rp.head);
+  }
   if (rp.state !== 'OPEN') return ev.ineligible(rp.state === 'MERGED' ? 'merged' : 'closed');
   if (rp.draft === true) return ev.ineligible('draft');
   if ((rp.base ?? 'main') !== expectedBase) return ev.ineligible('retargeted');
@@ -425,7 +430,7 @@ describe('audit round 1: lifecycle, identity and cleanup guards', () => {
     assert.match(rollupTrainProblem({ ...rec, candidateTree: 'f'.repeat(40) }, train), /candidate tree/);
     assert.match(rollupTrainProblem({ ...rec, members: [rec.members[0]] }, train), /names 1 member/);
   });
-  it('CI evidence: none-required PROVEN permits the rollup; unknown evidence stops the run with zero merges; the production default (the PR-1 stub) cannot merge', () => {
+  it('CI evidence: none-required PROVEN permits the rollup; unknown evidence stops the run with zero merges; the production default is the REAL oracle and a GitHub that does not answer its reads cannot merge', () => {
     const f = fixture(1);
     const w = world(f); w.rules = []; // a repo that requires nothing, proven: permitted (decision 6)
     const b = build(f, w);
@@ -445,8 +450,8 @@ describe('audit round 1: lifecycle, identity and cleanup guards', () => {
     const b3 = build(h, w3);
     const r3 = approve(h, w3, { trainId: b3.trainId, deps: { assessCi: undefined } });
     assert.equal(r3.ok, false, r3.text);
-    assert.equal(w3.merges.length, 0, 'the default oracle is the stub: nothing may merge');
-    assert.match(r3.text, /unimplemented-oracle/);
+    assert.equal(w3.merges.length, 0, 'the real oracle cannot establish evidence from this world: nothing may merge');
+    assert.ok(r3.text.includes('CI evidence unknown'), r3.text);
   });
   it('a permitting oracle answer: passed must carry its required list (else a run stop); a proven none-required needs none (final review G1)', () => {
     const mk = (evidence) => { const f = fixture(1); const w = world(f); const b = build(f, w); const r = approve(f, w, { trainId: b.trainId, serialOpts: { requiredChecks: [] }, deps: { assessCi: ({ expectedHead }) => ({ ...evidence, head: expectedHead }) } }); return { r, w }; };

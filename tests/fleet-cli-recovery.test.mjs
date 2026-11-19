@@ -12,6 +12,7 @@ import { OK_TIER, fleetDirOf, land, readyBranch, sessionRec, setup } from './hel
 import { readTrain } from '../scripts/lib/fleet/registry.mjs';
 import { approveTrain } from '../scripts/lib/fleet/train-approve.mjs';
 import { defaultDeps } from '../scripts/lib/fleet/train.mjs';
+import { ciApiState } from './helpers/fleet-github-fake.mjs';
 
 after(cleanupFleetRoots);
 
@@ -51,11 +52,11 @@ describe('manifest-driven recovery works with a malformed .fleet.json', () => {
     const base = git(['rev-parse', 'main'], s.fx.repo);
     const oid = readyBranch(s, 'feat-a', { 'a.txt': 'A\n' });
     const row = prRow({ number: 11, branch: 'feat-a', headOid: oid, baseOid: base });
-    s.fake.setState({ list: [row], view: { 11: row } });
+    s.fake.setState({ list: [row], view: { 11: row }, api: ciApiState({ heads: [oid] }) });
     const t = land(s).json.train;
     assert.equal(s.f(['land', '--approve', t.trainId]).status, 0);
     corrupt(s);
-    s.fake.setState({ list: [row], view: { 11: { ...row, state: 'MERGED', mergeCommit: { oid: 'c'.repeat(40) } } } });
+    s.fake.setState({ list: [row], view: { 11: { ...row, state: 'MERGED', mergeCommit: { oid: 'c'.repeat(40) } } }, api: ciApiState({ heads: [oid] }) });
     const r = s.f(['land', '--confirm', t.trainId, '--json']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.equal(sessionRec(s.fx, 'feat-a').state, 'done');

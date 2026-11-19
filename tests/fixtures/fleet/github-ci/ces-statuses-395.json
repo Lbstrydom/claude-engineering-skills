@@ -1,0 +1,11 @@
+{
+  "provenance": {
+    "repo": "Lbstrydom/claude-engineering-skills",
+    "endpoint": "GET repos/{r}/commits/{sha}/statuses?per_page=100",
+    "command": "gh api repos/Lbstrydom/claude-engineering-skills/commits/90c60bf286f891ad6fe2168321a30fbe843921a6/statuses?per_page=100",
+    "recordedAt": "2026-11-19",
+    "tool": "gh 2.78.0, owner token",
+    "note": "An empty list: this repo posts check runs, no commit statuses."
+  },
+  "body": []
+}

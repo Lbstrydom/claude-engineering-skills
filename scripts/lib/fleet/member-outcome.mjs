@@ -21,11 +21,11 @@ const Oid = z.string().regex(OID_RE);
 const Iso = z.string().refine((s) => Number.isFinite(Date.parse(s)), 'must be an ISO timestamp');
 
 export const MAX_HEAD_CHURN = 3;
-export const VERDICTS = Object.freeze(['verified', 'provenance-lost', 'untested-base', 'wrong-target', 'tree-mismatch']);
+export const VERDICTS = Object.freeze(['verified', 'provenance-lost', 'untested-base', 'wrong-target', 'tree-mismatch', 'merged-unverified']);
 /** Verdicts that extend the base chain (their squash sits on the chain tail and carries the tested content). */
 export const CHAIN_VERDICTS = Object.freeze(['verified', 'provenance-lost']);
 /** Verdicts that put something on the base the chain does not hold: the run halts (§2.1 invariant 7). */
-export const HALT_VERDICTS = Object.freeze(['wrong-target', 'untested-base', 'tree-mismatch']);
+export const HALT_VERDICTS = Object.freeze(['wrong-target', 'untested-base', 'tree-mismatch', 'merged-unverified']);
 
 const REFUSED_CODES = ['pr-closed', 'pr-draft', 'pr-retargeted', 'conflict', 'behind-base', 'head-moved', 'checks-failed', 'shipped-head-refused', 'ci-refused', 'message-invalid', 'member-refused', 'held'];
 const NOT_RUN_CODES = ['pr-unreadable', 'checks-pending', 'tree-unreadable', 'message-unreadable', 'head-churn', 'merge-unconfirmed', 'awaiting-read-back', 'awaiting-merge-evidence'];
@@ -96,8 +96,8 @@ export const FAULTS = Object.freeze({
   conflict: { scope: 'member', status: 'refused', code: 'conflict' },
   behind: { scope: 'member', status: 'refused', code: 'behind-base' },
   'checks-failed': { scope: 'member', status: 'refused', code: 'checks-failed' },
-  'checks-inventory-unknown': { scope: 'run' },
   'checks-pending-deadline': { scope: 'member', status: 'not-run', code: 'checks-pending' },
+  'merged-unverified': { scope: 'run' },
   'merged-unaccounted': { scope: 'run' },
   'message-stop': { scope: 'run' },
   'merge-unconfirmed': { scope: 'run', status: 'not-run', code: 'merge-unconfirmed' },
@@ -234,7 +234,7 @@ export function summariseRun(run, { tailTree, stoppedReason = null }) {
   const provenance = landed.filter((s) => s.outcome.verdict !== 'verified').map((s) => `PROVENANCE: ${s.id} ${s.outcome.verdict}`);
   const combination = combinationOf(run, { tailTree });
   const rollup = run.policy.name === 'rollup';
-  const unproven = landed.some((s) => s.outcome.verdict === 'wrong-target' || s.outcome.verdict === 'tree-mismatch' || (rollup && s.outcome.verdict === 'untested-base'));
+  const unproven = landed.some((s) => s.outcome.verdict === 'wrong-target' || s.outcome.verdict === 'tree-mismatch' || s.outcome.verdict === 'merged-unverified' || (rollup && s.outcome.verdict === 'untested-base'));
   const trainLanded = landed.length === n && !unproven;
   const tails = [];
   let first;
