@@ -237,6 +237,7 @@ describe('decideCiAdmission — one fixed table over a closed tag set', () => {
       assert.doesNotThrow(() => JSON.stringify(d), 'the decision is always serialisable');
       assert.ok(!/[\u0000-\u001f\u007f]/.test(describeEvidence(bad, d)), 'a diagnostic is ONE line without control characters');
     }
+    assert.match(describeEvidence({ tag: 'failed', names: { failed: ['full-suite', 'lint-checks', 'a-much-longer-required-check-name'] } }), /failed: full-suite, lint-checks, a-much-longer-required-check-name$/, 'names are never truncated by their position (code audit R4 H1)');
     assert.ok(describeEvidence({ tag: 'failed', names: { failed: 'ci' } }).length > 5, 'a names list that is not an array is ignored, not thrown on');
     assert.ok(describeEvidence({ tag: 'failed', names: { failed: [10n, cyc] } }).length > 5);
   });

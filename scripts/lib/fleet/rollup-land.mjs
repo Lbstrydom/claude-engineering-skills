@@ -213,7 +213,8 @@ export function makeRollupPolicy({ cwd, trainId, deps, rec, train, branch, prNum
       if (h !== train.candidate.oid || tree.stdout.trim() !== rec.candidateTree) return { ok: false, kind: 'member-refused', reason: `the rollup PR head ${short(h)} is not the tested candidate ${short(train.candidate.oid)}` };
       const ci = ciDecisionFor({ cwd, member: { prNumber: s.prNumber, repo: s.repo }, head: h, base: run.base, deps, requiredChecks, requiredChecksError });
       if (ci.disposition !== 'permit') return { ok: false, kind: { 'refuse-member': 'ci-refused', retry: 'ci-retry' }[ci.disposition] ?? 'ci-evidence-unknown', reason: `the rollup: ${ci.reason}` };
-      const checks = (ci.evidence.required ?? []).map((o) => ({ name: String(o.name), conclusion: String(o.conclusion) }));
+      if (!Array.isArray(ci.evidence.required)) return { ok: false, kind: 'ci-evidence-unknown', reason: `the rollup: PR #${s.prNumber}: the permitting CI evidence carried no required-check list, so the manifest cannot record what passed` };
+      const checks = ci.evidence.required.map((o) => ({ name: String(o.name), conclusion: String(o.conclusion) }));
       const ciRecord = { head: h, tree: rec.candidateTree, observedAt: deps.now().toISOString(), checks };
       const manifest = renderRollupManifest({
         stage: 'final', rollupId: branch, base: run.base, candidate: { oid: train.candidate.oid, tree: rec.candidateTree },

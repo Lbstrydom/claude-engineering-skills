@@ -568,10 +568,10 @@ replaces it with the following, all in PR 2 and all inside `mergeWithCiPermit` u
    step-9 re-read; this makes the FRESH assessment the only one a merge may follow, not the wait loop's earlier one.)
 2. **Post-merge verification.** After a merge is observed, verify, from fresh reads: the merge commit's first parent is the expected base tip
    (already the policy read-back's `untested-base`), the merged PR's base ref is the run base (`wrong-target`, now also in PLAIN serial),
-   the merged head equals the admitted head, and the required check runs of that head are STILL `success` (a re-assessment of the merged
-   head). **The limit, stated:** this reads the check state NOW, not at the instant GitHub accepted the merge, so a re-run that has since
-   finished green again (or is still pending) is indistinguishable from a run that never changed. It is a detective control: it catches a
-   red or skipped result that is still visible, and nothing more. A mismatch records the member outcome `landed` with verdict
+   the merged head equals the admitted head, and the required check runs of that head are `success` NOW (a re-assessment of the merged
+   head; anything but success, **a pending run included**, cannot be proven and is `merged-unverified`). **The limit, stated:** this reads the check state NOW, not at the instant GitHub accepted the merge, so a re-run that has since
+   finished green again is indistinguishable from a run that never changed. It is a detective control: it catches a red, skipped or
+   still-pending result that is visible now, and nothing more. A mismatch records the member outcome `landed` with verdict
    **`merged-unverified`** (new, a halt verdict next to `wrong-target`/`untested-base`), stops the run loudly, and is never reported as
    success. Tests: one row per check, positive (all hold: `landed`/`merged`) and negative (each broken in turn: halt, zero further merges).
 3. **Optional merge-queue path: NOT built, and that is stated.** The only queue signal in the code is the rule type `merge_queue` in
@@ -581,9 +581,9 @@ replaces it with the following, all in PR 2 and all inside `mergeWithCiPermit` u
    Out of Scope with the fixture it needs.
 4. **Docs.** This plan and `skills/fleet/references/landing.md` state that the remaining window (a retarget or a CI re-run between the
    fresh re-read and `gh pr merge`) is **narrowed** by fleet (the fresh re-read) and only **partly detected** after the fact (item 2's limit),
-   never closed by it. Closing it is repository policy, not fleet: a merge queue (the only server-side re-evaluation at merge time), or
-   required checks with no bypass AND a base whose requirements match what fleet assessed. Required checks alone do not close it: GitHub
-   itself counts a SKIPPED required check as satisfied (wine-cellar-app #802), and a retargeted base can carry other requirements.
+   and is **not closed by fleet**. Louis accepted it as a documented residual. Closing it is repository policy: a merge queue is the only
+   server-side re-evaluation at merge time, and it is only as strong as its required checks, which must not be skippable (GitHub itself
+   counts a SKIPPED required check as satisfied, wine-cellar-app #802). Without a queue the window stays open.
 
 **Test coverage** (`tests/fleet-ci-admission.test.mjs`, positive and negative per item): (1) a head, base or draft change between the
 wait-loop assessment and the merge → no merge call, the mapper's disposition; unchanged → exactly one merge with `--match-head-commit` equal

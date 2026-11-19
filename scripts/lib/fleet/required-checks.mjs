@@ -274,7 +274,7 @@ export function unimplementedOracle() {
 
 /** One line naming the evidence, for a refusal or stop reason. Never empty. */
 export function describeEvidence(evidence, decision = decideCiAdmission(evidence)) {
-  const list = (k) => (Array.isArray(evidence?.names?.[k]) ? evidence.names[k].map(show) : []);
+  const list = (k) => (Array.isArray(evidence?.names?.[k]) ? evidence.names[k].map((x) => show(x)) : []);
   const names = ['failed', 'not-run', 'missing', 'pending'].filter((k) => list(k).length).map((k) => `${k}: ${list(k).join(', ')}`);
   if (evidence?.tag === 'unknown' || decision.disposition === 'stop-run') return `CI evidence unknown (${decision.fault?.kind ?? 'unknown'}: ${decision.fault?.detail ?? 'no detail'})`;
   if (evidence?.tag === 'ineligible') return `the PR is not a merge candidate (${show(evidence.code)})`;
