@@ -1208,3 +1208,8 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   not land leaves a `subset`".
 - **Accepted trade (H2/H3), not a defect to fix here**: with no full-suite verdict, ship-batch cannot tell a FULL required run from a branch-tier
   one. The repository must require its full suite; nothing verifies it. Recorded as accepted debt by Louis's option (d).
+
+**Final round residuals (audited at `347a7836`; GPT H:3 M:3, Gemini CONCERNS / approve_with_debt, no more rounds by Louis's word).** Recorded as debt:
+- **FAIL-OPEN (flagged)**: H1/H2 `requiredInventory` takes a configured `requiredChecks` list as COMPLETE when a GitHub inventory read fails (pre-existing, shared with `land approve`); a stale config can omit a newly required check. H3/M2 the `gh pr view` JSON is not schema-validated: an absent or non-boolean `isDraft` passes the draft check (gh always sends a boolean; narrow).
+- **Fail-closed**: M1/M3 admission classifies fault kind by matching reason text (a reword can turn a refusal into a retryable not-run, never into a merge); fix by returning a structured `kind` from `ciAndIdentityReasons`.
+- Gemini: `tests/fleet-land-ship-batch.test.mjs` change not located by the diff measurement (a measurement gap, not a finding).
