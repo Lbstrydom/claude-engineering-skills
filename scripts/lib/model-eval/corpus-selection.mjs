@@ -1,7 +1,7 @@
 /**
  * @fileoverview Corpus-level rules for `known-defects.json` v4: per-suite shape validation, the frozen legacy-identity
  * exemption, subset selection, the content digest that stamps a run, and judge-free expect_clean scoring.
- * Plan: docs/plans/sashiko-audit-improvements.md §5 (PR C). Pure: no I/O, no LLM calls.
+ * Plan: the sashiko-audit-improvements plan, section 5 (PR C). Pure: no I/O, no LLM calls.
  *
  * @module scripts/lib/model-eval/corpus-selection
  */
