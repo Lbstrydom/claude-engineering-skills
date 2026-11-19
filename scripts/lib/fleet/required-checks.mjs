@@ -237,6 +237,9 @@ export const CI_INELIGIBLE_CODES = Object.freeze(['closed', 'merged', 'draft', '
 /** The closed disposition set. */
 export const CI_DISPOSITIONS = Object.freeze(['permit', 'refuse-member', 'retry', 'stop-run']);
 
+/** A value as short, safe text for a diagnostic: never throws (a BigInt, a cycle or a hostile toString must not escape as an exception). */
+const show = (v) => { try { const t = typeof v === 'string' ? v : JSON.stringify(v); return String(t ?? typeof v).slice(0, 80); } catch { return `<${typeof v}>`; } };
+
 /**
  * The ONE evidence → disposition table. `permit` is returned from exactly one branch (a positive allowlist); a tag the table does
  * not name, a non-object, or an `ineligible` with an unknown code is `stop-run`, never a refusal a caller could read as routine.
@@ -250,14 +253,14 @@ export function decideCiAdmission(evidence) {
   if (tag === 'missing' || tag === 'pending') return { disposition: 'retry', tag };
   if (tag === 'ineligible') {
     const code = evidence.code;
-    if (!CI_INELIGIBLE_CODES.includes(code)) return { disposition: 'stop-run', tag, code, fault: { kind: 'unexpected-tag', detail: `ineligible with an unrecognised code ${JSON.stringify(code ?? null)}` } };
+    if (!CI_INELIGIBLE_CODES.includes(code)) return { disposition: 'stop-run', tag, code, fault: { kind: 'unexpected-tag', detail: `ineligible with an unrecognised code ${show(code)}` } };
     return { disposition: code === 'head-moved' ? 'retry' : 'refuse-member', tag, code };
   }
   if (tag === 'unknown') {
     const kind = CI_FAULT_KINDS.includes(evidence.fault?.kind) ? evidence.fault.kind : 'unexpected-tag';
     return { disposition: 'stop-run', tag, fault: { kind, detail: String(evidence.fault?.detail ?? 'no detail') } };
   }
-  return { disposition: 'stop-run', tag: String(tag), fault: { kind: 'unexpected-tag', detail: `the CI evidence carried no recognised tag (${JSON.stringify(tag ?? null)})` } };
+  return { disposition: 'stop-run', tag: show(tag), fault: { kind: 'unexpected-tag', detail: `the CI evidence carried no recognised tag (${show(tag)})` } };
 }
 
 /**
@@ -271,9 +274,10 @@ export function unimplementedOracle() {
 
 /** One line naming the evidence, for a refusal or stop reason. Never empty. */
 export function describeEvidence(evidence, decision = decideCiAdmission(evidence)) {
-  const names = ['failed', 'not-run', 'missing', 'pending'].filter((k) => evidence?.names?.[k]?.length).map((k) => `${k}: ${evidence.names[k].join(', ')}`);
+  const list = (k) => (Array.isArray(evidence?.names?.[k]) ? evidence.names[k].map(show) : []);
+  const names = ['failed', 'not-run', 'missing', 'pending'].filter((k) => list(k).length).map((k) => `${k}: ${list(k).join(', ')}`);
   if (evidence?.tag === 'unknown' || decision.disposition === 'stop-run') return `CI evidence unknown (${decision.fault?.kind ?? 'unknown'}: ${decision.fault?.detail ?? 'no detail'})`;
-  if (evidence?.tag === 'ineligible') return `the PR is not a merge candidate (${evidence.code})`;
+  if (evidence?.tag === 'ineligible') return `the PR is not a merge candidate (${show(evidence.code)})`;
   if (decision.disposition === 'permit') return `required checks ${decision.tag}`;
   return `required checks ${decision.tag}${names.length ? `: ${names.join('; ')}` : ''}`;
 }

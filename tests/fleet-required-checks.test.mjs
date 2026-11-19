@@ -224,6 +224,16 @@ describe('decideCiAdmission — one fixed table over a closed tag set', () => {
     assert.equal(decideCiAdmission({ tag: 'unknown', fault: { kind: 'made-up' } }).fault.kind, 'unexpected-tag');
     assert.equal(decideCiAdmission({ tag: 'unknown' }).disposition, 'stop-run');
   });
+  it('malformed evidence and hostile tag values never throw: stop-run with a safe diagnostic (code audit R1 M2, M4)', () => {
+    const cyc = {}; cyc.self = cyc;
+    for (const bad of [{ tag: 10n }, { tag: cyc }, { tag: Symbol('x') }, { tag: 'ineligible', code: 10n }, { tag: 'unknown', names: { failed: 'ci' }, fault: { kind: 'transport', detail: cyc } }]) {
+      const d = decideCiAdmission(bad);
+      assert.equal(d.disposition, 'stop-run');
+      assert.ok(describeEvidence(bad, d).length > 5);
+    }
+    assert.ok(describeEvidence({ tag: 'failed', names: { failed: 'ci' } }).length > 5, 'a names list that is not an array is ignored, not thrown on');
+    assert.ok(describeEvidence({ tag: 'failed', names: { failed: [10n, cyc] } }).length > 5);
+  });
   it('the dispositions it can return are exactly the closed set', () => {
     const seen = new Set([...CI_EVIDENCE_TAGS.map((t) => decideCiAdmission(sample(t)).disposition), decideCiAdmission(null).disposition]);
     assert.deepEqual([...seen].sort(), [...CI_DISPOSITIONS].sort());

@@ -8,7 +8,7 @@
  * objects. Cases a happy path would never find: the grant revoked between build and merge, a foreign commit on the base, a
  * merge GitHub accepted whose recording was lost, a read-back that cannot finish, and a squash that lost its trailers.
  */
-import { ev, oracleOf } from './helpers/fleet-ci-evidence-fx.mjs';
+import { ev, oracleOf, requiredEvidence } from './helpers/fleet-ci-evidence-fx.mjs';
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -817,6 +817,28 @@ describe('CI: the admission is the evidence oracle disposition (docs/plans/ci-ev
     const w2 = world(c);
     assert.equal(approve(c, w2.gh).ok, true);
     assert.equal(w2.merges.length, 2);
+  });
+  it('the world oracle models REQUIRED CONTEXTS: a required check that never ran is missing, an unscripted rules answer is unknown, only the observed context passes', () => {
+    const rule = (...ctx) => [{ type: 'required_status_checks', parameters: { required_status_checks: ctx.map((context) => ({ context })) } }];
+    assert.deepEqual(requiredEvidence({ rules: rule('ci', 'lint'), bucket: 'pass', head: HEAD }), ev.missing(HEAD, ['lint']));
+    assert.equal(requiredEvidence({ rules: rule('ci', 'lint'), bucket: 'fail', head: HEAD }).tag, 'failed', 'the observed check bad news comes first');
+    assert.equal(requiredEvidence({ rules: undefined, bucket: 'pass', head: HEAD }).tag, 'unknown');
+    assert.equal(requiredEvidence({ rules: [], bucket: 'pass', head: HEAD }).tag, 'none-required');
+    assert.equal(requiredEvidence({ rules: rule('ci'), bucket: 'pass', head: HEAD }).tag, 'passed');
+    assert.equal(requiredEvidence({ rules: rule('other'), bucket: 'pass', head: HEAD }).tag, 'missing');
+  });
+  it('through the real serial runner, a required context that never ran merges nothing (it waits, then times out not-run)', () => {
+    const b = batch(1);
+    const w = world(b);
+    w.rules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }, { context: 'lint' }] } }]; // 'lint' is never observed
+    const r = approve(b, w.gh, { serialOpts: { timeoutMs: 50 } });
+    assert.equal(r.ok, false);
+    assert.equal(w.merges.length, 0);
+    assert.equal(outcomeOf(b, 'm1').code, 'checks-pending', JSON.stringify(outcomeOf(b, 'm1')));
+    const d = batch(1);
+    const w3 = world(d); // the control: only the observed context is required, so it merges
+    assert.equal(approve(d, w3.gh).ok, true);
+    assert.equal(w3.merges.length, 1);
   });
   it('the PRODUCTION default (no deps.assessCi) is the PR-1 stub: ci-evidence-unknown naming the unimplemented oracle', () => {
     const a = admitShipBatchMember({ cwd: process.cwd(), member, head: HEAD, base: 'main', remote: 'origin', deps: { shipBatch: { checkChild: child } } });

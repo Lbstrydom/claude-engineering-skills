@@ -29,6 +29,23 @@ export function evidenceFromBucket(bucket, head) {
 }
 
 /**
+ * The evidence of a world's REQUIRED checks at `head`. The world scripts ONE observed check, named `observedName` (default `ci`), with
+ * one bucket: a required context it does not name was NEVER observed (`missing`), and a world with no rules answer at all (`rules` not an
+ * array) is unknown, never a proven-empty inventory. `rulesFail` is a GitHub that will not answer.
+ */
+export function requiredEvidence({ rules, rulesFail = false, bucket, head, observedName = 'ci' }) {
+  if (rulesFail) return ev.unknown('transport', 'rules api down');
+  if (!Array.isArray(rules)) return ev.unknown('malformed', 'the world scripts no rules answer');
+  const required = rules.filter((r) => r.type === 'required_status_checks').flatMap((r) => r.parameters.required_status_checks.map((c) => c.context));
+  if (!required.length) return ev.noneRequired(head);
+  const unobserved = required.filter((c) => c !== observedName);
+  const own = required.includes(observedName) ? evidenceFromBucket(bucket, head) : null;
+  if (own && own.tag !== 'passed') return own; // the observed check's own bad news first
+  if (unobserved.length) return ev.missing(head, unobserved);
+  return own;
+}
+
+/**
  * The oracle of a landing world `w`: `w.prs` is a Map of PR number to `{state, head, draft, base, checks, unreadable}`, `w.rules` the
  * ruleset answer, `w.rulesFail` a GitHub that will not answer. Mirrors the read order of the real oracle: eligibility first, then CI.
  */
@@ -42,9 +59,6 @@ export function oracleOf(w) {
     if (p.draft) return ev.ineligible('draft');
     if (p.base !== expectedBase) return ev.ineligible('retargeted');
     if (p.head !== expectedHead) return ev.ineligible('head-moved', p.head);
-    if (w.rulesFail) return ev.unknown('transport', 'rules api down');
-    const required = (w.rules ?? []).filter((r) => r.type === 'required_status_checks').flatMap((r) => r.parameters.required_status_checks.map((c) => c.context));
-    if (!required.length) return ev.noneRequired(expectedHead);
-    return evidenceFromBucket(p.checks, expectedHead);
+    return requiredEvidence({ rules: w.rules, rulesFail: w.rulesFail, bucket: p.checks, head: expectedHead });
   };
 }
