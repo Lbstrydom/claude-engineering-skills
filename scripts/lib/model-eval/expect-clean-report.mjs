@@ -92,6 +92,6 @@ export async function runExpectCleanReport({ runId, arm, route, cases, scope, pa
 /** Pure: the process exit code for a report. 0 only when every case was measured and every call's cost is accounted for. */
 export function exitCodeFor(rep, budgetStoppedCode) {
   if (rep.budgetStop) return budgetStoppedCode;
-  if (rep.summary.unmeasured) return 1;
-  return rep.summary.failed > 0 || rep.unaccounted > 0 ? 3 : 0;
+  // 3 is INCOMPLETE across this repo: an all-failed (unmeasured) report is the extreme case of it, not a different failure.
+  return rep.summary.unmeasured || rep.summary.failed > 0 || rep.unaccounted > 0 ? 3 : 0;
 }

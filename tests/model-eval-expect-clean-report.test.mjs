@@ -133,10 +133,10 @@ describe('the CLI no longer refuses --suite expect_clean (G1)', () => {
 
 describe('exitCodeFor: a report exits 0 only when it is whole (r2 H1)', () => {
   const rep = (over = {}) => ({ budgetStop: null, summary: { unmeasured: false, failed: 0 }, unaccounted: 0, ...over });
-  it('whole = 0; cap stop = the budget code; unmeasured = 1; a failed case or unaccounted cost = 3', () => {
+  it('whole = 0; cap stop = the budget code; unmeasured, a failed case or unaccounted cost = 3 (INCOMPLETE)', () => {
     assert.equal(exitCodeFor(rep(), 4), 0);
     assert.equal(exitCodeFor(rep({ budgetStop: { reason: 'x' } }), 4), 4);
-    assert.equal(exitCodeFor(rep({ summary: { unmeasured: true, failed: 2 } }), 4), 1);
+    assert.equal(exitCodeFor(rep({ summary: { unmeasured: true, failed: 2 } }), 4), 3);
     assert.equal(exitCodeFor(rep({ summary: { unmeasured: false, failed: 1 } }), 4), 3);
     assert.equal(exitCodeFor(rep({ unaccounted: 1 }), 4), 3);
   });
