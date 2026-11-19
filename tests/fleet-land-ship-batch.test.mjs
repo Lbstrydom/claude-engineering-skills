@@ -424,16 +424,25 @@ describe('gate honesty: a waived or not-run member is never laundered into passe
 
 describe('tree identity: the head is re-read at merge time and proven by tree (F6, #609, #612)', () => {
   /** Push a new head for member 1 whose tree is `same` (a re-push of the tested content) or different. */
+  let repushSeq = 0;
   function repush(b, { same }) {
     const m = b.members[0];
     git(['checkout', '-q', '--detach', m.head], b.fx.repo);
-    if (same) git(['commit', '-q', '--amend', '-m', msgOf(1).replace('converged', 'converged')], b.fx.repo); // same tree, new oid
-    else { fs.writeFileSync(path.join(b.fx.repo, 'dropped.txt'), 'x\n'); git(['add', 'dropped.txt'], b.fx.repo); git(['commit', '-q', '--amend', '-m', msgOf(1)], b.fx.repo); }
+    // Every re-push gets a UNIQUE author date. An amend of the same commit within one wall-clock second is otherwise byte-identical (the same oid), so on a
+    // fast runner two "different" re-pushes were the SAME head and a churning head did not churn (PR #396 full-suite on Linux).
+    const date = `@${1_700_000_000 + (repushSeq += 1)} +0000`;
+    if (same) git(['commit', '-q', '--amend', '--date', date, '-m', msgOf(1).replace('converged', 'converged')], b.fx.repo); // same tree, new oid
+    else { fs.writeFileSync(path.join(b.fx.repo, 'dropped.txt'), 'x\n'); git(['add', 'dropped.txt'], b.fx.repo); git(['commit', '-q', '--amend', '--date', date, '-m', msgOf(1)], b.fx.repo); }
     const l = git(['rev-parse', 'HEAD'], b.fx.repo);
     git(['push', '-q', '-f', 'origin', `${l}:refs/pull/${m.pr}/head`], b.fx.repo);
     git(['checkout', '-q', 'main'], b.fx.repo);
     return l;
   }
+  it('the test helper itself: successive re-pushes are DISTINCT heads even within one wall-clock second (the PR #396 Linux flake)', () => {
+    const b = batch(1);
+    const heads = [repush(b, { same: true }), repush(b, { same: true }), repush(b, { same: false }), repush(b, { same: false })];
+    assert.equal(new Set([b.members[0].head, ...heads]).size, 5, heads.join(' '));
+  });
   it('an equal-tree re-push is admitted AT the new head: the child runs at it, the merge pins it, the message is read from it', () => {
     const b = batch(1);
     const w = world(b);
