@@ -147,7 +147,8 @@ Precedence when several required checks differ: `failed` > `not-run` > `missing`
 name per class (the operator sees all, the tag is the worst). Any `unknown` cause anywhere makes the whole result `unknown`.
 `ineligible` is decided before any CI read.
 
-**Read order** (each step needs the previous one's success; M5 makes the order load-bearing):
+**Read order** (each step needs the previous one's success; M5 makes the order load-bearing; seven `gh` calls, or five on
+the proven-empty path):
 
 1. `pr view <n> --json state,isDraft,headRefOid,baseRefName` → schema. `state != OPEN` → `ineligible closed|merged`;
    `isDraft === true` → `draft`; `baseRefName != expectedBase` → `retargeted`; `headRefOid != expectedHead` → `head-moved`.
@@ -159,19 +160,26 @@ name per class (the operator sees all, the tag is the worst). Any `unknown` caus
    `{context, integration_id}` of every `required_status_checks` rule. A requirement with no positive-integer
    `integration_id` → `unknown(unsupported-unpinned-requirement)`.
 4. Config assertion (§2.5). Mismatch → `unknown(config-drift)` with the diff.
-5. No required pairs → `none-required` (steps 2 and 3 succeeded: proven, not inferred).
-6. `api --paginate --slurp repos/{r}/commits/{expectedHead}/check-runs?per_page=100` → schema per run; every page's
-   `total_count` equal and the sum of `check_runs` lengths equal to it, else `unknown(incomplete-pagination)`; every run's
+5. No required pairs → candidate tag `none-required` (steps 2 and 3 succeeded: proven, not inferred); go to step 9.
+6. `api repos/{r}/commits/{expectedHead}/check-runs?per_page=100` → ONE page, schema per run. Completeness by
+   construction: `check_runs.length === total_count`, else `unknown(too-many-results)` (more than one page is not observed,
+   so no page can shift under another, R1-H4); run `id`s unique, else `unknown(malformed)`; every run's
    `head_sha === expectedHead`, else `unknown(malformed)`.
-7. Per required pair: candidates = runs with `name === context && app.id === integration_id`.
+7. `api repos/{r}/commits/{expectedHead}/statuses?per_page=100` → ONE page, schema per status; a full page (100) is
+   `unknown(too-many-results)`. **Any status whose `context` is a required context → `unknown(status-context-present)`**: a
+   status carries no app id the oracle can compare with the pin, and GitHub's rule for a same-name status beside a pinned
+   check run is not fixture-proven, so identity cannot be established (R1-H3). Statuses with other contexts are ignored.
+8. Per required pair: candidates = runs with `name === context && app.id === integration_id`.
    - none → `missing` (same-name runs from other apps → `wrongApp`);
    - any candidate not `completed` → `pending` (a re-run in flight);
    - all completed → classify each conclusion; one class → that class; two or more classes →
      `unknown(duplicate-conflict)` (M11); an unrecognised conclusion string → `unknown(unknown-conclusion)`.
-8. Re-read step 1. Head no longer `expectedHead` → `ineligible head-moved`. Any other change → the new `ineligible` code.
+9. **Final re-read, for every tag that could permit and every CI tag** (`none-required` included, R1-H2): repeat step 1.
+   Head no longer `expectedHead` → `ineligible head-moved`; any other eligibility change → the new `ineligible` code;
+   a malformed or failed read → `unknown`. Only after this step is a tag returned.
 
-Commit statuses (the legacy status API) are not read: every measured requirement pins app 15368, which only check runs can
-satisfy, and a status can never satisfy a pinned requirement. An unpinned requirement is unsupported (step 3).
+An unpinned requirement is unsupported (step 3), so the only source that can satisfy a supported requirement is a check run
+from the pinned app; statuses are read only to detect a same-context collision, never to satisfy one.
 
 ### 2.2 Disposition: one fixed table
 
@@ -209,22 +217,41 @@ runnable. Now no plan is emitted until every PR is `permit`. The cost is re-runn
 
 ### 2.3 The merge site
 
-**Invariant: no `gh pr merge` is reachable without a `permit` from `decideCiAdmission` on evidence whose `head` equals the
-`--match-head-commit` argument, assessed in the same pass immediately before the merge.**
+**Invariant: no fleet-executed `gh pr merge` happens without a `permit` from `decideCiAdmission` on evidence whose `head`
+equals the `--match-head-commit` argument, assessed immediately before the merge.** Fleet executes merges in exactly two
+places, both in `serial.mjs` (plain and policy). Both go through ONE function (R1-H5):
 
-- Plain serial: after the wait loop permits and the PR is re-read, call `assessRequiredCi` once more with
-  `expectedHead = h`; only `permit` proceeds; `retry` → `AGAIN`; anything else → the table above.
-- Policy serial (`policyMerge`): the same call after the existing final re-read and before the `merge` intent is written; a
-  resume therefore re-assesses (stale green on resume is re-asked, never replayed).
-- `--match-head-commit` takes `evidence.head` (the freshly observed head), never a recorded one.
+```js
+mergeWithCiPermit({ cwd, deps, s, h, configAssertion, mergeArgs }) →
+  { merged: true, evidence, m } | { merged: false, evidence, decision }
+```
+
+It calls `assessRequiredCi({..., expectedHead: h})`, calls `decideCiAdmission`, and only on `permit` builds the argv with
+`--match-head-commit evidence.head` and calls `deps.gh`. The caller passes the squash subject and body only; it cannot pass a
+head. Callers act on `{merged:false}` per the table in §2.2 (`retry` → `AGAIN` for plain serial, `bump` for policy). Its
+tests drive it directly with adversarial evidence (each non-permitting tag, a head that moves between assessment and argv) and
+assert no `gh pr merge` call; the census (§9) only asserts that no other `'pr', 'merge'` call exists under
+`scripts/lib/fleet/**`, so it is a discovery guard, not the proof.
+
+- Plain serial: after the wait loop permits and the PR is re-read, `mergeWithCiPermit` re-assesses; only `permit` merges.
+- Policy serial (`policyMerge`): the same call after the existing final re-read. The `merge` intent is written by a
+  `beforeMerge(evidence)` callback that `mergeWithCiPermit` runs only after `permit` and before `deps.gh`, so the intent's
+  `attempt.head` is `evidence.head` and no intent exists for a merge that was not permitted. A resume therefore re-assesses
+  (stale green on resume is re-asked, never replayed).
+- **`land approve` (pr mode) is not a fleet merge site, and the plan says so.** It prints merge commands a human runs later,
+  so its evidence is point-in-time: nothing fleet can do makes a later human command re-assess. Approve therefore (a) emits a
+  plan only when every PR is `permit` (§2.2), (b) prints above the commands that the CI evidence is as of the approve time and
+  that `fleet land --approve <t> --serial` is the executor that re-assesses before each merge, and (c) the landing docs state
+  that a human-run merge is gated by GitHub's own ruleset alone, which counts a SKIPPED required check as satisfied
+  (wine-cellar-app #802), so `--serial` is the safe path (R1-H1).
 - Head pinning freezes the CONTENT, not the POLICY: a ruleset change between assessment and merge is not caught by the pin.
   The merge-site re-assessment narrows that window to the gap between two API calls; it does not close it, and the docs say so.
 - The tested-tree and provenance checks (`treeIdentity`, the base chain, `baseRefOid`) stay where they are and separate.
 - `readRules` (`serial.mjs:251`, merge-queue detection) moves onto the adapter's paginated rules read, so the base's rules are
   read one way.
 
-Enforced by a source census test (§9): the set of `'pr', 'merge'` call sites under `scripts/lib/fleet/**` is pinned, and each
-is preceded in its function by an `assessRequiredCi` call; a new merge site fails the test until wired.
+Discovery guard (§9): a source census asserts that `mergeWithCiPermit` holds the only `'pr', 'merge'` call under
+`scripts/lib/fleet/**`; a new merge site fails the census until it is routed through the function.
 
 ### 2.4 The adapter and the fault enum
 
@@ -238,12 +265,15 @@ is preceded in its function by an `assessRequiredCi` call; a new merge site fail
 - Decode: `JSON.parse` failure → `malformed`.
 - Validate: zod 4 `z.object` over the DECISION fields only; unrelated extra keys tolerated (no `.strict()`, deliberately:
   GitHub adds fields). Failure → `malformed`, with the zod issue path.
-- Pagination: `--paginate --slurp`, completeness checked as in §2.1 step 6. A `gh` too old for `--slurp` exits non-zero →
-  `transport` (fail closed, never a single page).
+- Pagination: **no multi-page observation.** Check runs and statuses are one `per_page=100` page whose completeness is proven
+  on that page (§2.1 steps 6-7). Rules are read with `--paginate --slurp` and must come back as exactly ONE page (M8 shows
+  `--slurp` returns one array per page); two or more pages → `too-many-results`. A `gh` too old for `--slurp` exits non-zero →
+  `transport`. Measured sizes: a PR head carries 2 check runs in CES (M10), the busiest measured commit 31 (M11, a main tip
+  with scheduled workflows); rules number 1-4 (M4). A repo past those limits stops loudly and names the limit.
 
-`CI_FAULT_KINDS` (closed): `transport`, `malformed`, `incomplete-pagination`, `unsupported-classic-protection`,
-`unsupported-unpinned-requirement`, `config-error`, `config-drift`, `duplicate-conflict`, `unknown-conclusion`,
-`unexpected-tag`, `unimplemented-oracle` (PR 1 only, §3).
+`CI_FAULT_KINDS` (closed): `transport`, `malformed`, `too-many-results`, `unsupported-classic-protection`,
+`unsupported-unpinned-requirement`, `status-context-present`, `config-error`, `config-drift`, `duplicate-conflict`,
+`unknown-conclusion`, `unexpected-tag`, `unimplemented-oracle` (PR 1 only, §2.7).
 
 **Malformed decision data stops the RUN, never one member** (`unknown` → `stop-run`). A malformed answer says something about
 the tooling or GitHub, not about the member.
@@ -262,6 +292,20 @@ GitHub defines what is required. Config never substitutes for an unreadable inve
 **CES's `.fleet.json` gains `"requiredChecks": ["full-suite"]`** (decision 6). If `main`'s ruleset ever stops requiring
 `full-suite`, every CES landing stops with `config-drift` instead of proceeding on `none-required`. The tier caveat of
 `docs/plans/ship-batch-member-outcomes.md` (the required check must BE the full run) is unchanged and still stated there.
+
+### 2.5b The build boundary (ship-batch and rollup, R1-M2)
+
+Both builds already run admission before any mutation: `buildShipBatch` partitions members (`partitionMembers`,
+`ship-batch.mjs:219`) before it calls `buildFn` (the integration worktree, the tiers and the train record), and the rollup build
+partitions before it builds its candidate. The contract made explicit:
+
+1. Every listed member is assessed first, in a read-only pass; nothing is written during it.
+2. Any member's `stop-run` ends the build at once with `refused` naming the fault; `buildFn` is never called, so no
+   integration worktree, candidate branch, train record or rollup PR exists for this attempt.
+3. Otherwise `refuse-member` and `retry` members are `needs-user`; if none is admitted the build is refused as today
+   ("nothing to build"); else `buildFn` runs over the admitted members.
+4. Artifacts from an EARLIER attempt (an old train, a stale integration worktree) are untouched by a refused build: the
+   existing build code owns their lifecycle and this plan does not change it.
 
 ### 2.6 Execution model
 
@@ -335,7 +379,8 @@ turn, targeting #395's branch until #395 merges, then `main`.
 - `scripts/lib/fleet/train-approve.mjs` (modify, PR 2) — `verifyPrsForPlan` uses the oracle; `retry` and `stop-run` refuse
   the approve; its own state/draft/base/head checks are removed (the oracle's `ineligible` owns them); the `baseRefOid`
   provenance check stays.
-- `scripts/lib/fleet/serial.mjs` (modify, PR 2) — wait loop and both merge sites per §2.3; `readRules` via the adapter;
+- `scripts/lib/fleet/serial.mjs` (modify, PR 2) — `mergeWithCiPermit` (new, the only fleet merge call); the wait loop and
+  both merge sites per §2.3; `readRules` via the adapter;
   `requiredChecks`/`requiredChecksError` become the `configAssertion` argument.
 - `scripts/lib/fleet/config.mjs` (modify, PR 2) — the `requiredChecks` comment `:109` states the new meaning (§2.5).
 - `.fleet.json` (modify, PR 2) — `"requiredChecks": ["full-suite"]`.
@@ -375,7 +420,8 @@ recorded fixtures. Files: scripts/lib/fleet/github-ci-facts.mjs (create), tests/
 (create), tests/fixtures/fleet/github-ci/ces-rules-main.json (create), tests/fixtures/fleet/github-ci/wca-rules-main.json
 (create), tests/fixtures/fleet/github-ci/aio-branch-main.json (create), tests/fixtures/fleet/github-ci/wca-rules-paged.json
 (create), tests/fixtures/fleet/github-ci/wca-check-runs-paged.json (create), tests/fixtures/fleet/github-ci/ces-check-runs-395.json
-(create), tests/fixtures/fleet/github-ci/wca-check-runs-duplicate.json (create), tests/fleet-github-ci-facts.test.mjs (create).
+(create), tests/fixtures/fleet/github-ci/wca-check-runs-duplicate.json (create), tests/fixtures/fleet/github-ci/ces-statuses-395.json
+(create), tests/fleet-github-ci-facts.test.mjs (create).
 
 **Phase 3 — the evidence function**: `assessRequiredCi` per §2.1, the config assertion per §2.5, old exports deleted only
 after Phase 4 removes their callers (Phase 3 adds; Phase 4 deletes). Files: scripts/lib/fleet/required-checks.mjs (modify),
@@ -409,6 +455,11 @@ enters the consumer closure) + `npm run bundle:deps:check`, `npm run guards:pref
   it and is a GitHub setting; already tracked as proposal `p-20261118092842`.
 - **More API calls per member** (two assessments of five to seven reads): ~14 calls per member, well inside the 5000/h limit
   for batches of tens.
+- **One-page limits** (§2.4): a head with more than 100 check runs or statuses, or a branch with more than 100 applicable
+  rules, stops with `too-many-results`. Measured maxima are 31 and 4. Chosen over a multi-page stability protocol because a
+  single page is complete by construction; a repo that hits the limit is told so.
+- **A same-context commit status stops the run** (§2.1 step 7): a repo that posts a status AND a check run under the
+  required name cannot use fleet landing until the names differ. No measured repo does.
 - **Golden regeneration** could hide an unrelated drift: the regeneration diff is reviewed scenario by scenario and only
   CI-read scenarios may change (Phase 4 records the list).
 - **Deferred**: `scripts/lib/ci-merge.mjs` counts SKIPPED/NEUTRAL as pass (finding, out of scope: /ship's tool, not fleet).
@@ -423,21 +474,33 @@ enters the consumer closure) + `npm run bundle:deps:check`, `npm run guards:pref
   iterates `CI_EVIDENCE_TAGS` and asserts exactly one disposition each, that only `passed`/`none-required` permit, and that an
   unlisted tag returns `stop-run`.
 - **Integration, decision 9** (`tests/fleet-ci-admission.test.mjs`): a scenario describes GitHub (branch, rules pages, check
-  runs, PR views over time); the fake `gh` answers BOTH the `90c60bf2` read shapes (`pr checks --json`, unpaginated rules) and
-  the new ones from the same scenario, so every row runs against both seams. Entry points: `approveTrain`, `approveSerial`,
-  `approveShipBatch`, `resumeShipBatch`, `approveRollup`. For every non-permitting row: the exact disposition, **zero `pr
-  merge` calls**, and for approve no plan. Positive controls: CES-shaped ruleset pass and AIO proven-empty both PERMIT and
-  merge once, so an always-refuse implementation fails.
+  runs, statuses, PR views over time). Entry points: `approveTrain`, `approveSerial`, `buildShipBatch`, `approveShipBatch`,
+  `resumeShipBatch`, the rollup build and `approveRollup`. Two assertion layers, kept apart (R1-M1):
+  - **Candidate assertions** (always): for every non-permitting row, the exact disposition (read from the entry point's
+    result: approve's refusal fault, the serial fault code, the member outcome code, the build's refused reason), **zero `pr
+    merge` calls**, and for approve no plan and no `awaiting-merge` phase; for build rows, no train record and no
+    integration worktree (§2.5b). Positive controls: the CES-shaped ruleset pass and the AIO proven-empty scenario both
+    PERMIT and merge exactly once, so an always-refuse implementation fails.
+  - **Baseline characterisation** (rows marked `baselineDefect: true`): the same scenario runs against `90c60bf2`'s code in a
+    pinned worktree (`git worktree add <tmp> 90c60bf2`, then the test file, fixtures and fake copied in and run with
+    `CI_ADMISSION_BASELINE=1`). Under that flag the test asserts observable effects only, in the old vocabulary: a `pr
+    merge` call count above zero, or approve returning a plan. The fake answers the old read shapes (`pr checks --json`,
+    unpaginated rules) from the same scenario. Rows marked `baselineDefect: false` are candidate-only regression controls.
+    The baseline run is a proof step recorded in the Implementation Log, not part of `npm test` (the pinned code is not on
+    the branch).
 
   Rows: classic-only (enabled) · ruleset-only · mixed (ruleset + classic enabled) · proven-empty · ambiguous 404 (rules `[]`
   + branch 404, M5) · 403 on rules · config drift (`["full-suite"]` vs ruleset `["full-suite","lint"]`) · incomplete
-  pagination (required check on page 2; `total_count` short) · `isDraft` missing · skipped · neutral · wrong app (same name,
-  app 999) · duplicate runs (success + failure, M11) · head moved mid-observation · stale green on resume (green at assessment
-  1, failed at the merge-site re-assessment).
+  results (required check absent from a page whose `total_count` exceeds its length; rules on two pages) · duplicate run id ·
+  `isDraft` missing · skipped · neutral · wrong app (same name, app 999) · same-context status beside a passing pinned run ·
+  duplicate runs (success + failure, M11) · head moved mid-observation · eligibility changed during the branch/rules reads on
+  the proven-empty path (draft, retargeted, head) · stale green on resume (green at assessment 1, failed at the merge-site
+  re-assessment) · build with the third of three members `unknown`.
 
-- **Census** (`tests/fleet-merge-site-census.test.mjs`): every `'pr', 'merge'` site under `scripts/lib/fleet/**` is in the
-  pinned list and preceded in its function by `assessRequiredCi`; a planted merge call in a temp copy fails it (negative
-  control).
+- **`mergeWithCiPermit` unit** (in `tests/fleet-ci-admission.test.mjs`): each non-permitting tag → no `gh pr merge` call and
+  no `beforeMerge` call; `permit` → exactly one call whose `--match-head-commit` is `evidence.head`.
+- **Census** (`tests/fleet-merge-site-census.test.mjs`): `mergeWithCiPermit` holds the only `'pr', 'merge'` call under
+  `scripts/lib/fleet/**`; a planted merge call in a temp copy fails it (negative control). Discovery only, not the proof.
 - **Regression**: golden 20/20 (regenerated per §8), `fleet-serial`, `ship-train-recovery`, `fleet-land-ship-batch`,
   `fleet-rollup`, `fleet-cli-approve`, all fleet + ship-record suites.
 
@@ -448,7 +511,8 @@ enters the consumer closure) + `npm run bundle:deps:check`, `npm run guards:pref
 | No merge on unknown/missing/pending/failed evidence, in all four callers | `tests/fleet-ci-admission.test.mjs` rows run against `90c60bf2` and against the head | every row that is fail-open at `90c60bf2` is red there (a merge call or a plan) and green at the head; every row asserts zero merges | per-row table: red@90c60bf2 / green@head, merge-call counts, test count |
 | The oracle permits what it should | the two positive controls | both permit and merge exactly once at head | the same table |
 | Facts come only from proven signals | recorded fixtures M1-M12 | adapter tests pass on the recordings; each mutation yields its named fault | fixture provenance lines (repo, endpoint, date) |
-| Every merge site is gated | census test + its planted negative control | census green at head; planted site red | census output |
+| Every fleet merge is gated | `mergeWithCiPermit` unit rows + the census with its planted negative control | no merge call for any non-permit; `--match-head-commit` equals `evidence.head`; census green at head, planted site red | unit row counts + census output |
+| `none-required` re-validates eligibility | the proven-empty eligibility-change rows | each change yields `ineligible`, zero merges | the same table |
 | PR 1 cannot merge in production | the stub row in `fleet-land-ship-batch` / `fleet-rollup` | default deps: run-scope stop, zero merges | test names + counts |
 
 ## 11. Execution Clustering
