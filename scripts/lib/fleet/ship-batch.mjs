@@ -27,7 +27,7 @@ import { AI_TRAILER_KEYS, parseMessageTrailers } from '../commit-trailers.mjs';
 import { OID_RE } from './contracts.mjs';
 import { assertManaged, fleetDir, readTrain } from './registry.mjs';
 import { buildStatusFrom, gatherFacts, payloadFromStatus } from './facts.mjs';
-import { describeVerdict, observeRequiredChecks, requiredInventory } from './required-checks.mjs';
+import { decideCiAdmission, describeEvidence, unimplementedOracle } from './required-checks.mjs';
 import { readShipBatchGrant, GRANT_VERSION } from './coordinator-grant.mjs';
 import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
 import { summariseRun } from './member-outcome.mjs';
@@ -145,48 +145,46 @@ export function listReadyMembers(ctx) {
 }
 
 /**
- * C8 and C9 for one member, from GitHub: the PR is open, not a draft, and its head is the member's oid (C9); every REQUIRED check of the
- * base branch is green at exactly that head (C8). There is no separate full-suite verdict here: the required check IS the CI gate, and
- * whether it is the FULL run is the repository's own ruleset (docs/plans/ship-batch-member-outcomes.md, "CI: required checks only").
- * @returns {string[]} reasons it is not shippable (empty = green)
+ * C8 and C9 for one member from GitHub, as a DISPOSITION. The evidence comes from ONE oracle (`deps.assessCi`, default the PR-1 stub
+ * that establishes nothing, so a production run stops) and the disposition from ONE table (`decideCiAdmission`); nothing here reads
+ * a reason string (docs/plans/ci-evidence-oracle.md §2.2). The member's identity (open, not a draft, the base, the head) is part of
+ * the evidence (`ineligible`), not a second read here.
+ * @returns {{disposition: string, tag: string, fault?: object, code?: string, reason: string, evidence: object}}
  */
-export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, requiredChecksError = null }) {
-  const out = [];
-  const v = deps.gh(['pr', 'view', String(member.prNumber), '-R', member.repo, '--json', 'state,isDraft,headRefOid,baseRefName'], cwd);
-  let doc = null;
-  if (v.ok) { try { doc = JSON.parse(v.stdout); } catch { doc = null; } }
-  if (!doc) return [`identity: PR #${member.prNumber} cannot be read (${v.reason ?? 'unparseable'})`];
-  if (String(doc.state).toUpperCase() !== 'OPEN') out.push(`identity: PR #${member.prNumber} is ${doc.state}, not OPEN`);
-  if (doc.isDraft === true) out.push(`identity: PR #${member.prNumber} is a draft`);
-  if (doc.baseRefName !== base) out.push(`identity: PR #${member.prNumber} targets ${doc.baseRefName}, not ${base}`);
-  if (doc.headRefOid !== member.oid) out.push(`identity: PR #${member.prNumber} head ${short(doc.headRefOid)} is not the ready oid ${short(member.oid)}`);
-  if (out.length) return out;
-  const inv = requiredInventory(cwd, { repo: member.repo, base, configured: requiredChecks, configError: requiredChecksError, gh: deps.gh });
-  const rc = observeRequiredChecks(cwd, { pr: member.prNumber, repo: member.repo, inventory: inv, expectHead: member.oid, gh: deps.gh });
-  // A required-check INVENTORY that cannot be established (a config error, an unreadable ruleset) is a persistent problem the member cannot
-  // fix by retrying: it refuses. A required check that could not be OBSERVED right now (a failed read) stays an unmeasured fact (not-run).
-  // `cause` splits the two: a config problem (or nothing declared) is the MEMBER's persistent refusal; a ruleset GitHub would not answer
-  // is a failed read that says nothing about this member, so admitMember maps it to the run-scope `checks-inventory-unknown` stop.
-  if (inv.source === 'unknown' && inv.cause === 'unreadable') out.push(`ci: the required-check inventory cannot be read (${inv.reason ?? 'no reason'})`);
-  else if (inv.source === 'unknown') out.push(`ci: the required-check inventory is unknown (${inv.reason ?? 'no reason'})`);
-  else if (rc.verdict === 'none-required') out.push(`ci: no required checks are configured on ${base}, so nothing measured CI at this head`);
-  else if (rc.verdict !== 'pass') out.push(`ci: required checks ${describeVerdict(rc)}`);
-  return out;
+export function ciDecisionFor({ cwd, member, head, base, deps, requiredChecks, requiredChecksError = null }) {
+  const oracle = deps.assessCi ?? unimplementedOracle;
+  let evidence;
+  try {
+    evidence = oracle({ repo: member.repo, prNumber: member.prNumber, expectedBase: base, expectedHead: head, configAssertion: { requiredChecks, error: requiredChecksError } }, { ...deps, cwd });
+  } catch (e) { evidence = { tag: 'unknown', fault: { kind: 'unexpected-tag', detail: `the CI oracle threw: ${String(e?.message ?? e).slice(0, 300)}` } }; }
+  const d = decideCiAdmission(evidence);
+  return { ...d, reason: `PR #${member.prNumber}: ${describeEvidence(evidence, d)}`, evidence };
 }
 
 // ---- admission: ONE predicate for the build and the merge, by mode (R1-F6, R1-H5) -------------------------------------------
 
+/** The decision `ciDecisionFor` produced, carried in the candidate so admission is a pure function of it. */
+const CiDecision = z.looseObject({ disposition: z.enum(['permit', 'refuse-member', 'retry', 'stop-run']), tag: z.string(), reason: z.string() });
+
 /** The head-bound evidence of each admission mode, strict, so evidence cannot be borrowed across modes (§2.3). */
 const CandidateSchemas = {
-  'ship-batch': z.strictObject({ mode: z.literal('ship-batch'), head: Oid, child: z.any(), identityAndCi: z.array(z.string()) }),
+  'ship-batch': z.strictObject({ mode: z.literal('ship-batch'), head: Oid, child: z.any(), ci: CiDecision.nullable() }),
   rollup: z.strictObject({ mode: z.literal('rollup'), head: Oid, child: z.any(), branchTip: Oid.nullable() }),
 };
+
+/** A CI decision as an admission result: permit, a member refusal, a retryable not-run, or a RUN-scope stop. Pure; the table is `decideCiAdmission`. */
+export function ciAdmission(ci) {
+  if (!ci) throw new Error('a ship-batch candidate whose child passed carries a CI decision');
+  if (ci.disposition === 'permit') return { ok: true };
+  const kind = { 'refuse-member': 'ci-refused', retry: 'ci-retry' }[ci.disposition] ?? 'ci-evidence-unknown';
+  return { ok: false, kind, reasons: [ci.reason] };
+}
 
 /**
  * `admitMember(mode, invariant, candidate)`. Both inputs are gathered by the caller AT the head being judged:
  *  - `invariant`: fixed for the batch: `{base, remote}`;
- *  - `candidate`: `{mode, head, child, ...}` bound to that head (`identityAndCi` for a ship-batch member, `branchTip` for a rollup member).
- * @returns {{ok: true} | {ok: false, kind: 'shipped-head-refused'|'ci-refused'|'pr-unreadable'|'checks-inventory-unknown', reasons: string[]}}
+ *  - `candidate`: `{mode, head, child, ...}` bound to that head (`ci`, the CI decision, for a ship-batch member; `branchTip` for a rollup member).
+ * @returns {{ok: true} | {ok: false, kind: 'shipped-head-refused'|'ci-refused'|'ci-retry'|'ci-evidence-unknown', reasons: string[]}}
  */
 export function admitMember(mode, invariant, candidate) {
   const schema = CandidateSchemas[mode];
@@ -194,12 +192,7 @@ export function admitMember(mode, invariant, candidate) {
   const c = schema.parse(candidate);
   if (!invariant?.base || !invariant?.remote) throw new Error('admission needs the invariant base and remote');
   if (!c.child.ok) return { ok: false, kind: 'shipped-head-refused', reasons: c.child.reasons };
-  if (mode === 'ship-batch') {
-    // A PR that could not be READ is an unmeasured fact (not-run), never a measured refusal (F4): it is retried, not refused.
-    if (c.identityAndCi.some((r) => /^ci: the required-check inventory cannot be read/.test(r))) return { ok: false, kind: 'checks-inventory-unknown', reasons: c.identityAndCi };
-    if (c.identityAndCi.some((r) => /^identity: PR #\d+ cannot be read|^ci: required checks .*\bunknown\b/.test(r))) return { ok: false, kind: 'pr-unreadable', reasons: c.identityAndCi };
-    return c.identityAndCi.length ? { ok: false, kind: 'ci-refused', reasons: c.identityAndCi } : { ok: true };
-  }
+  if (mode === 'ship-batch') return ciAdmission(c.ci);
   return c.branchTip === c.head ? { ok: true } : { ok: false, kind: 'shipped-head-refused', reasons: [`branch-moved: the remote branch is ${short(c.branchTip)}, not the admitted head ${short(c.head)}`] };
 }
 
@@ -207,14 +200,16 @@ export function admitMember(mode, invariant, candidate) {
 export function admitShipBatchMember({ cwd, member, head, base, remote, deps, requiredChecks, requiredChecksError }) {
   const checkChild = deps.shipBatch?.checkChild ?? runShippedHeadChild;
   const child = checkChild({ worktree: member.worktree, head, base, remote });
-  const identityAndCi = child.ok ? ciAndIdentityReasons({ cwd, member: { ...member, oid: head }, base, deps, requiredChecks, requiredChecksError }) : [];
-  return admitMember('ship-batch', { base, remote }, { mode: 'ship-batch', head, child, identityAndCi });
+  const ci = child.ok ? ciDecisionFor({ cwd, member, head, base, deps, requiredChecks, requiredChecksError }) : null;
+  return admitMember('ship-batch', { base, remote }, { mode: 'ship-batch', head, child, ci });
 }
 
 /**
  * Partition the ready members into admitted and needs-user. A member that is not a PR, is stacked or retargeted, or fails any
  * condition is needs-user with every reason; nothing here throws.
- * @returns {{ok: Array<object>, needsUser: Array<{id: string, prNumber: number|null, reasons: string[]}>}}
+ * A RUN-scope stop (`ci-evidence-unknown`: the CI evidence could not be established) ends the partition at once and returns `stop`: it says
+ * something about the tooling or GitHub, not about a member, so nothing is built on it (docs/plans/ci-evidence-oracle.md §2.5b).
+ * @returns {{ok: Array<object>, needsUser: Array<{id: string, prNumber: number|null, reasons: string[]}>, stop?: {id: string, reason: string}}}
  */
 export function partitionMembers({ cwd, members, base, remote = null, deps, requiredChecks, requiredChecksError }) {
   const ok = [];
@@ -226,6 +221,7 @@ export function partitionMembers({ cwd, members, base, remote = null, deps, requ
     if (!m.oid) reasons.push('no ready oid recorded');
     if (reasons.length === 0) {
       const a = admitShipBatchMember({ cwd, member: m, head: m.oid, base, remote, deps, requiredChecks, requiredChecksError });
+      if (!a.ok && a.kind === 'ci-evidence-unknown') return { ok: [], needsUser: [], stop: { id: m.id, reason: a.reasons.join('; ') } };
       if (!a.ok) reasons.push(...a.reasons);
     }
     if (reasons.length) needsUser.push({ id: m.id, prNumber: m.prNumber ?? null, reasons });
@@ -264,7 +260,9 @@ export function buildShipBatch(ctx, flags, deps, buildFn, { parseSelect }) {
   const base = ctx.config.baseBranch;
   let rc = {};
   try { rc = { requiredChecks: ctx.config.requiredChecks }; } catch (e) { rc = { requiredChecksError: e.message }; }
-  const { ok, needsUser } = partitionMembers({ cwd, members, base, remote: TRAIN_REMOTE, deps, ...rc });
+  const { ok, needsUser, stop } = partitionMembers({ cwd, members, base, remote: TRAIN_REMOTE, deps, ...rc });
+  if (stop) return refusedResult(`ci-evidence-unknown: ${stop.reason}`, `REFUSED: the CI evidence could not be established (member ${stop.id}): ${stop.reason}
+Nothing was built, merged or changed: this stops the run, it is not a refusal of one member.`);
   const needsText = needsUser.map((n) => `  needs-user  ${n.id}${n.prNumber ? ` (PR #${n.prNumber})` : ''}: ${n.reasons.join('; ')}`);
   if (!ok.length) {
     return { ok: false, code: 'refused', reason: 'no member is ship-ok', needsUser, text: `REFUSED: no member is ship-ok — nothing was built, merged or changed\n${needsText.join('\n')}\nEach waits for the user to type /ship in its own session.` };

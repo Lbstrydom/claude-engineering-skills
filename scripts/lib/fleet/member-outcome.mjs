@@ -103,6 +103,8 @@ export const FAULTS = Object.freeze({
   'merge-unconfirmed': { scope: 'run', status: 'not-run', code: 'merge-unconfirmed' },
   'shipped-head-refused': { scope: 'member', status: 'refused', code: 'shipped-head-refused' },
   'ci-refused': { scope: 'member', status: 'refused', code: 'ci-refused' },
+  'ci-retry': { scope: 'member', status: 'not-run', code: 'checks-pending' },
+  'ci-evidence-unknown': { scope: 'run' },
   'message-invalid': { scope: 'member', status: 'refused', code: 'message-invalid' },
   'message-unreadable': { scope: 'member', status: 'not-run', code: 'message-unreadable' },
   'member-refused': { scope: 'run' },

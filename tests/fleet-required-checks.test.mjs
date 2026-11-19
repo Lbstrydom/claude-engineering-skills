@@ -13,6 +13,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { git } from './helpers/git.mjs';
 import {
+  CI_DISPOSITIONS, CI_EVIDENCE_TAGS, CI_FAULT_KINDS, CI_INELIGIBLE_CODES, decideCiAdmission, describeEvidence, unimplementedOracle,
   describeVerdict, observeRequiredChecks, parseBranchProtection, parseChecksJson, parseRulesInventory, requiredChecksVerdict, requiredInventory,
 } from '../scripts/lib/fleet/required-checks.mjs';
 import { prWarnings, summariseChecks } from '../scripts/lib/fleet/gh-facts.mjs';
@@ -187,5 +188,54 @@ describe('pr-mode approve — the gate on a real train', () => {
     const ok = s2.f(['land', '--approve', s2.trainId, '--json']);
     assert.equal(ok.status, 0);
     assert.equal(ok.json.plan[0].wait, undefined);
+  });
+});
+
+// ---- the CI-evidence contract: tags, fault kinds and the ONE disposition table (docs/plans/ci-evidence-oracle.md §2.2) -------------
+
+describe('decideCiAdmission — one fixed table over a closed tag set', () => {
+  const sample = (tag) => ({ tag, code: tag === 'ineligible' ? 'draft' : undefined, fault: tag === 'unknown' ? { kind: 'transport', detail: 'x' } : undefined });
+  const EXPECT = { passed: 'permit', 'none-required': 'permit', failed: 'refuse-member', 'not-run': 'refuse-member', missing: 'retry', pending: 'retry', ineligible: 'refuse-member', unknown: 'stop-run' };
+
+  it('covers EVERY tag exactly once, and the expectation table names no tag the contract lacks', () => {
+    assert.deepEqual(Object.keys(EXPECT).sort(), [...CI_EVIDENCE_TAGS].sort());
+    for (const tag of CI_EVIDENCE_TAGS) assert.equal(decideCiAdmission(sample(tag)).disposition, EXPECT[tag], tag);
+    assert.equal(new Set(CI_EVIDENCE_TAGS).size, CI_EVIDENCE_TAGS.length);
+  });
+  it('permit is a positive allowlist: only passed and none-required permit, whatever else the evidence carries', () => {
+    const permitting = CI_EVIDENCE_TAGS.filter((t) => decideCiAdmission(sample(t)).disposition === 'permit');
+    assert.deepEqual(permitting.sort(), ['none-required', 'passed']);
+    for (const bad of [undefined, null, {}, 'passed', 42, { tag: 'PASSED' }, { tag: 'green' }, { tag: '' }, { disposition: 'permit' }, { tag: 'passed-ish' }]) {
+      const d = decideCiAdmission(bad);
+      assert.equal(d.disposition, 'stop-run', JSON.stringify(bad));
+      assert.equal(d.fault.kind, 'unexpected-tag');
+    }
+  });
+  it('ineligible: head-moved retries, every other recognised code refuses the member, an unrecognised code stops the run', () => {
+    for (const code of CI_INELIGIBLE_CODES) assert.equal(decideCiAdmission({ tag: 'ineligible', code }).disposition, code === 'head-moved' ? 'retry' : 'refuse-member', code);
+    assert.equal(decideCiAdmission({ tag: 'ineligible', code: 'surprise' }).disposition, 'stop-run');
+    assert.equal(decideCiAdmission({ tag: 'ineligible' }).disposition, 'stop-run');
+  });
+  it('unknown is always a run stop and keeps a recognised fault kind; an unrecognised kind becomes unexpected-tag, never a pass', () => {
+    for (const kind of CI_FAULT_KINDS) {
+      const d = decideCiAdmission({ tag: 'unknown', fault: { kind, detail: 'd' } });
+      assert.deepEqual([d.disposition, d.fault.kind], ['stop-run', kind]);
+    }
+    assert.equal(decideCiAdmission({ tag: 'unknown', fault: { kind: 'made-up' } }).fault.kind, 'unexpected-tag');
+    assert.equal(decideCiAdmission({ tag: 'unknown' }).disposition, 'stop-run');
+  });
+  it('the dispositions it can return are exactly the closed set', () => {
+    const seen = new Set([...CI_EVIDENCE_TAGS.map((t) => decideCiAdmission(sample(t)).disposition), decideCiAdmission(null).disposition]);
+    assert.deepEqual([...seen].sort(), [...CI_DISPOSITIONS].sort());
+  });
+  it('the PR-1 stub oracle establishes nothing: unknown(unimplemented-oracle), so it never permits', () => {
+    const e = unimplementedOracle();
+    assert.deepEqual([e.tag, e.fault.kind], ['unknown', 'unimplemented-oracle']);
+    assert.equal(decideCiAdmission(e).disposition, 'stop-run');
+  });
+  it('describeEvidence never returns an empty line and names the fault of an unknown', () => {
+    for (const tag of CI_EVIDENCE_TAGS) assert.ok(describeEvidence(sample(tag)).length > 10, tag);
+    assert.match(describeEvidence({ tag: 'unknown', fault: { kind: 'config-drift', detail: 'a vs b' } }), /config-drift: a vs b/);
+    assert.match(describeEvidence({ tag: 'failed', names: { failed: ['ci', 'lint'] } }), /failed: ci, lint/);
   });
 });

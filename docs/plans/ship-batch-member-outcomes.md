@@ -1213,3 +1213,7 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
 - **FAIL-OPEN (flagged)**: H1/H2 `requiredInventory` takes a configured `requiredChecks` list as COMPLETE when a GitHub inventory read fails (pre-existing, shared with `land approve`); a stale config can omit a newly required check. H3/M2 the `gh pr view` JSON is not schema-validated: an absent or non-boolean `isDraft` passes the draft check (gh always sends a boolean; narrow).
 - **Fail-closed**: M1/M3 admission classifies fault kind by matching reason text (a reword can turn a refusal into a retryable not-run, never into a merge); fix by returning a structured `kind` from `ciAndIdentityReasons`.
 - Gemini: `tests/fleet-land-ship-batch.test.mjs` change not located by the diff measurement (a measurement gap, not a finding).
+
+### CI seam superseded (2026-11-19): docs/plans/ci-evidence-oracle.md
+
+- The residuals above (H1/H2 config-as-complete, H3/M2 unvalidated `isDraft`, M1/M3 reason-text classification) and the four rounds that preceded them were one structural defect: no single oracle for CI evidence. They are **moved to** `docs/plans/ci-evidence-oracle.md`. PR 1 of that plan replaces `ciAndIdentityReasons` and the regex classification in `admitMember` with `deps.assessCi` + `decideCiAdmission` (a stub oracle, so ship-batch and rollup cannot merge); PR 2 implements the oracle. The CI sections above describe the superseded design and are kept as history.

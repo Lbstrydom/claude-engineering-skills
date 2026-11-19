@@ -8,6 +8,7 @@
  * objects. Cases a happy path would never find: the grant revoked between build and merge, a foreign commit on the base, a
  * merge GitHub accepted whose recording was lost, a read-back that cannot finish, and a squash that lost its trailers.
  */
+import { ev, oracleOf } from './helpers/fleet-ci-evidence-fx.mjs';
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -21,7 +22,7 @@ import { readSerial, resumeSerial } from '../scripts/lib/fleet/serial.mjs';
 import { CANONICAL_GRANT } from '../scripts/lib/fleet/coordinator-grant.mjs';
 import {
   splitCommitMessage, aiTrailerMultiset, readBackReasons, runShippedHeadChild, partitionMembers, buildShipBatch,
-  approveShipBatch, resumeShipBatch, writeShipBatch, SHIP_BATCH_SCHEMA, CHILD_SCHEMA, admitMember, readShipBatch, ciAndIdentityReasons, admitShipBatchMember,
+  approveShipBatch, resumeShipBatch, writeShipBatch, SHIP_BATCH_SCHEMA, CHILD_SCHEMA, admitMember, readShipBatch, ciDecisionFor, admitShipBatchMember,
 } from '../scripts/lib/fleet/ship-batch.mjs';
 
 after(cleanupFleetRoots);
@@ -139,18 +140,11 @@ describe('runShippedHeadChild: every way the child can fail is a refusal', () =>
 describe('partitionMembers: only ship-ok members make the set', () => {
   const pr = (id, extra = {}) => ({ id, kind: 'pr', repo: REPO, prNumber: 20 + Number(id.slice(1)), baseRef: 'main', branch: id, oid: id.charCodeAt(1).toString(16).repeat(20).slice(0, 40), worktree: `/wt/${id}`, ...extra });
   const childByWt = (map) => ({ worktree }) => map[worktree] ?? { ok: true, reasons: [], envelope: {} };
-  const ghAllGreen = (members) => (args) => {
-    if (args[0] === 'pr' && args[1] === 'view') {
-      const n = Number(args[2]); const m = members.find((x) => x.prNumber === n);
-      return ok({ state: 'OPEN', isDraft: false, headRefOid: m.oid, baseRefName: 'main' });
-    }
-    if (args[0] === 'api') return { ok: true, status: 0, stdout: JSON.stringify(/rules\/branches/.test(args[1]) ? [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } }] : { protected: false }), stderr: '' };
-    if (args[0] === 'pr' && args[1] === 'checks') return { ok: true, status: 0, stdout: JSON.stringify([{ name: 'ci', bucket: 'pass', state: 'SUCCESS', completedAt: '2026-10-09T10:00:00Z' }]), stderr: '' };
-    return { ok: false, status: 1, stdout: '', stderr: 'unexpected', reason: 'unexpected' };
-  };
+  /** The oracle of a GitHub where every member PR is eligible at its ready oid and every required check passed. */
+  const assessAllGreen = () => ({ expectedHead }) => ev.passed(expectedHead);
   const run = (members, over = {}) => partitionMembers({
     cwd: process.cwd(), members, base: 'main', remote: 'origin', requiredChecks: undefined,
-    deps: { gh: over.gh ?? ghAllGreen(members), shipBatch: { checkChild: over.checkChild ?? childByWt({}) } },
+    deps: { assessCi: over.assessCi ?? assessAllGreen(), shipBatch: { checkChild: over.checkChild ?? childByWt({}) } },
   });
 
   it('the train\'s destination remote is handed to every child check (build time)', () => {
@@ -158,7 +152,7 @@ describe('partitionMembers: only ship-ok members make the set', () => {
     const ms = [pr('a1')];
     partitionMembers({
       cwd: process.cwd(), members: ms, base: 'main', remote: 'origin', requiredChecks: undefined,
-      deps: { gh: ghAllGreen(ms), shipBatch: { checkChild: (a) => { seen.push(a); return { ok: true, reasons: [], envelope: {} }; } } },
+      deps: { assessCi: assessAllGreen(), shipBatch: { checkChild: (a) => { seen.push(a); return { ok: true, reasons: [], envelope: {} }; } } },
     });
     assert.equal(seen.length, 1);
     assert.equal(seen[0].remote, 'origin');
@@ -192,22 +186,35 @@ describe('partitionMembers: only ship-ok members make the set', () => {
     assert.match(r.needsUser[2].reasons.join(' '), /no ready oid/);
     assert.equal(calls, 0);
   });
-  it('a PR whose head is not the ready oid (C9) is needs-user', () => {
+  it('a PR that is not a merge candidate at the ready oid (head moved, draft, closed, retargeted) is needs-user, each with its own code', () => {
     const ms = [pr('a1')];
-    const gh = (args) => (args[1] === 'view' ? ok({ state: 'OPEN', isDraft: false, headRefOid: 'f'.repeat(40), baseRefName: 'main' }) : ghAllGreen(ms)(args));
-    const r = run(ms, { gh });
-    assert.match(r.needsUser[0].reasons.join(' '), /identity: PR #\d+ head/);
+    for (const [code, re] of [['head-moved', /head-moved/], ['draft', /draft/], ['closed', /closed/], ['retargeted', /retargeted/]]) {
+      const r = run(ms, { assessCi: () => ev.ineligible(code) });
+      assert.equal(r.ok.length, 0, code);
+      assert.match(r.needsUser[0].reasons.join(' '), re, code);
+    }
   });
-  it('a draft PR and a closed PR are needs-user', () => {
+  it('required checks that are not green (C8) are needs-user: failed and not-run refuse, pending and missing wait', () => {
     const ms = [pr('a1')];
-    const mk = (over) => (args) => (args[1] === 'view' ? ok({ state: 'OPEN', isDraft: false, headRefOid: ms[0].oid, baseRefName: 'main', ...over }) : ghAllGreen(ms)(args));
-    assert.match(run(ms, { gh: mk({ isDraft: true }) }).needsUser[0].reasons.join(' '), /draft/);
-    assert.match(run(ms, { gh: mk({ state: 'CLOSED' }) }).needsUser[0].reasons.join(' '), /CLOSED/);
+    for (const [e, re] of [[ev.failed('h'), /failed/], [ev.notRun('h'), /not-run/], [ev.pending('h'), /pending/], [ev.missing('h'), /missing/]]) {
+      assert.match(run(ms, { assessCi: () => e }).needsUser[0].reasons.join(' '), re, e.tag);
+    }
   });
-  it('required checks that are not green (C8) are needs-user', () => {
+  it('no required checks, PROVEN, is admitted (a consumer may require nothing); unknown evidence STOPS the partition, never a member refusal', () => {
+    const ms = [pr('a1'), pr('a2'), pr('a3')];
+    assert.deepEqual(run(ms, { assessCi: () => ev.noneRequired('h') }).ok.map((m) => m.id), ['a1', 'a2', 'a3']);
+    const seen = [];
+    const r = run(ms, { assessCi: ({ prNumber, expectedHead }) => { seen.push(prNumber); return prNumber === 22 ? ev.unknown('transport', 'rules api 502') : ev.passed(expectedHead); } });
+    assert.deepEqual([r.ok, r.needsUser], [[], []]);
+    assert.equal(r.stop.id, 'a2');
+    assert.ok(r.stop.reason.includes('CI evidence unknown (transport: rules api 502)'), r.stop.reason);
+    assert.deepEqual(seen, [21, 22], 'the partition stopped at the first unknown: a3 was never assessed');
+  });
+  it('the PRODUCTION default oracle is the PR-1 stub: it establishes nothing, so the partition stops (ship-batch cannot merge)', () => {
     const ms = [pr('a1')];
-    const gh = (args) => (args[1] === 'checks' ? { ok: false, status: 8, stdout: JSON.stringify([{ name: 'ci', bucket: 'fail', state: 'FAILURE', completedAt: '2026-10-09T10:00:00Z' }]), stderr: '' } : ghAllGreen(ms)(args));
-    assert.match(run(ms, { gh }).needsUser[0].reasons.join(' '), /ci: required checks/);
+    const r = partitionMembers({ cwd: process.cwd(), members: ms, base: 'main', remote: 'origin', deps: { shipBatch: { checkChild: () => ({ ok: true, reasons: [], envelope: {} }) } } });
+    assert.equal(r.ok.length, 0);
+    assert.match(r.stop.reason, /unimplemented-oracle/);
   });
 });
 
@@ -283,9 +290,11 @@ function world(b, over = {}) {
       return { ok: false, status: 1, stdout: '', stderr: `unexpected gh ${args.join(' ')}`, reason: 'unexpected' };
     },
   };
+  w.gh.assessCi = oracleOf(w);
   return w;
 }
-const mk = (b, gh, extra = {}) => ({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), shipBatch: b.shipBatch, ...extra.deps }, serialOpts: { sleep: () => {}, timings: fast, ...(extra.serialOpts ?? {}) } });
+/** `gh` is a world's `gh` (or a wrapper that keeps its `assessCi`): its oracle is the one the run asks. */
+const mk = (b, gh, extra = {}) => ({ cwd: b.fx.repo, dir: b.dir, trainId: b.trainId, deps: { ...depsWith(gh), assessCi: gh.assessCi, shipBatch: b.shipBatch, ...extra.deps }, serialOpts: { sleep: () => {}, timings: fast, ...(extra.serialOpts ?? {}) } });
 const approve = (b, gh, extra = {}) => approveShipBatch(mk(b, gh, { ...extra, serialOpts: { timeoutMs: 60_000, ...(extra.serialOpts ?? {}) } }));
 const resume = (b, gh, extra = {}) => resumeShipBatch(mk(b, gh, extra));
 const outcomeOf = (b, id) => stepOf(b, id).outcome;
@@ -542,11 +551,11 @@ describe('the read-back: a failed read is not a measured defect (F4), a measured
     const deps = depsWith(w.gh);
     const git0 = deps.git;
     const flaky = { ...deps, git: (args, cwd, o) => (failing && args[0] === 'fetch' && args.includes('refs/heads/main') ? { ok: false, status: 1, stdout: '', stderr: 'net down', reason: 'net down' } : git0(args, cwd, o)) };
-    const r1 = approveShipBatch({ ...mk(b, w.gh), deps: { ...flaky, shipBatch: b.shipBatch } });
+    const r1 = approveShipBatch({ ...mk(b, w.gh), deps: { ...flaky, assessCi: w.gh.assessCi, shipBatch: b.shipBatch } });
     assert.equal(r1.ok, false);
     assert.deepEqual([outcomeOf(b, 'm1').status, outcomeOf(b, 'm1').code], ['not-run', 'awaiting-read-back']);
     failing = false;
-    const r2 = resumeShipBatch({ ...mk(b, w.gh), deps: { ...flaky, shipBatch: b.shipBatch } });
+    const r2 = resumeShipBatch({ ...mk(b, w.gh), deps: { ...flaky, assessCi: w.gh.assessCi, shipBatch: b.shipBatch } });
     assert.equal(r2.ok, true, r2.text);
     assert.equal(outcomeOf(b, 'm1').verdict, 'verified');
     assert.equal(w.merges.length, 1);
@@ -669,15 +678,18 @@ describe('admitMember: one predicate, strict evidence per mode (R1-H5)', () => {
   const child = { ok: true, reasons: [], envelope: {} };
   it('a ship-batch candidate without its CI evidence, and a rollup candidate carrying any, are rejected', () => {
     assert.throws(() => admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H, child }));
-    assert.throws(() => admitMember('rollup', { base: 'main', remote: 'origin' }, { mode: 'rollup', head: H, child, branchTip: H, identityAndCi: [] }));
+    assert.throws(() => admitMember('rollup', { base: 'main', remote: 'origin' }, { mode: 'rollup', head: H, child, branchTip: H, ci: null }));
     assert.throws(() => admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'rollup', head: H, child, branchTip: H }));
   });
   it('each mode judges its own evidence, and a head that is not the full oid is rejected', () => {
-    assert.equal(admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H, child, identityAndCi: [] }).ok, true);
-    assert.equal(admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H, child, identityAndCi: ['ci: red'] }).kind, 'ci-refused');
+    assert.equal(admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H, child, ci: { disposition: 'permit', tag: 'passed', reason: 'ok' } }).ok, true);
+    assert.equal(admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H, child, ci: { disposition: 'refuse-member', tag: 'failed', reason: 'red' } }).kind, 'ci-refused');
+    assert.equal(admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H, child, ci: { disposition: 'retry', tag: 'pending', reason: 'p' } }).kind, 'ci-retry');
+    assert.equal(admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H, child, ci: { disposition: 'stop-run', tag: 'unknown', reason: 'u' } }).kind, 'ci-evidence-unknown');
+    assert.throws(() => admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H, child, ci: { disposition: 'maybe', tag: 'x', reason: 'r' } }), 'an unknown disposition is rejected by the schema, never read as permit');
     assert.equal(admitMember('rollup', { base: 'main', remote: 'origin' }, { mode: 'rollup', head: H, child, branchTip: 'b'.repeat(40) }).ok, false);
     assert.equal(admitMember('rollup', { base: 'main', remote: 'origin' }, { mode: 'rollup', head: H, child, branchTip: H }).ok, true);
-    assert.throws(() => admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H.slice(0, 12), child, identityAndCi: [] }));
+    assert.throws(() => admitMember('ship-batch', { base: 'main', remote: 'origin' }, { mode: 'ship-batch', head: H.slice(0, 12), child, ci: { disposition: 'permit', tag: 'passed', reason: 'ok' } }));
   });
 });
 
@@ -714,7 +726,7 @@ describe('audit round 1: persistence, queue, tip and resume guards', () => {
     const deps = depsWith(w.gh);
     const git0 = deps.git;
     const flaky = { ...deps, git: (args, cwd, o) => (down && args[0] === 'ls-remote' ? { ok: false, status: 1, stdout: '', stderr: 'net down', reason: 'net down' } : git0(args, cwd, o)) };
-    const r1 = approveShipBatch({ ...mk(b, w.gh), deps: { ...flaky, shipBatch: b.shipBatch } });
+    const r1 = approveShipBatch({ ...mk(b, w.gh), deps: { ...flaky, assessCi: w.gh.assessCi, shipBatch: b.shipBatch } });
     assert.equal(r1.ok, false);
     assert.equal(serialOf(b).halt, undefined, 'an unreadable tip is not a proven mismatch');
     assert.equal(serialOf(b).finalized, undefined);
@@ -742,7 +754,8 @@ describe('audit round 1: persistence, queue, tip and resume guards', () => {
     const b = batch(1);
     const w = world(b);
     let views = 0;
-    const gh = (args) => (args[1] === 'view' && args[args.indexOf('--json') + 1] !== 'isInMergeQueue' && ++views > 6 ? { ok: false, status: 1, stdout: '', stderr: 'boom', reason: 'gh failed' } : w.gh(args));
+    const gh = (args) => (args[1] === 'view' && args[args.indexOf('--json') + 1] !== 'isInMergeQueue' && ++views > 2 ? { ok: false, status: 1, stdout: '', stderr: 'boom', reason: 'gh failed' } : w.gh(args));
+    gh.assessCi = w.gh.assessCi;
     const r = approve(b, gh);
     assert.equal(r.ok, false);
     assert.equal(w.merges.length, 0);
@@ -750,57 +763,64 @@ describe('audit round 1: persistence, queue, tip and resume guards', () => {
   });
 });
 
-describe('CI: the base branch\'s REQUIRED checks are the gate (there is no separate full-suite verdict)', () => {
+describe('CI: the admission is the evidence oracle disposition (docs/plans/ci-evidence-oracle.md §2.2)', () => {
   const HEAD = 'a'.repeat(40);
   const member = { id: 'm', prNumber: 7, repo: REPO, oid: HEAD };
-  const ok = (doc) => ({ ok: true, status: 0, stdout: JSON.stringify(doc), stderr: '' });
-  /** A GitHub where the ruleset requires `required` and `pr checks` reports `rows`; `checksDown` makes the observation fail. */
-  const ghWith = ({ required = ['full-suite'], rows, checksDown = false }) => (args) => {
-    if (args[0] === 'pr' && args[1] === 'view') return ok({ state: 'OPEN', isDraft: false, headRefOid: HEAD, baseRefName: 'main' });
-    if (args[0] === 'api') return ok(/rules\/branches/.test(args[1]) ? (required.length ? [{ type: 'required_status_checks', parameters: { required_status_checks: required.map((context) => ({ context })) } }] : []) : { protected: false });
-    if (args[0] === 'pr' && args[1] === 'checks') return checksDown ? { ok: false, status: 1, stdout: '', stderr: 'gh down', reason: 'gh down' } : { ok: rows.every((r) => r.bucket === 'pass'), status: 0, stdout: JSON.stringify(rows), stderr: '' };
-    return { ok: false, status: 1, stdout: '', stderr: 'unexpected', reason: 'unexpected' };
-  };
-  const row = (bucket, name = 'full-suite') => ({ name, bucket, state: bucket.toUpperCase(), completedAt: '2026-10-09T10:00:00Z' });
-  const reasons = (g, extra = {}) => ciAndIdentityReasons({ cwd: process.cwd(), member, base: 'main', deps: { gh: g }, ...extra });
-  const admit = (g, extra = {}) => admitShipBatchMember({ cwd: process.cwd(), member, head: HEAD, base: 'main', remote: 'origin', deps: { gh: g, shipBatch: { checkChild: () => ({ ok: true, reasons: [], envelope: {} }) } }, ...extra });
+  const child = () => ({ ok: true, reasons: [], envelope: {} });
+  const admit = (assessCi, extra = {}) => admitShipBatchMember({ cwd: process.cwd(), member, head: HEAD, base: 'main', remote: 'origin', deps: { assessCi, shipBatch: { checkChild: child } }, ...extra });
 
-  it('a member whose required full-suite is GREEN is admitted', () => {
-    assert.deepEqual(reasons(ghWith({ rows: [row('pass')] })), []);
-    assert.equal(admit(ghWith({ rows: [row('pass')] })).ok, true);
+  it('permit: passed, and none-required proven (a consumer may require nothing)', () => {
+    assert.equal(admit(() => ev.passed(HEAD)).ok, true);
+    assert.equal(admit(() => ev.noneRequired(HEAD)).ok, true);
   });
-  it('red, pending, missing and skipped required checks each refuse, as ci-refused', () => {
-    for (const [name, rows, re] of [['red', [row('fail')], /failed/], ['pending', [row('pending')], /pending/], ['missing', [row('pass', 'some-other-check')], /missing/], ['no rows', [], /missing/], ['skipped', [row('skipping')], /not-run|skipped|never ran/i]]) {
-      const r = reasons(ghWith({ rows }));
-      assert.ok(r.length === 1 && /^ci: required checks /.test(r[0]) && re.test(r[0]), `${name}: ${r.join(' | ')}`);
-      const a = admit(ghWith({ rows }));
-      assert.deepEqual([a.ok, a.kind], [false, 'ci-refused'], name);
+  it('failed and not-run refuse the member (ci-refused); pending and missing retry (ci-retry); every ineligible but head-moved refuses', () => {
+    for (const [e, kind] of [[ev.failed(HEAD), 'ci-refused'], [ev.notRun(HEAD), 'ci-refused'], [ev.pending(HEAD), 'ci-retry'], [ev.missing(HEAD), 'ci-retry'],
+      [ev.ineligible('draft'), 'ci-refused'], [ev.ineligible('closed'), 'ci-refused'], [ev.ineligible('head-moved'), 'ci-retry']]) {
+      const a = admit(() => e);
+      assert.deepEqual([a.ok, a.kind], [false, kind], `${e.tag}/${e.code ?? ''}`);
     }
   });
-  it('a requiredChecks config error refuses (ci-refused), it is not a retried read', () => {
-    const g = ghWith({ required: [], rows: [] });
-    const r = reasons(g, { requiredChecksError: '.fleet.json could not be loaded (bad json)' });
-    assert.ok(r.length === 1 && /^ci: the required-check inventory is unknown/.test(r[0]) && /bad json/.test(r[0]), r.join(' | '));
-    const a = admit(g, { requiredChecksError: '.fleet.json could not be loaded (bad json)' });
-    assert.deepEqual([a.ok, a.kind], [false, 'ci-refused']);
+  it('unknown evidence of every fault kind is the RUN-scope stop ci-evidence-unknown, never a member refusal', () => {
+    for (const kind of ['transport', 'malformed', 'config-drift', 'unsupported-classic-protection', 'unimplemented-oracle']) {
+      const a = admit(() => ev.unknown(kind));
+      assert.deepEqual([a.ok, a.kind], [false, 'ci-evidence-unknown'], kind);
+      assert.match(a.reasons[0], new RegExp(kind));
+    }
   });
-  it('a ruleset GitHub will not answer is a failed READ: the run-scope checks-inventory-unknown stop, never a member ci-refused', () => {
-    const base = ghWith({ rows: [row('pass')] });
-    const down = (args) => (args[0] === 'api' ? { ok: false, status: 1, stdout: '', stderr: 'HTTP 502', reason: 'HTTP 502' } : base(args));
-    const r = reasons(down);
-    assert.ok(r.length === 1 && /^ci: the required-check inventory cannot be read/.test(r[0]) && /502/.test(r[0]), r.join(' | '));
-    const a = admit(down);
-    assert.deepEqual([a.ok, a.kind], [false, 'checks-inventory-unknown']);
-    // The control: the same unreadable ruleset with the checks DECLARED in config is a measurable inventory, so it admits.
-    assert.equal(admit(down, { requiredChecks: ['full-suite'] }).ok, true);
+  it('an oracle that throws, returns nothing or returns an unlisted tag is a run stop, not a pass (fail closed)', () => {
+    for (const oracle of [() => { throw new Error('boom'); }, () => undefined, () => ({ tag: 'green' }), () => ({ tag: 'ineligible', code: 'surprise' })]) {
+      assert.equal(admit(oracle).kind, 'ci-evidence-unknown');
+    }
   });
-  it('no required checks anywhere is a refusal: nothing measured CI at this head', () => {
-    const r = reasons(ghWith({ required: [], rows: [] }), { requiredChecks: [] });
-    assert.deepEqual(r, ['ci: no required checks are configured on main, so nothing measured CI at this head']);
-    assert.equal(admit(ghWith({ required: [], rows: [] }), { requiredChecks: [] }).kind, 'ci-refused');
+  it('the oracle is asked for exactly this PR, base and head, with the config assertion', () => {
+    let asked = null;
+    admit((a) => { asked = a; return ev.passed(HEAD); }, { requiredChecks: ['full-suite'] });
+    assert.deepEqual([asked.repo, asked.prNumber, asked.expectedBase, asked.expectedHead], [REPO, 7, 'main', HEAD]);
+    assert.deepEqual(asked.configAssertion, { requiredChecks: ['full-suite'], error: null });
   });
-  it('a required check that cannot be OBSERVED right now is an unmeasured fact (pr-unreadable, not-run), never a refusal', () => {
-    const a = admit(ghWith({ rows: [], checksDown: true }));
-    assert.deepEqual([a.ok, a.kind], [false, 'pr-unreadable']);
+  it('a member whose child check refused is never assessed for CI', () => {
+    let asked = 0;
+    const a = admitShipBatchMember({ cwd: process.cwd(), member, head: HEAD, base: 'main', remote: 'origin', deps: { assessCi: () => { asked++; return ev.passed(HEAD); }, shipBatch: { checkChild: () => ({ ok: false, reasons: ['trailers: waived'], envelope: null }) } } });
+    assert.deepEqual([a.ok, a.kind, asked], [false, 'shipped-head-refused', 0]);
+  });
+  it('END TO END, the production default cannot merge: approve with no oracle stops the run at run scope, zero merges, the base untouched', () => {
+    const b = batch(2);
+    const w = world(b); // every PR is green and eligible: only the oracle is missing
+    const before = baseTip(b);
+    const r = approve(b, w.gh, { deps: { assessCi: undefined } });
+    assert.equal(r.ok, false, r.text);
+    assert.equal(w.merges.length, 0);
+    assert.equal(baseTip(b), before);
+    assert.match(r.text, /unimplemented-oracle/);
+    // The control: the SAME world with the oracle injected merges both members, so the stop above is the oracle's and nothing else's.
+    const c = batch(2);
+    const w2 = world(c);
+    assert.equal(approve(c, w2.gh).ok, true);
+    assert.equal(w2.merges.length, 2);
+  });
+  it('the PRODUCTION default (no deps.assessCi) is the PR-1 stub: ci-evidence-unknown naming the unimplemented oracle', () => {
+    const a = admitShipBatchMember({ cwd: process.cwd(), member, head: HEAD, base: 'main', remote: 'origin', deps: { shipBatch: { checkChild: child } } });
+    assert.deepEqual([a.ok, a.kind], [false, 'ci-evidence-unknown']);
+    assert.match(a.reasons[0], /unimplemented-oracle/);
   });
 });

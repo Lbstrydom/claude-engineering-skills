@@ -21,12 +21,11 @@ import { assertManaged, fleetDir, listTrains, readTrain } from './registry.mjs';
 import { payloadFromStatus } from './facts.mjs';
 import { approvable } from './overlap.mjs';
 import { branchOfRef, patchTrain, withTrainLock, buildTrain } from './train.mjs';
-import { observeRequiredChecks, requiredInventory } from './required-checks.mjs';
 import { GRANT_VERSION } from './coordinator-grant.mjs';
 import { readSerial, resumeSerial, startPolicyRun } from './serial.mjs';
 import { RollupPolicySchema } from './member-outcome.mjs';
 import {
-  admitMember, commitMessage, createOnly, grantRefusal, listReadyMembers, runShippedHeadChild, summaryText,
+  admitMember, ciDecisionFor, commitMessage, createOnly, grantRefusal, listReadyMembers, runShippedHeadChild, summaryText,
 } from './ship-batch.mjs';
 import {
   bodyOfMessage, overlapHolds, renderRollupManifest, rollupBranchName, sha256Body, ROLLUP_BRANCH_RE,
@@ -212,17 +211,15 @@ export function makeRollupPolicy({ cwd, trainId, deps, rec, train, branch, prNum
       const tree = deps.git(['rev-parse', `${h}^{tree}`], cwd, { timeoutMs: 60_000 });
       if (!tree.ok) return { ok: false, kind: 'tree-unreadable', reason: `the tree of the rollup head ${short(h)} could not be read` };
       if (h !== train.candidate.oid || tree.stdout.trim() !== rec.candidateTree) return { ok: false, kind: 'member-refused', reason: `the rollup PR head ${short(h)} is not the tested candidate ${short(train.candidate.oid)}` };
-      const inv = requiredInventory(cwd, { repo: s.repo, base: run.base, configured: requiredChecks, configError: requiredChecksError, gh: deps.gh });
-      const obs = observeRequiredChecks(cwd, { pr: s.prNumber, repo: s.repo, inventory: inv, expectHead: h, gh: deps.gh });
-      if (obs.verdict === 'none-required') return { ok: false, kind: 'ci-refused', reason: `no required checks are configured on ${run.base}, so nothing would measure the rollup's CI at ${short(h)}: declare them (branch rules or .fleet.json requiredChecks) before landing by rollup` };
-      if (obs.verdict !== 'pass') return { ok: false, kind: 'ci-refused', reason: `the rollup's required checks are ${obs.verdict} at ${short(h)}` };
-      const checks = (obs.observed ?? []).filter((o) => !inv.names.length || inv.names.includes(o.name)).map((o) => ({ name: String(o.name), conclusion: String(o.bucket ?? o.state ?? 'unknown') }));
-      const ci = { head: h, tree: rec.candidateTree, observedAt: deps.now().toISOString(), checks };
+      const ci = ciDecisionFor({ cwd, member: { prNumber: s.prNumber, repo: s.repo }, head: h, base: run.base, deps, requiredChecks, requiredChecksError });
+      if (ci.disposition !== 'permit') return { ok: false, kind: { 'refuse-member': 'ci-refused', retry: 'ci-retry' }[ci.disposition] ?? 'ci-evidence-unknown', reason: `the rollup: ${ci.reason}` };
+      const checks = (ci.evidence.required ?? []).map((o) => ({ name: String(o.name), conclusion: String(o.conclusion) }));
+      const ciRecord = { head: h, tree: rec.candidateTree, observedAt: deps.now().toISOString(), checks };
       const manifest = renderRollupManifest({
         stage: 'final', rollupId: branch, base: run.base, candidate: { oid: train.candidate.oid, tree: rec.candidateTree },
-        members: rec.members.map((m) => ({ id: m.id, branch: m.branch, head: m.head, tree: m.tree, runId: m.runId, gate: m.gate, finalReview: m.finalReview })), held: rec.held, ci,
+        members: rec.members.map((m) => ({ id: m.id, branch: m.branch, head: m.head, tree: m.tree, runId: m.runId, gate: m.gate, finalReview: m.finalReview })), held: rec.held, ci: ciRecord,
       });
-      return { ok: true, message: { subject: `fleet rollup ${branch}: ${rec.members.length} member${rec.members.length === 1 ? '' : 's'}`, body: manifest }, messageSha256: sha256Body(manifest), ci };
+      return { ok: true, message: { subject: `fleet rollup ${branch}: ${rec.members.length} member${rec.members.length === 1 ? '' : 's'}`, body: manifest }, messageSha256: sha256Body(manifest), ci: ciRecord };
     },
     readBack: ({ s, mergeOid, doc, run }) => {
       const git = (args) => deps.git(args, cwd, { timeoutMs: 120_000 });

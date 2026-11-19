@@ -217,3 +217,63 @@ export function describeVerdict(v) {
   if (v.verdict === 'unknown') return `required checks unknown (${v.reason ?? 'not observed'})`;
   return ['failed', 'not-run', 'missing', 'pending'].filter((k) => v.names?.[k]?.length).map((k) => `${k}: ${v.names[k].join(', ')}`).join('; ');
 }
+
+// ---- the CI-evidence contract (docs/plans/ci-evidence-oracle.md §2.1-2.2) -------------------------------------------------------
+// Evidence is WHAT IS KNOWN about a PR head's required CI, from a closed tag set. A disposition is WHAT A CALLER DOES about it.
+// The oracle that produces evidence (`assessRequiredCi`, PR 2) never returns an action; `decideCiAdmission` never reads GitHub.
+
+/** The closed evidence tag set. `passed` and `none-required` are the only ones that can permit a merge. */
+export const CI_EVIDENCE_TAGS = Object.freeze(['passed', 'none-required', 'failed', 'not-run', 'missing', 'pending', 'ineligible', 'unknown']);
+
+/** The closed fault kinds an `unknown` may carry (§2.4). `unimplemented-oracle` exists only while the oracle is a stub (PR 1). */
+export const CI_FAULT_KINDS = Object.freeze([
+  'transport', 'malformed', 'too-many-results', 'unsupported-classic-protection', 'unsupported-unpinned-requirement',
+  'status-context-present', 'config-error', 'config-drift', 'duplicate-conflict', 'unknown-conclusion', 'unexpected-tag', 'unimplemented-oracle',
+]);
+
+/** The closed `ineligible` codes. `head-moved` is the only one a caller may retry. */
+export const CI_INELIGIBLE_CODES = Object.freeze(['closed', 'merged', 'draft', 'retargeted', 'head-moved']);
+
+/** The closed disposition set. */
+export const CI_DISPOSITIONS = Object.freeze(['permit', 'refuse-member', 'retry', 'stop-run']);
+
+/**
+ * The ONE evidence → disposition table. `permit` is returned from exactly one branch (a positive allowlist); a tag the table does
+ * not name, a non-object, or an `ineligible` with an unknown code is `stop-run`, never a refusal a caller could read as routine.
+ * @param {{tag?: string, fault?: {kind: string, detail?: string}, code?: string}|null|undefined} evidence
+ * @returns {{disposition: 'permit'|'refuse-member'|'retry'|'stop-run', tag: string, fault?: {kind: string, detail: string}, code?: string}}
+ */
+export function decideCiAdmission(evidence) {
+  const tag = evidence && typeof evidence === 'object' ? evidence.tag : undefined;
+  if (tag === 'passed' || tag === 'none-required') return { disposition: 'permit', tag };
+  if (tag === 'failed' || tag === 'not-run') return { disposition: 'refuse-member', tag };
+  if (tag === 'missing' || tag === 'pending') return { disposition: 'retry', tag };
+  if (tag === 'ineligible') {
+    const code = evidence.code;
+    if (!CI_INELIGIBLE_CODES.includes(code)) return { disposition: 'stop-run', tag, code, fault: { kind: 'unexpected-tag', detail: `ineligible with an unrecognised code ${JSON.stringify(code ?? null)}` } };
+    return { disposition: code === 'head-moved' ? 'retry' : 'refuse-member', tag, code };
+  }
+  if (tag === 'unknown') {
+    const kind = CI_FAULT_KINDS.includes(evidence.fault?.kind) ? evidence.fault.kind : 'unexpected-tag';
+    return { disposition: 'stop-run', tag, fault: { kind, detail: String(evidence.fault?.detail ?? 'no detail') } };
+  }
+  return { disposition: 'stop-run', tag: String(tag), fault: { kind: 'unexpected-tag', detail: `the CI evidence carried no recognised tag (${JSON.stringify(tag ?? null)})` } };
+}
+
+/**
+ * The stub oracle (PR 1): it establishes nothing, so every assessment is `unknown` and every caller stops the run. A production
+ * default of this keeps `--ship-batch` and `--rollup` unable to merge until `assessRequiredCi` replaces it.
+ * @returns {{tag: 'unknown', fault: {kind: 'unimplemented-oracle', detail: string}}}
+ */
+export function unimplementedOracle() {
+  return { tag: 'unknown', fault: { kind: 'unimplemented-oracle', detail: 'the CI-evidence oracle is not implemented yet (docs/plans/ci-evidence-oracle.md, PR 2): this command cannot merge' } };
+}
+
+/** One line naming the evidence, for a refusal or stop reason. Never empty. */
+export function describeEvidence(evidence, decision = decideCiAdmission(evidence)) {
+  const names = ['failed', 'not-run', 'missing', 'pending'].filter((k) => evidence?.names?.[k]?.length).map((k) => `${k}: ${evidence.names[k].join(', ')}`);
+  if (evidence?.tag === 'unknown' || decision.disposition === 'stop-run') return `CI evidence unknown (${decision.fault?.kind ?? 'unknown'}: ${decision.fault?.detail ?? 'no detail'})`;
+  if (evidence?.tag === 'ineligible') return `the PR is not a merge candidate (${evidence.code})`;
+  if (decision.disposition === 'permit') return `required checks ${decision.tag}`;
+  return `required checks ${decision.tag}${names.length ? `: ${names.join('; ')}` : ''}`;
+}

@@ -70,8 +70,9 @@ failed: resumable). A failed read is never a measured defect.
 | grant absent or mismatched | nothing merged; plain `land` (with the user's go-ahead) is a SEPARATE invocation |
 | one member fails a row, at the build OR at its own merge (CI, child, closed, draft, retargeted, DIRTY, BEHIND, checks failed) | **refused** with that code; the rest still land. A BEHIND member is never `update-branch`ed (it would put an unshipped commit on the ship head) |
 | a read fails (PR view, tree, message), or a member's required checks are still pending after the merge-time wait | **not-run**; the rest land; the result is resumable (exit 3). At the BUILD a member whose required checks are not green yet is `needs-user` instead: `ready` means CI green |
-| the required-check inventory cannot be established: `.fleet.json` unloadable, or no required check configured | that member is **refused** `ci-refused` |
-| the branch rulesets/protection cannot be READ right now (a failed read) | run stop `checks-inventory-unknown` before the next merge; nothing is refused; resume once GitHub answers |
+| the CI evidence says a required check failed or never ran (skipped), or the PR is closed, a draft or retargeted | that member is **refused** `ci-refused` |
+| the CI evidence says required checks are pending or missing, or the head moved | that member is **not-run** `checks-pending` (build: `needs-user`); resume re-asks |
+| the CI evidence is `unknown` of ANY kind (a failed read, malformed data, config disagreeing with GitHub, an unsupported shape) | **run stop** `ci-evidence-unknown` before the next merge; nothing is refused; at the BUILD nothing is built at all |
 | grant revoked, base moved, merge queue present, rules unreadable | run stop before the next merge; merged members stay merged; rebuild after `base-moved` |
 | a merge request whose answer was lost or not observed | `merge-unconfirmed`: the run stops; a resume replays nothing inside the request window, and never while the PR is queued |
 | a PR merged by someone else | **skipped** plus a persisted `halt`: no further member lands in this run; rebuild |
@@ -86,3 +87,9 @@ combined tested tree; `subset` when a member did not land (each landed member wa
 resuming it reads nothing remote.
 
 Exit codes follow `fleet land`: 0 ok, 3 refused or stopped, 4 a train that ran red.
+
+## CI evidence: ONE oracle, and what works today
+
+Every admission asks `deps.assessCi` for evidence from a closed tag set (`passed`, `none-required`, `failed`, `not-run`, `missing`, `pending`, `ineligible`, `unknown`) and maps it with ONE table (`decideCiAdmission`): only `passed` and a PROVEN `none-required` permit. (the CES plan: ci-evidence-oracle, source repo only).
+
+**Until that plan's PR 2 lands, the oracle is a stub that establishes nothing, so `--ship-batch` and `--rollup` always stop at the first CI check: they cannot merge.** The builds exclude or stop, the approves stop at run scope with zero merges. Plain `land --serial` and `land --approve` are unchanged by this and still use the older required-checks reader.

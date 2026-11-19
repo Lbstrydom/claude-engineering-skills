@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { ev, evidenceFromBucket } from './helpers/fleet-ci-evidence-fx.mjs';
 import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots, makeFleetRepo, addBranch, installFakeGh, runFleet, scrubbedEnv } from './helpers/fleet-repo.mjs';
 import { REPO, ok, view, fast, depsWith, multiFx } from './helpers/fleet-serial-fx.mjs';
@@ -112,7 +113,17 @@ function squash(f, args, extraFile = null) {
   return git(['rev-parse', 'HEAD'], repo);
 }
 
-const mkDeps = (f, w, extra = {}) => ({ ...depsWith(w.gh), shipBatch: f.seam, ...extra });
+/** The oracle of the rollup world: the ROLLUP PR's eligibility, then the world's required checks (`w.rules`, `w.checks`, `w.rulesFail`). */
+const assessRollupCi = (w) => ({ prNumber, expectedHead }) => {
+  const rp = (w.allPrs ?? []).find((x) => x.number === prNumber);
+  if (!rp) return ev.unknown('malformed', `no scripted rollup PR #${prNumber}`);
+  if (rp.state !== 'OPEN') return ev.ineligible(rp.state === 'MERGED' ? 'merged' : 'closed');
+  if (rp.head !== expectedHead) return ev.ineligible('head-moved', rp.head);
+  if (w.rulesFail) return ev.unknown('transport', 'rules api down');
+  const required = (w.rules ?? []).filter((r) => r.type === 'required_status_checks').flatMap((r) => r.parameters.required_status_checks.map((c) => c.context));
+  return required.length ? evidenceFromBucket(w.checks, expectedHead) : ev.noneRequired(expectedHead);
+};
+const mkDeps = (f, w, extra = {}) => ({ ...depsWith(w.gh), assessCi: assessRollupCi(w), shipBatch: f.seam, ...extra });
 const build = (f, w, flags = {}) => buildRollup(f.ctx, flags, mkDeps(f, w), { parseSelect });
 const approve = (f, w, extra = {}) => approveRollup({ cwd: f.fx.repo, dir: f.dir, trainId: extra.trainId, deps: mkDeps(f, w, extra.deps), serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000, ...(extra.serialOpts ?? {}) } });
 const resume = (f, w, trainId, extra = {}) => resumeRollup({ cwd: f.fx.repo, dir: f.dir, trainId, deps: mkDeps(f, w, extra.deps), serialOpts: { sleep: () => {}, timings: fast, ...(extra.serialOpts ?? {}) } });
@@ -414,21 +425,28 @@ describe('audit round 1: lifecycle, identity and cleanup guards', () => {
     assert.match(rollupTrainProblem({ ...rec, candidateTree: 'f'.repeat(40) }, train), /candidate tree/);
     assert.match(rollupTrainProblem({ ...rec, members: [rec.members[0]] }, train), /names 1 member/);
   });
-  it('no required checks configured: the rollup is refused as ci-refused, never merged on nothing (R1-H6); an unknown inventory stops the run', () => {
+  it('CI evidence: none-required PROVEN permits the rollup; unknown evidence stops the run with zero merges; the production default (the PR-1 stub) cannot merge', () => {
     const f = fixture(1);
-    const w = world(f); w.rules = [];
+    const w = world(f); w.rules = []; // a repo that requires nothing, proven: permitted (decision 6)
     const b = build(f, w);
-    const unknown = approve(f, w, { trainId: b.trainId });
-    assert.equal(unknown.ok, false);
-    assert.match(unknown.text, /neither rulesets nor branch protection require a status check/);
+    // (the serial wait loop still asks the old inventory until PR 2 rewires it: it needs the config's [] to call none-required known)
+    const r = approve(f, w, { trainId: b.trainId, serialOpts: { requiredChecks: [] } });
+    assert.equal(r.ok, true, r.text);
+    assert.equal(w.merges.length, 1);
     const g = fixture(1);
-    const w2 = world(g); w2.rules = []; // no ruleset requires a check, and the config says none are required either
+    const w2 = world(g); w2.rulesFail = true; // GitHub will not answer: unknown, a RUN stop, not a member refusal
     const b2 = build(g, w2);
-    const r = approve(g, w2, { trainId: b2.trainId, serialOpts: { requiredChecks: [] } });
-    assert.equal(r.ok, false, r.text);
+    const r2 = approve(g, w2, { trainId: b2.trainId });
+    assert.equal(r2.ok, false, r2.text);
     assert.equal(w2.merges.length, 0);
-    assert.deepEqual([runOf(g, b2.trainId).steps[0].outcome.status, runOf(g, b2.trainId).steps[0].outcome.code], ['refused', 'ci-refused']);
-    assert.match(runOf(g, b2.trainId).steps[0].outcome.reason, /no required checks are configured/);
+    assert.ok(r2.text.includes('CI evidence unknown (transport'), r2.text);
+    const h = fixture(1);
+    const w3 = world(h);
+    const b3 = build(h, w3);
+    const r3 = approve(h, w3, { trainId: b3.trainId, deps: { assessCi: undefined } });
+    assert.equal(r3.ok, false, r3.text);
+    assert.equal(w3.merges.length, 0, 'the default oracle is the stub: nothing may merge');
+    assert.match(r3.text, /unimplemented-oracle/);
   });
   it('the overlap read asks git for paths WITHOUT rename detection, so a rename source is never missed (R1-H7)', () => {
     const f = fixture(2);
