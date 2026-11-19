@@ -852,6 +852,32 @@ expected saving from A and B is **expected, not measured**.
 - F3 (queued after PR B) and F5 (Louis's call; `known-defects.candidates.json` is left untouched).
 - Enforcing SID continuation in code (§4.8): it would be a heuristic that could refuse a legitimate new audit.
 
+## 12. PR D: the paid `expect_clean` run (G1 as its own PR)
+
+PR C left the `--suite expect_clean` report path open (G1). PR D carries that code (`scripts/lib/model-eval/expect-clean-report.mjs`) and the one
+paid run that uses it. Louis's decision, verbatim from the coordinator: "G1 as its own PR, cap €30".
+
+**Entries first.** The corpus holds no `expect_clean` entry yet. Twelve candidates (KD-030..KD-041) are proposed in a worksheet; **no entry goes into
+`known-defects.json` and no paid call is made until Louis approves them.** The run covers exactly the approved entries.
+
+**Spend cap and stop rule.**
+- **Hard cap: USD 30 in total**, below EUR 30 at any EUR/USD above 1, because the meter counts USD. It is metered on the provider-reported cost of
+  each generation call (`usageEvent.costUsd`), never a pre-flight estimate.
+- The run passes `--budget-remaining-usd 28`. The meter is checked after each case, so the run can overshoot by at most one case; the 2 USD of
+  headroom is that case. Measured anchor: 5-pass audit rounds cost 0.10 to 0.36 USD each, so the expected total for 12 cases is roughly 2 to 6 USD.
+- **Stop rule.** Stop between cases when recorded spend reaches 28 USD, or when any call's cost is unknown (an unpriced route or missing usage is
+  `unknown`, never a fabricated 0). A stopped run is reported as **partial** (`partial: true`, exit 4) and is never presented as finished. A
+  generation that fails is a `failed` case and its cost is flagged unaccounted (`costComplete: false`).
+- A second run, or any change to the cap, is a new decision for Louis.
+
+**Pin.** Run it from `npm run fixture:create -- --name expect-clean-2026-11 --rev <the merge sha of PR D>`, so another session's commit cannot change the
+revision mid-run. The fixture has no gitignored inputs: the corpus entries must be committed before the pin.
+
+**Before the first paid call**, the coordinator gets the planned spend breakdown (case count, diff sizes, expected and capped total) as a heads-up.
+
+**Right-sizing.** Band-aid: leave `expect_clean` unreachable and keep the scorer as dead code. Over-built: a judge, a new store table or a decision
+verdict for a metric with no threshold. Chosen: a report-only path that spends only against a metered cap.
+
 ## Audit trail
 - **/audit-plan, SID `audit-plan-1795086122232-96060`** (2026-11-19). GPT rounds (HIGH / MEDIUM): R1 10 / 2, R2 4 / 3, R3 3 / 2. Every finding
   was accepted and fixed: 24 of 24 (acceptance 100% each round, with the ledger written and cloud outcomes labelled
