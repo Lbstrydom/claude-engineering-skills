@@ -64,7 +64,7 @@ substitute when the GPT legs have no route, and which of `AUDIT_DEGRADED` /
 `AUDIT_NOT_RUN` to report so a run that did not happen stays distinguishable
 from one that passed.
 
-Initialise session ID: `SID=audit-code-$(node -e "process.stdout.write(Date.now()+'-'+process.pid)")` — epoch ms plus a PID, so concurrent sessions never share result, stderr or ledger files.
+Initialise session ID: `SID=audit-code-$(node -e "process.stdout.write(Date.now()+'-'+process.pid)")` — epoch ms plus a PID, so concurrent sessions get separate result, stderr and ledger files.
 
 Kickoff card: `/audit-code — Starting | Plan: <path> | Max 6 rounds | SID: $SID`.
 
@@ -129,7 +129,7 @@ resuming a clustered/partly-audited build.
 ### Round 1
 
 `$SCOPE` is the scope chosen in the table above — `diff` unless the user asked
-for `plan` or `full`. **Pass it; never hardcode `diff` here**: until 2026-09-06 a
+for `plan` or `full`. **Pass it; do not hardcode `diff` here**: until 2026-09-06 a
 requested `--scope full` ran as a diff audit and reported a clean result over a
 fraction of what was asked.
 
