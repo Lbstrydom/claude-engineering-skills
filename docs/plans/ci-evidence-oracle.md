@@ -568,7 +568,23 @@ enters the consumer closure) + `npm run bundle:deps:check`, `npm run guards:pref
 
 ## Audit trail
 
-(filled by /audit-plan)
+- **/audit-plan, SID `audit-plan-1795065144055-108976`** (2026-11-19), `--mode plan`, three GPT rounds (the soft cap).
+  - R1 (plan `51e608b4`): H:5 M:2, 7/7 accepted and fixed: approve is not a merge site (scoped, points to `--serial`);
+    `none-required` skipped the final PR re-read; statuses excluded by assumption (now read, same-context → `unknown`);
+    paginated reads not consistent (now one page, complete by construction); a lexical census cannot prove gating (now ONE
+    merge function, `mergeWithCiPermit`); baseline vs candidate assertions split; the build mutation boundary (§2.5b).
+  - R2 (`2bbd1c17`): H:1 M:2, 3/3 accepted and fixed: the base is not server-pinned (detect-and-halt stated, plain serial
+    gains the check); `--paginate` buffered every page (removed); status/conclusion domains closed.
+  - R3 (`6ad82985`): H:2 M:2, 4/4 accepted: the status reader added to the adapter contract; positive controls per entry
+    point; H1/H2 restate the read-to-merge window (base and CI), now written as point-in-time residuals that need Louis's
+    acceptance before PR 2 enables merging, with the server-side control (a merge queue) in Out of Scope (Future).
+  - **Stopped by the cap, not by convergence.** No GPT round was clean (clean-round rate 0%); acceptance was 100% in every
+    round; HIGH 5 → 1 → 2. The structural-or-stop card at round 3: 0 structural clusters, 3 local-unclassifiable (adapter
+    contract, test oracle, merge-site enforcement, each fixed in the round that raised it), 2 polish. The round-3 HIGHs are
+    the TOCTOU window no client can close, which is a stop signal for this plan (a GitHub setting closes it), not a defect a
+    fourth round would fix. STOP/CONTINUE is the coordinator's call (Louis's word "stop at the first clean round" was not met).
+- **Final review** (gemini-4-argon, round 1 of 2) on `05aebaec`: `APPROVE`, gate `approve` (blocking 0, debt 0), no new
+  findings, none wrongly dismissed.
 
 ## Implementation Log
 
