@@ -201,7 +201,8 @@ export async function runManifestDriver({ manifestPath, tier, corpusFlagPath, th
   // G2: arms are comparable only if every one drew the same corpus selection. A run whose stamp differs from the first
   // successful arm's, or is incomplete, is INCONCLUSIVE for this comparison, never silently compared.
   const stampDivergence = manifest.role === 'auditor' ? computeStampDivergence(results) : [];
-  const failedArms = [...new Set([...results.filter((r) => !r.ok).map((r) => r.armId), ...stampDivergence.map((d) => d.armId)])];
+  const finalResults = applyStampDivergence(results, stampDivergence);
+  const failedArms = finalResults.filter((r) => !r.ok).map((r) => r.armId);
   // controlsDivergence (auditor-controls-execution-wiring.md, round-4 H1 fix)
   // — `configDigest` hashes the manifest's REQUESTED controls (its correct,
   // unchanged meaning); this is the one place that already sees every arm's
@@ -217,7 +218,7 @@ export async function runManifestDriver({ manifestPath, tier, corpusFlagPath, th
   writeOutput({
     manifestId: manifest.id, role: manifest.role, comparisonId, tier,
     analysis: { maxAttemptsPerArm, budgetUsdPerArm },
-    arms: results, controlsDivergence, stampDivergence,
+    arms: finalResults, controlsDivergence, stampDivergence,
   }, outFile, summaryLine);
   for (const d of stampDivergence) process.stderr.write(`  [manifest-driver] manifest: arm "${d.armId}" is NOT comparable: selection stamp ${d.reason}
 `);
@@ -280,21 +281,31 @@ function computeControlsDivergence(results) {
 
 // Exported for direct testing (mirrors this repo's established _internals pattern).
 /**
- * Pure: the ok arms whose corpus-selection stamp does not match the first ok arm's (or is incomplete). Fewer than two ok
- * arms compare nothing, so nothing diverges. @returns {{armId: string, reason: string}[]}
+ * Pure: the ok arms whose corpus-selection stamp is not the one most arms drew (ties go to the earliest arm), or is incomplete.
+ * Fewer than two ok arms compare nothing. The reference is the majority, never "the first arm", so reordering a manifest
+ * cannot change which arms are blamed. @returns {{armId: string, reason: string}[]}
  */
 function computeStampDivergence(results) {
   const ok = results.filter((r) => r.ok && r.result);
   if (ok.length < 2) return [];
-  const base = stampOfEvidence(ok[0].result.evidence);
+  const stamps = ok.map((r) => stampOfEvidence(r.result.evidence));
+  const agree = stamps.map((a) => stamps.filter((b) => stampMismatch(a, b) === null).length);
+  const ref = agree.indexOf(Math.max(...agree));
   const out = [];
-  for (const r of ok.slice(1)) {
-    const why = stampMismatch(base, stampOfEvidence(r.result.evidence));
-    if (why) out.push({ armId: r.armId, reason: why });
-  }
-  // An incomplete BASE stamp makes every pair incomplete, so the base arm is blamed too rather than passing as the reference.
-  if (out.length > 0 && out.every((d) => d.reason.startsWith('incomplete-stamp:')) && stampMismatch(base, base)) out.unshift({ armId: ok[0].armId, reason: stampMismatch(base, base) });
+  const selfCheck = stampMismatch(stamps[ref], stamps[ref]);
+  if (selfCheck) out.push({ armId: ok[ref].armId, reason: selfCheck });
+  stamps.forEach((st, i) => {
+    if (i === ref) return;
+    const why = stampMismatch(stamps[ref], st);
+    if (why) out.push({ armId: ok[i].armId, reason: why });
+  });
   return out;
 }
 
-export const _internals = { computeControlsDivergence, computeStampDivergence, describeSkip };
+/** Pure: the arm results with every non-comparable arm demoted to `ok:false` (so the written output cannot read as a success). */
+function applyStampDivergence(results, divergence) {
+  const by = new Map(divergence.map((d) => [d.armId, d.reason]));
+  return results.map((r) => (by.has(r.armId) ? { ...r, ok: false, outcome: 'not-comparable', notComparable: `selection stamp ${by.get(r.armId)}` } : r));
+}
+
+export const _internals = { computeControlsDivergence, computeStampDivergence, applyStampDivergence, describeSkip };
