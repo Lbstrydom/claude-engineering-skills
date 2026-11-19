@@ -112,6 +112,7 @@ export function resolveUpstream(cwd, base, trains = []) {
  * @returns {object} facts for `buildStatus`, plus `dir`
  */
 export function gatherFacts({ cwd, config, now, env = process.env, prs = true, patches = true, worktrees = true, cmd = 'fleet', checks = true, maxBranches, untracked = true, merged, uncommitted, deadlineAt = null, ghIdentity = 'declared' }) {
+  if (ghIdentity !== 'declared' && ghIdentity !== 'ambient') throw new TypeError(`gatherFacts: ghIdentity must be 'declared' or 'ambient' (got ${JSON.stringify(ghIdentity)})`);
   const acct = ghIdentity === 'declared' ? ghEnvFor(config, env) : { env, account: null };
   env = acct.env;
   const dir = fleetDir(cwd);

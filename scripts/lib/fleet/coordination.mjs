@@ -154,9 +154,11 @@ export function pruneNext(dir, now, cmd = 'fleet', { read = readPruneCache, aler
     const age = (now instanceof Date ? now.getTime() : Date.now()) - Date.parse(rec.at);
     // A record from the future (a clock moved back) has no knowable age: re-measure rather than relay it as fresh.
     if (!Number.isFinite(age) || age < 0 || age > PRUNE_CACHE_MAX_AGE_MS) return { state: 'stale', record: rec, lines: refresh(Number.isFinite(age) && age >= 0 ? `last measured ${ageText(age)} ago` : 'its age is unknown') };
-    if (!rec.complete) return { state: 'ok', record: rec, lines: [`FYI for the user/coordinator: prune count unmeasured (${rec.reason}) — \`${status}\` (read-only) re-measures`] };
-    if (pruneIsEmpty(rec)) return { state: 'ok', record: rec, lines: [] };
+    // The alert reads what WAS measured (detached judging and the registered count need no PR list), so it is evaluated
+    // before the incomplete and empty returns, never after them.
     const ask = pruneAlertLine(rec, alert, cmd);
+    if (!rec.complete) return { state: 'ok', record: rec, lines: [`FYI for the user/coordinator: prune count unmeasured (${rec.reason}) — \`${status}\` (read-only) re-measures`, ...(ask ? [ask] : [])] };
+    if (pruneIsEmpty(rec)) return { state: 'ok', record: rec, lines: ask ? [ask] : [] };
     return { state: 'ok', record: rec, lines: [`FYI for the user/coordinator, not an action for this session: ${pruneCountText(rec)} — \`${cmd} prune\` (read-only) lists them (measured ${ageText(age)} ago)`, ...(ask ? [ask] : [])] };
   } catch (e) {
     return { state: 'unreadable', lines: [`prune count not derived (${e.message})`] };

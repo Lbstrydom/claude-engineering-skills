@@ -12,7 +12,7 @@ import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import { addBranch, cleanupFleetRoots, installFakeGh, makeFleetRepo, runFleet, scrubbedEnv } from './helpers/fleet-repo.mjs';
 import {
-  PRUNE_CACHE_FILE, invalidatePruneCache, pruneAlertCrossed, pruneAlertLine, pruneStatusLine, readPruneCache, summarisePrune, writePruneCache,
+  PRUNE_CACHE_FILE, invalidatePruneCache, pruneIsEmpty, pruneAlertCrossed, pruneAlertLine, pruneStatusLine, readPruneCache, summarisePrune, writePruneCache,
 } from '../scripts/lib/fleet/prune-summary.mjs';
 import { pruneNext, pruneNextLines } from '../scripts/lib/fleet/coordination.mjs';
 import { statusPrune } from '../scripts/lib/fleet/commands.mjs';
@@ -36,7 +36,7 @@ describe('summarisePrune — counts only what the plan holds', () => {
     }), AT);
     assert.deepEqual(r, {
       schemaVersion: 2, at: AT, complete: true, removable: 3, fresh: 1, kept: 1, unjudged: 0, orphans: 1,
-      detached: { removable: 0, fresh: 0, kept: 0, stale: 0, unjudged: 0 }, worktrees: null,
+      detached: { removable: 0, fresh: 0, kept: 0, stale: 0, staleKept: 0, unjudged: 0 }, worktrees: null,
       review: { postMerge: 2, postMergeOnBase: 1, noPr: 1, noPrOnBase: 1, unjudged: 0 },
     });
   });
@@ -234,7 +234,7 @@ describe('pruneAlertCrossed / pruneAlertLine — the ASK threshold', () => {
   const A = { removable: 25, worktrees: 30 };
   const R = (o = {}) => {
     const { detached, ...rest } = o;
-    return { ...summarisePrune(plan(), AT), ...rest, detached: { removable: 0, fresh: 0, kept: 0, stale: 0, unjudged: 0, ...(detached ?? {}) } };
+    return { ...summarisePrune(plan(), AT), ...rest, detached: { removable: 0, fresh: 0, kept: 0, stale: 0, staleKept: 0, unjudged: 0, ...(detached ?? {}) } };
   };
   test('boundary: exactly 25 removable / 30 registered crosses, one less does not (each side alone)', () => {
     assert.equal(pruneAlertCrossed(R({ removable: 25 }), A).crossed, true);
@@ -274,6 +274,27 @@ describe('pruneAlertCrossed / pruneAlertLine — the ASK threshold', () => {
     assert.match(only, /which worktrees to retire/);
     assert.doesNotMatch(only, /prune --apply|git worktree prune/);
     assert.equal(pruneAlertLine(R({ removable: 24, worktrees: 29 }), A), null);
+  });
+  test('H4/M2: the alert is NOT swallowed by the incomplete or empty early returns (next and status both)', () => {
+    const next = (rec, alert = A) => pruneNext(null, NOW, 'fleet', { read: () => ({ state: 'ok', record: rec }), alert }).lines;
+    const incomplete = R({ complete: false, reason: 'no PR list', detached: { removable: 25 } });
+    assert.ok(next(incomplete).some((l) => /^ASK /.test(l)), 'incomplete branch half, detached half over the limit');
+    assert.ok(next(incomplete).some((l) => /unmeasured/.test(l)), 'and the unmeasured line is still there');
+    assert.ok(next(R({ complete: false, reason: 'x', worktrees: 40 })).some((l) => /^ASK .*40 registered worktrees/.test(l)), 'incomplete, registered count over the limit');
+    const empty = R({ worktrees: 31 });
+    assert.equal(pruneIsEmpty(empty), true);
+    assert.deepEqual(next(empty).map((l) => l.slice(0, 4)), ['ASK ']);
+    assert.deepEqual(next(R({ worktrees: 5 })), [], 'control: empty and under the limit stays silent');
+    assert.match(pruneStatusLine(empty, 'fleet', A), /^prune: nothing removable, nothing to review · threshold crossed \(31 registered worktrees/);
+    assert.match(pruneStatusLine(incomplete, 'fleet', A), /^prune: unmeasured .* · threshold crossed/);
+    assert.doesNotMatch(pruneStatusLine(R({ worktrees: 5 }), 'fleet', A), /threshold/);
+  });
+  test('H1/H9: with a kept stale registration the ASK never offers the repository-wide git worktree prune', () => {
+    const l = pruneAlertLine(R({ detached: { stale: 25, staleKept: 1 } }), A);
+    assert.doesNotMatch(l, /whether to run `git worktree prune/);
+    assert.match(l, /rescue first/);
+    assert.match(l, /withheld/);
+    assert.match(pruneAlertLine(R({ detached: { stale: 25, staleKept: 0 } }), A), /whether to run `git worktree prune`/, 'control: nothing kept, so it is offered');
   });
   test('next relays it after the FYI line, only for a fresh complete-or-not record; the status line says so too; v1 cache → unmeasured, no ASK', () => {
     const rec = R({ removable: 25 });

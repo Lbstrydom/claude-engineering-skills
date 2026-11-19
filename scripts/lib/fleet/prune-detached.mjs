@@ -104,11 +104,17 @@ export function registrationHistory(ctx, w, { git = runGit } = {}) {
     if (!OID.test(orig)) return { ok: false, kept: 'registration not verified: a malformed ORIG_HEAD' };
     ids.add(orig);
   } catch (e) { if (e.code !== 'ENOENT') return { ok: false, kept: `registration not verified: cannot read ORIG_HEAD (${e.code ?? e.message})` }; }
-  for (const id of ids) {
-    if (!git(['rev-parse', '--verify', '--quiet', `${id}^{commit}`], ctx.cwd).ok) return { ok: false, kept: `registration not verified: ${id.slice(0, 12)} (HEAD or a reflog entry) is not a commit here` };
-  }
+  // FETCH_HEAD is per-worktree and lists fetched commits (first column) that no ref need hold.
+  try {
+    for (const line of fs.readFileSync(path.join(admin.dir, 'FETCH_HEAD'), 'utf8').split('\n').filter(Boolean)) {
+      const id = line.split(/\s/)[0];
+      if (!OID.test(id)) return { ok: false, kept: 'registration not verified: a malformed FETCH_HEAD line' };
+      ids.add(id);
+    }
+  } catch (e) { if (e.code !== 'ENOENT') return { ok: false, kept: `registration not verified: cannot read FETCH_HEAD (${e.code ?? e.message})` }; }
+  // ONE call for the whole set: an id that is not a commit makes rev-list fail, which is "unverified" (kept), never "nothing there".
   const rl = git(['rev-list', '--max-count=20', ...ids, '--not', '--remotes'], ctx.cwd);
-  if (!rl.ok) return { ok: false, kept: `registration not verified: cannot list unpushed commits (${rl.reason})` };
+  if (!rl.ok) return { ok: false, kept: `registration not verified: an id in HEAD, its reflog, ORIG_HEAD or FETCH_HEAD is not a commit here, or git failed (${rl.reason})` };
   const n = String(rl.stdout).split('\n').filter(Boolean).length;
   return n ? { ok: false, kept: `${n >= 20 ? '≥20' : n} commit(s) reachable only through this registration (HEAD or its reflog), no remote-tracking ref holds them` } : { ok: true };
 }
@@ -125,12 +131,15 @@ const risksOf = (r) => Object.entries(r.risks).filter(([, v]) => v.length);
 export function planDetached(ctx, { worktrees, mainCheckout, here, staleMs, nowMs, past, deadlineAt, clock, git = runGit, report = archiveReport }) {
   const out = empty();
   for (const w of worktrees) {
-    if (w.bare || w.branch || !w.detached) continue;
-    if (samePath(w.path, mainCheckout) || (here.ok && samePath(w.path, here.dir))) continue;
+    if (w.bare) continue;
     const gone = w.prunable || w.missing;
+    // A present worktree on a branch is the branch path's; a registration whose directory is gone is judged here whatever it had checked out.
+    if (!gone && (w.branch || !w.detached)) continue;
+    if (samePath(w.path, mainCheckout) || (here.ok && samePath(w.path, here.dir))) continue;
     const keep = (reason) => out.excluded.push({ path: w.path, head: w.head, gone, reason });
     if (w.locked) { keep('locked (in use)'); continue; }
     if (gone) {
+      if (past()) { out.unjudged += 1; continue; }
       const h = registrationHistory(ctx, w, { git });
       if (h.ok) out.stale.push({ path: w.path, head: w.head, reason: w.prunableReason ?? 'directory gone' }); else keep(h.kept);
       continue;
@@ -229,8 +238,9 @@ export function renderDetached(d) {
   if (d.stale.length || goneKept.length) {
     lines.push('', `stale registrations (${d.stale.length}) — directory gone; listed only: \`--apply\` never runs \`git worktree prune\`, which is repository-wide and removes EVERY prunable entry git lists, these and any other:`);
     for (const s of d.stale) lines.push(`  ${s.path} · HEAD ${String(s.head).slice(0, 12)} — its history is held by a remote-tracking ref`);
-    if (d.stale.length) lines.push('      git worktree prune');
     for (const e of goneKept) lines.push(`  kept: ${e.path}: ${e.reason}`);
+    if (d.stale.length && !goneKept.length) lines.push('      git worktree prune');
+    else if (goneKept.length) lines.push(`      git worktree prune is NOT offered: it would also delete the ${plural(goneKept.length, 'registration')} kept above, whose history only they hold. Rescue those commits first (e.g. \`git branch rescue-<n> <sha>\`), then re-run \`fleet prune\`.`);
   }
   return lines;
 }

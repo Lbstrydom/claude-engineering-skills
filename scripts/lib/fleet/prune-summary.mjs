@@ -41,7 +41,7 @@ const RecordSchema = z.object({
   removable: count, fresh: count, kept: count, unjudged: count, orphans: count,
   // Detached worktrees and stale registrations (docs/plans/fleet-hygiene.md §1.2): judged apart from the branch half, which needs the PR list and
   // so can be incomplete while this is complete. `worktrees` is the registered count (null = the list was unreadable).
-  detached: z.object({ removable: count, fresh: count, kept: count, stale: count, unjudged: count }).strict(),
+  detached: z.object({ removable: count, fresh: count, kept: count, stale: count, staleKept: count, unjudged: count }).strict(),
   worktrees: count.nullable(),
   review: z.object({ postMerge: count, postMergeOnBase: count, noPr: count, noPrOnBase: count, unjudged: count }).strict(),
 }).strict()
@@ -63,7 +63,7 @@ export function summarisePrune(plan, at) {
     ...(complete ? {} : { reason: plan.notJudged?.[0] ?? 'the prune plan was not judged' }),
     removable: plan.candidates.length, fresh: plan.candidates.filter((c) => c.fresh).length, kept: plan.excluded.length,
     unjudged: plan.unjudged ?? 0, orphans: plan.orphans?.dirs?.length ?? 0,
-    detached: { removable: d.candidates.length, fresh: d.candidates.filter((c) => c.fresh).length, kept: d.excluded.length, stale: d.stale.length, unjudged: d.unjudged },
+    detached: { removable: d.candidates.length, fresh: d.candidates.filter((c) => c.fresh).length, kept: d.excluded.length, stale: d.stale.length, staleKept: d.excluded.filter((e) => e.gone).length, unjudged: d.unjudged },
     worktrees: plan.registered ?? null,
     review: {
       postMerge: r.postMerge.length, postMergeOnBase: r.postMerge.filter((i) => i.allOnBase).length,
@@ -77,7 +77,7 @@ export function unmeasuredRecord(reason, at) {
   return {
     schemaVersion: PRUNE_CACHE_SCHEMA_VERSION, at, complete: false, reason,
     removable: 0, fresh: 0, kept: 0, unjudged: 0, orphans: 0,
-    detached: { removable: 0, fresh: 0, kept: 0, stale: 0, unjudged: 0 }, worktrees: null,
+    detached: { removable: 0, fresh: 0, kept: 0, stale: 0, staleKept: 0, unjudged: 0 }, worktrees: null,
     review: { postMerge: 0, postMergeOnBase: 0, noPr: 0, noPrOnBase: 0, unjudged: 0 },
   };
 }
@@ -110,10 +110,13 @@ export function pruneCountText(rec) {
 
 /** The one `fleet status` line. */
 export function pruneStatusLine(rec, cmd = 'fleet', alert = null) {
-  if (!rec.complete) return `prune: unmeasured (${rec.reason}) — \`${cmd} prune\` says what it could not judge`;
-  if (pruneIsEmpty(rec)) return 'prune: nothing removable, nothing to review';
+  // The threshold is read from what WAS measured (detached judging and the registered count need no PR list), so it is
+  // evaluated before the unmeasured and empty returns, never after them.
   const crossed = pruneAlertCrossed(rec, alert);
-  return `prune: ${pruneCountText(rec)} — \`${cmd} prune\` (read-only) lists them${crossed.crossed ? ` · threshold crossed (${crossed.why.join('; ')})` : ''}`;
+  const tail = crossed.crossed ? ` · threshold crossed (${crossed.why.join('; ')})` : '';
+  if (!rec.complete) return `prune: unmeasured (${rec.reason}) — \`${cmd} prune\` says what it could not judge${tail}`;
+  if (pruneIsEmpty(rec)) return `prune: nothing removable, nothing to review${tail}`;
+  return `prune: ${pruneCountText(rec)} — \`${cmd} prune\` (read-only) lists them${tail}`;
 }
 
 /**
@@ -124,7 +127,7 @@ export function pruneStatusLine(rec, cmd = 'fleet', alert = null) {
  * @returns {{crossed: boolean, lowerBound: boolean, why: string[], applyRemovable: number, stale: number}}
  */
 export function pruneAlertCrossed(rec, alert) {
-  const none = { crossed: false, lowerBound: false, why: [], applyRemovable: 0, stale: 0 };
+  const none = { crossed: false, lowerBound: false, why: [], applyRemovable: 0, stale: 0, staleKept: 0 };
   if (!alert || !rec) return none;
   const applyRemovable = rec.detached.removable + (rec.complete ? rec.removable : 0);
   const total = applyRemovable + rec.detached.stale;
@@ -132,7 +135,7 @@ export function pruneAlertCrossed(rec, alert) {
   const why = [];
   if (alert.removable && total >= alert.removable) why.push(`${lowerBound ? '≥' : ''}${total} removable (limit ${alert.removable}): ${applyRemovable} branch/worktree removal${applyRemovable === 1 ? '' : 's'}, ${rec.detached.stale} stale registration${rec.detached.stale === 1 ? '' : 's'}`);
   if (alert.worktrees && rec.worktrees !== null && rec.worktrees >= alert.worktrees) why.push(`${rec.worktrees} registered worktrees (limit ${alert.worktrees})`);
-  return { crossed: why.length > 0, lowerBound, why, applyRemovable, stale: rec.detached.stale };
+  return { crossed: why.length > 0, lowerBound, why, applyRemovable, stale: rec.detached.stale, staleKept: rec.detached.staleKept };
 }
 
 /** The ASK `fleet next` prints when the threshold is crossed: what to show the user, and only the action that can address what crossed. */
@@ -141,7 +144,8 @@ export function pruneAlertLine(rec, alert, cmd = 'fleet') {
   if (!c.crossed) return null;
   const asks = [];
   if (c.applyRemovable > 0) asks.push(`whether to run \`${cmd} prune --apply\``);
-  if (c.stale > 0) asks.push(`whether to run \`git worktree prune\` by hand (repository-wide: it removes every prunable entry git lists; \`${cmd} prune\` names them)`);
+  if (c.stale > 0 && c.staleKept === 0) asks.push(`whether to run \`git worktree prune\` by hand (repository-wide: it removes every prunable entry git lists; \`${cmd} prune\` names them)`);
+  if (c.staleKept > 0) asks.push(`which of the ${c.staleKept} kept stale registration(s) to rescue first (\`${cmd} prune\` names them; the repository-wide \`git worktree prune\` is withheld while they exist)`);
   if (!asks.length) asks.push(`which worktrees to retire (\`${cmd} prune\` lists what is kept and why)`);
   return `ASK for the coordinator's next pass, not an action for this session: prune threshold crossed — ${c.why.join('; ')} — show the user \`${cmd} prune\` (read-only) and ask ${asks.join(' and ')}; removal is the user's decision`;
 }

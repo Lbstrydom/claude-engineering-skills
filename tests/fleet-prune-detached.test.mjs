@@ -166,6 +166,63 @@ describe('stale registration, reflog expired: the listed HEAD is the whole evide
   });
 });
 
+describe('registration evidence beyond the reflog (audit R1)', () => {
+  const rmGone = (dir) => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+
+  test("H7/H10: a commit only this worktree's FETCH_HEAD names keeps it; an empty FETCH_HEAD does not (control)", () => {
+    const w = world();
+    const fetched = w.add('wt-fetch-head');
+    const orphan = commitFile(fetched, 'o.txt', 'o\n', 'fetched, then dropped');
+    git(['checkout', '-q', '--detach', w.pushed], fetched);
+    const admin = w.adminOf(fetched);
+    fs.writeFileSync(path.join(admin, 'logs', 'HEAD'), '');
+    fs.writeFileSync(path.join(admin, 'FETCH_HEAD'), `${orphan}\t\t'x' of origin\n`);
+    const control = w.add('wt-fetch-head-empty');
+    fs.writeFileSync(path.join(w.adminOf(control), 'FETCH_HEAD'), '');
+    fs.writeFileSync(path.join(w.adminOf(control), 'logs', 'HEAD'), '');
+    const d = w.plan();
+    assert.match(w.kept(d, fetched), /reachable only through this registration/);
+    assert.ok(w.cand(d, control));
+  });
+
+  test('H5: a registration whose directory is gone is judged even when it had a branch checked out', () => {
+    const w = world();
+    const dir = path.join(w.fx.root, 'wt-attached');
+    git(['worktree', 'add', '-q', '-b', 'attached', dir, w.pushed], w.fx.repo);
+    rmGone(dir);
+    assert.ok(w.stale(w.plan(), dir), 'listed as a stale registration (its tip is pushed)');
+    const dir2 = path.join(w.fx.root, 'wt-attached-unpushed');
+    git(['worktree', 'add', '-q', '-b', 'attached2', dir2, w.pushed], w.fx.repo);
+    commitFile(dir2, 'u.txt', 'u\n', 'unpushed on a branch');
+    rmGone(dir2);
+    const d = w.plan();
+    assert.equal(w.stale(d, dir2), undefined);
+    assert.match(w.kept(d, dir2), /reachable only through this registration/);
+  });
+
+  test('H1: with a kept stale registration the report withholds git worktree prune and says why; with none kept it prints it (control)', () => {
+    const w = world();
+    const gone = w.add('wt-gone');
+    rmGone(gone);
+    assert.match(renderDetached(w.plan()).join('\n'), /^ {6}git worktree prune$/m);
+    const lost = w.add('wt-gone-unpushed');
+    commitFile(lost, 'u.txt', 'u\n', 'only here');
+    rmGone(lost);
+    const text = renderDetached(w.plan()).join('\n');
+    assert.doesNotMatch(text, /^ {6}git worktree prune$/m);
+    assert.match(text, /git worktree prune is NOT offered/);
+  });
+
+  test('M4: a spent budget counts stale registrations as unjudged, never as listed or kept', () => {
+    const w = world();
+    const gone = w.add('wt-gone');
+    rmGone(gone);
+    const wt = listWorktrees(w.fx.repo);
+    const d = planDetached(w.ctx, { worktrees: wt.worktrees, mainCheckout: w.fx.repo, here: { ok: false }, staleMs: 3 * DAY, nowMs: Date.now(), past: () => true, deadlineAt: 0, clock: Date.now });
+    assert.deepEqual([d.stale.length, d.excluded.length, d.unjudged], [0, 0, 1]);
+  });
+});
+
 describe('apply re-checks everything at apply time', () => {
   const past = 30 * DAY;
   const planAndApply = (w, mutate, opts = {}) => {

@@ -205,11 +205,20 @@ describe('mutating workflows keep ONE identity: land and ship-batch read PRs as 
     const run = (extra) => { fs.rmSync(log, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); gatherFacts({ cwd: fx.repo, config, now: new Date(), env, ...extra }); return [...new Set(seen())]; };
     assert.deepEqual(run({}), ['TOKEN-DECLARED'], 'default: the declared account');
     assert.deepEqual(run({ ghIdentity: 'ambient' }), ['AMBIENT-TOKEN'], 'ambient: the signed-in account, as before this change');
+    assert.throws(() => gatherFacts({ cwd: fx.repo, config, now: new Date(), env, ghIdentity: 'Ambient' }), /ghIdentity must be/, 'an unknown mode is refused, never read as ambient');
+    // Every gatherFacts call in the two mutating workflows that carries the full config opts out of the declared account.
+    // Found by balanced parentheses, so a call split over several lines cannot escape.
     for (const f of ['land.mjs', 'ship-batch.mjs']) {
       const src = fs.readFileSync(new URL(`../scripts/lib/fleet/${f}`, import.meta.url), 'utf8');
-      const calls = src.split('\n').filter((l) => /gatherFacts\(\{[^}]*config(: ctx\.config)?[,\s]/.test(l) && !/hotFiles/.test(l));
+      const calls = [];
+      for (let i = src.indexOf('gatherFacts({'); i !== -1; i = src.indexOf('gatherFacts({', i + 1)) {
+        let depth = 0; let j = i + 'gatherFacts'.length;
+        do { if (src[j] === '(') depth += 1; else if (src[j] === ')') depth -= 1; j += 1; } while (depth > 0 && j < src.length);
+        const call = src.slice(i, j);
+        if (/config(: ctx\.config)?\s*[,}]/.test(call) && !/hotFiles/.test(call)) calls.push(call);
+      }
       assert.ok(calls.length >= 1, `${f}: found its full-config gatherFacts call`);
-      for (const l of calls) assert.match(l, /ghIdentity: 'ambient'/, `${f}: ${l.trim().slice(0, 80)}`);
+      for (const c of calls) assert.match(c, /ghIdentity: 'ambient'/, `${f}: ${c.slice(0, 80)}`);
     }
   });
 });
