@@ -19,6 +19,9 @@ import { sourceRelToDestRel } from '../scripts/lib/sync-path-map.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const norm = (p) => String(p).replace(/\\/g, '/');
+const GENERATED_ABSENT_OK = new Set(['scripts/.sync-manifest.json']);
+/** Git with no ambient config: the developer's/CI's global and system config (hooks path, signing, autocrlf, templates) never reaches the fixture. */
+let GIT_ISOLATED = {}; // set in `before`: an EMPTY config file (git rejects Windows' null device path)
 const NEW_MODULES = [
   'scripts/lib/fleet/coordinator-grant.mjs',
   'scripts/lib/fleet/ship-batch.mjs',
@@ -51,21 +54,25 @@ describe('in a relocated layout', () => {
     tmp = fs.mkdtempSync(path.join(ROOT, '.claude', 'tmp', 'reloc-'));
     for (const f of getSyncClosure().files.map(norm)) {
       if (!f.startsWith('scripts/') || !/\.(mjs|js|json)$/.test(f)) continue;
-      // A closure entry may be a generated file this checkout has not produced (`.sync-manifest.json`): the code is what matters.
-      if (!fs.existsSync(path.join(ROOT, f))) continue;
+      // Only the one known generated file may be absent in a checkout; any OTHER missing closure entry is a broken fixture, not a skip.
+      if (!fs.existsSync(path.join(ROOT, f))) { assert.ok(GENERATED_ABSENT_OK.has(f), `closure entry ${f} is missing from the checkout`); continue; }
       const dest = path.join(tmp, sourceRelToDestRel(f));
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(path.join(ROOT, f), dest);
     }
+    const emptyCfg = path.join(tmp, 'empty.gitconfig');
+    fs.writeFileSync(emptyCfg, '');
+    GIT_ISOLATED = { GIT_CONFIG_GLOBAL: emptyCfg, GIT_CONFIG_SYSTEM: emptyCfg, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
     repo = fs.mkdtempSync(path.join(tmp, 'consumer-'));
-    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+    const init = spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo, encoding: 'utf-8', env: { ...process.env, ...GIT_ISOLATED } });
+    assert.equal(init.status, 0, `git init failed: ${init.stderr}`);
   });
   after(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   const run = (script, args, cwd = repo) => spawnSync(process.execPath, [script, ...args], {
     cwd, encoding: 'utf-8', windowsHide: true, timeout: 120_000,
     // An empty HOME holds no grant; an empty DSN is the air-gap signal (the store is off whatever ~/.audit-loop.env says).
-    env: { ...process.env, HOME: repo, USERPROFILE: repo, AUDIT_DB_URL: '', LEARNING_DISABLE: '1', AZURE_OPENAI_ENDPOINT: '', FLEET_TELEMETRY: 'off' },
+    env: { ...process.env, ...GIT_ISOLATED, HOME: repo, USERPROFILE: repo, AUDIT_DB_URL: '', LEARNING_DISABLE: '1', AZURE_OPENAI_ENDPOINT: '', FLEET_TELEMETRY: 'off' },
   });
 
   it('the destination layout is the isolated one', () => {
@@ -103,7 +110,11 @@ describe('in a relocated layout', () => {
 
   it('with the store off, the relocated child refuses the evidence row instead of passing', () => {
     // A throwaway repo with one commit: HEAD is the head, there is no marker and no store, so the verdict is a refusal.
-    const g = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf-8' });
+    const g = (...a) => {
+      const r = spawnSync('git', a, { cwd: repo, encoding: 'utf-8', env: { ...process.env, ...GIT_ISOLATED } });
+      assert.equal(r.status, 0, `git ${a.join(' ')} failed: ${r.stderr}`);
+      return r;
+    };
     g('config', 'user.email', 't@example.com'); g('config', 'user.name', 'T'); g('config', 'commit.gpgsign', 'false');
     fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
     g('add', 'a.txt'); g('commit', '-q', '-m', 'one');
@@ -116,7 +127,12 @@ describe('in a relocated layout', () => {
     assert.equal(r.status, 2, r.stderr);
     const env = JSON.parse(r.stdout);
     assert.equal(env.ok, false);
-    assert.ok(env.conditions.some((c) => c.id === 'evidence' && !c.ok), 'the evidence row must refuse');
+    // The child must have actually judged THIS head (not died early), and refused the evidence row for a reason it states: a missing
+    // marker or an absent store, not an empty envelope.
+    assert.equal(env.head, head, 'the child must report the head it judged');
+    assert.ok(env.conditions.length > 1, 'the child must have evaluated several conditions');
+    const ev = env.conditions.find((c) => c.id === 'evidence');
+    assert.ok(ev && ev.ok === false && String(ev.detail ?? ev.reason ?? '').length > 0, `the evidence row must refuse with a stated reason: ${JSON.stringify(ev)}`);
   });
 });
 

@@ -98,7 +98,7 @@ export function parseBranchProtection(text) {
  * @returns {{source: 'rules-api'|'config'|'rules-api+config'|'unknown', names: string[], reason?: string}}
  */
 export function requiredInventory(cwd, { repo, base, configured, configError = null, gh = ghRunner() }) {
-  if (configError) return { source: 'unknown', names: [], reason: `.fleet.json could not be loaded (${configError}) — fix it before approving` };
+  if (configError) return { source: 'unknown', cause: 'config', names: [], reason: `.fleet.json could not be loaded (${configError}) — fix it before approving` };
   const hasConfig = Array.isArray(configured);
   const ask = (args, parse) => {
     if (!repo) return { ok: false, reason: 'no repository to ask' };
@@ -111,13 +111,13 @@ export function requiredInventory(cwd, { repo, base, configured, configError = n
   const names = [...new Set([...(rules.ok ? rules.names : []), ...(classic.ok ? classic.names : []), ...(configured ?? [])])].sort();
   if (rules.ok && classic.ok) {
     if (!names.length && !hasConfig) {
-      return { source: 'unknown', names: [], reason: 'neither rulesets nor branch protection require a status check — declare .fleet.json "requiredChecks": [] to confirm none are required' };
+      return { source: 'unknown', cause: 'none-declared', names: [], reason: 'neither rulesets nor branch protection require a status check — declare .fleet.json "requiredChecks": [] to confirm none are required' };
     }
     return { source: hasConfig ? 'github+config' : 'github', names };
   }
   if (hasConfig) return { source: 'config', names, partial: [rules, classic].filter((x) => !x.ok).map((x) => x.reason) };
   const why = [!rules.ok && `rulesets not readable (${rules.reason})`, !classic.ok && `branch protection not readable (${classic.reason})`].filter(Boolean).join('; ');
-  return { source: 'unknown', names: [], reason: `${why} — declare the required checks in .fleet.json "requiredChecks" ([] if none)` };
+  return { source: 'unknown', cause: 'unreadable', names: [], reason: `${why} — declare the required checks in .fleet.json "requiredChecks" ([] if none)` };
 }
 
 /**

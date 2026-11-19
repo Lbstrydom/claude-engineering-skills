@@ -1194,3 +1194,17 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   where the required check is a lighter tier must not use ship-batch until that repo says the required check is its full run.
 - Earlier text in this plan that mentions a full-suite verdict (the F6 row, "Reused unchanged", test 6) describes the superseded `1cd2df21`
   design and is kept as history; the behaviour is the one above.
+
+### CI inventory classification, and the accepted tier trade (final round, 2026-11-19, Louis: "One more then finish it")
+
+- **Inventory unknown is split by cause** (`requiredInventory().cause`): `config` (`.fleet.json` unloadable) and `none-declared` refuse that MEMBER
+  (`ci-refused`); `unreadable` (GitHub would not answer for the rulesets/protection) is a failed read that says nothing about the member, so
+  `admitMember` maps it to the run-scope `checks-inventory-unknown` stop. Merged members stay merged; a resume re-asks. At BUILD time every
+  member is excluded (needs-user) with the reason: nothing is built on an inventory nobody could read. Pinned in the `CI: ... REQUIRED checks`
+  tests, with a control (the same outage with the checks declared in config admits).
+- **Pending required checks**: at the build, "not green yet" is `needs-user` (`ready` means CI green). At the merge-time wait, still pending past
+  the deadline is `not-run` `checks-pending` (resumable). One contract, stated in `skills/fleet/references/ship-batch.md`.
+- **Landed-set wording**: "the tested set is the merged set" is replaced by "the combination tested is the admitted set; a member that later does
+  not land leaves a `subset`".
+- **Accepted trade (H2/H3), not a defect to fix here**: with no full-suite verdict, ship-batch cannot tell a FULL required run from a branch-tier
+  one. The repository must require its full suite; nothing verifies it. Recorded as accepted debt by Louis's option (d).

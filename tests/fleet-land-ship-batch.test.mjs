@@ -784,6 +784,16 @@ describe('CI: the base branch\'s REQUIRED checks are the gate (there is no separ
     const a = admit(g, { requiredChecksError: '.fleet.json could not be loaded (bad json)' });
     assert.deepEqual([a.ok, a.kind], [false, 'ci-refused']);
   });
+  it('a ruleset GitHub will not answer is a failed READ: the run-scope checks-inventory-unknown stop, never a member ci-refused', () => {
+    const base = ghWith({ rows: [row('pass')] });
+    const down = (args) => (args[0] === 'api' ? { ok: false, status: 1, stdout: '', stderr: 'HTTP 502', reason: 'HTTP 502' } : base(args));
+    const r = reasons(down);
+    assert.ok(r.length === 1 && /^ci: the required-check inventory cannot be read/.test(r[0]) && /502/.test(r[0]), r.join(' | '));
+    const a = admit(down);
+    assert.deepEqual([a.ok, a.kind], [false, 'checks-inventory-unknown']);
+    // The control: the same unreadable ruleset with the checks DECLARED in config is a measurable inventory, so it admits.
+    assert.equal(admit(down, { requiredChecks: ['full-suite'] }).ok, true);
+  });
   it('no required checks anywhere is a refusal: nothing measured CI at this head', () => {
     const r = reasons(ghWith({ required: [], rows: [] }), { requiredChecks: [] });
     assert.deepEqual(r, ['ci: no required checks are configured on main, so nothing measured CI at this head']);

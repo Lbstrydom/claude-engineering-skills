@@ -165,7 +165,10 @@ export function ciAndIdentityReasons({ cwd, member, base, deps, requiredChecks, 
   const rc = observeRequiredChecks(cwd, { pr: member.prNumber, repo: member.repo, inventory: inv, expectHead: member.oid, gh: deps.gh });
   // A required-check INVENTORY that cannot be established (a config error, an unreadable ruleset) is a persistent problem the member cannot
   // fix by retrying: it refuses. A required check that could not be OBSERVED right now (a failed read) stays an unmeasured fact (not-run).
-  if (inv.source === 'unknown') out.push(`ci: the required-check inventory is unknown (${inv.reason ?? 'no reason'})`);
+  // `cause` splits the two: a config problem (or nothing declared) is the MEMBER's persistent refusal; a ruleset GitHub would not answer
+  // is a failed read that says nothing about this member, so admitMember maps it to the run-scope `checks-inventory-unknown` stop.
+  if (inv.source === 'unknown' && inv.cause === 'unreadable') out.push(`ci: the required-check inventory cannot be read (${inv.reason ?? 'no reason'})`);
+  else if (inv.source === 'unknown') out.push(`ci: the required-check inventory is unknown (${inv.reason ?? 'no reason'})`);
   else if (rc.verdict === 'none-required') out.push(`ci: no required checks are configured on ${base}, so nothing measured CI at this head`);
   else if (rc.verdict !== 'pass') out.push(`ci: required checks ${describeVerdict(rc)}`);
   return out;
@@ -183,7 +186,7 @@ const CandidateSchemas = {
  * `admitMember(mode, invariant, candidate)`. Both inputs are gathered by the caller AT the head being judged:
  *  - `invariant`: fixed for the batch: `{base, remote}`;
  *  - `candidate`: `{mode, head, child, ...}` bound to that head (`identityAndCi` for a ship-batch member, `branchTip` for a rollup member).
- * @returns {{ok: true} | {ok: false, kind: 'shipped-head-refused'|'ci-refused'|'pr-unreadable', reasons: string[]}}
+ * @returns {{ok: true} | {ok: false, kind: 'shipped-head-refused'|'ci-refused'|'pr-unreadable'|'checks-inventory-unknown', reasons: string[]}}
  */
 export function admitMember(mode, invariant, candidate) {
   const schema = CandidateSchemas[mode];
@@ -193,6 +196,7 @@ export function admitMember(mode, invariant, candidate) {
   if (!c.child.ok) return { ok: false, kind: 'shipped-head-refused', reasons: c.child.reasons };
   if (mode === 'ship-batch') {
     // A PR that could not be READ is an unmeasured fact (not-run), never a measured refusal (F4): it is retried, not refused.
+    if (c.identityAndCi.some((r) => /^ci: the required-check inventory cannot be read/.test(r))) return { ok: false, kind: 'checks-inventory-unknown', reasons: c.identityAndCi };
     if (c.identityAndCi.some((r) => /^identity: PR #\d+ cannot be read|^ci: required checks .*\bunknown\b/.test(r))) return { ok: false, kind: 'pr-unreadable', reasons: c.identityAndCi };
     return c.identityAndCi.length ? { ok: false, kind: 'ci-refused', reasons: c.identityAndCi } : { ok: true };
   }
@@ -265,7 +269,7 @@ export function buildShipBatch(ctx, flags, deps, buildFn, { parseSelect }) {
   if (!ok.length) {
     return { ok: false, code: 'refused', reason: 'no member is ship-ok', needsUser, text: `REFUSED: no member is ship-ok — nothing was built, merged or changed\n${needsText.join('\n')}\nEach waits for the user to type /ship in its own session.` };
   }
-  // The partition happens BEFORE the integration worktree, so the tested set is the merged set.
+  // The partition happens BEFORE the integration worktree, so the tested combination is the admitted set (a member that later does not land leaves a subset).
   const r = buildFn(ctx, { ...flags, '--select': ok.map((m) => m.id).join(',') }, deps);
   if (!r.ok || !r.trainId) return { ...r, needsUser, text: `${r.text}${needsText.length ? `\n${needsText.join('\n')}` : ''}` };
   const dir = fleetDir(cwd);
@@ -284,7 +288,7 @@ export function buildShipBatch(ctx, flags, deps, buildFn, { parseSelect }) {
   });
   const lines = [
     r.text,
-    `ship-batch: ${ok.length} member(s) ship-ok, ${needsUser.length} needs-user (excluded BEFORE the build, so the tested set is the merged set)`,
+    `ship-batch: ${ok.length} member(s) ship-ok, ${needsUser.length} needs-user (excluded BEFORE the build, so the tested combination is the admitted set)`,
     ...needsText,
     `approve (needs no chat go-ahead only because the grant is present): ${cmd} land --approve ${r.trainId} --ship-batch`,
   ];

@@ -31,7 +31,7 @@ The grant is the section headed `## Coordinators may ship batches of pre-authori
    `.audit/` markers, and `fleet archive-check` refuses a ready, unmerged member for that reason.
 2. **Build**: `node scripts/fleet.mjs land --ship-batch`. It re-reads the grant, then for every ready member runs
    `ship-commit.mjs --check-shipped-head --head <oid> --json` **in that chip's worktree** and checks CI and identity. Members that
-   fail are excluded BEFORE the integration worktree is built, so the tested set is the merged set. `--select a,b` narrows it.
+   fail are excluded BEFORE the integration worktree is built, so the combination tested is the admitted set (a member that later does not land leaves a `subset`, below). `--select a,b` narrows it.
 3. **Approve**: `node scripts/fleet.mjs land --approve <train> --ship-batch`. This is the one land that needs no chat go-ahead, and
    only for a train built in step 2 under the grant. Every other `land --approve`, `--confirm`, `--override` and `--accept-rerun`
    still needs the user.
@@ -45,7 +45,7 @@ one run id) · `evidence` (the chip's own gate-evidence marker for that run and 
 repository) · `final-review` (bound to the same run, audited tree and round, APPROVE with result approve, corroborated by the
 store) · `post-audit-delta` (between the AUDITED tree and the head only a new status entry, a plan's Status line and its
 Implementation Log may differ; a change reverted to base is still inspected) · `sensitive-path`, `migration`, `repo-policy`.
-Fleet adds CI green at exactly the head (EVERY required check of the base branch, so the repository must require its FULL suite: a repo whose required check is a lighter tier must not use ship-batch), the PR
+Fleet adds CI green at exactly the head: EVERY required check of the base branch, and NOTHING else. There is no separate full-suite verdict, so the base branch must require its FULL suite as a required check; a repo whose required check is a lighter (branch) tier must not use ship-batch, and nothing here verifies that it is the full run, the PR
 open, not a draft, on the right base, head equal to the ready oid, and not stacked.
 
 **It never raises a gate.** A `waived` or `not-run` member is `needs-user`; the verbs write no trailer; the squash message is the
@@ -69,7 +69,9 @@ failed: resumable). A failed read is never a measured defect.
 |---|---|
 | grant absent or mismatched | nothing merged; plain `land` (with the user's go-ahead) is a SEPARATE invocation |
 | one member fails a row, at the build OR at its own merge (CI, child, closed, draft, retargeted, DIRTY, BEHIND, checks failed) | **refused** with that code; the rest still land. A BEHIND member is never `update-branch`ed (it would put an unshipped commit on the ship head) |
-| a read fails (PR view, tree, message, checks still pending at the deadline) | **not-run**; the rest land; the result is resumable (exit 3) |
+| a read fails (PR view, tree, message), or a member's required checks are still pending after the merge-time wait | **not-run**; the rest land; the result is resumable (exit 3). At the BUILD a member whose required checks are not green yet is `needs-user` instead: `ready` means CI green |
+| the required-check inventory cannot be established: `.fleet.json` unloadable, or no required check configured | that member is **refused** `ci-refused` |
+| the branch rulesets/protection cannot be READ right now (a failed read) | run stop `checks-inventory-unknown` before the next merge; nothing is refused; resume once GitHub answers |
 | grant revoked, base moved, merge queue present, rules unreadable | run stop before the next merge; merged members stay merged; rebuild after `base-moved` |
 | a merge request whose answer was lost or not observed | `merge-unconfirmed`: the run stops; a resume replays nothing inside the request window, and never while the PR is queued |
 | a PR merged by someone else | **skipped** plus a persisted `halt`: no further member lands in this run; rebuild |
