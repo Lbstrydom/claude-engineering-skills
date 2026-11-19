@@ -46,7 +46,7 @@ const call = (openai, userText, extra = {}) => callGPT(openai, optsFor(userText,
 
 let root;
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'call-record-')); _resetCallRecordsForTests(); });
-afterEach(() => { _resetCallRecordsForTests(); fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { _resetCallRecordsForTests(); fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 const cfg = (over = {}) => configureCallRecords({ repoRoot: root, identity: ID, env: {}, ...over });
 
 describe('call records: record, replay, identity', () => {
@@ -164,7 +164,7 @@ describe('call records: what is never recorded and what reads as a miss', () => 
   it('a write failure degrades to a live call, is counted, and never fails the audit', async () => {
     cfg();
     const dir = path.join(root, CALL_RECORD_ROOT_REL, TREE, 'audit-code-1-2-r1');
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     fs.writeFileSync(dir, 'a file where the directory should be');   // every write now fails
     const r = await call(client(), 'X');
     assert.equal(r.result.findings.length, 1);
@@ -230,7 +230,7 @@ describe('call records: review hardening (audit r1)', () => {
   it('an unreadable (non-directory) record path is reported, not folded into empty', () => {
     cfg();
     const dir = path.join(root, CALL_RECORD_ROOT_REL, TREE, 'audit-code-1-2-r1');
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     fs.writeFileSync(dir, 'a file where the directory should be');
     assert.match(cfg({ resume: true }).reason, /unreadable|unusable/);
   });

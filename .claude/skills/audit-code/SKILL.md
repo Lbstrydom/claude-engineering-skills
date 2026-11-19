@@ -129,11 +129,9 @@ resuming a clustered/partly-audited build.
 ### Round 1
 
 `$SCOPE` is the scope chosen in the table above — `diff` unless the user asked
-for `plan` or `full`. **Pass it; do not hardcode `diff` here.** This block read
-`--scope diff` literally until 2026-09-06, so a run the user had explicitly asked
-to be `--scope full` executed as a diff audit and reported a clean result over a
-fraction of what was requested — the scope flag this skill's own Usage lines
-advertise was accepted and then dropped.
+for `plan` or `full`. **Pass it; never hardcode `diff` here**: until 2026-09-06 a
+requested `--scope full` ran as a diff audit and reported a clean result over a
+fraction of what was asked.
 
 ```bash
 SCOPE=diff   # or plan / full, per the table above and the user's request
@@ -701,7 +699,7 @@ situations — read them only when the trigger applies.
 | `references/convergence-report.md` | Step 6–7 detail — census bookkeeping, example report card, source-repo steps, cross-surface clause, RUN_ID history. | Step 6 — printing a report with a non-`completed` row, OR Step 7 — `RUN_ID` is empty or `FINAL_REVIEW_SHADOW` is set. |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 7 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
 | `references/round-cap-and-structural-card.md` | Enforced GPT round cap (plan 3/5, code 6/8), exit 4 CAPPED, and the structural-or-stop card read at the cap. | A round exited 4, OR the audit reached round 6 without converging. |
-| `references/resume.md` | --resume - finish an INCOMPLETE round by replaying the passes that completed, so a 429 or timeout does not re-pay them. | A round ended INCOMPLETE (exit 3) from 429/timeout passes. |
+| `references/resume.md` | --resume - finish an INCOMPLETE round by replaying the passes that completed, so a 429 or timeout does not re-pay them. | A round ended INCOMPLETE from 429/timeout passes. |
 | `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — a prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
 | `references/pivot-rule.md` | Pivot rule - findings recurring in one file or concern for 3 consecutive rounds mean rethink the design, not loop. | Step 3 - same file or concern accepted in 3 consecutive rounds. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. ALSO Step 6 — about to emit the convergence report's pass/wave census, to apply §7's named-state rule. |

@@ -35,6 +35,6 @@ describe('fallback transport does not change the record key', () => {
       const r = await callGPT(second, opts('FB'));
       assert.equal(r.replayed, true);
       assert.equal(live, 0);
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });

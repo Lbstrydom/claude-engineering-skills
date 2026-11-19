@@ -81,7 +81,7 @@ export function pruneCallRecords(rootDir, currentTree, keep = DEFAULT_KEEP) {
   let removed = 0;
   for (const [i, e] of dated.entries()) {
     if (e.name === currentTree || i < keep) continue;
-    try { fs.rmSync(path.join(rootDir, e.name), { recursive: true, force: true, maxRetries: 2, retryDelay: 25 }); removed++; } catch { /* concurrent deleter / busy */ }
+    try { fs.rmSync(path.join(rootDir, e.name), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); removed++; } catch { /* concurrent deleter / busy */ }
   }
   return removed;
 }
