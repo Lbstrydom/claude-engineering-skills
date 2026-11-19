@@ -701,9 +701,9 @@ async function main() {
     if (suite === 'expect_clean') {
       const { runExpectCleanReport } = await import('./lib/model-eval/expect-clean-report.mjs');
       const reportRunId = `expect-clean-${Date.now()}`;
-      const rep = await runExpectCleanReport({ runId: reportRunId, arm: buildCandidateArm(candidateRoute, { id: 'CAND' }), route: candidateRoute, cases, scope, passes, meter });
+      const rep = await runExpectCleanReport({ runId: reportRunId, arm: buildCandidateArm(candidateRoute, { id: 'CAND' }), route: candidateRoute, cases, scope, passes, meter, capUsd: budgetRemainingUsd });
       const cost = costFromEvents(rep.usageEvents);
-      writeOutput({ runId: reportRunId, mode: 'report', suite, ...rep.summary, perCase: rep.perCase, budgetStop: rep.budgetStop, partial: rep.budgetStop != null || rep.summary.failed > 0, costComplete: rep.unaccounted === 0, cost, evidence: { mode: 'expect_clean', selectedKdIds: selectedKds.map((k) => k.id), corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, ...stamp, routeEvidence: routeCatalogInternals.toRouteEvidence(candidateRoute) } },
+      writeOutput({ runId: reportRunId, mode: 'report', suite, ...rep.summary, perCase: rep.perCase, budgetStop: rep.budgetStop, partial: rep.budgetStop != null || rep.summary.failed > 0, costComplete: rep.unaccounted === 0, cost, evidence: { mode: 'expect_clean', scope: scope ?? 'diff', passes: passes ?? 'all', selectedKdIds: selectedKds.map((k) => k.id), corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, ...stamp, routeEvidence: routeCatalogInternals.toRouteEvidence(candidateRoute) } },
         outFile, `[model-eval-auditor] expect_clean report: ${rep.summary.unmeasured ? 'UNMEASURED' : `fpRate=${rep.summary.fpRate}`} cases=${rep.summary.cases} failed=${rep.summary.failed}`);
       // A cap stop is a partial report; an unmeasured one (every generation failed) is a failed run, never a success exit.
       if (rep.budgetStop) process.exitCode = BUDGET_STOPPED_EXIT_CODE;

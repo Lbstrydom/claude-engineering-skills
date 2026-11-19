@@ -77,6 +77,30 @@ describe('runExpectCleanReport: the real generation arm, scored judge-free (G1)'
     assert.deepEqual(recorded, [0.1, null]);
     assert.equal(r.unaccounted, 1);
   });
+  it('a meter already at its cap starts no generation at all (r1 H3)', async () => {
+    let calls = 0;
+    const meter = { record() {}, check: () => ({ stop: true, reason: 'at-cap' }), spentUsd: 30 };
+    const r = await runExpectCleanReport({ runId: 'r', arm: {}, route: {}, cases: [kase('K1')], meter, generate: async () => { calls += 1; return { findings: [], usageEvent: usage() }; } });
+    assert.equal(calls, 0);
+    assert.deepEqual(r.budgetStop, { reason: 'at-cap', casesCompleted: 0, casesPlanned: 1 });
+  });
+  it('a case is not started when the costliest case so far would not fit under the cap (r1 H1/H4/H5)', async () => {
+    let spent = 0;
+    const meter = { record: (c) => { spent += c ?? 0; }, check: () => ({ stop: false }), get spentUsd() { return spent; } };
+    const r = await run([kase('K1'), kase('K2'), kase('K3')], { 'diff for K1': [], 'diff for K2': [], 'diff for K3': [] }, { meter, capUsd: 0.25 });
+    assert.deepEqual(r.perCase.map((c) => c.kdId), ['K1', 'K2'], 'after 0.2 spent, another 0.1 case would pass 0.25');
+    assert.equal(r.budgetStop.reason, 'projected-over-cap');
+  });
+  it('a generation that resolves to nothing, or a usage event with no finite cost, is unaccounted, never a silently complete cost (r1 H2/H6/M1)', async () => {
+    const recorded = [];
+    const meter = { record: (c) => recorded.push(c), check: () => ({ stop: false }), spentUsd: 0 };
+    const gens = [async () => null, async () => ({ findings: [], usageEvent: { costUsd: null } }), async () => ({ findings: [] })];
+    let i = 0;
+    const r = await runExpectCleanReport({ runId: 'r', arm: {}, route: {}, cases: [kase('K1'), kase('K2'), kase('K3')], meter, generate: () => gens[i++]() });
+    assert.equal(r.unaccounted, 3);
+    assert.deepEqual(recorded, [null, null, undefined]);
+    assert.equal(r.perCase[0].outcome, 'failed');
+  });
   it('the budget meter is fed every call and stops the run between cases', async () => {
     const recorded = [];
     const meter = { record: (c) => recorded.push(c), check: () => (recorded.length >= 1 ? { stop: true, reason: 'budget' } : { stop: false }) };

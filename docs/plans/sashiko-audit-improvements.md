@@ -863,8 +863,11 @@ paid run that uses it. Louis's decision, verbatim from the coordinator: "G1 as i
 **Spend cap and stop rule.**
 - **Hard cap: USD 30 in total**, below EUR 30 at any EUR/USD above 1, because the meter counts USD. It is metered on the provider-reported cost of
   each generation call (`usageEvent.costUsd`), never a pre-flight estimate.
-- The run passes `--budget-remaining-usd 28`. The meter is checked after each case, so the run can overshoot by at most one case; the 2 USD of
-  headroom is that case. Measured anchor: 5-pass audit rounds cost 0.10 to 0.36 USD each, so the expected total for 12 cases is roughly 2 to 6 USD.
+- The run passes `--budget-remaining-usd 28`. The meter is checked BEFORE every case, the first included, and a case is not started when the
+  costliest case so far would not fit under the cap (`projected-over-cap`). A single 5-pass generation cannot be bounded from outside, so
+  what is enforced is "no new case once the next one might cross", not a per-call ceiling: the first case is unbounded, and the 2 USD of headroom
+  covers a case dearer than any seen. Measured anchor: 5-pass audit rounds cost 0.10 to 0.36 USD each, so the expected total for 12 cases is
+  roughly 2 to 6 USD, far inside the cap.
 - **Stop rule.** Stop between cases when recorded spend reaches 28 USD, or when any call's cost is unknown (an unpriced route or missing usage is
   `unknown`, never a fabricated 0). A stopped run is reported as **partial** (`partial: true`, exit 4) and is never presented as finished. A
   generation that fails is a `failed` case and its cost is flagged unaccounted (`costComplete: false`).
