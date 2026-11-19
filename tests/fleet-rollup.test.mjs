@@ -114,10 +114,12 @@ function squash(f, args, extraFile = null) {
 }
 
 /** The oracle of the rollup world: the ROLLUP PR's eligibility, then the world's required checks (`w.rules`, `w.checks`, `w.rulesFail`). */
-const assessRollupCi = (w) => ({ prNumber, expectedHead }) => {
+const assessRollupCi = (w) => ({ prNumber, expectedBase, expectedHead }) => {
   const rp = (w.allPrs ?? []).find((x) => x.number === prNumber);
   if (!rp) return ev.unknown('malformed', `no scripted rollup PR #${prNumber}`);
   if (rp.state !== 'OPEN') return ev.ineligible(rp.state === 'MERGED' ? 'merged' : 'closed');
+  if (rp.draft === true) return ev.ineligible('draft');
+  if ((rp.base ?? 'main') !== expectedBase) return ev.ineligible('retargeted');
   if (rp.head !== expectedHead) return ev.ineligible('head-moved', rp.head);
   return requiredEvidence({ rules: w.rules, rulesFail: w.rulesFail, bucket: w.checks, head: expectedHead });
 };

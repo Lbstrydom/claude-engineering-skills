@@ -238,7 +238,7 @@ export const CI_INELIGIBLE_CODES = Object.freeze(['closed', 'merged', 'draft', '
 export const CI_DISPOSITIONS = Object.freeze(['permit', 'refuse-member', 'retry', 'stop-run']);
 
 /** A value as short, safe text for a diagnostic: never throws (a BigInt, a cycle or a hostile toString must not escape as an exception). */
-const show = (v) => { try { const t = typeof v === 'string' ? v : JSON.stringify(v); return String(t ?? typeof v).slice(0, 80); } catch { return `<${typeof v}>`; } };
+const show = (v, max = 120) => { try { const t = typeof v === 'string' ? v : JSON.stringify(v); return String(t ?? typeof v).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').slice(0, max); } catch { return `<${typeof v}>`; } };
 
 /**
  * The ONE evidence → disposition table. `permit` is returned from exactly one branch (a positive allowlist); a tag the table does
@@ -253,12 +253,12 @@ export function decideCiAdmission(evidence) {
   if (tag === 'missing' || tag === 'pending') return { disposition: 'retry', tag };
   if (tag === 'ineligible') {
     const code = evidence.code;
-    if (!CI_INELIGIBLE_CODES.includes(code)) return { disposition: 'stop-run', tag, code, fault: { kind: 'unexpected-tag', detail: `ineligible with an unrecognised code ${show(code)}` } };
+    if (!CI_INELIGIBLE_CODES.includes(code)) return { disposition: 'stop-run', tag, code: show(code), fault: { kind: 'unexpected-tag', detail: `ineligible with an unrecognised code ${show(code)}` } };
     return { disposition: code === 'head-moved' ? 'retry' : 'refuse-member', tag, code };
   }
   if (tag === 'unknown') {
     const kind = CI_FAULT_KINDS.includes(evidence.fault?.kind) ? evidence.fault.kind : 'unexpected-tag';
-    return { disposition: 'stop-run', tag, fault: { kind, detail: typeof evidence.fault?.detail === 'string' ? evidence.fault.detail : show(evidence.fault?.detail ?? 'no detail') } };
+    return { disposition: 'stop-run', tag, fault: { kind, detail: show(evidence.fault?.detail ?? 'no detail', 300) } };
   }
   return { disposition: 'stop-run', tag: show(tag), fault: { kind: 'unexpected-tag', detail: `the CI evidence carried no recognised tag (${show(tag)})` } };
 }

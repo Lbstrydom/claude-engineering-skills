@@ -56,6 +56,7 @@ export function oracleOf(w) {
     if (p.unreadable) return ev.unknown('transport', 'PR view failed');
     if (p.state === 'MERGED') return ev.ineligible('merged');
     if (p.state !== 'OPEN') return ev.ineligible('closed');
+    if (typeof p.draft !== 'boolean') return ev.unknown('malformed', 'the scripted PR has no boolean isDraft');
     if (p.draft) return ev.ineligible('draft');
     if (p.base !== expectedBase) return ev.ineligible('retargeted');
     if (p.head !== expectedHead) return ev.ineligible('head-moved', p.head);

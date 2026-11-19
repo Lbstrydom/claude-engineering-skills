@@ -232,6 +232,11 @@ describe('decideCiAdmission — one fixed table over a closed tag set', () => {
       assert.equal(d.disposition, 'stop-run');
       assert.ok(describeEvidence(bad, d).length > 5);
     }
+    for (const bad of [{ tag: 'ineligible', code: 10n }, { tag: 'unknown', fault: { kind: 'transport', detail: 'line one\nline two\u001b[31m' } }, { tag: 'failed', names: { failed: ['a\nb\r\u0007c'] } }]) {
+      const d = decideCiAdmission(bad);
+      assert.doesNotThrow(() => JSON.stringify(d), 'the decision is always serialisable');
+      assert.ok(!/[\u0000-\u001f\u007f]/.test(describeEvidence(bad, d)), 'a diagnostic is ONE line without control characters');
+    }
     assert.ok(describeEvidence({ tag: 'failed', names: { failed: 'ci' } }).length > 5, 'a names list that is not an array is ignored, not thrown on');
     assert.ok(describeEvidence({ tag: 'failed', names: { failed: [10n, cyc] } }).length > 5);
   });
