@@ -70,7 +70,7 @@ describe('the merge-site census', () => {
     assert.equal(mergeSites(split).length, 1);
     assert.ok(files().length >= 20, 'the walk reaches the fleet modules');
     const tmp = fs.mkdtempSync(path.join(import.meta.dirname, '.census-'));
-    try { fs.mkdirSync(path.join(tmp, 'deep')); fs.writeFileSync(path.join(tmp, 'deep', 'x.mjs'), "export const f = (d) => d.gh(['pr', 'merge', '2']);\n"); assert.deepEqual(files(tmp).map((x) => path.basename(x)), ['x.mjs']); } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    try { fs.mkdirSync(path.join(tmp, 'deep')); fs.writeFileSync(path.join(tmp, 'deep', 'x.mjs'), "export const f = (d) => d.gh(['pr', 'merge', '2']);\n"); assert.deepEqual(files(tmp).map((x) => path.basename(x)), ['x.mjs']); } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
   it('the plans and docs naming gh pr merge are not code: only .mjs under the fleet tree is censused, and train-approve only PRINTS the command', () => {
     const text = fs.readFileSync(path.join(FLEET, 'train-approve.mjs'), 'utf8');
