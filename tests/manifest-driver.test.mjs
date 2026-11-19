@@ -19,7 +19,7 @@ import { EXECUTORS } from '../scripts/lib/model-eval/executors.mjs';
 import { RunPreflightError } from '../scripts/lib/model-eval/cli-shared.mjs';
 import { AUDITOR_TIER_C_PROMPT_IDS, AUDITOR_TIER_C_SCHEMA_IDS } from '../scripts/lib/comparison/controls.mjs';
 
-const { computeControlsDivergence } = manifestDriverInternals;
+const { computeControlsDivergence, computeStampDivergence, applyStampDivergence } = manifestDriverInternals;
 
 const VALID_AUDITOR_CONTROLS = {
   reasoningEffort: 'medium', promptTemplateId: AUDITOR_TIER_C_PROMPT_IDS.at(-1), outputSchemaId: AUDITOR_TIER_C_SCHEMA_IDS.at(-1),
@@ -162,5 +162,45 @@ describe('computeControlsDivergence — auditor-controls-execution-wiring.md, ro
   it('a failed arm alongside a successful one is simply excluded, not counted as divergence', () => {
     const results = [okResult({ scope: true }), { result: { outcome: 'terminal', reason: 'exit 1' } }];
     assert.deepEqual(computeControlsDivergence(results), { scope: 'uniform' });
+  });
+});
+
+describe('computeStampDivergence: arms are compared only when they drew the same selection (G2)', () => {
+  const stamp = (over = {}) => ({ suite: 'detect', subset: 'full', corpusVersion: '4', corpusDigest: 'd1', corpusLoaderVersion: 'v2', selection: { seed: 7, requestedN: 2, selectedIds: ['KD-002', 'KD-005'] }, ...over });
+  const arm = (armId, ev, ok = true) => ({ armId, ok, result: ok ? { evidence: ev } : undefined });
+  it('negative control: three arms with identical stamps diverge on nothing', () => {
+    assert.deepEqual(computeStampDivergence([arm('a', stamp()), arm('b', stamp()), arm('c', stamp())]), []);
+  });
+  it('an arm that drew a different selection is named with the field that differs', () => {
+    const other = stamp({ selection: { seed: 7, requestedN: 2, selectedIds: ['KD-002', 'KD-006'] } });
+    assert.deepEqual(computeStampDivergence([arm('a', stamp()), arm('b', other), arm('c', stamp())]), [{ armId: 'b', reason: 'selection.selectedIds' }]);
+  });
+  it('a different corpus digest or subset is not comparable either', () => {
+    assert.equal(computeStampDivergence([arm('a', stamp()), arm('b', stamp({ corpusDigest: 'd2' }))])[0].reason, 'corpusDigest');
+    assert.equal(computeStampDivergence([arm('a', stamp()), arm('b', stamp({ subset: 'tiny' }))])[0].reason, 'subset');
+  });
+  it('an arm with no stamp is not comparable, and neither is a base with none (never a reassuring match)', () => {
+    assert.match(computeStampDivergence([arm('a', stamp()), arm('b', {})])[0].reason, /^incomplete-stamp:/);
+    assert.deepEqual(computeStampDivergence([arm('a', {}), arm('b', stamp())]).map((d) => d.armId), ['a']);
+    assert.deepEqual(computeStampDivergence([arm('a', {}), arm('b', {})]).map((d) => d.armId).sort(), ['a', 'b']);
+  });
+  it('failed arms are ignored, and fewer than two successful arms compare nothing', () => {
+    assert.deepEqual(computeStampDivergence([arm('a', stamp()), arm('b', null, false)]), []);
+    assert.deepEqual(computeStampDivergence([]), []);
+  });
+  it('the reference is the majority, so reordering the arms never changes who is blamed (M1)', () => {
+    const odd = stamp({ corpusDigest: 'zz' });
+    const a = computeStampDivergence([arm('x', odd), arm('y', stamp()), arm('z', stamp())]);
+    const b = computeStampDivergence([arm('y', stamp()), arm('z', stamp()), arm('x', odd)]);
+    assert.deepEqual(a, [{ armId: 'x', reason: 'corpusDigest' }]);
+    assert.deepEqual(b, a);
+  });
+  it('a divergent arm is demoted to ok:false in the emitted results; the others are untouched (H1)', () => {
+    const rs = [arm('a', stamp()), arm('b', stamp({ corpusDigest: 'd2' })), arm('c', stamp())];
+    const out = applyStampDivergence(rs, computeStampDivergence(rs));
+    assert.deepEqual(out.map((r) => [r.armId, r.ok]), [['a', true], ['b', false], ['c', true]]);
+    assert.equal(out[1].outcome, 'not-comparable');
+    assert.match(out[1].notComparable, /corpusDigest/);
+    assert.deepEqual(applyStampDivergence(rs, []), rs);
   });
 });

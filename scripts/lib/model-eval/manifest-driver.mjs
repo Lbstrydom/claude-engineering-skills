@@ -39,6 +39,7 @@ import { isScoredArm } from '../comparison/arms.mjs';
 import { configDigest as manifestConfigDigest, LOCK_SCHEMA_VERSION } from '../comparison/lock.mjs';
 import { upsertComparison, getComparisonArmAttempts } from '../store/model-eval.mjs';
 import { decideArmAttempt, DEFAULT_MAX_ATTEMPTS_PER_ARM } from '../comparison/attempts.mjs';
+import { stampOfEvidence, stampMismatch } from './corpus-selection.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { writeOutput } from '../file-io.mjs';
 import { EXECUTORS } from './executors.mjs';
@@ -197,7 +198,11 @@ export async function runManifestDriver({ manifestPath, tier, corpusFlagPath, th
   // Every non-ok arm, skipped or run: a permanently-failed, budget-stopped or
   // refused arm is INCONCLUSIVE for this comparison exactly as a failed run is.
   // (A resumed live success is a skip with ok:true and is not counted.)
-  const failedArms = results.filter((r) => !r.ok).map((r) => r.armId);
+  // G2: arms are comparable only if every one drew the same corpus selection. A run whose stamp differs from the first
+  // successful arm's, or is incomplete, is INCONCLUSIVE for this comparison, never silently compared.
+  const stampDivergence = manifest.role === 'auditor' ? computeStampDivergence(results) : [];
+  const finalResults = applyStampDivergence(results, stampDivergence);
+  const failedArms = finalResults.filter((r) => !r.ok).map((r) => r.armId);
   // controlsDivergence (auditor-controls-execution-wiring.md, round-4 H1 fix)
   // — `configDigest` hashes the manifest's REQUESTED controls (its correct,
   // unchanged meaning); this is the one place that already sees every arm's
@@ -213,8 +218,10 @@ export async function runManifestDriver({ manifestPath, tier, corpusFlagPath, th
   writeOutput({
     manifestId: manifest.id, role: manifest.role, comparisonId, tier,
     analysis: { maxAttemptsPerArm, budgetUsdPerArm },
-    arms: results, controlsDivergence,
+    arms: finalResults, controlsDivergence, stampDivergence,
   }, outFile, summaryLine);
+  for (const d of stampDivergence) process.stderr.write(`  [manifest-driver] manifest: arm "${d.armId}" is NOT comparable: selection stamp ${d.reason}
+`);
   if (failedArms.length > 0) {
     process.stderr.write(`  [manifest-driver] manifest: arm(s) failed: ${failedArms.join(', ')} — INCONCLUSIVE for those; siblings recorded normally\n`);
   }
@@ -273,4 +280,32 @@ function computeControlsDivergence(results) {
 }
 
 // Exported for direct testing (mirrors this repo's established _internals pattern).
-export const _internals = { computeControlsDivergence, describeSkip };
+/**
+ * Pure: the ok arms whose corpus-selection stamp is not the one most arms drew (ties go to the earliest arm), or is incomplete.
+ * Fewer than two ok arms compare nothing. The reference is the majority, never "the first arm", so reordering a manifest
+ * cannot change which arms are blamed. @returns {{armId: string, reason: string}[]}
+ */
+function computeStampDivergence(results) {
+  const ok = results.filter((r) => r.ok && r.result);
+  if (ok.length < 2) return [];
+  const stamps = ok.map((r) => stampOfEvidence(r.result.evidence));
+  const agree = stamps.map((a) => stamps.filter((b) => stampMismatch(a, b) === null).length);
+  const ref = agree.indexOf(Math.max(...agree));
+  const out = [];
+  const selfCheck = stampMismatch(stamps[ref], stamps[ref]);
+  if (selfCheck) out.push({ armId: ok[ref].armId, reason: selfCheck });
+  stamps.forEach((st, i) => {
+    if (i === ref) return;
+    const why = stampMismatch(stamps[ref], st);
+    if (why) out.push({ armId: ok[i].armId, reason: why });
+  });
+  return out;
+}
+
+/** Pure: the arm results with every non-comparable arm demoted to `ok:false` (so the written output cannot read as a success). */
+function applyStampDivergence(results, divergence) {
+  const by = new Map(divergence.map((d) => [d.armId, d.reason]));
+  return results.map((r) => (by.has(r.armId) ? { ...r, ok: false, outcome: 'not-comparable', notComparable: `selection stamp ${by.get(r.armId)}` } : r));
+}
+
+export const _internals = { computeControlsDivergence, computeStampDivergence, applyStampDivergence, describeSkip };

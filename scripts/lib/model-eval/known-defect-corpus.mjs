@@ -24,14 +24,14 @@ import { assertEgressSafe, isPathSensitive } from '../sensitive-egress-gate.mjs'
 import { findSensitivePathMentions, EgressGateError } from './egress-path-scan.mjs';
 import { resolveMainRoot } from '../pinned-worktree/paths.mjs';
 
-export const CORPUS_LOADER_VERSION = 'v1';
+export const CORPUS_LOADER_VERSION = 'v2';   // v2: suites (detect|missed|expect_clean) and the selection stamp
 
 // A known-defects.json entry is a hand-curated, LOCALIZED fix commit (see
 // the corpus itself — every entry to date touches 1-2 files). A diff this
 // large means the KD entry doesn't fit the bounded-corpus contract this
 // loader promises; fail loud (diff_too_large) rather than silently
 // truncating, which would test something other than the real defect.
-const MAX_DIFF_CHARS = 200_000;
+export const MAX_DIFF_CHARS = 200_000;
 
 export class CorpusCaseUnavailable extends Error {
   /** @param {'invalid_kd_id'|'repo_not_found'|'commit_not_found'|'diff_extraction_failed'|'diff_too_large'|'declared_files_not_in_diff'} reason */
@@ -164,7 +164,9 @@ export function loadCorpusCase({ kdEntry, repoRoots, env }) {
   }
 
   const gitOpts = env ? { env } : {};
-  const sha = kdEntry.buggyCommit;
+  // An expect_clean entry names the commit under test as `commit` (it has no buggy/fix pair).
+  const isClean = kdEntry.suite === 'expect_clean';
+  const sha = isClean ? kdEntry.commit : kdEntry.buggyCommit;
   const commitCheck = tryGit(root, ['cat-file', '-e', `${sha}^{commit}`], gitOpts);
   if (!commitCheck.ok) {
     throw new CorpusCaseUnavailable('commit_not_found', `loadCorpusCase: commit ${sha} not found in repo "${kdEntry.repo}" (${root}) for ${kdEntry.id} — git: ${commitCheck.error}`);
@@ -245,7 +247,7 @@ export function loadCorpusCase({ kdEntry, repoRoots, env }) {
     // second, divergent matcher.
     repoRoot: root,
     visibleInput: { diff, files },
-    hiddenGroundTruth: {
+    hiddenGroundTruth: isClean ? { suite: 'expect_clean', files: kdEntry.files, kdId: kdEntry.id } : {
       // `files` — the KD's OWN declared defect-location files (known-defects.json's
       // top-level `files` field), NOT `visibleInput.files` (the diff's changed-file
       // list) — required by deterministic-scorer.mjs::scoreDefectLocalization's

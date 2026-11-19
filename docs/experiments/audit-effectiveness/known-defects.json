@@ -1,5 +1,9 @@
 {
-  "version": 3,
+  "version": 4,
+  "subsets": {
+    "tiny": ["KD-002", "KD-005", "KD-006", "KD-015"],
+    "small": ["KD-002", "KD-005", "KD-006", "KD-015", "KD-016", "KD-017", "KD-018", "KD-019", "KD-020", "KD-021"]
+  },
   "defects": [
     {
       "id": "KD-002",
