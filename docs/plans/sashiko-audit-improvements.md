@@ -958,3 +958,5 @@ verdict for a metric with no threshold. Chosen: a report-only path that spends o
 
 - 2026-11-19: merged #398 (729ee42e7b86) — recorded by ship-record catch-up <!-- ship-record pr=398 -->
 - 2026-11-19: merged #400 (544bbc145b04) — recorded by ship-record catch-up <!-- ship-record pr=400 -->
+- 2026-11-19: merged #402 (07f01ac2106d) — recorded by ship-record catch-up <!-- ship-record pr=402 -->
+- 2026-11-19: merged #403 (e83fb0d70c11) — recorded by ship-record catch-up <!-- ship-record pr=403 -->
