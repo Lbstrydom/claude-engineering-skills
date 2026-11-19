@@ -220,6 +220,13 @@ describe('call records: review hardening (audit r1)', () => {
     assert.match(cfg({ resume: true }).reason, /nothing to resume/);
   });
 
+  it('an unreadable record file (not just a bad directory) is reported (r3)', () => {
+    cfg(); fs.writeFileSync(path.join(root, CALL_RECORD_ROOT_REL, TREE, 'audit-code-1-2-r1', 'd'.repeat(64) + '.json'), '{}');
+    const realRead = fs.readFileSync;
+    fs.readFileSync = (f, ...a) => { if (String(f).endsWith('d'.repeat(64) + '.json')) { const e = new Error('denied'); e.code = 'EACCES'; throw e; } return realRead(f, ...a); };
+    try { assert.match(cfg({ resume: true }).reason, /EACCES reading a record/); } finally { fs.readFileSync = realRead; }
+  });
+
   it('an unreadable (non-directory) record path is reported, not folded into empty', () => {
     cfg();
     const dir = path.join(root, CALL_RECORD_ROOT_REL, TREE, 'audit-code-1-2-r1');

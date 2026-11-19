@@ -97,8 +97,13 @@ function countUsableRecords(dir, identity) {
   let count = 0;
   for (const name of names) {
     if (!/^[0-9a-f]{64}\.json$/.test(name)) continue;
+    let raw;
+    try { raw = fs.readFileSync(path.join(dir, name), 'utf8'); } catch (err) {
+      if (err.code === 'ENOENT') continue;   // removed by a concurrent prune: not a record any more
+      return { count, error: `${err.code || err.message} reading a record` };   // EACCES/EIO: reported, never "empty"
+    }
     try {
-      const env = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+      const env = JSON.parse(raw);
       if (env.requestKey === name.slice(0, -5) && env.auditedTree === identity.auditedTree
         && env.auditSessionId === identity.auditSessionId && env.auditRound === identity.auditRound && env.response?.result !== undefined) count++;
     } catch { /* unparseable: not a usable record */ }
