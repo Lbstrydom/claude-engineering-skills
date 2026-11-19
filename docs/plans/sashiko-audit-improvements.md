@@ -875,4 +875,23 @@ expected saving from A and B is **expected, not measured**.
   is closed.**
 
 ## Implementation log
-_(filled during /cycle code)_
+
+### PR A: `--resume` (branch `claude/sashiko-pr-a-resume`, 2026-11-19)
+- **Audit:** /audit-code SID `audit-code-1795087907244-65232`, 5 rounds. GPT HIGH/MEDIUM: R1 3/9, R2 1/2, R3 0/2, R4 0/0, R5 0/0 (R5 re-audited the
+  post-R4 refactor). Final review (gemini, round 1 of 2): `APPROVE`, gate `approve`, code FULL, blocking 0, debt 0.
+- **Proof, red then green:** `tests/audit-call-record.test.mjs` (21) and `tests/audit-call-record-fallback.test.mjs` (1).
+  The fallback test is red when the transport is put back into the key (`pass 0 / fail 1`) and green without it.
+  Affected suites 237/237. `npm run guards:preflight` PASS (36 steps, not the full gate).
+- **Deviations from the audited plan, each deliberate:**
+  - **The dead pass-result cache is NOT retired here (F4).** `initResultCache`/`cachePassResult`/`cleanupCache` have no reader,
+    but four characterization tests pin the try/finally and the cache API (`finalization-characterization`,
+    `legacy-production-audit-hardening`, `pass-result-cache`). Removing them is a separate, reviewable change; recorded as a follow-up.
+  - **The transport (Responses vs chat fallback) is not in the key** (audit R1-H1/H3): it is decided during the live call, so
+    keying on it stored a fallback result under the wrong key. The prompt is stored as a sha256 only (R1-M2).
+  - **Cross-process retention locking was not built** (R1-M1/M5): a write touches the tree directory so an active audit stays
+    newest, and a pruned tree only costs a replay.
+  - **Resumable means at least one usable envelope** (R1-M6, R2, R3), not just a directory.
+  - **No end-to-end `runMultiPassCodeAudit` resume test.** The seam is proved at `callGPT`, the summary line, the gate marker and
+    the CLI refusals; the full-run path is exercised by the existing suites only.
+  - `scripts/openai-audit.mjs` stays inside its size baseline: the CLI wiring lives in `call-record.mjs` (`parseResumeFlag`,
+    `configureForRun`, `withResumeSummary`), and a refused resume is `stderr` + exit 1.
