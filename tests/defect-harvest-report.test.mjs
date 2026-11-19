@@ -175,6 +175,13 @@ describe('CLI contract (audit r1 H2/M6/M10)', () => {
     assert.equal(b.status, 1);
     assert.match(b.stderr, /share a basename/);
   });
+  it('--since must be a positive integer (final review G3)', () => {
+    for (const bad of ['abc', '0', '-5', '1.5']) {
+      const r = cli('--since', bad);
+      assert.equal(r.status, 1, bad);
+      assert.match(r.stderr, /positive integer/);
+    }
+  });
   it('refuses to write known-defects.json', () => {
     const r = cli('--roots', '.', '--out', 'docs/known-defects.json', '--apply');
     assert.equal(r.status, 1);

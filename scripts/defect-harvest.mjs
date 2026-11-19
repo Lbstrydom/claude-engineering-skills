@@ -260,7 +260,8 @@ export function serializeReport({ inputs, report }) {
 
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
-  const sinceN = Number.parseInt(argOption('since', '400'), 10);
+  const sinceN = Number(argOption('since', '400'));
+  if (!Number.isInteger(sinceN) || sinceN < 1) { log('REFUSED: --since must be a positive integer'); return 1; }
   const roots = argOption('roots', process.cwd()).split(',').map((s) => s.trim()).filter(Boolean);
   const rev = argOption('rev', 'HEAD');
   const corpusRoot = argOption('corpus-root', process.cwd());
