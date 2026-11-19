@@ -1,6 +1,6 @@
 # Plan: fleet hygiene — detached worktrees in prune, a prune ASK threshold, ghAccount in the PR probe
 - **Date**: 2026-11-19
-- **Status**: Proposed
+- **Status**: In Progress
 - **Author**: Claude + Louis
 - **Scope**: backend (Node CLI, `scripts/lib/fleet/**`). Stack `js-ts`.
 - **Target domain(s)**: `fleet`

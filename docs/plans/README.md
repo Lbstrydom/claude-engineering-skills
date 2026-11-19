@@ -24,6 +24,7 @@ This is the list to read when asking "what is in flight?".
 | [Coordinator-owned aggregate ship (one ship action per batch)](./coordinator-aggregate-ship.md) | `In Progress` |  |
 | [Size floor for `arch:duplicates` and the drift score](./duplicate-min-lines-floor.md) | `In Progress` |  |
 | [Fable 5.2 vs Opus 5.5 on coordinator-grade decisions](./fable-vs-opus-decision-eval.md) | `Approved` |  |
+| [fleet hygiene — detached worktrees in prune, a prune ASK threshold, ghAccount in the PR probe](./fleet-hygiene.md) | `In Progress` |  |
 | [fleet — the rest of a work consumer's November run report](./fleet-work-consumer-feedback-nov-2.md) | `In Progress` | implemented on branch `claude/fleet-feedback-batch2`, PR pending |
 | [fleet — defects from two work consumers' November feedback](./fleet-work-consumer-feedback-nov.md) | `In Progress` | implemented on branch `claude/nostalgic-nobel-101150`, PR pending |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |

@@ -130,8 +130,8 @@ describe('stale registrations (directory gone): listed only', () => {
     const gone = w.add('wt-gone');
     const goneUnpushed = w.add('wt-gone-unpushed');
     commitFile(goneUnpushed, 'u.txt', 'u\n', 'only in this registration');
-    fs.rmSync(gone, { recursive: true, force: true });
-    fs.rmSync(goneUnpushed, { recursive: true, force: true });
+    fs.rmSync(gone, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.rmSync(goneUnpushed, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const d = w.plan();
     assert.ok(w.stale(d, gone), 'listed');
     assert.equal(w.stale(d, goneUnpushed), undefined);
@@ -157,8 +157,8 @@ describe('stale registration, reflog expired: the listed HEAD is the whole evide
     const admin2 = w.adminOf(pushed);
     fs.writeFileSync(path.join(admin1, 'logs', 'HEAD'), '');
     fs.writeFileSync(path.join(admin2, 'logs', 'HEAD'), '');
-    fs.rmSync(unpushed, { recursive: true, force: true });
-    fs.rmSync(pushed, { recursive: true, force: true });
+    fs.rmSync(unpushed, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.rmSync(pushed, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const d = w.plan();
     assert.equal(w.stale(d, unpushed), undefined);
     assert.match(w.kept(d, unpushed), /reachable only through this registration/);
@@ -257,7 +257,7 @@ describe('the CLI: prune lists them, --apply never runs `git worktree prune`', (
     const f = (args) => runFleet(args, { cwd: w.fx.repo, env });
     const clean = w.add('wt-clean');
     const gone = w.add('wt-gone');
-    fs.rmSync(gone, { recursive: true, force: true });
+    fs.rmSync(gone, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const r = f(['prune', '--json']);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.json.prune.detached.candidates.length, 1);

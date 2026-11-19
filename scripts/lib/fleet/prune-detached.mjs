@@ -21,7 +21,7 @@ import { samePath } from '../harness-paths.mjs';
 import { CONSUMER_SNAPSHOT_PREFIX, SANDBOX_PREFIX } from '../prepush-sandbox-cleanup.mjs';
 import { archiveReport } from './lifecycle.mjs';
 import { hooksPathDependents, hooksPathRefusals } from './hooks-path-guard.mjs';
-import { runGit } from './git-facts.mjs';
+import { gitCommonDir, runGit } from './git-facts.mjs';
 import { renderCommand } from './shell-quote.mjs';
 import { transact } from './registry.mjs';
 import { lastActivity, provablyIdle } from './unregistered.mjs';
@@ -77,9 +77,9 @@ function anyRefFile(dir) {
  * @returns {{ok: true} | {ok: false, kept: string}} `kept` is the reason, unverified or not
  */
 export function registrationHistory(ctx, w, { git = runGit } = {}) {
-  const c = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], ctx.cwd);
+  const c = gitCommonDir(ctx.cwd);
   if (!c.ok) return { ok: false, kept: `the git common dir could not be read (${c.reason})` };
-  const admin = adminDirOf(String(c.stdout).trim(), w.path);
+  const admin = adminDirOf(c.dir, w.path);
   if (!admin.ok) return { ok: false, kept: `registration not verified: ${admin.reason}` };
   const refs = anyRefFile(path.join(admin.dir, 'refs'));
   if (refs.unverified) return { ok: false, kept: `registration not verified: ${refs.unverified}` };

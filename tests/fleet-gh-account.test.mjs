@@ -202,7 +202,7 @@ describe('mutating workflows keep ONE identity: land and ship-batch read PRs as 
     const env = scrubbedEnv({ FLEET_TELEMETRY: 'off', GH_TOKEN: 'AMBIENT-TOKEN', FAKE_GH_TOKEN_LOG: log, ...gh.env }, { prependPath: [gh.bin] });
     const config = resolveConfig(fx.repo, { env });
     const seen = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '').split('\n').filter((l) => l.startsWith('pr ')).map((l) => l.split(' ').at(-1));
-    const run = (extra) => { fs.rmSync(log, { force: true }); gatherFacts({ cwd: fx.repo, config, now: new Date(), env, ...extra }); return [...new Set(seen())]; };
+    const run = (extra) => { fs.rmSync(log, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); gatherFacts({ cwd: fx.repo, config, now: new Date(), env, ...extra }); return [...new Set(seen())]; };
     assert.deepEqual(run({}), ['TOKEN-DECLARED'], 'default: the declared account');
     assert.deepEqual(run({ ghIdentity: 'ambient' }), ['AMBIENT-TOKEN'], 'ambient: the signed-in account, as before this change');
     for (const f of ['land.mjs', 'ship-batch.mjs']) {
