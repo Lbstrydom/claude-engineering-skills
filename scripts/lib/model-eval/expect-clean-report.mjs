@@ -41,7 +41,7 @@ export async function runExpectCleanReport({ runId, arm, route, cases, scope, pa
     const stop = meter?.check();
     if (stop?.stop) return { reason: stop.reason };
     // The 5-pass call cannot be bounded from outside, so project one case ahead: the costliest case so far must still fit under the cap.
-    if (meter && Number.isFinite(capUsd) && maxCaseUsd > 0 && meter.spentUsd + maxCaseUsd > capUsd) return { reason: 'projected-over-cap' };
+    if (meter && Number.isFinite(capUsd) && maxCaseUsd > 0 && meter.spentUsd + maxCaseUsd > capUsd + 1e-9) return { reason: 'projected-over-cap' };
     return null;
   };
   // Serialised: generation chdirs into the case's repo, which is process-global state.
@@ -87,4 +87,11 @@ export async function runExpectCleanReport({ runId, arm, route, cases, scope, pa
     perCase.push({ kdId, ...scored });
   }
   return { perCase, summary: summarizeExpectClean(perCase), usageEvents, budgetStop, unaccounted };
+}
+
+/** Pure: the process exit code for a report. 0 only when every case was measured and every call's cost is accounted for. */
+export function exitCodeFor(rep, budgetStoppedCode) {
+  if (rep.budgetStop) return budgetStoppedCode;
+  if (rep.summary.unmeasured) return 1;
+  return rep.summary.failed > 0 || rep.unaccounted > 0 ? 3 : 0;
 }

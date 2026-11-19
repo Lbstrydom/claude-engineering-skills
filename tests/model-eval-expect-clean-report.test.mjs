@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { toScorable, runExpectCleanReport } from '../scripts/lib/model-eval/expect-clean-report.mjs';
+import { toScorable, runExpectCleanReport, exitCodeFor } from '../scripts/lib/model-eval/expect-clean-report.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dirs = [];
@@ -77,6 +77,13 @@ describe('runExpectCleanReport: the real generation arm, scored judge-free (G1)'
     assert.deepEqual(recorded, [0.1, null]);
     assert.equal(r.unaccounted, 1);
   });
+  it('floating-point sums do not stop an affordable case: 0.1 + 0.1 + 0.1 fits a 0.3 cap (r2 H2)', async () => {
+    let spent = 0;
+    const meter = { record: (c) => { spent += c ?? 0; }, check: () => ({ stop: false }), get spentUsd() { return spent; } };
+    const r = await run([kase('K1'), kase('K2'), kase('K3')], { 'diff for K1': [], 'diff for K2': [], 'diff for K3': [] }, { meter, capUsd: 0.3 });
+    assert.equal(r.perCase.length, 3);
+    assert.equal(r.budgetStop, null);
+  });
   it('a meter already at its cap starts no generation at all (r1 H3)', async () => {
     let calls = 0;
     const meter = { record() {}, check: () => ({ stop: true, reason: 'at-cap' }), spentUsd: 30 };
@@ -121,5 +128,16 @@ describe('the CLI no longer refuses --suite expect_clean (G1)', () => {
     assert.doesNotMatch(r.stderr, /invalid_corpus_selection/, r.stderr);
     assert.match(r.stderr, /corpus_too_small|usable entries/, r.stderr);
     assert.equal(r.status, 2);
+  });
+});
+
+describe('exitCodeFor: a report exits 0 only when it is whole (r2 H1)', () => {
+  const rep = (over = {}) => ({ budgetStop: null, summary: { unmeasured: false, failed: 0 }, unaccounted: 0, ...over });
+  it('whole = 0; cap stop = the budget code; unmeasured = 1; a failed case or unaccounted cost = 3', () => {
+    assert.equal(exitCodeFor(rep(), 4), 0);
+    assert.equal(exitCodeFor(rep({ budgetStop: { reason: 'x' } }), 4), 4);
+    assert.equal(exitCodeFor(rep({ summary: { unmeasured: true, failed: 2 } }), 4), 1);
+    assert.equal(exitCodeFor(rep({ summary: { unmeasured: false, failed: 1 } }), 4), 3);
+    assert.equal(exitCodeFor(rep({ unaccounted: 1 }), 4), 3);
   });
 });

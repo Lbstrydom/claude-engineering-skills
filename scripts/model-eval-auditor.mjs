@@ -706,8 +706,8 @@ async function main() {
       writeOutput({ runId: reportRunId, mode: 'report', suite, ...rep.summary, perCase: rep.perCase, budgetStop: rep.budgetStop, partial: rep.budgetStop != null || rep.summary.failed > 0, costComplete: rep.unaccounted === 0, cost, evidence: { mode: 'expect_clean', scope: scope ?? 'diff', passes: passes ?? 'all', selectedKdIds: selectedKds.map((k) => k.id), corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, ...stamp, routeEvidence: routeCatalogInternals.toRouteEvidence(candidateRoute) } },
         outFile, `[model-eval-auditor] expect_clean report: ${rep.summary.unmeasured ? 'UNMEASURED' : `fpRate=${rep.summary.fpRate}`} cases=${rep.summary.cases} failed=${rep.summary.failed}`);
       // A cap stop is a partial report; an unmeasured one (every generation failed) is a failed run, never a success exit.
-      if (rep.budgetStop) process.exitCode = BUDGET_STOPPED_EXIT_CODE;
-      else if (rep.summary.unmeasured) process.exitCode = 1;
+      const { exitCodeFor } = await import('./lib/model-eval/expect-clean-report.mjs');
+      process.exitCode = exitCodeFor(rep, BUDGET_STOPPED_EXIT_CODE);
       return;
     }
 
