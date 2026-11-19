@@ -1160,6 +1160,7 @@ Actions for this repo (the AGENTS.md CES rule). The head sha goes to the coordin
   - `skills/fleet/gate-contract.json` is unchanged: it carries no gates and its stated reason (no oracle recipe builds a multi-session repo) still holds, so the stated claims are pinned by the tests named in section 9 instead.
   - `SKILL.md` carried PR A's growth past its baseline; the rollup usage line is offset by trims elsewhere in the file, and `npm run skills:size:gate` is clean (no baseline was raised).
 - **Proof, red then green against the PROOF PLAN:** golden 20/20 against the refactor and the unchanged `fleet-serial`, `ship-train-recovery` (21/21); mutation: `conflicts with` to `conflict with` in `serial.mjs` turns the DIRTY golden scenario red. Unit `fleet-member-outcome` 25, `fleet-rollup-manifest` 13, census 12, `fleet-land-ship-batch` 74, `fleet-rollup` 18, `ship-record-entry` 19; all fleet and ship-record suites 2022 of 2025 pass (3 skipped), 0 fail.
+- 2026-11-19: merged #395 (5de17cfa4489) — recorded by ship-record catch-up <!-- ship-record pr=395 -->
 
 ## Code audit trail
 
