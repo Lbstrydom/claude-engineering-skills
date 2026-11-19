@@ -914,9 +914,9 @@ expected saving from A and B is **expected, not measured**.
 ### PR C: defect corpus (branch `claude/sashiko-pr-c-corpus`, 2026-11-19)
 - **Audit:** /audit-code SID `audit-code-1795090436039-86208`. Final review round 1 returned `blocked` on G1 (HIGH) and G2 (MEDIUM); G3 (`--since` validation) was fixed at once.
 - **G2, fixed:** the corpus-selection stamp is now checked before arms are compared. `manifest-driver.mjs` computes `computeStampDivergence`
-  over the successful arms of an auditor manifest; an arm whose stamp differs from the first successful arm's, or is incomplete, is
-  INCONCLUSIVE for the comparison and is named in the output's `stampDivergence`. Red/green: `tests/manifest-driver.test.mjs`
-  (3 of 18 fail when the function returns nothing).
+  over the successful arms of an auditor manifest; an arm whose stamp differs from the majority stamp (ties: earliest arm), or is incomplete, is
+  INCONCLUSIVE and is demoted to `ok:false` in the emitted results; for the comparison and is named in the output's `stampDivergence` (the arm is also named there). Red/green: `tests/manifest-driver.test.mjs`
+  (3 tests fail when the function returns nothing).
 - **G1, OPEN (Louis is weighing a fix against debt):** `--suite expect_clean` has no CLI path. The Tier-C extractor forces one defect per
   case, so a real clean run needs the paid 5-pass generation arm. The CLI refuses it with a clear message ("scored by the report-only
   path", which is not built) and the scorer (`scoreExpectCleanCase`, `summarizeExpectClean`) is tested but unreachable from the CLI.
