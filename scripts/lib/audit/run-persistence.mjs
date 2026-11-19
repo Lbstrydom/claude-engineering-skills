@@ -28,6 +28,7 @@ import { insertLearningDecision, backfillLearningOutcome, isCloudEnabled } from 
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, buildDecisionKey as _learningBuildKey } from '../learning/decision-logger.mjs';
 import { validateFinalizationData, validateAssembledFindings, validatePersistenceServices } from './finalization-contract.mjs';
 import { isInDiff, isPreExisting } from '../finding-scope.mjs';
+import { resumeSummary } from './call-record.mjs';
 
 /**
  * Validates an R2+ ledger file for suppression input. Round < 2 is always
@@ -271,6 +272,7 @@ export async function runPersistence(data, assembled, mergedResult, persistenceS
         auditedSha: ctx.auditedSha ?? null,
         auditedTree: ctx.auditedTree ?? null,
         auditedBranch: ctx.auditedBranch,
+        resumed: resumeSummary()?.resumed === true,
       });
       if (!gateEvidenceResult.written) {
         mergedResult._gateEvidenceUnwritten = gateEvidenceResult.reason;

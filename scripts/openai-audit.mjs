@@ -105,6 +105,7 @@ import {
 import { runTieredAuditPipeline } from './lib/audit/tiered-pipeline.mjs';
 import { runTieredShadowComparison } from './lib/audit/tiered-shadow-compare.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { configureCallRecords, resumeSummary } from './lib/audit/call-record.mjs';
 import { gateRoundCap, applyRoundCap } from './lib/audit/round-cap-gate.mjs';
 import { readFlagValue } from './lib/audit/round-cap.mjs';
 import { resolveAuditIdentity } from './lib/audit/audit-identity.mjs';
@@ -385,12 +386,12 @@ function printAuditResult(mergedResult, { outFile, jsonMode }) {
   const {
     verdict, findings: allFindings = [], _pass_timings: passTimings = {},
     _usage: totalUsage = {}, _failed_passes: failedPasses = [],
-    _passes_total: passesTotal = null, _coverage: coverage = null, _canary: canary = null,
+    _passes_total: passesTotal = null, _coverage: coverage = null, _canary: canary = null, _resume: resume = null,
   } = mergedResult;
   const { high, medium, low, preExisting } = tallySeverities(allFindings); // pre-existing findings are listed, not counted
   const totalLatencyMs = totalUsage.latency_ms ?? 0;
   const summaryLine = formatAuditSummaryLine({
-    verdict, high, medium, low, failedPasses, passesTotal, latencyMs: totalLatencyMs, coverage, canary, preExisting,
+    verdict, high, medium, low, failedPasses, passesTotal, latencyMs: totalLatencyMs, coverage, canary, preExisting, resume,
   });
   if (outFile) {
     writeOutput(mergedResult, outFile, summaryLine);
@@ -515,13 +516,27 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
     }
   }
 
+  // ── Call records / --resume (docs/plans/sashiko-audit-improvements.md §3). Needs the audited tree captured just above and
+  // the session/round identity resolved by main(). A refusal is a usage error (exit 1), never a silent fresh run.
+  const recordCfg = configureCallRecords({
+    repoRoot: process.cwd(),
+    identity: { auditedTree: ctx.auditedTree, auditSessionId: opts.auditIdentity?.auditSessionId ?? null, auditRound: opts.auditIdentity?.auditRound ?? null },
+    resume: opts.resume === true,
+  });
+  if (!recordCfg.ok) {
+    const err = new Error(recordCfg.reason);
+    err.code = 'RESUME_REFUSED';
+    throw err;
+  }
+  const stampResume = (r) => { const sum = resumeSummary(); return sum && r && typeof r === 'object' ? { ...r, _resume: sum } : r; };
+
   // `ctx.allowTiered` (shadow-flip incident fix, 2026-07-13): env flags are
   // operator intent, global to every Node process (tests included, via the
   // shared ~/.audit-loop.env); EXECUTION eligibility is per-call, asserted
   // only by the CLI's main(). Without it, a flipped flag routed fully-mocked
   // test harnesses into real multi-provider execution.
   if (tieredAuditConfig.pipelineEnabled && ctx.allowTiered) {
-    const mergedResult = stampRunNotices(stampAuditRound(applyCanaryToUnsupportedPipeline(await runTieredAuditPipeline(ctx)), opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts);
+    const mergedResult = stampResume(stampRunNotices(stampAuditRound(applyCanaryToUnsupportedPipeline(await runTieredAuditPipeline(ctx)), opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts));
     printAuditResult(mergedResult, { outFile, jsonMode });
     return mergedResult;
   }
@@ -531,7 +546,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
     ? runTieredShadowComparison({ ctx, legacyResultPromise, runTieredAuditPipeline }).catch(() => {})
     : null;
 
-  const mergedResult = stampRunNotices(stampAuditRound(await legacyResultPromise, opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts);
+  const mergedResult = stampResume(stampRunNotices(stampAuditRound(await legacyResultPromise, opts.round, opts.coverageChanged ? opts.auditBaseCommit : null), opts));
   if (shadowTask) await shadowTask;
 
   printAuditResult(mergedResult, { outFile, jsonMode });
@@ -725,6 +740,12 @@ async function main() {
   const escalateRecurring = escalateIdx !== -1 && args[escalateIdx + 1]
     ? Number.parseInt(args[escalateIdx + 1], 10)
     : (round >= 2 ? 5 : null);
+
+  // --resume: finish an INCOMPLETE round by replaying the passes that completed (call records). Legacy code audit only:
+  // plan and rebuttal are single calls (nothing to replay) and the tiered pipeline records nothing.
+  const resume = args.includes('--resume');
+  if (resume && mode !== 'code') { console.error(`Error: --resume applies to code audits only (resume-unsupported:${mode ?? 'none'})`); process.exitCode = 1; return; }
+  if (resume && tieredAuditConfig.pipelineEnabled) { console.error('Error: --resume is not supported with the tiered pipeline (resume-unsupported:tiered)'); process.exitCode = 1; return; }
 
   // A/B test: pipeline variant selection
   if (!mode || !(planFile || planless.planless) || !['plan', 'code', 'rebuttal'].includes(mode)) {
@@ -940,7 +961,13 @@ async function main() {
     // allowTiered: true — main() is the ONE production CLI entrypoint allowed
     // to execute the tiered pipeline / shadow (see buildAuditRunContext).
     if (planless.planless && !effectiveFileFilter?.length) { console.error('Error: --planless found no changed files to audit, and only a plan can supply plan scope'); process.exit(1); }
-    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { planless: planless.planless, passFilter, fileFilter: effectiveFileFilter, coverageChanged, coverageExcluded, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, auditIdentity, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty, requiredSubjects: required.subjects });
+    let codeResult;
+    try {
+      codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { resume, planless: planless.planless, passFilter, fileFilter: effectiveFileFilter, coverageChanged, coverageExcluded, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, auditIdentity, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty, requiredSubjects: required.subjects });
+    } catch (err) {
+      if (err?.code === 'RESUME_REFUSED') { console.error(`Error: ${err.message}`); process.exitCode = 1; return; }
+      throw err;
+    }
     // An INCOMPLETE run measured less than the change, and exiting 0 made that
     // indistinguishable from a pass to anything checking `$?` (2026-09-04
     // consumer report). 3, not 1: 1 already means "the CLI itself errored" on

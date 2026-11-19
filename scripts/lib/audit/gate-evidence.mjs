@@ -70,7 +70,7 @@ export const GATE_EVIDENCE_NO_RUN_ID = 'no-cloud-run-id';
  * @returns {{runId: string, sid: string|null, round: number|null, auditedSha: string|null, auditedTree: string|null, auditedBranch: string|null, ts: string}}
  */
 export function buildGateEvidence(input) {
-  const { runId, sid = null, round = null, auditedSha = null, auditedTree = null, nowIso } = input ?? {};
+  const { runId, sid = null, round = null, auditedSha = null, auditedTree = null, nowIso, resumed = false } = input ?? {};
 
   // `auditedBranch` is REQUIRED, and an omitted argument throws rather than
   // defaulting. This is the presence-vs-null contract on the WRITE side: `null`
@@ -116,6 +116,8 @@ export function buildGateEvidence(input) {
     auditedTree: auditedTree ?? null,
     auditedBranch,   // already validated: a non-empty string, or null
     ts: nowIso ?? new Date().toISOString(),
+    // Provenance, not a demotion: present ONLY on a round finished with `--resume`, so every other marker stays byte-identical.
+    ...(resumed === true ? { resumed: true } : {}),
   };
 }
 
@@ -153,6 +155,7 @@ export function writeGateEvidence({
   auditedTree = null,
   log = (m) => process.stderr.write(m),
   adapters = {},
+  resumed = false,
   ...rest
 } = {}) {
   const write = adapters.atomicWriteFileSync || atomicWriteFileSync;
@@ -193,7 +196,7 @@ export function writeGateEvidence({
   let payload;
   try {
     payload = buildGateEvidence({
-      runId, sid, round, auditedSha, auditedTree,
+      runId, sid, round, auditedSha, auditedTree, resumed,
       ...(hasBranch ? { auditedBranch: rest.auditedBranch } : {}),
     });
   } catch (e) {

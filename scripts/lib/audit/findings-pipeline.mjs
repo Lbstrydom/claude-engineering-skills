@@ -396,20 +396,23 @@ export function computeAuditVerdict(findings, { incomplete = false } = {}) {
  * @returns {string}
  */
 export function formatAuditSummaryLine({
-  verdict, high, medium, low, failedPasses = [], passesTotal = null, latencyMs = 0, coverage = null, canary = null, preExisting = 0,
+  verdict, high, medium, low, failedPasses = [], passesTotal = null, latencyMs = 0, coverage = null, canary = null, preExisting = 0, resume = null,
 }) {
   const secs = `${(Number(latencyMs || 0) / 1000).toFixed(0)}s`;
+  // A round finished with `--resume` says so beside the seconds field, so it never reads as a fresh round. The leading
+  // `Verdict: X | H:a M:b L:c | Ns` shape consumers parse is unchanged (same placement as `pre-existing:N`).
+  const resumedTag = resume && resume.resumed ? ` | resumed: ${resume.replayedCalls}/${resume.replayedCalls + resume.liveCalls} calls replayed` : '';
   const cov = formatCoverageSuffix(coverage);
   // A canary that blocks evidence (AUDIT_CANARY=1, scripts/lib/audit/canary.mjs) names itself first: every pass may have
   // produced output and the change may have been read, and the round is still blind.
   const canaryBlock = verdict === 'INCOMPLETE' ? describeCanaryBlock(canary) : null;
   if (canaryBlock) {
     const others = [failedPasses.length > 0 ? `${failedPasses.length} pass(es) also failed` : null, cov].filter(Boolean).join('; ');
-    return `Verdict: INCOMPLETE — ${canaryBlock}${others ? ` (${others})` : ''}. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}`;
+    return `Verdict: INCOMPLETE — ${canaryBlock}${others ? ` (${others})` : ''}. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}${resumedTag}`;
   }
   if (verdict !== 'INCOMPLETE') {
     // `pre-existing:N` rides AFTER the seconds so the leading `Verdict: X | H:a M:b L:c | Ns` shape consumers parse is unchanged.
-    const base = `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${secs}${preExisting > 0 ? ` | pre-existing:${preExisting} (not counted)` : ''}`;
+    const base = `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${secs}${resumedTag}${preExisting > 0 ? ` | pre-existing:${preExisting} (not counted)` : ''}`;
     // The verdict word counts FINDINGS; it does not say the change was read. Beside it, say when it was not
     // (upstream 58f4e3a5: a round converged on PASS with 844 changed lines unread) — the same count that blocks convergence.
     // Same for a changed file of an unrecognised type that no pass was sent (upstream 57bd3de9): the suffix names it, this says what it means.
@@ -419,7 +422,7 @@ export function formatAuditSummaryLine({
   const failed = failedPasses.length;
   if (failed === 0 && coverage && coverage.gate === 'fail') {
     // Every pass ran; the change itself was not measured. Say THAT, not "passes failed".
-    return `Verdict: INCOMPLETE — ${cov}; this round did not measure the change. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}`;
+    return `Verdict: INCOMPLETE — ${cov}; this round did not measure the change. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}${resumedTag}`;
   }
   // `passesTotal` is absent on results persisted before the field existed. Say
   // "unknown", never guess a denominator — a fabricated one is how the
@@ -430,7 +433,7 @@ export function formatAuditSummaryLine({
   const measuredNothing = Number.isFinite(passesTotal) && passesTotal > 0 && failed >= passesTotal;
   return `Verdict: INCOMPLETE — ${produced}; this round ${measuredNothing
     ? 'measured NOTHING' : 'did not measure the full change'
-  }${cov ? ` (${cov})` : ''}. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}`;
+  }${cov ? ` (${cov})` : ''}. The counts below are not evidence of cleanliness: H:${high} M:${medium} L:${low} | ${secs}${resumedTag}`;
 }
 
 export function processFindings(rawFindings, ctx = {}) {
