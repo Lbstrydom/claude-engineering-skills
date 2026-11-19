@@ -261,6 +261,14 @@ assert no `gh pr merge` call; the census (§9) only asserts that no other `'pr',
   (90c60bf2)`); plain serial gains the same check when it observes MERGED (`baseRefName !== run.base` → run stop
   `wrong-target`, never `NEXT`). A test retargets between the final read and the merge and asserts the halt and that no
   further member merges.
+- **The CI evidence is point-in-time, and the guarantee is stated as such (R3-H2).** A required run can be re-run or change
+  between the merge-site assessment and the merge, with the head unchanged; only a server-side merge queue re-evaluates checks
+  at merge time. Fleet's guarantee is therefore: *the evidence that permitted this merge was read in full immediately before
+  it, at exactly this head*. The window is the gap between the final re-read (§2.1 step 9) and the `gh pr merge` call.
+- **These two residuals (base and CI, R2-H1/R3-H1/R3-H2) need Louis's explicit acceptance before PR 2 enables merging.**
+  Closing them needs a GitHub setting (a merge queue on the base), which is Louis's and outside this plan's authority; it is
+  listed in Out of Scope (Future). PR 2's description will carry the acceptance question; until it is answered, PR 2 is
+  reviewable but not mergeable.
 - Head pinning freezes the CONTENT, not the POLICY: a ruleset change between assessment and merge is not caught by the pin.
   The merge-site re-assessment narrows that window to the gap between two API calls; it does not close it, and the docs say so.
 - The tested-tree and provenance checks (`treeIdentity`, the base chain, `baseRefOid`) stay where they are and separate.
@@ -274,8 +282,11 @@ Discovery guard (§9): a source census asserts that `mergeWithCiPermit` holds th
 
 `scripts/lib/fleet/github-ci-facts.mjs`:
 
-- `readPrCandidate`, `readBranchProtection`, `readBranchRules`, `readCheckRuns` — each `(deps, cwd, args) → {ok:true, value} |
-  {ok:false, fault:{kind, detail}}`.
+- `readPrCandidate`, `readBranchProtection`, `readBranchRules`, `readCheckRuns`, `readCommitStatuses` — each
+  `(deps, cwd, args) → {ok:true, value} | {ok:false, fault:{kind, detail}}`. Every GitHub read in §2.1 goes through exactly
+  one of them. `readCommitStatuses` (R3-M1): `GET repos/{r}/commits/{sha}/statuses?per_page=100`, decision fields
+  `[{id: int, context: string min 1, state: string}]`, ids unique, a full page (100) → `too-many-results`; tested on the
+  recorded `ces-statuses-395.json` (`[]`) and mutations (a missing `context`, a duplicate id, a full page).
 - Transport: `deps.gh` (the existing `ghRunner` shape). **Any non-zero exit, spawn failure or timeout is `transport`**, with
   the exit status and the first stderr line kept as opaque `detail` for the operator. No branch reads stderr. There is no
   "404 means empty" (M3, M7).
@@ -381,7 +392,7 @@ turn, targeting #395's branch until #395 merges, then `main`.
 
 ## 7. File-Level Plan
 
-- `scripts/lib/fleet/github-ci-facts.mjs` (create) — `readPrCandidate`, `readBranchProtection`, `readBranchRules`,
+- `scripts/lib/fleet/github-ci-facts.mjs` (create) — `readPrCandidate`, `readBranchProtection`, `readBranchRules`, `readCommitStatuses`,
   `readCheckRuns`, the zod schemas, `CI_FAULT_KINDS`' transport/malformed/pagination members. Imports `zod`, `gh-facts.mjs`
   (`spawnGh` via `ghRunner`). Imported by `required-checks.mjs`. (#2, #11, #13)
 - `scripts/lib/fleet/required-checks.mjs` (modify) — PR 1: add `CI_EVIDENCE_TAGS`, `CI_FAULT_KINDS`, `decideCiAdmission`,
@@ -432,7 +443,7 @@ tests/fleet-required-checks.test.mjs (modify), tests/fleet-land-ship-batch.test.
 (modify), skills/fleet/references/ship-batch.md (modify), skills/fleet/SKILL.md (modify),
 docs/plans/ship-batch-member-outcomes.md (modify).
 
-**Phase 2 — the GitHub-facts adapter and fixtures**: the four readers, schemas, pagination and transport faults over the
+**Phase 2 — the GitHub-facts adapter and fixtures**: the five readers, schemas, pagination and transport faults over the
 recorded fixtures. Files: scripts/lib/fleet/github-ci-facts.mjs (create), tests/fixtures/fleet/github-ci/ces-branch-main.json
 (create), tests/fixtures/fleet/github-ci/ces-rules-main.json (create), tests/fixtures/fleet/github-ci/wca-rules-main.json
 (create), tests/fixtures/fleet/github-ci/aio-branch-main.json (create), tests/fixtures/fleet/github-ci/wca-rules-page1.json
@@ -496,8 +507,11 @@ enters the consumer closure) + `npm run bundle:deps:check`, `npm run guards:pref
   - **Candidate assertions** (always): for every non-permitting row, the exact disposition (read from the entry point's
     result: approve's refusal fault, the serial fault code, the member outcome code, the build's refused reason), **zero `pr
     merge` calls**, and for approve no plan and no `awaiting-merge` phase; for build rows, no train record and no
-    integration worktree (§2.5b). Positive controls: the CES-shaped ruleset pass and the AIO proven-empty scenario both
-    PERMIT and merge exactly once, so an always-refuse implementation fails.
+    integration worktree (§2.5b). Positive controls, per entry point (R3-M2): the CES-shaped ruleset pass and the AIO
+    proven-empty scenario must each produce the entry point's own success: `approveTrain` emits a plan and the train is
+    `awaiting-merge`; `buildShipBatch` and the rollup build admit both members and create the train record; `approveSerial`,
+    `approveShipBatch`, `resumeShipBatch` and `approveRollup` merge exactly once per admitted member. An always-refuse
+    implementation fails every one of them.
   - **Baseline characterisation** (rows marked `baselineDefect: true`): the same scenario runs against `90c60bf2`'s code in a
     pinned worktree (`git worktree add <tmp> 90c60bf2`, then the test file, fixtures and fake copied in and run with
     `CI_ADMISSION_BASELINE=1`). Under that flag the test asserts observable effects only, in the old vocabulary: a `pr
@@ -541,6 +555,16 @@ enters the consumer closure) + `npm run bundle:deps:check`, `npm run guards:pref
 - **Cluster C** — Phases 4-5 — fix-gate: final
   - Coupling: rewiring the callers and the test that drives those same callers through their real entry points; the census pins the merge sites Phase 4 edits.
 - **Final gate**: the consolidated Gemini review over the union diff of Clusters B and C (PR 2); Cluster A's union diff is reviewed as PR 1's final gate before it is handed to the coordinator.
+
+## Out of Scope (Future)
+
+- **A server-side merge queue on each fleet-landed base** (R2-H1, R3-H1, R3-H2): the only mechanism that binds a merge to its
+  base and re-evaluates required checks at merge time. A GitHub ruleset setting, so Louis's; tracked as proposal
+  `p-20261118092842`. Note that `serial.mjs` today refuses a base with a merge queue (`merge-queue-present`), so adopting one
+  also needs the serial runner to hand merges to the queue: a design of its own.
+- **Classic branch protection, unpinned requirements, status-satisfied requirements**: unsupported, stop-run (§2.1). Each
+  needs a fixture from a repo that uses it.
+- **GitHub's own resolution of duplicate same-name runs** (M11): fail closed until an in-suite re-run fixture is recorded.
 
 ## Audit trail
 
