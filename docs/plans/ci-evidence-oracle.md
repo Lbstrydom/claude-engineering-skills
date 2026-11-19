@@ -556,9 +556,39 @@ enters the consumer closure) + `npm run bundle:deps:check`, `npm run guards:pref
   - Coupling: rewiring the callers and the test that drives those same callers through their real entry points; the census pins the merge sites Phase 4 edits.
 - **Final gate**: the consolidated Gemini review over the union diff of Clusters B and C (PR 2); Cluster A's union diff is reviewed as PR 1's final gate before it is handed to the coordinator.
 
+## Amendment A (2026-11-19, Louis: "yes" to the coordinator's proposal) — the TOCTOU residuals are accepted; PR 2 narrows them
+
+Not re-audited by decision (a short amendment, not a new round). **Louis accepted both residuals (R2-H1/R3-H1 base retarget, R3-H2 CI re-run
+between the last assessment and the merge) as documented, and does NOT require a merge queue.** This removes the precondition of §2.3 and
+replaces it with the following, all in PR 2 and all inside `mergeWithCiPermit` unless stated:
+
+1. **Re-read immediately before the merge.** `mergeWithCiPermit` re-reads the PR (base and head) and runs a FRESH `assessRequiredCi` as the
+   last step before `gh pr merge`; `--match-head-commit` takes that evidence's head. Any difference from the plan is the mapper's: a
+   changed head is `retry`, a retarget or a draft is `refuse-member`, unknown is `stop-run`. (The assessment already ends with the §2.1
+   step-9 re-read; this makes the FRESH assessment the only one a merge may follow, not the wait loop's earlier one.)
+2. **Post-merge verification.** After a merge is observed, verify, from fresh reads: the merge commit's first parent is the expected base tip
+   (already the policy read-back's `untested-base`), the merged PR's base ref is the run base (`wrong-target`, now also in PLAIN serial),
+   the merged head equals the admitted head, and the required check runs of that head are STILL `success` (a re-assessment of the merged
+   head: a re-run that turned red or skipped after the permit is caught). A mismatch records the member outcome `landed` with verdict
+   **`merged-unverified`** (new, a halt verdict next to `wrong-target`/`untested-base`), stops the run loudly, and is never reported as
+   success. Tests: one row per check, positive (all hold: `landed`/`merged`) and negative (each broken in turn: halt, zero further merges).
+3. **Optional merge-queue path: NOT built, and that is stated.** The only queue signal in the code is the rule type `merge_queue` in
+   `rules/branches/{b}` (`serial.mjs:251`), and **no fixture proves it**: none of the three measured repos (CES, WCA, AIO) has a queue and
+   a queue cannot be created without a GitHub settings change, which is not this chip's to make. Per the instruction ("if you cannot prove
+   the signal, leave this out and say so"), a base with a queue keeps today's behaviour (`merge-queue-present`, a run stop). Recorded in
+   Out of Scope with the fixture it needs.
+4. **Docs.** This plan and `skills/fleet/references/landing.md` state that the remaining window (a retarget or a CI re-run between the
+   fresh re-read and `gh pr merge`, which fleet narrows and then DETECTS but cannot prevent) is closed by repository policy (required checks
+   with no bypass, or a merge queue), not by fleet.
+
+**Test coverage** (`tests/fleet-ci-admission.test.mjs`, positive and negative per item): (1) a head, base or draft change between the
+wait-loop assessment and the merge → no merge call, the mapper's disposition; unchanged → exactly one merge with `--match-head-commit` equal
+to the fresh head; (2) each post-merge check holds → `landed`; each broken in turn → `merged-unverified` halt; (3) a base with a
+`merge_queue` rule → `merge-queue-present` stop, zero merges (the unchanged behaviour is pinned).
+
 ## Out of Scope (Future)
 
-- **A server-side merge queue on each fleet-landed base** (R2-H1, R3-H1, R3-H2): the only mechanism that binds a merge to its
+- **A server-side merge queue on each fleet-landed base** (R2-H1, R3-H1, R3-H2; accepted as residuals by Louis, Amendment A): the only mechanism that binds a merge to its
   base and re-evaluates required checks at merge time. A GitHub ruleset setting, so Louis's; tracked as proposal
   `p-20261118092842`. Note that `serial.mjs` today refuses a base with a merge queue (`merge-queue-present`), so adopting one
   also needs the serial runner to hand merges to the queue: a design of its own.
