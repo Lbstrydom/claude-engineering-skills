@@ -1,6 +1,6 @@
 # Plan: Sashiko-inspired audit improvements (audit --resume, contested-finding verification, defect corpus)
 - **Date**: 2026-11-19
-- **Status**: Audited (ready to implement on the coordinator's go)
+- **Status**: Approved (plan audit closed 2026-11-19; implementation waits for the coordinator's go)
 - **Author**: Claude + Louis
 - **Proposal**: `p-20261118213122-bc4c` (theme `audit-quality`), approved by Louis 2026-11-18 for after #395 landed (main at `1df6fbfb`).
 - **Scope**: backend (js-ts). Principle set: `skills/plan/references/engineering-principles.md`.
