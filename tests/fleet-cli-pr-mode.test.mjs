@@ -14,6 +14,7 @@ import { OK_TIER, fleetDirOf, land, originLog, readyBranch, sessionRec, setup } 
 import { readTrain } from '../scripts/lib/fleet/registry.mjs';
 import { PR_APPROVE_FIELDS } from '../scripts/lib/fleet/train-approve.mjs';
 import { PR_VIEW_FIELDS } from '../scripts/lib/fleet/gh-facts.mjs';
+import { ciApiState } from './helpers/fleet-github-fake.mjs';
 
 after(cleanupFleetRoots);
 
@@ -28,7 +29,7 @@ describe('pr mode: emits a plan, observes via gh', () => {
     const oidB = readyBranch(s, 'feat-b', { 'b.txt': 'B\n' });
     const rows = [prRow({ number: 11, branch: 'feat-a', headOid: oidA, baseOid: base }), prRow({ number: 12, branch: 'feat-b', headOid: oidB, baseOid: base })];
     const view = Object.fromEntries(rows.map((r) => [r.number, r]));
-    const state = { list: rows, view };
+    const state = { list: rows, view, api: ciApiState({ heads: [oidA, oidB] }) };
     s.fake.setState(state);
     return { s, base, oidA, oidB, rows, state, set: (v) => s.fake.setState({ ...state, view: v }) };
   }

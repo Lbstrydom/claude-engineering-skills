@@ -96,7 +96,6 @@ export const FAULTS = Object.freeze({
   conflict: { scope: 'member', status: 'refused', code: 'conflict' },
   behind: { scope: 'member', status: 'refused', code: 'behind-base' },
   'checks-failed': { scope: 'member', status: 'refused', code: 'checks-failed' },
-  'checks-inventory-unknown': { scope: 'run' },
   'checks-pending-deadline': { scope: 'member', status: 'not-run', code: 'checks-pending' },
   'merged-unaccounted': { scope: 'run' },
   'message-stop': { scope: 'run' },

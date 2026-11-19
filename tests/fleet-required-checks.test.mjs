@@ -6,15 +6,15 @@
  * GitHub (and fleet's old rollup) counted a skipped check as passing. Pinned:
  * the inventory is ASKED, never inferred; a required check observed as skipped
  * is `not-run`, one never observed is `missing`; the observation is bound to a
- * head; pr-mode approval refuses a draft and a not-run/failed required check, and
- * WAITs on missing/pending/unknown.
+ * head; pr-mode approval refuses a draft and anything but a `permit` from the one
+ * CI-evidence oracle (pending, missing and unknown included: no plan is printed on
+ * a check that has not passed). The disposition table is pinned at the end.
  */
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { git } from './helpers/git.mjs';
 import {
-  CI_DISPOSITIONS, CI_EVIDENCE_TAGS, CI_FAULT_KINDS, CI_INELIGIBLE_CODES, decideCiAdmission, describeEvidence, unimplementedOracle,
-  describeVerdict, observeRequiredChecks, parseBranchProtection, parseChecksJson, parseRulesInventory, requiredChecksVerdict, requiredInventory,
+  CI_DISPOSITIONS, CI_EVIDENCE_TAGS, CI_FAULT_KINDS, CI_INELIGIBLE_CODES, decideCiAdmission, describeEvidence,
 } from '../scripts/lib/fleet/required-checks.mjs';
 import { prWarnings, summariseChecks } from '../scripts/lib/fleet/gh-facts.mjs';
 import { parseFleetConfig } from '../scripts/lib/fleet/config.mjs';
@@ -24,98 +24,12 @@ import {
 
 after(cleanupFleetRoots);
 
-const H = 'a'.repeat(40);
-const inv = (names, source = 'rules-api') => ({ source, names });
-const c = (name, bucket, completedAt = '2026-10-09T10:00:00Z') => ({ name, bucket, state: bucket.toUpperCase(), completedAt });
 
-describe('requiredChecksVerdict — the ONE predicate', () => {
-  const v = (names, observed, headBound = true) => requiredChecksVerdict({ inventory: inv(names), observed, headBound });
-  it('every required check observed passing → pass', () => assert.equal(v(['ci', 'lint'], [c('ci', 'pass'), c('lint', 'pass'), c('other', 'fail')]).verdict, 'pass'));
-  it('a required check observed SKIPPED → not-run (the #802 defect)', () => {
-    const r = v(['ci'], [c('ci', 'skipping')]);
-    assert.deepEqual([r.verdict, r.names['not-run']], ['not-run', ['ci']]);
-  });
-  it('a required check never observed → missing, never "not required"', () => assert.deepEqual(v(['ci', 'e2e'], [c('ci', 'pass')]).names.missing, ['e2e']));
-  it('pending / fail / cancel', () => {
-    assert.equal(v(['ci'], [c('ci', 'pending')]).verdict, 'pending');
-    assert.equal(v(['ci'], [c('ci', 'fail')]).verdict, 'failed');
-    assert.equal(v(['ci'], [c('ci', 'cancel')]).verdict, 'failed');
-  });
-  it('the latest run of a name wins; an in-flight re-run is pending', () => {
-    assert.equal(v(['ci'], [c('ci', 'skipping', '2026-10-09T09:00:00Z'), c('ci', 'pass', '2026-10-09T10:00:00Z')]).verdict, 'pass');
-    assert.equal(v(['ci'], [c('ci', 'pass'), { name: 'ci', bucket: 'pending', state: 'IN_PROGRESS', completedAt: null }]).verdict, 'pending');
-  });
-  it('unbound head or unknown inventory → unknown; an EXPLICIT empty inventory → none-required', () => {
-    assert.equal(v(['ci'], [c('ci', 'pass')], false).verdict, 'unknown');
-    assert.equal(requiredChecksVerdict({ inventory: { source: 'unknown', names: [] }, observed: [], headBound: true }).verdict, 'unknown');
-    assert.equal(requiredChecksVerdict({ inventory: inv([], 'config'), observed: [], headBound: true }).verdict, 'none-required');
-  });
-  it('describeVerdict names the blocking checks', () => assert.equal(describeVerdict(v(['a', 'b', 'c'], [c('a', 'skipping'), c('b', 'pending')])), 'not-run: a; missing: c; pending: b'));
-});
-
-describe('inventory — asked, never inferred', () => {
-  const rules = (contexts) => JSON.stringify([{ type: 'pull_request' }, { type: 'required_status_checks', parameters: { required_status_checks: contexts.map((context) => ({ context })) } }]);
-  const branch = (contexts, isProtected = true) => JSON.stringify(isProtected ? { protected: true, protection: { required_status_checks: { contexts } } } : { protected: false });
-  // A gh stub answering the two inventory endpoints (rulesets, branch) by path; null = HTTP 403.
-  const gh = (rulesOut, branchOut) => (args) => {
-    const out = /rules\/branches/.test(args[1]) ? rulesOut : branchOut;
-    return out === null ? { ok: false, status: 1, stdout: '', stderr: '', reason: 'HTTP 403' } : { ok: true, status: 0, stdout: out, stderr: '', reason: null };
-  };
-  it('parses required_status_checks contexts; a malformed nested rule is a parse failure, not an empty list (C1-M4)', () => {
-    assert.deepEqual(parseRulesInventory(rules(['ci', 'lint'])), { ok: true, names: ['ci', 'lint'] });
-    assert.equal(parseRulesInventory(JSON.stringify([{ type: 'required_status_checks', parameters: { required_status_checks: {} } }])).ok, false);
-  });
-  it('classic protection: contexts, unprotected = empty, protected-but-unreadable = failure', () => {
-    assert.deepEqual(parseBranchProtection(branch(['build'])), { ok: true, names: ['build'] });
-    assert.deepEqual(parseBranchProtection(branch([], false)), { ok: true, names: [] });
-    assert.equal(parseBranchProtection(JSON.stringify({ protected: true })).ok, false);
-  });
-  it('the inventory is the union of rulesets, classic protection and config (C1-H6)', () => {
-    assert.deepEqual(requiredInventory('.', { repo: 'o/n', base: 'main', configured: ['e2e'], gh: gh(rules(['ci']), branch(['build'])) }), { source: 'github+config', names: ['build', 'ci', 'e2e'] });
-    assert.deepEqual(requiredInventory('.', { repo: 'o/n', base: 'main', gh: gh(rules(['ci']), branch([], false)) }), { source: 'github', names: ['ci'] });
-  });
-  it('a ruleset answer alone is NOT the whole inventory when branch protection is unreadable', () => {
-    const r = requiredInventory('.', { repo: 'o/n', base: 'main', gh: gh(rules(['ci']), null) });
-    assert.equal(r.source, 'unknown'); assert.match(r.reason, /branch protection not readable/);
-  });
-  it('nothing required anywhere and no config → unknown, never "none"; explicit config [] → none required', () => {
-    const r = requiredInventory('.', { repo: 'o/n', base: 'main', gh: gh('[]', branch([], false)) });
-    assert.equal(r.source, 'unknown'); assert.match(r.reason, /requiredChecks/);
-    assert.deepEqual(requiredInventory('.', { repo: 'o/n', base: 'main', configured: [], gh: gh('[]', branch([], false)) }), { source: 'github+config', names: [] });
-    assert.equal(requiredInventory('.', { repo: 'o/n', base: 'main', configured: ['ci'], gh: gh(null, null) }).source, 'config');
-  });
-  it('a config that failed to load is unknown, never "not declared" (C1-H8/H11)', () => {
-    const r = requiredInventory('.', { repo: 'o/n', base: 'main', configError: 'invalid fleet config', gh: gh(rules(['ci']), branch([], false)) });
-    assert.equal(r.source, 'unknown'); assert.match(r.reason, /could not be loaded/);
-  });
+describe('.fleet.json requiredChecks is an ASSERTION: absent stays absent, [] is kept', () => {
   it('config schema: requiredChecks absent stays absent; [] is kept', () => {
     assert.equal('requiredChecks' in parseFleetConfig({}).value, false);
     assert.deepEqual(parseFleetConfig({ requiredChecks: [] }).value.requiredChecks, []);
   });
-});
-
-describe('observeRequiredChecks — head binding and gh exit codes', () => {
-  const runner = ({ heads, checks, checksStatus = 8 }) => {
-    let i = 0;
-    return (args) => {
-      if (args[1] === 'view') return { ok: true, status: 0, stdout: JSON.stringify({ headRefOid: heads[Math.min(i++, heads.length - 1)] }), stderr: '' };
-      return { ok: checksStatus === 0, status: checksStatus, stdout: JSON.stringify(checks), stderr: '', reason: `gh exited ${checksStatus}` };
-    };
-  };
-  it('exit 8 (pending) with JSON is parsed, not read as a failure', () => {
-    const r = observeRequiredChecks('.', { pr: 1, repo: 'o/n', inventory: inv(['ci']), gh: runner({ heads: [H, H], checks: [c('ci', 'pending')] }) });
-    assert.deepEqual([r.complete, r.verdict, r.headOid], [true, 'pending', H]);
-  });
-  it('a head that moves during the observation → unknown', () => {
-    const r = observeRequiredChecks('.', { pr: 1, repo: 'o/n', inventory: inv(['ci']), gh: runner({ heads: [H, 'b'.repeat(40)], checks: [c('ci', 'pass')], checksStatus: 0 }) });
-    assert.deepEqual([r.complete, r.verdict], [false, 'unknown']);
-    assert.match(r.reason, /moved/);
-  });
-  it('an unexpected head is refused before observing', () => {
-    const r = observeRequiredChecks('.', { pr: 1, repo: 'o/n', inventory: inv(['ci']), expectHead: 'c'.repeat(40), gh: runner({ heads: [H], checks: [] }) });
-    assert.equal(r.verdict, 'unknown');
-  });
-  it('malformed checks JSON is never a pass', () => assert.equal(parseChecksJson('[{"bucket":1}]').ok, false));
 });
 
 describe('rollup + PR warnings', () => {
@@ -138,9 +52,12 @@ describe('rollup + PR warnings', () => {
   });
 });
 
-describe('pr-mode approve — the gate on a real train', () => {
-  const setup = () => {
-    const fx = makeFleetRepo({ fleetConfig: { mergeMethod: 'pr', testCommand: { tiers: [{ name: 'ok', command: ['node', '-e', '0'] }] } } });
+describe('pr-mode approve — the gate on a real train (the REAL oracle, through the real CLI and a scripted gh)', () => {
+  const APP = 15368;
+  const run = (name, conclusion = 'success', status = 'completed', app = APP) => ({ id: 1, name, status, conclusion: status === 'completed' ? conclusion : null, head_sha: null, app: { id: app } });
+  const setup = (fleetConfigExtra = {}) => {
+    const fx = makeFleetRepo({ fleetConfig: { mergeMethod: 'pr', testCommand: { tiers: [{ name: 'ok', command: ['node', '-e', '0'] }] }, ...fleetConfigExtra } });
+    git(['add', '.fleet.json'], fx.repo); git(['commit', '-q', '-m', 'cfg'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
     const fake = installFakeGh(fx.root);
     const env = scrubbedEnv({ FLEET_WORKTREE_ROOT: fx.wtRoot, ...fake.env }, { prependPath: [fake.bin] });
     const f = (args) => runFleet(args, { cwd: fx.repo, env });
@@ -151,43 +68,80 @@ describe('pr-mode approve — the gate on a real train', () => {
     assert.equal(f(['ready', '--id', 'feat']).status, 0);
     git(['checkout', '-q', 'main'], fx.repo);
     const row = prRow({ number: 21, branch: 'feat', headOid: oid, baseOid: base });
-    const rules = {
-      'GET repos/o/n/rules/branches/main': { body: [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } }] },
-      'GET repos/o/n/branches/main': { body: { protected: false } },
-    };
-    const state = (over = {}) => ({ list: [row], view: { 21: row }, api: rules, ...over });
+    const api = (over = {}) => ({
+      'GET repos/o/n/branches/main': { body: { protected: true, protection: { enabled: false, required_status_checks: { contexts: [], checks: [] } } } },
+      'GET repos/o/n/rules/branches/main?per_page=100': { body: [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci', integration_id: APP }] } }] },
+      [`GET repos/o/n/commits/${oid}/check-runs?filter=latest&per_page=100`]: { body: { total_count: 1, check_runs: [{ ...run('ci'), head_sha: oid }] } },
+      [`GET repos/o/n/commits/${oid}/statuses?per_page=100`]: { body: [] },
+      ...over,
+    });
+    const runs = (...list) => ({ body: { total_count: list.length, check_runs: list.map((r, i) => ({ ...r, id: i + 1, head_sha: oid })) } });
+    const state = (over = {}) => ({ list: [row], view: { 21: row }, api: api(), ...over });
     fake.setState(state());
     const built = f(['land', '--json']);
     assert.equal(built.status, 0, built.stdout + built.stderr);
-    return { f, fake, state, row, trainId: built.json.train.trainId };
+    return { f, fake, state, api, runs, oid, row, trainId: built.json.train.trainId };
   };
+  const approve = (s) => s.f(['land', '--approve', s.trainId, '--json']);
 
-  it('a required check SKIPPED on the head → approval refused, naming it', () => {
+  it('a required check SKIPPED on the head → approval refused, naming it (the #802 defect), and no plan', () => {
     const s = setup();
-    s.fake.setState(s.state({ checks: { 21: { rows: [c('ci', 'skipping')], exit: 0 } } }));
-    const ap = s.f(['land', '--approve', s.trainId, '--json']);
+    s.fake.setState(s.state({ api: s.api({ [`GET repos/o/n/commits/${s.oid}/check-runs?filter=latest&per_page=100`]: s.runs(run('ci', 'skipped')) }) }));
+    const ap = approve(s);
     assert.equal(ap.status, 3, ap.stdout);
     assert.match(ap.json.reason, /required checks not-run: ci/);
+    assert.equal(ap.json.plan, undefined);
   });
   it('a DRAFT PR → refused with the ready-then-run remedy', () => {
     const s = setup();
-    s.fake.setState(s.state({ view: { 21: { ...s.row, isDraft: true } }, checks: { 21: { rows: [c('ci', 'pass')] } } }));
-    const ap = s.f(['land', '--approve', s.trainId, '--json']);
+    s.fake.setState(s.state({ view: { 21: { ...s.row, isDraft: true } } }));
+    const ap = approve(s);
     assert.equal(ap.status, 3);
     assert.match(ap.json.reason, /DRAFT/);
   });
-  it('pending → the plan is emitted with a WAIT on that merge; pass → no WAIT (control)', () => {
+  it('an absent isDraft refuses (never "not a draft")', () => {
     const s = setup();
-    s.fake.setState(s.state({ checks: { 21: { rows: [c('ci', 'pending')], exit: 8 } } }));
-    const ap = s.f(['land', '--approve', s.trainId, '--json']);
-    assert.equal(ap.status, 0, ap.stdout);
-    assert.match(ap.json.plan[0].wait, /pending/);
-    assert.match(ap.json.text, /WAIT \(feat\)/);
-    const s2 = setup();
-    s2.fake.setState(s2.state({ checks: { 21: { rows: [c('ci', 'pass')] } } }));
-    const ok = s2.f(['land', '--approve', s2.trainId, '--json']);
-    assert.equal(ok.status, 0);
+    const { isDraft, ...noDraft } = s.row;
+    s.fake.setState(s.state({ view: { 21: noDraft } }));
+    const ap = approve(s);
+    assert.equal(ap.status, 3, ap.stdout);
+    assert.match(ap.json.reason, /isDraft is missing or not a boolean/);
+  });
+  it('pending now REFUSES the approve: no plan, no WAIT line, approve again when green (it used to print a runnable plan)', () => {
+    const s = setup();
+    s.fake.setState(s.state({ api: s.api({ [`GET repos/o/n/commits/${s.oid}/check-runs?filter=latest&per_page=100`]: s.runs(run('ci', null, 'in_progress')) }) }));
+    const ap = approve(s);
+    assert.equal(ap.status, 3, ap.stdout);
+    assert.match(ap.json.reason, /required checks pending.*not green yet: approve again/);
+    assert.equal(ap.json.plan, undefined);
+    assert.doesNotMatch(ap.stdout, /WAIT/);
+  });
+  it('pass → the plan, with the point-in-time note naming --serial as the gated executor (control)', () => {
+    const s = setup();
+    const ok = approve(s);
+    assert.equal(ok.status, 0, ok.stdout);
     assert.equal(ok.json.plan[0].wait, undefined);
+    assert.match(ok.json.ciEvidence, /point-in-time/);
+    assert.match(ok.json.ciEvidence, /--serial/);
+  });
+  it('a proven-empty inventory (unprotected branch, no rules) is none-required: the plan (a consumer may require nothing)', () => {
+    const s = setup();
+    s.fake.setState(s.state({ api: s.api({ 'GET repos/o/n/branches/main': { body: { protected: false, protection: { enabled: false, required_status_checks: { contexts: [], checks: [] } } } }, 'GET repos/o/n/rules/branches/main?per_page=100': { body: [] } }) }));
+    assert.equal(approve(s).status, 0);
+  });
+  it('an UNREADABLE inventory refuses, and a configured requiredChecks that agrees with GitHub cannot rescue it (the 90c60bf2 hole)', () => {
+    const s = setup({ requiredChecks: ['ci'] });
+    s.fake.setState(s.state({ api: s.api({ 'GET repos/o/n/rules/branches/main?per_page=100': { fail: 'HTTP 502' } }) }));
+    const ap = approve(s);
+    assert.equal(ap.status, 3, ap.stdout);
+    assert.match(ap.json.reason, /CI evidence unknown \(transport/);
+    assert.equal(ap.json.plan, undefined);
+  });
+  it('config that disagrees with GitHub (a stale requiredChecks) refuses with the diff', () => {
+    const s = setup({ requiredChecks: ['ci', 'lint'] });
+    const ap = approve(s);
+    assert.equal(ap.status, 3, ap.stdout);
+    assert.match(ap.json.reason, /config-drift: .*configured but not required by GitHub \[lint\]/);
   });
 });
 
@@ -244,11 +198,6 @@ describe('decideCiAdmission — one fixed table over a closed tag set', () => {
   it('the dispositions it can return are exactly the closed set', () => {
     const seen = new Set([...CI_EVIDENCE_TAGS.map((t) => decideCiAdmission(sample(t)).disposition), decideCiAdmission(null).disposition]);
     assert.deepEqual([...seen].sort(), [...CI_DISPOSITIONS].sort());
-  });
-  it('the PR-1 stub oracle establishes nothing: unknown(unimplemented-oracle), so it never permits', () => {
-    const e = unimplementedOracle();
-    assert.deepEqual([e.tag, e.fault.kind], ['unknown', 'unimplemented-oracle']);
-    assert.equal(decideCiAdmission(e).disposition, 'stop-run');
   });
   it('describeEvidence never returns an empty line and names the fault of an unknown', () => {
     for (const tag of CI_EVIDENCE_TAGS) assert.ok(describeEvidence(sample(tag)).length > 10, tag);

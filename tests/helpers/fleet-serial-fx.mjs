@@ -11,14 +11,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './git.mjs';
 import { defaultDeps } from '../../scripts/lib/fleet/train.mjs';
+import { evidenceFromBucket, ev } from './fleet-ci-evidence-fx.mjs';
 import { addBranch, installFakeGh, makeFleetRepo, prRow, runFleet, scrubbedEnv } from './fleet-repo.mjs';
 
 export const REPO = 'o/n';
 export const PR = 21;
-export const RULES = { ok: true, status: 0, stdout: JSON.stringify([{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } }]), stderr: '' };
-export const BRANCH = { ok: true, status: 0, stdout: JSON.stringify({ protected: false }), stderr: '' };
 export const ok = (doc) => ({ ok: true, status: 0, stdout: doc === undefined ? '' : JSON.stringify(doc), stderr: '' });
-export const check = (bucket) => [{ name: 'ci', bucket, state: bucket.toUpperCase(), completedAt: '2026-10-09T10:00:00Z' }];
 
 /** A pr-mode train with one ready session `feat` and a built (green) train. */
 export function trainFx({ message } = {}) {
@@ -59,34 +57,43 @@ export function updatedHead(fx, tested, { foreign = false } = {}) {
 }
 
 /**
- * A scripted gh. `views` is the sequence of `pr view` answers (the last repeats);
- * `checks` the sequence of `pr checks` buckets; calls are recorded.
+ * A scripted gh. `views` is the sequence of `pr view` answers (the last repeats); `checks` the sequence of buckets ONE CI ASSESSMENT consumes
+ * each (the last repeats); calls are recorded. `gh.assessCi` is the oracle seam the serial mechanics suites inject (`depsWith` carries it): it
+ * derives evidence from the PR view last served and the next bucket, so these suites test the RUNNER's reaction to evidence. The real oracle's reads
+ * are tested in fleet-assess-required-ci.test.mjs and driven through the real entry points in fleet-ci-admission.test.mjs.
  */
 export function scriptedGh({ views, checks = [['pass']], onUpdate = () => ok({}), onMerge = () => ok() }) {
-  const calls = []; let v = 0; let c = 0;
+  const calls = []; let v = 0; let c = 0; let last = null;
   const gh = (args) => {
     calls.push(args);
     if (args[0] === 'api' && args.includes('PUT')) return onUpdate(args);
-    if (args[0] === 'api' && /rules\/branches/.test(args[1])) return RULES;
-    if (args[0] === 'api' && /\/branches\//.test(args[1])) return BRANCH;
+    if (args[0] === 'api' && /rules\/branches/.test(args[1])) return ok([]);
     if (args[0] === 'pr' && args[1] === 'merge') return onMerge(args);
-    if (args[0] === 'pr' && args[1] === 'checks') {
-      const b = checks[Math.min(c++, checks.length - 1)];
-      return { ok: b[0] === 'pass', status: b[0] === 'pass' ? 0 : 8, stdout: b[0] === 'missing' ? '[]' : JSON.stringify(check(b[0])), stderr: '' };
-    }
     if (args[0] === 'pr' && args[1] === 'view') {
       const want = args[args.indexOf('--json') + 1];
       const doc = typeof views === 'function' ? views() : views[Math.min(v++, views.length - 1)];
+      last = doc;
       return want === 'headRefOid' ? ok({ headRefOid: doc.headRefOid }) : ok(doc);
     }
     return { ok: false, status: 1, stdout: '', stderr: `unexpected gh ${args.join(' ')}`, reason: 'unexpected' };
+  };
+  gh.assessCi = ({ expectedBase, expectedHead }) => {
+    const bucket = checks[Math.min(c++, checks.length - 1)][0];
+    const doc = last ?? (typeof views === 'function' ? views() : views[0]);
+    if (String(doc.state).toUpperCase() === 'MERGED') return ev.ineligible('merged');
+    if (String(doc.state).toUpperCase() !== 'OPEN') return ev.ineligible('closed');
+    if (doc.isDraft === true) return ev.ineligible('draft');
+    if (doc.baseRefName !== expectedBase) return ev.ineligible('retargeted');
+    if (doc.headRefOid !== expectedHead) return ev.ineligible('head-moved', doc.headRefOid);
+    return evidenceFromBucket(bucket, expectedHead);
   };
   return { gh, calls };
 }
 
 export const view = (head, over = {}) => ({ state: 'OPEN', isDraft: false, headRefOid: head, baseRefName: 'main', mergeStateStatus: 'CLEAN', mergeCommit: null, url: `https://github.com/${REPO}/pull/${PR}`, ...over });
 export const fast = { poll: 1, updatePoll: 1, updateWait: 200, mergeWait: 200 };
-export const depsWith = (gh) => defaultDeps({ gh, log: () => {} });
+/** Deps over a scripted gh; its `assessCi` (when it has one) is the oracle seam the run asks. */
+export const depsWith = (gh) => defaultDeps({ gh, log: () => {}, ...(gh.assessCi ? { assessCi: gh.assessCi } : {}) });
 
 /**
  * A pr-mode train over `n` ready sessions `m1..mn` (PRs 21..), each adding its own file, so the claims are path-disjoint (as

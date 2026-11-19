@@ -210,11 +210,11 @@ describe('partitionMembers: only ship-ok members make the set', () => {
     assert.ok(r.stop.reason.includes('CI evidence unknown (transport: rules api 502)'), r.stop.reason);
     assert.deepEqual(seen, [21, 22], 'the partition stopped at the first unknown: a3 was never assessed');
   });
-  it('the PRODUCTION default oracle is the PR-1 stub: it establishes nothing, so the partition stops (ship-batch cannot merge)', () => {
+  it('the PRODUCTION default oracle is the real one: against a GitHub that answers nothing the partition stops, it never admits', () => {
     const ms = [pr('a1')];
-    const r = partitionMembers({ cwd: process.cwd(), members: ms, base: 'main', remote: 'origin', deps: { shipBatch: { checkChild: () => ({ ok: true, reasons: [], envelope: {} }) } } });
+    const r = partitionMembers({ cwd: process.cwd(), members: ms, base: 'main', remote: 'origin', deps: { gh: () => ({ ok: false, status: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)', reason: 'x' }), shipBatch: { checkChild: () => ({ ok: true, reasons: [], envelope: {} }) } } });
     assert.equal(r.ok.length, 0);
-    assert.match(r.stop.reason, /unimplemented-oracle/);
+    assert.ok(r.stop.reason.includes('transport'), r.stop.reason);
   });
 });
 
@@ -398,7 +398,8 @@ describe('F1: a member fault never stops the batch (the member step cannot stop 
   it('an unknown fault kind and a throw inside the member step each stop the run as internal-error', () => {
     const b = batch(1);
     const w = world(b);
-    const gh = (args) => { if (args[1] === 'checks') throw new Error('gh exploded'); return w.gh(args); };
+    const gh = (args) => { if (args[1] === 'merge') throw new Error('gh exploded'); return w.gh(args); }; // a throw INSIDE the member step (the merge call)
+    gh.assessCi = w.gh.assessCi;
     const r = approve(b, gh);
     assert.equal(r.ok, false);
     assert.match(r.reason, /internal-error: gh exploded/);
@@ -463,6 +464,7 @@ describe('tree identity: the head is re-read at merge time and proven by tree (F
     const p = w.prs.get(b.members[0].pr);
     let n = 0;
     const gh = (args) => { if (args[1] === 'view' && !args.includes('isInMergeQueue') && n < 6) { const l = repush(b, { same: true }); p.head = l; n += 1; } return w.gh(args); };
+    gh.assessCi = w.gh.assessCi;
     approve(b, gh);
     assert.ok(n >= 1);
     assert.ok(w.merges.length <= 1);
@@ -514,13 +516,14 @@ describe('merge attribution, the unconfirmed merge and its reconciliation (F3, R
     const w = world(b);
     const p1 = w.prs.get(b.members[0].pr);
     let done = false;
-    const gh = (args) => {
-      if (!done && args[1] === 'checks' && Number(args[2]) === b.members[0].pr) {
+    const gh = (args) => w.gh(args);
+    gh.assessCi = (a) => { // the member is merged by someone else while its CI evidence is being read
+      if (!done && a.prNumber === b.members[0].pr) {
         done = true;
         const f = path.join(mkTmp('b-'), 'b'); fs.writeFileSync(f, 'x');
         p1.mergeCommit = squashFrom(b, b.members[0], ['--subject', 's', '--body-file', f, b.members[0].head]); p1.state = 'MERGED';
       }
-      return w.gh(args);
+      return w.gh.assessCi(a);
     };
     const r = approve(b, gh);
     assert.deepEqual([outcomeOf(b, 'm1').status, outcomeOf(b, 'm1').code, outcomeOf(b, 'm1').mergeOid], ['skipped', 'merged-externally', p1.mergeCommit]);
@@ -713,6 +716,7 @@ describe('audit round 1: persistence, queue, tip and resume guards', () => {
     for (const answer of [null, undefined, 'false']) {
       const orig = w.gh;
       const gh = (args) => (args[1] === 'view' && args[args.indexOf('--json') + 1] === 'isInMergeQueue' ? ok(answer === undefined ? {} : { isInMergeQueue: answer }) : orig(args));
+      gh.assessCi = orig.assessCi;
       const r = resume(b, gh);
       assert.match(r.reason, /not an explicit false|merge queue/, String(answer));
       assert.equal(w.merges.length, 1, 'never replayed on an unproven queue answer');
@@ -781,7 +785,7 @@ describe('CI: the admission is the evidence oracle disposition (docs/plans/ci-ev
     }
   });
   it('unknown evidence of every fault kind is the RUN-scope stop ci-evidence-unknown, never a member refusal', () => {
-    for (const kind of ['transport', 'malformed', 'config-drift', 'unsupported-classic-protection', 'unimplemented-oracle']) {
+    for (const kind of ['transport', 'malformed', 'config-drift', 'unsupported-classic-protection', 'unsupported-rule-type']) {
       const a = admit(() => ev.unknown(kind));
       assert.deepEqual([a.ok, a.kind], [false, 'ci-evidence-unknown'], kind);
       assert.match(a.reasons[0], new RegExp(kind));
@@ -803,16 +807,15 @@ describe('CI: the admission is the evidence oracle disposition (docs/plans/ci-ev
     const a = admitShipBatchMember({ cwd: process.cwd(), member, head: HEAD, base: 'main', remote: 'origin', deps: { assessCi: () => { asked++; return ev.passed(HEAD); }, shipBatch: { checkChild: () => ({ ok: false, reasons: ['trailers: waived'], envelope: null }) } } });
     assert.deepEqual([a.ok, a.kind, asked], [false, 'shipped-head-refused', 0]);
   });
-  it('END TO END, the production default cannot merge: approve with no oracle stops the run at run scope, zero merges, the base untouched', () => {
+  it('END TO END with the REAL oracle: a GitHub that does not answer the oracle\'s reads stops the run at run scope, zero merges; the same world with an oracle injected merges (control)', () => {
     const b = batch(2);
-    const w = world(b); // every PR is green and eligible: only the oracle is missing
+    const w = world(b); // its gh answers the old read shapes only, so the real oracle cannot establish the evidence
     const before = baseTip(b);
     const r = approve(b, w.gh, { deps: { assessCi: undefined } });
     assert.equal(r.ok, false, r.text);
     assert.equal(w.merges.length, 0);
     assert.equal(baseTip(b), before);
-    assert.match(r.text, /unimplemented-oracle/);
-    // The control: the SAME world with the oracle injected merges both members, so the stop above is the oracle's and nothing else's.
+    assert.ok(r.text.includes('CI evidence unknown'), r.text);
     const c = batch(2);
     const w2 = world(c);
     assert.equal(approve(c, w2.gh).ok, true);
@@ -840,9 +843,10 @@ describe('CI: the admission is the evidence oracle disposition (docs/plans/ci-ev
     assert.equal(approve(d, w3.gh).ok, true);
     assert.equal(w3.merges.length, 1);
   });
-  it('the PRODUCTION default (no deps.assessCi) is the PR-1 stub: ci-evidence-unknown naming the unimplemented oracle', () => {
-    const a = admitShipBatchMember({ cwd: process.cwd(), member, head: HEAD, base: 'main', remote: 'origin', deps: { shipBatch: { checkChild: child } } });
+  it('the PRODUCTION default (no deps.assessCi) is the REAL oracle: with a GitHub that does not answer its reads it is a run stop, naming the read that failed', () => {
+    const a = admitShipBatchMember({ cwd: process.cwd(), member, head: HEAD, base: 'main', remote: 'origin', deps: { gh: () => ({ ok: false, status: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)', reason: 'x' }), shipBatch: { checkChild: child } } });
     assert.deepEqual([a.ok, a.kind], [false, 'ci-evidence-unknown']);
-    assert.match(a.reasons[0], /unimplemented-oracle/);
+    assert.ok(a.reasons[0].includes('transport'), a.reasons[0]);
   });
+});
 });
