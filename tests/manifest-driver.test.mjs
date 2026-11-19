@@ -19,7 +19,7 @@ import { EXECUTORS } from '../scripts/lib/model-eval/executors.mjs';
 import { RunPreflightError } from '../scripts/lib/model-eval/cli-shared.mjs';
 import { AUDITOR_TIER_C_PROMPT_IDS, AUDITOR_TIER_C_SCHEMA_IDS } from '../scripts/lib/comparison/controls.mjs';
 
-const { computeControlsDivergence } = manifestDriverInternals;
+const { computeControlsDivergence, computeStampDivergence } = manifestDriverInternals;
 
 const VALID_AUDITOR_CONTROLS = {
   reasoningEffort: 'medium', promptTemplateId: AUDITOR_TIER_C_PROMPT_IDS.at(-1), outputSchemaId: AUDITOR_TIER_C_SCHEMA_IDS.at(-1),
@@ -162,5 +162,36 @@ describe('computeControlsDivergence — auditor-controls-execution-wiring.md, ro
   it('a failed arm alongside a successful one is simply excluded, not counted as divergence', () => {
     const results = [okResult({ scope: true }), { result: { outcome: 'terminal', reason: 'exit 1' } }];
     assert.deepEqual(computeControlsDivergence(results), { scope: 'uniform' });
+  });
+});
+
+describe('computeStampDivergence: arms are compared only when they drew the same selection (G2)', () => {
+  const stamp = (over = {}) => ({ suite: 'detect', subset: 'full', corpusVersion: '4', corpusDigest: 'd1', corpusLoaderVersion: 'v2', selection: { seed: 7, requestedN: 2, selectedIds: ['KD-002', 'KD-005'] }, ...over });
+  const arm = (armId, ev, ok = true) => ({ armId, ok, result: ok ? { evidence: ev } : undefined });
+  it('negative control: three arms with identical stamps diverge on nothing', () => {
+    assert.deepEqual(computeStampDivergence([arm('a', stamp()), arm('b', stamp()), arm('c', stamp())]), []);
+  });
+  it('an arm that drew a different selection is named with the field that differs', () => {
+    const other = stamp({ selection: { seed: 7, requestedN: 2, selectedIds: ['KD-002', 'KD-006'] } });
+    assert.deepEqual(computeStampDivergence([arm('a', stamp()), arm('b', other), arm('c', stamp())]), [{ armId: 'b', reason: 'selection.selectedIds' }]);
+  });
+  it('a different corpus digest or subset is not comparable either', () => {
+    assert.equal(computeStampDivergence([arm('a', stamp()), arm('b', stamp({ corpusDigest: 'd2' }))])[0].reason, 'corpusDigest');
+    assert.equal(computeStampDivergence([arm('a', stamp()), arm('b', stamp({ subset: 'tiny' }))])[0].reason, 'subset');
+  });
+  it('an arm with no stamp is not comparable, and neither is a base with none (never a reassuring match)', () => {
+    assert.match(computeStampDivergence([arm('a', stamp()), arm('b', {})])[0].reason, /^incomplete-stamp:/);
+    const both = computeStampDivergence([arm('a', {}), arm('b', stamp())]);
+    assert.deepEqual(both.map((d) => d.armId).sort(), ['a', 'b']);
+  });
+  it('failed arms are ignored, and fewer than two successful arms compare nothing', () => {
+    assert.deepEqual(computeStampDivergence([arm('a', stamp()), arm('b', null, false)]), []);
+    assert.deepEqual(computeStampDivergence([]), []);
+  });
+  it('the driver feeds the divergence into the failed (INCONCLUSIVE) arms and the output', () => {
+    const src = fs.readFileSync(new URL('../scripts/lib/model-eval/manifest-driver.mjs', import.meta.url), 'utf8');
+    assert.match(src, /computeStampDivergence\(results\)/);
+    assert.match(src, /stampDivergence\.map\(\(d\) => d\.armId\)/);
+    assert.match(src, /arms: results, controlsDivergence, stampDivergence/);
   });
 });

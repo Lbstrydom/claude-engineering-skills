@@ -114,6 +114,12 @@ export function selectionStamp(corpus, { suite, subset, seed, requestedN, select
   };
 }
 
+/** The stamp a run recorded in its evidence (the stamp fields are spread into `evidence`). Missing evidence yields an empty stamp. */
+export function stampOfEvidence(ev) {
+  const e = ev && typeof ev === 'object' ? ev : {};
+  return { suite: e.suite, subset: e.subset, corpusVersion: e.corpusVersion, corpusDigest: e.corpusDigest, corpusLoaderVersion: e.corpusLoaderVersion, selection: e.selection };
+}
+
 const STAMP_STRINGS = ['suite', 'subset', 'corpusVersion', 'corpusDigest', 'corpusLoaderVersion'];
 const isStr = (v) => typeof v === 'string' && v.length > 0;
 /** @returns {string|null} the first missing or malformed field of a stamp, else null */
