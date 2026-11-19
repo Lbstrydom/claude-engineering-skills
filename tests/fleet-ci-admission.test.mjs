@@ -335,3 +335,23 @@ describe('ship-batch (the policy serial runner), with the REAL oracle', () => {
     assert.equal(r.ok, false);
   });
 });
+
+describe('a resume re-verifies a merge it did not finish observing (plain serial)', () => {
+  it('crash after the merge call, then a resume that finds the PR MERGED with its check SKIPPED -> merged-unverified, step NOT persisted as merged', () => {
+    const { fx, tested, base, trainId } = trainFx();
+    const g = github({ head: tested, base });
+    const crashing = (args) => { const r = g.gh(args); if (args[1] === 'merge') throw new Error('simulated process death'); return r; };
+    assert.throws(() => approveSerial({ cwd: fx.repo, trainId, deps: depsWith(crashing), ...APPROVE }), /simulated process death/);
+    assert.equal(g.w.merged, true);
+    const g2 = github({ head: tested, base, over: (w) => { w.merged = true; return { checkRuns: () => runsDoc(tested, { conclusion: 'skipped' }) }; } });
+    const r = resumeSerial({ cwd: fx.repo, trainId, deps: depsWith(g2.gh), sleep: () => {}, timings: fast });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /merged-unverified/);
+    assert.notEqual(readSerial(fleetDirOf(fx.repo), trainId).run.steps[0].step, 'merged', 'an unverified merge is never persisted as merged');
+    // The control: the same resume with the check still green verifies and lands.
+    const g3 = github({ head: tested, base, over: (w) => { w.merged = true; return {}; } });
+    const ok3 = resumeSerial({ cwd: fx.repo, trainId, deps: depsWith(g3.gh), sleep: () => {}, timings: fast });
+    assert.equal(ok3.ok, true, JSON.stringify(ok3).slice(0, 300));
+    assert.equal(g3.merges.length, 0, 'the resume never re-merges');
+  });
+});

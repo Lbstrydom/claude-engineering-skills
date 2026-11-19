@@ -19,8 +19,8 @@ export function mergeSites(text) {
   const out = [];
   const re = /['"]pr['"]\s*,\s*['"]merge['"]/g;
   for (let m = re.exec(text); m; m = re.exec(text)) {
-    const before = text.slice(Math.max(0, m.index - 40), m.index);
-    if (/['"]gh['"]\s*,\s*$/.test(before)) continue;
+    const before = text.slice(Math.max(0, m.index - 60), m.index);
+    if (/\bcommand:\s*\[\s*['"]gh['"]\s*,\s*$/.test(before)) continue; // ONLY the approve plan's printed `command: ['gh', ...]` is data; any other 'gh' literal beside it is an exec argv
     out.push({ line: text.slice(0, m.index).split('\n').length, text: m[0] });
   }
   return out;
@@ -60,6 +60,10 @@ describe('the merge-site census', () => {
   it('NEGATIVE CONTROL: a planted second merge site in a copy of a fleet module is found', () => {
     const planted = `${fs.readFileSync(path.join(FLEET, 'train-approve.mjs'), 'utf8')}\nexport function sneaky(deps) { return deps.gh(['pr', 'merge', '1', '--squash'], '.'); }\n`;
     assert.deepEqual(mergeSites(planted).map((s) => enclosing(planted, s.line)), ['sneaky']);
+  });
+  it('NEGATIVE CONTROL: an exec of the gh binary by argv (spawnSync env gh pr merge) is NOT excused as printed data', () => {
+    assert.equal(mergeSites("spawnSync('env', ['gh', 'pr', 'merge', '1'])").length, 1);
+    assert.equal(mergeSites("{ command: ['gh', 'pr', 'merge', '1'] }").length, 0);
   });
   it('NEGATIVE CONTROLS: a site in a SUBDIRECTORY copy and a merge argv split across lines are both found; the walk is recursive', () => {
     const split = "deps.gh([\n  'pr',\n  'merge',\n  '1'])";

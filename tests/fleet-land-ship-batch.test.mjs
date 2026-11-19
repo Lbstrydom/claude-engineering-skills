@@ -469,7 +469,8 @@ describe('tree identity: the head is re-read at merge time and proven by tree (F
     assert.ok(n >= 1);
     assert.ok(w.merges.length <= 1);
     assert.equal(r.ok, false, 'a churning head is never a clean success');
-    assert.ok(outcomeOf(b, 'm1')?.status !== 'landed' || w.merges.length === 1, 'landed only with exactly one merge');
+    assert.deepEqual([outcomeOf(b, 'm1')?.status, outcomeOf(b, 'm1')?.code], ['not-run', 'head-churn'], JSON.stringify(outcomeOf(b, 'm1')));
+    assert.equal(w.merges.length, 0);
   });
 });
 

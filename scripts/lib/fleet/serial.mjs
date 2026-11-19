@@ -456,7 +456,8 @@ function stepMember(st, i) {
     if (policy) return mergedObserved(st, i, d);
     if (!s.accounted.includes(d.headRefOid)) return fault('merged-unaccounted', `PR #${s.prNumber} was merged at ${short(d.headRefOid)}, a head this run did not account for — check it by hand`);
     // A PR observed MERGED at an accounted head is verified BEFORE `merged` is persisted (a resume skips merged steps, so an unverified merge must never reach that state).
-    const pv = verifyMergedCi(st, s, d, d.headRefOid);
+    // The head to verify against is the one this run PINNED when a merge was requested (step `merge`), not whatever head the PR shows now.
+    const pv = verifyMergedCi(st, s, d, s.step === 'merge' && s.head ? s.head : d.headRefOid);
     if (!pv.ok) return fault('merged-unverified', pv.reason);
     st.setStep(i, { step: 'merged', mergedOid: d.mergeCommit?.oid ?? null, head: d.headRefOid });
     return NEXT;
