@@ -29,6 +29,7 @@ This is the list to read when asking "what is in flight?".
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
 | [Harness Retro — promote recurring session failures into enforcement](./harness-retro.md) | `In Progress` |  |
 | [render-mermaid must not overwrite a tracked architecture map](./render-mermaid-tracked-output-guard.md) | `Draft` |  |
+| [Sashiko-inspired audit improvements (audit --resume, contested-finding verification, defect corpus)](./sashiko-audit-improvements.md) | `Approved` | plan audit closed 2026-11-19; implementation waits for the coordinator's go |
 | [Ship-batch per-member outcomes, and rollup landing (PR B)](./ship-batch-member-outcomes.md) | `In Progress` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Ship record catch-up — /ship's RECORD half without its PUSH/MERGE authority](./ship-record-catchup.md) | `In Progress` |  |
@@ -48,15 +49,6 @@ resume. Read this list when asking "what did we decide to defer?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Score the final-review gate on the claims it already makes](./final-review-self-scoring-gate.md) | `Parked` | NO-GO, closed 2026-09-07. The §5 assumption was measured and does not hold; Features A/B/C are not built.… |
-
-## ⚠️ Malformed status
-
-These have a `Status:` line the closed vocabulary does not recognise.
-`npm run plans:status` fails on these — fix the status line.
-
-| Plan | Notes |
-|---|---|
-| [Sashiko-inspired audit improvements (audit --resume, contested-finding verification, defect corpus)](./sashiko-audit-improvements.md) |  |
 
 ## Superseded / abandoned
 
