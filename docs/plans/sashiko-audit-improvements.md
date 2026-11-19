@@ -917,9 +917,11 @@ expected saving from A and B is **expected, not measured**.
   over the successful arms of an auditor manifest; an arm whose stamp differs from the majority stamp (ties: earliest arm), or is incomplete, is
   INCONCLUSIVE and is demoted to `ok:false` in the emitted results; for the comparison and is named in the output's `stampDivergence` (the arm is also named there). Red/green: `tests/manifest-driver.test.mjs`
   (3 tests fail when the function returns nothing).
-- **G1, OPEN (Louis is weighing a fix against debt):** `--suite expect_clean` has no CLI path. The Tier-C extractor forces one defect per
-  case, so a real clean run needs the paid 5-pass generation arm. The CLI refuses it with a clear message ("scored by the report-only
-  path", which is not built) and the scorer (`scoreExpectCleanCase`, `summarizeExpectClean`) is tested but unreachable from the CLI.
+- **G1, FIXED (Louis: "fix G1"):** `--suite expect_clean` runs the real 5-pass generation arm per clean commit
+  (`scripts/lib/model-eval/expect-clean-report.mjs`), scored judge-free, and writes a REPORT to `--out`: no verdict, never stored (the store
+  requires a verdict on a completed run). Generation findings are mapped from `affectedFiles` to the scorer's `file`; a finding naming no
+  file is attributed to the case, a failed generation is `failed`. Tested with a fake generator (10 tests; the CLI test is red against the
+  old refusal). **No live run was made**: it is paid, so it needs a pinned fixture and a stated cap first.
 - **Retired:** `known-defects.candidates.json` (1,247 machine-derived candidates, no human notes), at Louis's instruction. Last in git at
   `2a4e6135`; the miner regenerates candidates into the gitignored `.audit/defect-candidates/`.
 

@@ -665,7 +665,6 @@ async function main() {
     const suite = argOption('suite', 'detect');
     const subset = argOption('subset', 'full');
     if (!SUITES.includes(suite) || !SUBSETS.includes(subset)) throw new RunPreflightError('invalid_corpus_selection', `--suite must be one of ${SUITES.join('|')} and --subset one of ${SUBSETS.join('|')}`);
-    if (suite === 'expect_clean') throw new RunPreflightError('invalid_corpus_selection', '--suite expect_clean is scored by the report-only path, not the screen/promotion tiers');
     const selectedKds = stratifiedSelectKDs(selectPool(corpus, { suite, subset }), { seed, n: minSampleSize });
     const stamp = selectionStamp(corpus, { suite, subset, seed, requestedN: minSampleSize, selected: selectedKds });
     if (selectedKds.length < minSampleSize) {
@@ -696,6 +695,18 @@ async function main() {
     // not "whatever happened to resolve this run."
     if (unavailable.length > 0) {
       throw new RunPreflightError('corpus_case_unavailable', `${unavailable.length}/${selectedKds.length} selected KD case(s) unavailable: ${unavailable.map((u) => `${u.kdId} (${u.reason})`).join(', ')}`);
+    }
+
+    // expect_clean is a REPORT (no verdict, so never a stored run): the real 5-pass generation arm, scored judge-free.
+    if (suite === 'expect_clean') {
+      const { runExpectCleanReport } = await import('./lib/model-eval/expect-clean-report.mjs');
+      const reportRunId = `expect-clean-${Date.now()}`;
+      const rep = await runExpectCleanReport({ runId: reportRunId, arm: buildCandidateArm(candidateRoute, { id: 'CAND' }), route: candidateRoute, cases, scope, passes, meter });
+      const cost = costFromEvents(rep.usageEvents);
+      writeOutput({ runId: reportRunId, mode: 'report', suite, ...rep.summary, perCase: rep.perCase, budgetStop: rep.budgetStop, cost, evidence: { mode: 'expect_clean', selectedKdIds: selectedKds.map((k) => k.id), corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, ...stamp, routeEvidence: routeCatalogInternals.toRouteEvidence(candidateRoute) } },
+        outFile, `[model-eval-auditor] expect_clean report: ${rep.summary.unmeasured ? 'UNMEASURED' : `fpRate=${rep.summary.fpRate}`} cases=${rep.summary.cases} failed=${rep.summary.failed}`);
+      if (rep.budgetStop) process.exitCode = BUDGET_STOPPED_EXIT_CODE;
+      return;
     }
 
     const repoIdentity = resolveRepoIdentity();
