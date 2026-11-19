@@ -31,9 +31,11 @@ every branch touches: an overlap made ONLY of them is listed apart (`[hot]`) and
 never blocks; mixed evidence still blocks. A tier or check may carry a one-line
 `"note"` (≤300 chars), printed and recorded in the manifest. Landing keys —
 `requiredChecks`, `appendOnlyGlobs`, `restackIgnore`, `serialTimeoutMs` — are in
-`references/landing.md`; `ghAccount` (a gh login name; the handover's PR probe reads that repo as it, using `gh auth token --user`; never a token), `archiveIgnore` (default `node_modules/**`, `scripts/.claude-skills/**`, `.claude/settings.local.json`: gitignored paths that `archive-check` and `prune` treat as disposable) is used by the verbs in `references/ending-a-session.md`.
+`references/landing.md`; `ghAccount` (a gh login name; the PR reads of `status`, `prune`, `next`'s caches and the handover use that account's credential via `gh auth token --user`, never a token. NOT `land`, `ship-batch` or the train, whose gh mutations run as the signed-in account, so they read PRs as it too; `ci-merge` takes its own `--gh-account`), `archiveIgnore` (default `node_modules/**`, `scripts/.claude-skills/**`, `.claude/settings.local.json`: gitignored paths that `archive-check` and `prune` treat as disposable) is used by the verbs in `references/ending-a-session.md`.
 
 `fullSuite` (`"session"` default, or `"train"`): with `"train"`, sessions run the targeted and affected-file tests plus the
 required gates and never take the heavy slot for a full suite; `next` and `ready` say so and give the test-log words
 (`full suite deferred to the train (fullSuite: train)`), and `fleet land` is the one full-suite run. Under `"train"`
 `land` is the only place a combination is tested in full, so run the fast-tier probe (`references/landing.md`) early.
+
+`pruneAlert` (`false`, or `{removable?, worktrees?}`; default `{removable: 25, worktrees: 30}`, a missing number keeps its default): once the cached prune count reaches either number, `fleet next` prints an `ASK` line for the coordinator's next pass. `removable` counts branch candidates, removable detached worktrees and stale registrations; `worktrees` counts registered worktrees. It names only the action that can address what crossed, and removal stays the user's decision. `false` turns it off.
