@@ -9,12 +9,13 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { makeGitFixtureEnv } from './helpers/git-fixture-env.mjs';
 import { harvestWithReport, buildInputs, serializeReport, loadCuratedSet, MINER_VERSION } from '../scripts/defect-harvest.mjs';
 
 let root; const sha = {};
-const EMPTY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'git-empty-'));
-const ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(EMPTY_DIR, 'none'), GIT_TEMPLATE_DIR: EMPTY_DIR, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' };
-const git = (...a) => execFileSync('git', ['-C', root, '-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${EMPTY_DIR}`, ...a], { encoding: 'utf8', env: ENV }).trim();
+const FIX = makeGitFixtureEnv();
+const ENV = FIX.env;
+const git = (...a) => execFileSync('git', ['-C', root, ...FIX.gitArgs, ...a], { encoding: 'utf8', env: ENV }).trim();
 const write = (f, text) => fs.writeFileSync(path.join(root, f), text);
 function commit(name, msg) { git('add', '-A'); git('commit', '-q', '-m', msg); sha[name] = git('rev-parse', 'HEAD'); }
 
@@ -39,7 +40,7 @@ before(() => {
   write('a.js', fs.readFileSync(path.join(root, 'a.js'), 'utf8') + '// n3\n');
   commit('c9', `fix: unrelated history\n\nFixes ${sha.side}`);                           // introducer is not an ancestor
 });
-after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+after(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); FIX.cleanup(); });
 
 const run = (over = {}, deps = {}) => harvestWithReport({ root, rev: 'main', sinceN: 100, ...over }, deps);
 const outcomeOf = (r, name) => r.outcomes.find((o) => o.commit === sha[name]);
