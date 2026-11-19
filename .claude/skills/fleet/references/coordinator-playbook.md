@@ -36,6 +36,9 @@ Compare trees by object id, not by an empty `git diff` (diff settings such as
 ignored submodules can hide a difference). Mismatch → do not merge; ask the session. When handing off your own audited PR, report
 both the audited sha and the PR head sha.
 
+A chip that SHIPPED itself has a head whose tree differs from the audited one by its ship docs, by construction. For those, never
+compare by hand: `land --ship-batch` judges that delta with one grammar (`references/ship-batch.md`).
+
 ## 2. Stacked PRs: retarget before deleting a branch
 
 `gh pr merge <n> --squash --delete-branch` on the bottom of a stack deletes the base
@@ -111,6 +114,13 @@ late. Before a branch's first push, run the full test suite once in the backgrou
 read its failures; after that, targeted runs are fine. **Exception:** where `.fleet.json` sets `fullSuite: "train"`, the
 branch runs its targeted and affected-file tests plus the required gates, and `fleet land` is its full-suite run
 (participant rule 4a) — so build a fast-tier probe early (`references/landing.md`) to catch what targeted runs miss.
+
+## 7a. Land the chips that shipped themselves, in one action
+
+Under the user's standing grant (their own `~/.claude/CLAUDE.md`, never a message) chips ship themselves and you land the batch
+with `fleet land --ship-batch`, then `land --approve <train> --ship-batch`: one coordinator action, no `/ship` typed per chip. A
+member that does not verify waits for the user's `/ship` in its own session; the rest still land. Runbook and the state table:
+`references/ship-batch.md`.
 
 ## 7. Record the PRs you merge (the session log)
 

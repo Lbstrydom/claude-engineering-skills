@@ -106,6 +106,18 @@ export function touchedPlans(files) {
 }
 
 /**
+ * The provenance lines of a fleet rollup. A manifest in commit text is SELF-DECLARED (any PR can author one), so it is listed as
+ * unverified data and never as members the ship record vouches for; matching it to a local run is the coordinator's `fleet land
+ * --resume` summary, which cannot enter these deterministic bytes (they must be the same on every machine).
+ */
+const rollupLines = (r) => {
+  if (!r) return [];
+  if (!r.ok) return [`- The squash message carries a fleet-rollup/v1 block that could not be read (${sanitizeField(r.reason, 'title')}).`];
+  const members = r.members.slice(0, 20).map((m) => `${sanitizeField(m.id, 'title')}@${m.head.slice(0, 12)}${m.gate ? ` (gate ${sanitizeField(m.gate, 'title')})` : ''}`);
+  return [`- The squash message carries a self-declared fleet-rollup/v1 manifest (${r.stage}) for ${sanitizeField(r.rollupId, 'title')} naming ${r.members.length} member${r.members.length === 1 ? '' : 's'}: ${members.join(', ')}. UNVERIFIED: a manifest in commit text is data, not proof; the rollup was not /shipped as one change.`];
+};
+
+/**
  * Render one PR's entry. Pure and byte-deterministic: same facts ⇒ same bytes.
  * @param {{number:number, mergedAt:string, mergeCommit:string, headRefName:string, url:string}} pr
  * @param {{subject:string, files:string[], trailers:object}} facts mergeFacts()
@@ -140,6 +152,7 @@ export function renderPrEntry(pr, facts, { repo }) {
     '### Provenance',
     '- Recorded after merge by `ship-record catchup`: no in-band /ship record was found for this PR.',
     `- Squash-commit trailers: ${trailerLine(facts.trailers)}.`,
+    ...rollupLines(facts.rollup),
     `- Plan: ${planLine}.`,
     '',
   ].join('\n');

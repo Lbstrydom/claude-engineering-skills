@@ -14,6 +14,7 @@
 import { spawnSync } from 'node:child_process';
 import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 import { classifyGhFailure } from '../fleet/gh-facts.mjs';
+import { parseRollupManifest } from '../fleet/rollup.mjs';
 import { parseMessageTrailers, GATE_VALUES } from '../commit-trailers.mjs';
 import {
   SHA_RE, RUN_ENTRY_RE, isFloorEntryName, parseFloorMarker, parsePrMarkers, prNumberFromEntryName, classifyRecordState, listingStart,
@@ -231,6 +232,13 @@ export function trailerState(message) {
  * The immutable facts of one merge commit: subject (its title — the GitHub title stays editable after merge, audit
  * R3-H2), changed files, trailers. null when the commit is not local.
  */
+/** The self-declared rollup manifest of a squash message, or null when the message names none. */
+function rollupFact(message) {
+  if (!message.includes('```fleet-rollup/v1')) return null;
+  const p = parseRollupManifest(message);
+  return p.ok ? { ok: true, stage: p.manifest.stage, rollupId: p.manifest.rollupId, members: p.manifest.members.map((m) => ({ id: String(m.id), head: String(m.head), gate: m.gate == null ? null : String(m.gate) })) } : { ok: false, reason: p.reason };
+}
+
 export function mergeFacts({ git }, sha) {
   if (!hasCommit({ git }, sha)) return null;
   const msg = git(['log', '-1', '--format=%B', sha]);
@@ -241,6 +249,8 @@ export function mergeFacts({ git }, sha) {
     subject: message.split('\n')[0] ?? '',
     files: files.map((r) => r.path),
     trailers: trailerState(message),
+    // A fleet rollup's squash carries a manifest in its message: a pure function of the commit, so the entry bytes stay deterministic.
+    rollup: rollupFact(message),
   };
 }
 

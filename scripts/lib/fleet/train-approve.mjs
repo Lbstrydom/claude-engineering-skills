@@ -227,6 +227,7 @@ export function approveTrain({ cwd, trainId, acceptRerun = false, doneCache = tr
     const r = readTrain(dir, trainId);
     if (!r.ok) return refuse(`train ${trainId}: ${r.reason}`);
     const t = r.train;
+    if (t.landing === 'rollup') return refuse(`train ${trainId} is a rollup: land it with land --approve ${trainId} --rollup (a plain approve would push the candidate straight to the base)`);
     const elig = approvable(t, { acceptRerun });
     if (!elig.ok) return refuse(elig.reason, { needsAcceptRerun: elig.needsAcceptRerun === true });
     const ver = verifyFacts({ cwd, train: t, dir, deps });
@@ -300,6 +301,7 @@ export function confirmTrain({ cwd, trainId, deps = defaultDeps() }) {
     const r = readTrain(dir, trainId);
     if (!r.ok) return refuse(`train ${trainId}: ${r.reason}`);
     const t = r.train;
+    if (t.landing === 'rollup') return refuse(`train ${trainId} is a rollup: land it with land --approve ${trainId} --rollup (a plain approve would push the candidate straight to the base)`);
     if (t.phase !== 'awaiting-merge') {
       return refuse(t.phase === 'landed' ? 'train already landed' : `train is ${t.phase} — --confirm applies only to a pr-mode train that is awaiting-merge`);
     }
@@ -329,6 +331,7 @@ export function reconcileTrain({ cwd, trainId, deps = defaultDeps() }) {
     const r = readTrain(dir, trainId);
     if (!r.ok) return refuse(`train ${trainId}: ${r.reason}`);
     const t = r.train;
+    if (t.landing === 'rollup') return refuse(`train ${trainId} is a rollup: land it with land --approve ${trainId} --rollup (a plain approve would push the candidate straight to the base)`);
     if (t.phase !== 'push-pending' && t.phase !== 'diverged') return refuse(`nothing to reconcile: train is ${t.phase} (only push-pending or diverged trains are reconciled)`);
     const dest = t.destination;
     const rem = remoteRefOid(cwd, dest.fetchUrl, dest.ref);

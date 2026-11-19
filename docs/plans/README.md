@@ -20,6 +20,7 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Out-of-diff audit noise — a pre-existing tag (8a) and changed-chunk scoping (1c)](./audit-out-of-diff-noise.md) | `In Progress` | 8a and the 1c mechanism are built (1c is OFF by default); the recall campaign below has not run, so 1c stays… |
+| [One CI-evidence oracle for fleet landing (approve, serial, ship-batch, rollup)](./ci-evidence-oracle.md) | `Draft` |  |
 | [Coordinator-owned aggregate ship (one ship action per batch)](./coordinator-aggregate-ship.md) | `In Progress` |  |
 | [Size floor for `arch:duplicates` and the drift score](./duplicate-min-lines-floor.md) | `In Progress` |  |
 | [Fable 5.2 vs Opus 5.5 on coordinator-grade decisions](./fable-vs-opus-decision-eval.md) | `Approved` |  |
@@ -28,6 +29,7 @@ This is the list to read when asking "what is in flight?".
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
 | [Harness Retro — promote recurring session failures into enforcement](./harness-retro.md) | `In Progress` |  |
 | [render-mermaid must not overwrite a tracked architecture map](./render-mermaid-tracked-output-guard.md) | `Draft` |  |
+| [Ship-batch per-member outcomes, and rollup landing (PR B)](./ship-batch-member-outcomes.md) | `In Progress` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Ship record catch-up — /ship's RECORD half without its PUSH/MERGE authority](./ship-record-catchup.md) | `In Progress` |  |
 | [Ship trains — batched, impact-based `/ship --train`](./ship-trains.md) | `Approved` |  |

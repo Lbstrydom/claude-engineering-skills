@@ -27,8 +27,14 @@
  * choose each squash commit's subject and body at merge time, on the exact head
  * being merged. See {@link MessageFor}. Absent, the merge call is byte-identical.
  *
+ * A run MAY carry a persisted `policy` (docs/plans/ship-batch-member-outcomes.md): the ship-batch and rollup landings. Under a
+ * policy each member has an `outcome` beside its phase, the member step cannot stop the run (it returns a closed result), and
+ * the pure decisions live in `member-outcome.mjs`. Without a policy nothing below changes a byte of today's behaviour
+ * (`tests/fleet-serial-golden.test.mjs`).
+ *
  * @module scripts/lib/fleet/serial
  */
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -42,6 +48,10 @@ import { branchOfRef, defaultDeps, patchTrain, withTrainLock } from './train.mjs
 import { verifyFacts } from './train-approve.mjs';
 import { describeVerdict, observeRequiredChecks, requiredInventory } from './required-checks.mjs';
 import { renderCommand } from './shell-quote.mjs';
+import {
+  AttemptSchema, CHAIN_VERDICTS, FAULTS, FinalizedSchema, HALT_VERDICTS, HaltSchema, MAX_HEAD_CHURN, OutcomeSchema, PolicySchema,
+  classifyMerged, isTerminal, summariseRun, validatePolicyRun, verdictOf,
+} from './member-outcome.mjs';
 
 /** The restack remedy, rendered shell-safe (a branch name is data, never shell syntax). */
 const restackCmd = (id) => renderCommand(['fleet', 'restack', id]);
@@ -64,6 +74,8 @@ export const SerialStepSchema = z.strictObject({
   accounted: z.array(Oid), // every head this run can vouch for: the tested one and each update it made
   updates: z.number().int().min(0),
   priorHead: Oid.nullable(), mergedOid: Oid.nullable(), note: z.string().max(1000).nullable(), at: Iso,
+  // Written ONLY under a policy (absent on every other run, so every other record keeps its bytes).
+  outcome: OutcomeSchema.nullable().optional(), attempt: AttemptSchema.optional(),
 });
 export const SerialRunSchema = z.strictObject({
   schemaVersion: z.literal(1), trainId: z.string().regex(TRAIN_ID_RE), startedAt: Iso, updatedAt: Iso,
@@ -73,6 +85,8 @@ export const SerialRunSchema = z.strictObject({
   // other run (and in every pre-existing record), which behave exactly as before.
   messageRequired: z.literal(true).optional(),
   steps: z.array(SerialStepSchema).min(1),
+  // Policy runs only: the persisted policy, the chain-invalidating halt, and the finalization marker (§2.1 invariants 6 and 7).
+  policy: PolicySchema.optional(), halt: HaltSchema.optional(), finalized: FinalizedSchema.optional(),
   outcome: z.strictObject({ status: z.enum(['landed', 'stopped']), reason: z.string().max(2000), at: Iso }).nullable(),
 });
 
@@ -135,12 +149,16 @@ export function readSerial(dir, trainId) {
     const raw = JSON.parse(text);
     if (raw?.schemaVersion !== 1) return { ok: false, reason: `serial record schemaVersion ${JSON.stringify(raw?.schemaVersion)} is not understood by this fleet` };
     const r = SerialRunSchema.safeParse(raw);
-    return r.success ? { ok: true, run: r.data } : { ok: false, reason: `schema: ${r.error.issues.slice(0, 3).map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}` };
+    if (!r.success) return { ok: false, reason: `schema: ${r.error.issues.slice(0, 3).map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}` };
+    const bad = validatePolicyRun(r.data);
+    return bad ? { ok: false, code: 'record-inconsistent', reason: `record-inconsistent: ${bad}` } : { ok: true, run: r.data };
   } catch (e) { return { ok: false, reason: `malformed JSON: ${e.message}` }; }
 }
 
 function writeSerial(dir, run) {
   const r = SerialRunSchema.parse(run);
+  const bad = validatePolicyRun(r);
+  if (bad) throw new Error(`record-inconsistent: ${bad}`); // a write that would violate an invariant never reaches the disk
   fs.mkdirSync(serialDir(dir), { recursive: true });
   atomicWriteFileSync(serialPath(dir, r.trainId), `${JSON.stringify(r, null, 2)}\n`);
   return r;
@@ -201,148 +219,386 @@ export function classifyUpdatedHead({ deps, cwd, s, run, h, priorHead }) {
 /**
  * Run (or resume) the serial loop for `trainId`. Never throws for remote
  * failures: each stop is recorded with its reason and is resumable.
+ *
+ * `policy` (ship-batch, rollup) is the RUNTIME half of a policy run: pure decisions the loop asks at fixed points, never a writer.
+ * `messageFor` (ship-train) and `policy` are two seams for two callers; passing both throws.
  * @param {{cwd: string, trainId: string, deps?: object, requiredChecks?: string[], requiredChecksError?: string|null,
- *   sleep?: (ms: number) => void, timings?: object, messageFor?: MessageFor}} a
+ *   sleep?: (ms: number) => void, timings?: object, messageFor?: MessageFor, policy?: object}} a
  */
-export function runSerial({ cwd, trainId, deps = defaultDeps(), requiredChecks, requiredChecksError = null, sleep = sleepMs, timings = {}, messageFor }) {
+export function runSerial({ cwd, trainId, deps = defaultDeps(), requiredChecks, requiredChecksError = null, sleep = sleepMs, timings = {}, messageFor, policy }) {
+  if (policy && typeof messageFor === 'function') throw new Error('runSerial takes messageFor (ship-train) or policy (ship-batch, rollup), never both');
   const dir = fleetDir(cwd);
   const T = { poll: SERIAL_POLL_MS, updatePoll: UPDATE_POLL_MS, updateWait: UPDATE_WAIT_MS, mergeWait: MERGE_WAIT_MS, ...timings };
-  const lease = withFileLockSync(path.join(serialDir(dir), `${trainId}.lock`), { attempts: 1 }, () => loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T, messageFor }));
+  const lease = withFileLockSync(path.join(serialDir(dir), `${trainId}.lock`), { attempts: 1 }, () => loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T, messageFor, policy }));
   if (!lease.ok) return { ok: false, code: 'error', reason: `another process is landing ${trainId} serially (serial/${trainId}.lock is held)` };
   return lease.value;
 }
 
-function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T, messageFor }) {
+// ---- the member step: it has NO `stop` in scope and returns one variant of a closed result (§2.2) -------------------------------
+
+const NEXT = Object.freeze({ kind: 'next' });
+const AGAIN = Object.freeze({ kind: 'again' });
+const fault = (kind, reason, extra = {}) => ({ kind: 'fault', fault: { kind, reason, ...extra } });
+const upper = (x) => String(x ?? '').toUpperCase();
+const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+
+/** Persist an outcome pair (and optional run-level fields) in ONE write: phase and outcome are never written apart (§2.1 invariant 2). */
+function commit(st, i, patch, extra = {}) {
+  return st.save({ ...extra, steps: st.run.steps.map((s, j) => (j === i ? { ...s, ...patch, at: st.now() } : s)) });
+}
+
+/** The branch rules of the base: `{ok, queue}`. A merge queue makes a merge unobservable (the synchronous guarantee, §2.3). */
+function readRules(st, s) {
+  const r = ghJson(st.deps, st.cwd, ['api', `repos/${s.repo}/rules/branches/${st.run.base}`]);
+  if (!r.ok || !Array.isArray(r.doc)) return { ok: false, reason: r.reason ?? 'the rules answer was not a list' };
+  return { ok: true, queue: r.doc.some((x) => x?.type === 'merge_queue') };
+}
+
+/** Count one re-verification of member `s`; past `MAX_HEAD_CHURN` it is `not-run/head-churn`, never an endless loop (R1-M1, M9). */
+function bump(st, s, why) {
+  const n = (st.churn.get(s.id) ?? 0) + 1;
+  st.churn.set(s.id, n);
+  return n > MAX_HEAD_CHURN ? fault('head-churn', `PR #${s.prNumber}: re-verified ${n} times (${why})`) : AGAIN;
+}
+
+/** A head this run did not account for, under a policy: equal TREE = the tested content (re-admit at it); else head-moved (§2.3). */
+function treeIdentity(st, i, s, h) {
+  const { deps, cwd, run, policy } = st;
+  const tested = policy.testedTree(run, s);
+  if (!policy.treeIdentity || !tested) return fault('head-unaccounted', `PR #${s.prNumber} head ${short(h)} is not one this run accounts for — someone pushed; approve a new train`);
+  const scope = `refs/fleet/serial/${run.trainId}`;
+  const f = deps.git(['fetch', '--no-tags', run.remote, `+refs/pull/${s.prNumber}/head:${scope}/pr-${s.prNumber}`], cwd, { timeoutMs: 120_000 });
+  const t = f.ok ? deps.git(['rev-parse', `${h}^{tree}`], cwd) : f;
+  if (!t.ok) return fault('tree-unreadable', `PR #${s.prNumber}: the tree of the new head ${short(h)} could not be read (${t.reason ?? 'fetch failed'})`);
+  const seen = t.stdout.trim();
+  if (seen !== tested) return fault('head-moved', `PR #${s.prNumber} head ${short(h)} carries tree ${short(seen)}, not the tested ${short(tested)}`, { trees: { tested, seen } });
+  st.setStep(i, { head: h, accounted: [...s.accounted, h] }); // the tested content, re-pushed: admission runs again AT this head
+  return bump(st, s, 'the tested content was re-pushed');
+}
+
+/** The read-back of one merged member under a policy, then the ONE write that records landed (+ chain extension + halt). */
+function readBackStep(st, i, doc) {
+  const { run, policy } = st;
+  const s = run.steps[i];
+  const mergeOid = doc.mergeCommit?.oid ?? s.mergedOid;
+  const rb = policy.readBack({ s, mergeOid, doc, run, deps: st.deps, cwd: st.cwd });
+  if (!rb.measured) {
+    commit(st, i, { step: 'merged', mergedOid: mergeOid, head: doc.headRefOid ?? s.head, outcome: { status: 'not-run', code: 'awaiting-read-back', reason: `the read-back could not be measured: ${String(rb.why).slice(0, 700)}` } });
+    return fault('read-back-unmeasured', `PR #${s.prNumber} merged at ${short(mergeOid)} but its read-back could not be measured (${rb.why}) — --resume re-checks it`);
+  }
+  const chain = run.policy.baseChain;
+  const v = verdictOf({ readBack: rb, runBase: run.base, chainTail: chain.at(-1), candidateTree: policy.name === 'rollup' ? run.policy.candidateTree : null });
+  const onChain = CHAIN_VERDICTS.includes(v.verdict);
+  const outcome = {
+    status: 'landed', code: 'merged', verdict: v.verdict, mergeOid, parent: rb.firstParent ?? null, chainIndex: onChain ? chain.length : null,
+    attribution: s.attempt?.ghExit === 0 ? 'this-run' : 'unknown', gate: rb.gate ?? null,
+    ...(rb.reasons?.length ? { reason: rb.reasons.join('; ').slice(0, 900) } : {}),
+    ...(policy.name === 'rollup' && s.attempt?.ci ? { ci: s.attempt.ci } : {}), ...(v.trees ? { trees: v.trees } : {}),
+  };
+  const halt = HALT_VERDICTS.includes(v.verdict) ? { halt: { code: v.verdict, member: s.id, at: st.now() } } : {};
+  commit(st, i, { step: 'merged', mergedOid: mergeOid, head: doc.headRefOid ?? s.head, outcome }, { ...(onChain ? { policy: { ...run.policy, baseChain: [...chain, mergeOid] } } : {}), ...halt });
+  if (!halt.halt) return NEXT;
+  const why = { 'wrong-target': `PR #${s.prNumber} merged into ${rb.baseRefName}, not ${run.base}`, 'untested-base': `landed-on-untested-base: PR #${s.prNumber} landed on ${short(rb.firstParent)}, not the tested ${short(chain.at(-1))} — a foreign commit reached the base in the merge window; the remaining members need a rebuild`, 'tree-mismatch': `PR #${s.prNumber} landed with tree ${short(rb.tree)}, not the candidate's ${short(v.trees?.expected)}: verify each member against the landed tree` }[v.verdict];
+  return fault('base-moved', why);
+}
+
+/** A PR observed MERGED under a policy: classify, persist the pair, and read back when the merge was ours (§2.3). */
+function mergedObserved(st, i, doc) {
+  const s = st.run.steps[i];
+  const c = classifyMerged({ step: s, doc });
+  if (c.external) {
+    commit(st, i, { step: 'merged', mergedOid: c.mergeOid, head: doc.headRefOid ?? s.head, outcome: c.outcome }, { halt: { code: 'merged-externally', member: s.id, at: st.now() } });
+    return fault('base-moved', `PR #${s.prNumber} was merged outside this run at ${short(doc.headRefOid)}: it put a commit on ${st.run.base} that the chain does not hold; rebuild the train`);
+  }
+  if (c.outcome) { // no merge oid reported: non-terminal, resume re-reads
+    commit(st, i, { step: c.step, mergedOid: null, head: doc.headRefOid ?? s.head, outcome: c.outcome });
+    return fault('read-back-unmeasured', `PR #${s.prNumber} is MERGED but GitHub reported no merge commit — --resume re-reads it`);
+  }
+  commit(st, i, { step: 'merged', mergedOid: c.mergeOid, head: doc.headRefOid ?? s.head, outcome: { status: 'not-run', code: 'awaiting-read-back', reason: 'merged; the read-back follows' } });
+  return readBackStep(st, i, { ...doc, mergeCommit: { oid: c.mergeOid } });
+}
+
+/** Merge under a policy, in the contract's order (§2.3): admit, base chain and rules, the final re-read, the intent, the merge, observe. */
+function policyMerge(st, i, h) {
+  const { deps, cwd, run, policy, T, sleep } = st;
+  const s = run.steps[i];
+  const gr = policy.grantRefusal?.();
+  if (gr) return fault('grant-revoked', `grant-revoked: ${gr.reason}`);
+  const a = policy.admit({ s, h, run, cwd, deps });
+  if (!a.ok) return fault(a.kind, a.reason, a.trees ? { trees: a.trees } : {});
+  const chainTail = run.policy.baseChain.at(-1);
+  const tip = baseTip({ deps, cwd, run });
+  if (!tip) return fault('base-moved', 'base-moved: the base tip could not be read, so the base progression cannot be verified');
+  if (tip !== chainTail) return fault('base-moved', `base-moved: the base is ${short(tip)}, the batch expects ${short(chainTail)} (a commit that is not this batch's own landed): rebuild the train`);
+  const rules = readRules(st, s);
+  if (!rules.ok) return fault('rules-unreadable', `rules-unreadable: the branch rules of ${run.base} could not be read (${rules.reason}), so a merge queue cannot be excluded`);
+  if (rules.queue) return fault('merge-queue-present', `merge-queue-present: ${run.base} has a merge queue, so a merge could not be observed synchronously`);
+  const re = viewPr(deps, cwd, s);
+  if (!re.ok) return fault('pr-unreadable', `PR #${s.prNumber}: cannot read it (${re.reason})`);
+  const d = re.doc;
+  if (upper(d.state) === 'MERGED') return mergedObserved(st, i, d);
+  if (upper(d.state) !== 'OPEN') return fault('pr-closed', `PR #${s.prNumber} is ${d.state}`);
+  if (d.isDraft === true) return fault('pr-draft', `PR #${s.prNumber} is a draft`);
+  if (d.baseRefName !== run.base) return fault('pr-retargeted', `PR #${s.prNumber} now targets ${d.baseRefName}, not ${run.base}`);
+  if (d.headRefOid !== h) return bump(st, s, 'the head changed while it was being admitted');
+  const attempt = { head: h, at: st.now(), ghExit: null, doneAt: null, ...(a.messageSha256 ? { messageSha256: a.messageSha256 } : {}), ...(a.ci ? { ci: a.ci } : {}) };
+  commit(st, i, { step: 'merge', head: h, outcome: null, attempt });
+  const mergeArgs = ['pr', 'merge', String(s.prNumber), '-R', s.repo, '--squash', '--subject', a.message.subject, '--body-file', null, '--match-head-commit', h];
+  const bodyFile = messagePath(st.dir, run.trainId, s.prNumber);
+  mergeArgs[mergeArgs.indexOf('--body-file') + 1] = bodyFile;
+  atomicWriteFileSync(bodyFile, a.message.body);
+  let m;
+  try { m = deps.gh(mergeArgs, cwd); } finally { retrySync(() => fs.rmSync(bodyFile, { force: true })); }
+  st.setStep(i, { attempt: { ...attempt, ghExit: m.ok ? 0 : (Number.isInteger(m.status) && m.status !== 0 ? m.status : 1), doneAt: st.now() } });
+  const until = Date.now() + T.mergeWait;
+  for (;;) {
+    const o = viewPr(deps, cwd, s);
+    if (o.ok && upper(o.doc.state) === 'MERGED') return mergedObserved(st, i, o.doc);
+    if (Date.now() >= until) {
+      const reason = m.ok ? `PR #${s.prNumber}: merge accepted but not observed merged after ${Math.round(T.mergeWait / 1000)}s — --resume reconciles it` : `PR #${s.prNumber}: gh pr merge failed (${m.reason}) — it may still have merged; --resume reconciles it`;
+      commit(st, i, { outcome: { status: 'not-run', code: 'merge-unconfirmed', reason: reason.slice(0, 900) } });
+      return fault('merge-unconfirmed', reason);
+    }
+    sleep(Math.min(T.updatePoll * 2, 5_000));
+  }
+}
+
+/**
+ * One pass over member `i`. Returns `NEXT` (decided or merged), `AGAIN` (re-verify from the top) or `fault(...)`. It cannot stop
+ * the run: the loop alone holds `stop`, and maps every fault through `FAULTS` (§2.2).
+ */
+function stepMember(st, i) {
+  const { cwd, deps, run, policy, T, sleep, messageFor } = st;
+  const s = run.steps[i];
+  if (policy && s.step === 'merged') { // an earlier run merged it and its read-back did not finish: read back now, never skip
+    const v = viewPr(deps, cwd, s);
+    if (!v.ok) return fault('pr-unreadable', `PR #${s.prNumber}: cannot read it (${v.reason})`);
+    if (upper(v.doc.state) !== 'MERGED') return fault('read-back-unmeasured', `PR #${s.prNumber} is no longer MERGED (${v.doc.state}); verify it by hand`);
+    const doc = { ...v.doc, mergeCommit: v.doc.mergeCommit ?? (s.mergedOid ? { oid: s.mergedOid } : null) };
+    // The same table as the first observation, against the persisted attempt: a merge at ANOTHER head is external, whatever the phase says.
+    const c = classifyMerged({ step: { ...s, step: 'merge' }, doc });
+    return c.external || !c.mergeOid ? mergedObserved(st, i, doc) : readBackStep(st, i, doc);
+  }
+  const v = viewPr(deps, cwd, s);
+  if (!v.ok) return fault('pr-unreadable', `PR #${s.prNumber}: cannot read it (${v.reason})`);
+  const d = v.doc;
+  if (upper(d.state) === 'MERGED') {
+    if (policy) return mergedObserved(st, i, d);
+    if (!s.accounted.includes(d.headRefOid)) return fault('merged-unaccounted', `PR #${s.prNumber} was merged at ${short(d.headRefOid)}, a head this run did not account for — check it by hand`);
+    st.setStep(i, { step: 'merged', mergedOid: d.mergeCommit?.oid ?? null, head: d.headRefOid });
+    return NEXT;
+  }
+  if (upper(d.state) !== 'OPEN') return fault('pr-closed', `PR #${s.prNumber} is ${d.state}`);
+  if (d.isDraft === true) return fault('pr-draft', `PR #${s.prNumber} is a draft`);
+  if (d.baseRefName !== run.base) return fault('pr-retargeted', `PR #${s.prNumber} now targets ${d.baseRefName}, not ${run.base}`);
+  if (policy && s.step === 'merge' && s.attempt) { // an unconfirmed merge request: OPEN counts as "did not merge" only after the request window (§2.3)
+    if (Date.parse(st.now()) - Date.parse(s.attempt.at) < T.mergeWait) return fault('merge-unconfirmed', `PR #${s.prNumber}: still OPEN within ${Math.round(T.mergeWait / 1000)}s of the merge request — it may still be executing; --resume later`);
+    const q = ghJson(deps, cwd, ['pr', 'view', String(s.prNumber), '-R', s.repo, '--json', 'isInMergeQueue']);
+    if (!q.ok) return fault('merge-queued', `PR #${s.prNumber}: whether it sits in a merge queue could not be read (${q.reason})`);
+    if (q.doc?.isInMergeQueue === true) return fault('merge-queued', `PR #${s.prNumber} sits in a merge queue: left for the operator, never re-attempted`);
+    if (q.doc?.isInMergeQueue !== false) return fault('merge-queued', `PR #${s.prNumber}: the merge-queue answer was not an explicit false (${JSON.stringify(q.doc?.isInMergeQueue ?? null)}), so queue absence is unproven`);
+    st.setStep(i, { step: 'pending', outcome: null }); // the request resolved without merging: admission starts again from the top
+  }
+  const h = d.headRefOid;
+  if (!s.accounted.includes(h)) {
+    if (policy) return treeIdentity(st, i, s, h);
+    // Only an interrupted update of ours can explain a new head; prove it or stop.
+    if (s.step !== 'update' || !s.priorHead) return fault('head-unaccounted', `PR #${s.prNumber} head ${short(h)} is not one this run accounts for — someone pushed; approve a new train`);
+    if (h === s.priorHead) { st.setStep(i, { step: 'pending' }); return AGAIN; } // the update never applied
+    const c = classifyUpdatedHead({ deps, cwd, s, run, h, priorHead: s.priorHead });
+    if (c.verdict === 'unverifiable') return fault('update-unverifiable', `PR #${s.prNumber}: could not verify the updated head (acquisition): ${c.reason}`);
+    if (c.verdict === 'foreign') return fault('update-foreign', `PR #${s.prNumber}: head ${short(h)} is UNACCOUNTED (${c.reason}) — approve a new train`);
+    st.setStep(i, { step: 'wait', head: h, accounted: [...s.accounted, h] });
+    return AGAIN;
+  }
+  const ms = upper(d.mergeStateStatus);
+  if (ms === 'DIRTY') return fault('conflict', `PR #${s.prNumber} now conflicts with ${run.base} — run \`${restackCmd(s.id)}\` and push, then --resume`);
+  if (ms === 'BEHIND' && policy) return fault('behind', `behind-base: PR #${s.prNumber} is behind ${run.base}; a policy run never updates a branch on the remote — restack, re-ship, or /ship`);
+  if (ms === 'BEHIND') {
+    if (s.updates >= MAX_UPDATES_PER_PR) return fault('update-churn', `PR #${s.prNumber} fell behind ${run.base} ${s.updates} times; the base is moving too fast — resume later`);
+    st.setStep(i, { step: 'update', priorHead: h, head: h });
+    const u = deps.gh(['api', '-X', 'PUT', `repos/${s.repo}/pulls/${s.prNumber}/update-branch`, '-f', `expected_head_sha=${h}`], cwd);
+    if (!u.ok) {
+      if (/merge conflict|422/i.test(`${u.stderr ?? ''} ${u.reason ?? ''}`)) return fault('update-failed', `PR #${s.prNumber} cannot be updated (merge conflict) — run \`${restackCmd(s.id)}\` and push, then --resume`);
+      return fault('update-failed', `PR #${s.prNumber}: update-branch failed (${u.reason})`);
+    }
+    // GitHub builds the merge commit in the background (202 Accepted): poll for the new head.
+    const until = Date.now() + T.updateWait;
+    let newHead = null;
+    for (;;) {
+      const w = viewPr(deps, cwd, s);
+      if (w.ok && w.doc.headRefOid && w.doc.headRefOid !== h) { newHead = w.doc.headRefOid; break; }
+      if (Date.now() >= until) break;
+      sleep(T.updatePoll);
+    }
+    if (!newHead) return fault('update-invisible', `PR #${s.prNumber}: update not yet visible after ${Math.round(T.updateWait / 1000)}s — --resume to continue`);
+    st.setStep(i, { updates: s.updates + 1 });
+    return AGAIN; // the next pass proves the new head is ours and moves to wait
+  }
+  // ── wait for required checks on this exact head ──
+  if (st.run.steps[i].step !== 'wait' && st.run.steps[i].step !== 'merge') st.setStep(i, { step: 'wait', head: h });
+  const deadline = Date.now() + run.timeoutMs;
+  let verdict;
+  for (;;) {
+    verdict = observeRequiredChecks(cwd, { pr: s.prNumber, repo: s.repo, inventory: st.invFor(s.repo), expectHead: h, gh: deps.gh });
+    if (verdict.verdict === 'pass' || verdict.verdict === 'none-required') break;
+    if (verdict.verdict === 'failed' || verdict.verdict === 'not-run') return fault('checks-failed', `PR #${s.prNumber} required checks ${describeVerdict(verdict)}`);
+    if (verdict.headOid && verdict.headOid !== h) break; // the head moved: re-verify from the top
+    if (verdict.inventory?.source === 'unknown') return fault('checks-inventory-unknown', `PR #${s.prNumber}: ${verdict.reason}`);
+    if (Date.now() >= deadline) {
+      const missing = verdict.names?.missing ?? [];
+      return fault('checks-pending-deadline', `PR #${s.prNumber}: required checks still ${verdict.verdict} after ${Math.round(run.timeoutMs / 60_000)} min (${describeVerdict(verdict)}${missing.length ? `; never registered on ${short(h)}: ${missing.join(', ')}` : ''}) — --resume to keep waiting`);
+    }
+    sleep(T.poll);
+  }
+  if (verdict.headOid && verdict.headOid !== h) return policy ? bump(st, s, 'the head moved while the required checks were observed') : AGAIN;
+  // ── merge exactly this head ──
+  const again = viewPr(deps, cwd, s);
+  if (policy && !again.ok) return fault('pr-unreadable', `PR #${s.prNumber}: cannot read it (${again.reason})`);
+  if (!again.ok || again.doc.headRefOid !== h) return policy ? bump(st, s, 'the head changed while the checks were observed') : AGAIN;
+  if (upper(again.doc.mergeStateStatus) === 'BEHIND') return AGAIN; // the base moved while we waited
+  if (policy && upper(again.doc.state) === 'MERGED') return AGAIN; // merged while we waited: the top of the pass classifies it
+  if (policy) return policyMerge(st, i, h);
+  // The message is decided here, on the head that is about to be merged, so a refusal stops the run
+  // BEFORE this merge and nothing stale is ever replayed.
+  let message = { kind: 'none' };
+  if (typeof messageFor === 'function') {
+    let answer;
+    try { answer = messageFor({ source: s, headOid: h, baseOid: baseTip({ deps, cwd, run }) }); } catch (e) { answer = { stop: `messageFor failed: ${e?.message ?? e}` }; }
+    message = readMessageAnswer(answer);
+    if (message.kind === 'stop') return fault('message-stop', `PR #${s.prNumber}: ${message.reason}`);
+    if (message.kind === 'none' && run.messageRequired) return fault('message-stop', `PR #${s.prNumber}: this run requires a squash message and messageFor returned none`);
+  }
+  st.setStep(i, { step: 'merge', head: h });
+  const mergeArgs = ['pr', 'merge', String(s.prNumber), '-R', s.repo, '--squash', '--match-head-commit', h];
+  let bodyFile = null;
+  if (message.kind === 'message') {
+    // gh reads --body-file during the call, so the file lives exactly that long.
+    bodyFile = messagePath(st.dir, st.trainId, s.prNumber);
+    atomicWriteFileSync(bodyFile, message.body);
+    mergeArgs.splice(mergeArgs.indexOf('--match-head-commit'), 0, '--subject', message.subject, '--body-file', bodyFile);
+  }
+  let m;
+  try { m = deps.gh(mergeArgs, cwd); } finally { if (bodyFile) retrySync(() => fs.rmSync(bodyFile, { force: true })); }
+  const until = Date.now() + T.mergeWait;
+  for (;;) {
+    const o = viewPr(deps, cwd, s);
+    if (o.ok && upper(o.doc.state) === 'MERGED') { st.setStep(i, { step: 'merged', mergedOid: o.doc.mergeCommit?.oid ?? null }); return NEXT; }
+    if (Date.now() >= until) {
+      return fault('merge-unconfirmed', m.ok
+        ? `PR #${s.prNumber}: merge accepted but not observed merged after ${Math.round(T.mergeWait / 1000)}s — check branch rules / merge queue, then --resume`
+        : `PR #${s.prNumber}: gh pr merge failed (${m.reason})`);
+    }
+    sleep(Math.min(T.updatePoll * 2, 5_000));
+  }
+}
+
+/** The result of a finalized (or finalizing) policy run, from the stored summary. */
+const policyResult = (run, trainId, f, extra = {}) => ({ ok: f.result.ok, code: f.result.ok ? 'ok' : 'refused', trainId, run, landed: f.result.trainLanded, summary: f.result, ...extra });
+
+/**
+ * Finalize a policy run: the final live base read, the tail tree, the pure summary, and ONE write of `finalized`. Only when every
+ * member is terminal or the run is halted; otherwise the run stays resumable. @returns {{finalized: boolean, summary: object}}
+ */
+function finalizeRun(st, stoppedReason) {
+  const { run, deps, cwd } = st;
+  const done = Boolean(run.halt) || run.steps.every((x) => isTerminal(x.outcome));
+  const chain = run.policy.baseChain;
+  let tailTree = null;
+  if (chain.length > 1) {
+    const r = deps.git(['rev-parse', `${chain.at(-1)}^{tree}`], cwd);
+    tailTree = r.ok ? r.stdout.trim() : null;
+    if (!tailTree) return { finalized: false, summary: { ...summariseRun(run, { tailTree: null, stoppedReason }), ok: false, first: `the landed tree of ${chain.at(-1).slice(0, 12)} could not be read: --resume re-checks it` } };
+  }
+  const summary = summariseRun(run, { tailTree, stoppedReason });
+  if (!done) return { finalized: false, summary };
+  st.save({ finalized: { at: st.now(), result: summary }, outcome: { status: summary.trainLanded ? 'landed' : 'stopped', reason: summary.first.slice(0, 1900), at: st.now() } });
+  return { finalized: true, summary };
+}
+
+function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sleep, T, messageFor, policy }) {
   let run = readSerial(dir, trainId);
   if (!run.ok) return { ok: false, code: 'refused', reason: `train ${trainId}: ${run.reason}` };
   run = run.run;
   const now = () => deps.now().toISOString();
-  const save = (patch) => { run = writeSerial(dir, { ...run, ...patch, updatedAt: now() }); return run; };
+  const save = (patch) => { run = writeSerial(dir, { ...run, ...patch, updatedAt: now() }); st.run = run; return run; };
   const setStep = (i, patch) => save({ steps: run.steps.map((s, j) => (j === i ? { ...s, ...patch, at: now() } : s)) });
+  const st = { cwd, dir, trainId, deps, T, sleep, policy, messageFor, run, now, save, setStep, churn: new Map(), invFor: null };
   // A stop KEEPS the step it happened in (an 'update' intent must survive to be recognised on resume);
   // only the note and the run outcome record why.
   const stop = (i, reason) => {
     if (i !== null) setStep(i, { note: reason });
     save({ outcome: { status: 'stopped', reason, at: now() } });
+    if (policy && run.halt) finalizeRun(st, reason); // a halted run is finished: nothing further may land in it
     return { ok: false, code: 'refused', reason, trainId, run, resumable: true };
   };
-  if (run.outcome?.status === 'landed') return { ok: true, code: 'ok', trainId, run, landed: true };
+  // A persisted policy and the driver must agree: a policy run is driven only by its own policy, and a plain driver never takes one.
+  if (run.policy && policy?.name !== run.policy.name) return { ok: false, code: 'refused', reason: `policy-mismatch: this run belongs to a ${run.policy.name} policy and may only be resumed with it: fleet land --resume ${trainId} ${run.policy.name === 'rollup' ? '--rollup' : '--ship-batch'}`, trainId };
+  if (!run.policy && policy) return { ok: false, code: 'refused', reason: `policy-mismatch: this run has no ${policy.name} policy; a plain run is resumed with: fleet land --resume ${trainId}`, trainId };
+  if (run.finalized) { // a finalized run is a historical summary: only the local, idempotent train patch and the cleanup remain
+    const out = policyResult(run, trainId, run.finalized);
+    return policy.cleanup ? policy.cleanup({ run, result: out, cwd, deps, save }) ?? out : out;
+  }
+  if (!policy && run.outcome?.status === 'landed') return { ok: true, code: 'ok', trainId, run, landed: true };
   const sweepFault = sweepMessageFiles(dir, trainId);
   if (sweepFault) return stop(null, sweepFault);
   if (run.messageRequired && typeof messageFor !== 'function') {
     return stop(null, 'this run was started with a squash-message provider (ship-train land) and may only merge with one; resume it with the same tool: node scripts/ship-train.mjs land --train ' + trainId + ' --resume');
   }
   if (run.outcome) save({ outcome: null }); // a resumed stop re-enters
+  if (policy) {
+    const gr = policy.grantRefusal?.();
+    if (gr) return stop(null, `grant-revoked: ${gr.reason}`);
+    if (run.steps.some((x) => !isTerminal(x.outcome) || x.step === 'merged')) {
+      const rules = readRules(st, run.steps[0]);
+      if (!rules.ok) return stop(null, `rules-unreadable: the branch rules of ${run.base} could not be read (${rules.reason}), so a merge queue cannot be excluded`);
+      if (rules.queue) return stop(null, `merge-queue-present: ${run.base} has a merge queue, so a merge could not be observed synchronously`);
+    }
+  }
   const inventory = new Map();
-  const invFor = (repo) => {
+  st.invFor = (repo) => {
     if (!inventory.has(repo)) inventory.set(repo, requiredInventory(cwd, { repo, base: run.base, configured: requiredChecks, configError: requiredChecksError, gh: deps.gh }));
     return inventory.get(repo);
   };
   for (let i = 0; i < run.steps.length; i += 1) {
-    if (run.steps[i].step === 'merged') continue;
-    if (run.steps[i].note) setStep(i, { note: null });
+    if (policy ? (isTerminal(run.steps[i].outcome) || run.halt) : run.steps[i].step === 'merged') continue;
+    if (!policy && run.steps[i].note) setStep(i, { note: null });
     for (;;) {
-      const s = run.steps[i];
-      if (s.step === 'merged') break;
-      const v = viewPr(deps, cwd, s);
-      if (!v.ok) return stop(i, `PR #${s.prNumber}: cannot read it (${v.reason})`);
-      const d = v.doc;
-      if (String(d.state).toUpperCase() === 'MERGED') {
-        if (!s.accounted.includes(d.headRefOid)) return stop(i, `PR #${s.prNumber} was merged at ${short(d.headRefOid)}, a head this run did not account for — check it by hand`);
-        setStep(i, { step: 'merged', mergedOid: d.mergeCommit?.oid ?? null, head: d.headRefOid });
-        break;
+      let r;
+      try { r = stepMember(st, i); } catch (e) {
+        if (!policy) throw e;
+        r = fault('internal-error', `internal-error: ${e?.message ?? e}`);
       }
-      if (String(d.state).toUpperCase() !== 'OPEN') return stop(i, `PR #${s.prNumber} is ${d.state}`);
-      if (d.isDraft === true) return stop(i, `PR #${s.prNumber} is a draft`);
-      if (d.baseRefName !== run.base) return stop(i, `PR #${s.prNumber} now targets ${d.baseRefName}, not ${run.base}`);
-      const h = d.headRefOid;
-      if (!s.accounted.includes(h)) {
-        // Only an interrupted update of ours can explain a new head; prove it or stop.
-        if (s.step !== 'update' || !s.priorHead) return stop(i, `PR #${s.prNumber} head ${short(h)} is not one this run accounts for — someone pushed; approve a new train`);
-        if (h === s.priorHead) { setStep(i, { step: 'pending' }); continue; } // the update never applied
-        const c = classifyUpdatedHead({ deps, cwd, s, run, h, priorHead: s.priorHead });
-        if (c.verdict === 'unverifiable') return stop(i, `PR #${s.prNumber}: could not verify the updated head (acquisition): ${c.reason}`);
-        if (c.verdict === 'foreign') return stop(i, `PR #${s.prNumber}: head ${short(h)} is UNACCOUNTED (${c.reason}) — approve a new train`);
-        setStep(i, { step: 'wait', head: h, accounted: [...s.accounted, h] });
-        continue;
-      }
-      const ms = String(d.mergeStateStatus ?? '').toUpperCase();
-      if (ms === 'DIRTY') return stop(i, `PR #${s.prNumber} now conflicts with ${run.base} — run \`${restackCmd(s.id)}\` and push, then --resume`);
-      if (ms === 'BEHIND') {
-        if (s.updates >= MAX_UPDATES_PER_PR) return stop(i, `PR #${s.prNumber} fell behind ${run.base} ${s.updates} times; the base is moving too fast — resume later`);
-        setStep(i, { step: 'update', priorHead: h, head: h });
-        const u = deps.gh(['api', '-X', 'PUT', `repos/${s.repo}/pulls/${s.prNumber}/update-branch`, '-f', `expected_head_sha=${h}`], cwd);
-        if (!u.ok) {
-          if (/merge conflict|422/i.test(`${u.stderr ?? ''} ${u.reason ?? ''}`)) return stop(i, `PR #${s.prNumber} cannot be updated (merge conflict) — run \`${restackCmd(s.id)}\` and push, then --resume`);
-          return stop(i, `PR #${s.prNumber}: update-branch failed (${u.reason})`);
-        }
-        // GitHub builds the merge commit in the background (202 Accepted): poll for the new head.
-        const until = Date.now() + T.updateWait;
-        let newHead = null;
-        for (;;) {
-          const w = viewPr(deps, cwd, s);
-          if (w.ok && w.doc.headRefOid && w.doc.headRefOid !== h) { newHead = w.doc.headRefOid; break; }
-          if (Date.now() >= until) break;
-          sleep(T.updatePoll);
-        }
-        if (!newHead) return stop(i, `PR #${s.prNumber}: update not yet visible after ${Math.round(T.updateWait / 1000)}s — --resume to continue`);
-        setStep(i, { updates: s.updates + 1 });
-        continue; // the next pass proves the new head is ours and moves to wait
-      }
-      // ── wait for required checks on this exact head ──
-      if (run.steps[i].step !== 'wait' && run.steps[i].step !== 'merge') setStep(i, { step: 'wait', head: h });
-      const deadline = Date.now() + run.timeoutMs;
-      let verdict;
-      for (;;) {
-        verdict = observeRequiredChecks(cwd, { pr: s.prNumber, repo: s.repo, inventory: invFor(s.repo), expectHead: h, gh: deps.gh });
-        if (verdict.verdict === 'pass' || verdict.verdict === 'none-required') break;
-        if (verdict.verdict === 'failed' || verdict.verdict === 'not-run') return stop(i, `PR #${s.prNumber} required checks ${describeVerdict(verdict)}`);
-        if (verdict.headOid && verdict.headOid !== h) break; // the head moved: re-verify from the top
-        if (verdict.inventory?.source === 'unknown') return stop(i, `PR #${s.prNumber}: ${verdict.reason}`);
-        if (Date.now() >= deadline) {
-          const missing = verdict.names?.missing ?? [];
-          return stop(i, `PR #${s.prNumber}: required checks still ${verdict.verdict} after ${Math.round(run.timeoutMs / 60_000)} min (${describeVerdict(verdict)}${missing.length ? `; never registered on ${short(h)}: ${missing.join(', ')}` : ''}) — --resume to keep waiting`);
-        }
-        sleep(T.poll);
-      }
-      if (verdict.headOid && verdict.headOid !== h) continue;
-      // ── merge exactly this head ──
-      const again = viewPr(deps, cwd, s);
-      if (!again.ok || again.doc.headRefOid !== h) continue;
-      if (String(again.doc.mergeStateStatus ?? '').toUpperCase() === 'BEHIND') continue; // the base moved while we waited
-      // The message is decided here, on the head that is about to be merged, so a refusal stops the run
-      // BEFORE this merge and nothing stale is ever replayed.
-      let message = { kind: 'none' };
-      if (typeof messageFor === 'function') {
-        let answer;
-        try { answer = messageFor({ source: s, headOid: h, baseOid: baseTip({ deps, cwd, run }) }); } catch (e) { answer = { stop: `messageFor failed: ${e?.message ?? e}` }; }
-        message = readMessageAnswer(answer);
-        if (message.kind === 'stop') return stop(i, `PR #${s.prNumber}: ${message.reason}`);
-        if (message.kind === 'none' && run.messageRequired) return stop(i, `PR #${s.prNumber}: this run requires a squash message and messageFor returned none`);
-      }
-      setStep(i, { step: 'merge', head: h });
-      const mergeArgs = ['pr', 'merge', String(s.prNumber), '-R', s.repo, '--squash', '--match-head-commit', h];
-      let bodyFile = null;
-      if (message.kind === 'message') {
-        // gh reads --body-file during the call, so the file lives exactly that long.
-        bodyFile = messagePath(dir, trainId, s.prNumber);
-        atomicWriteFileSync(bodyFile, message.body);
-        mergeArgs.splice(mergeArgs.indexOf('--match-head-commit'), 0, '--subject', message.subject, '--body-file', bodyFile);
-      }
-      let m;
-      try { m = deps.gh(mergeArgs, cwd); } finally { if (bodyFile) retrySync(() => fs.rmSync(bodyFile, { force: true })); }
-      const until = Date.now() + T.mergeWait;
-      for (;;) {
-        const o = viewPr(deps, cwd, s);
-        if (o.ok && String(o.doc.state).toUpperCase() === 'MERGED') { setStep(i, { step: 'merged', mergedOid: o.doc.mergeCommit?.oid ?? null }); break; }
-        if (Date.now() >= until) {
-          return stop(i, m.ok
-            ? `PR #${s.prNumber}: merge accepted but not observed merged after ${Math.round(T.mergeWait / 1000)}s — check branch rules / merge queue, then --resume`
-            : `PR #${s.prNumber}: gh pr merge failed (${m.reason})`);
-        }
-        sleep(Math.min(T.updatePoll * 2, 5_000));
+      if (r.kind === 'again') continue;
+      if (r.kind === 'next') break;
+      if (r.kind !== 'fault') return stop(i, `internal-error: the member step returned ${JSON.stringify(r.kind)}`);
+      const f = r.fault;
+      const row = FAULTS[f.kind];
+      if (!policy || !row) return policy ? stop(i, `internal-error: unknown fault kind ${JSON.stringify(f.kind)}`) : stop(i, f.reason);
+      if (row.scope === 'run') return stop(i, f.reason);
+      const outcome = { status: row.status, code: row.code, reason: f.reason.slice(0, 900), ...(f.trees ? { trees: f.trees } : {}) };
+      commit(st, i, { step: run.steps[i].step === 'merge' ? 'pending' : run.steps[i].step, outcome, note: null });
+      break;
+    }
+  }
+  if (policy) {
+    const touched = run.policy.baseChain.length > 1 || Boolean(run.halt);
+    if (touched && !run.halt) { // before the result: the live base must still be the chain tail (R3-H1)
+      const tip = baseTip({ deps, cwd, run });
+      if (tip === null) return stop(null, `the base tip of ${run.base} could not be read after the run, so the chain cannot be verified: --resume re-checks it`);
+      if (tip !== run.policy.baseChain.at(-1)) {
+        save({ halt: { code: 'base-moved', member: run.steps.at(-1).id, at: now() } });
+        return stop(null, `base-moved: the base is ${short(tip)}, the chain ends at ${short(run.policy.baseChain.at(-1))}: something else reached ${run.base} during the run`);
       }
     }
+    const fin = finalizeRun(st, null);
+    if (!fin.finalized) {
+      const reason = fin.summary.first;
+      save({ outcome: { status: 'stopped', reason: reason.slice(0, 1900), at: now() } });
+      return { ok: false, code: 'refused', reason, trainId, run, resumable: true, summary: fin.summary };
+    }
+    const out = policyResult(run, trainId, run.finalized);
+    return policy.cleanup ? policy.cleanup({ run, result: out, cwd, deps, save }) ?? out : out;
   }
   save({ outcome: { status: 'landed', reason: 'every PR observed merged', at: now() } });
   return { ok: true, code: 'ok', trainId, run, landed: true };
@@ -354,18 +610,22 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
  * the serial record is created, and the loop runs. Re-entering a stopped run is
  * `land --resume <trainId>`.
  */
-export function approveSerial({ cwd, trainId, acceptRerun = false, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, timeoutMs, messageFor }) {
+export function approveSerial({ cwd, trainId, acceptRerun = false, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, timeoutMs, messageFor, policy }) {
+  if (policy && typeof messageFor === 'function') throw new Error('approveSerial takes messageFor (ship-train) or policy (ship-batch), never both');
   const dir = fleetDir(cwd);
   const start = withTrainLock(dir, () => {
     const r = readTrain(dir, trainId);
     if (!r.ok) return { ok: false, code: 'refused', reason: `train ${trainId}: ${r.reason}` };
     const t = r.train;
+    if (t.landing === 'rollup') return { ok: false, code: 'refused', reason: `train ${trainId} is a rollup: approve it with land --approve ${trainId} --rollup` };
     if (t.mergeMethod !== 'pr') return { ok: false, code: 'refused', reason: `--serial lands PRs one at a time; train ${trainId} is ${t.mergeMethod}` };
     const elig = approvable(t, { acceptRerun });
     if (!elig.ok) return { ok: false, code: 'refused', reason: elig.reason, needsAcceptRerun: elig.needsAcceptRerun === true };
     const shallow = deps.git(['rev-parse', '--is-shallow-repository'], cwd);
     if (!shallow.ok || shallow.stdout.trim() !== 'false') return { ok: false, code: 'refused', reason: 'serial landing needs full history to verify updated heads; this clone is shallow (or git could not say) — git fetch --unshallow' };
     if (readSerial(dir, trainId).ok) return { ok: false, code: 'refused', reason: `a serial run already exists for ${trainId} — use land --resume ${trainId}` };
+    // A POLICY run is created only on a CONFIRMED absence: an unreadable record is state we cannot see, never an empty slot (a plain run keeps today's behaviour).
+    if (policy) { const ex = readSerial(dir, trainId); if (!ex.absent) return { ok: false, code: 'refused', reason: `the serial record of ${trainId} exists but cannot be read (${ex.reason}): recover or quarantine it before a run is started` }; }
     const ver = verifyFacts({ cwd, train: t, dir, deps });
     if (!ver.ok) return { ok: false, code: 'refused', reason: ver.reason };
     const stamp = deps.now().toISOString();
@@ -373,6 +633,7 @@ export function approveSerial({ cwd, trainId, acceptRerun = false, requiredCheck
       schemaVersion: 1, trainId, startedAt: stamp, updatedAt: stamp, timeoutMs: timeoutMs ?? 60 * 60 * 1000,
       base: branchOfRef(t.destination.ref), remote: t.destination.remote, outcome: null,
       ...(typeof messageFor === 'function' ? { messageRequired: true } : {}),
+      ...(policy ? { policy: policy.persisted } : {}),
       steps: t.sources.map((src) => ({
         id: src.id, prNumber: src.prNumber, repo: src.repo, testedOid: src.oid, step: 'pending', head: src.oid, accounted: [src.oid],
         updates: 0, priorHead: null, mergedOid: null, note: null, at: stamp,
@@ -382,13 +643,26 @@ export function approveSerial({ cwd, trainId, acceptRerun = false, requiredCheck
     return { ok: true };
   });
   if (!start.ok) return start;
-  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}), ...(messageFor ? { messageFor } : {}) }) });
+  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}), ...(messageFor ? { messageFor } : {}), ...(policy ? { policy } : {}) }) });
 }
 
 /** `land --resume <trainId>` for a train that has a serial run. */
-export function resumeSerial({ cwd, trainId, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, messageFor }) {
+export function resumeSerial({ cwd, trainId, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, messageFor, policy }) {
   const dir = fleetDir(cwd);
-  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}), ...(messageFor ? { messageFor } : {}) }) });
+  return finishSerial({ cwd, dir, trainId, deps, r: runSerial({ cwd, trainId, deps, requiredChecks, requiredChecksError, ...(sleep ? { sleep } : {}), ...(timings ? { timings } : {}), ...(messageFor ? { messageFor } : {}), ...(policy ? { policy } : {}) }) });
+}
+
+/**
+ * The ONE writer of a fresh policy run for a caller that builds its own record (the rollup, whose one step is a PR it just opened).
+ * The run is validated (schema and the policy invariants) and refused if a run already exists. `approveSerial` writes ship-batch runs.
+ */
+export function startPolicyRun({ dir, run }) {
+  if (!run.policy) throw new Error('startPolicyRun writes policy runs only');
+  const existing = readSerial(dir, run.trainId);
+  // Only a CONFIRMED absence permits creation: an invalid, unsupported or unreadable record is state we cannot see, never an empty slot.
+  if (!existing.absent) return { ok: false, reason: existing.ok ? `a serial run already exists for ${run.trainId}` : `the serial record of ${run.trainId} exists but cannot be read (${existing.reason}): recover or quarantine it before a run is started` };
+  writeSerial(dir, run);
+  return { ok: true };
 }
 
 function finishSerial({ dir, trainId, deps, r }) {

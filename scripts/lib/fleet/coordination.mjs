@@ -30,7 +30,7 @@ import { readUpstreamCache, renderUpstreamLine, upstreamQuiet, upstreamScript } 
 import { readRecordCache, renderRecordLine, recordQuiet } from './record-count.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
 import { leaseForNext, leaseStuckFooter } from './lease-cmd.mjs';
-import { fullSuiteDeferredLine, fullSuiteOf } from './config.mjs';
+import { fullSuiteDeferredLine, fullSuiteOf, landingOf, landingRollupLine } from './config.mjs';
 import { decisionsForSession, renderSessionDecision } from './decisions.mjs';
 
 /**
@@ -197,7 +197,7 @@ export function cmdNext(ctx, flags) {
   const stamp = noteStamp(r.item, ctx.now);
   // `.fleet.json` fullSuite: "train" — this session's test plan is targeted + affected tests and the gates; the train runs the suite.
   const fullSuite = fullSuiteOf(ctx);
-  const testLines = fullSuite === 'train' ? [fullSuiteDeferredLine(ctx.cmd)] : [];
+  const testLines = [...(fullSuite === 'train' ? [fullSuiteDeferredLine(ctx.cmd)] : []), ...(landingOf(ctx) === 'rollup' ? [landingRollupLine(ctx.cmd)] : [])];
   // A user decision addressed to this session (test-plan / answer): quoted as the USER's words, apart from directives and
   // obligations, and never a DO — it grants only its scope, never a merge, push, --override or deletion.
   const mine = decisionsForSession(ctx.dir, id, ctx.now ?? new Date());

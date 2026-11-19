@@ -39,6 +39,7 @@ import { resolveAppendOnly } from './union-merge.mjs';
 import { superviseTier } from './tier-supervisor.mjs';
 import { approvable, tiersOf, worstResult } from './overlap.mjs';
 import { assertManaged, fleetDir, newTrainId, probesDir, readTrain, writeTrain } from './registry.mjs';
+import { rollupMessage } from './rollup.mjs';
 
 const DEP_FILES = new Set(['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock']);
 const WIN_SHIMS = /^(?:npm|npx|pnpm|yarn)$/i;
@@ -277,7 +278,7 @@ export function planSources(sources, { mergeMethod, expectedOid }) {
  * @param {boolean} [args.dryRun]
  * @param {ReturnType<typeof defaultDeps>} [args.deps]
  */
-export function buildTrain({ cwd, config, sources, checkPayload = { sessions: [], overlaps: [] }, dryRun = false, probeTier = null, deps = defaultDeps() }) {
+export function buildTrain({ cwd, config, sources, checkPayload = { sessions: [], overlaps: [] }, dryRun = false, probeTier = null, deps = defaultDeps(), rollup = false }) {
   const refuse = (reason) => ({ ok: false, code: 'refused', reason });
   // A probe (`land --dry-run --tier <name>`) builds the same combined candidate but runs ONE tier, under `fleet/probes/`,
   // where no approve/confirm/resume reader looks: it can never be approved.
@@ -326,6 +327,7 @@ export function buildTrain({ cwd, config, sources, checkPayload = { sessions: []
     schemaVersion: 1, trainId, createdAt, updatedAt: createdAt, phase: 'snapshot', baseOid: base.oid,
     sources: plan.entries, mergeMethod: config.mergeMethod, destination, testCommand: tiers, deferredTiers: deferred,
     candidate: null, depsChanged: null, result: null, worktree: null, notes: [],
+    ...(rollup ? { landing: 'rollup' } : {}),
   });
 
   const abandon = (why) => {
@@ -344,7 +346,7 @@ export function buildTrain({ cwd, config, sources, checkPayload = { sessions: []
 
     const ident = deps.git(['var', 'GIT_COMMITTER_IDENT'], wt).ok ? [] : ['-c', 'user.name=fleet', '-c', 'user.email=fleet@localhost'];
     const wgit = (args) => deps.git([...ident, '-c', `core.hooksPath=${hooks.dir}`, ...args], wt);
-    const applied = applySources({ wgit, dir: wt, sources, mergeMethod: config.mergeMethod, trainId, appendOnlyGlobs: config.appendOnlyGlobs ?? [] });
+    const applied = applySources({ wgit, dir: wt, sources, mergeMethod: config.mergeMethod, trainId, appendOnlyGlobs: config.appendOnlyGlobs ?? [], rollup });
     const conflict = applied.conflict;
     if (applied.unioned.length) patchTrain(dir, trainId, { notes: applied.unioned.map((u) => `${u.sourceId}: ${u.files.join(', ')} merged keeping both sides (appendOnlyGlobs)`) }, deps);
     if (conflict) {
@@ -382,8 +384,16 @@ function closeProbe({ cwd, dir, done, deps }) {
  * restack the later branch once the earlier one lands.
  * @returns {{conflict: object|null, unioned: Array<{sourceId: string, files: string[]}>}}
  */
-function applySources({ wgit, dir, sources, mergeMethod, trainId, appendOnlyGlobs = [] }) {
+function applySources({ wgit, dir, sources, mergeMethod, trainId, appendOnlyGlobs = [], rollup = false }) {
   const unioned = [];
+  // A rollup member is squashed with a message that names it and carries NO AI-* trailer: `-C` would copy the member's AI-Gate onto a
+  // commit whose combined tree no audit read (docs/plans/ship-batch-member-outcomes.md section 2.9.3).
+  const squashCommit = (s) => {
+    if (!rollup) return wgit(['commit', '--no-verify', '--allow-empty', '-C', s.oid]);
+    const subj = wgit(['log', '-1', '--format=%s', s.oid]);
+    if (!subj.ok) return { ...subj, reason: `the subject of ${s.id} (${s.oid.slice(0, 12)}) could not be read: ${subj.reason ?? 'git log failed'}` }; // never a substituted subject
+    return wgit(['commit', '--no-verify', '--allow-empty', '-m', rollupMessage({ subject: subj.stdout.trim(), id: s.id, oid: s.oid })]);
+  };
   for (const s of sources) {
     const before = wgit(['rev-parse', 'HEAD']).stdout.trim();
     let r;
@@ -391,7 +401,7 @@ function applySources({ wgit, dir, sources, mergeMethod, trainId, appendOnlyGlob
     else {
       // `pr` uses squash for the test tree, as GitHub will. -C keeps the source tip's author and message.
       r = wgit(['merge', '--squash', s.oid]);
-      if (r.ok) r = wgit(['commit', '--no-verify', '--allow-empty', '-C', s.oid]);
+      if (r.ok) r = squashCommit(s);
     }
     if (!r.ok) {
       const list = wgit(['diff', '--name-only', '--diff-filter=U']);
@@ -406,7 +416,7 @@ function applySources({ wgit, dir, sources, mergeMethod, trainId, appendOnlyGlob
       if (!u.ok) return { conflict: { ...conflict, ...(u.ineligible ? { reason: `merge conflict (${u.reason})` } : {}) }, unioned };
       const done = mergeMethod === 'direct-merge'
         ? wgit(['commit', '--no-verify', '--no-edit'])
-        : wgit(['commit', '--no-verify', '--allow-empty', '-C', s.oid]);
+        : squashCommit(s);
       if (!done.ok) return { conflict: { ...conflict, reason: `resolved append-only files but could not commit: ${done.reason}` }, unioned };
       unioned.push({ sourceId: s.id, files: u.resolved });
     }
