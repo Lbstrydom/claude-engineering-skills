@@ -101,6 +101,11 @@
       "description": "GPT deliberation pass on Claude's rebuttal of findings.",
       "category": "audit"
     },
+    "audit:verify-findings": {
+      "description": "Verify contested audit findings with a quoted line; --check re-validates an artifact.",
+      "category": "audit",
+      "relatedSkill": "audit-code"
+    },
     "audit:refine": {
       "description": "LLM-driven prompt refinement from outcome data.",
       "category": "audit"
