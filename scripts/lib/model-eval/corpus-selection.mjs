@@ -69,9 +69,12 @@ export function validateCorpus(corpus, { requireCuration = true } = {}) {
     if (suite === 'expect_clean') {
       if (!e.commit || !Array.isArray(e.files) || !e.files.length || !e.rationale) errors.push(`${tag}: expect_clean needs commit, files and rationale`);
       if (e.buggyCommit || e.fixCommit || e.expectedFindingRubric) errors.push(`${tag}: expect_clean must not carry buggyCommit, fixCommit or expectedFindingRubric`);
-    } else if (!e.buggyCommit || !e.expectedFindingRubric) {
-      errors.push(`${tag}: ${suite} needs buggyCommit and expectedFindingRubric`);
+    } else {
+      const str = (v) => typeof v === 'string' && v.length > 0;
+      if (!str(e.buggyCommit) || !str(e.fixCommit) || !str(e.expectedFindingRubric)) errors.push(`${tag}: ${suite} needs buggyCommit, fixCommit and expectedFindingRubric`);
+      if (suite === 'missed' && e.auditCleared !== true) errors.push(`${tag}: a missed entry needs auditCleared: true (our own audit cleared the buggy commit)`);
     }
+    if (!(typeof e.repo === 'string' && e.repo) || !Array.isArray(e.files) || e.files.length === 0 || !e.files.every((f) => typeof f === 'string' && f)) errors.push(`${tag}: needs a repo and a non-empty files array of strings`);
     const legacy = LEGACY_UNCURATED_KD.some((l) => sameIdentity(e, l));
     if (e.curation) {
       if (e.curation.method !== 'human-review' || !e.curation.reviewedIn) errors.push(`${tag}: curation needs method "human-review" and reviewedIn`);
@@ -111,11 +114,28 @@ export function selectionStamp(corpus, { suite, subset, seed, requestedN, select
   };
 }
 
-const STAMP_FIELDS = ['suite', 'subset', 'corpusDigest', 'corpusLoaderVersion'];
-/** @returns {string|null} the first field two stamps disagree on, else null */
+const STAMP_STRINGS = ['suite', 'subset', 'corpusVersion', 'corpusDigest', 'corpusLoaderVersion'];
+const isStr = (v) => typeof v === 'string' && v.length > 0;
+/** @returns {string|null} the first missing or malformed field of a stamp, else null */
+export function stampIncomplete(s) {
+  for (const f of STAMP_STRINGS) if (!isStr(s?.[f])) return f;
+  const sel = s?.selection;
+  if (!Number.isInteger(sel?.seed)) return 'selection.seed';
+  if (!Number.isInteger(sel?.requestedN)) return 'selection.requestedN';
+  return Array.isArray(sel?.selectedIds) && sel.selectedIds.every(isStr) ? null : 'selection.selectedIds';
+}
+
+/**
+ * Two runs are comparable only when EVERY stamp field matches. An incomplete stamp is never comparable (not even to another
+ * incomplete one). @returns {string|null} the first field to blame (`<field>` missing/malformed, or the one that differs), else null
+ */
 export function stampMismatch(a, b) {
-  for (const f of STAMP_FIELDS) if (a?.[f] !== b?.[f]) return f;
-  return canonicalize(a?.selection?.selectedIds) === canonicalize(b?.selection?.selectedIds) ? null : 'selection.selectedIds';
+  const bad = stampIncomplete(a) ?? stampIncomplete(b);
+  if (bad) return `incomplete-stamp:${bad}`;
+  for (const f of STAMP_STRINGS) if (a[f] !== b[f]) return f;
+  if (a.selection.seed !== b.selection.seed) return 'selection.seed';
+  if (a.selection.requestedN !== b.selection.requestedN) return 'selection.requestedN';
+  return canonicalize(a.selection.selectedIds) === canonicalize(b.selection.selectedIds) ? null : 'selection.selectedIds';
 }
 
 const BLOCKING = new Set(['MEDIUM', 'HIGH']);
@@ -124,18 +144,22 @@ const BLOCKING = new Set(['MEDIUM', 'HIGH']);
  * finding is a `false_positive` (its pass recorded); a run that failed is `failed` and counts in the denominator, never as clean.
  * @param {{failed?:boolean, findings?:Array<{file?:string, severity?:string, pass?:string}>}} out
  */
+const normFile = (f) => String(f).replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
 export function scoreExpectCleanCase(out, files) {
-  if (!out || out.failed) return { outcome: 'failed', passes: [] };
-  const want = new Set(files.map((f) => f.toLowerCase()));
-  const hits = (out.findings ?? []).filter((f) => BLOCKING.has(f.severity) && want.has(String(f.file ?? '').toLowerCase()));
+  // Malformed output is `failed` (unmeasured), never `clean`: an incomplete generation must not look like a clean audit.
+  if (!out || typeof out !== 'object' || out.failed || !Array.isArray(out.findings)
+    || !out.findings.every((f) => f && typeof f === 'object' && typeof f.file === 'string' && typeof f.severity === 'string')) return { outcome: 'failed', passes: [] };
+  const want = new Set(files.map(normFile));
+  const hits = out.findings.filter((f) => BLOCKING.has(f.severity) && want.has(normFile(f.file)));
   return hits.length === 0 ? { outcome: 'clean', passes: [] } : { outcome: 'false_positive', passes: [...new Set(hits.map((h) => h.pass ?? 'unknown'))] };
 }
 
-/** Suite block; zero cases is `unmeasured`, never fpRate 0. */
+/** Suite block. The false-positive rate is over the MEASURED cases; no measured case (zero cases, or every audit failed) is `unmeasured`, never fpRate 0. */
 export function summarizeExpectClean(perCase) {
   const cases = perCase.length;
-  if (cases === 0) return { cases: 0, unmeasured: true };
   const count = (o) => perCase.filter((c) => c.outcome === o).length;
   const failed = count('failed');
-  return { cases, clean: count('clean'), falsePositive: count('false_positive'), failed, fpRate: count('false_positive') / cases, measuredRate: (cases - failed) / cases };
+  const measured = cases - failed;
+  if (measured === 0) return { cases, failed, unmeasured: true };
+  return { cases, clean: count('clean'), falsePositive: count('false_positive'), failed, fpRate: count('false_positive') / measured, measuredRate: measured / cases };
 }

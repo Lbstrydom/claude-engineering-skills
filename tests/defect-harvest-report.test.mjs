@@ -5,7 +5,7 @@
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -85,6 +85,26 @@ describe('every commit ends in exactly one terminal outcome', () => {
   });
 });
 
+describe('git failures are not evidence (audit r1 H4/M7/H9)', () => {
+  it('only exit status 1 means not-an-ancestor; any other failure propagates', () => {
+    const base = (args) => git(...args);
+    const failing = (status, stderr) => (args) => { if (args[0] === 'merge-base') throw Object.assign(new Error('boom'), { status, stderr }); return base(args); };
+    assert.deepEqual(outcomeOf(run({}, { git: failing(1, '') }), 'c9').filtered.map((f) => f.reason), ['introducer-not-ancestor']);
+    assert.deepEqual(outcomeOf(run({}, { git: failing(128, 'fatal: Not a valid commit name abc') }), 'c9').filtered.map((f) => f.reason), ['introducer-unresolvable']);
+    assert.throws(() => run({}, { git: failing(2, 'corrupt object database') }), /merge-base --is-ancestor .* failed/);
+    assert.throws(() => run({}, { git: failing(undefined, '') }), /merge-base --is-ancestor .* failed/);
+  });
+  it('the size bound applies to a pure addition and to the introducer diff', () => {
+    const tiny = run({ maxDiffChars: 10 });
+    assert.equal(outcomeOf(tiny, 'c6').reason, 'diff-too-large', 'pure addition is bounded too');
+    const lines = Array.from({ length: 60 }, (_, i) => `const v${i} = ${i};`);
+    write('big.js', `${lines.join('\n')}\n`); commit('big1', 'feat: big');
+    write('big.js', `${lines.map((l, i) => (i === 30 ? 'const v30 = 99;' : l)).join('\n')}\n`); commit('big2', 'fix: v30 was wrong');
+    const r = run({ maxDiffChars: 300 });
+    assert.deepEqual(outcomeOf(r, 'big2').filtered.map((f) => f.reason), ['introducer-diff-too-large']);
+  });
+});
+
 describe('reconciliation is independent of the classifier (negative controls)', () => {
   const FMT_SPLIT = String.fromCharCode(0) + String.fromCharCode(0) + '\n';
   it('a log that omits a commit fails as unclassified:<sha>', () => {
@@ -129,5 +149,27 @@ describe('identical inputs give byte-identical output; each input changes the he
     assert.deepEqual(again, pinned);
     assert.equal(pinned.pairs.length, 1);
     git('checkout', '--', rel);
+  });
+});
+
+describe('CLI contract (audit r1 H2/M6/M10)', () => {
+  const cli = (...args) => spawnSync(process.execPath, ['scripts/defect-harvest.mjs', ...args], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, LEARNING_DISABLE: '1' } });
+  it('an unknown flag is refused, not ignored', () => {
+    const r = cli('--bogus');
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /unknown flag "--bogus"/);
+  });
+  it('--out with several roots, and roots sharing a basename, are refused before any work', () => {
+    const a = cli('--roots', 'x/same,y/other', '--out', 'one.json', '--apply');
+    assert.equal(a.status, 1);
+    assert.match(a.stderr, /single file but several roots/);
+    const b = cli('--roots', 'x/same,y/same');
+    assert.equal(b.status, 1);
+    assert.match(b.stderr, /share a basename/);
+  });
+  it('refuses to write known-defects.json', () => {
+    const r = cli('--roots', '.', '--out', 'docs/known-defects.json', '--apply');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /never writes known-defects.json/);
   });
 });

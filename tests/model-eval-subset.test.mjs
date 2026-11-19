@@ -2,9 +2,11 @@
  * @fileoverview Tier 2 — corpus suites, subsets, frozen legacy identities and judge-free expect_clean scoring
  * (plan docs/plans/sashiko-audit-improvements.md §5.6). The real corpus is read, so a regression in the shipped file shows here.
  */
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   LEGACY_UNCURATED_KD, validateCorpus, selectPool, selectionStamp, stampMismatch, corpusDigest,
@@ -73,9 +75,34 @@ describe('validateCorpus', () => {
   });
 });
 
+describe('entry shape per suite (audit r1 M2/M9)', () => {
+  const c = real();
+  const errs = (e) => validateCorpus({ ...c, defects: [...c.defects, e] }).errors.join(' | ');
+  it('a missed entry must say our own audit cleared it', () => {
+    assert.match(errs(entry({ id: 'KD-910', suite: 'missed' })), /auditCleared: true/);
+    assert.equal(validateCorpus({ ...c, defects: [...c.defects, entry({ id: 'KD-911', suite: 'missed', auditCleared: true })] }).ok, true);
+  });
+  it('detect/missed need a fixCommit and typed repo/files', () => {
+    assert.match(errs(entry({ id: 'KD-912', fixCommit: undefined })), /needs buggyCommit, fixCommit/);
+    assert.match(errs(entry({ id: 'KD-913', repo: undefined })), /needs a repo and a non-empty files/);
+    assert.match(errs(entry({ id: 'KD-914', files: [] })), /non-empty files/);
+    assert.match(errs(entry({ id: 'KD-915', files: [3] })), /array of strings/);
+  });
+});
+
 describe('the selection stamp', () => {
   const c = { version: 4, defects: [entry({ id: 'KD-1' }), entry({ id: 'KD-2' })] };
   const stampFor = (corpus, over = {}) => ({ ...selectionStamp(corpus, { suite: 'detect', subset: 'full', seed: 1, requestedN: 2, selected: corpus.defects }), corpusLoaderVersion: 'v2', ...over });
+  it('an incomplete stamp is never comparable, not even to another incomplete one (r1 H5)', () => {
+    assert.match(stampMismatch({}, {}), /^incomplete-stamp:/);
+    assert.match(stampMismatch(stampFor(c), {}), /^incomplete-stamp:/);
+    assert.match(stampMismatch(stampFor(c, { corpusDigest: undefined }), stampFor(c)), /incomplete-stamp:corpusDigest/);
+  });
+  it('every field is compared: corpusVersion, seed and requestedN each differ alone (r1 H8)', () => {
+    assert.equal(stampMismatch(stampFor(c), stampFor(c, { corpusVersion: '9' })), 'corpusVersion');
+    assert.equal(stampMismatch(stampFor(c), { ...stampFor(c), selection: { ...stampFor(c).selection, seed: 2 } }), 'selection.seed');
+    assert.equal(stampMismatch(stampFor(c), { ...stampFor(c), selection: { ...stampFor(c).selection, requestedN: 3 } }), 'selection.requestedN');
+  });
   it('a one-field corpus edit under the same version changes the digest, and the comparison is refused', () => {
     const edited = { ...c, defects: [entry({ id: 'KD-1', expectedFindingRubric: 'edited' }), entry({ id: 'KD-2' })] };
     assert.notEqual(corpusDigest(c), corpusDigest(edited));
@@ -98,22 +125,41 @@ describe('expect_clean scoring is judge-free and strict', () => {
     assert.equal(scoreExpectCleanCase({ failed: true }, files).outcome, 'failed');
     assert.equal(scoreExpectCleanCase({ findings: [{ file: 'a.js', severity: 'LOW' }, { file: 'other.js', severity: 'HIGH' }] }, files).outcome, 'clean', 'LOW, or a file outside the case, is not a false positive');
   });
+  it('malformed output is failed, never clean (r1 H6/H7)', () => {
+    for (const bad of [{}, { findings: null }, { findings: 'none' }, { findings: [{ severity: 'HIGH' }] }, { findings: [{ file: 'a.js' }] }, 'ok', 42]) {
+      assert.equal(scoreExpectCleanCase(bad, ['a.js']).outcome, 'failed', JSON.stringify(bad));
+    }
+    assert.equal(scoreExpectCleanCase({ findings: [] }, ['a.js']).outcome, 'clean', 'control: a valid empty array is clean');
+  });
+  it('equivalent path spellings match (r1 M4)', () => {
+    for (const spelling of ['./a.js', 'A.JS', 'a.js']) assert.equal(scoreExpectCleanCase({ findings: [{ file: spelling, severity: 'HIGH' }] }, ['a.js']).outcome, 'false_positive');
+    assert.equal(scoreExpectCleanCase({ findings: [{ file: 'dir\\b.js', severity: 'HIGH' }] }, ['dir/b.js']).outcome, 'false_positive');
+  });
   it('the suite block counts a failed case in the denominator; zero cases is unmeasured', () => {
     const perCase = [{ outcome: 'clean' }, { outcome: 'false_positive' }, { outcome: 'failed' }];
-    assert.deepEqual(summarizeExpectClean(perCase), { cases: 3, clean: 1, falsePositive: 1, failed: 1, fpRate: 1 / 3, measuredRate: 2 / 3 });
-    assert.deepEqual(summarizeExpectClean([]), { cases: 0, unmeasured: true });
+    assert.deepEqual(summarizeExpectClean(perCase), { cases: 3, clean: 1, falsePositive: 1, failed: 1, fpRate: 1 / 2, measuredRate: 2 / 3 });
+    assert.deepEqual(summarizeExpectClean([]), { cases: 0, failed: 0, unmeasured: true });
+    assert.deepEqual(summarizeExpectClean([{ outcome: 'failed' }, { outcome: 'failed' }]), { cases: 2, failed: 2, unmeasured: true }, 'every audit failed: unmeasured, not fpRate 0 (r1 M8)');
   });
 });
 
-describe('loading an expect_clean case', () => {
-  const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  const files = execFileSync('git', ['show', '--name-only', '--format=', head], { encoding: 'utf8' }).split('\n').filter(Boolean);
-  const kd = (over = {}) => ({ id: 'KD-960', repo: 'claude-engineering-skills', suite: 'expect_clean', commit: head, files: files.slice(0, 1), rationale: 'r', ...over });
+describe('loading an expect_clean case (hermetic fixture repo, r1 M11)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kd-fixture-'));
+  const root = path.join(dir, 'fixture-repo');
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const g = (...a) => execFileSync('git', ['-C', root, '-c', 'core.autocrlf=false', ...a], { encoding: 'utf8', env }).trim();
+  fs.mkdirSync(root);
+  g('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(root, 'base.js'), 'export const a = 1;\n'); g('add', '-A'); g('commit', '-q', '-m', 'base');
+  fs.writeFileSync(path.join(root, 'clean.js'), 'export const c = 2;\n'); g('add', '-A'); g('commit', '-q', '-m', 'add clean.js');
+  const head = g('rev-parse', 'HEAD');
+  after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+  const kd = (over = {}) => ({ id: 'KD-960', repo: 'fixture-repo', suite: 'expect_clean', commit: head, files: ['clean.js'], rationale: 'r', ...over });
   it('uses `commit`, hides no rubric, and keeps the declared-files-in-diff invariant', () => {
-    const r = loadCorpusCase({ kdEntry: kd(), repoRoots: [process.cwd()] });
+    const r = loadCorpusCase({ kdEntry: kd(), repoRoots: [root] });
     assert.equal(r.hiddenGroundTruth.suite, 'expect_clean');
     assert.equal(Object.hasOwn(r.hiddenGroundTruth, 'expectedFindingRubric'), false);
     assert.ok(r.visibleInput.diff.length > 0);
-    assert.throws(() => loadCorpusCase({ kdEntry: kd({ files: ['not/in/the/diff.js'] }), repoRoots: [process.cwd()] }), (e) => e instanceof CorpusCaseUnavailable && e.reason === 'declared_files_not_in_diff');
+    assert.throws(() => loadCorpusCase({ kdEntry: kd({ files: ['not/in/the/diff.js'] }), repoRoots: [root] }), (e) => e instanceof CorpusCaseUnavailable && e.reason === 'declared_files_not_in_diff');
   });
 });

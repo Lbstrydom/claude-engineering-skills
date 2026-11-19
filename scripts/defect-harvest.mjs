@@ -23,7 +23,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { classifyPath } from './lib/sensitive-paths.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
-import { log, argOption, hasFlag } from './lib/cli-io.mjs';
+import { log, argOption, hasFlag, assertKnownFlags } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { MAX_DIFF_CHARS } from './lib/model-eval/known-defect-corpus.mjs';
 
@@ -107,9 +107,22 @@ function firstFunctionOriginHint(git, sha, file) {
 export const MINER_VERSION = 'v2';
 const AI_GATE_CLEARED_RE = /^AI-Gate:\s*(passed|converged)\b/im;
 
-/** Does `git` (real or fake) say `a` is an ancestor of `b`? A throwing runner means "no" (git's exit 1). */
-function isAncestor(git, a, b) {
-  try { git(['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; }
+/**
+ * `git merge-base --is-ancestor`: exit 0 = yes, exit 1 = the documented "no", an unknown object (exit 128, "not a valid commit
+ * name") = `unresolvable`. Anything else is an execution or repository failure and PROPAGATES: it is not evidence the introducer
+ * is unrelated, so it must never be recorded as a filtered pair.
+ * @returns {'ancestor'|'not-ancestor'|'unresolvable'}
+ */
+function ancestry(git, a, b) {
+  try { git(['merge-base', '--is-ancestor', a, b]); return 'ancestor'; } catch (err) {
+    if (err?.status === 1) return 'not-ancestor';
+    if (err?.status === 128 && /not a valid (commit|object) name|bad object|unknown revision/i.test(String(err.stderr ?? err.message))) return 'unresolvable';
+    throw new Error(`git merge-base --is-ancestor ${a} ${b} failed: ${err?.message ?? err}`);
+  }
+}
+/** Size of a commit's diff in the loader's own units; -1 when git cannot say. */
+function diffChars(git, sha) {
+  try { return git(['show', '--no-ext-diff', '--no-textconv', '--format=', sha]).length; } catch { return -1; }
 }
 const sameSha = (x, y) => !!x && !!y && (x.startsWith(y) || y.startsWith(x));
 const dropped = (reason) => ({ outcome: 'dropped', reason, candidates: [], filtered: [] });
@@ -134,6 +147,11 @@ function classifyCommit(git, rec, ctx) {
   else if (/\b(?:fixes|closes|resolves)\s+#\d+/i.test(full)) return dropped('issue-ref-only');
   else if (!isFixTyped) return dropped('not-fix-typed');
 
+  // Size bound shared with the loader, applied to the fix before ANY candidate branch (pure additions included).
+  const fixChars = diffChars(git, sha);
+  if (fixChars < 0) return dropped('git-error');
+  if (fixChars > ctx.maxDiffChars) return dropped('diff-too-large');
+
   if (!pairs) {
     let files;
     try { files = changedFiles(git, sha); } catch { return dropped('git-error'); }
@@ -148,15 +166,13 @@ function classifyCommit(git, rec, ctx) {
     pairs = [...introducers].map((i) => mk(i, 'blame', files.map((f) => f.file), introducers.size > 2 ? 'low' : 'medium'));
   }
 
-  // Size bound shared with the loader: a fix the loader would refuse can never become a corpus case.
-  try {
-    if (git(['show', '--no-ext-diff', '--no-textconv', '--format=', sha]).length > ctx.maxDiffChars) return dropped('diff-too-large');
-  } catch { return dropped('git-error'); }
-
   const kept = []; const filtered = [];
   for (const p of pairs) {
     if (ctx.curated.some((c) => sameSha(c.buggyCommit, p.buggyCommit) && sameSha(c.fixCommit, p.fixCommit))) { filtered.push({ buggyCommit: p.buggyCommit, reason: 'already-curated' }); continue; }
-    if (!isAncestor(git, p.buggyCommit, sha)) { filtered.push({ buggyCommit: p.buggyCommit, reason: 'introducer-not-ancestor' }); continue; }
+    const rel = ancestry(git, p.buggyCommit, sha);
+    if (rel !== 'ancestor') { filtered.push({ buggyCommit: p.buggyCommit, reason: rel === 'not-ancestor' ? 'introducer-not-ancestor' : 'introducer-unresolvable' }); continue; }
+    // H3: a detect/missed case loads the INTRODUCER's diff, so that diff must fit the loader's bound too.
+    if (diffChars(git, p.buggyCommit) > ctx.maxDiffChars) { filtered.push({ buggyCommit: p.buggyCommit, reason: 'introducer-diff-too-large' }); continue; }
     // The introducer must touch a file the fix touches. A commit whose files cannot be read is kept: unknown is not disjoint.
     const introFiles = filesFor(git, p.buggyCommit);
     if (introFiles.length > 0 && p.files.length > 0 && !introFiles.some((f) => p.files.includes(f))) { filtered.push({ buggyCommit: p.buggyCommit, reason: 'introducer-disjoint-files' }); continue; }
@@ -250,6 +266,11 @@ async function main() {
   const outDir = argOption('out-dir', path.join('.audit', 'defect-candidates'));
   const outArg = argOption('out', null);
   const apply = hasFlag('apply');
+  assertKnownFlags(process.argv, ['--since', '--roots', '--rev', '--corpus-root', '--corpus-rev', '--out-dir', '--out', '--apply', '--selfcheck-relocation'], { cli: 'defect-harvest' });
+  // One report per root: an explicit --out names ONE file, and two roots sharing a basename would share a default target.
+  if (outArg && roots.length > 1) { log('REFUSED: --out names a single file but several roots were given; use --out-dir'); return 1; }
+  const names = roots.map((r) => path.basename(r));
+  if (new Set(names).size !== names.length) { log(`REFUSED: roots share a basename (${names.join(', ')}), so their default report names would collide`); return 1; }
   if (outArg && path.basename(outArg).toLowerCase() === 'known-defects.json') { log('REFUSED: the miner never writes known-defects.json; a human curates candidates into it'); return 1; }
 
   let curated;

@@ -434,7 +434,7 @@ async function runPromotionTier({
     return {
       ...budgetStoppedResult({
         budgetStop, usageEvents, perCaseOutputs, honoredDials, meter,
-        evidence: { mode: 'comparative', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, ...stamp, ...stamp, computedJudgeTier },
+        evidence: { mode: 'comparative', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, ...stamp, computedJudgeTier },
       }),
       computedJudgeTier,
     };
