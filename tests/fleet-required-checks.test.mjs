@@ -226,7 +226,8 @@ describe('decideCiAdmission — one fixed table over a closed tag set', () => {
   });
   it('malformed evidence and hostile tag values never throw: stop-run with a safe diagnostic (code audit R1 M2, M4)', () => {
     const cyc = {}; cyc.self = cyc;
-    for (const bad of [{ tag: 10n }, { tag: cyc }, { tag: Symbol('x') }, { tag: 'ineligible', code: 10n }, { tag: 'unknown', names: { failed: 'ci' }, fault: { kind: 'transport', detail: cyc } }]) {
+    for (const bad of [{ tag: 10n }, { tag: cyc }, { tag: Symbol('x') }, { tag: 'ineligible', code: 10n }, { tag: 'unknown', names: { failed: 'ci' }, fault: { kind: 'transport', detail: cyc } },
+      JSON.parse('{"tag":"unknown","fault":{"kind":"transport","detail":{"toString":null,"valueOf":null}}}')]) {
       const d = decideCiAdmission(bad);
       assert.equal(d.disposition, 'stop-run');
       assert.ok(describeEvidence(bad, d).length > 5);

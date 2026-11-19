@@ -258,7 +258,7 @@ export function decideCiAdmission(evidence) {
   }
   if (tag === 'unknown') {
     const kind = CI_FAULT_KINDS.includes(evidence.fault?.kind) ? evidence.fault.kind : 'unexpected-tag';
-    return { disposition: 'stop-run', tag, fault: { kind, detail: String(evidence.fault?.detail ?? 'no detail') } };
+    return { disposition: 'stop-run', tag, fault: { kind, detail: typeof evidence.fault?.detail === 'string' ? evidence.fault.detail : show(evidence.fault?.detail ?? 'no detail') } };
   }
   return { disposition: 'stop-run', tag: show(tag), fault: { kind: 'unexpected-tag', detail: `the CI evidence carried no recognised tag (${show(tag)})` } };
 }

@@ -569,7 +569,9 @@ replaces it with the following, all in PR 2 and all inside `mergeWithCiPermit` u
 2. **Post-merge verification.** After a merge is observed, verify, from fresh reads: the merge commit's first parent is the expected base tip
    (already the policy read-back's `untested-base`), the merged PR's base ref is the run base (`wrong-target`, now also in PLAIN serial),
    the merged head equals the admitted head, and the required check runs of that head are STILL `success` (a re-assessment of the merged
-   head: a re-run that turned red or skipped after the permit is caught). A mismatch records the member outcome `landed` with verdict
+   head). **The limit, stated:** this reads the check state NOW, not at the instant GitHub accepted the merge, so a re-run that has since
+   finished green again (or is still pending) is indistinguishable from a run that never changed. It is a detective control: it catches a
+   red or skipped result that is still visible, and nothing more. A mismatch records the member outcome `landed` with verdict
    **`merged-unverified`** (new, a halt verdict next to `wrong-target`/`untested-base`), stops the run loudly, and is never reported as
    success. Tests: one row per check, positive (all hold: `landed`/`merged`) and negative (each broken in turn: halt, zero further merges).
 3. **Optional merge-queue path: NOT built, and that is stated.** The only queue signal in the code is the rule type `merge_queue` in
@@ -578,8 +580,10 @@ replaces it with the following, all in PR 2 and all inside `mergeWithCiPermit` u
    the signal, leave this out and say so"), a base with a queue keeps today's behaviour (`merge-queue-present`, a run stop). Recorded in
    Out of Scope with the fixture it needs.
 4. **Docs.** This plan and `skills/fleet/references/landing.md` state that the remaining window (a retarget or a CI re-run between the
-   fresh re-read and `gh pr merge`, which fleet narrows and then DETECTS but cannot prevent) is closed by repository policy (required checks
-   with no bypass, or a merge queue), not by fleet.
+   fresh re-read and `gh pr merge`) is **narrowed** by fleet (the fresh re-read) and only **partly detected** after the fact (item 2's limit),
+   never closed by it. Closing it is repository policy, not fleet: a merge queue (the only server-side re-evaluation at merge time), or
+   required checks with no bypass AND a base whose requirements match what fleet assessed. Required checks alone do not close it: GitHub
+   itself counts a SKIPPED required check as satisfied (wine-cellar-app #802), and a retargeted base can carry other requirements.
 
 **Test coverage** (`tests/fleet-ci-admission.test.mjs`, positive and negative per item): (1) a head, base or draft change between the
 wait-loop assessment and the merge → no merge call, the mapper's disposition; unchanged → exactly one merge with `--match-head-commit` equal
