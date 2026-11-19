@@ -181,7 +181,7 @@ function build(ctx, flags, deps) {
   const { cwd, config, cmd } = ctx;
   const selectGiven = flags['--select'] !== undefined;
   const selectIds = selectGiven ? parseSelect(flags['--select']) : null;
-  const facts = gatherFacts({ cwd, config, now: ctx.now, env: ctx.env });
+  const facts = gatherFacts({ cwd, config, now: ctx.now, env: ctx.env, ghIdentity: 'ambient' /* mutates as the ambient account until p-20261119105615-d6fb */ });
   if (!facts.registry.complete) {
     return { ok: false, code: 'refused', reason: 'registry incomplete — a train is never built on partial data', text: `REFUSED: registry incomplete (${facts.registry.invalid.map((i) => i.file).join(', ')}) — run \`${cmd} repair --quarantine <file>\`` };
   }

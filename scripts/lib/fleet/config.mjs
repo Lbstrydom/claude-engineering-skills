@@ -61,6 +61,8 @@ export const MAX_HOT_FILES = 200;
 export const DEFAULT_ARCHIVE_IGNORE = Object.freeze(['node_modules/**', 'scripts/.claude-skills/**', '.claude/settings.local.json']);
 /** `land --serial`: how long one PR may wait for its required checks. */
 export const DEFAULT_SERIAL_TIMEOUT_MS = 60 * 60 * 1000;
+/** `.fleet.json` `pruneAlert`: `fleet next` prints an ASK once the cached prune count crosses either number (docs/plans/fleet-hygiene.md §1.2). */
+export const DEFAULT_PRUNE_ALERT = Object.freeze({ removable: 25, worktrees: 30 });
 export const FULL_SUITE_MODES = Object.freeze(['session', 'train']);
 /** `.fleet.json` `landing`: `pr` (default, a PR per chip) or `rollup` (chips push a branch and `fleet ready`; the coordinator lands them as ONE PR). */
 export const LANDING_MODES = Object.freeze(['pr', 'rollup']);
@@ -115,6 +117,11 @@ const FleetFileSchema = z.strictObject({
   // A gh LOGIN NAME (never a token): the signed-in account whose credential the handover's PR probe uses for this repo.
   ghAccount: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/, 'must be a gh login name (letters, digits, - and _)')
     .refine((v) => !/^(gh[pousr]_|github_pat_)/i.test(v), 'looks like a token: ghAccount is a login NAME, never a credential').optional(),
+  // false = off; an object overrides either number (a missing one keeps its default). A misspelt key is an error, never inert.
+  pruneAlert: z.union([z.literal(false), z.strictObject({
+    removable: z.number().int('must be a whole number').min(1).max(100000).optional(),
+    worktrees: z.number().int('must be a whole number').min(1).max(100000).optional(),
+  })], { error: 'must be false or an object {removable?, worktrees?}' }).optional(),
   serialTimeoutMs: timeout().optional(),
   // `train`: sessions run targeted + affected tests and the required gates, never the full suite; `fleet land` is the ONE
   // full-suite run (consumer report 2026-11-15, item 1). `session` (default): each session runs it, as before.
@@ -215,7 +222,8 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
       ...(cfg.requiredChecks ? { requiredChecks: cfg.requiredChecks } : {}),
       appendOnlyGlobs: cfg.appendOnlyGlobs ?? [], restackIgnore: cfg.restackIgnore ?? [],
       archiveIgnore: cfg.archiveIgnore ?? [...DEFAULT_ARCHIVE_IGNORE], serialTimeoutMs: cfg.serialTimeoutMs ?? DEFAULT_SERIAL_TIMEOUT_MS,
-      ghAccount: cfg.ghAccount ?? null, fullSuite: cfg.fullSuite ?? 'session', landing: cfg.landing ?? 'pr',
+      ghAccount: cfg.ghAccount ?? null,
+      pruneAlert: cfg.pruneAlert === false ? null : { ...DEFAULT_PRUNE_ALERT, ...(cfg.pruneAlert ?? {}) }, fullSuite: cfg.fullSuite ?? 'session', landing: cfg.landing ?? 'pr',
     },
   };
 }
@@ -307,7 +315,7 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
     baseBranch: base.baseBranch, testCommand: v.testCommand, mergeMethod: v.mergeMethod, checks: v.checks, worktreeRoot,
     hotFiles: v.hotFiles, hideIdleAfterDays: v.hideIdleAfterDays, staleWorktreeDays: v.staleWorktreeDays,
     ...(v.requiredChecks ? { requiredChecks: v.requiredChecks } : {}),
-    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs, ghAccount: v.ghAccount, fullSuite: v.fullSuite, landing: v.landing,
+    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs, ghAccount: v.ghAccount, pruneAlert: v.pruneAlert, fullSuite: v.fullSuite, landing: v.landing,
     sources: {
       baseBranch: base.source, testCommand: v.testCommandSource, mergeMethod: v.mergeMethodSource,
       checks: file.value?.checks ? 'config' : 'default', worktreeRoot: fromEnv ? 'env' : 'default',

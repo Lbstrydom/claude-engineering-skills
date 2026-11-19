@@ -15,6 +15,7 @@
 import {
   listWorktrees, listBranches, changedFiles, patchId, baseFreshness, headOf, runGit, resolveMeasurementBase, mergeBase, cacheDirFor,
 } from './git-facts.mjs';
+import { ghEnvFor } from './gh-account.mjs';
 import { GH_TIMEOUT_MS, OPEN_PR_CHECK_ARGS, OPEN_PR_LIST_ARGS, listPullRequests, prLocalRef } from './gh-facts.mjs';
 import { ghBatch } from './gh-batch.mjs';
 import { ConfigError } from './config.mjs';
@@ -90,6 +91,9 @@ export function resolveUpstream(cwd, base, trains = []) {
  * @param {Date} args.now
  * @param {NodeJS.ProcessEnv} [args.env]
  * @param {boolean} [args.prs=true]     query `gh`
+ * @param {'declared'|'ambient'} [args.ghIdentity='declared'] whose credential the gh reads use: the repo's `.fleet.json` `ghAccount`
+ *   (`declared`, a repo without one is unchanged) or the signed-in account as is (`ambient`). A caller that goes on to MUTATE through gh
+ *   as the ambient account passes `ambient`, so it never decides on one identity's evidence and acts as another (docs/plans/fleet-hygiene.md §1.3).
  * @param {boolean} [args.patches=true] per-branch patch-ids
  * @param {boolean} [args.worktrees=true]
  * @param {boolean} [args.checks=true]  `false` records `facts.checks = {queried:false}`, which makes
@@ -107,7 +111,9 @@ export function resolveUpstream(cwd, base, trains = []) {
  *   incomplete (`known:false`). Omitted ⇒ unbounded, as before.
  * @returns {object} facts for `buildStatus`, plus `dir`
  */
-export function gatherFacts({ cwd, config, now, env = process.env, prs = true, patches = true, worktrees = true, cmd = 'fleet', checks = true, maxBranches, untracked = true, merged, uncommitted, deadlineAt = null }) {
+export function gatherFacts({ cwd, config, now, env = process.env, prs = true, patches = true, worktrees = true, cmd = 'fleet', checks = true, maxBranches, untracked = true, merged, uncommitted, deadlineAt = null, ghIdentity = 'declared' }) {
+  const acct = ghIdentity === 'declared' ? ghEnvFor(config, env) : { env, account: null };
+  env = acct.env;
   const dir = fleetDir(cwd);
   const base = config.baseBranch;
   const registry = readSessions(dir);
@@ -126,7 +132,9 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   // The gh questions are independent network round trips: ask them CONCURRENTLY (lib/fleet/gh-batch.mjs),
   // then classify each exactly as a direct call would. A single question is asked directly.
   const gh = prefetchGh({ cwd, env, base, wantPrs, wantMerged: mergedWanted !== false });
-  const prFacts = wantPrs ? listPullRequests(cwd, { env, prefetched: gh.open }) : { queried: false, complete: false, reason: 'not requested', prs: [] };
+  const prRead = wantPrs ? listPullRequests(cwd, { env, prefetched: gh.open }) : { queried: false, complete: false, reason: 'not requested', prs: [] };
+  // A declared account that could not be read fails closed (the probe ran as nobody); say WHICH account, not a bare 401.
+  const prFacts = acct.error && !prRead.queried ? { ...prRead, reason: `gh account ${acct.account} is not available: ${acct.error}` } : prRead;
   const sel = selectBranchesToAnalyse({ registry, branches, base, maxBranches, untracked });
   // Evidence is computed from the commit ids `listBranches` captured, not by re-resolving the NAMES: another
   // session can commit between the two reads, and the PR-trust comparison below uses the captured tip, so

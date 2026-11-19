@@ -151,3 +151,42 @@ describe('the handover probe uses the declared account — real CLI, fake gh', (
     assert.doesNotMatch(tokensSeen(w), /AMBIENT-TOKEN/, 'the ambient account never answered for a repo that declared another');
   });
 });
+
+describe('status and prune read PRs as the declared account (gatherFacts) — real CLI, fake gh that only the declared account can read', () => {
+  function world(fleetConfig) {
+    const fx = makeFleetRepo({ fleetConfig });
+    if (fleetConfig) { git(['add', '.fleet.json'], fx.repo); git(['commit', '-q', '-m', 'fleet config'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo); }
+    const gh = installFakeGh(fx.root);
+    gh.setState({ list: [], view: {}, merged: [], accounts: { 'storyline-acct': 'TOKEN-DECLARED' }, requireToken: 'TOKEN-DECLARED' });
+    const A = tmpRoot('gh-acct-'); fs.mkdirSync(path.join(A, 'projects'), { recursive: true });
+    const log = path.join(tmpRoot('gh-log-'), 'tokens.log');
+    const env = scrubbedEnv({ FLEET_TELEMETRY: 'off', CLAUDE_CONFIG_DIR: A, CLAUDE_AUDIT_LOOP_DIR: '', GH_TOKEN: 'AMBIENT-TOKEN', FAKE_GH_TOKEN_LOG: log, ...gh.env }, { prependPath: [gh.bin] });
+    return { fx, env, log };
+  }
+  const prCalls = (w) => (fs.existsSync(w.log) ? fs.readFileSync(w.log, 'utf8') : '').split('\n').filter((l) => l.startsWith('pr '));
+
+  it('control (red before this change): a repo with NO ghAccount that the ambient account cannot read is UNMEASURED, and prune says so', () => {
+    const w = world(null);
+    const s = runFleet(['status', '--json'], { cwd: w.fx.repo, env: w.env });
+    assert.equal(s.json.status.sources.prs.queried, false);
+    assert.match(String(s.json.status.sources.prs.reason), /Could not resolve|not read|repository/i);
+    const p = runFleet(['prune', '--json'], { cwd: w.fx.repo, env: w.env });
+    assert.equal(p.json.prune.complete, false);
+  });
+  it('declared: status reads the PR list as the declared account (queried:true), and no pr call ever carries the ambient token', () => {
+    const w = world({ ghAccount: 'storyline-acct' });
+    const s = runFleet(['status', '--json'], { cwd: w.fx.repo, env: w.env });
+    assert.equal(s.json.status.sources.prs.queried, true, JSON.stringify(s.json.status.sources.prs));
+    assert.ok(prCalls(w).length > 0);
+    assert.ok(prCalls(w).every((l) => l.endsWith('TOKEN-DECLARED')), prCalls(w).join('\n'));
+    const p = runFleet(['prune', '--json'], { cwd: w.fx.repo, env: w.env });
+    assert.equal(p.json.prune.complete, true, 'prune can now judge the repo');
+  });
+  it('declared but unavailable: the reason names the account and the ambient token is never used', () => {
+    const w = world({ ghAccount: 'ghost-acct' });
+    const s = runFleet(['status', '--json'], { cwd: w.fx.repo, env: w.env });
+    assert.equal(s.json.status.sources.prs.queried, false);
+    assert.match(String(s.json.status.sources.prs.reason), /gh account ghost-acct is not available/);
+    assert.ok(prCalls(w).every((l) => !l.includes('AMBIENT-TOKEN')));
+  });
+});

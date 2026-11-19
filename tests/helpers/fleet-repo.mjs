@@ -210,6 +210,8 @@ if (/^gh(\\.exe)?$/i.test(path.basename(process.execPath))) {
     out(t + '\\n');
   }
   if (process.env.GH_TOKEN === 'fleet-declared-gh-account-unavailable') fail('HTTP 401: Bad credentials');
+  // state.requireToken: a repo only that account can read — any other credential cannot resolve it (the storyline shape).
+  if (state.requireToken && process.env.GH_TOKEN !== state.requireToken) fail('GraphQL: Could not resolve to a Repository with the name fixture/repo. (repository)');
   const ji = args.indexOf('--json');
   const req = ji < 0 ? [] : String(args[ji + 1]).split(',');
   for (const f of req) if (!fields.includes(f)) fail('Unknown JSON field: "' + f + '"');
