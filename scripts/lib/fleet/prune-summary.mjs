@@ -130,7 +130,7 @@ export function pruneAlertCrossed(rec, alert) {
   const total = applyRemovable + rec.detached.stale;
   const lowerBound = !rec.complete || notJudgedOf(rec) > 0;
   const why = [];
-  if (alert.removable && total >= alert.removable) why.push(`${lowerBound ? '≥' : ''}${total} removable (limit ${alert.removable}): ${applyRemovable} for prune --apply, ${rec.detached.stale} stale registration${rec.detached.stale === 1 ? '' : 's'}`);
+  if (alert.removable && total >= alert.removable) why.push(`${lowerBound ? '≥' : ''}${total} removable (limit ${alert.removable}): ${applyRemovable} branch/worktree removal${applyRemovable === 1 ? '' : 's'}, ${rec.detached.stale} stale registration${rec.detached.stale === 1 ? '' : 's'}`);
   if (alert.worktrees && rec.worktrees !== null && rec.worktrees >= alert.worktrees) why.push(`${rec.worktrees} registered worktrees (limit ${alert.worktrees})`);
   return { crossed: why.length > 0, lowerBound, why, applyRemovable, stale: rec.detached.stale };
 }

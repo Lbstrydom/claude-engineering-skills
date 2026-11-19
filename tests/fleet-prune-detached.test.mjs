@@ -147,6 +147,25 @@ describe('stale registrations (directory gone): listed only', () => {
   });
 });
 
+describe('stale registration, reflog expired: the listed HEAD is the whole evidence', () => {
+  test('directory gone + empty reflog + unpushed HEAD → kept; same with a pushed HEAD → listed (control)', () => {
+    const w = world();
+    const unpushed = w.add('wt-gone-empty-unpushed');
+    commitFile(unpushed, 'u.txt', 'u\n', 'unpushed');
+    const admin1 = w.adminOf(unpushed);
+    const pushed = w.add('wt-gone-empty-pushed');
+    const admin2 = w.adminOf(pushed);
+    fs.writeFileSync(path.join(admin1, 'logs', 'HEAD'), '');
+    fs.writeFileSync(path.join(admin2, 'logs', 'HEAD'), '');
+    fs.rmSync(unpushed, { recursive: true, force: true });
+    fs.rmSync(pushed, { recursive: true, force: true });
+    const d = w.plan();
+    assert.equal(w.stale(d, unpushed), undefined);
+    assert.match(w.kept(d, unpushed), /reachable only through this registration/);
+    assert.ok(w.stale(d, pushed), 'control');
+  });
+});
+
 describe('apply re-checks everything at apply time', () => {
   const past = 30 * DAY;
   const planAndApply = (w, mutate, opts = {}) => {

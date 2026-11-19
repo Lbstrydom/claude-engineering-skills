@@ -221,3 +221,15 @@ describe('executable element must be non-blank; ..fleet is inside', () => {
     assert.equal(validateWorktreeRoot(path.join(os.tmpdir(), '..fleet-sibling'), where), null);
   });
 });
+
+describe('parseFleetConfig — pruneAlert', () => {
+  it('absent: the defaults (25 removable / 30 registered); partial: the other number keeps its default; false: off (null)', () => {
+    assert.deepEqual(ok({}).pruneAlert, { removable: 25, worktrees: 30 });
+    assert.deepEqual(ok({ pruneAlert: { removable: 10 } }).pruneAlert, { removable: 10, worktrees: 30 });
+    assert.deepEqual(ok({ pruneAlert: { worktrees: 5, removable: 7 } }).pruneAlert, { removable: 7, worktrees: 5 });
+    assert.equal(ok({ pruneAlert: false }).pruneAlert, null);
+  });
+  it('a misspelt key, zero, a fraction, true or a string is an error naming the key — never inert', () => {
+    for (const v of [{ removeable: 10 }, { removable: 0 }, { worktrees: 1.5 }, true, 'off', { removable: '10' }]) assert.match(bad({ pruneAlert: v }), /pruneAlert/, JSON.stringify(v));
+  });
+});
