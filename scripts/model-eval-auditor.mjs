@@ -33,6 +33,7 @@ import { extractStructured } from './lib/model-eval/structured-extractor.mjs';
 import { scoreDefectLocalization } from './lib/model-eval/deterministic-scorer.mjs';
 import { computeVerdict } from './lib/model-eval/verdict.mjs';
 import { loadCorpusCase, CorpusCaseUnavailable, CORPUS_LOADER_VERSION } from './lib/model-eval/known-defect-corpus.mjs';
+import { selectPool, selectionStamp, validateCorpus, SUITES, SUBSETS } from './lib/model-eval/corpus-selection.mjs';
 import { EgressGateError } from './lib/model-eval/egress-path-scan.mjs';
 import { runAuditGenerationArm } from './lib/model-eval/arm-generation.mjs';
 import { runBlindJudgeProtocol } from './lib/model-eval/blind-judge.mjs';
@@ -266,13 +267,13 @@ function costFromEvents(usageEvents) {
 
 // ── Screening tier (oracle mode, Tier C) ────────────────────────────────
 
-async function runScreenTier({ runId, candidateRoute, cases, corpusVersion, selectedKdIds, thresholds, dials, meter }) {
+async function runScreenTier({ runId, candidateRoute, cases, corpusVersion, selectedKdIds, thresholds, dials, meter, stamp = {} }) {
   const { metrics, honoredDials, perCase, usageEvents, budgetStop } = await scoreArmTierC({ route: candidateRoute, cases, dials, runId, armLabel: 'CAND', meter });
   const routeEvidence = routeCatalogInternals.toRouteEvidence(candidateRoute);
   if (budgetStop) {
     return budgetStoppedResult({
       budgetStop, usageEvents, honoredDials, meter, perCaseOutputs: { candidate: perCase },
-      evidence: { mode: 'oracle', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, routeEvidence },
+      evidence: { mode: 'oracle', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, ...stamp, routeEvidence },
     });
   }
   const { verdict, nextAction, reasons } = computeVerdict({
@@ -282,7 +283,7 @@ async function runScreenTier({ runId, candidateRoute, cases, corpusVersion, sele
   });
   return {
     verdict, nextAction, metrics, honoredDials,
-    evidence: { mode: 'oracle', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, routeEvidence, reasons },
+    evidence: { mode: 'oracle', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, ...stamp, routeEvidence, reasons },
     cost: costFromEvents(usageEvents),
     perCaseOutputs: { candidate: perCase },
   };
@@ -291,7 +292,7 @@ async function runScreenTier({ runId, candidateRoute, cases, corpusVersion, sele
 // ── Promotion tier (comparative mode) ───────────────────────────────────
 
 async function runPromotionTier({
-  runId, repoId, candidateRoute, baselineRoute, judgeRoute, cases, corpusVersion, selectedKdIds, thresholds, repoRoots,
+  runId, repoId, candidateRoute, baselineRoute, judgeRoute, cases, corpusVersion, selectedKdIds, thresholds, repoRoots, stamp = {},
   scope, passes, dials, meter,
 }) {
   const { computedJudgeTier } = resolveEvaluationTier({ mode: 'comparative', candidateRoute, baselineRoute, judgeRoute });
@@ -433,7 +434,7 @@ async function runPromotionTier({
     return {
       ...budgetStoppedResult({
         budgetStop, usageEvents, perCaseOutputs, honoredDials, meter,
-        evidence: { mode: 'comparative', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, computedJudgeTier },
+        evidence: { mode: 'comparative', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, ...stamp, ...stamp, computedJudgeTier },
       }),
       computedJudgeTier,
     };
@@ -658,7 +659,15 @@ async function main() {
     const corpusVersion = String(corpus.version);
     const minSampleSize = tier === 'screen' ? thresholds.screen.minSampleSize : thresholds.promotion.minSampleSize;
     const seed = seedFromString(`${corpusVersion}:auditor:${tier}`);
-    const selectedKds = stratifiedSelectKDs(corpus.defects, { seed, n: minSampleSize });
+    const validation = validateCorpus(corpus, { requireCuration: path.resolve(corpusPath) === path.resolve(DEFAULT_CORPUS_PATH) });
+    if (!validation.ok) throw new RunPreflightError('invalid_corpus', `known-defects.json is invalid: ${validation.errors.join('; ')}`);
+    // The pool never holds an `invalidated` entry, and is narrowed to the requested suite and subset BEFORE the seeded draw.
+    const suite = argOption('suite', 'detect');
+    const subset = argOption('subset', 'full');
+    if (!SUITES.includes(suite) || !SUBSETS.includes(subset)) throw new RunPreflightError('invalid_corpus_selection', `--suite must be one of ${SUITES.join('|')} and --subset one of ${SUBSETS.join('|')}`);
+    if (suite === 'expect_clean') throw new RunPreflightError('invalid_corpus_selection', '--suite expect_clean is scored by the report-only path, not the screen/promotion tiers');
+    const selectedKds = stratifiedSelectKDs(selectPool(corpus, { suite, subset }), { seed, n: minSampleSize });
+    const stamp = selectionStamp(corpus, { suite, subset, seed, requestedN: minSampleSize, selected: selectedKds });
     if (selectedKds.length < minSampleSize) {
       throw new RunPreflightError('corpus_too_small', `known-defects.json has only ${selectedKds.length} usable entries; ${tier} tier needs minSampleSize=${minSampleSize}`);
     }
@@ -710,12 +719,12 @@ async function main() {
     let result;
     let branch;
     if (tier === 'screen') {
-      result = await runScreenTier({ runId, candidateRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, dials, meter });
+      result = await runScreenTier({ runId, candidateRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, dials, meter, stamp });
       branch = 'tier-c';
     } else {
       const baselineRoute = resolveCandidateRoute({ role: 'auditor', candidateSpec: { kind: 'sentinel', value: BASELINE_ARM.generation.modelSentinel } });
       const judgeRoute = judgeRaw ? resolveCandidateRoute({ role: 'auditor', candidateSpec: parseJsonArg(judgeRaw, '--judge') }) : null;
-      result = await runPromotionTier({ runId, repoId: repoIdentity.repoUuid, candidateRoute, baselineRoute, judgeRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, repoRoots, scope, passes, dials, meter });
+      result = await runPromotionTier({ runId, repoId: repoIdentity.repoUuid, candidateRoute, baselineRoute, judgeRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, repoRoots, scope, passes, dials, meter, stamp });
       branch = result.computedJudgeTier === 'A' || result.computedJudgeTier === 'B' ? 'tier-a-b' : 'tier-c';
     }
 

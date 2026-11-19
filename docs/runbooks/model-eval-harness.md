@@ -141,6 +141,20 @@ and rewritable. So when a run surfaces genuine bugs that were not curated:
 - Keep one small **frozen anchor subset** untouched by active evaluation, purely
   as rot-detection.
 
+#### Growing and selecting the corpus (v4)
+
+- **Mine, never label.** `node scripts/defect-harvest.mjs --roots <repo> [--rev <ref>] [--since N] --apply` writes candidates to
+  `.audit/defect-candidates/<repo>-<rev12>.json` (gitignored). Every examined commit ends in one outcome (`candidate`,
+  `candidate-unattributed` or `dropped:<reason>`), the run exits 3 if the outcomes do not reconcile with `git rev-list`, and the
+  header records every input (rev, options, a digest of the curated set read from `git show <corpus-rev>:…`). The miner never
+  writes `known-defects.json`; a human curates a candidate in by hand and adds `curation: {method: "human-review", reviewedIn, miner}`.
+- **Suites.** `suite` is per entry: `detect` (default), `missed` (a commit our own audit cleared, `auditCleared`, later fixed) and
+  `expect_clean` (`commit`, `files`, `rationale`; no pair, no rubric). `--suite` selects one; `invalidated` entries are never drawn.
+- **Subsets.** `--subset tiny|small|full`. `tiny` is the frozen anchor subset above: hand-listed, never re-drawn.
+- **Stamp.** A run's evidence carries `suite`, `subset`, `corpusVersion`, `corpusDigest`, `corpusLoaderVersion` and
+  `selection {seed, requestedN, selectedIds}`; two runs compare only when those match (`stampMismatch`).
+- Legacy entries (the 18 present at v3) are exempt from `curation` only while their id, repo and both commits are unchanged.
+
 ### Brainstorm/plan roles
 
 Not in this harness — they use the blinded-judge arm-eval framework
