@@ -186,10 +186,10 @@ describe('readCheckRuns: ONE page, complete by construction', () => {
     const d = body('ces-check-runs-395.json'); d.check_runs[0].app = null;
     assert.equal(readCheckRuns(deps(answer(d)), '.', { repo: REPO, head: HEAD }).value[0].appId, null);
   });
-  it('asks for one page of 100 on the immutable head sha', () => {
+  it('states filter=latest explicitly (a default change cannot move the observation) and reads the immutable head sha', () => {
     let seen = null;
     readCheckRuns({ gh: (a) => { seen = a; return answer(body('ces-check-runs-395.json')); } }, '.', { repo: REPO, head: HEAD });
-    assert.deepEqual(seen, ['api', `repos/${REPO}/commits/${HEAD}/check-runs?per_page=${PAGE_SIZE}`]);
+    assert.deepEqual(seen, ['api', `repos/${REPO}/commits/${HEAD}/check-runs?filter=latest&per_page=${PAGE_SIZE}`]);
   });
 });
 

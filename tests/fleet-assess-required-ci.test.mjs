@@ -87,6 +87,13 @@ describe('the inventory: GitHub defines it, and an unreadable or ambiguous answe
     const rules = fixture('ces-rules-main.json'); delete rules[0].parameters.required_status_checks[0].integration_id;
     assert.deepEqual(kinds(assess(cesScenario({ rules })).evidence), ['unknown', 'unsupported-unpinned-requirement']);
   });
+  it('a rule type the oracle does not read (workflows, required_deployments, code_scanning, merge_queue, a future type) is unsupported-rule-type, NEVER none-required', () => {
+    for (const type of ['workflows', 'required_deployments', 'code_scanning', 'merge_queue', 'a_type_github_adds_tomorrow']) {
+      assert.deepEqual(kinds(assess(emptyScenario({ rules: [{ type, parameters: {} }] })).evidence), ['unknown', 'unsupported-rule-type'], type);
+      assert.deepEqual(kinds(assess(cesScenario({ rules: [...fixture('ces-rules-main.json'), { type }] })).evidence), ['unknown', 'unsupported-rule-type'], `${type} beside a status-check rule`);
+    }
+    assert.equal(assess(cesScenario({ rules: wcaRules() , checkRuns: runs(run(1, 'Required gate'), run(2, 'AI-Models trailer')) })).evidence.tag, 'passed', 'every measured rule type is read');
+  });
   it('a full page of rules is too-many-results', () => {
     const rules = Array.from({ length: 100 }, () => ({ type: 'deletion' }));
     assert.deepEqual(kinds(assess(cesScenario({ rules })).evidence), ['unknown', 'too-many-results']);
@@ -167,6 +174,12 @@ describe('the observation: failed, not-run, missing, pending, and every doubt un
     assert.deepEqual(kinds(one(run(1, 'full-suite'), run(1, 'full-suite'))), ['unknown', 'malformed']);
     const other = run(1, 'full-suite'); other.head_sha = OTHER_HEAD;
     assert.deepEqual(kinds(one(other)), ['unknown', 'malformed']);
+  });
+  it('a status context differing only in case is still a collision', () => {
+    assert.deepEqual(kinds(assess(cesScenario({ statuses: [{ id: 1, context: 'Full-Suite', state: 'success' }] })).evidence), ['unknown', 'status-context-present']);
+  });
+  it('inherited property names are not conclusions: constructor, __proto__ and toString are unknown-conclusion', () => {
+    for (const c of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) assert.deepEqual(kinds(one(run(1, 'full-suite', 'completed', c))), ['unknown', 'unknown-conclusion'], c);
   });
   it('a commit status sharing a required context is unknown(status-context-present); a status with another context is ignored; a statuses failure is transport', () => {
     const st = (context) => [{ id: 1, context, state: 'success' }];

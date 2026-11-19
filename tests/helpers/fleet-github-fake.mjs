@@ -18,7 +18,7 @@ export const HEAD = '90c60bf286f891ad6fe2168321a30fbe843921a6';
 export const OTHER_HEAD = 'b'.repeat(40);
 
 /** An answer that is a failed `gh` run. */
-export const failed = (status = 1, stderr = 'gh: Not Found (HTTP 404)') => ({ __fail: { status, stderr } });
+export const failed = (status = 1, stderr = 'gh: Not Found (HTTP 404)', stdout = '') => ({ __fail: { status, stderr, stdout } });
 
 /** The CES-shaped GitHub at #395's head: a ruleset-only `main` requiring `full-suite` from app 15368, which passed. */
 export function cesScenario(over = {}) {
@@ -38,23 +38,27 @@ export function emptyScenario(over = {}) {
 }
 
 const asRes = (answer) => (answer && answer.__fail
-  ? { ok: false, status: answer.__fail.status, stdout: '', stderr: answer.__fail.stderr, reason: 'gh failed' }
+  ? { ok: false, status: answer.__fail.status, stdout: answer.__fail.stdout ?? '', stderr: answer.__fail.stderr, reason: 'gh failed' }
   : { ok: true, status: 0, stdout: JSON.stringify(answer), stderr: '' });
 
 /** @returns {{gh: Function, calls: string[][], merges: string[][], deps: {gh: Function, cwd: string}}} */
-export function githubFake(scenario, { onMerge } = {}) {
+export function githubFake(scenario, { onMerge, repo = REPO, base = 'main', head = HEAD, prNumber = 395 } = {}) {
   const calls = []; const merges = []; let prReads = 0;
   const pick = (a) => (Array.isArray(a) ? a[Math.min(prReads - 1, a.length - 1)] : typeof a === 'function' ? a(prReads) : a);
   const gh = (args) => {
     calls.push(args);
     if (args[0] === 'pr' && args[1] === 'merge') { merges.push(args); return onMerge ? onMerge(args) : asRes({}); }
-    if (args[0] === 'pr' && args[1] === 'view') { prReads += 1; return asRes(pick(scenario.pr)); }
+    if (args[0] === 'pr' && args[1] === 'view') {
+      if (args[2] !== String(prNumber) || args[args.indexOf('-R') + 1] !== repo) return { ok: false, status: 1, stdout: '', stderr: `unexpected PR read ${args.join(' ')}`, reason: 'unexpected' };
+      prReads += 1; return asRes(pick(scenario.pr));
+    }
     if (args[0] === 'api') {
       const p = args[1];
-      if (/\/rules\/branches\//.test(p)) return asRes(scenario.rules);
-      if (/\/branches\//.test(p)) return asRes(scenario.branch);
-      if (/\/check-runs\?/.test(p)) return asRes(scenario.checkRuns);
-      if (/\/statuses\?/.test(p)) return asRes(scenario.statuses);
+      const at = `repos/${repo}/`;
+      if (p === `${at}rules/branches/${base}?per_page=100`) return asRes(scenario.rules);
+      if (p === `${at}branches/${base}`) return asRes(scenario.branch);
+      if (p === `${at}commits/${head}/check-runs?filter=latest&per_page=100`) return asRes(scenario.checkRuns);
+      if (p === `${at}commits/${head}/statuses?per_page=100`) return asRes(scenario.statuses);
     }
     return { ok: false, status: 1, stdout: '', stderr: `unexpected gh ${args.join(' ')}`, reason: 'unexpected' };
   };

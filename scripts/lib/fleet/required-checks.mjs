@@ -229,7 +229,7 @@ export const CI_EVIDENCE_TAGS = Object.freeze(['passed', 'none-required', 'faile
 /** The closed fault kinds an `unknown` may carry (§2.4). `unimplemented-oracle` exists only while the oracle is a stub (PR 1). */
 export const CI_FAULT_KINDS = Object.freeze([
   'transport', 'malformed', 'too-many-results', 'unsupported-classic-protection', 'unsupported-unpinned-requirement',
-  'status-context-present', 'config-error', 'config-drift', 'duplicate-conflict', 'unknown-conclusion', 'unexpected-tag', 'unimplemented-oracle',
+  'status-context-present', 'unsupported-rule-type', 'config-error', 'config-drift', 'duplicate-conflict', 'unknown-conclusion', 'unexpected-tag', 'unimplemented-oracle',
 ]);
 
 /** The closed `ineligible` codes. `head-moved` is the only one a caller may retry. */
@@ -286,7 +286,7 @@ export function describeEvidence(evidence, decision = decideCiAdmission(evidence
 // ---- the oracle: assessRequiredCi (docs/plans/ci-evidence-oracle.md section 2.1) -------------------------------------------------
 
 /** A check run's `conclusion`, as the class it counts as. A conclusion not listed is `unknown-conclusion`, never a guess. */
-const CONCLUSION_CLASS = Object.freeze({
+const CONCLUSION_CLASS = Object.freeze({ __proto__: null,
   success: 'passed', failure: 'failed', cancelled: 'failed', timed_out: 'failed', startup_failure: 'failed',
   skipped: 'not-run', neutral: 'not-run', stale: 'not-run', action_required: 'not-run',
 });
@@ -341,6 +341,18 @@ function assessPair(pair, runs) {
 }
 
 /**
+ * Branch rule types that impose NO check or workflow requirement, so an inventory built only from `required_status_checks` is complete for
+ * them (every type measured so far is here: deletion, non_fast_forward, pull_request, required_status_checks). A rule type NOT listed (a
+ * required `workflows` rule, `required_deployments`, `code_scanning`, a merge queue, or a type GitHub adds tomorrow) might require CI
+ * evidence the oracle does not read, so it is `unsupported-rule-type`, never "none required".
+ */
+const NON_CI_RULE_TYPES = Object.freeze(new Set([
+  'creation', 'update', 'deletion', 'required_linear_history', 'required_signatures', 'pull_request', 'non_fast_forward', 'commit_message_pattern',
+  'commit_author_email_pattern', 'committer_email_pattern', 'branch_name_pattern', 'tag_name_pattern', 'file_path_restriction', 'max_file_path_length',
+  'file_extension_restriction', 'max_file_size', 'required_status_checks',
+]));
+
+/**
  * THE oracle: the CI evidence for PR `prNumber` at `expectedHead`, as ONE value from the closed tag set. It reads (in this order, each
  * step needing the last): the PR, the branch (proving it exists and that classic protection is off), the rules, the config assertion, the
  * check runs and statuses of the immutable head, and the PR again. It never returns an action and never throws; every doubt is `unknown`.
@@ -363,6 +375,8 @@ export function assessRequiredCi({ repo, prNumber, expectedBase, expectedHead, c
 
     const rules = readBranchRules(deps, cwd, { repo, base: expectedBase });
     if (!rules.ok) return fromFault(rules);
+    const unsupported = [...new Set(rules.value.types.filter((t) => !NON_CI_RULE_TYPES.has(t)))].map((t) => show(t, 60));
+    if (unsupported.length) return unknownOf('unsupported-rule-type', `the branch has rule type(s) the oracle does not read: ${unsupported.join(', ')} (they may require CI evidence it cannot see)`);
     const unpinned = rules.value.pairs.filter((p) => p.integrationId === null).map((p) => show(p.context, 60));
     if (unpinned.length) return unknownOf('unsupported-unpinned-requirement', `required without a pinned integration: ${unpinned.join(', ')} (a check cannot be matched to an app, so identity cannot be established)`);
     const seen = new Set();
@@ -380,7 +394,8 @@ export function assessRequiredCi({ repo, prNumber, expectedBase, expectedHead, c
       if (!runs.ok) return fromFault(runs);
       const statuses = readCommitStatuses(deps, cwd, { repo, head: expectedHead });
       if (!statuses.ok) return fromFault(statuses);
-      const clash = statuses.value.filter((s) => contexts.includes(s.context)).map((s) => show(s.context, 60));
+      const lowered = new Set(contexts.map((c) => c.toLowerCase())); // status contexts are compared case-insensitively: a near-miss is a collision, not a pass
+      const clash = statuses.value.filter((s) => lowered.has(s.context.toLowerCase())).map((s) => show(s.context, 60));
       if (clash.length) return unknownOf('status-context-present', `a commit status shares the required context ${[...new Set(clash)].join(', ')}: a status carries no app id, so identity cannot be established`);
 
       const names = { failed: [], 'not-run': [], missing: [], pending: [] }; const wrongApp = {}; const passed = [];

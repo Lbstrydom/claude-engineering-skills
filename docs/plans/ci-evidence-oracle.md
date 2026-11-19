@@ -446,8 +446,8 @@ docs/plans/ship-batch-member-outcomes.md (modify).
 **Phase 2 — the GitHub-facts adapter and fixtures**: the five readers, schemas, pagination and transport faults over the
 recorded fixtures. Files: scripts/lib/fleet/github-ci-facts.mjs (create), tests/fixtures/fleet/github-ci/ces-branch-main.json
 (create), tests/fixtures/fleet/github-ci/ces-rules-main.json (create), tests/fixtures/fleet/github-ci/wca-rules-main.json
-(create), tests/fixtures/fleet/github-ci/aio-branch-main.json (create), tests/fixtures/fleet/github-ci/wca-rules-page1.json
-(create), tests/fixtures/fleet/github-ci/wca-check-runs-paged.json (create), tests/fixtures/fleet/github-ci/ces-check-runs-395.json
+(create), tests/fixtures/fleet/github-ci/aio-branch-main.json (create), tests/fixtures/fleet/github-ci/aio-rules-main.json
+(create), tests/fixtures/fleet/github-ci/wca-branch-main.json (create), tests/fixtures/fleet/github-ci/ces-pr-395-view.json (create), tests/fixtures/fleet/github-ci/ces-check-runs-395.json
 (create), tests/fixtures/fleet/github-ci/wca-check-runs-duplicate.json (create), tests/fixtures/fleet/github-ci/ces-statuses-395.json
 (create), tests/fleet-github-ci-facts.test.mjs (create).
 

@@ -141,14 +141,16 @@ const CheckRunsSchema = z.object({
 });
 
 /**
- * `GET repos/{r}/commits/{sha}/check-runs?per_page=100`, ONE page, complete by construction: `length === total_count`, ids unique, every run on
+ * `GET repos/{r}/commits/{sha}/check-runs?filter=latest&per_page=100`, ONE page, complete by construction (`filter=latest` is GitHub's default, stated
+ * so a change of default cannot move it: a rerun inside a suite replaces its earlier attempt, while the same name in DIFFERENT suites is returned
+ * twice, which the oracle's duplicate rule fails closed on; measured 2026-11-19, fixture `wca-check-runs-duplicate.json`): `length === total_count`, ids unique, every run on
  * `head`. Raw status/conclusion strings are returned: their meaning is the evidence function's (closed domains), not this reader's.
  * @returns {{ok: true, value: Array<{id: number, name: string, status: string, conclusion: string|null, appId: number|null}>} | {ok: false, fault: object}}
  */
 export function readCheckRuns(deps, cwd, { repo, head }) {
   if (!REPO_RE.test(String(repo ?? ''))) return badArgs('the check-runs read');
   if (!OID_RE.test(String(head ?? ''))) return fault('malformed', 'the check-runs read: the head is not a full oid');
-  const r = ghJson(deps, cwd, ['api', `repos/${repo}/commits/${head}/check-runs?per_page=${PAGE_SIZE}`]);
+  const r = ghJson(deps, cwd, ['api', `repos/${repo}/commits/${head}/check-runs?filter=latest&per_page=${PAGE_SIZE}`]);
   if (!r.ok) return r;
   const v = validated(CheckRunsSchema, r.value, 'the check runs');
   if (!v.ok) return v;
