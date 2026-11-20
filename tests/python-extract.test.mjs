@@ -276,6 +276,9 @@ describe('runPythonHelper — protocol and failure accounting (fake helper)', ()
       assert.deepEqual(outcomes(results),
         [OUTCOME.PARSED, OUTCOME.PARSED, OUTCOME.HELPER_DIED, OUTCOME.HELPER_DIED, OUTCOME.HELPER_DIED]);
       assert.equal(results.size, 5, 'every candidate has exactly one terminal outcome');
+      // Only requests that passed load() are marked read (the module index's admission).
+      assert.deepEqual([1, 2, 3, 4, 5].map((id) => results.get(id).read === true), [true, true, true, false, false],
+        'file 3 was loaded and sent (then the helper died); 4 and 5 were never loaded');
     } finally { delete process.env.FAKE_HELPER_MARK; }
   });
 

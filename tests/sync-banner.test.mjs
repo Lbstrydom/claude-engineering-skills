@@ -99,6 +99,9 @@ describe('sync-banner — injectUpstreamBanner', () => {
     assert.equal(a[1], PY_FIRST);
     const b = injectUpstreamBanner('#!/usr/bin/env python3\n# coding: utf-8\nx = 1\n', dst).split('\n');
     assert.deepEqual(b.slice(0, 3), ['#!/usr/bin/env python3', '# coding: utf-8', PY_FIRST]);
+    // Line 2 counts only after a comment/blank line 1 — after code (or the start of a string) it is not a cookie.
+    const d = injectUpstreamBanner('s = """\n# coding: latin-1\n"""\n', dst).split('\n');
+    assert.equal(d[0], PY_FIRST);
     // NEGATIVE CONTROL: a cookie-looking line on line 3 is not a cookie and does not move.
     const c = injectUpstreamBanner('x = 1\ny = 2\n# coding: latin-1\n', dst).split('\n');
     assert.equal(c[0], PY_FIRST);

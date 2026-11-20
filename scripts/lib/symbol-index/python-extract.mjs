@@ -291,7 +291,7 @@ function makeLineReader(onLine, maxBytes) {
  * @param {{command: string, args: string[], onBeat?: () => void, fileTimeoutMs?: number,
  *          helloTimeoutMs?: number, heartbeatMs?: number, maxRestarts?: number,
  *          spawnFn?: typeof spawn, maxLineBytes?: number}} opts
- * @returns {Promise<{results: Map<number, {outcome: string, response?: object, detail?: string}>,
+ * @returns {Promise<{results: Map<number, {outcome: string, response?: object, detail?: string, read?: boolean}>,
  *                    protocolErrors: number, restarts: number}>}
  */
 export async function runPythonHelper(requests, {
@@ -323,11 +323,11 @@ export async function runPythonHelper(requests, {
         proc.setInFlight(null);
         onBeat();
         if (res.ok) {
-          results.set(req.id, classifyResponse(res.message));
+          results.set(req.id, { ...classifyResponse(res.message), read: true });
           next++;
           continue;
         }
-        results.set(req.id, { outcome: res.reason === 'timeout' ? OUTCOME.TIMEOUT : OUTCOME.HELPER_DIED, detail: res.reason });
+        results.set(req.id, { outcome: res.reason === 'timeout' ? OUTCOME.TIMEOUT : OUTCOME.HELPER_DIED, detail: res.reason, read: true });
         next++;
         failed = true;
         break;
@@ -600,8 +600,9 @@ export async function runPythonStage(ctx) {
   // gate, parsed or not (an import of a file that failed to parse is still a
   // local edge target, never "external") — but never one whose read was
   // refused: a re-admission failure means it may no longer be admissible.
-  const READ_REFUSED = new Set([OUTCOME.IDENTITY_CHANGED, OUTCOME.SIZE_CAP, OUTCOME.READ_ERROR]);
-  const indexFiles = requests.filter((r) => !READ_REFUSED.has(results.get(r.id).outcome)).map((r) => r.rel);
+  // `read` is set ONLY where load() succeeded (passed the open-then-verify gate);
+  // a request never loaded (restarts exhausted) or refused is not in the index.
+  const indexFiles = requests.filter((r) => results.get(r.id).read === true).map((r) => r.rel);
   const { edges, buckets, offered } = bucketPythonImports({
     importsByFile, indexFiles, repoRoot, disowned, readMeta: guardedMetaReader(repoRoot, maxBytes),
   });

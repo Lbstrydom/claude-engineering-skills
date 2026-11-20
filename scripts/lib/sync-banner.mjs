@@ -121,9 +121,11 @@ function pinnedHeadLength(content, destRel) {
   let n = 0;
   if (lines[0].startsWith('#!')) n = 1;
   if (destRel.endsWith('.py')) {
-    for (let i = 0; i < Math.min(2, lines.length); i++) {
-      if (PY_CODING_COOKIE.test(lines[i].replace(/\r$/, ''))) n = Math.max(n, i + 1);
-    }
+    const line = (i) => (lines[i] ?? '').replace(/\r$/, '');
+    // PEP 263: a cookie counts on line 1, or on line 2 only when line 1 is
+    // itself a comment or blank (otherwise line 2 is code or inside a string).
+    if (PY_CODING_COOKIE.test(line(0))) n = Math.max(n, 1);
+    else if (/^[ \t\f]*(#.*)?$/.test(line(0)) && PY_CODING_COOKIE.test(line(1))) n = Math.max(n, 2);
   }
   if (n === 0) return 0;
   // Degenerate shebang-only-no-newline file: the whole content is the head.
