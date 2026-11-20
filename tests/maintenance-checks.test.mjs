@@ -66,6 +66,7 @@ describe('maintenance-checks — CHECKS manifest', () => {
       // retires (see scripts/slice-recurrence-check.mjs's header), this line
       // goes with it and the test turns red until someone does.
       'slice-recurrence',
+      'telemetry-export',
       'workflow-cadence',
     ].sort());
   });
