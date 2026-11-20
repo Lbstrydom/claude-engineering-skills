@@ -38,6 +38,19 @@ const gitBytes = (dir, args, input) => execFileSync('git', [...GIT_CONFIG, '-C',
  * submodules are skipped (their content is a link target / another repository). Paths travel as bytes through stdin, so no
  * command-line length limit applies and non-UTF-8 names survive.
  */
+/**
+ * Why a path cannot be sent to `hash-object --stdin-paths` as a raw line, or null. The input is newline-delimited, and Git C-UNQUOTES a
+ * line that starts with a double quote (so a file named `"a"` would be hashed as `a`): both are refused as unverifiable rather than
+ * quoted, because a guard that guesses at an encoding is exactly what a hostile name defeats.
+ * @param {Buffer} name
+ * @returns {string|null}
+ */
+export function unverifiablePathReason(name) {
+  if (name.includes(10)) return 'contains a newline';
+  if (name[0] === 0x22) return 'starts with a double quote (git would C-unquote it)';
+  return null;
+}
+
 function assertTreeMatchesCommit(dir, sha) {
   let listing;
   try { listing = gitBytes(dir, ['ls-files', '-s', '-z']); } catch (err) { throw new Error(`withCaseTree: could not list ${sha}'s files to verify the checkout: ${err.message}`); }
@@ -51,7 +64,8 @@ function assertTreeMatchesCommit(dir, sha) {
     const [mode, oid] = listing.subarray(start, tab).toString('latin1').split(' ');
     const name = listing.subarray(tab + 1, end);
     if (mode === '100644' || mode === '100755') {
-      if (name.includes(10)) throw new Error(`withCaseTree: ${sha} has a path containing a newline; its checkout cannot be verified`);
+      const why = unverifiablePathReason(name);
+      if (why) throw new Error(`withCaseTree: ${sha} has a path that ${why}: ${JSON.stringify(name.toString('utf8'))}; its checkout cannot be verified`);
       files.push({ oid, name });
     }
     start = end + 1;

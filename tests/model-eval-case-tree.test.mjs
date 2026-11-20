@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { withCaseTree } from '../scripts/lib/model-eval/case-tree.mjs';
+import { withCaseTree, unverifiablePathReason } from '../scripts/lib/model-eval/case-tree.mjs';
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: ENV }).trim();
@@ -225,6 +225,16 @@ describe('withCaseTree', () => {
   test('line endings are not touched even when the machine converts them (core.autocrlf=true is set on the repository)', async () => {
     const { r, sha } = attrRepo({ config: [['core.autocrlf', 'true']], content: 'one\ntwo\n' });
     try { assert.equal(await withCaseTree({ repoRoot: r, sha }, async (d) => fs.readFileSync(path.join(d, 'a.js'), 'utf8')), 'one\ntwo\n'); } finally { rm(r); }
+  });
+
+  test('paths git would reinterpret on --stdin-paths are refused as unverifiable, not quoted (a quoted name could be hashed as a different file)', () => {
+    assert.match(unverifiablePathReason(Buffer.from('"a"')), /double quote/);
+    assert.match(unverifiablePathReason(Buffer.from('"')), /double quote/);
+    assert.match(unverifiablePathReason(Buffer.from([0x61, 0x0a, 0x62])), /newline/);
+    assert.equal(unverifiablePathReason(Buffer.from('a"b')), null, 'a quote that is not leading is literal');
+    assert.equal(unverifiablePathReason(Buffer.from('dir/"x')), null, 'only the first byte of the whole line matters');
+    assert.equal(unverifiablePathReason(Buffer.from(String.raw`src\win\file.js`)), null, 'backslashes are literal on a line that does not start with a quote');
+    assert.equal(unverifiablePathReason(Buffer.from([0xff, 0xfe, 0x2e, 0x6a, 0x73])), null, 'non-UTF-8 bytes are fine: paths travel as bytes');
   });
 
   test('a tree whose path list is far longer than any command line is still verified (paths travel on stdin)', async () => {
