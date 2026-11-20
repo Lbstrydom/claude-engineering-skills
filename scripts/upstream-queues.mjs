@@ -65,6 +65,7 @@ import {
   discoverStores, describeStore, readRepoEnvText, readSharedEnvText,
 } from './lib/upstream/store-discovery.mjs';
 import { storeFingerprint } from './lib/db/client.mjs';
+import { stdoutNamesUnreachableStore } from './lib/store/backlog-gather.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -113,11 +114,18 @@ export function queryStore(store, limit = 50) {
     const line = out.trim().split('\n').filter((l) => l.trim().startsWith('{')).pop();
     if (!line) return { ok: false, rows: [], reason: 'no-envelope-in-output' };
     const env = JSON.parse(line);
-    if (!env.ok) return { ok: false, rows: [], reason: env.error?.code || 'query-failed' };
+    if (!env.ok) {
+      return { ok: false, rows: [], reason: stdoutNamesUnreachableStore(line) ? 'store-unreachable' : (env.error?.code || 'query-failed') };
+    }
     // `cloud:false` is NOT an empty queue — it is an unasked question.
     if (env.cloud === false) return { ok: false, rows: [], reason: 'cloud-off' };
     return { ok: true, rows: Array.isArray(env.rows) ? env.rows : [], reason: null };
   } catch (err) {
+    // A failing child exits non-zero but still prints its envelope: read it before
+    // concluding "the CLI crashed" — a down store is a named state, not a spawn failure.
+    if (err?.stdout && stdoutNamesUnreachableStore(String(err.stdout))) {
+      return { ok: false, rows: [], reason: 'store-unreachable' };
+    }
     const reason = err?.signal === 'SIGTERM' ? 'timeout' : (err?.code || 'spawn-failed');
     return { ok: false, rows: [], reason: String(reason) };
   }

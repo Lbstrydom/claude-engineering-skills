@@ -44,6 +44,32 @@ export const READERS = Object.freeze({
 export const STORE_UNREACHABLE_CODES = Object.freeze(['CLOUD_UNREACHABLE', 'REPO_RESOLVE_FAILED', 'LIST_FAILED']);
 
 /**
+ * Does this `ok:false` envelope name the store as unreachable? ONE predicate, shared by the dashboard
+ * reader classifier below and by `upstream:queues` / `stores:drift`, so a store that one surface calls
+ * unreachable cannot be called a crash by another. A generic code (`LIST_FAILED` also covers a bad
+ * query) counts only with connection-class evidence in the envelope's own message.
+ *
+ * @param {object|null} env a parsed reader envelope
+ * @returns {boolean}
+ */
+export function envelopeNamesUnreachableStore(env) {
+  if (!env || env.ok !== false) return false;
+  const code = safeCode(env.error?.code);
+  const message = `${env.error?.message ?? ''} ${env.error?.error ?? ''}`;
+  return !!code && STORE_UNREACHABLE_CODES.includes(code)
+    && (!NEEDS_CONNECTION_EVIDENCE.has(code) || CONNECTION_EVIDENCE.test(message));
+}
+
+/**
+ * The same question asked of a child's raw stdout (the last JSON object on it).
+ * @param {string} stdout
+ * @returns {boolean}
+ */
+export function stdoutNamesUnreachableStore(stdout) {
+  return envelopeNamesUnreachableStore(lastEnvelope(stdout));
+}
+
+/**
  * Codes that are generic (`LIST_FAILED` also covers a bad query) and only mean
  * "unreachable" when the envelope ALSO carries connection-class evidence.
  */
@@ -139,9 +165,7 @@ export function classifyReaderResult({ exitCode, stdout, aborted = false, reader
       const sqlstate = sqlstateOf(env);
       if (sqlstate) return out('schema-fault', `schema fault (SQLSTATE ${safeCode(sqlstate)})`);
       const code = safeCode(env.error?.code);
-      const message = `${env.error?.message ?? ''} ${env.error?.error ?? ''}`;
-      if (code && STORE_UNREACHABLE_CODES.includes(code)
-          && (!NEEDS_CONNECTION_EVIDENCE.has(code) || CONNECTION_EVIDENCE.test(message))) {
+      if (envelopeNamesUnreachableStore(env)) {
         return out('store-unreachable', `store unreachable (${code})`);
       }
       const reason = safeCode(env.reason);

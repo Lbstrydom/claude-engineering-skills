@@ -54,6 +54,7 @@ import {
   discoverStores, describeStore, readRepoEnvText, readSharedEnvText,
 } from './lib/upstream/store-discovery.mjs';
 import { storeFingerprint } from './lib/db/client.mjs';
+import { stdoutNamesUnreachableStore } from './lib/store/backlog-gather.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -104,6 +105,7 @@ export function queryStoreDrift(store) {
     if (err?.stdout) {
       const parsed = parseDriftOutput(String(err.stdout));
       if (parsed.ok) return parsed;
+      if (stdoutNamesUnreachableStore(String(err.stdout))) return { ok: false, drift: null, reason: 'store-unreachable' };
     }
     const reason = err?.signal === 'SIGTERM' ? 'timeout' : (err?.code || 'spawn-failed');
     return { ok: false, drift: null, reason: String(reason) };
