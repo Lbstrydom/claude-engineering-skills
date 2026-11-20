@@ -743,15 +743,16 @@ describe('check-accepted-debt.mjs — CLI process boundary', () => {
 
   it('a relative --out lands relative to the CALLER cwd, not the repo root', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'accepted-debt-out-'));
-    const strayInRepo = path.join(REPO_ROOT, 'caller-cwd-out.json');
-    const preExisting = fs.existsSync(strayInRepo); // never delete a file this test did not create
+    // A name only this test owns: whatever else lives at the repo root can neither be overwritten nor deleted by it.
+    const name = `caller-cwd-out-${process.pid}-${Date.now()}.json`;
+    const strayInRepo = path.join(REPO_ROOT, name);
     try {
-      const r = spawnSync('node', [CLI, '--json', '--out', 'caller-cwd-out.json'], { cwd: tmp, encoding: 'utf-8' });
+      const r = spawnSync('node', [CLI, '--json', '--out', name], { cwd: tmp, encoding: 'utf-8' });
       assert.equal(r.status, 0, r.stderr);
-      assert.ok(fs.existsSync(path.join(tmp, 'caller-cwd-out.json')), 'file written under the caller cwd');
-      assert.ok(preExisting || !fs.existsSync(strayInRepo), 'nothing written under the repo root');
+      assert.ok(fs.existsSync(path.join(tmp, name)), 'file written under the caller cwd');
+      assert.ok(!fs.existsSync(strayInRepo), 'nothing written under the repo root');
     } finally {
-      if (!preExisting) fs.rmSync(strayInRepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(strayInRepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); // a name nothing else uses
       fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
