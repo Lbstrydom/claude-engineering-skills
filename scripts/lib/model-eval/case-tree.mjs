@@ -58,9 +58,9 @@ function assertTreeMatchesCommit(dir, sha) {
     start = end + 1;
     if (mode !== '100644' && mode !== '100755') continue;
     if (oid.length !== 40) throw new Error(`withCaseTree: ${sha} is not a SHA-1 repository; its checkout cannot be verified`);
-    let bytes = null;
-    try { bytes = fs.readFileSync(Buffer.concat([Buffer.from(`${dir}${path.sep}`), name])); } catch { /* a file the checkout did not produce is a mismatch */ }
-    if (bytes === null || gitBlobId(bytes) !== oid) bad.push(name.toString('utf8'));
+    let bytes;
+    try { bytes = fs.readFileSync(Buffer.concat([Buffer.from(`${dir}${path.sep}`), name])); } catch (err) { bad.push(`${name.toString('utf8')} (unreadable: ${err?.code ?? err?.message})`); continue; } // refused, but NAMED as unreadable, not as a transformation
+    if (gitBlobId(bytes) !== oid) bad.push(name.toString('utf8'));
   }
   if (bad.length > 0) throw new Error(`withCaseTree: refusing to audit ${sha}: its checkout differs from the commit's blobs (a filter, ident, encoding or eol attribute is transforming it), so the files read would not be what the diff describes: ${bad.slice(0, 5).join(', ')}${bad.length > 5 ? `, and ${bad.length - 5} more` : ''}`);
 }

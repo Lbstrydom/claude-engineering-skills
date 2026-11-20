@@ -240,11 +240,31 @@ describe('withCaseTree', () => {
     } finally { rm(dir); }
   });
 
-  test('names that git\'s --stdin-paths would reinterpret cannot fool the check, because no path is handed back to git (leading quote, trailing CR)', async () => {
-    // Windows cannot create these names, so the property is shown on names it CAN: a name that begins with a quote-like or ends with a
-    // space-like character still resolves to its own file. The in-process read has no quoting, trimming or splitting step to defeat.
-    const { r, sha } = attrRepo({ extra: [["'q.txt", 'q\n'], ['trail .txt', 't\n'], ['two words.txt', 'w\n']] });
+  // These names cannot exist on Windows, so the cases are skipped there; they are the ones `hash-object --stdin-paths` mangled (a leading
+  // double quote is C-unquoted, a trailing CR is stripped). The check reads files in-process, so each name resolves to its OWN file.
+  const NASTY = ['"q.txt', 'r.txt\r'];
+  test('POSIX: names with a leading double quote and a trailing CR are verified as themselves: an untouched checkout is audited', { skip: process.platform === 'win32' }, async () => {
+    const { r, sha } = attrRepo({ content: 'plain\n', extra: NASTY.map((n) => [n, 'plain\n']) });
     try { assert.equal(await withCaseTree({ repoRoot: r, sha }, async () => 'ran'), 'ran'); } finally { rm(r); }
+  });
+  test('POSIX: a checkout transformation that touches only the nasty-named files is REFUSED before the callback runs', { skip: process.platform === 'win32' }, async () => {
+    const { r, sha } = attrRepo({ gitattributes: '* filter=upper\n', config: smudge('upper'), content: 'plain\n', extra: NASTY.map((n) => [n, 'one\n']) });
+    let ran = false;
+    try {
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { ran = true; return 1; }), /differs from the commit's blobs.*q\.txt/);
+      assert.equal(ran, false);
+    } finally { rm(r); }
+  });
+
+  test('an unreadable file is refused and NAMED as unreadable, not as a transformation', async () => {
+    const { r, sha } = attrRepo();
+    try {
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => 1, { _git: (root, args) => {
+        const out = execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: ENV });
+        if (args[0] === 'worktree' && args[1] === 'add') fs.rmSync(path.join(args[args.length - 2], 'a.js'), { force: true }); // the checkout "did not produce" it
+        return out;
+      } }), /a\.js \(unreadable: ENOENT\)/);
+    } finally { rm(r); }
   });
 
   test('a tree whose path list is far longer than any command line is still verified (paths travel on stdin)', async () => {
