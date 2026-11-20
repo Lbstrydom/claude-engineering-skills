@@ -345,3 +345,30 @@ describe('arm-generation.mjs — a case is audited at ITS commit, not at the che
     } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
+
+describe('arm-generation.mjs — overlapping generations are serialised (cwd is process-global)', () => {
+  const sh2 = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).trim();
+  const route = { transport: 'openai-compatible', resolvedModel: 'gpt-5.4', deploymentId: null, pricingModel: 'gpt-5.4', provider: 'openai' };
+  test('two calls started together each read their OWN commit and leave cwd restored', async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arm-overlap-'));
+    try {
+      sh2(repo, 'init', '-q');
+      fs.writeFileSync(path.join(repo, 'a.js'), 'first\n'); sh2(repo, 'add', '.'); sh2(repo, 'commit', '-q', '-m', '1');
+      const s1 = sh2(repo, 'rev-parse', 'HEAD');
+      fs.writeFileSync(path.join(repo, 'a.js'), 'second\n'); sh2(repo, 'commit', '-q', '-am', '2');
+      const s2 = sh2(repo, 'rev-parse', 'HEAD');
+      const seen = {};
+      const audit = (key) => async () => {
+        seen[key] = [fs.readFileSync('a.js', 'utf8').trim()];
+        await new Promise((r) => setTimeout(r, 150)); // a window in which an unserialised second call would chdir away
+        seen[key].push(fs.readFileSync('a.js', 'utf8').trim());
+        return { findings: [], _usage: {} };
+      };
+      const call = (key, sha) => runAuditGenerationArm({ arm: ARM_A, auditInput: { diff: 'x', files: ['a.js'], repoRoot: repo, treeSha: sha }, route, runId: `r-${key}`, role: 'auditor', _runMultiPassCodeAudit: audit(key), _clientFactories: spyFactories().factories });
+      await Promise.all([call('one', s1), call('two', s2)]);
+      assert.deepEqual(seen.one, ['first', 'first']);
+      assert.deepEqual(seen.two, ['second', 'second']);
+      assert.equal(path.resolve(process.cwd()), path.resolve(savedCwd));
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+});

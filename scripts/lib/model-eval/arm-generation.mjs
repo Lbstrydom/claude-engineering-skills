@@ -110,6 +110,16 @@ async function resolveGenerationClient(generation, route, factories = {}) {
   return { client, model: route.deploymentId ?? route.resolvedModel };
 }
 
+// process.chdir is process-global, so two overlapping generations would read each other's tree and restore the wrong directory.
+// The callers serialise today; this makes the guarantee the function's own (a queue, not a lock that can be skipped).
+let cwdQueue = Promise.resolve();
+async function acquireCwd() {
+  const prev = cwdQueue; let release;
+  cwdQueue = new Promise((r) => { release = r; });
+  await prev;
+  return release;
+}
+
 /**
  * @param {{arm: object, auditInput: {diff:string, files:string[], repoRoot:string, treeSha:string},
  *   route: {transport:string, resolvedModel:string, deploymentId:string|null, pricingModel:string, provider:string},
@@ -179,6 +189,7 @@ export async function runAuditGenerationArm({
   const outFile = path.join(scratchDir, `${arm.id}.result.json`);
   fs.writeFileSync(diffPath, auditInput.diff, 'utf8');
 
+  const releaseCwd = await acquireCwd();
   const savedCwd = process.cwd();
   let mergedResult;
   try {
@@ -241,6 +252,7 @@ export async function runAuditGenerationArm({
     });
   } finally {
     if (path.resolve(process.cwd()) !== path.resolve(savedCwd)) process.chdir(savedCwd);
+    releaseCwd();
   }
 
   // Round-1 (Cluster B) audit M15 fix — the legacy result contract

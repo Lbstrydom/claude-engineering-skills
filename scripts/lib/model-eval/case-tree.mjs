@@ -12,12 +12,20 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { isSafeGitRevision } from '../vcs.mjs';
 
-const git = (root, args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+// Variables that make `git -C <root>` act on a DIFFERENT repository (a git hook, e.g. pre-push, sets several): dropped for every call.
+const GIT_REPO_SELECTORS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_PREFIX'];
+const cleanEnv = () => { const e = { ...process.env }; for (const k of GIT_REPO_SELECTORS) delete e[k]; return e; };
+
+// `core.hooksPath` pointed at nothing: a repository's own post-checkout hook must not run while a tree is materialised, or it could
+// rewrite the files the audit is about to read.
+const git = (root, args, { hooks = false } = {}) => execFileSync('git', [...(hooks ? [] : ['-c', `core.hooksPath=${os.devNull}`]), '-C', root, ...args],
+  { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, env: cleanEnv() });
 
 /**
  * Run `fn(dir)` with `dir` a detached checkout of `sha` from `repoRoot`'s repository, then remove it, whether or not `fn` threw.
  * Removal is addressed through `repoRoot`, never through the worktree itself: a worktree already deregistered would otherwise
- * resolve `-C <dir>` to the parent repository.
+ * resolve `-C <dir>` to the parent repository. A cleanup that fails is REPORTED: it throws when `fn` succeeded, and rides on the
+ * primary error as `cleanupErrors` when `fn` threw (the primary error is never replaced).
  * @template T
  * @param {{repoRoot: string, sha: string}} where
  * @param {(dir: string) => Promise<T>} fn
@@ -27,12 +35,26 @@ export async function withCaseTree({ repoRoot, sha }, fn) {
   if (typeof sha !== 'string' || !isSafeGitRevision(sha)) throw new Error(`withCaseTree: "${sha}" is not a safe git revision`);
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-tree-'));
   const dir = path.join(base, 'tree');
+  let added = false; let result; let primary = null;
   try {
     git(repoRoot, ['worktree', 'add', '--detach', '--force', dir, sha]);
-    return await fn(dir);
-  } finally {
-    try { git(repoRoot, ['worktree', 'remove', '--force', dir]); } catch { /* a failed add leaves nothing registered */ }
-    try { git(repoRoot, ['worktree', 'prune']); } catch { /* best effort */ }
-    try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* best effort */ }
+    added = true;
+    result = await fn(dir);
+  } catch (err) { primary = err; }
+  const cleanupErrors = [];
+  if (added) {
+    try { git(repoRoot, ['worktree', 'remove', '--force', dir]); } catch (err) {
+      cleanupErrors.push(`worktree remove ${dir}: ${err.message}`);
+      // Remove the files, then prune the now-dangling registration: only on this failure path, never routinely, because prune is
+      // repository-wide and must not touch other worktrees (e.g. ones on a temporarily unavailable mount) when nothing went wrong.
+      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); git(repoRoot, ['worktree', 'prune']); } catch (err2) { cleanupErrors.push(`fallback cleanup ${dir}: ${err2.message}`); }
+    }
   }
+  try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch (err) { cleanupErrors.push(`rm ${base}: ${err.message}`); }
+  if (primary) {
+    if (cleanupErrors.length > 0) primary.cleanupErrors = cleanupErrors;
+    throw primary;
+  }
+  if (cleanupErrors.length > 0) throw new Error(`withCaseTree: cleanup of the case tree for ${sha} failed: ${cleanupErrors.join('; ')}`);
+  return result;
 }
