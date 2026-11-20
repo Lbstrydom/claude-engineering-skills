@@ -105,7 +105,7 @@ import { computeCallId, appendLedgerRow } from './lib/solo-control/ledger.mjs';
 import { canonicaliseRemoteUrl } from './lib/repo-identity.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
 import { clampToSchema, parseJsonLoose, REASONING_TIERS, assertReasoningTier } from './lib/solo-control/cold-pass-support.mjs';
-import { buildGateReviewPrompt, runGeminiReview, geminiUsageOrNull, runClaudeGateReview, runGptGateReview, runGeminiPass } from './lib/solo-control/gate-reviews.mjs';
+import { createGateReviews } from './lib/solo-control/gate-reviews.mjs';
 import { readLedger, aggregateCostForArm, sharedPassCreditRows } from './lib/solo-control/ledger.mjs';
 import { csvLine, parseCsv } from './lib/solo-control/csv.mjs';
 import { runGptJudgeBatch } from './lib/solo-control/judge.mjs';
@@ -125,6 +125,7 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 // reading 7 where the plan said 5. AGENTS.md names this trap ("a new
 // mechanical wave must be declared in MECHANICAL_WAVES, or PASS_PROMPTS
 // silently enrols it in the paid comparison"); the fix is one oracle.
+const { buildGateReviewPrompt, runGeminiReview, geminiUsageOrNull, runClaudeGateReview, runGptGateReview, runGeminiPass } = createGateReviews({ ShadowPassSchema });
 const PASSES = SHADOW_PASSES;
 
 // Candidate local repo roots a ledger commit could live in. Always the current

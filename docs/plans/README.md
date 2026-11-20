@@ -36,6 +36,7 @@ This is the list to read when asking "what is in flight?".
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Ship record catch-up — /ship's RECORD half without its PUSH/MERGE authority](./ship-record-catchup.md) | `In Progress` |  |
 | [Ship trains — batched, impact-based `/ship --train`](./ship-trains.md) | `Approved` |  |
+| [Solo-control hardening — pre-existing defects PR #413's audit found but did not touch](./solo-control-hardening.md) | `In Progress` | fixes implemented; audit and merge pending |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
 | [prior-upstream recognition for REWRITTEN destinations](./sync-prior-upstream-rewritten.md) | `Approved` |  |
 | [the base-lag restore must not manufacture a divergence](./sync-refused-manifest-base.md) | `Approved` |  |
