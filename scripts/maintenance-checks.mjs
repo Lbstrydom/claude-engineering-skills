@@ -415,6 +415,14 @@ export const CHECKS = [
     // bounds total spend, unlike the small capped call /ship Step 0.5e makes
     // on every push. `--apply` because a dry-run report nobody reads changes
     // nothing; this entry exists specifically to close the loop unattended.
+    key: 'telemetry-export',
+    label: 'Telemetry export for a store CES cannot reach (opt-in; at most one export per day)',
+    // Opt-in on BOTH names: with either unset the check is skipped, so this is invisible to a consumer that never
+    // chose it. `--if-older-than 24` makes a repeat run read nothing and write nothing.
+    requiredEnv: ['TELEMETRY_CONSUMER_ALIAS', 'TELEMETRY_DROP_DIR'],
+    steps: [{ script: 'telemetry-export.mjs', args: ['--if-older-than', '24'] }],
+  },
+  {
     key: 'remediation-reconcile',
     label: 'Remediation-state out-of-band verification (accepted findings stuck pending/planned)',
     requiredEnv: ['AUDIT_DB_URL'],

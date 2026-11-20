@@ -16,8 +16,12 @@
  * Usage:
  *   node scripts/telemetry-export.mjs --alias <alias> --drop-dir <dir> [--push]
  *   node scripts/telemetry-export.mjs --alias <alias> --print        # build + print, deliver nothing
+ *   node scripts/telemetry-export.mjs --alias <alias> --drop-dir <dir> --if-older-than 24   # skip when a recent export exists
  *
- * Env: TELEMETRY_CONSUMER_ALIAS, TELEMETRY_DROP_DIR (flags win).
+ * Env: TELEMETRY_CONSUMER_ALIAS, TELEMETRY_DROP_DIR (flags win); TELEMETRY_EXPORT_PUSH=1 is --push.
+ *
+ * `--if-older-than <hours>` makes it cheap to call from any trigger (weekly maintenance, a pre-push hook): when
+ * this alias already has a valid export newer than that, it exits 0 having read nothing from the store.
  * Exit: 0 written (or printed) · 1 refused / failed · 2 usage.
  *
  * @module scripts/telemetry-export
@@ -33,9 +37,10 @@ import { buildExport } from './lib/telemetry-export/build.mjs';
 import { makeRowReader } from './lib/telemetry-export/sources.mjs';
 import { deliverExport } from './lib/telemetry-export/deliver.mjs';
 import { ExportRefusedError } from './lib/telemetry-export/redact.mjs';
+import { scanDrop } from './lib/telemetry-export/reader.mjs';
 import { stdoutNamesUnreachableStore } from './lib/store/backlog-gather.mjs';
 
-const KNOWN_FLAGS = ['--alias', '--drop-dir', '--push', '--print', '--selfcheck-relocation'];
+const KNOWN_FLAGS = ['--alias', '--drop-dir', '--push', '--print', '--if-older-than', '--selfcheck-relocation'];
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SETUP_CLI = path.join(HERE, 'setup-postgres.mjs');
 
@@ -88,7 +93,13 @@ async function main() {
   const alias = argOption('alias') || process.env.TELEMETRY_CONSUMER_ALIAS || '';
   const dropDir = argOption('drop-dir') || process.env.TELEMETRY_DROP_DIR || '';
   const printOnly = hasFlag('print');
-  const push = hasFlag('push');
+  const push = hasFlag('push') || process.env.TELEMETRY_EXPORT_PUSH === '1';
+  const olderThanRaw = argOption('if-older-than');
+  const olderThanHours = olderThanRaw === null || olderThanRaw === undefined ? null : Number(olderThanRaw);
+  if (olderThanHours !== null && !(Number.isFinite(olderThanHours) && olderThanHours > 0)) {
+    process.stderr.write('telemetry-export: --if-older-than needs a positive number of hours\n');
+    await finishAndExit(2); return;
+  }
   if (!/^[a-z0-9-]{1,32}$/.test(alias)) {
     process.stderr.write('telemetry-export: --alias (or TELEMETRY_CONSUMER_ALIAS) must match [a-z0-9-]{1,32}\n');
     await fail('USAGE', 2); return;
@@ -100,6 +111,18 @@ async function main() {
   if (!printOnly && !dropDir) {
     process.stderr.write('telemetry-export: no drop directory — pass --drop-dir or set TELEMETRY_DROP_DIR (or use --print)\n');
     await fail('USAGE', 2); return;
+  }
+
+  // Throttle: a recent valid export for THIS alias means there is nothing to do (and nothing to read).
+  if (olderThanHours !== null && !printOnly && dropDir) {
+    const prior = scanDrop({ dropDir, expected: [{ alias, cadence: 'on-demand' }], now: new Date() }).aliases[0];
+    if (prior?.state === 'received') {
+      const hours = (Date.now() - Date.parse(prior.generatedAt)) / 3_600_000;
+      if (hours < olderThanHours) {
+        process.stdout.write(`${JSON.stringify({ ok: true, skipped: 'recent-export', ageHours: Math.floor(hours) })}\n`);
+        await finishAndExit(0); return;
+      }
+    }
   }
 
   const [{ probeStoreReachability }, client, query, repoStore, identity, upstreamCmds] = await Promise.all([
