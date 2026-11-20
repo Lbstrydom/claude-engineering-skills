@@ -44,6 +44,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * @returns {{remote: string, branch: string}} the destination, resolved explicitly (a bare `git push` obeys
  *   push.default / remote.pushDefault and could publish other refs)
  */
+/** A git-ignored export could never be staged, would sit on disk unseen by the retry scan and never be delivered. */
+function refuseIfIgnored(git, rel) {
+  let ignored = false;
+  try { git(['check-ignore', '-q', '--', rel]); ignored = true; } catch { ignored = false; }   // exit 1 = not ignored
+  if (ignored) throw new Error('deliver: the drop repository ignores exports of this name (.gitignore) — they could never be delivered');
+}
+
 function pushGate(git, root) {
   const top = String(git(['rev-parse', '--show-toplevel']) ?? '').trim();
   if (!top || fs.realpathSync(top) !== root) throw new Error('deliver: --push needs the drop directory to be the root of its own Git work tree');
@@ -53,12 +60,48 @@ function pushGate(git, root) {
   if (!upstream || slash < 1) throw new Error('deliver: cannot tell whether earlier exports were pushed (no upstream configured?) — set one, then retry');
   const remote = upstream.slice(0, slash);
   const branch = upstream.slice(slash + 1);
+  // The checks below compare HEAD with the local tracking ref, so they only mean something for a PLAIN clone: the
+  // default fetch refspec (a custom one can map a differently named remote branch onto this tracking ref) and no
+  // separate push URL (a push destination that is not the one the upstream was fetched from can be behind it, and
+  // an explicit push would then publish the missing ancestors too).
+  const optional = (args) => { try { return String(git(args) ?? '').trim(); } catch { return ''; } };
+  const fetchSpecs = optional(['config', '--get-all', `remote.${remote}.fetch`]).split('\n').filter(Boolean);
+  if (fetchSpecs.length !== 1 || fetchSpecs[0] !== `+refs/heads/*:refs/remotes/${remote}/*`) {
+    throw new Error(`deliver: remote "${remote}" does not use the default fetch refspec — the drop must be a plain clone`);
+  }
+  if (optional(['config', '--get-all', `remote.${remote}.pushurl`])) {
+    throw new Error(`deliver: remote "${remote}" has a separate push URL — the drop must be a plain clone`);
+  }
   const ahead = Number(String(git(['rev-list', '--count', '@{u}..HEAD']) ?? '').trim());
   if (!Number.isInteger(ahead)) throw new Error('deliver: could not count unpushed commits — refusing to push');
   if (ahead > 0) {
     throw new Error(`deliver: ${ahead} commit(s) are committed but not pushed in the drop directory — push or reset them yourself; the exporter will not publish history it did not write`);
   }
   return { remote, branch };
+}
+
+/**
+ * Stage exactly `paths`, commit them, and push THAT commit.
+ *
+ *   - the push names the commit by SHA, so a commit another process makes after this one is not published with it;
+ *   - `push.followTags` is switched off for this command: configuration that adds refs adds unvalidated content;
+ *   - if the push fails, our own commit is undone (a mixed reset to its parent, only while HEAD is still that commit)
+ *     so the exporter never leaves behind the committed-but-unpushed state its own gate refuses — the validated file
+ *     stays on disk, uncommitted, for the next attempt.
+ */
+function commitAndPush(git, dest, paths, message) {
+  git(['add', '--', ...paths]);
+  const parent = String(git(['rev-parse', 'HEAD']) ?? '').trim();
+  git(['commit', '-q', '-m', message, '--', ...paths]);
+  const ours = String(git(['rev-parse', 'HEAD']) ?? '').trim();
+  try {
+    git(['-c', 'push.followTags=false', 'push', '--no-follow-tags', dest.remote, `${ours}:refs/heads/${dest.branch}`]);
+  } catch (err) {
+    try {
+      if (String(git(['rev-parse', 'HEAD']) ?? '').trim() === ours) git(['reset', '-q', '--mixed', parent]);
+    } catch { /* leave it: the gate will report the unpushed commit */ }
+    throw err;
+  }
 }
 
 /**
@@ -98,6 +141,7 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
   // Validate the Git destination BEFORE publishing anything: a refusal here must not leave a published file
   // behind it, and "delivery failed" must never describe a file that was in fact written.
   const dest = push ? pushGate(git, root) : null;
+  if (push) refuseIfIgnored(git, rel);
 
   // The alias directory is created by us or is a plain directory: never a symlink (which could point out of the drop).
   let st = null;
@@ -152,9 +196,7 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
 
   let pushed = false;
   if (push) {
-    git(['add', '--', rel]);
-    git(['commit', '-q', '-m', `telemetry export ${doc.consumerAlias} ${doc.generatedAt.slice(0, 10)}`, '--', rel]);
-    git(['push', dest.remote, `HEAD:refs/heads/${dest.branch}`]);
+    commitAndPush(git, dest, [rel], `telemetry export ${doc.consumerAlias} ${doc.generatedAt.slice(0, 10)}`);
     pushed = true;
   }
   return { file: target, pushed };
@@ -187,8 +229,11 @@ export function pushPending({ dropDir, alias, exec = execFileSync }) {
   // otherwise be committed and pushed without ever meeting the schema or the redaction check, so anything else (an
   // unrelated file, a hand-edited export, a symlink) stops the retry rather than being swept in.
   const pathRe = new RegExp(String.raw`^${alias}/\d{4}-\d{2}-\d{2}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`);
-  const status = String(git(['status', '--porcelain=v1', '-z', '-uall', '--', `${alias}/`]) ?? '');
-  const dirtyPaths = status.split('\0').filter(Boolean).map((e) => e.slice(3));
+  const status = String(git(['status', '--porcelain=v1', '-z', '-uall', '--ignored', '--', `${alias}/`]) ?? '');
+  const entries = status.split('\0').filter(Boolean);
+  const ignoredExport = entries.find((e) => e.startsWith('!! ') && pathRe.test(e.slice(3)));
+  if (ignoredExport) throw new Error('deliver: an export in the drop is git-ignored and can never be delivered (retry stopped)');
+  const dirtyPaths = entries.filter((e) => !e.startsWith('!! ')).map((e) => e.slice(3));
   for (const p of dirtyPaths) {
     const name = p.split('/').pop();
     if (!pathRe.test(p)) throw new Error(`deliver: refusing to stage "${name}" — not a telemetry export (retry stopped; nothing was staged)`);
@@ -204,8 +249,6 @@ export function pushPending({ dropDir, alias, exec = execFileSync }) {
   }
   if (dirtyPaths.length === 0) return { pending: false, pushed: false };
 
-  git(['add', '--', ...dirtyPaths]);
-  git(['commit', '-q', '-m', `telemetry export ${alias} (retry of an undelivered export)`, '--', ...dirtyPaths]);
-  git(['push', dest.remote, `HEAD:refs/heads/${dest.branch}`]);
+  commitAndPush(git, dest, dirtyPaths, `telemetry export ${alias} (retry of an undelivered export)`);
   return { pending: true, pushed: true };
 }
