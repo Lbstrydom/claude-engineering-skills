@@ -11,7 +11,12 @@ import {
   redactSecrets,
   gateSymbolForEgress,
   SECRET_REDACTED,
+  isPythonIndexPath,
+  PYTHON_EXT_ALLOWLIST,
+  JS_TS_EXT_ALLOWLIST,
+  DEFAULT_EXT_ALLOWLIST,
 } from '../scripts/lib/sensitive-egress-gate.mjs';
+import { languageById } from '../scripts/lib/file-taxonomy.mjs';
 import { buildRulingsBlock } from '../scripts/lib/ledger.mjs';
 import {
   scanForSecrets,
@@ -58,6 +63,92 @@ describe('isExtensionAllowlisted', () => {
     for (const p of ['x.json', 'y.md', 'z.yaml', 'a.lock']) {
       assert.equal(isExtensionAllowlisted(p), false, `expected ${p} rejected`);
     }
+  });
+  // Plan: docs/plans/python-arch-memory-indexing.md §2.1 — Python joins the
+  // ONE allowlist; `.pyi` stubs stay out; the list is derived, not hand-kept.
+  it('allows .py and refuses .pyi stubs', () => {
+    assert.ok(isExtensionAllowlisted('pkg/mod.py'));
+    assert.ok(isExtensionAllowlisted('PKG/MOD.PY'), 'case-insensitive like every other extension');
+    assert.equal(isExtensionAllowlisted('pkg/mod.pyi'), false);
+    assert.ok(isPythonIndexPath('pkg/mod.py'));
+    assert.equal(isPythonIndexPath('pkg/mod.ts'), false);
+    assert.equal(isPythonIndexPath('pkg/mod.pyi'), false);
+  });
+  it('derives the Python list from the file-taxonomy registry, and keeps the JS/TS list intact', () => {
+    const fromTaxonomy = languageById('py').extensions.filter((e) => e !== '.pyi');
+    assert.deepEqual([...PYTHON_EXT_ALLOWLIST], fromTaxonomy);
+    assert.deepEqual([...DEFAULT_EXT_ALLOWLIST], [...JS_TS_EXT_ALLOWLIST, ...PYTHON_EXT_ALLOWLIST]);
+    assert.deepEqual([...JS_TS_EXT_ALLOWLIST], ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.vue', '.svelte']);
+  });
+});
+
+// The widening reaches the shared gate too (plan §2.6 inventory). Every
+// protection the JS path relies on must hold for `.py` at the gate itself.
+describe('gateSymbolForEgress — Python files (Tier 3, plan §2.6)', () => {
+  function mkdtemp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'egress-py-')); }
+  const rm = (d) => fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  // Symlink creation needs privileges on Windows; CI (Linux) always runs these.
+  function trySymlink(t, target, link) {
+    try { fs.symlinkSync(target, link); return true; } catch (err) {
+      if (err.code === 'EPERM' || err.code === 'EACCES') { t.skip(`symlinks unavailable here (${err.code})`); return false; }
+      throw err;
+    }
+  }
+
+  it('sends a clean admitted .py body and returns its canonical path', () => {
+    const repoRoot = mkdtemp();
+    try {
+      fs.writeFileSync(path.join(repoRoot, 'mod.py'), 'def f():\n    return 1\n');
+      const r = gateSymbolForEgress({ filePath: 'mod.py', bodyText: 'def f():\n    return 1\n', repoRoot });
+      assert.equal(r.action, 'send');
+      assert.ok(r.canonicalAbsPath.endsWith('mod.py'));
+    } finally { rm(repoRoot); }
+  });
+
+  it('skips a sensitive-path .py', () => {
+    const repoRoot = mkdtemp();
+    try {
+      fs.mkdirSync(path.join(repoRoot, 'secrets'));
+      fs.writeFileSync(path.join(repoRoot, 'secrets', 'settings.py'), 'X = 1\n');
+      const r = gateSymbolForEgress({ filePath: 'secrets/settings.py', bodyText: 'X = 1', repoRoot });
+      assert.equal(r.action, 'skip-path');
+    } finally { rm(repoRoot); }
+  });
+
+  it('skips an innocent .py symlinked at a sensitive in-repo target', (t) => {
+    const repoRoot = mkdtemp();
+    try {
+      fs.mkdirSync(path.join(repoRoot, 'secrets'));
+      const target = path.join(repoRoot, 'secrets', 'db.yaml');
+      fs.writeFileSync(target, 'password: x\n');
+      if (!trySymlink(t, target, path.join(repoRoot, 'helpers.py'))) return;
+      const r = gateSymbolForEgress({ filePath: 'helpers.py', bodyText: '', repoRoot });
+      assert.equal(r.action, 'skip-path');
+      assert.match(r.reason, /canonical target/);
+    } finally { rm(repoRoot); }
+  });
+
+  it('refuses a .py symlink that escapes the repo', (t) => {
+    const repoRoot = mkdtemp();
+    const outside = mkdtemp();
+    try {
+      const target = path.join(outside, 'elsewhere.py');
+      fs.writeFileSync(target, 'def g(): pass\n');
+      if (!trySymlink(t, target, path.join(repoRoot, 'util.py'))) return;
+      const r = gateSymbolForEgress({ filePath: 'util.py', bodyText: 'def g(): pass', repoRoot });
+      assert.equal(r.action, 'skip-symlink-escape');
+    } finally { rm(repoRoot); rm(outside); }
+  });
+
+  it('redacts a .py body carrying a secret', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const key = ['AKIA', 'IOSFODNN7EXAMPLE'].join('');
+      const body = `def client():\n    """Uses ${key}."""\n    return connect("${key}")\n`;
+      fs.writeFileSync(path.join(repoRoot, 'aws.py'), body);
+      const r = gateSymbolForEgress({ filePath: 'aws.py', bodyText: body, repoRoot });
+      assert.equal(r.action, 'redact-content');
+    } finally { rm(repoRoot); }
   });
 });
 

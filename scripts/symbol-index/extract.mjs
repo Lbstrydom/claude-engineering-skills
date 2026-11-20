@@ -43,6 +43,7 @@ import {
 import { ignoredUntrackedPaths } from '../lib/disowned-paths.mjs';
 import { COVERAGE_DEFAULTS } from '../lib/symbol-index/graph-verdict.mjs';
 import { parseFilesManifest } from '../lib/symbol-index/files-manifest.mjs';
+import { describeParserGap } from '../lib/symbol-index/parser-gap.mjs';
 import { emit, assertKnownFlags } from '../lib/cli-io.mjs';
 import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
@@ -838,7 +839,7 @@ async function extractGraphAndViolations(repoRoot, opts = {}) {
     + `cruised (${pct}) in ${elapsedMs}ms — edges: ${edges.persisted} persisted, `
     + `${edges.external} external, ${edges.selfEdge} self, ${edges.escaping} escaping, `
     + `${edges.unresolved} unresolved, ${edges.disowned} disowned`);
-  warnAboutParserGap(coverage.parser);
+  for (const line of describeParserGap(coverage.parser)) emitProgress(line);
 
   return { violationCount: violations.length, importCount, coverage };
 }
@@ -861,41 +862,6 @@ function availableCruiserExtensions() {
   } catch {
     return null;
   }
-}
-
-/**
- * Say — loudly, with the remedy — when the import graph is missing whole
- * languages because no transpiler is installed for them.
- *
- * This is the difference between a number and a diagnosis. Before it, a
- * consumer whose 522 TypeScript files were unreadable saw only a 22% coverage
- * ratio and `Layering violations: 0`; the cause was diagnosable only from
- * outside the tool, by asking dep-cruiser directly.
- *
- * @param {{known: boolean, unparseable: number|null, byExtension: Record<string, number>}|null} parser
- */
-function warnAboutParserGap(parser) {
-  if (!parser) return;
-  if (!parser.known) {
-    // NB: the phrasing below deliberately avoids the literal `from "<word>"`
-    // shape. `module-graph.mjs`'s import scanner is regex-based and reads that
-    // as a bare package specifier, which makes the string look like an
-    // undeclared dependency to `tests/install-deps-contract.test.mjs`.
-    emitProgress('WARNING: could not ask dependency-cruiser which extensions it can parse — '
-      + 'the coverage ratio below cannot distinguish "not reached" and "unreadable".');
-    return;
-  }
-  if (!parser.unparseable) return;
-  const breakdown = Object.entries(parser.byExtension)
-    .sort((a, b) => b[1] - a[1])
-    .map(([ext, n]) => `${ext} (${n})`)
-    .join(', ');
-  emitProgress(`WARNING: ${parser.unparseable} eligible file(s) have no parser available in this `
-    + `dependency-cruiser install — ${breakdown}. Their imports are absent from the graph, so a `
-    + `layering result covering them is UNMEASURED, not clean. Remedy: install the matching `
-    + `transpiler where dependency-cruiser can resolve it (TypeScript files need \`typescript\`; `
-    + `under pnpm's strict layout that means hoisting it, e.g. a root devDependency or `
-    + `\`public-hoist-pattern[]=typescript\` in .npmrc).`);
 }
 
 /**

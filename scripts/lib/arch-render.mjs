@@ -418,7 +418,7 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
   // "No records" means two very different things, and conflating them makes
   // the consultation confidently wrong. For an INDEXED file type, empty is
   // evidence: nothing similar exists, greenfield is right. For a file type the
-  // extractor never reads (.py, .java, .go, .rs, .sql …) empty is the ABSENCE
+  // extractor never reads (.java, .go, .rs, .sql …) empty is the ABSENCE
   // of evidence — there are no rows to match because nothing was ever indexed.
   // AGENTS.md makes this consultation mandatory before writing a new symbol
   // and reads empty records as "proceed greenfield", so emitting the greenfield

@@ -15,11 +15,37 @@ import path from 'node:path';
 import { classifyPath, resolveAndClassify } from './sensitive-paths.mjs';
 import { scanForSecrets, redactSecrets as redactSecretsImpl } from './secret-patterns.mjs';
 import { redactObject } from './redact.mjs';
+import { languageById } from './file-taxonomy.mjs';
 
-/** Allowlist: only these extensions ever send body content to providers. */
-export const DEFAULT_EXT_ALLOWLIST = Object.freeze([
+/** The ts-morph-parsed extensions — the original allowlist, unchanged. */
+export const JS_TS_EXT_ALLOWLIST = Object.freeze([
   '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.vue', '.svelte',
 ]);
+
+/**
+ * Python extensions the symbol index reads, DERIVED from the file-taxonomy
+ * registry (never a second hand-kept list). `.pyi` stubs are excluded on
+ * purpose: a stub restates the signatures of its `.py` twin, so indexing both
+ * would manufacture `precedent` clusters out of one module.
+ * Plan: docs/plans/python-arch-memory-indexing.md §2.1.
+ */
+const PYTHON_STUB_EXTENSION = '.pyi';
+export const PYTHON_EXT_ALLOWLIST = Object.freeze(
+  languageById('py').extensions.filter((e) => e !== PYTHON_STUB_EXTENSION),
+);
+
+/** Allowlist: only these extensions ever send body content to providers. */
+export const DEFAULT_EXT_ALLOWLIST = Object.freeze([...JS_TS_EXT_ALLOWLIST, ...PYTHON_EXT_ALLOWLIST]);
+
+/**
+ * True iff an (already-admitted) path is routed to the Python parser stage
+ * rather than ts-morph.
+ * @param {string} filePath
+ * @returns {boolean}
+ */
+export function isPythonIndexPath(filePath) {
+  return isExtensionAllowlisted(filePath, PYTHON_EXT_ALLOWLIST);
+}
 
 /** Marker placed in `purpose_summary` when content scrub catches secrets. */
 export const SECRET_REDACTED = '[SECRET_REDACTED]';
