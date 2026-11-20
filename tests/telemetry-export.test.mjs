@@ -17,14 +17,14 @@ import {
   SCHEMA_ID, validateExport, TelemetryExportSchema, MAX_UPSTREAM_ROWS, SEVERITIES, PASSES,
 } from '../scripts/lib/telemetry-export/schema.mjs';
 import { assertExportClean, ExportRefusedError } from '../scripts/lib/telemetry-export/redact.mjs';
-import { buildExport, mapAuditRows, mapUpstreamRows, displayId, reasonForError } from '../scripts/lib/telemetry-export/build.mjs';
+import { buildExport, mapAuditRows, mapUpstreamRows, mapDrift, strictCount, displayId, reasonForError } from '../scripts/lib/telemetry-export/build.mjs';
 import { makeRowReader, SQL } from '../scripts/lib/telemetry-export/sources.mjs';
 import { deliverExport, exportFileName } from '../scripts/lib/telemetry-export/deliver.mjs';
 import { isReadOnlyStatement } from '../scripts/lib/db/query.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CANARIES = Object.freeze({
-  token: 'sk-ant-api03-CANARYCANARYCANARYCANARYCANARY',
+  token: 'sk-ant-api03-Zx9Kq7Lm2Vb8Nc4Rt6Yp1Wd3Hs5Jf0AaQe',
   sshPath: '~/.ssh/id_rsa',
   host: 'audit-db.corp-internal.example.com',
   repo: 'acme-secret-repo-name',
@@ -98,7 +98,7 @@ describe('schema: allowlist by construction', () => {
     doc.consumerAlias = CANARIES.token;
     const r = validateExport(doc);
     assert.equal(r.ok, false);
-    assert.doesNotMatch(r.reason, /CANARY/);
+    assert.equal(r.reason.includes(CANARIES.token), false);
   });
 
   it('an unmeasured group carries NO counts (it cannot be summed as zero)', () => {
@@ -161,6 +161,68 @@ describe('builder: the canary never reaches the serialised bytes', () => {
     assert.ok(doc.redactions > 0, 'the misses were counted, not hidden');
     assert.equal(doc.audit.byMode.other, 2);
     assert.equal(doc.upstream.open[0].severity, 'other');
+  });
+});
+
+describe('schema: real instants and a fixed window (audit round 1)', () => {
+  it('impossible dates are rejected even though the shape matches', async () => {
+    const doc = await build();
+    for (const mutate of [
+      (d) => { d.window.from = '2026-99-99T00:00:00.000Z'; },
+      (d) => { d.generatedAt = '2026-02-30T10:00:00.000Z'; },
+    ]) { const c = structuredClone(doc); mutate(c); assert.equal(validateExport(c).ok, false); }
+  });
+  it('the window must be exactly seven days and end at generatedAt', async () => {
+    const doc = await build();
+    const a = structuredClone(doc); a.window.from = '2026-11-14T10:00:00.000Z';
+    assert.equal(validateExport(a).ok, false);
+    const b = structuredClone(doc); b.window.to = '2026-11-20T09:59:59.000Z'; b.window.from = '2026-11-13T09:59:59.000Z';
+    assert.equal(validateExport(b).ok, false);
+  });
+});
+
+describe('builder: an incomplete measurement is unmeasured, never a zero (audit round 1)', () => {
+  const full = { hasDrift: false, drift: { unapplied: [], shaMismatch: [] }, liveConstraints: { measured: true, missing: [], altered: [] } };
+  it('a complete drift response is a measurement', () => assert.deepEqual(mapDrift(full), { measured: true, unapplied: 0, shaMismatch: 0, liveBroken: 0 }));
+  it('missing or malformed lists are NOT read as empty', () => {
+    for (const bad of [
+      { ...full, drift: {} },
+      { ...full, drift: { unapplied: [], shaMismatch: 'x' } },
+      { ...full, drift: undefined },
+      { ...full, liveConstraints: { measured: true } },
+      { ...full, liveConstraints: { measured: false, missing: [], altered: [] } },
+      {}, null,
+    ]) assert.deepEqual(mapDrift(bad), { measured: false, reason: 'read-failed' }, JSON.stringify(bad));
+  });
+  it('strictCount accepts real counts (number, bigint, digit string) and refuses everything else', () => {
+    assert.equal(strictCount(0), 0);
+    assert.equal(strictCount('12'), 12);
+    assert.equal(strictCount(7n), 7);
+    for (const bad of [undefined, null, '', 'x', -1, 1.5, NaN, Infinity, {}, '1e3']) assert.throws(() => strictCount(bad), /non-negative integer/, String(bad));
+  });
+  it('a garbled aggregate makes the group unmeasured (read-failed), not a zero', async () => {
+    const doc = await build(deps({ readRows: async () => ({ status: 'ok', runs: [{ mode: 'code', gemini_verdict: null, converged: false, n: undefined }], findings: [], upstream: [], totalOpen: 0 }) }));
+    assert.deepEqual(doc.audit, { measured: false, reason: 'read-failed' });
+  });
+  it('the upstream total row missing from the store is refused, not read as "no open reports"', async () => {
+    const reader = makeRowReader({
+      withTx: async (fn) => fn({}), query: async () => [],
+      many: async () => [],   // the total query returns NO row
+      getRepoIdByUuid: async () => ({ id: 'r' }), resolveRepoIdentity: () => ({ repoUuid: 'u' }),
+    });
+    await assert.rejects(() => reader({ from: new Date(NOW - 7 * 864e5), to: NOW }), /upstream total/);
+  });
+  it('the repo lookup runs INSIDE the snapshot transaction, after SET TRANSACTION', async () => {
+    const order = [];
+    const reader = makeRowReader({
+      withTx: async (fn) => { order.push('begin'); return fn({}); },
+      query: async () => { order.push('setTx'); return []; },
+      many: async () => [{ n: 0 }],
+      getRepoIdByUuid: async () => { order.push('lookup'); return { id: 'r' }; },
+      resolveRepoIdentity: () => ({ repoUuid: 'u' }),
+    });
+    await reader({ from: new Date(NOW - 7 * 864e5), to: NOW });
+    assert.deepEqual(order.slice(0, 3), ['begin', 'setTx', 'lookup']);
   });
 });
 
@@ -269,7 +331,7 @@ describe('sources: read-only, one snapshot, repo-scoped, no writes', () => {
     assert.deepEqual(await makeRowReader(f1.deps)({ from: NOW, to: NOW }), { status: 'repo-unresolved' });
     const f2 = fake({ getRepoIdByUuid: async () => null });
     assert.deepEqual(await makeRowReader(f2.deps)({ from: NOW, to: NOW }), { status: 'repo-unregistered' });
-    assert.equal(f2.seen.length, 0);
+    assert.deepEqual(f2.seen, [SQL.setTx], 'only the SET TRANSACTION ran: no aggregate read for an unregistered repo');
   });
 
   it('a lookup error PROPAGATES (it is not "unregistered")', async () => {
@@ -285,9 +347,9 @@ describe('delivery: one primitive — a file in the drop directory', () => {
     const r = deliverExport({ doc, dropDir: dir });
     assert.equal(r.pushed, false);
     assert.equal(path.relative(dir, r.file).split(path.sep).join('/'), exportFileName(doc));
-    assert.equal(exportFileName(doc), 'acme/2026-11-20-0b9c1f3e.json');
+    assert.equal(exportFileName(doc), `acme/2026-11-20-${EXPORT_ID}.json`);
     assert.deepEqual(JSON.parse(fs.readFileSync(r.file, 'utf8')), doc);
-    assert.deepEqual(fs.readdirSync(path.join(dir, 'acme')), ['2026-11-20-0b9c1f3e.json']);
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'acme')), [`2026-11-20-${EXPORT_ID}.json`]);
   });
 
   it('exports are IMMUTABLE: the same name is refused, a same-day repeat is a second file', async () => {
@@ -314,7 +376,7 @@ describe('delivery: one primitive — a file in the drop directory', () => {
   it('--push runs EXACTLY rev-parse, add, commit, push — never force, nothing else', async () => {
     const dir = tmp();
     const calls = [];
-    const r = deliverExport({ doc: await build(), dropDir: dir, push: true, exec: (cmd, args) => { calls.push([cmd, ...args]); return ''; } });
+    const r = deliverExport({ doc: await build(), dropDir: dir, push: true, exec: (cmd, args) => { calls.push([cmd, ...args]); return args[0] === 'rev-parse' ? dir : ''; } });
     assert.equal(r.pushed, true);
     assert.deepEqual(calls.map((c) => c[1]), ['rev-parse', 'add', 'commit', 'push']);
     assert.ok(calls.every((c) => c[0] === 'git'));
@@ -329,7 +391,41 @@ describe('delivery: one primitive — a file in the drop directory', () => {
 
   it('a failing push surfaces (the file is already safely written, the caller is told)', async () => {
     const doc = await build();
-    assert.throws(() => deliverExport({ doc, dropDir: tmp(), push: true, exec: (c, a) => { if (a[0] === 'push') throw new Error('rejected'); return ''; } }), /rejected/);
+    const dir = tmp();
+    assert.throws(() => deliverExport({ doc, dropDir: dir, push: true, exec: (c, a) => { if (a[0] === 'push') throw new Error('rejected'); return a[0] === 'rev-parse' ? dir : ''; } }), /rejected/);
+  });
+});
+
+describe('delivery hardening (audit round 1)', () => {
+  it('--push refuses a drop directory that is merely NESTED inside another repository', async () => {
+    const outer = tmp();
+    const dir = path.join(outer, 'drop');
+    fs.mkdirSync(dir);
+    const doc = await build();
+    let committed = false;
+    const exec = (c, a) => { if (a[0] === 'rev-parse') return outer; if (a[0] === 'commit') committed = true; return ''; };
+    assert.throws(() => deliverExport({ doc, dropDir: dir, push: true, exec }), /root of its own Git work tree/);
+    assert.equal(committed, false, 'nothing was committed into the surrounding repository');
+  });
+
+  it('an alias directory that is a symlink/junction pointing out of the drop is refused, and nothing is written there', async () => {
+    const drop = tmp();
+    const outside = tmp();
+    const doc = await build();
+    try { fs.symlinkSync(outside, path.join(drop, 'acme'), 'junction'); } catch { return; }   // no symlink privilege: nothing to assert
+    assert.throws(() => deliverExport({ doc, dropDir: drop }), /symlink/);
+    assert.deepEqual(fs.readdirSync(outside), []);
+  });
+
+  it('publication is no-replace: a pre-existing file is never overwritten', async () => {
+    const dir = tmp();
+    const doc = await build();
+    fs.mkdirSync(path.join(dir, 'acme'));
+    const target = path.join(dir, 'acme', exportFileName(doc).split('/')[1]);
+    fs.writeFileSync(target, 'ORIGINAL');
+    assert.throws(() => deliverExport({ doc, dropDir: dir }), /immutable/);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'ORIGINAL');
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'acme')).filter((n) => n.includes('tmp')), [], 'no temp file left behind');
   });
 });
 

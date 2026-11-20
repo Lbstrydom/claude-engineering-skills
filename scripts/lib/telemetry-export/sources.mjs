@@ -17,6 +17,7 @@
  * @module scripts/lib/telemetry-export/sources
  */
 import { MAX_UPSTREAM_ROWS } from './schema.mjs';
+import { strictCount } from './build.mjs';
 
 export const SQL = Object.freeze({
   setTx: 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY',
@@ -50,18 +51,20 @@ export function makeRowReader(deps) {
   return async function readRows({ from, to }) {
     const ident = deps.resolveRepoIdentity();
     if (!ident?.repoUuid) return { status: 'repo-unresolved' };
-    // strict: a DB error throws (reported as read-failed / store-unreachable), never reads as "unregistered".
-    const repo = await deps.getRepoIdByUuid(ident.repoUuid);
-    if (!repo) return { status: 'repo-unregistered' };
-
     return deps.withTx(async () => {
       await deps.query(SQL.setTx);
+      // INSIDE the snapshot: the repo row and the aggregates scoped to it describe the same instant, so a repo
+      // removed in between cannot turn into "an empty week". Strict lookup: a DB error throws (read-failed /
+      // store-unreachable), never reads as "unregistered".
+      const repo = await deps.getRepoIdByUuid(ident.repoUuid);
+      if (!repo) return { status: 'repo-unregistered' };
       const f = from.toISOString(); const t = to.toISOString();
       const runs = await deps.many(SQL.runs, [repo.id, f, t]);
       const findings = await deps.many(SQL.findings, [repo.id, f, t]);
       const upstream = await deps.many(SQL.upstream, [repo.id, t]);
       const total = await deps.many(SQL.upstreamTotal, [repo.id, t]);
-      return { status: 'ok', runs, findings, upstream, totalOpen: Number(total?.[0]?.n) || 0 };
+      // The total row must exist and be a real count: a missing row read as 0 would be a measured "no open reports".
+      return { status: 'ok', runs, findings, upstream, totalOpen: strictCount(total?.[0]?.n, 'upstream total') };
     });
   };
 }

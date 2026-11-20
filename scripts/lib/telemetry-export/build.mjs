@@ -53,6 +53,17 @@ function toEnum(value, allowed, tally) {
 const zeros = (keys) => Object.fromEntries(keys.map((k) => [k, 0]));
 
 /**
+ * An aggregate count must be PRESENT and a safe non-negative integer: `Number(x) || 0` turned an
+ * absent or garbled count into a measured zero. Digit strings (what pg returns for bigint) and
+ * bigints are accepted; nothing else is.
+ */
+export function strictCount(v, what = 'count') {
+  const n = typeof v === 'bigint' ? Number(v) : (typeof v === 'string' && /^[0-9]+$/.test(v) ? Number(v) : v);
+  if (!Number.isSafeInteger(n) || n < 0) throw Object.assign(new Error(`${what} is not a non-negative integer`), { code: 'BAD_AGGREGATE' });
+  return n;
+}
+
+/**
  * @param {{runs: Array<{mode: string|null, gemini_verdict: string|null, converged: boolean, n: number}>,
  *          findings: Array<{severity: string|null, adjudication_outcome: string|null, pass_name: string|null, n: number}>}} rows
  * @param {{n: number}} tally
@@ -62,7 +73,7 @@ export function mapAuditRows(rows, tally) {
   const byVerdict = zeros(VERDICTS);
   let runs = 0; let convergedRuns = 0;
   for (const r of rows.runs) {
-    const n = Number(r.n) || 0;
+    const n = strictCount(r.n, 'audit runs');
     runs += n;
     if (r.converged) convergedRuns += n;
     byMode[toEnum(r.mode, AUDIT_MODES, tally)] += n;
@@ -73,7 +84,7 @@ export function mapAuditRows(rows, tally) {
   const findingsByOutcome = zeros(OUTCOMES);
   const findingsByPass = zeros(PASSES);
   for (const f of rows.findings) {
-    const n = Number(f.n) || 0;
+    const n = strictCount(f.n, 'findings');
     findingsBySeverity[toEnum(f.severity, SEVERITIES, tally)] += n;
     findingsByOutcome[f.adjudication_outcome == null || f.adjudication_outcome === '' ? 'pending' : toEnum(f.adjudication_outcome, OUTCOMES, tally)] += n;
     findingsByPass[toEnum(f.pass_name, PASSES, tally)] += n;
@@ -101,11 +112,26 @@ export function mapUpstreamRows(rows, totalOpen, to, tally) {
   return { measured: true, open, totalOpen, truncated: open.length < totalOpen };
 }
 
+/**
+ * Drift response → group. The response must be COMPLETE: a missing or malformed list is an unreadable
+ * measurement, never an empty one (an absent `unapplied` read as `[]` is "0 migrations behind").
+ * Live constraints that were not measured make the whole group unmeasured, not "0 broken".
+ */
+export function mapDrift(resp) {
+  const dd = resp?.drift;
+  const live = resp?.liveConstraints;
+  const ok = dd && Array.isArray(dd.unapplied) && Array.isArray(dd.shaMismatch)
+    && live && live.measured === true && Array.isArray(live.missing) && Array.isArray(live.altered);
+  if (!ok) return { measured: false, reason: 'read-failed' };
+  return { measured: true, unapplied: dd.unapplied.length, shaMismatch: dd.shaMismatch.length, liveBroken: live.missing.length + live.altered.length };
+}
+
 /** Closed reason for an error thrown by a reader. Never the message: it can carry a host. */
 export function reasonForError(err) {
   const code = String(err?.code ?? '');
   if (['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN', 'ECONNRESET'].includes(code)) return 'store-unreachable';
   if (code === 'NO_DB') return 'store-unconfigured';
+  if (code === 'BAD_AGGREGATE') return 'read-failed';
   // A typed SQLSTATE in the schema-fault classes (undefined table / column, permission) is a fault, not an absence.
   if (/^(42P01|42703|42501|42883)$/.test(code)) return 'schema-fault';
   return 'read-failed';
@@ -141,16 +167,7 @@ export async function buildExport({ now, consumerAlias, storeFingerprint, toolBu
     try {
       const d = await deps.drift();
       if (d.ok && d.drift) {
-        const dd = d.drift.drift ?? {};
-        const live = d.drift.liveConstraints;
-        drift = {
-          measured: true,
-          unapplied: (Array.isArray(dd.unapplied) ? dd.unapplied : []).length,
-          shaMismatch: (Array.isArray(dd.shaMismatch) ? dd.shaMismatch : []).length,
-          // Live constraints that were NOT measured are not "0 broken": the whole group is unmeasured then.
-          liveBroken: live?.measured ? [...(live.missing || []), ...(live.altered || [])].length : null,
-        };
-        if (drift.liveBroken === null) drift = { measured: false, reason: 'read-failed' };
+        drift = mapDrift(d.drift);
       } else {
         drift = { measured: false, reason: d.reason === 'store-unreachable' ? 'store-unreachable' : 'read-failed' };
       }

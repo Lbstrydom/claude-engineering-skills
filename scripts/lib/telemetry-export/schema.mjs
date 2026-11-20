@@ -56,8 +56,14 @@ export const UNMEASURED_REASONS = Object.freeze([
 // ── Bounded formats ──────────────────────────────────────────────────────────
 
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-/** ISO-8601 UTC with a trailing Z, as `Date#toISOString` writes it. */
-const isoUtc = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/);
+/**
+ * ISO-8601 UTC exactly as `Date#toISOString` writes it — AND a real instant: the regex alone accepts
+ * 2026-99-99T00:00:00.000Z, which parses to NaN and would slip past every ordering comparison.
+ * Round-tripping through `Date` is the check (it rejects impossible dates and normalises nothing).
+ */
+const isoUtc = z.string()
+  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  .refine((s) => { const t = Date.parse(s); return Number.isFinite(t) && new Date(t).toISOString() === s; }, 'not a real UTC instant');
 const alias = z.string().regex(/^[a-z0-9-]{1,32}$/);
 const hex = (n) => z.string().regex(new RegExp(`^[0-9a-f]{${n}}$`));
 const count = z.number().int().nonnegative();
@@ -135,7 +141,13 @@ export function validateExport(doc) {
     return { ok: false, reason: `schema: ${i?.code ?? 'invalid'} at ${(i?.path ?? []).join('.') || '(root)'}` };
   }
   const d = parsed.data;
-  if (Date.parse(d.window.from) >= Date.parse(d.window.to)) return { ok: false, reason: 'window: from is not before to' };
+  const from = Date.parse(d.window.from);
+  const to = Date.parse(d.window.to);
+  if (!(from < to)) return { ok: false, reason: 'window: from is not before to' };
+  // The window is a CONTRACT, not a free pair: exactly WINDOW_DAYS long and ending at generatedAt. A figure
+  // over another window is a different figure, and the reader must not have to guess which one it got.
+  if (to - from !== WINDOW_DAYS * 86_400_000) return { ok: false, reason: `window: not exactly ${WINDOW_DAYS} days` };
+  if (d.window.to !== d.generatedAt) return { ok: false, reason: 'window: does not end at generatedAt' };
   if (d.upstream.measured) {
     if (d.upstream.open.length > d.upstream.totalOpen) return { ok: false, reason: 'upstream: more rows than totalOpen' };
     if (d.upstream.truncated !== (d.upstream.open.length < d.upstream.totalOpen)) return { ok: false, reason: 'upstream: truncated flag disagrees with the rows' };
