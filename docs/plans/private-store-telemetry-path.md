@@ -59,7 +59,7 @@ is a rejection, not a pass-through — a guard that is inert on its defaults is 
 | Envelope | `schema` (`telemetry-export/v1`), `exportId`, `generatedAt`, `window {from, to}`, `consumerAlias` (the registry alias, never a repo name), `storeFingerprint` (the existing 16-hex digest), `toolBundleSha` (the sync manifest hash) |
 | Health | the `doctor` store-reachability verdict, `stores:drift` result (counts of unapplied / mismatched migrations, live-constraint status), migration ledger head |
 | Audit | per skill and per round: counts of audit runs by verdict, rounds to convergence, finding counts by severity and category, adjudication outcome counts. **Counts and enumerations only.** |
-| Upstream | open `upstream_issues` as `{id (12 hex of sha256 of the row id, so ids cannot be mistaken for store keys and a collision needs 2^48 rows), severity, category, ageDays}`, capped at 200 rows with `truncated: true` beyond that. **Titles and bodies have no field in v1** (§2.2). |
+| Upstream | open `upstream_issues` as `{id (12 hex of sha256 of the row id, so ids cannot be mistaken for store keys; a 48-bit digest reaches a birthday collision only around 2^24 ≈ 16 million distinct ids, against a lifetime population of a few thousand reports, and an id is a display handle, never a join key), severity, category, ageDays}`, capped at 200 rows with `truncated: true` beyond that. **Titles and bodies have no field in v1** (§2.2). |
 | Measurement honesty | for every group, `measured: true|false` and a `reason` when false (e.g. the store was unreachable at export time). An export never writes a zero for a group it could not read. |
 
 **Every string-valued field has a stated contract; none is free text.** Classifications (`severity`, `category`, skill name,
@@ -75,7 +75,7 @@ read in one transaction so the groups agree; a group that cannot be read in that
 partial). That table is reviewed before the exporter is written; this plan fixes the *shape*, not the SQL.
 
 **Bounds.** One export file is at most 256 KB; the reader refuses larger files (`rejected: oversize`) without parsing
-them, and keeps the newest 8 valid exports per alias (the reader owns cleanup of the rest).
+them, and keeps the newest 8 valid exports per alias (the reader owns cleanup of the rest). **Scan bounds:** at most 200 files per alias directory and 64 MB in total, scanned in a deterministic order (name, then mtime); rejected files are retained newest-20 per alias. Hitting a bound is reported as `scan incomplete: <bound>` — never as a clean scan, so it can never produce a `never received` claim.
 
 ### 2.2 Redaction
 
@@ -174,7 +174,7 @@ is a new version (strictness means the old reader would otherwise reject it).
 
 | Phase | Deliverable | Gate |
 |---|---|---|
-| **0** | First read the child CLI's real exit and output contract (what it prints, to which stream, with which exit code, for an unreachable store) and write it down. Then `queryStore` / `queryStoreDrift` classify from the **envelope's error code**, never from stderr text; an envelope that is missing, malformed or carries an unknown code stays `spawn-failed`. Both callers share one classifier. Test with a dead port; negative controls: a genuine crash and a malformed envelope stay `spawn-failed`. | one small PR; independent of the rest |
+| **0** | First read the child CLI's real exit and output contract (what it prints, to which stream, with which exit code, for an unreachable store) and write it down. Then `queryStore` / `queryStoreDrift` classify from the **envelope's error code**, never from stderr text; an envelope that is missing, malformed or carries an unknown code stays `spawn-failed`. Both callers share one classifier. If the unreachable-store path emits no usable code, **Phase 0's first change adds one at the CLI's emit site** (the contract is ours to fix), and it stops there if that is not possible; it never guesses from stderr. Test with a dead port; negative controls: a genuine crash and a malformed envelope stay `spawn-failed`. | one small PR; independent of the rest |
 | **1** | `telemetry-export/v1` schema + the exporter + redaction layers + canary-secret tests, **same commit** (Tier 3). Reads only; writes one file. | `npm run check`, the canary suite |
 | **2** | CES reader + the four-state rendering in `upstream:queues` / `stores:drift`, with both absent-⇒-unmeasured and genuine-zero-⇒-zero tests. | tests above |
 | **3** | The two triggers (`/ship` post-step, weekly maintenance) and a `doctor` line saying whether an export is overdue. | cadence observed over two real cycles, not assumed |
