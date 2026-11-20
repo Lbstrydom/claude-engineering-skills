@@ -221,6 +221,19 @@ describe('a partial read is never a definitive state', () => {
   });
 });
 
+describe('scan-incomplete causes do not hide each other', () => {
+  it('a count bound hit AFTER an unreadable alias still wins (it is what makes absence unprovable elsewhere)', () => {
+    const drop = tmp();
+    fs.writeFileSync(path.join(drop, 'broken'), 'not a directory');
+    fs.mkdirSync(path.join(drop, 'big'));
+    for (let i = 0; i < MAX_FILES_PER_ALIAS + 1; i++) fs.writeFileSync(path.join(drop, 'big', `2026-11-${String(1 + (i % 28)).padStart(2, '0')}-${crypto.randomUUID()}.json`), '{}');
+    fs.mkdirSync(path.join(drop, 'empty'));
+    const r = scan(drop, [...expected('weekly', 'broken'), ...expected('weekly', 'big'), ...expected('weekly', 'empty')]);
+    assert.equal(r.scanIncomplete, 'files-per-alias');
+    assert.equal(stateOf(r, 'empty').state, 'scan-incomplete');
+  });
+});
+
 describe('re-validation: CES does not trust the sender', () => {
   const planted = (drop, name, body) => {
     fs.mkdirSync(path.join(drop, 'acme'), { recursive: true });
@@ -266,6 +279,12 @@ describe('re-validation: CES does not trust the sender', () => {
   it('an oversize file is refused WITHOUT being parsed', () => {
     const drop = tmp(); planted(drop, NAME, `{"x":"${'a'.repeat(MAX_EXPORT_BYTES + 10)}"}`);
     assert.equal(stateOf(scan(drop)).latestRejected.reason, 'oversize');
+  });
+
+  it('a non-regular file with an export-shaped name (a directory) is refused without being opened', () => {
+    const drop = tmp();
+    fs.mkdirSync(path.join(drop, 'acme', NAME), { recursive: true });
+    assert.equal(stateOf(scan(drop)).latestRejected.reason, 'not-a-file');
   });
 
   it('a symlinked export is refused', async (t) => {
@@ -324,6 +343,18 @@ describe('retention is explicit and never acts on a scan it does not trust', () 
     const after = scan(drop);
     assert.equal(stateOf(after).validCount, KEEP_VALID);
     assert.equal(stateOf(after).ageDays, 1, 'the newest survived');
+  });
+
+  it('failed deletions are REPORTED, not swallowed into a success count', async () => {
+    const drop = tmp();
+    for (let i = 0; i < KEEP_VALID + 2; i++) await put(drop, { ageDays: i + 1 });
+    const r = pruneDrop(scan(drop), { unlink: () => { throw Object.assign(new Error('x'), { code: 'EACCES' }); } });
+    assert.deepEqual(r, { removed: 0, failed: 2, skipped: false });
+  });
+
+  it('an untrusted scan is reported as skipped, not as zero removed', async () => {
+    const drop = tmp(); await put(drop, { ageDays: 1 });
+    assert.equal(pruneDrop({ ...scan(drop), scanIncomplete: 'total-bytes' }).skipped, true);
   });
 
   it('CONTROL — nothing is removed on an unreadable or incomplete scan', async () => {

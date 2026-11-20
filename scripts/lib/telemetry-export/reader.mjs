@@ -52,12 +52,15 @@ function judgeFile({ fs, file, expectedAlias, now }) {
   let ls;
   try { ls = fs.lstatSync(file); } catch (err) { return { ok: false, reason: `unreadable: ${err?.code || 'error'}` }; }
   if (ls.isSymbolicLink()) return { ok: false, reason: 'symlink' };
+  // Before OPENING: a FIFO or device with an export-shaped name would block `open` waiting for a writer, so the
+  // type is refused on the lstat, and the open itself is non-blocking where the platform has the flag.
+  if (!ls.isFile()) return { ok: false, reason: 'not-a-file' };
   // Type and size are taken from the OPEN descriptor, and the read itself is capped, so the entry cannot be
   // swapped or grown between a check and the read. Refused WITHOUT parsing: a cap that parsed first is no cap.
   let raw;
   let fd;
   try {
-    fd = fs.openSync(file, 'r');
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
     const st = fs.fstatSync(fd);
     if (!st.isFile()) return { ok: false, reason: 'not-a-file' };
     if (st.size > MAX_EXPORT_BYTES) return { ok: false, reason: 'oversize' };
@@ -128,6 +131,9 @@ export function scanDrop({ dropDir, expected, now, fs = nodeFs }) {
   }
 
   let scanIncomplete = null;
+  // A COUNT bound outranks `alias-unreadable`: it is the one that makes "nothing was there" unprovable elsewhere,
+  // so a later bound must not be hidden behind an earlier unreadable alias.
+  const markIncomplete = (why) => { if (scanIncomplete === null || (scanIncomplete === 'alias-unreadable' && why !== 'alias-unreadable')) scanIncomplete = why; };
   let bytes = 0;
   const aliases = [];
   for (const { alias, cadence } of expected) {
@@ -142,7 +148,7 @@ export function scanDrop({ dropDir, expected, now, fs = nodeFs }) {
     } catch (err) {
       if (err?.code !== 'ENOENT') {
         // "Could not look" for THIS alias also means the scan as a whole is not trusted (no pruning, no clean claim).
-        scanIncomplete = scanIncomplete ?? 'alias-unreadable';
+        markIncomplete('alias-unreadable');
         aliases.push({ alias, cadence, state: 'drop-unreadable', reason: String(err?.code || 'unreadable') });
         continue;
       }
@@ -150,7 +156,7 @@ export function scanDrop({ dropDir, expected, now, fs = nodeFs }) {
     // Newest first: the file name starts with the export date.
     names.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
     let truncated = false;
-    if (names.length > MAX_FILES_PER_ALIAS) { scanIncomplete = scanIncomplete ?? 'files-per-alias'; names = names.slice(0, MAX_FILES_PER_ALIAS); truncated = true; }
+    if (names.length > MAX_FILES_PER_ALIAS) { markIncomplete('files-per-alias'); names = names.slice(0, MAX_FILES_PER_ALIAS); truncated = true; }
 
     const valid = []; const rejected = [];
     for (const name of names) {
@@ -159,7 +165,7 @@ export function scanDrop({ dropDir, expected, now, fs = nodeFs }) {
       let size = 0;
       try { size = fs.lstatSync(file).size; } catch { /* judgeFile reports it */ }
       bytes += size;
-      if (bytes > MAX_TOTAL_BYTES) { scanIncomplete = scanIncomplete ?? 'total-bytes'; truncated = true; break; }
+      if (bytes > MAX_TOTAL_BYTES) { markIncomplete('total-bytes'); truncated = true; break; }
       const j = judgeFile({ fs, file, expectedAlias: alias, now });
       if (j.ok) valid.push({ file, name, doc: j.doc }); else rejected.push({ file, name, reason: j.reason });
     }
@@ -205,16 +211,17 @@ export function scanDrop({ dropDir, expected, now, fs = nodeFs }) {
  *
  * @param {ReturnType<typeof scanDrop>} scan
  * @param {{unlink?: (p: string) => void}} [io]
- * @returns {{removed: number}}
+ * @returns {{removed: number, failed: number, skipped: boolean}} `skipped` = the scan was not trusted; `failed` = deletions that errored
  */
 export function pruneDrop(scan, { unlink = nodeFs.unlinkSync } = {}) {
-  if (scan.scanError || scan.scanIncomplete) return { removed: 0 };   // never prune on a scan we do not fully trust
-  let removed = 0;
+  if (scan.scanError || scan.scanIncomplete) return { removed: 0, failed: 0, skipped: true };   // never prune on a scan we do not fully trust
+  let removed = 0; let failed = 0;
+  const drop = (f) => { try { unlink(f); removed++; } catch { failed++; } };
   for (const a of scan.aliases) {
-    for (const f of (a.files?.valid ?? []).slice(KEEP_VALID)) { try { unlink(f); removed++; } catch { /* leave it */ } }
-    for (const f of (a.files?.rejected ?? []).slice(KEEP_REJECTED)) { try { unlink(f); removed++; } catch { /* leave it */ } }
+    for (const f of (a.files?.valid ?? []).slice(KEEP_VALID)) drop(f);
+    for (const f of (a.files?.rejected ?? []).slice(KEEP_REJECTED)) drop(f);
   }
-  return { removed };
+  return { removed, failed, skipped: false };
 }
 
 const fig = (g, text) => (g.measured ? text : `unmeasured (${g.reason})`);

@@ -43,7 +43,9 @@ async function main() {
 
   if (hasFlag('prune')) {
     const r = pruneDrop(scan);
-    process.stderr.write(`telemetry exports: pruned ${r.removed} file(s) beyond retention${scan.scanError || scan.scanIncomplete ? ' (scan not clean: nothing removed)' : ''}\n`);
+    process.stderr.write(r.skipped
+      ? 'telemetry exports: scan not clean — nothing was pruned\n'
+      : `telemetry exports: pruned ${r.removed} file(s) beyond retention${r.failed ? `; ${r.failed} could NOT be removed (permissions or in use) — retention is not enforced` : ''}\n`);
   }
   if (hasFlag('json')) {
     // Strip file paths: they are local and of no use to a reader of the JSON.
