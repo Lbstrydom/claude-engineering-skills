@@ -379,11 +379,17 @@ describe('arm-generation.mjs — overlapping generations are serialised (cwd is 
       fs.writeFileSync(path.join(repo, 'a.js'), 'x\n'); sh2(repo, 'add', '.'); sh2(repo, 'commit', '-q', '-m', '1');
       const sha =sh2(repo, 'rev-parse', 'HEAD');
       let secondDiffFile = null; let firstDone = false;
+      // Barriers, not sleeps: the second call starts only once the first is INSIDE its audit, and the first is released only after
+      // the second has been initiated.
+      let enteredFirst; const firstEntered = new Promise((r) => { enteredFirst = r; });
+      let releaseFirst; const firstReleased = new Promise((r) => { releaseFirst = r; });
       const first = runAuditGenerationArm({ arm: ARM_A, auditInput: { diff: 'one', files: ['a.js'], repoRoot: repo, treeSha: sha }, route, runId: 'r-s1', role: 'auditor', _clientFactories: spyFactories().factories,
-        _runMultiPassCodeAudit: async () => { await new Promise((r) => setTimeout(r, 300)); firstDone = true; return { findings: [], _usage: {} }; } });
-      await new Promise((r) => setTimeout(r, 100)); // the first call is now inside its tree
+        _runMultiPassCodeAudit: async () => { enteredFirst(); await firstReleased; firstDone = true; return { findings: [], _usage: {} }; } });
+      await firstEntered; // the first call is now inside its tree
       const second = runAuditGenerationArm({ arm: ARM_A, auditInput: { diff: 'two', files: ['a.js'], repoRoot: repo, treeSha: sha }, route, runId: 'r-s2', role: 'auditor', _clientFactories: spyFactories().factories,
         _runMultiPassCodeAudit: async (c, p, pc, j, o, h, opts) => { secondDiffFile = opts.diffFile; assert.equal(firstDone, true, 'serialised'); assert.equal(fs.readFileSync(opts.diffFile, 'utf8'), 'two', 'its input survived the first tree being removed'); return { findings: [], _usage: {} }; } });
+      await new Promise((r) => setImmediate(r)); // the second call has been initiated and is queued behind the first
+      releaseFirst();
       await Promise.all([first, second]);
       assert.equal(secondDiffFile.includes('model-eval-tree-'), false, 'scratch is not under a temporary case tree');
       assert.equal(path.resolve(process.cwd()), path.resolve(savedCwd));

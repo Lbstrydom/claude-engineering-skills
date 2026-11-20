@@ -21,6 +21,19 @@ const cleanEnv = () => { const e = { ...process.env }; for (const k of GIT_REPO_
 const git = (root, args, { hooks = false } = {}) => execFileSync('git', [...(hooks ? [] : ['-c', `core.hooksPath=${os.devNull}`]), '-C', root, ...args],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, env: cleanEnv() });
 
+/** The registration entry (a directory under <common-dir>/worktrees) that points at `dir`, or null. Read from the files git itself wrote. */
+function registrationFor(repoRoot, dir) {
+  try {
+    const common = path.resolve(repoRoot, execFileSync('git', ['-C', repoRoot, 'rev-parse', '--git-common-dir'], { encoding: 'utf8', env: cleanEnv() }).trim());
+    const want = path.resolve(dir, '.git').toLowerCase();
+    for (const name of fs.readdirSync(path.join(common, 'worktrees'))) {
+      const entry = path.join(common, 'worktrees', name);
+      try { if (path.resolve(fs.readFileSync(path.join(entry, 'gitdir'), 'utf8').trim()).toLowerCase() === want) return entry; } catch { /* an entry without a gitdir is not ours */ }
+    }
+  } catch { /* no worktrees directory: nothing registered */ }
+  return null;
+}
+
 /**
  * Run `fn(dir)` with `dir` a detached checkout of `sha` from `repoRoot`'s repository, then remove it, whether or not `fn` threw.
  * Removal is addressed through `repoRoot`, never through the worktree itself: a worktree already deregistered would otherwise
@@ -35,25 +48,25 @@ export async function withCaseTree({ repoRoot, sha }, fn, { _git = git } = {}) {
   if (typeof sha !== 'string' || !isSafeGitRevision(sha)) throw new Error(`withCaseTree: "${sha}" is not a safe git revision`);
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-tree-'));
   const dir = path.join(base, 'tree');
-  let added = false; let result; let primary = null;
+  let result; let primary; let failed = false; // a thrown value may be falsy: track THAT it threw, not what
   try {
     _git(repoRoot, ['worktree', 'add', '--detach', '--force', dir, sha]);
-    added = true;
     result = await fn(dir);
-  } catch (err) { primary = err; }
+  } catch (err) { primary = err; failed = true; }
   const cleanupErrors = [];
-  if (added) {
-    // Two --force: a locked worktree (a crashed earlier call, or anything that locked it) is still ours to remove.
-    try { _git(repoRoot, ['worktree', 'remove', '--force', '--force', dir]); } catch (err) {
+  // Attempted whether or not `add` returned: a git killed between registering and finishing the checkout leaves a registration.
+  // Two --force: a locked worktree is still ours to remove. "Not a working tree" is the expected answer when nothing was created.
+  try { _git(repoRoot, ['worktree', 'remove', '--force', '--force', dir]); } catch (err) {
+    if (fs.existsSync(dir) || registrationFor(repoRoot, dir)) {
       cleanupErrors.push(`worktree remove ${dir}: ${err.message}`);
-      // Remove the files, then prune the now-dangling registration: only on this failure path, never routinely, because prune is
-      // repository-wide and must not touch other worktrees (e.g. ones on a temporarily unavailable mount) when nothing went wrong.
-      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); _git(repoRoot, ['worktree', 'prune']); } catch (err2) { cleanupErrors.push(`fallback cleanup ${dir}: ${err2.message}`); }
+      // Targeted: delete the files and ONLY this tree's registration entry. Never the repository-wide `git worktree prune`, which
+      // would also unregister other worktrees that merely look missing (e.g. on an unavailable mount).
+      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); const reg = registrationFor(repoRoot, dir); if (reg) fs.rmSync(reg, { recursive: true, force: true }); } catch (err2) { cleanupErrors.push(`fallback cleanup ${dir}: ${err2.message}`); }
     }
   }
   try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch (err) { cleanupErrors.push(`rm ${base}: ${err.message}`); }
-  if (primary) {
-    if (cleanupErrors.length > 0) primary.cleanupErrors = cleanupErrors;
+  if (failed) {
+    if (cleanupErrors.length > 0 && primary && typeof primary === 'object') primary.cleanupErrors = cleanupErrors;
     throw primary;
   }
   if (cleanupErrors.length > 0) throw new Error(`withCaseTree: cleanup of the case tree for ${sha} failed: ${cleanupErrors.join('; ')}`);

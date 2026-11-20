@@ -103,4 +103,36 @@ describe('withCaseTree', () => {
       assert.equal(registered(r), 1, 'the fallback (delete files, then prune) cleaned the registration');
     } finally { rm(r); }
   });
+
+  test('a falsy thrown value is still a failure and is rethrown as thrown', async () => {
+    const { r, sha } = repo();
+    try {
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { throw 0; }), (e) => e === 0);
+      assert.equal(registered(r), 1);
+    } finally { rm(r); }
+  });
+
+  test('a git that registers the worktree and then fails leaves no registration behind', async () => {
+    const { r, sha } = repo();
+    const realGit = (root, args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: ENV });
+    const addThenDie = (root, args) => { const out = realGit(root, args); if (args[0] === 'worktree' && args[1] === 'add') throw new Error('killed mid-checkout'); return out; };
+    try {
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => 1, { _git: addThenDie }), /killed mid-checkout/);
+      assert.equal(registered(r), 1, 'the half-made registration was removed');
+    } finally { rm(r); }
+  });
+
+  test('the fallback unregisters ONLY its own tree: an unrelated worktree that merely looks missing keeps its registration', async () => {
+    const { r, sha } = repo();
+    const other = path.join(os.tmpdir(), `case-tree-unrelated-${process.pid}`);
+    const realGit = (root, args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: ENV });
+    const failingRemove = (root, args) => { if (args[0] === 'worktree' && args[1] === 'remove') throw new Error('simulated'); return realGit(root, args); };
+    try {
+      sh(r, 'worktree', 'add', '--detach', other, sha);
+      rm(other); // now it LOOKS missing (an unavailable mount, say); a repository-wide prune would unregister it
+      assert.equal(registered(r), 2);
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => 1, { _git: failingRemove }), /cleanup of the case tree/);
+      assert.equal(registered(r), 2, 'ours is gone, the unrelated one is untouched');
+    } finally { try { sh(r, 'worktree', 'prune'); } catch { /* */ } rm(other); rm(r); }
+  });
 });
