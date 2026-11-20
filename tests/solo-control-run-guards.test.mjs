@@ -30,7 +30,7 @@ test('H1: authorizeAll refuses when ANY model recipient is not cleared for the r
     const policy = loadRecipientPolicy(p);
     assert.doesNotThrow(() => guards.authorizeAll(['gpt-6-astra'], 'github.com/x/r', policy));
     assert.throws(() => guards.authorizeAll(['gpt-6-astra', 'gemini-pro-latest'], 'github.com/x/r', policy), /REFUSED/);
-  } finally { fs.rmSync(p, { force: true }); }
+  } finally { fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
 });
 
 // H8

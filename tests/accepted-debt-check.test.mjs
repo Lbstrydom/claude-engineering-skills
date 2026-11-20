@@ -750,7 +750,7 @@ describe('check-accepted-debt.mjs — CLI process boundary', () => {
       assert.ok(fs.existsSync(path.join(tmp, 'caller-cwd-out.json')), 'file written under the caller cwd');
       assert.ok(!fs.existsSync(strayInRepo), 'nothing written under the repo root');
     } finally {
-      fs.rmSync(strayInRepo, { force: true });
+      fs.rmSync(strayInRepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
