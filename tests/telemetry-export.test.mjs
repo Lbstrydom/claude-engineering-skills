@@ -378,23 +378,53 @@ describe('delivery: one primitive — a file in the drop directory', () => {
   });
 
   /** A scripted git: the gate's three reads, then whatever is allowed to follow. */
-  const gitStub = (dir, calls, { ahead = '0', upstream = 'origin/main' } = {}) => (cmd, args) => {
-    calls.push([cmd, ...args]);
-    if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return dir;
-    if (args[0] === 'rev-parse') { if (!upstream) throw new Error('no upstream'); return upstream; }
-    if (args[0] === 'rev-list') return ahead;
-    return '';
+  const gitStub = (dir, calls, { ahead = '0', upstream = 'origin/main', fetchSpec = '+refs/heads/*:refs/remotes/origin/*', pushurl = '', ignored = false } = {}) => {
+    let head = 0;
+    return (cmd, args) => {
+      calls.push([cmd, ...args]);
+      if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return dir;
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return `sha${head++ === 0 ? 'parent' : 'ours'}\n`;
+      if (args[0] === 'rev-parse') { if (!upstream) throw new Error('no upstream'); return upstream; }
+      if (args[0] === 'config') return args[2].endsWith('.fetch') ? fetchSpec : pushurl;
+      if (args[0] === 'check-ignore') { if (ignored) return ''; throw new Error('exit 1: not ignored'); }
+      if (args[0] === 'rev-list') return ahead;
+      return '';
+    };
   };
 
-  it('--push runs the three gate reads, then add, commit and an EXPLICIT push — never force, nothing else', async () => {
+  it('--push: gate reads, add, commit, and ONE push of the exact commit — explicit destination, no tags, never force', async () => {
     const dir = tmp();
     const calls = [];
     const r = deliverExport({ doc: await build(), dropDir: dir, push: true, exec: gitStub(dir, calls) });
     assert.equal(r.pushed, true);
-    assert.deepEqual(calls.map((c) => c[1]), ['rev-parse', 'rev-parse', 'rev-list', 'add', 'commit', 'push']);
-    assert.deepEqual(calls[5].slice(1), ['push', 'origin', 'HEAD:refs/heads/main'], 'the destination is explicit, never whatever push.default says');
+    const verbs = calls.map((c) => c[1] === '-c' ? c[3] : c[1]);
+    assert.deepEqual(verbs, ['rev-parse', 'rev-parse', 'config', 'config', 'rev-list', 'check-ignore', 'add', 'rev-parse', 'commit', 'rev-parse', 'push']);
+    const push = calls.at(-1);
+    assert.deepEqual(push.slice(1), ['-c', 'push.followTags=false', 'push', '--no-follow-tags', 'origin', 'shaours:refs/heads/main'],
+      'the destination is explicit and the commit is named by SHA: nothing config-driven and nothing committed later can ride along');
     assert.ok(calls.every((c) => c[0] === 'git'));
-    assert.equal(calls.flat().some((a) => /force|-f$|--delete|reset|checkout|--all|--mirror/.test(a)), false);
+    assert.equal(calls.flat().some((a) => /^(--force|-f|--delete|--all|--mirror|--tags)$/.test(a)), false);
+  });
+
+  it('a push that fails UNDOES the exporter\'s own commit (mixed reset to its parent) and still reports the failure', async () => {
+    const dir = tmp();
+    const calls = [];
+    const stub = gitStub(dir, calls);
+    assert.throws(() => deliverExport({ doc: await_(), dropDir: dir, push: true, exec: (c, a) => { if (a.includes('push')) throw new Error('rejected'); return stub(c, a); } }), /rejected/);
+    const reset = calls.find((c) => c[1] === 'reset');
+    assert.deepEqual(reset?.slice(1), ['reset', '-q', '--mixed', 'shaparent']);
+  });
+
+  it('plain-clone assumptions are enforced: a custom fetch refspec, a separate push URL, or an ignoring .gitignore are refused BEFORE anything is written', async () => {
+    for (const [opts, re] of [
+      [{ fetchSpec: '+refs/heads/main:refs/remotes/origin/other' }, /default fetch refspec/],
+      [{ pushurl: 'ssh://elsewhere/drop.git' }, /separate push URL/],
+      [{ ignored: true }, /ignores exports of this name/],
+    ]) {
+      const dir = tmp();
+      assert.throws(() => deliverExport({ doc: await_(), dropDir: dir, push: true, exec: gitStub(dir, [], opts) }), re);
+      assert.equal(fs.existsSync(path.join(dir, 'acme')), false, `nothing written for ${JSON.stringify(opts)}`);
+    }
   });
 
   it('commits already made but not pushed are NOT published on the exporter\'s behalf: refused BEFORE anything is written', async () => {
@@ -420,7 +450,7 @@ describe('delivery: one primitive — a file in the drop directory', () => {
   it('a failing push surfaces (the file is already safely written, the caller is told)', async () => {
     const doc = await build();
     const dir = tmp();
-    assert.throws(() => deliverExport({ doc, dropDir: dir, push: true, exec: (c, a) => { if (a[0] === 'push') throw new Error('rejected'); return gitStub(dir, [])(c, a); } }), /rejected/);
+    assert.throws(() => deliverExport({ doc, dropDir: dir, push: true, exec: (() => { const g = gitStub(dir, []); return (c, a) => { if (a.includes('push')) throw new Error('rejected'); return g(c, a); }; })() }), /rejected/);
   });
 });
 

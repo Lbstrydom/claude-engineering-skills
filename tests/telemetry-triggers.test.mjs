@@ -356,6 +356,32 @@ describe('throttle audit round 1: it must really read nothing, deliver what is p
       assert.match(r.stderr, /cannot tell whether earlier exports were pushed/);
     });
 
+    it('a push that fails after the exporter committed leaves NO unpushed commit behind: its own commit is undone, the file stays for the next attempt', async () => {
+      const { remote, drop } = gitDrop();
+      await put(drop, { ageMs: 3_600_000 });
+      const headBefore = git(drop, 'rev-parse', 'HEAD');
+      fs.rmSync(remote, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });   // push will fail
+      const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
+      assert.equal(r.status, 1);
+      assert.equal(git(drop, 'rev-parse', 'HEAD'), headBefore, 'HEAD is back where it was');
+      assert.match(git(drop, 'status', '--porcelain', '-uall'), /\?\? acme\/.*\.json/, 'the validated file is still there, uncommitted');
+    });
+
+    it('a separate push URL, a custom fetch refspec and an ignoring .gitignore each REFUSE (a drop must be a plain clone)', async () => {
+      for (const [prep, re] of [
+        [(drop) => git(drop, 'config', 'remote.origin.pushurl', 'ssh://elsewhere.example.test/drop.git'), /separate push URL/],
+        [(drop) => git(drop, 'config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/other'), /default fetch refspec|cannot tell whether earlier exports were pushed/],   // a remapped refspec usually breaks the upstream lookup first: refused either way
+        [(drop) => { fs.writeFileSync(path.join(drop, '.gitignore'), '*.json\n'); git(drop, 'add', '.gitignore'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'ignore'); git(drop, 'push', '-q'); }, /ignores exports of this name/],
+      ]) {
+        const { drop } = gitDrop();
+        prep(drop);
+        const r = run(['--alias', 'acme', '--drop-dir', drop], pushEnv);
+        assert.equal(r.status, 1, r.stdout);
+        assert.match(r.stderr, re);
+        assert.equal(fs.existsSync(path.join(drop, 'acme')), false, 'nothing was written');
+      }
+    });
+
     it('a failing delivery of the earlier export is REPORTED (exit 1), not skipped over', async () => {
       const { remote, drop } = gitDrop();
       await put(drop, { ageMs: 3_600_000 });
