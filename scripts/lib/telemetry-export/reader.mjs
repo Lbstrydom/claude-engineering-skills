@@ -64,8 +64,15 @@ function judgeFile({ fs, file, expectedAlias, now }) {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) return { ok: false, reason: 'not-a-file' };
     if (st.size > MAX_EXPORT_BYTES) return { ok: false, reason: 'oversize' };
+    // Read until EOF or one byte past the cap: a single readSync may legitimately return less than the file
+    // (network filesystems, pipes), and a truncated body would read as corrupt rather than as what it is.
     const buf = Buffer.alloc(MAX_EXPORT_BYTES + 1);
-    const n = fs.readSync(fd, buf, 0, MAX_EXPORT_BYTES + 1, 0);
+    let n = 0;
+    while (n < buf.length) {
+      const got = fs.readSync(fd, buf, n, buf.length - n, n);
+      if (got === 0) break;
+      n += got;
+    }
     if (n > MAX_EXPORT_BYTES) return { ok: false, reason: 'oversize' };
     raw = buf.toString('utf8', 0, n);
   } catch (err) {
@@ -126,7 +133,10 @@ export function scanDrop({ dropDir, expected, now, fs = nodeFs }) {
   const expectedAliases = new Set(expected.map((e) => e.alias));
   const unattributed = [];
   for (const d of top) {
-    if (!d.isDirectory() || d.name.startsWith('.')) continue;          // .git and friends are not exporters
+    if (d.name.startsWith('.')) continue;                              // .git and friends are not exporters
+    // A symlink in the drop is never followed, and never silently ignored either.
+    if (d.isSymbolicLink()) { unattributed.push({ dir: ALIAS_RE.test(d.name) ? d.name : '(invalid name)', reason: 'symlink' }); continue; }
+    if (!d.isDirectory()) continue;
     if (!expectedAliases.has(d.name)) unattributed.push({ dir: ALIAS_RE.test(d.name) ? d.name : '(invalid name)', reason: 'unexpected-alias' });
   }
 
