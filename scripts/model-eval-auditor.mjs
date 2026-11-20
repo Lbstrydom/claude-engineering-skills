@@ -318,7 +318,7 @@ async function runPromotionTier({
     let candidateCaught = 0, baselineCaught = 0;
     let candidateFindingsTotal = 0, candidateFalseCount = 0, baselineFindingsTotal = 0, baselineFalseCount = 0;
     for (const kdCase of cases) {
-      const auditInput = { diff: kdCase.visibleInput.diff, files: kdCase.visibleInput.files, repoRoot: kdCase.repoRoot };
+      const auditInput = { diff: kdCase.visibleInput.diff, files: kdCase.visibleInput.files, repoRoot: kdCase.repoRoot, treeSha: kdCase.treeSha };
       // scope/passes (auditor-controls-execution-wiring.md, Phase 2) reach
       // BOTH the candidate and baseline arm identically — lesson (b),
       // controls.mjs's own header: arms must share one dial or the
@@ -675,8 +675,8 @@ async function main() {
     const unavailable = [];
     for (const kd of selectedKds) {
       try {
-        const { visibleInput, hiddenGroundTruth, repoRoot } = loadCorpusCase({ kdEntry: kd, repoRoots });
-        cases.push({ visibleInput, hiddenGroundTruth, repoRoot });
+        const { visibleInput, hiddenGroundTruth, repoRoot, treeSha } = loadCorpusCase({ kdEntry: kd, repoRoots });
+        cases.push({ visibleInput, hiddenGroundTruth, repoRoot, treeSha });
       } catch (err) {
         if (err instanceof CorpusCaseUnavailable) unavailable.push({ kdId: kd.id, reason: err.reason, message: err.message });
         // An egress-gate refusal (sensitive path mention / secret pattern in
