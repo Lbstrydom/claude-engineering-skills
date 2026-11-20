@@ -70,6 +70,20 @@ const FILES = {
     `    return "${KEY_BODY}"`,
     '',
   ].join('\n'),
+  // A U+2028 inside a string literal (str.splitlines would split there; Python
+  // does not), and an __all__ inside a function (a different variable).
+  'src/shop/odd.py': [
+    'SEP = "a b"',
+    '__all__ = ["visible"]',
+    'def visible():',
+    '    """Shown."""',
+    '    return SEP',
+    '',
+    'def hidden():',
+    '    __all__ = ["hidden"]',
+    '    return __all__',
+    '',
+  ].join('\n'),
   'src/shop/compat.py': [
     '__all__ = ["fast_path"]',
     '__all__ += ["slow_path"]',
@@ -144,7 +158,7 @@ describe('Python fixture repo — full extract through the real CLI', () => {
 
   it('indexes module functions, classes and methods with signatures', () => {
     const got = ofType(recs, 'symbol').map((s) => `${s.filePath}::${s.symbolName}::${s.kind}::${s.signature}`).sort();
-    assert.deepEqual(got.filter((g) => !g.includes('aws.py') && !g.includes('compat.py')), [
+    assert.deepEqual(got.filter((g) => !/aws\.py|compat\.py|odd\.py/.test(g)), [
       'src/shop/legacy.py::greet::function::def greet()',
       'src/shop/orders/pricing.py::total_price::function::def total_price(items, tax_rate=0.2)',
       'src/shop/orders/service.py::OrderService._audit::method::def _audit(self)',
@@ -194,6 +208,16 @@ describe('Python fixture repo — full extract through the real CLI', () => {
     assert.equal(c.fast_path.isExported, true);
   });
 
+  it('slices on Python\'s own line boundaries and reads __all__ from module scope only', () => {
+    const o = Object.fromEntries(ofType(recs, 'symbol')
+      .filter((s) => s.filePath === 'src/shop/odd.py').map((s) => [s.symbolName, s]));
+    assert.equal(o.visible.startLine, 3);
+    assert.match(o.visible.bodyText, /^def visible\(\):\n {4}"""Shown\."""\n {4}return SEP$/,
+      'a U+2028 in an earlier string must not shift the slice');
+    assert.equal(o.visible.isExported, true);
+    assert.equal(o.hidden.isExported, false, 'a function-local __all__ is not the module\'s');
+  });
+
   it('a sensitive-path .py and an escaping symlink are never read, named or indexed', () => {
     const all = JSON.stringify(recs);
     assert.equal(all.includes('secrets/creds.py'), false);
@@ -221,10 +245,10 @@ describe('Python fixture repo — full extract through the real CLI', () => {
     const cov = coverageOf(recs);
     assert.equal(cov.outcome, 'ok');
     assert.equal(cov.parser.unparseable, 0);
-    // 10 regular .py (+ the symlink when the OS allowed one); the sensitive file
+    // 11 regular .py (+ the symlink when the OS allowed one); the sensitive file
     // and the escaping symlink are refused by the gate, so they are not in the
-    // universe at all (never read, never named): 9 either way.
-    assert.equal(cov.eligible, 9);
+    // universe at all (never read, never named): 10 either way.
+    assert.equal(cov.eligible, 10);
     assert.equal(cov.cruised, cov.eligible - 1, 'only broken.py (syntax error) is uncruised');
     assert.deepEqual(cov.samples.uncruised, ['src/shop/broken.py']);
     const summary = ofType(recs, 'summary')[0].counts;

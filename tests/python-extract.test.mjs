@@ -14,9 +14,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 import {
-  probePythonParser, readAdmittedSource, toSymbolCandidates, toImportRefs, runPythonHelper,
+  probePythonParser, readAdmittedSource, toSymbolCandidates, toImportRefs, runPythonHelper, runPythonStage,
   bucketPythonImports, guardedMetaReader, OUTCOME, DEFAULT_HELPER_PATH, PYTHON_ENV_VAR,
 } from '../scripts/lib/symbol-index/python-extract.mjs';
 
@@ -28,8 +29,16 @@ const reqs = (k) => Array.from({ length: k }, (_, i) => ({
 const outcomes = (results) => [...results.values()].map((r) => r.outcome);
 
 let tmp;
-beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'py-extract-')); });
-afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+// A fresh marker per test: the fake helper's one-shot faults fire once across
+// restarts (and die-after stays dead), never leaking between tests.
+beforeEach(() => {
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'py-extract-'));
+  process.env.FAKE_HELPER_MARK = path.join(tmp, 'fake-helper.mark');
+});
+afterEach(() => {
+  delete process.env.FAKE_HELPER_MARK;
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+});
 
 describe('probePythonParser', () => {
   const ok = () => ({ status: 0, stdout: '3.11.4\n' });
@@ -144,6 +153,18 @@ describe('readAdmittedSource — open-then-verify against a re-admission (Tier 3
     fs.writeFileSync(p, 'x'.repeat(100));
     const r = readAdmittedSource(admitted(p), { maxBytes: 10, readmit: readmitAt(p) });
     assert.equal(r.outcome, OUTCOME.SIZE_CAP);
+  });
+
+  it('a path swapped to a FIFO with no writer is refused without blocking', (t) => {
+    if (process.platform === 'win32') { t.skip('no FIFOs on Windows; CI (Linux) runs this'); return; }
+    const fifo = path.join(tmp, 'pipe.py');
+    const mk = spawnSync('mkfifo', [fifo]);
+    if (mk.status !== 0) { t.skip('mkfifo unavailable'); return; }
+    const started = Date.now();
+    const r = readAdmittedSource({ canonicalPath: fs.realpathSync(fifo) }, { maxBytes: 1024, readmit: readmitAt(fifo) });
+    assert.equal(r.ok, false);
+    assert.equal(r.outcome, OUTCOME.IDENTITY_CHANGED);
+    assert.ok(Date.now() - started < 5000, 'the open must not hang on a writerless FIFO');
   });
 
   it('refuses to run without a re-admission (no silent pre-open-only mode)', () => {
@@ -346,5 +367,31 @@ describe('guardedMetaReader — root discovery never opens a refused metadata fi
       readMeta: (rel) => { seen.push(rel); return null; },
     });
     assert.deepEqual(seen.sort(), ['pyproject.toml', 'setup.cfg', 'svc/setup.cfg']);
+  });
+});
+
+describe('runPythonStage — a file whose read is refused never enters the module index (M5)', () => {
+  it('an import of a file refused at re-admission is not a persisted edge', async () => {
+    const probe = probePythonParser();
+    if (!probe.available) throw new Error(`Python >= 3.9 is required for this suite: ${probe.reason}`);
+    fs.writeFileSync(path.join(tmp, 'a.py'), 'from b import thing\n');
+    fs.writeFileSync(path.join(tmp, 'b.py'), 'thing = 1\n');
+    const canon = (rel) => fs.realpathSync(path.join(tmp, rel));
+    let bCalls = 0;
+    // Admits both on the walk; b.py is refused when the reader re-admits it after the open.
+    const admit = (abs) => {
+      const rel = path.relative(tmp, abs).split(path.sep).join('/');
+      if (rel === 'b.py' && ++bCalls > 1) return { admitted: false, rel, reason: 'sensitive' };
+      return { admitted: true, rel, canonicalPath: canon(rel) };
+    };
+    const emitted = [];
+    const stats = { symbolCount: 0, parseFailures: 0, redacted: 0, skippedDelegate: 0 };
+    const res = await runPythonStage({
+      repoRoot: tmp, symbolAdmissions: [], universeFiles: [path.join(tmp, 'a.py'), path.join(tmp, 'b.py')],
+      admit, redactAndEmit: () => {}, emit: (r) => emitted.push(r), log: () => {}, stats, maxBytes: 4096, probe,
+    });
+    assert.equal(emitted.filter((r) => r.type === 'import').length, 0, 'b.py must not be an edge target');
+    assert.equal(res.buckets.persisted, 0);
+    assert.equal(stats.pythonFailed, 1);
   });
 });

@@ -41,6 +41,19 @@ def _decode(raw):
     return text
 
 
+def _module_scope_nodes(body):
+    """Every AST node in MODULE scope: statements (descending into if/try/with/
+    for/while blocks) and their expressions, but never into a def, lambda or
+    class body, whose ``__all__`` is a different variable."""
+    stack = list(body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        yield node
+        stack.extend(ast.iter_child_nodes(node))
+
+
 def _literal_all(tree):
     """The module's __all__ when it is ONE literal list/tuple of strings, else None.
 
@@ -51,7 +64,7 @@ def _literal_all(tree):
     """
     found = None
     bindings = 0
-    for node in ast.walk(tree):
+    for node in _module_scope_nodes(tree.body):
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
@@ -127,7 +140,11 @@ def _scope_defs(body):
 
 def extract_symbols(tree, text):
     declared = _literal_all(tree)
-    lines = text.splitlines(keepends=True)  # once per file, not once per symbol
+    # Once per file, not once per symbol — and on Python's OWN line boundaries
+    # (\n, \r\n, \r). str.splitlines also splits on \x0b, \x0c, \x1c-\x1e, \x85,
+    #   and  , which can sit inside a string literal and would shift
+    # every later slice off the AST's line numbers.
+    lines = io.StringIO(text, newline="").readlines()
 
     def exported(name):
         return name in declared if declared is not None else _is_public(name)

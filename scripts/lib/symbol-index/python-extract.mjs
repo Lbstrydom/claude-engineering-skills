@@ -121,6 +121,17 @@ export function probePythonParser({
   return { available: false, interpreter: null, version: null, helperPath, reason };
 }
 
+const OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0);
+
+/**
+ * The opened descriptor's real path, where the OS exposes one (Linux
+ * `/proc/self/fd`); `null` when it cannot be asked — never a guess.
+ */
+function descriptorPath(fd) {
+  if (process.platform !== 'linux') return null;
+  try { return fs.realpathSync(`/proc/self/fd/${fd}`); } catch { return null; }
+}
+
 /**
  * Read an ADMITTED file, bound to an admission decision made AFTER the open
  * (§2.6). Open-then-verify: open the canonical path, `fstat` the descriptor,
@@ -148,15 +159,32 @@ export function readAdmittedSource(admission, { maxBytes, readmit, beforeOpen, a
   let fd = null;
   try {
     if (typeof beforeOpen === 'function') beforeOpen();
-    fd = fs.openSync(canonical, 'r');
+    // O_NONBLOCK where it exists: a path swapped to a FIFO with no writer must
+    // not hang the open (regular files ignore the flag). Windows has no FIFOs here.
+    fd = fs.openSync(canonical, OPEN_FLAGS);
     const st1 = fs.fstatSync(fd, { bigint: true });
+    if (!st1.isFile()) {
+      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'opened path is not a regular file' };
+    }
     if (typeof afterOpen === 'function') afterOpen();
+    const same = (st) => st.dev === st1.dev && st.ino === st1.ino;
+    // The descriptor's OWN path, where the OS exposes it, is authoritative: no
+    // later path lookup can be swapped under it.
+    const fdPath = descriptorPath(fd);
+    if (fdPath !== null && fdPath !== canonical) {
+      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'opened file is not at the admitted canonical path' };
+    }
+    // Elsewhere, sandwich the re-admission between two identity checks: a swap
+    // must hold the sensitive target for the open, release it for the
+    // re-admission, and hold it again for both stats.
+    if (!same(fs.statSync(canonical, { bigint: true }))) {
+      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'opened file is not the file at the admitted path' };
+    }
     const again = readmit();
     if (!again?.admitted || again.canonicalPath !== canonical) {
       return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'path no longer admitted at its canonical location' };
     }
-    const now = fs.statSync(canonical, { bigint: true });
-    if (now.dev !== st1.dev || now.ino !== st1.ino) {
+    if (!same(fs.statSync(canonical, { bigint: true }))) {
       return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'opened file is not the file at the admitted path' };
     }
     if (st1.size > BigInt(maxBytes)) {
@@ -568,9 +596,12 @@ export async function runPythonStage(ctx) {
     if (symbolRel.has(rel)) stats.parseFailures++;
   }
 
-  // The module index holds every ADMITTED .py, parsed or not (H2): an import of a
-  // file that failed to parse is still a local edge target, never "external".
-  const indexFiles = candidates.map((c) => c.admission.rel);
+  // The module index holds every .py that was READ under the open-then-verify
+  // gate, parsed or not (an import of a file that failed to parse is still a
+  // local edge target, never "external") — but never one whose read was
+  // refused: a re-admission failure means it may no longer be admissible.
+  const READ_REFUSED = new Set([OUTCOME.IDENTITY_CHANGED, OUTCOME.SIZE_CAP, OUTCOME.READ_ERROR]);
+  const indexFiles = requests.filter((r) => !READ_REFUSED.has(results.get(r.id).outcome)).map((r) => r.rel);
   const { edges, buckets, offered } = bucketPythonImports({
     importsByFile, indexFiles, repoRoot, disowned, readMeta: guardedMetaReader(repoRoot, maxBytes),
   });

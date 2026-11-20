@@ -81,14 +81,18 @@ export function injectUpstreamBanner(content, destRel) {
   // A UTF-8 BOM must stay byte 0: inject into what follows it, then restore it.
   if (content.startsWith('﻿')) return '﻿' + injectUpstreamBanner(content.slice(1), destRel);
 
-  const firstBannerLine = `${token} ${BANNER_BODY[0]}`;
+  // Python honours a PEP 263 cookie, and a file declaring `ascii` (or any
+  // non-UTF-8 codec) stops parsing if the banner brings non-ASCII bytes; the
+  // Python banner is therefore ASCII-only, whatever the file declares.
+  const body = destRel.endsWith('.py') ? BANNER_BODY.map(asciiFold) : BANNER_BODY;
+  const firstBannerLine = `${token} ${body[0]}`;
   // Idempotent guard: skip ONLY if the banner already sits at the TOP (as
   // injected) — NOT merely present somewhere in the body. A relocated source
   // file can legitimately contain the marker text (e.g. this very module),
   // so a whole-file `includes()` check would wrongly skip bannering it.
   if (firstContentLine(content) === firstBannerLine) return content;
 
-  const block = BANNER_BODY.map((l) => `${token} ${l}`).join('\n');
+  const block = body.map((l) => `${token} ${l}`).join('\n');
   // A Python encoding declaration (PEP 263) only counts on line 1 or 2, so it
   // keeps its position with the shebang above the banner.
   const keep = pinnedHeadLength(content, destRel);
@@ -102,6 +106,11 @@ export function injectUpstreamBanner(content, destRel) {
 }
 
 const PY_CODING_COOKIE = /^[ \t\f]*#.*?coding[:=][ \t]*[-\w.]+/;
+
+/** ASCII-only rendering of a banner line (the two glyphs it uses, anything else as `?`). */
+function asciiFold(line) {
+  return line.replaceAll('⚠', '!!').replaceAll('—', '-').replace(/[^\x00-\x7F]/g, '?');
+}
 
 /**
  * Length of the head that must stay above the banner: a shebang line, and for
