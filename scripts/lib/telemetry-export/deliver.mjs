@@ -119,7 +119,7 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
   } finally {
     // Covers a failed or partial temp write and the post-link cleanup. A failure to remove a temp file must
     // NOT turn a successfully published export into a thrown "delivery failed" (and skip the requested push).
-    try { fs.rmSync(tmp, { force: true }); } catch { /* leftover temp file: harmless, dot-prefixed, never .json */ }
+    try { fs.rmSync(tmp, { force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* leftover temp file: harmless, dot-prefixed, never .json */ }
   }
 
   let pushed = false;
