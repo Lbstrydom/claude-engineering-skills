@@ -416,7 +416,12 @@ export async function upstreamCmd(ctx) {
       // ok:false (partial cursor) rather than silently resetting to page 1 —
       // this must actually surface as a failure, not a quietly-empty list.
       if (res.ok === false) {
-        throw new CommandError('LIST_FAILED', res.error || 'listUpstreamIssues failed', res);
+        // The dispatcher already knows when the store failed to answer at init: say so with a
+        // distinct CODE, so a caller classifies from the code and never from message text.
+        throw new CommandError(
+          ctx.cloud.state === 'unreachable' ? 'CLOUD_UNREACHABLE' : 'LIST_FAILED',
+          res.error || 'listUpstreamIssues failed', res,
+        );
       }
       if (ctx.hasFlag('worksheet')) {
         process.stdout.write(`${m.renderWorksheet(res.items || [], { state })}\n`);

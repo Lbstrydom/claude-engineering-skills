@@ -43,8 +43,24 @@ describe('setup-postgres --check-drift against an unreachable store', () => {
   });
 });
 
+describe('`cross-skill upstream list` against an unreachable store', () => {
+  it('emits the distinct CLOUD_UNREACHABLE code (classified by code, not message), still exit 2', async () => {
+    const port = await freePort();
+    const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'cross-skill.mjs'), 'upstream', 'list', '--state', 'open', '--limit', '3'], {
+      cwd: ROOT, encoding: 'utf-8', timeout: 60000, windowsHide: true,
+      env: { ...process.env, AUDIT_DB_URL: `postgresql://u:p@127.0.0.1:${port}/audit_loop`, AUDIT_DB_SSL_MODE: 'disable' },
+    });
+    assert.equal(r.status, 2);
+    const last = r.stdout.trim().split('\n').filter((l) => l.startsWith('{')).pop();
+    assert.equal(JSON.parse(last).error.code, 'CLOUD_UNREACHABLE');
+  });
+});
+
 describe('interpretUpstreamStdout', () => {
-  it('an unreachable envelope is store-unreachable', () => {
+  it('a CLOUD_UNREACHABLE envelope (what `upstream list` now emits for a down store) is store-unreachable — by CODE', () => {
+    assert.equal(interpretUpstreamStdout(line({ ok: false, error: { code: 'CLOUD_UNREACHABLE', message: 'x' } })).reason, 'store-unreachable');
+  });
+  it('legacy envelope: LIST_FAILED is recognised only WITH connection evidence (the dashboard oracle, unchanged)', () => {
     assert.equal(interpretUpstreamStdout(line({ ok: false, error: { code: 'LIST_FAILED', message: 'connect ECONNREFUSED 127.0.0.1:1' } })).reason, 'store-unreachable');
   });
   it('a generic failure keeps its own code; a bad query is NOT unreachable', () => {
