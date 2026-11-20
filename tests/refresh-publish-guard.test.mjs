@@ -20,8 +20,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  assessPublishEligibility, assessIndexFreshness, checkRefreshPublishEligibility, resolveDefaultBranch, ALLOW_BRANCH_PUBLISH_ENV,
+  assessPublishEligibility, assessIndexFreshness, checkRefreshPublishEligibility, resolveDefaultBranch, skipReasonFor, ALLOW_BRANCH_PUBLISH_ENV,
 } from '../scripts/symbol-index/refresh-publish-guard.mjs';
+import { makeGitRunner as makeIdentityRunner, isSpawnTimeout } from '../scripts/lib/worktree-identity.mjs';
 import { parseArgs, KNOWN_FLAGS } from '../scripts/symbol-index/refresh-args.mjs';
 import { gitInit, commit, gitFixtureEnv, makeGitRunner as makeCheckedGit, makeRepoTemplate } from './helpers/fixtures.mjs';
 
@@ -315,6 +316,91 @@ describe('refresh.mjs wiring (source inspection)', () => {
     assert.ok(guard < main.indexOf('acquireRefreshLock('), 'guard must run before the per-repo lock');
     assert.ok(guard < main.indexOf('publishRefreshRun('), 'guard must run before publish');
     assert.match(main, /allowBranchPublish: args\.allowBranchPublish/, 'the CLI flag must reach the guard');
-    assert.match(main, /reason: 'not-default-branch'/, 'the skip must be machine-readable on stdout');
+    assert.ok(main.includes('reason: skipReasonFor(eligibility)'),'the skip must be machine-readable on stdout');
+  });
+});
+
+describe('a git spawn timeout is not a missing ref', () => {
+  const TIMEOUT = { error: { code: 'ETIMEDOUT' }, signal: 'SIGTERM', status: null, stdout: '', stderr: '' };
+  const hangingRunner = (hangOn) => {
+    const real = (dir) => runnerFor(dir);
+    return (dir) => (args) => (args.join(' ').includes(hangOn) ? TIMEOUT : real(dir)(args));
+  };
+
+  it('timeout on rev-parse of the default branch: git-exec-failed + retry wording, never default-branch-unresolvable', () => {
+    const dir = mainRepo('publish-guard-timeout-');
+    try {
+      const r = assessPublishEligibility({ run: hangingRunner('refs/heads/main')(dir) });
+      assert.equal(r.publish, false);
+      assert.equal(r.reason, 'git-exec-failed');
+      assert.notEqual(r.reason, 'default-branch-unresolvable');
+      assert.match(r.detail, /timed out/);
+      assert.match(r.detail, /retry/);
+      assert.equal(skipReasonFor(r), 'git-exec-failed', 'the stdout skip reason must not read not-default-branch either');
+    } finally { rm(dir); }
+  });
+
+  it('timeout on symbolic-ref carries through the same way', () => {
+    const dir = mainRepo('publish-guard-timeout-sym-');
+    try {
+      const r = assessPublishEligibility({ run: hangingRunner('refs/remotes/origin/HEAD')(dir) });
+      assert.equal(r.reason, 'git-exec-failed');
+      assert.match(r.detail, /timed out/);
+    } finally { rm(dir); }
+  });
+
+  it('CONTROL — a genuinely missing default branch is still default-branch-unresolvable', () => {
+    const dir = mainRepo('publish-guard-missing-');
+    try {
+      makeCheckedGit(() => dir)(['branch', '-q', '-m', 'main', 'trunk']);
+      const r = assessPublishEligibility({ run: runnerFor(dir) });
+      assert.equal(r.reason, 'default-branch-unresolvable');
+      assert.doesNotMatch(r.detail, /timed out/);
+    } finally { rm(dir); }
+  });
+
+  it('CONTROL — a healthy main publishes', () => {
+    const dir = mainRepo('publish-guard-healthy-');
+    try {
+      const r = assessPublishEligibility({ run: runnerFor(dir) });
+      assert.equal(r.publish, true);
+      assert.equal(r.reason, 'default-branch');
+    } finally { rm(dir); }
+  });
+
+  it('skipReasonFor keeps not-default-branch only where it is true', () => {
+    assert.equal(skipReasonFor({ reason: 'not-default-branch' }), 'not-default-branch');
+    assert.equal(skipReasonFor({ reason: 'detached-off-default-branch' }), 'not-default-branch');
+    assert.equal(skipReasonFor({ reason: 'default-branch-unresolvable' }), 'default-branch-unresolvable');
+    assert.equal(skipReasonFor({ reason: 'head-unresolvable' }), 'head-unresolvable');
+  });
+});
+
+describe('makeGitRunner — one retry for a timed-out spawn', () => {
+  const TIMEOUT = { error: { code: 'ETIMEDOUT' }, signal: 'SIGTERM', status: null };
+  const OK = { status: 0, stdout: 'x' };
+  const fakeSpawn = (...results) => { const calls = []; const f = () => { calls.push(1); return results[Math.min(calls.length - 1, results.length - 1)]; }; f.calls = calls; return f; };
+
+  it('retries once after a timeout and returns the second answer', () => {
+    const spawn = fakeSpawn(TIMEOUT, OK);
+    assert.equal(makeIdentityRunner('.', { spawn })(['status']).status, 0);
+    assert.equal(spawn.calls.length, 2);
+  });
+  it('two timeouts in a row stay a timeout — never an exit status', () => {
+    const spawn = fakeSpawn(TIMEOUT, TIMEOUT);
+    const res = makeIdentityRunner('.', { spawn })(['status']);
+    assert.equal(isSpawnTimeout(res), true);
+    assert.equal(spawn.calls.length, 2);
+  });
+  it('CONTROL — an ordinary non-zero exit is an answer and is NOT retried', () => {
+    const spawn = fakeSpawn({ status: 1, stdout: '' }, OK);
+    assert.equal(makeIdentityRunner('.', { spawn })(['rev-parse']).status, 1);
+    assert.equal(spawn.calls.length, 1);
+  });
+  it('isSpawnTimeout: ETIMEDOUT or a signal; not a plain exit', () => {
+    assert.equal(isSpawnTimeout({ error: { code: 'ETIMEDOUT' } }), true);
+    assert.equal(isSpawnTimeout({ signal: 'SIGTERM', status: null }), true);
+    assert.equal(isSpawnTimeout({ status: 0, signal: null }), false);
+    assert.equal(isSpawnTimeout(null), false);
   });
 });

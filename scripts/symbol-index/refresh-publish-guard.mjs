@@ -33,7 +33,7 @@
  * @module scripts/symbol-index/refresh-publish-guard
  */
 
-import { makeGitRunner, readActualIdentity } from '../lib/worktree-identity.mjs';
+import { makeGitRunner, readActualIdentity, isSpawnTimeout } from '../lib/worktree-identity.mjs';
 
 /** The env override. `'1'` only, matching this repo's other boolean env flags. */
 export const ALLOW_BRANCH_PUBLISH_ENV = 'ARCH_REFRESH_ALLOW_BRANCH_PUBLISH';
@@ -46,11 +46,18 @@ function execFailed(res) {
   return !res || res.error || res.status === null || res.status === undefined;
 }
 
-/** `rev-parse --verify --quiet <ref>^{commit}` → true | false | null (git failed). */
+/** What a failed git call looked like, for a message the operator can act on. */
+function execFailureDetail(what, res) {
+  return isSpawnTimeout(res)
+    ? `${what} timed out (git did not answer in time — retry; this is not a missing ref)`
+    : `${what} failed`;
+}
+
+/** `rev-parse --verify --quiet <ref>^{commit}` → {ok: true|false} | {ok: null, res} (git failed). */
 function refResolves(run, ref) {
   const res = run(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
-  if (execFailed(res)) return null;
-  return res.status === 0;
+  if (execFailed(res)) return { ok: null, res };
+  return { ok: res.status === 0 };
 }
 
 /**
@@ -71,7 +78,7 @@ function refResolves(run, ref) {
 export function resolveDefaultBranch({ run }) {
   const sym = run(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
   if (execFailed(sym) || (sym.status !== 0 && sym.status !== 1)) {
-    return { ok: false, reason: 'git-exec-failed', detail: 'symbolic-ref refs/remotes/origin/HEAD failed' };
+    return { ok: false, reason: 'git-exec-failed', detail: execFailureDetail('symbolic-ref refs/remotes/origin/HEAD', sym) };
   }
 
   let name = null;
@@ -86,9 +93,9 @@ export function resolveDefaultBranch({ run }) {
   for (const candidate of candidates) {
     const tips = [];
     for (const ref of [`refs/remotes/origin/${candidate}`, `refs/heads/${candidate}`]) {
-      const ok = refResolves(run, ref);
-      if (ok === null) return { ok: false, reason: 'git-exec-failed', detail: `rev-parse ${ref} failed` };
-      if (ok) tips.push(ref);
+      const probe = refResolves(run, ref);
+      if (probe.ok === null) return { ok: false, reason: 'git-exec-failed', detail: execFailureDetail(`rev-parse ${ref}`, probe.res) };
+      if (probe.ok) tips.push(ref);
     }
     if (tips.length > 0) return { ok: true, name: candidate, tips, source: source ?? 'fallback' };
     // origin/HEAD named a branch that resolves nowhere: a broken remote state,
@@ -114,7 +121,8 @@ export function resolveDefaultBranch({ run }) {
  *            head: string|null, branch: string|null, defaultBranch: string|null}}
  *   `reason` is one of: `default-branch`, `detached-on-default-branch`,
  *   `override` (publish) · `not-default-branch`, `detached-off-default-branch`,
- *   `default-branch-unresolvable`, `head-unresolvable` (no publish).
+ *   `default-branch-unresolvable` (no such default branch), `git-exec-failed` (git
+ *   did not answer, e.g. a timeout — retry), `head-unresolvable` (no publish).
  */
 export function assessPublishEligibility({ run, override = false }) {
   const identity = readActualIdentity({ run });
@@ -132,7 +140,14 @@ export function assessPublishEligibility({ run, override = false }) {
     return { ...base, publish: false, reason: 'head-unresolvable', detail: `could not read HEAD (${identity.reason})` };
   }
   if (!def.ok) {
-    return { ...base, publish: false, reason: 'default-branch-unresolvable', detail: def.detail };
+    // def.reason is carried through: `git-exec-failed` (git did not answer — a
+    // timeout, say; RETRY) must never surface as `default-branch-unresolvable`
+    // (no such branch), which sends the operator hunting a ref that exists.
+    return {
+      ...base, publish: false,
+      reason: def.reason === 'git-exec-failed' ? 'git-exec-failed' : 'default-branch-unresolvable',
+      detail: def.detail,
+    };
   }
   if (branch !== null) {
     return branch === def.name
@@ -224,6 +239,22 @@ export function assessIndexFreshness({ run, indexCommit }) {
   const behind = !execFailed(count) && count.status === 0 ? Number.parseInt(String(count.stdout ?? '').trim(), 10) : Number.NaN;
   if (!Number.isInteger(behind) || behind < 1) return result('unknown', null, 'git rev-list returned no usable count');
   return result('behind', behind, `${behind} commit${behind === 1 ? '' : 's'} behind ${short}`);
+}
+
+/**
+ * The top-level `reason` of the machine-readable skip line. Consumers read
+ * `not-default-branch` as "you are somewhere the default branch is not", so it is
+ * kept only for the reasons that MEAN that; every other refusal (git did not
+ * answer, no default branch, unreadable HEAD) names itself rather than telling a
+ * developer on `main` that they are not on the default branch.
+ *
+ * @param {{reason: string}} eligibility
+ * @returns {string}
+ */
+export function skipReasonFor(eligibility) {
+  return eligibility.reason === 'not-default-branch' || eligibility.reason === 'detached-off-default-branch'
+    ? 'not-default-branch'
+    : eligibility.reason;
 }
 
 export function checkRefreshPublishEligibility({ repoRoot, allowBranchPublish = false, env = process.env, run = makeGitRunner(repoRoot) }) {

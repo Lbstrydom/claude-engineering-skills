@@ -456,3 +456,22 @@ describe('eligibleFiles — the size clause (§2.1.1, contract gap)', () => {
     assert.deepEqual(eligibleFiles(files, { repoRoot: ROOT }), [rel('src/a.ts')]);
   });
 });
+
+describe('emptyIndexWarning — a refresh that published 0 symbols over a non-empty tree', async () => {
+  const { emptyIndexWarning } = await import('../scripts/lib/symbol-index/graph-coverage.mjs');
+  const py = Array.from({ length: 5 }, (_, i) => `pkg/m${i}.py`).concat(['data/a.csv', 'README.md']);
+  const base = { symbolCount: 0, mode: 'full', trackedFiles: py, indexedExtensions: ['.ts', '.js'] };
+
+  it('warns, naming what is tracked and what the index can read', () => {
+    const w = emptyIndexWarning(base);
+    assert.match(w, /0 symbols over 7 tracked file/);
+    assert.match(w, /\.py 5/);
+    assert.match(w, /\.ts \.js/);
+    assert.match(w, /NOT "no similar code"/);
+  });
+  it('negative controls: symbols published, an incremental run, or an empty tree owe nothing', () => {
+    assert.equal(emptyIndexWarning({ ...base, symbolCount: 3 }), null);
+    assert.equal(emptyIndexWarning({ ...base, mode: 'incremental' }), null);
+    assert.equal(emptyIndexWarning({ ...base, trackedFiles: [] }), null);
+  });
+});

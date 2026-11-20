@@ -152,6 +152,36 @@ export async function generateIntentEmbedding(intentDescription, activeModel, ac
   }
 }
 
+const EMPTY_UNIVERSE_HINT =
+  'this repo has no files the index can read (its languages are not indexed), so the lookup compared nothing — ' +
+  'this is NOT "no similar code"; search the repo directly before writing new code';
+
+/**
+ * The coverage verdict of the snapshot being searched, or `null` when the caller
+ * did not wire a reader (nothing asked, nothing claimed). A snapshot with no
+ * stored measurement reads `unknown`/`not_measured` — never a clean verdict.
+ *
+ * @param {{getGraphCoverage?: Function}} adapters
+ * @param {{refreshId: string}} active
+ * @param {{id: string}} repoRow
+ * @returns {Promise<{status: string, reason: string|null, eligible: number|null}|null>}
+ */
+export async function snapshotCoverage(adapters, active, repoRow) {
+  if (typeof adapters.getGraphCoverage !== 'function') return null;
+  let cov = null;
+  try {
+    cov = await adapters.getGraphCoverage(active.refreshId, repoRow.id);
+  } catch {
+    cov = null;   // a failed read is "we do not know", exactly like no row
+  }
+  if (!cov?.verdict) return { status: 'unknown', reason: 'not_measured', eligible: null };
+  return {
+    status: cov.verdict.status,
+    reason: cov.verdict.reason ?? null,
+    eligible: cov.extraction?.eligible ?? null,
+  };
+}
+
 /**
  * Top-level orchestrator for plan-time neighbourhood consultation.
  *
@@ -208,6 +238,24 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
     err.expected = { model: null, dim: null };
     err.available = [];
     throw err;
+  }
+
+  // 1b. Coverage verdict of the snapshot we are about to search. An index that
+  // could not read this repo's languages (`empty_universe`: nothing eligible, so
+  // 0 symbols) answers every query with an empty list — byte-identical to a fully
+  // indexed repo with nothing similar. Say so, and skip the paid intent embedding:
+  // there is nothing to compare against.
+  const coverage = await snapshotCoverage(adapters, active, repoRow);
+  if (coverage?.reason === 'empty_universe') {
+    return NeighbourhoodResultSchema.parse({
+      cloud: true,
+      refreshId: active.refreshId,
+      records: [],
+      totalCandidatesConsidered: 0,
+      truncated: false,
+      coverage,
+      hint: EMPTY_UNIVERSE_HINT,
+    });
   }
 
   // 2. Cache lookup or generate
@@ -405,7 +453,10 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
     records,
     totalCandidatesConsidered: records.length,
     truncated: false,
-    hint: null,
+    ...(coverage ? { coverage } : {}),
+    hint: records.length === 0 && coverage && coverage.status !== 'verified'
+      ? `index coverage is ${coverage.status}${coverage.reason ? ` (${coverage.reason})` : ''}; an empty result is not evidence that no similar code exists`
+      : null,
   });
 }
 

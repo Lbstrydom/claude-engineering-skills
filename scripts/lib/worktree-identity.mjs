@@ -72,9 +72,35 @@ export function isGitObjectId(v) {
 
 const SHA_RE = GIT_OBJECT_ID_RE;
 
-/** Default runner. Kept trivial so the injected one is a faithful stand-in. */
-export function makeGitRunner(cwd) {
-  return (args) => spawnSync('git', args, { cwd, encoding: 'utf-8', windowsHide: true, timeout: 10000 });
+/**
+ * Did this spawn die to its timeout (or any signal) rather than exit? On a heavily
+ * loaded machine `git` can take past the cap; `spawnSync` then returns
+ * `error.code === 'ETIMEDOUT'` / a `signal` and `status: null`. That is "git did
+ * not answer", which is NOT an answer about the ref — a caller that folds it into
+ * "the ref does not exist" refuses a valid repo (field report: a publish guard
+ * blamed `default-branch-unresolvable` on a healthy `main`).
+ *
+ * @param {{error?: {code?: string}, signal?: string|null}|null|undefined} res
+ * @returns {boolean}
+ */
+export function isSpawnTimeout(res) {
+  return !!res && (res.error?.code === 'ETIMEDOUT' || (res.signal != null && res.signal !== ''));
+}
+
+/**
+ * Default runner. Kept trivial so the injected one is a faithful stand-in.
+ *
+ * A timed-out spawn is retried ONCE: these are one-off identity probes whose
+ * 10s cap costs nothing on a healthy machine and caused a wrong refusal on a busy
+ * one. A second timeout is returned as-is (still `isSpawnTimeout`), never dressed
+ * up as an exit status.
+ */
+export function makeGitRunner(cwd, { spawn = spawnSync, timeoutMs = 10000 } = {}) {
+  const once = (args) => spawn('git', args, { cwd, encoding: 'utf-8', windowsHide: true, timeout: timeoutMs });
+  return (args) => {
+    const first = once(args);
+    return isSpawnTimeout(first) ? once(args) : first;
+  };
 }
 
 /** A spawn that never produced a status is always an execution failure. */
