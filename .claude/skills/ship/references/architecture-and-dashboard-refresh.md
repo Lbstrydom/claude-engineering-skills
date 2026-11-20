@@ -58,7 +58,7 @@ migration and no longer matches the code:
 - Legacy-only `SUPABASE_AUDIT_*` present without `AUDIT_DB_URL` → `resolveDbUrl()`
   throws (swallowed by this step's `|| true`), ship continues but the refresh
   does not run.
-- Non-JS/TS stack → skips silently (`reason: 'unsupported-stack'`), exit 0,
+- A stack with nothing indexable (neither JS/TS nor Python) → skips silently (`reason: 'unsupported-stack'`), exit 0,
   ship continues.
 - HEAD not on the default branch (a feature branch, or detached at a commit
   the default branch does not contain) → skips (`reason: 'not-default-branch'`),

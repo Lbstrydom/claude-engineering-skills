@@ -99,6 +99,26 @@ ask what already knows — git for ownership, the parser for its own capability.
 Measurements and the full design:
 [consumer-corpus-and-honesty-2026-09-04.md](../plans/consumer-corpus-and-honesty-2026-09-04.md).
 
+## Languages indexed — JS/TS via ts-morph, Python via its own `ast`
+
+`.py` files (never `.pyi` stubs) are admitted through the SAME egress gate as
+JS/TS (`admitFile`: sensitive path, canonical/symlink re-classification, repo
+escape, size cap) and parsed by `lib/symbol-index/python-ast-helper.py`, a
+stdlib-only helper run as `python -I -B` that opens no files: Node reads each
+admitted file bound to its admission identity and sends the bytes. It emits
+module functions, classes and methods (`Class.method`) with signatures; the
+docstring travels inside `bodyText`, so the secret scrub covers it. Imports are
+resolved by the arch-intent Python resolver against pyproject/`src/`/`__init__`
+roots into the same edge buckets as dep-cruiser's (an unresolved name under a
+known local package is `unresolved`; any other unresolved absolute name is
+`external`).
+
+**Availability is the interpreter's answer.** With no Python >= 3.9 (or an
+unusable `ARCH_INDEX_PYTHON`), every `.py` is reported as `unparseable` in the
+coverage record's `parser.byExtension`, never as indexed, and extract prints the
+remedy. `.sql` is not indexed. Design:
+[python-arch-memory-indexing.md](../plans/python-arch-memory-indexing.md).
+
 ## Retagging a module changes every edge *into* it — re-baseline BOTH directions
 
 Moving a file to another domain changes the `from` domain of everything it

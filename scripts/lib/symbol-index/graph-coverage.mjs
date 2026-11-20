@@ -96,16 +96,23 @@ export function normalizeRepoPath(p, repoRoot, { base } = {}) {
  * refuses to read still counted against the denominator, understating coverage
  * on exactly the repos most likely to have generated monsters.
  *
+ * `extensions` widens the universe beyond dep-cruiser's candidates — the
+ * extractor passes CRUISABLE ∪ its Python extensions, so a Python repo has a
+ * real denominator instead of `empty_universe` (plan
+ * docs/plans/python-arch-memory-indexing.md §2.5). Defaults to
+ * `CRUISABLE_EXTENSIONS`, byte-identical to the pre-Python behaviour.
+ *
  * @param {string[]} files - whole-repo inventory (SKIP_DIRS already applied)
- * @param {{repoRoot: string, isTooLarge?: (absPath: string) => boolean}} opts
+ * @param {{repoRoot: string, isTooLarge?: (absPath: string) => boolean, extensions?: readonly string[]}} opts
  * @returns {string[]} sorted, de-duplicated, normalized repo-relative paths
  */
-export function eligibleFiles(files, { repoRoot, isTooLarge } = {}) {
+export function eligibleFiles(files, { repoRoot, isTooLarge, extensions = CRUISABLE_EXTENSIONS } = {}) {
   if (!Array.isArray(files) || typeof repoRoot !== 'string') return [];
+  const allowed = extensions === CRUISABLE_EXTENSIONS ? CRUISABLE_SET : new Set(extensions);
   const out = new Set();
   for (const f of files) {
     if (typeof f !== 'string' || f.length === 0) continue;
-    if (!CRUISABLE_SET.has(path.extname(f).toLowerCase())) continue;
+    if (!allowed.has(path.extname(f).toLowerCase())) continue;
     if (typeof isTooLarge === 'function' && isTooLarge(f)) continue;
     const rel = normalizeRepoPath(f, repoRoot);
     // A path that escapes the repo is not part of this repo's universe.
@@ -134,13 +141,21 @@ export function eligibleFiles(files, { repoRoot, isTooLarge } = {}) {
  * measurement, never "all extensions are available" (AGENTS.md: unknown is not
  * a synonym for verified).
  *
+ * `candidates` is the set of extensions this pipeline admits at all; it scopes
+ * `unavailableExtensions` (default `CRUISABLE_EXTENSIONS`). The extractor
+ * passes the Python extensions too, and unions the Python probe's answer into
+ * `availableExtensions` ONLY when an interpreter was found — so a missing
+ * interpreter reports `.py` as unparseable, never as indexed.
+ *
  * @param {string[]} eligible - repo-relative eligible paths
  * @param {string[]|null|undefined} availableExtensions - dep-cruiser's
  *   `allExtensions` filtered to `available === true`, as `.ext` strings
+ *   (plus any other parser stage's extensions, when that stage is available)
+ * @param {readonly string[]} [candidates]
  * @returns {{known: boolean, unavailableExtensions: string[],
  *            unparseable: number|null, byExtension: Record<string, number>}}
  */
-export function assessParserAvailability(eligible, availableExtensions) {
+export function assessParserAvailability(eligible, availableExtensions, candidates = CRUISABLE_EXTENSIONS) {
   if (!Array.isArray(availableExtensions)) {
     return { known: false, unavailableExtensions: [], unparseable: null, byExtension: {} };
   }
@@ -159,7 +174,7 @@ export function assessParserAvailability(eligible, availableExtensions) {
     // Only the candidates this pipeline actually admits — an extension
     // dep-cruiser knows about but `eligibleFiles` never yields (`.coffee`,
     // `.csx`) is not a gap in THIS graph and would be noise in the report.
-    unavailableExtensions: CRUISABLE_EXTENSIONS.filter((e) => !avail.has(e)),
+    unavailableExtensions: candidates.filter((e) => !avail.has(e)),
     unparseable,
     byExtension,
   };
@@ -185,7 +200,7 @@ export function assessParserAvailability(eligible, availableExtensions) {
 export function assessExtractionCoverage({
   outcome = 'ok', eligible = [], cruisedSources = [], repoRoot = '',
   cruisedBase = undefined, elapsedMs = null, edges = {}, sampleCap = 20,
-  availableExtensions = null,
+  availableExtensions = null, candidateExtensions = CRUISABLE_EXTENSIONS,
 } = {}) {
   if (outcome !== 'ok') {
     return {
@@ -213,7 +228,7 @@ export function assessExtractionCoverage({
     ratio: eligible.length === 0 ? null : seen.size / eligible.length,
     elapsedMs: elapsedMs ?? null,
     edges: normalizeEdgeBuckets(edges),
-    parser: assessParserAvailability(eligible, availableExtensions),
+    parser: assessParserAvailability(eligible, availableExtensions, candidateExtensions),
     samples: { uncruised: uncruised.slice(0, clampCap(sampleCap)) },
   };
 }

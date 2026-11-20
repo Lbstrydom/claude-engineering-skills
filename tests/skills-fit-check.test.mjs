@@ -183,13 +183,14 @@ describe('applyRules — Python FastAPI (backend-only API)', () => {
   it('/audit-code → FITS', () => {
     assert.equal(verdictFor(verdicts, '/audit-code').label, 'FITS');
   });
-  it('architectural memory → MISMATCH (extractor is JS/TS-only)', () => {
+  it('architectural memory → FITS, naming the interpreter it needs (Python parser stage)', () => {
     // The 2026-07-20 field case: a Python consumer could restore node_modules
-    // and still get nothing from arch:refresh. /audit-code FITS above while
-    // this MISMATCHes — that contrast is the whole point of the entry.
+    // and still get nothing from arch:refresh. Since the Python parser stage
+    // (docs/plans/python-arch-memory-indexing.md) it is indexed — given a
+    // Python >= 3.9 interpreter, which the verdict must name.
     const v = verdictFor(verdicts, ARCH_MEMORY);
-    assert.equal(v.label, 'MISMATCH');
-    assert.match(v.reason, /JS\/TS-only/);
+    assert.equal(v.label, 'FITS');
+    assert.match(v.reason, /Python >= 3\.9/);
   });
   it('/ux-lock (lock mode) → MISMATCH (no UI routes)', () => {
     const v = verdictFor(verdicts, '/ux-lock (lock mode)');
@@ -341,10 +342,10 @@ describe('architectural-memory rule tracks the real extractor gate', () => {
   // This verdict is only useful if it says what refresh.mjs ACTUALLY does.
   // The rule and the short-circuit live in different files, so assert the
   // coupling directly rather than trusting two prose comments to agree.
-  // Three-way, NOT two-way. `mixed` clears the stack gate but only the JS/TS
-  // half is indexed, so it is PARTIAL — collapsing it into FITS would tell a
-  // FastAPI+React repo its Python code is covered when it is not.
-  const EXPECTED = { 'js-ts': 'FITS', mixed: 'PARTIAL', python: 'MISMATCH', unknown: 'MISMATCH' };
+  // Since the Python parser stage (docs/plans/python-arch-memory-indexing.md)
+  // a mixed JS/TS+Python repo is fully indexed (FITS, naming the interpreter it
+  // needs); Java/C# halves still make it PARTIAL (tested below).
+  const EXPECTED = { 'js-ts': 'FITS', mixed: 'FITS', python: 'FITS', unknown: 'MISMATCH' };
 
   it('every fixture: label follows the detected stack', () => {
     for (const name of ['nextjs-with-playwright', 'vite-react-no-playwright',
@@ -355,7 +356,7 @@ describe('architectural-memory rule tracks the real extractor gate', () => {
     }
   });
 
-  it('mixed stack is PARTIAL, and says the Python half is unindexed', () => {
+  it('mixed stack is FITS now that Python is indexed, and names the interpreter it needs', () => {
     // Synthesised rather than fixtured: `mixed` needs a package.json WITH deps
     // AND a Python marker, which no existing fixture has.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fit-mixed-'));
@@ -364,8 +365,8 @@ describe('architectural-memory rule tracks the real extractor gate', () => {
     const profile = detectShape(dir);
     assert.equal(profile.stack, 'mixed');
     const v = verdictFor(applyRules(profile), ARCH_MEMORY);
-    assert.equal(v.label, 'PARTIAL');
-    assert.match(v.reason, /only JS\/TS files are indexed/);
+    assert.equal(v.label, 'FITS');
+    assert.match(v.reason, /Python >= 3\.9/);
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
@@ -392,30 +393,30 @@ describe('architectural-memory rule tracks the real extractor gate', () => {
     assert.equal(verdictFor(applyRules(profile), ARCH_MEMORY).label, 'FITS');
   });
 
-  it('the extension allowlist backing that claim really excludes .py/.java', () => {
-    // If someone widens DEFAULT_EXT_ALLOWLIST, the `mixed` PARTIAL wording
-    // becomes a lie. Couple the claim to the list it describes.
-    assert.equal(isExtensionAllowlisted('a.py'), false);
+  it('the extension allowlist backing that claim admits .py and excludes .java', () => {
+    // Couple the verdict's claim to the list it describes: FITS for Python is a
+    // lie unless .py is admitted; PARTIAL for Java is a lie unless .java is not.
+    assert.equal(isExtensionAllowlisted('a.py'), true);
     assert.equal(isExtensionAllowlisted('a.java'), false);
     assert.equal(isExtensionAllowlisted('a.ts'), true);
   });
 
-  it('refresh.mjs still short-circuits on exactly those two stacks', () => {
-    // A source-coupling guard, in the spirit of tests/anthropic-client-migration.
-    // If someone teaches the extractor Python, this fails and points here —
-    // far better than the fit-check silently telling Python users "MISMATCH"
-    // forever after the constraint is gone.
+  it('refresh.mjs gates on the SAME stack set the rule reads', () => {
+    // A source-coupling guard, in the spirit of tests/anthropic-client-migration:
+    // both sides read ARCH_INDEXED_STACKS (lib/repo-stack.mjs), so they cannot
+    // drift — and if someone replaces either read, this fails and points here.
     const src = fs.readFileSync(
       path.join(__dirname, '..', 'scripts', 'symbol-index', 'refresh.mjs'), 'utf-8');
-    assert.match(
-      src,
-      /stack\s*!==\s*'js-ts'\s*&&\s*stack\s*!==\s*'mixed'/,
-      'refresh.mjs stack short-circuit changed — update the architectural-memory rule in lib/fit-check/rules.mjs to match',
-    );
+    assert.match(src, /!ARCH_INDEXED_STACKS\.has\(stack\)/,
+      'refresh.mjs stack short-circuit changed — update the architectural-memory rule in lib/fit-check/rules.mjs to match');
+    const rules = fs.readFileSync(
+      path.join(__dirname, '..', 'scripts', 'lib', 'fit-check', 'rules.mjs'), 'utf-8');
+    assert.match(rules, /ARCH_INDEXED_STACKS\.has\(p\.stack\)/);
   });
 
   it('MISMATCH never strands the user — it names what still works', () => {
-    const v = verdictFor(applyRules(detectShape(fixture('python-fastapi'))), ARCH_MEMORY);
+    const v = verdictFor(applyRules(detectShape(fixture('unknown-shape'))), ARCH_MEMORY);
+    assert.equal(v.label, 'MISMATCH');
     assert.match(v.setup, /audit-code/);
   });
 });

@@ -77,6 +77,12 @@ const CORE_ASSETS = [
   // and every affected run recorded `fallback_legacy` — 15 wasted observations
   // in the Phase-14 window before the cause was traced (2026-07-18).
   'scripts/lib/oss-call-policy.json',
+  // The symbol index's Python parser stage. `lib/symbol-index/python-extract.mjs`
+  // runs it via `new URL('./python-ast-helper.py', import.meta.url)` — a
+  // module-relative path, so the import walker never sees it. Without this
+  // entry a consumer's probe reports `helper-missing` and every .py file is
+  // counted unparseable (docs/plans/python-arch-memory-indexing.md §2.4).
+  'scripts/lib/symbol-index/python-ast-helper.py',
   // The bundle's npm-dependency declaration (generate-bundle-deps.mjs). JSON
   // fs-read by check-setup, so the import walker cannot discover it.
   'scripts/lib/bundle-deps.json',

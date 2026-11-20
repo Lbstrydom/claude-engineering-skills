@@ -456,3 +456,51 @@ describe('eligibleFiles — the size clause (§2.1.1, contract gap)', () => {
     assert.deepEqual(eligibleFiles(files, { repoRoot: ROOT }), [rel('src/a.ts')]);
   });
 });
+
+// ── Python joins the universe (docs/plans/python-arch-memory-indexing.md §2.4–2.5) ──
+describe('eligibleFiles / assessParserAvailability — extra parser candidates', () => {
+  const files = ['src/a.ts', 'pkg/m.py', 'pkg/n.py', 'README.md', 'pkg/stub.pyi'].map((f) => path.join(ROOT, f));
+
+  it('NEGATIVE CONTROL: the default universe is unchanged — .py is not eligible', () => {
+    assert.deepEqual(eligibleFiles(files, { repoRoot: ROOT }), [rel('src/a.ts')]);
+  });
+
+  it('an explicit extension set widens the universe (a Python repo is no longer empty_universe)', () => {
+    const out = eligibleFiles(files, { repoRoot: ROOT, extensions: [...CRUISABLE_EXTENSIONS, '.py'] });
+    assert.deepEqual(out, [rel('pkg/m.py'), rel('pkg/n.py'), rel('src/a.ts')]);
+  });
+
+  it('a missing interpreter reports .py as UNPARSEABLE, never indexed', () => {
+    const eligible = ['src/a.ts', 'pkg/m.py', 'pkg/n.py'];
+    const cov = assessExtractionCoverage({
+      outcome: 'ok', eligible, cruisedSources: ['src/a.ts'], repoRoot: ROOT,
+      // dep-cruiser can read .ts; the Python probe failed, so .py is NOT unioned in.
+      availableExtensions: ['.ts'],
+      candidateExtensions: [...CRUISABLE_EXTENSIONS, '.py'],
+    });
+    assert.equal(cov.parser.unparseable, 2);
+    assert.deepEqual(cov.parser.byExtension, { '.py': 2 });
+    assert.ok(cov.parser.unavailableExtensions.includes('.py'));
+    assert.equal(cov.cruised, 1);
+  });
+
+  it('an available interpreter clears .py from the gap and counts parsed files in the numerator', () => {
+    const eligible = ['src/a.ts', 'pkg/m.py'];
+    const cov = assessExtractionCoverage({
+      outcome: 'ok', eligible, cruisedSources: ['src/a.ts', 'pkg/m.py'], repoRoot: ROOT,
+      availableExtensions: ['.ts', '.py'],
+      candidateExtensions: [...CRUISABLE_EXTENSIONS, '.py'],
+    });
+    assert.equal(cov.parser.unparseable, 0);
+    assert.equal(cov.parser.unavailableExtensions.includes('.py'), false);
+    assert.equal(cov.ratio, 1);
+  });
+
+  it('NEGATIVE CONTROL: without candidateExtensions, unavailableExtensions stays dep-cruiser-scoped', () => {
+    const cov = assessExtractionCoverage({
+      outcome: 'ok', eligible: ['src/a.ts'], cruisedSources: ['src/a.ts'], repoRoot: ROOT,
+      availableExtensions: ['.ts'],
+    });
+    assert.equal(cov.parser.unavailableExtensions.includes('.py'), false);
+  });
+});

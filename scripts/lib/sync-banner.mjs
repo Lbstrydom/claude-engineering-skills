@@ -24,7 +24,7 @@ export const RELOCATED_TOOLING_PREFIX = 'scripts/.claude-skills/';
 
 /** Line-comment token by extension. Absent ⇒ not comment-capable ⇒ no banner. */
 const COMMENT_TOKEN_BY_EXT = {
-  '.mjs': '//', '.js': '//', '.cjs': '//', '.sh': '#', '.bash': '#',
+  '.mjs': '//', '.js': '//', '.cjs': '//', '.sh': '#', '.bash': '#', '.py': '#',
 };
 
 /** The banner body (comment token is prefixed per line at injection time). */
@@ -78,21 +78,57 @@ export function injectUpstreamBanner(content, destRel) {
   const token = bannerTokenFor(destRel);
   if (!token) return content;
 
-  const firstBannerLine = `${token} ${BANNER_BODY[0]}`;
+  // A UTF-8 BOM must stay byte 0: inject into what follows it, then restore it.
+  if (content.startsWith('﻿')) return '﻿' + injectUpstreamBanner(content.slice(1), destRel);
+
+  // Python honours a PEP 263 cookie, and a file declaring `ascii` (or any
+  // non-UTF-8 codec) stops parsing if the banner brings non-ASCII bytes; the
+  // Python banner is therefore ASCII-only, whatever the file declares.
+  const body = destRel.endsWith('.py') ? BANNER_BODY.map(asciiFold) : BANNER_BODY;
+  const firstBannerLine = `${token} ${body[0]}`;
   // Idempotent guard: skip ONLY if the banner already sits at the TOP (as
   // injected) — NOT merely present somewhere in the body. A relocated source
   // file can legitimately contain the marker text (e.g. this very module),
   // so a whole-file `includes()` check would wrongly skip bannering it.
   if (firstContentLine(content) === firstBannerLine) return content;
 
-  const block = BANNER_BODY.map((l) => `${token} ${l}`).join('\n');
-  // Preserve a leading shebang as byte 0 (banner goes directly below it),
-  // including the degenerate shebang-only-no-newline case (R1 fix).
-  if (content.startsWith('#!')) {
-    const firstNl = content.indexOf('\n');
-    if (firstNl === -1) return `${content}\n${block}\n`;
-    return content.slice(0, firstNl + 1) + block + '\n' + content.slice(firstNl + 1);
+  const block = body.map((l) => `${token} ${l}`).join('\n');
+  // A Python encoding declaration (PEP 263) only counts on line 1 or 2, so it
+  // keeps its position with the shebang above the banner.
+  const keep = pinnedHeadLength(content, destRel);
+  if (keep > 0) {
+    const head = content.slice(0, keep);
+    if (content.slice(keep).startsWith(firstBannerLine)) return content;
+    return (head.endsWith('\n') ? head : `${head}\n`) + block + '\n' + content.slice(keep);
   }
   const lead = content.startsWith('\n') ? '' : '\n';
   return block + lead + content;
+}
+
+const PY_CODING_COOKIE = /^[ \t\f]*#.*?coding[:=][ \t]*[-\w.]+/;
+
+/** ASCII-only rendering of a banner line (the two glyphs it uses, anything else as `?`). */
+function asciiFold(line) {
+  return line.replaceAll('⚠', '!!').replaceAll('—', '-').replace(/[^\x00-\x7F]/g, '?');
+}
+
+/**
+ * Length of the head that must stay above the banner: a shebang line, and for
+ * Python a coding-cookie line among the first two.
+ */
+function pinnedHeadLength(content, destRel) {
+  const lines = content.split('\n');
+  let n = 0;
+  if (lines[0].startsWith('#!')) n = 1;
+  if (destRel.endsWith('.py')) {
+    const line = (i) => (lines[i] ?? '').replace(/\r$/, '');
+    // PEP 263: a cookie counts on line 1, or on line 2 only when line 1 is
+    // itself a comment or blank (otherwise line 2 is code or inside a string).
+    if (PY_CODING_COOKIE.test(line(0))) n = Math.max(n, 1);
+    else if (/^[ \t\f]*(#.*)?$/.test(line(0)) && PY_CODING_COOKIE.test(line(1))) n = Math.max(n, 2);
+  }
+  if (n === 0) return 0;
+  // Degenerate shebang-only-no-newline file: the whole content is the head.
+  const idx = lines.slice(0, n).join('\n').length;
+  return Math.min(content.length, idx + 1);
 }

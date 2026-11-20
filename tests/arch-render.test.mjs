@@ -230,33 +230,72 @@ describe('renderNeighbourhoodCallout', () => {
     const { markdown } = renderNeighbourhoodCallout({ records: [], cloudStatus: 'error', hint: 'RPC_ERROR' });
     assert.match(markdown, /consultation failed/);
   });
-  it('empty records emits "No near-duplicates found"', () => {
+  it('empty records over a verified snapshot emits "No near-duplicates found"', () => {
     const { markdown } = renderNeighbourhoodCallout({
       records: [], cloudStatus: 'ok', targetPaths: ['x.mjs'],
+      coverage: { status: 'verified', reason: null, eligible: 10 },
     });
     assert.match(markdown, /No near-duplicates found/);
+  });
+
+  it('empty records with NO coverage verdict is unknown, never greenfield', () => {
+    const { markdown } = renderNeighbourhoodCallout({ records: [], cloudStatus: 'ok', targetPaths: ['x.mjs'] });
+    assert.doesNotMatch(markdown, /greenfield|No near-duplicates found/i);
+    assert.match(markdown, /unknown \(no coverage verdict\)/);
+    assert.match(markdown, /absence of evidence/i);
   });
   // ── unindexed file types — absence of evidence vs evidence of absence ────
   //
   // AGENTS.md makes this consultation mandatory before writing a new symbol
-  // and reads empty records as "proceed greenfield". For a .py/.java target
+  // and reads empty records as "proceed greenfield". For a .go/.java target
   // there are no rows to match because nothing was ever indexed, so the
   // greenfield wording would be a confident wrong answer — and would invite
-  // exactly the duplicate arch-memory exists to prevent.
+  // exactly the duplicate arch-memory exists to prevent. (`.py` was the
+  // example until Python joined the allowlist — plan
+  // docs/plans/python-arch-memory-indexing.md.)
   it('empty records for an UNINDEXED path must NOT say greenfield', () => {
     const { markdown } = renderNeighbourhoodCallout({
-      records: [], cloudStatus: 'ok', targetPaths: ['api/users.py'],
+      records: [], cloudStatus: 'ok', targetPaths: ['api/users.go'],
     });
     assert.doesNotMatch(markdown, /greenfield/i);
     assert.doesNotMatch(markdown, /No near-duplicates found/);
     assert.match(markdown, /not indexed/i);
     assert.match(markdown, /absence of evidence/i);
-    assert.match(markdown, /api\/users\.py/);
+    assert.match(markdown, /api\/users\.go/);
   });
 
-  it('empty records for an INDEXED path still says greenfield (no false alarm)', () => {
+  it('a .py target is now an INDEXED type (no "not indexed" disclaimer)', () => {
+    const { markdown } = renderNeighbourhoodCallout({
+      records: [], cloudStatus: 'ok', targetPaths: ['api/users.py'],
+    });
+    assert.doesNotMatch(markdown, /not indexed/i);
+  });
+
+  // The extension says a type CAN be indexed; only the snapshot's coverage
+  // verdict says this refresh DID read it (a refresh with no Python interpreter
+  // reports every .py as unparseable).
+  it('empty records over a NON-verified snapshot must NOT say greenfield, whatever the type', () => {
+    const { markdown } = renderNeighbourhoodCallout({
+      records: [], cloudStatus: 'ok', targetPaths: ['api/users.py'],
+      coverage: { status: 'degraded', reason: 'below_floor', eligible: 40 },
+    });
+    assert.doesNotMatch(markdown, /greenfield/i);
+    assert.match(markdown, /absence of evidence/i);
+    assert.match(markdown, /degraded \(below_floor\)/);
+  });
+
+  it('empty records over a VERIFIED snapshot still says greenfield (negative control)', () => {
+    const { markdown } = renderNeighbourhoodCallout({
+      records: [], cloudStatus: 'ok', targetPaths: ['api/users.py'],
+      coverage: { status: 'verified', reason: null, eligible: 40 },
+    });
+    assert.match(markdown, /greenfield/i);
+  });
+
+  it('empty records for an INDEXED path over a verified snapshot still says greenfield (no false alarm)', () => {
     const { markdown } = renderNeighbourhoodCallout({
       records: [], cloudStatus: 'ok', targetPaths: ['lib/x.mjs'],
+      coverage: { status: 'verified', reason: null, eligible: 10 },
     });
     assert.match(markdown, /greenfield/i);
     assert.doesNotMatch(markdown, /not indexed/i);
@@ -265,7 +304,7 @@ describe('renderNeighbourhoodCallout', () => {
   it('a mixed target list warns even when the JS half returned records', () => {
     const { markdown } = renderNeighbourhoodCallout({
       cloudStatus: 'ok',
-      targetPaths: ['lib/x.mjs', 'api/users.py'],
+      targetPaths: ['lib/x.mjs', 'api/users.go'],
       totalCandidatesConsidered: 1,
       records: [{
         symbolName: 'foo', filePath: 'lib/x.mjs', startLine: 10,
@@ -275,7 +314,7 @@ describe('renderNeighbourhoodCallout', () => {
     });
     const partialLine = markdown.split('\n').find(l => l.includes('Partial'));
     assert.ok(partialLine, 'expected a Partial caveat line');
-    assert.match(partialLine, /api\/users\.py/);
+    assert.match(partialLine, /api\/users\.go/);
     // The INDEXED path must not be named as unindexed — the caveat has to be
     // precise about which target it disclaims, or it just reads as noise.
     assert.doesNotMatch(partialLine, /lib\/x\.mjs/);

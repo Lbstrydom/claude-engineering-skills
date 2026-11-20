@@ -333,19 +333,20 @@ Tier is about whether the `.mjs` can **run**. It says nothing about whether a
 given skill can **understand your code** — a separate axis, and the one that
 surprises people:
 
-> **Architectural memory (`arch:refresh` / `arch:render`) is JS/TS-only in v1.**
-> [`symbol-index/refresh.mjs`](../../scripts/symbol-index/refresh.mjs)
-> short-circuits unless `detectRepoStack` returns `js-ts` or `mixed`, emitting
-> `reason: 'unsupported-stack'`. `arch:render` then correctly writes its
-> `repo-not-registered` stub. Both steps report honestly — but you only find
-> out after running them.
+> **Architectural memory (`arch:refresh` / `arch:render`) indexes JS/TS and
+> Python.** [`symbol-index/refresh.mjs`](../../scripts/symbol-index/refresh.mjs)
+> short-circuits unless `detectRepoStack` returns a stack in
+> `ARCH_INDEXED_STACKS` (`js-ts`, `mixed`, `python`), emitting
+> `reason: 'unsupported-stack'`; `arch:render` then writes its
+> `repo-not-registered` stub. Python needs a Python >= 3.9 interpreter at
+> refresh time (PATH, or `ARCH_INDEX_PYTHON`) — without one, every `.py` file
+> is reported as **unparseable** in the coverage record, never as indexed.
+> Java, C# and `.sql` are not indexed.
 
-Because `detectRepoStack` requires a `package.json` **with dependencies** to
-report `js-ts`, **every Tier-2 consumer is automatically outside architectural
-memory's support** — fixing the runtime does not unlock it. A Tier-1 repo whose
-`package.json` is an empty shell is skipped for the same reason. Everything
-else — `/plan`, `/audit-plan`, `/audit-code`, `/ship`, and the browser lenses —
-is language-agnostic and works regardless.
+The `.mjs` half still has to RUN, so a Tier-2 consumer (no `package.json`)
+cannot run `arch:refresh` itself however its code is written. Everything else
+— `/plan`, `/audit-plan`, `/audit-code`, `/ship`, and the browser lenses — is
+language-agnostic and works regardless.
 
 **Don't reason about this by hand — ask:**
 
