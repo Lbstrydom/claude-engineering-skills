@@ -41,6 +41,7 @@ import { canonicalise, denseRankColumnPositions, diffSchemas } from './lib/db/sc
 import { captureLiveSchema, SHARED_CATALOG_QUERIES } from './lib/db/live-catalog.mjs';
 import { checkLiveConstraints, renderConstraintDrift } from './lib/db/constraint-drift.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { finishAndExit } from './lib/cli-io.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1265,7 +1266,7 @@ async function main() {
     args.mode = 'migrate';
   }
 
-  const { getPool, closePool } = await import('./lib/db/client.mjs');
+  const { getPool, closePool, classifyDbConnectionError } = await import('./lib/db/client.mjs');
   const pool = await getPool();
 
   // R3-audit M1: --check-drift exits 0 (cloud:false) when AUDIT_DB_URL is
@@ -1340,7 +1341,12 @@ async function main() {
     }
   } catch (err) {
     process.stderr.write(`\n${R}setup failed${X}: ${err.message}\n`);
-    process.exit(1);
+    // Machine-readable half of the same failure, for callers that read stdout (`stores:drift`):
+    // an unreachable store is a NAMED state, not a CLI crash. No message — the host stays on stderr.
+    if (args.format === 'json' && classifyDbConnectionError(err).cause === 'unreachable') {
+      process.stdout.write(`${JSON.stringify({ ok: false, error: { code: 'CLOUD_UNREACHABLE', cause: 'unreachable' } })}\n`);
+    }
+    await finishAndExit(1);
   } finally {
     await closePool();
   }
