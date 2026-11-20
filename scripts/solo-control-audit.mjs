@@ -1717,6 +1717,9 @@ async function cmdSoloPassRetro() {
 /** A blind sheet as RFC 4180 records (see lib/solo-control/csv.mjs): `rows` are the identity columns by name, `records` the raw cells in sheet order. */
 function readBlindSheet(csvPath) {
   const [header = [], ...records] = parseCsv(fs.readFileSync(csvPath, 'utf8'));
+  // a sheet missing a column would index cells[-1] (a property csvLine never serialises) and grade rows into nowhere
+  const absent = ['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern'].filter((n) => !header.includes(n));
+  if (absent.length) throw new Error(`blind sheet ${path.basename(csvPath)} is missing column(s): ${absent.join(', ')}`);
   const col = (n) => header.indexOf(n);
   const iId = col('blind_id'), iCommit = col('commit'), iSev = col('severity'), iCat = col('category'), iFile = col('file'), iDetail = col('detail');
   const rows = records.map((c) => ({ blindId: c[iId], commit: c[iCommit], severity: c[iSev], category: c[iCat], file: c[iFile], detail: c[iDetail] }));
@@ -1731,6 +1734,8 @@ async function cmdJudgeGpt() {
   const maxDiffChars = optOrDie(positiveInt, 'max-diff-chars', '600000');
   const force = hasFlag('force');
   if (!fs.existsSync(srcPath)) { log(`No blind sheet at ${path.relative(process.cwd(), srcPath)} — run merge first.`); process.exit(1); }
+  // the checkpoint REPLACES outPath after every commit: pointing it at the input sheet would overwrite the source with grades
+  if (path.resolve(outPath) === path.resolve(srcPath)) { log(`FATAL: --out resolves to the input sheet (${path.relative(process.cwd(), srcPath)}) — the checkpoint would overwrite it`); process.exit(2); }
   const recipientPolicy = policyOrDie(); // the full diff of every sheet commit goes to GPT
 
   const { header, rows, records } = readBlindSheet(srcPath);

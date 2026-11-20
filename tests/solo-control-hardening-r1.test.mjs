@@ -218,3 +218,24 @@ describe('apparatus: generation that never replied (provider unreachable on a de
     assert.equal(JSON.parse(fs.readFileSync(path.join(out, `S-pregate-A-${SUBJECT}.json`), 'utf8')).generationFailedCells, 5);
   }));
 });
+
+describe('round 6 follow-ups', () => {
+  const head = 'blind_id,commit,severity,category,file,detail,label,proof,cluster,matches,pattern';
+  test('judge-gpt --out equal to the input sheet is refused and the source is untouched', () => inTemp((dir) => {
+    const out = path.join(dir, '.audit-loop/solo-control'); fs.mkdirSync(out, { recursive: true });
+    const src = path.join(out, 'blind-adjudication.csv');
+    const text = `${head}\nF001,${HEAD.slice(0, 8)},HIGH,k,f,d,,,c1,,\n`;
+    fs.writeFileSync(src, text);
+    const r = cli(dir, ['judge-gpt', '--out', 'blind-adjudication.csv', '--force'], refusingPolicy(dir));
+    assert.equal(r.status, 2, r.out);
+    assert.match(r.out, /would overwrite it/);
+    assert.equal(fs.readFileSync(src, 'utf8'), text);
+  }));
+  test('judge-gpt on a sheet with no label column is refused (it graded rows into cells[-1])', () => inTemp((dir) => {
+    const out = path.join(dir, '.audit-loop/solo-control'); fs.mkdirSync(out, { recursive: true });
+    fs.writeFileSync(path.join(out, 'blind-adjudication.csv'), 'blind_id,commit,severity,category,file,detail\nF001,abc,HIGH,k,f,d\n');
+    const r = cli(dir, ['judge-gpt'], refusingPolicy(dir));
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /missing column\(s\): label/);
+  }));
+});
