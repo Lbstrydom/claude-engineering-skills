@@ -23,30 +23,48 @@ const cleanEnv = () => { const e = { ...process.env }; for (const k of GIT_REPO_
 // `core.hooksPath` pointed at nothing: a repository's own post-checkout hook must not run while a tree is materialised, or it could
 // rewrite the files the audit is about to read. (Checkout FILTERS are not disabled: none of the corpus repos names one in
 // .gitattributes, so no file is filtered; a future corpus repo that does is a curation constraint.)
-const git = (root, args) => execFileSync('git', ['-c', `core.hooksPath=${os.devNull}`, '-C', root, ...args],
+const GIT_CONFIG = ['-c', `core.hooksPath=${os.devNull}`, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf'];
+const git = (root, args) => execFileSync('git', [...GIT_CONFIG, '-C', root, ...args],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, env: cleanEnv() });
 
-// Attributes that make a checkout differ from the committed blobs the diff describes. Resolved by GIT (check-attr) on the checked-out
-// tree, never by pattern-matching attribute files: that sees every source (.gitattributes at any depth, .git/info/attributes, the global
-// attributes file), ignores comments and patterns matching no file, and covers ident and working-tree-encoding as well as filter.
-const TRANSFORM_ATTRS = ['filter', 'ident', 'working-tree-encoding'];
-const CHECK_ATTR_CHUNK = 200; // paths per call: far below the Windows command-line limit
+/** Run git in `dir` with raw bytes in and out (paths are bytes, not necessarily UTF-8) and an optional stdin. */
+const gitBytes = (dir, args, input) => execFileSync('git', [...GIT_CONFIG, '-C', dir, ...args], { input, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024, env: cleanEnv() });
 
-/** Throws if any file in the checked-out tree `dir` has an effective transforming attribute. Runs BEFORE the audit reads anything. */
-function assertNoCheckoutTransform(dir, sha, _git) {
-  let files;
-  try { files = _git(dir, ['ls-files', '-z']).split('\0').filter(Boolean); } catch (err) { throw new Error(`withCaseTree: could not list ${sha}'s files to check them for checkout transformations: ${err.message}`); }
-  const hits = [];
-  for (let i = 0; i < files.length; i += CHECK_ATTR_CHUNK) {
-    let out;
-    try { out = _git(dir, ['check-attr', '-z', ...TRANSFORM_ATTRS, '--', ...files.slice(i, i + CHECK_ATTR_CHUNK)]); } catch (err) { throw new Error(`withCaseTree: could not check ${sha} for checkout transformations: ${err.message}`); }
-    const parts = out.split('\0');
-    for (let j = 0; j + 2 < parts.length; j += 3) {
-      const [file, attr, value] = [parts[j], parts[j + 1], parts[j + 2]];
-      if (value !== 'unspecified' && value !== 'unset') hits.push(`${file} (${attr}=${value})`);
+/**
+ * The audit reads the checked-out FILES while its diff describes the commit's BLOBS. A smudge filter, `ident`, a working-tree-encoding
+ * or an eol attribute makes them differ, and no list of attribute names can be complete (a filter may even be NAMED "unset"). So this
+ * does not ask what could transform the checkout: it checks whether it DID. Every regular file's raw bytes (hash-object --no-filters)
+ * are compared with the blob id the index holds for it; any mismatch REFUSES the case before the audit reads anything. Symlinks and
+ * submodules are skipped (their content is a link target / another repository). Paths travel as bytes through stdin, so no
+ * command-line length limit applies and non-UTF-8 names survive.
+ */
+function assertTreeMatchesCommit(dir, sha) {
+  let listing;
+  try { listing = gitBytes(dir, ['ls-files', '-s', '-z']); } catch (err) { throw new Error(`withCaseTree: could not list ${sha}'s files to verify the checkout: ${err.message}`); }
+  const files = [];
+  let start = 0;
+  while (start < listing.length) {
+    let end = listing.indexOf(0, start);
+    if (end < 0) end = listing.length;
+    const tab = listing.indexOf(9, start);
+    if (tab < 0 || tab > end) throw new Error(`withCaseTree: unreadable index entry while verifying ${sha}`);
+    const [mode, oid] = listing.subarray(start, tab).toString('latin1').split(' ');
+    const name = listing.subarray(tab + 1, end);
+    if (mode === '100644' || mode === '100755') {
+      if (name.includes(10)) throw new Error(`withCaseTree: ${sha} has a path containing a newline; its checkout cannot be verified`);
+      files.push({ oid, name });
     }
+    start = end + 1;
   }
-  if (hits.length > 0) throw new Error(`withCaseTree: refusing to audit ${sha}: its checkout would be transformed, so the files read would differ from the commit's blobs: ${hits.slice(0, 5).join(', ')}${hits.length > 5 ? `, and ${hits.length - 5} more` : ''}`);
+  if (files.length === 0) return;
+  let hashed;
+  try {
+    const input = Buffer.concat(files.flatMap((f) => [f.name, Buffer.from('\n')]));
+    hashed = gitBytes(dir, ['hash-object', '--no-filters', '--stdin-paths'], input).toString('latin1').split('\n').filter(Boolean);
+  } catch (err) { throw new Error(`withCaseTree: could not hash the checked-out files of ${sha}: ${err.message}`); }
+  if (hashed.length !== files.length) throw new Error(`withCaseTree: hashed ${hashed.length} of ${files.length} files of ${sha}; the checkout cannot be verified`);
+  const bad = files.filter((f, i) => hashed[i] !== f.oid).map((f) => f.name.toString('utf8'));
+  if (bad.length > 0) throw new Error(`withCaseTree: refusing to audit ${sha}: its checkout differs from the commit's blobs (a filter, ident, encoding or eol attribute is transforming it), so the files read would not be what the diff describes: ${bad.slice(0, 5).join(', ')}${bad.length > 5 ? `, and ${bad.length - 5} more` : ''}`);
 }
 
 /**
@@ -67,8 +85,8 @@ export async function withCaseTree({ repoRoot, sha }, fn, { _git = git, _warn = 
   let result; let primary; let failed = false; // a thrown value may be falsy: track THAT it threw, not what
   try {
     _git(repoRoot, ['worktree', 'add', '--detach', '--force', dir, sha]);
-    // The tree is checked out, but nothing has READ it yet: a transforming attribute refuses the case here, and the common cleanup below removes it.
-    assertNoCheckoutTransform(dir, sha, _git);
+    // The tree is checked out, but nothing has READ it yet: a checkout that differs from the commit's blobs refuses the case here, and the common cleanup below removes it.
+    assertTreeMatchesCommit(dir, sha);
     result = await fn(dir);
   } catch (err) { primary = err; failed = true; }
 

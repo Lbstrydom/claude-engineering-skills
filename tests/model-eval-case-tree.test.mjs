@@ -174,44 +174,64 @@ describe('withCaseTree', () => {
     } finally { sh(r, 'worktree', 'remove', '-f', '-f', dir); rm(path.dirname(dir)); rm(r); }
   });
 
-  /** A repo with one commit holding a.js (+ optional .gitattributes text); `infoAttributes` goes to .git/info/attributes (no commit holds it). */
-  function attrRepo({ gitattributes = null, infoAttributes = null } = {}) {
+  /** A repo with one commit; `config` are git config pairs set BEFORE the commit and checkout; `infoAttributes` goes to .git/info/attributes. */
+  function attrRepo({ gitattributes = null, infoAttributes = null, config = [], content = 'one\n', extra = [] } = {}) {
     const r = fs.mkdtempSync(path.join(os.tmpdir(), 'case-tree-attr-'));
     sh(r, 'init', '-q');
+    for (const [k, v] of config) sh(r, 'config', k, v);
     if (gitattributes !== null) fs.writeFileSync(path.join(r, '.gitattributes'), gitattributes);
-    fs.writeFileSync(path.join(r, 'a.js'), 'one\n');
+    fs.writeFileSync(path.join(r, 'a.js'), content);
+    for (const [name, body] of extra) fs.writeFileSync(path.join(r, name), body);
     sh(r, 'add', '.'); sh(r, 'commit', '-q', '-m', 'c1');
     if (infoAttributes !== null) { fs.mkdirSync(path.join(r, '.git', 'info'), { recursive: true }); fs.writeFileSync(path.join(r, '.git', 'info', 'attributes'), infoAttributes); }
     return { r, sha: sh(r, 'rev-parse', 'HEAD') };
   }
+  const smudge = (name) => [[`filter.${name}.smudge`, 'sed s/one/ONE/'], [`filter.${name}.clean`, 'sed s/ONE/one/']]; // round-trips, so the index stays clean
 
-  for (const [label, opts, want] of [
-    ['a filter in .gitattributes', { gitattributes: '*.js filter=upper\n' }, /a\.js \(filter=upper\)/],
-    ['ident', { gitattributes: '*.js ident\n' }, /a\.js \(ident=set\)/],
-    ['working-tree-encoding', { gitattributes: '*.js working-tree-encoding=ISO-8859-1\n' }, /working-tree-encoding=ISO-8859-1/],
-    ['a filter in .git/info/attributes (no committed .gitattributes at all)', { infoAttributes: '*.js filter=upper\n' }, /a\.js \(filter=upper\)/],
+  for (const [label, opts] of [
+    ['an active smudge filter in .gitattributes', { gitattributes: '*.js filter=upper\n', config: smudge('upper') }],
+    ['a filter literally NAMED "unset" (check-attr cannot tell it from an unset attribute)', { gitattributes: '*.js filter=unset\n', config: smudge('unset') }],
+    ['an active smudge filter set only in .git/info/attributes (no committed .gitattributes at all)', { infoAttributes: '*.js filter=upper\n', config: smudge('upper') }],
+    ['ident expansion', { gitattributes: '*.js ident\n', content: '$Id$\n' }],
   ]) {
     test(`${label} REFUSES the case before anything is read, and the tree is removed`, async () => {
       const { r, sha } = attrRepo(opts);
       let ran = false;
       try {
-        await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { ran = true; return 1; }), (e) => /would be transformed/.test(e.message) && want.test(e.message));
+        await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { ran = true; return 1; }), /differs from the commit's blobs.*a\.js/);
         assert.equal(ran, false, 'fn never ran, so nothing read the transformed files');
         assert.equal(registered(r), 1, 'the refused tree was still removed');
       } finally { rm(r); }
     });
   }
 
+  test('working-tree-encoding that re-encodes a non-ASCII file REFUSES the case', async () => {
+    const { r, sha } = attrRepo({ gitattributes: '*.js working-tree-encoding=ISO-8859-1\n', content: Buffer.from('caf\u00e9\n', 'latin1') });
+    try { await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => 1), /differs from the commit's blobs/); } finally { rm(r); }
+  });
+
   for (const [label, opts] of [
     ['a comment that mentions filter=', { gitattributes: '# the old *.js filter=upper rule was removed\n' }],
     ['a filter pattern that matches no file', { gitattributes: '*.png filter=lfs\n' }],
-    ['a filter attribute explicitly unset', { gitattributes: '*.js -filter\n' }],
+    ['a filter attribute explicitly unset', { gitattributes: '*.js -filter\n', config: smudge('upper') }],
+    ['an attribute naming a filter that is not configured (inert: bytes unchanged)', { gitattributes: '*.js filter=nobody\n' }],
   ]) {
-    test(`${label} is NOT a transformation: the case is audited (the check is not over-broad)`, async () => {
+    test(`${label} does not alter the checkout, so the case is audited (the check is not over-broad)`, async () => {
       const { r, sha } = attrRepo(opts);
       try { assert.equal(await withCaseTree({ repoRoot: r, sha }, async () => 'ran'), 'ran'); } finally { rm(r); }
     });
   }
+
+  test('line endings are not touched even when the machine converts them (core.autocrlf=true is set on the repository)', async () => {
+    const { r, sha } = attrRepo({ config: [['core.autocrlf', 'true']], content: 'one\ntwo\n' });
+    try { assert.equal(await withCaseTree({ repoRoot: r, sha }, async (d) => fs.readFileSync(path.join(d, 'a.js'), 'utf8')), 'one\ntwo\n'); } finally { rm(r); }
+  });
+
+  test('a tree whose path list is far longer than any command line is still verified (paths travel on stdin)', async () => {
+    const extra = Array.from({ length: 400 }, (_, i) => [`${'x'.repeat(120)}-${i}.txt`, `f${i}\n`]);
+    const { r, sha } = attrRepo({ extra });
+    try { assert.equal(await withCaseTree({ repoRoot: r, sha }, async () => 'ran'), 'ran'); } finally { rm(r); }
+  });
 
   test('a repository with no filter attributes is audited as before (the check is not vacuous in the other direction)', async () => {
     const { r, sha } = repo();
