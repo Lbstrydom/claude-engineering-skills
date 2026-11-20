@@ -1,8 +1,7 @@
 """Python parser stage for the architectural-memory symbol index.
 
-Driven by scripts/lib/symbol-index/python-extract.mjs. Protocol
-(docs/plans/python-arch-memory-indexing.md section 2.9), one JSON object per
-line on stdin and stdout:
+Driven by its sibling module python-extract.mjs (same directory). Protocol,
+one JSON object per line on stdin and stdout:
 
   -> {"v":1,"hello":true}
   <- {"v":1,"hello":true,"python":"3.x.y"}

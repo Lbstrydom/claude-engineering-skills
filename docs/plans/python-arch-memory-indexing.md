@@ -457,4 +457,27 @@ time.
   - Final gate: **APPROVE** (gemini / gemini-4-argon, round 1/2, blocking 0, debt 0).
 
 ## Implementation Log
-(empty)
+- **Phase 1** (`663d2364`): the allowlist, coverage parameters and `parser-gap.mjs`. `arch-render.test.mjs` used
+  `.py` as its "unindexed" example, so it moved to `.go`, and a case pins `.py` as indexed.
+- **Phase 2** (`f973a6d0`): the helper, `python-extract.mjs`, the guarded `readMeta`, and the domain-map edge.
+  **Found and fixed in the reused resolver:** relative imports under a `src/` root resolved against the directory
+  path (`src.shop.orders.x`) and never matched the index. They now resolve against the importer's dotted module.
+  This also changes `arch-intent`'s own `analyseImports` results in src-layout consumers, where such edges are now
+  seen. It is a correctness fix, called out in the hand-off.
+- **Phase 3 — load-bearing additions the plan missed** (each needed for "a Python consumer's `arch:refresh`
+  indexes"):
+  - `refresh.mjs` stack gate: a pure-Python repo (`stack=python`) skipped as `unsupported-stack` **before**
+    extraction. Both the gate and the fit-check verdict now read one set, `ARCH_INDEXED_STACKS`
+    (`lib/repo-stack.mjs`), and a source-coupling test pins both reads.
+  - `fit-check/rules.mjs` (Python is now FITS and names the interpreter), `render-mermaid.mjs` (Python is no longer
+    an "unindexed stack" banner input), and `/ship`'s reference line plus its gate-contract quote.
+  - **The coverage universe excludes `.py` files the gate refuses.** The e2e test caught `secrets/creds.py` being
+    *named* in `coverage.samples.uncruised`. A refused file is never read, so per the §2.1.1 clause it is neither
+    counted nor named. This is scoped to Python: JS files are still cruised by dep-cruiser, which is unchanged.
+- **Follow-ups (independent of this change, for the coordinator):**
+  - The `/audit-code` duplication wave filters candidates with its own JS-only regex
+    (`lib/audit/duplication-detector.mjs:60`), so Python is not yet duplicate-checked there.
+  - The ts-morph admission-to-read race (§8).
+  - The `arch-render` "not indexed" callout keys on the allowlist, not on the snapshot's coverage verdict (the
+    sibling chip's envelope work).
+  - `.sql` extraction.

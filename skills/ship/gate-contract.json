@@ -418,8 +418,8 @@
       "reason": "Upstream report cbd8b539 (wine-cellar-app) fix, reconciled with a concurrent session's independent fix to the same paragraph (83467058): Step 0.5c's failure-matrix intro. Restates the pre-existing step-0-5-gates-non-blocking disposition ('Step 0.5 pre-ship gates are non-blocking by default') for this specific step — a negative guarantee about agent orchestration, not a CLI exit code. 'Verified against' introduces the correction itself (the SUPABASE_AUDIT_URL/SERVICE_ROLE_REQUIRED/RPC vocabulary was stale relative to the postgres-parity migration), which is a documentation accuracy claim, not an enforcement claim."
     },
     {
-      "line": "Non-JS/TS stack → skips silently (`reason: 'unsupported-stack'`), exit 0,",
-      "reason": "Describes scripts/symbol-index/refresh.mjs's own early-return behaviour (verified against the source at fix time) for a non-JS/TS repo — a property of that CLI, not a claim /ship's own execution enforces. Same disposition class as the pre-existing 'exits 0'/'always exits 0' entries elsewhere in this file describing another script's contract."
+      "line": "A stack with nothing indexable (neither JS/TS nor Python) → skips silently (`reason: 'unsupported-stack'`), exit 0,",
+      "reason": "Describes scripts/symbol-index/refresh.mjs's own early-return behaviour (verified against the source at fix time) for a repo with no JS/TS or Python to index — a property of that CLI, not a claim /ship's own execution enforces. Same disposition class as the pre-existing 'exits 0'/'always exits 0' entries elsewhere in this file describing another script's contract."
     },
     {
       "line": "or refresh-lock conflict) → `refresh.mjs` exits 1 or 2 and writes a message",

@@ -75,7 +75,7 @@ import { resolveModel } from '../lib/model-resolver.mjs';
 import { resolveEmbedProfile } from '../lib/embed-text.mjs';
 import { ignoredUntrackedPaths, OWNERSHIP_RULE_EPOCH } from '../lib/disowned-paths.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
-import { detectRepoStack } from '../lib/repo-stack.mjs';
+import { detectRepoStack, ARCH_INDEXED_STACKS } from '../lib/repo-stack.mjs';
 import { tagDomain, loadDomainRules, loadCoverageConfig } from '../lib/symbol-index/domain-tagger.mjs';
 import { graphVerdict } from '../lib/symbol-index/graph-verdict.mjs';
 import { assessExtractionCoverage } from '../lib/symbol-index/graph-coverage.mjs';
@@ -249,10 +249,12 @@ async function main() {
     await finishAndExit(0);
   }
 
-  // Stack short-circuit: JS/TS only in v1
+  // Stack short-circuit: the extractor indexes JS/TS (ts-morph) and Python (the
+  // python-extract.mjs stage; an absent interpreter reports as unparseable
+  // coverage, never as indexed). Anything else has nothing to extract.
   const { stack } = detectRepoStack(repoRoot);
-  if (stack !== 'js-ts' && stack !== 'mixed') {
-    process.stderr.write(`architectural-memory: ${stack === 'python' ? 'Python' : stack} extraction not yet supported (stack=${stack} detected)\n`);
+  if (!ARCH_INDEXED_STACKS.has(stack)) {
+    process.stderr.write(`architectural-memory: ${stack} extraction not yet supported (stack=${stack} detected)\n`);
     process.stdout.write(JSON.stringify({ ok: true, cloud: true, skipped: true, reason: 'unsupported-stack', stack }) + '\n');
     await finishAndExit(0);
   }

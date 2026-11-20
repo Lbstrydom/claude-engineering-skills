@@ -159,7 +159,10 @@ export async function generateIntentEmbedding(intentDescription, activeModel, ac
  * matching `NeighbourhoodResultSchema`. Errors are typed for the failure-matrix
  * mapping in cross-skill.mjs.
  *
- * @param {{getActiveSnapshot: Function, getRepoIdByUuid: Function, callNeighbourhoodRpc: Function}} adapters - injected for testability
+ * @param {{getActiveSnapshot: Function, getRepoIdByUuid: Function, callNeighbourhoodRpc: Function,
+ *          normalizeIntent?: Function, embedIntent?: Function}} adapters - injected for testability.
+ *   The two optional hooks replace only the provider calls (intent normalisation
+ *   and intent embedding); omitted, production behaviour is unchanged.
  * @param {object} args - matches NeighbourhoodQueryArgsSchema
  * @param {string} repoRoot - for disk cache location
  */
@@ -229,8 +232,14 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
   let normalized = { text: safeIntent, mode: 'fallback', normalizerId: 'none', reason: 'not-attempted' };
   try {
     assertEgressSafe(safeIntent, { label: 'arch-memory:normalize-intent' });
-    const { normalizeIntentToPurpose } = await import('./arch-memory/normalize-intent.mjs');
-    normalized = await normalizeIntentToPurpose(safeIntent, { repoRoot });
+    // Optional provider seam (tests): stands in for the provider CALL only —
+    // redaction and the egress gate above still run first.
+    if (adapters.normalizeIntent) {
+      normalized = await adapters.normalizeIntent(safeIntent, { repoRoot });
+    } else {
+      const { normalizeIntentToPurpose } = await import('./arch-memory/normalize-intent.mjs');
+      normalized = await normalizeIntentToPurpose(safeIntent, { repoRoot });
+    }
   } catch (err) {
     // A gate refusal means redact-once upstream missed something. Degrade to
     // the deterministic path rather than sending, and never throw into the
@@ -254,7 +263,7 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
   );
   let intentEmbedding = getCached(repoRoot, key, ttlMs);
   if (!intentEmbedding) {
-    const emb = await generateIntentEmbedding(
+    const emb = await (adapters.embedIntent ?? generateIntentEmbedding)(
       embedInput,
       active.activeEmbeddingModel,
       active.activeEmbeddingDim

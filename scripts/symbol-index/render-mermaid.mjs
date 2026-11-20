@@ -541,7 +541,10 @@ async function main() {
     // lookup strand a stale coverage verdict on disk. Degrade to "no banner".
     let unindexedStackKinds = [];
     try {
-      const SYMBOL_BEARING_STACKS = new Set(['python', 'java', 'csharp']);
+      // Python is indexed since the Python parser stage
+      // (docs/plans/python-arch-memory-indexing.md); a missing interpreter is
+      // reported by the coverage verdict, not by this banner.
+      const SYMBOL_BEARING_STACKS = new Set(['java', 'csharp']);
       unindexedStackKinds = detectRepoStack(repoRoot).stackKinds
         .filter(k => SYMBOL_BEARING_STACKS.has(k));
     } catch (err) {

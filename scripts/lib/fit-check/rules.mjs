@@ -17,6 +17,7 @@
  * @module scripts/lib/fit-check/rules
  */
 import { displayAddDev, displayExec } from '../package-manager.mjs';
+import { ARCH_INDEXED_STACKS } from '../repo-stack.mjs';
 
 /**
  * The "install Playwright" setup line, in the target repo's own package
@@ -110,47 +111,34 @@ export const SKILLS = [
     // than a shape axis, and nothing else surfaced that.
     //
     // Field report (2026-07-20): a Python consumer restored node_modules, ran
-    // `arch:refresh`, and got `unsupported-stack`; render then wrote its
-    // repo-not-registered stub. Every step reported itself honestly, but the
-    // constraint was only discoverable by spending the effort and reading a
-    // skip line. `symbol-index/refresh.mjs` short-circuits on
-    // `stack !== 'js-ts' && stack !== 'mixed'` — the extractor is JS/TS-only
-    // in v1 — so this verdict must track THAT condition exactly.
+    // `arch:refresh`, and got `unsupported-stack`. Since the Python parser stage
+    // (docs/plans/python-arch-memory-indexing.md) `symbol-index/refresh.mjs`
+    // gates on ARCH_INDEXED_STACKS, the same set read here, so this verdict
+    // tracks THAT condition exactly.
     skill: 'architectural memory (arch:refresh / arch:render)',
     evaluate: (p) => {
       // `stack` is a 4-value enum and cannot express "js-ts repo that also
       // carries .java" — that reports plain `js-ts`, clears the gate, and has
-      // its Java half dropped exactly like a mixed repo's Python half. Check
-      // stackKinds so the coarser enum's blind spot doesn't read as FITS.
-      const unindexed = (p.stackKinds || []).filter(k => k === 'python' || k === 'java' || k === 'csharp');
-      if (p.stack === 'js-ts' && unindexed.length === 0) {
-        return { label: 'FITS', reason: 'Symbol extractor supports js-ts.' };
+      // its Java half dropped. Check stackKinds so the coarser enum's blind
+      // spot doesn't read as FITS. Python is indexed — by a Python >= 3.9
+      // interpreter at refresh time; without one, coverage reports the .py
+      // files as unparseable rather than indexed.
+      const unindexed = (p.stackKinds || []).filter(k => k === 'java' || k === 'csharp');
+      const hasPython = p.stack === 'python' || p.stack === 'mixed' || (p.stackKinds || []).includes('python');
+      const pythonNote = hasPython ? ' Python files need a Python >= 3.9 interpreter (PATH or ARCH_INDEX_PYTHON) at refresh time.' : '';
+      if (ARCH_INDEXED_STACKS.has(p.stack) && unindexed.length === 0) {
+        return { label: 'FITS', reason: `Symbol extractor supports ${p.stack}.${pythonNote}` };
       }
-      if (p.stack === 'js-ts') {
+      if (ARCH_INDEXED_STACKS.has(p.stack)) {
         return {
           label: 'PARTIAL',
-          reason: `Indexed as js-ts, but this repo also carries ${unindexed.join(', ')} sources — only JS/TS files are indexed.`,
-          setup: 'Read the generated map as covering the JS/TS half ONLY. Do not treat "no duplicate found" as authoritative for the other sources.',
-        };
-      }
-      // `mixed` clears refresh.mjs's stack gate, so the map BUILDS — but the
-      // extractor's extension allowlist (sensitive-egress-gate.mjs
-      // DEFAULT_EXT_ALLOWLIST) is .js/.jsx/.mjs/.cjs/.ts/.tsx/.vue/.svelte.
-      // Every .py file is counted as `skippedExt`. The resulting map looks
-      // complete while covering only the JS/TS half — a quieter failure than
-      // the Python-only case, which at least aborts loudly. Say so.
-      if (p.stack === 'mixed') {
-        return {
-          label: 'PARTIAL',
-          reason: 'Mixed stack: the map builds, but only JS/TS files are indexed — .py sources are skipped as skippedExt.',
-          setup: 'Read the generated map as covering the JS/TS half ONLY. Do not treat "no duplicate found" as authoritative for Python code.',
+          reason: `Indexed as ${p.stack}, but this repo also carries ${unindexed.join(', ')} sources — only JS/TS and Python files are indexed.${pythonNote}`,
+          setup: 'Read the generated map as covering the JS/TS and Python code ONLY. Do not treat "no duplicate found" as authoritative for the other sources.',
         };
       }
       return {
         label: 'MISMATCH',
-        reason: p.stack === 'python'
-          ? 'Symbol extraction is JS/TS-only in v1; arch:refresh skips Python with reason=unsupported-stack and arch:render writes a stub map.'
-          : 'No JS/TS manifest with dependencies detected; arch:refresh skips and arch:render writes a stub map.',
+        reason: 'No JS/TS or Python sources detected; arch:refresh skips (reason=unsupported-stack) and arch:render writes a stub map.',
         setup: 'No action available — the other skills do not depend on this. /plan, /audit-plan, /audit-code and the browser lenses work without an indexed repo.',
       };
     },

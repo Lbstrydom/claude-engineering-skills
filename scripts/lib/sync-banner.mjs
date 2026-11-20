@@ -24,7 +24,7 @@ export const RELOCATED_TOOLING_PREFIX = 'scripts/.claude-skills/';
 
 /** Line-comment token by extension. Absent ⇒ not comment-capable ⇒ no banner. */
 const COMMENT_TOKEN_BY_EXT = {
-  '.mjs': '//', '.js': '//', '.cjs': '//', '.sh': '#', '.bash': '#',
+  '.mjs': '//', '.js': '//', '.cjs': '//', '.sh': '#', '.bash': '#', '.py': '#',
 };
 
 /** The banner body (comment token is prefixed per line at injection time). */
