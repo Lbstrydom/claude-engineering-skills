@@ -34,7 +34,12 @@ const symbolFor = (id) => ({
   symbolName: `f${id}`, kind: 'function', startLine: 1, endLine: 2,
   signature: `def f${id}()`, bodyText: `def f${id}():\n    return ${id}`, isExported: true,
 });
+let dying = false;
 const die = () => {
+  // Accept nothing more: pipelined requests already buffered in the same stdin
+  // chunk must not be answered past the threshold.
+  dying = true;
+  rl.close();
   if (mark) fs.writeFileSync(mark, 'dead');
   // Exit only once stdout has drained, so the nth answer is delivered first.
   process.stdout.write('', () => process.exit(3));
@@ -42,6 +47,7 @@ const die = () => {
 
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line) => {
+  if (dying) return;
   const req = JSON.parse(line);
   if (req.hello) {
     if (mode === 'hang-hello') return;

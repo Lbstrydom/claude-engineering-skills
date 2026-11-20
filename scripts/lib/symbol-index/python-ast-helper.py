@@ -36,7 +36,7 @@ def _decode(raw):
     """Decode source bytes the way the interpreter would (PEP 263 cookie + BOM)."""
     encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
     text = raw.decode(encoding)  # strict: a bad byte raises
-    if text.startswith("﻿"):
+    if text.startswith("\ufeff"):
         text = text[1:]
     return text
 
@@ -57,26 +57,35 @@ def _module_scope_nodes(body):
 def _literal_all(tree):
     """The module's __all__ when it is ONE literal list/tuple of strings, else None.
 
-    Conservative on purpose: any second binding, augmented assignment
-    (``__all__ += [...]``) or method call on it (``__all__.append``) makes the
-    final value undecidable statically, so the caller falls back to the
-    underscore convention rather than trusting the first assignment.
+    Conservative on purpose. The value is trusted only when the module has
+    exactly ONE touch of ``__all__`` in module scope, and that touch is an
+    unconditional top-level ``__all__ = [<str literals>]``. Anything else makes
+    the final value undecidable statically, so the caller falls back to the
+    underscore convention: any other binding (destructuring, ``for``/``with``
+    targets, walrus, ``del``), a subscript or slice store, an augmented
+    assignment, a method call such as ``__all__.append``, or an assignment
+    nested in a conditional or loop block.
     """
-    found = None
-    bindings = 0
+    touches = 0
     for node in _module_scope_nodes(tree.body):
-        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
-                bindings += 1
-                value = node.value
-                if (isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(value, (ast.List, ast.Tuple))
-                        and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in value.elts)):
-                    found = {e.value for e in value.elts}
+        if isinstance(node, ast.Name) and node.id == "__all__" and isinstance(node.ctx, (ast.Store, ast.Del)):
+            touches += 1
+        elif (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+              and node.value.id == "__all__" and isinstance(node.ctx, (ast.Store, ast.Del))):
+            touches += 1
         elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
               and isinstance(node.func.value, ast.Name) and node.func.value.id == "__all__"):
-            bindings += 1
-    return found if bindings == 1 else None
+            touches += 1
+    if touches != 1:
+        return None
+    for stmt in tree.body:  # unconditional: a DIRECT child of the module
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+            if (len(targets) == 1 and isinstance(targets[0], ast.Name) and targets[0].id == "__all__"
+                    and isinstance(stmt.value, (ast.List, ast.Tuple))
+                    and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in stmt.value.elts)):
+                return {e.value for e in stmt.value.elts}
+    return None
 
 
 def _is_public(name):
@@ -123,7 +132,7 @@ def _symbol(node, lines, name, kind, signature, exported):
 
 # Statements whose bodies are still the enclosing scope (a def under
 # `if TYPE_CHECKING:` or `try: ... except ImportError:` is module-level).
-_BLOCKS = (ast.If, ast.Try, ast.With, ast.AsyncWith) + ((ast.TryStar,) if hasattr(ast, "TryStar") else ())
+_BLOCKS = tuple(getattr(ast, n) for n in ("If", "Try", "TryStar", "With", "AsyncWith", "For", "AsyncFor", "While", "Match") if hasattr(ast, n))
 
 
 def _scope_defs(body):
@@ -132,18 +141,20 @@ def _scope_defs(body):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             yield node
         elif isinstance(node, _BLOCKS):
-            children = list(node.body) + list(getattr(node, "orelse", [])) + list(getattr(node, "finalbody", []))
+            children = list(getattr(node, "body", [])) + list(getattr(node, "orelse", [])) + list(getattr(node, "finalbody", []))
             for h in getattr(node, "handlers", []):
                 children += h.body
+            for case in getattr(node, "cases", []):  # match/case
+                children += case.body
             yield from _scope_defs(children)
 
 
 def extract_symbols(tree, text):
     declared = _literal_all(tree)
-    # Once per file, not once per symbol — and on Python's OWN line boundaries
-    # (\n, \r\n, \r). str.splitlines also splits on \x0b, \x0c, \x1c-\x1e, \x85,
-    #   and  , which can sit inside a string literal and would shift
-    # every later slice off the AST's line numbers.
+    # Once per file, not once per symbol, and on Python's OWN line boundaries
+    # (LF, CRLF, CR). str.splitlines also splits on VT, FF, FS/GS/RS, NEL and the
+    # Unicode line/paragraph separators, which can sit inside a string literal
+    # and would shift every later slice off the AST line numbers.
     lines = io.StringIO(text, newline="").readlines()
 
     def exported(name):
