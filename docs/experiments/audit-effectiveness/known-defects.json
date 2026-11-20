@@ -304,7 +304,9 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
-      }
+      },
+      "invalidated": true,
+      "invalidatedReason": "Egress gate refused this commit's diff at preflight (corpus_case_unavailable: egress_blocked, 2026-11-20); the two scored files are clean, so the trigger is elsewhere in the commit and is unidentified. Excluded from the expect_clean pool; the entry stays as a record."
     },
     {
       "id": "KD-034",

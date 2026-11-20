@@ -48,6 +48,7 @@ breakdown goes to the coordinator before the first paid call, under a hard $30 c
 ```
 
 ## KD-033: feat(merge-friction): stop committing skills.manifest.json and the plans-index counts; release.yml fixes (#256
+- **INVALIDATED 2026-11-20:** the egress gate refused this commit's diff at preflight (`egress_blocked`); the two scored files are clean, so the trigger elsewhere in the commit is unidentified. Dropped from the run (11 cases).
 - Commit `42f9ff84cf512143e1d91bdc391a4a5b432ab8c2` (2026-10-15); files: `scripts/build-manifest.mjs`, `scripts/generate-plans-index.mjs`
 - Evidence: 100% of its 48 added lines survive unmodified at origin/main; no later commit names it as a defect; diff 8929 chars; provenance trailer `AI-Gate: converged`.
 ```json
