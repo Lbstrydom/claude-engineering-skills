@@ -52,10 +52,11 @@ export function classifyStoreReachability(connect) {
 function cleanField(name, v, problems) {
   if (v === undefined) return null;
   if (typeof v !== 'string' || !v.trim()) { problems.push(`"${name}" must be a non-empty string`); return null; }
-  const s = v.trim();
-  if (s.length > MAX_POINTER_FIELD) { problems.push(`"${name}" is longer than ${MAX_POINTER_FIELD} characters`); return null; }
-  if (CONTROL_CHARS.test(s)) { problems.push(`"${name}" contains control characters`); return null; }
-  return s;
+  // Validate the value AS WRITTEN, then trim for display: trimming first would
+  // let a trailing newline (or whitespace padding past the cap) slip through.
+  if (v.length > MAX_POINTER_FIELD) { problems.push(`"${name}" is longer than ${MAX_POINTER_FIELD} characters`); return null; }
+  if (CONTROL_CHARS.test(v)) { problems.push(`"${name}" contains control characters`); return null; }
+  return v.trim();
 }
 
 /**
@@ -123,7 +124,10 @@ const CONNECT_TIMEOUT_MS = 15_000;
  * `injectResolvedDbEnv` copies the DSN + TLS mode out of the repo's own `.env`
  * (kept out of `process.env` for isolation); the tunnel TLS pair is copied the
  * same way here, or a tunnelled store would read unreachable from the doctor
- * while every other CLI reached it.
+ * while every other CLI reached it. `process.env` is the only channel the shared
+ * pool reads and `getPool()` is a per-process singleton, so this mirrors
+ * `injectResolvedDbEnv`'s existing contract: ONE subject root per process (the
+ * doctor's shape), never a genuine shell export overwritten.
  *
  * @param {{subjectRoot: string, loadEnv: Function, injectResolvedDbEnv: Function,
  *          importClient?: () => Promise<object>, timeoutMs?: number}} deps
@@ -151,6 +155,10 @@ export async function probeStoreReachability({ subjectRoot, loadEnv, injectResol
     return await Promise.race([attempt, deadline]);
   } catch (err) {
     const { cause, hint } = client.classifyDbConnectionError(err);
+    // The race only bounds the VERDICT; a stalled attempt still holds its socket.
+    // Close the pool so the abandoned attempt is torn down and cannot keep the
+    // process alive after the verdict has been reported.
+    try { await client.closePool?.(); } catch { /* best-effort teardown */ }
     return { configured: true, ok: false, cause, hint };
   } finally {
     clearTimeout(timer);

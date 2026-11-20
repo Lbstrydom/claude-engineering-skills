@@ -20,8 +20,12 @@ import { REGISTRY, probeIds } from '../scripts/lib/doctor/registry.mjs';
 import { runProbe } from '../scripts/lib/doctor/registry.mjs';
 import { classifyDbConnectionError } from '../scripts/lib/db/client.mjs';
 
+const roots = [];
+afterEach(() => { for (const r of roots.splice(0)) fs.rmSync(r, { recursive: true, force: true }); });
+
 function repoWithPointer(body) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'store-setup-'));
+  roots.push(root);
   if (body !== undefined) {
     fs.mkdirSync(path.join(root, '.audit-loop'), { recursive: true });
     fs.writeFileSync(path.join(root, STORE_SETUP_POINTER_PATH), body);
@@ -63,6 +67,12 @@ describe('readStoreSetupPointer', () => {
     assert.match(esc.problems.join(' '), /control characters/);
     const nl = readStoreSetupPointer(repoWithPointer(JSON.stringify({ check: 'a\nstore: reachable' })));
     assert.equal(nl.check, null);
+    // Control characters at the EDGES must not be laundered by trimming.
+    for (const edge of ['setup\n', '\tsetup', 'setup\r\n']) {
+      assert.equal(readStoreSetupPointer(repoWithPointer(JSON.stringify({ check: edge }))).check, null, JSON.stringify(edge));
+    }
+    // ...nor an over-cap value padded with whitespace.
+    assert.equal(readStoreSetupPointer(repoWithPointer(JSON.stringify({ docs: 'x' + ' '.repeat(305) }))).docs, null);
     const long = readStoreSetupPointer(repoWithPointer(JSON.stringify({ docs: 'x'.repeat(301) })));
     assert.equal(long.docs, null);
   });
@@ -114,8 +124,13 @@ describe('probeStoreReachability', () => {
     assert.equal(r.cause, 'unreachable');
   });
   it('a wedged connection attempt is bounded by the timeout', async () => {
-    const r = await probeStoreReachability({ subjectRoot: '.', ...noEnv, timeoutMs: 30, importClient: async () => ({ getPool: async () => ({ query: () => new Promise(() => {}) }), classifyDbConnectionError }) });
+    let closed = 0;
+    const t0 = Date.now();
+    const r = await probeStoreReachability({ subjectRoot: '.', ...noEnv, timeoutMs: 30, importClient: async () => ({ getPool: async () => ({ query: () => new Promise(() => {}) }), classifyDbConnectionError, closePool: async () => { closed++; } }) });
     assert.equal(r.ok, false);
+    assert.equal(r.cause, 'unreachable');
+    assert.ok(Date.now() - t0 < 2000, 'the verdict must arrive at the deadline, not at the stalled attempt');
+    assert.equal(closed, 1, 'the abandoned attempt is torn down');
   });
   it('REAL client against a port nothing listens on: configured-but-unreachable', async () => {
     const port = await new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
