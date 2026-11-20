@@ -32,7 +32,10 @@ async function main() {
 
   const expected = expectedExporters();
   if (expected.length === 0) {
-    process.stdout.write('telemetry exports: no registered consumer declares a `telemetry` block — nothing is expected, nothing is measured\n');
+    // The same channel and shape whichever way it is asked for: a JSON caller gets JSON, never prose.
+    process.stdout.write(hasFlag('json')
+      ? `${JSON.stringify({ scanError: null, scanIncomplete: null, aliases: [], unattributed: [], expected: 0 }, null, 2)}\n`
+      : 'telemetry exports: no registered consumer declares a `telemetry` block — nothing is expected, nothing is measured\n');
     await finishAndExit(0); return;
   }
   const dropDir = argOption('drop-dir') || process.env.TELEMETRY_DROP_DIR || null;

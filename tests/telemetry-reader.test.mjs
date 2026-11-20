@@ -19,6 +19,7 @@ import {
   scanDrop, pruneDrop, renderTelemetryExports, MAX_FILES_PER_ALIAS, KEEP_VALID, WEEKLY_STALE_DAYS,
 } from '../scripts/lib/telemetry-export/reader.mjs';
 import { expectedExporters } from '../scripts/lib/consumer-repos.mjs';
+import { scanRegistered } from '../scripts/lib/telemetry-export/registered.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DAY = 86_400_000;
@@ -38,6 +39,13 @@ const goodDeps = (over = {}) => ({
 async function put(drop, { alias = 'acme', ageDays = 1, deps = goodDeps(), exportId = crypto.randomUUID() } = {}) {
   const doc = await buildExport({ now: new Date(NOW.getTime() - ageDays * DAY), consumerAlias: alias, storeFingerprint: 'a'.repeat(16), toolBundleSha: null, exportId, deps });
   return deliverExport({ doc, dropDir: drop }).file;
+}
+/** Symlink creation needs a privilege on some Windows setups: skip EXPLICITLY for that, rethrow anything else. */
+function trySymlink(t, target, link, type) {
+  try { fs.symlinkSync(target, link, type); return true; } catch (err) {
+    if (['EPERM', 'EACCES', 'ENOSYS', 'ENOTSUP'].includes(err?.code)) { t.skip(`symlinks unavailable here (${err.code})`); return false; }
+    throw err;
+  }
 }
 const expected = (cadence = 'weekly', alias = 'acme') => [{ alias, cadence }];
 const scan = (drop, exp = expected()) => scanDrop({ dropDir: drop, expected: exp, now: NOW });
@@ -83,9 +91,12 @@ describe('the five states', () => {
     assert.equal(a.ageDays, 40);
   });
 
-  it('CONTROL — exactly at the boundary is not stale (14 days), one more day is', async () => {
-    const d1 = tmp(); await put(d1, { ageDays: WEEKLY_STALE_DAYS });
-    assert.equal(stateOf(scan(d1)).state, 'received');
+  it('staleness is judged on the EXACT elapsed time, not on floored days', async () => {
+    const drop = tmp(); await put(drop, { ageDays: WEEKLY_STALE_DAYS });
+    assert.equal(stateOf(scan(drop)).state, 'received', 'exactly 14 days is the boundary, not past it');
+    const justPast = scanDrop({ dropDir: drop, expected: expected(), now: new Date(NOW.getTime() + 3_600_000) });
+    assert.equal(stateOf(justPast).state, 'stale', '14 days and one hour is past the policy');
+    assert.equal(stateOf(justPast).ageDays, WEEKLY_STALE_DAYS, 'the DISPLAY still says 14d');
   });
 
   it('rejected: files arrived and none validated — reasons are shown, never dropped', () => {
@@ -105,7 +116,29 @@ describe('the five states', () => {
     const a = stateOf(scan(drop));
     assert.equal(a.state, 'received');
     assert.equal(a.latestRejected.reason, 'not-an-export');
+    assert.equal(a.latestRejected.newer, true);
     assert.match(renderTelemetryExports(scan(drop)).join('\n'), /newer file rejected: not-an-export/);
+  });
+
+  it('an OLDER rejected file is not described as newer', async () => {
+    const drop = tmp(); await put(drop, { ageDays: 3 });
+    fs.writeFileSync(path.join(drop, 'acme', '2026-01-01-0b9c1f3e-6d1a-4b6e-8a53-3f5a2f1c9d77.json'), '[]');
+    const a = stateOf(scan(drop));
+    assert.equal(a.latestRejected.newer, false);
+    const text = renderTelemetryExports(scan(drop)).join('\n');
+    assert.match(text, /another file rejected: not-an-export/);
+    assert.doesNotMatch(text, /newer file rejected/);
+  });
+});
+
+describe('all three drift indicators are shown', () => {
+  it('migrations behind, sha-mismatched and broken constraints each appear, so none can hide', async () => {
+    const drop = tmp();
+    await put(drop, { deps: goodDeps({ drift: async () => ({ ok: true, drift: { hasDrift: true, drift: { unapplied: ['a', 'b'], shaMismatch: ['c'] }, liveConstraints: { measured: true, missing: ['x', 'y', 'z'], altered: [] } } }) }) });
+    const text = renderTelemetryExports(scan(drop)).join('\n');
+    assert.match(text, /migrations behind 2/);
+    assert.match(text, /sha-mismatched 1/);
+    assert.match(text, /constraints broken 3/);
   });
 });
 
@@ -174,6 +207,20 @@ describe('scan bounds never produce a clean "never received"', () => {
   });
 });
 
+describe('a partial read is never a definitive state', () => {
+  it('an alias cut off by the file bound is scan-incomplete even if it has a valid export in what was read', async () => {
+    const drop = tmp(); await put(drop, { ageDays: 1 });
+    for (let i = 0; i < MAX_FILES_PER_ALIAS; i++) {
+      fs.writeFileSync(path.join(drop, 'acme', `2026-12-${String(1 + (i % 28)).padStart(2, '0')}-${crypto.randomUUID()}.json`), '{}');
+    }
+    const r = scan(drop);
+    const a = stateOf(r);
+    assert.equal(a.state, 'scan-incomplete');
+    assert.equal('figures' in a, false, 'no figures from a partial read');
+    assert.equal(r.scanIncomplete, 'files-per-alias');
+  });
+});
+
 describe('re-validation: CES does not trust the sender', () => {
   const planted = (drop, name, body) => {
     fs.mkdirSync(path.join(drop, 'acme'), { recursive: true });
@@ -209,16 +256,45 @@ describe('re-validation: CES does not trust the sender', () => {
     assert.equal(stateOf(scan(drop)).state, 'rejected');
   });
 
+  it('a file exactly at the size cap is read (and rejected as not-json), one byte over is oversize', () => {
+    const d1 = tmp(); planted(d1, NAME, 'x'.repeat(MAX_EXPORT_BYTES));
+    assert.equal(stateOf(scan(d1)).latestRejected.reason, 'not-json');
+    const d2 = tmp(); planted(d2, NAME, 'x'.repeat(MAX_EXPORT_BYTES + 1));
+    assert.equal(stateOf(scan(d2)).latestRejected.reason, 'oversize');
+  });
+
   it('an oversize file is refused WITHOUT being parsed', () => {
     const drop = tmp(); planted(drop, NAME, `{"x":"${'a'.repeat(MAX_EXPORT_BYTES + 10)}"}`);
     assert.equal(stateOf(scan(drop)).latestRejected.reason, 'oversize');
   });
 
-  it('a symlinked export is refused', async () => {
+  it('a symlinked export is refused', async (t) => {
     const drop = tmp(); const real = await put(drop, { ageDays: 1 });
     const link = path.join(drop, 'acme', '2026-11-18-1b9c1f3e-6d1a-4b6e-8a53-3f5a2f1c9d77.json');
-    try { fs.symlinkSync(real, link, 'file'); } catch { return; }   // no symlink privilege: nothing to assert
+    if (!trySymlink(t, real, link, 'file')) return;
     assert.equal(stateOf(scan(drop)).latestRejected.reason, 'symlink');
+  });
+
+  it('an alias DIRECTORY that is a symlink/junction is not followed: drop-unreadable, scan untrusted, nothing pruned', async (t) => {
+    const drop = tmp(); const outside = tmp();
+    await put(outside, { ageDays: 1 });   // a valid export OUTSIDE the drop, under <outside>/acme
+    if (!trySymlink(t, path.join(outside, 'acme'), path.join(drop, 'acme'), 'junction')) return;
+    const r = scan(drop);
+    assert.equal(stateOf(r).state, 'drop-unreadable');
+    assert.equal(stateOf(r).reason, 'SYMLINK');
+    assert.equal(r.scanIncomplete, 'alias-unreadable');
+    let calls = 0;
+    pruneDrop(r, { unlink: () => { calls++; } });
+    assert.equal(calls, 0);
+  });
+
+  it("an unreadable alias does not stop another alias's clean empty directory from being a provable never-received", () => {
+    const drop = tmp(); fs.writeFileSync(path.join(drop, 'broken'), 'a file where the alias directory should be');
+    fs.mkdirSync(path.join(drop, 'empty'));
+    const r = scan(drop, [...expected('weekly', 'broken'), ...expected('weekly', 'empty')]);
+    assert.equal(stateOf(r, 'broken').state, 'drop-unreadable');
+    assert.equal(stateOf(r, 'empty').state, 'never-received');
+    assert.equal(r.scanIncomplete, 'alias-unreadable');
   });
 
   it('a directory that is not an expected exporter is listed as unattributed and never read', async () => {
@@ -271,10 +347,14 @@ describe('the registry declares who is expected', () => {
 });
 
 describe('the CLI', () => {
-  it('with nobody expected it says so and measures nothing (default off: no change for anyone)', () => {
-    const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'telemetry-exports.mjs')], { cwd: ROOT, encoding: 'utf-8', timeout: 60000, windowsHide: true, env: { ...process.env, TELEMETRY_DROP_DIR: '' } });
-    assert.equal(r.status, 0);
-    assert.match(r.stdout, /nothing is expected, nothing is measured|\[\d/);
+  it('with nobody expected, nothing is scanned and nothing is rendered (default off: no change for anyone)', () => {
+    assert.equal(scanRegistered({ expected: [], dropDir: tmp() }), null);
+  });
+
+  it('with someone expected, the registered wiring scans the drop it is given', async () => {
+    const drop = tmp(); await put(drop, { ageDays: 1 });
+    const r = scanRegistered({ expected: expected(), dropDir: drop, now: NOW });
+    assert.equal(r.aliases[0].state, 'received');
   });
   it('--selfcheck-relocation and an unknown flag', () => {
     const run = (a) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'telemetry-exports.mjs'), ...a], { cwd: ROOT, encoding: 'utf-8', timeout: 60000, windowsHide: true });

@@ -49,14 +49,27 @@ const short = (s) => String(s).slice(0, 120);
  * @returns {{ok: true, doc: object} | {ok: false, reason: string}}
  */
 function judgeFile({ fs, file, expectedAlias, now }) {
-  let st;
-  try { st = fs.lstatSync(file); } catch (err) { return { ok: false, reason: `unreadable: ${err?.code || 'error'}` }; }
-  if (st.isSymbolicLink()) return { ok: false, reason: 'symlink' };
-  if (!st.isFile()) return { ok: false, reason: 'not-a-file' };
-  // Refused WITHOUT parsing: a size cap that parsed first would not be a cap.
-  if (st.size > MAX_EXPORT_BYTES) return { ok: false, reason: 'oversize' };
+  let ls;
+  try { ls = fs.lstatSync(file); } catch (err) { return { ok: false, reason: `unreadable: ${err?.code || 'error'}` }; }
+  if (ls.isSymbolicLink()) return { ok: false, reason: 'symlink' };
+  // Type and size are taken from the OPEN descriptor, and the read itself is capped, so the entry cannot be
+  // swapped or grown between a check and the read. Refused WITHOUT parsing: a cap that parsed first is no cap.
   let raw;
-  try { raw = fs.readFileSync(file, 'utf8'); } catch (err) { return { ok: false, reason: `unreadable: ${err?.code || 'error'}` }; }
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return { ok: false, reason: 'not-a-file' };
+    if (st.size > MAX_EXPORT_BYTES) return { ok: false, reason: 'oversize' };
+    const buf = Buffer.alloc(MAX_EXPORT_BYTES + 1);
+    const n = fs.readSync(fd, buf, 0, MAX_EXPORT_BYTES + 1, 0);
+    if (n > MAX_EXPORT_BYTES) return { ok: false, reason: 'oversize' };
+    raw = buf.toString('utf8', 0, n);
+  } catch (err) {
+    return { ok: false, reason: `unreadable: ${err?.code || 'error'}` };
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* nothing to do */ } }
+  }
   let doc;
   try { doc = JSON.parse(raw); } catch { return { ok: false, reason: 'not-json' }; }
   if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return { ok: false, reason: 'not-an-export' };
@@ -121,13 +134,23 @@ export function scanDrop({ dropDir, expected, now, fs = nodeFs }) {
     const dir = path.join(dropDir, alias);
     let names = [];
     try {
+      // The alias directory must be a real directory INSIDE the drop: a symlink here would walk the scan (and a
+      // later prune) out of it.
+      const ds = fs.lstatSync(dir);
+      if (ds.isSymbolicLink() || !ds.isDirectory()) throw Object.assign(new Error('x'), { code: ds.isSymbolicLink() ? 'SYMLINK' : 'NOTDIR' });
       names = fs.readdirSync(dir).filter((n) => !n.startsWith('.'));
     } catch (err) {
-      if (err?.code !== 'ENOENT') { aliases.push({ alias, cadence, state: 'drop-unreadable', reason: String(err?.code || 'unreadable') }); continue; }
+      if (err?.code !== 'ENOENT') {
+        // "Could not look" for THIS alias also means the scan as a whole is not trusted (no pruning, no clean claim).
+        scanIncomplete = scanIncomplete ?? 'alias-unreadable';
+        aliases.push({ alias, cadence, state: 'drop-unreadable', reason: String(err?.code || 'unreadable') });
+        continue;
+      }
     }
     // Newest first: the file name starts with the export date.
     names.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
-    if (names.length > MAX_FILES_PER_ALIAS) { scanIncomplete = scanIncomplete ?? 'files-per-alias'; names = names.slice(0, MAX_FILES_PER_ALIAS); }
+    let truncated = false;
+    if (names.length > MAX_FILES_PER_ALIAS) { scanIncomplete = scanIncomplete ?? 'files-per-alias'; names = names.slice(0, MAX_FILES_PER_ALIAS); truncated = true; }
 
     const valid = []; const rejected = [];
     for (const name of names) {
@@ -136,7 +159,7 @@ export function scanDrop({ dropDir, expected, now, fs = nodeFs }) {
       let size = 0;
       try { size = fs.lstatSync(file).size; } catch { /* judgeFile reports it */ }
       bytes += size;
-      if (bytes > MAX_TOTAL_BYTES) { scanIncomplete = scanIncomplete ?? 'total-bytes'; break; }
+      if (bytes > MAX_TOTAL_BYTES) { scanIncomplete = scanIncomplete ?? 'total-bytes'; truncated = true; break; }
       const j = judgeFile({ fs, file, expectedAlias: alias, now });
       if (j.ok) valid.push({ file, name, doc: j.doc }); else rejected.push({ file, name, reason: j.reason });
     }
@@ -144,22 +167,34 @@ export function scanDrop({ dropDir, expected, now, fs = nodeFs }) {
 
     const newest = valid[0] ?? null;
     const base = { alias, cadence, validCount: valid.length, rejectedCount: rejected.length, files: { valid: valid.map((v) => v.file), rejected: rejected.map((r) => r.file) } };
-    const latestRejected = rejected[0] ? { name: rejected[0].name, reason: rejected[0].reason } : null;
-    if (newest) {
-      const ageDays = Math.max(0, Math.floor((now.getTime() - Date.parse(newest.doc.generatedAt)) / DAY_MS));
-      // `on-demand` promised no cadence: shown with its age, never stale.
-      const stale = cadence === 'weekly' && ageDays > WEEKLY_STALE_DAYS;
+    // `newer` is claimed only when it is established: the rejected file's own name-date against the chosen export.
+    const latestRejected = rejected[0]
+      ? { name: rejected[0].name, reason: rejected[0].reason, newer: newest ? rejected[0].name.slice(0, 10) > newest.doc.generatedAt.slice(0, 10) : null }
+      : null;
+    if (truncated) {
+      // Unexamined files may include a newer valid export or change the verdict: no definitive state from a partial read.
+      aliases.push({ ...base, state: 'scan-incomplete', reason: scanIncomplete });
+    } else if (newest) {
+      const ageMs = Math.max(0, now.getTime() - Date.parse(newest.doc.generatedAt));
+      const ageDays = Math.floor(ageMs / DAY_MS);   // for DISPLAY only
+      // `on-demand` promised no cadence: shown with its age, never stale. The threshold is compared on the exact
+      // elapsed time: flooring to days first would keep an export 14 days and 23 hours old "received".
+      const stale = cadence === 'weekly' && ageMs > WEEKLY_STALE_DAYS * DAY_MS;
       aliases.push({ ...base, state: stale ? 'stale' : 'received', ageDays, generatedAt: newest.doc.generatedAt, figures: figuresOf(newest.doc), latestRejected });
     } else if (rejected.length > 0) {
       aliases.push({ ...base, state: 'rejected', latestRejected });
-    } else if (scanIncomplete) {
+    } else if (scanIncomplete && scanIncomplete !== 'alias-unreadable') {
       aliases.push({ ...base, state: 'scan-incomplete', reason: scanIncomplete });
     } else {
       aliases.push({ ...base, state: 'never-received' });
     }
   }
   // A bound hit anywhere makes "nothing was there" unprovable for an alias that found nothing.
-  if (scanIncomplete) for (const a of aliases) if (a.state === 'never-received') { a.state = 'scan-incomplete'; a.reason = scanIncomplete; }
+  // An alias that could not be READ taints pruning, but says nothing about another alias's empty directory, which
+  // was read cleanly; a COUNT bound (files / bytes) does make "nothing was there" unprovable for those that found none.
+  if (scanIncomplete && scanIncomplete !== 'alias-unreadable') {
+    for (const a of aliases) if (a.state === 'never-received') { a.state = 'scan-incomplete'; a.reason = scanIncomplete; }
+  }
   return { scanError: null, scanIncomplete, aliases, unattributed };
 }
 
@@ -204,10 +239,12 @@ export function renderTelemetryExports(scan) {
         `audit runs ${fig(f.audit, String(f.audit.runs))}`,
         `upstream open ${fig(f.upstream, String(f.upstream.totalOpen))}`,
         `migrations behind ${fig(f.drift, String(f.drift.unapplied))}`,
+        `sha-mismatched ${fig(f.drift, String(f.drift.shaMismatch))}`,
+        `constraints broken ${fig(f.drift, String(f.drift.liveBroken))}`,
       ].join(' · ');
       out.push(`${a.state === 'stale' ? 'STALE' : 'ok'} ${head}: export ${a.ageDays}d old — ${body} (reported by the consumer, unauthenticated)`
         + (a.state === 'stale' ? ' — OLDER than its freshness policy; not current' : '')
-        + (a.latestRejected ? ` · newer file rejected: ${a.latestRejected.reason}` : ''));
+        + (a.latestRejected ? ` · ${a.latestRejected.newer ? 'newer file' : 'another file'} rejected: ${a.latestRejected.reason}` : ''));
     } else if (a.state === 'rejected') {
       out.push(`rejected ${head}: ${a.rejectedCount} file(s), none valid — newest: ${a.latestRejected?.reason ?? 'unknown'}`);
     } else if (a.state === 'never-received') {
