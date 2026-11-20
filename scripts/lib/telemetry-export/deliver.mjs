@@ -32,6 +32,36 @@ const ALIAS_RE = /^[a-z0-9-]{1,32}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /**
+ * The ONE gate in front of any push the exporter makes (the fresh-export path and the retry path alike).
+ *
+ * The exporter pushes only what IT created, and only when that is the whole difference to the remote:
+ *   - the drop directory is itself the ROOT of its own work tree (not a folder inside another repository);
+ *   - an upstream is configured — its absence is an UNKNOWN delivery state, never "nothing pending"; and
+ *   - NOTHING is already committed-but-unpushed. A push publishes every ancestor, so pushing on top of history the
+ *     exporter did not write would publish that history too, past the schema and the redaction check. Rather than
+ *     try to inspect arbitrary commits, it refuses and says so; whoever made them pushes them.
+ *
+ * @returns {{remote: string, branch: string}} the destination, resolved explicitly (a bare `git push` obeys
+ *   push.default / remote.pushDefault and could publish other refs)
+ */
+function pushGate(git, root) {
+  const top = String(git(['rev-parse', '--show-toplevel']) ?? '').trim();
+  if (!top || fs.realpathSync(top) !== root) throw new Error('deliver: --push needs the drop directory to be the root of its own Git work tree');
+  let upstream;
+  try { upstream = String(git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']) ?? '').trim(); } catch { upstream = ''; }
+  const slash = upstream.indexOf('/');
+  if (!upstream || slash < 1) throw new Error('deliver: cannot tell whether earlier exports were pushed (no upstream configured?) — set one, then retry');
+  const remote = upstream.slice(0, slash);
+  const branch = upstream.slice(slash + 1);
+  const ahead = Number(String(git(['rev-list', '--count', '@{u}..HEAD']) ?? '').trim());
+  if (!Number.isInteger(ahead)) throw new Error('deliver: could not count unpushed commits — refusing to push');
+  if (ahead > 0) {
+    throw new Error(`deliver: ${ahead} commit(s) are committed but not pushed in the drop directory — push or reset them yourself; the exporter will not publish history it did not write`);
+  }
+  return { remote, branch };
+}
+
+/**
  * @param {object} doc a validated export
  * @returns {string} the POSIX-style relative file name inside the drop directory
  */
@@ -67,11 +97,7 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
 
   // Validate the Git destination BEFORE publishing anything: a refusal here must not leave a published file
   // behind it, and "delivery failed" must never describe a file that was in fact written.
-  if (push) {
-    const top = String(git(['rev-parse', '--show-toplevel']) ?? '').trim();
-    // The drop directory must BE the work tree's root, not a folder inside some other repository.
-    if (!top || fs.realpathSync(top) !== root) throw new Error('deliver: --push needs the drop directory to be the root of its own Git work tree');
-  }
+  const dest = push ? pushGate(git, root) : null;
 
   // The alias directory is created by us or is a plain directory: never a symlink (which could point out of the drop).
   let st = null;
@@ -128,22 +154,21 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
   if (push) {
     git(['add', '--', rel]);
     git(['commit', '-q', '-m', `telemetry export ${doc.consumerAlias} ${doc.generatedAt.slice(0, 10)}`, '--', rel]);
-    git(['push']);
+    git(['push', dest.remote, `HEAD:refs/heads/${dest.branch}`]);
     pushed = true;
   }
   return { file: target, pushed };
 }
 
 /**
- * Push what is already written but not yet delivered, for ONE alias.
+ * Deliver what is already written but not yet COMMITTED, for ONE alias.
  *
- * Why this exists: the throttle (`--if-older-than`) treats a recent valid file as "an export exists", but a file
- * written by an earlier run whose push failed (offline, rejected) is NOT delivered. Without this, such a file
- * suppresses every later attempt for the whole throttle window. So a requested push first delivers anything of
- * this alias's that is uncommitted OR committed-but-unpushed, and only then may the caller skip.
- *
- * Same rules as `deliverExport`'s push: the drop directory must itself be a Git work-tree root; exactly
- * `status`/`add`/`commit`/`push`; never force; nothing outside `<alias>/`.
+ * Why this exists: the throttle (`--if-older-than`) treats a recent valid file as "an export exists", but a file written
+ * by an earlier run whose push failed (offline, rejected) is NOT delivered, and would otherwise suppress every later
+ * attempt for the whole throttle window. This stages, commits and pushes ONLY validated exports of this alias, through
+ * the same `pushGate` as a fresh export. Commits that already exist but were never pushed are NOT pushed on the
+ * exporter's behalf (the gate refuses and says so): they were not written by it, and inspecting arbitrary history is
+ * not something an exporter should pretend to do safely.
  *
  * @param {object} p
  * @param {string} p.dropDir
@@ -156,44 +181,31 @@ export function pushPending({ dropDir, alias, exec = execFileSync }) {
   if (!fs.existsSync(dropDir) || !fs.statSync(dropDir).isDirectory()) throw new Error('deliver: the drop directory does not exist');
   const root = fs.realpathSync(dropDir);
   const git = (args) => exec('git', args, { cwd: root, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, windowsHide: true });
-  const top = String(git(['rev-parse', '--show-toplevel']) ?? '').trim();
-  if (!top || fs.realpathSync(top) !== root) throw new Error('deliver: --push needs the drop directory to be the root of its own Git work tree');
+  const dest = pushGate(git, root);
 
+  // Uncommitted files in this alias's directory. ONLY validated exports may ride along: a stray file here would
+  // otherwise be committed and pushed without ever meeting the schema or the redaction check, so anything else (an
+  // unrelated file, a hand-edited export, a symlink) stops the retry rather than being swept in.
   const pathRe = new RegExp(String.raw`^${alias}/\d{4}-\d{2}-\d{2}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`);
-
-  // 1. Uncommitted files in this alias's directory. ONLY validated exports may ride along: a stray file here would
-  //    otherwise be committed and pushed without ever meeting the schema or the redaction check, so anything else
-  //    (an unrelated file, a hand-edited export) stops the retry rather than being swept in.
   const status = String(git(['status', '--porcelain=v1', '-z', '-uall', '--', `${alias}/`]) ?? '');
   const dirtyPaths = status.split('\0').filter(Boolean).map((e) => e.slice(3));
   for (const p of dirtyPaths) {
-    if (!pathRe.test(p)) throw new Error(`deliver: refusing to stage "${p.split('/').pop()}" — not a telemetry export (retry stopped; nothing was staged)`);
+    const name = p.split('/').pop();
+    if (!pathRe.test(p)) throw new Error(`deliver: refusing to stage "${name}" — not a telemetry export (retry stopped; nothing was staged)`);
+    const full = path.join(root, ...p.split('/'));
+    // lstat, never a followed read: a symlink would validate as its TARGET's JSON while git commits the link itself.
+    const st = fs.lstatSync(full);
+    if (st.isSymbolicLink() || !st.isFile()) throw new Error(`deliver: "${name}" is not a regular file (retry stopped)`);
     let doc;
-    try { doc = JSON.parse(fs.readFileSync(path.join(root, ...p.split('/')), 'utf8')); } catch { throw new Error(`deliver: "${p.split('/').pop()}" is not valid JSON (retry stopped)`); }
+    try { doc = JSON.parse(fs.readFileSync(full, 'utf8')); } catch { throw new Error(`deliver: "${name}" is not valid JSON (retry stopped)`); }
     const v = validateExport(doc);
-    if (!v.ok || v.doc.consumerAlias !== alias) throw new Error(`deliver: "${p.split('/').pop()}" does not validate as an export of this alias (retry stopped)`);
+    if (!v.ok || v.doc.consumerAlias !== alias) throw new Error(`deliver: "${name}" does not validate as an export of this alias (retry stopped)`);
     assertExportClean(v.doc);   // throws ExportRefusedError (category only)
   }
+  if (dirtyPaths.length === 0) return { pending: false, pushed: false };
 
-  // 2. Commits already made but not pushed. An unavailable upstream is an UNKNOWN delivery state, not "nothing ahead"
-  //    (assuming zero would silently strand an export whose push failed for want of an upstream), and only commits
-  //    that touch nothing but this alias's exports may be pushed on its behalf.
-  let ahead = 0;
-  try {
-    ahead = Number(String(git(['rev-list', '--count', '@{u}..HEAD']) ?? '0').trim());
-  } catch {
-    throw new Error('deliver: cannot tell whether earlier exports were pushed (no upstream configured?) — set one, then retry');
-  }
-  if (ahead > 0) {
-    const touched = String(git(['diff', '--name-only', '-z', '@{u}..HEAD']) ?? '').split('\0').filter(Boolean);
-    const stray = touched.find((p) => !pathRe.test(p));
-    if (stray) throw new Error(`deliver: an unpushed commit touches "${stray}", which is not one of this alias's exports — refusing to push it on the exporter's behalf`);
-  }
-  if (dirtyPaths.length === 0 && ahead === 0) return { pending: false, pushed: false };
-  if (dirtyPaths.length > 0) {
-    git(['add', '--', ...dirtyPaths]);
-    git(['commit', '-q', '-m', `telemetry export ${alias} (retry of an undelivered export)`, '--', ...dirtyPaths]);
-  }
-  git(['push']);
+  git(['add', '--', ...dirtyPaths]);
+  git(['commit', '-q', '-m', `telemetry export ${alias} (retry of an undelivered export)`, '--', ...dirtyPaths]);
+  git(['push', dest.remote, `HEAD:refs/heads/${dest.branch}`]);
   return { pending: true, pushed: true };
 }

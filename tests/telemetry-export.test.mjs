@@ -6,7 +6,7 @@
  * hostname, a planted repo name and a planted issue title are pushed through every layer, and
  * NONE of their bytes may appear in the serialised export.
  */
-import { describe, it, afterEach } from 'node:test';
+import { describe, it, before, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -52,6 +52,8 @@ function deps(over = {}) {
     ...over,
   };
 }
+let prebuilt = null;
+const await_ = () => prebuilt;
 const build = (d = deps()) => buildExport({ now: NOW, consumerAlias: 'acme', storeFingerprint: 'a'.repeat(16), toolBundleSha: 'b'.repeat(40), exportId: EXPORT_ID, deps: d });
 
 describe('schema: allowlist by construction', () => {
@@ -340,6 +342,8 @@ describe('sources: read-only, one snapshot, repo-scoped, no writes', () => {
   });
 });
 
+before(async () => { prebuilt = await build(); });
+
 describe('delivery: one primitive — a file in the drop directory', () => {
   it('writes <alias>/<date>-<id8>.json atomically, leaving no temp file', async () => {
     const dir = tmp();
@@ -373,14 +377,38 @@ describe('delivery: one primitive — a file in the drop directory', () => {
     assert.throws(() => deliverExport({ doc, dropDir: tmp() }), /valid alias/);
   });
 
-  it('--push runs EXACTLY rev-parse, add, commit, push — never force, nothing else', async () => {
+  /** A scripted git: the gate's three reads, then whatever is allowed to follow. */
+  const gitStub = (dir, calls, { ahead = '0', upstream = 'origin/main' } = {}) => (cmd, args) => {
+    calls.push([cmd, ...args]);
+    if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return dir;
+    if (args[0] === 'rev-parse') { if (!upstream) throw new Error('no upstream'); return upstream; }
+    if (args[0] === 'rev-list') return ahead;
+    return '';
+  };
+
+  it('--push runs the three gate reads, then add, commit and an EXPLICIT push — never force, nothing else', async () => {
     const dir = tmp();
     const calls = [];
-    const r = deliverExport({ doc: await build(), dropDir: dir, push: true, exec: (cmd, args) => { calls.push([cmd, ...args]); return args[0] === 'rev-parse' ? dir : ''; } });
+    const r = deliverExport({ doc: await build(), dropDir: dir, push: true, exec: gitStub(dir, calls) });
     assert.equal(r.pushed, true);
-    assert.deepEqual(calls.map((c) => c[1]), ['rev-parse', 'add', 'commit', 'push']);
+    assert.deepEqual(calls.map((c) => c[1]), ['rev-parse', 'rev-parse', 'rev-list', 'add', 'commit', 'push']);
+    assert.deepEqual(calls[5].slice(1), ['push', 'origin', 'HEAD:refs/heads/main'], 'the destination is explicit, never whatever push.default says');
     assert.ok(calls.every((c) => c[0] === 'git'));
-    assert.equal(calls.flat().some((a) => /force|-f$|--delete|reset|checkout|branch|remote/.test(a)), false);
+    assert.equal(calls.flat().some((a) => /force|-f$|--delete|reset|checkout|--all|--mirror/.test(a)), false);
+  });
+
+  it('commits already made but not pushed are NOT published on the exporter\'s behalf: refused BEFORE anything is written', async () => {
+    const dir = tmp();
+    const calls = [];
+    assert.throws(() => deliverExport({ doc: await_(), dropDir: dir, push: true, exec: gitStub(dir, calls, { ahead: '2' }) }), /2 commit\(s\) are committed but not pushed/);
+    assert.equal(fs.existsSync(path.join(dir, 'acme')), false, 'nothing was published');
+    assert.equal(calls.some((c) => c[1] === 'push' || c[1] === 'commit' || c[1] === 'add'), false);
+  });
+
+  it('no upstream is an UNKNOWN delivery state: refused before anything is written', async () => {
+    const dir = tmp();
+    assert.throws(() => deliverExport({ doc: await_(), dropDir: dir, push: true, exec: gitStub(dir, [], { upstream: '' }) }), /cannot tell whether earlier exports were pushed/);
+    assert.equal(fs.existsSync(path.join(dir, 'acme')), false);
   });
 
   it('CONTROL — without --push git is never invoked', async () => {
@@ -392,7 +420,7 @@ describe('delivery: one primitive — a file in the drop directory', () => {
   it('a failing push surfaces (the file is already safely written, the caller is told)', async () => {
     const doc = await build();
     const dir = tmp();
-    assert.throws(() => deliverExport({ doc, dropDir: dir, push: true, exec: (c, a) => { if (a[0] === 'push') throw new Error('rejected'); return a[0] === 'rev-parse' ? dir : ''; } }), /rejected/);
+    assert.throws(() => deliverExport({ doc, dropDir: dir, push: true, exec: (c, a) => { if (a[0] === 'push') throw new Error('rejected'); return gitStub(dir, [])(c, a); } }), /rejected/);
   });
 });
 

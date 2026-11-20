@@ -53,8 +53,11 @@ nothing when this alias already has a newer valid export. Three ways to run it, 
   consumer-owned `.githooks/pre-push.local` (never the managed hook) —
   `node scripts/.claude-skills/telemetry-export.mjs --if-older-than 24 || echo "telemetry export failed (push not blocked)" >&2`.
   It cannot slow a push on a quiet day (it exits at once) and never blocks one — but a failure is SAID, not
-  swallowed. With `TELEMETRY_EXPORT_PUSH=1` a recent file is not enough to skip: anything an earlier failed push
-  left uncommitted or unpushed is delivered first.
+  swallowed. With `TELEMETRY_EXPORT_PUSH=1` a recent file is not enough to skip: a file an earlier run wrote but never committed is validated
+  (strict schema + redaction) and delivered first, and a stray or edited file beside it stops the retry. The exporter pushes
+  to an explicit `<remote> HEAD:<upstream branch>`, only what it created, and **refuses** (before writing anything) when
+  commits already exist in the drop that were never pushed, or when no upstream is set — it will not publish history it
+  did not write; push or reset those yourself.
 - **By hand**, whenever.
 
 Use an ABSOLUTE `TELEMETRY_DROP_DIR`: the exporter resolves a relative one against the directory it runs in and the doctor against the repo root.
