@@ -96,7 +96,7 @@ import { resolveShadowArmsWithToggle } from './lib/arm-eval/toggle.mjs';
 import { classifyPath } from './lib/sensitive-paths.mjs';
 import { redactSecrets } from './lib/secret-patterns.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
-import { log, argOption, hasFlag } from './lib/cli-io.mjs';
+import { log, argOption, hasFlag, finishAndExit } from './lib/cli-io.mjs';
 import { dupHash } from './lib/solo-control/cluster-propose.mjs';
 import { authorizeAll, resumedOut, seedResumedGrades, qualifyBatchCluster, labelCoverage, decisionStatusFor, splitApparatusGaps } from './lib/solo-control/run-guards.mjs';
 import { classifyRecipient } from './lib/solo-control/recipient.mjs';
@@ -107,7 +107,10 @@ import { computeCallId, appendLedgerRow } from './lib/solo-control/ledger.mjs';
 import { canonicaliseRemoteUrl } from './lib/repo-identity.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
 import { normalizeGeminiUsage } from './lib/gemini-usage.mjs';
-import { readLedger, aggregateBudgetSpent, aggregateCostForArm, sharedPassCreditRows } from './lib/solo-control/ledger.mjs';
+import { readLedger, aggregateCostForArm, sharedPassCreditRows } from './lib/solo-control/ledger.mjs';
+import { csvLine, parseCsv } from './lib/solo-control/csv.mjs';
+import { runGptJudgeBatch } from './lib/solo-control/judge.mjs';
+import { positiveInt, nonNegativeNumber, budgetVerdict, sheetPairingProblems, validateGradings, findingsDigest, geminiFindingsOrMiss, assertResumableProvenance, coldPassOutcome, judgeResumeIdentity } from './lib/solo-control/hardening-guards.mjs';
 import { assertResumableBackend, commitsCompleteForAllArms, coveredCommits, gateCellState, resumeArmFile, runMeasuredReview, reviewCommitState, unmeasuredCommits } from './lib/solo-control/completion.mjs';
 import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
@@ -208,8 +211,19 @@ function repoIdentityFor(root) {
  * alongside: the floor is then a floor, and the caller logs that.
  */
 function budgetBreached(budgetUsd) {
-  const { spentUsd, complete } = aggregateBudgetSpent(readLedger(CALL_LEDGER_PATH));
-  return spentUsd >= budgetUsd ? { spentUsd, complete } : null;
+  return budgetVerdict(readLedger(CALL_LEDGER_PATH), budgetUsd);
+}
+/** The operator-facing line for a budget stop — a breached ceiling and an UNCHECKABLE one read differently. */
+const budgetStopLine = (hit, budgetUsd, where) => `\n✗ ${hit.reason === 'unmeasured'
+  ? `BUDGET UNCHECKABLE: ${hit.unmeasured} ledger call(s) reached a provider with no price, so $${hit.spentUsd.toFixed(2)} is a FLOOR that cannot be compared to the $${budgetUsd} cap (unpriced means unmeasured, never zero)`
+  : `BUDGET CEILING: $${hit.spentUsd.toFixed(2)} spent across the ledger ≥ $${budgetUsd} cap${hit.complete ? '' : ' (a FLOOR — some rows are unpriced)'}`}. Stopped at ${where}; it and every later commit are partial and will be dropped cohort-wide by score.`;
+/** Parse a validated numeric option or exit 2 — the value reaches a loop increment, a slice width or a spend ceiling. */
+function optOrDie(fn, flag, dflt) { try { return fn(argOption(flag, dflt), flag); } catch (err) { log(`FATAL: ${err.message}`); process.exit(2); } }
+/** Load the recipient policy at the top of any command that sends a diff anywhere; a missing/malformed file is an operator setup error. */
+function policyOrDie() { try { return loadRecipientPolicy(RECIPIENT_POLICY_PATH); } catch (err) { log(`FATAL: recipient policy unavailable (${err.message})`); process.exit(2); } }
+/** Authorize every model a commit's diff is about to reach, for the repo that holds it → null if cleared, else the refusal text. */
+function refusedFor(models, root, policy) {
+  try { authorizeAll(models, repoIdentityFor(root), policy); return null; } catch (err) { return err.message; }
 }
 
 function recordCall({ arm, sharedBy = null, commit, purpose, pass, chunkIndex, repeatIndex, resolvedModel, recipient, usage, state }) {
@@ -228,10 +242,6 @@ function recordCall({ arm, sharedBy = null, commit, purpose, pass, chunkIndex, r
 // across S and DB findings so `merge` can pre-group VERBATIM duplicates; NOT
 // semantic dedup) now imported from lib/solo-control/cluster-propose.mjs —
 // this file's copy was byte-identical (flagged by `arch:duplicates`).
-function csvField(v) {
-  const s = v == null ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 // ── target-commit discovery ──────────────────────────────────────────────────
 
@@ -605,6 +615,7 @@ async function runPass(client, model, passName, diff, { reasoningEffort = null }
   const { system, user } = buildColdPassPrompt(passName, diff);
   const maxTokens = reasoningEffort ? REASONING_TIERS.anthropic[reasoningEffort] : 8000;
   let lastErr = null;
+  let gotReply = false; // did ANY attempt return a reply? none ⇒ a provider error, not a conformance miss
   let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
     let resp;
@@ -623,6 +634,7 @@ async function runPass(client, model, passName, diff, { reasoningEffort = null }
       lastErr = (err?.message || String(err)).slice(0, 160);
       continue;
     }
+    gotReply = true;
     usage = sumUsage(usage, resp.usage || null);
     const text = Array.isArray(resp.content) ? resp.content.map((c) => c.text || '').join('') : '';
     const parsed = clampToSchema(parseJsonLoose(text));
@@ -632,9 +644,16 @@ async function runPass(client, model, passName, diff, { reasoningEffort = null }
     }
     lastErr = check.error?.issues?.map((i) => i.message).join('; ') || 'unparseable';
   }
-  log(`      ! pass ${passName} produced no conformant JSON (${lastErr}) — recorded 0 findings`);
   // usage is kept: a miss still billed every attempt that returned a reply.
-  return { findings: [], usage, conformanceMiss: true, rawText: null };
+  return coldPassMiss(passName, lastErr, gotReply, usage, {});
+}
+
+/** The terminal return of a cold pass that never produced conformant JSON — a REPLY that did not conform is a
+ * conformance miss (counted, scored as the model's outcome); NO reply is a provider error (the cell is unmeasured). */
+function coldPassMiss(passName, lastErr, gotReply, usage, extra) {
+  const outcome = coldPassOutcome({ gotReply, conformant: false });
+  log(`      ! pass ${passName} ${outcome === 'provider-error' ? `got no reply (${lastErr}) — cell UNMEASURED` : `produced no conformant JSON (${lastErr}) — recorded 0 findings`}`);
+  return { findings: [], usage, rawText: null, ...extra, ...(outcome === 'provider-error' ? { providerError: true } : { conformanceMiss: true }) };
 }
 
 /**
@@ -664,6 +683,7 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
   const maxTokens = REASONING_TIERS.deepseek[reasoningEffort ?? 'high'];
   let lastErr = null;
   let lastFingerprint = null;
+  let gotReply = false; // see runPass
   let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
     let resp;
@@ -680,6 +700,7 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
       lastErr = (err?.error?.message || err?.message || String(err)).slice(0, 160);
       continue;
     }
+    gotReply = true;
     lastFingerprint = resp.system_fingerprint || null;
     const u = resp.usage || null;
     usage = sumUsage(usage, u ? { input_tokens: u.prompt_tokens ?? 0, output_tokens: u.completion_tokens ?? 0 } : null);
@@ -691,9 +712,7 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
     }
     lastErr = check.error?.issues?.map((i) => i.message).join('; ') || 'unparseable';
   }
-  log(`      ! pass ${passName} produced no conformant JSON (${lastErr}) — recorded 0 findings`);
-  // usage is kept: a miss still billed every attempt that returned a reply.
-  return { findings: [], usage, conformanceMiss: true, rawText: null, systemFingerprint: lastFingerprint };
+  return coldPassMiss(passName, lastErr, gotReply, usage, { systemFingerprint: lastFingerprint });
 }
 
 // ── subcommands ──────────────────────────────────────────────────────────────
@@ -723,7 +742,7 @@ async function cmdRun() {
   // effort: offline → silent fallback to the static pool.
   try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
   const model = resolveModel(modelArg);
-  const maxChars = Number.parseInt(argOption('max-chars', '45000'), 10); // per-chunk cap (~11k tok); larger chunks slow claude -p past its timeout
+  const maxChars = optOrDie(positiveInt, 'max-chars', '45000'); // per-chunk cap (~11k tok); larger chunks slow claude -p past its timeout
   const commitsArg = argOption('commits');
   const corpusArg = argOption('corpus');
   const force = hasFlag('force');
@@ -739,19 +758,17 @@ async function cmdRun() {
   // would grind for hours across dozens of chunks. Skip + RECORD (state
   // 'diff-too-large', listed in perCommit — never silently dropped) so scoring can
   // report the defect as unscored-by-refusal rather than missed.
-  const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
+  const maxDiffChars = optOrDie(positiveInt, 'max-diff-chars', '600000');
   // NO-OP since 2026-11-15 (cmdRun is always sdk). Still read so assertKnownFlags
   // keeps accepting it, and logged so a run that passed it knows it was inert.
   const useSdk = hasFlag('sdk');
-  const budgetUsd = Number.parseFloat(argOption('budget-usd', '350')); // plan §8 ceiling, experiment-wide
+  const budgetUsd = optOrDie(nonNegativeNumber, 'budget-usd', '350'); // plan §8 ceiling, experiment-wide
 
   // exp-5: preflight-load the recipient policy ALWAYS (Security Considerations
   // §2 — "missing policy ⇒ refuse", below every entry path, before any client is
   // constructed). Fatal for the whole run: a missing/malformed policy file is an
   // operator setup error, not a per-commit condition.
-  let recipientPolicy;
-  try { recipientPolicy = loadRecipientPolicy(RECIPIENT_POLICY_PATH); }
-  catch (err) { log(`FATAL: recipient policy unavailable (${err.message})`); process.exit(2); }
+  const recipientPolicy = policyOrDie();
   const recipient = classifyRecipient(model);
 
   // --reasoning-effort: validated against THIS recipient's tier table, so a
@@ -838,8 +855,10 @@ async function cmdRun() {
   // records, so the guard compares like with like rather than a normalised
   // form that would silently agree.
   const plannedBackend = recipient === 'anthropic' ? 'sdk' : recipient;
-  try { plan = planIncrementalRun({ units, prior, force, resume, backend: plannedBackend }); }
-  catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
+  try {
+    plan = planIncrementalRun({ units, prior, force, resume, backend: plannedBackend });
+    assertResumableProvenance(prior, { resolvedModel: model, reasoningEffort: reasoningEffort ?? null, repeats, maxChars }, force);
+  } catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
   const { commits, covered } = plan;
   const requestedCommitShas = units.map((u) => u.commitSha);
   const out = resumedOut(prior, { force, fresh: { armLabel: label, model, modelArg, stageType: STAGE_TYPE, generatedFor: requestedCommitShas, findings: [], perCommit: [] }, rerunShas: commits.map((u) => u.commitSha), patch: { model, modelArg, generatedFor: [...new Set([...(prior?.generatedFor || []), ...requestedCommitShas])] } });
@@ -931,6 +950,7 @@ async function cmdRun() {
     // findings for that repeat (never crashes), but a skewed miss rate on one pass
     // should be visible in scoring, not silently absorbed as "the model found less".
     let fingerprintDrift = false;
+    let providerErrorCells = 0;
     let budgetHit = null;
     cells: for (const passName of PASSES) {
       for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
@@ -953,9 +973,10 @@ async function cmdRun() {
             : await runDeepseekPass(deepseekClient, model, passName, chunk, { reasoningEffort });
           if (r.usage) { totalIn += r.usage.input_tokens || 0; totalOut += r.usage.output_tokens || 0; }
           if (r.rawText != null) rawTexts.push(r.rawText);
-          const cc = (commitConformance[passName] ||= { attempts: 0, misses: 0 });
-          cc.attempts++;
-          if (r.conformanceMiss) cc.misses++;
+          // A provider error (no reply on any attempt) is an UNMEASURED cell, not a conformance miss: it must not
+          // enter the miss-rate denominator, and the commit below reads provider-error so a resume re-runs it.
+          if (r.providerError) providerErrorCells++;
+          else { const cc = (commitConformance[passName] ||= { attempts: 0, misses: 0 }); cc.attempts++; if (r.conformanceMiss) cc.misses++; }
 
           // DeepSeek fingerprint pin (plan §2/§8): `deepseek-flash` is an
           // unversioned alias — the FIRST successful call this run seeds the
@@ -963,7 +984,7 @@ async function cmdRun() {
           // subsequent call is checked against it. A drift refuses just this
           // cell (provider-error, findings discarded), never crashes the run
           // or silently mixes two snapshots into one arm.
-          let cellState = r.conformanceMiss ? 'conformance-miss' : 'ok';
+          let cellState = r.providerError ? 'provider-error' : r.conformanceMiss ? 'conformance-miss' : 'ok';
           if (recipient === 'deepseek' && r.systemFingerprint) {
             if (!out.manifest.systemFingerprint) out.manifest.systemFingerprint = r.systemFingerprint;
             else if (r.systemFingerprint !== out.manifest.systemFingerprint) {
@@ -1000,7 +1021,7 @@ async function cmdRun() {
     const misses = Object.values(commitConformance).reduce((a, c) => a + c.misses, 0);
     const attempts = Object.values(commitConformance).reduce((a, c) => a + c.attempts, 0);
     log(`      → ${commitFindings} finding(s)${misses ? ` (${misses}/${attempts} conformance misses — see perCommit.conformanceByPass)` : ''}`);
-    const state = budgetHit ? 'budget-exceeded' : fingerprintDrift ? 'provider-error' : 'ran';
+    const state = budgetHit ? 'budget-exceeded' : (fingerprintDrift || providerErrorCells) ? 'provider-error' : 'ran';
     out.perCommit.push({
       sha, unitKey: unit.resumeKey, repo: path.basename(root), state, findings: commitFindings,
       chunks: chunks.length, skippedSensitive: ext.skippedSensitive, conformanceByPass: commitConformance,
@@ -1008,7 +1029,7 @@ async function cmdRun() {
       // against (plan §3 "Execution contract"): passes × chunks × repeats for
       // THIS commit — a structural fact only the runner knows.
       expectedCells: PASSES.length * chunks.length * repeats,
-      ...(fingerprintDrift ? { error: 'fingerprint-drift' } : {}),
+      ...(fingerprintDrift ? { error: 'fingerprint-drift' } : providerErrorCells ? { error: `${providerErrorCells} cell(s) got no provider reply` } : {}),
       ...(budgetHit ? { error: 'budget', spentUsd: budgetHit.spentUsd } : {}),
     });
     // Per-commit checkpoint (matches cmdApparatus's existing pattern) — a run
@@ -1016,7 +1037,7 @@ async function cmdRun() {
     // ONE commit in flight, not everything since the last invocation.
     atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
     if (budgetHit) {
-      log(`\n✗ BUDGET CEILING: $${budgetHit.spentUsd.toFixed(2)} spent across the ledger ≥ $${budgetUsd} cap${budgetHit.complete ? '' : ' (a FLOOR — some rows are unpriced)'}. Stopped at ${short}; it and every later commit are partial and will be dropped cohort-wide by score.`);
+      log(budgetStopLine(budgetHit, budgetUsd, short));
       process.exit(3);
     }
   }
@@ -1124,8 +1145,7 @@ async function runGeminiReview(geminiModel, collected, diff) {
     model: geminiModel, contents: prompt,
     config: { responseMimeType: 'application/json', responseSchema: zodToGeminiSchema(ShadowPassSchema) },
   });
-  let parsed = null; try { parsed = JSON.parse(resp.text); } catch { /* conformance miss */ }
-  return { findings: parsed?.findings || [], usage: geminiUsageOrNull(resp), ...(parsed ? {} : { state: 'conformance-miss' }) };
+  return { ...geminiFindingsOrMiss(resp.text, ShadowPassSchema), usage: geminiUsageOrNull(resp) };
 }
 
 /** Gemini's `usageMetadata` → the ledger's `{input_tokens, output_tokens}`,
@@ -1155,7 +1175,7 @@ function geminiUsageOrNull(resp) {
  * @param {import('@anthropic-ai/sdk').default} client - createAnthropicClient({backend:'sdk'})
  * @param {string} model - resolved Claude model id (e.g. claude-sonnet-5)
  * @param {Array} collected - the GPT 5-pass deduped union
- * @param {string} diff - chunks[0] — same "gate sees chunk 0 only" limitation as the Gemini gates
+ * @param {string} diff - the WHOLE diff under audit (the gate reads every chunk the passes ran on)
  * @param {{reasoningEffort?: keyof typeof REASONING_TIERS.anthropic}} [opts] - an
  *   Anthropic `output_config.effort` tier; `high` is the API default. max_tokens
  *   follows the tier (REASONING_TIERS) because thinking shares that budget.
@@ -1229,8 +1249,7 @@ async function runGeminiPass(geminiModel, passName, diff) {
     model: geminiModel, contents: prompt,
     config: { responseMimeType: 'application/json', responseSchema: zodToGeminiSchema(ShadowPassSchema) },
   });
-  let parsed = null; try { parsed = JSON.parse(resp.text); } catch { /* conformance miss */ }
-  return { findings: parsed?.findings || [], usage: geminiUsageOrNull(resp), ...(parsed ? {} : { state: 'conformance-miss' }) };
+  return { ...geminiFindingsOrMiss(resp.text, ShadowPassSchema), usage: geminiUsageOrNull(resp) };
 }
 
 /** Run the apparatus (arm A) retro over --commits. Incremental like cmdRun. */
@@ -1289,16 +1308,15 @@ async function cmdApparatus() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const commitsArg = argOption('commits');
   const corpusArg = argOption('corpus');
-  const maxChars = Number.parseInt(argOption('max-chars', '45000'), 10);
-  const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
+  const maxChars = optOrDie(positiveInt, 'max-chars', '45000');
+  const maxDiffChars = optOrDie(positiveInt, 'max-diff-chars', '600000');
   const force = hasFlag('force');
   const resume = hasFlag('resume');
   const gateOnly = hasFlag('gate-only');
   const label = argOption('label', 'A'); // legacy default 'A' preserved for the pre-exp-5 caller
+  const budgetUsd = optOrDie(nonNegativeNumber, 'budget-usd', '350'); // plan §8 ceiling, experiment-wide
 
-  let recipientPolicy;
-  try { recipientPolicy = loadRecipientPolicy(RECIPIENT_POLICY_PATH); }
-  catch (err) { log(`FATAL: recipient policy unavailable (${err.message})`); process.exit(2); }
+  const recipientPolicy = policyOrDie();
 
   const { createOpenAIClient } = await import('./lib/openai-client.mjs');
   const { zodTextFormat } = await import('openai/helpers/zod');
@@ -1328,7 +1346,6 @@ async function cmdApparatus() {
   } else if (argOption('gate-reasoning-effort')) {
     log(`FATAL: --gate-reasoning-effort applies to an anthropic or openai gate; "${gateModel}" is ${gateRecipient}.`); process.exit(2);
   }
-  const budgetUsd = Number.parseFloat(argOption('budget-usd', '350')); // plan §8 ceiling, experiment-wide
   const client = await createOpenAIClient({ purpose: 'gpt' }); // the 5-pass client; an openai gate reuses it with its own model id
   const anthropicGateClient = gateRecipient === 'anthropic' ? await createAnthropicClient({ backend: 'sdk' }) : null;
   if (!['gemini', 'anthropic', 'openai'].includes(gateRecipient)) {
@@ -1359,8 +1376,10 @@ async function cmdApparatus() {
   // planIncrementalRun contract without changing this function's own sha-based loop body.
   const requestedUnits = requested.map((sha) => ({ mode: 'manual', resumeKey: sha, commitSha: sha, auditedSha: null, auditedTree: null }));
   let plan;
-  try { plan = planIncrementalRun({ units: requestedUnits, prior, force, resume }); }
-  catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
+  try {
+    plan = planIncrementalRun({ units: requestedUnits, prior, force, resume });
+    assertResumableProvenance(prior, { gptModel, gateModel, gateReasoningEffort, ...(gateOnly ? {} : { maxChars }) }, force);
+  } catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
   const commits = plan.commits.map((u) => u.commitSha);
   const out = prior && !force
     ? { ...prior, generatedFor: [...new Set([...(prior.generatedFor || []), ...requested])] }
@@ -1383,13 +1402,14 @@ async function cmdApparatus() {
     recordCall({ arm: label, commit: sha, purpose, pass, chunkIndex, repeatIndex: 0, resolvedModel, recipient, usage: null, state: 'provider-error' });
     out.perCommit.push({ sha, state: 'budget-exceeded', error: 'budget', spentUsd: hit.spentUsd });
     atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
-    log(`\n✗ BUDGET CEILING: $${hit.spentUsd.toFixed(2)} spent across the ledger ≥ $${budgetUsd} cap${hit.complete ? '' : ' (a FLOOR — some rows are unpriced)'}. Stopped at ${sha.slice(0, 8)}; it and every later commit are partial and will be dropped cohort-wide by score.`);
+    log(budgetStopLine(hit, budgetUsd, sha.slice(0, 8)));
     process.exit(3);
   };
 
   for (const sha of commits) {
     const short = sha.slice(0, 8);
     let ext, chunks, collected, repoBasename, passChunks;
+    let gateDiff; // what the gate reads: the WHOLE diff — generation ran on every chunk, so a gate shown chunk 0 judged "net-new" against a fraction of what the passes saw
 
     if (gateOnly) {
       const pgPath = pregatePath(sha);
@@ -1401,6 +1421,21 @@ async function cmdApparatus() {
         out.perCommit.push({ sha, state: 'pregate-integrity-mismatch' });
         continue;
       }
+      // The context digest alone leaves the FINDINGS the gate is told to find the complement of unbound: edited findings
+      // changed the gate's answer under an unchanged digest. New artifacts carry findingsSha256; a legacy one is flagged.
+      if (pregate.findingsSha256 && pregate.findingsSha256 !== findingsDigest(pregate.findings)) {
+        log(`  ${short}: PRE-GATE FINDINGS MISMATCH — the artifact's findings do not match the digest it was written with; refusing`);
+        out.perCommit.push({ sha, state: 'pregate-integrity-mismatch' });
+        continue;
+      }
+      if (!pregate.findingsSha256) log(`  ${short}: ⚠ legacy pre-gate artifact — its findings are not digest-bound (re-run without --gate-only to bind them)`);
+      // A legacy artifact saved ONLY chunk 0 as the gate context: over a multi-chunk commit the gate would be shown a fraction of the diff.
+      if (pregate.gateContextScope !== 'full' && (pregate.passChunks ?? 1) > 1) {
+        log(`  ${short}: pre-gate artifact holds only chunk 0 of ${pregate.passChunks} — refusing a gate over a fraction of the diff (re-run without --gate-only)`);
+        out.perCommit.push({ sha, state: 'pregate-chunk0-only' });
+        continue;
+      }
+      gateDiff = pregate.gateContext;
       collected = pregate.findings;
       ext = { files: pregate.files || [] };
       chunks = [pregate.gateContext];
@@ -1455,10 +1490,10 @@ async function cmdApparatus() {
       }
       collected = dedupeFindings(raw); // "deduped 5-pass union" per plan §7
       // Write the immutable pre-gate artifact BEFORE calling any gate.
-      const gateContext = chunks[0] || '';
+      gateDiff = ext.diff;
       atomicWriteFileSync(pregatePath(sha), JSON.stringify({
-        sha, repo: repoBasename, files: ext.files, findings: collected, passChunks,
-        gateContext, gateContextSha256: sha256hex(gateContext), writtenAt: new Date().toISOString(),
+        sha, repo: repoBasename, files: ext.files, findings: collected, passChunks, findingsSha256: findingsDigest(collected),
+        gateContext: gateDiff, gateContextScope: 'full', gateContextSha256: sha256hex(gateDiff), writtenAt: new Date().toISOString(),
       }, null, 2));
     }
 
@@ -1467,10 +1502,10 @@ async function cmdApparatus() {
     let gateFindings = [], gateState = 'provider-error';
     try {
       const r = gateRecipient === 'anthropic'
-        ? await runClaudeGateReview(anthropicGateClient, gateModel, collected, chunks[0] || '', { reasoningEffort: gateReasoningEffort })
+        ? await runClaudeGateReview(anthropicGateClient, gateModel, collected, gateDiff, { reasoningEffort: gateReasoningEffort })
         : gateRecipient === 'openai'
-          ? await runGptGateReview(client, zodTextFormat, gateModel, collected, chunks[0] || '', { reasoningEffort: gateReasoningEffort })
-          : await runGeminiReview(gateModel, collected, chunks[0] || '');
+          ? await runGptGateReview(client, zodTextFormat, gateModel, collected, gateDiff, { reasoningEffort: gateReasoningEffort })
+          : await runGeminiReview(gateModel, collected, gateDiff);
       gateState = gateCellState(r);
       if (gateState === 'provider-error') log(`      ! ${gateRecipient} gate did not review: ${r.error || r.skipped} — commit reads partial`);
       else gateFindings = r.findings;
@@ -1564,9 +1599,10 @@ async function cmdApparatusBC() {
   const commitsArg = argOption('commits');
   if (!commitsArg) { log('apparatus-bc requires --commits <sha,sha,...> (the known-defect commits).'); process.exit(2); }
   const requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
-  const maxChars = Number.parseInt(argOption('max-chars', '45000'), 10);
-  const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
+  const maxChars = optOrDie(positiveInt, 'max-chars', '45000');
+  const maxDiffChars = optOrDie(positiveInt, 'max-diff-chars', '600000');
   const force = hasFlag('force');
+  const recipientPolicy = policyOrDie(); // every model below receives a diff — the policy is consulted per commit, before extraction
 
   const { createOpenAIClient, createOpenRouterClient } = await import('./lib/openai-client.mjs');
   const { zodTextFormat } = await import('openai/helpers/zod');
@@ -1600,6 +1636,8 @@ async function cmdApparatusBC() {
     const short = sha.slice(0, 8);
     const root = locateCommit(sha);
     if (!root) { log(`  ${short}: NOT FOUND in any local repo root — skipped`); outB.perCommit.push({ sha, state: 'not-found' }); outC.perCommit.push({ sha, state: 'not-found' }); continue; }
+    const refused = refusedFor([ossModel, gptModel, geminiModel], root, recipientPolicy);
+    if (refused) { log(`  ${short}: POLICY REFUSED (${refused}) — skipped, not sent`); for (const o of [outB, outC]) o.perCommit.push({ sha, repo: path.basename(root), state: 'policy-refused', error: refused }); continue; }
     let ext;
     try { ext = extractDiff(root, sha); }
     catch (err) {
@@ -1647,8 +1685,8 @@ async function cmdApparatusBC() {
     // Per-arm Gemini: B reviews oss+gpt-round union; C reviews oss-gen alone.
     const bUpstream = dedupeFindings([...ossFindings, ...gptRoundFindings]);
     const cUpstream = dedupeFindings(ossFindings);
-    const bRev = await runMeasuredReview(() => runGeminiReview(geminiModel, bUpstream, chunks[0] || ''));
-    const cRev = await runMeasuredReview(() => runGeminiReview(geminiModel, cUpstream, chunks[0] || ''));
+    const bRev = await runMeasuredReview(() => runGeminiReview(geminiModel, bUpstream, ext.diff)); // the whole diff, not chunk 0
+    const cRev = await runMeasuredReview(() => runGeminiReview(geminiModel, cUpstream, ext.diff));
     for (const [a, rev] of [['B', bRev], ['C', cRev]]) if (!rev.measured) log(`      ! gemini(${a}) did not review: ${rev.error}`);
     const bAll = dedupeFindings([...ossFindings, ...gptRoundFindings, ...bRev.findings]);
     const cAll = dedupeFindings([...ossFindings, ...cRev.findings]);
@@ -1699,6 +1737,7 @@ async function cmdSonnetGeminiRetro() {
 
   try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
   const geminiModel = resolveModel('latest-pro');
+  const recipientPolicy = policyOrDie();
 
   const dest = sFindingsPath('SG-gemini-only');
   const prior = fs.existsSync(dest) ? JSON.parse(fs.readFileSync(dest, 'utf8')) : null;
@@ -1718,6 +1757,8 @@ async function cmdSonnetGeminiRetro() {
     if (sonnetFindings.length === 0) { log(`  ${short}: no S-sonnet baseline on record — skipped`); out.perCommit.push({ sha, state: 'no-sonnet-baseline' }); continue; }
     const root = locateCommit(sha);
     if (!root) { log(`  ${short}: NOT FOUND in any repo root — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
+    const refused = refusedFor([geminiModel], root, recipientPolicy);
+    if (refused) { log(`  ${short}: POLICY REFUSED (${refused}) — skipped, not sent`); out.perCommit.push({ sha, repo: path.basename(root), state: 'policy-refused', error: refused }); continue; }
     let ext;
     try { ext = extractDiff(root, sha); }
     catch (err) {
@@ -1761,8 +1802,8 @@ async function cmdSoloPassRetro() {
     log('solo-pass-retro requires --commits <sha,sha,...> and --engine gpt|gemini.'); process.exit(2);
   }
   const requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
-  const maxChars = Number.parseInt(argOption('max-chars', '45000'), 10);
-  const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
+  const maxChars = optOrDie(positiveInt, 'max-chars', '45000');
+  const maxDiffChars = optOrDie(positiveInt, 'max-diff-chars', '600000');
   const force = hasFlag('force');
 
   try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
@@ -1776,6 +1817,7 @@ async function cmdSoloPassRetro() {
   } else {
     model = resolveModel('latest-pro');
   }
+  const recipientPolicy = policyOrDie();
 
   const label = engine === 'gpt' ? 'GPT-alone' : 'Gemini-alone';
   const dest = sFindingsPath(label);
@@ -1794,6 +1836,8 @@ async function cmdSoloPassRetro() {
     const short = sha.slice(0, 8);
     const root = locateCommit(sha);
     if (!root) { log(`  ${short}: NOT FOUND in any repo root — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
+    const refused = refusedFor([model], root, recipientPolicy);
+    if (refused) { log(`  ${short}: POLICY REFUSED (${refused}) — skipped, not sent`); out.perCommit.push({ sha, repo: path.basename(root), state: 'policy-refused', error: refused }); continue; }
     let ext;
     try { ext = extractDiff(root, sha); }
     catch (err) {
@@ -1857,115 +1901,33 @@ async function cmdSoloPassRetro() {
 // Writes a SEPARATE file (default blind-adjudication-gpt.csv) — never touches
 // the Claude-judge sheet.
 
-const GradingSchema = z.object({
-  gradings: z.array(z.object({
-    blind_id: z.string(),
-    label: z.enum(['proven', 'actionable', 'plausible', 'false']),
-    proof: z.string().optional().default(''),
-    cluster: z.string().optional().default(''),
-    matches: z.string().optional().default(''),
-    pattern: z.string().optional().default(''),
-  })),
-});
-
-const JUDGE_SYSTEM = [
-  'You are a blind code-review adjudicator. You grade a list of findings against',
-  'the ACTUAL diff provided below. You do NOT know which of several AI reviewers',
-  'produced each finding — grade purely on whether the code supports the claim,',
-  'never on writing style or confidence.',
-  '',
-  'CRITICAL: if the diff below was assembled from multiple chunks, a fragment with',
-  'no visible `diff --git` header for a hunk is a CONTINUATION of a file shown',
-  'elsewhere in this SAME diff, not evidence the file was deleted or is absent.',
-  'Only grade a "file is missing/deleted" claim as proven/actionable if the file',
-  'genuinely does not appear ANYWHERE in the diff shown to you.',
-  '',
-  'Label taxonomy (severity weights LOW=1, MEDIUM=3, HIGH=8):',
-  '  proven     (factor 1.0) — direct code evidence confirms the claim exactly; cite file:line in `proof`.',
-  '  actionable (factor 0.6) — real, worth-fixing issue, but not a slam-dunk proof; some inference involved.',
-  '  plausible  (factor 0)   — could be true, unverifiable from the diff shown.',
-  '  false      (factor 0)   — factually wrong against the diff shown.',
-  '',
-  '`proof` is REQUIRED (file:line or a short repro) whenever severity=HIGH and label is proven or actionable;',
-  'otherwise leave it empty. If you cannot produce proof for a HIGH accept, grade it `plausible` instead.',
-  '`cluster` — a short tag you choose so that findings describing the SAME underlying defect within this',
-  'commit share one value (e.g. "c1", "c2"); reuse a tag across findings you judge to be the same defect.',
-  '`matches` — a KD-NNN id from the known-defects rubric below, ONLY if label is proven/actionable AND the',
-  'file is in that KD\'s file list AND the finding actually describes that KD\'s defect (not just same file).',
-  '`pattern` — optional short tag, ONLY if this finding shares a file/module or violated invariant with',
-  'another finding you are ALSO grading in this same batch; otherwise leave empty.',
-  '',
-  'Grade EVERY blind_id given. Return structured JSON per the schema — nothing else.',
-].join('\n');
-
-/** Quoted-CSV row parser (mirrors cmdScore's — kept local, no cross-fn coupling). */
-function parseCsvLine(line) {
-  const out = []; let cur = '', q = false;
-  for (const ch of line) { if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; }
-  out.push(cur); return out;
-}
-
+/** A blind sheet as RFC 4180 records (see lib/solo-control/csv.mjs): `rows` are the identity columns by name, `records` the raw cells in sheet order. */
 function readBlindSheet(csvPath) {
-  const lines = fs.readFileSync(csvPath, 'utf8').split(/\r?\n/).filter(Boolean);
-  const header = lines[0].split(',');
+  const [header = [], ...records] = parseCsv(fs.readFileSync(csvPath, 'utf8'));
   const col = (n) => header.indexOf(n);
   const iId = col('blind_id'), iCommit = col('commit'), iSev = col('severity'), iCat = col('category'), iFile = col('file'), iDetail = col('detail');
-  const rows = lines.slice(1).map((line) => {
-    const c = parseCsvLine(line);
-    return { blindId: c[iId], commit: c[iCommit], severity: c[iSev], category: c[iCat], file: c[iFile], detail: c[iDetail] };
-  });
-  return { header, rows };
+  const rows = records.map((c) => ({ blindId: c[iId], commit: c[iCommit], severity: c[iSev], category: c[iCat], file: c[iFile], detail: c[iDetail] }));
+  return { header, rows, records };
 }
 
-/** One GPT grading call over a sub-batch of rows for ONE commit's full diff. */
-async function runGptJudgeBatch(client, zodTextFormat, gptModel, { shortSha, diff, kdBlock, rowsBatch, reasoning }) {
-  const rowsJson = JSON.stringify(rowsBatch.map((r) => ({ blind_id: r.blindId, severity: r.severity, category: r.category, file: r.file, detail: r.detail })), null, 2);
-  const userPrompt = [
-    `## Commit ${shortSha} — full diff`,
-    diff,
-    kdBlock ? `## Known-defect rubric for this commit\n${kdBlock}` : '## Known-defect rubric for this commit\n(none)',
-    `## Findings to grade (blind — ${rowsBatch.length} row(s))`,
-    rowsJson,
-  ].join('\n\n');
-  assertEgressSafe(userPrompt, { label: `judge-gpt:${shortSha}` });
-  const params = {
-    model: gptModel,
-    input: [{ role: 'system', content: JUDGE_SYSTEM }, { role: 'user', content: userPrompt }],
-    text: { format: zodTextFormat(GradingSchema, 'grading') },
-    max_output_tokens: 16000,
-  };
-  if (reasoning) params.reasoning = { effort: reasoning };
-  const resp = await client.responses.parse(params);
-  return { gradings: resp.output_parsed?.gradings || [], usage: resp.usage || null };
-}
 
 async function cmdJudgeGpt() {
   const srcPath = argOption('csv') ? path.resolve(argOption('csv')) : BLIND_CSV;
   const outPath = path.join(OUT_DIR, argOption('out', 'blind-adjudication-gpt.csv'));
-  const rowBatchSize = Number.parseInt(argOption('batch-size', '40'), 10);
-  const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
+  const rowBatchSize = optOrDie(positiveInt, 'batch-size', '40'); // 0 would re-send the SAME paid batch forever
+  const maxDiffChars = optOrDie(positiveInt, 'max-diff-chars', '600000');
   const force = hasFlag('force');
   if (!fs.existsSync(srcPath)) { log(`No blind sheet at ${path.relative(process.cwd(), srcPath)} — run merge first.`); process.exit(1); }
+  const recipientPolicy = policyOrDie(); // the full diff of every sheet commit goes to GPT
 
-  const { header, rows } = readBlindSheet(srcPath);
+  const { header, rows, records } = readBlindSheet(srcPath);
   const iLabel = header.indexOf('label'), iProof = header.indexOf('proof'), iCluster = header.indexOf('cluster'), iMatches = header.indexOf('matches'), iPattern = header.indexOf('pattern');
-  const rawLines = fs.readFileSync(srcPath, 'utf8').split(/\r?\n/).filter(Boolean).slice(1);
 
   // RESUME (crash/interruption safety — found live: a session restart killed
   // this process mid-run and the ONLY-write-at-the-end version lost 12 fully-
   // graded commits' worth of real spend). Seed gradingByBlindId from any prior
   // partial output at outPath; every commit checkpoints as it finishes below,
   // so a killed process never loses more than its in-flight commit.
-  const gradingByBlindId = new Map();
-  if (fs.existsSync(outPath) && !force) {
-    const priorLines = fs.readFileSync(outPath, 'utf8').split(/\r?\n/).filter(Boolean);
-    const priorHeader = priorLines[0].split(',');
-    const pc = Object.fromEntries(['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern'].map((n) => [n, priorHeader.indexOf(n)])); const priorRows = priorLines.slice(1).map((line) => { const c = parseCsvLine(line); return { blindId: c[pc.blind_id], commit: c[pc.commit], severity: c[pc.severity], category: c[pc.category], file: c[pc.file], detail: c[pc.detail], label: c[pc.label], proof: c[pc.proof], cluster: c[pc.cluster], matches: c[pc.matches], pattern: c[pc.pattern] }; });
-    const seeded = seedResumedGrades(priorRows, rows); for (const [k, v] of seeded.grades) gradingByBlindId.set(k, v); // blind ids renumber on re-merge: keep a grade only for the SAME row content
-    if (seeded.discarded) log(`  ⚠ ${seeded.discarded} prior grade(s) discarded — their blind_id now names different content (re-merge renumbered); re-grading.`);
-    if (gradingByBlindId.size) log(`Resuming — ${gradingByBlindId.size} row(s) already graded in ${path.relative(process.cwd(), outPath)} (use --force to re-grade everything)`);
-  }
-
   const { createOpenAIClient } = await import('./lib/openai-client.mjs');
   const { zodTextFormat } = await import('openai/helpers/zod');
   try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
@@ -1973,7 +1935,24 @@ async function cmdJudgeGpt() {
   const client = await createOpenAIClient({ purpose: 'gpt' });
 
   const kdPath = path.join('docs/experiments/audit-effectiveness/known-defects.json');
-  const knownDefects = fs.existsSync(kdPath) ? (JSON.parse(fs.readFileSync(kdPath, 'utf8')).defects || []) : [];
+  const kdText = fs.existsSync(kdPath) ? fs.readFileSync(kdPath, 'utf8') : '';
+  const knownDefects = kdText ? (JSON.parse(kdText).defects || []) : [];
+
+  // A grade depends on the judge MODEL and the known-defect rubric it was shown, neither of which is in the row content
+  // seedResumedGrades fingerprints — recorded beside the output so a resume under a different judge re-grades.
+  const metaPath = `${outPath}.meta.json`;
+  const judgeIdentity = { model: gptModel, knownDefectsSha256: sha256hex(kdText) };
+  const gradingByBlindId = new Map();
+  if (fs.existsSync(outPath) && !force) {
+    const [priorHeader = [], ...priorRecords] = parseCsv(fs.readFileSync(outPath, 'utf8'));
+    const pc = Object.fromEntries(['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern'].map((n) => [n, priorHeader.indexOf(n)])); const priorRows = priorRecords.map((c) => ({ blindId: c[pc.blind_id], commit: c[pc.commit], severity: c[pc.severity], category: c[pc.category], file: c[pc.file], detail: c[pc.detail], label: c[pc.label], proof: c[pc.proof], cluster: c[pc.cluster], matches: c[pc.matches], pattern: c[pc.pattern] }));
+    let meta = null; try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch { /* legacy output or unreadable */ }
+    const same = judgeResumeIdentity(meta, judgeIdentity);
+    if (same.note) log(`  ⚠ ${same.note}${same.ok ? '' : '; re-grading everything.'}`);
+    const seeded = same.ok ? seedResumedGrades(priorRows, rows) : { grades: new Map(), discarded: 0 }; for (const [k, v] of seeded.grades) gradingByBlindId.set(k, v); // blind ids renumber on re-merge: keep a grade only for the SAME row content
+    if (seeded.discarded) log(`  ⚠ ${seeded.discarded} prior grade(s) discarded — their blind_id now names different content (re-merge renumbered); re-grading.`);
+    if (gradingByBlindId.size) log(`Resuming — ${gradingByBlindId.size} row(s) already graded in ${path.relative(process.cwd(), outPath)} (use --force to re-grade everything)`);
+  }
 
   const byCommit = new Map();
   for (const r of rows) { if (!byCommit.has(r.commit)) byCommit.set(r.commit, []); byCommit.get(r.commit).push(r); }
@@ -1982,18 +1961,19 @@ async function cmdJudgeGpt() {
   /** Write the current gradingByBlindId state to outPath — called after EVERY
    * commit so a kill/restart never loses more than the in-flight commit. */
   const writeCheckpoint = () => {
-    const lines = [header.join(',')];
+    const lines = [csvLine(header)];
     let ungradedNow = 0;
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       const g = gradingByBlindId.get(r.blindId);
-      const cells = parseCsvLine(rawLines[i]);
+      const cells = [...records[i]];
       if (g) {
         cells[iLabel] = g.label || ''; cells[iProof] = g.proof || ''; cells[iCluster] = g.cluster || `${r.commit}:${r.blindId}`;
         cells[iMatches] = g.matches || ''; cells[iPattern] = g.pattern || '';
       } else ungradedNow++;
-      lines.push(cells.map(csvField).join(','));
+      lines.push(csvLine(cells));
     }
+    atomicWriteFileSync(metaPath, JSON.stringify(judgeIdentity)); // meta first: a crash between the two leaves a NEW identity beside OLD grades, which a resume re-grades, never trusts
     atomicWriteFileSync(outPath, lines.join('\n') + '\n');
     return ungradedNow;
   };
@@ -2006,6 +1986,8 @@ async function cmdJudgeGpt() {
     }
     const root = locateCommit(shortSha);
     if (!root) { log(`  ${shortSha}: NOT FOUND in any repo root — ${commitRows.length} row(s) left ungraded`); failedCommits.push(shortSha); continue; }
+    const refused = refusedFor([gptModel], root, recipientPolicy);
+    if (refused) { log(`  ${shortSha}: POLICY REFUSED (${refused}) — ${commitRows.length} row(s) left ungraded, diff not sent`); failedCommits.push(shortSha); continue; }
     let ext;
     try { ext = extractDiff(root, shortSha); }
     catch (err) {
@@ -2025,8 +2007,10 @@ async function cmdJudgeGpt() {
       const rowsBatch = commitRows.slice(i, i + rowBatchSize);
       try {
         const { gradings } = await runGptJudgeBatch(client, zodTextFormat, gptModel, { shortSha, diff: ext.diff, kdBlock, rowsBatch, reasoning: 'high' });
-        for (const g of gradings) gradingByBlindId.set(g.blind_id, qualifyBatchCluster(g, shortSha, i / rowBatchSize));
-        graded += gradings.length;
+        const { valid, rejected } = validateGradings(gradings, rowsBatch.map((r) => r.blindId));
+        if (rejected.length) log(`      ! judge returned ${rejected.length} grading(s) for ids outside this batch or repeated (${rejected.slice(0, 4).join(', ')}) — ignored`);
+        for (const g of valid) gradingByBlindId.set(g.blind_id, qualifyBatchCluster(g, shortSha, i / rowBatchSize));
+        graded += valid.length;
       } catch (err) {
         log(`      ! judge batch failed for ${shortSha} rows ${i}-${i + rowsBatch.length}: ${String(err?.message).slice(0, 160)}`);
       }
@@ -2296,7 +2280,7 @@ async function cmdMerge() {
   const header = ['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern'];
   const lines = [header.join(',')];
   for (const b of blind) {
-    lines.push([b.blindId, b.commit.slice(0, 8), b.severity, b.category, b.file, b.detail, '', '', b.proposedCluster, b.kdHint || '', ''].map(csvField).join(','));
+    lines.push(csvLine([b.blindId, b.commit.slice(0, 8), b.severity, b.category, b.file, b.detail, '', '', b.proposedCluster, b.kdHint || '', '']));
   }
   fs.mkdirSync(OUT_DIR, { recursive: true });
   atomicWriteFileSync(BLIND_CSV, lines.join('\n') + '\n');
@@ -2329,17 +2313,12 @@ async function cmdMerge() {
 async function cmdScore() {
   if (!fs.existsSync(BLIND_CSV) || !fs.existsSync(BLIND_MAP)) { log('Run `merge` and label the CSV first.'); process.exit(1); }
   const { map, commits, knownDefects = [], armMeta = {}, lowVolumeByArm = {}, mediumSampleMeta = null } = JSON.parse(fs.readFileSync(BLIND_MAP, 'utf8'));
-  const csv = fs.readFileSync(BLIND_CSV, 'utf8').split(/\r?\n/).filter(Boolean);
-  const header = csv[0].split(',');
+  const [header = [], ...csvRecords] = parseCsv(fs.readFileSync(BLIND_CSV, 'utf8'));
   const col = (n) => header.indexOf(n);
   const iId = col('blind_id'), iLabel = col('label'), iCluster = col('cluster'), iMatches = col('matches'), iProof = col('proof'), iPattern = col('pattern');
-
-  // Simple quoted-CSV parse.
-  const parseRow = (line) => {
-    const out = []; let cur = '', q = false;
-    for (const ch of line) { if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; }
-    out.push(cur); return out;
-  };
+  // The sheet and the private map are only meaningful as a PAIR — refuse before reading a single label if they are not.
+  const pairing = sheetPairingProblems(map, csvRecords.map((c) => ({ blindId: c[iId], commit: c[col('commit')], severity: c[col('severity')], category: c[col('category')] })));
+  if (pairing.length) { log(`REFUSING to score: the blind sheet and .blind-map.json are not a pair:\n  ${pairing.join('\n  ')}\n  (re-run merge, or restore the deleted rows — an unfinished sheet must not score as complete)`); process.exit(4); }
 
   const VALID = new Set(['proven', 'actionable', 'plausible', 'false']);
   // Split by sheetTier: 'auto'/'kd-candidate' are EXHAUSTIVE (every cluster on the
@@ -2352,8 +2331,7 @@ async function cmdScore() {
   const patternGroups = new Map(); // pattern tag -> [{blindId, commit, arm}]
   let unlabeled = 0, invalid = 0, dataRows = 0;
   const highNeedingProof = [];
-  for (let i = 1; i < csv.length; i++) {
-    const cols = parseRow(csv[i]);
+  for (const cols of csvRecords) {
     const blindId = cols[iId];
     const m = map[blindId];
     if (!m) continue;
@@ -2454,7 +2432,7 @@ async function cmdScore() {
       caveat: 'Parallel frozen-diff — apparatus-unique value is an UPPER BOUND on external marginal value (in prod, a solo review would fix bugs before the apparatus saw the diff).',
     },
   };
-  process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+  process.stdout.write(JSON.stringify(report, null, 2) + '\n'); // main() drains stdout before it exits — a piped report must not truncate
   log('\nInterpretation (§12.2): an eligible solo arm with `matchesApparatus:true` at lower cost puts the apparatus on notice; '
     + 'ineligible (FP/noise ceiling) or under-recall on known defects → the apparatus earns its keep. Compare S-fable vs S-sonnet for the cost frontier.');
 }
@@ -2478,7 +2456,7 @@ async function main() {
     log(`FATAL: ${err?.stack || err?.message || err}`);
     process.exit(1);
   }
-  process.exit(0);
+  await finishAndExit(0);
 }
 
 // Guarded so tests can `import` this module for `_internals` (pure helpers

@@ -18,7 +18,7 @@
     "scripts/lib/upstream/commands.mjs": 1090,
     "scripts/openai-audit.mjs": 1321,
     "scripts/setup-postgres.mjs": 1372,
-    "scripts/solo-control-audit.mjs": 2495,
+    "scripts/solo-control-audit.mjs": 2473,
     "scripts/symbol-index/extract.mjs": 1219,
     "scripts/sync-to-repos.mjs": 1916
   }
