@@ -57,6 +57,8 @@ nothing when this alias already has a newer valid export. Three ways to run it, 
   left uncommitted or unpushed is delivered first.
 - **By hand**, whenever.
 
+Use an ABSOLUTE `TELEMETRY_DROP_DIR`: the exporter resolves a relative one against the directory it runs in and the doctor against the repo root.
+
 `doctor` reports freshness: `machine/telemetry-export` is `not_applicable` when nothing is configured, and when
 configured it separates *export overdue* (the newest valid export is older than a weekly cadence plus a day),
 *never exported*, *only rejected files*, and *could not read the drop* — four different facts, none standing in for

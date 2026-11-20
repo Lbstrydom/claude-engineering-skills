@@ -25,6 +25,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { validateExport } from './schema.mjs';
+import { assertExportClean } from './redact.mjs';
 
 const ALIAS_RE = /^[a-z0-9-]{1,32}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -157,13 +159,40 @@ export function pushPending({ dropDir, alias, exec = execFileSync }) {
   const top = String(git(['rev-parse', '--show-toplevel']) ?? '').trim();
   if (!top || fs.realpathSync(top) !== root) throw new Error('deliver: --push needs the drop directory to be the root of its own Git work tree');
 
-  const dirty = String(git(['status', '--porcelain', '--', `${alias}/`]) ?? '').trim() !== '';
-  let ahead = false;
-  try { ahead = Number(String(git(['rev-list', '--count', '@{u}..HEAD']) ?? '0').trim()) > 0; } catch { ahead = false; }   // no upstream: nothing known to be unpushed
-  if (!dirty && !ahead) return { pending: false, pushed: false };
-  if (dirty) {
-    git(['add', '--', `${alias}/`]);
-    git(['commit', '-q', '-m', `telemetry export ${alias} (retry of an undelivered export)`, '--', `${alias}/`]);
+  const pathRe = new RegExp(String.raw`^${alias}/\d{4}-\d{2}-\d{2}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`);
+
+  // 1. Uncommitted files in this alias's directory. ONLY validated exports may ride along: a stray file here would
+  //    otherwise be committed and pushed without ever meeting the schema or the redaction check, so anything else
+  //    (an unrelated file, a hand-edited export) stops the retry rather than being swept in.
+  const status = String(git(['status', '--porcelain=v1', '-z', '-uall', '--', `${alias}/`]) ?? '');
+  const dirtyPaths = status.split('\0').filter(Boolean).map((e) => e.slice(3));
+  for (const p of dirtyPaths) {
+    if (!pathRe.test(p)) throw new Error(`deliver: refusing to stage "${p.split('/').pop()}" — not a telemetry export (retry stopped; nothing was staged)`);
+    let doc;
+    try { doc = JSON.parse(fs.readFileSync(path.join(root, ...p.split('/')), 'utf8')); } catch { throw new Error(`deliver: "${p.split('/').pop()}" is not valid JSON (retry stopped)`); }
+    const v = validateExport(doc);
+    if (!v.ok || v.doc.consumerAlias !== alias) throw new Error(`deliver: "${p.split('/').pop()}" does not validate as an export of this alias (retry stopped)`);
+    assertExportClean(v.doc);   // throws ExportRefusedError (category only)
+  }
+
+  // 2. Commits already made but not pushed. An unavailable upstream is an UNKNOWN delivery state, not "nothing ahead"
+  //    (assuming zero would silently strand an export whose push failed for want of an upstream), and only commits
+  //    that touch nothing but this alias's exports may be pushed on its behalf.
+  let ahead = 0;
+  try {
+    ahead = Number(String(git(['rev-list', '--count', '@{u}..HEAD']) ?? '0').trim());
+  } catch {
+    throw new Error('deliver: cannot tell whether earlier exports were pushed (no upstream configured?) — set one, then retry');
+  }
+  if (ahead > 0) {
+    const touched = String(git(['diff', '--name-only', '-z', '@{u}..HEAD']) ?? '').split('\0').filter(Boolean);
+    const stray = touched.find((p) => !pathRe.test(p));
+    if (stray) throw new Error(`deliver: an unpushed commit touches "${stray}", which is not one of this alias's exports — refusing to push it on the exporter's behalf`);
+  }
+  if (dirtyPaths.length === 0 && ahead === 0) return { pending: false, pushed: false };
+  if (dirtyPaths.length > 0) {
+    git(['add', '--', ...dirtyPaths]);
+    git(['commit', '-q', '-m', `telemetry export ${alias} (retry of an undelivered export)`, '--', ...dirtyPaths]);
   }
   git(['push']);
   return { pending: true, pushed: true };
