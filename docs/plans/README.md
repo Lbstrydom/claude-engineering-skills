@@ -29,7 +29,6 @@ This is the list to read when asking "what is in flight?".
 | [fleet — defects from two work consumers' November feedback](./fleet-work-consumer-feedback-nov.md) | `In Progress` | implemented on branch `claude/nostalgic-nobel-101150`, PR pending |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
 | [Harness Retro — promote recurring session failures into enforcement](./harness-retro.md) | `In Progress` |  |
-| [Python indexing for architectural memory](./python-arch-memory-indexing.md) | `In Progress` |  |
 | [render-mermaid must not overwrite a tracked architecture map](./render-mermaid-tracked-output-guard.md) | `Draft` |  |
 | [Sashiko-inspired audit improvements (audit --resume, contested-finding verification, defect corpus)](./sashiko-audit-improvements.md) | `Approved` | plan audit closed 2026-11-19; implementation waits for the coordinator's go |
 | [Ship-batch per-member outcomes, and rollup landing (PR B)](./ship-batch-member-outcomes.md) | `In Progress` |  |
@@ -283,6 +282,7 @@ source comments that no docs linter sees — stays valid.
 | [Consumer pre-push hook: bounded, visible, fail-closed steps (hook v11)](./prepush-hook-bounded-steps.md) | `Complete` | shipped in #284 (status reconciled against merged PRs 2026-10-25) |
 | [Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed.md) | `Complete` | shipped in #225 (status reconciled against merged PRs 2026-10-25) |
 | [Git-Native Provenance Trailers (F1) + Executable Gate-Honesty Suite (F2)](./provenance-trailers-and-gate-honesty.md) | `Complete` | implemented via `/cycle --autonomous`… |
+| [Python indexing for architectural memory](./python-arch-memory-indexing.md) | `Complete` |  |
 | [Quickfix Mechanical Blind-Spot Patterns](./quickfix-blindspot-patterns.md) | `Complete` | plan-audit (3 GPT rounds + 4 Gemini rounds) converged as documented below; implemented… |
 | [Adaptive Audit Intelligence — Efficiency, Learning, and Continuous Improvement](./r2-efficiency.md) | `Complete` | shipped — R2+ mode is the canonical audit re-run path: `R2_ROUND_MODIFIER` + `buildRulingsBlock` in… |
 | [Reconcile attribution, coverage honesty, and base freshness](./reconcile-attribution-and-base-freshness.md) | `Complete` | shipped across `b0cc72e7` (attribution + coverage) and `5bf80dea` (`--apply` repair path); the §7b close-out… |

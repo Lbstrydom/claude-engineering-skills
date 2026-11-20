@@ -1,6 +1,6 @@
 # Plan: Python indexing for architectural memory
 - **Date**: 2026-11-20
-- **Status**: In Progress
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`; the change adds a Python *target* language, not a Python codebase)
 - **Target domain(s)**: `arch-memory`, `shared-lib`
@@ -474,7 +474,17 @@ time.
   - **The coverage universe excludes `.py` files the gate refuses.** The e2e test caught `secrets/creds.py` being
     *named* in `coverage.samples.uncruised`. A refused file is never read, so per the §2.1.1 clause it is neither
     counted nor named. This is scoped to Python: JS files are still cruised by dep-cruiser, which is unchanged.
+- **Code audit** (6 rounds, cap reached; final gate `approve_with_debt` with 0 blocking findings): see
+  [python-arch-memory-indexing-audit-summary.md](python-arch-memory-indexing-audit-summary.md). Changes driven by
+  the audit:
+  - the reader became open-then-verify, with a descriptor-path binding on Linux and a stat sandwich elsewhere;
+  - the protocol accepts only the in-flight id;
+  - the helper finds nested and decorated definitions and slices lines the way Python counts them;
+  - `__all__` is trusted only on a single mention;
+  - the Python sync banner is ASCII and keeps BOM and cookie positions.
 - **Follow-ups (independent of this change, for the coordinator):**
+  - Decide on the non-Linux residual admission race (accept it, or make Python indexing Linux-only). See the audit
+    summary.
   - The `/audit-code` duplication wave filters candidates with its own JS-only regex
     (`lib/audit/duplication-detector.mjs:60`), so Python is not yet duplicate-checked there.
   - The ts-morph admission-to-read race (§8).
