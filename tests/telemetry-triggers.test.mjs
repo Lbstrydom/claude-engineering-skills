@@ -270,13 +270,28 @@ describe('throttle audit round 1: it must really read nothing, deliver what is p
       assert.match(git(remote, 'log', '--oneline', '--all'), /retry of an undelivered export/);
     });
 
-    it('a COMMITTED-BUT-UNPUSHED recent export is pushed', async () => {
+    it('a COMMITTED-BUT-UNPUSHED export is NOT pushed on the exporter\'s behalf: reported (exit 1), remote unchanged', async () => {
       const { remote, drop } = gitDrop();
       await put(drop, { ageMs: 3_600_000 });
       git(drop, 'add', '.'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'local only');
+      const before = git(remote, 'rev-list', '--all', '--count');
       const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
-      assert.equal(r.status, 0, r.stderr);
-      assert.match(git(remote, 'log', '--oneline', '--all'), /local only/);
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /committed but not pushed/);
+      assert.equal(git(remote, 'rev-list', '--all', '--count'), before);
+    });
+
+    it('a FRESH export on top of unpushed history is refused BEFORE it is written (a push would publish the ancestors too)', async () => {
+      const { remote, drop } = gitDrop();
+      fs.mkdirSync(path.join(drop, 'acme'));
+      fs.writeFileSync(path.join(drop, 'other.txt'), 'unrelated unpushed work');
+      git(drop, 'add', '.'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'unrelated');
+      const before = git(remote, 'rev-list', '--all', '--count');
+      const r = run(['--alias', 'acme', '--drop-dir', drop], pushEnv);
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /committed but not pushed/);
+      assert.deepEqual(fs.readdirSync(path.join(drop, 'acme')), [], 'no export was written');
+      assert.equal(git(remote, 'rev-list', '--all', '--count'), before);
     });
 
     it('CONTROL — nothing pending: it skips and makes no commit', async () => {
@@ -315,7 +330,7 @@ describe('throttle audit round 1: it must really read nothing, deliver what is p
       assert.equal(pushed.filter((n) => n.startsWith('acme/')).length, 1, 'only the fresh valid export was delivered');
     });
 
-    it('an unpushed commit that touches anything but this alias\'s exports is not pushed on its behalf', async () => {
+    it('an unpushed commit that touches anything at all is not pushed on the exporter\'s behalf', async () => {
       const { remote, drop } = gitDrop();
       await put(drop, { ageMs: 3_600_000 });
       git(drop, 'add', '.'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'exports');
@@ -325,7 +340,7 @@ describe('throttle audit round 1: it must really read nothing, deliver what is p
       const before = git(remote, 'rev-list', '--all', '--count');
       const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
       assert.equal(r.status, 1);
-      assert.match(r.stderr, /not one of this alias's exports/);
+      assert.match(r.stderr, /committed but not pushed/);
       assert.equal(git(remote, 'rev-list', '--all', '--count'), before);
     });
 
