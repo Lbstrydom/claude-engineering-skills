@@ -78,5 +78,7 @@ describe('interpretUpstreamStdout', () => {
     assert.deepEqual(interpretUpstreamStdout(line({ ok: true, rows: [] })), { ok: true, rows: [], reason: null });
     assert.equal(interpretUpstreamStdout(line({ ok: true, cloud: false })).reason, 'cloud-off');
     assert.equal(interpretUpstreamStdout('banner only\n').reason, 'no-envelope-in-output');
+    // A truncated line is malformed, not a spawn failure.
+    assert.equal(interpretUpstreamStdout('{"ok":tru\n').reason, 'malformed-envelope');
   });
 });

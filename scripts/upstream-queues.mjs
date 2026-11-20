@@ -89,7 +89,8 @@ export function interpretUpstreamStdout(out) {
   // env/config banners it writes to stdout.
   const line = out.trim().split('\n').filter((l) => l.trim().startsWith('{')).pop();
   if (!line) return { ok: false, rows: [], reason: 'no-envelope-in-output' };
-  const env = JSON.parse(line);
+  let env;
+  try { env = JSON.parse(line); } catch { return { ok: false, rows: [], reason: 'malformed-envelope' }; }
   if (!env.ok) {
     return { ok: false, rows: [], reason: stdoutNamesUnreachableStore(line) ? 'store-unreachable' : (env.error?.code || 'query-failed') };
   }
