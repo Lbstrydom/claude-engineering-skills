@@ -366,15 +366,28 @@ export function assertAttributionExhaustive(coverage, persistedEdges) {
  * @returns {string|null}
  */
 export function emptyIndexWarning({ symbolCount, mode, trackedFiles, indexedExtensions }) {
-  if (mode !== 'full' || symbolCount !== 0 || !Array.isArray(trackedFiles) || trackedFiles.length === 0) return null;
+  if (mode !== 'full' || symbolCount !== 0) return null;
+  // Git could not enumerate the tree: say the check is incomplete rather than
+  // pass over it as if the tree were empty.
+  if (trackedFiles === null || trackedFiles === undefined) {
+    return 'published an index with 0 symbols, and could not list tracked files to tell whether that is expected. '
+      + 'get-neighbourhood will compare nothing here — an empty lookup is NOT "no similar code".';
+  }
+  if (!Array.isArray(trackedFiles) || trackedFiles.length === 0) return null;
+  const indexed = new Set(indexedExtensions.map((e) => e.toLowerCase()));
   const byExt = new Map();
+  let readable = 0;
   for (const f of trackedFiles) {
     const ext = path.extname(String(f)).toLowerCase() || '(none)';
     byExt.set(ext, (byExt.get(ext) ?? 0) + 1);
+    if (indexed.has(ext)) readable++;
   }
   const top = [...byExt.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 5)
     .map(([e, n]) => `${e} ${n}`).join(', ');
-  return `published an index with 0 symbols over ${trackedFiles.length} tracked file(s) (top extensions: ${top}). `
-    + `This repo's languages are not indexed (readable: ${indexedExtensions.join(' ')}), so get-neighbourhood will `
-    + 'compare nothing here — an empty lookup is NOT "no similar code".';
+  const head = `published an index with 0 symbols over ${trackedFiles.length} tracked file(s) (top extensions: ${top}). `;
+  const tail = 'get-neighbourhood will compare nothing here — an empty lookup is NOT "no similar code".';
+  // Only name a cause the evidence supports.
+  return readable === 0
+    ? `${head}None has an extension the index reads (${indexedExtensions.join(' ')}), so this repo's languages are not indexed. ${tail}`
+    : `${head}${readable} are of a type the index reads, yet no symbol was extracted — check the extraction output above. ${tail}`;
 }

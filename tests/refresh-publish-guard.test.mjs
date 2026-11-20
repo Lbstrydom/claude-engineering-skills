@@ -404,3 +404,27 @@ describe('makeGitRunner — one retry for a timed-out spawn', () => {
     assert.equal(isSpawnTimeout(null), false);
   });
 });
+
+describe('git failing is not a missing ref (beyond timeouts)', () => {
+  const FATAL = { status: 128, stdout: '', stderr: 'fatal: not a git repository' };
+  const failingRunner = (failOn, res) => (dir) => (args) => (args.join(' ').includes(failOn) ? res : runnerFor(dir)(args));
+
+  it('rev-parse exiting 128 is git-exec-failed, not default-branch-unresolvable', () => {
+    const dir = mainRepo('publish-guard-128-');
+    try {
+      const r = assessPublishEligibility({ run: failingRunner('refs/heads/main', FATAL)(dir) });
+      assert.equal(r.reason, 'git-exec-failed');
+      assert.match(r.detail, /exit 128/);
+    } finally { rm(dir); }
+  });
+
+  it('a signal kill says it was killed (and to retry), distinct from the timeout wording', () => {
+    const dir = mainRepo('publish-guard-kill-');
+    try {
+      const r = assessPublishEligibility({ run: failingRunner('refs/heads/main', { error: null, signal: 'SIGKILL', status: null })(dir) });
+      assert.equal(r.reason, 'git-exec-failed');
+      assert.match(r.detail, /killed by SIGKILL/);
+      assert.match(r.detail, /retry/);
+    } finally { rm(dir); }
+  });
+});

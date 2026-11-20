@@ -97,13 +97,13 @@ import { runExtractSummariseEmbed } from './refresh-subprocess.mjs';
 import { checkRefreshPublishEligibility, skipReasonFor, ALLOW_BRANCH_PUBLISH_ENV } from './refresh-publish-guard.mjs';
 
 function logErr(s) { process.stderr.write(`  [refresh] ${s}\n`); }
-/** Tracked paths, best-effort: only feeds a WARNING, so a failure means no warning. */
+/** Tracked paths, or `null` when git could not enumerate them (unknown ≠ empty tree). */
 function listTrackedFiles(repoRoot) {
   try {
     return execFileSync('git', ['ls-files', '-z'], {
       cwd: repoRoot, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, windowsHide: true, timeout: 30000,
     }).split('\0').filter(Boolean);
-  } catch { return []; }
+  } catch { return null; }
 }
 
 function logOk(s) { process.stderr.write(`  [refresh] ${s}\n`); }

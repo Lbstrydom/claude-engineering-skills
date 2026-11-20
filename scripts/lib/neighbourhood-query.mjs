@@ -158,16 +158,21 @@ const EMPTY_UNIVERSE_HINT =
 
 /**
  * The coverage verdict of the snapshot being searched, or `null` when the caller
- * did not wire a reader (nothing asked, nothing claimed). A snapshot with no
- * stored measurement reads `unknown`/`not_measured` — never a clean verdict.
+ * did not wire a reader. Never `null` any more: an unwired reader and a snapshot with no
+ * stored measurement both read `unknown` — never a clean verdict.
  *
  * @param {{getGraphCoverage?: Function}} adapters
  * @param {{refreshId: string}} active
  * @param {{id: string}} repoRow
- * @returns {Promise<{status: string, reason: string|null, eligible: number|null}|null>}
+ * @returns {Promise<{status: string, reason: string|null, eligible: number|null}>}
  */
 export async function snapshotCoverage(adapters, active, repoRow) {
-  if (typeof adapters.getGraphCoverage !== 'function') return null;
+  // Not wired = the coverage question was never asked, which must read as
+  // UNKNOWN, not as absence of a problem: an empty result with no verdict at all
+  // is byte-identical to a fully indexed repo with nothing similar.
+  if (typeof adapters.getGraphCoverage !== 'function') {
+    return { status: 'unknown', reason: 'coverage_reader_unavailable', eligible: null };
+  }
   let cov = null;
   try {
     cov = await adapters.getGraphCoverage(active.refreshId, repoRow.id);
@@ -278,7 +283,9 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
   try {
     assertEgressSafe(safeIntent, { label: 'arch-memory:normalize-intent' });
     const { normalizeIntentToPurpose } = await import('./arch-memory/normalize-intent.mjs');
-    normalized = await normalizeIntentToPurpose(safeIntent, { repoRoot });
+    // `adapters.normalizeIntent` / `adapters.embedIntent`: test seams so the
+    // orchestrator can be driven end to end without a provider (both paid).
+    normalized = await (adapters.normalizeIntent ?? normalizeIntentToPurpose)(safeIntent, { repoRoot });
   } catch (err) {
     // A gate refusal means redact-once upstream missed something. Degrade to
     // the deterministic path rather than sending, and never throw into the
@@ -302,7 +309,7 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
   );
   let intentEmbedding = getCached(repoRoot, key, ttlMs);
   if (!intentEmbedding) {
-    const emb = await generateIntentEmbedding(
+    const emb = await (adapters.embedIntent ?? generateIntentEmbedding)(
       embedInput,
       active.activeEmbeddingModel,
       active.activeEmbeddingDim

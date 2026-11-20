@@ -48,15 +48,22 @@ function execFailed(res) {
 
 /** What a failed git call looked like, for a message the operator can act on. */
 function execFailureDetail(what, res) {
-  return isSpawnTimeout(res)
-    ? `${what} timed out (git did not answer in time — retry; this is not a missing ref)`
-    : `${what} failed`;
+  if (res?.error?.code === 'ETIMEDOUT') {
+    return `${what} timed out (git did not answer in time — retry; this is not a missing ref)`;
+  }
+  if (isSpawnTimeout(res)) {
+    return `${what} was killed by ${res.signal} before git answered (retry; this is not a missing ref)`;
+  }
+  return `${what} failed${Number.isInteger(res?.status) ? ` (exit ${res.status})` : ''}`;
 }
 
 /** `rev-parse --verify --quiet <ref>^{commit}` → {ok: true|false} | {ok: null, res} (git failed). */
 function refResolves(run, ref) {
   const res = run(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
-  if (execFailed(res)) return { ok: null, res };
+  // `--verify --quiet` exits 1 for a ref that does not exist; anything else
+  // non-zero (128: not a repository, bad object database…) is git failing, not
+  // an answer about the ref.
+  if (execFailed(res) || (res.status !== 0 && res.status !== 1)) return { ok: null, res };
   return { ok: res.status === 0 };
 }
 
