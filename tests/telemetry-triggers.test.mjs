@@ -360,7 +360,8 @@ describe('throttle audit round 1: it must really read nothing, deliver what is p
       const { remote, drop } = gitDrop();
       await put(drop, { ageMs: 3_600_000 });
       const headBefore = git(drop, 'rev-parse', 'HEAD');
-      fs.rmSync(remote, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });   // push will fail
+      // The remote is reachable and the gate passes, but it REJECTS the push: the failure happens after our commit.
+      fs.writeFileSync(path.join(remote, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
       const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
       assert.equal(r.status, 1);
       assert.equal(git(drop, 'rev-parse', 'HEAD'), headBefore, 'HEAD is back where it was');
@@ -369,7 +370,7 @@ describe('throttle audit round 1: it must really read nothing, deliver what is p
 
     it('a separate push URL, a custom fetch refspec and an ignoring .gitignore each REFUSE (a drop must be a plain clone)', async () => {
       for (const [prep, re] of [
-        [(drop) => git(drop, 'config', 'remote.origin.pushurl', 'ssh://elsewhere.example.test/drop.git'), /separate push URL/],
+        [(drop) => git(drop, 'config', 'remote.origin.pushurl', 'ssh://elsewhere.example.test/drop.git'), /pushes somewhere other than where it fetches/],
         [(drop) => git(drop, 'config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/other'), /default fetch refspec|cannot tell whether earlier exports were pushed/],   // a remapped refspec usually breaks the upstream lookup first: refused either way
         [(drop) => { fs.writeFileSync(path.join(drop, '.gitignore'), '*.json\n'); git(drop, 'add', '.gitignore'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'ignore'); git(drop, 'push', '-q'); }, /ignores exports of this name/],
       ]) {
