@@ -132,6 +132,20 @@ describe('probeStoreReachability', () => {
     assert.ok(Date.now() - t0 < 2000, 'the verdict must arrive at the deadline, not at the stalled attempt');
     assert.equal(closed, 1, 'the abandoned attempt is torn down');
   });
+  it('a teardown that itself never finishes cannot hold up the verdict', async () => {
+    const t0 = Date.now();
+    const r = await probeStoreReachability({
+      subjectRoot: '.', ...noEnv, timeoutMs: 30, teardownTimeoutMs: 50,
+      importClient: async () => ({
+        getPool: async () => ({ query: () => new Promise(() => {}) }),
+        classifyDbConnectionError,
+        closePool: () => new Promise(() => {}),   // wedged exactly like the query
+      }),
+    });
+    assert.equal(r.ok, false);
+    assert.ok(Date.now() - t0 < 2000, 'verdict bounded by connect deadline + teardown deadline');
+  });
+
   it('REAL client against a port nothing listens on: configured-but-unreachable', async () => {
     const port = await new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
     const saved = { url: process.env.AUDIT_DB_URL, ssl: process.env.AUDIT_DB_SSL_MODE };

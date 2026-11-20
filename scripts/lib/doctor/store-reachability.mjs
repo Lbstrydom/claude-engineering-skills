@@ -117,6 +117,7 @@ export function renderStoreDetail(verdict, pointer, failure = {}) {
 }
 
 const CONNECT_TIMEOUT_MS = 15_000;
+const TEARDOWN_TIMEOUT_MS = 2_000;
 
 /**
  * Make ONE bounded attempt to reach the store this repo is configured for.
@@ -133,7 +134,7 @@ const CONNECT_TIMEOUT_MS = 15_000;
  *          importClient?: () => Promise<object>, timeoutMs?: number}} deps
  * @returns {Promise<{configured: boolean, ok?: boolean, cause?: string, hint?: string}>}
  */
-export async function probeStoreReachability({ subjectRoot, loadEnv, injectResolvedDbEnv, importClient, timeoutMs = CONNECT_TIMEOUT_MS }) {
+export async function probeStoreReachability({ subjectRoot, loadEnv, injectResolvedDbEnv, importClient, timeoutMs = CONNECT_TIMEOUT_MS, teardownTimeoutMs = TEARDOWN_TIMEOUT_MS }) {
   const env = loadEnv(subjectRoot);
   injectResolvedDbEnv(env, subjectRoot);
   for (const key of ['AUDIT_DB_SSL_SERVERNAME', 'AUDIT_DB_SSL_CA']) {
@@ -158,7 +159,12 @@ export async function probeStoreReachability({ subjectRoot, loadEnv, injectResol
     // The race only bounds the VERDICT; a stalled attempt still holds its socket.
     // Close the pool so the abandoned attempt is torn down and cannot keep the
     // process alive after the verdict has been reported.
-    try { await client.closePool?.(); } catch { /* best-effort teardown */ }
+    // Teardown is itself bounded: a pool end() can wait on the very attempt that
+    // wedged, and the verdict must not wait with it.
+    await Promise.race([
+      Promise.resolve().then(() => client.closePool?.()).catch(() => {}),
+      new Promise((resolve) => { setTimeout(resolve, teardownTimeoutMs); }),
+    ]);
     return { configured: true, ok: false, cause, hint };
   } finally {
     clearTimeout(timer);
