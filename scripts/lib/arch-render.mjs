@@ -448,11 +448,15 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
       ].join('\n');
       return { markdown: md, appendixMarkdown: '', truncatedAt: 0 };
     }
-    // An indexable type, but the snapshot's own verdict says the index did not
-    // (fully) read the repo — e.g. a refresh with no Python interpreter reports
-    // every .py as unparseable. Empty is then absence of evidence too.
-    if (coverage && coverage.status !== 'verified') {
-      const why = `${coverage.status}${coverage.reason ? ` (${coverage.reason})` : ''}`;
+    // An indexable type, but nothing says the index read the repo: the
+    // snapshot's verdict is not `verified` (e.g. a refresh with no Python
+    // interpreter reports every .py as unparseable), or no verdict was passed at
+    // all — "not asked" is unknown, never clean. Only an explicitly verified
+    // snapshot earns the greenfield wording.
+    if (coverage?.status !== 'verified') {
+      const why = coverage?.status
+        ? `${coverage.status}${coverage.reason ? ` (${coverage.reason})` : ''}`
+        : 'unknown (no coverage verdict)';
       const md = [
         `> **Neighbourhood considered** — _index coverage ${escapeMarkdown(why)}_`,
         '>',

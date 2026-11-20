@@ -230,11 +230,19 @@ describe('renderNeighbourhoodCallout', () => {
     const { markdown } = renderNeighbourhoodCallout({ records: [], cloudStatus: 'error', hint: 'RPC_ERROR' });
     assert.match(markdown, /consultation failed/);
   });
-  it('empty records emits "No near-duplicates found"', () => {
+  it('empty records over a verified snapshot emits "No near-duplicates found"', () => {
     const { markdown } = renderNeighbourhoodCallout({
       records: [], cloudStatus: 'ok', targetPaths: ['x.mjs'],
+      coverage: { status: 'verified', reason: null, eligible: 10 },
     });
     assert.match(markdown, /No near-duplicates found/);
+  });
+
+  it('empty records with NO coverage verdict is unknown, never greenfield', () => {
+    const { markdown } = renderNeighbourhoodCallout({ records: [], cloudStatus: 'ok', targetPaths: ['x.mjs'] });
+    assert.doesNotMatch(markdown, /greenfield|No near-duplicates found/i);
+    assert.match(markdown, /unknown \(no coverage verdict\)/);
+    assert.match(markdown, /absence of evidence/i);
   });
   // ── unindexed file types — absence of evidence vs evidence of absence ────
   //
@@ -284,9 +292,10 @@ describe('renderNeighbourhoodCallout', () => {
     assert.match(markdown, /greenfield/i);
   });
 
-  it('empty records for an INDEXED path still says greenfield (no false alarm)', () => {
+  it('empty records for an INDEXED path over a verified snapshot still says greenfield (no false alarm)', () => {
     const { markdown } = renderNeighbourhoodCallout({
       records: [], cloudStatus: 'ok', targetPaths: ['lib/x.mjs'],
+      coverage: { status: 'verified', reason: null, eligible: 10 },
     });
     assert.match(markdown, /greenfield/i);
     assert.doesNotMatch(markdown, /not indexed/i);
