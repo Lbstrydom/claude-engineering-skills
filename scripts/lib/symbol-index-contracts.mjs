@@ -86,6 +86,13 @@ export const NeighbourhoodResultSchema = z.object({
   // `false` = the store is connected but this repo has no row in it (distinct
   // from `cloud:false`, store offline). Absent = registered / not asked.
   repoRegistered: z.boolean().optional(),
+  // The active snapshot's coverage verdict, so an index that could not read this
+  // repo never looks like "checked, nothing similar". Absent = not asked.
+  coverage: z.object({
+    status: z.string(),
+    reason: z.string().nullable(),
+    eligible: z.number().int().nonnegative().nullable(),
+  }).optional(),
   refreshId: z.string().uuid().nullable(),
   records:   z.array(ScoredSymbolRecordSchema),
   totalCandidatesConsidered: z.number().int().nonnegative(),

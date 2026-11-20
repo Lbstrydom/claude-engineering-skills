@@ -155,6 +155,7 @@ and exit 0, because the next incremental refresh anchors on whatever was
 published last and copies forward the symbols of files its diff does not touch.
 A branch snapshot made that anchor a commit `main` never had, and stale symbols
 survived as false duplicate clusters. Guard: `refresh-publish-guard.mjs`.
+When the guard cannot decide, the skip names the real cause instead: `git-exec-failed` (git did not answer in time — a timeout; retry), `default-branch-unresolvable` (no such default branch), `head-unresolvable`. A timed-out git probe is retried once.
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|

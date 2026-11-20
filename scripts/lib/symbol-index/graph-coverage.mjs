@@ -347,3 +347,47 @@ export function assertAttributionExhaustive(coverage, persistedEdges) {
   const expected = Number.isFinite(persistedEdges) ? persistedEdges : 0;
   return { ok: actual === expected, expected, actual };
 }
+
+/**
+ * The warning a full refresh owes when it PUBLISHED AN INDEX WITH NO SYMBOLS over
+ * a tracked tree that is not empty. Such a refresh exits cleanly, embeds nothing
+ * and publishes an active snapshot — which reads as a successful run, while every
+ * later `get-neighbourhood` compares nothing. The cause is the repo's languages
+ * not being indexed, and only the refresh can say so at the moment it learns it.
+ *
+ * Pure. Full runs only: an incremental run can legitimately touch no indexable
+ * file. Returns `null` when no warning is owed.
+ *
+ * @param {object} p
+ * @param {number} p.symbolCount           symbols the refresh published
+ * @param {string} p.mode                  'full' | 'incremental'
+ * @param {string[]} p.trackedFiles        repo-relative tracked paths
+ * @param {readonly string[]} p.indexedExtensions  extensions the index can read (e.g. `.ts`)
+ * @returns {string|null}
+ */
+export function emptyIndexWarning({ symbolCount, mode, trackedFiles, indexedExtensions }) {
+  if (mode !== 'full' || symbolCount !== 0) return null;
+  // Git could not enumerate the tree: say the check is incomplete rather than
+  // pass over it as if the tree were empty.
+  if (trackedFiles === null || trackedFiles === undefined) {
+    return 'published an index with 0 symbols, and could not list tracked files to tell whether that is expected. '
+      + 'get-neighbourhood will compare nothing here — an empty lookup is NOT "no similar code".';
+  }
+  if (!Array.isArray(trackedFiles) || trackedFiles.length === 0) return null;
+  const indexed = new Set(indexedExtensions.map((e) => e.toLowerCase()));
+  const byExt = new Map();
+  let readable = 0;
+  for (const f of trackedFiles) {
+    const ext = path.extname(String(f)).toLowerCase() || '(none)';
+    byExt.set(ext, (byExt.get(ext) ?? 0) + 1);
+    if (indexed.has(ext)) readable++;
+  }
+  const top = [...byExt.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 5)
+    .map(([e, n]) => `${e} ${n}`).join(', ');
+  const head = `published an index with 0 symbols over ${trackedFiles.length} tracked file(s) (top extensions: ${top}). `;
+  const tail = 'get-neighbourhood will compare nothing here — an empty lookup is NOT "no similar code".';
+  // Only name a cause the evidence supports.
+  return readable === 0
+    ? `${head}None has an extension the index reads (${indexedExtensions.join(' ')}), so this repo's languages are not indexed. ${tail}`
+    : `${head}${readable} are of a type the index reads, yet no symbol was extracted — check the extraction output above. ${tail}`;
+}

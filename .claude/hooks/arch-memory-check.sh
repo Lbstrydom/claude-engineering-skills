@@ -232,6 +232,10 @@ node -e '
       // "checked, nothing similar" — nothing was compared.
       out.push("> Cloud store connected, but this repo is not registered in it — nothing was compared.");
       out.push("> Index it with `node " + process.env.REFRESH_CLI + "`; until then do not read this as \"no similar code\".");
+    } else if (records.length === 0 && r.coverage && r.coverage.status !== "verified") {
+      // The index could not vouch for this repo: an empty list is not an answer.
+      out.push("> Index coverage is " + r.coverage.status + (r.coverage.reason ? " (" + r.coverage.reason + ")" : "") + " — nothing reliable was compared. " + (r.hint || ""));
+      out.push("> Do NOT read this as greenfield; search the repo directly before writing new code.");
     } else if (records.length === 0) {
       const hint = r.hint ? " " + r.hint : "";
       out.push("> No near-duplicates in symbol-index for this intent." + hint);
