@@ -9,8 +9,10 @@
  */
 import { runAuditGenerationArm } from './arm-generation.mjs';
 import { scoreExpectCleanCase, summarizeExpectClean } from './corpus-selection.mjs';
+import { redactSecrets } from '../secret-patterns.mjs';
 
 const SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH']);
+const BLOCKING = new Set(['MEDIUM', 'HIGH']);
 const norm = (f) => String(f).replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
 
 /**
@@ -26,6 +28,28 @@ export function toScorable(findings, files) {
     const file = hit ?? (named.length === 0 ? files[0] : named[0]);
     return { file, severity: f?.severity, pass: f?._pass };
   });
+}
+
+/** The text fields of a finding that a human needs to judge its claim; each is secret-redacted before it can reach `--out`. */
+const TEXT_FIELDS = ['id', 'category', 'section', 'detail', 'risk', 'recommendation', 'principle', 'evidence', 'evidenceRef', 'quote'];
+const redactText = (v) => (typeof v === 'string' ? redactSecrets(v).text : v);
+
+/**
+ * The findings that drove a false positive, kept in full so the outcome can be adjudicated: a bare `false_positive` with a pass name
+ * cannot say whether the claim was real, wrong or a nit. Same attribution and the same MEDIUM+ filter as the scorer, so what is
+ * kept is exactly what made the case a false positive. Free text goes through the audit's own secret redaction.
+ */
+export function retainDrivers(findings, files) {
+  const want = new Set(files.map(norm));
+  const scorable = toScorable(findings, files);
+  const kept = [];
+  findings.forEach((f, i) => {
+    if (!BLOCKING.has(scorable[i].severity) || !want.has(norm(scorable[i].file))) return;
+    const out = { severity: f.severity, pass: f._pass ?? 'unknown', files: Array.isArray(f.affectedFiles) ? f.affectedFiles.map(redactText) : [], primaryFile: redactText(f._primaryFile ?? null) };
+    for (const k of TEXT_FIELDS) if (f[k] !== undefined) out[k] = redactText(f[k]);
+    kept.push(out);
+  });
+  return kept;
 }
 
 /**
@@ -84,7 +108,9 @@ export async function runExpectCleanReport({ runId, arm, route, cases, scope, pa
 `);
       }
     }
-    perCase.push({ kdId, ...scored });
+    // The findings that made the case a false positive ride with it: the report must be adjudicable without a re-run.
+    const drivers = scored.outcome === 'false_positive' && Array.isArray(gen?.findings) ? retainDrivers(gen.findings, files) : undefined;
+    perCase.push({ kdId, ...scored, ...(drivers ? { findings: drivers } : {}) });
   }
   return { perCase, summary: summarizeExpectClean(perCase), usageEvents, budgetStop, unaccounted };
 }

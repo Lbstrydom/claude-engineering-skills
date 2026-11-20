@@ -118,6 +118,32 @@ describe('runExpectCleanReport: the real generation arm, scored judge-free (G1)'
   });
 });
 
+describe('a false_positive case keeps the findings that drove it, redacted', () => {
+  const full = (severity, over = {}) => finding(severity, {
+    id: 'H1', category: '[backend] Fail-open check', section: 'src/a.js: f', detail: 'f swallows the error and returns ok',
+    risk: 'a failure reads as success', recommendation: 'rethrow after logging', principle: 'fail closed', evidence: 'line 12: catch {}', ...over,
+  });
+  it('carries the claim, risk, suggested fix and evidence of each MEDIUM+ finding on the case', async () => {
+    const r = await run([kase('K1')], { 'diff for K1': [full('HIGH'), full('LOW', { id: 'L1', detail: 'a nit' })] });
+    assert.equal(r.perCase[0].outcome, 'false_positive');
+    assert.equal(r.perCase[0].findings.length, 1, 'only the finding that drove the outcome, not the LOW one');
+    assert.deepEqual(r.perCase[0].findings[0], {
+      severity: 'HIGH', pass: 'be', files: ['src/a.js'], primaryFile: 'src/a.js', id: 'H1', category: '[backend] Fail-open check', section: 'src/a.js: f',
+      detail: 'f swallows the error and returns ok', risk: 'a failure reads as success', recommendation: 'rethrow after logging', principle: 'fail closed', evidence: 'line 12: catch {}',
+    });
+  });
+  it('a clean case carries no findings and a finding on another file is not retained', async () => {
+    const r = await run([kase('K1'), kase('K2')], { 'diff for K1': [full('LOW')], 'diff for K2': [full('HIGH', { _primaryFile: 'other.js', affectedFiles: ['other.js'] })] });
+    assert.deepEqual(r.perCase.map((c) => c.findings), [undefined, undefined]);
+  });
+  it('free text is secret-redacted before it can be written', async () => {
+    const secret = 'ghp_' + 'a'.repeat(36);
+    const r = await run([kase('K1')], { 'diff for K1': [full('HIGH', { detail: `token ${secret} is logged`, evidence: secret })] });
+    assert.equal(JSON.stringify(r.perCase).includes(secret), false, 'the token must not survive into the report');
+    assert.match(r.perCase[0].findings[0].detail, /\[REDACTED/);
+  });
+});
+
 describe('the CLI no longer refuses --suite expect_clean (G1)', () => {
   it('it reaches corpus loading: an empty corpus fails as corpus_too_small, not as an invalid suite', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'expect-clean-cli-')); dirs.push(dir);

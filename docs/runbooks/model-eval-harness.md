@@ -154,7 +154,7 @@ and rewritable. So when a run surfaces genuine bugs that were not curated:
   the real 5-pass generation arm on each clean commit (the Tier-C extractor forces one defect per case, so it cannot answer "none")
   and scores it judge-free: a MEDIUM or HIGH finding on the case's files is a `false_positive`, a failed generation is `failed`.
   The output is a REPORT (`fpRate` over measured cases, or `unmeasured`), carries the stamp, has no verdict and is never stored as a
-  run. It spends real money per case: pin the revision first (`npm run fixture:create`) and state a cap.
+  run. A `false_positive` case carries `findings` (the MEDIUM+ ones that drove it: claim, risk, fix, evidence; secret-redacted) so it can be adjudicated without a re-run. It spends real money per case: pin the revision first (`npm run fixture:create`) and state a cap.
 - **Subsets.** `--subset tiny|small|full`. `tiny` is the frozen anchor subset above: hand-listed, never re-drawn.
 - **Stamp.** A run's evidence carries `suite`, `subset`, `corpusVersion`, `corpusDigest`, `corpusLoaderVersion` and
   `selection {seed, requestedN, selectedIds}`; two runs compare only when those match (`stampMismatch`).
