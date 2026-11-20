@@ -428,6 +428,14 @@ describe('delivery hardening (audit round 1)', () => {
     assert.deepEqual(fs.readdirSync(path.join(dir, 'acme')).filter((n) => n.includes('tmp')), []);
   });
 
+  it('any other publish failure leaves no temp file behind and no partial final file', async () => {
+    const dir = tmp();
+    const doc = await build();
+    const broken = () => { throw Object.assign(new Error('io'), { code: 'EIO' }); };
+    assert.throws(() => deliverExport({ doc, dropDir: dir, link: broken }), /io/);
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'acme')), []);
+  });
+
   it('a concurrent mkdir of the alias directory (EEXIST) is rechecked, not fatal', async () => {
     const dir = tmp();
     const doc = await build();

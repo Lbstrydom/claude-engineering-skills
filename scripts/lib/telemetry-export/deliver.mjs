@@ -92,16 +92,20 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
 
   const target = path.join(realAlias, fileName);
   const tmp = path.join(realAlias, `.${fileName}.tmp-${process.pid}-${Date.now()}`);
-  fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`, { flag: 'wx' });
   try {
+    fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}
+`, { flag: 'wx' });
     try {
-      link(tmp, target);   // fails EEXIST rather than replacing: exports are immutable
+      link(tmp, target);   // atomic, and fails EEXIST rather than replacing: exports are immutable
     } catch (err) {
-      // Filesystems without hard links (FAT/exFAT, some network shares): fall back to an exclusive copy, which
-      // also refuses to replace. Not atomic to a concurrent reader — the reader rejects a truncated file and
-      // picks it up whole on its next scan — but still immutable and still never an overwrite.
+      // A filesystem without hard links (FAT/exFAT, some network shares). A RENAME is still atomic to a
+      // reader, which matters more than the no-replace guarantee here: the name embeds a random UUID, so a
+      // genuine collision is not a realistic event, and the existence check below covers a re-run. A copy
+      // straight to the final name would not do: a crash mid-copy would leave a truncated file at an
+      // immutable name that every retry then refuses.
       if (['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV'].includes(err?.code)) {
-        fs.copyFileSync(tmp, target, fs.constants.COPYFILE_EXCL);
+        if (fs.existsSync(target)) throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+        fs.renameSync(tmp, target);
       } else {
         throw err;
       }
@@ -110,7 +114,7 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
     if (err?.code === 'EEXIST') throw new Error('deliver: an export with this name already exists (exports are immutable)');
     throw err;
   } finally {
-    fs.rmSync(tmp, { force: true });
+    fs.rmSync(tmp, { force: true });   // covers a failed or partial temp write, and the post-link cleanup
   }
 
   let pushed = false;
