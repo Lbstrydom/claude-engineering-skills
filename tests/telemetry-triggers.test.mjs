@@ -290,6 +290,57 @@ describe('throttle audit round 1: it must really read nothing, deliver what is p
       assert.equal(git(remote, 'rev-list', '--all', '--count'), before);
     });
 
+    it('a stray file beside the export is NEVER swept into the commit: the retry stops, nothing staged, remote unchanged', async () => {
+      const { remote, drop } = gitDrop();
+      await put(drop, { ageMs: 3_600_000 });
+      fs.writeFileSync(path.join(drop, 'acme', 'notes.txt'), 'internal hostname db.corp.example');
+      const before = git(remote, 'rev-list', '--all', '--count');
+      const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /not a telemetry export/);
+      assert.equal(git(remote, 'rev-list', '--all', '--count'), before);
+      assert.equal(git(drop, 'diff', '--cached', '--name-only'), '', 'nothing was staged');
+    });
+
+    it('a hand-edited export (right name, fails the schema) is never pushed: it is not "recent", so a fresh valid one is written and only IT is delivered', async () => {
+      const { remote, drop } = gitDrop();
+      const file = await put(drop, { ageMs: 3_600_000 });
+      const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+      doc.repoName = 'acme-secret-repo';
+      fs.writeFileSync(file, JSON.stringify(doc));
+      const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
+      assert.equal(r.status, 0, r.stderr);
+      const pushed = git(remote, 'ls-tree', '-r', '--name-only', 'HEAD').split('\n');
+      assert.equal(pushed.some((n) => n.endsWith(path.basename(file))), false, 'the tampered file reached the remote');
+      assert.equal(pushed.filter((n) => n.startsWith('acme/')).length, 1, 'only the fresh valid export was delivered');
+    });
+
+    it('an unpushed commit that touches anything but this alias\'s exports is not pushed on its behalf', async () => {
+      const { remote, drop } = gitDrop();
+      await put(drop, { ageMs: 3_600_000 });
+      git(drop, 'add', '.'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'exports');
+      git(drop, 'push', '-q');
+      fs.writeFileSync(path.join(drop, 'other.txt'), 'unrelated');
+      git(drop, 'add', '.'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'unrelated work');
+      const before = git(remote, 'rev-list', '--all', '--count');
+      const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /not one of this alias's exports/);
+      assert.equal(git(remote, 'rev-list', '--all', '--count'), before);
+    });
+
+    it('no upstream is an UNKNOWN delivery state, reported — not assumed to mean nothing is pending', async () => {
+      const base = tmp();
+      const drop = path.join(base, 'drop');
+      fs.mkdirSync(drop);
+      spawnSync('git', ['init', '-q', drop], { windowsHide: true });
+      await put(drop, { ageMs: 3_600_000 });
+      git(drop, 'add', '.'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'exports');
+      const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /cannot tell whether earlier exports were pushed/);
+    });
+
     it('a failing delivery of the earlier export is REPORTED (exit 1), not skipped over', async () => {
       const { remote, drop } = gitDrop();
       await put(drop, { ageMs: 3_600_000 });
