@@ -62,9 +62,12 @@ is a rejection, not a pass-through — a guard that is inert on its defaults is 
 | Upstream | open `upstream_issues` as `{id (12 hex of sha256 of the row id, so ids cannot be mistaken for store keys and a collision needs 2^48 rows), severity, category, ageDays}`, capped at 200 rows with `truncated: true` beyond that. **Titles and bodies have no field in v1** (§2.2). |
 | Measurement honesty | for every group, `measured: true|false` and a `reason` when false (e.g. the store was unreachable at export time). An export never writes a zero for a group it could not read. |
 
-**Every string-valued field is a closed enum, not free text** (`severity`, `category`, skill name, verdict, pass name):
-the exporter maps a source value to the enum or to `"other"`. That, not the scrub in §2.2, is what guarantees no
-organisation detail can ride inside a value.
+**Every string-valued field has a stated contract; none is free text.** Classifications (`severity`, `category`, skill name,
+verdict, pass name) are **closed enums**: the exporter maps a source value to the enum or to `"other"`. The identifying and
+temporal fields are **bounded formats**, validated by regex and length: `schema` is a literal; `exportId` a UUID;
+`generatedAt` and window bounds ISO-8601 UTC; `consumerAlias` `^[a-z0-9-]{1,32}$` and present in the reader's expected
+list; `storeFingerprint` 16 lowercase hex; `toolBundleSha` 40 lowercase hex. A value outside its contract is a rejection.
+That, not the scrub in §2.2, is what guarantees no organisation detail can ride inside a value.
 
 **Field sources (specified before any code).** The first deliverable of Phase 1 is a table of every field → the exact
 query or CLI it is read from, the filter, units, and window boundaries (windows are the 7 days ending at `generatedAt`,
@@ -99,8 +102,10 @@ must not appear anywhere in the serialised export.
 Manual first: `npm run telemetry:export` writes the file and prints its path. Then two existing triggers, neither
 new infrastructure: a `/ship` post-step when the store is reachable, and the **local weekly maintenance** replica
 (`AUDIT_LOOP_WEEKLY_MAINTENANCE=1`, `docs/runbooks/local-maintenance-checks.md`). The export is idempotent, keyed by
-`(consumerAlias, window end date)`: the file is `<alias>/<yyyy-mm-dd>.json`, written to a temporary name and renamed into
-place (a reader never sees a half-written file), and a same-day repeat overwrites it with a new `exportId`. A cadence is
+`(consumerAlias, window end date)`. Each export is **immutable and uniquely named**, `<alias>/<yyyy-mm-dd>-<first 8 of exportId>.json`,
+written to a temporary name and renamed into place (a reader never sees a half-written file); a same-day repeat is a
+second file, never an overwrite, so a delayed or rejected older file can never replace a valid newer one. The reader
+chooses the newest **valid** export by `generatedAt`, and retention (§2.1 bounds) removes the oldest. A cadence is
 **observed, never trusted for having been configured** (AGENTS.md): CES decides freshness from the newest `generatedAt`
 it holds, not from a schedule it was told about.
 
@@ -116,8 +121,8 @@ The CES-side reader keeps a list of **expected exporters** (the private entries 
 
 | State | Meaning | Rendered as |
 |---|---|---|
-| `received` | a valid export, newer than `2 × cadence` | its figures, with the export's age |
-| `stale` | the newest valid export is older than that | the last figures **labelled with their age**, never as current |
+| `received` | a valid export within its freshness policy (§2.3) | its figures, with the export's age |
+| `stale` | the newest valid export is outside that policy | the last figures **labelled with their age**, never as current |
 | `rejected` | a file arrived and failed the schema or redaction re-check | "rejected: <reason>" — never silently dropped |
 | `never received` | an expected exporter with no file | **"unmeasured — no export received"**; no count, no `0`, no "clean" |
 
@@ -190,8 +195,10 @@ audit. Nothing past phase 0 starts before §6 is answered.
 
 ## 6. Decisions for Louis (nothing is built until these are answered)
 
-1. **May the work machine send anything outside the organisation?** This decides whether delivery is possible at all.
-   If not, the only path is a human carrying the file (still valid: the reader does not care how it arrived).
+1. **May any telemetry leave the organisation, by any means?** If **no**, this plan stops at Phase 0: a person carrying a
+   file out is still a transfer and needs the same authorisation, so there is no "manual" loophole. If yes, 1b: is an
+   *automated* channel permitted, or only a person-initiated one? The reader does not care how a file arrived; the
+   organisation does.
 2. **Delivery channel**, given (1) is yes: a shared folder CES can read, a private repository, or email. The plan is
    channel-agnostic on purpose; the schema and the reader do not change.
 3. **Titles**: v1 has none. Are upstream report titles ever worth a *separate, later* contract change (new schema
@@ -206,5 +213,8 @@ audit. Nothing past phase 0 starts before §6 is answered.
   zero and never absent from the list.
 - A received export contains no key outside the schema, and the canary fixture (token, sensitive path, hostname) is
   absent from the serialised bytes.
-- Deleting the drop directory turns every private consumer into `never received — unmeasured`, with no code change.
-- `stale` is rendered with its age; a reader given an export older than `2 × cadence` never prints it as current.
+- Emptying the drop directory (it still exists) turns every private consumer into `never received — unmeasured`, with no code
+  change. **Removing or making the directory unreadable** produces one visible `drop unreadable: <code>` scan error and **no**
+  per-consumer `never received` claim (§2.4: "we could not look" is not "nothing was there").
+- `stale` is rendered with its age; a `weekly` alias whose newest valid export is older than 14 days never prints as current,
+  and an `on-demand` alias is shown with its age and is never `stale`.
