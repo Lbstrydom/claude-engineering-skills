@@ -123,6 +123,21 @@ describe('a FAILED coverage read is not an ABSENT measurement', () => {
     assert.match(lines.join(''), /SCHEMA fault/);
   });
 
+  it('every failed read leaves ONE diagnostic: generic failures their code, invalid payloads their schema complaints, never a message', async () => {
+    const capture = async (err) => {
+      const lines = [];
+      const orig = process.stderr.write.bind(process.stderr);
+      process.stderr.write = (x) => { lines.push(String(x)); return true; };
+      try { await snapshotCoverage(failing(err), active, repo); } finally { process.stderr.write = orig; }
+      return lines.join('');
+    };
+    const generic = await capture(Object.assign(new Error('connect ECONNREFUSED db.corp.example:5432'), { code: 'ECONNREFUSED' }));
+    assert.ok(generic.includes('strict read failed (ECONNREFUSED)'), generic);
+    assert.equal(generic.includes('corp.example'), false, 'the host in the message is not echoed');
+    const invalid = await capture(Object.assign(new Error('x'), { code: 'COVERAGE_PAYLOAD_INVALID', issues: ['verdict.status: Invalid option'] }));
+    assert.ok(invalid.includes('(COVERAGE_PAYLOAD_INVALID): verdict.status: Invalid option'), invalid);
+  });
+
   it('an unusable stored record is coverage_payload_invalid', async () => {
     const c = await snapshotCoverage(failing(Object.assign(new Error('x'), { code: 'COVERAGE_PAYLOAD_INVALID' })), active, repo);
     assert.equal(c.reason, 'coverage_payload_invalid');

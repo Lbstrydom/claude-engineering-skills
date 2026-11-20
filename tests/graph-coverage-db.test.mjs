@@ -121,6 +121,32 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     assert.equal(read, null, 'no row yet for refreshIdB — must read null, never a fabricated clean result');
   });
 
+  // { strict } — a FAILED read must be distinguishable from an ABSENT row (AGENTS.md: a schema error is not an empty
+  // result). Exercised against the real database, not injected errors.
+  it('strict: a refresh with no coverage row is still null (an absent row is not a failure)', async () => {
+    assert.equal(await getGraphCoverage(refreshIdB, repoId, { strict: true }), null);
+  });
+
+  it('strict: a stored payload that fails CoverageSchema THROWS COVERAGE_PAYLOAD_INVALID; the default degrades to null', async () => {
+    const pool = await getPool();
+    const refreshIdC = (await pool.query(
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'full', 'published') RETURNING id`, [repoId],
+    )).rows[0].id;
+    await pool.query(
+      `INSERT INTO symbol_refresh_coverage (refresh_id, status, reason, measured_at, measured_refresh_id, payload)
+       VALUES ($1, 'unknown', 'not_measured', now(), $1, $2::jsonb)`,
+      [refreshIdC, JSON.stringify({ schemaVersion: 1, nonsense: true })],
+    );
+    await assert.rejects(() => getGraphCoverage(refreshIdC, repoId, { strict: true }), (e) => e.code === 'COVERAGE_PAYLOAD_INVALID');
+    assert.equal(await getGraphCoverage(refreshIdC, repoId), null, 'CONTROL: the default contract is unchanged');
+  });
+
+  it('strict: a REAL Postgres error propagates with its SQLSTATE (no DDL: this suite shares a container with others); the default degrades to null', async () => {
+    // A malformed uuid is rejected by Postgres itself (22P02), through the real query path.
+    await assert.rejects(() => getGraphCoverage('not-a-uuid', repoId, { strict: true }), (e) => e.code === '22P02' || e.cause?.code === '22P02');
+    assert.equal(await getGraphCoverage('not-a-uuid', repoId), null, 'CONTROL: the default contract is unchanged');
+  });
+
   it('recordGraphCoverage REFUSES to persist a record that violates CoverageSchema (round-2 audit M2/M4 — the write boundary must enforce the schema, not just declare it)', async () => {
     // Uses its OWN fresh refresh_id (round-3 audit M3) — reusing refreshIdA
     // (already holding a VALID row from the earlier "writes a row" test)

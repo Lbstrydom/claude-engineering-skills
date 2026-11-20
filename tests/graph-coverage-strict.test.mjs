@@ -23,7 +23,8 @@ async function probe(call) {
       try { out = { returned: await m.getGraphCoverage('r-1', 'repo-1'${call}) ?? null }; }
       catch (e) { out = { threw: true, code: e.code ?? null }; }
       process.stdout.write('RESULT:' + JSON.stringify(out) + '\\n');
-      process.exit(0);
+      const { finishAndExit } = await import('./scripts/lib/cli-io.mjs');
+      await finishAndExit(0);
     });`;
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
     cwd: ROOT, encoding: 'utf-8', timeout: 60000, windowsHide: true,

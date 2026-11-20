@@ -181,7 +181,11 @@ export async function snapshotCoverage(adapters, active, repoRow) {
     // A FAILED read is not an ABSENT measurement. Both are "unknown", but they are different facts and the reason
     // says which (AGENTS.md: a schema error is not an empty result); a schema fault is also named as one, loudly.
     const fault = describeSchemaFault(err, 'graph coverage read');
-    if (fault) process.stderr.write(`${fault}\n`);
+    // ONE diagnostic per failed read, whatever its kind — the strict path bypasses the store's own line, so the detail
+    // it used to print must not be lost. Code and schema complaints only: a message can carry a host.
+    process.stderr.write(fault
+      ? `${fault}\n`
+      : `  [coverage] strict read failed (${err?.code ?? 'error'})${Array.isArray(err?.issues) ? `: ${err.issues.join('; ')}` : ''}\n`);
     const reason = err?.code === 'COVERAGE_PAYLOAD_INVALID' ? 'coverage_payload_invalid'
       : fault ? 'coverage_schema_fault' : 'coverage_read_failed';
     return { status: 'unknown', reason, eligible: null };

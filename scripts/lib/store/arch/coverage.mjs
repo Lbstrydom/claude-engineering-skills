@@ -152,7 +152,11 @@ export async function getGraphCoverage(refreshId, repoId, { strict = false } = {
       // `strict` callers (the neighbourhood lookup) must be able to tell "the stored record is unusable" from "there is
       // no record": both used to read as null.
       if (strict) {
-        throw Object.assign(new Error(`stored coverage payload for ${refreshId} fails the schema`), { code: 'COVERAGE_PAYLOAD_INVALID' });
+        throw Object.assign(new Error(`stored coverage payload for ${refreshId} fails the schema`), {
+          code: 'COVERAGE_PAYLOAD_INVALID',
+          // What the default path printed, kept: the schema's own complaints (paths and messages, never values).
+          issues: parsed.error.issues.slice(0, 5).map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`),
+        });
       }
       process.stderr.write(
         `  [coverage] stored payload for ${refreshId} fails the schema — treating as unknown: `
