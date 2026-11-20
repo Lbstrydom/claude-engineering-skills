@@ -41,42 +41,35 @@ def _decode(raw):
     return text
 
 
-def _module_scope_nodes(body):
-    """Every AST node in MODULE scope: statements (descending into if/try/with/
-    for/while blocks) and their expressions, but never into a def, lambda or
-    class body, whose ``__all__`` is a different variable."""
-    stack = list(body)
-    while stack:
-        node = stack.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
-        yield node
-        stack.extend(ast.iter_child_nodes(node))
+def _mentions_of(tree, word):
+    """How many times ``word`` appears as an identifier or string in the WHOLE
+    tree: names in any context, attribute names, import names and aliases,
+    def/class/handler/match names, global/nonlocal lists, keyword names and
+    string constants. Deliberately generic: every way to rebind, alias, mutate
+    or reflect on ``__all__`` (``exports = __all__``, ``from x import __all__``,
+    ``global __all__`` in a function, ``globals()['__all__']``,
+    ``sys.modules[__name__].__all__``) surfaces as one more mention."""
+    count = 0
+    for node in ast.walk(tree):
+        for _, value in ast.iter_fields(node):
+            if isinstance(value, str):
+                count += value == word
+            elif isinstance(value, list):
+                count += sum(1 for v in value if isinstance(v, str) and v == word)
+    return count
 
 
 def _literal_all(tree):
     """The module's __all__ when it is ONE literal list/tuple of strings, else None.
 
-    Conservative on purpose. The value is trusted only when the module has
-    exactly ONE touch of ``__all__`` in module scope, and that touch is an
-    unconditional top-level ``__all__ = [<str literals>]``. Anything else makes
-    the final value undecidable statically, so the caller falls back to the
-    underscore convention: any other binding (destructuring, ``for``/``with``
-    targets, walrus, ``del``), a subscript or slice store, an augmented
-    assignment, a method call such as ``__all__.append``, or an assignment
-    nested in a conditional or loop block.
+    Trusted only when ``__all__`` is mentioned exactly ONCE anywhere in the
+    file, and that one mention is an unconditional top-level
+    ``__all__ = [<str literals>]``. Any other mention could rebind, alias,
+    mutate or reflect on it, so the final value is undecidable statically and
+    the caller falls back to the underscore convention. (One generic rule,
+    replacing a list of special cases that kept missing the next one.)
     """
-    touches = 0
-    for node in _module_scope_nodes(tree.body):
-        if isinstance(node, ast.Name) and node.id == "__all__" and isinstance(node.ctx, (ast.Store, ast.Del)):
-            touches += 1
-        elif (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
-              and node.value.id == "__all__" and isinstance(node.ctx, (ast.Store, ast.Del))):
-            touches += 1
-        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-              and isinstance(node.func.value, ast.Name) and node.func.value.id == "__all__"):
-            touches += 1
-    if touches != 1:
+    if _mentions_of(tree, "__all__") != 1:
         return None
     for stmt in tree.body:  # unconditional: a DIRECT child of the module
         if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
