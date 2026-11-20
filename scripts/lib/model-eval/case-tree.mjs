@@ -35,9 +35,27 @@ const gitBytes = (dir, args) => execFileSync('git', [...GIT_CONFIG, '-C', dir, .
 export const gitBlobId = (bytes) => crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 
 /**
+ * The blob id of a FILE, hashed incrementally from an open descriptor: a large committed file is never held whole in memory (nor limited by
+ * Node's buffer size), the git header comes from the size at open, and a file that changes size while being read throws.
+ * @param {string|Buffer} file  a path (a Buffer carries a non-UTF-8 name unchanged)
+ */
+export function gitBlobIdOfFile(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const h = crypto.createHash('sha1').update(`blob ${size}\0`);
+    const chunk = Buffer.allocUnsafe(1 << 20);
+    let total = 0;
+    for (let n = fs.readSync(fd, chunk, 0, chunk.length, null); n > 0; n = fs.readSync(fd, chunk, 0, chunk.length, null)) { h.update(chunk.subarray(0, n)); total += n; }
+    if (total !== size) throw new Error(`file changed size while being read (${size} -> ${total})`);
+    return h.digest('hex');
+  } finally { fs.closeSync(fd); }
+}
+
+/**
  * The audit reads the checked-out FILES while its diff describes the commit's BLOBS. A smudge filter, `ident`, a working-tree-encoding
  * or an eol attribute makes them differ, and no list of attribute names can be complete (a filter may even be NAMED "unset"). So this
- * does not ask what could transform the checkout: it checks whether it DID. Each regular file's bytes are read here and hashed as a git
+ * does not ask what could transform the checkout: it checks whether it DID. Each regular file is read here (streamed) and hashed as a git
  * blob, then compared with the blob id the index holds; any mismatch REFUSES the case before the audit reads anything. Reading and
  * hashing in-process (not `hash-object --stdin-paths`) is deliberate: that interface reinterprets names (a leading quote is C-unquoted, a
  * trailing CR is stripped, LF splits a path), and four audit rounds found a new way each, so no path is ever handed back to git.
@@ -58,9 +76,9 @@ function assertTreeMatchesCommit(dir, sha) {
     start = end + 1;
     if (mode !== '100644' && mode !== '100755') continue;
     if (oid.length !== 40) throw new Error(`withCaseTree: ${sha} is not a SHA-1 repository; its checkout cannot be verified`);
-    let bytes;
-    try { bytes = fs.readFileSync(Buffer.concat([Buffer.from(`${dir}${path.sep}`), name])); } catch (err) { bad.push(`${name.toString('utf8')} (unreadable: ${err?.code ?? err?.message})`); continue; } // refused, but NAMED as unreadable, not as a transformation
-    if (gitBlobId(bytes) !== oid) bad.push(name.toString('utf8'));
+    let id;
+    try { id = gitBlobIdOfFile(Buffer.concat([Buffer.from(`${dir}${path.sep}`), name])); } catch (err) { bad.push(`${name.toString('utf8')} (unreadable: ${err?.code ?? err?.message})`); continue; } // refused, but NAMED as unreadable, not as a transformation
+    if (id !== oid) bad.push(name.toString('utf8'));
   }
   if (bad.length > 0) throw new Error(`withCaseTree: refusing to audit ${sha}: its checkout differs from the commit's blobs (a filter, ident, encoding or eol attribute is transforming it), so the files read would not be what the diff describes: ${bad.slice(0, 5).join(', ')}${bad.length > 5 ? `, and ${bad.length - 5} more` : ''}`);
 }

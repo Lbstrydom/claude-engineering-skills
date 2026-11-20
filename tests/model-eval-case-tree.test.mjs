@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { withCaseTree, gitBlobId } from '../scripts/lib/model-eval/case-tree.mjs';
+import { withCaseTree, gitBlobId, gitBlobIdOfFile } from '../scripts/lib/model-eval/case-tree.mjs';
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: ENV }).trim();
@@ -247,13 +247,29 @@ describe('withCaseTree', () => {
     const { r, sha } = attrRepo({ content: 'plain\n', extra: NASTY.map((n) => [n, 'plain\n']) });
     try { assert.equal(await withCaseTree({ repoRoot: r, sha }, async () => 'ran'), 'ran'); } finally { rm(r); }
   });
-  test('POSIX: a checkout transformation that touches only the nasty-named files is REFUSED before the callback runs', { skip: process.platform === 'win32' }, async () => {
-    const { r, sha } = attrRepo({ gitattributes: '* filter=upper\n', config: smudge('upper'), content: 'plain\n', extra: NASTY.map((n) => [n, 'one\n']) });
-    let ran = false;
+  // One fixture PER name, in which ONLY that file's content is transformed (the smudge rewrites "one" and nothing else), so a verifier that
+  // skipped or mis-resolved either name cannot hide behind the other.
+  for (const name of NASTY) {
+    test(`POSIX: a transformation touching ONLY ${JSON.stringify(name)} is REFUSED before the callback runs, naming that file`, { skip: process.platform === 'win32' }, async () => {
+      const { r, sha } = attrRepo({ gitattributes: '* filter=upper\n', config: smudge('upper'), content: 'plain\n', extra: NASTY.map((n) => [n, n === name ? 'one\n' : 'plain\n']) });
+      let ran = false;
+      try {
+        await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { ran = true; return 1; }), (e) => /differs from the commit's blobs/.test(e.message) && e.message.includes(name.replace(/\r/g, '\r')));
+        assert.equal(ran, false);
+      } finally { rm(r); }
+    });
+  }
+
+  test('gitBlobIdOfFile streams: it matches git hash-object for a multi-chunk file (3 MiB, not a multiple of the 1 MiB chunk) and for an empty file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'case-tree-stream-'));
     try {
-      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { ran = true; return 1; }), /differs from the commit's blobs.*q\.txt/);
-      assert.equal(ran, false);
-    } finally { rm(r); }
+      for (const [i, bytes] of [Buffer.alloc(0), Buffer.alloc(3 * 1024 * 1024 + 17, 'abc')].entries()) {
+        const f = path.join(dir, `f${i}`);
+        fs.writeFileSync(f, bytes);
+        assert.equal(gitBlobIdOfFile(f), execFileSync('git', ['hash-object', '--no-filters', f], { encoding: 'utf8', env: ENV }).trim(), `sample ${i}`);
+        assert.equal(gitBlobIdOfFile(f), gitBlobId(bytes), 'the streamed id equals the in-memory id');
+      }
+    } finally { rm(dir); }
   });
 
   test('an unreadable file is refused and NAMED as unreadable, not as a transformation', async () => {
