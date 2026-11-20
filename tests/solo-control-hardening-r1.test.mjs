@@ -177,3 +177,12 @@ describe('round 2 follow-ups', () => {
     assert.deepEqual([row[8], row[9]], ['c1', 'KD-1'], 'the pre-filled cluster and KD hint stay');
   }));
 });
+
+describe('round 3 follow-ups', () => {
+  test('a quote inside an unquoted field is corrupt (it silently split a record before)', () => {
+    assert.throws(() => parseCsv('prefix"line1\nline2",proven\n'), /unquoted field/);
+  });
+  test('negative control: a doubled quote INSIDE a quoted field and a quoted-first field still parse', () => {
+    assert.deepEqual(parseCsv('"a ""b"" c",plain\n'), [['a "b" c', 'plain']]);
+  });
+});

@@ -60,7 +60,11 @@ export function parseCsv(text) {
       } else cur += ch;
       continue;
     }
-    if (ch === '"' && cur === '') { inQuotes = true; touched = true; }
+    if (ch === '"') {
+      // RFC 4180: a quote may only OPEN a field. One inside an unquoted field is a corrupt cell, not a literal.
+      if (cur !== '') throw new Error('parseCsv: a quote inside an unquoted field — the sheet is corrupt');
+      inQuotes = true; touched = true;
+    }
     else if (ch === ',') { touched = true; endField(); }
     else if (ch === '\r') { if (text[i + 1] === '\n') i++; endRecord(); }
     else if (ch === '\n') endRecord();

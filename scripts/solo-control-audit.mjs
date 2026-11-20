@@ -2036,7 +2036,7 @@ async function cmdMerge() {
     const cRefused = cRoot ? refusedFor([CLUSTER_MODEL], cRoot, recipientPolicy) : 'commit not locatable — repo identity unknown';
     if (cRefused) { log(`  cluster ${commitSha.slice(0, 8)}: POLICY REFUSED (${cRefused}) — unassisted, nothing sent`); prop = { clusters: {}, mode: 'policy-refused' }; }
     else try { prop = await proposeClusters(batch, { client, model: CLUSTER_MODEL }); }
-    catch { prop = { clusters: {}, mode: 'duphash-degraded' }; }
+    catch (err) { log(`  cluster ${commitSha.slice(0, 8)}: model clustering failed (${String(err?.message || err).slice(0, 120)}) — dup-hash fallback`); prop = { clusters: {}, mode: 'duphash-degraded' }; }
     clusteredCommits++;
     log(`  cluster ${clusteredCommits}/${totalCommitsToCluster}: ${commitSha.slice(0, 8)} · ${idxs.length} row(s) · mode=${prop.mode}`);
     clusterModesUsed.add(prop.mode);
