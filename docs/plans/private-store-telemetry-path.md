@@ -1,8 +1,8 @@
 # Plan: a telemetry path from a consumer whose store CES cannot reach
 - **Date**: 2026-11-20
-- **Status**: Draft
+- **Status**: Approved
 - **Author**: Claude + Louis
-- **Scope**: backend (a consumer-side export CLI, a CES-side reader, one schema; no UI). Stack `js-ts`. **Nothing here is built until Louis decides §6.**
+- **Scope**: backend (a consumer-side export CLI, a CES-side reader, one schema; no UI). Stack `js-ts`. **§6 is decided; phases 0–3 are approved.**
 - **Target domain(s)**: `scripts`, `shared-lib`
 
 Origin: a work organisation moved its audit store from a public-endpoint Postgres to a **private** one reached
@@ -180,7 +180,7 @@ is a new version (strictness means the old reader would otherwise reject it).
 | **3** | The two triggers (`/ship` post-step, weekly maintenance) and a `doctor` line saying whether an export is overdue. | cadence observed over two real cycles, not assumed |
 
 Phases 0 and 1 are independent; 2 needs the schema from 1; 3 needs both. Each is its own PR and each carries its own
-audit. Nothing past phase 0 starts before §6 is answered.
+audit. §6 is answered; each phase is its own PR with its own audit.
 
 ## 5. Risks
 
@@ -193,19 +193,33 @@ audit. Nothing past phase 0 starts before §6 is answered.
   imported by both sides; the reader re-validates; a fixture derived from a real export, not a hand-written factory.
 - **Scope creep toward "just a bit more detail".** The strict schema makes every addition a visible diff to review.
 
-## 6. Decisions for Louis (nothing is built until these are answered)
+## 6. Decisions (answered by Louis, 2026-11-20 evening; full approval through merge)
 
-1. **May any telemetry leave the organisation, by any means?** If **no**, this plan stops at Phase 0: a person carrying a
-   file out is still a transfer and needs the same authorisation, so there is no "manual" loophole. If yes, 1b: is an
-   *automated* channel permitted, or only a person-initiated one? The reader does not care how a file arrived; the
-   organisation does.
-2. **Delivery channel**, given (1) is yes: a shared folder CES can read, a private repository, or email. The plan is
-   channel-agnostic on purpose; the schema and the reader do not change.
-3. **Titles**: v1 has none. Are upstream report titles ever worth a *separate, later* contract change (new schema
-   version, free-text egress policy, human-confirmed preview), or is `{id, severity, category, age}` enough?
-4. **Is one private consumer enough to justify phases 1–3**, or is the documented `unqueried` state acceptable until a
-   second private consumer appears (M6)?
-5. **Cadence**: weekly via the maintenance replica, or only on demand?
+1. **May telemetry leave the organisation?** **Yes.** Louis authorised it in chat, including the automated path (1b).
+2. **Delivery channel — decided: a drop directory, provisioned as a private Git repository.** The exporter's only delivery
+   primitive is writing the finished file into `TELEMETRY_DROP_DIR`. Why this and not the alternatives: the schema and
+   reader need one thing from a channel — a directory of files they can scan — and a directory is what *every* channel
+   reduces to. Provisioned as a **private Git repository cloned on both machines**, it also gives, for free, what the
+   other options lack: per-writer access control (repo permissions, so §2.4a's "channel provides authentication" is
+   true), an immutable audit trail of every export, atomic publication (a commit), and no key custody for CES to invent.
+   A synced shared folder is a valid drop directory too (the reader cannot tell), and so is a person carrying a file, if
+   the organisation permits it. Email is rejected as the *primary* channel: it needs an SMTP credential on the work machine,
+   has no per-writer access model, and a reader would have to scrape a mailbox. When the drop directory is a Git work
+   tree and `--push` is passed, the exporter additionally runs `git add`, `git commit` and `git push` there (nothing else,
+   never a force-push); without `--push` it only writes the file.
+3. **Titles: as needed, later.** v1 has none. A future need is a separate schema version with its own egress policy.
+4. **Build it generally, default off — decided.** The question was whether one private consumer justifies the work. The
+   repository has several kinds of user: this maintainer's own consumers (shared store: unaffected), the work organisation
+   (private store: the case here), and external adopters of the skills, a growing share of whom will sit behind private
+   networks for the same reason. The build is small (files, no table, no new credential), it is **opt-in per consumer**, and
+   with it off nothing changes for anyone. A one-off special case for the work repo would have to be torn out and redone
+   when the second private consumer appears; the general version costs the same. So: phases 1–3 are built generically.
+   The expected-exporters list is the gitignored local registry, so a consumer with no entry sees no change at all.
+5. **Cadence — recommended and adopted: weekly, plus opportunistic.** The local weekly-maintenance replica exports once a
+   week (the existing, observed cadence); `/ship` additionally exports when the last export is older than 24 hours and
+   the store is reachable, so the file tracks real activity rather than a calendar. `stale` after 14 days (two weekly
+   cycles). Not on-demand-only: it would leave CES unable to tell an idle consumer from a silent one. A week with no
+   audits is exported honestly as `measured:true` with genuine zeros — idle is a measurement, not a gap.
 
 ## 7. Acceptance criteria
 
