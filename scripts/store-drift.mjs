@@ -48,7 +48,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import './lib/load-env.mjs';
-import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
 import {
   discoverStores, describeStore, readRepoEnvText, readSharedEnvText,
@@ -239,7 +239,7 @@ export function renderDrift(result) {
   return lines.join('\n');
 }
 
-function main() {
+async function main() {
   try {
     assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'store-drift' });
   } catch (err) {
@@ -274,7 +274,8 @@ function main() {
     }
   }
   // Advisory, always. See the fileoverview.
-  process.exit(0);
+  // Drained before exit: a piped stdout is asynchronous on Windows and process.exit() would truncate the card.
+  await finishAndExit(0);
 }
 
 // Guarded: this module EXPORTS its pure collators for tests, and a bare main()
@@ -284,5 +285,5 @@ function main() {
 // A suite that cannot fail is the unearned green this repo's own test guard
 // exists to catch, arriving through the module system instead of the runner.
 if (isInvokedAsScript(import.meta.url)) {
-  main();
+  await main();
 }

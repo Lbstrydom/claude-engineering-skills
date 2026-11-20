@@ -59,7 +59,7 @@ import { fileURLToPath } from 'node:url';
 // worktree, so the fan-out silently EXCLUDED this repo's own store: a
 // regression against the single-store read it replaces. Caught by running it.
 import './lib/load-env.mjs';
-import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
 import {
   discoverStores, describeStore, readRepoEnvText, readSharedEnvText,
@@ -234,7 +234,7 @@ export function renderQueues(result, max = 5) {
   return lines.join('\n');
 }
 
-function main() {
+async function main() {
   try {
     assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'upstream-queues' });
   } catch (err) {
@@ -275,8 +275,9 @@ function main() {
     }
   }
   // Always 0 — advisory. See the header.
-  process.exit(0);
+  // Drained before exit: a piped stdout is asynchronous on Windows and process.exit() would truncate the card.
+  await finishAndExit(0);
 }
 
 const invokedAsScript = isInvokedAsScript(import.meta.url);
-if (invokedAsScript) main();
+if (invokedAsScript) await main();
