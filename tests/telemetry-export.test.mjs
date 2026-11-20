@@ -378,15 +378,24 @@ describe('delivery: one primitive — a file in the drop directory', () => {
   });
 
   /** A scripted git: the gate's three reads, then whatever is allowed to follow. */
-  const gitStub = (dir, calls, { ahead = '0', upstream = 'origin/main', fetchSpec = '+refs/heads/*:refs/remotes/origin/*', pushurl = '', ignored = false } = {}) => {
+  const gitStub = (dir, calls, { ahead = '0', upstream = 'origin/main', fetchSpec = '+refs/heads/*:refs/remotes/origin/*', pushUrl = 'https://x.example.test/drop.git', ignored = false, remoteTip = 'tipsha', afterPushRemoteTip = null, ignoreError = false } = {}) => {
     let head = 0;
+    let pushed = false;
     return (cmd, args) => {
+      const verb = args[0] === '-c' ? args[2] : args[0];
       calls.push([cmd, ...args]);
+      if (verb === 'push') pushed = true;
       if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return dir;
       if (args[0] === 'rev-parse' && args[1] === 'HEAD') return `sha${head++ === 0 ? 'parent' : 'ours'}\n`;
+      if (args[0] === 'rev-parse' && args[1] === '@{u}') return 'tipsha';
       if (args[0] === 'rev-parse') { if (!upstream) throw new Error('no upstream'); return upstream; }
-      if (args[0] === 'config') return args[2].endsWith('.fetch') ? fetchSpec : pushurl;
-      if (args[0] === 'check-ignore') { if (ignored) return ''; throw new Error('exit 1: not ignored'); }
+      if (args[0] === 'config') return fetchSpec;
+      if (args[0] === 'remote') return args.includes('--push') ? pushUrl : 'https://x.example.test/drop.git';
+      if (args[0] === 'ls-remote') return `${pushed && afterPushRemoteTip ? afterPushRemoteTip : remoteTip}\trefs/heads/main\n`;
+      if (args[0] === 'check-ignore') {
+        if (ignored) return '';
+        throw Object.assign(new Error(ignoreError ? 'fatal' : 'exit 1: not ignored'), { status: ignoreError ? 128 : 1 });
+      }
       if (args[0] === 'rev-list') return ahead;
       return '';
     };
@@ -398,12 +407,12 @@ describe('delivery: one primitive — a file in the drop directory', () => {
     const r = deliverExport({ doc: await build(), dropDir: dir, push: true, exec: gitStub(dir, calls) });
     assert.equal(r.pushed, true);
     const verbs = calls.map((c) => c[1] === '-c' ? c[3] : c[1]);
-    assert.deepEqual(verbs, ['rev-parse', 'rev-parse', 'config', 'config', 'rev-list', 'check-ignore', 'add', 'rev-parse', 'commit', 'rev-parse', 'push']);
+    assert.deepEqual(verbs, ['rev-parse', 'rev-parse', 'config', 'remote', 'remote', 'rev-parse', 'ls-remote', 'rev-list', 'check-ignore', 'add', 'rev-parse', 'commit', 'rev-parse', 'push']);
     const push = calls.at(-1);
     assert.deepEqual(push.slice(1), ['-c', 'push.followTags=false', 'push', '--no-follow-tags', 'origin', 'shaours:refs/heads/main'],
       'the destination is explicit and the commit is named by SHA: nothing config-driven and nothing committed later can ride along');
     assert.ok(calls.every((c) => c[0] === 'git'));
-    assert.equal(calls.flat().some((a) => /^(--force|-f|--delete|--all|--mirror|--tags)$/.test(a)), false);
+    assert.equal(push.some((a) => /^(--force|-f|--delete|--all|--mirror|--tags)$/.test(a)), false);
   });
 
   it('a push that fails UNDOES the exporter\'s own commit (mixed reset to its parent) and still reports the failure', async () => {
@@ -411,14 +420,38 @@ describe('delivery: one primitive — a file in the drop directory', () => {
     const calls = [];
     const stub = gitStub(dir, calls);
     assert.throws(() => deliverExport({ doc: await_(), dropDir: dir, push: true, exec: (c, a) => { if (a.includes('push')) throw new Error('rejected'); return stub(c, a); } }), /rejected/);
-    const reset = calls.find((c) => c[1] === 'reset');
-    assert.deepEqual(reset?.slice(1), ['reset', '-q', '--mixed', 'shaparent']);
+    const resets = calls.filter((c) => c[1] === 'reset').map((c) => c.slice(1));
+    // HEAD moves back WITHOUT touching the index (--soft); only OUR path is then unstaged. A mixed reset would also
+    // have unstaged whatever else the work tree had staged.
+    assert.deepEqual(resets[0], ['reset', '-q', '--soft', 'shaparent']);
+    assert.deepEqual(resets[1].slice(0, 3), ['reset', '-q', '--']);
+    assert.equal(resets.some((r) => r.includes('--mixed')), false);
+  });
+
+  it('a push that ERRORS but reached the remote is reconciled as delivered: no rollback, no failure', async () => {
+    const dir = tmp();
+    const calls = [];
+    const stub = gitStub(dir, calls, { afterPushRemoteTip: 'shaours' });
+    const r = deliverExport({ doc: await_(), dropDir: dir, push: true, exec: (c, a) => { const out = stub(c, a); if (a.includes('push')) throw new Error('connection reset before ack'); return out; } });
+    assert.equal(r.pushed, true);
+    assert.equal(calls.some((c) => c[1] === 'reset'), false, 'a delivered commit must not be undone locally');
+  });
+
+  it('a remote that moved since the last fetch, a rewrite that splits fetch and push, and an unreadable ignore check are refused BEFORE anything is written', async () => {
+    for (const [opts, re] of [
+      [{ remoteTip: 'someoneelse' }, /not where this clone last saw it/],
+      [{ pushUrl: 'ssh://rewritten.example.test/drop.git' }, /pushes somewhere other than where it fetches/],
+      [{ ignoreError: true }, /could not tell whether the export would be git-ignored/],
+    ]) {
+      const dir = tmp();
+      assert.throws(() => deliverExport({ doc: await_(), dropDir: dir, push: true, exec: gitStub(dir, [], opts) }), re);
+      assert.equal(fs.existsSync(path.join(dir, 'acme')), false, `nothing written for ${JSON.stringify(opts)}`);
+    }
   });
 
   it('plain-clone assumptions are enforced: a custom fetch refspec, a separate push URL, or an ignoring .gitignore are refused BEFORE anything is written', async () => {
     for (const [opts, re] of [
       [{ fetchSpec: '+refs/heads/main:refs/remotes/origin/other' }, /default fetch refspec/],
-      [{ pushurl: 'ssh://elsewhere/drop.git' }, /separate push URL/],
       [{ ignored: true }, /ignores exports of this name/],
     ]) {
       const dir = tmp();

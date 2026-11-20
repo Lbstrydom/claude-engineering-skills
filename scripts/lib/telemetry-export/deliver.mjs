@@ -47,7 +47,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** A git-ignored export could never be staged, would sit on disk unseen by the retry scan and never be delivered. */
 function refuseIfIgnored(git, rel) {
   let ignored = false;
-  try { git(['check-ignore', '-q', '--', rel]); ignored = true; } catch { ignored = false; }   // exit 1 = not ignored
+  try {
+    git(['check-ignore', '-q', '--', rel]);
+    ignored = true;
+  } catch (err) {
+    // Exit 1 is git's answer "not ignored". Anything else (fatal repository or index error) is NOT an answer.
+    if (err?.status !== 1) throw new Error('deliver: could not tell whether the export would be git-ignored — refusing to publish');
+  }
   if (ignored) throw new Error('deliver: the drop repository ignores exports of this name (.gitignore) — they could never be delivered');
 }
 
@@ -69,8 +75,19 @@ function pushGate(git, root) {
   if (fetchSpecs.length !== 1 || fetchSpecs[0] !== `+refs/heads/*:refs/remotes/${remote}/*`) {
     throw new Error(`deliver: remote "${remote}" does not use the default fetch refspec — the drop must be a plain clone`);
   }
-  if (optional(['config', '--get-all', `remote.${remote}.pushurl`])) {
-    throw new Error(`deliver: remote "${remote}" has a separate push URL — the drop must be a plain clone`);
+  // The EFFECTIVE destinations, rewrites applied (`url.<base>.insteadOf` / `pushInsteadOf` / `pushurl`): the push
+  // must go exactly where the upstream was fetched from, and to exactly one place.
+  const fetchUrls = optional(['remote', 'get-url', '--all', remote]).split('\n').filter(Boolean);
+  const pushUrls = optional(['remote', 'get-url', '--push', '--all', remote]).split('\n').filter(Boolean);
+  if (fetchUrls.length !== 1 || pushUrls.length !== 1 || fetchUrls[0] !== pushUrls[0]) {
+    throw new Error(`deliver: remote "${remote}" pushes somewhere other than where it fetches (a separate push URL or a rewrite) — the drop must be a plain clone`);
+  }
+  // The local tracking ref is only as fresh as the last fetch: a remote branch reset or deleted since would make
+  // "nothing ahead" a statement about a stale picture. Ask the remote itself; a mismatch means fetch first.
+  const tracked = String(git(['rev-parse', '@{u}']) ?? '').trim();
+  const remoteTip = String(git(['ls-remote', remote, `refs/heads/${branch}`]) ?? '').trim().split(/\s+/)[0] ?? '';
+  if (!tracked || remoteTip !== tracked) {
+    throw new Error(`deliver: the remote branch is not where this clone last saw it — fetch and review first (the exporter will not push over an unknown state)`);
   }
   const ahead = Number(String(git(['rev-list', '--count', '@{u}..HEAD']) ?? '').trim());
   if (!Number.isInteger(ahead)) throw new Error('deliver: could not count unpushed commits — refusing to push');
@@ -97,8 +114,19 @@ function commitAndPush(git, dest, paths, message) {
   try {
     git(['-c', 'push.followTags=false', 'push', '--no-follow-tags', dest.remote, `${ours}:refs/heads/${dest.branch}`]);
   } catch (err) {
+    // A push can reach the remote and still report an error (the connection dies before the acknowledgement).
+    // Ask the remote what it has: if our commit is there, the export WAS delivered and undoing it locally would
+    // desynchronise the clone from the remote.
+    let delivered = false;
+    try { delivered = String(git(['ls-remote', dest.remote, `refs/heads/${dest.branch}`]) ?? '').trim().split(/\s+/)[0] === ours; } catch { delivered = false; }
+    if (delivered) return;
     try {
-      if (String(git(['rev-parse', 'HEAD']) ?? '').trim() === ours) git(['reset', '-q', '--mixed', parent]);
+      // Undo ONLY our commit: move HEAD back WITHOUT touching the index (--soft), then unstage just our paths,
+      // so anything else staged in the work tree is left exactly as it was found.
+      if (String(git(['rev-parse', 'HEAD']) ?? '').trim() === ours) {
+        git(['reset', '-q', '--soft', parent]);
+        git(['reset', '-q', '--', ...paths]);
+      }
     } catch { /* leave it: the gate will report the unpushed commit */ }
     throw err;
   }
