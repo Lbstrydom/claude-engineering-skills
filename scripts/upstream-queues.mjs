@@ -66,6 +66,8 @@ import {
 } from './lib/upstream/store-discovery.mjs';
 import { storeFingerprint } from './lib/db/client.mjs';
 import { stdoutNamesUnreachableStore } from './lib/store/backlog-gather.mjs';
+import { scanRegistered } from './lib/telemetry-export/registered.mjs';
+import { renderTelemetryExports } from './lib/telemetry-export/reader.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -260,10 +262,17 @@ function main() {
     stores, unresolved, query: (s) => queryStore(s, limit),
   });
 
+  // Consumers whose store CES cannot reach push a redacted summary instead (opt-in; null = nobody expected).
+  const telemetry = scanRegistered();
   if (process.argv.includes('--json')) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    const slim = telemetry && { ...telemetry, aliases: telemetry.aliases.map(({ files, ...rest }) => rest) };
+    process.stdout.write(`${JSON.stringify(telemetry ? { ...result, telemetryExports: slim } : result, null, 2)}\n`);
   } else {
     process.stdout.write(`${renderQueues(result)}\n`);
+    if (telemetry) {
+      process.stdout.write('  telemetry exports (stores CES cannot reach — upstream reports as REPORTED by the consumer):\n');
+      for (const l of renderTelemetryExports(telemetry)) process.stdout.write(`    ${l}\n`);
+    }
   }
   // Always 0 — advisory. See the header.
   process.exit(0);

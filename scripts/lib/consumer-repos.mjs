@@ -150,6 +150,9 @@ const LOCAL_REGISTRY_BASENAME = 'consumer-repos.local.json';
 /** Legal values of a registry entry's optional `merge` field. Absent means `'auto'`. */
 export const MERGE_POLICIES = Object.freeze(['auto', 'manual']);
 
+/** Legal `telemetry.cadence` of an expected exporter (docs/plans/private-store-telemetry-path.md §2.3). */
+export const TELEMETRY_CADENCES = Object.freeze(['weekly', 'on-demand']);
+
 /**
  * Where the local registry may live, most-specific first.
  *
@@ -257,8 +260,22 @@ function loadLocalRepos() {
       if (e.merge !== undefined && !MERGE_POLICIES.includes(e.merge)) {
         throw new Error(`entry #${i} has merge ${JSON.stringify(e.merge)} — expected one of ${MERGE_POLICIES.join(', ')}`);
       }
+      // An expected exporter: a consumer whose store CES cannot reach pushes a redacted summary instead. Validated,
+      // never defaulted — a typo'd cadence read as 'weekly' would make an on-demand consumer look permanently stale.
+      let telemetry;
+      if (e.telemetry !== undefined) {
+        const t = e.telemetry;
+        if (!t || typeof t.alias !== 'string' || !/^[a-z0-9-]{1,32}$/.test(t.alias)) {
+          throw new Error(`entry #${i} has an invalid telemetry.alias — expected [a-z0-9-]{1,32}`);
+        }
+        if (!TELEMETRY_CADENCES.includes(t.cadence)) {
+          throw new Error(`entry #${i} has telemetry.cadence ${JSON.stringify(t.cadence)} — expected one of ${TELEMETRY_CADENCES.join(', ')}`);
+        }
+        telemetry = { alias: t.alias, cadence: t.cadence };
+      }
       return {
         ...(e.merge !== undefined ? { merge: e.merge } : {}),
+        ...(telemetry ? { telemetry } : {}),
         name:  String(e.name),
         alias: String(e.alias),
         // Relative entries anchor to the main checkout for the same reason
@@ -314,6 +331,23 @@ function mergeRegistries(base, local) {
 }
 
 export const CONSUMER_REPOS = Object.freeze(mergeRegistries(BASE_REPOS, loadLocalRepos()).map((r) => Object.freeze(r)));
+
+/**
+ * The expected exporters: every registered consumer that declares a `telemetry` block. PURE.
+ * Two consumers may not share an export alias (the reader attributes a file by its directory name).
+ *
+ * @param {ReadonlyArray<{telemetry?: {alias: string, cadence: string}}>} [repos]
+ * @returns {Array<{alias: string, cadence: 'weekly'|'on-demand'}>}
+ */
+export function expectedExporters(repos = CONSUMER_REPOS) {
+  const out = [];
+  for (const r of repos) {
+    if (!r.telemetry) continue;
+    if (out.some((o) => o.alias === r.telemetry.alias)) throw new Error(`two consumers declare the telemetry alias "${r.telemetry.alias}" — refusing to guess which a file belongs to`);
+    out.push({ alias: r.telemetry.alias, cadence: r.telemetry.cadence });
+  }
+  return out;
+}
 
 /**
  * Who merges a registered consumer's sync PR: the entry's `merge` field, `'auto'` when absent.

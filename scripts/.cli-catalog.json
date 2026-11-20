@@ -761,6 +761,10 @@
       "description": "Write a redacted telemetry-export/v1 summary of this consumer's audit store into a drop directory CES can read (opt-in; for a store CES cannot reach).",
       "category": "sync"
     },
+    "telemetry:exports": {
+      "description": "What each expected exporter has sent CES (received / stale / rejected / never received / drop unreadable). An absent export is unmeasured, never zero. Advisory.",
+      "category": "sync"
+    },
     "stores:drift": {
       "description": "Migration drift across EVERY consumer store, not just the ambient one (advisory; never blocks).",
       "category": "sync"
