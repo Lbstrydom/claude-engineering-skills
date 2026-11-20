@@ -221,6 +221,15 @@ describe('a partial read is never a definitive state', () => {
   });
 });
 
+describe('a symlink at the top of the drop is reported, never followed (final gate G1)', () => {
+  it('an unexpected symlink is listed as unattributed/symlink', (t) => {
+    const drop = tmp(); const outside = tmp();
+    if (!trySymlink(t, outside, path.join(drop, 'stranger'), 'junction')) return;
+    const r = scan(drop);
+    assert.deepEqual(r.unattributed, [{ dir: 'stranger', reason: 'symlink' }]);
+  });
+});
+
 describe('scan-incomplete causes do not hide each other', () => {
   it('a count bound hit AFTER an unreadable alias still wins (it is what makes absence unprovable elsewhere)', () => {
     const drop = tmp();
