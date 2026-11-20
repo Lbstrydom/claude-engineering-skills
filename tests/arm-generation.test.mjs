@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import {
   runAuditGenerationArm, UnsupportedGenerationTransport, _internals,
@@ -120,8 +121,8 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
     const spy = spyFactories();
     const fakeAudit = async () => { called = true; return {}; };
     await assert.rejects(
-      () => runAuditGenerationArm({
-        arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
+      () => runAuditGenerationArm({ _withCaseTree: fakeTree,
+        arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir, treeSha: 'abc123' },
         route: { transport: 'native-anthropic' }, runId: 'r1', role: 'auditor',
         _runMultiPassCodeAudit: fakeAudit, _clientFactories: spy.factories,
       }),
@@ -141,9 +142,9 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
     };
 
     const route = { transport: 'openai-compatible', resolvedModel: 'gpt-5.4', deploymentId: null, pricingModel: 'gpt-5.4', provider: 'openai' };
-    const result = await runAuditGenerationArm({
+    const result = await runAuditGenerationArm({ _withCaseTree: fakeTree,
       arm: ARM_A,
-      auditInput: { diff: '--- fake diff ---', files: ['a.js', 'b.js'], repoRoot: tmpDir },
+      auditInput: { diff: '--- fake diff ---', files: ['a.js', 'b.js'], repoRoot: tmpDir, treeSha: 'abc123' },
       route, runId: 'r-test-1', role: 'auditor',
       _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
     });
@@ -175,8 +176,8 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
     const fakeAudit = async () => { throw new Error('boom'); };
     const route = { transport: 'openai-compatible', resolvedModel: 'gpt-5.4', deploymentId: null, pricingModel: 'gpt-5.4', provider: 'openai' };
     await assert.rejects(
-      () => runAuditGenerationArm({
-        arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
+      () => runAuditGenerationArm({ _withCaseTree: fakeTree,
+        arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir, treeSha: 'abc123' },
         route, runId: 'r-test-2', role: 'auditor', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
       }),
       /boom/,
@@ -192,8 +193,8 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
       return { findings: [], _usage: { input_tokens: 10, output_tokens: 5 } };
     };
     const route = { transport: 'openai-compatible', resolvedModel: 'gpt-5.4', deploymentId: 'audit-deployment', pricingModel: 'gpt-5.4', provider: 'azure' };
-    await runAuditGenerationArm({
-      arm: candidateArm, auditInput: { diff: 'x', files: ['a.js'], repoRoot: tmpDir },
+    await runAuditGenerationArm({ _withCaseTree: fakeTree,
+      arm: candidateArm, auditInput: { diff: 'x', files: ['a.js'], repoRoot: tmpDir, treeSha: 'abc123' },
       route, runId: 'r-test-3', role: 'auditor', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
     });
     assert.equal(capturedOpts.model, 'audit-deployment');
@@ -205,8 +206,8 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
     const fakeAudit = async () => { called = true; return { findings: [], _usage: {} }; };
     const route = { transport: 'openai-compatible', resolvedModel: 'gpt-5.4', deploymentId: null, pricingModel: 'gpt-5.4', provider: 'openai' };
     await assert.rejects(
-      () => runAuditGenerationArm({
-        arm: ARM_A, auditInput: { diff: '+++ b/.env\n+SECRET=abc123', files: ['.env'], repoRoot: tmpDir },
+      () => runAuditGenerationArm({ _withCaseTree: fakeTree,
+        arm: ARM_A, auditInput: { diff: '+++ b/.env\n+SECRET=abc123', files: ['.env'], repoRoot: tmpDir, treeSha: 'abc123' },
         route, runId: 'r-test-4', role: 'auditor', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
       }),
       EgressGateError,
@@ -218,8 +219,8 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
     const fakeAudit = async () => ({ findings: 'not-an-array', _usage: { input_tokens: 1, output_tokens: 1 } });
     const route = { transport: 'openai-compatible', resolvedModel: 'gpt-5.4', deploymentId: null, pricingModel: 'gpt-5.4', provider: 'openai' };
     await assert.rejects(
-      () => runAuditGenerationArm({
-        arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
+      () => runAuditGenerationArm({ _withCaseTree: fakeTree,
+        arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir, treeSha: 'abc123' },
         route, runId: 'r-test-5', role: 'auditor', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
       }),
       /malformed result/,
@@ -237,8 +238,8 @@ describe('arm-generation.mjs — controls.scope/controls.passes wiring (auditor-
       capturedOpts = opts;
       return fakeAuditResult;
     };
-    await runAuditGenerationArm({
-      arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
+    await runAuditGenerationArm({ _withCaseTree: fakeTree,
+      arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir, treeSha: 'abc123' },
       route, runId: 'r-scope-1', role: 'auditor', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
     });
     assert.equal(capturedOpts.scopeMode, 'diff');
@@ -251,8 +252,8 @@ describe('arm-generation.mjs — controls.scope/controls.passes wiring (auditor-
       capturedOpts = opts;
       return fakeAuditResult;
     };
-    await runAuditGenerationArm({
-      arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
+    await runAuditGenerationArm({ _withCaseTree: fakeTree,
+      arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir, treeSha: 'abc123' },
       route, runId: 'r-scope-2', role: 'auditor', scope: 'full', _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
     });
     assert.equal(capturedOpts.scopeMode, 'full');
@@ -264,10 +265,83 @@ describe('arm-generation.mjs — controls.scope/controls.passes wiring (auditor-
       capturedOpts = opts;
       return fakeAuditResult;
     };
-    await runAuditGenerationArm({
-      arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
+    await runAuditGenerationArm({ _withCaseTree: fakeTree,
+      arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir, treeSha: 'abc123' },
       route, runId: 'r-scope-3', role: 'auditor', passes: ['structure', 'wiring'], _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
     });
     assert.deepEqual(capturedOpts.passFilter, ['structure', 'wiring']);
+  });
+});
+
+// The case-tree fake: runs the call in the given dir without touching git (the real one is exercised below against a real repo).
+const fakeTree = async ({ repoRoot }, fn) => fn(repoRoot);
+
+describe('arm-generation.mjs — a case is audited at ITS commit, not at the checkout (instrument fix, 2026-11-20)', () => {
+  const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).trim();
+  const route = { transport: 'openai-compatible', resolvedModel: 'gpt-5.4', deploymentId: null, pricingModel: 'gpt-5.4', provider: 'openai' };
+  /** A repo whose CHECKOUT is ahead of the case commit: `later()` exists only in the second commit. */
+  function repoAheadOfCase() {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arm-tree-repo-'));
+    sh(repo, 'init', '-q');
+    fs.writeFileSync(path.join(repo, 'a.js'), 'export function atCommit() {}\n');
+    sh(repo, 'add', '.'); sh(repo, 'commit', '-q', '-m', 'case');
+    const caseSha = sh(repo, 'rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(repo, 'a.js'), 'export function atCommit() {}\nexport function later() {}\n');
+    sh(repo, 'commit', '-q', '-am', 'post-commit');
+    return { repo, caseSha };
+  }
+  const readA = () => fs.readFileSync('a.js', 'utf8');
+
+  test('file reads during the audit see the case commit, never a symbol a later commit added', async () => {
+    const { repo, caseSha } = repoAheadOfCase();
+    let seen = null; let cwdDuring = null;
+    const fakeAudit = async () => { seen = readA(); cwdDuring = process.cwd(); return { findings: [], _usage: {} }; };
+    try {
+      await runAuditGenerationArm({
+        arm: ARM_A, auditInput: { diff: 'x', files: ['a.js'], repoRoot: repo, treeSha: caseSha }, route, runId: 'r-tree', role: 'auditor',
+        _runMultiPassCodeAudit: fakeAudit, _clientFactories: spyFactories().factories,
+      });
+      assert.match(seen, /atCommit/);
+      assert.equal(seen.includes('later'), false, 'a post-commit symbol must not be visible to the audit');
+      assert.notEqual(path.resolve(cwdDuring), path.resolve(repo), 'the audit must not run in the checkout itself');
+      assert.equal(path.resolve(process.cwd()), path.resolve(savedCwd), 'cwd restored');
+      assert.equal(fs.existsSync(cwdDuring), false, 'the throwaway tree is removed');
+      assert.equal(sh(repo, 'worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ')).length, 1, 'no worktree left registered');
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  test('NEGATIVE CONTROL: auditing the checkout (the old behaviour) DOES see the post-commit symbol, so the test above can fail', async () => {
+    const { repo } = repoAheadOfCase();
+    let seen = null;
+    try {
+      await runAuditGenerationArm({
+        arm: ARM_A, auditInput: { diff: 'x', files: ['a.js'], repoRoot: repo, treeSha: 'unused' }, route, runId: 'r-ctl', role: 'auditor',
+        _withCaseTree: fakeTree, // the old behaviour: run in repoRoot itself
+        _runMultiPassCodeAudit: async () => { seen = readA(); return { findings: [], _usage: {} }; }, _clientFactories: spyFactories().factories,
+      });
+      assert.match(seen, /later/, 'the probe can see a post-commit symbol when the tree is the checkout');
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  test('a call that names no case commit is refused, never defaulted to the checkout', async () => {
+    let called = false;
+    await assert.rejects(() => runAuditGenerationArm({
+      arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir }, route, runId: 'r-none', role: 'auditor',
+      _runMultiPassCodeAudit: async () => { called = true; return { findings: [] }; }, _clientFactories: spyFactories().factories,
+    }), /treeSha/);
+    assert.equal(called, false);
+  });
+
+  test('the tree is removed even when the audit throws', async () => {
+    const { repo, caseSha } = repoAheadOfCase();
+    let dir = null;
+    try {
+      await assert.rejects(() => runAuditGenerationArm({
+        arm: ARM_A, auditInput: { diff: 'x', files: ['a.js'], repoRoot: repo, treeSha: caseSha }, route, runId: 'r-throw', role: 'auditor',
+        _runMultiPassCodeAudit: async () => { dir = process.cwd(); throw new Error('boom'); }, _clientFactories: spyFactories().factories,
+      }), /boom/);
+      assert.equal(fs.existsSync(dir), false);
+      assert.equal(path.resolve(process.cwd()), path.resolve(savedCwd));
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });

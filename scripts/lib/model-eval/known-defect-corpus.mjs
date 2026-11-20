@@ -246,6 +246,8 @@ export function loadCorpusCase({ kdEntry, repoRoots, env }) {
     // tier's generation arm) read it here rather than re-deriving it with a
     // second, divergent matcher.
     repoRoot: root,
+    // The commit the diff came from: a generation arm audits THIS tree, not the checkout at `repoRoot`.
+    treeSha: sha,
     visibleInput: { diff, files },
     hiddenGroundTruth: isClean ? { suite: 'expect_clean', files: kdEntry.files, kdId: kdEntry.id } : {
       // `files` — the KD's OWN declared defect-location files (known-defects.json's

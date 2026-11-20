@@ -77,7 +77,7 @@ export async function runExpectCleanReport({ runId, arm, route, cases, scope, pa
     const files = kdCase.visibleInput.files;
     let scored = { outcome: 'failed', passes: [] }; let gen = null; let threw = false;
     try {
-      gen = await generate({ arm, auditInput: { diff: kdCase.visibleInput.diff, files, repoRoot: kdCase.repoRoot }, route, runId, role: 'auditor', scope, passes });
+      gen = await generate({ arm, auditInput: { diff: kdCase.visibleInput.diff, files, repoRoot: kdCase.repoRoot, treeSha: kdCase.treeSha }, route, runId, role: 'auditor', scope, passes });
     } catch (err) {
       // A generation that could not complete is `failed` (unmeasured, in the denominator), never clean. It may still have been billed,
       // so the meter is told the cost is UNKNOWN and the report says its cost is incomplete.
