@@ -85,6 +85,8 @@ const FILES = {
     '',
   ].join('\n'),
   'src/shop/trusted.py': '__all__ = ["listed"]\ndef listed():\n    return 1\ndef unlisted():\n    return 2\n',
+  // exec() can mutate __all__ from inside a string: opaque, so not trusted.
+  'src/shop/dynamic.py': '__all__ = ["shown"]\nexec("__all__.append(\'later\')")\ndef shown():\n    return 1\ndef later():\n    return 2\n',
   // Loop-scoped module defs, and an __all__ that is only conditionally bound
   // (so it is undecidable, and the underscore convention applies).
   'src/shop/blocks.py': [
@@ -173,7 +175,7 @@ describe('Python fixture repo — full extract through the real CLI', () => {
 
   it('indexes module functions, classes and methods with signatures', () => {
     const got = ofType(recs, 'symbol').map((s) => `${s.filePath}::${s.symbolName}::${s.kind}::${s.signature}`).sort();
-    assert.deepEqual(got.filter((g) => !/aws\.py|compat\.py|odd\.py|blocks\.py|trusted\.py/.test(g)), [
+    assert.deepEqual(got.filter((g) => !/aws\.py|compat\.py|odd\.py|blocks\.py|trusted\.py|dynamic\.py/.test(g)), [
       'src/shop/legacy.py::greet::function::def greet()',
       'src/shop/orders/pricing.py::total_price::function::def total_price(items, tax_rate=0.2)',
       'src/shop/orders/service.py::OrderService._audit::method::def _audit(self)',
@@ -238,6 +240,9 @@ describe('Python fixture repo — full extract through the real CLI', () => {
   it('a single unconditional literal __all__ IS trusted (negative control for the fallbacks)', () => {
     const p = ofType(recs, 'symbol').filter((s) => s.filePath === 'src/shop/trusted.py');
     assert.deepEqual(p.map((s) => `${s.symbolName}:${s.isExported}`).sort(), ['listed:true', 'unlisted:false']);
+    const d = ofType(recs, 'symbol').filter((s) => s.filePath === 'src/shop/dynamic.py');
+    assert.deepEqual(d.map((s) => `${s.symbolName}:${s.isExported}`).sort(), ['later:true', 'shown:true'],
+      'an exec string mentioning __all__ makes the literal untrusted');
   });
 
   it('finds defs inside for/while blocks; a conditionally-bound __all__ is undecidable', () => {
@@ -274,10 +279,10 @@ describe('Python fixture repo — full extract through the real CLI', () => {
     const cov = coverageOf(recs);
     assert.equal(cov.outcome, 'ok');
     assert.equal(cov.parser.unparseable, 0);
-    // 13 regular .py (+ the symlink when the OS allowed one); the sensitive file
+    // 14 regular .py (+ the symlink when the OS allowed one); the sensitive file
     // and the escaping symlink are refused by the gate, so they are not in the
-    // universe at all (never read, never named): 12 either way.
-    assert.equal(cov.eligible, 12);
+    // universe at all (never read, never named): 13 either way.
+    assert.equal(cov.eligible, 13);
     assert.equal(cov.cruised, cov.eligible - 1, 'only broken.py (syntax error) is uncruised');
     assert.deepEqual(cov.samples.uncruised, ['src/shop/broken.py']);
     const summary = ofType(recs, 'summary')[0].counts;

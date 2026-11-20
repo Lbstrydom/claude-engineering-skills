@@ -51,6 +51,11 @@ def _mentions_of(tree, word):
     ``sys.modules[__name__].__all__``) surfaces as one more mention."""
     count = 0
     for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value != word and word in node.value:
+            # A string that merely CONTAINS it (exec("__all__.append('x')"), a
+            # docstring) is opaque: count it, so the literal is not trusted.
+            count += 1
+            continue
         for _, value in ast.iter_fields(node):
             if isinstance(value, str):
                 count += value == word
