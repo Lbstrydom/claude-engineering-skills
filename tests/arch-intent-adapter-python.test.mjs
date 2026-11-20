@@ -223,6 +223,28 @@ describe('resolvePythonImport', () => {
     assert.equal(res.state, 'resolved-local');
     assert.ok(res.submodules.includes('a/b/c.py'));
   });
+
+  // Found building the symbol index's Python stage
+  // (docs/plans/python-arch-memory-indexing.md): under a `src/` root the
+  // structural walk produced `src.shop.orders.pricing`, which the index (keyed
+  // `shop.orders.pricing`) never held — every relative import in a src layout
+  // read as `unresolved`.
+  it('resolves a relative import under a src/ root via the importer\'s dotted module', () => {
+    const mapped = new Map([
+      ['src/shop/__init__.py', 'd'], ['src/shop/orders/__init__.py', 'd'],
+      ['src/shop/orders/service.py', 'd'], ['src/shop/orders/pricing.py', 'd'], ['src/shop/util.py', 'd'],
+    ]);
+    const idx = buildPythonModuleIndex(mapped, ['src', '']);
+    const sib = { kind: 'from', module: 'pricing', names: ['x'], isRelative: true, dotCount: 1 };
+    assert.equal(resolvePythonImport(sib, 'src/shop/orders/service.py', idx).targetFile, 'src/shop/orders/pricing.py');
+    const up = { kind: 'from', module: 'util', names: ['y'], isRelative: true, dotCount: 2 };
+    assert.equal(resolvePythonImport(up, 'src/shop/orders/service.py', idx).targetFile, 'src/shop/util.py');
+    // From a package __init__, `.` is the package itself.
+    const fromInit = { kind: 'from', module: 'pricing', names: ['x'], isRelative: true, dotCount: 1 };
+    assert.equal(resolvePythonImport(fromInit, 'src/shop/orders/__init__.py', idx).targetFile, 'src/shop/orders/pricing.py');
+    const tooHigh = { kind: 'from', module: 'x', names: ['y'], isRelative: true, dotCount: 4 };
+    assert.equal(resolvePythonImport(tooHigh, 'src/shop/orders/service.py', idx).state, 'unresolved');
+  });
 });
 
 // ── Integration — analyseImports against a fixture repo ─────────────────────

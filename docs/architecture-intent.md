@@ -107,6 +107,9 @@ the new `arch-intent/` module tree, robustness helpers. Should NOT depend on
 Symbol-index extraction + refresh (`scripts/symbol-index/**`,
 `scripts/lib/symbol-index/**`). Walks the repo, extracts symbols + their
 domain tags, writes to Supabase. Read by neighbourhood queries during /plan.
+Depends on `arch-intent` for ONE thing: its Python import resolver
+(`adapters/python.mjs`), reused by the Python parser stage
+(`lib/symbol-index/python-extract.mjs`) rather than re-implemented.
 
 ### `learning-store`
 Supabase write/read layer (`learning-store.mjs`, `bandit.mjs`, `refine-prompts.mjs`,

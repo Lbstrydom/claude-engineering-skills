@@ -278,13 +278,19 @@ function parseImportedNames(clause) {
  * `__init__.py` walk, and the repo root. Handles PEP 420 namespace packages
  * and nested-monorepo layouts.
  *
- * NOT pure — reads `pyproject.toml` / `setup.cfg` under `repoPath`.
+ * NOT pure — reads `pyproject.toml` / `setup.cfg` under `repoPath`. EVERY such
+ * read (mapped or repo-root probe) goes through `readMeta(rel)`, which returns
+ * the file's text, `''` when it exists but cannot be read, or `null` when it is
+ * absent. The default reads the filesystem exactly as before; the symbol
+ * indexer passes a reader guarded by the sensitive-path gate so a metadata file
+ * symlinked at a secret is never opened (docs/plans/python-arch-memory-indexing.md §2.3).
  *
  * @param {string} repoPath
  * @param {Map<string,string>} mapped - repo-relative file → domain
+ * @param {{readMeta?: (rel: string) => string|null}} [opts]
  * @returns {string[]} repo-relative source roots, precedence-ordered
  */
-export function discoverPythonRoots(repoPath, mapped) {
+export function discoverPythonRoots(repoPath, mapped, { readMeta = defaultReadMeta(repoPath) } = {}) {
   const files = [...mapped.keys()];
   const roots = [];
   const seen = new Set();
@@ -296,17 +302,16 @@ export function discoverPythonRoots(repoPath, mapped) {
   // 1. Packaging metadata anywhere in the tree.
   const metaFiles = files.filter(f =>
     f.endsWith('pyproject.toml') || f.endsWith('setup.cfg'));
+  const contents = new Map(metaFiles.map((f) => [f, readMeta(f) ?? '']));
   // Also probe the repo root explicitly (metadata files may be untracked-in-mapped).
   for (const rootMeta of ['pyproject.toml', 'setup.cfg']) {
-    if (!metaFiles.includes(rootMeta) && fs.existsSync(path.join(repoPath, rootMeta))) {
-      metaFiles.push(rootMeta);
-    }
+    if (metaFiles.includes(rootMeta)) continue;
+    const content = readMeta(rootMeta);
+    if (content !== null) { metaFiles.push(rootMeta); contents.set(rootMeta, content); }
   }
   for (const metaFile of metaFiles) {
     const dir = path.dirname(metaFile) === '.' ? '' : path.dirname(metaFile);
-    let content = '';
-    try { content = fs.readFileSync(path.join(repoPath, metaFile), 'utf-8'); }
-    catch { /* unreadable — skip */ }
+    const content = contents.get(metaFile) ?? '';
     const pkgDirs = extractPackageDirs(content);
     if (pkgDirs.length === 0) {
       add(dir); // metadata present but no explicit package-dir → its own dir
@@ -349,6 +354,15 @@ export function discoverPythonRoots(repoPath, mapped) {
   return roots;
 }
 
+/** The unguarded reader: absent → null, unreadable → '' (the historical behaviour). */
+function defaultReadMeta(repoPath) {
+  return (rel) => {
+    const abs = path.join(repoPath, rel);
+    if (!fs.existsSync(abs)) return null;
+    try { return fs.readFileSync(abs, 'utf-8'); } catch { return ''; }
+  };
+}
+
 /** Extract `package-dir` / `where` values from pyproject.toml / setup.cfg text. */
 function extractPackageDirs(content) {
   const dirs = [];
@@ -386,6 +400,11 @@ export function buildPythonModuleIndex(mapped, roots) {
   const moduleToFile = new Map();
   const packageDirs = new Set();
   const collisionTracker = new Map(); // dottedName → file[]
+  // file → its dotted module name under its chosen root. Relative imports
+  // resolve against THIS, not the file's directory: under a `src/` root the
+  // directory `src/pkg/sub` is the package `pkg.sub`, and a structural walk of
+  // the directory produced `src.pkg.sub.x`, which never matched the index.
+  const fileToDotted = new Map();
 
   for (const file of mapped.keys()) {
     if (!isPySource(file)) continue;
@@ -409,6 +428,7 @@ export function buildPythonModuleIndex(mapped, roots) {
       dotted = rel.replace(/\.(py|pyi)$/i, '').replaceAll('/', '.');
     }
     if (!dotted) continue;
+    fileToDotted.set(norm, { dotted, isPackage: base === '__init__.py' || base === '__init__.pyi' });
 
     if (!collisionTracker.has(dotted)) collisionTracker.set(dotted, []);
     collisionTracker.get(dotted).push(norm);
@@ -422,7 +442,7 @@ export function buildPythonModuleIndex(mapped, roots) {
   }
   indexCollisions.sort((a, b) => a.dottedName.localeCompare(b.dottedName));
 
-  return { moduleToFile, packageDirs, indexCollisions };
+  return { moduleToFile, packageDirs, indexCollisions, fileToDotted };
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────────
@@ -439,8 +459,19 @@ export function buildPythonModuleIndex(mapped, roots) {
 export function resolvePythonImport(ref, fromFile, index) {
   let dotted;
 
-  if (ref.isRelative) {
-    // Resolve the importing file's package, then walk up (dotCount-1) levels.
+  const own = ref.isRelative ? index.fileToDotted?.get(fromFile.replaceAll('\\', '/')) : undefined;
+  if (own) {
+    // The importer's PACKAGE in dotted form (a package's __init__ is its own
+    // package), then up (dotCount-1) levels — Python's own semantics.
+    const parts = own.dotted.split('.');
+    if (!own.isPackage) parts.pop();
+    let up = ref.dotCount - 1;
+    while (up > 0 && parts.length > 0) { parts.pop(); up--; }
+    if (up > 0) return { state: 'unresolved' }; // walked above the top-level package
+    dotted = [parts.join('.'), ref.module].filter(Boolean).join('.');
+  } else if (ref.isRelative) {
+    // Importer not in the index (a caller-built index): resolve structurally
+    // from its directory, then walk up (dotCount-1) levels.
     const fromDir = path.dirname(fromFile).replaceAll('\\', '/');
     let baseParts = fromDir === '.' || fromDir === '' ? [] : fromDir.split('/');
     // Translate the file dir into a dotted package via the index is hard;
