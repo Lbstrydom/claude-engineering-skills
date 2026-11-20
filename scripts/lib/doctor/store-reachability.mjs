@@ -161,10 +161,15 @@ export async function probeStoreReachability({ subjectRoot, loadEnv, injectResol
     // process alive after the verdict has been reported.
     // Teardown is itself bounded: a pool end() can wait on the very attempt that
     // wedged, and the verdict must not wait with it.
-    await Promise.race([
-      Promise.resolve().then(() => client.closePool?.()).catch(() => {}),
-      new Promise((resolve) => { setTimeout(resolve, teardownTimeoutMs); }),
-    ]);
+    let teardownTimer;
+    try {
+      await Promise.race([
+        Promise.resolve().then(() => client.closePool?.()).catch(() => {}),
+        new Promise((resolve) => { teardownTimer = setTimeout(resolve, teardownTimeoutMs); }),
+      ]);
+    } finally {
+      clearTimeout(teardownTimer);   // a prompt teardown must not keep the process alive for the full deadline
+    }
     return { configured: true, ok: false, cause, hint };
   } finally {
     clearTimeout(timer);
