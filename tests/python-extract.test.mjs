@@ -133,7 +133,7 @@ describe('readAdmittedSource — open-then-verify against a re-admission (Tier 3
     const r = readAdmittedSource({ canonicalPath: canonical }, {
       maxBytes: 1024, readmit: readmitAt(p),
       beforeOpen: () => { fs.renameSync(p, stash); swapped = trySymlink(t, secret, p); if (!swapped) fs.renameSync(stash, p); },
-      afterOpen: () => { if (swapped) { fs.rmSync(p); fs.renameSync(stash, p); } },
+      afterOpen: () => { if (swapped) { fs.unlinkSync(p); fs.renameSync(stash, p); } },
     });
     if (!swapped) return;
     assert.equal(r.ok, false, 'the secret bytes must not be returned');
@@ -359,7 +359,7 @@ describe('guardedMetaReader — root discovery never opens a refused metadata fi
       const read = guardedMetaReader(tmp, 1024);
       assert.equal(read('setup.cfg'), null);
       assert.equal(read('pyproject.toml'), null);
-    } finally { fs.rmSync(outside, { recursive: true, force: true }); }
+    } finally { fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('discoverPythonRoots routes EVERY metadata read — mapped and root probe — through readMeta', async () => {

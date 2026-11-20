@@ -410,6 +410,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Postgres-Parity M1 — `/audit-code` Summary](./postgres-parity-m1-audit-summary.md) |  |
 | [Postgres-Parity M3 + M4 — `/audit-code` Summary](./postgres-parity-m3m4-audit-summary.md) |  |
 | [Audit Summary — Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed-audit-summary.md) |  |
+| [Audit summary: Python indexing for architectural memory](./python-arch-memory-indexing-audit-summary.md) |  |
 | [Audit summary — arch-memory / symbol-index manifest transport](./refactor-arch-memory-symbol-index-2026-07-audit-summary.md) |  |
 | [Audit Summary — refactor-architecture-debt-remainder-2026-07](./refactor-architecture-debt-remainder-2026-07-audit-summary.md) |  |
 | [Audit Summary — Requirements Layer](./requirements-layer-audit-summary.md) |  |
