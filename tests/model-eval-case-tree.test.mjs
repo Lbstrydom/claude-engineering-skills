@@ -96,25 +96,25 @@ describe('withCaseTree', () => {
 
   test('a removal that fails is REPORTED: the call throws, naming the leftover path and the recovery command, and the tree is left intact', async () => {
     const { r, sha } = repo();
+    let dir;
     try {
-      let dir;
       await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async (d) => { dir = d; return 1; }, { _git: failingRemove }),
-        (e) => /could not be removed and was left at/.test(e.message) && e.message.includes(dir) && /worktree remove -f -f/.test(e.message) && /simulated: cannot remove/.test(e.message));
+        (e) => /could not be removed/.test(e.message) && e.message.includes(JSON.stringify(dir)) && /worktree remove -f -f/.test(e.message) && /simulated: cannot remove/.test(e.message));
       assert.equal(fs.existsSync(path.join(dir, 'a.js')), true, 'left intact, not half-deleted');
       assert.equal(registered(r), 2, 'and still registered, so the recovery command works');
-    } finally { try { sh(r, 'worktree', 'remove', '-f', '-f', path.join(os.tmpdir())); } catch { /* */ } try { sh(r, 'worktree', 'prune'); } catch { /* */ } rm(r); }
+    } finally { sh(r, 'worktree', 'remove', '-f', '-f', dir); rm(path.dirname(dir)); rm(r); }
   });
 
   test('when fn threw, its error is rethrown unchanged (even frozen, even a primitive) and the cleanup failure is warned, not lost', async () => {
     const { r, sha } = repo();
-    const warns = [];
+    const warns = []; const dirs = [];
     const frozen = Object.freeze(new Error('primary'));
     try {
-      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { throw frozen; }, { _git: failingRemove, _warn: (m) => warns.push(m) }), (e) => e === frozen);
-      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { throw 'boom'; }, { _git: failingRemove, _warn: (m) => warns.push(m) }), (e) => e === 'boom');
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async (d) => { dirs.push(d); throw frozen; }, { _git: failingRemove, _warn: (m) => warns.push(m) }), (e) => e === frozen);
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async (d) => { dirs.push(d); throw 'boom'; }, { _git: failingRemove, _warn: (m) => warns.push(m) }), (e) => e === 'boom');
       assert.equal(warns.length, 2);
-      assert.ok(warns.every((m) => /could not be removed and was left at/.test(m)));
-    } finally { try { sh(r, 'worktree', 'prune'); } catch { /* */ } rm(r); }
+      assert.ok(warns.every((m) => /could not be removed/.test(m)));
+    } finally { for (const d of dirs) { sh(r, 'worktree', 'remove', '-f', '-f', d); rm(path.dirname(d)); } rm(r); }
   });
 
   test('a falsy thrown value is still a failure and is rethrown as thrown', async () => {
@@ -138,11 +138,20 @@ describe('withCaseTree', () => {
   test('a failed removal never touches another worktree, including one that merely looks missing', async () => {
     const { r, sha } = repo();
     const other = path.join(os.tmpdir(), `case-tree-unrelated-${process.pid}`);
+    let mine = null;
     try {
       sh(r, 'worktree', 'add', '--detach', other, sha);
       rm(other); // looks missing (an unavailable mount, say); a prune would unregister it
-      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => 1, { _git: failingRemove }), /could not be removed/);
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async (d) => { mine = d; return 1; }, { _git: failingRemove }), /could not be removed/);
       assert.ok(sh(r, 'worktree', 'list', '--porcelain').includes(other.split(path.sep).join('/')), 'the unrelated registration is untouched');
-    } finally { try { sh(r, 'worktree', 'prune'); } catch { /* */ } rm(other); rm(r); }
+    } finally { if (mine) { sh(r, 'worktree', 'remove', '-f', '-f', mine); rm(path.dirname(mine)); } rm(other); rm(r); }
+  });
+
+  test('a tree the callback deleted, whose removal then fails, is still REPORTED (a missing directory proves nothing about the registration)', async () => {
+    const { r, sha } = repo();
+    let mine = null;
+    try {
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async (d) => { mine = d; rm(d); return 1; }, { _git: failingRemove }), /could not be removed/);
+    } finally { try { sh(r, 'worktree', 'prune'); } catch { /* */ } if (mine) rm(path.dirname(mine)); rm(r); }
   });
 });

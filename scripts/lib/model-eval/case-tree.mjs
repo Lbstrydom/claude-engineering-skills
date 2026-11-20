@@ -29,7 +29,7 @@ const git = (root, args) => execFileSync('git', ['-c', `core.hooksPath=${os.devN
 /**
  * Run `fn(dir)` with `dir` a detached checkout of `sha` from `repoRoot`'s repository, then remove it, whether or not `fn` threw.
  * Removal is addressed through `repoRoot`, never through the worktree itself. If removal fails, `fn`'s result is not returned:
- * with a successful `fn` the call throws (naming the leftover path and the command that removes it); with a failing `fn` the
+ * with a successful `fn` the call throws (naming the repository and the leftover tree); with a failing `fn` the
  * original thrown value is rethrown UNCHANGED (never mutated, never wrapped) and the cleanup failure goes to `_warn`.
  * @template T
  * @param {{repoRoot: string, sha: string}} where
@@ -42,16 +42,20 @@ export async function withCaseTree({ repoRoot, sha }, fn, { _git = git, _warn = 
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-tree-'));
   const dir = path.join(base, 'tree');
   let result; let primary; let failed = false; // a thrown value may be falsy: track THAT it threw, not what
+  let added = false;
   try {
     _git(repoRoot, ['worktree', 'add', '--detach', '--force', dir, sha]);
+    added = true;
     result = await fn(dir);
   } catch (err) { primary = err; failed = true; }
 
   // Attempted whether or not `add` returned: a git killed between registering and finishing the checkout leaves a registration.
-  // Two --force: a locked worktree is still ours to remove. A directory that was never created is not a cleanup failure.
+  // Two --force: a locked worktree is still ours to remove. A failed removal is a cleanup failure whenever `add` succeeded (a missing
+  // directory proves nothing about the registration); after a failed `add` it is one only if a directory was left behind.
+  // The message carries the two paths, not a ready-made shell command: a path is never interpolated into command text.
   let leftover = null;
   try { _git(repoRoot, ['worktree', 'remove', '--force', '--force', dir]); } catch (err) {
-    if (fs.existsSync(dir)) leftover = `the case tree for ${sha} could not be removed and was left at ${dir} (git -C "${repoRoot}" worktree remove -f -f "${dir}"): ${err.message}`;
+    if (added || fs.existsSync(dir)) leftover = `the case tree for ${sha} could not be removed (repository: ${JSON.stringify(repoRoot)}, tree: ${JSON.stringify(dir)}; run 'git worktree remove -f -f' on the tree, or 'git worktree prune' if its directory is gone): ${err.message}`;
   }
   if (!leftover) {
     try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch (err) { leftover = `could not delete ${base}: ${err.message}`; }
