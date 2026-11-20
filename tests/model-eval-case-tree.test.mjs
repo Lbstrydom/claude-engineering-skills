@@ -277,7 +277,7 @@ describe('withCaseTree', () => {
     try {
       await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => 1, { _git: (root, args) => {
         const out = execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: ENV });
-        if (args[0] === 'worktree' && args[1] === 'add') fs.rmSync(path.join(args[args.length - 2], 'a.js'), { force: true }); // the checkout "did not produce" it
+        if (args[0] === 'worktree' && args[1] === 'add') fs.rmSync(path.join(args[args.length - 2], 'a.js'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); // the checkout "did not produce" it
         return out;
       } }), /a\.js \(unreadable: ENOENT\)/);
     } finally { rm(r); }
