@@ -158,3 +158,22 @@ describe('extracted modules: every relative dynamic import resolves (a moved fil
     assert.ok(/import\(\s*'\.\.\/schemas\.mjs'\s*\)/.test(fs.readFileSync(path.join(REPO_ROOT, 'scripts/lib/solo-control/gate-reviews.mjs'), 'utf8')));
   });
 });
+
+describe('round 2 follow-ups', () => {
+  test('a 408 is attempted once too: the project rule retries no 4xx except 429', async () => {
+    const mk = (status) => { let n = 0; return { get n() { return n; }, client: { messages: { create: async () => { n++; throw Object.assign(new Error(String(status)), { status }); } } } }; };
+    const a = mk(408); await soloCtl.runPass(a.client, 'claude-x', 'structure', 'diff --git a/x b/x\n+1\n');
+    const b = mk(429); await soloCtl.runPass(b.client, 'claude-x', 'structure', 'diff --git a/x b/x\n+1\n');
+    assert.equal(a.n, 1);
+    assert.equal(b.n, 2, 'negative control: 429 is still retried');
+  });
+  test('judge-gpt: an ungraded row carries NO label from the source sheet into the GPT output', () => inTemp((dir) => {
+    const out = path.join(dir, '.audit-loop/solo-control'); fs.mkdirSync(out, { recursive: true });
+    const head = 'blind_id,commit,severity,category,file,detail,label,proof,cluster,matches,pattern';
+    fs.writeFileSync(path.join(out, 'blind-adjudication.csv'), `${head}\nF001,${HEAD.slice(0, 8)},HIGH,k,f,d,proven,f:1,c1,KD-1,pat\n`);
+    cli(dir, ['judge-gpt'], refusingPolicy(dir)); // policy-refused: the row is never graded
+    const [, row] = parseCsv(fs.readFileSync(path.join(out, 'blind-adjudication-gpt.csv'), 'utf8'));
+    assert.deepEqual([row[6], row[7], row[10]], ['', '', ''], 'label/proof/pattern cleared');
+    assert.deepEqual([row[8], row[9]], ['c1', 'KD-1'], 'the pre-filled cluster and KD hint stay');
+  }));
+});

@@ -531,7 +531,7 @@ function buildColdPassPrompt(passName, diff) {
   return { system, user };
 }
 /** A 4xx other than 429/408 will fail identically on the second attempt — retrying it only repeats a doomed (and, for 402, billed-or-refused) call. */
-const isPermanentClientError = (err) => { const s = Number(err?.status ?? err?.statusCode ?? err?.error?.status); return s >= 400 && s < 500 && s !== 429 && s !== 408; };
+const isPermanentClientError = (err) => { const s = Number(err?.status ?? err?.statusCode ?? err?.error?.status); return s >= 400 && s < 500 && s !== 429; }; // the project rule (classifyLlmError): no 4xx retry except 429
 const JSON_RETRY_SUFFIX = '\n\nYour previous reply was not valid JSON. Reply with ONLY the JSON object.';
 
 
@@ -1182,9 +1182,10 @@ async function cmdApparatus() {
     assertResumableProvenance(prior, { gptModel, gateModel, gateReasoningEffort, ...(gateOnly ? {} : { maxChars }) }, force);
   } catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
   const commits = plan.commits.map((u) => u.commitSha);
-  const out = prior && !force
-    ? { ...prior, generatedFor: [...new Set([...(prior.generatedFor || []), ...requested])] }
-    : { armLabel: label, model: `${gptModel}+${gateModel}`, modelArg: `apparatus(latest-gpt→${gateModelArg})`, stageType: STAGE_TYPE, generatedFor: requested, findings: [], perCommit: [] };
+  // resumeArmFile drops the findings of the commits about to be RE-RUN (a provider-error commit keeps partial findings yet is not
+  // covered, so re-running it would append them twice); perCommit history is kept, the re-run's entry wins as the latest.
+  const out = resumeArmFile(prior, { force, rerun: commits, fresh: { armLabel: label, model: `${gptModel}+${gateModel}`, modelArg: `apparatus(latest-gpt→${gateModelArg})`, stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] } });
+  out.generatedFor = [...new Set([...(out.generatedFor || []), ...requested])];
   out.armLabel = label;
   out.provenance = {
     composition: gateOnly ? 'gate-only(reuses saved pre-gate artifact)' : `gpt-5pass→${gateRecipient}-review`,
@@ -1346,7 +1347,7 @@ async function cmdApparatus() {
     }
     log(`      → ${commitFindings} finding(s)`);
     out.perCommit.push({
-      sha, repo: repoBasename, state: genFailed ? 'provider-error' : 'ran', ...(genFailed ? { error: `${genFailed} generation pass(es) got no provider reply` } : {}), gateState, findings: commitFindings, chunks: chunks.length,
+      sha, repo: repoBasename, state: (genFailed || gateState === 'provider-error') ? 'provider-error' : 'ran', ...(genFailed ? { error: `${genFailed} generation pass(es) got no provider reply` } : gateState === 'provider-error' ? { error: 'gate did not review' } : {}), gateState, findings: commitFindings, chunks: chunks.length,
       // Denominator for score's completion check: the shared 5-pass rows (over
       // the chunk count the passes actually ran on — for a gate-only run that is
       // the ORIGINAL run's count, carried in the pregate artifact) + this gate.
@@ -1780,7 +1781,7 @@ async function cmdJudgeGpt() {
       if (g) {
         cells[iLabel] = g.label || ''; cells[iProof] = g.proof || ''; cells[iCluster] = g.cluster || `${r.commit}:${r.blindId}`;
         cells[iMatches] = g.matches || ''; cells[iPattern] = g.pattern || '';
-      } else ungradedNow++;
+      } else { cells[iLabel] = ''; cells[iProof] = ''; cells[iPattern] = ''; ungradedNow++; } // an ungraded row carries NO label from the source sheet into the GPT output
       lines.push(csvLine(cells));
     }
     const outText = lines.join('\n') + '\n';
