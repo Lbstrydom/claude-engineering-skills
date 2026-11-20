@@ -7,7 +7,7 @@
 // table cannot see — so adding a pool entry without a row fails at push.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { STATIC_POOL, pricingKey, resolveModel, _resetCatalogCache, parseOpenAIModel } from '../scripts/lib/model-resolver.mjs';
+import { STATIC_POOL, pricingKey, resolveModel, _resetCatalogCache, setCatalog, parseOpenAIModel } from '../scripts/lib/model-resolver.mjs';
 import { modelPricing } from '../scripts/lib/model-pricing-table.mjs';
 import { pricingKeys, priceFor, isPriced, costFromUsage, costForBudget } from '../scripts/lib/model-pricing.mjs';
 
@@ -33,6 +33,25 @@ describe('model pricing — STATIC_POOL coverage (2026-09-23)', () => {
     for (const s of ['latest-gpt', 'latest-gpt-mini', 'latest-opus', 'latest-sonnet', 'latest-haiku', 'latest-pro', 'latest-flash', 'latest-flash-lite']) {
       const id = resolveModel(s, { silent: true });
       assert.equal(isPriced(id), true, `${s} → ${id} must be priced`);
+    }
+  });
+
+  it('a gpt-6.2 id the LIVE catalog can hand out is priced on its own row (2026-11-20: latest-gpt → gpt-6.2-sol was unpriced)', () => {
+    // The pool test above reads STATIC_POOL, which a live catalog outranks: gpt-6.2-sol was never in it, so the
+    // table could go without a row for it and every offline check stayed green. Inject the catalog the live path sees.
+    try {
+      setCatalog('openai', [...STATIC_POOL.openai, 'gpt-6.2-sol', 'gpt-6.2-astra']);
+      const id = resolveModel('latest-gpt', { silent: true });
+      assert.equal(id, 'gpt-6.2-sol', 'precondition: the injected catalog makes latest-gpt resolve to gpt-6.2-sol');
+      for (const pick of [id, 'gpt-6.2-astra']) {
+        assert.equal(isPriced(pick), true, `${pick} must be priced`);
+        assert.equal(landingKey(pick), pick, `${pick} must land on its own version+SKU row`);
+      }
+      assert.deepEqual([priceFor('gpt-6.2-sol', { inputTokens: 1000 }).input, priceFor('gpt-6.2-sol', { inputTokens: 1000 }).output], [2, 10]);
+      assert.deepEqual([priceFor('gpt-6.2-sol', { inputTokens: 272_001 }).input, priceFor('gpt-6.2-sol', { inputTokens: 272_001 }).output], [4, 15]);
+      assert.deepEqual([priceFor('gpt-6.2-astra', { inputTokens: 1000 }).input, priceFor('gpt-6.2-astra', { inputTokens: 1000 }).output], [8, 40]);
+    } finally {
+      _resetCatalogCache();
     }
   });
 
