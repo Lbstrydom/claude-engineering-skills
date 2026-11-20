@@ -10,9 +10,10 @@ import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildExport } from '../scripts/lib/telemetry-export/build.mjs';
 import { deliverExport } from '../scripts/lib/telemetry-export/deliver.mjs';
@@ -178,5 +179,154 @@ describe('doctor: machine/telemetry-export', () => {
     const drop = tmp(); await put(drop, { alias: 'someone-else', ageMs: 1000 });
     const r = await go({ TELEMETRY_CONSUMER_ALIAS: 'acme', TELEMETRY_DROP_DIR: drop });
     assert.match(r.detail, /no export has ever been written/);
+  });
+});
+
+describe('throttle audit round 1: it must really read nothing, deliver what is pending, and not trust the clock blindly', () => {
+  const run = (args, env = {}) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'telemetry-export.mjs'), ...args], {
+    cwd: ROOT, encoding: 'utf-8', timeout: 90000, windowsHide: true,
+    env: {
+      ...process.env, AUDIT_DB_URL: '', TELEMETRY_CONSUMER_ALIAS: '', TELEMETRY_DROP_DIR: '', TELEMETRY_EXPORT_PUSH: '',
+      GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test', ...env,
+    },
+  });
+  const lastJson = (r) => JSON.parse(r.stdout.trim().split('\n').filter((l) => l.startsWith('{')).pop());
+  const git = (cwd, ...a) => spawnSync('git', a, { cwd, encoding: 'utf-8', windowsHide: true }).stdout.trim();
+
+  /**
+   * ASYNC runner for the counting-store test: `spawnSync` blocks this process's event loop, so a TCP server living in
+   * the same process could not even ACCEPT the child's connection while it ran, and the count would read 0 for a
+   * child that did connect. (A control that cannot see a connection proves nothing.)
+   */
+  const runAsync = (args, env) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'telemetry-export.mjs'), ...args], {
+      cwd: ROOT, windowsHide: true, env: { ...process.env, TELEMETRY_CONSUMER_ALIAS: '', TELEMETRY_DROP_DIR: '', TELEMETRY_EXPORT_PUSH: '', ...env },
+    });
+    let stdout = ''; let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+
+  /** A TCP listener that counts connections: the observable store boundary. */
+  async function countingStore() {
+    const conns = { n: 0 };
+    const server = net.createServer((s) => { conns.n++; s.destroy(); });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    return { conns, port: server.address().port, close: () => new Promise((r) => server.close(r)) };
+  }
+
+  it('a skipped run makes NO connection to the store; a real run does (the boundary is observable)', async () => {
+    const store = await countingStore();
+    const env = { AUDIT_DB_URL: `postgresql://u:p@127.0.0.1:${store.port}/audit_loop`, AUDIT_DB_SSL_MODE: 'disable' };
+    try {
+      const recent = tmp(); await put(recent, { ageMs: 2 * 3_600_000 });
+      const skipped = await runAsync(['--alias', 'acme', '--drop-dir', recent, '--if-older-than', '24'], env);
+      assert.equal(skipped.status, 0, skipped.stderr);
+      assert.equal(lastJson(skipped).skipped, 'recent-export');
+      assert.equal(store.conns.n, 0, 'the skip path touched the store');
+
+      const empty = tmp();
+      const ran = await runAsync(['--alias', 'acme', '--drop-dir', empty, '--if-older-than', '24'], env);
+      assert.equal(ran.status, 0, ran.stderr);
+      assert.ok(store.conns.n > 0, 'CONTROL: a real run reaches the store');
+    } finally { await store.close(); }
+  });
+
+  it('--print and --if-older-than together are a usage error (printing is never throttled)', () => {
+    assert.equal(run(['--alias', 'acme', '--print', '--if-older-than', '24']).status, 2);
+  });
+
+  it('a FUTURE-dated export (within the reader\'s clock-skew tolerance) does not throttle', async () => {
+    const drop = tmp(); await put(drop, { ageMs: -3 * 3_600_000 });
+    const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(lastJson(r).ok, true);
+    assert.equal('skipped' in lastJson(r), false);
+    assert.equal(listFiles(drop).length, 2);
+  });
+
+  describe('with --push: a recent FILE is not a delivered export', () => {
+    function gitDrop() {
+      const base = tmp();
+      const remote = path.join(base, 'remote.git');
+      spawnSync('git', ['init', '-q', '--bare', remote], { windowsHide: true });
+      const drop = path.join(base, 'drop');
+      spawnSync('git', ['clone', '-q', remote, drop], { windowsHide: true });
+      fs.writeFileSync(path.join(drop, 'README'), 'x');
+      git(drop, 'add', '.'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'init');
+      git(drop, 'push', '-q', '-u', 'origin', 'HEAD');
+      return { remote, drop };
+    }
+    const pushEnv = { TELEMETRY_EXPORT_PUSH: '1' };
+
+    it('an UNCOMMITTED recent export is delivered, then the run skips', async () => {
+      const { remote, drop } = gitDrop();
+      await put(drop, { ageMs: 3_600_000 });   // written earlier, push never happened
+      assert.equal(git(remote, 'log', '--oneline', '--all').split('\n').length, 1);
+      const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(lastJson(r).skipped, 'recent-export');
+      assert.match(git(remote, 'log', '--oneline', '--all'), /retry of an undelivered export/);
+    });
+
+    it('a COMMITTED-BUT-UNPUSHED recent export is pushed', async () => {
+      const { remote, drop } = gitDrop();
+      await put(drop, { ageMs: 3_600_000 });
+      git(drop, 'add', '.'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'local only');
+      const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(git(remote, 'log', '--oneline', '--all'), /local only/);
+    });
+
+    it('CONTROL — nothing pending: it skips and makes no commit', async () => {
+      const { remote, drop } = gitDrop();
+      await put(drop, { ageMs: 3_600_000 });
+      git(drop, 'add', '.'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'delivered');
+      git(drop, 'push', '-q');
+      const before = git(remote, 'rev-list', '--all', '--count');
+      const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(git(remote, 'rev-list', '--all', '--count'), before);
+    });
+
+    it('a failing delivery of the earlier export is REPORTED (exit 1), not skipped over', async () => {
+      const { remote, drop } = gitDrop();
+      await put(drop, { ageMs: 3_600_000 });
+      fs.rmSync(remote, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });   // the remote is gone: push must fail
+      const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /earlier export could not be delivered/);
+    });
+  });
+});
+
+describe('doctor: configuration semantics (audit round 1)', () => {
+  const probe = REGISTRY.find((p) => p.id === 'machine/telemetry-export');
+  const KEYS = ['TELEMETRY_CONSUMER_ALIAS', 'TELEMETRY_DROP_DIR'];
+  const clean = async (fn) => {
+    const saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+    for (const k of KEYS) delete process.env[k];
+    try { return await fn(); } finally { for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
+  };
+
+  it('a RELATIVE drop path in the subject\'s own .env resolves against the subject root, not the doctor\'s cwd', async () => {
+    const subject = tmp();
+    fs.mkdirSync(path.join(subject, 'drop'));
+    const doc = await buildExport({ now: new Date(Date.now() - DAY), consumerAlias: 'acme', storeFingerprint: null, toolBundleSha: null, exportId: crypto.randomUUID(), deps: deps() });
+    deliverExport({ doc, dropDir: path.join(subject, 'drop') });
+    fs.writeFileSync(path.join(subject, '.env'), 'TELEMETRY_CONSUMER_ALIAS=acme\nTELEMETRY_DROP_DIR=drop\n');
+    const r = await clean(() => runProbe(probe, { subjectRoot: subject, fs }));
+    assert.equal(r.status, 'pass', r.detail);
+  });
+
+  it('a state the probe does not know is UNKNOWN, never waved through as healthy', async () => {
+    const stub = () => ({ scanError: null, aliases: [{ state: 'something-new', generatedAt: 'not-a-date' }] });
+    const r = await clean(() => {
+      process.env.TELEMETRY_CONSUMER_ALIAS = 'acme'; process.env.TELEMETRY_DROP_DIR = tmp();
+      return runProbe(probe, { subjectRoot: tmp(), fs, scanTelemetryDrop: stub });
+    });
+    assert.equal(r.status, 'unknown');
+    assert.match(r.detail, /could not judge/);
   });
 });

@@ -51,8 +51,10 @@ nothing when this alias already has a newer valid export. Three ways to run it, 
   names are set, so it is invisible to a consumer that never opted in.
 - **Opportunistically at push time**, so the file tracks real activity rather than a calendar: one line in the
   consumer-owned `.githooks/pre-push.local` (never the managed hook) —
-  `node scripts/.claude-skills/telemetry-export.mjs --if-older-than 24 || true`. It cannot slow a push on a quiet
-  day (it exits at once) and never blocks one.
+  `node scripts/.claude-skills/telemetry-export.mjs --if-older-than 24 || echo "telemetry export failed (push not blocked)" >&2`.
+  It cannot slow a push on a quiet day (it exits at once) and never blocks one — but a failure is SAID, not
+  swallowed. With `TELEMETRY_EXPORT_PUSH=1` a recent file is not enough to skip: anything an earlier failed push
+  left uncommitted or unpushed is delivered first.
 - **By hand**, whenever.
 
 `doctor` reports freshness: `machine/telemetry-export` is `not_applicable` when nothing is configured, and when

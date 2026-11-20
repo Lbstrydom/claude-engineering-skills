@@ -35,7 +35,7 @@ import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit } from '
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { buildExport } from './lib/telemetry-export/build.mjs';
 import { makeRowReader } from './lib/telemetry-export/sources.mjs';
-import { deliverExport } from './lib/telemetry-export/deliver.mjs';
+import { deliverExport, pushPending } from './lib/telemetry-export/deliver.mjs';
 import { ExportRefusedError } from './lib/telemetry-export/redact.mjs';
 import { scanDrop } from './lib/telemetry-export/reader.mjs';
 import { stdoutNamesUnreachableStore } from './lib/store/backlog-gather.mjs';
@@ -114,11 +114,25 @@ async function main() {
   }
 
   // Throttle: a recent valid export for THIS alias means there is nothing to do (and nothing to read).
-  if (olderThanHours !== null && !printOnly && dropDir) {
+  if (olderThanHours !== null && printOnly) {
+    process.stderr.write('telemetry-export: --print and --if-older-than are mutually exclusive (printing is never throttled; it also delivers nothing)\n');
+    await finishAndExit(2); return;
+  }
+  if (olderThanHours !== null && dropDir) {
     const prior = scanDrop({ dropDir, expected: [{ alias, cadence: 'on-demand' }], now: new Date() }).aliases[0];
     if (prior?.state === 'received') {
       const hours = (Date.now() - Date.parse(prior.generatedAt)) / 3_600_000;
-      if (hours < olderThanHours) {
+      // A negative age is a FUTURE timestamp (the reader tolerates up to a day of clock skew): it is not evidence
+      // of a recent export, so it never throttles.
+      if (hours >= 0 && hours < olderThanHours) {
+        // A recent FILE is not a delivered export: when a push is requested, deliver anything of this alias's
+        // that an earlier failed push left behind BEFORE skipping.
+        if (push) {
+          try { pushPending({ dropDir, alias }); } catch (err) {
+            process.stderr.write(`telemetry-export: an earlier export could not be delivered (${String(err?.message ?? err).split('\n')[0]})\n`);
+            await finishAndExit(1); return;
+          }
+        }
         process.stdout.write(`${JSON.stringify({ ok: true, skipped: 'recent-export', ageHours: Math.floor(hours) })}\n`);
         await finishAndExit(0); return;
       }
