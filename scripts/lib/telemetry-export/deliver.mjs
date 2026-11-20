@@ -131,3 +131,40 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
   }
   return { file: target, pushed };
 }
+
+/**
+ * Push what is already written but not yet delivered, for ONE alias.
+ *
+ * Why this exists: the throttle (`--if-older-than`) treats a recent valid file as "an export exists", but a file
+ * written by an earlier run whose push failed (offline, rejected) is NOT delivered. Without this, such a file
+ * suppresses every later attempt for the whole throttle window. So a requested push first delivers anything of
+ * this alias's that is uncommitted OR committed-but-unpushed, and only then may the caller skip.
+ *
+ * Same rules as `deliverExport`'s push: the drop directory must itself be a Git work-tree root; exactly
+ * `status`/`add`/`commit`/`push`; never force; nothing outside `<alias>/`.
+ *
+ * @param {object} p
+ * @param {string} p.dropDir
+ * @param {string} p.alias
+ * @param {(cmd: string, args: string[], opts: object) => any} [p.exec]
+ * @returns {{pending: boolean, pushed: boolean}}
+ */
+export function pushPending({ dropDir, alias, exec = execFileSync }) {
+  if (!ALIAS_RE.test(alias)) throw new Error('deliver: not a valid alias');
+  if (!fs.existsSync(dropDir) || !fs.statSync(dropDir).isDirectory()) throw new Error('deliver: the drop directory does not exist');
+  const root = fs.realpathSync(dropDir);
+  const git = (args) => exec('git', args, { cwd: root, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, windowsHide: true });
+  const top = String(git(['rev-parse', '--show-toplevel']) ?? '').trim();
+  if (!top || fs.realpathSync(top) !== root) throw new Error('deliver: --push needs the drop directory to be the root of its own Git work tree');
+
+  const dirty = String(git(['status', '--porcelain', '--', `${alias}/`]) ?? '').trim() !== '';
+  let ahead = false;
+  try { ahead = Number(String(git(['rev-list', '--count', '@{u}..HEAD']) ?? '0').trim()) > 0; } catch { ahead = false; }   // no upstream: nothing known to be unpushed
+  if (!dirty && !ahead) return { pending: false, pushed: false };
+  if (dirty) {
+    git(['add', '--', `${alias}/`]);
+    git(['commit', '-q', '-m', `telemetry export ${alias} (retry of an undelivered export)`, '--', `${alias}/`]);
+  }
+  git(['push']);
+  return { pending: true, pushed: true };
+}
