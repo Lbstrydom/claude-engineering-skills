@@ -1308,9 +1308,12 @@ async function cmdApparatus() {
     }
 
     // Gate — net-new over the deduped union (whichever way it was produced).
-    guardBudget(sha, 'gate', 'apparatus-gate', 0, gateModel, gateRecipient);
+    // A commit whose generation passes never replied is re-run whole (its pre-gate artifact is refused for --gate-only), so a gate
+    // over that INCOMPLETE union would be paid for and thrown away: no gate call, the gate cell stays provider-error.
+    if (!genFailed) guardBudget(sha, 'gate', 'apparatus-gate', 0, gateModel, gateRecipient);
     let gateFindings = [], gateState = 'provider-error';
-    try {
+    if (genFailed) log(`      ! ${genFailed} generation pass(es) never replied — gate NOT called over an incomplete union`);
+    else try {
       const r = gateRecipient === 'anthropic'
         ? await runClaudeGateReview(anthropicGateClient, gateModel, collected, gateDiff, { reasoningEffort: gateReasoningEffort })
         : gateRecipient === 'openai'

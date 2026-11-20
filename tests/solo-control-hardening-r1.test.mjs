@@ -196,3 +196,25 @@ describe('round 4 follow-ups', () => {
     }));
   }
 });
+
+describe('apparatus: generation that never replied (provider unreachable on a dead local port: nothing leaves the machine)', () => {
+  const SUBJECT = '901348a29a4f626c1efff009ddbfdef66f1e1aaf'; // docs-only commit; absent in a shallow clone => skip by name
+  test('commit reads provider-error, the gate is NOT called over the incomplete union, the artifact records the failure', (t) => inTemp((dir) => {
+    if (spawnSync('git', ['-C', REPO_ROOT, 'cat-file', '-e', `${SUBJECT}^{commit}`]).status !== 0) { t.skip('subject commit not in this clone'); return; }
+    const ident = spawnSync('git', ['-C', REPO_ROOT, 'config', '--get', 'remote.origin.url'], { encoding: 'utf8' }).stdout.trim();
+    const m = /github\.com[/:]([^/]+\/[^/.]+)/.exec(ident);
+    if (!m) { t.skip('no github origin to key the policy on'); return; }
+    const pol = path.join(dir, 'p.json');
+    fs.writeFileSync(pol, JSON.stringify({ version: 2, repos: { [`github.com/${m[1]}`]: ['anthropic', 'openai', 'gemini', 'openrouter'] } }));
+    const r = cli(dir, ['apparatus', '--commits', SUBJECT, '--budget-usd', '5'], { SOLO_CONTROL_RECIPIENT_POLICY_PATH: pol, OPENAI_BASE_URL: 'http://127.0.0.1:9', AZURE_OPENAI_ENDPOINT: '' });
+    const out = path.join(dir, '.audit-loop/solo-control');
+    const arm = JSON.parse(fs.readFileSync(path.join(out, 'S-findings-A.json'), 'utf8'));
+    assert.equal(arm.perCommit[0].state, 'provider-error', r.out);
+    assert.match(arm.perCommit[0].error, /5 generation pass/);
+    assert.match(r.out, /gate NOT called/);
+    const rows = fs.readFileSync(path.join(out, 'call-ledger.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(rows.filter((x) => x.purpose === 'gate').length, 0, 'no gate call was recorded or made');
+    assert.equal(rows.filter((x) => x.purpose === 'pass' && x.state === 'provider-error').length, 5);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(out, `S-pregate-A-${SUBJECT}.json`), 'utf8')).generationFailedCells, 5);
+  }));
+});
