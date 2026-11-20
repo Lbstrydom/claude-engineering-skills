@@ -213,7 +213,8 @@ export async function getNeighbourhoodCmd(ctx) {
   const { getNeighbourhoodForIntent } = await import('../../neighbourhood-query.mjs');
   try {
     const out = await getNeighbourhoodForIntent({
-      getRepoIdByUuid: ctx.deps.getRepoIdByUuid,
+      // strict: a DB error must throw, not read as null = "repo not registered".
+      getRepoIdByUuid: (u) => ctx.deps.getRepoIdByUuid(u, { strict: true }),
       getActiveSnapshot: ctx.deps.getActiveSnapshot,
       getBandCalibration: ctx.deps.getBandCalibration,
       callNeighbourhoodRpc: (args) => ctx.deps.callNeighbourhoodRpc(args),
@@ -247,7 +248,7 @@ export async function getIncidentNeighbourhoodCmd(ctx) {
   const { getIncidentNeighbourhoodForIntent } = await import('../../neighbourhood-query.mjs');
   try {
     const wrapped = await getIncidentNeighbourhoodForIntent({
-      getRepoIdByUuid: ctx.deps.getRepoIdByUuid,
+      getRepoIdByUuid: (u) => ctx.deps.getRepoIdByUuid(u, { strict: true }),
       getActiveSnapshot: ctx.deps.getActiveSnapshot,
       callIncidentNeighbourhoodRpc: (args) => ctx.deps.callIncidentNeighbourhoodRpc(args),
       getMaxIncidentRefreshAt: (repoId) => ctx.deps.getMaxIncidentRefreshAt(repoId),

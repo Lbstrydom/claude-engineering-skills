@@ -206,6 +206,11 @@ fi
 # doesn't override the user's actual ask — it's a HINT.
 
 if [[ -n "$RESULT" ]]; then
+# Layout-aware: the refresh CLI sits beside cross-skill.mjs in BOTH layouts
+# (scripts/ and scripts/.claude-skills/), so name it relative to the repo root.
+REFRESH_CLI="${CROSS_SKILL#"$REPO_ROOT"/}"
+REFRESH_CLI="${REFRESH_CLI%/*}/symbol-index/refresh.mjs"
+export REFRESH_CLI
 node -e '
   let s = "";
   process.stdin.on("data", d => s += d);
@@ -226,7 +231,7 @@ node -e '
       // Store is ONLINE; this repo simply has no row yet. Not "offline", and not
       // "checked, nothing similar" — nothing was compared.
       out.push("> Cloud store connected, but this repo is not registered in it — nothing was compared.");
-      out.push("> Index it with `node scripts/symbol-index/refresh.mjs`; until then do not read this as \"no similar code\".");
+      out.push("> Index it with `node " + process.env.REFRESH_CLI + "`; until then do not read this as \"no similar code\".");
     } else if (records.length === 0) {
       const hint = r.hint ? " " + r.hint : "";
       out.push("> No near-duplicates in symbol-index for this intent." + hint);

@@ -423,8 +423,15 @@ describe('arch-memory-check tooling-layout resolution', () => {
     const stub = "process.stdout.write(JSON.stringify({ ok: true, cloud: true, repoRegistered: false, records: [], hint: 'repo not found in cloud store' }));";
     const r = runArchInLayout('scripts', stub);
     assert.match(r.stdout, /not registered in it — nothing was compared/);
+    assert.ok(r.stdout.includes('node scripts/symbol-index/refresh.mjs'), r.stdout);
     assert.doesNotMatch(r.stdout, /Cloud store offline/);
     assert.doesNotMatch(r.stdout, /greenfield/);
+  });
+
+  it('the remediation command follows the consumer layout', () => {
+    const stub = "process.stdout.write(JSON.stringify({ ok: true, cloud: true, repoRegistered: false, records: [] }));";
+    const r = runArchInLayout('scripts/.claude-skills', stub);
+    assert.ok(r.stdout.includes('node scripts/.claude-skills/symbol-index/refresh.mjs'), r.stdout);
   });
 
   it('negative control: a registered repo with no neighbours still reads as greenfield', () => {
