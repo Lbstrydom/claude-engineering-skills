@@ -22,6 +22,7 @@ import path from 'node:path';
 import { createOpenAIClient, createOpenRouterClient } from '../openai-client.mjs';
 import { runMultiPassCodeAudit } from '../../openai-audit.mjs';
 import { buildUsageEvent } from './cost.mjs';
+import { withCaseTree } from './case-tree.mjs';
 import { assertEgressSafe, isPathSensitive } from '../sensitive-egress-gate.mjs';
 import { findSensitivePathMentions, EgressGateError } from './egress-path-scan.mjs';
 
@@ -109,8 +110,18 @@ async function resolveGenerationClient(generation, route, factories = {}) {
   return { client, model: route.deploymentId ?? route.resolvedModel };
 }
 
+// process.chdir is process-global, so two overlapping generations would read each other's tree and restore the wrong directory.
+// The callers serialise today; this makes the guarantee the function's own (a queue, not a lock that can be skipped).
+let cwdQueue = Promise.resolve();
+async function acquireCwd() {
+  const prev = cwdQueue; let release;
+  cwdQueue = new Promise((r) => { release = r; });
+  await prev;
+  return release;
+}
+
 /**
- * @param {{arm: object, auditInput: {diff:string, files:string[], repoRoot:string},
+ * @param {{arm: object, auditInput: {diff:string, files:string[], repoRoot:string, treeSha:string},
  *   route: {transport:string, resolvedModel:string, deploymentId:string|null, pricingModel:string, provider:string},
  *   runId: string, role: string, signal?: AbortSignal, scope?: string, passes?: string[],
  *   _runMultiPassCodeAudit?: typeof runMultiPassCodeAudit,
@@ -125,6 +136,7 @@ export async function runAuditGenerationArm({
   // repoProfile omission without a real network-calling 5-pass audit.
   _runMultiPassCodeAudit = runMultiPassCodeAudit,
   _clientFactories = {},
+  _withCaseTree = withCaseTree,
 }) {
   void signal; // accepted for API uniformity with the other model-eval
   // primitives (invokeStructured, runBlindJudgeProtocol both take signal) —
@@ -133,6 +145,12 @@ export async function runAuditGenerationArm({
   // has no signal field). A 5-pass production audit call cannot currently
   // be aborted mid-flight; documenting this explicitly rather than silently
   // dropping a parameter that looks like it should work.
+
+  // A case is a COMMIT: its files must be read from that commit's tree, never from whatever the checkout happens to be. A call
+  // that names no commit would silently audit today's code, so it is refused, not defaulted.
+  if (typeof auditInput.treeSha !== 'string' || auditInput.treeSha === '') {
+    throw new Error('runAuditGenerationArm: auditInput.treeSha (the case commit) is required; auditing the fixture checkout shows the model post-commit code');
+  }
 
   // Round-5 audit H5 — checked FIRST, before any client/generation work.
   if (route.transport !== 'openai-compatible') {
@@ -160,30 +178,27 @@ export async function runAuditGenerationArm({
 
   const { client, model } = await resolveGenerationClient(arm.generation, route, _clientFactories);
 
-  // Written BEFORE the chdir below, as ABSOLUTE paths — immune to the cwd
-  // swap (buildAuditRunContext's file reads resolve relative to
-  // process.cwd(), confirmed by tracing legacy-production-audit.mjs's
-  // repoRoot/baseDir usage; a relative path here would silently read/write
-  // the WRONG repo once cwd changes).
+  // EVERYTHING that depends on process.cwd() happens while holding the queue: the scratch paths below resolve against it, and
+  // another generation may be mid-audit with cwd inside its own temporary tree (a path resolved there is deleted under us).
+  const releaseCwd = await acquireCwd();
+  let mergedResult;
+  try {
+  const savedCwd = process.cwd();
+  // Written BEFORE the chdir below, as ABSOLUTE paths — immune to the cwd swap (buildAuditRunContext's file reads resolve relative
+  // to process.cwd(); a relative path here would silently read/write the WRONG repo once cwd changes).
   const scratchDir = path.resolve('.audit', 'tmp', 'model-eval', runId);
   fs.mkdirSync(scratchDir, { recursive: true });
   const diffPath = path.join(scratchDir, `${arm.id}.diff`);
   const outFile = path.join(scratchDir, `${arm.id}.result.json`);
   fs.writeFileSync(diffPath, auditInput.diff, 'utf8');
-
-  const savedCwd = process.cwd();
-  let mergedResult;
   try {
-    // Every file read inside runMultiPassCodeAudit's legacy pipeline
-    // resolves against process.cwd() (repoRoot/baseDir, verified directly)
-    // — a known-defect corpus case from a SIBLING repo (wine-cellar-app,
-    // ai-organiser) requires actually chdir'ing there for changedFiles to
-    // resolve to real file content. Always restored in `finally`, mirroring
-    // diff-scope-resolver.mjs's own established chdir/restore pattern.
-    if (path.resolve(savedCwd) !== path.resolve(auditInput.repoRoot)) {
-      process.chdir(auditInput.repoRoot);
-    }
-    mergedResult = await _runMultiPassCodeAudit(
+    // Every file read inside runMultiPassCodeAudit's legacy pipeline resolves against process.cwd(), so cwd must be a checkout of
+    // the CASE COMMIT (a throwaway detached worktree of repoRoot's repository), not repoRoot's own working tree. Always restored
+    // in `finally`, mirroring diff-scope-resolver.mjs's chdir/restore pattern.
+    mergedResult = await _withCaseTree({ repoRoot: auditInput.repoRoot, sha: auditInput.treeSha }, async (treeDir) => {
+    process.chdir(treeDir);
+    // cwd leaves the tree BEFORE it is removed: a process cannot delete its own working directory on Windows.
+    try { return await _runMultiPassCodeAudit(
       client,
       buildGenericPlanContent(auditInput.files),
       '', // projectContext — deliberately empty/uniform for both candidate and
@@ -232,9 +247,13 @@ export async function runAuditGenerationArm({
         // Passing a repoProfile here would silently corrupt those tables
         // with synthetic, non-PR generation calls.
       },
-    );
+    ); } finally { process.chdir(savedCwd); }
+    });
   } finally {
     if (path.resolve(process.cwd()) !== path.resolve(savedCwd)) process.chdir(savedCwd);
+  }
+  } finally {
+    releaseCwd(); // unconditional: a throw anywhere above must not leave the queue held
   }
 
   // Round-1 (Cluster B) audit M15 fix — the legacy result contract

@@ -71,6 +71,7 @@ import { resolveModel } from './lib/model-resolver.mjs';
 import { costFromUsage, sumUsage } from './lib/model-pricing.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import * as store from './lib/store/campaign.mjs';
+import * as redoLib from './lib/campaign/redo.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
@@ -527,7 +528,8 @@ async function verbAdjudicate(campaignId, { limit, dryRun, redo = null, reason =
     });
     const receiptArgs = { campaignId: config.id, cohortDigest: adjudicationCohortDir(lock), snapshotId: 'adjudicate', armId: row.worksheet_row_id, attempt };
     const claim = claimReceipt({ ...receiptArgs, body: { kind: 'adjudication', adjudicatorModel } });
-    if (!claim.ok) {
+    if (claimConflictBucket(claim) === 'skipped') {
+      skipped += 1;
       process.stderr.write(`  [campaign] row ${row.worksheet_row_id}: attempt ${attempt} already claimed — another runner holds it; skipping\n`);
       continue;
     }
@@ -596,64 +598,11 @@ function adjudicationCohortDir(lock) {
   return lock?.lockDigest ?? 'no-lock';
 }
 
-/** `--redo a,b,c` → the finding ids, or null when the flag is absent. */
-function parseRedo(value) {
-  if (value == null) return null;
-  if (String(value).startsWith('--')) throw new ArgvError('--redo <finding-uuid[,finding-uuid...]> is required when the flag is given');
-  const ids = String(value).split(',').map((s) => s.trim()).filter(Boolean);
-  if (ids.length === 0) throw new ArgvError('--redo was given no finding ids');
-  return ids;
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * Resolve `--redo` finding ids to blind worksheet rows, refusing before spend.
- *
- * Three refusals, all of them BEFORE any provider call, because every one of
- * them is cheaper to state than to discover halfway through a paid batch:
- *
- * 1. **No reason.** A redo supersedes a verdict that already counts toward the
- *    campaign's accepted totals. The superseded row stays readable either way,
- *    but "why did this number move" must not be reconstructable only from
- *    timestamps.
- * 2. **An id this cohort does not hold** — a typo, or a finding from another
- *    campaign. Silently adjudicating nothing would read as success.
- * 3. **A finding a HUMAN has already dispositioned.** The override names the
- *    agent verdict it overrides and that pair IS the published calibration
- *    figure, so superseding the named verdict would leave the override pointing
- *    at a superseded row. A person's decision also simply outranks a re-run.
- */
-async function resolveRedoRows({ redo, candidates, blindRows, reason }) {
-  if (!reason || String(reason).trim().length === 0) {
-    return { ok: false, error: '--redo requires --reason "why": it supersedes verdicts that already count toward this campaign\'s totals.' };
-  }
-  const malformed = redo.filter((id) => !UUID_RE.test(id));
-  if (malformed.length > 0) {
-    return { ok: false, error: `--redo takes FINDING uuids; these are not uuids: ${malformed.join(', ')}` };
-  }
-  const rowIdFor = new Map(candidates.map((c) => [c.findingId, c.worksheetRowId]));
-  const unknown = redo.filter((id) => !rowIdFor.has(id));
-  if (unknown.length > 0) {
-    return {
-      ok: false,
-      error: `these findings are not in this cohort's live evidence: ${unknown.join(', ')}\n`
-        + '  (a redo names FINDING uuids from THIS campaign — check the id, or the cohort lock)',
-    };
-  }
-  const human = await store.findingsWithHumanDisposition(redo);
-  const blocked = redo.filter((id) => human.ids.has(id));
-  if (blocked.length > 0) {
-    return {
-      ok: false,
-      error: `${human.ok ? 'these findings already carry a HUMAN disposition' : 'the human-disposition guard could not be read, so every id is refused'}: ${blocked.join(', ')}\n`
-        + '  A human override names the agent verdict it overrides, and that pair is the campaign\'s calibration figure.\n'
-        + '  Re-record the human decision instead: campaign.mjs override --finding FINDING_UUID --verdict accepted --note "why"',
-    };
-  }
-  const byRowId = new Map(blindRows.rows.map((r) => [r.worksheet_row_id, r]));
-  return { ok: true, rows: redo.map((id) => byRowId.get(rowIdFor.get(id))).filter(Boolean) };
-}
+// `--redo` parsing, redo-row resolution and the claim-conflict bucket live in lib/campaign/redo.mjs (this file is size-ratcheted).
+const parseRedo = redoLib.parseRedo;
+const parseRedoFromArgv = (argv = process.argv) => redoLib.parseRedoFromArgv(arg('redo', argv), argv);
+const resolveRedoRows = (a) => redoLib.resolveRedoRows({ ...a, findingsWithHumanDisposition: store.findingsWithHumanDisposition });
+const claimConflictBucket = redoLib.claimConflictBucket;
 
 async function writeVerdict({ src, ws, adjudicatorModel, verdict, cost = null, attempt = 1, worksheetRowUuid = null, dryRun = false }) {
   // The dry-run guarantee gets a FUNCTION BOUNDARY rather than resting on the
@@ -782,27 +731,31 @@ async function verbOverride({ findingId, outcome, note, actor }) {
  * is not moving one, and watermarking a campaign for having a rule at all would
  * make the signal meaningless.
  */
-async function recordRuleState({ config, campaignId, actor }) {
+async function recordRuleState({ config, campaignId, actor }, deps = {}) {
+  const listEvents = deps.listEvents ?? ((id) => store.listCampaignEvents(id));
+  const appendEvent = deps.appendEvent ?? ((e) => store.appendCampaignEvent(e));
   if (!campaignId) return { ok: true, recorded: false };
   const current = Object.fromEntries(ANALYSIS_TIME_FIELDS.map((f) => [f, config[f]]));
-  const log = await store.listCampaignEvents(campaignId);
+  const log = await listEvents(campaignId);
   if (log.cloud === false) return { ok: true, recorded: false };
 
   const prior = [...log.rows]
     .filter((e) => e.kind === 'rule_registered' || e.kind === 'rule_changed')
     .pop();
   if (!prior) {
-    await store.appendCampaignEvent({ campaignId, kind: 'rule_registered', actor: actor ?? null, detail: { rule: current } });
+    const w = await appendEvent({ campaignId, kind: 'rule_registered', actor: actor ?? null, detail: { rule: current } });
+    if (!w?.ok) return { ok: false, recorded: false, kind: 'rule_registered', error: w?.error ?? 'append failed' };
     return { ok: true, recorded: true, kind: 'rule_registered' };
   }
   const before = prior.detail?.rule ?? prior.detail?.after ?? null;
   // Canonical JSON so key order can never masquerade as a rule change.
   if (canonicalJson(before) === canonicalJson(current)) return { ok: true, recorded: false, kind: 'unchanged' };
 
-  await store.appendCampaignEvent({
+  const w = await appendEvent({
     campaignId, kind: 'rule_changed', actor: actor ?? null,
     detail: { before, after: current },
   });
+  if (!w?.ok) return { ok: false, recorded: false, kind: 'rule_changed', error: w?.error ?? 'append failed' };
   return { ok: true, recorded: true, kind: 'rule_changed', before, after: current };
 }
 
@@ -815,11 +768,15 @@ async function verbReconcile(campaignId, { actor = null, confirmMismatch = false
   // `{cloud:false}` and the caller renders it, same as every other verb here.
   if (promoted.cloud === false) cloudOffNotice('reconcile');
 
+  let ruleWriteFailed = false;
   if (promoted.cloud !== false) {
     const ev = await readCohortEvidence({ config, lock });
     if (ev.ok) {
       const ruled = await recordRuleState({ config, campaignId: ev.campaignId, actor });
-      if (ruled.kind === 'rule_changed') {
+      if (ruled.ok === false) {
+        process.stderr.write(`  rule state NOT recorded (${ruled.error}) — campaign_events write failed; re-run reconcile\n`);
+        ruleWriteFailed = true;
+      } else if (ruled.kind === 'rule_changed') {
         process.stdout.write('  RULE CHANGED — recorded in campaign_events. Standings collected before this edit are watermarked;\n'
           + '  the evidence survives, and the fact that the goalposts moved is now recorded beside the number.\n');
       } else if (ruled.kind === 'rule_registered') {
@@ -855,6 +812,7 @@ async function verbReconcile(campaignId, { actor = null, confirmMismatch = false
   for (const r of byState.unreadable) process.stdout.write(`  TORN     ${r.path}\n`);
   // Exit 4 when operator action is outstanding — a reconcile that always exits 0
   // is a reconcile nobody reads.
+  if (ruleWriteFailed) return 1;
   return (byState.intent.length + byState.unreadable.length) > 0 ? 4 : 0;
 }
 
@@ -963,7 +921,7 @@ async function main() {
     case 'adjudicate':  return verbAdjudicate(arg('campaign'), {
       limit: arg('limit') == null ? null : Number(arg('limit')),
       dryRun: process.argv.includes('--dry-run'),
-      redo: parseRedo(arg('redo')),
+      redo: parseRedoFromArgv(),
       reason: arg('reason'), actor: arg('actor'),
     });
     case 'override':    return verbOverride({
@@ -1009,7 +967,7 @@ if (invokedDirectly) {
   });
 }
 
-export const _internals = Object.freeze({ callAdjudicator, adjudicationCohortDir, assertOutcome, writeVerdict, parseRedo, resolveRedoRows });
+export const _internals = Object.freeze({ callAdjudicator, adjudicationCohortDir, assertOutcome, writeVerdict, parseRedo, parseRedoFromArgv, claimConflictBucket, resolveRedoRows });
 
 /** Exported for the live-schema suite: the rule recorder is store-coupled, so
  *  its contract is only assertable against a real campaign_events table. */

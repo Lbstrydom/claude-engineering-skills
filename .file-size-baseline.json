@@ -3,7 +3,6 @@
   "limitLines": 1000,
   "toleranceLines": 10,
   "files": {
-    "scripts/campaign.mjs": 1017,
     "scripts/cross-skill.mjs": 1124,
     "scripts/lib/anthropic-client.mjs": 1135,
     "scripts/lib/audit/evidence-triage.mjs": 1245,

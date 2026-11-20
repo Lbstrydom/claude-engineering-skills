@@ -307,6 +307,7 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [], trac
   const myPaths = claim.paths ?? [];
   const conflicts = [];
   const uninspected = [];
+  const changedUnknown = [];
   const finished = [];
   for (const o of others) {
     const s = o.session;
@@ -316,6 +317,7 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [], trac
       continue;
     }
     if (o.uncommittedUnknown) uninspected.push({ with: s.id, reason: o.uncommittedUnknown });
+    if (o.changedUnknown) changedUnknown.push({ with: s.id, reason: o.changedUnknown });
     const via = [];
     const hit = { with: s.id, via, paths: [], files: [], known: false };
     const hot = new Set();
@@ -351,11 +353,13 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [], trac
     conflicts.push(hit);
   }
   const blocking = conflicts.filter(isBlockingConflict);
-  const extra = { ...(uninspected.length ? { uninspected } : {}), ...(finished.length ? { finished } : {}) };
+  const extra = { ...(uninspected.length ? { uninspected } : {}), ...(changedUnknown.length ? { changedUnknown } : {}), ...(finished.length ? { finished } : {}) };
   if (mode === 'new' && blocking.length) return { ok: false, verdict: 'blocked', conflicts, ...extra };
   if (mode === 'adopt' && blocking.length) return { ok: true, verdict: 'warn', conflicts, ...extra };
   // Advisory-only evidence (uncommitted edits) reads as a WARN, never a block and never a silent OK.
   if (conflicts.some((c) => (c.uncommittedOnly || c.abstractOnly) && !c.known)) return { ok: true, verdict: 'warn', conflicts, ...extra };
+  // A live session whose changed files are UNKNOWN is never a silent OK: overlap by files cannot be ruled out.
+  if (changedUnknown.length) return { ok: true, verdict: 'warn', conflicts, ...extra };
   return { ok: true, verdict: 'ok', conflicts, ...extra };
 }
 

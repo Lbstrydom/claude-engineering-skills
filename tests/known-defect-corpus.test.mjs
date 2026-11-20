@@ -51,6 +51,12 @@ describe('known-defect-corpus.mjs — loadCorpusCase', () => {
     assert.deepEqual(visibleInput.files, sorted);
   });
 
+  test('treeSha is the commit the diff came from (buggyCommit for a detect case, commit for an expect_clean case), so the audit reads that tree', () => {
+    assert.equal(loadCorpusCase({ kdEntry: baseKd, repoRoots: [REPO_ROOT] }).treeSha, baseKd.buggyCommit);
+    const clean = { id: 'KD-CLEAN', repo: baseKd.repo, suite: 'expect_clean', commit: baseKd.buggyCommit, files: baseKd.files, rationale: 'r', curation: { method: 'human-review', reviewedIn: 'x' } };
+    assert.equal(loadCorpusCase({ kdEntry: clean, repoRoots: [REPO_ROOT] }).treeSha, clean.commit);
+  });
+
   test('hiddenGroundTruth carries exactly the KD entry fields, never leaking into visibleInput', () => {
     const { visibleInput, hiddenGroundTruth } = loadCorpusCase({ kdEntry: baseKd, repoRoots: [REPO_ROOT] });
     assert.deepEqual(hiddenGroundTruth, {

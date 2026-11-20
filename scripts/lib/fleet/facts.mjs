@@ -519,9 +519,16 @@ export function othersFor(facts, selfId, now, sessions = facts.registry.sessions
     const merged = b ? facts.merged?.evidence?.[b] : undefined;
     const wt = facts.worktrees?.queried ? worktreeOf(facts.worktrees.worktrees ?? [], s.worktree, b) : null;
     const md = merged?.merged ? mergedDone(merged, workRemainingIn(facts, b ?? null, wt)) : null;
+    const ownQueried = !!(b && facts.ownChanged?.[b]?.queried && k === b);
+    const ch = k ? facts.changed?.[k] : undefined;
+    // A branch with NO queried change evidence (skipped by `untracked:false`, or registered after the gather
+    // and so never in it) has UNKNOWN changed files — never "none". Mirrors `uncommittedUnknown`.
+    const changedUnknown = !ownQueried && k && facts.changed && !ch?.queried
+      ? (ch?.reason ?? 'changed files not measured for this branch (registered after the facts were gathered)') : null;
     return {
       session: s, live: live && !md?.done,
-      changedFiles: b && facts.ownChanged?.[b]?.queried && k === b ? facts.ownChanged[b].files : k && facts.changed?.[k]?.queried ? facts.changed[k].files : [],
+      ...(changedUnknown ? { changedUnknown } : {}),
+      changedFiles: ownQueried ? facts.ownChanged[b].files : k && facts.changed?.[k]?.queried ? facts.changed[k].files : [],
       uncommittedFiles: u?.queried ? u.files : [], ...(u && !u.queried ? { uncommittedUnknown: u.reason } : {}),
       ...(live && md?.done ? { finished: md.note } : {}), ...(md && !md.done ? { mergedNote: md.note } : {}),
     };

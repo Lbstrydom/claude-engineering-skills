@@ -655,6 +655,45 @@ describe('--redo guards', () => {
     assert.throws(() => parseRedo(',,'), /no finding ids/);
   });
 
+  it('KD-032 H2: a trailing valueless --redo is a usage error, never the ordinary paid path', () => {
+    const { parseRedoFromArgv } = _internals;
+    assert.throws(() => parseRedoFromArgv(['node', 'c', 'adjudicate', '--campaign', 'x', '--redo']), /required when the flag is given/);
+    assert.equal(parseRedoFromArgv(['node', 'c', 'adjudicate', '--campaign', 'x']), null);
+    assert.deepEqual(parseRedoFromArgv(['node', 'c', 'adjudicate', '--redo', 'a,b']), ['a', 'b']);
+  });
+
+  it('a candidate with no blind worksheet row is REFUSED, never silently dropped', async () => {
+    const r = await resolveRedoRows({ ...ok, redo: [candidates[0].findingId, candidates[1].findingId], blindRows: { rows: [{ worksheet_row_id: 'wr-1' }] } });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /no blind worksheet row.*22222222/);
+  });
+
+  it('KD-032 H7: duplicate redo ids are deduped (first-seen order), never two paid calls', async () => {
+    assert.deepEqual(parseRedo('a,b,a'), ['a', 'b']);
+    const id = candidates[0].findingId;
+    const r = await resolveRedoRows({ ...ok, redo: [id, id] });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.rows.map((x) => x.worksheet_row_id), ['wr-1']);
+  });
+
+  it('KD-032 M1: a claim conflict is counted as skipped so the summary balances', () => {
+    const { claimConflictBucket } = _internals;
+    assert.equal(claimConflictBucket({ ok: true }), null);
+    assert.equal(claimConflictBucket({ ok: false }), 'skipped');
+    const s = renderAdjudicationSummary({ attempted: 3, settled: 2, skipped: 1 });
+    assert.equal(s.balanced, true);
+    assert.equal(s.exitCode, 0);
+  });
+
+  it('KD-032 H4: recordRuleState does not claim a recording when the event write failed', async () => {
+    const { recordRuleState } = await import('../scripts/campaign.mjs');
+    const failing = { listEvents: async () => ({ cloud: true, rows: [] }), appendEvent: async () => ({ ok: false, error: 'boom' }) };
+    const r = await recordRuleState({ config: {}, campaignId: 'cid', actor: null }, failing);
+    assert.equal(r.ok, false);
+    assert.equal(r.recorded, false);
+    assert.match(String(r.error), /boom/);
+  });
+
   it('refuses without a reason — a redo moves numbers that are already published', async () => {
     const r = await (resolveRedoRows({ redo: [candidates[0].findingId], candidates, blindRows, reason: null }));
     assert.equal(r.ok, false);

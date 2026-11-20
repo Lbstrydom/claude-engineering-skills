@@ -21,6 +21,9 @@ import {
   evaluatePersonaTest, evaluateGitHub, evaluateEnvProvenance, checkPlaywrightAvailable,
 } from '../../check-setup.mjs';
 import { SHADOW_REMEDY } from '../env-provenance.mjs';
+import {
+  STORE_VERDICT, classifyStoreReachability, readStoreSetupPointer, renderStoreDetail, probeStoreReachability,
+} from './store-reachability.mjs';
 
 // ── sync-isolation-verify gate adapter (§2.3a) ──────────────────────────────
 //
@@ -291,6 +294,35 @@ const CHECK_SETUP_PROBES = [
   }),
 ];
 
+// ── Machine-state probe: audit-store reachability (never gates — D9) ────────
+
+/**
+ * Reachability of the store this repo is configured for, as its OWN verdict:
+ * reachable / configured-but-unreachable / unconfigured (local-only). `machine`
+ * because reachability is a fact about THIS developer's network and tunnel, not
+ * repo state, so it advises and never blocks a push. A non-reachable verdict
+ * prints the org's committed `.audit-loop/store-setup.json` pointer, if any.
+ * `ctx.probeStore` is the test seam; it defaults to one real, bounded attempt.
+ */
+const STORE_REACHABILITY_PROBE = {
+  id: 'machine/store-reachability',
+  title: 'Audit store reachability (reachable / configured-but-unreachable / unconfigured)',
+  class: 'machine',
+  fix: 'Follow the setup pointer in the finding detail (.audit-loop/store-setup.json), or set AUDIT_DB_URL and start the store/tunnel it names.',
+  async run(ctx) {
+    const probe = ctx.probeStore ?? (() => probeStoreReachability({
+      subjectRoot: ctx.subjectRoot, loadEnv, injectResolvedDbEnv,
+    }));
+    const connect = await probe();
+    const verdict = classifyStoreReachability(connect);
+    const pointer = readStoreSetupPointer(ctx.subjectRoot, ctx.fs);
+    return {
+      status: verdict === STORE_VERDICT.REACHABLE ? 'pass' : 'warn',
+      detail: renderStoreDetail(verdict, pointer, connect),
+    };
+  },
+};
+
 // ── Machine-state probe: browser (never gates — D9) ─────────────────────────
 
 const BROWSER_PROBE = {
@@ -473,6 +505,7 @@ export const PROBES = [
   PACKAGE_MANAGER_PROBE,
   ...SYNC_ISOLATION_PROBES,
   ...CHECK_SETUP_PROBES,
+  STORE_REACHABILITY_PROBE,
   BROWSER_PROBE,
   AUTOCRLF_PROBE,
   ...NAMED_COMMAND_PROBES,
