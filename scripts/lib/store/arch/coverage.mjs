@@ -124,7 +124,7 @@ export async function recordGraphCoverage(refreshId, coverage) {
  * @param {string} repoId - the repo asserting ownership of that refresh
  * @returns {Promise<object|null>} the §2.1.6b payload, or null
  */
-export async function getGraphCoverage(refreshId, repoId) {
+export async function getGraphCoverage(refreshId, repoId, { strict = false } = {}) {
   if (!refreshId || !repoId || !await isCloudEnabled()) return null;
   try {
     const row = await one(
@@ -149,6 +149,11 @@ export async function getGraphCoverage(refreshId, repoId) {
     // not know" rather than to a clean verdict.
     const parsed = CoverageSchema.safeParse(row.payload);
     if (!parsed.success) {
+      // `strict` callers (the neighbourhood lookup) must be able to tell "the stored record is unusable" from "there is
+      // no record": both used to read as null.
+      if (strict) {
+        throw Object.assign(new Error(`stored coverage payload for ${refreshId} fails the schema`), { code: 'COVERAGE_PAYLOAD_INVALID' });
+      }
       process.stderr.write(
         `  [coverage] stored payload for ${refreshId} fails the schema — treating as unknown: `
         + `${parsed.error.issues.map((i) => i.message).join('; ')}\n`,
@@ -157,6 +162,10 @@ export async function getGraphCoverage(refreshId, repoId) {
     }
     return parsed.data;
   } catch (err) {
+    // `strict`: a FAILED read is not an ABSENT row. The default keeps the historical degrade-to-null for callers that
+    // render a map and can live with "unknown"; the neighbourhood lookup asks to be told, because "the read failed"
+    // and "nothing was measured" are different facts.
+    if (strict) throw err;
     process.stderr.write(`  [coverage] read failed: ${err.message}\n`);
     return null;
   }

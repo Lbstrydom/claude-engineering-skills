@@ -22,6 +22,7 @@ import {
 } from './symbol-index-contracts.mjs';
 import { symbolIndexConfig, azureConfig } from './config.mjs';
 import { redactSecrets } from './secret-patterns.mjs';
+import { describeSchemaFault } from './db/errors.mjs';
 import { assertEgressSafe } from './sensitive-egress-gate.mjs';
 import { NORMALIZE_PROMPT_VERSION } from './arch-memory/normalize-intent.mjs';
 import { embedText, azureProvenanceId } from './embed-text.mjs';
@@ -175,9 +176,15 @@ export async function snapshotCoverage(adapters, active, repoRow) {
   }
   let cov = null;
   try {
-    cov = await adapters.getGraphCoverage(active.refreshId, repoRow.id);
-  } catch {
-    cov = null;   // a failed read is "we do not know", exactly like no row
+    cov = await adapters.getGraphCoverage(active.refreshId, repoRow.id, { strict: true });
+  } catch (err) {
+    // A FAILED read is not an ABSENT measurement. Both are "unknown", but they are different facts and the reason
+    // says which (AGENTS.md: a schema error is not an empty result); a schema fault is also named as one, loudly.
+    const fault = describeSchemaFault(err, 'graph coverage read');
+    if (fault) process.stderr.write(`${fault}\n`);
+    const reason = err?.code === 'COVERAGE_PAYLOAD_INVALID' ? 'coverage_payload_invalid'
+      : fault ? 'coverage_schema_fault' : 'coverage_read_failed';
+    return { status: 'unknown', reason, eligible: null };
   }
   if (!cov?.verdict) return { status: 'unknown', reason: 'not_measured', eligible: null };
   return {

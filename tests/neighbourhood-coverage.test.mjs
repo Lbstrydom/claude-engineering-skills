@@ -101,3 +101,56 @@ describe('snapshotCoverage', () => {
     assert.equal(c.status, 'unknown');
   });
 });
+
+describe('a FAILED coverage read is not an ABSENT measurement', () => {
+  const active = { refreshId: REFRESH };
+  const repo = { id: 'repo-1' };
+  const failing = (err) => ({ getGraphCoverage: async () => { throw err; } });
+
+  it('a generic read failure is coverage_read_failed, distinct from not_measured', async () => {
+    const c = await snapshotCoverage(failing(new Error('connection terminated')), active, repo);
+    assert.deepEqual(c, { status: 'unknown', reason: 'coverage_read_failed', eligible: null });
+  });
+
+  it('a Postgres schema fault (42xxx) is named as one, and says so loudly on stderr', async () => {
+    const lines = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (s) => { lines.push(String(s)); return true; };
+    let c;
+    try { c = await snapshotCoverage(failing(Object.assign(new Error('relation does not exist'), { code: '42P01' })), active, repo); }
+    finally { process.stderr.write = orig; }
+    assert.equal(c.reason, 'coverage_schema_fault');
+    assert.match(lines.join(''), /SCHEMA fault/);
+  });
+
+  it('an unusable stored record is coverage_payload_invalid', async () => {
+    const c = await snapshotCoverage(failing(Object.assign(new Error('x'), { code: 'COVERAGE_PAYLOAD_INVALID' })), active, repo);
+    assert.equal(c.reason, 'coverage_payload_invalid');
+  });
+
+  it('CONTROL — a genuinely missing measurement is still not_measured (the four reasons are four different facts)', async () => {
+    const c = await snapshotCoverage({ getGraphCoverage: async () => null }, active, repo);
+    assert.equal(c.reason, 'not_measured');
+    const reasons = new Set([
+      (await snapshotCoverage(failing(new Error('x')), active, repo)).reason,
+      (await snapshotCoverage(failing(Object.assign(new Error('x'), { code: '42703' })), active, repo)).reason,
+      (await snapshotCoverage(failing(Object.assign(new Error('x'), { code: 'COVERAGE_PAYLOAD_INVALID' })), active, repo)).reason,
+      c.reason,
+    ]);
+    assert.equal(reasons.size, 4);
+  });
+
+  it('the reader is asked to be STRICT (otherwise the store swallows the failure into null before we can see it)', async () => {
+    let seen;
+    await snapshotCoverage({ getGraphCoverage: async (...args) => { seen = args; return null; } }, active, repo);
+    assert.deepEqual(seen[2], { strict: true });
+  });
+
+  it('an empty result over a failed read is still flagged as not evidence', async () => {
+    const h = harness(null);
+    h.adapters.getGraphCoverage = async () => { throw new Error('boom'); };
+    const out = await h.run();
+    assert.equal(out.coverage.reason, 'coverage_read_failed');
+    assert.match(out.hint, /not evidence/);
+  });
+});
