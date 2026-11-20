@@ -21,6 +21,7 @@
  *
  * @module scripts/lib/telemetry-export/deliver
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -91,7 +92,9 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
   if (!isInside(root, realAlias)) throw new Error('deliver: the alias directory resolves outside the drop directory');
 
   const target = path.join(realAlias, fileName);
-  const tmp = path.join(realAlias, `.${fileName}.tmp-${process.pid}-${Date.now()}`);
+  // Unique per call (random suffix), so two deliveries — even in one process, even in one millisecond — never
+  // share a temp name, and the cleanup below can only ever remove a file this call created.
+  const tmp = path.join(realAlias, `.${fileName}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
   try {
     fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}
 `, { flag: 'wx' });
@@ -114,7 +117,9 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
     if (err?.code === 'EEXIST') throw new Error('deliver: an export with this name already exists (exports are immutable)');
     throw err;
   } finally {
-    fs.rmSync(tmp, { force: true });   // covers a failed or partial temp write, and the post-link cleanup
+    // Covers a failed or partial temp write and the post-link cleanup. A failure to remove a temp file must
+    // NOT turn a successfully published export into a thrown "delivery failed" (and skip the requested push).
+    try { fs.rmSync(tmp, { force: true }); } catch { /* leftover temp file: harmless, dot-prefixed, never .json */ }
   }
 
   let pushed = false;
