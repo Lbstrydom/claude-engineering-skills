@@ -662,6 +662,12 @@ describe('--redo guards', () => {
     assert.deepEqual(parseRedoFromArgv(['node', 'c', 'adjudicate', '--redo', 'a,b']), ['a', 'b']);
   });
 
+  it('a candidate with no blind worksheet row is REFUSED, never silently dropped', async () => {
+    const r = await resolveRedoRows({ ...ok, redo: [candidates[0].findingId, candidates[1].findingId], blindRows: { rows: [{ worksheet_row_id: 'wr-1' }] } });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /no blind worksheet row.*22222222/);
+  });
+
   it('KD-032 H7: duplicate redo ids are deduped (first-seen order), never two paid calls', async () => {
     assert.deepEqual(parseRedo('a,b,a'), ['a', 'b']);
     const id = candidates[0].findingId;

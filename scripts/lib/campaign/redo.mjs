@@ -77,6 +77,11 @@ export async function resolveRedoRows({ redo, candidates, blindRows, reason, fin
     };
   }
   const byRowId = new Map(blindRows.rows.map((r) => [r.worksheet_row_id, r]));
-  return { ok: true, rows: [...new Set(redo)].map((id) => byRowId.get(rowIdFor.get(id))).filter(Boolean) };
+  const distinct = [...new Set(redo)];
+  const rows = distinct.map((id) => byRowId.get(rowIdFor.get(id)));
+  // A candidate whose blind worksheet row is absent would otherwise be dropped silently, and the redo would "succeed" on fewer rows.
+  const missing = distinct.filter((_, i) => !rows[i]);
+  if (missing.length > 0) return { ok: false, error: `these findings have no blind worksheet row (candidates and worksheet disagree): ${missing.join(', ')}` };
+  return { ok: true, rows };
 }
 
