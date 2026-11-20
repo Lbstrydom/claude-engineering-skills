@@ -571,7 +571,7 @@ The rows below are the ones whose semantics constrain how you write code:
 | `LEARNING_REPO_NAME` | — | Must be the **`owner/repo` slug** (matches `audit_repos.name`) — a bare repo name silently misses the lookup, which is how weekly-review sat broken for weeks in every consumer. `install.mjs`/`setup.mjs` derive it; don't hand-type it. |
 | `FINAL_REVIEW_TIMEOUT_MS` | `270000` | **COUPLED** to `FINAL_REVIEW_HARD_DEADLINE_MS`: the watchdog floor is `2x timeout + 60000`, so 270s is the most the default admits — raise both together. Read by `finalReviewTimeoutMs()` (`GEMINI_REVIEW_TIMEOUT_MS` is a deprecated alias); `finalReviewModelSpec()` owns the ONE default for `FINAL_REVIEW_MODEL`. |
 | `AUDIT_AUTHOR_TIER_HINT` | — | **Observation-only** — it records an author-model tier and must never route. |
-| ~~`SUPABASE_AUDIT_*`~~ | — | **Sunset in M4.** The runtime DSN's password IS the secret — there is no separate write-role key. |
+| ~~`SUPABASE_AUDIT_*`~~ | — | **Sunset in M4.** The runtime DSN's credential is the access control — there is no separate write-role key. |
 
 ## Postgres-Parity Store (M1–M4)
 
@@ -582,9 +582,14 @@ a connection string. **Load-bearing invariants** (the rest is in the docs below)
 - **Connect**: `AUDIT_DB_URL` + `AUDIT_DB_SSL_MODE=no-verify`, via the Supabase
   **Session pooler (5432)**, **NOT the Transaction pooler (6543)** — 6543 drops
   server-side prepared statements and the `search_path=public` pin the `db/` seam
-  needs. Single-tenant: the DSN password IS the secret; the runtime `pg.Pool`
-  ([`db/client.mjs`](scripts/lib/db/client.mjs)) owns `public` and **bypasses RLS**
-  (correct here), and the schema is **`public`-only** in v1. Setup recipe,
+  needs. Single-tenant: a role's credential is the access control (no separate
+  read/write keys). The runtime `pg.Pool` ([`db/client.mjs`](scripts/lib/db/client.mjs))
+  either owns `public` or is a `BYPASSRLS` role with DML grants, so it **bypasses
+  RLS** (correct here); an **owner + least-privilege runtime split** is supported,
+  and its `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>` line is the one that gets
+  forgotten ([postgres-parity.md](docs/runbooks/postgres-parity.md) §Two roles). The
+  schema is **`public`-only** in v1. Moving to a different store:
+  [moving-the-audit-store.md](docs/runbooks/moving-the-audit-store.md). Setup recipe,
   `--migrate`/`--adopt`/`--check-drift`, `npm run setup:cloud`:
   [postgres-parity.md](docs/runbooks/postgres-parity.md) §Connecting + §Setup recipe.
 - **Never use the dashboard as the routine migration path** — it reintroduces the
