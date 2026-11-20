@@ -42,20 +42,18 @@ export async function withCaseTree({ repoRoot, sha }, fn, { _git = git, _warn = 
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-tree-'));
   const dir = path.join(base, 'tree');
   let result; let primary; let failed = false; // a thrown value may be falsy: track THAT it threw, not what
-  let added = false;
   try {
     _git(repoRoot, ['worktree', 'add', '--detach', '--force', dir, sha]);
-    added = true;
     result = await fn(dir);
   } catch (err) { primary = err; failed = true; }
 
   // Attempted whether or not `add` returned: a git killed between registering and finishing the checkout leaves a registration.
-  // Two --force: a locked worktree is still ours to remove. A failed removal is a cleanup failure whenever `add` succeeded (a missing
-  // directory proves nothing about the registration); after a failed `add` it is one only if a directory was left behind.
-  // The message carries the two paths, not a ready-made shell command: a path is never interpolated into command text.
+  // Two --force: a locked worktree is still ours to remove. ANY failed removal is reported (after a failed `add` it is a warning next to
+  // the add error): neither the add result nor a missing directory proves the registration is gone. The message carries the two paths,
+  // not a ready-made shell command (a path is never interpolated into command text) and never suggests the repository-wide prune.
   let leftover = null;
   try { _git(repoRoot, ['worktree', 'remove', '--force', '--force', dir]); } catch (err) {
-    if (added || fs.existsSync(dir)) leftover = `the case tree for ${sha} could not be removed (repository: ${JSON.stringify(repoRoot)}, tree: ${JSON.stringify(dir)}; run 'git worktree remove -f -f' on the tree, or 'git worktree prune' if its directory is gone): ${err.message}`;
+    leftover = `the case tree for ${sha} could not be removed (repository: ${JSON.stringify(repoRoot)}, tree: ${JSON.stringify(dir)}; find it in 'git worktree list' and remove only that entry with 'git worktree remove -f -f'): ${err.message}`;
   }
   if (!leftover) {
     try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch (err) { leftover = `could not delete ${base}: ${err.message}`; }

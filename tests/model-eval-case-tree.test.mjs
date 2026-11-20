@@ -154,4 +154,23 @@ describe('withCaseTree', () => {
       await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async (d) => { mine = d; rm(d); return 1; }, { _git: failingRemove }), /could not be removed/);
     } finally { try { sh(r, 'worktree', 'prune'); } catch { /* */ } if (mine) rm(path.dirname(mine)); rm(r); }
   });
+
+  test('a failed add followed by a failed removal is still reported (as a warning beside the add error), never silent', async () => {
+    const { r, sha } = repo();
+    const warns = [];
+    const addFails = (root, args) => { if (args[0] === 'worktree' && args[1] === 'add') throw new Error('add died'); return failingRemove(root, args); };
+    try {
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => 1, { _git: addFails, _warn: (m) => warns.push(m) }), /add died/);
+      assert.equal(warns.length, 1);
+      assert.match(warns[0], /could not be removed/);
+    } finally { rm(r); }
+  });
+
+  test('the recovery guidance never suggests the repository-wide prune', async () => {
+    const { r, sha } = repo();
+    let dir;
+    try {
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async (d) => { dir = d; return 1; }, { _git: failingRemove }), (e) => !/prune/.test(e.message));
+    } finally { sh(r, 'worktree', 'remove', '-f', '-f', dir); rm(path.dirname(dir)); rm(r); }
+  });
 });
