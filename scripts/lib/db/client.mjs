@@ -28,6 +28,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import { loadSharedEnv } from '../load-shared-env.mjs';
 import { readEnvWithAlias, _resetAliasWarnings } from '../env-alias.mjs';
 
@@ -313,6 +314,25 @@ export function dbIdentity(dsn) {
   // localhost and 127.0.0.1 are the same server for this purpose.
   const canonHost = LOOPBACK_DB_HOSTS.has(host) || /^127\./.test(host) ? 'localhost' : host;
   return `${canonHost}:${target.port}/${target.database}`;
+}
+
+/**
+ * The database a DSN addresses, rendered for a HUMAN with the host exactly as
+ * configured. `dbIdentity` folds every loopback spelling to `localhost` because
+ * it is an EQUALITY key (fingerprint, disposable guard) — wrong for a message a
+ * developer copies from: a port-forward often listens on IPv4 only, and
+ * `localhost` can resolve to `::1`, so `127.0.0.1` must stay `127.0.0.1`.
+ * Display only — never compare or hash this; use `dbIdentity`. Credential-free
+ * by construction, like `dbIdentity`.
+ *
+ * @param {string} dsn
+ * @returns {string|null} `host:port/database`, or null if unparseable
+ */
+export function dbDisplayTarget(dsn) {
+  let u;
+  try { u = new URL(dsn); } catch { return null; }
+  const target = effectiveDbTarget(u);
+  return `${target.host.trim()}:${target.port}/${target.database}`;
 }
 
 /**
@@ -662,9 +682,37 @@ export function buildPoolConfig(url, pgTypes) {
     // runner keeps its own loop alive, so this never ends a suite early.
     allowExitOnIdle: true,
     connectionTimeoutMillis: 10000,
-    ssl: sslMode === 'disable' ? false : { rejectUnauthorized: sslMode !== 'no-verify' },
+    ssl: buildSslOptions(sslMode),
     types: customTypes,
   };
+}
+
+/**
+ * TLS options for the pool. `AUDIT_DB_SSL_SERVERNAME` / `AUDIT_DB_SSL_CA` exist
+ * for a tunnel: through a localhost port-forward the connect host is
+ * `127.0.0.1` while the certificate names the real server, so `require` fails
+ * unless verification is told which name to check (`servername`) and which CA
+ * to trust (`ca`, a PEM bundle path). Unset = exactly the previous options.
+ *
+ * @param {string} sslMode one of VALID_SSL_MODES
+ * @returns {false | object}
+ */
+function buildSslOptions(sslMode) {
+  if (sslMode === 'disable') return false;
+  const ssl = { rejectUnauthorized: sslMode !== 'no-verify' };
+  const servername = (process.env.AUDIT_DB_SSL_SERVERNAME || '').trim();
+  if (servername) ssl.servername = servername;
+  const caPath = (process.env.AUDIT_DB_SSL_CA || '').trim();
+  if (caPath) {
+    try {
+      ssl.ca = fs.readFileSync(caPath, 'utf8');
+    } catch (err) {
+      // Loud, never a silent fall-back to the system roots: the operator asked for
+      // a specific CA, and verifying against a different one is the wrong answer.
+      throw new Error(`AUDIT_DB_SSL_CA could not be read (${err.code || err.message}): ${caPath}`);
+    }
+  }
+  return ssl;
 }
 
 /**

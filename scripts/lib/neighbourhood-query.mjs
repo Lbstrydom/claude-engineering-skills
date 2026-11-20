@@ -176,8 +176,12 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
   // 1. Resolve repo + active snapshot
   const repoRow = await adapters.getRepoIdByUuid(v.repoUuid);
   if (!repoRow) {
+    // The store IS connected here — only this repo has no row in it. `cloud:false`
+    // is reserved for "store offline" (AGENTS.md), so an unregistered repo on a live
+    // store must not read as one; `repoRegistered:false` is the distinct reason.
     const out = {
-      cloud: false,
+      cloud: true,
+      repoRegistered: false,
       refreshId: null,
       records: [],
       totalCandidatesConsidered: 0,
@@ -450,6 +454,7 @@ export async function getIncidentNeighbourhoodForIntent(adapters, args, repoRoot
   if (!repoRow) {
     return {
       result: { records: [], totalCandidatesConsidered: 0, freshnessWarning: null,
+                repoRegistered: false,
                 hint: 'repo not found in cloud store; run `npm run security:refresh`' },
       usage, latencyMs: Date.now() - startMs,
     };

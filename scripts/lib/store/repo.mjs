@@ -20,7 +20,7 @@
  * @module scripts/lib/store/repo
  */
 
-import { getPool, dbIdentity, classifyDbConnectionError, activeStoreDescriptor } from '../db/client.mjs';
+import { getPool, dbDisplayTarget, classifyDbConnectionError, activeStoreDescriptor } from '../db/client.mjs';
 import { one, insertReturning, updateWhere, many, pgArray } from '../db/query.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { _recordInitFailure, _clearInitFailure } from './client-state.mjs';
@@ -81,7 +81,7 @@ export async function initLearningStore() {
     // the store was Supabase-coupled when it has been provider-neutral since
     // the M4 postgres-parity migration. `dbIdentity` is credential-free by
     // construction, so the DSN's password cannot ride along.
-    const where = dbIdentity(process.env.AUDIT_DB_URL || '') ?? 'the configured database';
+    const where = dbDisplayTarget(process.env.AUDIT_DB_URL || '') ?? 'the configured database';
     const { cause, hint } = classifyDbConnectionError(err);
     // `err.message` is EMPTY for pg's aggregate ECONNREFUSED — verified against
     // a dead endpoint, not assumed. That is why the old line rendered as

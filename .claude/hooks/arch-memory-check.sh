@@ -222,6 +222,11 @@ node -e '
     if (r.cloud === false) {
       out.push("> Cloud store offline — no neighbourhood lookup performed.");
       out.push("> Recommend `npm run arch:refresh` to enable for future fixes.");
+    } else if (r.repoRegistered === false) {
+      // Store is ONLINE; this repo simply has no row yet. Not "offline", and not
+      // "checked, nothing similar" — nothing was compared.
+      out.push("> Cloud store connected, but this repo is not registered in it — nothing was compared.");
+      out.push("> Index it with `node scripts/symbol-index/refresh.mjs`; until then do not read this as \"no similar code\".");
     } else if (records.length === 0) {
       const hint = r.hint ? " " + r.hint : "";
       out.push("> No near-duplicates in symbol-index for this intent." + hint);

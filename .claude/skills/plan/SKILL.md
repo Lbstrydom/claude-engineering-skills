@@ -98,8 +98,7 @@ Lazy reference loading by scope:
 ## Phase 0.5 — Architectural-memory Neighbourhood
 
 If the architectural memory is populated for this repo (a prior
-`npm run arch:refresh` succeeded against a Supabase project), consult
-the symbol-index for near-duplicates BEFORE proposing new code:
+`npm run arch:refresh` succeeded), consult the symbol-index for near-duplicates BEFORE proposing new code:
 
 ```bash
 node scripts/cross-skill.mjs get-neighbourhood --json '{
@@ -110,9 +109,9 @@ node scripts/cross-skill.mjs get-neighbourhood --json '{
 ```
 
 Inline the returned `markdown` field as **"Neighbourhood considered"**
-near the top of the plan output. State-handling per the failure matrix:
+near the top of the plan output. Handle by state:
 
-- `cloud:false` → emit literal `npm run arch:refresh` hint; proceed.
+- `cloud:false` or `repoRegistered:false` → emit literal `npm run arch:refresh` hint; proceed (nothing compared).
 - `cloud:true, records:[]` → "No near-duplicates found — proceed."
 - `EMBEDDING_MISMATCH` / `RPC_ERROR` → emit `_consultation failed: <code>; plan proceeds without architectural context_`; continue.
 - `BAD_INPUT` → surface to user, abort plan generation.

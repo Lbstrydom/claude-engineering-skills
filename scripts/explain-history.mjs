@@ -215,6 +215,9 @@ function archMemoryNeighbourhood(topic, opts = {}) {
   if (!parsed || parsed.cloud === false) {
     return { skipped: 'cloud disabled — run npm run arch:refresh', records: [] };
   }
+  if (parsed.repoRegistered === false) {
+    return { skipped: 'repo not registered in the connected store — run npm run arch:refresh', records: [] };
+  }
   const records = (parsed.records || []).slice(0, opts.limit || 10).map(r => ({
     symbolName: r.symbolName,
     filePath: r.filePath,
