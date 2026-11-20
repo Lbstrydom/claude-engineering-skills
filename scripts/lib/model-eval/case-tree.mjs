@@ -26,15 +26,27 @@ const cleanEnv = () => { const e = { ...process.env }; for (const k of GIT_REPO_
 const git = (root, args) => execFileSync('git', ['-c', `core.hooksPath=${os.devNull}`, '-C', root, ...args],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, env: cleanEnv() });
 
-function assertNoCheckoutFilter(repoRoot, sha, _git) {
-  let found = '';
-  try {
-    found = _git(repoRoot, ['grep', '-l', '-e', 'filter=', sha, '--', '.gitattributes', ':(glob)**/.gitattributes']);
-  } catch (err) {
-    if (err?.status === 1) return; // git grep: exit 1 = no match
-    throw new Error(`withCaseTree: could not check ${sha} for checkout filters: ${err.message}`);
+// Attributes that make a checkout differ from the committed blobs the diff describes. Resolved by GIT (check-attr) on the checked-out
+// tree, never by pattern-matching attribute files: that sees every source (.gitattributes at any depth, .git/info/attributes, the global
+// attributes file), ignores comments and patterns matching no file, and covers ident and working-tree-encoding as well as filter.
+const TRANSFORM_ATTRS = ['filter', 'ident', 'working-tree-encoding'];
+const CHECK_ATTR_CHUNK = 200; // paths per call: far below the Windows command-line limit
+
+/** Throws if any file in the checked-out tree `dir` has an effective transforming attribute. Runs BEFORE the audit reads anything. */
+function assertNoCheckoutTransform(dir, sha, _git) {
+  let files;
+  try { files = _git(dir, ['ls-files', '-z']).split('\0').filter(Boolean); } catch (err) { throw new Error(`withCaseTree: could not list ${sha}'s files to check them for checkout transformations: ${err.message}`); }
+  const hits = [];
+  for (let i = 0; i < files.length; i += CHECK_ATTR_CHUNK) {
+    let out;
+    try { out = _git(dir, ['check-attr', '-z', ...TRANSFORM_ATTRS, '--', ...files.slice(i, i + CHECK_ATTR_CHUNK)]); } catch (err) { throw new Error(`withCaseTree: could not check ${sha} for checkout transformations: ${err.message}`); }
+    const parts = out.split('\0');
+    for (let j = 0; j + 2 < parts.length; j += 3) {
+      const [file, attr, value] = [parts[j], parts[j + 1], parts[j + 2]];
+      if (value !== 'unspecified' && value !== 'unset') hits.push(`${file} (${attr}=${value})`);
+    }
   }
-  if (found.trim()) throw new Error(`withCaseTree: refusing to audit ${sha}: .gitattributes names a checkout filter (${found.trim().split(/\r?\n/).join(', ')}), which can transform the files the audit reads`);
+  if (hits.length > 0) throw new Error(`withCaseTree: refusing to audit ${sha}: its checkout would be transformed, so the files read would differ from the commit's blobs: ${hits.slice(0, 5).join(', ')}${hits.length > 5 ? `, and ${hits.length - 5} more` : ''}`);
 }
 
 /**
@@ -50,15 +62,13 @@ function assertNoCheckoutFilter(repoRoot, sha, _git) {
  */
 export async function withCaseTree({ repoRoot, sha }, fn, { _git = git, _warn = (m) => process.stderr.write(`${m}\n`) } = {}) {
   if (typeof sha !== 'string' || !isSafeGitRevision(sha)) throw new Error(`withCaseTree: "${sha}" is not a safe git revision`);
-  // A checkout FILTER (git-lfs smudge, ident, a custom filter) can rewrite the files the audit reads while the diff describes the original
-  // blobs. Disabling hooks does not stop it, and a filter cannot be switched off generically, so a repository that names one in any
-  // .gitattributes at this commit is REFUSED rather than audited on transformed content.
-  assertNoCheckoutFilter(repoRoot, sha, _git);
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-tree-'));
   const dir = path.join(base, 'tree');
   let result; let primary; let failed = false; // a thrown value may be falsy: track THAT it threw, not what
   try {
     _git(repoRoot, ['worktree', 'add', '--detach', '--force', dir, sha]);
+    // The tree is checked out, but nothing has READ it yet: a transforming attribute refuses the case here, and the common cleanup below removes it.
+    assertNoCheckoutTransform(dir, sha, _git);
     result = await fn(dir);
   } catch (err) { primary = err; failed = true; }
 

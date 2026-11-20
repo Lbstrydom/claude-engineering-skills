@@ -174,20 +174,44 @@ describe('withCaseTree', () => {
     } finally { sh(r, 'worktree', 'remove', '-f', '-f', dir); rm(path.dirname(dir)); rm(r); }
   });
 
-  test('a repository whose .gitattributes names a checkout filter is REFUSED, not audited on transformed content', async () => {
-    const r = fs.mkdtempSync(path.join(os.tmpdir(), 'case-tree-filter-'));
-    try {
-      sh(r, 'init', '-q');
-      fs.writeFileSync(path.join(r, '.gitattributes'), '*.js filter=upper\n');
-      fs.writeFileSync(path.join(r, 'a.js'), 'one\n');
-      sh(r, 'add', '.'); sh(r, 'commit', '-q', '-m', 'c1');
-      const sha = sh(r, 'rev-parse', 'HEAD');
+  /** A repo with one commit holding a.js (+ optional .gitattributes text); `infoAttributes` goes to .git/info/attributes (no commit holds it). */
+  function attrRepo({ gitattributes = null, infoAttributes = null } = {}) {
+    const r = fs.mkdtempSync(path.join(os.tmpdir(), 'case-tree-attr-'));
+    sh(r, 'init', '-q');
+    if (gitattributes !== null) fs.writeFileSync(path.join(r, '.gitattributes'), gitattributes);
+    fs.writeFileSync(path.join(r, 'a.js'), 'one\n');
+    sh(r, 'add', '.'); sh(r, 'commit', '-q', '-m', 'c1');
+    if (infoAttributes !== null) { fs.mkdirSync(path.join(r, '.git', 'info'), { recursive: true }); fs.writeFileSync(path.join(r, '.git', 'info', 'attributes'), infoAttributes); }
+    return { r, sha: sh(r, 'rev-parse', 'HEAD') };
+  }
+
+  for (const [label, opts, want] of [
+    ['a filter in .gitattributes', { gitattributes: '*.js filter=upper\n' }, /a\.js \(filter=upper\)/],
+    ['ident', { gitattributes: '*.js ident\n' }, /a\.js \(ident=set\)/],
+    ['working-tree-encoding', { gitattributes: '*.js working-tree-encoding=ISO-8859-1\n' }, /working-tree-encoding=ISO-8859-1/],
+    ['a filter in .git/info/attributes (no committed .gitattributes at all)', { infoAttributes: '*.js filter=upper\n' }, /a\.js \(filter=upper\)/],
+  ]) {
+    test(`${label} REFUSES the case before anything is read, and the tree is removed`, async () => {
+      const { r, sha } = attrRepo(opts);
       let ran = false;
-      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { ran = true; return 1; }), /names a checkout filter/);
-      assert.equal(ran, false, 'nothing was checked out or read');
-      assert.equal(registered(r), 1);
-    } finally { rm(r); }
-  });
+      try {
+        await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { ran = true; return 1; }), (e) => /would be transformed/.test(e.message) && want.test(e.message));
+        assert.equal(ran, false, 'fn never ran, so nothing read the transformed files');
+        assert.equal(registered(r), 1, 'the refused tree was still removed');
+      } finally { rm(r); }
+    });
+  }
+
+  for (const [label, opts] of [
+    ['a comment that mentions filter=', { gitattributes: '# the old *.js filter=upper rule was removed\n' }],
+    ['a filter pattern that matches no file', { gitattributes: '*.png filter=lfs\n' }],
+    ['a filter attribute explicitly unset', { gitattributes: '*.js -filter\n' }],
+  ]) {
+    test(`${label} is NOT a transformation: the case is audited (the check is not over-broad)`, async () => {
+      const { r, sha } = attrRepo(opts);
+      try { assert.equal(await withCaseTree({ repoRoot: r, sha }, async () => 'ran'), 'ran'); } finally { rm(r); }
+    });
+  }
 
   test('a repository with no filter attributes is audited as before (the check is not vacuous in the other direction)', async () => {
     const { r, sha } = repo();
