@@ -12,6 +12,7 @@
  */
 import fs from 'node:fs';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { isSafeGitRevision } from '../vcs.mjs';
@@ -27,34 +28,25 @@ const GIT_CONFIG = ['-c', `core.hooksPath=${os.devNull}`, '-c', 'core.autocrlf=f
 const git = (root, args) => execFileSync('git', [...GIT_CONFIG, '-C', root, ...args],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, env: cleanEnv() });
 
-/** Run git in `dir` with raw bytes in and out (paths are bytes, not necessarily UTF-8) and an optional stdin. */
-const gitBytes = (dir, args, input) => execFileSync('git', [...GIT_CONFIG, '-C', dir, ...args], { input, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024, env: cleanEnv() });
+/** Run git in `dir` and return raw bytes (paths are bytes, not necessarily UTF-8). */
+const gitBytes = (dir, args) => execFileSync('git', [...GIT_CONFIG, '-C', dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024, env: cleanEnv() });
+
+/** The id git gives a blob: sha1("blob <length>\0" + bytes). Computed here, so no path is ever handed back to git to interpret. */
+export const gitBlobId = (bytes) => crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 
 /**
  * The audit reads the checked-out FILES while its diff describes the commit's BLOBS. A smudge filter, `ident`, a working-tree-encoding
  * or an eol attribute makes them differ, and no list of attribute names can be complete (a filter may even be NAMED "unset"). So this
- * does not ask what could transform the checkout: it checks whether it DID. Every regular file's raw bytes (hash-object --no-filters)
- * are compared with the blob id the index holds for it; any mismatch REFUSES the case before the audit reads anything. Symlinks and
- * submodules are skipped (their content is a link target / another repository). Paths travel as bytes through stdin, so no
- * command-line length limit applies and non-UTF-8 names survive.
+ * does not ask what could transform the checkout: it checks whether it DID. Each regular file's bytes are read here and hashed as a git
+ * blob, then compared with the blob id the index holds; any mismatch REFUSES the case before the audit reads anything. Reading and
+ * hashing in-process (not `hash-object --stdin-paths`) is deliberate: that interface reinterprets names (a leading quote is C-unquoted, a
+ * trailing CR is stripped, LF splits a path), and four audit rounds found a new way each, so no path is ever handed back to git.
+ * Symlinks and submodules are skipped (their content is a link target / another repository). Only SHA-1 repositories are verifiable.
  */
-/**
- * Why a path cannot be sent to `hash-object --stdin-paths` as a raw line, or null. The input is newline-delimited, and Git C-UNQUOTES a
- * line that starts with a double quote (so a file named `"a"` would be hashed as `a`): both are refused as unverifiable rather than
- * quoted, because a guard that guesses at an encoding is exactly what a hostile name defeats.
- * @param {Buffer} name
- * @returns {string|null}
- */
-export function unverifiablePathReason(name) {
-  if (name.includes(10)) return 'contains a newline';
-  if (name[0] === 0x22) return 'starts with a double quote (git would C-unquote it)';
-  return null;
-}
-
 function assertTreeMatchesCommit(dir, sha) {
   let listing;
   try { listing = gitBytes(dir, ['ls-files', '-s', '-z']); } catch (err) { throw new Error(`withCaseTree: could not list ${sha}'s files to verify the checkout: ${err.message}`); }
-  const files = [];
+  const bad = [];
   let start = 0;
   while (start < listing.length) {
     let end = listing.indexOf(0, start);
@@ -63,21 +55,13 @@ function assertTreeMatchesCommit(dir, sha) {
     if (tab < 0 || tab > end) throw new Error(`withCaseTree: unreadable index entry while verifying ${sha}`);
     const [mode, oid] = listing.subarray(start, tab).toString('latin1').split(' ');
     const name = listing.subarray(tab + 1, end);
-    if (mode === '100644' || mode === '100755') {
-      const why = unverifiablePathReason(name);
-      if (why) throw new Error(`withCaseTree: ${sha} has a path that ${why}: ${JSON.stringify(name.toString('utf8'))}; its checkout cannot be verified`);
-      files.push({ oid, name });
-    }
     start = end + 1;
+    if (mode !== '100644' && mode !== '100755') continue;
+    if (oid.length !== 40) throw new Error(`withCaseTree: ${sha} is not a SHA-1 repository; its checkout cannot be verified`);
+    let bytes = null;
+    try { bytes = fs.readFileSync(Buffer.concat([Buffer.from(`${dir}${path.sep}`), name])); } catch { /* a file the checkout did not produce is a mismatch */ }
+    if (bytes === null || gitBlobId(bytes) !== oid) bad.push(name.toString('utf8'));
   }
-  if (files.length === 0) return;
-  let hashed;
-  try {
-    const input = Buffer.concat(files.flatMap((f) => [f.name, Buffer.from('\n')]));
-    hashed = gitBytes(dir, ['hash-object', '--no-filters', '--stdin-paths'], input).toString('latin1').split('\n').filter(Boolean);
-  } catch (err) { throw new Error(`withCaseTree: could not hash the checked-out files of ${sha}: ${err.message}`); }
-  if (hashed.length !== files.length) throw new Error(`withCaseTree: hashed ${hashed.length} of ${files.length} files of ${sha}; the checkout cannot be verified`);
-  const bad = files.filter((f, i) => hashed[i] !== f.oid).map((f) => f.name.toString('utf8'));
   if (bad.length > 0) throw new Error(`withCaseTree: refusing to audit ${sha}: its checkout differs from the commit's blobs (a filter, ident, encoding or eol attribute is transforming it), so the files read would not be what the diff describes: ${bad.slice(0, 5).join(', ')}${bad.length > 5 ? `, and ${bad.length - 5} more` : ''}`);
 }
 

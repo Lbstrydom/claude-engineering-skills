@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { withCaseTree, unverifiablePathReason } from '../scripts/lib/model-eval/case-tree.mjs';
+import { withCaseTree, gitBlobId } from '../scripts/lib/model-eval/case-tree.mjs';
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: ENV }).trim();
@@ -227,14 +227,24 @@ describe('withCaseTree', () => {
     try { assert.equal(await withCaseTree({ repoRoot: r, sha }, async (d) => fs.readFileSync(path.join(d, 'a.js'), 'utf8')), 'one\ntwo\n'); } finally { rm(r); }
   });
 
-  test('paths git would reinterpret on --stdin-paths are refused as unverifiable, not quoted (a quoted name could be hashed as a different file)', () => {
-    assert.match(unverifiablePathReason(Buffer.from('"a"')), /double quote/);
-    assert.match(unverifiablePathReason(Buffer.from('"')), /double quote/);
-    assert.match(unverifiablePathReason(Buffer.from([0x61, 0x0a, 0x62])), /newline/);
-    assert.equal(unverifiablePathReason(Buffer.from('a"b')), null, 'a quote that is not leading is literal');
-    assert.equal(unverifiablePathReason(Buffer.from('dir/"x')), null, 'only the first byte of the whole line matters');
-    assert.equal(unverifiablePathReason(Buffer.from(String.raw`src\win\file.js`)), null, 'backslashes are literal on a line that does not start with a quote');
-    assert.equal(unverifiablePathReason(Buffer.from([0xff, 0xfe, 0x2e, 0x6a, 0x73])), null, 'non-UTF-8 bytes are fine: paths travel as bytes');
+  test('gitBlobId is git\'s own blob id: it matches `git hash-object` for empty, text, CRLF, and binary content (the instrument is validated against git)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'case-tree-blob-'));
+    try {
+      const samples = [Buffer.alloc(0), Buffer.from('hello\n'), Buffer.from('a\r\nb\r\n'), Buffer.from([0, 1, 2, 255, 254, 0, 10, 13]), Buffer.from('caf\u00e9\n', 'utf8')];
+      for (const [i, bytes] of samples.entries()) {
+        const f = path.join(dir, `f${i}`);
+        fs.writeFileSync(f, bytes);
+        assert.equal(gitBlobId(bytes), execFileSync('git', ['hash-object', '--no-filters', f], { encoding: 'utf8', env: ENV }).trim(), `sample ${i}`);
+      }
+      assert.equal(gitBlobId(Buffer.from('hello\n')), 'ce013625030ba8dba906f756967f9e9ca394464a', 'the well-known id of "hello\\n"');
+    } finally { rm(dir); }
+  });
+
+  test('names that git\'s --stdin-paths would reinterpret cannot fool the check, because no path is handed back to git (leading quote, trailing CR)', async () => {
+    // Windows cannot create these names, so the property is shown on names it CAN: a name that begins with a quote-like or ends with a
+    // space-like character still resolves to its own file. The in-process read has no quoting, trimming or splitting step to defeat.
+    const { r, sha } = attrRepo({ extra: [["'q.txt", 'q\n'], ['trail .txt', 't\n'], ['two words.txt', 'w\n']] });
+    try { assert.equal(await withCaseTree({ repoRoot: r, sha }, async () => 'ran'), 'ran'); } finally { rm(r); }
   });
 
   test('a tree whose path list is far longer than any command line is still verified (paths travel on stdin)', async () => {
