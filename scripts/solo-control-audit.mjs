@@ -98,6 +98,7 @@ import { redactSecrets } from './lib/secret-patterns.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { log, argOption, hasFlag } from './lib/cli-io.mjs';
 import { dupHash } from './lib/solo-control/cluster-propose.mjs';
+import { authorizeAll, resumedOut, seedResumedGrades, qualifyBatchCluster, labelCoverage, decisionStatusFor, splitApparatusGaps } from './lib/solo-control/run-guards.mjs';
 import { classifyRecipient } from './lib/solo-control/recipient.mjs';
 import { zodToOpenAiJsonSchema } from './lib/oss-structured-output.mjs';
 import { loadRecipientPolicy, resolveAndAuthorize } from './lib/solo-control/policy.mjs';
@@ -841,9 +842,7 @@ async function cmdRun() {
   catch (err) { log(`FATAL: ${err.message}`); process.exit(2); }
   const { commits, covered } = plan;
   const requestedCommitShas = units.map((u) => u.commitSha);
-  const out = prior && !force
-    ? { ...prior, model, modelArg, generatedFor: [...new Set([...(prior.generatedFor || []), ...requestedCommitShas])] }
-    : { armLabel: label, model, modelArg, stageType: STAGE_TYPE, generatedFor: requestedCommitShas, findings: [], perCommit: [] };
+  const out = resumedOut(prior, { force, fresh: { armLabel: label, model, modelArg, stageType: STAGE_TYPE, generatedFor: requestedCommitShas, findings: [], perCommit: [] }, rerunShas: commits.map((u) => u.commitSha), patch: { model, modelArg, generatedFor: [...new Set([...(prior?.generatedFor || []), ...requestedCommitShas])] } });
   out.armLabel = label;
   out.manifest = { ...(out.manifest || {}), resolvedModel: model, recipient, systemFingerprint: (out.manifest && out.manifest.systemFingerprint) || null };
 
@@ -1204,7 +1203,7 @@ async function runGptGateReview(client, zodTextFormat, model, collected, diff, {
   };
   if (reasoningEffort) params.reasoning = { effort: reasoningEffort };
   const resp = await client.responses.parse(params);
-  return { findings: resp.output_parsed?.findings || [], usage: resp.usage || null };
+  return { findings: resp.output_parsed?.findings || [], usage: resp.usage || null, ...(resp.output_parsed ? {} : { state: 'conformance-miss' }) };
 }
 
 /** Gemini as a FROM-SCRATCH generator — same open-ended "audit this diff" task
@@ -1407,13 +1406,15 @@ async function cmdApparatus() {
       chunks = [pregate.gateContext];
       passChunks = pregate.passChunks ?? null; // how many chunks the SHARED 5-pass rows span
       repoBasename = pregate.repo || null;
+      try { const gRoot = locateCommit(sha); if (!gRoot) throw new Error('commit not locatable — repo identity unknown'); authorizeAll([gptModel, gateModel], repoIdentityFor(gRoot), recipientPolicy); }
+      catch (err) { log(`  ${short}: POLICY REFUSED (${err.message}) — skipped, not sent`); out.perCommit.push({ sha, repo: repoBasename, state: 'policy-refused', error: err.message }); continue; }
       const credited = creditSharedPassRows(sha, label);
       log(`  ${short}: gate-only, reusing pre-gate (${collected.length} finding(s), verified sha256; ${credited} shared 5-pass cell(s) credited to ${label})`);
     } else {
       const root = locateCommit(sha);
       if (!root) { log(`  ${short}: NOT FOUND — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
       const repoIdentity = repoIdentityFor(root);
-      try { resolveAndAuthorize({ model: gptModel, repoIdentity, policy: recipientPolicy }); resolveAndAuthorize({ model: gateModel, repoIdentity, policy: recipientPolicy }); }
+      try { authorizeAll([gptModel, gateModel], repoIdentity, recipientPolicy); }
       catch (err) { log(`  ${short}: POLICY REFUSED (${err.message}) — skipped, not sent`); out.perCommit.push({ sha, repo: path.basename(root), state: 'policy-refused', error: err.message }); continue; }
       try { ext = extractDiff(root, sha); }
       catch (err) {
@@ -1448,7 +1449,7 @@ async function cmdApparatus() {
           // credits itself via creditSharedPassRows (see its docstring for the
           // hardcoded-list bug this replaced). aggregateBudgetSpent still counts
           // the call once, by callId.
-          recordCall({ arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: 0, resolvedModel: gptModel, recipient: 'openai', usage: r.usage, state: 'ok' });
+          recordCall({ arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: 0, resolvedModel: gptModel, recipient: 'openai', usage: r.usage, state: r.state ?? 'ok' });
           for (const f of r.findings) raw.push(f);
         }
       }
@@ -1959,11 +1960,9 @@ async function cmdJudgeGpt() {
   if (fs.existsSync(outPath) && !force) {
     const priorLines = fs.readFileSync(outPath, 'utf8').split(/\r?\n/).filter(Boolean);
     const priorHeader = priorLines[0].split(',');
-    const pId = priorHeader.indexOf('blind_id'), pLabel = priorHeader.indexOf('label'), pProof = priorHeader.indexOf('proof'), pCluster = priorHeader.indexOf('cluster'), pMatches = priorHeader.indexOf('matches'), pPattern = priorHeader.indexOf('pattern');
-    for (const line of priorLines.slice(1)) {
-      const c = parseCsvLine(line);
-      if (c[pLabel]) gradingByBlindId.set(c[pId], { blind_id: c[pId], label: c[pLabel], proof: c[pProof], cluster: c[pCluster], matches: c[pMatches], pattern: c[pPattern] });
-    }
+    const pc = Object.fromEntries(['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern'].map((n) => [n, priorHeader.indexOf(n)])); const priorRows = priorLines.slice(1).map((line) => { const c = parseCsvLine(line); return { blindId: c[pc.blind_id], commit: c[pc.commit], severity: c[pc.severity], category: c[pc.category], file: c[pc.file], detail: c[pc.detail], label: c[pc.label], proof: c[pc.proof], cluster: c[pc.cluster], matches: c[pc.matches], pattern: c[pc.pattern] }; });
+    const seeded = seedResumedGrades(priorRows, rows); for (const [k, v] of seeded.grades) gradingByBlindId.set(k, v); // blind ids renumber on re-merge: keep a grade only for the SAME row content
+    if (seeded.discarded) log(`  ⚠ ${seeded.discarded} prior grade(s) discarded — their blind_id now names different content (re-merge renumbered); re-grading.`);
     if (gradingByBlindId.size) log(`Resuming — ${gradingByBlindId.size} row(s) already graded in ${path.relative(process.cwd(), outPath)} (use --force to re-grade everything)`);
   }
 
@@ -2026,7 +2025,7 @@ async function cmdJudgeGpt() {
       const rowsBatch = commitRows.slice(i, i + rowBatchSize);
       try {
         const { gradings } = await runGptJudgeBatch(client, zodTextFormat, gptModel, { shortSha, diff: ext.diff, kdBlock, rowsBatch, reasoning: 'high' });
-        for (const g of gradings) gradingByBlindId.set(g.blind_id, g);
+        for (const g of gradings) gradingByBlindId.set(g.blind_id, qualifyBatchCluster(g, shortSha, i / rowBatchSize));
         graded += gradings.length;
       } catch (err) {
         log(`      ! judge batch failed for ${shortSha} rows ${i}-${i + rowsBatch.length}: ${String(err?.message).slice(0, 160)}`);
@@ -2091,7 +2090,7 @@ async function cmdMerge() {
     log(`REFUSING: ${unmeasured.length} (arm, commit) review(s) never ran — re-run that subcommand for them (resume retries), or pass --allow-unmeasured to drop those commits from every arm:\n${unmeasured.slice(0, 14).map((u) => `  ${u.arm} ${u.commit.slice(0, 12)} — ${u.error}`).join('\n')}`);
     process.exit(4);
   }
-  const commits = matched.filter((c) => !unmeasured.some((u) => u.commit === c));
+  let commits = matched.filter((c) => !unmeasured.some((u) => u.commit === c));
   const seed = Number.parseInt(argOption('seed', '20260704'), 10);
   // Severity scope — applied UNIFORMLY to S and A/B/C so it can't bias the
   // comparison. Default HIGH only: the auto-include tier. Two ADDITIVE, opt-in
@@ -2124,10 +2123,26 @@ async function cmdMerge() {
   // Uniform blind rows. `detail` is truncated to ONE length for every arm so
   // verbosity/style can't leak arm identity (brainstorm: finding-style mismatch).
   const DETAIL_CAP = 220;
-  const commitsSet = new Set(commits);
   const ext = await fetchExternalFindings(commits);
   const extACommits = new Set(ext.filter((e) => e.arm === 'A').map((e) => e.commit_sha));
 
+  // Coverage preflight (§12.4 / R2-H1): a covered commit with NO apparatus (arm A)
+  // findings can't be compared — it would read as "solo won" against an empty
+  // apparatus. Coverage can come from EITHER the ledger view (live shadow runs) OR
+  // the local retro file S-findings-A.json (the `apparatus` subcommand). Refuse on
+  // real gaps; the fix is `solo-control-audit.mjs apparatus --commits <gaps>`.
+  const viewACommits = extACommits;
+  const localA = soloRuns.find((r) => (r.armLabel || '') === 'A');
+  const localACommits = new Set(localA ? localA.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha) : []);
+  const { gaps, covered } = splitApparatusGaps(commits, viewACommits, localACommits);
+  if (gaps.length && !hasFlag('allow-apparatus-gaps')) {
+    log(`REFUSING: ${gaps.length}/${commits.length} commit(s) have NO apparatus (arm A) findings (ledger view OR local retro) — an empty apparatus arm would falsely read as "solo won":`);
+    for (const g of gaps.slice(0, 14)) log(`  ${g.slice(0, 12)} — run: node scripts/solo-control-audit.mjs apparatus --commits ${g.slice(0, 12)}`);
+    log('Or pass --allow-apparatus-gaps to score only the covered commits (documented lower coverage).');
+    process.exit(4);
+  }
+  if (gaps.length) { log(`  --allow-apparatus-gaps: dropping ${gaps.length} gap commit(s) from every arm.`); commits = covered; }
+  const commitsSet = new Set(commits);
   // Collect ALL severities (not just in-scope) so the kd-candidate + medium-pool
   // tiers and the free LOW-volume stat all have the data they need; `tier` decides
   // what actually reaches the sheet. Every row still gets a dupHash-derived `_i`-
@@ -2166,21 +2181,6 @@ async function cmdMerge() {
     r.tier = String(r.severity || '').toUpperCase() === 'MEDIUM' ? 'medium-pool' : 'excluded';
   }
   const rows = allRows.filter((r) => r.tier !== 'excluded');
-  // Coverage preflight (§12.4 / R2-H1): a covered commit with NO apparatus (arm A)
-  // findings can't be compared — it would read as "solo won" against an empty
-  // apparatus. Coverage can come from EITHER the ledger view (live shadow runs) OR
-  // the local retro file S-findings-A.json (the `apparatus` subcommand). Refuse on
-  // real gaps; the fix is `solo-control-audit.mjs apparatus --commits <gaps>`.
-  const viewACommits = extACommits;
-  const localA = soloRuns.find((r) => (r.armLabel || '') === 'A');
-  const localACommits = new Set(localA ? localA.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha) : []);
-  const gaps = commits.filter((c) => !viewACommits.has(c) && !localACommits.has(c));
-  if (gaps.length && !hasFlag('allow-apparatus-gaps')) {
-    log(`REFUSING: ${gaps.length}/${commits.length} commit(s) have NO apparatus (arm A) findings (ledger view OR local retro) — an empty apparatus arm would falsely read as "solo won":`);
-    for (const g of gaps.slice(0, 14)) log(`  ${g.slice(0, 12)} — run: node scripts/solo-control-audit.mjs apparatus --commits ${g.slice(0, 12)}`);
-    log('Or pass --allow-apparatus-gaps to score only the covered commits (documented lower coverage).');
-    process.exit(4);
-  }
   // Cluster-PROPOSE pre-pass (offline aggregation aid): the LLM suggests duplicate
   // groups (bias to over-split), the human overrides. Sensitive rows never sent;
   // any failure → deterministic dupHash fallback. Proposals seed the `cluster` col.
@@ -2375,8 +2375,8 @@ async function cmdScore() {
     }
   }
 
-  const coverage = dataRows > 0 ? (dataRows - unlabeled) / dataRows : 0;
-  if (unlabeled > 0) log(`⚠ ${unlabeled}/${dataRows} row(s) unlabeled (coverage ${(coverage * 100).toFixed(0)}%).`);
+  const coverage = labelCoverage({ dataRows, unlabeled, invalid });
+  if (unlabeled + invalid > 0) log(`⚠ ${unlabeled + invalid}/${dataRows} row(s) unlabeled or invalid (coverage ${(coverage * 100).toFixed(0)}%).`);
 
   const underpowered = Object.entries(armMeta).filter(([, v]) => v.samplingDegenerate).map(([k]) => k);
   const { scoreArms, scoreMediumSampleWeighted } = await import('./lib/solo-control/scoring.mjs');
@@ -2441,7 +2441,7 @@ async function cmdScore() {
   const report = {
     commitsCovered: commits.length,
     labelCoverage: +coverage.toFixed(2),
-    decisionStatus: coverage >= 0.9 && highNeedingProof.length === 0 ? 'final' : 'directional-only',
+    decisionStatus: decisionStatusFor({ coverage, invalid, highNeedingProof }),
     ...result,
     mediumSample: mediumSampleMeta ? { ...mediumSampleMeta, labeled: sampleRows.length, estimate: mediumEstimate } : null,
     lowVolumeByArm,

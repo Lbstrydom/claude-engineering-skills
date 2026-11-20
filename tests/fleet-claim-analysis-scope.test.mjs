@@ -16,7 +16,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './helpers/git.mjs';
-import { gatherFacts, selectBranchesToAnalyse } from '../scripts/lib/fleet/facts.mjs';
+import { gatherFacts, othersFor, selectBranchesToAnalyse } from '../scripts/lib/fleet/facts.mjs';
+import { decideClaim } from '../scripts/lib/fleet/overlap.mjs';
 import {
   addBranch, cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv,
 } from './helpers/fleet-repo.mjs';
@@ -63,6 +64,21 @@ describe('gatherFacts({untracked:false}) over a real repo', () => {
       assert.equal(c.queried, false);
       assert.match(c.reason, /not requested/);
     }
+  });
+  it('a session registered after the gather (branch NOT QUERIED) reads changedUnknown, and decideClaim WARNS instead of treating it as no files', () => {
+    const fx = makeFleetRepo();
+    addBranch(fx.repo, 'late', { 'a/x.txt': 'x\n' });
+    const now = new Date();
+    const f = gatherFacts({ cwd: fx.repo, config: { baseBranch: 'main' }, now, env: scrubbedEnv(), prs: false, patches: false, worktrees: false, untracked: false });
+    const late = { id: 'late', state: 'working', intent: 'other work', paths: ['zzz/**'], source: { kind: 'branch', branch: 'late', prNumber: null }, lastSeen: now.toISOString() };
+    const others = othersFor(f, 'me', now, [late]);
+    assert.equal(others.length, 1);
+    assert.deepEqual(others[0].changedFiles, []);
+    assert.ok(others[0].changedUnknown, 'files-unknown marker is set');
+    const v = decideClaim({ claim: { id: 'me', intent: 'mine', paths: ['a/**'], knownOverlaps: [] }, mode: 'new', others: [{ ...others[0], live: true }], complete: true });
+    assert.equal(v.verdict, 'warn', 'never a silent ok');
+    assert.equal(v.ok, true);
+    assert.equal(v.changedUnknown?.[0]?.with, 'late');
   });
   it('control: the default analyses all five', () => {
     const fx = scene();

@@ -329,6 +329,32 @@ test('spillSummary counts the queue and the evidence drawer separately', async (
   } finally { rmTmp(root); }
 });
 
+test('a keyless envelope stranded in spill/ (lost/ move failed) is quarantined by the drain, never replayed', async () => {
+  const root = mkTmp('ces-dw-keyless-');
+  try {
+    let calls = 0;
+    let mode = 'throw';
+    registerWriter('keyless', {
+      schemaVersion: 1,
+      replay: async () => { calls += 1; if (mode === 'throw') throw new Error('x'); return { applied: true }; },
+    });
+    // A regular file where lost/ must be a directory: the rename to lost/ fails, the envelope stays in spill/.
+    fs.mkdirSync(spill(root), { recursive: true });
+    fs.writeFileSync(lost(root), 'not a directory');
+    const r = await durableWrite('keyless', { id: 1 }, { repoRoot: root });
+    assert.equal(r.outcome, 'lost');
+    assert.equal(calls, 1);
+    assert.equal(queued(root).length, 1, 'envelope left in spill/');
+
+    mode = 'ok'; // a replay would now "succeed" — which would be a double-apply of a possibly-committed write
+    const d = await drainSpill({ repoRoot: root, isTracked: () => false });
+    assert.equal(calls, 1, 'keyless writer is never replayed');
+    assert.equal(d.drained, 0);
+    assert.equal(queued(root).length, 0, 'envelope left the queue');
+    assert.equal(fs.readdirSync(path.join(spill(root), REJECTED_SUBDIR)).length, 1, 'quarantined to rejected/');
+  } finally { rmTmp(root); }
+});
+
 // ── Phase 2: attempts lifecycle, bounds, lock ───────────────────────────────
 
 const pgErr = (code) => Object.assign(new Error(`pg ${code}`), { code });
