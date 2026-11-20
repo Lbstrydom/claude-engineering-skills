@@ -8,11 +8,10 @@
  * @module scripts/lib/model-eval/expect-clean-report
  */
 import { runAuditGenerationArm } from './arm-generation.mjs';
-import { scoreExpectCleanCase, summarizeExpectClean } from './corpus-selection.mjs';
+import { scoreExpectCleanCase, summarizeExpectClean, driverIndexes } from './corpus-selection.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
 
 const SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH']);
-const BLOCKING = new Set(['MEDIUM', 'HIGH']);
 const norm = (f) => String(f).replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
 
 /**
@@ -32,7 +31,13 @@ export function toScorable(findings, files) {
 
 /** The text fields of a finding that a human needs to judge its claim; each is secret-redacted before it can reach `--out`. */
 const TEXT_FIELDS = ['id', 'category', 'section', 'detail', 'risk', 'recommendation', 'principle', 'evidence', 'evidenceRef', 'quote'];
-const redactText = (v) => (typeof v === 'string' ? redactSecrets(v).text : v);
+// Recursive: a structured `evidence` ({quote: ...}) or an array must not carry a secret past a string-only redactor.
+const redactDeep = (v) => {
+  if (typeof v === 'string') return redactSecrets(v).text;
+  if (Array.isArray(v)) return v.map(redactDeep);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redactDeep(x)]));
+  return v;
+};
 
 /**
  * The findings that drove a false positive, kept in full so the outcome can be adjudicated: a bare `false_positive` with a pass name
@@ -40,16 +45,12 @@ const redactText = (v) => (typeof v === 'string' ? redactSecrets(v).text : v);
  * kept is exactly what made the case a false positive. Free text goes through the audit's own secret redaction.
  */
 export function retainDrivers(findings, files) {
-  const want = new Set(files.map(norm));
-  const scorable = toScorable(findings, files);
-  const kept = [];
-  findings.forEach((f, i) => {
-    if (!BLOCKING.has(scorable[i].severity) || !want.has(norm(scorable[i].file))) return;
-    const out = { severity: f.severity, pass: f._pass ?? 'unknown', files: Array.isArray(f.affectedFiles) ? f.affectedFiles.map(redactText) : [], primaryFile: redactText(f._primaryFile ?? null) };
-    for (const k of TEXT_FIELDS) if (f[k] !== undefined) out[k] = redactText(f[k]);
-    kept.push(out);
+  return driverIndexes(toScorable(findings, files), files).map((i) => {
+    const f = findings[i];
+    const out = { severity: f.severity, pass: f._pass ?? 'unknown', files: redactDeep(Array.isArray(f.affectedFiles) ? f.affectedFiles : []), primaryFile: redactDeep(f._primaryFile ?? null) };
+    for (const k of TEXT_FIELDS) if (f[k] !== undefined) out[k] = redactDeep(f[k]);
+    return out;
   });
-  return kept;
 }
 
 /**

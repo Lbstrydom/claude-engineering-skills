@@ -154,12 +154,18 @@ const SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH']);
 // Lowercasing is deliberate: it is the repo-wide MATCHING key (AGENTS.md accepted debt, `normalizePath`) and the loader's own
 // declared-files check folds case the same way, so scoring and loading cannot disagree on what names a file.
 const normFile = (f) => String(f).replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
+/** Indexes of the findings that block a case: MEDIUM+ on one of its files. The ONE predicate, shared by the scorer and the report that keeps them. */
+export function driverIndexes(findings, files) {
+  const want = new Set(files.map(normFile));
+  const idx = [];
+  findings.forEach((f, i) => { if (BLOCKING.has(f.severity) && want.has(normFile(f.file))) idx.push(i); });
+  return idx;
+}
 export function scoreExpectCleanCase(out, files) {
   // Malformed output is `failed` (unmeasured), never `clean`: an incomplete generation must not look like a clean audit.
   if (!out || typeof out !== 'object' || out.failed || !Array.isArray(out.findings)
     || !out.findings.every((f) => f && typeof f === 'object' && typeof f.file === 'string' && f.file.trim() !== '' && SEVERITIES.has(f.severity))) return { outcome: 'failed', passes: [] };
-  const want = new Set(files.map(normFile));
-  const hits = out.findings.filter((f) => BLOCKING.has(f.severity) && want.has(normFile(f.file)));
+  const hits = driverIndexes(out.findings, files).map((i) => out.findings[i]);
   return hits.length === 0 ? { outcome: 'clean', passes: [] } : { outcome: 'false_positive', passes: [...new Set(hits.map((h) => h.pass ?? 'unknown'))] };
 }
 

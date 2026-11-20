@@ -136,6 +136,16 @@ describe('a false_positive case keeps the findings that drove it, redacted', () 
     const r = await run([kase('K1'), kase('K2')], { 'diff for K1': [full('LOW')], 'diff for K2': [full('HIGH', { _primaryFile: 'other.js', affectedFiles: ['other.js'] })] });
     assert.deepEqual(r.perCase.map((c) => c.findings), [undefined, undefined]);
   });
+  it('a secret nested in structured evidence, an array or file metadata is redacted too', async () => {
+    const secret = 'ghp_' + 'a'.repeat(36);
+    const r = await run([kase('K1')], { 'diff for K1': [full('HIGH', { evidence: { quote: secret, lines: [secret, 12] }, affectedFiles: ['src/a.js', `x/${secret}.js`] })] });
+    assert.equal(JSON.stringify(r.perCase).includes(secret), false, 'no nested string may carry the token');
+    assert.equal(r.perCase[0].findings[0].evidence.lines[1], 12, 'non-strings pass through');
+  });
+  it('the retained findings are exactly the scorer drivers: severity and attribution cannot drift apart', async () => {
+    const r = await run([kase('K1')], { 'diff for K1': [full('MEDIUM', { id: 'M1' }), full('LOW', { id: 'L1' }), full('HIGH', { id: 'H9', _primaryFile: 'other.js', affectedFiles: ['other.js'] }), full('HIGH', { id: 'H2', _primaryFile: null, affectedFiles: [] })] });
+    assert.deepEqual(r.perCase[0].findings.map((f) => f.id), ['M1', 'H2'], 'MEDIUM+ on the case (a file-less one is attributed to it); never LOW, never another file');
+  });
   it('free text is secret-redacted before it can be written', async () => {
     const secret = 'ghp_' + 'a'.repeat(36);
     const r = await run([kase('K1')], { 'diff for K1': [full('HIGH', { detail: `token ${secret} is logged`, evidence: secret })] });
