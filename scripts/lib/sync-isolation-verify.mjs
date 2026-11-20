@@ -83,6 +83,7 @@ const CLI_SMOKE_SET = [
                                  // sync-to-repos.mjs (verified before adding —
                                  // see the trap this comment block warns about);
                                  // handler added 2026-08-16 (Gemini final review)
+  'telemetry-export.mjs', // opt-in consumer-side telemetry export; must survive the scripts/.claude-skills relocation, declared in sync-entry-lists.mjs
   'doctor.mjs', // consumer-friction doctor — the single door; must survive the scripts/.claude-skills relocation, declared in sync-to-repos.mjs
   'setup-postgres.mjs', // layout-aware repo-root resolution — must survive the scripts/.claude-skills relocation
   'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import

@@ -312,6 +312,10 @@ export const CORE_ENTRY = [
   // walker pulls in its lib/doctor/** closure automatically (doctor.mjs does
   // NOT itself import lib/disowned-paths.mjs — no probe needs it today).
   'scripts/doctor.mjs',
+  // `telemetry:export` — a consumer whose store CES cannot reach writes a redacted summary into a drop
+  // directory (docs/plans/private-store-telemetry-path.md). Runs ON the consumer, so it ships; the reader
+  // (`scripts/telemetry-exports.mjs`) is CES-only and deliberately is NOT declared.
+  'scripts/telemetry-export.mjs',
   // `ignoredUntrackedPaths`, extracted out of lib/claudemd/file-scanner.mjs so
   // the doctor and the context-drift scanner share one oracle instead of two
   // copies (D4). Declared explicitly (closes R1-H6) rather than relying on
