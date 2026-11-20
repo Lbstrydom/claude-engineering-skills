@@ -78,6 +78,30 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', B = '\x1b[1
 const QUERY_TIMEOUT_MS = 20_000;
 
 /**
+ * Turn the child's stdout into an answer. PURE — split out so the malformed and
+ * unreachable shapes are testable without a live store.
+ *
+ * @param {string} out
+ * @returns {{ok: boolean, rows: Array<object>, reason: string|null}}
+ */
+export function interpretUpstreamStdout(out) {
+  // The CLI prints a JSON envelope as its LAST line; earlier lines are the
+  // env/config banners it writes to stdout.
+  const line = out.trim().split('\n').filter((l) => l.trim().startsWith('{')).pop();
+  if (!line) return { ok: false, rows: [], reason: 'no-envelope-in-output' };
+  const env = JSON.parse(line);
+  if (!env.ok) {
+    return { ok: false, rows: [], reason: stdoutNamesUnreachableStore(line) ? 'store-unreachable' : (env.error?.code || 'query-failed') };
+  }
+  // `cloud:false` is NOT an empty queue — it is an unasked question.
+  if (env.cloud === false) return { ok: false, rows: [], reason: 'cloud-off' };
+  // A success envelope WITHOUT a rows array is malformed, not an empty queue: normalising
+  // it to [] is exactly the wrong-empty this card exists to refuse.
+  if (!Array.isArray(env.rows)) return { ok: false, rows: [], reason: 'malformed-envelope' };
+  return { ok: true, rows: env.rows, reason: null };
+}
+
+/**
  * Ask ONE store for its open upstream reports, in a child process carrying that
  * store's DSN and nothing else of ours.
  *
@@ -109,17 +133,7 @@ export function queryStore(store, limit = 50) {
         },
       },
     );
-    // The CLI prints a JSON envelope as its LAST line; earlier lines are the
-    // env/config banners it writes to stdout.
-    const line = out.trim().split('\n').filter((l) => l.trim().startsWith('{')).pop();
-    if (!line) return { ok: false, rows: [], reason: 'no-envelope-in-output' };
-    const env = JSON.parse(line);
-    if (!env.ok) {
-      return { ok: false, rows: [], reason: stdoutNamesUnreachableStore(line) ? 'store-unreachable' : (env.error?.code || 'query-failed') };
-    }
-    // `cloud:false` is NOT an empty queue — it is an unasked question.
-    if (env.cloud === false) return { ok: false, rows: [], reason: 'cloud-off' };
-    return { ok: true, rows: Array.isArray(env.rows) ? env.rows : [], reason: null };
+    return interpretUpstreamStdout(out);
   } catch (err) {
     // A failing child exits non-zero but still prints its envelope: read it before
     // concluding "the CLI crashed" — a down store is a named state, not a spawn failure.
