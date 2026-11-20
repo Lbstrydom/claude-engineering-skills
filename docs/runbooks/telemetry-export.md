@@ -42,7 +42,7 @@ is itself the root of its own Git work tree (never a folder inside another repos
 
 ## CES side
 
-Declare the consumer in the **gitignored** local registry (`scripts/lib/consumer-repos.local.json`), so the
+Declare the consumer in the **gitignored** local registry (copy `scripts/lib/consumer-repos.local.example.json`), so the
 consumer is never named in this public repo:
 
 ```json
