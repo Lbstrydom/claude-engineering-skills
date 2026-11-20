@@ -41,6 +41,7 @@ import { canonicalise, denseRankColumnPositions, diffSchemas } from './lib/db/sc
 import { captureLiveSchema, SHARED_CATALOG_QUERIES } from './lib/db/live-catalog.mjs';
 import { checkLiveConstraints, renderConstraintDrift } from './lib/db/constraint-drift.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { finishAndExit } from './lib/cli-io.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1345,7 +1346,7 @@ async function main() {
     if (args.format === 'json' && classifyDbConnectionError(err).cause === 'unreachable') {
       process.stdout.write(`${JSON.stringify({ ok: false, error: { code: 'CLOUD_UNREACHABLE', cause: 'unreachable' } })}\n`);
     }
-    process.exit(1);
+    await finishAndExit(1);
   } finally {
     await closePool();
   }
