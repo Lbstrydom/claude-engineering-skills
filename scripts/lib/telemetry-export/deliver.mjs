@@ -94,7 +94,7 @@ function pushGate(git, root) {
   if (ahead > 0) {
     throw new Error(`deliver: ${ahead} commit(s) are committed but not pushed in the drop directory — push or reset them yourself; the exporter will not publish history it did not write`);
   }
-  return { remote, branch };
+  return { remote, branch, tip: tracked };
 }
 
 /**
@@ -114,19 +114,23 @@ function commitAndPush(git, dest, paths, message) {
   try {
     git(['-c', 'push.followTags=false', 'push', '--no-follow-tags', dest.remote, `${ours}:refs/heads/${dest.branch}`]);
   } catch (err) {
-    // A push can reach the remote and still report an error (the connection dies before the acknowledgement).
-    // Ask the remote what it has: if our commit is there, the export WAS delivered and undoing it locally would
-    // desynchronise the clone from the remote.
-    let delivered = false;
-    try { delivered = String(git(['ls-remote', dest.remote, `refs/heads/${dest.branch}`]) ?? '').trim().split(/\s+/)[0] === ours; } catch { delivered = false; }
-    if (delivered) return;
+    // A push can reach the remote and still report an error (the connection dies before the acknowledgement), so a
+    // failed push is NOT proof of non-delivery. Ask the remote, and act only on what can be established:
+    //   - it has our commit            -> delivered; undoing anything locally would desynchronise the clone
+    //   - it is exactly where it was   -> confirmed not delivered; safe to undo our own commit
+    //   - unreadable, or it moved      -> UNKNOWN; leave everything as it is and say so
+    let remoteTip = null;
+    try { remoteTip = String(git(['ls-remote', dest.remote, `refs/heads/${dest.branch}`]) ?? '').trim().split(/\s+/)[0] || null; } catch { remoteTip = null; }
+    if (remoteTip === ours) return;
+    if (remoteTip === null || remoteTip !== dest.tip) {
+      throw new Error('deliver: the push failed and the remote\'s state could not be established — verify what the remote has before retrying (nothing was undone locally)');
+    }
     try {
-      // Undo ONLY our commit: move HEAD back WITHOUT touching the index (--soft), then unstage just our paths,
-      // so anything else staged in the work tree is left exactly as it was found.
-      if (String(git(['rev-parse', 'HEAD']) ?? '').trim() === ours) {
-        git(['reset', '-q', '--soft', parent]);
-        git(['reset', '-q', '--', ...paths]);
-      }
+      // Undo ONLY our commit, atomically: update-ref with the expected old value moves the branch back to the parent
+      // only if it is STILL our commit (a commit made in between makes it a no-op), and never touches the index; then
+      // just our own paths are unstaged, so anything else staged in the work tree is left exactly as it was found.
+      git(['update-ref', '-m', 'telemetry-export: undo an undelivered export commit', 'HEAD', parent, ours]);
+      git(['reset', '-q', '--', ...paths]);
     } catch { /* leave it: the gate will report the unpushed commit */ }
     throw err;
   }

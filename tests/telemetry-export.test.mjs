@@ -420,12 +420,29 @@ describe('delivery: one primitive — a file in the drop directory', () => {
     const calls = [];
     const stub = gitStub(dir, calls);
     assert.throws(() => deliverExport({ doc: await_(), dropDir: dir, push: true, exec: (c, a) => { if (a.includes('push')) throw new Error('rejected'); return stub(c, a); } }), /rejected/);
-    const resets = calls.filter((c) => c[1] === 'reset').map((c) => c.slice(1));
-    // HEAD moves back WITHOUT touching the index (--soft); only OUR path is then unstaged. A mixed reset would also
-    // have unstaged whatever else the work tree had staged.
-    assert.deepEqual(resets[0], ['reset', '-q', '--soft', 'shaparent']);
-    assert.deepEqual(resets[1].slice(0, 3), ['reset', '-q', '--']);
-    assert.equal(resets.some((r) => r.includes('--mixed')), false);
+    const undo = calls.find((c) => c[1] === 'update-ref');
+    // An ATOMIC compare-and-swap (new value, then the EXPECTED old value): the branch moves back only if it is still
+    // our commit, and the index is never touched; then only OUR paths are unstaged.
+    assert.deepEqual(undo.slice(-3), ['HEAD', 'shaparent', 'shaours']);
+    const unstage = calls.find((c) => c[1] === 'reset');
+    assert.deepEqual(unstage.slice(1, 4), ['reset', '-q', '--']);
+    assert.equal(calls.some((c) => c.includes('--mixed') || c.includes('--hard') || c.includes('--soft')), false);
+  });
+
+  it('a failed push whose outcome CANNOT be established (remote unreadable, or it moved) undoes NOTHING and says so', async () => {
+    for (const mode of ['unreadable', 'moved']) {
+      const dir = tmp();
+      const calls = [];
+      const stub = gitStub(dir, calls, { afterPushRemoteTip: mode === 'moved' ? 'someoneelse' : null });
+      let pushed = false;
+      const exec = (c, a) => {
+        if (a.includes('push')) { stub(c, a); pushed = true; throw new Error('connection reset'); }
+        if (pushed && a[0] === 'ls-remote' && mode === 'unreadable') throw new Error('network down');
+        return stub(c, a);
+      };
+      assert.throws(() => deliverExport({ doc: await_(), dropDir: dir, push: true, exec }), /could not be established/, mode);
+      assert.equal(calls.some((c) => c[1] === 'update-ref' || c[1] === 'reset'), false, `${mode}: nothing may be undone`);
+    }
   });
 
   it('a push that ERRORS but reached the remote is reconciled as delivered: no rollback, no failure', async () => {
