@@ -356,6 +356,19 @@ describe('throttle audit round 1: it must really read nothing, deliver what is p
       assert.match(r.stderr, /cannot tell whether earlier exports were pushed/);
     });
 
+    it('a staged RENAME in the alias directory is refused (its second path must never be parsed as an export)', async () => {
+      const { remote, drop } = gitDrop();
+      const file = await put(drop, { ageMs: 3_600_000 });
+      git(drop, 'add', '.'); git(drop, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'exports'); git(drop, 'push', '-q');
+      fs.renameSync(file, path.join(path.dirname(file), '2026-01-01-1b9c1f3e-6d1a-4b6e-8a53-3f5a2f1c9d77.json'));
+      git(drop, 'add', '-A');
+      const before = git(remote, 'rev-list', '--all', '--count');
+      const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /rename or copy is staged/);
+      assert.equal(git(remote, 'rev-list', '--all', '--count'), before);
+    });
+
     it('a push that fails after the exporter committed leaves NO unpushed commit behind: its own commit is undone, the file stays for the next attempt', async () => {
       const { remote, drop } = gitDrop();
       await put(drop, { ageMs: 3_600_000 });
