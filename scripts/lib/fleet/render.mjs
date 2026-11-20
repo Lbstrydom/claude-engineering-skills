@@ -203,6 +203,7 @@ export function renderClaimVerdict(v, ctx = {}) {
     lines.push(`  ${c.known ? '[known] ' : ''}${c.hotOnly ? '[hot] ' : ''}${c.abstractOnly ? '[abstract] ' : ''}${c.with}: ${c.via.join('+')}${detail.length ? ` — ${detail.join('; ')}` : ''}`);
   }
   for (const u of v.uninspected ?? []) lines.push(`  note: uncommitted work not inspected for ${u.with} (${u.reason})`);
+  for (const u of v.changedUnknown ?? []) lines.push(`  warn: overlap by files unknown for ${u.with} (${u.reason})`);
   for (const f of v.finished ?? []) lines.push(`  note: ${f.with} not counted as an overlap — ${f.note}, worktree clean; retire its record: \`${ctx.cmd ?? 'fleet'} ${renderCommand(['release', '--id', f.with])}\``);
   const hint = sharedFilesHint(v, ctx.sharedConfig);
   if (hint) lines.push(hint);

@@ -139,11 +139,28 @@ export function splitLightDark(value) {
   return null;
 }
 
+/** Whitespace-separated tokens outside parentheses (`0 2px rgba(0, 0, 0)` → 3). */
+function topLevelTokenCount(value) {
+  let depth = 0; let count = 0; let inTok = false;
+  for (const c of String(value).trim()) {
+    if (c === '(') depth++;
+    else if (c === ')') depth = Math.max(0, depth - 1);
+    if (depth === 0 && /\s/.test(c)) { inTok = false; continue; }
+    if (!inTok) { count++; inTok = true; }
+  }
+  return count;
+}
+
 /** Heuristic family for a CSS custom-property name + value. */
 function familyForVar(name, value) {
   const n = name.toLowerCase();
   const isLength = LENGTH_RE.test(String(value).trim());
   if (normalizeColor(value)) return 'colors';
+  // A shadow/elevation-named var with a SHADOW-shaped value (several top-level
+  // tokens: `0 2px 4px rgba(...)`) is a shadow even when its name also reads as a
+  // colour (`--color-card-shadow`). A single-token value (`hsl(...)`) is a real
+  // colour under a shadow name (`--shadow-color`) and falls through.
+  if (/shadow|elevation/.test(n) && topLevelTokenCount(value) > 1) return 'shadow';
   // A `--color-*` / `--*-color(-*)` name whose value the normaliser cannot parse
   // (hsl(), oklch(), color-mix(), …) is still a COLOUR token: classify it so the
   // extraction seam can WARN (`token_unparsed_color`) instead of dropping it
@@ -189,8 +206,10 @@ const cssVarsAdapter = {
         let lost = false;
         for (const t of LIGHT_DARK_THEMES) {
           if (theme && theme !== t) { lost = true; continue; } // only the matching half applies
-          const fam = familyForVar(name, ld[t]);
-          if (fam) pushToken(out.values, fam, { value: ld[t], varName: name, theme: t });
+          // light-dark() only accepts <color>: classify the DECLARATION, not each
+          // half, so an unparseable half is pushed and the extraction seam WARNS
+          // (token_unparsed_color) instead of it vanishing silently.
+          pushToken(out.values, 'colors', { value: ld[t], varName: name, theme: t });
         }
         if (lost) scopedLightDark.push(name);
         continue;

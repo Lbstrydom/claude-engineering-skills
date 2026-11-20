@@ -286,6 +286,8 @@ async function main() {
     throw err;
   }
   if (opts.help) { printUsage(); await finishAndExit(0); return; }
+  // Resolve --out against the CALLER's cwd BEFORE the chdir(repoRoot) below.
+  const outAbs = opts.outFile ? path.resolve(opts.outFile) : null;
   if (opts.outFlagWithoutValue) {
     process.stderr.write('check-accepted-debt: --out requires a file path argument\n');
     await finishAndExit(2);
@@ -322,8 +324,8 @@ async function main() {
 
   if (opts.outFile) {
     try {
-      fs.mkdirSync(path.dirname(path.resolve(opts.outFile)), { recursive: true });
-      atomicWriteFileSync(opts.outFile, `${outputText}\n`);
+      fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+      atomicWriteFileSync(outAbs,`${outputText}\n`);
     } catch (err) {
       process.stderr.write(`check-accepted-debt: failed to write --out: ${err.message}\n`);
       await finishAndExit(2);

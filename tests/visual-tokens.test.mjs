@@ -202,3 +202,37 @@ test('json: a colours-family value the normaliser cannot parse warns the same wa
   assert.equal(tokenIndex.has('colors', '0,0,0'), true);
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
+
+test('css-vars: light-dark() with an unparseable half WARNS per half instead of dropping it silently', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'visual-ld-unparsed-'));
+  fs.writeFileSync(path.join(dir, 'tokens.css'), [
+    ':root{',
+    '--background: light-dark(hsl(0 0% 100%), #000000);',
+    '--foreground: light-dark(hsl(0 0% 0%), oklch(0.9 0 0));',
+    '}',
+  ].join('\n'));
+  const { tokenIndex, warnings } = await extractAllowedSet(dir, { tokenSources: [{ type: 'css-vars', path: 'tokens.css' }] });
+  const unparsed = warnings.filter((w) => w.startsWith('token_unparsed_color:'));
+  assert.equal(unparsed.filter((w) => w.includes('--background')).length, 1, 'background: only the hsl half is unparseable');
+  assert.equal(unparsed.filter((w) => w.includes('--foreground')).length, 2, 'foreground: both halves warned');
+  assert.equal(tokenIndex.has('colors', '0,0,0'), true, 'parseable half survives');
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+});
+
+test('css-vars: a colour-named shadow var is a shadow; a real colour under a shadow name stays a colour', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'visual-shadow-name-'));
+  fs.writeFileSync(path.join(dir, 'tokens.css'), [
+    ':root{',
+    '--color-card-shadow: 0 2px 4px rgba(0,0,0,.2);',
+    '--shadow-color: hsl(210 40% 50%);',
+    '--color-brand: hsl(210 40% 50%);',
+    '}',
+  ].join('\n'));
+  const { allowedSet, warnings } = await extractAllowedSet(dir, { tokenSources: [{ type: 'css-vars', path: 'tokens.css' }] });
+  const unparsed = warnings.filter((w) => w.startsWith('token_unparsed_color:'));
+  assert.equal((allowedSet.families.shadow || []).length, 1, '--color-card-shadow lands in shadow');
+  assert.ok(!unparsed.some((w) => w.includes('--color-card-shadow')), 'not an unparsed colour');
+  assert.ok(unparsed.some((w) => w.includes('--shadow-color')), '--shadow-color hsl() stays a (warned) colour');
+  assert.ok(unparsed.some((w) => w.includes('--color-brand')), 'control still warns');
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+});

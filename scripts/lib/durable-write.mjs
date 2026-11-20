@@ -270,8 +270,8 @@ export async function durableWrite(writerId, payload, { repoRoot = process.cwd()
       // Cleanup is OUTSIDE the attempt's failure path. If the write committed
       // and only the envelope removal failed, the operation SUCCEEDED — calling
       // it a failure would spill (or worse, `lost`) a write that is already in
-      // the store. A leftover envelope is harmless: it is idempotent for a keyed
-      // writer, and the drain's reclaim handles it.
+      // the store. A leftover envelope is harmless for a keyed writer (replay is
+      // idempotent); for a keyless one the drain quarantines it WITHOUT replaying.
       // NOTE: deliberately UNTESTED, and that is a disposition rather than an
       // oversight. `rmSync` with `force: true` does not throw for a missing
       // path, and on this platform Node opens with FILE_SHARE_DELETE so an open
@@ -304,7 +304,7 @@ function retainOrLose(spec, file, repoRoot, writerId, why) {
     let target = path.join(dest, path.basename(file));
     for (let n = 1; fs.existsSync(target); n++) target = `${path.join(dest, path.basename(file))}.${n}`;
     fs.renameSync(file, target);
-  } catch { /* the envelope stays in spill/; the drain will quarantine it */ }
+  } catch { /* the envelope stays in spill/; the drain quarantines it (never replays a keyless writer) */ }
   return { outcome: 'lost', writerId, error: why };
 }
 
@@ -597,6 +597,14 @@ async function drainLocked({ repoRoot, cap, isConnectionError, isTracked }) {
       // id mismatches; this is the belt for a registry that changed mid-drain.
       if (!spec) {
         quarantine(repoRoot, held, name, envelope, `unknown writerId "${envelope.writerId}"`);
+        return { quarantined: true };
+      }
+
+      // A keyless writer is NEVER replayed: an envelope that survives in spill/ is either
+      // died-after-commit or never-committed, and without an idempotency key the two are
+      // indistinguishable — replaying risks a double-apply. Terminal, evidence kept.
+      if (!spec.rowKey) {
+        quarantine(repoRoot, held, name, envelope, 'keyless writer: never replayed');
         return { quarantined: true };
       }
 

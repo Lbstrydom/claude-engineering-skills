@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -738,6 +739,20 @@ describe('check-accepted-debt.mjs — CLI process boundary', () => {
     assert.equal(parsed.code, 'clean');
     assert.ok(parsed.summary);
     assert.ok(typeof parsed.rendering === 'string');
+  });
+
+  it('a relative --out lands relative to the CALLER cwd, not the repo root', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'accepted-debt-out-'));
+    const strayInRepo = path.join(REPO_ROOT, 'caller-cwd-out.json');
+    try {
+      const r = spawnSync('node', [CLI, '--json', '--out', 'caller-cwd-out.json'], { cwd: tmp, encoding: 'utf-8' });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(fs.existsSync(path.join(tmp, 'caller-cwd-out.json')), 'file written under the caller cwd');
+      assert.ok(!fs.existsSync(strayInRepo), 'nothing written under the repo root');
+    } finally {
+      fs.rmSync(strayInRepo, { force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
   });
 
   it('--print-fingerprints exits 0 against the real repo and prints one line per registered row', () => {
