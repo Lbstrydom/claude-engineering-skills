@@ -217,6 +217,7 @@ export async function getNeighbourhoodCmd(ctx) {
       getRepoIdByUuid: (u) => ctx.deps.getRepoIdByUuid(u, { strict: true }),
       getActiveSnapshot: ctx.deps.getActiveSnapshot,
       getBandCalibration: ctx.deps.getBandCalibration,
+      getGraphCoverage: ctx.deps.getGraphCoverage,
       callNeighbourhoodRpc: (args) => ctx.deps.callNeighbourhoodRpc(args),
     }, { ...p, repoUuid });
     return { ok: true, cloud: true, ...out };

@@ -152,6 +152,41 @@ export async function generateIntentEmbedding(intentDescription, activeModel, ac
   }
 }
 
+const EMPTY_UNIVERSE_HINT =
+  'this repo has no files the index can read (its languages are not indexed), so the lookup compared nothing — ' +
+  'this is NOT "no similar code"; search the repo directly before writing new code';
+
+/**
+ * The coverage verdict of the snapshot being searched, or `null` when the caller
+ * did not wire a reader. Never `null` any more: an unwired reader and a snapshot with no
+ * stored measurement both read `unknown` — never a clean verdict.
+ *
+ * @param {{getGraphCoverage?: Function}} adapters
+ * @param {{refreshId: string}} active
+ * @param {{id: string}} repoRow
+ * @returns {Promise<{status: string, reason: string|null, eligible: number|null}>}
+ */
+export async function snapshotCoverage(adapters, active, repoRow) {
+  // Not wired = the coverage question was never asked, which must read as
+  // UNKNOWN, not as absence of a problem: an empty result with no verdict at all
+  // is byte-identical to a fully indexed repo with nothing similar.
+  if (typeof adapters.getGraphCoverage !== 'function') {
+    return { status: 'unknown', reason: 'coverage_reader_unavailable', eligible: null };
+  }
+  let cov = null;
+  try {
+    cov = await adapters.getGraphCoverage(active.refreshId, repoRow.id);
+  } catch {
+    cov = null;   // a failed read is "we do not know", exactly like no row
+  }
+  if (!cov?.verdict) return { status: 'unknown', reason: 'not_measured', eligible: null };
+  return {
+    status: cov.verdict.status,
+    reason: cov.verdict.reason ?? null,
+    eligible: cov.extraction?.eligible ?? null,
+  };
+}
+
 /**
  * Top-level orchestrator for plan-time neighbourhood consultation.
  *
@@ -159,10 +194,7 @@ export async function generateIntentEmbedding(intentDescription, activeModel, ac
  * matching `NeighbourhoodResultSchema`. Errors are typed for the failure-matrix
  * mapping in cross-skill.mjs.
  *
- * @param {{getActiveSnapshot: Function, getRepoIdByUuid: Function, callNeighbourhoodRpc: Function,
- *          normalizeIntent?: Function, embedIntent?: Function}} adapters - injected for testability.
- *   The two optional hooks replace only the provider calls (intent normalisation
- *   and intent embedding); omitted, production behaviour is unchanged.
+ * @param {{getActiveSnapshot: Function, getRepoIdByUuid: Function, callNeighbourhoodRpc: Function}} adapters - injected for testability
  * @param {object} args - matches NeighbourhoodQueryArgsSchema
  * @param {string} repoRoot - for disk cache location
  */
@@ -213,6 +245,24 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
     throw err;
   }
 
+  // 1b. Coverage verdict of the snapshot we are about to search. An index that
+  // could not read this repo's languages (`empty_universe`: nothing eligible, so
+  // 0 symbols) answers every query with an empty list — byte-identical to a fully
+  // indexed repo with nothing similar. Say so, and skip the paid intent embedding:
+  // there is nothing to compare against.
+  const coverage = await snapshotCoverage(adapters, active, repoRow);
+  if (coverage?.reason === 'empty_universe') {
+    return NeighbourhoodResultSchema.parse({
+      cloud: true,
+      refreshId: active.refreshId,
+      records: [],
+      totalCandidatesConsidered: 0,
+      truncated: false,
+      coverage,
+      hint: EMPTY_UNIVERSE_HINT,
+    });
+  }
+
   // 2. Cache lookup or generate
   const ttlMs = symbolIndexConfig?.intentEmbedCacheTtlMs ?? CACHE_TTL_MS_DEFAULT;
   // Redact BEFORE deriving the cache key (defence-in-depth): a secret-bearing
@@ -232,14 +282,16 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
   let normalized = { text: safeIntent, mode: 'fallback', normalizerId: 'none', reason: 'not-attempted' };
   try {
     assertEgressSafe(safeIntent, { label: 'arch-memory:normalize-intent' });
-    // Optional provider seam (tests): stands in for the provider CALL only —
-    // redaction and the egress gate above still run first.
-    if (adapters.normalizeIntent) {
-      normalized = await adapters.normalizeIntent(safeIntent, { repoRoot });
-    } else {
-      const { normalizeIntentToPurpose } = await import('./arch-memory/normalize-intent.mjs');
-      normalized = await normalizeIntentToPurpose(safeIntent, { repoRoot });
-    }
+    const { normalizeIntentToPurpose } = await import('./arch-memory/normalize-intent.mjs');
+    // `adapters.normalizeIntent` / `adapters.embedIntent`: test seams so the
+    // orchestrator can be driven end to end without a provider (both paid).
+    // Read once, test for presence (not truthiness: a present-but-wrong value must
+    // fail inside this try rather than silently reach the real provider), and call
+    // it as a plain function — exactly the semantics of the `??` form this replaces.
+    const injectedNormalize = adapters.normalizeIntent;
+    normalized = injectedNormalize != null
+      ? await injectedNormalize(safeIntent, { repoRoot })
+      : await normalizeIntentToPurpose(safeIntent, { repoRoot });
   } catch (err) {
     // A gate refusal means redact-once upstream missed something. Degrade to
     // the deterministic path rather than sending, and never throw into the
@@ -414,7 +466,10 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
     records,
     totalCandidatesConsidered: records.length,
     truncated: false,
-    hint: null,
+    ...(coverage ? { coverage } : {}),
+    hint: records.length === 0 && coverage && coverage.status !== 'verified'
+      ? `index coverage is ${coverage.status}${coverage.reason ? ` (${coverage.reason})` : ''}; an empty result is not evidence that no similar code exists`
+      : null,
   });
 }
 

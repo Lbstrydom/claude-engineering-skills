@@ -428,6 +428,13 @@ describe('arch-memory-check tooling-layout resolution', () => {
     assert.doesNotMatch(r.stdout, /greenfield/);
   });
 
+  it('an index that could not read the repo is not reported as greenfield', () => {
+    const stub = "process.stdout.write(JSON.stringify({ ok: true, cloud: true, records: [], coverage: { status: 'unverified', reason: 'empty_universe', eligible: 0 }, hint: 'compared nothing' }));";
+    const r = runArchInLayout('scripts', stub);
+    assert.ok(r.stdout.includes('Index coverage is unverified (empty_universe)'), r.stdout);
+    assert.doesNotMatch(r.stdout, /greenfield work/);
+  });
+
   it('the remediation command follows the consumer layout', () => {
     const stub = "process.stdout.write(JSON.stringify({ ok: true, cloud: true, repoRegistered: false, records: [] }));";
     const r = runArchInLayout('scripts/.claude-skills', stub);

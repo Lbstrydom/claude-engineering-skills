@@ -12,6 +12,7 @@
  */
 import fs from 'node:fs';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { isSafeGitRevision } from '../vcs.mjs';
@@ -23,8 +24,64 @@ const cleanEnv = () => { const e = { ...process.env }; for (const k of GIT_REPO_
 // `core.hooksPath` pointed at nothing: a repository's own post-checkout hook must not run while a tree is materialised, or it could
 // rewrite the files the audit is about to read. (Checkout FILTERS are not disabled: none of the corpus repos names one in
 // .gitattributes, so no file is filtered; a future corpus repo that does is a curation constraint.)
-const git = (root, args) => execFileSync('git', ['-c', `core.hooksPath=${os.devNull}`, '-C', root, ...args],
+const GIT_CONFIG = ['-c', `core.hooksPath=${os.devNull}`, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf'];
+const git = (root, args) => execFileSync('git', [...GIT_CONFIG, '-C', root, ...args],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, env: cleanEnv() });
+
+/** Run git in `dir` and return raw bytes (paths are bytes, not necessarily UTF-8). */
+const gitBytes = (dir, args) => execFileSync('git', [...GIT_CONFIG, '-C', dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024, env: cleanEnv() });
+
+/** The id git gives a blob: sha1("blob <length>\0" + bytes). Computed here, so no path is ever handed back to git to interpret. */
+export const gitBlobId = (bytes) => crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+
+/**
+ * The blob id of a FILE, hashed incrementally from an open descriptor: a large committed file is never held whole in memory (nor limited by
+ * Node's buffer size), the git header comes from the size at open, and a file that changes size while being read throws.
+ * @param {string|Buffer} file  a path (a Buffer carries a non-UTF-8 name unchanged)
+ */
+export function gitBlobIdOfFile(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const h = crypto.createHash('sha1').update(`blob ${size}\0`);
+    const chunk = Buffer.allocUnsafe(1 << 20);
+    let total = 0;
+    for (let n = fs.readSync(fd, chunk, 0, chunk.length, null); n > 0; n = fs.readSync(fd, chunk, 0, chunk.length, null)) { h.update(chunk.subarray(0, n)); total += n; }
+    if (total !== size) throw new Error(`file changed size while being read (${size} -> ${total})`);
+    return h.digest('hex');
+  } finally { fs.closeSync(fd); }
+}
+
+/**
+ * The audit reads the checked-out FILES while its diff describes the commit's BLOBS. A smudge filter, `ident`, a working-tree-encoding
+ * or an eol attribute makes them differ, and no list of attribute names can be complete (a filter may even be NAMED "unset"). So this
+ * does not ask what could transform the checkout: it checks whether it DID. Each regular file is read here (streamed) and hashed as a git
+ * blob, then compared with the blob id the index holds; any mismatch REFUSES the case before the audit reads anything. Reading and
+ * hashing in-process (not `hash-object --stdin-paths`) is deliberate: that interface reinterprets names (a leading quote is C-unquoted, a
+ * trailing CR is stripped, LF splits a path), and four audit rounds found a new way each, so no path is ever handed back to git.
+ * Symlinks and submodules are skipped (their content is a link target / another repository). Only SHA-1 repositories are verifiable.
+ */
+function assertTreeMatchesCommit(dir, sha) {
+  let listing;
+  try { listing = gitBytes(dir, ['ls-files', '-s', '-z']); } catch (err) { throw new Error(`withCaseTree: could not list ${sha}'s files to verify the checkout: ${err.message}`); }
+  const bad = [];
+  let start = 0;
+  while (start < listing.length) {
+    let end = listing.indexOf(0, start);
+    if (end < 0) end = listing.length;
+    const tab = listing.indexOf(9, start);
+    if (tab < 0 || tab > end) throw new Error(`withCaseTree: unreadable index entry while verifying ${sha}`);
+    const [mode, oid] = listing.subarray(start, tab).toString('latin1').split(' ');
+    const name = listing.subarray(tab + 1, end);
+    start = end + 1;
+    if (mode !== '100644' && mode !== '100755') continue;
+    if (oid.length !== 40) throw new Error(`withCaseTree: ${sha} is not a SHA-1 repository; its checkout cannot be verified`);
+    let id;
+    try { id = gitBlobIdOfFile(Buffer.concat([Buffer.from(`${dir}${path.sep}`), name])); } catch (err) { bad.push(`${name.toString('utf8')} (unreadable: ${err?.code ?? err?.message})`); continue; } // refused, but NAMED as unreadable, not as a transformation
+    if (id !== oid) bad.push(name.toString('utf8'));
+  }
+  if (bad.length > 0) throw new Error(`withCaseTree: refusing to audit ${sha}: its checkout differs from the commit's blobs (a filter, ident, encoding or eol attribute is transforming it), so the files read would not be what the diff describes: ${bad.slice(0, 5).join(', ')}${bad.length > 5 ? `, and ${bad.length - 5} more` : ''}`);
+}
 
 /**
  * Run `fn(dir)` with `dir` a detached checkout of `sha` from `repoRoot`'s repository, then remove it, whether or not `fn` threw.
@@ -44,6 +101,8 @@ export async function withCaseTree({ repoRoot, sha }, fn, { _git = git, _warn = 
   let result; let primary; let failed = false; // a thrown value may be falsy: track THAT it threw, not what
   try {
     _git(repoRoot, ['worktree', 'add', '--detach', '--force', dir, sha]);
+    // The tree is checked out, but nothing has READ it yet: a checkout that differs from the commit's blobs refuses the case here, and the common cleanup below removes it.
+    assertTreeMatchesCommit(dir, sha);
     result = await fn(dir);
   } catch (err) { primary = err; failed = true; }
 
@@ -55,7 +114,8 @@ export async function withCaseTree({ repoRoot, sha }, fn, { _git = git, _warn = 
   try { _git(repoRoot, ['worktree', 'remove', '--force', '--force', dir]); } catch (err) {
     leftover = `the case tree for ${sha} could not be removed (repository: ${JSON.stringify(repoRoot)}, tree: ${JSON.stringify(dir)}; find it in 'git worktree list' and remove only that entry with 'git worktree remove -f -f'): ${err.message}`;
   }
-  if (!leftover) {
+  // Nothing recoverable lives in `base` when the tree directory is gone (a failed add): remove it even though the removal is reported.
+  if (!leftover || !fs.existsSync(dir)) {
     try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch (err) { leftover = `could not delete ${base}: ${err.message}`; }
   }
   if (leftover) {
