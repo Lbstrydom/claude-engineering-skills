@@ -739,13 +739,21 @@ async function recordRuleState({ config, campaignId, actor }, deps = {}) {
   const log = await listEvents(campaignId);
   if (log.cloud === false) return { ok: true, recorded: false };
 
-  const prior = [...log.rows]
-    .filter((e) => e.kind === 'rule_registered' || e.kind === 'rule_changed')
-    .pop();
+  const ruleEvents = [...log.rows].filter((e) => e.kind === 'rule_registered' || e.kind === 'rule_changed');
+  const prior = ruleEvents.at(-1);
+  // read-then-append is not atomic across runners: two reconciles that both read the same `prior` each append, and the
+  // chain then holds an event whose `before` is not the event that precedes it. The append cannot be made conditional from
+  // here (no store-side constraint), so the race is DETECTED after the write — never recorded as if it had been clean.
+  const withRaceCheck = async (res) => {
+    const after = await listEvents(campaignId);
+    const n = [...(after.rows ?? [])].filter((e) => e.kind === 'rule_registered' || e.kind === 'rule_changed').length;
+    return n === ruleEvents.length + 1 ? res
+      : { ...res, ok: false, error: `another reconcile wrote rule state concurrently (${n - ruleEvents.length} event(s) appended, expected 1) — the rule-change chain may be out of order` };
+  };
   if (!prior) {
     const w = await appendEvent({ campaignId, kind: 'rule_registered', actor: actor ?? null, detail: { rule: current } });
     if (!w?.ok) return { ok: false, recorded: false, kind: 'rule_registered', error: w?.error ?? 'append failed' };
-    return { ok: true, recorded: true, kind: 'rule_registered' };
+    return withRaceCheck({ ok: true, recorded: true, kind: 'rule_registered' });
   }
   const before = prior.detail?.rule ?? prior.detail?.after ?? null;
   // Canonical JSON so key order can never masquerade as a rule change.
@@ -756,7 +764,7 @@ async function recordRuleState({ config, campaignId, actor }, deps = {}) {
     detail: { before, after: current },
   });
   if (!w?.ok) return { ok: false, recorded: false, kind: 'rule_changed', error: w?.error ?? 'append failed' };
-  return { ok: true, recorded: true, kind: 'rule_changed', before, after: current };
+  return withRaceCheck({ ok: true, recorded: true, kind: 'rule_changed', before, after: current });
 }
 
 async function verbReconcile(campaignId, { actor = null, confirmMismatch = false } = {}) {

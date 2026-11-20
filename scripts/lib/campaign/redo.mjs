@@ -25,9 +25,13 @@ export function parseRedoFromArgv(value, argv) {
   return parseRedo(value);
 }
 
-/** A lost receipt claim is a benign skip; it must land in the `skipped` bucket. */
+/** A receipt claim that LOST to an existing claim is a benign skip and lands in the `skipped` bucket. Any OTHER failure
+ * (no code, an unknown code) is not a skip: it used to land there too, so a filesystem or receipt-creation failure was
+ * counted as a runner that already holds the attempt — a row never adjudicated, reported as settled. */
 export function claimConflictBucket(claim) {
-  return claim && claim.ok ? null : 'skipped';
+  if (claim && claim.ok) return null;
+  if (claim && claim.code === 'claimed') return 'skipped';
+  throw new Error(`[campaign/redo] receipt claim failed for a reason other than an existing claim (${JSON.stringify(claim ?? null)}) — not a benign skip`);
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -67,7 +71,9 @@ export async function resolveRedoRows({ redo, candidates, blindRows, reason, fin
     };
   }
   const human = await findingsWithHumanDisposition(redo);
-  const blocked = redo.filter((id) => human.ids.has(id));
+  // An unreadable guard refuses EVERY id on its own account: the store hands back the ids it could not check, but a guard
+  // that reports ok:false with an empty set must not read as "no human touched these".
+  const blocked = human.ok ? redo.filter((id) => human.ids.has(id)) : [...redo];
   if (blocked.length > 0) {
     return {
       ok: false,

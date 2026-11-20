@@ -679,7 +679,10 @@ describe('--redo guards', () => {
   it('KD-032 M1: a claim conflict is counted as skipped so the summary balances', () => {
     const { claimConflictBucket } = _internals;
     assert.equal(claimConflictBucket({ ok: true }), null);
-    assert.equal(claimConflictBucket({ ok: false }), 'skipped');
+    assert.equal(claimConflictBucket({ ok: false, code: 'claimed' }), 'skipped');
+    // Only an existing claim is a benign skip — any other failure must surface, never read as "another runner holds it".
+    assert.throws(() => claimConflictBucket({ ok: false }), /not a benign skip/);
+    assert.throws(() => claimConflictBucket(null), /not a benign skip/);
     const s = renderAdjudicationSummary({ attempted: 3, settled: 2, skipped: 1 });
     assert.equal(s.balanced, true);
     assert.equal(s.exitCode, 0);

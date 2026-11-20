@@ -516,6 +516,8 @@ export function othersFor(facts, selfId, now, sessions = facts.registry.sessions
     const k = evidenceKey(s, facts);
     const live = liveness(s, { now, leaseMs: facts.leaseMs, tipCommitAt: b ? tipOf.get(b) ?? null : null }).live;
     const u = b ? facts.uncommitted?.[b] : undefined;
+    // An UNQUERIED entry is unknown, and so is an ABSENT one (a branch registered after the facts were gathered) — never "no uncommitted files".
+    const uncommittedUnknown = !b ? null : u ? (u.queried ? null : (u.reason ?? 'uncommitted files not measured for this branch')) : (facts.uncommitted ? 'uncommitted files not measured for this branch (registered after the facts were gathered)' : null);
     const merged = b ? facts.merged?.evidence?.[b] : undefined;
     const wt = facts.worktrees?.queried ? worktreeOf(facts.worktrees.worktrees ?? [], s.worktree, b) : null;
     const md = merged?.merged ? mergedDone(merged, workRemainingIn(facts, b ?? null, wt)) : null;
@@ -529,7 +531,7 @@ export function othersFor(facts, selfId, now, sessions = facts.registry.sessions
       session: s, live: live && !md?.done,
       ...(changedUnknown ? { changedUnknown } : {}),
       changedFiles: ownQueried ? facts.ownChanged[b].files : k && facts.changed?.[k]?.queried ? facts.changed[k].files : [],
-      uncommittedFiles: u?.queried ? u.files : [], ...(u && !u.queried ? { uncommittedUnknown: u.reason } : {}),
+      uncommittedFiles: u?.queried ? u.files : [], ...(uncommittedUnknown ? { uncommittedUnknown } : {}),
       ...(live && md?.done ? { finished: md.note } : {}), ...(md && !md.done ? { mergedNote: md.note } : {}),
     };
   });
