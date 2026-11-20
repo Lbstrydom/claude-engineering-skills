@@ -70,6 +70,29 @@ describe('sync-banner — injectUpstreamBanner', () => {
     assert.ok(out.includes('// ' + BANNER_BODY[0]), 'banner present after shebang');
   });
 
+  // Python files ship too (lib/symbol-index/python-ast-helper.py). Two Python
+  // rules a naive prepend breaks: a BOM must stay byte 0, and a PEP 263 coding
+  // cookie only counts on line 1 or 2.
+  it('a .py BOM stays at byte 0, banner after it, idempotent', () => {
+    const dst = 'scripts/.claude-skills/lib/x.py';
+    const out = injectUpstreamBanner('﻿def f():\n    pass\n', dst);
+    assert.ok(out.startsWith('﻿# ' + BANNER_BODY[0]));
+    assert.equal(out.indexOf('﻿', 1), -1, 'no BOM mid-file');
+    assert.equal(injectUpstreamBanner(out, dst), out);
+  });
+
+  it('a .py coding cookie keeps its line-1/line-2 position, with or without a shebang', () => {
+    const dst = 'scripts/.claude-skills/lib/x.py';
+    const a = injectUpstreamBanner('# -*- coding: latin-1 -*-\nx = 1\n', dst).split('\n');
+    assert.equal(a[0], '# -*- coding: latin-1 -*-');
+    assert.equal(a[1], '# ' + BANNER_BODY[0]);
+    const b = injectUpstreamBanner('#!/usr/bin/env python3\n# coding: utf-8\nx = 1\n', dst).split('\n');
+    assert.deepEqual(b.slice(0, 3), ['#!/usr/bin/env python3', '# coding: utf-8', '# ' + BANNER_BODY[0]]);
+    // NEGATIVE CONTROL: a cookie-looking line on line 3 is not a cookie and does not move.
+    const c = injectUpstreamBanner('x = 1\ny = 2\n# coding: latin-1\n', dst).split('\n');
+    assert.equal(c[0], '# ' + BANNER_BODY[0]);
+  });
+
   it('idempotency holds on CRLF line endings (Windows consumers)', () => {
     const once = injectUpstreamBanner('export const x = 1;\r\n', 'scripts/.claude-skills/foo.mjs');
     const twice = injectUpstreamBanner(once, 'scripts/.claude-skills/foo.mjs');

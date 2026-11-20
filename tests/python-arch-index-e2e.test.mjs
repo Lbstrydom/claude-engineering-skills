@@ -25,7 +25,13 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXTRACT = path.join(HERE, '..', 'scripts', 'symbol-index', 'extract.mjs');
 const CHILD = path.join(HERE, 'helpers', 'python-neighbourhood-child.mjs');
 const NO_NET = path.join(HERE, 'fixtures', 'no-network-preload.mjs');
-const KEY = ['AKIA', 'IOSFODNN7EXAMPLE'].join(''); // runtime-built: no literal secret in the repo
+// Runtime-built, one per position, so each redaction is proven independently
+// (and no literal secret sits in the repo).
+const KEY_SIG = ['AKIA', 'IOSFODNN7EXAMPLE'].join('');
+const KEY_DOC = ['AKIA', 'J3Q7XKZP2WLMN4RT'].join('');
+const KEY_BODY = ['ghp_', 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'].join('');
+const KEYS = [KEY_SIG, KEY_DOC, KEY_BODY];
+const SUBPROCESS_TIMEOUT_MS = 120_000;
 
 const FILES = {
   'pyproject.toml': '[project]\nname = "shop"\n',
@@ -53,13 +59,40 @@ const FILES = {
     '',
   ].join('\n'),
   'src/shop/aws.py': [
-    `def client(key="${KEY}"):`,
-    `    """Connects with ${KEY}."""`,
+    `def by_signature(key="${KEY_SIG}"):`,
     '    return key',
+    '',
+    'def by_docstring():',
+    `    """Connects with ${KEY_DOC}."""`,
+    '    return 1',
+    '',
+    'def by_body():',
+    `    return "${KEY_BODY}"`,
+    '',
+  ].join('\n'),
+  'src/shop/compat.py': [
+    '__all__ = ["fast_path"]',
+    '__all__ += ["slow_path"]',
+    'try:',
+    '    import ujson',
+    'except ImportError:',
+    '    def slow_path(data):',
+    '        """Fallback JSON path."""',
+    '        return data',
+    'if True:',
+    '    def fast_path(data):',
+    '        return data',
+    '',
+    '@register',
+    '@cache(size=1)',
+    'class Codec:',
+    '    if True:',
+    '        def encode(self, x):',
+    '            return x',
     '',
   ].join('\n'),
   'src/shop/broken.py': 'def oops(:\n    pass\n',
-  'tools/cli.py': 'from shop.orders.service import OrderService\nfrom shop.missing import nope\n',
+  'tools/cli.py': 'from shop.orders.service import OrderService\nfrom shop.missing import nope\nfrom shop.broken import oops\n',
   'secrets/creds.py': 'TOKEN = "x"\ndef leaked():\n    return TOKEN\n',
 };
 
@@ -76,8 +109,9 @@ function requirePython() {
 
 function runExtract(args = [], env = {}) {
   const r = spawnSync(process.execPath, [EXTRACT, '--root', root, ...args], {
-    encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024,
+    encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, timeout: SUBPROCESS_TIMEOUT_MS,
   });
+  assert.equal(r.error?.code, undefined, `extract did not finish: ${r.error?.code}`);
   assert.equal(r.status, 0, `extract failed: ${r.stderr}`);
   return { records: r.stdout.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)), stdout: r.stdout, stderr: r.stderr };
 }
@@ -110,7 +144,7 @@ describe('Python fixture repo — full extract through the real CLI', () => {
 
   it('indexes module functions, classes and methods with signatures', () => {
     const got = ofType(recs, 'symbol').map((s) => `${s.filePath}::${s.symbolName}::${s.kind}::${s.signature}`).sort();
-    assert.deepEqual(got.filter((g) => !g.includes('aws.py')), [
+    assert.deepEqual(got.filter((g) => !g.includes('aws.py') && !g.includes('compat.py')), [
       'src/shop/legacy.py::greet::function::def greet()',
       'src/shop/orders/pricing.py::total_price::function::def total_price(items, tax_rate=0.2)',
       'src/shop/orders/service.py::OrderService._audit::method::def _audit(self)',
@@ -138,12 +172,26 @@ describe('Python fixture repo — full extract through the real CLI', () => {
     assert.equal(ofType(recs, 'symbol').find((s) => s.symbolName === 'OrderService._audit').isExported, false);
   });
 
-  it('a secret in a default arg, docstring or body never leaves in ANY field', () => {
+  it('a secret in a default arg, a docstring or a body — each alone — never leaves in ANY field', () => {
     const aws = ofType(recs, 'symbol').filter((s) => s.filePath === 'src/shop/aws.py');
-    assert.equal(aws.length, 1);
-    assert.equal(aws[0].redacted, true);
-    assert.equal(aws[0].bodyText, '');
-    for (const r of recs) assert.equal(JSON.stringify(r).includes(KEY), false, `key leaked in ${r.type}`);
+    assert.deepEqual(aws.map((s) => s.symbolName).sort(), ['by_body', 'by_docstring', 'by_signature']);
+    for (const s of aws) {
+      assert.equal(s.redacted, true, `${s.symbolName} must be redacted`);
+      assert.equal(s.bodyText, '');
+    }
+    const all = JSON.stringify(recs);
+    for (const k of KEYS) assert.equal(all.includes(k), false, `a key leaked: ${k.slice(0, 4)}…`);
+  });
+
+  it('finds definitions under if/try/with, includes decorators, treats a mutated __all__ as undecidable', () => {
+    const c = Object.fromEntries(ofType(recs, 'symbol')
+      .filter((s) => s.filePath === 'src/shop/compat.py').map((s) => [s.symbolName, s]));
+    assert.deepEqual(Object.keys(c).sort(), ['Codec', 'Codec.encode', 'fast_path', 'slow_path']);
+    assert.equal(c.Codec.startLine, 13, 'span starts at the first decorator');
+    assert.match(c.Codec.bodyText, /^@register\n@cache\(size=1\)\nclass Codec:/);
+    // `__all__ += [...]` makes the final list undecidable: both fall back to the underscore convention.
+    assert.equal(c.slow_path.isExported, true);
+    assert.equal(c.fast_path.isExported, true);
   });
 
   it('a sensitive-path .py and an escaping symlink are never read, named or indexed', () => {
@@ -160,11 +208,12 @@ describe('Python fixture repo — full extract through the real CLI', () => {
     const edges = ofType(recs, 'import').map((e) => `${e.importer}->${e.imported}`).sort();
     assert.deepEqual(edges, [
       'src/shop/orders/service.py->src/shop/orders/pricing.py',
+      'tools/cli.py->src/shop/broken.py',
       'tools/cli.py->src/shop/orders/service.py',
-    ]);
+    ], 'an import of a file that failed to parse is still a LOCAL edge');
     const cov = coverageOf(recs);
-    assert.equal(cov.edges.persisted, 2);
-    assert.equal(cov.edges.external, 1, 'requests');
+    assert.equal(cov.edges.persisted, 3);
+    assert.equal(cov.edges.external, 2, 'requests, ujson');
     assert.equal(cov.edges.unresolved, 1, 'shop.missing — a known local package');
   });
 
@@ -172,10 +221,10 @@ describe('Python fixture repo — full extract through the real CLI', () => {
     const cov = coverageOf(recs);
     assert.equal(cov.outcome, 'ok');
     assert.equal(cov.parser.unparseable, 0);
-    // 9 regular .py (+ the symlink when the OS allowed one); the sensitive file
+    // 10 regular .py (+ the symlink when the OS allowed one); the sensitive file
     // and the escaping symlink are refused by the gate, so they are not in the
-    // universe at all (never read, never named): 8 either way.
-    assert.equal(cov.eligible, 8);
+    // universe at all (never read, never named): 9 either way.
+    assert.equal(cov.eligible, 9);
     assert.equal(cov.cruised, cov.eligible - 1, 'only broken.py (syntax error) is uncruised');
     assert.deepEqual(cov.samples.uncruised, ['src/shop/broken.py']);
     const summary = ofType(recs, 'summary')[0].counts;
@@ -205,7 +254,7 @@ describe('Python fixture repo — incremental extract', () => {
       assert.deepEqual([...new Set(ofType(records, 'symbol').map((s) => s.filePath))], ['src/shop/orders/pricing.py']);
       assert.deepEqual(ofType(records, 'processed').map((p) => p.file), ['src/shop/orders/pricing.py'],
         'import-only universe files are not "processed"');
-      assert.equal(ofType(records, 'import').length, 2, 'the whole import graph is still published');
+      assert.equal(ofType(records, 'import').length, 3, 'the whole import graph is still published');
       assert.equal(coverageOf(records).parser.unparseable, 0);
     } finally { removeFilesManifest(manifest); }
   });
@@ -217,7 +266,7 @@ describe('Python fixture repo — no interpreter', () => {
     assert.equal(ofType(records, 'symbol').length, 0);
     assert.equal(ofType(records, 'import').length, 0);
     const cov = coverageOf(records);
-    assert.ok(cov.parser.unparseable >= 8, JSON.stringify(cov.parser));
+    assert.ok(cov.parser.unparseable >= 9, JSON.stringify(cov.parser));
     assert.equal(cov.parser.byExtension['.py'], cov.parser.unparseable);
     assert.ok(cov.parser.unavailableExtensions.includes('.py'));
     assert.equal(cov.cruised, 0);
@@ -231,7 +280,8 @@ describe('get-neighbourhood returns a real Python neighbour', () => {
     const { stdout } = runExtract();
     const env = { ...process.env, LEARNING_DISABLE: '1', AUDIT_DB_URL: '', NO_NET_LOG: path.join(outside, 'net.log') };
     const r = spawnSync(process.execPath, ['--import', pathToFileURL(NO_NET).href, CHILD, root,
-      'compute the order total price including sales tax'], { input: stdout, encoding: 'utf8', env });
+      'compute the order total price including sales tax'], { input: stdout, encoding: 'utf8', env, timeout: SUBPROCESS_TIMEOUT_MS });
+    assert.equal(r.error?.code, undefined, `neighbourhood child did not finish: ${r.error?.code}`);
     assert.equal(r.status, 0, r.stderr);
     const result = NeighbourhoodResultSchema.parse(JSON.parse(r.stdout.trim().split('\n').pop()));
     assert.ok(result.records.length > 0);

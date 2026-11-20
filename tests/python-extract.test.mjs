@@ -16,14 +16,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  probePythonParser, readAdmittedSource, toSymbolCandidates, runPythonHelper,
+  probePythonParser, readAdmittedSource, toSymbolCandidates, toImportRefs, runPythonHelper,
   bucketPythonImports, guardedMetaReader, OUTCOME, DEFAULT_HELPER_PATH, PYTHON_ENV_VAR,
 } from '../scripts/lib/symbol-index/python-extract.mjs';
 
 const FAKE = fileURLToPath(new URL('./helpers/fake-python-helper.mjs', import.meta.url));
 const fake = (...args) => ({ command: process.execPath, args: [FAKE, ...args] });
 const reqs = (k) => Array.from({ length: k }, (_, i) => ({
-  id: i + 1, rel: `m${i + 1}.py`, bytes: Buffer.from(`x = ${i}\n`), wantSymbols: true,
+  id: i + 1, rel: `m${i + 1}.py`, wantSymbols: true, load: () => ({ ok: true, bytes: Buffer.from(`x = ${i}\n`) }),
 }));
 const outcomes = (results) => [...results.values()].map((r) => r.outcome);
 
@@ -72,42 +72,94 @@ describe('probePythonParser', () => {
   });
 });
 
-describe('readAdmittedSource — read bound to the admission (Tier 3)', () => {
+describe('readAdmittedSource — open-then-verify against a re-admission (Tier 3)', () => {
   const admitted = (p) => ({ canonicalPath: fs.realpathSync(p) });
+  // A re-admission stub answering the way extract.mjs's admitFile does for a
+  // plain in-repo file: admitted at its own canonical path.
+  const readmitAt = (p) => () => ({ admitted: true, canonicalPath: fs.realpathSync(p) });
+  function trySymlink(t, target, link) {
+    try { fs.symlinkSync(target, link); return true; } catch (err) {
+      if (err.code === 'EPERM' || err.code === 'EACCES') { t.skip(`symlinks unavailable here (${err.code})`); return false; }
+      throw err;
+    }
+  }
 
-  it('reads an admitted file', () => {
+  it('reads an admitted file into a buffer sized to the file, not the cap', () => {
     const p = path.join(tmp, 'a.py');
     fs.writeFileSync(p, 'def f():\n    return 1\n');
-    const r = readAdmittedSource(admitted(p), { maxBytes: 1024 });
+    const r = readAdmittedSource(admitted(p), { maxBytes: 1 << 20, readmit: readmitAt(p) });
     assert.equal(r.ok, true);
     assert.equal(r.bytes.toString(), 'def f():\n    return 1\n');
+    assert.ok(r.bytes.buffer.byteLength < (1 << 16), `backing buffer ${r.bytes.buffer.byteLength}B must not scale with maxBytes`);
   });
 
-  it('fails closed with identity-changed when the file is swapped between admission and read', () => {
+  it('refuses when the re-admission (after the open) no longer admits the path', () => {
+    const p = path.join(tmp, 'a.py');
+    fs.writeFileSync(p, 'x = 1\n');
+    const r = readAdmittedSource(admitted(p), { maxBytes: 1024, readmit: () => ({ admitted: false }) });
+    assert.equal(r.outcome, OUTCOME.IDENTITY_CHANGED);
+  });
+
+  it('refuses a file replaced on the same path after the open (the fd is not the admitted file)', () => {
     const p = path.join(tmp, 'a.py');
     fs.writeFileSync(p, 'def f(): pass\n');
-    const adm = admitted(p);
-    const r = readAdmittedSource(adm, {
-      maxBytes: 1024,
-      beforeRead: () => { fs.rmSync(p); fs.writeFileSync(p, 'SECRET = "swapped in"\n'); },
+    const r = readAdmittedSource(admitted(p), {
+      maxBytes: 1024, readmit: readmitAt(p),
+      afterOpen: () => { fs.renameSync(p, path.join(tmp, 'moved.py')); fs.writeFileSync(p, 'other = 1\n'); },
     });
     assert.equal(r.ok, false);
     assert.equal(r.outcome, OUTCOME.IDENTITY_CHANGED);
   });
 
-  it('refuses growth of the same inode past the cap (bounded read)', () => {
+  it('swap-in-then-restore: a symlink to a sensitive target, opened, then the path restored, is refused', (t) => {
+    const dir = path.join(tmp, 'pkg');
+    fs.mkdirSync(dir);
+    const p = path.join(dir, 'mod.py');
+    fs.writeFileSync(p, 'def ok(): pass\n');
+    const canonical = fs.realpathSync(p);
+    const secret = path.join(tmp, 'secret.txt');
+    fs.writeFileSync(secret, 'TOKEN = "do-not-read"\n');
+    const stash = path.join(tmp, 'mod.stash');
+    let swapped = false;
+    const r = readAdmittedSource({ canonicalPath: canonical }, {
+      maxBytes: 1024, readmit: readmitAt(p),
+      beforeOpen: () => { fs.renameSync(p, stash); swapped = trySymlink(t, secret, p); if (!swapped) fs.renameSync(stash, p); },
+      afterOpen: () => { if (swapped) { fs.rmSync(p); fs.renameSync(stash, p); } },
+    });
+    if (!swapped) return;
+    assert.equal(r.ok, false, 'the secret bytes must not be returned');
+    assert.equal(r.outcome, OUTCOME.IDENTITY_CHANGED);
+  });
+
+  it('refuses growth of the same inode during the read (bounded read)', () => {
     const p = path.join(tmp, 'a.py');
     fs.writeFileSync(p, 'x = 1\n');
-    const r = readAdmittedSource(admitted(p), { maxBytes: 8, beforeRead: () => fs.appendFileSync(p, 'y = 2\n') });
+    const r = readAdmittedSource(admitted(p), { maxBytes: 1024, readmit: readmitAt(p), afterOpen: () => fs.appendFileSync(p, 'y = 2\n') });
     assert.equal(r.ok, false);
-    assert.ok([OUTCOME.IDENTITY_CHANGED, OUTCOME.SIZE_CAP].includes(r.outcome), r.outcome);
+    assert.equal(r.outcome, OUTCOME.IDENTITY_CHANGED);
   });
 
   it('refuses a file over the cap without reading it', () => {
     const p = path.join(tmp, 'big.py');
     fs.writeFileSync(p, 'x'.repeat(100));
-    const r = readAdmittedSource(admitted(p), { maxBytes: 10 });
+    const r = readAdmittedSource(admitted(p), { maxBytes: 10, readmit: readmitAt(p) });
     assert.equal(r.outcome, OUTCOME.SIZE_CAP);
+  });
+
+  it('refuses to run without a re-admission (no silent pre-open-only mode)', () => {
+    assert.throws(() => readAdmittedSource({ canonicalPath: tmp }, { maxBytes: 10 }), /readmit is required/);
+  });
+});
+
+describe('toImportRefs — the resolver only ever sees well-formed refs', () => {
+  const ok = { kind: 'from', module: 'a', names: ['b'], isRelative: true, dotCount: 1, line: 3 };
+  it('accepts a well-formed ref', () => { assert.equal(toImportRefs([ok]).ok, true); });
+  it('fails the file closed on a null element, a bad kind, or an inconsistent relative flag', () => {
+    assert.equal(toImportRefs([ok, null]).ok, false);
+    assert.equal(toImportRefs([{ ...ok, kind: 'require' }]).ok, false);
+    assert.equal(toImportRefs([{ ...ok, isRelative: false }]).ok, false);
+    assert.equal(toImportRefs([{ ...ok, names: [1] }]).ok, false);
+    assert.equal(toImportRefs({}).ok, false);
   });
 });
 
@@ -153,6 +205,20 @@ describe('runPythonHelper — protocol and failure accounting (fake helper)', ()
     const wrong = await runPythonHelper(reqs(2), { ...fake('wrong-id'), ...fast });
     assert.equal(wrong.results.get(1).outcome, OUTCOME.TIMEOUT);
     assert.ok(wrong.protocolErrors >= 1);
+  });
+
+  it('a response for a request NOT in flight (answered early) is a protocol error, never accepted', async () => {
+    const { results, protocolErrors } = await runPythonHelper(reqs(2), { ...fake('early-id'), ...fast, fileTimeoutMs: 300, maxRestarts: 0 });
+    assert.ok(protocolErrors >= 1);
+    assert.equal(results.get(1).outcome, OUTCOME.TIMEOUT, 'request 1 was only ever answered as id 2');
+  });
+
+  it('a load failure is that request\'s terminal outcome and the queue continues', async () => {
+    const rs = reqs(2);
+    rs[0].load = () => ({ ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'swapped' });
+    const { results } = await runPythonHelper(rs, { ...fake('ok'), ...fast });
+    assert.equal(results.get(1).outcome, OUTCOME.IDENTITY_CHANGED);
+    assert.equal(results.get(2).outcome, OUTCOME.PARSED);
   });
 
   it('a hang before hello restarts, then exhausts, and every candidate is helper-died', async () => {

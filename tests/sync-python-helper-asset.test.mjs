@@ -67,7 +67,7 @@ describe('python-ast-helper.py ships to consumers', () => {
         JSON.stringify({ v: 1, hello: true }),
         JSON.stringify({ v: 1, id: 1, rel: 'm.py', b64: Buffer.from('def ping():\n    """Pong."""\n').toString('base64'), wantSymbols: true }),
       ].join('\n') + '\n';
-      const r = spawnSync(probe.interpreter.command, [...probe.interpreter.prefix, '-I', '-B', helperPath], { input: req, encoding: 'utf8' });
+      const r = spawnSync(probe.interpreter.command, [...probe.interpreter.prefix, '-I', '-B', helperPath], { input: req, encoding: 'utf8', timeout: 60_000 });
       assert.equal(r.status, 0, r.stderr);
       const [hello, res] = r.stdout.trim().split('\n').map((l) => JSON.parse(l));
       assert.equal(hello.hello, true);

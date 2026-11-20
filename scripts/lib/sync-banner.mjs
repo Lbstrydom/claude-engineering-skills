@@ -78,6 +78,9 @@ export function injectUpstreamBanner(content, destRel) {
   const token = bannerTokenFor(destRel);
   if (!token) return content;
 
+  // A UTF-8 BOM must stay byte 0: inject into what follows it, then restore it.
+  if (content.startsWith('﻿')) return '﻿' + injectUpstreamBanner(content.slice(1), destRel);
+
   const firstBannerLine = `${token} ${BANNER_BODY[0]}`;
   // Idempotent guard: skip ONLY if the banner already sits at the TOP (as
   // injected) — NOT merely present somewhere in the body. A relocated source
@@ -86,13 +89,35 @@ export function injectUpstreamBanner(content, destRel) {
   if (firstContentLine(content) === firstBannerLine) return content;
 
   const block = BANNER_BODY.map((l) => `${token} ${l}`).join('\n');
-  // Preserve a leading shebang as byte 0 (banner goes directly below it),
-  // including the degenerate shebang-only-no-newline case (R1 fix).
-  if (content.startsWith('#!')) {
-    const firstNl = content.indexOf('\n');
-    if (firstNl === -1) return `${content}\n${block}\n`;
-    return content.slice(0, firstNl + 1) + block + '\n' + content.slice(firstNl + 1);
+  // A Python encoding declaration (PEP 263) only counts on line 1 or 2, so it
+  // keeps its position with the shebang above the banner.
+  const keep = pinnedHeadLength(content, destRel);
+  if (keep > 0) {
+    const head = content.slice(0, keep);
+    if (content.slice(keep).startsWith(firstBannerLine)) return content;
+    return (head.endsWith('\n') ? head : `${head}\n`) + block + '\n' + content.slice(keep);
   }
   const lead = content.startsWith('\n') ? '' : '\n';
   return block + lead + content;
+}
+
+const PY_CODING_COOKIE = /^[ \t\f]*#.*?coding[:=][ \t]*[-\w.]+/;
+
+/**
+ * Length of the head that must stay above the banner: a shebang line, and for
+ * Python a coding-cookie line among the first two.
+ */
+function pinnedHeadLength(content, destRel) {
+  const lines = content.split('\n');
+  let n = 0;
+  if (lines[0].startsWith('#!')) n = 1;
+  if (destRel.endsWith('.py')) {
+    for (let i = 0; i < Math.min(2, lines.length); i++) {
+      if (PY_CODING_COOKIE.test(lines[i].replace(/\r$/, ''))) n = Math.max(n, i + 1);
+    }
+  }
+  if (n === 0) return 0;
+  // Degenerate shebang-only-no-newline file: the whole content is the head.
+  const idx = lines.slice(0, n).join('\n').length;
+  return Math.min(content.length, idx + 1);
 }

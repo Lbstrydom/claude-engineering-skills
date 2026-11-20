@@ -7,6 +7,7 @@
  *   malformed     answer request 1 with a non-JSON line, then behave
  *   dup-id        answer every request twice
  *   wrong-id      answer request 1 with an id nobody asked for
+ *   early-id      answer request 1 as id 2 (a request not yet sent)
  *   die-after <n> answer n requests, then exit 3; with FAKE_HELPER_MARK=<file> set, every
  *                 later process (a restart) dies on hello — a permanently broken helper
  *   hang-hello    never answer the hello
@@ -44,6 +45,7 @@ rl.on('line', (line) => {
       process.exit(3);
     }
     if (mode === 'malformed' && req.id === 1) { process.stdout.write('{not json\n'); return; }
+    if (mode === 'early-id' && req.id === 1) { out({ v: 1, id: 2, ok: true, symbols: [], imports: [] }); return; }
     if (mode === 'wrong-id' && req.id === 1) { out({ v: 1, id: 999, ok: true, symbols: [], imports: [] }); return; }
     if (mode === 'oversize' && req.id === 1) { process.stdout.write(`${'x'.repeat(64 * 1024)}\n`); return; }
     const res = { v: 1, id: req.id, ok: true, symbols: req.wantSymbols ? [symbolFor(req.id)] : [], imports: [] };

@@ -77,6 +77,10 @@ describe('isExtensionAllowlisted', () => {
   it('derives the Python list from the file-taxonomy registry, and keeps the JS/TS list intact', () => {
     const fromTaxonomy = languageById('py').extensions.filter((e) => e !== '.pyi');
     assert.deepEqual([...PYTHON_EXT_ALLOWLIST], fromTaxonomy);
+    // PIN: a taxonomy edit that adds a Python extension widens EGRESS too, so it
+    // must fail here and be reviewed as an egress change, not ride in silently.
+    assert.deepEqual([...PYTHON_EXT_ALLOWLIST], ['.py'],
+      'the Python egress allowlist changed — review it as an egress change, then update this pin');
     assert.deepEqual([...DEFAULT_EXT_ALLOWLIST], [...JS_TS_EXT_ALLOWLIST, ...PYTHON_EXT_ALLOWLIST]);
     assert.deepEqual([...JS_TS_EXT_ALLOWLIST], ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.vue', '.svelte']);
   });

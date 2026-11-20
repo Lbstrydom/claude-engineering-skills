@@ -245,6 +245,22 @@ describe('resolvePythonImport', () => {
     const tooHigh = { kind: 'from', module: 'x', names: ['y'], isRelative: true, dotCount: 4 };
     assert.equal(resolvePythonImport(tooHigh, 'src/shop/orders/service.py', idx).state, 'unresolved');
   });
+
+  it('never resolves a relative import that leaves the top-level package (Python refuses it)', () => {
+    const mapped = new Map([['src/shop/__init__.py', 'd'], ['src/shop/mod.py', 'd'], ['src/foo.py', 'd'], ['src/top.py', 'd']]);
+    const idx = buildPythonModuleIndex(mapped, ['src']);
+    // shop/mod.py's package is `shop`; `..` would leave it — the would-be target src/foo.py exists, and must NOT match.
+    const beyond = { kind: 'from', module: 'foo', names: ['bar'], isRelative: true, dotCount: 2 };
+    assert.equal(resolvePythonImport(beyond, 'src/shop/mod.py', idx).state, 'unresolved');
+    // A top-level module has no package to be relative to.
+    const noPkg = { kind: 'from', module: 'foo', names: ['bar'], isRelative: true, dotCount: 1 };
+    assert.equal(resolvePythonImport(noPkg, 'src/top.py', idx).state, 'unresolved');
+    // At the boundary: `.` from inside the package still resolves.
+    const inside = { kind: 'from', module: '', names: ['mod'], isRelative: true, dotCount: 1 };
+    const res = resolvePythonImport(inside, 'src/shop/__init__.py', idx);
+    assert.equal(res.state, 'resolved-local');
+    assert.ok(res.submodules.includes('src/shop/mod.py'));
+  });
 });
 
 // ── Integration — analyseImports against a fixture repo ─────────────────────

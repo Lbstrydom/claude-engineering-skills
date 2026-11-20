@@ -19,7 +19,10 @@
  */
 export function remedyFor(ext) {
   if (ext === '.py') {
-    return 'install Python >= 3.9 on PATH, or set ARCH_INDEX_PYTHON to an interpreter';
+    // Two distinct causes share this extension; the `python:` stderr line names
+    // which one fired (helper-missing vs no usable interpreter).
+    return 'install Python >= 3.9 on PATH or set ARCH_INDEX_PYTHON to an interpreter; if the `python:` line '
+      + 'says helper-missing, re-sync the tooling (python-ast-helper.py is absent next to python-extract.mjs)';
   }
   if (ext === '.ts' || ext === '.tsx' || ext === '.mts' || ext === '.cts') {
     return 'install `typescript` where dependency-cruiser can resolve it (under pnpm\'s strict '

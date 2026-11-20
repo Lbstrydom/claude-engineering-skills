@@ -20,6 +20,7 @@ import base64
 import io
 import json
 import sys
+import textwrap
 import tokenize
 
 PROTOCOL_VERSION = 1
@@ -41,22 +42,28 @@ def _decode(raw):
 
 
 def _literal_all(tree):
-    """The module's __all__ when it is a literal list/tuple of strings, else None."""
-    for node in tree.body:
-        targets = []
-        if isinstance(node, ast.Assign):
-            targets = node.targets
-        elif isinstance(node, ast.AnnAssign) and node.value is not None:
-            targets = [node.target]
-        for t in targets:
-            if isinstance(t, ast.Name) and t.id == "__all__":
+    """The module's __all__ when it is ONE literal list/tuple of strings, else None.
+
+    Conservative on purpose: any second binding, augmented assignment
+    (``__all__ += [...]``) or method call on it (``__all__.append``) makes the
+    final value undecidable statically, so the caller falls back to the
+    underscore convention rather than trusting the first assignment.
+    """
+    found = None
+    bindings = 0
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
+                bindings += 1
                 value = node.value
-                if isinstance(value, (ast.List, ast.Tuple)) and all(
-                    isinstance(e, ast.Constant) and isinstance(e.value, str) for e in value.elts
-                ):
-                    return {e.value for e in value.elts}
-                return None
-    return None
+                if (isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(value, (ast.List, ast.Tuple))
+                        and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in value.elts)):
+                    found = {e.value for e in value.elts}
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+              and isinstance(node.func.value, ast.Name) and node.func.value.id == "__all__"):
+            bindings += 1
+    return found if bindings == 1 else None
 
 
 def _is_public(name):
@@ -79,39 +86,65 @@ def _class_signature(node):
     return "class %s(%s)" % (node.name, ", ".join(parts)) if parts else "class %s" % node.name
 
 
-def _symbol(node, text, name, kind, signature, exported):
+def _span(node):
+    """(start, end) lines of a definition, decorators included."""
+    start = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])])
+    return start, getattr(node, "end_lineno", None) or node.lineno
+
+
+def _symbol(node, lines, name, kind, signature, exported):
+    start, end = _span(node)
     return {
         "symbolName": name,
         "kind": kind,
-        "startLine": node.lineno,
-        "endLine": getattr(node, "end_lineno", None) or node.lineno,
+        "startLine": start,
+        "endLine": end,
         "signature": signature,
-        # The docstring travels INSIDE bodyText only; there is deliberately no
-        # separate docstring field that could bypass the body secret scrub.
-        "bodyText": ast.get_source_segment(text, node) or "",
+        # Whole source lines, decorators included. The docstring travels INSIDE
+        # bodyText only; there is deliberately no separate docstring field that
+        # could bypass the body secret scrub.
+        "bodyText": textwrap.dedent("".join(lines[start - 1:end])).rstrip("\r\n"),
         "isExported": bool(exported),
     }
 
 
+# Statements whose bodies are still the enclosing scope (a def under
+# `if TYPE_CHECKING:` or `try: ... except ImportError:` is module-level).
+_BLOCKS = (ast.If, ast.Try, ast.With, ast.AsyncWith) + ((ast.TryStar,) if hasattr(ast, "TryStar") else ())
+
+
+def _scope_defs(body):
+    """Definitions in a scope, descending into control-flow blocks but never into defs."""
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield node
+        elif isinstance(node, _BLOCKS):
+            children = list(node.body) + list(getattr(node, "orelse", [])) + list(getattr(node, "finalbody", []))
+            for h in getattr(node, "handlers", []):
+                children += h.body
+            yield from _scope_defs(children)
+
+
 def extract_symbols(tree, text):
     declared = _literal_all(tree)
+    lines = text.splitlines(keepends=True)  # once per file, not once per symbol
 
     def exported(name):
         return name in declared if declared is not None else _is_public(name)
 
     out = []
-    for node in tree.body:
+    for node in _scope_defs(tree.body):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            out.append(_symbol(node, text, node.name, "function", _def_signature(node), exported(node.name)))
-        elif isinstance(node, ast.ClassDef):
-            cls_exported = exported(node.name)
-            out.append(_symbol(node, text, node.name, "class", _class_signature(node), cls_exported))
-            for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    out.append(_symbol(
-                        item, text, "%s.%s" % (node.name, item.name), "method",
-                        _def_signature(item), cls_exported and _is_public(item.name),
-                    ))
+            out.append(_symbol(node, lines, node.name, "function", _def_signature(node), exported(node.name)))
+            continue
+        cls_exported = exported(node.name)
+        out.append(_symbol(node, lines, node.name, "class", _class_signature(node), cls_exported))
+        for item in _scope_defs(node.body):
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                out.append(_symbol(
+                    item, lines, "%s.%s" % (node.name, item.name), "method",
+                    _def_signature(item), cls_exported and _is_public(item.name),
+                ))
     return out
 
 

@@ -122,32 +122,49 @@ export function probePythonParser({
 }
 
 /**
- * Read an ADMITTED file, bound to the admission identity (§2.6): re-stat, open,
- * fstat and compare dev+ino+size, confirm the canonical path still resolves to
- * itself, read at most `maxBytes + 1` from the fd, then fstat again.
+ * Read an ADMITTED file, bound to an admission decision made AFTER the open
+ * (§2.6). Open-then-verify: open the canonical path, `fstat` the descriptor,
+ * then RE-RUN the full admission gate (`readmit`) and require that the inode
+ * now at the re-admitted canonical path IS the descriptor's inode (dev+ino).
+ *
+ * Why after, not before: any check made before the open leaves a window in
+ * which a symlink component can be swapped at a sensitive target, the file
+ * opened, and the path restored. Verifying after the open binds the bytes the
+ * fd will yield to a classification of the path as it stands NOW: a swap is
+ * either seen by the re-admission (refused) or restored before it (the restored
+ * path names a different inode than the fd — refused).
+ *
+ * The read is bounded (`maxBytes + 1`, into a buffer sized to the file) and a
+ * post-read `fstat` must show the same size and mtime.
  *
  * @param {{canonicalPath: string}} admission - from extract.mjs `admitFile`
- * @param {{maxBytes: number, beforeRead?: () => void}} opts - `beforeRead` is a test seam
+ * @param {{maxBytes: number, readmit: () => {admitted: boolean, canonicalPath?: string},
+ *          beforeOpen?: () => void, afterOpen?: () => void}} opts - the two hooks are test seams
  * @returns {{ok: true, bytes: Buffer} | {ok: false, outcome: string, detail: string}}
  */
-export function readAdmittedSource(admission, { maxBytes, beforeRead } = {}) {
+export function readAdmittedSource(admission, { maxBytes, readmit, beforeOpen, afterOpen } = {}) {
+  if (typeof readmit !== 'function') throw new Error('readAdmittedSource: readmit is required (open-then-verify)');
   const canonical = admission.canonicalPath;
   let fd = null;
   try {
-    const st0 = fs.statSync(canonical, { bigint: true });
-    if (typeof beforeRead === 'function') beforeRead();
+    if (typeof beforeOpen === 'function') beforeOpen();
     fd = fs.openSync(canonical, 'r');
     const st1 = fs.fstatSync(fd, { bigint: true });
-    if (st1.dev !== st0.dev || st1.ino !== st0.ino || st1.size !== st0.size) {
-      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'file changed between admission and open' };
+    if (typeof afterOpen === 'function') afterOpen();
+    const again = readmit();
+    if (!again?.admitted || again.canonicalPath !== canonical) {
+      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'path no longer admitted at its canonical location' };
     }
-    if (fs.realpathSync(canonical) !== canonical) {
-      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'canonical path no longer resolves to itself' };
+    const now = fs.statSync(canonical, { bigint: true });
+    if (now.dev !== st1.dev || now.ino !== st1.ino) {
+      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'opened file is not the file at the admitted path' };
     }
     if (st1.size > BigInt(maxBytes)) {
       return { ok: false, outcome: OUTCOME.SIZE_CAP, detail: `size ${st1.size} > ${maxBytes}` };
     }
-    const buf = Buffer.alloc(maxBytes + 1);
+    // Sized to the file (+1 to detect growth), never maxBytes: a retained subarray
+    // of a maxBytes buffer per small file is what made memory scale with the cap.
+    const buf = Buffer.alloc(Number(st1.size) + 1);
     let total = 0;
     while (total < buf.length) {
       const n = fs.readSync(fd, buf, total, buf.length - total, total);
@@ -191,6 +208,29 @@ export function toSymbolCandidates(symbols) {
   return { ok: true, candidates };
 }
 
+/**
+ * Validate the helper's import refs against the shape `resolvePythonImport`
+ * consumes (§2.9 / M8): a malformed element fails the whole file closed rather
+ * than reaching the resolver as a property-access error.
+ *
+ * @param {unknown} imports
+ * @returns {{ok: true, refs: object[]} | {ok: false, reason: string}}
+ */
+export function toImportRefs(imports) {
+  if (!Array.isArray(imports)) return { ok: false, reason: 'imports is not an array' };
+  const refs = [];
+  for (const r of imports) {
+    if (!r || typeof r !== 'object' || (r.kind !== 'import' && r.kind !== 'from')
+      || typeof r.module !== 'string' || !Array.isArray(r.names) || !r.names.every((n) => typeof n === 'string')
+      || typeof r.isRelative !== 'boolean' || !Number.isInteger(r.dotCount) || r.dotCount < 0
+      || r.isRelative !== (r.dotCount > 0) || !Number.isInteger(r.line)) {
+      return { ok: false, reason: 'malformed import ref' };
+    }
+    refs.push({ kind: r.kind, module: r.module, names: [...r.names], isRelative: r.isRelative, dotCount: r.dotCount, line: r.line });
+  }
+  return { ok: true, refs };
+}
+
 /** Line splitter with a hard per-line cap; returns `false` once the cap is breached. */
 function makeLineReader(onLine, maxBytes) {
   let buf = '';
@@ -212,7 +252,14 @@ function makeLineReader(onLine, maxBytes) {
  * process failure restarts it (at most `maxRestarts`), and once restarts are
  * exhausted EVERY remaining candidate — queued or in flight — ends `helper-died`.
  *
- * @param {Array<{id: number, rel: string, bytes: Buffer, wantSymbols: boolean}>} requests
+ * Bytes are loaded LAZILY (`load()` per request, just before it is sent), so at
+ * most one file's source is held at a time; a load failure is that request's
+ * terminal outcome. Only a response for the request IN FLIGHT is accepted —
+ * any other id (unknown, already answered, or not yet sent) is a counted
+ * protocol error and never attributed (H7).
+ *
+ * @param {Array<{id: number, rel: string, wantSymbols: boolean,
+ *          load: () => ({ok: true, bytes: Buffer} | {ok: false, outcome: string, detail: string})}>} requests
  * @param {{command: string, args: string[], onBeat?: () => void, fileTimeoutMs?: number,
  *          helloTimeoutMs?: number, heartbeatMs?: number, maxRestarts?: number,
  *          spawnFn?: typeof spawn, maxLineBytes?: number}} opts
@@ -240,8 +287,12 @@ export async function runPythonHelper(requests, {
       let failed = false;
       while (next < requests.length) {
         const req = requests[next];
-        proc.send({ v: PROTOCOL_VERSION, id: req.id, rel: req.rel, b64: req.bytes.toString('base64'), wantSymbols: req.wantSymbols });
+        const loaded = req.load();
+        if (!loaded.ok) { results.set(req.id, { outcome: loaded.outcome, detail: loaded.detail }); next++; continue; }
+        proc.setInFlight(req.id);
+        proc.send({ v: PROTOCOL_VERSION, id: req.id, rel: req.rel, b64: loaded.bytes.toString('base64'), wantSymbols: req.wantSymbols });
         const res = await proc.await((m) => m.id === req.id, fileTimeoutMs);
+        proc.setInFlight(null);
         onBeat();
         if (res.ok) {
           results.set(req.id, classifyResponse(res.message));
@@ -278,16 +329,19 @@ export async function runPythonHelper(requests, {
       if (idx !== -1) { const [m] = inbox.splice(idx, 1); settle({ ok: true, message: m }); }
       else if (dead) settle({ ok: false, reason: deathReason || 'exited' });
     };
-    const seenIds = new Set();
+    let inFlight = null;
+    let helloSeen = false;
     const onLine = (line) => {
       let msg;
       try { msg = JSON.parse(line); } catch { protocolErrors++; return; }
       if (!msg || typeof msg !== 'object' || msg.v !== PROTOCOL_VERSION) { protocolErrors++; return; }
-      if (msg.hello !== true) {
-        // Unknown or duplicate ids are counted and dropped — never attributed to another file.
-        const known = requests.some((r) => r.id === msg.id);
-        if (!known || seenIds.has(msg.id)) { protocolErrors++; return; }
-        seenIds.add(msg.id);
+      if (msg.hello === true) {
+        if (helloSeen) { protocolErrors++; return; }
+        helloSeen = true;
+      } else {
+        // Only the request in flight may be answered, exactly once.
+        if (inFlight === null || msg.id !== inFlight) { protocolErrors++; return; }
+        inFlight = null;
       }
       inbox.push(msg);
       deliver();
@@ -309,6 +363,7 @@ export async function runPythonHelper(requests, {
       child.stdin.write(`${JSON.stringify({ v: PROTOCOL_VERSION, hello: true })}\n`);
     }
     return {
+      setInFlight(id) { inFlight = id; },
       send(obj) { if (!dead && child) { try { child.stdin.write(`${JSON.stringify(obj)}\n`); } catch { die('stdin-closed'); } } },
       await(match, timeoutMs) {
         return new Promise((resolve) => {
@@ -394,7 +449,13 @@ export function guardedMetaReader(repoRoot, maxBytes) {
     if (!fs.existsSync(abs)) return null;
     const cls = resolveAndClassify(rel, { repoRoot });
     if (cls.resolutionFailed || cls.escapedRepo || cls.category === 'sensitive') return null;
-    const read = readAdmittedSource({ canonicalPath: cls.canonical }, { maxBytes });
+    const readmit = () => {
+      if (shouldSkipForIndexing(rel, ['sensitive', 'generatedNoise']).skip) return { admitted: false };
+      const c = resolveAndClassify(rel, { repoRoot });
+      return (c.resolutionFailed || c.escapedRepo || c.category === 'sensitive')
+        ? { admitted: false } : { admitted: true, canonicalPath: c.canonical };
+    };
+    const read = readAdmittedSource({ canonicalPath: cls.canonical }, { maxBytes, readmit });
     return read.ok ? read.bytes.toString('utf8') : '';
   };
 }
@@ -456,13 +517,14 @@ export async function runPythonStage(ctx) {
     if (a.admitted) candidates.push({ admission: a, wantSymbols: false });
   }
 
-  const outcomes = new Map(); // rel -> outcome
-  const requests = [];
-  candidates.forEach((c, i) => {
-    const read = readAdmittedSource(c.admission, { maxBytes });
-    if (!read.ok) { outcomes.set(c.admission.rel, read.outcome); return; }
-    requests.push({ id: i + 1, rel: c.admission.rel, bytes: read.bytes, wantSymbols: c.wantSymbols, cand: c });
-  });
+  log(`python: parsing ${candidates.length} file(s) with Python ${probe.version} (${probe.interpreter?.command ?? '?'}) — `
+    + 'syntax newer than this interpreter reports as a per-file syntax error');
+  const requests = candidates.map((c, i) => ({
+    id: i + 1, rel: c.admission.rel, wantSymbols: c.wantSymbols,
+    load: () => readAdmittedSource(c.admission, {
+      maxBytes, readmit: () => admit(path.join(repoRoot, c.admission.rel), { repoRoot }),
+    }),
+  }));
 
   const spec = ctx.helperCommand ?? {
     command: probe.interpreter.command, args: [...probe.interpreter.prefix, '-I', '-B', probe.helperPath],
@@ -474,6 +536,7 @@ export async function runPythonStage(ctx) {
     log(`python: helper protocol errors=${protocolErrors} restarts=${restarts}`);
   }
 
+  const outcomes = new Map(); // rel -> outcome
   const importsByFile = new Map();
   const cruisedSources = [];
   for (const req of requests) {
@@ -481,16 +544,17 @@ export async function runPythonStage(ctx) {
     let outcome = r.outcome;
     if (outcome === OUTCOME.PARSED) {
       const mapped = req.wantSymbols ? toSymbolCandidates(r.response.symbols) : { ok: true, candidates: [] };
-      if (!mapped.ok || !Array.isArray(r.response.imports)) {
+      const refs = toImportRefs(r.response.imports);
+      if (!mapped.ok || !refs.ok) {
         outcome = OUTCOME.HELPER_DIED;
-        log(`python: malformed helper response for ${req.rel} — ${mapped.reason || 'imports is not an array'}`);
+        log(`python: malformed helper response for ${req.rel} — ${mapped.reason || refs.reason}`);
       } else {
         if (req.wantSymbols) {
           redactAndEmit(mapped.candidates, { rel: req.rel, includeDelegates, stats });
           // `processed` = admitted, parsed, classified — zero-symbol files included (§2.10).
           emit({ type: 'processed', file: req.rel });
         }
-        importsByFile.set(req.rel, r.response.imports);
+        importsByFile.set(req.rel, refs.refs);
         cruisedSources.push(path.join(repoRoot, req.rel));
       }
     } else if (r.detail) {
@@ -504,7 +568,9 @@ export async function runPythonStage(ctx) {
     if (symbolRel.has(rel)) stats.parseFailures++;
   }
 
-  const indexFiles = [...importsByFile.keys()];
+  // The module index holds every ADMITTED .py, parsed or not (H2): an import of a
+  // file that failed to parse is still a local edge target, never "external".
+  const indexFiles = candidates.map((c) => c.admission.rel);
   const { edges, buckets, offered } = bucketPythonImports({
     importsByFile, indexFiles, repoRoot, disowned, readMeta: guardedMetaReader(repoRoot, maxBytes),
   });

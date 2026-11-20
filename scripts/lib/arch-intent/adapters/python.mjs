@@ -456,6 +456,7 @@ export function buildPythonModuleIndex(mapped, roots) {
  * @returns {{state:'resolved-local'|'proven-external'|'unresolved',
  *   targetFile?:string, dotted?:string, submodules?:string[]}}
  */
+// @duplicate-justification: target=scripts/lib/language-profiles.mjs:pyResolveImport reason=pre-existing pair; that one resolves path-structurally for the audit language profile over a flat file set, this one resolves dotted names against a root-aware module index with stdlib classification for arch-intent and the symbol index; merging them is its own refactor
 export function resolvePythonImport(ref, fromFile, index) {
   let dotted;
 
@@ -465,9 +466,11 @@ export function resolvePythonImport(ref, fromFile, index) {
     // package), then up (dotCount-1) levels — Python's own semantics.
     const parts = own.dotted.split('.');
     if (!own.isPackage) parts.pop();
-    let up = ref.dotCount - 1;
-    while (up > 0 && parts.length > 0) { parts.pop(); up--; }
-    if (up > 0) return { state: 'unresolved' }; // walked above the top-level package
+    // Each extra dot leaves one package; leaving the TOP-level package is
+    // Python's "attempted relative import beyond top-level package", and a
+    // top-level module has no package to be relative to at all.
+    if (ref.dotCount - 1 >= parts.length) return { state: 'unresolved' };
+    parts.length -= ref.dotCount - 1;
     dotted = [parts.join('.'), ref.module].filter(Boolean).join('.');
   } else if (ref.isRelative) {
     // Importer not in the index (a caller-built index): resolve structurally
