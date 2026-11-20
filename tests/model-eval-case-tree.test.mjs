@@ -173,4 +173,39 @@ describe('withCaseTree', () => {
       await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async (d) => { dir = d; return 1; }, { _git: failingRemove }), (e) => !/prune/.test(e.message));
     } finally { sh(r, 'worktree', 'remove', '-f', '-f', dir); rm(path.dirname(dir)); rm(r); }
   });
+
+  test('a repository whose .gitattributes names a checkout filter is REFUSED, not audited on transformed content', async () => {
+    const r = fs.mkdtempSync(path.join(os.tmpdir(), 'case-tree-filter-'));
+    try {
+      sh(r, 'init', '-q');
+      fs.writeFileSync(path.join(r, '.gitattributes'), '*.js filter=upper\n');
+      fs.writeFileSync(path.join(r, 'a.js'), 'one\n');
+      sh(r, 'add', '.'); sh(r, 'commit', '-q', '-m', 'c1');
+      const sha = sh(r, 'rev-parse', 'HEAD');
+      let ran = false;
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { ran = true; return 1; }), /names a checkout filter/);
+      assert.equal(ran, false, 'nothing was checked out or read');
+      assert.equal(registered(r), 1);
+    } finally { rm(r); }
+  });
+
+  test('a repository with no filter attributes is audited as before (the check is not vacuous in the other direction)', async () => {
+    const { r, sha } = repo();
+    try { assert.equal(await withCaseTree({ repoRoot: r, sha }, async () => 'ok'), 'ok'); } finally { rm(r); }
+  });
+
+  test('a failed add whose removal also fails does not leak the temporary base directory', async () => {
+    const { r, sha } = repo();
+    const warns = []; let base = null;
+    const addFailsRemoveFails = (root, args) => {
+      if (args[0] === 'worktree' && args[1] === 'add') { base = path.dirname(args[args.length - 2]); throw new Error('add died'); }
+      if (args[0] === 'worktree' && args[1] === 'remove') throw new Error('simulated');
+      return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: ENV });
+    };
+    try {
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => 1, { _git: addFailsRemoveFails, _warn: (m) => warns.push(m) }), /add died/);
+      assert.equal(warns.length, 1, 'the failed removal is still reported');
+      assert.equal(fs.existsSync(base), false, 'the empty temporary base is gone');
+    } finally { rm(r); }
+  });
 });

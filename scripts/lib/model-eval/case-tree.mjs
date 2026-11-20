@@ -26,6 +26,17 @@ const cleanEnv = () => { const e = { ...process.env }; for (const k of GIT_REPO_
 const git = (root, args) => execFileSync('git', ['-c', `core.hooksPath=${os.devNull}`, '-C', root, ...args],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, env: cleanEnv() });
 
+function assertNoCheckoutFilter(repoRoot, sha, _git) {
+  let found = '';
+  try {
+    found = _git(repoRoot, ['grep', '-l', '-e', 'filter=', sha, '--', '.gitattributes', ':(glob)**/.gitattributes']);
+  } catch (err) {
+    if (err?.status === 1) return; // git grep: exit 1 = no match
+    throw new Error(`withCaseTree: could not check ${sha} for checkout filters: ${err.message}`);
+  }
+  if (found.trim()) throw new Error(`withCaseTree: refusing to audit ${sha}: .gitattributes names a checkout filter (${found.trim().split(/\r?\n/).join(', ')}), which can transform the files the audit reads`);
+}
+
 /**
  * Run `fn(dir)` with `dir` a detached checkout of `sha` from `repoRoot`'s repository, then remove it, whether or not `fn` threw.
  * Removal is addressed through `repoRoot`, never through the worktree itself. If removal fails, `fn`'s result is not returned:
@@ -39,6 +50,10 @@ const git = (root, args) => execFileSync('git', ['-c', `core.hooksPath=${os.devN
  */
 export async function withCaseTree({ repoRoot, sha }, fn, { _git = git, _warn = (m) => process.stderr.write(`${m}\n`) } = {}) {
   if (typeof sha !== 'string' || !isSafeGitRevision(sha)) throw new Error(`withCaseTree: "${sha}" is not a safe git revision`);
+  // A checkout FILTER (git-lfs smudge, ident, a custom filter) can rewrite the files the audit reads while the diff describes the original
+  // blobs. Disabling hooks does not stop it, and a filter cannot be switched off generically, so a repository that names one in any
+  // .gitattributes at this commit is REFUSED rather than audited on transformed content.
+  assertNoCheckoutFilter(repoRoot, sha, _git);
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-tree-'));
   const dir = path.join(base, 'tree');
   let result; let primary; let failed = false; // a thrown value may be falsy: track THAT it threw, not what
@@ -55,7 +70,8 @@ export async function withCaseTree({ repoRoot, sha }, fn, { _git = git, _warn = 
   try { _git(repoRoot, ['worktree', 'remove', '--force', '--force', dir]); } catch (err) {
     leftover = `the case tree for ${sha} could not be removed (repository: ${JSON.stringify(repoRoot)}, tree: ${JSON.stringify(dir)}; find it in 'git worktree list' and remove only that entry with 'git worktree remove -f -f'): ${err.message}`;
   }
-  if (!leftover) {
+  // Nothing recoverable lives in `base` when the tree directory is gone (a failed add): remove it even though the removal is reported.
+  if (!leftover || !fs.existsSync(dir)) {
     try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch (err) { leftover = `could not delete ${base}: ${err.message}`; }
   }
   if (leftover) {
