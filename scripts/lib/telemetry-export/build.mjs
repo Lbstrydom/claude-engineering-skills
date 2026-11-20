@@ -21,7 +21,10 @@
  *   audit.byMode / byVerdict    `audit_runs.mode` / `.gemini_verdict` → enum        same
  *   audit.findingsBy*           `audit_findings` joined to those runs, grouped by   same
  *                               severity / adjudication_outcome / pass_name → enum
- *   upstream.open               `upstream_issues` WHERE state='open' for the repo   as of `to`; oldest first
+ *   upstream.open               `upstream_issues` WHERE state='open' for the repo   created before `to` (the export
+ *                                                                                   instant); the snapshot begins a
+ *                                                                                   few seconds LATER, so a report
+ *                                                                                   opened in that gap is not listed
  *   upstream.open[].id          first 12 hex of sha256(row id) — a display handle,  never a join key
  *   upstream.open[].ageDays     whole days from created_at to `to`
  *
@@ -40,13 +43,13 @@ import { assertExportClean } from './redact.mjs';
 const DAY_MS = 86_400_000;
 
 /** Map a source value to its closed enum, or `'other'`; counts the misses so the document can say so. */
-function toEnum(value, allowed, tally) {
+function toEnum(value, allowed, tally, weight = 1) {
   const v = typeof value === 'string' ? value.trim() : '';
   if (allowed.includes(v)) return v;
   const lower = v.toLowerCase();
   const hit = allowed.find((a) => a.toLowerCase() === lower);
   if (hit) return hit;
-  if (tally) tally.n++;
+  if (tally) tally.n += weight;   // by the grouped row's multiplicity: a source value, not a SQL row
   return 'other';
 }
 
@@ -76,18 +79,18 @@ export function mapAuditRows(rows, tally) {
     const n = strictCount(r.n, 'audit runs');
     runs += n;
     if (r.converged) convergedRuns += n;
-    byMode[toEnum(r.mode, AUDIT_MODES, tally)] += n;
+    byMode[toEnum(r.mode, AUDIT_MODES, tally, n)] += n;
     // A run with no verdict is `none` (the reviewer did not run / write back), not `other`.
-    byVerdict[r.gemini_verdict == null || r.gemini_verdict === '' ? 'none' : toEnum(r.gemini_verdict, VERDICTS, tally)] += n;
+    byVerdict[r.gemini_verdict == null || r.gemini_verdict === '' ? 'none' : toEnum(r.gemini_verdict, VERDICTS, tally, n)] += n;
   }
   const findingsBySeverity = zeros(SEVERITIES);
   const findingsByOutcome = zeros(OUTCOMES);
   const findingsByPass = zeros(PASSES);
   for (const f of rows.findings) {
     const n = strictCount(f.n, 'findings');
-    findingsBySeverity[toEnum(f.severity, SEVERITIES, tally)] += n;
-    findingsByOutcome[f.adjudication_outcome == null || f.adjudication_outcome === '' ? 'pending' : toEnum(f.adjudication_outcome, OUTCOMES, tally)] += n;
-    findingsByPass[toEnum(f.pass_name, PASSES, tally)] += n;
+    findingsBySeverity[toEnum(f.severity, SEVERITIES, tally, n)] += n;
+    findingsByOutcome[f.adjudication_outcome == null || f.adjudication_outcome === '' ? 'pending' : toEnum(f.adjudication_outcome, OUTCOMES, tally, n)] += n;
+    findingsByPass[toEnum(f.pass_name, PASSES, tally, n)] += n;
   }
   return { measured: true, runs, convergedRuns, byMode, byVerdict, findingsBySeverity, findingsByOutcome, findingsByPass };
 }

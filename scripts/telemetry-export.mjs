@@ -66,11 +66,21 @@ function parseDrift(out) {
   } catch { return { ok: false, reason: 'read-failed' }; }
 }
 
+/**
+ * Every failure leaves BOTH a diagnostic on stderr (the human) and `{ok:false,error:{code}}` on stdout (the machine),
+ * the CLI contract: a caller parsing stdout must not mistake a failure for silence. Codes only — no message text,
+ * which can carry a host.
+ */
+async function fail(code, exitCode) {
+  process.stdout.write(`${JSON.stringify({ ok: false, error: { code } })}\n`);
+  await finishAndExit(exitCode);
+}
+
 async function main() {
   try {
     assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'telemetry-export' });
   } catch (err) {
-    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); await finishAndExit(2); return; }
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); await fail('USAGE', 2); return; }
     throw err;
   }
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); await finishAndExit(0); return; }
@@ -81,11 +91,15 @@ async function main() {
   const push = hasFlag('push');
   if (!/^[a-z0-9-]{1,32}$/.test(alias)) {
     process.stderr.write('telemetry-export: --alias (or TELEMETRY_CONSUMER_ALIAS) must match [a-z0-9-]{1,32}\n');
-    await finishAndExit(2); return;
+    await fail('USAGE', 2); return;
+  }
+  if (printOnly && push) {
+    process.stderr.write('telemetry-export: --print and --push are mutually exclusive (printing delivers nothing)\n');
+    await fail('USAGE', 2); return;
   }
   if (!printOnly && !dropDir) {
     process.stderr.write('telemetry-export: no drop directory — pass --drop-dir or set TELEMETRY_DROP_DIR (or use --print)\n');
-    await finishAndExit(2); return;
+    await fail('USAGE', 2); return;
   }
 
   const [{ probeStoreReachability }, client, query, repoStore, identity, upstreamCmds] = await Promise.all([
@@ -126,7 +140,7 @@ async function main() {
     process.stderr.write(err instanceof ExportRefusedError
       ? `${err.message}\n`
       : 'telemetry-export: the export could not be built (nothing was written)\n');
-    await finishAndExit(1); return;
+    await fail(err instanceof ExportRefusedError ? 'EXPORT_REFUSED' : 'BUILD_FAILED', 1); return;
   } finally {
     try { await client.closePool?.(); } catch { /* best effort */ }
   }
@@ -141,7 +155,7 @@ async function main() {
     await finishAndExit(0);
   } catch (err) {
     process.stderr.write(`telemetry-export: delivery failed (${String(err?.message ?? err).split('\n')[0]})\n`);
-    await finishAndExit(1);
+    await fail('DELIVERY_FAILED', 1);
   }
 }
 

@@ -123,7 +123,7 @@ export const TelemetryExportSchema = z.object({
   health,
   audit,
   upstream,
-  /** How many source values fell outside their closed enum and were reported as 'other'. Observability only. */
+  /** How many source values (grouped rows counted by their multiplicity) fell outside their closed enum and were reported as 'other'. Observability only. */
   redactions: count,
 }).strict();
 

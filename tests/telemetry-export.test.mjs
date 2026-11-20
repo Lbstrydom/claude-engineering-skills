@@ -456,6 +456,49 @@ describe('delivery hardening (audit round 1)', () => {
   });
 });
 
+describe('R5 fixes: multiplicity, machine-readable failures, print/push', () => {
+  it('redactions counts the SOURCE VALUES, not the grouped rows (an unknown mode with n=100 is 100)', () => {
+    const tally = { n: 0 };
+    mapAuditRows({ runs: [{ mode: 'mystery', gemini_verdict: 'APPROVE', converged: false, n: 100 }], findings: [] }, tally);
+    assert.equal(tally.n, 100);
+    const clean = { n: 0 };
+    mapAuditRows({ runs: [{ mode: 'code', gemini_verdict: 'APPROVE', converged: false, n: 100 }], findings: [] }, clean);
+    assert.equal(clean.n, 0, 'CONTROL: known values add nothing');
+  });
+
+  const run = (args, env = {}) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'telemetry-export.mjs'), ...args], {
+    cwd: ROOT, encoding: 'utf-8', timeout: 90000, windowsHide: true,
+    env: { ...process.env, AUDIT_DB_URL: '', TELEMETRY_CONSUMER_ALIAS: '', TELEMETRY_DROP_DIR: '', ...env },
+  });
+  const lastJson = (r) => JSON.parse(r.stdout.trim().split('\n').filter((l) => l.startsWith('{')).pop());
+
+  it('--print with --push is a usage error (the push would be silently dropped)', () => {
+    const r = run(['--alias', 'acme', '--print', '--push']);
+    assert.equal(r.status, 2);
+    assert.deepEqual(lastJson(r), { ok: false, error: { code: 'USAGE' } });
+  });
+
+  it('every failure leaves {ok:false,error:{code}} on stdout, codes only (no message text, which can carry a host)', () => {
+    for (const [args, code, status] of [
+      [['--bogus'], 'USAGE', 2],
+      [['--alias', 'Not Valid', '--print'], 'USAGE', 2],
+      [['--alias', 'acme'], 'USAGE', 2],
+      [['--alias', 'acme', '--drop-dir', path.join(os.tmpdir(), 'definitely-missing-drop-dir')], 'DELIVERY_FAILED', 1],
+    ]) {
+      const r = run(args);
+      assert.equal(r.status, status, args.join(' '));
+      assert.deepEqual(lastJson(r), { ok: false, error: { code } }, args.join(' '));
+    }
+  });
+
+  it('CONTROL — a success is still {ok:true,…} and exits 0', () => {
+    const dir = tmp();
+    const r = run(['--alias', 'acme', '--drop-dir', dir]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(lastJson(r).ok, true);
+  });
+});
+
 describe('the CLI', () => {
   const run = (args, env = {}) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'telemetry-export.mjs'), ...args], {
     cwd: ROOT, encoding: 'utf-8', timeout: 90000, windowsHide: true,
