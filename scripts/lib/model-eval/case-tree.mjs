@@ -31,23 +31,24 @@ const git = (root, args, { hooks = false } = {}) => execFileSync('git', [...(hoo
  * @param {(dir: string) => Promise<T>} fn
  * @returns {Promise<T>}
  */
-export async function withCaseTree({ repoRoot, sha }, fn) {
+export async function withCaseTree({ repoRoot, sha }, fn, { _git = git } = {}) {
   if (typeof sha !== 'string' || !isSafeGitRevision(sha)) throw new Error(`withCaseTree: "${sha}" is not a safe git revision`);
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-tree-'));
   const dir = path.join(base, 'tree');
   let added = false; let result; let primary = null;
   try {
-    git(repoRoot, ['worktree', 'add', '--detach', '--force', dir, sha]);
+    _git(repoRoot, ['worktree', 'add', '--detach', '--force', dir, sha]);
     added = true;
     result = await fn(dir);
   } catch (err) { primary = err; }
   const cleanupErrors = [];
   if (added) {
-    try { git(repoRoot, ['worktree', 'remove', '--force', dir]); } catch (err) {
+    // Two --force: a locked worktree (a crashed earlier call, or anything that locked it) is still ours to remove.
+    try { _git(repoRoot, ['worktree', 'remove', '--force', '--force', dir]); } catch (err) {
       cleanupErrors.push(`worktree remove ${dir}: ${err.message}`);
       // Remove the files, then prune the now-dangling registration: only on this failure path, never routinely, because prune is
       // repository-wide and must not touch other worktrees (e.g. ones on a temporarily unavailable mount) when nothing went wrong.
-      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); git(repoRoot, ['worktree', 'prune']); } catch (err2) { cleanupErrors.push(`fallback cleanup ${dir}: ${err2.message}`); }
+      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); _git(repoRoot, ['worktree', 'prune']); } catch (err2) { cleanupErrors.push(`fallback cleanup ${dir}: ${err2.message}`); }
     }
   }
   try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch (err) { cleanupErrors.push(`rm ${base}: ${err.message}`); }

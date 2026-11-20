@@ -81,12 +81,26 @@ describe('withCaseTree', () => {
     } finally { rm(r); }
   });
 
-  test('a cleanup that fails is reported, not swallowed (and never replaces fn\'s error)', async () => {
+  test('a LOCKED worktree is still removed, with no registration left behind', async () => {
     const { r, sha } = repo();
     try {
-      // Make removal fail: lock the worktree so `worktree remove --force` (a single --force) refuses it.
-      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async (d) => { sh(r, 'worktree', 'lock', d); return 1; }), /cleanup of the case tree .* failed/);
-      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async (d) => { sh(r, 'worktree', 'lock', d); throw new Error('primary'); }), (e) => e.message === 'primary' && Array.isArray(e.cleanupErrors) && e.cleanupErrors.length > 0);
-    } finally { try { sh(r, 'worktree', 'prune'); } catch { /* */ } rm(r); }
+      let dir;
+      await withCaseTree({ repoRoot: r, sha }, async (d) => { dir = d; sh(r, 'worktree', 'lock', d); });
+      assert.equal(fs.existsSync(dir), false);
+      assert.equal(registered(r), 1, 'the locked registration is gone too');
+    } finally { rm(r); }
+  });
+
+  test('a cleanup that fails is reported, not swallowed (and never replaces the primary error)', async () => {
+    const { r, sha } = repo();
+    const realGit = (root, args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: ENV });
+    // Removal fails whatever we do; add and everything else is real.
+    const failingRemove = (root, args) => { if (args[0] === 'worktree' && args[1] === 'remove') throw new Error('simulated: cannot remove'); return realGit(root, args); };
+    try {
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => 1, { _git: failingRemove }), /cleanup of the case tree .* failed: .*simulated: cannot remove/);
+      await assert.rejects(() => withCaseTree({ repoRoot: r, sha }, async () => { throw new Error('primary'); }, { _git: failingRemove }),
+        (e) => e.message === 'primary' && Array.isArray(e.cleanupErrors) && e.cleanupErrors.some((m) => /simulated: cannot remove/.test(m)));
+      assert.equal(registered(r), 1, 'the fallback (delete files, then prune) cleaned the registration');
+    } finally { rm(r); }
   });
 });

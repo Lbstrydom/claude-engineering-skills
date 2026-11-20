@@ -178,20 +178,19 @@ export async function runAuditGenerationArm({
 
   const { client, model } = await resolveGenerationClient(arm.generation, route, _clientFactories);
 
-  // Written BEFORE the chdir below, as ABSOLUTE paths — immune to the cwd
-  // swap (buildAuditRunContext's file reads resolve relative to
-  // process.cwd(), confirmed by tracing legacy-production-audit.mjs's
-  // repoRoot/baseDir usage; a relative path here would silently read/write
-  // the WRONG repo once cwd changes).
+  // EVERYTHING that depends on process.cwd() happens while holding the queue: the scratch paths below resolve against it, and
+  // another generation may be mid-audit with cwd inside its own temporary tree (a path resolved there is deleted under us).
+  const releaseCwd = await acquireCwd();
+  let mergedResult;
+  try {
+  const savedCwd = process.cwd();
+  // Written BEFORE the chdir below, as ABSOLUTE paths — immune to the cwd swap (buildAuditRunContext's file reads resolve relative
+  // to process.cwd(); a relative path here would silently read/write the WRONG repo once cwd changes).
   const scratchDir = path.resolve('.audit', 'tmp', 'model-eval', runId);
   fs.mkdirSync(scratchDir, { recursive: true });
   const diffPath = path.join(scratchDir, `${arm.id}.diff`);
   const outFile = path.join(scratchDir, `${arm.id}.result.json`);
   fs.writeFileSync(diffPath, auditInput.diff, 'utf8');
-
-  const releaseCwd = await acquireCwd();
-  const savedCwd = process.cwd();
-  let mergedResult;
   try {
     // Every file read inside runMultiPassCodeAudit's legacy pipeline resolves against process.cwd(), so cwd must be a checkout of
     // the CASE COMMIT (a throwaway detached worktree of repoRoot's repository), not repoRoot's own working tree. Always restored
@@ -252,7 +251,9 @@ export async function runAuditGenerationArm({
     });
   } finally {
     if (path.resolve(process.cwd()) !== path.resolve(savedCwd)) process.chdir(savedCwd);
-    releaseCwd();
+  }
+  } finally {
+    releaseCwd(); // unconditional: a throw anywhere above must not leave the queue held
   }
 
   // Round-1 (Cluster B) audit M15 fix — the legacy result contract
