@@ -56,7 +56,7 @@ export async function withCaseTree({ repoRoot, sha }, fn, { _git = git, _warn = 
     leftover = `the case tree for ${sha} could not be removed (repository: ${JSON.stringify(repoRoot)}, tree: ${JSON.stringify(dir)}; find it in 'git worktree list' and remove only that entry with 'git worktree remove -f -f'): ${err.message}`;
   }
   if (!leftover) {
-    try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch (err) { leftover = `could not delete ${base}: ${err.message}`; }
+    try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch (err) { leftover = `could not delete ${base}: ${err.message}`; }
   }
   if (leftover) {
     if (!failed) throw new Error(`withCaseTree: ${leftover}`);
