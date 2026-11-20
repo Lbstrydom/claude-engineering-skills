@@ -30,6 +30,7 @@ async function probe(call) {
     cwd: ROOT, encoding: 'utf-8', timeout: 60000, windowsHide: true,
     env: { ...process.env, AUDIT_DB_URL: `postgresql://u:p@127.0.0.1:${port}/audit_loop`, AUDIT_DB_SSL_MODE: 'disable' },
   });
+  assert.ok(!r.error && r.status === 0, `child failed: ${r.error?.code ?? r.status} ${r.stderr}`);
   const line = r.stdout.split('\n').find((l) => l.startsWith('RESULT:'));
   assert.ok(line, r.stderr);
   return JSON.parse(line.slice('RESULT:'.length));
