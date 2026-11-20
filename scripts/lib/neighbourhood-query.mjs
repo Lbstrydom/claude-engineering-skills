@@ -285,8 +285,12 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
     const { normalizeIntentToPurpose } = await import('./arch-memory/normalize-intent.mjs');
     // `adapters.normalizeIntent` / `adapters.embedIntent`: test seams so the
     // orchestrator can be driven end to end without a provider (both paid).
-    normalized = adapters.normalizeIntent
-      ? await adapters.normalizeIntent(safeIntent, { repoRoot })
+    // Read once, test for presence (not truthiness: a present-but-wrong value must
+    // fail inside this try rather than silently reach the real provider), and call
+    // it as a plain function — exactly the semantics of the `??` form this replaces.
+    const injectedNormalize = adapters.normalizeIntent;
+    normalized = injectedNormalize != null
+      ? await injectedNormalize(safeIntent, { repoRoot })
       : await normalizeIntentToPurpose(safeIntent, { repoRoot });
   } catch (err) {
     // A gate refusal means redact-once upstream missed something. Degrade to

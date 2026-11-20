@@ -78,6 +78,16 @@ describe('getNeighbourhoodForIntent — coverage verdict', () => {
   });
 });
 
+describe('injected normalizer semantics (the seam must behave like the `??` call it replaced)', () => {
+  it('is called as a plain function: no receiver', async () => {
+    const h = harness(cov('verified', null, 120));
+    let receiver = 'unset';
+    h.adapters.normalizeIntent = function (t) { receiver = this; return { text: t, mode: 'fallback', normalizerId: 'test' }; };
+    await getNeighbourhoodForIntent(h.adapters, args, fs.mkdtempSync(path.join(os.tmpdir(), 'nbhd-cov-')));
+    assert.equal(receiver, undefined);
+  });
+});
+
 describe('snapshotCoverage', () => {
   const active = { refreshId: REFRESH };
   const repo = { id: 'repo-1' };
