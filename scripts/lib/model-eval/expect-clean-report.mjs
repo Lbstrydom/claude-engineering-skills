@@ -81,7 +81,7 @@ export async function runExpectCleanReport({ runId, arm, route, cases, scope, pa
     } catch (err) {
       // A generation that could not complete is `failed` (unmeasured, in the denominator), never clean. It may still have been billed,
       // so the meter is told the cost is UNKNOWN and the report says its cost is incomplete.
-      process.stderr.write(`  [expect-clean] ${kdId}: generation failed: ${err.message}
+      process.stderr.write(`  [expect-clean] ${kdId}: generation failed: ${err?.message ?? String(err)}
 `);
       threw = true;
       unaccounted += 1;

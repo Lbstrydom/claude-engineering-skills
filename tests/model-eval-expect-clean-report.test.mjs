@@ -118,6 +118,16 @@ describe('runExpectCleanReport: the real generation arm, scored judge-free (G1)'
   });
 });
 
+describe('a generation that rejects with a non-Error value is a failed case, never a crash', () => {
+  for (const [label, v] of [['null', null], ['undefined', undefined], ['a string', 'boom'], ['0', 0]]) {
+    it(`rejecting with ${label}`, async () => {
+      const r = await runExpectCleanReport({ runId: 'r', arm: { id: 'CAND' }, route: {}, cases: [kase('K1')], generate: async () => { throw v; } });
+      assert.equal(r.perCase[0].outcome, 'failed');
+      assert.equal(r.unaccounted, 1);
+    });
+  }
+});
+
 describe('a false_positive case keeps the findings that drove it, redacted', () => {
   const full = (severity, over = {}) => finding(severity, {
     id: 'H1', category: '[backend] Fail-open check', section: 'src/a.js: f', detail: 'f swallows the error and returns ok',
