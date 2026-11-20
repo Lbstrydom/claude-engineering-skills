@@ -179,6 +179,36 @@ an opt-out. The declaration governs which token this tooling uses and cannot
 change `gh`'s own precedence, so the INFO still states that a bare `gh` command
 runs as the keyring account unless the `.env` token is exported.
 
+### Store reachability, and telling new developers how to get a store
+
+`machine/store-reachability` gives the audit store its own verdict, so a store
+nobody can reach stops looking like "the tooling is fine, it just has no
+history":
+
+| Verdict | Meaning | Status |
+|---|---|---|
+| `reachable` | a connection was made and `SELECT 1` answered | pass |
+| `configured-but-unreachable` | a DSN is configured and the store did not answer (cause: unreachable, TLS, auth, …) | warn |
+| `unconfigured (local-only)` | no DSN anywhere; the tooling runs local-only | warn |
+
+It is a `machine` probe: it describes this developer's network and tunnel, so it
+advises and never gates a push. The detail never carries a host or a DSN.
+
+How to get a store on a private network is organisation-specific (access
+approval, a cloud CLI, a tunnel), and upstream deliberately knows none of it. A
+consumer commits **`.audit-loop/store-setup.json`** and the doctor prints it
+whenever the verdict is not `reachable`:
+
+```json
+{ "check": "pwsh tools/audit-store/setup-audit-store.ps1 -DryRun", "docs": "tools/audit-store/README.md" }
+```
+
+Both keys are optional, each at most 300 characters, no control characters.
+`check` is **printed for a human to run, never executed** by the doctor. A file
+that is present but unusable is reported as such (never as absent), and the file
+must be committed — `.audit-loop/` is not ignored wholesale, so it travels with
+every clone.
+
 ---
 
 ## Runtime prerequisites — and non-Node consumers
