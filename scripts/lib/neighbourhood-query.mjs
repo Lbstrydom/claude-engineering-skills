@@ -285,7 +285,9 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
     const { normalizeIntentToPurpose } = await import('./arch-memory/normalize-intent.mjs');
     // `adapters.normalizeIntent` / `adapters.embedIntent`: test seams so the
     // orchestrator can be driven end to end without a provider (both paid).
-    normalized = await (adapters.normalizeIntent ?? normalizeIntentToPurpose)(safeIntent, { repoRoot });
+    normalized = adapters.normalizeIntent
+      ? await adapters.normalizeIntent(safeIntent, { repoRoot })
+      : await normalizeIntentToPurpose(safeIntent, { repoRoot });
   } catch (err) {
     // A gate refusal means redact-once upstream missed something. Degrade to
     // the deterministic path rather than sending, and never throw into the
