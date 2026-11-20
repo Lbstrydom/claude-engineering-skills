@@ -86,7 +86,6 @@ import path from 'node:path';
 import { z } from 'zod';
 
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
-import { buildToolUseRequest } from './lib/anthropic-tool-choice.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';
 import { PASS_PROMPTS } from './lib/prompt-seeds.mjs';
 import { ShadowPassSchema, seededShuffle, SHADOW_PASSES } from './lib/audit-shadow.mjs';
@@ -100,17 +99,17 @@ import { log, argOption, hasFlag, finishAndExit } from './lib/cli-io.mjs';
 import { dupHash } from './lib/solo-control/cluster-propose.mjs';
 import { authorizeAll, resumedOut, seedResumedGrades, qualifyBatchCluster, labelCoverage, decisionStatusFor, splitApparatusGaps } from './lib/solo-control/run-guards.mjs';
 import { classifyRecipient } from './lib/solo-control/recipient.mjs';
-import { zodToOpenAiJsonSchema } from './lib/oss-structured-output.mjs';
 import { loadRecipientPolicy, resolveAndAuthorize } from './lib/solo-control/policy.mjs';
 import { loadCorpus, entriesEligibleForRecipient } from './lib/solo-control/corpus.mjs';
 import { computeCallId, appendLedgerRow } from './lib/solo-control/ledger.mjs';
 import { canonicaliseRemoteUrl } from './lib/repo-identity.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
-import { normalizeGeminiUsage } from './lib/gemini-usage.mjs';
+import { clampToSchema, parseJsonLoose, REASONING_TIERS, assertReasoningTier } from './lib/solo-control/cold-pass-support.mjs';
+import { buildGateReviewPrompt, runGeminiReview, geminiUsageOrNull, runClaudeGateReview, runGptGateReview, runGeminiPass } from './lib/solo-control/gate-reviews.mjs';
 import { readLedger, aggregateCostForArm, sharedPassCreditRows } from './lib/solo-control/ledger.mjs';
 import { csvLine, parseCsv } from './lib/solo-control/csv.mjs';
 import { runGptJudgeBatch } from './lib/solo-control/judge.mjs';
-import { positiveInt, nonNegativeNumber, budgetVerdict, sheetPairingProblems, validateGradings, findingsDigest, geminiFindingsOrMiss, assertResumableProvenance, coldPassOutcome, judgeResumeIdentity } from './lib/solo-control/hardening-guards.mjs';
+import { rowSig, positiveInt, nonNegativeNumber, budgetVerdict, sheetPairingProblems, validateGradings, findingsDigest, assertResumableProvenance, coldPassOutcome, judgeResumeIdentity } from './lib/solo-control/hardening-guards.mjs';
 import { assertResumableBackend, commitsCompleteForAllArms, coveredCommits, gateCellState, resumeArmFile, runMeasuredReview, reviewCommitState, unmeasuredCommits } from './lib/solo-control/completion.mjs';
 import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
@@ -159,7 +158,11 @@ const CALL_LEDGER_PATH = path.join(OUT_DIR, 'call-ledger.jsonl');
 /** Per-solo-arm findings file. One per author model so Sonnet + Fable can coexist
  * as SEPARATE solo arms (S-sonnet, S-fable) compared against A/B/C — the cost-
  * frontier three-way. */
-const sFindingsPath = (label) => path.join(OUT_DIR, `S-findings-${label}.json`);
+const sFindingsPath = (label) => {
+  // an operator-supplied --label becomes a filename: refuse separators and dot-segments rather than write outside OUT_DIR
+  if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(String(label)) || String(label).includes('..')) throw new Error(`invalid arm label ${JSON.stringify(label)} — letters, digits, . _ + - only`);
+  return path.join(OUT_DIR, `S-findings-${label}.json`);
+};
 const listSFindings = () => (fs.existsSync(OUT_DIR) ? fs.readdirSync(OUT_DIR).filter((f) => /^S-findings-.+\.json$/.test(f)) : []);
 
 /** Short, stable arm label for a resolved model id (used ONLY in the private map,
@@ -363,7 +366,7 @@ function finalizeDiff(nameListOut, rawDiffForFiles, label) {
  */
 function extractDiff(root, sha) {
   const nameOut = git(root, ['show', '--pretty=format:', '--name-only', sha]);
-  return finalizeDiff(nameOut, (files) => git(root, ['show', sha, '-U8', '--', ...files]), `solo-control:${sha.slice(0, 8)}`);
+  return finalizeDiff(nameOut, (files) => git(root, ['--literal-pathspecs', 'show', sha, '-U8', '--', ...files]), `solo-control:${sha.slice(0, 8)}`);
 }
 
 /**
@@ -391,10 +394,10 @@ function extractAuditedDiff(root, { auditedSha, auditedTree }) {
   const label = `solo-control:${auditedSha.slice(0, 8)}`;
   if (cleanTreeSha === auditedTree) {
     const nameOut = git(root, ['show', '--pretty=format:', '--name-only', auditedSha]);
-    return finalizeDiff(nameOut, (files) => git(root, ['show', auditedSha, '-U8', '--', ...files]), label);
+    return finalizeDiff(nameOut, (files) => git(root, ['--literal-pathspecs', 'show', auditedSha, '-U8', '--', ...files]), label);
   }
   const nameOut = git(root, ['diff', '--name-only', auditedSha, auditedTree]);
-  return finalizeDiff(nameOut, (files) => git(root, ['diff', auditedSha, auditedTree, '-U8', '--', ...files]), label);
+  return finalizeDiff(nameOut, (files) => git(root, ['--literal-pathspecs', 'diff', auditedSha, auditedTree, '-U8', '--', ...files]), label);
 }
 
 /** Split a diff into ≤maxChars blocks at file (`diff --git`) boundaries so each
@@ -508,45 +511,6 @@ function sumUsage(a, b) {
   return { input_tokens: (a.input_tokens || 0) + (b.input_tokens || 0), output_tokens: (a.output_tokens || 0) + (b.output_tokens || 0) };
 }
 
-/** Clamp verbose free-JSON string fields to the ShadowPassSchema/ProducerFinding
- * caps so a valid-but-too-long finding is KEPT (truncated), not dropped. The arms
- * conform natively (enforced structured output); `claude -p` writes free JSON and
- * routinely exceeds detail(600)/summary(1000). Same principle as gemini-review's
- * truncateToSchema — a real finding shouldn't be discarded over prose length. */
-const FIELD_CAPS = { id: 10, category: 80, section: 120, detail: 600, risk: 500, recommendation: 600, principle: 150 };
-/** Truncate at a WORD boundary within the cap (not mid-word) and mark it with an
- * ellipsis, so the rare overflow reads as clearly-cut, never severed mid-word. The
- * PROMPT already tells the model to write within budget (matching the arms), so this
- * fires rarely — it's a safety net, not the routine path. */
-function clampField(s, cap) {
-  if (typeof s !== 'string' || s.length <= cap) return s;
-  const head = s.slice(0, cap - 1);
-  const lastSpace = head.lastIndexOf(' ');
-  return (lastSpace > cap * 0.6 ? head.slice(0, lastSpace) : head).replace(/[\s.,;:]+$/, '') + '…';
-}
-function clampToSchema(parsed) {
-  if (!parsed || typeof parsed !== 'object') return parsed;
-  if (typeof parsed.summary === 'string') parsed.summary = clampField(parsed.summary, 1000);
-  if (Array.isArray(parsed.findings)) {
-    for (const f of parsed.findings) {
-      if (!f || typeof f !== 'object') continue;
-      for (const [k, cap] of Object.entries(FIELD_CAPS)) f[k] = clampField(f[k], cap);
-      if (f.classification) f.classification.sourceName = clampField(f.classification.sourceName, 64);
-    }
-  }
-  return parsed;
-}
-
-function parseJsonLoose(text) {
-  if (!text) return null;
-  let t = text.trim();
-  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) t = fence[1].trim();
-  const start = t.indexOf('{');
-  const end = t.lastIndexOf('}');
-  if (start >= 0 && end > start) t = t.slice(start, end + 1);
-  try { return JSON.parse(t); } catch { return null; }
-}
 
 /**
  * The ONE cold-pass prompt builder — exp-5's fairness axis for Arms B/C/D
@@ -566,44 +530,10 @@ function buildColdPassPrompt(passName, diff) {
   ].join('\n\n');
   return { system, user };
 }
+/** A 4xx other than 429/408 will fail identically on the second attempt — retrying it only repeats a doomed (and, for 402, billed-or-refused) call. */
+const isPermanentClientError = (err) => { const s = Number(err?.status ?? err?.statusCode ?? err?.error?.status); return s >= 400 && s < 500 && s !== 429 && s !== 408; };
 const JSON_RETRY_SUFFIX = '\n\nYour previous reply was not valid JSON. Reply with ONLY the JSON object.';
 
-/**
- * Reasoning-effort tiers per recipient, verified against each vendor's docs
- * 2026-09-21. The tables are deliberately NOT unified: DeepSeek silently
- * aliases `xhigh` → `high` and `medium` → `high`, so passing an Anthropic tier
- * through would record one effort in the manifest and run another. A tier
- * not in the recipient's table is refused at the CLI, never remapped.
- *
- * - anthropic: `output_config.effort`; `high` is the API default (identical to
- *   omitting it); `max` is documented to overthink structured output, so
- *   `xhigh` is the above-default tier exp-5 uses.
- * - deepseek: `thinking.reasoning_effort`; thinking is ON by default at `high`;
- *   `max` is the only above-default tier. Thinking mode IGNORES `temperature`.
- *
- * `maxTokens` is the vendor-documented ceiling that thinking shares with the
- * answer — raising effort without raising it truncates the chain of thought
- * and reads as a conformance miss, an instrument artifact the experiment
- * would then mis-score as "the model found less".
- */
-const REASONING_TIERS = Object.freeze({
-  anthropic: Object.freeze({ low: 8000, medium: 8000, high: 8000, xhigh: 64000, max: 64000 }),
-  deepseek: Object.freeze({ low: 65536, high: 65536, max: 131072 }),
-  // Responses API `reasoning.effort`; `max_output_tokens` INCLUDES reasoning
-  // tokens, so it scales with the tier. Only the tiers the production pipeline
-  // already uses (PASS_REASONING) — an `xhigh` exists on some newer OpenAI
-  // models but is not verified for gpt-5.6, so it is refused, not guessed.
-  openai: Object.freeze({ low: 8000, medium: 16000, high: 32000 }),
-});
-function assertReasoningTier(recipient, tier) {
-  if (tier == null) return null;
-  const table = REASONING_TIERS[recipient];
-  if (!table) throw new Error(`--reasoning-effort is not supported for recipient "${recipient}"`);
-  if (!Object.hasOwn(table, tier)) {
-    throw new Error(`--reasoning-effort "${tier}" is not a ${recipient} tier (valid: ${Object.keys(table).join('|')}) — refusing rather than letting the provider silently remap it`);
-  }
-  return tier;
-}
 
 /** Run one audit pass with the author model over the cold diff, minus the
  * reservation/cost machinery (offline, uncapped — this is a bounded 20-call
@@ -616,6 +546,7 @@ async function runPass(client, model, passName, diff, { reasoningEffort = null }
   const maxTokens = reasoningEffort ? REASONING_TIERS.anthropic[reasoningEffort] : 8000;
   let lastErr = null;
   let gotReply = false; // did ANY attempt return a reply? none ⇒ a provider error, not a conformance miss
+  let usageMissing = false; // a reply that reported no usage: the summed usage would be PARTIAL — null (unmeasured) beats a low price
   let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
     let resp;
@@ -632,20 +563,22 @@ async function runPass(client, model, passName, diff, { reasoningEffort = null }
       // A provider/backend failure on ONE pass must NOT crash the whole run —
       // degrade to a conformance miss (0 findings) and move on.
       lastErr = (err?.message || String(err)).slice(0, 160);
+      if (isPermanentClientError(err)) break;
       continue;
     }
     gotReply = true;
+    if (!resp.usage) usageMissing = true;
     usage = sumUsage(usage, resp.usage || null);
     const text = Array.isArray(resp.content) ? resp.content.map((c) => c.text || '').join('') : '';
     const parsed = clampToSchema(parseJsonLoose(text));
     const check = ColdPassSchema.safeParse(parsed);
     if (check.success) {
-      return { findings: check.data.findings, usage, rawText: text };
+      return { findings: check.data.findings, usage: usageMissing ? null : usage, rawText: text };
     }
     lastErr = check.error?.issues?.map((i) => i.message).join('; ') || 'unparseable';
   }
   // usage is kept: a miss still billed every attempt that returned a reply.
-  return coldPassMiss(passName, lastErr, gotReply, usage, {});
+  return coldPassMiss(passName, lastErr, gotReply, usageMissing ? null : usage, {});
 }
 
 /** The terminal return of a cold pass that never produced conformant JSON — a REPLY that did not conform is a
@@ -684,6 +617,7 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
   let lastErr = null;
   let lastFingerprint = null;
   let gotReply = false; // see runPass
+  let usageMissing = false;
   let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
     let resp;
@@ -698,9 +632,11 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
       resp = await client.chat.completions.create(params);
     } catch (err) {
       lastErr = (err?.error?.message || err?.message || String(err)).slice(0, 160);
+      if (isPermanentClientError(err)) break;
       continue;
     }
     gotReply = true;
+    if (!resp.usage) usageMissing = true;
     lastFingerprint = resp.system_fingerprint || null;
     const u = resp.usage || null;
     usage = sumUsage(usage, u ? { input_tokens: u.prompt_tokens ?? 0, output_tokens: u.completion_tokens ?? 0 } : null);
@@ -708,11 +644,11 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
     const parsed = clampToSchema(parseJsonLoose(text));
     const check = ColdPassSchema.safeParse(parsed);
     if (check.success) {
-      return { findings: check.data.findings, usage, rawText: text, systemFingerprint: lastFingerprint };
+      return { findings: check.data.findings, usage: usageMissing ? null : usage, rawText: text, systemFingerprint: lastFingerprint };
     }
     lastErr = check.error?.issues?.map((i) => i.message).join('; ') || 'unparseable';
   }
-  return coldPassMiss(passName, lastErr, gotReply, usage, { systemFingerprint: lastFingerprint });
+  return coldPassMiss(passName, lastErr, gotReply, usageMissing ? null : usage, { systemFingerprint: lastFingerprint });
 }
 
 // ── subcommands ──────────────────────────────────────────────────────────────
@@ -1116,141 +1052,6 @@ async function runGptPass(client, zodTextFormat, gptModel, passName, diff, reaso
   return { findings: resp.output_parsed?.findings || [], usage: resp.usage || null, ...(resp.output_parsed ? {} : { state: 'conformance-miss' }) };
 }
 
-/**
- * The ONE gate-review prompt builder — every gate candidate (Flash, Pro,
- * Sonnet-<effort>, ...) sends BYTE-IDENTICAL text for the same (collected,
- * diff), so the ablation compares gate MODELS, not prompt wording. Factored
- * out for the same reason as buildColdPassPrompt: a structural guarantee via
- * one shared function, not a maintained coincidence between two copies.
- */
-function buildGateReviewPrompt(collected, diff) {
-  const priorList = collected.slice(0, 40).map((f) => `- [${f.severity}] ${f.category}: ${(f.detail || '').slice(0, 160)}`).join('\n');
-  return [
-    'You are the final-gate reviewer. Below are findings already raised by a prior audit.',
-    'Emit ONLY NET-NEW findings the prior audit MISSED (do not restate). Return per the schema.',
-    `## Prior findings\n${priorList || '(none)'}`,
-    `## Subject under audit\n${diff}`,
-  ].join('\n\n');
-}
-
-/** Gemini net-new review over the collected GPT findings (mirrors callGeminiDefault). */
-async function runGeminiReview(geminiModel, collected, diff) {
-  if (!process.env.GEMINI_API_KEY) return { findings: [], skipped: 'no-key' };
-  const { GoogleGenAI } = await import('@google/genai');
-  const { zodToGeminiSchema } = await import('./lib/schemas.mjs');
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const prompt = buildGateReviewPrompt(collected, diff);
-  assertEgressSafe(prompt, { label: 'apparatus:gemini' });
-  const resp = await ai.models.generateContent({
-    model: geminiModel, contents: prompt,
-    config: { responseMimeType: 'application/json', responseSchema: zodToGeminiSchema(ShadowPassSchema) },
-  });
-  return { ...geminiFindingsOrMiss(resp.text, ShadowPassSchema), usage: geminiUsageOrNull(resp) };
-}
-
-/** Gemini's `usageMetadata` → the ledger's `{input_tokens, output_tokens}`,
- * or null when the provider reported nothing usable — never a fabricated 0,
- * which costFromUsage would price as FREE (the "always-null column reads as
- * free" defect). Reuses the shared normaliser so thoughts vs candidates are
- * billed the way Google bills them. */
-function geminiUsageOrNull(resp) {
-  const g = normalizeGeminiUsage(resp?.usageMetadata);
-  return g.usageMissing ? null : { input_tokens: g.input_tokens, output_tokens: g.output_tokens };
-}
-
-/**
- * Claude's gate-ablation counterpart to runGeminiReview — a third candidate
- * (Flash vs Pro vs Sonnet-<effort>) in the gate ablation, paired against the
- * SAME immutable pre-gate artifact and never ranked in decide() (plan §3
- * "Gate ablation (not a candidate)"). Mirrors runGeminiReview's prompt text
- * VERBATIM (same "emit only net-new" framing, same priorList/diff shape) so
- * the ablation compares GATE MODELS, not prompt wording — but uses Claude's
- * OWN structured-output mechanism (tool-use, forced where the model allows), matching how
- * runGeminiReview/runGptPass each use their model's best mechanism rather
- * than a shared lowest-common-denominator one. This is deliberately NOT the
- * buildColdPassPrompt fairness rule (that isolates the MODEL for the cold-
- * arm comparison); the gate ablation asks "which model, at its best, makes
- * a better gate", so each gate gets its native structured-output path.
- *
- * @param {import('@anthropic-ai/sdk').default} client - createAnthropicClient({backend:'sdk'})
- * @param {string} model - resolved Claude model id (e.g. claude-sonnet-5)
- * @param {Array} collected - the GPT 5-pass deduped union
- * @param {string} diff - the WHOLE diff under audit (the gate reads every chunk the passes ran on)
- * @param {{reasoningEffort?: keyof typeof REASONING_TIERS.anthropic}} [opts] - an
- *   Anthropic `output_config.effort` tier; `high` is the API default. max_tokens
- *   follows the tier (REASONING_TIERS) because thinking shares that budget.
- */
-async function runClaudeGateReview(client, model, collected, diff, { reasoningEffort = 'high' } = {}) {
-  const prompt = buildGateReviewPrompt(collected, diff);
-  assertEgressSafe(prompt, { label: 'apparatus:claude-gate' });
-  // Opus 5.5 400s on forced tool_choice: auto + a SYSTEM instruction there keeps the user prompt byte-identical.
-  const toolUse = buildToolUseRequest(model, { name: 'emit_findings', description: 'Return the net-new findings.', input_schema: zodToOpenAiJsonSchema(ShadowPassSchema) });
-  const params = {
-    model, max_tokens: REASONING_TIERS.anthropic[reasoningEffort] ?? 8000,
-    messages: [{ role: 'user', content: prompt }], tools: toolUse.tools, tool_choice: toolUse.tool_choice,
-    ...(toolUse.instruction ? { system: toolUse.instruction } : {}),
-  };
-  if (reasoningEffort) params.output_config = { effort: reasoningEffort };
-
-  // A gate that did not review is provider-error (commit reads partial), never a clean `{findings: []}`.
-  let resp;
-  try { resp = await client.messages.create(params, { timeoutMs: 300000 }); }
-  catch (err) { return { findings: [], usage: null, state: 'provider-error', error: String(err?.message || err).slice(0, 160) }; }
-  const usage = resp.usage || null;
-  if (resp.stop_reason === 'refusal') return { findings: [], usage, state: 'provider-error', error: 'refusal (stop_reason: refusal)' };
-  const call = Array.isArray(resp.content) ? resp.content.find((c) => c.type === 'tool_use') : null;
-  if (!call) return { findings: [], usage, state: 'provider-error', error: `no emit_findings tool call (stop_reason: ${resp.stop_reason ?? 'unknown'})` };
-  const check = ShadowPassSchema.safeParse(clampToSchema(call.input ?? null));
-  return check.success ? { findings: check.data.findings, usage, state: 'ok' } : { findings: [], usage, state: 'conformance-miss' };
-}
-
-/**
- * GPT's gate-ablation counterpart (fourth candidate: Flash / Pro / Sonnet-xhigh /
- * Sol-high) — same shared prompt, GPT's own structured-output mechanism
- * (Responses API + zodTextFormat, exactly what runGptPass uses for the 5-pass).
- * The whole prompt goes as ONE user input item so the text the model sees is
- * byte-identical to what the Gemini and Claude gates see.
- * @param {import('openai').OpenAI} client - the same `purpose:'gpt'` client the 5-pass uses
- */
-async function runGptGateReview(client, zodTextFormat, model, collected, diff, { reasoningEffort = 'high' } = {}) {
-  const prompt = buildGateReviewPrompt(collected, diff);
-  assertEgressSafe(prompt, { label: 'apparatus:gpt-gate' });
-  const params = {
-    model,
-    input: [{ role: 'user', content: prompt }],
-    text: { format: zodTextFormat(ShadowPassSchema, 'shadow_pass') },
-    max_output_tokens: REASONING_TIERS.openai[reasoningEffort] ?? 8000,
-  };
-  if (reasoningEffort) params.reasoning = { effort: reasoningEffort };
-  const resp = await client.responses.parse(params);
-  return { findings: resp.output_parsed?.findings || [], usage: resp.usage || null, ...(resp.output_parsed ? {} : { state: 'conformance-miss' }) };
-}
-
-/** Gemini as a FROM-SCRATCH generator — same open-ended "audit this diff" task
- * and prompt shape as runGptPass/runOssPass (PASS_PROMPTS system + the diff,
- * no prior findings to react to). Everywhere else in this experiment Gemini
- * only ever did the easier "find what's missing from this list" job
- * (runGeminiReview above) — this is the missing apples-to-apples comparison:
- * is Gemini actually a better cold auditor than GPT, or does it only look
- * clean because it always got the constrained review task? */
-async function runGeminiPass(geminiModel, passName, diff) {
-  if (!process.env.GEMINI_API_KEY) return { findings: [], skipped: 'no-key' };
-  const { GoogleGenAI } = await import('@google/genai');
-  const { zodToGeminiSchema } = await import('./lib/schemas.mjs');
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const system = PASS_PROMPTS[passName] || `Audit the code for ${passName} issues.`;
-  const userPrompt = [
-    `## Task\nAudit the code below for the "${passName}" concern. Return findings per the schema.`,
-    `## Code (redacted)\n${diff}`,
-  ].join('\n\n');
-  const prompt = `${system}\n\n${userPrompt}`;
-  assertEgressSafe(prompt, { label: `gemini-solo:${passName}` });
-  const resp = await ai.models.generateContent({
-    model: geminiModel, contents: prompt,
-    config: { responseMimeType: 'application/json', responseSchema: zodToGeminiSchema(ShadowPassSchema) },
-  });
-  return { ...geminiFindingsOrMiss(resp.text, ShadowPassSchema), usage: geminiUsageOrNull(resp) };
-}
 
 /** Run the apparatus (arm A) retro over --commits. Incremental like cmdRun. */
 /** The immutable pre-gate artifact path for one commit (plan §7: written BEFORE
@@ -1409,6 +1210,7 @@ async function cmdApparatus() {
   for (const sha of commits) {
     const short = sha.slice(0, 8);
     let ext, chunks, collected, repoBasename, passChunks;
+    let genFailed = 0; // generation passes that got no provider reply: the pre-gate union is then incomplete
     let gateDiff; // what the gate reads: the WHOLE diff — generation ran on every chunk, so a gate shown chunk 0 judged "net-new" against a fraction of what the passes saw
 
     if (gateOnly) {
@@ -1433,6 +1235,12 @@ async function cmdApparatus() {
       if (pregate.gateContextScope !== 'full' && (pregate.passChunks ?? 1) > 1) {
         log(`  ${short}: pre-gate artifact holds only chunk 0 of ${pregate.passChunks} — refusing a gate over a fraction of the diff (re-run without --gate-only)`);
         out.perCommit.push({ sha, state: 'pregate-chunk0-only' });
+        continue;
+      }
+      // The union the gate is told to complement must be a COMPLETE one, from the generator this run claims.
+      if (pregate.generationFailedCells > 0 || (pregate.gptModel && pregate.gptModel !== gptModel)) {
+        log(`  ${short}: pre-gate artifact is not reusable (${pregate.generationFailedCells > 0 ? `${pregate.generationFailedCells} generation pass(es) never replied` : `generated by ${pregate.gptModel}, this run claims ${gptModel}`}) — re-run without --gate-only`);
+        out.perCommit.push({ sha, state: 'pregate-incomplete' });
         continue;
       }
       gateDiff = pregate.gateContext;
@@ -1474,7 +1282,8 @@ async function cmdApparatus() {
           let r;
           try { r = await runGptPass(client, zodTextFormat, gptModel, passName, chunk, PASS_REASONING[passName] ?? null); }
           catch (err) {
-            log(`      ! gpt ${passName} failed: ${String(err?.message).slice(0, 120)} — 0 findings`);
+            genFailed++;
+            log(`      ! gpt ${passName} failed: ${String(err?.message).slice(0, 120)} — pass UNMEASURED`);
             recordCall({ arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: 0, resolvedModel: gptModel, recipient: 'openai', usage: null, state: 'provider-error' });
             continue;
           }
@@ -1492,7 +1301,7 @@ async function cmdApparatus() {
       // Write the immutable pre-gate artifact BEFORE calling any gate.
       gateDiff = ext.diff;
       atomicWriteFileSync(pregatePath(sha), JSON.stringify({
-        sha, repo: repoBasename, files: ext.files, findings: collected, passChunks, findingsSha256: findingsDigest(collected),
+        sha, repo: repoBasename, files: ext.files, findings: collected, passChunks, findingsSha256: findingsDigest(collected), gptModel, generationFailedCells: genFailed,
         gateContext: gateDiff, gateContextScope: 'full', gateContextSha256: sha256hex(gateDiff), writtenAt: new Date().toISOString(),
       }, null, 2));
     }
@@ -1537,7 +1346,7 @@ async function cmdApparatus() {
     }
     log(`      → ${commitFindings} finding(s)`);
     out.perCommit.push({
-      sha, repo: repoBasename, state: 'ran', gateState, findings: commitFindings, chunks: chunks.length,
+      sha, repo: repoBasename, state: genFailed ? 'provider-error' : 'ran', ...(genFailed ? { error: `${genFailed} generation pass(es) got no provider reply` } : {}), gateState, findings: commitFindings, chunks: chunks.length,
       // Denominator for score's completion check: the shared 5-pass rows (over
       // the chunk count the passes actually ran on — for a gate-only run that is
       // the ORIGINAL run's count, carried in the pregate artifact) + this gate.
@@ -1942,12 +1751,13 @@ async function cmdJudgeGpt() {
   // seedResumedGrades fingerprints — recorded beside the output so a resume under a different judge re-grades.
   const metaPath = `${outPath}.meta.json`;
   const judgeIdentity = { model: gptModel, knownDefectsSha256: sha256hex(kdText) };
+  const outSha = () => (fs.existsSync(outPath) ? sha256hex(fs.readFileSync(outPath, 'utf8')) : null);
   const gradingByBlindId = new Map();
   if (fs.existsSync(outPath) && !force) {
     const [priorHeader = [], ...priorRecords] = parseCsv(fs.readFileSync(outPath, 'utf8'));
     const pc = Object.fromEntries(['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern'].map((n) => [n, priorHeader.indexOf(n)])); const priorRows = priorRecords.map((c) => ({ blindId: c[pc.blind_id], commit: c[pc.commit], severity: c[pc.severity], category: c[pc.category], file: c[pc.file], detail: c[pc.detail], label: c[pc.label], proof: c[pc.proof], cluster: c[pc.cluster], matches: c[pc.matches], pattern: c[pc.pattern] }));
     let meta = null; try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch { /* legacy output or unreadable */ }
-    const same = judgeResumeIdentity(meta, judgeIdentity);
+    const same = judgeResumeIdentity(meta, { ...judgeIdentity, outSha256: outSha() });
     if (same.note) log(`  ⚠ ${same.note}${same.ok ? '' : '; re-grading everything.'}`);
     const seeded = same.ok ? seedResumedGrades(priorRows, rows) : { grades: new Map(), discarded: 0 }; for (const [k, v] of seeded.grades) gradingByBlindId.set(k, v); // blind ids renumber on re-merge: keep a grade only for the SAME row content
     if (seeded.discarded) log(`  ⚠ ${seeded.discarded} prior grade(s) discarded — their blind_id now names different content (re-merge renumbered); re-grading.`);
@@ -1973,8 +1783,11 @@ async function cmdJudgeGpt() {
       } else ungradedNow++;
       lines.push(csvLine(cells));
     }
-    atomicWriteFileSync(metaPath, JSON.stringify(judgeIdentity)); // meta first: a crash between the two leaves a NEW identity beside OLD grades, which a resume re-grades, never trusts
-    atomicWriteFileSync(outPath, lines.join('\n') + '\n');
+    const outText = lines.join('\n') + '\n';
+    atomicWriteFileSync(outPath, outText);
+    // The sidecar binds the CSV it describes (outSha256): a crash between these two writes leaves a CSV the sidecar does not
+    // match, which a resume re-grades rather than trusts.
+    atomicWriteFileSync(metaPath, JSON.stringify({ ...judgeIdentity, outSha256: sha256hex(outText) }));
     return ungradedNow;
   };
 
@@ -2140,7 +1953,7 @@ async function cmdMerge() {
       if (!commitsSet.has(f.commit)) continue;
       if (isLocalApparatus && extACommits.has(f.commit)) continue; // double-count guard
       if (String(f.severity || '').toUpperCase() === 'LOW') lowVolumeByArm[arm] = (lowVolumeByArm[arm] || 0) + 1;
-      allRows.push({ arm, commit: f.commit, severity: f.severity, category: f.category, file: f.section, detail: (f.detail || '').slice(0, DETAIL_CAP), dup: f._dup, fingerprint: null });
+      allRows.push({ arm, commit: f.commit, severity: f.severity, category: f.category, file: f.section, detail: (f.detail || '').slice(0, DETAIL_CAP), dup: f._dup ?? dupHash(f.category, f.section, f.detail), fingerprint: null });
     }
   }
   for (const e of ext) {
@@ -2178,6 +1991,8 @@ async function cmdMerge() {
   // by commit fixes both: each batch is small (a few hundred rows at most) AND the
   // only grouping that could ever be correct.
   const { proposeClusters } = await import('./lib/solo-control/cluster-propose.mjs');
+  const CLUSTER_MODEL = 'claude-sonnet-5'; // proposeClusters' own default, named so the policy check and the call cannot disagree
+  const recipientPolicy = policyOrDie();
   const clusterOf = new Map();
   const clusterModesUsed = new Set();
   // Force sdk explicitly rather than the ambient CLAUDE_BACKEND — same lever
@@ -2214,7 +2029,12 @@ async function cmdMerge() {
   for (const [commitSha, idxs] of rowsByCommit) {
     const batch = idxs.map((i) => ({ category: rows[i].category, file: rows[i].file, detail: rows[i].detail }));
     let prop;
-    try { prop = await proposeClusters(batch, { client }); }
+    // The batch (category, file path, detail of real findings) goes to the clustering model: consult the policy for the repo
+    // that holds this commit first. Unlocatable or refused ⇒ the deterministic dup-hash fallback, nothing sent.
+    const cRoot = locateCommit(commitSha);
+    const cRefused = cRoot ? refusedFor([CLUSTER_MODEL], cRoot, recipientPolicy) : 'commit not locatable — repo identity unknown';
+    if (cRefused) { log(`  cluster ${commitSha.slice(0, 8)}: POLICY REFUSED (${cRefused}) — unassisted, nothing sent`); prop = { clusters: {}, mode: 'policy-refused' }; }
+    else try { prop = await proposeClusters(batch, { client, model: CLUSTER_MODEL }); }
     catch { prop = { clusters: {}, mode: 'duphash-degraded' }; }
     clusteredCommits++;
     log(`  cluster ${clusteredCommits}/${totalCommitsToCluster}: ${commitSha.slice(0, 8)} · ${idxs.length} row(s) · mode=${prop.mode}`);
@@ -2233,7 +2053,7 @@ async function cmdMerge() {
   // above (not each tier separately): a HIGH row and a MEDIUM row describing the
   // same underlying defect must land in one cluster so the medium-pool row rides
   // in "for free" via auto-inclusion, rather than being independently sampled.
-  const clusterKeyOf = (i) => clusterOf.get(i) || `solo:${rows[i].dup}`;
+  const clusterKeyOf = (i) => clusterOf.get(i) || `solo:${rows[i].commit.slice(0, 8)}:${rows[i].dup}`; // commit-scoped: the same text on two commits is not one defect
   const clusterRowIdxs = new Map(); // clusterKey -> [row idx,...]
   rows.forEach((_, i) => {
     const ck = clusterKeyOf(i);
@@ -2290,7 +2110,7 @@ async function cmdMerge() {
   // (auto/kd-candidate — scoreArms) vs a weighted sample (medium-sample —
   // scoreMediumSampleWeighted) for `score`.
   const map = {};
-  for (const b of blind) map[b.blindId] = { arm: b.arm, commit: b.commit, severity: b.severity, category: b.category, fingerprint: b.fingerprint, dup: b.dup, sheetTier: b.sheetTier, inclusionProb: b.inclusionProb };
+  for (const b of blind) map[b.blindId] = { arm: b.arm, commit: b.commit, severity: b.severity, category: b.category, fingerprint: b.fingerprint, dup: b.dup, sig: rowSig(b.file, b.detail), sheetTier: b.sheetTier, inclusionProb: b.inclusionProb };
   // Underpowered/degenerate solo arms → carried so scoring can mark them ineligible.
   const armMeta = {};
   for (const run of soloRuns) armMeta[run.armLabel || 'S'] = { samplingDegenerate: !!run.samplingDegenerate, repeats: run.provenance?.repeats ?? 1 };
@@ -2317,7 +2137,7 @@ async function cmdScore() {
   const col = (n) => header.indexOf(n);
   const iId = col('blind_id'), iLabel = col('label'), iCluster = col('cluster'), iMatches = col('matches'), iProof = col('proof'), iPattern = col('pattern');
   // The sheet and the private map are only meaningful as a PAIR — refuse before reading a single label if they are not.
-  const pairing = sheetPairingProblems(map, csvRecords.map((c) => ({ blindId: c[iId], commit: c[col('commit')], severity: c[col('severity')], category: c[col('category')] })));
+  const pairing = sheetPairingProblems(map, csvRecords.map((c) => ({ blindId: c[iId], commit: c[col('commit')], severity: c[col('severity')], category: c[col('category')], file: c[col('file')], detail: c[col('detail')] })));
   if (pairing.length) { log(`REFUSING to score: the blind sheet and .blind-map.json are not a pair:\n  ${pairing.join('\n  ')}\n  (re-run merge, or restore the deleted rows — an unfinished sheet must not score as complete)`); process.exit(4); }
 
   const VALID = new Set(['proven', 'actionable', 'plausible', 'false']);

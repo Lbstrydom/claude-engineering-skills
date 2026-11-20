@@ -49,11 +49,18 @@ export function budgetVerdict(rows, budgetUsd) {
     const nothingCameBack = (r.state === 'provider-error' || r.state === 'excluded') && !r.usage;
     if (!nothingCameBack) unmeasured++;
   }
+  const exact = spentUsd; // compared UNROUNDED: a 4-decimal round could let a sub-cent overage pass
   spentUsd = +spentUsd.toFixed(4);
-  if (spentUsd >= budgetUsd) return { spentUsd, complete: unmeasured === 0, unmeasured, reason: 'ceiling' };
+  if (exact >= budgetUsd) return { spentUsd, complete: unmeasured === 0, unmeasured, reason: 'ceiling' };
   if (unmeasured > 0) return { spentUsd, complete: false, unmeasured, reason: 'unmeasured' };
   return null;
 }
+
+/** A row's content signature, written into the private map by `merge` and re-derived from the sheet by `score`. Binds the
+ * identity columns a human must not edit (file, detail) so two merges that happen to agree on id/commit/severity/category
+ * cannot be mistaken for one pair. Line endings are normalised first: a spreadsheet rewrites LF as CRLF inside a quoted cell. */
+export const rowSig = (file, detail) => crypto.createHash('sha256')
+  .update([file, detail].map((x) => String(x ?? '').replace(/\r\n?/g, '\n').trim()).join('\u0000')).digest('hex').slice(0, 12);
 
 /** The sheet/map pairing check `score` runs before reading a label. The blind CSV and the private map are two files;
  * they are only meaningful as a pair, and the pair is edited by a human in between. Every map id must be on the sheet
@@ -77,7 +84,8 @@ export function sheetPairingProblems(map, sheetRows) {
   const drift = sheetRows.filter((r) => map[r.blindId] && (
     r.commit === '' || !String(map[r.blindId].commit || '').startsWith(String(r.commit || ''))
     || String(map[r.blindId].severity || '') !== String(r.severity || '')
-    || String(map[r.blindId].category || '') !== String(r.category || ''))).map((r) => r.blindId);
+    || String(map[r.blindId].category || '') !== String(r.category || '')
+    || (map[r.blindId].sig && map[r.blindId].sig !== rowSig(r.file, r.detail)))).map((r) => r.blindId);
   if (drift.length) problems.push(`${drift.length} row(s) disagree with the map on commit/severity/category — the sheet and map are from different merges: ${drift.slice(0, 8).join(', ')}`);
   return problems;
 }
@@ -142,7 +150,10 @@ export const coldPassOutcome = ({ gotReply, conformant }) => (conformant ? 'ok' 
  * @returns {{ok: boolean, note?: string}} ok=false ⇒ discard every prior grade; a missing meta file is a legacy output
  * (accepted with a note, never silently). */
 export function judgeResumeIdentity(meta, current) {
+  // The sidecar binds the output it was written beside (outSha256): a crash between the two writes leaves a CSV the
+  // sidecar does not describe, and those grades' judge is unknown — re-grade, never trust.
+  if (meta && meta.outSha256 !== current.outSha256) return { ok: false, note: 'the output CSV does not match its meta sidecar (interrupted checkpoint)' };
   if (!meta) return { ok: true, note: 'prior output has no meta sidecar (written before the judge identity was recorded) — its grades are unverifiable but kept' };
-  const diffs = Object.keys(current).filter((k) => meta[k] !== current[k]);
+  const diffs = Object.keys(current).filter((k) => k !== 'outSha256' && meta[k] !== current[k]);
   return diffs.length ? { ok: false, note: `judge identity changed (${diffs.join(', ')}) — prior grades were made by a different judge/rubric` } : { ok: true };
 }

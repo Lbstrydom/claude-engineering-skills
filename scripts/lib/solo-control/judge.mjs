@@ -66,5 +66,7 @@ export async function runGptJudgeBatch(client, zodTextFormat, gptModel, { shortS
   };
   if (reasoning) params.reasoning = { effort: reasoning };
   const resp = await client.responses.parse(params);
-  return { gradings: resp.output_parsed?.gradings || [], usage: resp.usage || null };
+  // no structured reply is a FAILED batch (the caller logs it and leaves the rows ungraded), never an empty grading list
+  if (!resp.output_parsed) throw new Error('judge returned no structured output');
+  return { gradings: resp.output_parsed.gradings || [], usage: resp.usage || null };
 }

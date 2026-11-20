@@ -50,7 +50,13 @@ export function parseCsv(text) {
     const ch = text[i];
     if (inQuotes) {
       if (ch === '"') {
-        if (text[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false;
+        if (text[i + 1] === '"') { cur += '"'; i++; }
+        else {
+          inQuotes = false;
+          const next = text[i + 1];
+          // a closed quote must end the field: `"a"junk` is not "ajunk", it is a corrupt cell
+          if (next !== undefined && next !== ',' && next !== String.fromCharCode(10) && next !== String.fromCharCode(13)) throw new Error(`parseCsv: text after a closing quote (${JSON.stringify(next)}) — the sheet is corrupt`);
+        }
       } else cur += ch;
       continue;
     }

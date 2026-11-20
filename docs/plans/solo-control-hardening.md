@@ -74,5 +74,28 @@ once under `[be-services]` and once under `[Sustainability]`); the hand-over sai
 
 ## 5. Tests
 
-`tests/solo-control-hardening.test.mjs` (+ `tests/campaign-adjudicate.test.mjs`, `tests/fleet-overlap.test.mjs`): every
-fix has a red-then-green test and a negative control (the guard does not fire on the healthy input).
+`tests/solo-control-hardening.test.mjs`, `tests/solo-control-hardening-r1.test.mjs` (+ `tests/campaign-adjudicate.test.mjs`):
+every fix has a red-then-green test and a negative control (the guard does not fire on the healthy input). Red was
+confirmed by restoring origin/main's copies of the six touched files and running the suite (20 of 51 failed; the rest are
+pure-guard tests whose subject did not exist).
+
+## 6. /audit-code round 1 on this change (37 findings) — triage
+
+Fixed (new code or a gap in a fix above): pairing now also binds `file`+`detail` through a per-row `sig` written by `merge`
+(H6/H19/H27); the judge sidecar binds the CSV it describes, so an interrupted checkpoint re-grades instead of trusting
+(H7/H20); a cold pass whose reply carried no usage reports `usage:null` = unmeasured (H10/H17); a permanent 4xx is attempted
+once (M5); the budget compares unrounded (M3); `parseCsv` rejects text after a closing quote (H15/M4); `judge` treats "no
+structured output" as a failed batch (H14); `--label` is validated as a filename (H13); `cmdApparatus` records a commit whose
+generation passes never replied as `provider-error`, and the pre-gate artifact now carries `gptModel` + `generationFailedCells`
+that `--gate-only` checks (H8/H23); `merge`'s clustering call consults the recipient policy per commit (H2) and its
+fallback cluster key is commit-scoped and no longer `solo:undefined` for rows without `_dup` (H25); the three diff
+extractors pass `--literal-pathspecs` so a clean file name cannot select an excluded file (H1).
+
+Rebutted or deferred, with the reason: provider-error rows without usage stay out of the unmeasured count (H9/H18/H28 —
+deliberate, §3: counting them wedges the run on its own failures); call identity (H3/H16/H28 — §4, #22); race prevention
+(H5/H21/H29 — §4, #15); legacy arm files and judge outputs with missing provenance resume with a warning, not a refusal
+(H4/H22/H30 — refusing would force `--force` re-spend on every existing arm; unknown is disclosed, not trusted silently);
+DeepSeek responses without a fingerprint (H4), discovered-unit findings keyed by commit SHA (H11), repo scoping (H12, #20),
+`extractAuditedDiff` base (H24, #23), retro baseline completeness (H26), `cmdRun` end-of-run metadata checkpoint (M2),
+retro top-level model (M1, #21): pre-existing paths this change neither calls nor depends on. M6/M7 are the adjacency
+wave's own enumeration bound, not findings.
