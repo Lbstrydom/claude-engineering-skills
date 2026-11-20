@@ -25,7 +25,7 @@ describe('the sampling pool', () => {
     assert.equal(c.defects.find((d) => d.id === 'KD-013').invalidated, true);
     const pool = selectPool(c);
     assert.equal(pool.some((d) => d.invalidated), false);
-    assert.equal(pool.length, c.defects.length - c.defects.filter((d) => d.invalidated).length);
+    assert.equal(pool.length, c.defects.filter((d) => !d.invalidated && (d.suite ?? 'detect') === 'detect').length); // default suite is detect
   });
   it('narrows to the requested suite and refuses an unknown suite or an undeclared subset', () => {
     const c = { version: 4, defects: [entry({ id: 'KD-901' }), entry({ id: 'KD-902', suite: 'missed' })], subsets: { tiny: ['KD-901'] } };
