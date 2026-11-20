@@ -40,6 +40,26 @@ named** (full UUID): a repeat is a second file, never an overwrite. `--push` wor
 is itself the root of its own Git work tree (never a folder inside another repository), runs exactly
 `add`, `commit`, `push`, and never forces.
 
+## Triggers — keeping it current
+
+The exporter is cheap to call from anywhere, because `--if-older-than <hours>` makes a repeat run read and write
+nothing when this alias already has a newer valid export. Three ways to run it, none required:
+
+- **Weekly maintenance** (recommended): set `TELEMETRY_CONSUMER_ALIAS` and `TELEMETRY_DROP_DIR` (plus
+  `TELEMETRY_EXPORT_PUSH=1` for a Git drop) where the local maintenance runner is enabled
+  ([`local-maintenance-checks.md`](local-maintenance-checks.md)). The `telemetry-export` check is skipped unless both
+  names are set, so it is invisible to a consumer that never opted in.
+- **Opportunistically at push time**, so the file tracks real activity rather than a calendar: one line in the
+  consumer-owned `.githooks/pre-push.local` (never the managed hook) —
+  `node scripts/.claude-skills/telemetry-export.mjs --if-older-than 24 || true`. It cannot slow a push on a quiet
+  day (it exits at once) and never blocks one.
+- **By hand**, whenever.
+
+`doctor` reports freshness: `machine/telemetry-export` is `not_applicable` when nothing is configured, and when
+configured it separates *export overdue* (the newest valid export is older than a weekly cadence plus a day),
+*never exported*, *only rejected files*, and *could not read the drop* — four different facts, none standing in for
+another. It is a `machine` probe: it advises and never gates.
+
 ## CES side
 
 Declare the consumer in the **gitignored** local registry (copy `scripts/lib/consumer-repos.local.example.json`), so the
