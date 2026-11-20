@@ -59,7 +59,7 @@ gateway + termination watchdog) are documented in the
 | `AUDIT_DB_SSL_MODE` | No | `require` | TLS mode: `require` (default; strict verify), `no-verify` (accept self-signed — needed for Supabase poolers), `disable`. |
 | `AUDIT_DB_POOL_MAX` | No | `4` | Maximum simultaneous pg connections. Increase only when the audit-loop's chunked upserts demand it. |
 | `AUDIT_ALLOW_SCHEMA_BEHIND` | No | — | `1` lets `openai-audit.mjs` proceed when the store is provably behind this checkout (a bundled migration absent from `public.audit_loop_migrations`). Unset, the audit **refuses before spending**: a behind store rejects the `audit_runs` INSERT, so the run cannot be registered, no gate-evidence marker is written, and the commit reads `AI-Gate: not-run` however clean the audit was. The override keeps the findings and accepts that loss — it is announced at start and again at the end. Fail-OPEN either way: only a definite set difference blocks. |
-| ~~`SUPABASE_AUDIT_*`~~ | — | — | **Sunset in M4** (postgres-parity). The audit-loop now uses `AUDIT_DB_URL` exclusively; the legacy URL + anon-key + service-role-key triplet was tied to the old `@supabase/supabase-js` PostgREST path which has been removed. The runtime DSN's password IS the secret — no separate write-role key. |
+| ~~`SUPABASE_AUDIT_*`~~ | — | — | **Sunset in M4** (postgres-parity). The audit-loop now uses `AUDIT_DB_URL` exclusively; the legacy URL + anon-key + service-role-key triplet was tied to the old `@supabase/supabase-js` PostgREST path which has been removed. The runtime DSN's credential is the access control — no separate write-role key. |
 
 ## Audit behaviour
 
@@ -157,7 +157,9 @@ and exit 0, because the next incremental refresh anchors on whatever was
 published last and copies forward the symbols of files its diff does not touch.
 A branch snapshot made that anchor a commit `main` never had, and stale symbols
 survived as false duplicate clusters. Guard: `refresh-publish-guard.mjs`.
+When the guard cannot decide, the skip names the real cause instead: `git-exec-failed` (git did not answer in time — a timeout; retry), `default-branch-unresolvable` (no such default branch), `head-unresolvable`. A timed-out git probe is retried once.
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
 | `ARCH_REFRESH_ALLOW_BRANCH_PUBLISH` | No | — | Set to `1` to publish a refresh from a non-default branch or an off-branch detached HEAD. Same effect as `--allow-branch-publish`. Only `1` opts in. The next incremental refresh on the default branch will anchor on this snapshot, so run `npm run arch:refresh:full` on the default branch afterwards. |
+| `ARCH_INDEX_PYTHON` | No | — (probes `py -3`, `python`, `python3` on Windows; `python3`, `python` elsewhere) | The Python interpreter (>= 3.9) the symbol index uses to parse `.py` files (`lib/symbol-index/python-extract.mjs`). When set it is the ONLY interpreter tried: an unusable one makes every `.py` file report as unparseable in coverage, never silently falls back to another. Unset and none found → the same unparseable report, with the remedy printed. |

@@ -283,6 +283,7 @@ source comments that no docs linter sees — stays valid.
 | [Consumer pre-push hook: bounded, visible, fail-closed steps (hook v11)](./prepush-hook-bounded-steps.md) | `Complete` | shipped in #284 (status reconciled against merged PRs 2026-10-25) |
 | [Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed.md) | `Complete` | shipped in #225 (status reconciled against merged PRs 2026-10-25) |
 | [Git-Native Provenance Trailers (F1) + Executable Gate-Honesty Suite (F2)](./provenance-trailers-and-gate-honesty.md) | `Complete` | implemented via `/cycle --autonomous`… |
+| [Python indexing for architectural memory](./python-arch-memory-indexing.md) | `Complete` |  |
 | [Quickfix Mechanical Blind-Spot Patterns](./quickfix-blindspot-patterns.md) | `Complete` | plan-audit (3 GPT rounds + 4 Gemini rounds) converged as documented below; implemented… |
 | [Adaptive Audit Intelligence — Efficiency, Learning, and Continuous Improvement](./r2-efficiency.md) | `Complete` | shipped — R2+ mode is the canonical audit re-run path: `R2_ROUND_MODIFIER` + `buildRulingsBlock` in… |
 | [Reconcile attribution, coverage honesty, and base freshness](./reconcile-attribution-and-base-freshness.md) | `Complete` | shipped across `b0cc72e7` (attribution + coverage) and `5bf80dea` (`--apply` repair path); the §7b close-out… |
@@ -410,6 +411,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Postgres-Parity M1 — `/audit-code` Summary](./postgres-parity-m1-audit-summary.md) |  |
 | [Postgres-Parity M3 + M4 — `/audit-code` Summary](./postgres-parity-m3m4-audit-summary.md) |  |
 | [Audit Summary — Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed-audit-summary.md) |  |
+| [Audit summary: Python indexing for architectural memory](./python-arch-memory-indexing-audit-summary.md) |  |
 | [Audit summary — arch-memory / symbol-index manifest transport](./refactor-arch-memory-symbol-index-2026-07-audit-summary.md) |  |
 | [Audit Summary — refactor-architecture-debt-remainder-2026-07](./refactor-architecture-debt-remainder-2026-07-audit-summary.md) |  |
 | [Audit Summary — Requirements Layer](./requirements-layer-audit-summary.md) |  |

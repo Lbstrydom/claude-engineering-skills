@@ -96,16 +96,23 @@ export function normalizeRepoPath(p, repoRoot, { base } = {}) {
  * refuses to read still counted against the denominator, understating coverage
  * on exactly the repos most likely to have generated monsters.
  *
+ * `extensions` widens the universe beyond dep-cruiser's candidates — the
+ * extractor passes CRUISABLE ∪ its Python extensions, so a Python repo has a
+ * real denominator instead of `empty_universe` (plan
+ * docs/plans/python-arch-memory-indexing.md §2.5). Defaults to
+ * `CRUISABLE_EXTENSIONS`, byte-identical to the pre-Python behaviour.
+ *
  * @param {string[]} files - whole-repo inventory (SKIP_DIRS already applied)
- * @param {{repoRoot: string, isTooLarge?: (absPath: string) => boolean}} opts
+ * @param {{repoRoot: string, isTooLarge?: (absPath: string) => boolean, extensions?: readonly string[]}} opts
  * @returns {string[]} sorted, de-duplicated, normalized repo-relative paths
  */
-export function eligibleFiles(files, { repoRoot, isTooLarge } = {}) {
+export function eligibleFiles(files, { repoRoot, isTooLarge, extensions = CRUISABLE_EXTENSIONS } = {}) {
   if (!Array.isArray(files) || typeof repoRoot !== 'string') return [];
+  const allowed = extensions === CRUISABLE_EXTENSIONS ? CRUISABLE_SET : new Set(extensions);
   const out = new Set();
   for (const f of files) {
     if (typeof f !== 'string' || f.length === 0) continue;
-    if (!CRUISABLE_SET.has(path.extname(f).toLowerCase())) continue;
+    if (!allowed.has(path.extname(f).toLowerCase())) continue;
     if (typeof isTooLarge === 'function' && isTooLarge(f)) continue;
     const rel = normalizeRepoPath(f, repoRoot);
     // A path that escapes the repo is not part of this repo's universe.
@@ -134,13 +141,21 @@ export function eligibleFiles(files, { repoRoot, isTooLarge } = {}) {
  * measurement, never "all extensions are available" (AGENTS.md: unknown is not
  * a synonym for verified).
  *
+ * `candidates` is the set of extensions this pipeline admits at all; it scopes
+ * `unavailableExtensions` (default `CRUISABLE_EXTENSIONS`). The extractor
+ * passes the Python extensions too, and unions the Python probe's answer into
+ * `availableExtensions` ONLY when an interpreter was found — so a missing
+ * interpreter reports `.py` as unparseable, never as indexed.
+ *
  * @param {string[]} eligible - repo-relative eligible paths
  * @param {string[]|null|undefined} availableExtensions - dep-cruiser's
  *   `allExtensions` filtered to `available === true`, as `.ext` strings
+ *   (plus any other parser stage's extensions, when that stage is available)
+ * @param {readonly string[]} [candidates]
  * @returns {{known: boolean, unavailableExtensions: string[],
  *            unparseable: number|null, byExtension: Record<string, number>}}
  */
-export function assessParserAvailability(eligible, availableExtensions) {
+export function assessParserAvailability(eligible, availableExtensions, candidates = CRUISABLE_EXTENSIONS) {
   if (!Array.isArray(availableExtensions)) {
     return { known: false, unavailableExtensions: [], unparseable: null, byExtension: {} };
   }
@@ -159,7 +174,7 @@ export function assessParserAvailability(eligible, availableExtensions) {
     // Only the candidates this pipeline actually admits — an extension
     // dep-cruiser knows about but `eligibleFiles` never yields (`.coffee`,
     // `.csx`) is not a gap in THIS graph and would be noise in the report.
-    unavailableExtensions: CRUISABLE_EXTENSIONS.filter((e) => !avail.has(e)),
+    unavailableExtensions: candidates.filter((e) => !avail.has(e)),
     unparseable,
     byExtension,
   };
@@ -185,7 +200,7 @@ export function assessParserAvailability(eligible, availableExtensions) {
 export function assessExtractionCoverage({
   outcome = 'ok', eligible = [], cruisedSources = [], repoRoot = '',
   cruisedBase = undefined, elapsedMs = null, edges = {}, sampleCap = 20,
-  availableExtensions = null,
+  availableExtensions = null, candidateExtensions = CRUISABLE_EXTENSIONS,
 } = {}) {
   if (outcome !== 'ok') {
     return {
@@ -213,7 +228,7 @@ export function assessExtractionCoverage({
     ratio: eligible.length === 0 ? null : seen.size / eligible.length,
     elapsedMs: elapsedMs ?? null,
     edges: normalizeEdgeBuckets(edges),
-    parser: assessParserAvailability(eligible, availableExtensions),
+    parser: assessParserAvailability(eligible, availableExtensions, candidateExtensions),
     samples: { uncruised: uncruised.slice(0, clampCap(sampleCap)) },
   };
 }
@@ -346,4 +361,48 @@ export function assertAttributionExhaustive(coverage, persistedEdges) {
   const actual = coverage?.candidates ?? 0;
   const expected = Number.isFinite(persistedEdges) ? persistedEdges : 0;
   return { ok: actual === expected, expected, actual };
+}
+
+/**
+ * The warning a full refresh owes when it PUBLISHED AN INDEX WITH NO SYMBOLS over
+ * a tracked tree that is not empty. Such a refresh exits cleanly, embeds nothing
+ * and publishes an active snapshot — which reads as a successful run, while every
+ * later `get-neighbourhood` compares nothing. The cause is the repo's languages
+ * not being indexed, and only the refresh can say so at the moment it learns it.
+ *
+ * Pure. Full runs only: an incremental run can legitimately touch no indexable
+ * file. Returns `null` when no warning is owed.
+ *
+ * @param {object} p
+ * @param {number} p.symbolCount           symbols the refresh published
+ * @param {string} p.mode                  'full' | 'incremental'
+ * @param {string[]} p.trackedFiles        repo-relative tracked paths
+ * @param {readonly string[]} p.indexedExtensions  extensions the index can read (e.g. `.ts`)
+ * @returns {string|null}
+ */
+export function emptyIndexWarning({ symbolCount, mode, trackedFiles, indexedExtensions }) {
+  if (mode !== 'full' || symbolCount !== 0) return null;
+  // Git could not enumerate the tree: say the check is incomplete rather than
+  // pass over it as if the tree were empty.
+  if (trackedFiles === null || trackedFiles === undefined) {
+    return 'published an index with 0 symbols, and could not list tracked files to tell whether that is expected. '
+      + 'get-neighbourhood will compare nothing here — an empty lookup is NOT "no similar code".';
+  }
+  if (!Array.isArray(trackedFiles) || trackedFiles.length === 0) return null;
+  const indexed = new Set(indexedExtensions.map((e) => e.toLowerCase()));
+  const byExt = new Map();
+  let readable = 0;
+  for (const f of trackedFiles) {
+    const ext = path.extname(String(f)).toLowerCase() || '(none)';
+    byExt.set(ext, (byExt.get(ext) ?? 0) + 1);
+    if (indexed.has(ext)) readable++;
+  }
+  const top = [...byExt.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 5)
+    .map(([e, n]) => `${e} ${n}`).join(', ');
+  const head = `published an index with 0 symbols over ${trackedFiles.length} tracked file(s) (top extensions: ${top}). `;
+  const tail = 'get-neighbourhood will compare nothing here — an empty lookup is NOT "no similar code".';
+  // Only name a cause the evidence supports.
+  return readable === 0
+    ? `${head}None has an extension the index reads (${indexedExtensions.join(' ')}), so this repo's languages are not indexed. ${tail}`
+    : `${head}${readable} are of a type the index reads, yet no symbol was extracted — check the extraction output above. ${tail}`;
 }

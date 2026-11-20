@@ -503,6 +503,7 @@
       "shared-lib"
     ],
     "arch-memory": [
+      "arch-intent",
       "learning-store",
       "shared-lib"
     ],

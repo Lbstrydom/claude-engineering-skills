@@ -73,8 +73,10 @@ AUDIT_DB_SSL_MODE=disable         # localhost without TLS; `require` for TLS hos
 
 ## Privilege model (plan §2 / R2 H4 + R3 H3)
 
-Two distinct roles, both single-tenant by design (the DSN's password IS the secret —
-no separate read/write keys):
+Two distinct roles, both single-tenant by design (a role's credential is the access
+control — there are no separate read/write API keys). The single-DSN shape (one role
+that owns the schema) and the owner + least-privilege-runtime split are both
+supported; see *Two roles* below:
 
 - **Setup role** (`scripts/setup-postgres.mjs`, one-time per fresh self-hosted DB) —
   needs `CREATEROLE` (to create the `anon`/`authenticated`/`service_role` stub roles)
@@ -114,6 +116,64 @@ itself (PG 16+) — an Azure server admin does. Verify before trusting a new rol
 ```sql
 SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user;
 ```
+
+### Two roles: an owner and a least-privilege runtime role (supported)
+
+For an organisation whose policy forbids handing developers an owner credential,
+split the single DSN in two. **This shape is supported** — a consumer ran the
+full suite of store operations on it (2026-11-20 field report) — and it is the
+shape the sections above already point at:
+
+| Role | Holds | Used by |
+|---|---|---|
+| **owner** (`audit_owner`) | owns the database and every object in `public`; may `CREATE` in it | `setup-postgres.mjs --migrate` only, via a one-command shell override — never in a repo `.env` |
+| **runtime** (`audit_app`) | `BYPASSRLS`; DML on tables, `USAGE`/`SELECT` on sequences, `EXECUTE` on functions; **no** `CREATE` | every tool invocation, via `AUDIT_DB_URL` |
+
+```sql
+-- As an administrator, once per database.
+CREATE ROLE audit_owner WITH LOGIN PASSWORD '<strong password>';
+CREATE DATABASE audit_loop OWNER audit_owner;
+CREATE ROLE audit_app WITH LOGIN BYPASSRLS PASSWORD '<strong password>';
+
+-- Connected to audit_loop:
+GRANT CONNECT ON DATABASE audit_loop TO audit_app;
+GRANT USAGE ON SCHEMA public TO audit_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA public TO audit_app;
+GRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA public TO audit_app;
+GRANT EXECUTE                        ON ALL FUNCTIONS IN SCHEMA public TO audit_app;
+
+-- The line that is easy to forget: objects a FUTURE migration creates.
+ALTER DEFAULT PRIVILEGES FOR ROLE audit_owner IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES    TO audit_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE audit_owner IN SCHEMA public
+  GRANT USAGE, SELECT                  ON SEQUENCES TO audit_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE audit_owner IN SCHEMA public
+  GRANT EXECUTE                        ON FUNCTIONS TO audit_app;
+```
+
+**Why `FOR ROLE audit_owner` is the whole point.** `ALTER DEFAULT PRIVILEGES`
+without it applies to objects created by *the role that ran the statement* — the
+administrator — so migrations run later as `audit_owner` create tables the runtime
+role cannot read, and the first symptom is a permission error (or, without
+`BYPASSRLS`, zero rows) one migration after the setup "worked". The `GRANT … ON ALL
+…` lines cover what exists now; the default privileges cover what is coming.
+
+Two properties to know. `CREATE OR REPLACE FUNCTION` preserves a function's ACL,
+but **changing its argument list creates a different function**, which receives the
+default privileges above rather than the old one's grants. And the runtime role
+cannot apply migrations (`42501`): that is the boundary working — see
+*Migrations need the admin DSN* below and
+[`migration-credentials.md`](../../skills/ship/references/migration-credentials.md).
+
+Verify, never assume:
+
+```sql
+SELECT rolbypassrls FROM pg_roles WHERE rolname = 'audit_app';                    -- must be true
+SELECT has_table_privilege('audit_app', 'public.audit_repos', 'SELECT');          -- must be true
+SELECT defaclrole::regrole, defaclobjtype FROM pg_default_acl;                    -- audit_owner rows for r, S, f
+```
+
+After the next migration, repeat the second query against a table it created.
 
 ### Migrations need the admin DSN
 

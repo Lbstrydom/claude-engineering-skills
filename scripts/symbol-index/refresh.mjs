@@ -75,10 +75,12 @@ import { resolveModel } from '../lib/model-resolver.mjs';
 import { resolveEmbedProfile } from '../lib/embed-text.mjs';
 import { ignoredUntrackedPaths, OWNERSHIP_RULE_EPOCH } from '../lib/disowned-paths.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
-import { detectRepoStack } from '../lib/repo-stack.mjs';
+import { detectRepoStack, ARCH_INDEXED_STACKS } from '../lib/repo-stack.mjs';
 import { tagDomain, loadDomainRules, loadCoverageConfig } from '../lib/symbol-index/domain-tagger.mjs';
 import { graphVerdict } from '../lib/symbol-index/graph-verdict.mjs';
-import { assessExtractionCoverage } from '../lib/symbol-index/graph-coverage.mjs';
+import { assessExtractionCoverage, emptyIndexWarning } from '../lib/symbol-index/graph-coverage.mjs';
+import { DEFAULT_EXT_ALLOWLIST } from '../lib/sensitive-egress-gate.mjs';
+import { execFileSync } from 'node:child_process';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { findRepoPragmas, resolvePragmasToDefinitions, PRAGMA_RESOLUTION_MAX_GAP_LINES } from '../lib/duplicate-justification-pragma.mjs';
 import { isDriftPathExempt } from '../lib/symbol-index/drift-path-exemptions.mjs';
@@ -92,9 +94,18 @@ import { resolveWalkStartCommit, acquireRefreshLock, HEARTBEAT_INTERVAL_MS } fro
 import { finalizeRefreshMode } from './refresh-mode.mjs';
 import { resolveIncrementalFileScope } from './refresh-file-scope.mjs';
 import { runExtractSummariseEmbed } from './refresh-subprocess.mjs';
-import { checkRefreshPublishEligibility, ALLOW_BRANCH_PUBLISH_ENV } from './refresh-publish-guard.mjs';
+import { checkRefreshPublishEligibility, skipReasonFor, ALLOW_BRANCH_PUBLISH_ENV } from './refresh-publish-guard.mjs';
 
 function logErr(s) { process.stderr.write(`  [refresh] ${s}\n`); }
+/** Tracked paths, or `null` when git could not enumerate them (unknown ≠ empty tree). */
+function listTrackedFiles(repoRoot) {
+  try {
+    return execFileSync('git', ['ls-files', '-z'], {
+      cwd: repoRoot, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, windowsHide: true, timeout: 30000,
+    }).split('\0').filter(Boolean);
+  } catch { return null; }
+}
+
 function logOk(s) { process.stderr.write(`  [refresh] ${s}\n`); }
 
 /**
@@ -249,10 +260,12 @@ async function main() {
     await finishAndExit(0);
   }
 
-  // Stack short-circuit: JS/TS only in v1
+  // Stack short-circuit: the extractor indexes JS/TS (ts-morph) and Python (the
+  // python-extract.mjs stage; an absent interpreter reports as unparseable
+  // coverage, never as indexed). Anything else has nothing to extract.
   const { stack } = detectRepoStack(repoRoot);
-  if (stack !== 'js-ts' && stack !== 'mixed') {
-    process.stderr.write(`architectural-memory: ${stack === 'python' ? 'Python' : stack} extraction not yet supported (stack=${stack} detected)\n`);
+  if (!ARCH_INDEXED_STACKS.has(stack)) {
+    process.stderr.write(`architectural-memory: ${stack} extraction not yet supported (stack=${stack} detected)\n`);
     process.stdout.write(JSON.stringify({ ok: true, cloud: true, skipped: true, reason: 'unsupported-stack', stack }) + '\n');
     await finishAndExit(0);
   }
@@ -266,7 +279,7 @@ async function main() {
       + `the default branch, because later incremental refreshes anchor on it. Skipping this refresh; pass `
       + `--allow-branch-publish or set ${ALLOW_BRANCH_PUBLISH_ENV}=1 to publish anyway.`);
     process.stdout.write(JSON.stringify({
-      ok: true, cloud: true, skipped: true, reason: 'not-default-branch',
+      ok: true, cloud: true, skipped: true, reason: skipReasonFor(eligibility),
       publishGuard: eligibility.reason, branch: eligibility.branch, head: eligibility.head,
       defaultBranch: eligibility.defaultBranch,
     }) + '\n');
@@ -759,6 +772,14 @@ async function main() {
       if (heartbeatStatus.failureCount > 0) {
         logOk(`WARNING: heartbeat failed ${heartbeatStatus.failureCount} time(s) during this refresh (last: ${heartbeatStatus.lastError}) — refresh completed anyway`);
       }
+      // A clean exit that published ZERO symbols over a non-empty tree is a
+      // refresh that indexed nothing — say so, never leave it looking like success.
+      const emptyWarning = emptyIndexWarning({
+        symbolCount: finalSymbols.length, mode,
+        trackedFiles: listTrackedFiles(repoRoot),
+        indexedExtensions: DEFAULT_EXT_ALLOWLIST,
+      });
+      if (emptyWarning) logOk(`WARNING: ${emptyWarning}`);
       process.stdout.write(JSON.stringify({
         ok: true,
         cloud: true,
@@ -773,6 +794,7 @@ async function main() {
         embeddingModel: embedProfile.provenanceId,
         embeddingDim: embedDim,
         heartbeatFailures: heartbeatStatus.failureCount,
+        ...(emptyWarning ? { warnings: ['empty-index'] } : {}),
       }) + '\n');
     });
   } catch (err) {

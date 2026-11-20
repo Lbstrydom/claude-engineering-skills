@@ -29,13 +29,17 @@ import {
   // enforcement is hoisted via resolveAndClassify (Gemini-G2 WS-CANON
   // fix). The gate remains the single seam other callers can use.
   isExtensionAllowlisted,
+  isPythonIndexPath,
+  PYTHON_EXT_ALLOWLIST,
   containsSecrets,
   redactSecrets,
   SECRET_REDACTED,
 } from '../lib/sensitive-egress-gate.mjs';
 import { shouldSkipForIndexing, formatSkipLog, resolveAndClassify } from '../lib/sensitive-paths.mjs';
 import { isThinDelegate } from '../lib/symbol-index/thin-delegate.mjs';
+import { runPythonStage } from '../lib/symbol-index/python-extract.mjs';
 import {
+  CRUISABLE_EXTENSIONS,
   eligibleFiles,
   assessExtractionCoverage,
   assertExtractionExhaustive,
@@ -43,6 +47,7 @@ import {
 import { ignoredUntrackedPaths } from '../lib/disowned-paths.mjs';
 import { COVERAGE_DEFAULTS } from '../lib/symbol-index/graph-verdict.mjs';
 import { parseFilesManifest } from '../lib/symbol-index/files-manifest.mjs';
+import { describeParserGap } from '../lib/symbol-index/parser-gap.mjs';
 import { emit, assertKnownFlags } from '../lib/cli-io.mjs';
 import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
@@ -599,6 +604,8 @@ export function extractSymbols(filePaths, repoRoot, opts = {}) {
     // supersedes the old size-gated large-file tick, which fired only for
     // files over MAX_FILE_BYTES/2.
     emit({ type: 'progress', file: rel });
+    // Python goes to its own parser stage (python-extract.mjs), never ts-morph.
+    if (isPythonIndexPath(admission.canonicalPath)) { opts.pythonAdmissions?.push(admission); continue; }
 
     const parsed = loadAndParseFile(admission.canonicalPath, project);
     if (!parsed.ok) {
@@ -662,7 +669,7 @@ export function extractSymbols(filePaths, repoRoot, opts = {}) {
  */
 async function extractGraphAndViolations(repoRoot, opts = {}) {
   const {
-    eligible = null, sampleCap = COVERAGE_DEFAULTS.sampleCap, disowned = null,
+    eligible = null, sampleCap = COVERAGE_DEFAULTS.sampleCap, disowned = null, python = null,
   } = opts;
   const measure = Array.isArray(eligible);
   // R1 audit Gemini-G1: don't hardcode ['scripts', 'src'] — many repos use
@@ -763,15 +770,16 @@ async function extractGraphAndViolations(repoRoot, opts = {}) {
   // and /explain caller-domain analysis. Filter out external deps via
   // cruiser-emitted metadata (Gemini-R1-G3, Gemini-R2-G1).
   const modules = result.output?.modules || [];
-  let importCount = 0;
+  let importCount = python?.importCount ?? 0;
   // Every dependency the cruise offered lands in exactly ONE bucket. Each of
   // these three drops is individually defensible and none was ever counted —
   // that silence is the defect (plan §2.1.2). `cruisedEdges` is the total the
   // exhaustivity assertion holds them to.
+  // Python's edges (python-extract.mjs) were bucketed by the same rules; seed them in.
   const edges = {
-    external: 0, selfEdge: 0, escaping: 0, unresolved: 0, disowned: 0, persisted: 0,
+    external: 0, selfEdge: 0, escaping: 0, unresolved: 0, disowned: 0, persisted: 0, ...python?.buckets,
   };
-  let cruisedEdges = 0;
+  let cruisedEdges = python?.offered ?? 0;
   // `disowned == null` means ownership was never classified (restricted run, or
   // git unavailable) — every path is then treated as owned, which is the
   // pre-2026-09-04 behaviour and the fail-open direction.
@@ -810,7 +818,7 @@ async function extractGraphAndViolations(repoRoot, opts = {}) {
   const coverage = assessExtractionCoverage({
     outcome: 'ok',
     eligible,
-    cruisedSources: modules.map(m => m.source).filter(Boolean),
+    cruisedSources: [...modules.map(m => m.source).filter(Boolean), ...(python?.cruisedSources ?? [])],
     repoRoot,
     // dep-cruiser emits `source` relative to ITS process CWD, which is not
     // necessarily repoRoot. Resolving against repoRoot is correct only when
@@ -819,7 +827,8 @@ async function extractGraphAndViolations(repoRoot, opts = {}) {
     elapsedMs,
     edges,
     sampleCap,
-    availableExtensions: availableCruiserExtensions(),
+    availableExtensions: unionAvailable(availableCruiserExtensions(), python?.availableExtensions),
+    candidateExtensions: INDEXABLE_EXTENSIONS,
   });
 
   const exhaustive = assertExtractionExhaustive(coverage, cruisedEdges);
@@ -838,7 +847,7 @@ async function extractGraphAndViolations(repoRoot, opts = {}) {
     + `cruised (${pct}) in ${elapsedMs}ms — edges: ${edges.persisted} persisted, `
     + `${edges.external} external, ${edges.selfEdge} self, ${edges.escaping} escaping, `
     + `${edges.unresolved} unresolved, ${edges.disowned} disowned`);
-  warnAboutParserGap(coverage.parser);
+  for (const line of describeParserGap(coverage.parser)) emitProgress(line);
 
   return { violationCount: violations.length, importCount, coverage };
 }
@@ -854,6 +863,11 @@ async function extractGraphAndViolations(repoRoot, opts = {}) {
  *
  * @returns {string[]|null}
  */
+/** Every extension this pipeline indexes: dep-cruiser's candidates plus the Python stage's. */
+const INDEXABLE_EXTENSIONS = Object.freeze([...CRUISABLE_EXTENSIONS, ...PYTHON_EXT_ALLOWLIST]);
+/** `null` (dep-cruiser could not be asked) stays `null` — never upgraded to a partial claim. */
+const unionAvailable = (cruiser, extra) => (cruiser == null ? null : [...cruiser, ...(extra ?? [])]);
+
 function availableCruiserExtensions() {
   try {
     if (!Array.isArray(allExtensions)) return null;
@@ -861,41 +875,6 @@ function availableCruiserExtensions() {
   } catch {
     return null;
   }
-}
-
-/**
- * Say — loudly, with the remedy — when the import graph is missing whole
- * languages because no transpiler is installed for them.
- *
- * This is the difference between a number and a diagnosis. Before it, a
- * consumer whose 522 TypeScript files were unreadable saw only a 22% coverage
- * ratio and `Layering violations: 0`; the cause was diagnosable only from
- * outside the tool, by asking dep-cruiser directly.
- *
- * @param {{known: boolean, unparseable: number|null, byExtension: Record<string, number>}|null} parser
- */
-function warnAboutParserGap(parser) {
-  if (!parser) return;
-  if (!parser.known) {
-    // NB: the phrasing below deliberately avoids the literal `from "<word>"`
-    // shape. `module-graph.mjs`'s import scanner is regex-based and reads that
-    // as a bare package specifier, which makes the string look like an
-    // undeclared dependency to `tests/install-deps-contract.test.mjs`.
-    emitProgress('WARNING: could not ask dependency-cruiser which extensions it can parse — '
-      + 'the coverage ratio below cannot distinguish "not reached" and "unreadable".');
-    return;
-  }
-  if (!parser.unparseable) return;
-  const breakdown = Object.entries(parser.byExtension)
-    .sort((a, b) => b[1] - a[1])
-    .map(([ext, n]) => `${ext} (${n})`)
-    .join(', ');
-  emitProgress(`WARNING: ${parser.unparseable} eligible file(s) have no parser available in this `
-    + `dependency-cruiser install — ${breakdown}. Their imports are absent from the graph, so a `
-    + `layering result covering them is UNMEASURED, not clean. Remedy: install the matching `
-    + `transpiler where dependency-cruiser can resolve it (TypeScript files need \`typescript\`; `
-    + `under pnpm's strict layout that means hoisting it, e.g. a root devDependency or `
-    + `\`public-hoist-pattern[]=typescript\` in .npmrc).`);
 }
 
 /**
@@ -1133,7 +1112,8 @@ async function main() {
     emitProgress('WARNING: --include-delegates is a debug/visibility flag. The resulting index includes thin-facade duplicates and should not be used as a baseline snapshot — re-run without the flag for normal operations.');
   }
   emitProgress(`scanning ${files.length} files (mode=${args.mode})`);
-  const stats = extractSymbols(files, repoRoot, { includeDelegates: args.includeDelegates });
+  const pythonAdmissions = [];
+  const stats = extractSymbols(files, repoRoot, { includeDelegates: args.includeDelegates, pythonAdmissions });
   // ── Coverage denominator: its OWN whole-repo walk, not `files` ────────────
   //
   // `files` answers "which files am I re-extracting symbols for" — restricted
@@ -1181,14 +1161,21 @@ async function main() {
   // Always measurable now: the denominator is the repo's eligible universe on
   // both run modes, so the ratio is commensurable with the whole-repo cruise
   // regardless of how many files were re-extracted.
-  const eligible = eligibleFiles(universeFiles, { repoRoot, isTooLarge });
+  const python = await runPythonStage({
+    repoRoot, symbolAdmissions: pythonAdmissions, universeFiles, admit: admitFile, redactAndEmit, emit,
+    log: emitProgress, stats, includeDelegates: args.includeDelegates, disowned: universeWalk.disowned, maxBytes: MAX_FILE_BYTES,
+  });
+  // A .py the gate refuses (sensitive, symlink-escaped, oversize) is never read, so it is neither in the
+  // denominator nor NAMED in the uncruised samples — the same clause as the size cap (§2.1.1).
+  const isExcluded = (abs) => isTooLarge(abs) || (isPythonIndexPath(abs) && !admitFile(abs, { repoRoot }).admitted);
+  const eligible = eligibleFiles(universeFiles, { repoRoot, isTooLarge: isExcluded, extensions: INDEXABLE_EXTENSIONS });
   if (statFailures > 0) {
     emitProgress(`WARNING: ${statFailures} file(s) excluded from the coverage `
       + `denominator because their size could not be read — the reported ratio `
       + `is optimistic by that much.`);
   }
   const graphStats = await extractGraphAndViolations(repoRoot, {
-    eligible, disowned: universeWalk.disowned,
+    eligible, disowned: universeWalk.disowned, python,
   });
   // `coverage` travels on its own `{type:'coverage'}` line, not inside
   // `counts` — that field is a flat scalar bag and consumers treat it as one.

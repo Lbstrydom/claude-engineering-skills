@@ -395,8 +395,16 @@ export function renderArchitectureMap({
   return { markdown, bytesWritten: Buffer.byteLength(markdown, 'utf-8') };
 }
 
-/** Render the /plan-* "Neighbourhood considered" callout. */
-export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidatesConsidered, cloudStatus, hint }) {
+/**
+ * Render the /plan-* "Neighbourhood considered" callout.
+ *
+ * `coverage` is the searched snapshot's verdict from the get-neighbourhood
+ * envelope (`{status, reason, eligible}`). It — not the extension allowlist — is
+ * what says whether THIS refresh actually read the repo: a `.py` file is an
+ * indexable type, but a refresh run with no Python interpreter read none of
+ * them, and only the verdict knows that.
+ */
+export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidatesConsidered, cloudStatus, hint, coverage }) {
   if (cloudStatus === 'cloud-off') {
     const md = [
       '> **Neighbourhood considered** — _skipped_',
@@ -418,7 +426,7 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
   // "No records" means two very different things, and conflating them makes
   // the consultation confidently wrong. For an INDEXED file type, empty is
   // evidence: nothing similar exists, greenfield is right. For a file type the
-  // extractor never reads (.py, .java, .go, .rs, .sql …) empty is the ABSENCE
+  // extractor never reads (.java, .go, .rs, .sql …) empty is the ABSENCE
   // of evidence — there are no rows to match because nothing was ever indexed.
   // AGENTS.md makes this consultation mandatory before writing a new symbol
   // and reads empty records as "proceed greenfield", so emitting the greenfield
@@ -437,6 +445,26 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
         '> **This is absence of evidence, not evidence of absence** — it does NOT',
         '> mean no similar code exists. Check for near-duplicates by hand before',
         '> adding a new symbol here.',
+      ].join('\n');
+      return { markdown: md, appendixMarkdown: '', truncatedAt: 0 };
+    }
+    // An indexable type, but nothing says the index read the repo: the
+    // snapshot's verdict is not `verified` (e.g. a refresh with no Python
+    // interpreter reports every .py as unparseable), or no verdict was passed at
+    // all — "not asked" is unknown, never clean. Only an explicitly verified
+    // snapshot earns the greenfield wording.
+    if (coverage?.status !== 'verified') {
+      const why = coverage?.status
+        ? `${coverage.status}${coverage.reason ? ` (${coverage.reason})` : ''}`
+        : 'unknown (no coverage verdict)';
+      const md = [
+        `> **Neighbourhood considered** — _index coverage ${escapeMarkdown(why)}_`,
+        '>',
+        `> No rows matched, but the active snapshot's coverage verdict is \`${escapeMarkdown(why)}\`,`,
+        '> so the index may never have read these files (for Python: no usable',
+        '> interpreter at refresh time reports every `.py` as unparseable).',
+        '> **This is absence of evidence, not evidence of absence** — check for',
+        '> near-duplicates by hand before adding a new symbol here.',
       ].join('\n');
       return { markdown: md, appendixMarkdown: '', truncatedAt: 0 };
     }

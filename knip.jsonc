@@ -46,7 +46,12 @@
 
     // Spawned as a child process by tests/audit-capture-db.test.mjs (a fresh process is the point: the column probes
     // cache per process, so the parent cannot observe a column it dropped). A spawn path is not an import knip follows.
-    "tests/helpers/audit-capture-oldschema-child.mjs"
+    "tests/helpers/audit-capture-oldschema-child.mjs",
+
+    // Same class, spawned by tests/python-extract.test.mjs and tests/python-arch-index-e2e.test.mjs: a fake Python
+    // helper speaking the parser-stage protocol, and the neighbourhood child run under the no-network preload.
+    "tests/helpers/fake-python-helper.mjs",
+    "tests/helpers/python-neighbourhood-child.mjs"
   ],
 
   "project": [

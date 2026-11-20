@@ -39,6 +39,14 @@ const JAVA_ROOT_MARKERS = [
  * `java`/`postgres` — those have no /plan profile, so widening `stack`
  * would break that selector. Deliberate split.
  */
+/**
+ * The `detectRepoStack` values the architectural-memory extractor can index
+ * (ts-morph for JS/TS, the Python parser stage for Python). ONE set, read by
+ * both `symbol-index/refresh.mjs`'s stack gate and the fit-check verdict, so
+ * the two cannot drift (docs/plans/python-arch-memory-indexing.md).
+ */
+export const ARCH_INDEXED_STACKS = Object.freeze(new Set(['js-ts', 'mixed', 'python']));
+
 export function detectRepoStack(cwd = process.cwd()) {
   const detectedFrom = [];
 
