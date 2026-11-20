@@ -28,6 +28,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import { loadSharedEnv } from '../load-shared-env.mjs';
 import { readEnvWithAlias, _resetAliasWarnings } from '../env-alias.mjs';
 
@@ -313,6 +314,25 @@ export function dbIdentity(dsn) {
   // localhost and 127.0.0.1 are the same server for this purpose.
   const canonHost = LOOPBACK_DB_HOSTS.has(host) || /^127\./.test(host) ? 'localhost' : host;
   return `${canonHost}:${target.port}/${target.database}`;
+}
+
+/**
+ * The database a DSN addresses, rendered for a HUMAN with the host exactly as
+ * configured. `dbIdentity` folds every loopback spelling to `localhost` because
+ * it is an EQUALITY key (fingerprint, disposable guard) — wrong for a message a
+ * developer copies from: a port-forward often listens on IPv4 only, and
+ * `localhost` can resolve to `::1`, so `127.0.0.1` must stay `127.0.0.1`.
+ * Display only — never compare or hash this; use `dbIdentity`. Credential-free
+ * by construction, like `dbIdentity`.
+ *
+ * @param {string} dsn
+ * @returns {string|null} `host:port/database`, or null if unparseable
+ */
+export function dbDisplayTarget(dsn) {
+  let u;
+  try { u = new URL(dsn); } catch { return null; }
+  const target = effectiveDbTarget(u);
+  return `${target.host.trim()}:${target.port}/${target.database}`;
 }
 
 /**
@@ -647,7 +667,7 @@ export function buildPoolConfig(url, pgTypes) {
   };
 
   return {
-    connectionString: url,
+    connectionString: dsnForExplicitTls(url),
     // Set the session GUC during the Postgres startup handshake — eliminates
     // the race that a `SET search_path` issued from an async connect hook
     // could lose against the first user query on a fresh client.
@@ -662,9 +682,76 @@ export function buildPoolConfig(url, pgTypes) {
     // runner keeps its own loop alive, so this never ends a suite early.
     allowExitOnIdle: true,
     connectionTimeoutMillis: 10000,
-    ssl: sslMode === 'disable' ? false : { rejectUnauthorized: sslMode !== 'no-verify' },
+    ssl: buildSslOptions(sslMode),
     types: customTypes,
   };
+}
+
+/**
+ * TLS options for the pool. `AUDIT_DB_SSL_SERVERNAME` / `AUDIT_DB_SSL_CA` exist
+ * for a tunnel: through a localhost port-forward the connect host is
+ * `127.0.0.1` while the certificate names the real server, so `require` fails
+ * unless verification is told which name to check (`servername`) and which CA
+ * to trust (`ca`, a PEM bundle path). Unset = exactly the previous options.
+ *
+ * @param {string} sslMode one of VALID_SSL_MODES
+ * @returns {false | object}
+ */
+function buildSslOptions(sslMode) {
+  const servername = (process.env.AUDIT_DB_SSL_SERVERNAME || '').trim();
+  const caPath = (process.env.AUDIT_DB_SSL_CA || '').trim();
+  let ca;
+  // Read (and so validate) the CA whatever the mode: a configured-but-unreadable
+  // path is a misconfiguration to report, not to ignore because TLS is off today.
+  if (caPath) {
+    try {
+      ca = fs.readFileSync(caPath, 'utf8');
+    } catch (err) {
+      // Loud, never a silent fall-back to the system roots: the operator asked for
+      // a specific CA, and verifying against a different one is the wrong answer.
+      throw new Error(`AUDIT_DB_SSL_CA could not be read (${err.code || err.message}): ${caPath}`);
+    }
+  }
+  // A readable-but-empty or non-PEM file would otherwise be dropped by the
+  // truthiness check below and TLS would silently verify against the DEFAULT
+  // roots — the opposite of what the operator asked for.
+  if (caPath && !/-----BEGIN CERTIFICATE-----/.test(ca)) {
+    throw new Error(`AUDIT_DB_SSL_CA contains no PEM certificate: ${caPath}`);
+  }
+  if (sslMode === 'disable') return false;
+  const ssl = { rejectUnauthorized: sslMode !== 'no-verify' };
+  if (servername) ssl.servername = servername;
+  if (ca) ssl.ca = ca;
+  return ssl;
+}
+
+/**
+ * node-postgres lets TLS parameters in the connection string (`sslmode=`,
+ * `sslrootcert=`, …) REPLACE the `ssl` object it was handed — so a DSN carrying
+ * `?sslmode=require` would silently discard the servername/CA configured through
+ * AUDIT_DB_SSL_*. When either is set the env is the operator's explicit choice:
+ * the DSN's mode parameters (`sslmode`, `ssl`, `uselibpqcompat`) are dropped, the
+ * mode coming from AUDIT_DB_SSL_MODE. Certificate parameters (`sslrootcert`,
+ * `sslcert`, `sslkey`) cannot be merged into the env-built object, so combining
+ * them is REFUSED with a clear error rather than silently discarded. Neither var
+ * set: the DSN is passed through untouched.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+function dsnForExplicitTls(url) {
+  if (!process.env.AUDIT_DB_SSL_SERVERNAME?.trim() && !process.env.AUDIT_DB_SSL_CA?.trim()) return url;
+  let u;
+  try { u = new URL(url); } catch { return url; }
+  const certParams = ['sslrootcert', 'sslcert', 'sslkey'].filter((k) => u.searchParams.has(k));
+  if (certParams.length > 0) {
+    throw new Error(
+      `AUDIT_DB_SSL_SERVERNAME/AUDIT_DB_SSL_CA are set but the DSN also carries ${certParams.join(', ')}; ` +
+      'node-postgres would let the DSN replace the TLS options. Put the certificate settings in one place only.',
+    );
+  }
+  for (const k of ['sslmode', 'ssl', 'uselibpqcompat']) u.searchParams.delete(k);
+  return u.toString();
 }
 
 /**

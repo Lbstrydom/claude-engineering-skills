@@ -152,7 +152,9 @@ describe('no user-facing path calls a generic Postgres endpoint "Supabase"', () 
     // exact sentence — an assertion tied to wording fails on a phrasing
     // improvement and teaches you to stop improving the wording.
     assert.match(src, /\[learning\] Postgres store/, 'the failure must be described in vendor-neutral terms');
-    assert.match(src, /dbIdentity\(/, 'it must say WHICH database, or the reader cannot tell');
+    // dbDisplayTarget is the same credential-free renderer minus the loopback fold
+    // (a developer copies this host into a DSN, so 127.0.0.1 must stay 127.0.0.1).
+    assert.match(src, /db(Identity|DisplayTarget)\(/, 'it must say WHICH database, or the reader cannot tell');
     assert.match(src, /classifyDbConnectionError\(/, 'and WHY, or they cannot act on it');
   });
 });

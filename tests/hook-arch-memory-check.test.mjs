@@ -369,7 +369,7 @@ const STUB_CROSS_SKILL = [
  * Throwaway repo with the hook at its canonical path and a stub cross-skill.mjs
  * under `cliRelDir`. Pass `null` to install no CLI at all.
  */
-function scaffoldArchLayout(cliRelDir) {
+function scaffoldArchLayout(cliRelDir, stubSource = STUB_CROSS_SKILL) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'arch-layout-')));
   const hookDir = path.join(root, '.claude', 'hooks');
   fs.mkdirSync(hookDir, { recursive: true });
@@ -381,13 +381,13 @@ function scaffoldArchLayout(cliRelDir) {
   if (cliRelDir) {
     const cliDir = path.join(root, ...cliRelDir.split('/'));
     fs.mkdirSync(cliDir, { recursive: true });
-    fs.writeFileSync(path.join(cliDir, 'cross-skill.mjs'), STUB_CROSS_SKILL + '\n');
+    fs.writeFileSync(path.join(cliDir, 'cross-skill.mjs'), stubSource + '\n');
   }
   return { root, hook };
 }
 
-function runArchInLayout(cliRelDir) {
-  const { root, hook } = scaffoldArchLayout(cliRelDir);
+function runArchInLayout(cliRelDir, stubSource) {
+  const { root, hook } = scaffoldArchLayout(cliRelDir, stubSource);
   let stdout = '', exit = 0;
   try {
     stdout = execFileSync('bash', [hook, '--prompt', 'fix the login redirect bug'], {
@@ -417,6 +417,28 @@ describe('arch-memory-check tooling-layout resolution', () => {
     assert.equal(r.exit, 0);
     // The regression: the -f probe missed and the hook silently exited 0.
     assert.match(r.stdout, /stubbedNeighbour/);
+  });
+
+  it('unregistered repo on a LIVE store is not reported as offline or as "no similar code"', () => {
+    const stub = "process.stdout.write(JSON.stringify({ ok: true, cloud: true, repoRegistered: false, records: [], hint: 'repo not found in cloud store' }));";
+    const r = runArchInLayout('scripts', stub);
+    assert.match(r.stdout, /not registered in it — nothing was compared/);
+    assert.ok(r.stdout.includes('node scripts/symbol-index/refresh.mjs'), r.stdout);
+    assert.doesNotMatch(r.stdout, /Cloud store offline/);
+    assert.doesNotMatch(r.stdout, /greenfield/);
+  });
+
+  it('the remediation command follows the consumer layout', () => {
+    const stub = "process.stdout.write(JSON.stringify({ ok: true, cloud: true, repoRegistered: false, records: [] }));";
+    const r = runArchInLayout('scripts/.claude-skills', stub);
+    assert.ok(r.stdout.includes('node scripts/.claude-skills/symbol-index/refresh.mjs'), r.stdout);
+  });
+
+  it('negative control: a registered repo with no neighbours still reads as greenfield', () => {
+    const stub = "process.stdout.write(JSON.stringify({ ok: true, cloud: true, records: [] }));";
+    const r = runArchInLayout('scripts', stub);
+    assert.match(r.stdout, /greenfield/);
+    assert.doesNotMatch(r.stdout, /not registered/);
   });
 
   it('neither layout -- silently exits 0 (architectural-memory not installed)', () => {

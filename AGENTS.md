@@ -850,7 +850,8 @@ them means stale tooling. Band semantics and recalibration history:
 **When NOT to consult**: bug fixes changing only an existing function's body (no
 new symbol); trivial edits (typos, formatting, one-line conditionals); doc-only or
 test-only changes (unless adding test helpers); cloud store offline
-(`{"cloud": false}` — log an `arch:refresh` hint, proceed).
+(`{"cloud": false}` — log an `arch:refresh` hint, proceed). `{"cloud": true, "repoRegistered": false}`
+is NOT offline: the store is up and this repo has no row — nothing was compared, so run `arch:refresh`.
 
 **The rule above is host-neutral and mandatory; the hook is Claude-Code-only
 ACCELERATION, not cross-agent enforcement.** A

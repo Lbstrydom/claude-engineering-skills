@@ -83,6 +83,9 @@ export const NeighbourhoodQueryArgsSchema = z.object({
 
 export const NeighbourhoodResultSchema = z.object({
   cloud:     z.boolean(),
+  // `false` = the store is connected but this repo has no row in it (distinct
+  // from `cloud:false`, store offline). Absent = registered / not asked.
+  repoRegistered: z.boolean().optional(),
   refreshId: z.string().uuid().nullable(),
   records:   z.array(ScoredSymbolRecordSchema),
   totalCandidatesConsidered: z.number().int().nonnegative(),

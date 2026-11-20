@@ -71,6 +71,7 @@ describe('getIncidentNeighbourhoodForIntent — behavioural guards', () => {
     );
     assert.deepEqual(out.result.records, []);
     assert.equal(out.result.totalCandidatesConsidered, 0);
+    assert.equal(out.result.repoRegistered, false);   // distinct reason, not just an empty list
   });
 
   it('returns empty when no active embedding model', async () => {
@@ -82,6 +83,7 @@ describe('getIncidentNeighbourhoodForIntent — behavioural guards', () => {
       os.tmpdir(),
     );
     assert.deepEqual(out.result.records, []);
+    assert.notEqual(out.result.repoRegistered, false);   // negative control: registered repo
   });
 });
 

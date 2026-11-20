@@ -36,7 +36,9 @@ describe('getNeighbourhoodForIntent', () => {
       targetPaths: [],
       intentDescription: 'test',
     }, root);
-    assert.equal(out.cloud, false);
+    // Store connected, repo unregistered: NOT `cloud:false` (offline).
+    assert.equal(out.cloud, true);
+    assert.equal(out.repoRegistered, false);
     assert.equal(out.records.length, 0);
     assert.match(out.hint, /arch:refresh/);
   });
@@ -54,6 +56,8 @@ describe('getNeighbourhoodForIntent', () => {
       intentDescription: 'test',
     }, root);
     assert.equal(out.cloud, true);
+    // Negative control: a REGISTERED repo with no snapshot must not claim it is unregistered.
+    assert.notEqual(out.repoRegistered, false);
     assert.equal(out.refreshId, null);
     assert.match(out.hint, /arch:refresh/);
   });
