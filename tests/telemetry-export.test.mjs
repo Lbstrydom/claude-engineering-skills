@@ -406,6 +406,7 @@ describe('delivery hardening (audit round 1)', () => {
     const exec = (c, a) => { if (a[0] === 'rev-parse') return outer; if (a[0] === 'commit') committed = true; return ''; };
     assert.throws(() => deliverExport({ doc, dropDir: dir, push: true, exec }), /root of its own Git work tree/);
     assert.equal(committed, false, 'nothing was committed into the surrounding repository');
+    assert.equal(fs.existsSync(path.join(dir, 'acme')), false, 'and NOTHING was published: the refusal comes before the write');
   });
 
   it('an alias directory that is a symlink/junction pointing out of the drop is refused, and nothing is written there', async () => {
@@ -415,6 +416,24 @@ describe('delivery hardening (audit round 1)', () => {
     try { fs.symlinkSync(outside, path.join(drop, 'acme'), 'junction'); } catch { return; }   // no symlink privilege: nothing to assert
     assert.throws(() => deliverExport({ doc, dropDir: drop }), /symlink/);
     assert.deepEqual(fs.readdirSync(outside), []);
+  });
+
+  it('a filesystem without hard links falls back to an exclusive copy: still immutable, still delivered', async () => {
+    const dir = tmp();
+    const doc = await build();
+    const noLinks = () => { throw Object.assign(new Error('x'), { code: 'EPERM' }); };
+    const r = deliverExport({ doc, dropDir: dir, link: noLinks });
+    assert.deepEqual(JSON.parse(fs.readFileSync(r.file, 'utf8')), doc);
+    assert.throws(() => deliverExport({ doc, dropDir: dir, link: noLinks }), /immutable/);
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'acme')).filter((n) => n.includes('tmp')), []);
+  });
+
+  it('a concurrent mkdir of the alias directory (EEXIST) is rechecked, not fatal', async () => {
+    const dir = tmp();
+    const doc = await build();
+    const racing = (p) => { fs.mkdirSync(p); throw Object.assign(new Error('x'), { code: 'EEXIST' }); };
+    const r = deliverExport({ doc, dropDir: dir, mkdir: racing });
+    assert.equal(fs.existsSync(r.file), true);
   });
 
   it('publication is no-replace: a pre-existing file is never overwritten', async () => {

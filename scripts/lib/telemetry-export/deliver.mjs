@@ -49,10 +49,10 @@ function isInside(parent, child) {
  * @param {object} p.doc
  * @param {string} p.dropDir
  * @param {boolean} [p.push=false]
- * @param {(cmd: string, args: string[], opts: object) => any} [p.exec]
+ * @param {(cmd: string, args: string[], opts: object) => any} [p.exec]  test seams: exec, link, mkdir
  * @returns {{file: string, pushed: boolean}}
  */
-export function deliverExport({ doc, dropDir, push = false, exec = execFileSync }) {
+export function deliverExport({ doc, dropDir, push = false, exec = execFileSync, link = fs.linkSync, mkdir = fs.mkdirSync }) {
   if (!dropDir || typeof dropDir !== 'string') throw new Error('deliver: no drop directory (set TELEMETRY_DROP_DIR or pass --drop-dir)');
   if (!fs.existsSync(dropDir) || !fs.statSync(dropDir).isDirectory()) throw new Error('deliver: the drop directory does not exist');
   const root = fs.realpathSync(dropDir);
@@ -60,6 +60,15 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync 
   const rel = exportFileName(doc);
   const [aliasDir, fileName] = rel.split('/');
   const aliasPath = path.join(root, aliasDir);
+  const git = (args) => exec('git', args, { cwd: root, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, windowsHide: true });
+
+  // Validate the Git destination BEFORE publishing anything: a refusal here must not leave a published file
+  // behind it, and "delivery failed" must never describe a file that was in fact written.
+  if (push) {
+    const top = String(git(['rev-parse', '--show-toplevel']) ?? '').trim();
+    // The drop directory must BE the work tree's root, not a folder inside some other repository.
+    if (!top || fs.realpathSync(top) !== root) throw new Error('deliver: --push needs the drop directory to be the root of its own Git work tree');
+  }
 
   // The alias directory is created by us or is a plain directory: never a symlink (which could point out of the drop).
   let st = null;
@@ -68,7 +77,15 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync 
     if (st.isSymbolicLink()) throw new Error('deliver: the alias directory is a symlink (refused)');
     if (!st.isDirectory()) throw new Error('deliver: the alias path exists and is not a directory');
   } else {
-    fs.mkdirSync(aliasPath);
+    try {
+      mkdir(aliasPath);
+    } catch (err) {
+      // A concurrent export created it first: recheck the entry with the same rules instead of failing.
+      if (err?.code !== 'EEXIST') throw err;
+      const again = fs.lstatSync(aliasPath);
+      if (again.isSymbolicLink()) throw new Error('deliver: the alias directory is a symlink (refused)');
+      if (!again.isDirectory()) throw new Error('deliver: the alias path exists and is not a directory');
+    }
   }
   const realAlias = fs.realpathSync(aliasPath);
   if (!isInside(root, realAlias)) throw new Error('deliver: the alias directory resolves outside the drop directory');
@@ -77,20 +94,27 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync 
   const tmp = path.join(realAlias, `.${fileName}.tmp-${process.pid}-${Date.now()}`);
   fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`, { flag: 'wx' });
   try {
-    fs.linkSync(tmp, target);   // fails EEXIST rather than replacing: exports are immutable
+    try {
+      link(tmp, target);   // fails EEXIST rather than replacing: exports are immutable
+    } catch (err) {
+      // Filesystems without hard links (FAT/exFAT, some network shares): fall back to an exclusive copy, which
+      // also refuses to replace. Not atomic to a concurrent reader — the reader rejects a truncated file and
+      // picks it up whole on its next scan — but still immutable and still never an overwrite.
+      if (['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV'].includes(err?.code)) {
+        fs.copyFileSync(tmp, target, fs.constants.COPYFILE_EXCL);
+      } else {
+        throw err;
+      }
+    }
   } catch (err) {
-    fs.rmSync(tmp, { force: true });
     if (err?.code === 'EEXIST') throw new Error('deliver: an export with this name already exists (exports are immutable)');
     throw err;
+  } finally {
+    fs.rmSync(tmp, { force: true });
   }
-  fs.rmSync(tmp, { force: true });
 
   let pushed = false;
   if (push) {
-    const git = (args) => exec('git', args, { cwd: root, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, windowsHide: true });
-    const top = String(git(['rev-parse', '--show-toplevel']) ?? '').trim();
-    // The drop directory must BE the work tree's root, not a folder inside some other repository.
-    if (!top || fs.realpathSync(top) !== root) throw new Error('deliver: --push needs the drop directory to be the root of its own Git work tree');
     git(['add', '--', rel]);
     git(['commit', '-q', '-m', `telemetry export ${doc.consumerAlias} ${doc.generatedAt.slice(0, 10)}`, '--', rel]);
     git(['push']);
