@@ -527,7 +527,8 @@ async function verbAdjudicate(campaignId, { limit, dryRun, redo = null, reason =
     });
     const receiptArgs = { campaignId: config.id, cohortDigest: adjudicationCohortDir(lock), snapshotId: 'adjudicate', armId: row.worksheet_row_id, attempt };
     const claim = claimReceipt({ ...receiptArgs, body: { kind: 'adjudication', adjudicatorModel } });
-    if (!claim.ok) {
+    if (claimConflictBucket(claim) === 'skipped') {
+      skipped += 1;
       process.stderr.write(`  [campaign] row ${row.worksheet_row_id}: attempt ${attempt} already claimed — another runner holds it; skipping\n`);
       continue;
     }
@@ -600,9 +601,28 @@ function adjudicationCohortDir(lock) {
 function parseRedo(value) {
   if (value == null) return null;
   if (String(value).startsWith('--')) throw new ArgvError('--redo <finding-uuid[,finding-uuid...]> is required when the flag is given');
-  const ids = String(value).split(',').map((s) => s.trim()).filter(Boolean);
+  const ids = [...new Set(String(value).split(',').map((s) => s.trim()).filter(Boolean))];
   if (ids.length === 0) throw new ArgvError('--redo was given no finding ids');
   return ids;
+}
+
+/**
+ * `--redo` from argv. A flag that is PRESENT but valueless (a trailing
+ * `--redo`) is a usage error: `arg()` reads it as null, which `parseRedo`
+ * treats as "flag absent", silently running the ordinary PAID adjudicate-all
+ * path the operator did not ask for.
+ */
+function parseRedoFromArgv(argv = process.argv) {
+  const value = arg('redo', argv);
+  if (value == null && argv.includes('--redo')) {
+    throw new ArgvError('--redo <finding-uuid[,finding-uuid...]> is required when the flag is given');
+  }
+  return parseRedo(value);
+}
+
+/** A lost receipt claim is a benign skip; it must land in the `skipped` bucket. */
+function claimConflictBucket(claim) {
+  return claim && claim.ok ? null : 'skipped';
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -652,7 +672,7 @@ async function resolveRedoRows({ redo, candidates, blindRows, reason }) {
     };
   }
   const byRowId = new Map(blindRows.rows.map((r) => [r.worksheet_row_id, r]));
-  return { ok: true, rows: redo.map((id) => byRowId.get(rowIdFor.get(id))).filter(Boolean) };
+  return { ok: true, rows: [...new Set(redo)].map((id) => byRowId.get(rowIdFor.get(id))).filter(Boolean) };
 }
 
 async function writeVerdict({ src, ws, adjudicatorModel, verdict, cost = null, attempt = 1, worksheetRowUuid = null, dryRun = false }) {
@@ -782,27 +802,31 @@ async function verbOverride({ findingId, outcome, note, actor }) {
  * is not moving one, and watermarking a campaign for having a rule at all would
  * make the signal meaningless.
  */
-async function recordRuleState({ config, campaignId, actor }) {
+async function recordRuleState({ config, campaignId, actor }, deps = {}) {
+  const listEvents = deps.listEvents ?? ((id) => store.listCampaignEvents(id));
+  const appendEvent = deps.appendEvent ?? ((e) => store.appendCampaignEvent(e));
   if (!campaignId) return { ok: true, recorded: false };
   const current = Object.fromEntries(ANALYSIS_TIME_FIELDS.map((f) => [f, config[f]]));
-  const log = await store.listCampaignEvents(campaignId);
+  const log = await listEvents(campaignId);
   if (log.cloud === false) return { ok: true, recorded: false };
 
   const prior = [...log.rows]
     .filter((e) => e.kind === 'rule_registered' || e.kind === 'rule_changed')
     .pop();
   if (!prior) {
-    await store.appendCampaignEvent({ campaignId, kind: 'rule_registered', actor: actor ?? null, detail: { rule: current } });
+    const w = await appendEvent({ campaignId, kind: 'rule_registered', actor: actor ?? null, detail: { rule: current } });
+    if (!w?.ok) return { ok: false, recorded: false, kind: 'rule_registered', error: w?.error ?? 'append failed' };
     return { ok: true, recorded: true, kind: 'rule_registered' };
   }
   const before = prior.detail?.rule ?? prior.detail?.after ?? null;
   // Canonical JSON so key order can never masquerade as a rule change.
   if (canonicalJson(before) === canonicalJson(current)) return { ok: true, recorded: false, kind: 'unchanged' };
 
-  await store.appendCampaignEvent({
+  const w = await appendEvent({
     campaignId, kind: 'rule_changed', actor: actor ?? null,
     detail: { before, after: current },
   });
+  if (!w?.ok) return { ok: false, recorded: false, kind: 'rule_changed', error: w?.error ?? 'append failed' };
   return { ok: true, recorded: true, kind: 'rule_changed', before, after: current };
 }
 
@@ -815,11 +839,15 @@ async function verbReconcile(campaignId, { actor = null, confirmMismatch = false
   // `{cloud:false}` and the caller renders it, same as every other verb here.
   if (promoted.cloud === false) cloudOffNotice('reconcile');
 
+  let ruleWriteFailed = false;
   if (promoted.cloud !== false) {
     const ev = await readCohortEvidence({ config, lock });
     if (ev.ok) {
       const ruled = await recordRuleState({ config, campaignId: ev.campaignId, actor });
-      if (ruled.kind === 'rule_changed') {
+      if (ruled.ok === false) {
+        process.stderr.write(`  rule state NOT recorded (${ruled.error}) — campaign_events write failed; re-run reconcile\n`);
+        ruleWriteFailed = true;
+      } else if (ruled.kind === 'rule_changed') {
         process.stdout.write('  RULE CHANGED — recorded in campaign_events. Standings collected before this edit are watermarked;\n'
           + '  the evidence survives, and the fact that the goalposts moved is now recorded beside the number.\n');
       } else if (ruled.kind === 'rule_registered') {
@@ -855,6 +883,7 @@ async function verbReconcile(campaignId, { actor = null, confirmMismatch = false
   for (const r of byState.unreadable) process.stdout.write(`  TORN     ${r.path}\n`);
   // Exit 4 when operator action is outstanding — a reconcile that always exits 0
   // is a reconcile nobody reads.
+  if (ruleWriteFailed) return 1;
   return (byState.intent.length + byState.unreadable.length) > 0 ? 4 : 0;
 }
 
@@ -963,7 +992,7 @@ async function main() {
     case 'adjudicate':  return verbAdjudicate(arg('campaign'), {
       limit: arg('limit') == null ? null : Number(arg('limit')),
       dryRun: process.argv.includes('--dry-run'),
-      redo: parseRedo(arg('redo')),
+      redo: parseRedoFromArgv(),
       reason: arg('reason'), actor: arg('actor'),
     });
     case 'override':    return verbOverride({
@@ -1009,7 +1038,7 @@ if (invokedDirectly) {
   });
 }
 
-export const _internals = Object.freeze({ callAdjudicator, adjudicationCohortDir, assertOutcome, writeVerdict, parseRedo, resolveRedoRows });
+export const _internals = Object.freeze({ callAdjudicator, adjudicationCohortDir, assertOutcome, writeVerdict, parseRedo, parseRedoFromArgv, claimConflictBucket, resolveRedoRows });
 
 /** Exported for the live-schema suite: the rule recorder is store-coupled, so
  *  its contract is only assertable against a real campaign_events table. */
