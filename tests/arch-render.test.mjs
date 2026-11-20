@@ -263,6 +263,27 @@ describe('renderNeighbourhoodCallout', () => {
     assert.doesNotMatch(markdown, /not indexed/i);
   });
 
+  // The extension says a type CAN be indexed; only the snapshot's coverage
+  // verdict says this refresh DID read it (a refresh with no Python interpreter
+  // reports every .py as unparseable).
+  it('empty records over a NON-verified snapshot must NOT say greenfield, whatever the type', () => {
+    const { markdown } = renderNeighbourhoodCallout({
+      records: [], cloudStatus: 'ok', targetPaths: ['api/users.py'],
+      coverage: { status: 'degraded', reason: 'below_floor', eligible: 40 },
+    });
+    assert.doesNotMatch(markdown, /greenfield/i);
+    assert.match(markdown, /absence of evidence/i);
+    assert.match(markdown, /degraded \(below_floor\)/);
+  });
+
+  it('empty records over a VERIFIED snapshot still says greenfield (negative control)', () => {
+    const { markdown } = renderNeighbourhoodCallout({
+      records: [], cloudStatus: 'ok', targetPaths: ['api/users.py'],
+      coverage: { status: 'verified', reason: null, eligible: 40 },
+    });
+    assert.match(markdown, /greenfield/i);
+  });
+
   it('empty records for an INDEXED path still says greenfield (no false alarm)', () => {
     const { markdown } = renderNeighbourhoodCallout({
       records: [], cloudStatus: 'ok', targetPaths: ['lib/x.mjs'],

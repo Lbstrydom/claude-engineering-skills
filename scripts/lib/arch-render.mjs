@@ -395,8 +395,16 @@ export function renderArchitectureMap({
   return { markdown, bytesWritten: Buffer.byteLength(markdown, 'utf-8') };
 }
 
-/** Render the /plan-* "Neighbourhood considered" callout. */
-export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidatesConsidered, cloudStatus, hint }) {
+/**
+ * Render the /plan-* "Neighbourhood considered" callout.
+ *
+ * `coverage` is the searched snapshot's verdict from the get-neighbourhood
+ * envelope (`{status, reason, eligible}`). It — not the extension allowlist — is
+ * what says whether THIS refresh actually read the repo: a `.py` file is an
+ * indexable type, but a refresh run with no Python interpreter read none of
+ * them, and only the verdict knows that.
+ */
+export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidatesConsidered, cloudStatus, hint, coverage }) {
   if (cloudStatus === 'cloud-off') {
     const md = [
       '> **Neighbourhood considered** — _skipped_',
@@ -437,6 +445,22 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
         '> **This is absence of evidence, not evidence of absence** — it does NOT',
         '> mean no similar code exists. Check for near-duplicates by hand before',
         '> adding a new symbol here.',
+      ].join('\n');
+      return { markdown: md, appendixMarkdown: '', truncatedAt: 0 };
+    }
+    // An indexable type, but the snapshot's own verdict says the index did not
+    // (fully) read the repo — e.g. a refresh with no Python interpreter reports
+    // every .py as unparseable. Empty is then absence of evidence too.
+    if (coverage && coverage.status !== 'verified') {
+      const why = `${coverage.status}${coverage.reason ? ` (${coverage.reason})` : ''}`;
+      const md = [
+        `> **Neighbourhood considered** — _index coverage ${escapeMarkdown(why)}_`,
+        '>',
+        `> No rows matched, but the active snapshot's coverage verdict is \`${escapeMarkdown(why)}\`,`,
+        '> so the index may never have read these files (for Python: no usable',
+        '> interpreter at refresh time reports every `.py` as unparseable).',
+        '> **This is absence of evidence, not evidence of absence** — check for',
+        '> near-duplicates by hand before adding a new symbol here.',
       ].join('\n');
       return { markdown: md, appendixMarkdown: '', truncatedAt: 0 };
     }
