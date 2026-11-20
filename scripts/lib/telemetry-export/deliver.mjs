@@ -265,6 +265,9 @@ export function pushPending({ dropDir, alias, exec = execFileSync }) {
   const entries = status.split('\0').filter(Boolean);
   const ignoredExport = entries.find((e) => e.startsWith('!! ') && pathRe.test(e.slice(3)));
   if (ignoredExport) throw new Error('deliver: an export in the drop is git-ignored and can never be delivered (retry stopped)');
+  // A rename or copy record is followed by a second NUL-separated path that would be read as an entry of its own;
+  // exports are never renamed, so such a record means something else is going on here: stop.
+  if (entries.some((e) => /^[RC]/.test(e))) throw new Error('deliver: a rename or copy is staged in the alias directory — not an export (retry stopped)');
   const dirtyPaths = entries.filter((e) => !e.startsWith('!! ')).map((e) => e.slice(3));
   for (const p of dirtyPaths) {
     const name = p.split('/').pop();
