@@ -8,7 +8,8 @@
  * @module scripts/lib/model-eval/expect-clean-report
  */
 import { runAuditGenerationArm } from './arm-generation.mjs';
-import { scoreExpectCleanCase, summarizeExpectClean } from './corpus-selection.mjs';
+import { scoreExpectCleanCase, summarizeExpectClean, driverIndexes } from './corpus-selection.mjs';
+import { redactSecrets } from '../secret-patterns.mjs';
 
 const SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH']);
 const norm = (f) => String(f).replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
@@ -25,6 +26,30 @@ export function toScorable(findings, files) {
     const hit = named.find((n) => want.has(norm(n)));
     const file = hit ?? (named.length === 0 ? files[0] : named[0]);
     return { file, severity: f?.severity, pass: f?._pass };
+  });
+}
+
+/** The text fields of a finding that a human needs to judge its claim; each is secret-redacted before it can reach `--out`. */
+const TEXT_FIELDS = ['id', 'category', 'section', 'detail', 'risk', 'recommendation', 'principle', 'evidence', 'evidenceRef', 'quote'];
+// Recursive: a structured `evidence` ({quote: ...}) or an array must not carry a secret past a string-only redactor.
+const redactDeep = (v) => {
+  if (typeof v === 'string') return redactSecrets(v).text;
+  if (Array.isArray(v)) return v.map(redactDeep);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redactDeep(x)]));
+  return v;
+};
+
+/**
+ * The findings that drove a false positive, kept in full so the outcome can be adjudicated: a bare `false_positive` with a pass name
+ * cannot say whether the claim was real, wrong or a nit. Same attribution and the same MEDIUM+ filter as the scorer, so what is
+ * kept is exactly what made the case a false positive. Free text goes through the audit's own secret redaction.
+ */
+export function retainDrivers(findings, files) {
+  return driverIndexes(toScorable(findings, files), files).map((i) => {
+    const f = findings[i];
+    const out = { severity: f.severity, pass: f._pass ?? 'unknown', files: redactDeep(Array.isArray(f.affectedFiles) ? f.affectedFiles : []), primaryFile: redactDeep(f._primaryFile ?? null) };
+    for (const k of TEXT_FIELDS) if (f[k] !== undefined) out[k] = redactDeep(f[k]);
+    return out;
   });
 }
 
@@ -84,7 +109,9 @@ export async function runExpectCleanReport({ runId, arm, route, cases, scope, pa
 `);
       }
     }
-    perCase.push({ kdId, ...scored });
+    // The findings that made the case a false positive ride with it: the report must be adjudicable without a re-run.
+    const drivers = scored.outcome === 'false_positive' && Array.isArray(gen?.findings) ? retainDrivers(gen.findings, files) : undefined;
+    perCase.push({ kdId, ...scored, ...(drivers ? { findings: drivers } : {}) });
   }
   return { perCase, summary: summarizeExpectClean(perCase), usageEvents, budgetStop, unaccounted };
 }
