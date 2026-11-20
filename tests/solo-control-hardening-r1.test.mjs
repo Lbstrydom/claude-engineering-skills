@@ -186,3 +186,13 @@ describe('round 3 follow-ups', () => {
     assert.deepEqual(parseCsv('"a ""b"" c",plain\n'), [['a "b" c', 'plain']]);
   });
 });
+
+describe('round 4 follow-ups', () => {
+  for (const bad of ['0', '2.5', 'abc', '-1']) {
+    test(`run --repeats ${bad} is refused (it used to run as a different experiment)`, () => inTemp((dir) => {
+      const r = cli(dir, ['run', '--commits', HEAD, '--repeats', bad]);
+      assert.equal(r.status, 2, r.out);
+      assert.match(r.out, /--repeats must be a positive integer/);
+    }));
+  }
+});

@@ -688,7 +688,7 @@ async function cmdRun() {
   // are identical and collapse to x1; only the sdk backend could set it (cli claude -p
   // can't), so --repeats>1 forces sdk. No recipient takes one any more (see
   // effectiveTemperature); --temperature is parsed only to report it as ignored.
-  const repeats = Math.max(1, Number.parseInt(argOption('repeats', '1'), 10) || 1);
+  const repeats = optOrDie(positiveInt, 'repeats', '1'); // 0 / 2.5 / junk used to run silently as a DIFFERENT experiment
   const temperature = repeats > 1 ? Number.parseFloat(argOption('temperature', '1.0')) : null;
   // Diff-size sanity cap: a mega-commit (repo-import / 2000-file initial release)
   // would grind for hours across dozens of chunks. Skip + RECORD (state
@@ -1189,7 +1189,7 @@ async function cmdApparatus() {
   out.armLabel = label;
   out.provenance = {
     composition: gateOnly ? 'gate-only(reuses saved pre-gate artifact)' : `gpt-5pass→${gateRecipient}-review`,
-    gptModel, gptModelArg, gateModel, gateModelArg, gateRecipient, gateReasoningEffort, maxChars, budgetUsd, retro: true,
+    gptModel, gptModelArg, gateModel, gateModelArg, gateRecipient, gateReasoningEffort, maxChars: gateOnly ? (prior?.provenance?.maxChars ?? null) : maxChars, budgetUsd, retro: true, // a --gate-only run did not chunk anything: it must not overwrite the chunk size the generation ran with
     note: 'NOT persisted to audit_findings — experiment-local (keeps Phase-1 ledger clean)',
   };
 
