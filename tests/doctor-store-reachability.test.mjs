@@ -21,7 +21,7 @@ import { runProbe } from '../scripts/lib/doctor/registry.mjs';
 import { classifyDbConnectionError } from '../scripts/lib/db/client.mjs';
 
 const roots = [];
-afterEach(() => { for (const r of roots.splice(0)) fs.rmSync(r, { recursive: true, force: true }); });
+afterEach(() => { for (const r of roots.splice(0)) fs.rmSync(r, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 function repoWithPointer(body) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'store-setup-'));
