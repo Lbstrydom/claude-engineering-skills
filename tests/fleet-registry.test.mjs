@@ -4,7 +4,7 @@
  * a stale rev, a concurrent claim race between two real processes, liveness
  * against real commit times, train-id confinement and write-once manifests.
  */
-import { describe, it, after } from 'node:test';
+import { describe, it, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -15,7 +15,7 @@ import { pathToFileURL } from 'node:url';
 import { git } from './helpers/git.mjs';
 import {
   storageKey, fleetDir, readSessions, writeSession, transact, quarantine, readHold, writeHold,
-  newTrainId, assertTrainId, assertManaged, trainPath, readTrain, writeTrain, listTrains,
+  newTrainId, mintTrainId, assertTrainId, assertManaged, trainPath, readTrain, writeTrain, listTrains,
   SessionSchema, RegistryError, TRAIN_ID_RE,
 } from '../scripts/lib/fleet/registry.mjs';
 import { decideClaim, liveness, buildStatus } from '../scripts/lib/fleet/overlap.mjs';
@@ -260,6 +260,25 @@ describe('train ids and manifests', () => {
     assert.match(id, /^t-20261005123456-[0-9a-f]{4}$/);
     assert.equal(assertTrainId(id), id);
     assert.ok(TRAIN_ID_RE.test(newTrainId()));
+  });
+  it('mintTrainId skips an id that already holds a manifest, and refuses (never overwrites) when none is free', () => {
+    const dir = freshDir();
+    const now = new Date('2026-10-05T12:34:56.000Z');
+    const taken = newTrainId(now);
+    writeTrain(dir, manifest(taken));
+    const real = crypto.randomBytes;
+    const seq = [Buffer.from(taken.slice(-4), 'hex'), Buffer.from('beef', 'hex')];
+    const m = mock.method(crypto, 'randomBytes', (...a) => (new Error().stack.includes('newTrainId') ? seq.shift() : real(...a)));
+    try {
+      assert.equal(mintTrainId(dir, now), 't-20261005123456-beef');
+      // negative control: with a FREE first draw the first draw is used, no redraw.
+      seq.push(Buffer.from('0102', 'hex'));
+      assert.equal(mintTrainId(dir, now), 't-20261005123456-0102');
+    } finally { m.mock.restore(); }
+    const stuck = mock.method(crypto, 'randomBytes', (...a) => (new Error().stack.includes('newTrainId') ? Buffer.from(taken.slice(-4), 'hex') : real(...a)));
+    try {
+      assert.throws(() => mintTrainId(dir, now, { attempts: 3 }), (e) => e.code === 'TRAIN_ID_EXHAUSTED');
+    } finally { stuck.mock.restore(); }
   });
   it('a train id like ../x is rejected before any path is built', () => {
     const dir = freshDir();

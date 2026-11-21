@@ -4,10 +4,11 @@
  * the push and PR open, the final manifest, the squash pinned to the candidate, evidence honesty (no AI-* trailer, each member's
  * own tree), a red rollup, the base race, supersession, the post-landing cleanup and its refusals.
  */
-import { describe, it, after } from 'node:test';
+import { describe, it, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { ev, requiredEvidence } from './helpers/fleet-ci-evidence-fx.mjs';
 import { git } from './helpers/git.mjs';
@@ -133,6 +134,34 @@ const build = (f, w, flags = {}) => buildRollup(f.ctx, flags, mkDeps(f, w), { pa
 const approve = (f, w, extra = {}) => approveRollup({ cwd: f.fx.repo, dir: f.dir, trainId: extra.trainId, deps: mkDeps(f, w, extra.deps), serialOpts: { sleep: () => {}, timings: fast, timeoutMs: 60_000, ...(extra.serialOpts ?? {}) } });
 const resume = (f, w, trainId, extra = {}) => resumeRollup({ cwd: f.fx.repo, dir: f.dir, trainId, deps: mkDeps(f, w, extra.deps), serialOpts: { sleep: () => {}, timings: fast, ...(extra.serialOpts ?? {}) } });
 const runOf = (f, trainId) => { const r = readSerial(f.dir, trainId); if (!r.ok) throw new Error(`serial: ${r.reason}`); return r.run; };
+
+describe('train id collision (CI flake, run 44940239208)', () => {
+  // The id is `t-<second>-<16 random bits>`. Two builds inside ONE second draw the same
+  // suffix with probability 1/65536 — rare, but it happens in CI and in production, and
+  // the second build then died on writeTrain's "refusing to overwrite populated manifest
+  // field createdAt" even though nothing was wrong with the train. The suffix is drawn from
+  // crypto.randomBytes, so the collision is forced here by sequencing exactly that source.
+  it('a second build in the same second whose random suffix collides gets a FRESH id instead of failing', () => {
+    const f = fixture(1);
+    const w = world(f); w.checks = 'pass';
+    let tick = 0;
+    const sameSecondClock = () => new Date(Date.UTC(2026, 10, 21, 19, 29, 43, tick++));
+    const suffixes = [Buffer.from([0x19, 0x01]), Buffer.from([0x19, 0x01]), Buffer.from([0xab, 0xcd])];
+    // Other fleet code draws randomBytes too (lease tokens, worker names): only the TRAIN-ID draw is sequenced.
+    const real = crypto.randomBytes;
+    const draw = mock.method(crypto, 'randomBytes', (...a) => (new Error().stack.includes('newTrainId') ? (suffixes.shift() ?? Buffer.from([0x00, 0x01])) : real(...a)));
+    try {
+      const b1 = buildRollup(f.ctx, {}, mkDeps(f, w, { now: sameSecondClock }), { parseSelect });
+      const b2 = buildRollup(f.ctx, {}, mkDeps(f, w, { now: sameSecondClock }), { parseSelect });
+      assert.equal(b1.trainId, 't-20261121192943-1901');
+      assert.equal(b2.ok === false ? b2.reason : b2.trainId, 't-20261121192943-abcd', 'the colliding draw was discarded, the next one used');
+      assert.notEqual(b1.trainId, b2.trainId);
+      assert.ok(draw.mock.callCount() >= 3, 'the collision was retried against the registry, not tolerated');
+    } finally {
+      draw.mock.restore();
+    }
+  });
+});
 
 describe('build: holds, never failures', () => {
   it('a member the child refuses (waived) and a member whose branch was never pushed are HELD with reasons; the rollup is built from the rest; the record is write-once', () => {

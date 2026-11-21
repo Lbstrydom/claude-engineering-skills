@@ -210,6 +210,25 @@ export function newTrainId(now = new Date()) {
   return `t-${stamp}-${crypto.randomBytes(2).toString('hex')}`;
 }
 
+/**
+ * A train id that is FREE in `dir`. `newTrainId` is `t-<second>-<16 random bits>`, so two builds in the
+ * same second draw the same id with probability 1/65536. The loser used to reach `writeTrain` with an
+ * id that already held a manifest and die on "refusing to overwrite populated manifest field" — a CI
+ * flake (run 44940239208) and a real production hazard, since nothing was wrong with the train.
+ * Minting checks the registry and redraws; callers hold `trains/.lock`, so check-then-write cannot race.
+ *
+ * @param {string} dir the fleet dir the train will be written under (trains or probes)
+ * @param {Date} [now]
+ * @param {{attempts?: number}} [opts]
+ */
+export function mintTrainId(dir, now = new Date(), { attempts = 16 } = {}) {
+  for (let i = 0; i < attempts; i++) {
+    const id = newTrainId(now);
+    if (!fs.existsSync(trainPath(dir, id))) return id;
+  }
+  throw new RegistryError('TRAIN_ID_EXHAUSTED', `no free train id for ${new Date(now).toISOString()} after ${attempts} draws`);
+}
+
 /** Validate before ANY path is built from it. */
 export function assertTrainId(id) {
   if (typeof id !== 'string' || !TRAIN_ID_RE.test(id)) {
