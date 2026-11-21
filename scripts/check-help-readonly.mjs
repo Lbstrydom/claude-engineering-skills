@@ -53,11 +53,19 @@ export function listEntryPoints(root = ROOT, smokeSet = []) {
     .filter((n) => n.endsWith('.mjs') && !(n in NOT_A_CLI))
     .sort()
     .map((n) => path.join(dir, n));
-  // Plus the relocation guard's CLI_SMOKE_SET members that live in a subdirectory
-  // (symbol-index/drift.mjs, ...): they ship to consumers as CLIs too.
-  const nested = [...smokeSet].filter((rel) => rel.includes('/')).sort()
+  // Plus EVERY nested `scripts/<subsystem>/*.mjs` (symbol-index/, learning/, ...),
+  // derived from the filesystem so a NEW nested CLI is covered the day it lands
+  // rather than only if someone remembers to enrol it, and the relocation guard's
+  // CLI_SMOKE_SET members under scripts/lib (which ship to consumers as CLIs).
+  // Library modules among them are probed too (harmless: nothing runs) but only a
+  // file that looks like a CLI owes the static contract — see `looksLikeCli`.
+  const nested = fs.readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && e.name !== 'lib' && e.name !== 'node_modules')
+    .flatMap((e) => fs.readdirSync(path.join(dir, e.name)).filter((n) => n.endsWith('.mjs')).sort()
+      .map((n) => path.join(dir, e.name, n)));
+  const libSmoke = [...smokeSet].filter((rel) => rel.startsWith('lib/'))
     .map((rel) => path.join(dir, rel)).filter((p) => fs.existsSync(p));
-  return [...top, ...nested];
+  return [...top, ...nested, ...libSmoke];
 }
 
 /** Path of an entry point relative to `scripts/`, with `/` separators — its stable identity. */
@@ -74,6 +82,10 @@ export const labelOf = (abs, root = ROOT) => path.relative(path.join(root, 'scri
  * @param {string} text CLI source
  * @returns {boolean}
  */
+export function looksLikeCli(text) {
+  return /^#!\/usr\/bin\/env node|isInvokedAsScript\(|process\.argv/m.test(text);
+}
+
 export function hasHelpContract(text) {
   return /--help|help-guard-run|['"]-h['"]|assertKnownFlags|parseArgs\s*\(|ArgvError|unknown (?:flag|option)/i.test(text);
 }
@@ -81,7 +93,7 @@ export function hasHelpContract(text) {
 /** Add the static `no-help-contract` finding to a probe result. */
 export function withStaticFinding(result, root = ROOT) {
   const text = fs.readFileSync(path.join(root, 'scripts', result.file), 'utf-8');
-  if (hasHelpContract(text)) return result;
+  if (!looksLikeCli(text) || hasHelpContract(text)) return result;
   return {
     ...result,
     kinds: [...result.kinds, 'no-help-contract'].sort(),
@@ -91,10 +103,10 @@ export function withStaticFinding(result, root = ROOT) {
 
 /** @param {{file:string, kinds:string[]}[]} results */
 export function offenderIds(results) {
-  // `hang` is load-dependent (a loaded machine can push a slow CLI past the
-  // timeout), so it is REPORTED but never part of the gated identity set — a
-  // gate whose verdict flips on machine load is the flaky-gate shape.
-  return results.flatMap((r) => r.kinds.filter((k) => k !== 'hang').map((k) => `${r.file}::${k}`)).sort();
+  // `hang` IS gated: a CLI that has not exited has not been shown read-only, and
+  // a green result over it would read incomplete coverage as success. The timeout
+  // is generous (HELP_TIMEOUT_MS) so a loaded machine does not flip the verdict.
+  return results.flatMap((r) => r.kinds.map((k) => `${r.file}::${k}`)).sort();
 }
 
 async function main() {

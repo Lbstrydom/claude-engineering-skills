@@ -238,11 +238,29 @@ describe('checkMarkerRemedies — the gate on the gate', () => {
       'node ./scripts/.claude-skills/skills-hydrate.mjs --json',
       'cd . && node scripts/.claude-skills/skills-hydrate.mjs',
       'node scripts\\.claude-skills\\skills-hydrate.mjs',
+      'node --no-warnings "scripts/.claude-skills/skills-hydrate.mjs"',
+      "node -e \"require('./scripts/.claude-skills/skills-hydrate.mjs')\"",
     ]) {
       const r = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': body } }) });
       assert.equal(r.ok, false, body);
       assert.deepEqual(r.circular, ['skills:hydrate'], body);
       assert.deepEqual(r.missing, [], body);
+    }
+  });
+
+  it('END TO END: a real package.json on disk with the circular spelling fails the file-backed read', () => {
+    // No injected reader: the exact path `check-worktree-preflight` and the doctor
+    // probe take against a consumer checkout.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hydrate-circ-'));
+    try {
+      fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { 'skills:hydrate': 'node scripts/.claude-skills/skills-hydrate.mjs' } }));
+      const bad = checkMarkerRemedies(root);
+      assert.equal(bad.ok, false);
+      assert.deepEqual(bad.circular, ['skills:hydrate']);
+      fs.writeFileSync(path.join(root, 'package.json'), `{${CONSUMER_HYDRATE_NPM_SCRIPT.replace(/^/, '"scripts": {')}}}`);
+      assert.equal(checkMarkerRemedies(root).ok, true, 'the canonical one-liner on disk must pass');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 

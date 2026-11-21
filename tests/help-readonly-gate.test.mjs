@@ -94,11 +94,17 @@ describe('arch-intent-bootstrap --help (field report 2026-11-21: --help ran the 
 });
 
 describe('census', () => {
-  it('a hang is reported but never gated identity (load-dependent)', () => {
+  it('a hang IS an offender: a CLI that never exited was not shown read-only', () => {
     assert.deepEqual(offenderIds([
       { file: 'a.mjs', kinds: ['no-help-contract'] },
       { file: 'b.mjs', kinds: ['hang', 'fs-write'] },
-    ]), ['a.mjs::no-help-contract', 'b.mjs::fs-write']);
+    ]), ['a.mjs::no-help-contract', 'b.mjs::fs-write', 'b.mjs::hang']);
+  });
+  it('every nested non-lib CLI is covered, derived from the filesystem', () => {
+    const files = listEntryPoints(ROOT, []).map((p) => path.relative(path.join(ROOT, 'scripts'), p).split(path.sep).join('/'));
+    assert.ok(files.includes('symbol-index/embed.mjs'));
+    assert.ok(files.includes('postgres-parity/generate-expected-schema.mjs'));
+    assert.ok(!files.some((f) => f.startsWith('lib/')), 'lib/ is only reached through CLI_SMOKE_SET');
   });
   it('the entry-point list is derived from the filesystem, plus nested smoke-set CLIs', () => {
     const files = listEntryPoints(ROOT, ['symbol-index/drift.mjs', 'check-setup.mjs']).map((p) => path.relative(path.join(ROOT, 'scripts'), p).split(path.sep).join('/'));

@@ -31,9 +31,10 @@ unasked.
 ### 2.1 #3 — a present remedy must also be runnable
 
 `checkMarkerRemedies` additionally rejects a remedy whose body EXECUTES a file
-under `scripts/.claude-skills/` (`node scripts/.claude-skills/…`). A directory
-named inside `node -e "…"` (the canonical one-liner) is not an execution of a
-file there and must not match. Result gains `circular: string[]`; `ok` requires it
+under `scripts/.claude-skills/` (`node [--opts] scripts/.claude-skills/…`, with or without quotes, `./`, `&&`
+chains or backslashes) or LOADS one from `node -e` (`require('…/.claude-skills/…')`,
+`import(…)`). A directory merely NAMED inside `node -e "…"` (the canonical
+one-liner's `const dir='scripts/.claude-skills'`) is neither, and must not match. Result gains `circular: string[]`; `ok` requires it
 empty. Surfaced by `check-worktree-preflight` (`wtpf/remedy-circular`) and the
 doctor probe `hydration/remedy-missing` (the one a consumer actually runs, since
 the gate reads THIS repo's `package.json`).
@@ -46,8 +47,9 @@ does not own a consumer's `package.json`, and the doctor already reads it.
 
 Two halves, because each alone missed the original bug:
 
-1. **Dynamic** (`lib/help-probe/`). Each `scripts/*.mjs` plus nested
-   `CLI_SMOKE_SET` members runs with `--help` under an `--import` preload that
+1. **Dynamic** (`lib/help-probe/`). Every top-level `scripts/*.mjs`, EVERY
+   nested `scripts/<subsystem>/*.mjs` (derived from the filesystem, so a new nested
+   CLI is covered the day it lands) and the `lib/` members of `CLI_SMOKE_SET` run with `--help` under an `--import` preload that
    RECORDS and BLOCKS filesystem writes, network (`net`, `dns`, `http(s)`,
    `fetch`) and any spawn other than `node` and read-only `git`. Blocking makes the
    census itself harmless. `NODE_OPTIONS` carries the preload into child `node`.
@@ -66,10 +68,23 @@ and others hit the network while their imports load — and an async stdout writ
 lets later imports keep evaluating until its callback fires. 44 CLIs got the
 import; `arch-intent-bootstrap` got an explicit `--help` plus `assertKnownFlags`.
 
+**Stated limits (round-1 audit, H1/H4/H5/M1).** The probe is an instrument for a
+census, not a security sandbox: it blocks the common entry points (`fs` write
+family incl. promises, `open` with a writing flag, `net`/`dns`/`http(s)`/`fetch`,
+non-read-only spawns) and poisons the env, but a CLI that deliberately strips
+`NODE_OPTIONS` or uses an unpatched native route is outside it. The static
+contract is a necessary backstop, not proof (an `assertKnownFlags` call could sit
+after a side effect); the dynamic half is what tests reachability, and the guard
+is the first import so nothing precedes it. `--help` short-circuits ahead of the
+other flags by convention (`--bogus --help` prints usage and runs nothing), so
+unknown-flag refusal applies to invocations that would actually run. The usage
+text is the header `Usage:` block, else the first `@fileoverview` paragraph, else
+a `see the header of scripts/<file>` line — never empty, never an error.
+
 **Gate shape.** Absolute, NOT baselined: the census found 54 findings including
 `prepush-check --help` creating a git worktree and paid-provider calls from
 `openai-audit`/`anthropic-ping`/`gemini-review`; a baseline holding those would
-hold the bug. A `hang` is reported but never gated (load-dependent). `shared.mjs`
+hold the bug. A `hang` IS gated (60 s timeout): a CLI that has not exited has not been shown read-only, and a green over it would read incomplete coverage as success. `shared.mjs`
 (a barrel with no main) is exempt by a written reason.
 
 ## 3. Acceptance criteria
@@ -81,8 +96,9 @@ hold the bug. A `hang` is reported but never gated (load-dependent). `shared.mjs
   attempts no write/network/spawn; `--bogus` exits 2.
 - A3. The probe flags a fixture that writes, a fixture using named fs imports, and
   a fixture that fetches/pushes, blocks the write, and passes a clean fixture.
-- A4. `npm run help:readonly:gate` reports 0 offenders across all CLIs, and fails
+- A4. `npm run help:readonly:gate` reports 0 offenders (including hangs) across every top-level, nested and `lib/` smoke-set CLI, and fails
   when a CLI without a contract is added.
+- A6. A real `package.json` on disk (no injected reader) with the circular spelling fails `checkMarkerRemedies`; with the canonical one-liner it passes.
 - A5. Registration invariants hold: CLI catalog entry, archive-lane
   classification, knip ignore for the preload (loaded by path, never imported).
 

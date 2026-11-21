@@ -10,7 +10,7 @@
  * @module scripts/symbol-index/embed
  */
 
-import readline from 'node:readline';
+import '../lib/help-guard-run.mjs'; import readline from 'node:readline';
 import { symbolIndexConfig, azureConfig } from '../lib/config.mjs';
 import { chunkBatches, compose } from '../lib/symbol-index.mjs';
 import { emit } from '../lib/cli-io.mjs';

@@ -18,7 +18,7 @@ import { pathToFileURL } from 'node:url';
 const PRELOAD = path.join(import.meta.dirname, 'preload.mjs');
 
 /** Seconds a `--help` may take before it counts as having started real work. */
-export const HELP_TIMEOUT_MS = 20000;
+export const HELP_TIMEOUT_MS = 60000;
 
 /**
  * @param {string} scriptAbs absolute path of the CLI

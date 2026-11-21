@@ -169,8 +169,11 @@ const CIRCULAR_REMEDY = /(?:^|[\s&|;(])(?:node|npx|tsx)\s+(?:--?[\w-]+\s+)*["']?
  * @param {unknown} body
  * @returns {boolean}
  */
+/** `node -e` code that LOADS a file from the tree (`require('./scripts/.claude-skills/x')`, `import(...)`). */
+const CIRCULAR_LOAD = /(?:require|import)\s*\(\s*["'`][^"'`]*\.claude-skills[\\/]/;
+
 export function isCircularRemedy(body) {
-  return typeof body === 'string' && CIRCULAR_REMEDY.test(body);
+  return typeof body === 'string' && (CIRCULAR_REMEDY.test(body) || CIRCULAR_LOAD.test(body));
 }
 
 /**
