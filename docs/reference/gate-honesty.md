@@ -300,7 +300,10 @@ weaken a contract, or edit the gate code. `scripts/gate-provenance.mjs` judges i
 - **Verdict run, and an opt-in shadow**: a detached worktree of the PR head with the protected set checked out from the
   base (a protected path the base lacked is removed from disk and index). `node_modules` is the dependency install of THE
   BASE (`npm ci --ignore-scripts` in a separate base worktree, or `--base-install-dir`). Each registered ratchet gate runs there:
-  **base code over PR data**. The CI step executes NO PR-controlled code at all. The *shadow* run (the same gates from a clean
+  **base code over PR data**. The CI step executes no PR-controlled code *that the protected set can see*: every gate entry
+  point, its import closure and every helper it spawns by a literal path (or declares in `spawns`) come from the base. A helper
+  a gate reaches through a path computed at run time and NOT declared in `spawns` is the one way PR code could still run there;
+  that is a declared limit, not a guarantee. The *shadow* run (the same gates from a clean
   worktree of the head, which does execute PR code) is therefore opt-in (`--shadow`), off by default, and never passed by
   `full-suite.yml`; the report then says `shadow: not run (PR code is never executed by the provenance step; the test job runs it)`.
   With `--shadow`, all verdict runs still finish before any shadow run starts, and a divergence is printed.

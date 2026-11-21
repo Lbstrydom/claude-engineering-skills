@@ -245,7 +245,28 @@ export function classifyGateDiff({ baseRegistry, headRegistry, baseFiles, headFi
   const files = [];
   let verdict = 'unchanged';
   const universe = new Set([...baseFiles, ...headFiles, REGISTRY_PATH]);
+  // The registry's EFFECTIVE meaning for each path: which entry governs it (first match). One general rule instead of per-case
+  // precedence checks: a path whose governing entry changes kind or fields between the two registries is unknown; a path
+  // that loses its governing entry is loosening; a newly governed path is tightening (audit R6 H1/H3).
+  const governed = new Map();
+  if (baseRegistry && headRegistry) {
+    const strip = (e) => (e ? { ...e, path: undefined, note: undefined } : null);
+    for (const p of universe) {
+      if (p === REGISTRY_PATH) continue;
+      const be = matchEntry(baseRegistry, p);
+      const he = matchEntry(headRegistry, p);
+      if (!be && !he) continue;
+      if (be && !he) governed.set(p, { verdict: 'loosening', reason: `no longer governed by the registry (was ${be.kind} via ${be.path})` });
+      else if (!be && he) governed.set(p, { verdict: 'tightening', reason: `newly governed (${he.kind} via ${he.path})` });
+      else if (!same(strip(be), strip(he))) governed.set(p, { verdict: 'unknown', reason: `governing entry changed: ${be.kind} via ${be.path} -> ${he.kind} via ${he.path}` });
+    }
+  }
   for (const path of [...universe].sort()) {
+    const gov = governed.get(path);
+    if (gov) {
+      files.push({ path, kind: 'governance', verdict: gov.verdict, reasons: [gov.reason] });
+      verdict = worstOf(verdict, gov.verdict);
+    }
     // An UNREGISTERED module the gates import or spawn is still code the verdict rests on: opaque, so unknown, so loosening.
     const entry = matchEntry(baseRegistry, path) ?? matchEntry(headRegistry, path) ?? (protectedPaths.has(path) ? { path, kind: "opaque" } : null);
     if (!entry && path !== REGISTRY_PATH) continue;

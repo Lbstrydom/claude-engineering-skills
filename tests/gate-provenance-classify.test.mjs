@@ -204,6 +204,34 @@ test('registry diff compares the WHOLE entry minus note: knownFields/allowanceKe
   assert.equal(run(entry, mk(base), mk({ ...base, kind: 'opaque' })).verdict, 'loosening');
 });
 
+test('an ADDED glob that takes over existing paths changes their governing entry: unknown (audit R6 H1/H3)', () => {
+  const parse = (x) => parseRegistry(x).registry;
+  const baseR = j({ version: 1, files: [{ path: 'g/*.json', kind: 'opaque' }], gates: [] });
+  const headR = j({ version: 1, files: [{ path: 'g/**', kind: 'numeric-cap' }, { path: 'g/*.json', kind: 'opaque' }], gates: [] });
+  const out = classifyGateDiff({
+    baseRegistry: parse(baseR), headRegistry: parse(headR), baseFiles: ['g/a.json'], headFiles: ['g/a.json'],
+    readBase: (p) => (p === REGISTRY_PATH ? baseR : '{}'), readHead: (p) => (p === REGISTRY_PATH ? headR : '{}'),
+  });
+  assert.equal(out.verdict, 'unknown');
+  assert.ok(out.files.some((f) => f.path === 'g/a.json' && f.kind === 'governance' && /opaque via g\/\*\.json -> numeric-cap via g\/\*\*/.test(f.reasons[0])));
+  // negative control: an added glob that governs NO existing path changes nothing for existing paths
+  const headR2 = j({ version: 1, files: [{ path: 'g/*.json', kind: 'opaque' }, { path: 'other/**', kind: 'numeric-cap' }], gates: [] });
+  const out2 = classifyGateDiff({
+    baseRegistry: parse(baseR), headRegistry: parse(headR2), baseFiles: ['g/a.json'], headFiles: ['g/a.json'],
+    readBase: (p) => (p === REGISTRY_PATH ? baseR : '{}'), readHead: (p) => (p === REGISTRY_PATH ? headR2 : '{}'),
+  });
+  assert.equal(out2.files.some((f) => f.kind === 'governance'), false);
+});
+
+test('changedBetween diffs head against the MERGE BASE, not the advanced base sha (audit R6 M1)', async () => {
+  const { changedBetween } = await import('../scripts/lib/gate-provenance/analyze.mjs');
+  const calls = [];
+  const run = (cmd, args) => { calls.push(args.join(' ')); return args[0] === 'merge-base' ? 'f'.repeat(40) + '\n' : 'a.json\0'; };
+  assert.deepEqual(changedBetween('/r', 'b'.repeat(40), 'c'.repeat(40), run), ['a.json']);
+  assert.equal(calls[0], `merge-base ${'b'.repeat(40)} ${'c'.repeat(40)}`);
+  assert.match(calls[1], new RegExp(`^diff --name-only --no-renames -z ${'f'.repeat(40)} ${'c'.repeat(40)}$`));
+});
+
 test('reordering shared registry entries is unknown: matching is first-match (audit R5 H4)', () => {
   const entry = { path: REGISTRY_PATH, kind: 'opaque' };
   const a = { path: 'gc/*.json', kind: 'contract-set' };

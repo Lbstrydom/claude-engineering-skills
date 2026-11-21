@@ -18,9 +18,15 @@ import { evaluateLoosening, fetchPrFacts } from './authorize.mjs';
 import { escapeData as E, neutralizeLeadingCommand } from './actions-escape.mjs';
 
 /** Files changed between the two revisions. `--no-renames` lists BOTH sides of a move, so a move out of or into a registered path is seen. */
-function changedBetween(repoRoot, base, head) {
-  const out = execFileSync('git', ['diff', '--name-only', '--no-renames', '-z', base, head], { cwd: repoRoot, encoding: 'utf8', env: sanitizeGitEnv(repoRoot), maxBuffer: 256 * 1024 * 1024 });
-  return out.split('\0').filter(Boolean);
+/**
+ * What the PR changed: head against the MERGE BASE, never against the (possibly advanced) base sha, whose own later changes are
+ * not the PR's (audit R6 M1). A merge base that cannot be computed throws (the caller reports unmeasured).
+ */
+export function changedBetween(repoRoot, base, head, run = execFileSync) {
+  const opts = { cwd: repoRoot, encoding: 'utf8', env: sanitizeGitEnv(repoRoot), maxBuffer: 256 * 1024 * 1024 };
+  const fork = String(run('git', ['merge-base', base, head], opts)).trim();
+  const out = run('git', ['diff', '--name-only', '--no-renames', '-z', fork, head], opts);
+  return String(out).split('\0').filter(Boolean);
 }
 
 /**
