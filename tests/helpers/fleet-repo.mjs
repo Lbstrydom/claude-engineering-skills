@@ -63,7 +63,10 @@ function buildFleetRepo(root, files) {
   fs.mkdirSync(repo);
   git(['init', '--bare', '-q', '-b', 'main', origin], root);
   git(['init', '-q', '-b', 'main'], repo);
-  for (const [k, v] of Object.entries({ 'user.email': 't@example.com', 'user.name': 'T', 'commit.gpgsign': 'false', 'core.autocrlf': 'false' })) git(['config', k, v], repo);
+  // No detached background maintenance in a template that is copied byte for byte (git >= 2.56 writes objects/maintenance.lock after
+  // commit/push, and cpSync reports the vanished file's parent as ENOENT): docs/plans/verification-lessons.md 2.1a.
+  for (const [k, v] of Object.entries({ 'user.email': 't@example.com', 'user.name': 'T', 'commit.gpgsign': 'false', 'core.autocrlf': 'false', 'maintenance.auto': 'false', 'gc.auto': '0' })) git(['config', k, v], repo);
+  for (const [k, v] of Object.entries({ 'maintenance.auto': 'false', 'gc.auto': '0', 'receive.autogc': 'false' })) git(['config', k, v], origin);
   for (const [rel, body] of Object.entries(files)) writeFile(repo, rel, body);
   git(['add', '.'], repo);
   git(['commit', '-q', '-m', 'init'], repo);
@@ -106,12 +109,12 @@ export function makeFleetRepo({ files = { 'a.txt': 'a\n', 'b.txt': 'b\n', 'c.txt
   return { root, repo, origin, wtRoot: path.join(root, 'wt') };
 }
 
-/** Create `name` off main with one commit, then return to main. Returns the tip oid. */
-export function addBranch(repo, name, files, msg = `work on ${name}`) {
+/** Create `name` off main with one commit, then return to main. Returns the tip oid. `committerDate` pins `GIT_COMMITTER_DATE` for that commit. */
+export function addBranch(repo, name, files, msg = `work on ${name}`, { committerDate = null } = {}) {
   git(['checkout', '-q', '-b', name, 'main'], repo);
   for (const [rel, body] of Object.entries(files)) writeFile(repo, rel, body);
   git(['add', '--', ...Object.keys(files)], repo);
-  git(['commit', '-q', '-m', msg], repo);
+  git(['commit', '-q', '-m', msg], repo, committerDate ? { GIT_COMMITTER_DATE: committerDate } : undefined);
   const oid = git(['rev-parse', 'HEAD'], repo);
   git(['checkout', '-q', 'main'], repo);
   return oid;

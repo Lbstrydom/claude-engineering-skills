@@ -28,6 +28,7 @@ import path from 'node:path';
 import { enumerateSkillFiles, listSkillNames } from './skill-packaging.mjs';
 import { CONSUMER_REPOS } from './consumer-repos.mjs';
 import { collectImportClosure } from './module-graph.mjs';
+import { ignoredUntrackedPaths } from './disowned-paths.mjs';
 import {
   CORE_ENTRY, LEARNING_ENTRY, ARCH_ENTRY, SYNC_ISOLATION_ENTRY, DEBT_ENTRY,
 } from './sync-entry-lists.mjs';
@@ -171,23 +172,40 @@ export class MissingEntryPointError extends Error {
 /**
  * Build the repo-relative path universe under scripts/ and .claude/ — the
  * file set `resolveSpecifier` probes for extension/index resolution.
+ *
+ * **The corpus is the repo, not the disk.** The walk goes level by level and asks the ONE ownership oracle
+ * (`ignoredUntrackedPaths`: ignored AND untracked) about each level's entries before descending, so a gitignored
+ * directory (`.claude/tmp/`, `.claude/worktrees/`) is never listed: its files cannot enter a consumer's bundle, and a
+ * parallel process deleting a copy there cannot make this walk die with ENOENT. ENOENT is deliberately NOT caught: an
+ * OWNED directory vanishing mid-walk is a fault that must stay loud. The oracle fails open and loud (a degraded answer
+ * warns on stderr and leaves the candidates unfiltered), which is the pre-fix behaviour, never a silent narrowing.
+ * @param {{root?: string, fsImpl?: Pick<typeof fs, 'readdirSync'|'existsSync'>}} [opts] injectable for tests
  * @returns {Set<string>}
  */
-function buildFileUniverse() {
+function buildFileUniverse({ root = REPO_ROOT, fsImpl = fs } = {}) {
   const out = new Set();
   const SKIP = new Set(['node_modules', '.git', '.audit', '.audit-loop']);
-  const walk = (dir, base) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (SKIP.has(entry.name)) continue;
-      const abs = path.join(dir, entry.name);
-      const rel = base ? `${base}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) walk(abs, rel);
-      else out.add(rel);
-    }
-  };
+  let level = [];
   for (const top of ['scripts', '.claude']) {
-    const dir = path.join(REPO_ROOT, top);
-    if (fs.existsSync(dir)) walk(dir, top);
+    const dir = path.join(root, top);
+    if (fsImpl.existsSync(dir)) level.push({ abs: dir, rel: top });
+  }
+  while (level.length) {
+    const entries = [];
+    for (const d of level) {
+      for (const entry of fsImpl.readdirSync(d.abs, { withFileTypes: true })) {
+        if (SKIP.has(entry.name)) continue;
+        entries.push({ abs: path.join(d.abs, entry.name), rel: `${d.rel}/${entry.name}`, dir: entry.isDirectory() });
+      }
+    }
+    // A directory is asked with its trailing slash, so a directory-only pattern (`.claude/tmp/`) matches it.
+    const key = (e) => (e.dir ? `${e.rel}/` : e.rel);
+    const disowned = ignoredUntrackedPaths(root, entries.map(key)).paths;
+    level = [];
+    for (const e of entries) {
+      if (disowned.has(key(e))) continue;
+      if (e.dir) level.push({ abs: e.abs, rel: e.rel }); else out.add(e.rel);
+    }
   }
   return out;
 }
@@ -381,6 +399,6 @@ export function getAllConsumerInventories() {
 export const _internals = {
   CORE_ENTRY, LEARNING_ENTRY, ARCH_ENTRY, DEBT_ENTRY,
   SYNC_ISOLATION_ENTRY, CORE_ASSETS, EDITOR_FILES, CLAUDE_CODE_FILES,
-  bundleForRepo, syncMigrations, buildSkillFiles,
+  bundleForRepo, syncMigrations, buildSkillFiles, buildFileUniverse,
   REPO_ROOT,
 };

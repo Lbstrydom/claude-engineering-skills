@@ -14,10 +14,11 @@ import { execFileSync } from 'node:child_process';
 /**
  * @param {string[]} args - git argv, e.g. `['worktree', 'list', '--porcelain']`
  * @param {string} cwd
+ * @param {Record<string, string>} [env] extra variables layered over `process.env` (e.g. a pinned `GIT_COMMITTER_DATE`)
  * @returns {string} stdout, trimmed
  */
-export function git(args, cwd) {
+export function git(args, cwd, env) {
   return execFileSync('git', args, {
-    cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
+    cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], ...(env ? { env: { ...process.env, ...env } } : {}),
   }).trim();
 }

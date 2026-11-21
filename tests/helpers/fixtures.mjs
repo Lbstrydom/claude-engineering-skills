@@ -14,6 +14,7 @@ import path from 'node:path';
 import { execSync, execFileSync, spawnSync } from 'node:child_process';
 import { Writable } from 'node:stream';
 import { GIT_LOCAL_ENV_VARS } from '../../scripts/lib/git-env-sanitize.mjs';
+import { withMaintenanceOff } from './git-fixture-env.mjs';
 
 export { GIT_LOCAL_ENV_VARS };
 
@@ -49,7 +50,7 @@ export { GIT_LOCAL_ENV_VARS };
 export function gitFixtureEnv() {
   const env = { ...process.env };
   for (const name of GIT_LOCAL_ENV_VARS) delete env[name];
-  return env;
+  return withMaintenanceOff(env);
 }
 
 /**

@@ -20,8 +20,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { gitInit, gitInitWithEmptyCommit, commit, makeGitRunner, gitFixtureEnv, makeRepoTemplate, rmrf } from './helpers/fixtures.mjs';
+import { makeGitFixtureEnv, withMaintenanceOff } from './helpers/git-fixture-env.mjs';
+import { makeFleetRepo, cleanupFleetRoots } from './helpers/fleet-repo.mjs';
 
 function headOf(dir, env) {
   try {
@@ -214,5 +216,54 @@ describe('makeRepoTemplate — copies are real, private repos', () => {
     // tested a repo that is not the one it describes.
     const t = makeRepoTemplate(() => { throw new Error('git exploded'); });
     assert.throws(() => t('tpl-g-'), /fixture template build failed: git exploded/);
+  });
+});
+
+describe('fixture repositories never run detached background maintenance (docs/plans/verification-lessons.md 2.1a)', () => {
+  // git >= 2.56 starts `git maintenance run --auto` after `commit`; its objects/maintenance.lock vanished mid-`cpSync` of a template
+  // in CI (run 44901035185). The cause cannot be provoked locally (Windows cannot detach), so the pin is the DECISION: every fixture
+  // env and every template says maintenance.auto=false, read back from git itself.
+  const readCfg = (dir, env) => execFileSync('git', ['config', '--get', 'maintenance.auto'], { cwd: dir, encoding: 'utf-8', env }).trim();
+  const dirs = [];
+  after(() => { for (const d of dirs) rmrf(d); cleanupFleetRoots(); });
+  const mk = (prefix) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; };
+
+  it('gitFixtureEnv() reads maintenance.auto=false through git', () => {
+    const d = mk('maint-a-');
+    execFileSync('git', ['init', '-q'], { cwd: d, env: gitFixtureEnv() });
+    assert.equal(readCfg(d, gitFixtureEnv()), 'false');
+  });
+
+  it('makeGitFixtureEnv() reads maintenance.auto=false through git, and its cleanup removes its dir', () => {
+    const f = makeGitFixtureEnv();
+    try {
+      const d = mk('maint-b-');
+      execFileSync('git', ['init', '-q'], { cwd: d, env: f.env });
+      assert.equal(readCfg(d, f.env), 'false');
+    } finally { f.cleanup(); }
+  });
+
+  it('negative control: without the env the same read is NOT false (the instrument can fail)', () => {
+    const d = mk('maint-c-');
+    const bare = { ...process.env, GIT_CONFIG_GLOBAL: path.join(d, 'none'), GIT_CONFIG_NOSYSTEM: '1' };
+    for (const k of Object.keys(bare)) if (k.startsWith('GIT_CONFIG_KEY_') || k.startsWith('GIT_CONFIG_VALUE_') || k === 'GIT_CONFIG_COUNT') delete bare[k];
+    execFileSync('git', ['init', '-q'], { cwd: d, env: bare });
+    const r = spawnSync('git', ['config', '--get', 'maintenance.auto'], { cwd: d, encoding: 'utf-8', env: bare });
+    assert.notEqual(r.stdout.trim(), 'false');
+  });
+
+  it('withMaintenanceOff merges after existing GIT_CONFIG_COUNT entries instead of overwriting them', () => {
+    const env = withMaintenanceOff({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'kept' });
+    assert.equal(env.GIT_CONFIG_COUNT, '2');
+    assert.equal(env.GIT_CONFIG_KEY_0, 'user.name');
+    assert.equal(env.GIT_CONFIG_VALUE_0, 'kept');
+    assert.equal(env.GIT_CONFIG_KEY_1, 'maintenance.auto');
+    assert.equal(env.GIT_CONFIG_VALUE_1, 'false');
+  });
+
+  it('the fleet template repo and its bare origin both say maintenance.auto=false', () => {
+    const fx = makeFleetRepo();
+    assert.equal(readCfg(fx.repo, gitFixtureEnv()), 'false');
+    assert.equal(readCfg(fx.origin, gitFixtureEnv()), 'false');
   });
 });
