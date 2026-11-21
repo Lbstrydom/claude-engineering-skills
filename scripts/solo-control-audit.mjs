@@ -1694,6 +1694,8 @@ async function cmdJudgeGpt() {
   if (!fs.existsSync(srcPath)) { log(`No blind sheet at ${path.relative(process.cwd(), srcPath)} — run merge first.`); process.exit(1); }
   // the checkpoint REPLACES outPath after every commit: it must never be the input sheet NOR the canonical human-labelled sheet / private map
   // (a copied input with --out blind-adjudication.csv overwrote the labels)
+  // --out names a file INSIDE the solo-control output dir: `--out ../../.env` used to resolve anywhere on disk
+  if (path.relative(OUT_DIR, outPath).startsWith('..') || path.isAbsolute(path.relative(OUT_DIR, outPath))) { log(`FATAL: --out must stay inside ${path.relative(process.cwd(), OUT_DIR)}`); process.exit(2); }
   { const why = protectedOutputProblem(outPath, [srcPath, BLIND_CSV, BLIND_MAP], realPath); if (why) { log(`FATAL: ${path.relative(process.cwd(), outPath)} ${why} — the checkpoint would overwrite it`); process.exit(2); } }
   const recipientPolicy = policyOrDie(); // the full diff of every sheet commit goes to GPT
 
@@ -1722,24 +1724,27 @@ async function cmdJudgeGpt() {
   const hasIdent = header.includes('judge_identity');
   const iIdent = hasIdent ? header.indexOf('judge_identity') : header.length;
   const gradingByBlindId = new Map();
+  let backupNeeded = force; // any run that is about to REPLACE grades with fewer/other ones keeps the old output first
   if (fs.existsSync(outPath) && !force) {
     const [priorHeader = [], ...priorRecords] = parseCsv(fs.readFileSync(outPath, 'utf8'));
     const pc = Object.fromEntries(['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern', 'judge_identity'].map((n) => [n, priorHeader.indexOf(n)])); const priorAll = priorRecords.map((c) => ({ blindId: c[pc.blind_id], commit: c[pc.commit], severity: c[pc.severity], category: c[pc.category], file: c[pc.file], detail: c[pc.detail], label: c[pc.label], proof: c[pc.proof], cluster: c[pc.cluster], matches: c[pc.matches], pattern: c[pc.pattern], identity: c[pc.judge_identity] }));
     const verdict = (p) => judgeGradeVerdict({ hasColumn: pc.judge_identity >= 0, rowIdentity: p.identity, current: judgeIdentity });
     const priorRows = priorAll.filter((p) => !p.label || verdict(p) !== 'discard');
     const wrongJudge = priorAll.filter((p) => p.label && verdict(p) === 'discard').length;
+    if (wrongJudge) backupNeeded = true;
     if (wrongJudge) log(`  ⚠ ${wrongJudge} prior grade(s) discarded — made by a different judge model or known-defect rubric; re-grading.`);
     if (priorAll.some((p) => p.label && (pc.judge_identity < 0 || p.identity === LEGACY_JUDGE_IDENTITY))) log('  ⚠ some prior grades predate the judge identity — they are unverifiable (legacy-unverified) but kept');
     // each kept grade keeps ITS identity: a column-less (legacy) grade stays legacy-unverified when re-written, it is never stamped with the current judge
     const identOf = new Map(priorAll.map((p) => [p.blindId, pc.judge_identity >= 0 && p.identity ? p.identity : LEGACY_JUDGE_IDENTITY]));
     const seeded = seedResumedGrades(priorRows, rows); for (const [k, v] of seeded.grades) gradingByBlindId.set(k, { ...v, identity: identOf.get(k) }); // blind ids renumber on re-merge: keep a grade only for the SAME row content
+    if (seeded.discarded) backupNeeded = true;
     if (seeded.discarded) log(`  ⚠ ${seeded.discarded} prior grade(s) discarded — their blind_id now names different content (re-merge renumbered); re-grading.`);
     if (gradingByBlindId.size) log(`Resuming — ${gradingByBlindId.size} row(s) already graded in ${path.relative(process.cwd(), outPath)} (use --force to re-grade everything)`);
   }
 
   // --force re-grades from an empty map; if the provider then fails the final checkpoint would replace a graded output with ungraded rows
   // each forced run keeps its OWN timestamped copy: a fixed name let a second failed --force replace the only backup of the original grades
-  if (force && fs.existsSync(outPath)) fs.copyFileSync(outPath, `${outPath}.prev-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+  if (backupNeeded && fs.existsSync(outPath)) fs.copyFileSync(outPath, `${outPath}.prev-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   const byCommit = new Map();
   for (const r of rows) { if (!byCommit.has(r.commit)) byCommit.set(r.commit, []); byCommit.get(r.commit).push(r); }
   log(`GPT judge — model=${gptModel} · ${rows.length} row(s) across ${byCommit.size} commit(s) → ${path.relative(process.cwd(), outPath)}`);

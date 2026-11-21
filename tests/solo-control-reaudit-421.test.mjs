@@ -214,8 +214,8 @@ describe('judge-gpt: grades keep THEIR identity; --force cannot destroy a graded
   test('a directory alias for the output dir cannot name the canonical sheet under another string', (t) => inTemp((dir) => {
     const d = solo(dir);
     fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText('proven', 'f:1'));
-    try { fs.symlinkSync(d, path.join(dir, '.audit-loop', 'alias'), 'junction'); } catch { t.skip('cannot create a directory link here'); return; }
-    const r = cli(dir, ['judge-gpt', '--out', '../alias/blind-adjudication.csv', '--force'], refusingPolicy(dir));
+    try { fs.symlinkSync(d, path.join(d, 'alias'), 'junction'); } catch { t.skip('cannot create a directory link here'); return; }
+    const r = cli(dir, ['judge-gpt', '--out', 'alias/blind-adjudication.csv', '--force'], refusingPolicy(dir));
     assert.equal(r.status, 2, r.out);
     assert.match(r.out, /would overwrite it/);
     assert.equal(parseCsv(fs.readFileSync(path.join(d, 'blind-adjudication.csv'), 'utf8'))[1][6], 'proven');
@@ -272,5 +272,35 @@ describe('re-audit round 4', () => {
     const cur = resolveModel('latest-gpt') + '|' + createHash('sha256').update('').digest('hex').slice(0, 16);
     fs.writeFileSync(path.join(d, 'out.csv'), csvLine([...HEADER, 'judge_identity']) + NL + csvLine(['F001', HEAD.slice(0, 8), 'HIGH', 'k', 'f', 'd', 'proven', 'f:1', 'c1', '', '', cur]) + NL);
     assert.doesNotMatch(cli(dir, ['judge-gpt', '--out', 'out.csv'], refusingPolicy(dir)).out, /legacy-unverified/);
+  }));
+});
+
+describe('re-audit round 5', () => {
+  test('--out must stay inside the output dir (../../.env used to resolve anywhere)', () => inTemp((dir) => {
+    const d = solo(dir);
+    fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText());
+    const target = path.join(dir, 'victim.txt');
+    fs.writeFileSync(target, 'precious');
+    const r = cli(dir, ['judge-gpt', '--out', '../../victim.txt'], refusingPolicy(dir));
+    assert.equal(r.status, 2, r.out);
+    assert.match(r.out, /must stay inside/);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'precious');
+  }));
+  test('a NORMAL resume that discards grades (different judge) keeps the old output first; one that discards nothing makes no backup', () => inTemp((dir) => {
+    const d = solo(dir);
+    fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText());
+    const old = csvLine([...HEADER, 'judge_identity']) + NL + csvLine(['F001', HEAD.slice(0, 8), 'HIGH', 'k', 'f', 'd', 'proven', 'f:1', 'c1', '', '', 'gpt-OLD|0000']) + NL;
+    fs.writeFileSync(path.join(d, 'out.csv'), old);
+    cli(dir, ['judge-gpt', '--out', 'out.csv'], refusingPolicy(dir));
+    const backups = fs.readdirSync(d).filter((f) => f.startsWith('out.csv.prev-')).map((f) => fs.readFileSync(path.join(d, f), 'utf8'));
+    assert.ok(backups.includes(old), 'the discarded grades survive on disk');
+  }));
+  test('negative control: nothing discarded ⇒ no backup churn', () => inTemp((dir) => {
+    const d = solo(dir);
+    fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText());
+    const cur = resolveModel('latest-gpt') + '|' + createHash('sha256').update('').digest('hex').slice(0, 16);
+    fs.writeFileSync(path.join(d, 'out.csv'), csvLine([...HEADER, 'judge_identity']) + NL + csvLine(['F001', HEAD.slice(0, 8), 'HIGH', 'k', 'f', 'd', 'proven', 'f:1', 'c1', '', '', cur]) + NL);
+    cli(dir, ['judge-gpt', '--out', 'out.csv'], refusingPolicy(dir));
+    assert.equal(fs.readdirSync(d).filter((f) => f.startsWith('out.csv.prev-')).length, 0);
   }));
 });
