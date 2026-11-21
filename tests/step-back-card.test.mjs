@@ -33,9 +33,9 @@ test('section at round 3: prints signals, fires on reopen, never calls a provide
   assert.match(s.lines.join('\n'), /UNMEASURED/, 'retired is unmeasured without a ledger and says so');
 });
 
-test('--step-back with a fake provider: valid defect admits a round with a focus note; invalid output admits none', async () => {
+test('--step-back with a fake provider: valid defect names a focus note but the human decides; invalid output admits none', async () => {
   const ok = await buildCheckpointSection({ ...base, round: 4, stepBack: true, model: 'm', provider: async ({ user }) => ({ text: JSON.stringify({ action: 'defect', topicId: 't', evidenceNeeded: user }), usage: { input_tokens: 1, output_tokens: 1 } }) });
-  assert.equal(ok.record.state, 'step-back-valid'); assert.equal(ok.record.next.roundAdmitted, true);
+  assert.equal(ok.record.state, 'step-back-valid'); assert.equal(ok.record.next.roundAdmitted, false);
   const bad = await buildCheckpointSection({ ...base, round: 4, stepBack: true, provider: async () => ({ text: '{"action":"continue"}' }) });
   assert.equal(bad.record.state, 'step-back-invalid'); assert.equal(bad.record.next.roundAdmitted, false);
   const none = await buildCheckpointSection({ ...base, round: 4, stepBack: true, provider: null });

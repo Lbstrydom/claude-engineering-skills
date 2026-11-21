@@ -47,7 +47,8 @@ export const STEP_BACK_SYSTEM_PROMPT = [
   'You are a fresh-context reviewer stepping back from an audit loop that has not converged.',
   'You are given the plan, the audit ledger and round results up to a checkpoint, and the files the findings cite with their one-hop neighbours.',
   'Decide ONE of: (1) structural - the findings are symptoms of a missing shared primitive or design; name the files; (2) stop - the remaining findings rest on a false premise or are marginal; list each topicId with the premise that fails; (3) defect - exactly one real defect remains; name its topicId and the evidence needed.',
-  'There is NO "continue" option. If you cannot justify one of the three, pick defect for the single most credible topicId.',
+  'There is NO "continue" option. If the evidence does not justify exactly one of the three, do not pick one to be agreeable: reply in plain text saying so, and that reply will be rejected as invalid, which is the honest outcome.',
+  'Every topicId you name MUST be one that appears in the ledger or rounds you were given.',
   'Reply with ONLY a JSON object, one of:',
   '{"action":"structural","files":["path",...]}',
   '{"action":"stop","items":[{"topicId":"...","premise":"..."}]}',
@@ -58,17 +59,27 @@ export const STEP_BACK_SYSTEM_PROMPT = [
  * Validate raw reviewer output. Accepts the object, or JSON text (optionally in a code fence).
  * @returns {{ok: true, output: object}|{ok: false, error: string}}
  */
-export function parseStepBackOutput(raw) {
+export function parseStepBackOutput(raw, { knownTopics = null } = {}) {
   let value = raw;
   if (typeof raw === 'string') {
     const t = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
     try { value = JSON.parse(t); } catch (err) { return { ok: false, error: `not JSON (${err.message})` }; }
   }
   const r = StepBackSchema.safeParse(value);
+  if (r.success && knownTopics) {
+    const known = knownTopics instanceof Set ? knownTopics : new Set(knownTopics);
+    const named = r.data.action === 'stop' ? r.data.items.map((i) => i.topicId) : r.data.action === 'defect' ? [r.data.topicId] : [];
+    const unknown = named.filter((t) => !known.has(t));
+    if (unknown.length) return { ok: false, error: `unknown topicId(s) not in the checkpoint: ${unknown.slice(0, 5).join(', ')}` };
+  }
   return r.success ? { ok: true, output: r.data } : { ok: false, error: r.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ').slice(0, 400) };
 }
 
 // ── (b) the context pack ─────────────────────────────────────────────────────
+
+/** Sections shrink in this order when the pack is over budget: least central first. */
+export const TRUNCATION_ORDER = Object.freeze(['arch', 'importers', 'imports', 'cited', 'ledger', 'rounds', 'plan']);
+const TRUNCATION_MARKER = '\n[truncated]';
 
 export const PACK_LIMITS = Object.freeze({ perFileChars: 60_000, totalChars: 600_000, maxImporterScan: 5000, maxArchNeighbours: 8 });
 
@@ -157,44 +168,65 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
     }
   }
 
-  const sections = [];
-  const fileMeta = [];
-  let budget = limits.totalChars;
-  const addFile = (rel, role) => {
+  // Assembly. Every part (markup included) counts toward `limits.totalChars`; when the pack is over, sections shrink
+  // in the declared TRUNCATION_ORDER and each reduction is reported in `truncations`.
+  const parts = [];
+  const part = (group, open, body, close, meta = null) => parts.push({ group, open, body, close, meta });
+  const addFile = (rel, role, group) => {
     const body = readBody(rel); if (body == null) return;
-    const truncated = body.length > limits.perFileChars || body.length > budget;
-    const shown = body.slice(0, Math.max(0, Math.min(limits.perFileChars, budget)));
-    budget -= shown.length;
-    fileMeta.push({ path: rel, role, chars: shown.length, truncated });
-    sections.push(`<file path="${rel}" role="${role}"${truncated ? ' truncated="true"' : ''}>\n${shown}\n</file>`);
+    const cut = body.length > limits.perFileChars;
+    const shown = cut ? body.slice(0, limits.perFileChars) : body;
+    part(group, `<file path="${rel}" role="${role}"${cut ? ' truncated="true"' : ''}>\n`, shown, '\n</file>', { path: rel, role, chars: shown.length, truncated: cut });
   };
 
   if (planFile) {
     const rel = posix(path.isAbsolute(planFile) ? path.relative(root, planFile) : planFile);
     const body = readBody(rel);
-    if (body != null) sections.push(`<plan path="${rel}">\n${body}\n</plan>`); else notes.push('plan file was excluded or unreadable');
+    if (body != null) part('plan', `<plan path="${rel}">\n`, body, '\n</plan>'); else notes.push('plan file was excluded or unreadable');
   }
-  sections.push(`<ledger>\n${redact(JSON.stringify(ledgerEntries, null, 1))}\n</ledger>`);
+  part('ledger', '<ledger>\n', redact(JSON.stringify(ledgerEntries, null, 1)), '\n</ledger>');
   const roundView = (rounds || []).map((r) => ({
     round: r.round, auditedSha: r.auditedSha ?? null, verdict: r.verdict ?? null,
     findings: (r.findings || []).map((f) => ({ id: f.id, severity: f.severity, category: f.category, section: f.section, detail: f.detail, topicId: f.topicId ?? topicOf(f), files: [...findingFiles(f)] })),
   }));
-  sections.push(`<rounds>\n${redact(JSON.stringify(roundView, null, 1))}\n</rounds>`);
-  for (const rel of cited) addFile(rel, 'cited');
-  for (const rel of [...imports.keys()].sort()) addFile(rel, imports.get(rel));
-  for (const rel of [...importersOf.keys()].sort()) addFile(rel, importersOf.get(rel));
+  part('rounds', '<rounds>\n', redact(JSON.stringify(roundView, null, 1)), '\n</rounds>');
+  for (const rel of cited) addFile(rel, 'cited', 'cited');
+  for (const rel of [...imports.keys()].sort()) addFile(rel, imports.get(rel), 'imports');
+  for (const rel of [...importersOf.keys()].sort()) addFile(rel, importersOf.get(rel), 'importers');
 
   if (typeof archNeighbours === 'function') {
-    const allowed = fileMeta.filter((f) => f.role === 'cited').map((f) => f.path); // only files that passed the gate
+    const allowed = parts.filter((p) => p.group === 'cited').map((p) => p.meta.path); // only files that passed the gate
     try {
       const items = (await archNeighbours({ files: allowed, intent: `Understand the design around: ${allowed.join(', ')}` })) || [];
-      sections.push(`<arch-neighbours>\n${redact(JSON.stringify(items.slice(0, limits.maxArchNeighbours), null, 1))}\n</arch-neighbours>`);
+      part('arch', '<arch-neighbours>\n', redact(JSON.stringify(items.slice(0, limits.maxArchNeighbours), null, 1)), '\n</arch-neighbours>');
     } catch (err) { notes.push(`arch-memory neighbours unavailable (${String(err?.message || err).slice(0, 80)})`); }
   } else notes.push('arch-memory neighbours: not queried');
 
+  const SEP = '\n\n';
+  const size = () => parts.reduce((n, p) => n + p.open.length + p.body.length + p.close.length, 0) + SEP.length * Math.max(0, parts.length - 1);
+  const truncations = [];
+  const FILE_GROUPS = new Set(['cited', 'imports', 'importers']);
+  for (const group of TRUNCATION_ORDER) {
+    while (size() > limits.totalChars) {
+      const idx = parts.map((p, i) => (p.group === group ? i : -1)).filter((i) => i >= 0);
+      if (idx.length === 0) break;
+      if (FILE_GROUPS.has(group)) { const [gone] = parts.splice(idx[idx.length - 1], 1); truncations.push({ section: group, action: 'dropped', path: gone.meta.path }); continue; }
+      const p = parts[idx[0]];
+      const keep = Math.max(0, p.body.length - (size() - limits.totalChars) - TRUNCATION_MARKER.length);
+      truncations.push({ section: group, action: 'truncated', from: p.body.length, to: keep });
+      p.body = `${p.body.slice(0, keep)}${TRUNCATION_MARKER}`;
+      if (p.body.length > keep && size() > limits.totalChars) p.body = '';
+    }
+  }
+  if (truncations.length) notes.push(`pack over ${limits.totalChars} chars: ${truncations.map((t) => `${t.section} ${t.action}${t.path ? ` ${t.path}` : ''}`).join('; ')}`);
+
+  const topics = [...new Set([...roundView.flatMap((r) => r.findings.map((f) => f.topicId)), ...(ledgerEntries || []).map((e) => e.topicId)].filter(Boolean))].sort();
   const skipLog = formatSkipLog(skipped, { logger: 'step-back-pack' });
   const excluded = { sensitive: skipped.filter((s) => !s.unreadable).length, unreadable: skipped.filter((s) => s.unreadable).length };
-  return { text: sections.join('\n\n'), files: fileMeta, skipped, skipLog, excluded, notes };
+  return {
+    text: parts.map((p) => `${p.open}${p.body}${p.close}`).join(SEP), files: parts.filter((p) => p.meta).map((p) => p.meta),
+    skipped, skipLog, excluded, notes, truncations, topics,
+  };
 }
 
 // ── (d) the state machine record ─────────────────────────────────────────────
@@ -221,7 +253,7 @@ export function applyStepBackOutcome(record, outcome) {
     const o = outcome.output;
     const next = o.action === 'structural' ? { roundAdmitted: false, decision: 'route files to /plan or a fleet proposal', files: o.files }
       : o.action === 'stop' ? { roundAdmitted: false, decision: 'stop proposed; debt only after human approval', items: o.items, debtWrite: 'pending-human-approval' }
-        : { roundAdmitted: true, decision: 'round runs with a focus note', focusNote: { topicId: o.topicId, evidenceNeeded: o.evidenceNeeded } };
+        : { roundAdmitted: false, decision: 'a defect is named; the human decides whether round N+1 runs with this focus note', focusNote: { topicId: o.topicId, evidenceNeeded: o.evidenceNeeded } };
     return { ...record, state: 'step-back-valid', output: o, next, debtWritten: false };
   }
   if (outcome.kind === 'invalid') {
@@ -254,7 +286,7 @@ export async function runStepBack({ record, pack, provider, model = null }) {
   try { res = await provider({ system: STEP_BACK_SYSTEM_PROMPT, user: pack.text, model }); } catch (err) {
     return { record: applyStepBackOutcome(record, { kind: 'unavailable', reason: String(err?.message || err).slice(0, 200) }), usage: null };
   }
-  const parsed = parseStepBackOutput(res?.text ?? res?.output);
+  const parsed = parseStepBackOutput(res?.text ?? res?.output, { knownTopics: pack.topics ?? null });
   const outcome = parsed.ok ? { kind: 'valid', output: parsed.output } : { kind: 'invalid', raw: res?.text ?? null, error: parsed.error };
   return { record: applyStepBackOutcome(record, outcome), usage: res?.usage ?? null };
 }

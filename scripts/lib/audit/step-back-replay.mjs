@@ -44,11 +44,14 @@ export function estimateCostUsd({ modelId, inputTokens, outputTokens }) {
   return rate ? (inputTokens * rate.input + outputTokens * rate.output) / 1_000_000 : null;
 }
 
-/** Pre-call ceiling from chars/4; an unpriced model uses the conservative fallback rate, never zero. */
-export function preflightEstimateUsd({ modelId, inputChars, maxOutputTokens }) {
-  const inputTokens = Math.ceil(inputChars / 4);
+/**
+ * UPPER bound of one call's cost: input = chars / 3 tokens (conservative) at the input price + the output ceiling at the
+ * output price. An unpriced model uses the conservative fallback rate, never zero.
+ */
+export function upperBoundUsd({ modelId, inputChars, outputCeilingTokens = STEP_BACK_MAX_OUTPUT_TOKENS }) {
+  const inputTokens = Math.ceil(inputChars / 3);
   const rate = priceFor(modelId, { inputTokens }) || FALLBACK_PRICE_USD;
-  return (inputTokens * rate.input + maxOutputTokens * rate.output) / 1_000_000;
+  return (inputTokens * rate.input + outputCeilingTokens * rate.output) / 1_000_000;
 }
 
 export const REPLAY_ARMS = Object.freeze(['none', 'same', 'different']);
@@ -88,23 +91,23 @@ export async function prepareItems({ dataset, deps = {} }) {
   return { items, unrecoverable };
 }
 
-/** Per-call cost estimate for an arm: preflight, replaced by measured cost after 2 measured calls of that arm. */
-export function estimateCall({ model, inputChars, measured }) {
-  const pre = preflightEstimateUsd({ modelId: model, inputChars, maxOutputTokens: STEP_BACK_MAX_OUTPUT_TOKENS });
-  if (!measured || measured.length < 2) return pre;
-  const ratio = measured.reduce((s, m) => s + m.cost, 0) / Math.max(1e-9, measured.reduce((s, m) => s + m.pre, 0));
-  return Math.max(pre * ratio, ...measured.map((m) => m.cost));
-}
-
 /**
  * Run (or plan) the replay.
+ *
+ * **Spend is bounded by an UPPER bound per call**, never an estimate: input = pack chars / 3 (a conservative
+ * chars-per-token) at the input price, plus the provider's output ceiling at the output price. Before each call,
+ * `spent + upperBound <= maxUsd` or the run stops. A call that returns no usable usage, or fails after the provider
+ * may have processed it, is charged its upper bound, never $0.
+ *
+ * **Results are never held only in memory**: every record (the plan, then each call as it completes) goes to
+ * `deps.onRecord` BEFORE anything is scored; the CLI appends them to a JSONL file and scores from that file.
+ *
  * @param {object} a
  * @param {object} a.dataset - the frozen dataset
  * @param {string[]} a.arms - subset of REPLAY_ARMS
  * @param {number} a.maxUsd - hard stop; required unless dryRun
  * @param {boolean} [a.dryRun]
- * @param {object} [a.deps] - makeProvider(arm) => {model, call}; checkout; readJson; topicOf
- * @returns {Promise<{plan: object[], calls: object[], unrecoverable: object[], spentUsd: number, stopped: object|null, estimatedUsd: number}>}
+ * @param {object} [a.deps] - makeProvider(arm) => {model, call, outputCeilingTokens?}; checkout; readJson; topicOf; onRecord
  */
 export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = {} }) {
   const paid = arms.filter((a) => PAID_ARMS.includes(a));
@@ -114,38 +117,56 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
   const prepared = await prepareItems({ dataset, deps });
   const { items, unrecoverable } = prepared;
 
-  const measured = Object.fromEntries(paid.map((a) => [a, []]));
-  const plan = []; const calls = [];
-  let spent = 0; let stopped = null;
+  const plan = [];
   for (const item of items) {
     for (const arm of paid) {
       const prov = providers[arm];
-      const pre = preflightEstimateUsd({ modelId: prov.model, inputChars: item.inputChars, maxOutputTokens: STEP_BACK_MAX_OUTPUT_TOKENS });
-      const est = estimateCall({ model: prov.model, inputChars: item.inputChars, measured: measured[arm] });
-      const row = { pr: item.pr, checkpoint: item.checkpoint, arm, model: prov.model, packChars: item.pack.text.length, estimateUsd: est };
-      plan.push(row);
-      if (dryRun) continue;
-      if (stopped || spent + est > maxUsd) {
-        stopped ||= { reason: 'max-usd', detail: `spent $${spent.toFixed(4)} + estimate $${est.toFixed(4)} would exceed the $${maxUsd} cap`, before: `PR #${item.pr} R${item.checkpoint} ${arm}` };
-        calls.push({ ...row, status: 'skipped-budget', action: null, costUsd: 0 });
-        continue;
-      }
-      const record = initialStepBackRecord({ round: item.checkpoint, signals: { anyFires: true, unmeasured: [] } });
-      const { record: out, usage } = await runStepBack({ record, pack: item.pack, provider: prov.call, model: prov.model });
-      let cost = 0; let spendSource = 'none';
-      if (usage) {
-        const exact = usage.usageMissing ? null : estimateCostUsd({ modelId: prov.model, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens });
-        cost = exact ?? est; spendSource = exact == null ? 'estimate' : 'usage';
-        spent += cost; measured[arm].push({ cost, pre });
-      }
-      calls.push({
-        ...row, status: out.state === 'step-back-valid' ? 'ok' : out.state === 'step-back-invalid' ? 'invalid' : 'unavailable',
-        action: out.output?.action ?? null, output: out.output ?? null, raw: out.state === 'step-back-invalid' ? out.raw : undefined,
-        error: out.error ?? out.reason ?? null, usage: usage ?? null, costUsd: cost, spendSource,
-      });
+      const upperUsd = upperBoundUsd({ modelId: prov.model, inputChars: item.inputChars, outputCeilingTokens: prov.outputCeilingTokens });
+      plan.push({ pr: item.pr, checkpoint: item.checkpoint, arm, model: prov.model, packChars: item.pack.text.length, estimateUsd: upperUsd, upperBoundUsd: upperUsd, item });
     }
   }
-  return { plan, calls, unrecoverable, controls: prepared.controls || [], spentUsd: spent, stopped, estimatedUsd: plan.reduce((s, p) => s + p.estimateUsd, 0), preparedPrs: items.length };
+  const publicPlan = plan.map(({ item, ...row }) => row);
+  const estimatedUsd = publicPlan.reduce((s, p) => s + p.upperBoundUsd, 0);
+  const base = { plan: publicPlan, unrecoverable, controls: prepared.controls || [], estimatedUsd, upperBoundTotalUsd: estimatedUsd, preparedPrs: items.length };
+  if (dryRun) return { ...base, calls: [], spentUsd: 0, stopped: null };
+
+  deps.onRecord?.({ type: 'plan', plan: publicPlan, maxUsd, arms });
+  const calls = []; let spent = 0; let stopped = null;
+  for (const row of plan) {
+    const { item, ...meta } = row;
+    const emit = (c) => { calls.push(c); deps.onRecord?.({ type: 'call', ...c }); };
+    if (stopped || spent + row.upperBoundUsd > maxUsd) {
+      stopped ||= { reason: 'max-usd', detail: `spent $${spent.toFixed(4)} + upper bound $${row.upperBoundUsd.toFixed(4)} would exceed the $${maxUsd} cap`, before: `PR #${row.pr} R${row.checkpoint} ${row.arm}` };
+      emit({ ...meta, status: 'skipped-budget', action: null, costUsd: 0, spendSource: 'none' });
+      continue;
+    }
+    const prov = providers[row.arm];
+    const record = initialStepBackRecord({ round: row.checkpoint, signals: { anyFires: true, unmeasured: [] } });
+    const { record: out, usage } = await runStepBack({ record, pack: item.pack, provider: prov.call, model: prov.model });
+    const exact = usage && !usage.usageMissing && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens)
+      ? estimateCostUsd({ modelId: prov.model, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens }) : null;
+    // No usable usage (absent, unpriced model, or an error after the provider may have processed the call): charge the bound.
+    const cost = exact ?? row.upperBoundUsd;
+    spent += cost;
+    emit({
+      ...meta, status: out.state === 'step-back-valid' ? 'ok' : out.state === 'step-back-invalid' ? 'invalid' : 'unavailable',
+      action: out.output?.action ?? null, output: out.output ?? null, raw: out.state === 'step-back-invalid' ? out.raw : undefined,
+      error: out.error ?? out.reason ?? null, usage: usage ?? null, costUsd: cost, spendSource: exact == null ? 'upper-bound' : 'usage',
+    });
+  }
+  return { ...base, calls, spentUsd: spent, stopped };
+}
+
+/** Rebuild `{plan, calls, spentUsd, stopped}` from the results JSONL text. Scoring reads THIS, so it can be re-run any time. */
+export function readResultsJsonl(text) {
+  let plan = []; let maxUsd = null; let arms = null; const calls = [];
+  for (const line of String(text).split('\n')) {
+    if (!line.trim()) continue;
+    const r = JSON.parse(line);
+    if (r.type === 'plan') { plan = r.plan; maxUsd = r.maxUsd; arms = r.arms; } else if (r.type === 'call') calls.push(r);
+  }
+  const stoppedCall = calls.find((c) => c.status === 'skipped-budget');
+  return { plan, calls, maxUsd, arms, spentUsd: calls.reduce((s, c) => s + (c.costUsd || 0), 0), stopped: stoppedCall ? { reason: 'max-usd', before: `PR #${stoppedCall.pr} R${stoppedCall.checkpoint} ${stoppedCall.arm}` } : null };
 }
 
 /**
@@ -189,8 +210,8 @@ export function scoreReplay({ calls, truth, arms, plan }) {
 /** The dry-run text: every planned call and the estimated total, nothing sent. */
 export function renderDryRun({ plan, unrecoverable, estimatedUsd, maxUsd = null, preparedPrs = 0, controls = [] }) {
   const lines = ['step-back-replay DRY RUN - no provider call was made'];
-  plan.forEach((p, i) => lines.push(`  call ${i + 1}: PR #${p.pr} R${p.checkpoint} arm=${p.arm} model=${p.model} pack=${p.packChars} chars est $${p.estimateUsd.toFixed(4)}`));
-  lines.push(`planned calls: ${plan.length} (${preparedPrs} PR-checkpoints), estimated total $${estimatedUsd.toFixed(2)}${maxUsd ? ` against a hard stop of $${Number(maxUsd).toFixed(2)}` : ''}`);
+  plan.forEach((p, i) => lines.push(`  call ${i + 1}: PR #${p.pr} R${p.checkpoint} arm=${p.arm} model=${p.model} pack=${p.packChars} chars upper bound $${p.upperBoundUsd.toFixed(4)}`));
+  lines.push(`planned calls: ${plan.length} (${preparedPrs} PR-checkpoints), UPPER-BOUND total $${estimatedUsd.toFixed(2)}${maxUsd ? ` against a hard stop of $${Number(maxUsd).toFixed(2)}` : ''}`);
   if (unrecoverable.length) lines.push(`unrecoverable (excluded, never imputed): ${unrecoverable.map((u) => `#${u.pr}${u.checkpoint ? ` R${u.checkpoint}` : ''} (${u.reason})`).join('; ')}`);
   if (controls.length) lines.push(`controls (no checkpoint, no call): ${controls.map((c) => `#${c.pr} (${c.rounds} rounds)`).join(', ')}`);
   return lines.join('\n');
@@ -209,9 +230,9 @@ async function prepareStoreItems({ dataset, deps }) {
     if (pr.control) controls.push({ pr: pr.pr, rounds: pr.rounds, note: 'fewer than 3 rounds: the step-back cannot fire' });
     for (const cp of pr.checkpoints) {
       if (cp.status !== 'recoverable') { unrecoverable.push({ pr: pr.pr, checkpoint: cp.checkpoint, reason: cp.reason }); continue; }
-      const snap = buildExportSnapshot({ exp, branch: pr.branch, checkpoint: cp.checkpoint });
+      const snap = buildExportSnapshot({ exp, runIds: pr.runIds, checkpoint: cp.checkpoint });
       if (!snap.ok) { unrecoverable.push({ pr: pr.pr, checkpoint: cp.checkpoint, reason: snap.reason }); continue; }
-      const rev = (deps.openRevision || createRevisionFs)({ sha: snap.snapshot.auditedSha });
+      const rev = (deps.openRevision || createRevisionFs)({ sha: snap.snapshot.auditedSha, cwd: deps.cwd || process.cwd() });
       if (!rev.ok) { unrecoverable.push({ pr: pr.pr, checkpoint: cp.checkpoint, reason: rev.reason }); continue; }
       const pack = await buildStepBackPack({
         repoRoot: rev.root, fsImpl: rev.fs, planFile: snap.snapshot.planFile, ledgerEntries: snap.snapshot.ledgerEntries, rounds: snap.snapshot.rounds,

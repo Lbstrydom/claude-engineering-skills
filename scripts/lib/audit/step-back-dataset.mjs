@@ -66,7 +66,7 @@ export function freezeDataset({ spec, readJson = readJsonDefault, listDir = (d) 
     let ledger; try { ledger = readJson(ledgerPath); } catch (err) { fail(`final ledger unreadable (${err?.code || err?.message})`); continue; }
     if (!Array.isArray(ledger?.entries)) { fail('final ledger has no entries[]'); continue; }
     const checkpoints = CHECKPOINTS.filter((c) => c <= rounds[rounds.length - 1]).map((c) => ({ checkpoint: c, hasRoundLedger: c in roundLedgerPaths }));
-    prs.push({ ...base, status: 'recoverable', rounds, ledgerPath, resultPaths, roundLedgerPaths, auditedShas, checkpoints, crossChecked: Array.isArray(p.storeRows) && p.storeRows.length > 0 });
+    prs.push({ ...base, status: 'recoverable', rounds, ledgerPath, resultPaths, roundLedgerPaths, auditedShas, checkpoints, crossChecked: rounds.every((n) => (p.storeRows || []).some((x) => x.round === n)) });
     truth[p.pr] = { label: p.label, acceptedHighRounds: acceptedHighRounds(ledger.entries), lastRound: rounds[rounds.length - 1] };
   }
   return { dataset: { version: DATASET_VERSION, prs }, scoring: { version: DATASET_VERSION, truth } };
