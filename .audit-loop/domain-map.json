@@ -455,6 +455,11 @@
       "domain": "shared-lib"
     },
     {
+      "_why": "EXPLICIT shared-lib claim, added 2026-11-21 (fleet-feedback-cluster1-bugs) so the domain is DECIDED rather than defaulted (tests/domain-map-subsystem-coverage.test.mjs). VERIFIED at source: preload.mjs imports only node builtins, and probe.mjs only node builtins — no feature domain — so shared-lib is correct on the evidence and this rule changes the resolved graph by ZERO edges.",
+      "pattern": "scripts/lib/help-probe/**",
+      "domain": "shared-lib"
+    },
+    {
       "pattern": "scripts/lib/**",
       "domain": "shared-lib"
     },
