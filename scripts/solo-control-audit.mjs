@@ -110,7 +110,7 @@ import { readLedger, aggregateCostForArm, sharedPassCreditRows } from './lib/sol
 import { csvLine, parseCsv } from './lib/solo-control/csv.mjs';
 import { chunkDiff, continuationMarker } from './lib/solo-control/chunk-diff.mjs';
 import { runGptJudgeBatch } from './lib/solo-control/judge.mjs';
-import { rowSig, positiveInt, nonNegativeNumber, budgetVerdict, sheetPairingProblems, validateGradings, findingsDigest, assertResumableProvenance, coldPassOutcome, judgeGradeVerdict, decisionArms, protectedOutputProblem } from './lib/solo-control/hardening-guards.mjs';
+import { rowSig, positiveInt, nonNegativeNumber, budgetVerdict, sheetPairingProblems, validateGradings, findingsDigest, assertResumableProvenance, coldPassOutcome, judgeGradeVerdict, LEGACY_JUDGE_IDENTITY, decisionArms, protectedOutputProblem } from './lib/solo-control/hardening-guards.mjs';
 import { assertResumableBackend, commitsCompleteForAllArms, coveredCommits, gateCellState, resumeArmFile, runMeasuredReview, reviewCommitState, unmeasuredCommits } from './lib/solo-control/completion.mjs';
 import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
@@ -226,6 +226,8 @@ const budgetStopLine = (hit, budgetUsd, where) => `\n✗ ${hit.reason === 'unmea
 function optOrDie(fn, flag, dflt) { try { return fn(argOption(flag, dflt), flag); } catch (err) { log(`FATAL: ${err.message}`); process.exit(2); } }
 /** Load the recipient policy at the top of any command that sends a diff anywhere; a missing/malformed file is an operator setup error. */
 function policyOrDie() { try { return loadRecipientPolicy(RECIPIENT_POLICY_PATH); } catch (err) { log(`FATAL: recipient policy unavailable (${err.message})`); process.exit(2); } }
+/** A path's real location: symlinked parent directories (and Windows case) resolved, so an alias cannot name a protected file under a different string. */
+const realPath = (p) => { try { return path.join(fs.realpathSync.native(path.dirname(path.resolve(p))), path.basename(p)); } catch { return path.resolve(p); } };
 /** Authorize every model a commit's diff is about to reach, for the repo that holds it → null if cleared, else the refusal text. */
 function refusedFor(models, root, policy) {
   try { authorizeAll(models, repoIdentityFor(root), policy); return null; } catch (err) { return err.message; }
@@ -335,7 +337,7 @@ function treeExists(root, tree) {
  * runs the full `git diff`/`git show` invocation at all). */
 function finalizeDiff(nameListOut, rawDiffForFiles, label) {
   // NUL-separated (-z): git default quoting turns src/cafe-with-accent into an octal-escaped, double-quoted name, which the classifier and the literal pathspec then misread
-  const allFiles = nameListOut.split(String.fromCharCode(0)).map((f) => f.replace(/^\n+|\n+$/g, '')).filter(Boolean);
+  const allFiles = nameListOut.split(String.fromCharCode(0)).filter(Boolean); // names verbatim: a newline is a legal character IN a git file name
   const clean = [];
   const skippedSensitive = [];
   for (const f of allFiles) {
@@ -1698,7 +1700,7 @@ async function cmdJudgeGpt() {
   if (!fs.existsSync(srcPath)) { log(`No blind sheet at ${path.relative(process.cwd(), srcPath)} — run merge first.`); process.exit(1); }
   // the checkpoint REPLACES outPath after every commit: it must never be the input sheet NOR the canonical human-labelled sheet / private map
   // (a copied input with --out blind-adjudication.csv overwrote the labels)
-  if (protectedOutputProblem(outPath, [srcPath, BLIND_CSV, BLIND_MAP], path.resolve)) { log(`FATAL: --out ${path.relative(process.cwd(), outPath)} ${protectedOutputProblem(outPath, [srcPath, BLIND_CSV, BLIND_MAP], path.resolve)} — the checkpoint would overwrite it`); process.exit(2); }
+  if (protectedOutputProblem(outPath, [srcPath, BLIND_CSV, BLIND_MAP], realPath)) { log(`FATAL: --out ${path.relative(process.cwd(), outPath)} ${protectedOutputProblem(outPath, [srcPath, BLIND_CSV, BLIND_MAP], realPath)} — the checkpoint would overwrite it`); process.exit(2); }
   const recipientPolicy = policyOrDie(); // the full diff of every sheet commit goes to GPT
 
   const { header, rows, records } = readBlindSheet(srcPath);
@@ -1734,11 +1736,15 @@ async function cmdJudgeGpt() {
     const wrongJudge = priorAll.filter((p) => p.label && verdict(p) === 'discard').length;
     if (wrongJudge) log(`  ⚠ ${wrongJudge} prior grade(s) discarded — made by a different judge model or known-defect rubric; re-grading.`);
     if (pc.judge_identity < 0 && priorAll.some((p) => p.label)) log('  ⚠ prior output predates the judge identity column — its grades are unverifiable but kept');
-    const seeded = seedResumedGrades(priorRows, rows); for (const [k, v] of seeded.grades) gradingByBlindId.set(k, v); // blind ids renumber on re-merge: keep a grade only for the SAME row content
+    // each kept grade keeps ITS identity: a column-less (legacy) grade stays legacy-unverified when re-written, it is never stamped with the current judge
+    const identOf = new Map(priorAll.map((p) => [p.blindId, pc.judge_identity >= 0 && p.identity ? p.identity : LEGACY_JUDGE_IDENTITY]));
+    const seeded = seedResumedGrades(priorRows, rows); for (const [k, v] of seeded.grades) gradingByBlindId.set(k, { ...v, identity: identOf.get(k) }); // blind ids renumber on re-merge: keep a grade only for the SAME row content
     if (seeded.discarded) log(`  ⚠ ${seeded.discarded} prior grade(s) discarded — their blind_id now names different content (re-merge renumbered); re-grading.`);
     if (gradingByBlindId.size) log(`Resuming — ${gradingByBlindId.size} row(s) already graded in ${path.relative(process.cwd(), outPath)} (use --force to re-grade everything)`);
   }
 
+  // --force re-grades from an empty map; if the provider then fails the final checkpoint would replace a graded output with ungraded rows
+  if (force && fs.existsSync(outPath)) fs.copyFileSync(outPath, `${outPath}.prev`);
   const byCommit = new Map();
   for (const r of rows) { if (!byCommit.has(r.commit)) byCommit.set(r.commit, []); byCommit.get(r.commit).push(r); }
   log(`GPT judge — model=${gptModel} · ${rows.length} row(s) across ${byCommit.size} commit(s) → ${path.relative(process.cwd(), outPath)}`);
@@ -1756,7 +1762,7 @@ async function cmdJudgeGpt() {
         cells[iLabel] = g.label || ''; cells[iProof] = g.proof || ''; cells[iCluster] = g.cluster || `${r.commit}:${r.blindId}`;
         cells[iMatches] = g.matches || ''; cells[iPattern] = g.pattern || '';
       } else { cells[iLabel] = ''; cells[iProof] = ''; cells[iPattern] = ''; ungradedNow++; } // an ungraded row carries NO label from the source sheet into the GPT output
-      cells[iIdent] = g ? judgeIdentity : '';
+      cells[iIdent] = g ? (g.identity ?? judgeIdentity) : '';
       lines.push(csvLine(cells));
     }
     atomicWriteFileSync(outPath, lines.join('\n') + '\n'); // ONE file: grade and identity are replaced together
@@ -1840,8 +1846,8 @@ async function fetchExternalFindings(commits) {
 async function cmdMerge() {
   // Re-running merge REPLACES the canonical sheet: hours of human labels, proofs and cluster edits vanish. Refuse before any (paid) clustering.
   if (!hasFlag('overwrite-labeled') && fs.existsSync(BLIND_CSV)) {
-    const [h0 = [], ...rs0] = parseCsv(fs.readFileSync(BLIND_CSV, 'utf8')); const il0 = h0.indexOf('label');
-    const labeled0 = il0 < 0 ? 0 : rs0.filter((c) => (c[il0] || '').trim()).length;
+    const [h0 = [], ...rs0] = parseCsv(fs.readFileSync(BLIND_CSV, 'utf8')); const humanCols = ['label', 'proof', 'pattern'].map((n) => h0.indexOf(n)).filter((i) => i >= 0);
+    const labeled0 = rs0.filter((c) => humanCols.some((i) => (c[i] || '').trim())).length; // any human-only cell: a proof or pattern is work even before a label
     if (labeled0) { log(`REFUSING: ${path.relative(process.cwd(), BLIND_CSV)} already holds ${labeled0} labelled row(s); a merge would discard them. Move the sheet aside, or pass --overwrite-labeled.`); process.exit(4); }
   }
   const mergeId = crypto.randomUUID(); // rides in the sheet (merge_id column) AND the map: a pair from different merges is refused by score

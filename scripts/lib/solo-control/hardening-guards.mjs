@@ -89,9 +89,12 @@ export function sheetPairingProblems(map, sheetRows, { mapMergeId = null, sheetM
   if (drift.length) problems.push(`${drift.length} row(s) disagree with the map on commit/severity/category — the sheet and map are from different merges: ${drift.slice(0, 8).join(', ')}`);
   // The merge generation rides IN the sheet (a `merge_id` column) and in the map: two merges that produce identical visible
   // findings with different arm attribution (or the same ids after a re-merge) can no longer pass as a pair.
-  if (mapMergeId) {
-    const ids = new Set(sheetMergeIds ?? []);
+  const ids = new Set((sheetMergeIds ?? []).filter(Boolean));
+  if (mapMergeId && sheetRows.length > 0) { // a zero-finding merge has no rows to carry the id: nothing to pair
     if (ids.size !== 1 || !ids.has(mapMergeId)) problems.push(`the sheet's merge_id (${[...ids].join('|') || 'none'}) is not the map's (${mapMergeId}) — they are from different merges`);
+  } else if (!mapMergeId && ids.size > 0) {
+    // a sheet that carries a merge_id beside a map that has none: the interrupted first merge after the column existed (new sheet, old map)
+    problems.push('the sheet carries a merge_id but the map has none — an interrupted merge left a new sheet beside an old map');
   }
   return problems;
 }
@@ -156,7 +159,8 @@ export const coldPassOutcome = ({ gotReply, conformant }) => (conformant ? 'ok' 
  * second file, and an interruption between the two writes left a pair no check could tell from a healthy one. An output with no
  * such column at all is a legacy one (written before the identity existed): kept, with a warning the caller prints, never silently.
  * @returns {'keep'|'discard'|'legacy'} */
-export const judgeGradeVerdict = ({ hasColumn, rowIdentity, current }) => (!hasColumn ? 'legacy' : rowIdentity === current ? 'keep' : 'discard');
+export const LEGACY_JUDGE_IDENTITY = 'legacy-unverified';
+export const judgeGradeVerdict = ({ hasColumn, rowIdentity, current }) => (!hasColumn || rowIdentity === LEGACY_JUDGE_IDENTITY ? 'legacy' : rowIdentity === current ? 'keep' : 'discard');
 
 /** The arms a `score --decide` cohort must cover: every arm in the merged sheet (`armMeta`, written by merge from every solo run it
  * read), not only the arms that happen to have an included finding — a completed arm that found nothing is a result, and dropping it

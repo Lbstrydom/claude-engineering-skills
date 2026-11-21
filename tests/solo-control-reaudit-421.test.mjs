@@ -175,3 +175,56 @@ describe('diff extraction survives non-ASCII file names (git quoted them and the
     assert.ok(!ext.diff.includes('hunter2'));
   }));
 });
+
+// ── round 2 of the re-audit ─────────────────────────────────────────────────
+const NL = String.fromCharCode(10);
+const sheetText = (label = '', proof = '') => csvLine(HEADER) + NL + csvLine(['F001', HEAD.slice(0, 8), 'HIGH', 'k', 'f', 'd', label, proof, 'c1', '', '']) + NL;
+
+describe('pairing edge cases', () => {
+  const rows = [{ blindId: 'F001', commit: 'abc12345', severity: 'HIGH', category: 'k', file: 'f', detail: 'd' }];
+  const map = { F001: { commit: 'abc12345def', severity: 'HIGH', category: 'k' } };
+  test('a zero-finding merge (empty map, header-only sheet, map has a merge id) is a valid pair — not a regression', () => {
+    assert.deepEqual(sheetPairingProblems({}, [], { mapMergeId: 'M1', sheetMergeIds: [] }), []);
+  });
+  test('a NEW sheet (merge_id) beside an OLD map (none) is refused; old + old and no-column sheets are fine', () => {
+    assert.match(sheetPairingProblems(map, rows, { mapMergeId: null, sheetMergeIds: ['M2'] }).join(), /map has none/);
+    assert.deepEqual(sheetPairingProblems(map, rows, { mapMergeId: null, sheetMergeIds: ['', ''] }), []);
+    assert.deepEqual(sheetPairingProblems(map, rows, { mapMergeId: null, sheetMergeIds: [] }), []);
+  });
+});
+
+describe('judge-gpt: grades keep THEIR identity; --force cannot destroy a graded output; aliases cannot reach a protected sheet', () => {
+  const legacyOut = (dir) => { const d = solo(dir); fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText()); fs.writeFileSync(path.join(d, 'out.csv'), sheetText('proven', 'f:1')); return d; };
+  test('a legacy (column-less) grade is re-written as legacy-unverified, NEVER stamped with the current judge', () => inTemp((dir) => {
+    const d = legacyOut(dir);
+    cli(dir, ['judge-gpt', '--out', 'out.csv'], refusingPolicy(dir));
+    const [header, row] = parseCsv(fs.readFileSync(path.join(d, 'out.csv'), 'utf8'));
+    assert.equal(row[6], 'proven', 'the legacy grade is kept');
+    assert.equal(row[header.indexOf('judge_identity')], 'legacy-unverified');
+  }));
+  test('--force keeps the previous graded output as <out>.prev before it can be replaced by ungraded rows', () => inTemp((dir) => {
+    const d = legacyOut(dir);
+    const before = fs.readFileSync(path.join(d, 'out.csv'), 'utf8');
+    cli(dir, ['judge-gpt', '--out', 'out.csv', '--force'], refusingPolicy(dir));
+    assert.equal(fs.readFileSync(path.join(d, 'out.csv.prev'), 'utf8'), before);
+    assert.equal(parseCsv(fs.readFileSync(path.join(d, 'out.csv'), 'utf8'))[1][6], '', 'the re-grade really did replace it (policy-refused)');
+  }));
+  test('a directory alias for the output dir cannot name the canonical sheet under another string', (t) => inTemp((dir) => {
+    const d = solo(dir);
+    fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText('proven', 'f:1'));
+    try { fs.symlinkSync(d, path.join(dir, '.audit-loop', 'alias'), 'junction'); } catch { t.skip('cannot create a directory link here'); return; }
+    const r = cli(dir, ['judge-gpt', '--out', '../alias/blind-adjudication.csv', '--force'], refusingPolicy(dir));
+    assert.equal(r.status, 2, r.out);
+    assert.match(r.out, /would overwrite it/);
+    assert.equal(parseCsv(fs.readFileSync(path.join(d, 'blind-adjudication.csv'), 'utf8'))[1][6], 'proven');
+  }));
+});
+
+describe('merge: any human-only cell is work worth protecting', () => {
+  test('a sheet with a proof but NO label yet is refused', () => inTemp((dir) => {
+    fs.writeFileSync(path.join(solo(dir), 'blind-adjudication.csv'), sheetText('', 'f:12 shows it'));
+    const r = cli(dir, ['merge']);
+    assert.equal(r.status, 4, r.out);
+    assert.match(r.out, /already holds 1/);
+  }));
+});
