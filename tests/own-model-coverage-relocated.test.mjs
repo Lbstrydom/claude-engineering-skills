@@ -75,6 +75,24 @@ describe('the input resolver reads the right file in BOTH layouts', () => {
     assert.deepEqual([...cols].sort(), ['mode', 'tool_sha']);
   });
 
+  it('a nameless view, an empty table name and an unreadable migration are typed input errors (final gate)', () => {
+    const bad = (fx) => {
+      const root = path.join(tmp, `bad-${Math.random().toString(36).slice(2, 8)}`);
+      write(root, 'tests/fixtures/expected-schema.json', JSON.stringify(fx));
+      return () => loadSchemaColumns(resolveCoverageInputs(root, 'source'));
+    };
+    const T = { table_name: 't', columns: ['c'] };
+    assert.throws(bad({ tables: [T], views: [{ definition: 'select 1' }] }), CoverageInputMissingError);
+    assert.throws(bad({ tables: [{ table_name: '', columns: ['c'] }] }), CoverageInputMissingError);
+    assert.throws(bad({ tables: [T], views: 'nope' }), CoverageInputMissingError);
+    assert.doesNotThrow(bad({ tables: [T], views: [{ view_name: 'v', definition: 'select 1' }] }));
+    // A directory named like a migration cannot be read as one: typed, never a raw EISDIR.
+    const root = path.join(tmp, 'badmig');
+    write(root, 'supabase/migrations/001_ok.sql', '-- ok');
+    fs.mkdirSync(path.join(root, 'supabase', 'migrations', '002_dir.sql'), { recursive: true });
+    assert.throws(() => loadMigrations(resolveCoverageInputs(root, 'source')), CoverageInputMissingError);
+  });
+
   it('source layout uses the source paths unchanged', () => {
     const inp = resolveCoverageInputs(path.join(tmp, 'src'), 'source');
     assert.equal(inp.config.rel, '.own-model-coverage.json');

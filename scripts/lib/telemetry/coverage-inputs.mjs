@@ -103,13 +103,16 @@ export function loadSchemaColumns(inputs) {
   const colName = (c) => (typeof c === 'string' ? c : c?.column_name);
   const goodName = (c) => typeof colName(c) === 'string' && colName(c).length > 0;
   for (const t of fx.tables) {
-    if (!t || typeof t.table_name !== 'string' || !Array.isArray(t.columns)) throw invalid('every table needs a table_name and a columns array');
+    if (!t || typeof t.table_name !== 'string' || t.table_name.length === 0 || !Array.isArray(t.columns)) throw invalid('every table needs a table_name and a columns array');
     // `tables[].columns[]` are objects with a `column_name` in the real fixture; a bare string is accepted, a nameless entry is not.
     if (!t.columns.every(goodName)) throw invalid('every column needs a non-empty column_name');
   }
   // Views carry a `definition` and no column list in the real fixture; where a list IS given it is held to the same rule.
+  if (fx.views !== undefined && !Array.isArray(fx.views)) throw invalid('views must be an array');
   for (const v of fx.views ?? []) {
-    if (v && v.columns !== undefined && !(Array.isArray(v.columns) && v.columns.every(goodName))) throw invalid('every view column needs a non-empty column_name');
+    const viewName = v?.view_name ?? v?.table_name;
+    if (!v || typeof v !== 'object' || typeof viewName !== 'string' || viewName.length === 0) throw invalid('every view needs a view_name');
+    if (v.columns !== undefined && !(Array.isArray(v.columns) && v.columns.every(goodName))) throw invalid('every view column needs a non-empty column_name');
   }
   const m = new Map();
   // The SAME accessor the validator used, so a bare-string column the validator accepted maps to its name (R3 H1).
@@ -127,8 +130,14 @@ export function loadMigrations(inputs) {
     if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') throw new CoverageInputMissingError('migrations directory', inputs.migrations.rel);
     throw new CoverageInputMissingError('migrations directory', inputs.migrations.rel, 'could not read');
   }
-  return names.filter((f) => f.endsWith('.sql')).sort()
-    .map((f) => ({ name: f, sql: fs.readFileSync(path.join(inputs.migrations.abs, f), 'utf8') }));
+  // A migration that cannot be read is the same typed failure as an unreadable directory (final gate L), never a raw throw.
+  return names.filter((f) => f.endsWith('.sql')).sort().map((f) => {
+    try {
+      return { name: f, sql: fs.readFileSync(path.join(inputs.migrations.abs, f), 'utf8') };
+    } catch {
+      throw new CoverageInputMissingError('migrations directory', inputs.migrations.rel, 'could not read');
+    }
+  });
 }
 
 /**
