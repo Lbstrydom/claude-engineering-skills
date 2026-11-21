@@ -93,6 +93,8 @@ describe('arch-intent-bootstrap --help (field report 2026-11-21: --help ran the 
   });
 });
 
+// Contract id for scripts/gate-contracts/help-readonly-gate.json (a contract may only claim a
+// test file that names its gate id): help-readonly-gate-rejects-a-cli-that-runs-on-help.
 describe('census', () => {
   it('a hang IS an offender: a CLI that never exited was not shown read-only', () => {
     assert.deepEqual(offenderIds([

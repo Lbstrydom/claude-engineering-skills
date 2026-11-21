@@ -18,7 +18,7 @@
 > **The test for a line: would an agent that never opens the linked doc still
 > avoid the mistake?** A line that *describes* a subsystem moves; a **tripwire**,
 > one that stops a mistake an agent would make unprompted, stays resident whatever
-> its section's size — shortened, not relocated. **And 26 sentences here are
+> its section's size — shortened, not relocated. **And 27 sentences here are
 > quoted character-for-character by gate contracts** (`statedIn: AGENTS.md`), so
 > `npm run check` fails on any rewording: list them before editing —
 > [gate-honesty.md](docs/reference/gate-honesty.md) §`stated` is a VERBATIM quote.
@@ -131,6 +131,12 @@
 > tokens, the SKILL.md target nothing enforced) may not grow, one under it may not
 > cross, and a shrink fails until re-baselined. Move detail to `references/`.
 > [Measurement](docs/reference/ratchet-gates.md).
+>
+> **`--help` is a pure read on every CLI.** `npm run help:readonly:gate` runs each
+> one with `--help` under a preload that blocks writes, network and mutating spawns
+> (a CLI that ignores the flag simply RUNS: `prepush-check --help` created a worktree).
+> No baseline: fix an offender with `import './lib/help-guard-run.mjs'` as its first import.
+> [Plan](docs/plans/fleet-feedback-cluster1-bugs.md)
 >
 > **Generated-artifact policy (invariant — avoid the "messy middle").** Every
 > generated file lands in exactly ONE of two categories; never tracked-but-
