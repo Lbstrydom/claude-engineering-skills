@@ -477,11 +477,14 @@ warning: startOid not recorded — ${start.reason}` : '')
  */
 export function materializeRemoteBranch(cwd, name) {
   if (!runGit(['check-ref-format', '--branch', name], cwd).ok) return null;
-  const refs = runGit(['for-each-ref', '--format=%(refname)', `refs/remotes/*/${name}`], cwd);
-  if (!refs.ok) return { ok: false, reason: `could not list remote-tracking refs (${refs.stderr?.trim() || 'git failed'})` };
-  // The pattern also matches a longer remote-relative path; keep only the exact <remote>/<name>. (A branch literally named
-  // `HEAD` cannot exist - check-ref-format refuses it - so a nested `feature/HEAD` is an ordinary branch and is kept.)
-  const exact = refs.stdout.split('\n').map((l) => l.trim()).filter((r) => r && r.slice('refs/remotes/'.length).split('/').slice(1).join('/') === name);
+  // Candidates come from the CONFIGURED remote names - a remote name may itself contain slashes (`team/origin`), so the ref is never
+  // split on its first segment. (A branch literally named `HEAD` cannot exist - check-ref-format refuses it - so a nested
+  // `feature/HEAD` is an ordinary branch.)
+  const remotes = runGit(['remote'], cwd);
+  if (!remotes.ok) return { ok: false, reason: `could not list remotes (${remotes.stderr?.trim() || remotes.reason || 'git failed'})` };
+  const exact = remotes.stdout.split('\n').map((r) => r.trim()).filter(Boolean)
+    .map((r) => `refs/remotes/${r}/${name}`)
+    .filter((ref) => runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd).ok);
   if (!exact.length) return null;
   if (exact.length > 1) return { ok: false, reason: `branch ${name} exists on several remotes (${exact.map((r) => r.slice('refs/remotes/'.length)).join(', ')}) — create the local branch you mean first (git branch ${name} <remote>/${name})` };
   // Read the FULLY QUALIFIED remote ref's commit FIRST (a local branch named `origin/x` must not be able to shadow it), then create

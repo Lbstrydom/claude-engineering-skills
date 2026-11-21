@@ -2,8 +2,8 @@
  * @fileoverview Line-ending churn that passes unnoticed (fleet feedback #7): a file whose CRLF/LF endings flipped shows as
  * a whole-file rewrite in review, hides the real change, and reaches a train as noise. A cheap check at `ready`: two
  * `git diff --numstat` reads of the SAME range, one raw and one with `--ignore-cr-at-eol`. A file whose ignoring-CR diff is
- * EMPTY but whose raw diff is not is a PURE flip; a file where line-ending noise dominates (at least `PARTIAL_MIN` lines and
- * at least twice the real change) is a PARTIAL one. Disclosure only - it never blocks - and a read that could not be made is
+ * EMPTY but whose raw diff is not is a PURE flip; a file where line-ending NOISE (raw minus real changed lines) dominates - at least
+ * `PARTIAL_MIN` lines AND at least twice the real change - is a PARTIAL one. Disclosure only - it never blocks - and a read that could not be made is
  * said, never read as "no flips".
  *
  * Detection is mechanical and says nothing about intent: a deliberate `.gitattributes` EOL change is also a flip, and the
@@ -14,7 +14,7 @@
  */
 import { runGit } from './git-facts.mjs';
 
-/** A partial flip needs this many extra raw-diff lines over the real change, and at least twice it, to be worth a line. */
+/** A partial flip needs this many lines of line-ending noise (raw minus real), and at least twice the real change, to be worth a line. */
 export const PARTIAL_MIN = 20;
 /** Cap on files named in one line; the count is always exact. */
 export const NAME_CAP = 8;
@@ -59,7 +59,7 @@ export function eolFlips(cwd, baseOid, oid) {
     const g = real.files.get(file);
     const realN = g ? g.added + g.deleted : 0;
     if (realN === 0) flips.push({ file, kind: 'pure', raw: rawN, real: 0 });
-    else if (rawN - realN >= PARTIAL_MIN && rawN >= 2 * realN) flips.push({ file, kind: 'partial', raw: rawN, real: realN });
+    else if (rawN - realN >= PARTIAL_MIN && rawN - realN >= 2 * realN) flips.push({ file, kind: 'partial', raw: rawN, real: realN });
   }
   return { ok: true, flips: flips.sort((a, b) => (a.file < b.file ? -1 : 1)) };
 }

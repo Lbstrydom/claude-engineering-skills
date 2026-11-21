@@ -39,8 +39,8 @@ async function main() {
   // Every token must be a known flag or the value right after --target: a stray word, or anything after a `--` terminator (where a
   // mistyped option hides from the flag check), is refused BEFORE anything runs.
   const ti0 = argv.indexOf('--target');
-  const stray = argv.filter((a, i) => !['--target', '--no-pull', '--dry-run'].includes(a) && i !== ti0 + 1 && !a.startsWith('--target='));
-  if (stray.length) throw new ArgvError(`sync-refresh: unexpected argument ${JSON.stringify(stray[0])} (accepted: --target <alias>, --no-pull, --dry-run)`);
+  const stray = argv.filter((a, i) => !['--target', '--no-pull', '--dry-run'].includes(a) && i !== ti0 + 1);
+  if (stray.length) throw new ArgvError(`sync-refresh: unexpected argument ${JSON.stringify(stray[0])} (accepted: --target <alias> as two words, --no-pull, --dry-run)`);
   const dryRun = argv.includes('--dry-run');
   const ti = argv.indexOf('--target');
   const target = ti >= 0 ? argv[ti + 1] : null;
@@ -90,6 +90,7 @@ async function main() {
   // its output would describe the tree BEFORE the sync, not the preview.)
   if (dryRun) {
     process.stdout.write(`${D}--dry-run: nothing was changed in ${matches.map((m) => m.name).join(', ')}; the sync-to-repos output above lists what a real run would change.${X}\n`);
+    await finishAndExit(0);
     return;
   }
 

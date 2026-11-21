@@ -73,6 +73,17 @@ describe('#4 fleet add adopts a remote-only branch', () => {
     assert.equal(res.ok, true, JSON.stringify(res));
     assert.equal(git(['rev-parse', 'refs/heads/feature/HEAD'], fx.repo), git(['rev-parse', 'refs/remotes/origin/feat-x'], fx.repo));
   });
+  it('a remote whose NAME contains a slash is matched by its configured name, not by splitting the ref', () => {
+    const fx = remoteOnly();
+    git(['remote', 'rename', 'origin', 'team/origin'], fx.repo);
+    assert.equal(git(['rev-parse', '--verify', 'refs/remotes/team/origin/feat-x'], fx.repo), git(['rev-parse', 'refs/remotes/team/origin/feat-x'], fx.repo));
+    const res = materializeRemoteBranch(fx.repo, 'feat-x');
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(res.created, 'team/origin/feat-x');
+    assert.equal(git(['rev-parse', 'refs/heads/feat-x'], fx.repo), git(['rev-parse', 'refs/remotes/team/origin/feat-x'], fx.repo));
+    // A branch whose own name starts with a segment equal to the remote's last segment is not confused with it.
+    assert.equal(materializeRemoteBranch(fx.repo, 'origin/feat-x'), null);
+  });
   it('creation is create-only: a branch that appears first is never overwritten', () => {
     const fx = remoteOnly();
     git(['branch', 'feat-x', 'main'], fx.repo);
@@ -321,6 +332,13 @@ describe('--dry-run: the two CLIs that ignored it', () => {
     assert.equal(r.status, 2, 'an unknown target is its own refusal');
     assert.match(r.stderr, /unknown target/);
     assert.doesNotMatch(r.stdout + r.stderr, /pulling canonical/);
+  });
+  it('sync-refresh refuses stray words, the --target=x form, and anything after the -- terminator, before doing anything', () => {
+    for (const args of [['--target', 'x', 'stray'], ['--target=x'], ['--target', 'x', '--', '--dry-runn']]) {
+      const r = run('scripts/sync-refresh.mjs', args);
+      assert.equal(r.status, 2, `${args.join(' ')}: ${r.stdout}${r.stderr}`);
+      assert.doesNotMatch(r.stdout + r.stderr, /pulling canonical/);
+    }
   });
   it('sync-refresh refuses a missing or flag-shaped --target value before doing anything', () => {
     for (const args of [['--target'], ['--target', '--no-pull']]) {
