@@ -12,6 +12,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dirs = [];
 after(() => { for (const d of dirs) { try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } } });
 
+// A whole source whose verdicts are bound to its run: the baseline a test then breaks ONE thing of.
+const WHOLE = { partial: false, budgetStop: null, costComplete: true, bound: true };
+const score = (cases, byKey, over = {}) => scoreAdjudicated(cases, byKey, { ...WHOLE, ...over });
 const f = (id, pass = 'backend', severity = 'HIGH') => ({ id, pass, severity });
 const v = (kdId, id, cls, extra = {}) => ({ kdId, id, pass: 'backend', class: cls, ...(cls === 'REAL' ? { preExisting: true } : {}), ...extra });
 const idx = (list) => { const r = indexAdjudications(list); assert.equal(r.ok, true, JSON.stringify(r.errors)); return r.byKey; };
@@ -24,7 +27,7 @@ const perCase = [...wholeCases, { kdId: 'K4', outcome: 'failed' }];
 
 describe('scoreAdjudicated: falseClaims / realDefects / nits / notClean instead of a bare rate', () => {
   const byKey = idx([v('K1', 'H1', 'REAL', { preExisting: false }), v('K1', 'M1', 'NOT_A_DEFECT'), v('K2', 'H1', 'WRONG')]);
-  const r = scoreAdjudicated(wholeCases, byKey);
+  const r = score(wholeCases, byKey);
 
   it('counts each class, and a case with a REAL defect is notClean (introduced when the commit added it)', () => {
     assert.equal(r.falseClaims, 1); assert.equal(r.realDefects, 1); assert.equal(r.nits, 1);
@@ -38,27 +41,27 @@ describe('scoreAdjudicated: falseClaims / realDefects / nits / notClean instead 
     assert.equal(k2.outcome, 'flagged'); assert.equal(k2.notClean, false);
   });
   it('a pre-existing REAL defect makes the case notClean but not introduced-by-commit', () => {
-    const q = scoreAdjudicated(wholeCases, idx([v('K1', 'H1', 'REAL', { preExisting: true }), v('K1', 'M1', 'NOT_A_DEFECT'), v('K2', 'H1', 'NOT_A_DEFECT')]));
+    const q = score(wholeCases, idx([v('K1', 'H1', 'REAL', { preExisting: true }), v('K1', 'M1', 'NOT_A_DEFECT'), v('K2', 'H1', 'NOT_A_DEFECT')]));
     assert.equal(q.notClean, 1); assert.equal(q.notCleanIntroducedByCommit, 0);
   });
   it('an unadjudicated finding is never counted as anything: the result is INCOMPLETE', () => {
-    const q = scoreAdjudicated(wholeCases, idx([v('K1', 'H1', 'REAL')]));
+    const q = score(wholeCases, idx([v('K1', 'H1', 'REAL')]));
     assert.equal(q.unadjudicated, 2); assert.equal(q.complete, false);
     assert.equal(q.realDefects, 1); assert.equal(q.nits, 0); assert.equal(q.falseClaims, 0);
   });
   it('a verdict that matches no finding is ORPHANED and reported, never silently ignored', () => {
-    const q = scoreAdjudicated(wholeCases, idx([v('K1', 'H1', 'REAL'), v('K1', 'M1', 'NOT_A_DEFECT'), v('K2', 'H1', 'WRONG'), v('K9', 'H1', 'REAL')]));
+    const q = score(wholeCases, idx([v('K1', 'H1', 'REAL'), v('K1', 'M1', 'NOT_A_DEFECT'), v('K2', 'H1', 'WRONG'), v('K9', 'H1', 'REAL')]));
     assert.deepEqual(q.orphaned, ['K9:backend:H1']); assert.equal(q.complete, false);
     assert.equal(q.realDefects, 1, 'the orphan did not count');
   });
   it('findings are keyed by case, pass AND id: the same id in another pass is a different finding', () => {
     assert.notEqual(findingKey('K1', { pass: 'backend', id: 'H1' }), findingKey('K1', { pass: 'Sustainability', id: 'H1' }));
-    const q = scoreAdjudicated([{ kdId: 'K1', outcome: 'flagged', findings: [f('H1', 'backend'), f('H1', 'Sustainability')] }],
+    const q = score([{ kdId: 'K1', outcome: 'flagged', findings: [f('H1', 'backend'), f('H1', 'Sustainability')] }],
       idx([{ kdId: 'K1', id: 'H1', pass: 'backend', class: 'REAL', preExisting: true }, { kdId: 'K1', id: 'H1', pass: 'Sustainability', class: 'WRONG' }]));
     assert.equal(q.realDefects, 1); assert.equal(q.falseClaims, 1);
   });
   it('UNDETERMINED is neither a confirmed nor a refuted claim: outside the false-claim rate, which is null (not 0) when nothing was judged', () => {
-    const q = scoreAdjudicated([{ kdId: 'K1', outcome: 'flagged', findings: [f('H1')] }], idx([v('K1', 'H1', 'UNDETERMINED')]));
+    const q = score([{ kdId: 'K1', outcome: 'flagged', findings: [f('H1')] }], idx([v('K1', 'H1', 'UNDETERMINED')]));
     assert.equal(q.undetermined, 1); assert.equal(q.falseClaimRate, null);
   });
 });
@@ -67,7 +70,7 @@ describe('completeness: nothing is guessed, and an incomplete score says why ins
   const all = idx([v('K1', 'H1', 'REAL'), v('K1', 'M1', 'NOT_A_DEFECT'), v('K2', 'H1', 'WRONG')]);
 
   it('a source run that failed a case is INCOMPLETE even though every finding has a verdict', () => {
-    const q = scoreAdjudicated(perCase, all);
+    const q = score(perCase, all);
     assert.equal(q.complete, false); assert.deepEqual(q.failedCases, ['K4']);
     assert.match(q.incompleteReasons.join(';'), /source run failed case\(s\): K4/);
   });
@@ -76,36 +79,66 @@ describe('completeness: nothing is guessed, and an incomplete score says why ins
     ['a partial report', { partial: true }, /source run was partial/],
     ['an incomplete cost', { costComplete: false }, /cost is incomplete/],
   ]) it(`the source report's own ${label} makes the score INCOMPLETE`, () => {
-    const q = scoreAdjudicated(wholeCases, all, source);
+    const q = score(wholeCases, all, source);
     assert.equal(q.complete, false); assert.match(q.incompleteReasons.join(';'), re);
   });
   it('a whole source with every finding judged is complete, with no reasons', () => {
-    const q = scoreAdjudicated(wholeCases, all, { partial: false, budgetStop: null, costComplete: true });
+    const q = score(wholeCases, all, { partial: false, budgetStop: null, costComplete: true });
     assert.equal(q.complete, true); assert.deepEqual(q.incompleteReasons, []);
   });
 
   it('a flagged case that kept NO findings (an older or truncated report) cannot be adjudicated: INCOMPLETE, never zero findings', () => {
     for (const findings of [undefined, []]) {
-      const q = scoreAdjudicated([{ kdId: 'K1', outcome: 'flagged', findings }], idx([]));
+      const q = score([{ kdId: 'K1', outcome: 'flagged', findings }], idx([]));
       assert.equal(q.complete, false); assert.deepEqual(q.inconsistent, ['K1']);
     }
   });
 
   it('a finding with no id, or two findings sharing (case, pass, id), are AMBIGUOUS: one verdict is never applied to both', () => {
-    const dup = scoreAdjudicated([{ kdId: 'K1', outcome: 'flagged', findings: [f('H1'), f('H1')] }], idx([v('K1', 'H1', 'REAL')]));
+    const dup = score([{ kdId: 'K1', outcome: 'flagged', findings: [f('H1'), f('H1')] }], idx([v('K1', 'H1', 'REAL')]));
     assert.equal(dup.complete, false); assert.equal(dup.ambiguous.length, 1); assert.equal(dup.realDefects, 1, 'applied once, not twice');
-    const noId = scoreAdjudicated([{ kdId: 'K1', outcome: 'flagged', findings: [{ pass: 'backend', severity: 'HIGH' }] }], idx([]));
+    const noId = score([{ kdId: 'K1', outcome: 'flagged', findings: [{ pass: 'backend', severity: 'HIGH' }] }], idx([]));
     assert.equal(noId.complete, false); assert.match(noId.ambiguous[0], /\(no id\)/);
   });
 
   it('a verdict carrying a fingerprint is applied only to a finding that still has it (an id reused by a later run does not inherit it)', () => {
     const mine = { id: 'H1', pass: 'backend', severity: 'HIGH', category: 'c', section: 's', detail: 'the claim' };
-    const ok = scoreAdjudicated([{ kdId: 'K1', outcome: 'flagged', findings: [mine] }], idx([v('K1', 'H1', 'REAL', { fingerprint: findingFingerprint(mine) })]));
+    const ok = score([{ kdId: 'K1', outcome: 'flagged', findings: [mine] }], idx([v('K1', 'H1', 'REAL', { fingerprint: findingFingerprint(mine) })]));
     assert.equal(ok.complete, true); assert.equal(ok.realDefects, 1);
     const later = { ...mine, detail: 'a DIFFERENT claim under the same id' };
-    const stale = scoreAdjudicated([{ kdId: 'K1', outcome: 'flagged', findings: [later] }], idx([v('K1', 'H1', 'REAL', { fingerprint: findingFingerprint(mine) })]));
+    const stale = score([{ kdId: 'K1', outcome: 'flagged', findings: [later] }], idx([v('K1', 'H1', 'REAL', { fingerprint: findingFingerprint(mine) })]));
     assert.equal(stale.complete, false); assert.deepEqual(stale.stale, ['K1:backend:H1']);
     assert.equal(stale.realDefects, 0, 'the stale verdict counted nowhere'); assert.equal(stale.unadjudicated, 1);
+  });
+});
+
+describe('completeness, round 2: unknown and unresolved are never success', () => {
+  const all = idx([v('K1', 'H1', 'REAL'), v('K1', 'M1', 'NOT_A_DEFECT'), v('K2', 'H1', 'WRONG')]);
+  it('an UNDETERMINED finding leaves its case unresolved: INCOMPLETE, never a case quietly counted clean', () => {
+    const q = score([{ kdId: 'K1', outcome: 'flagged', findings: [f('H1')] }], idx([v('K1', 'H1', 'UNDETERMINED')]));
+    assert.equal(q.complete, false); assert.match(q.incompleteReasons.join(';'), /UNDETERMINED/); assert.equal(q.notClean, 0);
+  });
+  it('a repeated case id cannot receive the same verdict twice: the duplicate is ambiguous across the WHOLE report', () => {
+    const q = score([{ kdId: 'K1', outcome: 'flagged', findings: [f('H1')] }, { kdId: 'K1', outcome: 'flagged', findings: [f('H1')] }], idx([v('K1', 'H1', 'REAL')]));
+    assert.equal(q.complete, false); assert.equal(q.realDefects, 1, 'applied once'); assert.deepEqual(q.ambiguous, ['K1:backend:H1']);
+  });
+  for (const [label, source] of [['partial missing', { partial: undefined }], ['costComplete missing', { costComplete: undefined }], ['partial not a boolean', { partial: 'no' }]]) {
+    it(`a source report with ${label} has UNKNOWN completeness: INCOMPLETE`, () => {
+      const q = score(wholeCases, all, source);
+      assert.equal(q.complete, false); assert.match(q.incompleteReasons.join(';'), /completeness is unknown/);
+    });
+  }
+  it('verdicts tied to neither a run nor to every finding content are INCOMPLETE; either tie makes them usable', () => {
+    const unbound = score(wholeCases, all, { bound: false });
+    assert.equal(unbound.complete, false); assert.match(unbound.incompleteReasons.join(';'), /not bound to this report run/);
+    assert.equal(score(wholeCases, all, { bound: false, allFingerprinted: true }).complete, true, 'every verdict fingerprinted is an acceptable tie');
+    assert.equal(score(wholeCases, all, { bound: true }).complete, true, 'a reportRunId-bound file is the other');
+  });
+  it('indexAdjudications reports allFingerprinted only when every verdict has one', () => {
+    const fp = (id) => v('K1', id, 'WRONG', { fingerprint: 'abcdef0123456789' });
+    assert.equal(indexAdjudications([fp('H1'), fp('H2')]).allFingerprinted, true);
+    assert.equal(indexAdjudications([fp('H1'), v('K1', 'H2', 'WRONG')]).allFingerprinted, false);
+    assert.equal(indexAdjudications([]).allFingerprinted, false, 'an empty list ties nothing');
   });
 });
 
@@ -170,27 +203,28 @@ describe('the offline CLI mode: --adjudicate-report scores a report with no spen
     return { r, out: fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : null };
   };
   const report = { runId: 'x', suite: 'expect_clean', partial: false, budgetStop: null, costComplete: true, perCase: wholeCases };
+  const bind = (verdicts) => ({ reportRunId: 'x', verdicts });
 
   it('writes the adjudicated block and exits 0 when every finding has a verdict', () => {
-    const { r, out } = run(report, [v('K1', 'H1', 'REAL'), v('K1', 'M1', 'NOT_A_DEFECT'), v('K2', 'H1', 'WRONG')]);
+    const { r, out } = run(report, bind([v('K1', 'H1', 'REAL'), v('K1', 'M1', 'NOT_A_DEFECT'), v('K2', 'H1', 'WRONG')]));
     assert.equal(r.status, 0, r.stderr);
     assert.equal(out.adjudicated.realDefects, 1); assert.equal(out.adjudicated.falseClaims, 1);
     assert.match(r.stdout, /falseClaims=1 realDefects=1 nits=1 notClean=1\/3/);
   });
   it('exits 3 (INCOMPLETE) with unadjudicated findings, never a clean-looking success', () => {
-    const { r, out } = run(report, [v('K1', 'H1', 'REAL')]);
+    const { r, out } = run(report, bind([v('K1', 'H1', 'REAL')]));
     assert.equal(r.status, 3); assert.equal(out.adjudicated.complete, false);
     assert.match(r.stdout, /INCOMPLETE \(2 finding\(s\) have no verdict/);
   });
   it('exits 3 (INCOMPLETE) for a source report that failed a case or stopped at the cap, even with every finding judged', () => {
     const verdicts = [v('K1', 'H1', 'REAL'), v('K1', 'M1', 'NOT_A_DEFECT'), v('K2', 'H1', 'WRONG')];
-    const failed = run({ ...report, partial: true, perCase: perCase }, verdicts);
+    const failed = run({ ...report, partial: true, perCase: perCase }, bind(verdicts));
     assert.equal(failed.r.status, 3); assert.match(failed.r.stdout, /source run failed case\(s\): K4/);
-    const capped = run({ ...report, partial: true, budgetStop: { reason: 'projected-over-cap' } }, verdicts);
+    const capped = run({ ...report, partial: true, budgetStop: { reason: 'projected-over-cap' } }, bind(verdicts));
     assert.equal(capped.r.status, 3); assert.match(capped.r.stdout, /source run was partial/);
   });
   it('exits 3 for a flagged case with no retained findings (an older report)', () => {
-    const { r } = run({ ...report, perCase: [{ kdId: 'K1', outcome: 'flagged' }] }, []);
+    const { r } = run({ ...report, perCase: [{ kdId: 'K1', outcome: 'flagged' }] }, bind([]));
     assert.equal(r.status, 3); assert.match(r.stdout, /flagged case\(s\) kept no findings: K1/);
   });
   it('refuses verdicts bound to a DIFFERENT report run (exit 2) and records boundToReport when the run matches', () => {
@@ -199,10 +233,12 @@ describe('the offline CLI mode: --adjudicate-report scores a report with no spen
     assert.equal(wrong.r.status, 2); assert.match(wrong.r.stderr, /made for report run some-other-run, not x/);
     const right = run(report, { reportRunId: 'x', verdicts });
     assert.equal(right.r.status, 0, right.r.stderr); assert.equal(right.out.adjudicated.boundToReport, true);
-    assert.equal(run(report, verdicts).out.adjudicated.boundToReport, false, 'a bare array is not bound to a run');
+    const bare = run(report, verdicts);
+    assert.equal(bare.out.adjudicated.boundToReport, false); assert.equal(bare.r.status, 3, 'an unbound, unfingerprinted verdict list is INCOMPLETE, not a success');
+    assert.match(bare.r.stdout, /not bound to this report run/);
   });
   it('refuses a report that is not an expect_clean report, and a missing --adjudications argument', () => {
-    assert.equal(run({ suite: 'detect', perCase: [] }, []).r.status, 2);
+    assert.equal(run({ suite: 'detect', perCase: [] }, bind([])).r.status, 2);
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'adj-cli-')); dirs.push(d);
     fs.writeFileSync(path.join(d, 'r.json'), JSON.stringify(report));
     const r = spawnSync('node', [path.join(ROOT, 'scripts', 'model-eval-auditor.mjs'), '--adjudicate-report', path.join(d, 'r.json')], { encoding: 'utf8' });

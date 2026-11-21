@@ -30,6 +30,7 @@ export const findingFingerprint = (f) => crypto.createHash('sha256')
  * @returns {{ok: true, byKey: Map<string, object>, reportRunId: string|null} | {ok: false, errors: string[]}}
  */
 export function indexAdjudications(input) {
+  // (also returns `allFingerprinted`: every verdict carries a content fingerprint, which is what binds an UNBOUND verdict list to its findings)
   const bound = input && !Array.isArray(input) && typeof input === 'object';
   const list = bound ? input.verdicts : input;
   if (!Array.isArray(list)) return { ok: false, errors: ['adjudications must be a JSON array, or {reportRunId, verdicts: [...]}'] };
@@ -48,28 +49,30 @@ export function indexAdjudications(input) {
     if (byKey.has(key)) errors.push(`${tag}: duplicate verdict for ${key}`); else byKey.set(key, a);
   });
   if (bound && input.reportRunId !== undefined && (typeof input.reportRunId !== 'string' || input.reportRunId === '')) errors.push('reportRunId must be a non-empty string');
-  return errors.length ? { ok: false, errors } : { ok: true, byKey, reportRunId: bound && typeof input.reportRunId === 'string' ? input.reportRunId : null };
+  return errors.length ? { ok: false, errors } : { ok: true, byKey, reportRunId: bound && typeof input.reportRunId === 'string' ? input.reportRunId : null, allFingerprinted: byKey.size > 0 && [...byKey.values()].every((a) => a.fingerprint !== undefined) };
 }
 
 /**
  * Score a report's per-case findings against verdicts.
  * @param {{kdId: string, outcome: string, findings?: object[]}[]} perCase
  * @param {Map<string, object>} byKey  from indexAdjudications
- * @param {{partial?: boolean, budgetStop?: object|null, costComplete?: boolean}} [source]  the report's own completeness fields
+ * @param {{partial?: boolean, budgetStop?: object|null, costComplete?: boolean, bound?: boolean, allFingerprinted?: boolean}} [source]
+ *   the report's own completeness fields (BOTH `partial` and `costComplete` must be present booleans: absent means unknown, never whole), and how
+ *   the verdicts are tied to this report: `bound` (a {reportRunId} file for this run) or `allFingerprinted` (every verdict carries a content fingerprint)
  */
 export function scoreAdjudicated(perCase, byKey, source = {}) {
   const seen = new Set(); const stale = []; const ambiguous = []; const inconsistent = [];
+  const keysInReport = new Set(); // across the WHOLE report: a repeated case id must not let one verdict be applied twice
   const cases = []; const t = { REAL: 0, NOT_A_DEFECT: 0, WRONG: 0, UNDETERMINED: 0, unadjudicated: 0 };
   for (const c of perCase) {
     const counts = { REAL: 0, NOT_A_DEFECT: 0, WRONG: 0, UNDETERMINED: 0, unadjudicated: 0 };
     let introduced = false;
-    const here = new Set();
     // A flagged case has MEDIUM+ drivers by definition: none kept means the report cannot be adjudicated (an older or truncated report).
     if (c.outcome === 'flagged' && !(Array.isArray(c.findings) && c.findings.length > 0)) inconsistent.push(c.kdId);
     for (const f of c.findings ?? []) {
       const key = findingKey(c.kdId, f);
-      if (!f?.id || here.has(key)) { ambiguous.push(f?.id ? key : `${c.kdId}:${f?.pass ?? 'unknown'}:(no id)`); continue; } // never apply one verdict to two findings
-      here.add(key);
+      if (!f?.id || keysInReport.has(key)) { ambiguous.push(f?.id ? key : `${c.kdId}:${f?.pass ?? 'unknown'}:(no id)`); continue; } // never apply one verdict to two findings
+      keysInReport.add(key);
       const v = byKey.get(key);
       if (!v) { counts.unadjudicated += 1; continue; }
       seen.add(key);
@@ -91,6 +94,11 @@ export function scoreAdjudicated(perCase, byKey, source = {}) {
   if (failed.length > 0) reasons.push(`the source run failed case(s): ${failed.join(', ')}`);
   if (source.partial === true || source.budgetStop) reasons.push('the source run was partial (cap stop or failed case)');
   if (source.costComplete === false) reasons.push('the source run\'s cost is incomplete');
+  // Unknown is not whole: a report without these fields (older, or truncated) cannot be assumed complete.
+  if (typeof source.partial !== 'boolean' || typeof source.costComplete !== 'boolean') reasons.push('the source report does not say whether it was complete (partial / costComplete missing): its completeness is unknown');
+  if (t.UNDETERMINED > 0) reasons.push(`${t.UNDETERMINED} finding(s) are UNDETERMINED: their cases' cleanliness is not established`);
+  // Finding ids are only unique within one run, so a verdict list must be tied to this run (reportRunId) or to each finding's content.
+  if (source.bound !== true && source.allFingerprinted !== true) reasons.push('the verdicts are not bound to this report run (no reportRunId) and not every one carries a fingerprint: they could belong to a different run that reused the same ids');
   const judged = t.REAL + t.NOT_A_DEFECT + t.WRONG; // UNDETERMINED is neither a claim confirmed nor refuted
   return {
     complete: reasons.length === 0,

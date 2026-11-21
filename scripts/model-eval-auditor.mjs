@@ -509,7 +509,7 @@ async function main() {
     if (!idx.ok) { process.stderr.write(`[model-eval-auditor] invalid adjudications: ${idx.errors.join('; ')}\n`); process.exitCode = 2; return; }
     if (report.suite !== 'expect_clean' || !Array.isArray(report.perCase)) { process.stderr.write('[model-eval-auditor] --adjudicate-report needs an expect_clean report\n'); process.exitCode = 2; return; }
     if (idx.reportRunId && idx.reportRunId !== report.runId) { process.stderr.write(`[model-eval-auditor] these verdicts were made for report run ${idx.reportRunId}, not ${report.runId}\n`); process.exitCode = 2; return; }
-    const a = scoreAdjudicated(report.perCase, idx.byKey, { partial: report.partial, budgetStop: report.budgetStop, costComplete: report.costComplete });
+    const a = scoreAdjudicated(report.perCase, idx.byKey, { partial: report.partial, budgetStop: report.budgetStop, costComplete: report.costComplete, bound: idx.reportRunId !== null, allFingerprinted: idx.allFingerprinted });
     a.boundToReport = idx.reportRunId !== null; // an array of verdicts is not bound to a run: ids are only unique within one run
     writeOutput({ source: { runId: report.runId, report: adjudicateReport, adjudications: adjPath }, adjudicated: a }, outFile,
       `[model-eval-auditor] adjudicated: falseClaims=${a.falseClaims} realDefects=${a.realDefects} nits=${a.nits} notClean=${a.notClean}/${a.measuredCases} cases${a.complete ? '' : ` INCOMPLETE (${a.incompleteReasons.join('; ')})`}`);

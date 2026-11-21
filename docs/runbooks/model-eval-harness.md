@@ -159,11 +159,15 @@ and rewritable. So when a run surfaces genuine bugs that were not curated:
   risk, fix, evidence; secret-redacted) so it can be adjudicated without a re-run. It spends real money per case: pin the revision first
   (`npm run fixture:create`) and state a cap.
 - **Adjudicating a report (offline, no spend).** Judge each kept finding REAL / NOT_A_DEFECT / WRONG / UNDETERMINED against the code at the case's
-  commit (a JSON array of `{kdId, pass, id, class, preExisting?}`, as in
-  [expect-clean-adjudication-v2-2026-11-20.json](../experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json)), then
+  commit: `{reportRunId, verdicts: [{kdId, pass, id, class, preExisting}]}` (`preExisting` is required on a REAL verdict; the verdict array in
+  [expect-clean-adjudication-v2-2026-11-20.json](../experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json) is that array, to be wrapped with
+  the run id of the report it was made for). Finding ids repeat across runs, so verdicts must be tied to the run (`reportRunId`, refused if it
+  differs) or each carry a content `fingerprint` (`findingFingerprint`); otherwise the score is INCOMPLETE. Then
   `node scripts/model-eval-auditor.mjs --adjudicate-report <report.json> --adjudications <verdicts.json> --out <file>`. The result is
   `falseClaims` (WRONG), `realDefects` (REAL), `nits`, `notClean` (cases with a REAL defect) and `falseClaimRate` over judged findings. A
-  finding with no verdict is never counted as anything: the result is INCOMPLETE (exit 3), as is a verdict that matches no finding (orphaned).
+  finding with no verdict is never counted as anything: the result is INCOMPLETE (exit 3), and so is every other thing that would make the number a guess:
+  a verdict matching no finding (orphaned) or made for a different finding under the same id (stale), an UNDETERMINED finding, a missing or duplicate finding
+  id, a flagged case that kept no findings, and a source report that failed a case, stopped at its cap, or does not say whether it was complete.
   A candidate is judged on `falseClaims`; `realDefects` and `notClean` are statements about the corpus.
 - **Re-curation.** An `expect_clean` entry may carry `adjudication: {verdict: "not-clean" | "clean-under-audit", date, source, realDefects: [...]}`
   (validated; `not-clean` must list its evidence). An entry is MARKED, never deleted, so history and stamps stay honest. Marking changes the
