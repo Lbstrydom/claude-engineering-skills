@@ -37,6 +37,9 @@ export const EXPORT_SQL = Object.freeze({
   events: 'SELECT id, finding_id, adjudication_outcome, remediation_state, ruling, round, created_at, superseded_at, overrides_event_id FROM finding_adjudication_events WHERE finding_id = ANY($1::uuid[]) ORDER BY created_at ASC, id ASC',
 });
 
+/** The transaction wrapper. READ ONLY is enforced by the server, so even a wrong statement here could not write. */
+export const EXPORT_TX = Object.freeze({ begin: 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY', commit: 'COMMIT', rollback: 'ROLLBACK' });
+
 const iso = (v) => (v instanceof Date ? v.toISOString() : v ?? null);
 const normRows = (rows) => rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, iso(v)])));
 
@@ -47,10 +50,20 @@ const normRows = (rows) => rows.map((r) => Object.fromEntries(Object.entries(r).
 export async function exportRows({ branches, since, repoId, query }) {
   if (!repoId) throw new Error('exportRows: a repo id is required (runs are filtered by repo_id as well as branch)');
   const rowsOf = async (sql, params) => { const r = await query(sql, params); return normRows(Array.isArray(r) ? r : r.rows); };
-  const runs = await rowsOf(EXPORT_SQL.runs, [branches, since, repoId]);
-  const runIds = runs.map((r) => r.id);
-  const findings = runIds.length ? await rowsOf(EXPORT_SQL.findings, [runIds]) : [];
-  const events = findings.length ? await rowsOf(EXPORT_SQL.events, [findings.map((f) => f.id)]) : [];
+  // One snapshot: the three SELECTs run in a single REPEATABLE READ READ ONLY transaction, so a concurrent writer cannot
+  // leave runs, findings and events from different moments. COMMIT on success, ROLLBACK on any error.
+  let runs; let findings; let events;
+  await query(EXPORT_TX.begin, []);
+  try {
+    runs = await rowsOf(EXPORT_SQL.runs, [branches, since, repoId]);
+    const runIds = runs.map((r) => r.id);
+    findings = runIds.length ? await rowsOf(EXPORT_SQL.findings, [runIds]) : [];
+    events = findings.length ? await rowsOf(EXPORT_SQL.events, [findings.map((f) => f.id)]) : [];
+    await query(EXPORT_TX.commit, []);
+  } catch (err) {
+    try { await query(EXPORT_TX.rollback, []); } catch { /* the original error is the one that matters */ }
+    throw err;
+  }
   return { version: EXPORT_VERSION, exportedAt: new Date().toISOString(), since, branches, repoId, runs, findings, events };
 }
 
@@ -64,6 +77,8 @@ const HOUR_MS = 3_600_000;
  * cutoff would admit exactly that.
  */
 export const SESSION_GAP_MS = 3 * HOUR_MS;
+// Known cost, chosen deliberately: valid adjudications made more than 3h after the final run are EXCLUDED. Reading them would be
+// look-ahead (the plan's rule), so the replay accepts losing some late-but-legitimate rulings rather than admit later state.
 
 /** The pinned runs of a PR, in the listed order. `missing` names listed ids the export does not hold. */
 export function pinnedRuns(exp, runIds) {

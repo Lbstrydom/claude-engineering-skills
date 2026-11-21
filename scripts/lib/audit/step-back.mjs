@@ -80,6 +80,7 @@ export function parseStepBackOutput(raw, { knownTopics = null } = {}) {
 /** Sections shrink in this order when the pack is over budget: least central first. */
 export const TRUNCATION_ORDER = Object.freeze(['arch', 'importers', 'imports', 'cited', 'ledger', 'rounds', 'plan']);
 const TRUNCATION_MARKER = '\n[truncated]';
+const OMITTED_RESERVE = 700;
 
 export const PACK_LIMITS = Object.freeze({ perFileChars: 60_000, totalChars: 600_000, maxImporterScan: 5000, maxArchNeighbours: 8 });
 
@@ -176,13 +177,13 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
     const body = readBody(rel); if (body == null) return;
     const cut = body.length > limits.perFileChars;
     const shown = cut ? body.slice(0, limits.perFileChars) : body;
-    part(group, `<file path="${rel}" role="${role}"${cut ? ' truncated="true"' : ''}>\n`, shown, '\n</file>', { path: rel, role, chars: shown.length, truncated: cut });
+    part(group, `<file path="${redact(rel)}" role="${role}"${cut ? ' truncated="true"' : ''}>\n`, shown, '\n</file>', { path: rel, role, chars: shown.length, truncated: cut });
   };
 
   if (planFile) {
     const rel = posix(path.isAbsolute(planFile) ? path.relative(root, planFile) : planFile);
     const body = readBody(rel);
-    if (body != null) part('plan', `<plan path="${rel}">\n`, body, '\n</plan>'); else notes.push('plan file was excluded or unreadable');
+    if (body != null) part('plan', `<plan path="${redact(rel)}">\n`, body, '\n</plan>'); else notes.push('plan file was excluded or unreadable');
   }
   part('ledger', '<ledger>\n', redact(JSON.stringify(ledgerEntries, null, 1)), '\n</ledger>');
   const roundView = (rounds || []).map((r) => ({
@@ -209,8 +210,11 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
   // Every iteration removes or shrinks something: a file part is dropped; a text part is cut ONCE (to its kept prefix plus the
   // marker, or to empty) and is then spent. A spent section is never selected again, so the loop cannot spin.
   const spent = new Set();
+  // When the pack is over budget a short <omitted> section is added so the reviewer knows what it did not see; its room is reserved first.
+  const overBudget = size() > limits.totalChars;
+  const budget = overBudget ? limits.totalChars - OMITTED_RESERVE : limits.totalChars;
   for (const group of TRUNCATION_ORDER) {
-    while (size() > limits.totalChars) {
+    while (size() > budget) {
       const idx = parts.map((p, i) => (p.group === group && !spent.has(p) ? i : -1)).filter((i) => i >= 0);
       if (idx.length === 0) break;
       if (FILE_GROUPS.has(group)) { const [gone] = parts.splice(idx[idx.length - 1], 1); truncations.push({ section: group, action: 'dropped', path: gone.meta.path }); continue; }
@@ -220,6 +224,12 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
       p.body = keep > 0 ? `${p.body.slice(0, keep)}${TRUNCATION_MARKER}` : '';
       spent.add(p);
     }
+  }
+  if (truncations.length) {
+    const dropped = truncations.filter((t) => t.action === 'dropped').map((t) => redact(t.path));
+    const cut = truncations.filter((t) => t.action === 'truncated').map((t) => `${t.section} (kept ${t.to} of ${t.from} chars)`);
+    const body = [dropped.length ? `files not shown: ${dropped.slice(0, 15).join(', ')}${dropped.length > 15 ? ` and ${dropped.length - 15} more` : ''}` : null, cut.length ? `sections shortened: ${cut.join('; ')}` : null].filter(Boolean).join('\n').slice(0, OMITTED_RESERVE - 40);
+    part('omitted', '<omitted>\n', body, '\n</omitted>');
   }
   if (size() > limits.totalChars) throw new Error(`step-back pack cannot fit totalChars=${limits.totalChars}: every section is emptied and the fixed markup alone is ${size()} chars`);
   if (truncations.length) notes.push(`pack over ${limits.totalChars} chars: ${truncations.map((t) => `${t.section} ${t.action}${t.path ? ` ${t.path}` : ''}`).join('; ')}`);

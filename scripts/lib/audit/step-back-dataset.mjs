@@ -22,12 +22,16 @@ import path from 'node:path';
 export const DATASET_VERSION = 1;
 export const CHECKPOINTS = Object.freeze([3, 6]);
 
-/** Refuse duplicate PR numbers and duplicate (pr, checkpoint) pairs in a spec or a dataset. */
+/** Refuse duplicate PR numbers, duplicate (pr, checkpoint) pairs, and run ids repeated within or across PRs, in a spec or a dataset. */
 export function assertNoDuplicates(prs) {
-  const seen = new Set(); const pairs = new Set();
+  const seen = new Set(); const pairs = new Set(); const runOwner = new Map();
   for (const p of prs || []) {
     if (seen.has(p.pr)) throw new Error(`duplicate PR number #${p.pr}`);
     seen.add(p.pr);
+    for (const id of p.runIds || []) {
+      if (runOwner.has(id)) throw new Error(runOwner.get(id) === p.pr ? `run id ${id} is repeated within PR #${p.pr}` : `run id ${id} is pinned to both PR #${runOwner.get(id)} and PR #${p.pr}`);
+      runOwner.set(id, p.pr);
+    }
     for (const c of p.checkpoints || []) {
       const k = `${p.pr}@${c.checkpoint}`;
       if (pairs.has(k)) throw new Error(`duplicate (pr, checkpoint) pair #${p.pr} R${c.checkpoint}`);
