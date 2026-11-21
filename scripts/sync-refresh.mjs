@@ -77,6 +77,13 @@ function main() {
     process.exit(sync.status || 1);
   }
 
+  // A dry run changed nothing in the consumer: say so and stop. (`git status` there would also be a write - it can refresh the index - and
+  // its output would describe the tree BEFORE the sync, not the preview.)
+  if (dryRun) {
+    process.stdout.write(`${D}--dry-run: nothing was changed in ${matches.map((m) => m.name).join(', ')}; the sync-to-repos output above lists what a real run would change.${X}\n`);
+    return;
+  }
+
   // 3. Show the consumer's tracked changes — what YOU review + push to its remote.
   for (const m of matches) {
     process.stdout.write(`\n${G}✓ ${m.name}${X} ${D}(${m.path})${X}\n`);

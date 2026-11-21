@@ -65,6 +65,9 @@ export function eolFlips(cwd, baseOid, oid) {
 /** The JSON shape `ready` carries: `checked` is explicit, so "not checked" is never read as "checked, none". */
 export const eolJson = (res) => (res.ok ? { checked: true, flips: res.flips } : { checked: false, reason: res.reason, flips: [] });
 
+/** A git path rendered for a terminal: control characters (newline, CR, ESC) become visible `\xNN`, never raw. */
+export const printable = (p) => String(p).replace(/[\u0000-\u001f\u007f]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+
 /** The lines a `ready` prints about it (empty when nothing flipped). */
 export function eolFlipLines(res) {
   if (!res) return [];
@@ -72,7 +75,7 @@ export function eolFlipLines(res) {
   if (!res.flips.length) return [];
   const pure = res.flips.filter((f) => f.kind === 'pure');
   const partial = res.flips.filter((f) => f.kind === 'partial');
-  const names = (l) => `${l.slice(0, NAME_CAP).map((f) => f.file).join(', ')}${l.length > NAME_CAP ? `, … ${l.length - NAME_CAP} more` : ''}`;
+  const names = (l) => `${l.slice(0, NAME_CAP).map((f) => printable(f.file)).join(', ')}${l.length > NAME_CAP ? `, … ${l.length - NAME_CAP} more` : ''}`;
   const L = [];
   if (pure.length) L.push(`warning: ${pure.length} file(s) changed ONLY in line endings (CRLF/LF): ${names(pure)} — restore their original endings unless the change is deliberate`);
   if (partial.length) L.push(`warning: line endings dominate the diff of ${partial.length} file(s): ${names(partial)} — the real change is buried; check the endings were not rewritten`);

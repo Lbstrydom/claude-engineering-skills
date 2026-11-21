@@ -11,6 +11,9 @@ const ledgerPath = scratchPath('ledger', `${SID}-ledger.json`);
 /** Importing this module writes NOTHING: the ledger is written only by `main()`, which only the entry guard calls. */
 function main(argv) {
   assertKnownFlags(argv, ['--dry-run'], { cli: 'write-ledger-r1' });
+  // Nothing else is an argument: a stray word, or anything after a `--` terminator (where a mistyped option would hide), is refused.
+  const stray = argv.slice(2).filter((a) => a !== '--dry-run');
+  if (stray.length) throw new ArgvError(`write-ledger-r1: unexpected argument ${JSON.stringify(stray[0])} (accepted: --dry-run)`);
   const DRY_RUN = argv.includes('--dry-run');
   let entries = 0;
   function addEntry(finding, outcome, remState, severity, origSeverity, ruling, rationale, resolvedRound) {

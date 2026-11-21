@@ -150,7 +150,8 @@ export function renderReconcile(r, cmd = 'fleet') {
 export function renderAbandon(r) {
   if (!r.ok) return `REFUSED: ${r.reason}`;
   const head = `ABANDONED ${r.train.trainId}${r.worktreeRemoved ? ' (worktree removed)' : r.worktreeNote ? ` (worktree: ${r.worktreeNote})` : ''}. Sessions were never touched by the train.`;
-  const fix = (l) => (!l.dirExists ? 'the directory is gone but git still lists it: preview with `git worktree prune --dry-run -v`, then `git worktree prune` (it clears EVERY stale registration, not only this one)'
+  const fix = (l) => (l.registered === null && !l.dirExists ? 'could not verify the git registration (git worktree list failed): run `git worktree list`, then `git worktree prune --dry-run -v` and prune if it lists this path'
+    : !l.dirExists ? 'the directory is gone but git still lists it: preview with `git worktree prune --dry-run -v`, then `git worktree prune` (it clears EVERY stale registration, not only this one)'
     : l.registered === false ? `git no longer lists it, so it is only a directory: inspect it, then delete ${renderCommand([l.path])} yourself`
       : `inspect it first, then: git worktree remove --force --force ${renderCommand([l.path])} (a locked worktree needs --force twice)`);
   const left = (r.leftBehind ?? []).map((l) => `LEFT BEHIND: ${l.kind} ${l.path} (${l.reason}) — ${fix(l)}`);

@@ -14,7 +14,7 @@ import { REMOTE_READ_ATTEMPTS, isPermanentFailure, isTimeoutFailure, lsRemote, r
 import { remoteRefOid } from '../scripts/lib/fleet/git-facts.mjs';
 import { removeTrainWorktree } from '../scripts/lib/fleet/train.mjs';
 import { renderAbandon } from '../scripts/lib/fleet/render-train.mjs';
-import { eolFlipLines, eolFlips, eolJson } from '../scripts/lib/fleet/eol-flips.mjs';
+import { eolFlipLines, eolFlips, eolJson, printable } from '../scripts/lib/fleet/eol-flips.mjs';
 import { materializeRemoteBranch } from '../scripts/lib/fleet/commands.mjs';
 
 after(cleanupFleetRoots);
@@ -56,6 +56,32 @@ describe('#4 fleet add adopts a remote-only branch', () => {
     // `claim` ran on main, so the session is bound to main; the point is the ref this call made did not survive a no-op add.
     assert.notEqual(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/feat-x'], { cwd: fx.repo }).status, 0, 'the branch made for a no-op add is gone');
     assert.match(r.json.text, /was removed again: nothing was adopted/);
+  });
+  it('is created from the FULLY QUALIFIED remote ref: a local branch named origin/feat-x cannot shadow it', () => {
+    const fx = remoteOnly();
+    const remoteTip = git(['rev-parse', 'refs/remotes/origin/feat-x'], fx.repo);
+    git(['branch', 'origin/feat-x', 'main'], fx.repo); // a LOCAL branch whose short name collides with the remote-tracking one
+    const res = materializeRemoteBranch(fx.repo, 'feat-x');
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(git(['rev-parse', 'refs/heads/feat-x'], fx.repo), remoteTip, 'the remote tip, not the shadowing branch');
+    assert.equal(res.oid, remoteTip, 'the oid rollback compares against is the one it created at');
+  });
+  it('a nested branch whose last segment is HEAD is an ordinary branch (only the remote symbolic HEAD is excluded)', () => {
+    const fx = remoteOnly();
+    git(['update-ref', 'refs/remotes/origin/feature/HEAD', git(['rev-parse', 'refs/remotes/origin/feat-x'], fx.repo)], fx.repo);
+    const res = materializeRemoteBranch(fx.repo, 'feature/HEAD');
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(git(['rev-parse', 'refs/heads/feature/HEAD'], fx.repo), git(['rev-parse', 'refs/remotes/origin/feat-x'], fx.repo));
+  });
+  it('creation is create-only: a branch that appears first is never overwritten', () => {
+    const fx = remoteOnly();
+    git(['branch', 'feat-x', 'main'], fx.repo);
+    const before = git(['rev-parse', 'refs/heads/feat-x'], fx.repo);
+    // Called directly (as a racing creator would): the all-zero old value makes update-ref refuse.
+    const res = materializeRemoteBranch(fx.repo, 'feat-x');
+    assert.equal(res.ok, false);
+    assert.match(res.reason, /could not create feat-x/);
+    assert.equal(git(['rev-parse', 'refs/heads/feat-x'], fx.repo), before);
   });
   it('a branch that exists nowhere is still refused, and creates nothing', () => {
     const fx = makeFleetRepo();
@@ -169,6 +195,10 @@ describe('#6 land --abandon says what it left behind', () => {
     assert.ok(left({}).includes('(a locked worktree needs --force twice)'));
     assert.ok(left({ registered: false }).includes('git no longer lists it, so it is only a directory: inspect it, then delete'));
     assert.ok(left({ dirExists: false }).includes('git worktree prune --dry-run -v'));
+    // The directory is gone and git could NOT be asked: an unanswered query is never read as "nothing left".
+    const unknown = left({ dirExists: false, registered: null, reason: 'x; git worktree list failed (boom)' });
+    assert.ok(unknown.includes('could not verify the git registration'), unknown);
+    assert.ok(unknown.includes('git worktree list failed (boom)'));
     const clean = renderAbandon({ ...base, worktreeRemoved: true, worktreeNote: undefined, leftBehind: [] });
     assert.doesNotMatch(clean, /LEFT BEHIND/);
     assert.match(renderAbandon({ ok: false, reason: 'x' }), /^REFUSED: x$/);
@@ -200,6 +230,12 @@ describe('#7 line-ending flips are disclosed at ready', () => {
     const lines = eolFlipLines(r);
     assert.match(lines[0], /1 file\(s\) changed ONLY in line endings \(CRLF\/LF\): eol\.txt/);
     assert.match(lines[1], /line endings dominate the diff of 1 file\(s\): mixed\.txt/);
+  });
+  it('filenames are rendered without raw control characters (a newline or ESC cannot forge terminal output)', () => {
+    assert.equal(printable('a\nb\u001b[31m\r.txt'), 'a\\x0ab\\x1b[31m\\x0d.txt');
+    const lines = eolFlipLines({ ok: true, flips: [{ file: 'evil\nwarning: fake', kind: 'pure', raw: 4, real: 0 }] });
+    assert.equal(lines.length, 1, 'one line, not two');
+    assert.ok(lines[0].includes('evil\\x0awarning: fake'), lines[0]);
   });
   it('the JSON says checked:false with a reason when it could not look, and checked:true with no flips when it looked and found none', () => {
     assert.deepEqual(eolJson({ ok: false, reason: 'base not measured' }), { checked: false, reason: 'base not measured', flips: [] });
@@ -274,6 +310,12 @@ describe('--dry-run: the two CLIs that ignored it', () => {
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', "await import('./scripts/write-ledger-r1.mjs'); process.stdout.write('imported');"], { encoding: 'utf8' });
     assert.equal(r.stdout.trim().endsWith('imported'), true, r.stdout + r.stderr);
     assert.equal(fs.existsSync(ledger), existed);
+  });
+  it('write-ledger-r1 refuses a stray word, including one after the -- terminator', () => {
+    for (const args of [['stray'], ['--', '--dry-runn'], ['--dry-run', 'extra']]) {
+      const r = run('scripts/write-ledger-r1.mjs', args);
+      assert.equal(r.status, 2, `${args.join(' ')}: ${r.stdout}${r.stderr}`);
+    }
   });
   it('write-ledger-r1 refuses a mistyped flag; --dry-run writes nothing and says what it would write', () => {
     const bad = run('scripts/write-ledger-r1.mjs', ['--dry-runn']);

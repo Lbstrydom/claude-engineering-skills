@@ -79,7 +79,7 @@ for it, exits 2) before pulling or spawning anything; the first `--target` wins.
 
 ## 3. Acceptance criteria
 
-- A1. `fleet add <x>` with `x` only on `origin` creates `x` tracking `origin/x` (no checkout) and adopts it; nowhere → still
+- A1. `fleet add <x>` with `x` only on `origin` creates `x` at `origin/x`'s commit (no checkout, no tracking configuration) and adopts it; nowhere → still
   refused; two remotes → refused naming both; an existing local branch is untouched; a nonsense name creates nothing.
 - A2. A failed remote read is retried at most 3 times with the stated backoff; an answer and a timeout are not retried; the four
   call sites use it; `remoteRefOid`'s shapes are unchanged.

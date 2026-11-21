@@ -478,16 +478,20 @@ export function materializeRemoteBranch(cwd, name) {
   if (!runGit(['check-ref-format', '--branch', name], cwd).ok) return null;
   const refs = runGit(['for-each-ref', '--format=%(refname)', `refs/remotes/*/${name}`], cwd);
   if (!refs.ok) return { ok: false, reason: `could not list remote-tracking refs (${refs.stderr?.trim() || 'git failed'})` };
-  const found = refs.stdout.split('\n').map((l) => l.trim()).filter((l) => l && !l.endsWith('/HEAD'));
-  // The pattern also matches a longer remote-relative path; keep only the exact <remote>/<name>.
-  const exact = found.filter((r) => r.slice('refs/remotes/'.length).split('/').slice(1).join('/') === name);
+  // The pattern also matches a longer remote-relative path; keep only the exact <remote>/<name>. (A branch literally named
+  // `HEAD` cannot exist - check-ref-format refuses it - so a nested `feature/HEAD` is an ordinary branch and is kept.)
+  const exact = refs.stdout.split('\n').map((l) => l.trim()).filter((r) => r && r.slice('refs/remotes/'.length).split('/').slice(1).join('/') === name);
   if (!exact.length) return null;
   if (exact.length > 1) return { ok: false, reason: `branch ${name} exists on several remotes (${exact.map((r) => r.slice('refs/remotes/'.length)).join(', ')}) — create the local branch you mean first (git branch ${name} <remote>/${name})` };
-  const remoteRef = exact[0].slice('refs/remotes/'.length);
-  const made = runGit(['branch', '--no-track', '--', name, remoteRef], cwd);
-  const tip = made.ok ? runGit(['rev-parse', `refs/heads/${name}`], cwd) : null;
-  if (made.ok && !tip.ok) return { ok: false, reason: `created ${name} but could not read its tip (${tip.reason})` };
-  return made.ok ? { ok: true, created: remoteRef, oid: tip.stdout.trim() } : { ok: false, reason: `git branch ${name} ${remoteRef} failed (${made.stderr?.trim() || 'unknown'})` };
+  // Read the FULLY QUALIFIED remote ref's commit FIRST (a local branch named `origin/x` must not be able to shadow it), then create
+  // the local ref at exactly that oid, only if it does not exist (an all-zero old value): ONE atomic step that both creates it
+  // and fixes the oid rollback will compare against, with no window for another process to move it in between.
+  const full = exact[0];
+  const tip = runGit(['rev-parse', '--verify', `${full}^{commit}`], cwd);
+  if (!tip.ok) return { ok: false, reason: `could not read ${full} (${tip.reason})` };
+  const oid = tip.stdout.trim();
+  const made = runGit(['update-ref', '-m', `fleet add: created from ${full.slice('refs/remotes/'.length)}`, `refs/heads/${name}`, oid, '0'.repeat(oid.length)], cwd);
+  return made.ok ? { ok: true, created: full.slice('refs/remotes/'.length), oid } : { ok: false, reason: `could not create ${name} from ${full} (${made.reason ?? made.stderr?.trim() ?? 'unknown'})` };
 }
 
 /**
@@ -505,16 +509,33 @@ export function cmdAdd(ctx, flags, positionals) {
     materialized = materializeRemoteBranch(ctx.cwd, name);
     if (materialized && !materialized.ok) return refused(materialized.reason);
   }
-  const undo = () => { if (materialized?.ok) runGit(['update-ref', '-d', `refs/heads/${name}`, materialized.oid], ctx.cwd); };
+  /**
+   * Remove the ref THIS call created - under the registry lock adoption uses, so a concurrent `fleet add` that adopted the
+   * branch in the meantime (a non-terminal session bound to it) keeps it - and with a compare-and-swap on the oid it created,
+   * so a branch someone moved is never deleted. Reports what actually happened; never claims a removal it did not make.
+   * @returns {string} one sentence
+   */
+  const undo = () => {
+    const where = `the local branch ${name} this call created from ${materialized.created}`;
+    const tx = transact(ctx.dir, (t) => {
+      if (t.sessions.some((x) => !isTerminalState(x.state) && x.source?.branch === name)) return 'kept';
+      return runGit(['update-ref', '-d', `refs/heads/${name}`, materialized.oid], ctx.cwd);
+    });
+    if (!tx.ok) return `(${where} could NOT be removed: the registry lock was busy — remove it yourself if unwanted: git branch -d ${name})`;
+    if (tx.value === 'kept') return `(${where} was KEPT: another session adopted it meanwhile)`;
+    return tx.value.ok ? `(${where} was removed again: nothing was adopted)`
+      : `(${where} was NOT removed (${tx.value.reason}) — it moved or is locked; inspect it, then remove it yourself if unwanted: git branch -d ${name})`;
+  };
   let res;
-  try { res = adoptOnce(ctx, flags, positionals); } catch (e) { undo(); throw e; }
+  try { res = adoptOnce(ctx, flags, positionals); } catch (e) {
+    if (materialized?.ok) process.stderr.write(`${undo()}\n`);
+    throw e;
+  }
   if (!materialized?.ok) return res;
   if (res.ok && res.added?.length) {
     return { ...res, createdFrom: materialized.created, text: [`created local branch ${name} from ${materialized.created} (nothing checked out)`, res.text].join('\n') };
   }
-  undo();
-  return { ...res, text: `${res.text}
-(the local branch ${name} this call created from ${materialized.created} was removed again: nothing was adopted)` };
+  return { ...res, text: [res.text, undo()].join('\n') };
 }
 
 function adoptOnce(ctx, flags, positionals) {

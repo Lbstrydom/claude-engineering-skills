@@ -578,8 +578,9 @@ function leftoverOf(cwd, t, rm, deps) {
   const dirExists = fs.existsSync(t.worktree);
   const l = deps.git(['worktree', 'list', '--porcelain', '-z'], cwd);
   const registered = l.ok ? parseWorktreePorcelain(l.stdout).some((w) => pathsEqual(w.path, t.worktree, process.platform)) : null;
-  if (!dirExists && registered !== true) return [];
-  return [{ kind: 'worktree', path: t.worktree, dirExists, registered, reason: rm.reason }];
+  // An UNANSWERED registration query is not proof of absence: with the directory gone, `registered: null` is still reported.
+  if (!dirExists && registered === false) return [];
+  return [{ kind: 'worktree', path: t.worktree, dirExists, registered, reason: l.ok ? rm.reason : `${rm.reason}; git worktree list failed (${l.reason})` }];
 }
 
 /**
