@@ -15,3 +15,17 @@ export function escapeData(value) {
 export function escapeProperty(value) {
   return escapeData(value).replace(/:/g, '%3A').replace(/,/g, '%2C');
 }
+
+/**
+ * A runner reads a COMMAND from any line that starts with `::`, leading whitespace included. Data escaping handles newlines
+ * inside a fragment, but a fragment that IS the start of a line could still open a command, so a leading marker is neutralised
+ * by prefixing `| `.
+ */
+export function neutralizeLeadingCommand(line) {
+  return /^\s*::/.test(line) ? `| ${line}` : line;
+}
+
+/** For a standalone stdout/stderr line built from untrusted text: data-escaped, and never starting a command. */
+export function escapeLogLine(value) {
+  return neutralizeLeadingCommand(escapeData(value));
+}

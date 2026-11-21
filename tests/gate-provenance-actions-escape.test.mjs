@@ -21,3 +21,15 @@ test('escapeProperty: data escapes plus colon and comma', () => {
 test('percent is escaped FIRST, so an escape is never double-decoded into a newline', () => {
   assert.equal(escapeData('%0A'), '%250A');
 });
+
+import { escapeLogLine, neutralizeLeadingCommand } from '../scripts/lib/gate-provenance/actions-escape.mjs';
+
+test('standalone lines: a leading :: (even after whitespace) is neutralised so untrusted text cannot become a command', () => {
+  assert.equal(neutralizeLeadingCommand('::error::x'), '| ::error::x');
+  assert.equal(neutralizeLeadingCommand('   ::warning::x'), '|    ::warning::x');
+  assert.equal(neutralizeLeadingCommand('a ::error::x'), 'a ::error::x', 'only a LEADING marker starts a command');
+  assert.equal(neutralizeLeadingCommand('plain'), 'plain');
+  assert.equal(escapeLogLine('::error::x'), '| ::error::x');
+  assert.equal(escapeLogLine('a\n::error::x'), 'a%0A::error::x', 'the newline form is escaped, not split into a line');
+  for (const evil of ['::error::x', '\t::set-env name=A::b', '::add-mask::y']) assert.ok(!/^\s*::/.test(escapeLogLine(evil)), evil);
+});

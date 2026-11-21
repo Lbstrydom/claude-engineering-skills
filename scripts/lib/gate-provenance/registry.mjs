@@ -37,6 +37,8 @@ const GateEntry = z.strictObject({
   id: z.string().min(1),
   /** `node` argv, relative to the repo root; the first element is the gate's entry point. */
   argv: z.array(z.string()).min(1),
+  /** Helper scripts this gate runs that no import or literal scan can see (a computed path): declared here, protected with their closure. */
+  spawns: z.array(z.string()).optional(),
 });
 
 export const RegistrySchema = z.strictObject({
@@ -99,4 +101,7 @@ export function expandRegistry(registry, trackedFiles) {
 }
 
 /** Entry-point script of each registered ratchet gate. */
+/** Declared (not scanned) helper scripts of every registered gate. */
+export const gateSpawns = (registry) => (registry?.gates ?? []).flatMap((g) => g.spawns ?? []);
+
 export const gateEntryPoints = (registry) => (registry?.gates ?? []).map((g) => g.argv[0]);

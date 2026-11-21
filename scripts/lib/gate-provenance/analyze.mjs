@@ -15,7 +15,7 @@ import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 import { classifyGateDiff, needsAuthorization, GATE_DIFF_CONTRACT_VERSION } from './classify.mjs';
 import { buildSnapshot, loadSide, computeProtected, runGate } from './snapshot.mjs';
 import { evaluateLoosening, fetchPrFacts } from './authorize.mjs';
-import { escapeData as E } from './actions-escape.mjs';
+import { escapeData as E, neutralizeLeadingCommand } from './actions-escape.mjs';
 
 /** Files changed between the two revisions. `--no-renames` lists BOTH sides of a move, so a move out of or into a registered path is seen. */
 function changedBetween(repoRoot, base, head) {
@@ -27,12 +27,12 @@ function changedBetween(repoRoot, base, head) {
  * Run every registered gate twice: VERDICT (base protected set, in the snapshot) and SHADOW (a clean worktree of the head).
  * @returns {{state: 'measured'|'unmeasured', reason?: string, runs: object[]}}
  */
-function runGates({ repoRoot, base, head, baseSide, headSide, prot, install, installDeps, baseInstallDir, fsImpl, run }) {
+function runGates({ repoRoot, base, head, baseSide, headSide, prot, install, installDeps, baseInstallDir, fsImpl, shadow, run }) {
   const gates = baseSide.registry.gates;
   if (!gates.length) return { state: 'unmeasured', reason: 'the base registry declares no gates', runs: [] };
   let snap;
   try {
-    snap = buildSnapshot({ repoRoot, base, head, install, installDeps, baseInstallDir, baseSide, headSide, prot, fsImpl });
+    snap = buildSnapshot({ repoRoot, base, head, install, installDeps, baseInstallDir, baseSide, headSide, prot, fsImpl, shadow });
   } catch (e) {
     return { state: 'unmeasured', reason: `snapshot construction failed: ${String(e.message).split('\n')[0]}`, runs: [] };
   }
@@ -43,9 +43,12 @@ function runGates({ repoRoot, base, head, baseSide, headSide, prot, install, ins
     // ALL verdict runs complete and are recorded before ANY shadow run starts: the shadow shares the base node_modules, so a
     // shadow gate that writes there must not be able to change a verdict.
     const verdicts = gates.map((g) => run({ cwd: snap.dir, argv: g.argv }));
-    const shadows = gates.map((g) => run({ cwd: snap.shadowDir, argv: g.argv }));
-    const runs = gates.map((g, i) => ({ id: g.id, verdict: verdicts[i], shadow: shadows[i], diverges: verdicts[i].exit !== shadows[i].exit }));
-    return { state: 'measured', runs, inventories: snap.inventories };
+    // The shadow executes PR code, so it is opt-in (--shadow) and never requested by CI.
+    const shadows = shadow ? gates.map((g) => run({ cwd: snap.shadowDir, argv: g.argv })) : null;
+    const runs = gates.map((g, i) => (shadows
+      ? { id: g.id, verdict: verdicts[i], shadow: shadows[i], diverges: verdicts[i].exit !== shadows[i].exit }
+      : { id: g.id, verdict: verdicts[i], diverges: false }));
+    return { state: 'measured', runs, inventories: snap.inventories, shadow: shadow ? { state: 'run' } : { state: 'not-run', reason: SHADOW_NOT_RUN } };
   } finally {
     snap.cleanup();
   }
@@ -67,6 +70,8 @@ export function unmeasuredReport({ mode, base, head, reason }) {
   return r;
 }
 
+export const SHADOW_NOT_RUN = 'PR code is never executed by the provenance step; the test job runs it';
+
 function bootstrapReason(baseSide) {
   return baseSide.registryError === 'absent'
     ? 'the base has no .gate-files.json (bootstrap: the one change that cannot be judged by base rules)'
@@ -79,13 +84,14 @@ function bootstrapReason(baseSide) {
  * @param {string} args.base resolved base sha
  * @param {string} args.head resolved head sha
  * @param {'observe'|'enforce'} args.mode
+ * @param {boolean} [args.shadow] true = ALSO run each gate from a clean worktree of the head (executes PR code; off by default)
  * @param {boolean} [args.gateRuns] false = skip the snapshot-and-run step (reported as unmeasured)
  * @param {string} [args.repo] owner/name for gh
  * @param {string|number} [args.pr] PR number for gh
  * @param {string} [args.baseInstallDir] an existing trusted base install to reuse
  * @param {object} [args.deps] injected seams for tests: facts, installDeps, install, runGate, show
  */
-export function analyze({ repoRoot, base, head, mode, gateRuns = true, repo, pr, baseInstallDir, deps = {} }) {
+export function analyze({ repoRoot, base, head, mode, gateRuns = true, shadow = false, repo, pr, baseInstallDir, deps = {} }) {
   const report = newReport({ mode, base, head });
   const unmeasured = (why) => report.unmeasuredParts.push(why);
   const finish = () => {
@@ -125,8 +131,11 @@ export function analyze({ repoRoot, base, head, mode, gateRuns = true, repo, pr,
 
   if (needsAuthorization(report.classification.verdict)) {
     try {
-      const facts = deps.facts ?? fetchPrFacts({ repo, pr });
-      report.authorization = evaluateLoosening({ changedFiles: changedBetween(repoRoot, base, head), protectedPaths: new Set(prot.protectedPaths), facts, base, head });
+      // The registered-only check uses the BASE registry set (authorizedPaths): a PR cannot widen it by registering its own file.
+      report.authorization = evaluateLoosening({
+        changedFiles: changedBetween(repoRoot, base, head), protectedPaths: new Set(prot.authorizedPaths),
+        facts: () => deps.facts ?? fetchPrFacts({ repo, pr }), base, head,
+      });
       if (report.authorization.state === 'unmeasured') unmeasured(`loosening authorization unreadable: ${report.authorization.reasons[0]}`);
     } catch (e) {
       unmeasured(`git read failed: ${String(e.message).split('\n')[0]}`);
@@ -138,7 +147,7 @@ export function analyze({ repoRoot, base, head, mode, gateRuns = true, repo, pr,
   } else {
     report.gateRuns = runGates({
       repoRoot, base, head, baseSide, headSide, prot, install: deps.install ?? true, installDeps: deps.installDeps,
-      baseInstallDir, fsImpl: deps.fsImpl, run: deps.runGate ?? runGate,
+      baseInstallDir, fsImpl: deps.fsImpl, shadow, run: deps.runGate ?? runGate,
     });
   }
   if (report.gateRuns.state !== 'measured') unmeasured(`gate runs unmeasured: ${report.gateRuns.reason}`);
@@ -166,13 +175,14 @@ export function formatReport(r) {
     if (r.authorization) lines.push('', `authorization: ${r.authorization.state}${r.authorization.reasons.length ? ` (${E(r.authorization.reasons.join('; '))})` : ''}`);
     lines.push('');
     if (r.gateRuns?.state === 'measured') {
-      lines.push('registered gates (verdict = base protected set; shadow = clean worktree of the head):');
-      for (const g of r.gateRuns.runs) lines.push(`  ${E(g.id).padEnd(22)} verdict exit ${g.verdict.exit}  shadow exit ${g.shadow.exit}${g.diverges ? '  DIVERGES' : ''}`);
+      lines.push(r.gateRuns.shadow?.state === 'run' ? 'registered gates (verdict = base protected set; shadow = clean worktree of the head):' : 'registered gates (verdict = base protected set, base code over PR data):');
+      for (const g of r.gateRuns.runs) lines.push(`  ${E(g.id).padEnd(22)} verdict exit ${g.verdict.exit}${g.shadow ? `  shadow exit ${g.shadow.exit}${g.diverges ? '  DIVERGES' : ''}` : ''}`);
+      if (r.gateRuns.shadow?.state === 'not-run') lines.push(`shadow: not run (${E(r.gateRuns.shadow.reason)})`);
       const inv = r.gateRuns.inventories;
       if (inv) lines.push(`protected set: ${inv.protectedPaths.length} paths (${inv.restored.length} restored from base, ${inv.removed.length} removed as absent at base, ${inv.helperScripts.length} spawned helper scripts)`);
     } else if (r.gateRuns) lines.push(`gate runs: UNMEASURED (${E(r.gateRuns.reason)})`);
   }
   for (const p of r.unmeasuredParts) lines.push(`UNMEASURED: ${E(p)}`);
   lines.push('', summaryLine(r));
-  return lines.join('\n');
+  return lines.map(neutralizeLeadingCommand).join('\n');
 }

@@ -4,7 +4,7 @@
  *
  * Classifies how the PR changed every registered gate-defining file (.gate-files.json), builds the trusted verdict
  * snapshot (PR tree with the protected set swapped for the base version), runs each registered ratchet gate there (verdict)
- * and in the PR tree (shadow), and checks the loosening authorization (label `gate-loosening` + an approving review).
+ * (and, with the opt-in --shadow, in a clean worktree of the head), and checks the loosening authorization (label `gate-loosening` + an approving review).
  *
  * Usage:
  *   node scripts/gate-provenance.mjs --base <sha> [--head <rev>] [--repo-root <dir>] [--mode observe|enforce] [--json]
@@ -28,7 +28,7 @@ import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { analyze, formatReport, summaryLine, unmeasuredReport } from './lib/gate-provenance/analyze.mjs';
 import { escapeData } from './lib/gate-provenance/actions-escape.mjs';
 
-const KNOWN_FLAGS = ['--base', '--head', '--repo-root', '--mode', '--json', '--pr', '--repo', '--no-gate-runs', '--base-install-dir', '--help', '-h', '--selfcheck-relocation'];
+const KNOWN_FLAGS = ['--base', '--head', '--repo-root', '--mode', '--json', '--pr', '--repo', '--no-gate-runs', '--shadow', '--base-install-dir', '--help', '-h', '--selfcheck-relocation'];
 const NOTICE = '::notice title=audit-loop-gate-provenance::';
 
 /** `--name value` or `--name=value`; a flag present without a usable value is a usage error. */
@@ -47,6 +47,15 @@ function value(argv, name) {
 
 /** Tolerant, never-throwing read of the mode (both `--mode enforce` and `--mode=enforce`), done ONCE so a crash handler shares it. */
 let MODE = "observe";
+/** What a crash handler needs to still print a faithful JSON report: read tolerantly, before anything can throw. */
+const CTX = { json: false, base: null, head: 'HEAD' };
+function rawValue(argv, name) {
+  for (let i = 2; i < argv.length; i++) {
+    if (argv[i] === name) return argv[i + 1] ?? null;
+    if (argv[i].startsWith(`${name}=`)) return argv[i].slice(name.length + 1);
+  }
+  return null;
+}
 function modeOf(argv) {
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === "--mode") return argv[i + 1] === "enforce" ? "enforce" : "observe";
@@ -66,12 +75,15 @@ function gitRunner(repoRoot) {
 async function main() {
   const argv = process.argv;
   MODE = modeOf(argv);
+  CTX.json = argv.includes('--json');
+  CTX.base = rawValue(argv, '--base');
+  CTX.head = rawValue(argv, '--head') ?? 'HEAD';
   if (argv.includes('--selfcheck-relocation')) { console.log('OK'); await finishAndExit(0); return; }
   let opts;
   try {
     assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'gate-provenance' });
     if (argv.includes('--help') || argv.includes('-h')) {
-      process.stderr.write('Usage: node scripts/gate-provenance.mjs --base <sha> [--head <rev>] [--repo-root <dir>] [--mode observe|enforce] [--json] [--pr <n> --repo <owner/name>] [--no-gate-runs]\n');
+      process.stderr.write('Usage: node scripts/gate-provenance.mjs --base <sha> [--head <rev>] [--repo-root <dir>] [--mode observe|enforce] [--json] [--pr <n> --repo <owner/name>] [--no-gate-runs] [--shadow]\n');
       await finishAndExit(0);
       return;
     }
@@ -88,6 +100,7 @@ async function main() {
       baseInstallDir: value(argv, "--base-install-dir") ?? undefined,
       json: argv.includes('--json'),
       gateRuns: !argv.includes('--no-gate-runs'),
+      shadow: argv.includes('--shadow'),
     };
   } catch (err) {
     if (err instanceof ArgvError || /requires a value/.test(String(err?.message))) { process.stderr.write(`${escapeData(err.message)}\n`); await finishAndExit(2); return; }
@@ -109,7 +122,7 @@ async function main() {
     if (!baseSha || !headSha) {
       report = unmeasuredReport({ mode: opts.mode, base: opts.base, head: opts.head, reason: 'base or head does not resolve to a commit' });
     } else {
-      report = analyze({ repoRoot: opts.repoRoot, base: baseSha, head: headSha, mode: opts.mode, gateRuns: opts.gateRuns, repo: opts.repo, pr: opts.pr, baseInstallDir: opts.baseInstallDir });
+      report = analyze({ repoRoot: opts.repoRoot, base: baseSha, head: headSha, mode: opts.mode, gateRuns: opts.gateRuns, shadow: opts.shadow, repo: opts.repo, pr: opts.pr, baseInstallDir: opts.baseInstallDir });
     }
   }
 
@@ -131,6 +144,11 @@ if (isInvokedAsScript(import.meta.url)) {
     const first = String(err?.message ?? err).split('\n')[0];
     process.stderr.write(`gate-provenance: ${escapeData(err?.stack ?? err)}\n`);
     process.stderr.write(`${NOTICE}state=unmeasured | runner crashed: ${escapeData(first)}\n`);
+    // Under --json stdout is ONE JSON report even on a crash, built by the one report constructor.
+    if (CTX.json) {
+      const report = unmeasuredReport({ mode: MODE, base: CTX.base, head: CTX.head, reason: `runner crashed: ${escapeData(first)}` });
+      process.stdout.write(`${JSON.stringify(report)}\n`);
+    }
     await finishAndExit(MODE === "enforce" ? 3 : 0);
   });
 }

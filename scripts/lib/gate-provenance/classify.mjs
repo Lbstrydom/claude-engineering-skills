@@ -46,7 +46,7 @@ function flatten(doc) {
   const out = new Map();
   const walk = (v, prefix, depth) => {
     if (Array.isArray(v)) {
-      for (const el of v) out.set(`${prefix}[]=${JSON.stringify(el)}`, { num: false, value: true });
+      for (const el of v) out.set(`${prefix}[]=${JSON.stringify(el)}`, { num: false, value: true, arrayMember: true, parent: prefix });
     } else if (isObj(v)) {
       for (const [k, x] of Object.entries(v)) {
         if (depth === 0 && (k.startsWith('_') || k.startsWith('$'))) continue;
@@ -84,12 +84,13 @@ function diffEntries(base, head, t, { removed, added, changed, removedFor = () =
  */
 const classifyNumericCap = (base, head, t, entry = {}) => {
   const allow = (entry.allowanceKeys || []).map((k) => `/${k}`);
-  const isAllowance = (k) => allow.some((p) => k === p || k.startsWith(`${p}/`) || k.startsWith(`${p}[]=`));
+  // Array membership is DATA on the entry (arrayMember/parent), never inferred from the key text: a file named a[]=b is a key.
+  const isAllowance = (k, bv) => allow.some((p) => (bv.arrayMember ? bv.parent === p || bv.parent.startsWith(`${p}/`) : k === p || k.startsWith(`${p}/`)));
   const defKey = entry.allowanceDefaultKey;
   const def = defKey && isObj(head) && typeof head[defKey] === 'number' ? head[defKey] : null;
   const removedFor = (k, bv) => {
-    if (!isAllowance(k)) return 'loosening';
-    if (k.includes('[]=')) return 'tightening';
+    if (!isAllowance(k, bv)) return 'loosening';
+    if (bv.arrayMember) return 'tightening';
     if (!bv.num) return 'unknown';
     if (def === null) return defKey ? 'loosening' : 'unknown';
     return bv.value >= def ? 'tightening' : 'loosening';
@@ -153,14 +154,22 @@ function classifyRegistryChange(baseText, headText, t) {
       }
     }
   }
-  for (const p of hf.keys()) if (!bf.has(p)) t.add('tightening', `registry entry added: ${p}`);
+  for (const [p, e] of hf) {
+    if (bf.has(p)) continue;
+    // An added EXACT entry beats any glob that already governs the path: if it classifies the path differently, the path
+    // changed classification (unknown); a path no existing entry governs is a genuinely new one (tightening).
+    const governing = matchEntry(b.registry, p);
+    const strip = (v) => ({ ...v, path: undefined, note: undefined });
+    if (governing && !same(strip(governing), strip(e))) t.add('unknown', `registry entry added over an existing glob and classifies it differently: ${p} (was ${governing.kind} via ${governing.path})`);
+    else t.add('tightening', `registry entry added: ${p}`);
+  }
   const gates = (r) => new Map(r.registry.gates.map((g) => [g.id, g]));
   const bg = gates(b);
   const hg = gates(h);
   for (const [id, g] of bg) {
     const x = hg.get(id);
     if (!x) t.add('loosening', `registry gate removed: ${id}`);
-    else if (!same(x.argv, g.argv)) t.add('loosening', `registry gate argv changed: ${id}`);
+    else if (!same(x, g)) t.add('loosening', `registry gate changed (${[...new Set([...Object.keys(x), ...Object.keys(g)])].filter((k) => !same(x[k], g[k])).join(', ')}): ${id}`);
   }
   for (const id of hg.keys()) if (!bg.has(id)) t.add('tightening', `registry gate added: ${id}`);
 }

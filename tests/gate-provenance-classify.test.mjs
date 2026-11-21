@@ -249,3 +249,33 @@ test('registry diff: changing allowanceDefaultKey loosens', () => {
   assert.equal(run(entry, mk(b), mk({ ...b, allowanceDefaultKey: 'other' })).verdict, 'loosening');
   assert.equal(run(entry, mk(b), mk({ path: 'a.json', kind: 'numeric-cap', allowanceKeys: ['files'] })).verdict, 'loosening');
 });
+
+// ── audit round 3 ──────────────────────────────────────────────────────────────────────────────────────────────────────
+test('exact-over-glob: an added exact entry under an existing glob changes that path classification, so it is unknown', () => {
+  const entry = { path: REGISTRY_PATH, kind: 'opaque' };
+  const glob = { path: 'gc/*.json', kind: 'contract-set' };
+  const mk = (...files) => j({ version: 1, files, gates: [] });
+  assert.equal(run(entry, mk(glob), mk(glob, { path: 'gc/a.json', kind: 'opaque' })).verdict, 'unknown', 'gc/a.json moves from contract-set to opaque');
+  assert.equal(run(entry, mk(glob), mk(glob, { path: 'gc/a.json', kind: 'numeric-cap' })).verdict, 'unknown');
+  assert.equal(run(entry, mk(glob), mk(glob, { path: 'gc/a.json', kind: 'contract-set', knownFields: ['x'] })).verdict, 'unknown', 'same kind but different fields still changes the classification');
+  assert.equal(run(entry, mk(glob), mk(glob, { path: 'gc/a.json', kind: 'contract-set' })).verdict, 'tightening', 'identical classification: nothing changes for the path');
+  assert.equal(run(entry, mk(glob), mk(glob, { path: 'other/new.json', kind: 'opaque' })).verdict, 'tightening', 'a genuinely new path');
+});
+
+test('structural arrays: a filename containing []= is not an array member', () => {
+  const sizedF = { path: 'size.json', kind: 'numeric-cap', allowanceKeys: ['files', 'ids'], allowanceDefaultKey: 'limitLines' };
+  // The exception for a file literally named "a[]=b.mjs" is a NUMBER below the default, so removing it loosens.
+  assert.equal(verdict(sizedF, { limitLines: 1000, files: { 'a[]=b.mjs': 800 } }, { limitLines: 1000, files: {} }), 'loosening');
+  assert.equal(verdict(sizedF, { limitLines: 1000, files: { 'a[]=b.mjs': 1200 } }, { limitLines: 1000, files: {} }), 'tightening');
+  // and a REAL array member still reads as one
+  assert.equal(verdict(sizedF, { limitLines: 1000, ids: ['x[]=y'] }, { limitLines: 1000, ids: [] }), 'tightening');
+});
+
+test('registry gates: a changed spawns list loosens', () => {
+  const entry = { path: REGISTRY_PATH, kind: 'opaque' };
+  const mk = (g) => j({ version: 1, files: [], gates: [g] });
+  const base = { id: 'g', argv: ['x.mjs'], spawns: ['a.mjs', 'b.mjs'] };
+  assert.equal(run(entry, mk(base), mk({ ...base, spawns: ['a.mjs'] })).verdict, 'loosening');
+  assert.equal(run(entry, mk(base), mk({ id: 'g', argv: ['x.mjs'] })).verdict, 'loosening');
+  assert.equal(run(entry, mk(base), mk({ ...base, spawns: ['a.mjs', 'b.mjs', 'c.mjs'] })).verdict, 'loosening', 'any change to a gate entry is a change');
+});

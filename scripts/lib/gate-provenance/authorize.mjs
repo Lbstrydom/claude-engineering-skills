@@ -66,10 +66,15 @@ export function hasApproval(reviews, headSha, reviewer = APPROVING_REVIEWER) {
  * @param {{changedFiles: string[], protectedPaths: Set<string>, facts: object, base: string, head: string}} args
  * @returns {{state: 'authorized'|'not-authorized'|'unmeasured', reasons: string[]}}
  */
-export function evaluateLoosening({ changedFiles, protectedPaths, facts, base, head }) {
+export function evaluateLoosening({ changedFiles, protectedPaths, facts: factsOrReader, base, head }) {
   const reasons = [];
   const outside = changedFiles.filter((f) => !protectedPaths.has(f));
-  if (outside.length) reasons.push(`touches files outside the protected set: ${outside.slice(0, 5).join(', ')}${outside.length > 5 ? ` (+${outside.length - 5})` : ''}`);
+  // A change outside the protected set is decided from the diff alone: a measured violation, whatever the PR facts say, and
+  // the facts are not even read (a lazy reader is never called).
+  if (outside.length) {
+    return { state: 'not-authorized', reasons: [`touches files outside the protected set: ${outside.slice(0, 5).join(', ')}${outside.length > 5 ? ` (+${outside.length - 5})` : ''}`] };
+  }
+  const facts = typeof factsOrReader === 'function' ? factsOrReader() : factsOrReader;
   if (!facts.measured) return { state: 'unmeasured', reasons: [facts.reason, ...reasons] };
   if (facts.baseSha !== base || facts.headSha !== head) {
     return { state: 'unmeasured', reasons: [`the PR facts describe ${String(facts.baseSha).slice(0, 8)}..${String(facts.headSha).slice(0, 8)}, not the analyzed ${base.slice(0, 8)}..${head.slice(0, 8)}`, ...reasons] };

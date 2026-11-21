@@ -297,11 +297,13 @@ weaken a contract, or edit the gate code. `scripts/gate-provenance.mjs` judges i
   reads `tightening`, `loosening`, `unknown` or `unchanged`; worst wins, in the order `loosening > unknown > tightening >
   unchanged`. `unknown` is treated as loosening. A raised cap, an added allowance, a removed entry or a deleted file loosens. A
   change to the registry compares the whole entry minus `note`, so a field added later is never ignored.
-- **Verdict and shadow runs**: a detached worktree of the PR head with the protected set checked out from the base (a protected
-  path the base lacked is removed from disk and index). `node_modules` is the dependency install of THE BASE (`npm ci
-  --ignore-scripts` in a separate base worktree, or `--base-install-dir`). Each registered ratchet gate runs there (verdict) and
-  in a second clean detached worktree of the resolved head with the same `node_modules` link (shadow), never in the caller
-  working tree; a divergence is printed.
+- **Verdict run, and an opt-in shadow**: a detached worktree of the PR head with the protected set checked out from the
+  base (a protected path the base lacked is removed from disk and index). `node_modules` is the dependency install of THE
+  BASE (`npm ci --ignore-scripts` in a separate base worktree, or `--base-install-dir`). Each registered ratchet gate runs there:
+  **base code over PR data**. The CI step executes NO PR-controlled code at all. The *shadow* run (the same gates from a clean
+  worktree of the head, which does execute PR code) is therefore opt-in (`--shadow`), off by default, and never passed by
+  `full-suite.yml`; the report then says `shadow: not run (PR code is never executed by the provenance step; the test job runs it)`.
+  With `--shadow`, all verdict runs still finish before any shadow run starts, and a divergence is printed.
 - **Unmeasured dominates**: any unmeasured input (a git read failure, an unparseable base registry, the snapshot, the base
   install, the gate runs, `--no-gate-runs`, unreadable PR facts) makes the overall state `unmeasured`, never `clean` or
   `authorized`; `unmeasuredParts` lists them. A measured `violation` still outranks it. A git read that FAILS is unmeasured;
@@ -318,6 +320,17 @@ weaken a contract, or edit the gate code. `scripts/gate-provenance.mjs` judges i
 - **Effective cap**: on a `numeric-cap` baseline an `allowanceKeys` exception removed at or above the default it falls back to
   (the head value of `allowanceDefaultKey`, e.g. `limitLines`) is `tightening`; below it, `loosening`; with no declared default
   or a non-numeric value only an ids-style array member is `tightening`, anything else `unknown`.
+- **Registry precedence**: an exact registry entry beats a glob, so a PR that adds an exact entry for a path an existing glob
+  governs, with a different classification, changes that path classification: it reads `unknown` (a path no entry governs
+  is a genuinely new one: `tightening`). The registered-only authorization check uses the BASE registry protected set
+  only, so a PR cannot make its own change of a file registered-only by registering the file; a change outside that set is a
+  measured violation decided from the diff alone, before any PR fact is read.
+- **Declared limit - computed helper paths**: the spawn scan follows string literals only. A gate that spawns a script whose
+  path is computed at runtime must declare it in its registry gate entry (`spawns: [paths]`, validated by the strict schema);
+  declared helpers join the protected set with their import closure. An undeclared computed path is not protected.
+- **Output contract**: in `--json` mode stdout is one JSON report even when the runner crashes (`unmeasuredParts:
+  ['runner crashed: ...']`; observe exits 0, enforce exits 3). Untrusted text is Actions-escaped, and no standalone line may
+  start with `::` (a leading marker is prefixed with `| `).
 - **Named residual - the step lives in a PR-controlled workflow**: observe mode runs inside the `pull_request` workflow that
   the PR itself can edit, so a PR can delete or neutralise the step. Observe mode is a notice, not a control. The enforce-mode
   follow-up MUST be a base-defined required check (for example `pull_request_target` running only base code, with no PR

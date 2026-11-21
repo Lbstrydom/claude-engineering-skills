@@ -22,7 +22,7 @@ import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 import { isSafeGitRevision } from '../vcs.mjs';
-import { expandRegistry, gateEntryPoints, parseRegistry, REGISTRY_PATH } from './registry.mjs';
+import { expandRegistry, gateEntryPoints, gateSpawns, parseRegistry, REGISTRY_PATH } from './registry.mjs';
 import { protectedClosure } from './protected-set.mjs';
 
 /** Install inputs: protected whether or not the registry names them, because they decide what the gates run ON. */
@@ -97,17 +97,23 @@ export function computeProtected(baseSide, headSide) {
   const implementations = new Set();
   for (const [p, e] of registered) {
     if (e.kind !== 'contract-set' || !baseSide.set.has(p)) continue;
-    try {
-      const doc = JSON.parse(baseSide.read(p));
-      for (const g of Array.isArray(doc?.gates) ? doc.gates : []) if (typeof g?.implementation === 'string') implementations.add(g.implementation);
-    } catch { /* not a contract document */ }
+    // The READ is outside the try: a git read failure propagates (unmeasured). Only a parse failure is an invalid contract.
+    const text = baseSide.read(p);
+    let doc = null;
+    try { doc = JSON.parse(text); } catch { /* not a contract document: the classifier reports it as unknown */ }
+    for (const g of Array.isArray(doc?.gates) ? doc.gates : []) if (typeof g?.implementation === 'string') implementations.add(g.implementation);
   }
-  const entryPoints = [...new Set([...gateEntryPoints(baseSide.registry), ...implementations])].filter((p) => baseSide.set.has(p));
+  const entryPoints = [...new Set([...gateEntryPoints(baseSide.registry), ...gateSpawns(baseSide.registry), ...implementations])].filter((p) => baseSide.set.has(p));
   const closure = protectedClosure({ entryPoints, repoFiles: baseSide.set, readFile: baseSide.read });
   const wanted = new Set([...registered.keys(), ...closure.files, ...INSTALL_INPUTS, REGISTRY_PATH]);
   const protectedPaths = [...wanted].sort();
+  // What a PR may touch and still be "registered-only": the BASE registry alone (over the union inventory), never the head
+  // registry, which the PR itself can widen. The union above stays for the verdict overlay.
+  const baseRegistered = baseSide.registry ? [...expandRegistry(baseSide.registry, unionFiles).keys()] : [];
+  const authorizedPaths = [...new Set([...baseRegistered, ...closure.files, ...INSTALL_INPUTS, REGISTRY_PATH])].sort();
   return {
     protectedPaths,
+    authorizedPaths,
     restore: protectedPaths.filter((p) => baseSide.set.has(p)),
     remove: protectedPaths.filter((p) => !baseSide.set.has(p) && headSide.set.has(p)),
     closure: closure.files,
@@ -127,7 +133,8 @@ export function npmCiIgnoreScripts(dir) {
 }
 
 /**
- * Build the verdict snapshot AND a clean shadow worktree. The caller MUST call `cleanup()` (in a finally).
+ * Build the verdict snapshot, and (only when `shadow` is true) a clean shadow worktree of the head. The shadow executes PR code,
+ * so it is opt-in and never requested by CI. The caller MUST call `cleanup()` (in a finally).
  *
  * @param {object} args
  * @param {string} args.repoRoot
@@ -138,7 +145,7 @@ export function npmCiIgnoreScripts(dir) {
  * @param {string} [args.baseInstallDir] an existing, trusted base install to link instead of installing again
  * @returns {{dir: string, shadowDir: string, nodeModules: string, nodeModulesReason?: string, inventories: object, cleanup: () => void}}
  */
-export function buildSnapshot({ repoRoot, base, head, install = true, installDeps = npmCiIgnoreScripts, baseInstallDir, baseSide, headSide, prot, fsImpl = fs }) {
+export function buildSnapshot({ repoRoot, base, head, install = true, installDeps = npmCiIgnoreScripts, baseInstallDir, baseSide, headSide, prot, fsImpl = fs, shadow = false }) {
   for (const r of [base, head]) if (!isSafeGitRevision(r)) throw new Error(`unsafe revision: ${JSON.stringify(r)}`);
   const bs = baseSide ?? loadSide(repoRoot, base);
   const hs = headSide ?? loadSide(repoRoot, head);
@@ -155,11 +162,13 @@ export function buildSnapshot({ repoRoot, base, head, install = true, installDep
   };
   try {
     const dir = path.join(tmp, 'head');
-    const shadowDir = path.join(tmp, 'shadow');
+    const shadowDir = shadow ? path.join(tmp, 'shadow') : null;
     git(repoRoot, ['worktree', 'add', '--detach', dir, head]);
     worktrees.push(dir);
-    git(repoRoot, ['worktree', 'add', '--detach', shadowDir, head]);
-    worktrees.push(shadowDir);
+    if (shadow) {
+      git(repoRoot, ['worktree', 'add', '--detach', shadowDir, head]);
+      worktrees.push(shadowDir);
+    }
     // `checkout <base> -- <paths>` writes AND stages: a path the PR deleted comes back tracked.
     if (protectedSet.restore.length) {
       git(dir, ['checkout', base, '--pathspec-from-file=-', '--pathspec-file-nul'], { input: literalPathspecs(protectedSet.restore) });
@@ -186,7 +195,7 @@ export function buildSnapshot({ repoRoot, base, head, install = true, installDep
       const nm = path.join(installDir, 'node_modules');
       if (r.ok && fs.existsSync(nm)) {
         fs.symlinkSync(nm, path.join(dir, 'node_modules'), 'junction');
-        fs.symlinkSync(nm, path.join(shadowDir, 'node_modules'), 'junction');
+        if (shadow) fs.symlinkSync(nm, path.join(shadowDir, 'node_modules'), 'junction');
         nodeModules = 'linked';
         nodeModulesReason = undefined;
       } else nodeModulesReason = r.reason ?? 'install produced no node_modules';

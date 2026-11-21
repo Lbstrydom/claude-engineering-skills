@@ -108,7 +108,7 @@
       ]
     },
     {
-      "path": "scripts/gate-contracts/*.json",
+      "path": "scripts/gate-contracts/**/*.json",
       "kind": "contract-set"
     },
     {

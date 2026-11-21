@@ -121,7 +121,7 @@ test('computeProtected: closure is derived from the base, install inputs always 
 
 // ── authorization ──────────────────────────────────────────────────────────────────────────────────────────────────
 import { hasApproval, evaluateLoosening, fetchPrFacts } from '../scripts/lib/gate-provenance/authorize.mjs';
-import { analyze, summaryLine } from '../scripts/lib/gate-provenance/analyze.mjs';
+import { analyze, summaryLine, formatReport } from '../scripts/lib/gate-provenance/analyze.mjs';
 
 const B = 'b'.repeat(40);
 const H = 'a'.repeat(40);
@@ -379,7 +379,7 @@ test('shadow run: a clean worktree of the resolved head, with the same node_modu
       return { exit: 0, cwd };
     };
     const installDeps = (dir) => { fs.mkdirSync(path.join(dir, 'node_modules', 'marker'), { recursive: true }); return { ok: true }; };
-    const rep = A(r, base, head, { deps: { installDeps, runGate } });
+    const rep = A(r, base, head, { shadow: true, deps: { installDeps, runGate } });
     assert.equal(rep.gateRuns.state, 'measured');
     assert.equal(seen.length, 2);
     const [verdict, shadow] = seen;
@@ -483,7 +483,7 @@ test('isolation: ALL verdict runs finish before ANY shadow run starts, so a shad
       if (shadow) { fs.writeFileSync(nm, 'x'); return { exit: 0 }; }
       return { exit: fs.existsSync(nm) ? 1 : 0 };
     };
-    const rep = A(r, base, head, { deps: { installDeps: fakeInstall, runGate } });
+    const rep = A(r, base, head, { shadow: true, deps: { installDeps: fakeInstall, runGate } });
     assert.deepEqual(rep.gateRuns.runs.map((g) => g.verdict.exit), [0, 0], 'no verdict saw the shadow write');
     assert.equal(rep.state, 'clean', rep.reason);
     const firstShadow = calls.findIndex((c) => c.startsWith('shadow'));
@@ -557,5 +557,74 @@ test('report shape: a range failure builds the same report (unmeasuredParts pres
       assert.match(text.stdout, /::notice title=audit-loop-gate-provenance::state=unmeasured/);
     }
     assert.ok(base);
+  } finally { r.cleanup(); }
+});
+
+// ── audit round 3 ──────────────────────────────────────────────────────────────────────────────────────────────────────
+test('structural: the shadow run is OFF by default (no PR code is executed), and --shadow keeps the isolated behaviour', () => {
+  const { r, base, head } = twoGateScenario();
+  try {
+    const calls = [];
+    const runGate = ({ cwd, argv }) => { calls.push(`${path.basename(cwd)}:${argv.join(' ')}`); return { exit: 0, cwd }; };
+    const off = A(r, base, head, { deps: { installDeps: fakeInstall, runGate } });
+    assert.equal(off.gateRuns.state, 'measured');
+    assert.deepEqual(calls.map((c) => c.split(':')[0]), ['head', 'head'], 'only the verdict runs, in the base-protected snapshot');
+    assert.ok(off.gateRuns.runs.every((g) => g.shadow === undefined && g.diverges === false));
+    assert.equal(off.gateRuns.shadow.state, 'not-run');
+    assert.match(off.gateRuns.shadow.reason, /PR code is never executed by the provenance step; the test job runs it/);
+    assert.equal(off.state, 'clean', 'a shadow that was not requested is not an unmeasured part');
+    assert.match(formatReport(off), /shadow: not run \(PR code is never executed by the provenance step; the test job runs it\)/);
+    calls.length = 0;
+    const on = A(r, base, head, { shadow: true, deps: { installDeps: fakeInstall, runGate } });
+    assert.deepEqual(calls.map((c) => c.split(':')[0]), ['head', 'head', 'shadow', 'shadow']);
+    assert.equal(on.gateRuns.shadow.state, 'run');
+  } finally { r.cleanup(); }
+});
+
+test('JSON crash contract: a runner crash under --json prints a JSON unmeasured report; observe exits 0, enforce exits 3', () => {
+  const { r, base } = scenario((x) => x.put('caps.json', JSON.stringify({ limit: 5 })));
+  const crash = { GATE_PROVENANCE_CRASH_FOR_TEST: '1' };
+  try {
+    for (const [modeArgs, code] of [[[], 0], [['--mode', 'enforce'], 3], [['--mode=enforce'], 3]]) {
+      const res = cli(['--repo-root', r.dir, '--base', base, '--no-gate-runs', '--json', ...modeArgs], r.dir, crash);
+      assert.equal(res.status, code, modeArgs.join(' '));
+      const rep = JSON.parse(res.stdout);
+      assert.equal(rep.state, 'unmeasured');
+      assert.deepEqual(rep.unmeasuredParts, ['runner crashed: injected crash (test seam)']);
+      assert.equal(rep.contractVersion, 1);
+      assert.equal(rep.mode, modeArgs.length ? 'enforce' : 'observe');
+      assert.equal(res.stdout.trim().split('\n').length, 1, 'stdout stays ONE clean JSON line');
+    }
+  } finally { r.cleanup(); }
+});
+
+test('authorization scope: a PR that registers a new file cannot make its own change of that file registered-only', () => {
+  const { r, base, head } = scenario((x) => {
+    x.put('caps.json', JSON.stringify({ limit: 99 }));                 // a loosening in a base-registered file
+    x.put('src/new.json', JSON.stringify({ n: 1 }));                   // an UNREGISTERED-at-base file the PR also changes...
+    x.put('.gate-files.json', JSON.stringify({ ...REG, files: [...REG.files, { path: 'src/new.json', kind: 'opaque' }] }, null, 2)); // ...and registers itself
+  });
+  try {
+    const okFacts = facts({ baseSha: base, headSha: head, reviews: [{ user: 'Lbstrydom', state: 'APPROVED', commitId: head }] });
+    const rep = A(r, base, head, { gateRuns: false, deps: { facts: okFacts } });
+    assert.equal(rep.authorization.state, 'not-authorized', 'src/new.json is outside the BASE registry protected set');
+    assert.match(rep.authorization.reasons.join(), /src\/new.json/);
+    assert.equal(rep.state, 'violation');
+  } finally { r.cleanup(); }
+});
+
+test('outside change first: a loosening PR touching a file outside the protected set is a measured violation even when PR facts are unreadable', () => {
+  const { r, base, head } = scenario((x) => { x.put('caps.json', JSON.stringify({ limit: 99 })); x.put('src/app.mjs', 'export const app = 8;\n'); });
+  try {
+    const rep = A(r, base, head, { gateRuns: false, deps: { facts: { measured: false, reason: 'gh missing' } } });
+    assert.equal(rep.authorization.state, 'not-authorized');
+    assert.match(rep.authorization.reasons.join(), /outside the protected set: src\/app.mjs/);
+    assert.equal(rep.state, 'violation', 'decided without the facts, so it is not downgraded to unmeasured');
+    // control: with only protected files changed, unreadable facts stay UNMEASURED
+    const only = scenario((x) => x.put('caps.json', JSON.stringify({ limit: 77 })));
+    try {
+      const rep2 = A(only.r, only.base, only.head, { gateRuns: false, deps: { facts: { measured: false, reason: 'gh missing' } } });
+      assert.equal(rep2.state, 'unmeasured');
+    } finally { only.r.cleanup(); }
   } finally { r.cleanup(); }
 });

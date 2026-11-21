@@ -20,7 +20,7 @@ const loaded = parseRegistry(fs.readFileSync(path.join(ROOT, REGISTRY_PATH), 'ut
 function candidates(files) {
   return files.filter((f) => !f.startsWith('docs/') && !f.startsWith('tests/') && (
     /(^|\/)[^/]*baseline\.json$/.test(f)
-    || /^scripts\/gate-contracts\/[^/]+\.json$/.test(f)
+    || /^scripts\/gate-contracts\/.+\.json$/.test(f)
     || /^skills\/[^/]+\/gate-contract\.json$/.test(f)
     || f === '.anthropic-pin-census.json'
   ));
@@ -128,7 +128,7 @@ function uncoveredImplementations(registry, files, read, contracts) {
   return [...out].sort();
 }
 const realContracts = () => tracked
-  .filter((f) => /^scripts\/gate-contracts\/[^/]+\.json$|^skills\/[^/]+\/gate-contract\.json$/.test(f))
+  .filter((f) => /^scripts\/gate-contracts\/.+\.json$|^skills\/[^/]+\/gate-contract\.json$/.test(f))
   .map((f) => JSON.parse(fs.readFileSync(path.join(ROOT, f), 'utf8')));
 
 test('CENSUS: every gate entry point named in the registry gate list exists; a fixture with a ghost entry fails', () => {
@@ -237,4 +237,55 @@ test('Actions injection: a filename with a newline then ::error::x cannot start 
   }
   assert.equal(summaryLine(report).includes('\n'), false, 'the notice summary is a single line');
   assert.ok(summaryLine(report).includes('%0A'), 'the newline is Actions-escaped rather than dropped');
+});
+
+// ── audit round 3 ──────────────────────────────────────────────────────────────────────────────────────────────────────
+test('structural: the CI step never passes --shadow and executes no PR-controlled code', () => {
+  const wf = fs.readFileSync(path.join(ROOT, '.github/workflows/full-suite.yml'), 'utf8');
+  const step = wf.slice(wf.indexOf('- name: Gate provenance'), wf.indexOf('- run: npm ci'));
+  assert.ok(step.includes('gate-provenance.mjs') && step.includes('--mode observe'), 'precondition: the step is where we think it is');
+  assert.equal(step.includes('--shadow'), false, 'the shadow run executes PR code; CI must not request it');
+  assert.ok(wf.indexOf('- name: Gate provenance') < wf.indexOf('- run: npm ci'), 'and it still runs before the PR npm ci');
+});
+
+test('read vs parse: a read failure PROPAGATES (unmeasured); only a parse failure is an invalid contract', () => {
+  const reg = regOf([{ path: 'gc/*.json', kind: 'contract-set' }], [{ id: 'g', argv: ['scripts/g.mjs'] }]);
+  const mk = (read) => ({ registry: reg, files: ['gc/a.json', 'scripts/g.mjs'], set: new Set(['gc/a.json', 'scripts/g.mjs']), read });
+  const ok = (p) => (p === 'gc/a.json' ? '{"gates":[]}' : 'export const g = 1;\n');
+  assert.doesNotThrow(() => computeProtected(mk(ok), mk(ok)));
+  const unparseable = (p) => (p === 'gc/a.json' ? '{not json' : 'export const g = 1;\n');
+  assert.doesNotThrow(() => computeProtected(mk(unparseable), mk(unparseable)), 'a parse failure is the classifier job');
+  const failing = (p) => { if (p === 'gc/a.json') { const e = new Error('git show failed'); e.code = 'GIT_READ_FAILED'; throw e; } return 'export const g = 1;\n'; };
+  assert.throws(() => computeProtected(mk(failing), mk(failing)), /git show failed/, 'a read failure must not be swallowed as an invalid contract');
+});
+
+test('authorizedPaths is the BASE registry protected set only; the union stays for the verdict overlay', () => {
+  const baseReg = regOf([{ path: 'caps.json', kind: 'numeric-cap' }], [{ id: 'g', argv: ['scripts/g.mjs'] }]);
+  const headReg = regOf([{ path: 'caps.json', kind: 'numeric-cap' }, { path: 'src/new.json', kind: 'opaque' }], [{ id: 'g', argv: ['scripts/g.mjs'] }]);
+  const base = fakeSide(baseReg, { 'caps.json': '{}', 'scripts/g.mjs': 'export const g = 1;\n' });
+  const head = fakeSide(headReg, { 'caps.json': '{}', 'scripts/g.mjs': 'export const g = 1;\n', 'src/new.json': '{}' });
+  const p = computeProtected(base, head);
+  assert.ok(p.protectedPaths.includes('src/new.json'), 'the union keeps the head-registered path in the overlay');
+  assert.ok(!p.authorizedPaths.includes('src/new.json'), 'but a PR cannot widen what its own change is allowed to touch');
+  assert.ok(p.authorizedPaths.includes('caps.json') && p.authorizedPaths.includes('scripts/g.mjs'));
+});
+
+test('recursive census: scripts/gate-contracts/** is covered, proven on a nested fixture', () => {
+  const nested = 'scripts/gate-contracts/sub/deep.json';
+  const files = [...tracked, nested];
+  assert.deepEqual(unregistered(loaded.registry, files), [], 'the committed registry covers a nested contract');
+  const flatOnly = { ...loaded.registry, files: loaded.registry.files.map((e) => (e.path.startsWith('scripts/gate-contracts/') && e.path.endsWith('*.json') ? { ...e, path: 'scripts/gate-contracts/*.json' } : e)) };
+  assert.deepEqual(unregistered(flatOnly, files), [nested], 'a one-level glob misses it, so the census would have caught the gap');
+});
+
+test('spawns: a registry gate may declare helpers the scanner cannot see; they join the protected set with their closure', () => {
+  const reg = regOf([], [{ id: 'g', argv: ['scripts/g.mjs'], spawns: ['scripts/dyn.mjs'] }]);
+  const contents = { 'scripts/g.mjs': 'export const g = 1;\n', 'scripts/dyn.mjs': 'import "./lib/d.mjs";\n', 'scripts/lib/d.mjs': 'export const d = 1;\n', 'scripts/other.mjs': 'x' };
+  const side = fakeSide(reg, contents);
+  const p = computeProtected(side, side);
+  assert.ok(p.closure.includes('scripts/dyn.mjs') && p.closure.includes('scripts/lib/d.mjs'));
+  assert.ok(!p.closure.includes('scripts/other.mjs'));
+  assert.equal(parseRegistry(JSON.stringify({ version: 1, files: [], gates: [{ id: 'g', argv: ['a.mjs'], spawns: ['b.mjs'] }] })).ok, true);
+  assert.equal(parseRegistry(JSON.stringify({ version: 1, files: [], gates: [{ id: 'g', argv: ['a.mjs'], spawnz: ['b.mjs'] }] })).ok, false, 'strict schema: a misspelt field is refused');
+  assert.equal(parseRegistry(JSON.stringify({ version: 1, files: [], gates: [{ id: 'g', argv: ['a.mjs'], spawns: 'b.mjs' }] })).ok, false);
 });
