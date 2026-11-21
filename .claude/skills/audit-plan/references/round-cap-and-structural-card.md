@@ -92,6 +92,21 @@ Read it as evidence for a human call, not as an instruction:
   with that productivity, not proof the run stopped: a CONTINUE is recorded on the run as `past_cap_reason`.
   So the cap policy can be decided on data later; the card does not change the policy or admit another round.
 
+## Round signals and the step-back (code rounds 3 and 6)
+
+For a code audit the card (requested for round 4 or 7) also prints three deterministic signals
+(`scripts/lib/audit/round-signals.mjs`): **reopen rate** (findings whose cited lines fall in the post-image hunks of the
+fix range, ≥ 0.5 fires), **severity drift** (median per-file change in max severity, ≤ -1 over ≥ 2 files fires) and
+**retired** (accepted topics closed; ≤ 1 for two consecutive rounds fires). An unmeasured signal (no `audited_sha`, no cited
+lines, no ledger) never fires and is never read as quiet; the card says the trigger is unmeasured.
+
+When one fires, run `node scripts/audit-structural-card.mjs --sid "$SID" --mode code --round <N+1> --step-back`
+(`--step-back-arm same|different`; a paid call, never automatic). A fresh-context reviewer reads an egress-gated pack and
+returns `structural`, `stop` or `defect`; there is no `continue`. Invalid or unavailable output admits no round. A `stop` is
+a proposal: debt is written only after a human approves it.
+
+After round 6 the default is **stop-to-debt or a human**; rounds 7-8 need `--past-cap`. The 6/8 caps are unchanged.
+
 ## The human call
 
 Present the card to the operator (the user, or the coordinator) with three choices, and record the choice in
