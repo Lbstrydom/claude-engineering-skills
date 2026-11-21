@@ -289,7 +289,7 @@ weaken a contract, or edit the gate code. `scripts/gate-provenance.mjs` judges i
   `*-baseline.json` or contract file, on a gate entry point that does not exist, and on a contract `implementation` that is
   neither registered nor inside the protected closure.
 - **One protected-set model** (`scripts/lib/gate-provenance/protected-set.mjs`): registry entries + the base import closure of
-  each registered gate entry point + the **subprocess helpers** a closure module spawns (a `scripts/x.mjs` string literal in a
+  each registered gate entry point + the **subprocess helpers** a closure module spawns (a string literal naming a repo script in a
   module that calls spawn/execFile/fork, followed recursively with its own closure) + install inputs. The snapshot, the
   classification and the registered-only authorization check all read this one set. A module in it that is not registered and
   that the PR changes classifies as `opaque`, so `unknown`, so loosening. Residual: a script path computed at runtime is not followed.
