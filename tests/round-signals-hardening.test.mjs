@@ -57,3 +57,11 @@ test('R2-M2: null findings stay null into the signals (unmeasured, never an empt
   assert.deepEqual(s.unmeasured.sort(), ['reopenRate', 'retired', 'severityDrift']);
   assert.equal(s.anyFires, false);
 });
+
+test('R3-M5: the diff command pins prefixes and ignores user diff config', async () => {
+  const { postImageHunks } = await import('../scripts/lib/audit/round-signals.mjs');
+  let seen = null;
+  const git = (a) => { if (a.includes('diff')) seen = a; return { status: 0, stdout: '' }; };
+  postImageHunks({ base: 'a'.repeat(40), head: 'b'.repeat(40) }, git);
+  for (const flag of ['--src-prefix=a/', '--dst-prefix=b/', '--no-ext-diff', 'diff.noprefix=false']) assert.ok(seen.includes(flag), flag);
+});

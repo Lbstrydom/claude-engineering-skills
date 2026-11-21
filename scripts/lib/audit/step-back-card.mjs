@@ -99,7 +99,7 @@ export async function buildCheckpointSection({ sid, mode, round, planFile = null
       if (record.reason) lines.push(`  unavailable: ${record.reason}`);
     }
   } else if (record.state === 'signals-fired') {
-    lines.push(`A signal fired: run  node scripts/audit-structural-card.mjs --sid ${sid} --mode code --round ${round} --step-back  (no round is admitted on the strength of a fired trigger alone).`);
+    lines.push(`A signal fired: run  node scripts/audit-structural-card.mjs --sid ${sid} --mode code --round ${round} --dir ${JSON.stringify(auditDir)}${planFile ? ` --plan ${JSON.stringify(planFile)}` : ''} --step-back  (no round is admitted on the strength of a fired trigger alone).`);
   }
   if (post) lines.push(post);
   return { checkpoint, signals, record, pack, usage, lines };

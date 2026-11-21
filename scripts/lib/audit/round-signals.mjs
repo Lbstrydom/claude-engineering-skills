@@ -132,7 +132,8 @@ export function postImageHunks(fixRange, git) {
     if (anc.status === 1) return { measured: false, reason: `range rewritten (${base.slice(0, 8)} is not an ancestor of ${head.slice(0, 8)})` };
     if (anc.status !== 0) return { measured: false, reason: `ancestry of ${base.slice(0, 8)}..${head.slice(0, 8)} could not be determined` };
   }
-  const d = git(['diff', '-U0', '--find-renames', '--no-color', '--no-ext-diff', `${base}..${head}`]);
+  // Prefixes are pinned (a user's diff.noprefix / mnemonicPrefix config would otherwise change the path shape the parser strips).
+  const d = git(['-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', 'diff', '-U0', '--find-renames', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', `${base}..${head}`]);
   if (d.status !== 0) return { measured: false, reason: `git diff ${base.slice(0, 8)}..${head.slice(0, 8)} failed` };
   return { measured: true, hunks: parsePostImageHunks(d.stdout) };
 }

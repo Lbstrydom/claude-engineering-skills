@@ -67,14 +67,16 @@ export function gitBatchReader(cwd = process.cwd()) {
  * @param {{sha: string, git?: Function, readBatch?: (oids: string[]) => Map<string, string>, cwd?: string}} a
  * @returns {{ok: true, fs: object, root: string, repoFiles: string[], stats: {files: number, prefetched: number}}|{ok: false, reason: string}}
  */
-export function createRevisionFs({ sha, cwd = process.cwd(), git = gitRunner(cwd), readBatch = gitBatchReader(cwd) }) {
+export function createRevisionFs({ sha, cwd = process.cwd(), git = gitRunner(cwd), readBatch = gitBatchReader(cwd), maxPrefetch = 5000 }) {
   if (!/^[0-9a-f]{7,64}$/i.test(String(sha || ''))) return { ok: false, reason: 'audited_sha is not a commit id' };
   const ls = git(['ls-tree', '-r', '-z', sha]);
   if (ls.status !== 0) return { ok: false, reason: `git cannot read revision ${String(sha).slice(0, 8)}` };
   const entries = parseLsTree(ls.stdout);
   const byPath = new Map(entries.map((e) => [e.path, e]));
   // Prefetch code files for the importer scan; sensitive paths are never read here.
-  const want = entries.filter((e) => e.mode !== '120000' && isImportScannable(e.path) && classifyPath(e.path) !== 'sensitive');
+  // Bounded to what the pack can use: its importer scan reads at most the first `maxImporterScan` code files in path order.
+  const want = entries.filter((e) => e.mode !== '120000' && isImportScannable(e.path) && classifyPath(e.path) !== 'sensitive')
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)).slice(0, maxPrefetch);
   let blobs = new Map();
   if (want.length) {
     try { blobs = readBatch(want.map((e) => e.oid)); } catch (err) { return { ok: false, reason: `blob read failed: ${String(err?.message || err).slice(0, 120)}` }; }

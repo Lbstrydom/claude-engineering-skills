@@ -126,3 +126,44 @@ test('R2-H1: run verifies the export and spec hashes recorded at freeze before a
   await assert.rejects(() => main(['run', '--dataset', p2, '--arms', 'same', '--dry-run'], { ...base, readBytes: w.readBytes }), /records no input hashes/);
   assert.equal(calls, 0);
 });
+
+test('R3-H2/H3/M2: completeness compares planned vs completed IDENTITIES; a stop with no ground truth blocks adoption', async () => {
+  const { scoreReplay } = await import('../scripts/lib/audit/step-back-replay.mjs');
+  const truth = { 1: { label: 'bad', acceptedHighRounds: [1] }, 2: { label: 'bad', acceptedHighRounds: [1] }, 3: { label: 'bad', acceptedHighRounds: [1] } };
+  const plan = [{ arm: 'same', pr: 1, checkpoint: 3 }, { arm: 'same', pr: 2, checkpoint: 3 }, { arm: 'same', pr: 3, checkpoint: 3 }];
+  const c = (pr, action = 'stop', status = 'ok') => ({ arm: 'same', pr, checkpoint: 3, action, status });
+  const full = scoreReplay({ calls: [c(1), c(2), c(3)], truth, arms: ['same'], plan });
+  assert.deepEqual([full.arms.same.complete, full.arms.same.verdict], [true, 'adopted']);
+  // Same COUNT (3 completed of 3 planned) but PR 3 is missing and PR 1 appears twice: incomplete.
+  const dup = scoreReplay({ calls: [c(1), c(1), c(2)], truth, arms: ['same'], plan });
+  assert.equal(dup.arms.same.complete, false);
+  assert.equal(dup.arms.same.verdict, 'incomplete (not adopted)');
+  // An extra identity outside the plan is incomplete too.
+  const extra = scoreReplay({ calls: [c(1), c(2), c(3), c(9)], truth, arms: ['same'], plan });
+  assert.equal(extra.arms.same.complete, false);
+  // A stop on a PR with no ground-truth entry blocks adoption.
+  const noTruth = scoreReplay({ calls: [c(1), c(2), c(3)], truth: { 1: truth[1], 2: truth[2] }, arms: ['same'], plan });
+  assert.deepEqual([noTruth.arms.same.complete, noTruth.arms.same.missingTruth, noTruth.arms.same.verdict], [false, true, 'incomplete (not adopted)']);
+});
+
+test('R3-H6: freeze refuses a run id repeated within a PR or pinned to two PRs', async () => {
+  const { assertNoDuplicates } = await import('../scripts/lib/audit/step-back-dataset.mjs');
+  assert.throws(() => assertNoDuplicates([{ pr: 1, runIds: ['a', 'b', 'a'] }]), /run id a is repeated within PR #1/);
+  assert.throws(() => assertNoDuplicates([{ pr: 1, runIds: ['a'] }, { pr: 2, runIds: ['b', 'a'] }]), /pinned to both PR #1 and PR #2/);
+  assertNoDuplicates([{ pr: 1, runIds: ['a'] }, { pr: 2, runIds: ['b'] }]);
+});
+
+test('R3-H7: score --out refuses the results file it reads and every input', async () => {
+  const w = world();
+  const results = path.join(w.dir, 'calls.jsonl');
+  const deps = { readExport: () => w.exp, readBytes: w.readBytes, openRevision: w.openRevision, makeProvider: () => provider('gpt-5.5', async () => ({ text: GOOD, usage: { input_tokens: 1, output_tokens: 1 } })) };
+  const orig = console.log; console.log = () => {};
+  try {
+    await main(['run', '--dataset', w.dsPath, '--arms', 'same', '--max-usd', '5', '--confirm-spend', '--results', results], deps);
+    const before = fs.readFileSync(results, 'utf8');
+    for (const bad of [results, w.dsPath, scoringPathFor(w.dsPath)]) {
+      await assert.rejects(() => main(['score', '--dataset', w.dsPath, '--results', results, '--out', bad]), /--out must not be/);
+    }
+    assert.equal(fs.readFileSync(results, 'utf8'), before, 'the results file was not touched');
+  } finally { console.log = orig; }
+});

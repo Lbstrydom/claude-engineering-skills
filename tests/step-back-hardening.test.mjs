@@ -80,3 +80,30 @@ test('R2-M5: an importer that passes classification but cannot be read is record
   assert.ok(pack.skipped.some((s) => s.path === 'src/c.mjs' && s.pattern === 'read-failed' && s.unreadable));
   assert.ok(pack.excluded.unreadable >= 1);
 });
+
+test('R3-H8: file and plan paths in pack attributes are redacted like bodies', async () => {
+  const { root, args } = bigRepo();
+  const secret = 'ghp_0123456789abcdefghijABCDEFGHIJ012345';
+  fs.writeFileSync(path.join(root, 'src', `${secret}.mjs`), 'export const z = 1;\n');
+  const rounds = [{ round: 1, findings: [{ id: 'H9', severity: 'HIGH', category: 'c', section: 's', detail: 'd', _primaryFile: `src/${secret}.mjs`, affectedFiles: [`src/${secret}.mjs`] }] }];
+  const pack = await buildStepBackPack({ ...args, rounds, repoFiles: [...args.repoFiles, `src/${secret}.mjs`] });
+  assert.equal(pack.text.includes(secret), false);
+  assert.ok(pack.text.includes('<file path="src/[REDACTED'));
+});
+
+test('R3-M1: truncation is reported INSIDE the pack as a short <omitted> section', async () => {
+  const { args } = bigRepo();
+  const pack = await buildStepBackPack({ ...args, limits: { perFileChars: 60_000, totalChars: 40_000, maxImporterScan: 5000, maxArchNeighbours: 8 } });
+  assert.ok(pack.text.length <= 40_000);
+  assert.match(pack.text, /<omitted>\n[\s\S]*(files not shown|sections shortened)[\s\S]*<\/omitted>/);
+  assert.equal((await buildStepBackPack(args)).text.includes('<omitted>'), false, 'a pack that fits has no omitted section');
+});
+
+test('R3-M4: the revision prefetch is bounded by the importer-scan limit', () => {
+  const files = Array.from({ length: 6 }, (_, i) => ({ path: `src/f${i}.mjs`, oid: `o${i}` }));
+  const tree = `${files.map((f) => `100644 blob ${f.oid}\t${f.path}`).join('\0')}\0`;
+  let asked = 0;
+  const rev = createRevisionFs({ sha: 'a'.repeat(40), maxPrefetch: 2, git: () => ({ status: 0, stdout: tree }), readBatch: (oids) => { asked = oids.length; return new Map(oids.map((o) => [o, 'x'])); } });
+  assert.equal(rev.ok, true);
+  assert.equal(asked, 2);
+});

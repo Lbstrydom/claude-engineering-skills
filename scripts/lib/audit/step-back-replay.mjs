@@ -207,8 +207,12 @@ export function scoreReplay({ calls, truth, arms, plan }) {
   for (const arm of arms) {
     if (arm === 'none') { out.none = { earlyStops: 0, falseStops: 0, invalidOutputs: 0, verdict: 'recorded-baseline (computed, not called)' }; continue; }
     const mine = calls.filter((c) => c.arm === arm);
-    const planned = plan.filter((p) => p.arm === arm).length;
-    const done = mine.filter((c) => c.status === 'ok' || c.status === 'invalid').length;
+    const idOf = (c) => `${c.pr}@${c.checkpoint}`;
+    const plannedIds = new Set(plan.filter((p) => p.arm === arm).map(idOf));
+    const doneIds = new Set(mine.filter((c) => c.status === 'ok' || c.status === 'invalid').map(idOf));
+    const planned = plannedIds.size; const done = doneIds.size;
+    // Completeness is the planned IDENTITY set against the completed one, never a count: a missing or an extra identity is incomplete.
+    const identitiesMatch = planned > 0 && [...plannedIds].every((k) => doneIds.has(k)) && [...doneIds].every((k) => plannedIds.has(k));
     const byPr = new Map();
     for (const c of mine) if (c.status === 'ok' && STOPPING_ACTIONS.includes(c.action)) {
       if (!byPr.has(c.pr) || c.checkpoint < byPr.get(c.pr)) byPr.set(c.pr, c.checkpoint);
@@ -223,10 +227,12 @@ export function scoreReplay({ calls, truth, arms, plan }) {
       else detail.push({ pr, checkpoint: cp, outcome: 'harmless-stop' });
     }
     const invalidOutputs = mine.filter((c) => c.status === 'invalid').length;
-    const complete = planned > 0 && done === planned;
+    // A stop on a PR with no ground-truth entry cannot be scored: the arm is incomplete, never adoptable.
+    const missingTruth = detail.some((d) => d.outcome === 'no-ground-truth');
+    const complete = identitiesMatch && !missingTruth;
     const adopted = complete && falseStops <= ADOPTION_RULE.maxFalseStops && earlyStops >= ADOPTION_RULE.minEarlyStops;
     out[arm] = {
-      earlyStops, falseStops, invalidOutputs, complete, calls: { planned, completed: done }, detail,
+      earlyStops, falseStops, invalidOutputs, complete, calls: { planned, completed: done }, missingTruth, detail,
       verdict: !complete ? 'incomplete (not adopted)' : adopted ? 'adopted' : 'not adopted',
     };
   }

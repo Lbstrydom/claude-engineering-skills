@@ -46,6 +46,14 @@ async function defaultRepoId(query) {
   return rows[0].id;
 }
 
+/** One pooled connection for the export transaction (BEGIN..COMMIT must share it); released in all cases. */
+async function withOneConnection(fn) {
+  const pool = await (await import('./lib/db/client.mjs')).getPool();
+  if (!pool) throw new Error('no audit store configured (AUDIT_DB_URL)');
+  const client = await pool.connect();
+  try { return await fn((sql, params) => client.query(sql, params)); } finally { client.release(); }
+}
+
 function scoreFrom({ datasetPath, resultsPath, arms, deps }) {
   const parsed = readResultsJsonl(fs.readFileSync(resultsPath, 'utf8'));
   // Ground truth is read ONLY here, after every call, and only from the results file's perspective.
@@ -68,7 +76,8 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     if (!branches.length || !since || !out) throw new ArgvError('step-back-replay export: --branches <csv>, --since <date> and --out are required.');
     if (Number.isNaN(Date.parse(since))) throw new ArgvError('step-back-replay export: --since must be a date.');
     const repoId = flag('--repo-id') || await defaultRepoId(query);
-    const exp = await exportRows({ branches, since, repoId, query }); // READ-ONLY: SELECTs only (EXPORT_SQL)
+    // READ-ONLY: SELECTs only, inside ONE REPEATABLE READ READ ONLY transaction on one connection (EXPORT_SQL, EXPORT_TX).
+    const exp = deps.query ? await exportRows({ branches, since, repoId, query }) : await withOneConnection(async (q) => exportRows({ branches, since, repoId, query: q }));
     writeJson(out, exp);
     console.log(`step-back-replay export: ${exp.runs.length} runs, ${exp.findings.length} findings, ${exp.events.length} events for ${branches.length} branch(es) -> ${out}`);
     return 0;
@@ -107,6 +116,10 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     if (!datasetPath || !resultsPath) throw new ArgvError('step-back-replay score: --dataset and --results are required.');
     const { parsed, score } = scoreFrom({ datasetPath, resultsPath, deps });
     const out = flag('--out');
+    if (out) {
+      const forbidden = [datasetPath, scoringPathFor(datasetPath), resultsPath, parsed.dataset?.exportPath, flag('--spec')].filter(Boolean).map((p) => path.resolve(p));
+      if (forbidden.includes(path.resolve(out))) throw new ArgvError('step-back-replay score: --out must not be the results file or any input (dataset, scoring, export, spec).');
+    }
     if (out) writeJson(out, { version: 1, dataset: datasetPath, results: resultsPath, spentUsd: parsed.spentUsd, stopped: parsed.stopped, score });
     console.log(`step-back-replay score: spent $${parsed.spentUsd.toFixed(4)} - ${summaryOf(score)}${out ? ` -> ${out}` : ''}`);
     return 0;

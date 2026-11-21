@@ -20,7 +20,7 @@ function fakeGit({ diffs = {}, bad = [], notAncestor = false, calls = [] } = {})
     calls.push(args);
     if (args[0] === 'cat-file') return { status: bad.some((b) => args[2].startsWith(b)) ? 128 : 0, stdout: '' };
     if (args[0] === 'merge-base') return { status: notAncestor ? 1 : 0, stdout: '' };
-    if (args[0] === 'diff') return { status: 0, stdout: diffs[args[args.length - 1]] ?? '' };
+    if (args.includes('diff')) return { status: 0, stdout: diffs[args[args.length - 1]] ?? '' };
     return { status: 1, stdout: '' };
   };
 }

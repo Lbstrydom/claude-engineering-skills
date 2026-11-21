@@ -6,7 +6,7 @@ import { createStepBackProvider, STEP_BACK_ARM_MODELS } from '../scripts/lib/aud
 
 const S = (c) => c.repeat(40);
 const DIFF = ['--- a/a.mjs', '+++ b/a.mjs', '@@ -1 +1,3 @@', '-o', '+n1', '+n2', '+n3'].join('\n');
-const git = (args) => (args[0] === 'diff' ? { status: 0, stdout: DIFF } : { status: 0, stdout: '' });
+const git = (args) => (args.includes('diff') ? { status: 0, stdout: DIFF } : { status: 0, stdout: '' });
 const f = (id, line) => ({ id, severity: 'HIGH', _primaryFile: 'a.mjs', affectedFiles: ['a.mjs'], line });
 const rounds = [
   { round: 1, auditedSha: S('1'), findings: [f('A', 1)] },
@@ -80,4 +80,10 @@ test('CLI: --selfcheck-relocation and an unknown --step-back-arm', () => {
   assert.equal(run('--selfcheck-relocation').stdout.trim(), 'OK');
   const bad = run('--sid', 'x', '--mode', 'code', '--round', '4', '--no-write', '--step-back-arm', 'bogus');
   assert.equal(bad.status, 2);
+});
+
+test('R3-M6: the suggested --step-back command carries the current --dir and --plan', async () => {
+  const s = await buildCheckpointSection({ ...base, round: 4, auditDir: '/tmp/my audit', planFile: 'docs/plans/x.md' });
+  const line = s.lines.find((l) => l.startsWith('A signal fired'));
+  assert.match(line, /--dir "\/tmp\/my audit" --plan "docs\/plans\/x\.md" --step-back/);
 });

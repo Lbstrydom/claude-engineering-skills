@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { EXPORT_SQL, exportRows, buildExportSnapshot, freezeFromExport, effectiveEvent, pinnedRuns, proposeRuns } from '../scripts/lib/audit/step-back-export.mjs';
+import { EXPORT_SQL, EXPORT_TX, exportRows, buildExportSnapshot, freezeFromExport, effectiveEvent, pinnedRuns, proposeRuns } from '../scripts/lib/audit/step-back-export.mjs';
 import { createRevisionFs, parseLsTree } from '../scripts/lib/audit/step-back-gitfs.mjs';
 import { runReplay, renderDryRun } from '../scripts/lib/audit/step-back-replay.mjs';
 import { buildStepBackPack } from '../scripts/lib/audit/step-back.mjs';
@@ -88,10 +88,16 @@ test('export is read-only: every statement is a SELECT with no write keyword', a
   const params = [];
   const query = async (sql, p) => { seen.push(sql); params.push(p); return { rows: sql === EXPORT_SQL.runs ? exp.runs : sql === EXPORT_SQL.findings ? exp.findings : exp.events }; };
   const out = await exportRows({ branches: ['b1'], since: '2026-11-19', repoId: 'repo-1', query });
-  assert.deepEqual(seen, [EXPORT_SQL.runs, EXPORT_SQL.findings, EXPORT_SQL.events]);
+  assert.deepEqual(seen, [EXPORT_TX.begin, EXPORT_SQL.runs, EXPORT_SQL.findings, EXPORT_SQL.events, EXPORT_TX.commit], 'one transaction around the three SELECTs');
+  assert.match(EXPORT_TX.begin, /ISOLATION LEVEL REPEATABLE READ READ ONLY/);
+  const failing = []; let n = 0;
+  const bad = async (sql) => { failing.push(sql); if (++n === 3) throw new Error('boom'); return { rows: [{ id: 'r', created_at: new Date() }] }; };
+  await assert.rejects(() => exportRows({ branches: ['b1'], since: '2026-11-19', repoId: 'repo-1', query: bad }), /boom/);
+  assert.equal(failing[failing.length - 1], EXPORT_TX.rollback, 'ROLLBACK on error, never COMMIT');
+  assert.equal(failing.includes(EXPORT_TX.commit), false);
   assert.equal(out.runs.length, exp.runs.length);
   assert.match(EXPORT_SQL.runs, /repo_id = \$3/, 'H3: runs are filtered by repo as well as branch');
-  assert.equal(params[0][2], 'repo-1');
+  assert.equal(params[1][2], 'repo-1');
   await assert.rejects(() => exportRows({ branches: ['b1'], since: '2026-11-19', query }), /repo id is required/);
 });
 
@@ -170,7 +176,7 @@ test('H8: with no run N+1 there is NO time cutoff, so the round-N rulings (writt
 test('H7/H20: the spec pins exact run ids; a PR without them, or with a listed run missing, is refused', () => {
   const exp = fixture();
   const f = freezeFromExport({ exp, exportPath: 'x', spec: { prs: [
-    { pr: 1, label: 'bad', branch: 'b1' }, { pr: 2, label: 'bad', branch: 'b1', runIds: ['r1', 'r2', 'GHOST'] }, { pr: 3, label: 'bad', branch: 'b1', runIds: B1 }] } });
+    { pr: 1, label: 'bad', branch: 'b1' }, { pr: 2, label: 'bad', branch: 'b1', runIds: ['m1', 'm2', 'GHOST'] }, { pr: 3, label: 'bad', branch: 'b1', runIds: B1 }] } });
   assert.match(f.dataset.prs[0].reason, /pins no runIds/);
   assert.match(f.dataset.prs[1].reason, /1 of 3 pinned runs are not in the export/);
   assert.equal(f.dataset.prs[2].status, 'recoverable');
