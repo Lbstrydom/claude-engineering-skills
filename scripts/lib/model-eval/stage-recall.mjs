@@ -76,17 +76,14 @@ export function buildStageFindingsArtifact({ runId, corpusRev, entryId, stage, f
   return StageFindingsArtifactSchema.parse({ version: STAGE_FINDINGS_VERSION, runId, corpusRev, entryId, stage, findings: projectStageFindings(findings) });
 }
 
-const resolvedRevs = new Map();
 /**
- * Resolve a corpus revision to a full commit sha ONCE (cached per process), via `git rev-parse --verify <rev>^{commit}`.
- * Throws on anything git cannot resolve to a commit.
+ * Resolve a corpus revision to a full commit sha at THIS call, via `git rev-parse --verify <rev>^{commit}`. No cache: a movable
+ * ref (`main`) can advance between two captures in one process, and each capture must store the sha it was taken at (audit R2
+ * H3/M3). Throws on anything git cannot resolve to a commit.
  */
 export function resolveCorpusRev(rev, { cwd = process.cwd(), exec = execFileSync } = {}) {
-  const key = `${cwd}\u0000${rev}`;
-  if (resolvedRevs.has(key)) return resolvedRevs.get(key);
   const sha = String(exec('git', ['-C', cwd, 'rev-parse', '--verify', `${rev}^{commit}`], { encoding: 'utf8' })).trim();
   if (!FULL_SHA_RE.test(sha)) throw new Error(`resolveCorpusRev: ${rev} did not resolve to a full commit sha`);
-  resolvedRevs.set(key, sha);
   return sha;
 }
 
@@ -136,8 +133,11 @@ export function loadEligibleEntries(corpusRev, { cwd = process.cwd(), exec = exe
 }
 
 const hasDescription = (f) => typeof f.description === 'string' && f.description.length > 0;
-/** A unit is scorable in a stage when it found nothing (a real zero) or at least one finding carries a description. */
-const describable = (a) => a.findings.length === 0 || a.findings.some(hasDescription);
+/**
+ * A unit is scorable in a stage when it found nothing (a real zero) or EVERY finding carries a description: one undescribed
+ * finding could be the one that matches the defect, so scoring it with an empty description would fabricate a miss (audit R2 M1).
+ */
+const describable = (a) => a.findings.length === 0 || a.findings.every(hasDescription);
 
 /**
  * Stages are compared on the SAME units only: a unit is `(runId, entryId)`, and a stage's recall covers only units that are

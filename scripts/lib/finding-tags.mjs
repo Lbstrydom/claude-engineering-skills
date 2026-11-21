@@ -76,6 +76,9 @@ export function gatesForCount(f, { inDiff }) {
       : { gates: false, reason: 'mechanically-pre-existing' };
   }
   const g = findingGateClass(f);
+  // A model claim of pre_existing on a line the mechanical scope places IN the diff contradicts it: the finding gates, and
+  // that holds for a nit too (the contradiction is checked before the nit excusal, audit R2 H2/M2).
+  if (f?.pre_existing === true) return { gates: true, reason: 'tag-contradiction' };
   if (g.reason === 'nit') return g;
   if (!g.gates) return { gates: true, reason: 'tag-contradiction' };
   return g;

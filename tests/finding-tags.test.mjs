@@ -67,6 +67,10 @@ describe('gatesForCount - the mechanical scope outranks the model', () => {
     assert.equal(gatesForCount(full({ importance: 'nit' }), { inDiff: true }).gates, false);
     assert.equal(gatesForCount(full({ importance: 'nit', severity: 'HIGH' }), { inDiff: true }).gates, true);
     assert.equal(gatesForCount({ severity: 'LOW', importance: 'nit', pre_existing: false }, { inDiff: true }).gates, true);   // half-stated nit
+    // audit R2 H2/M2: an in-diff NIT that claims pre_existing contradicts the mechanical scope - it gates, never excused as a nit
+    const nitClaimsOld = gatesForCount(full({ importance: 'nit', pre_existing: true, newly_reachable: false }), { inDiff: true });
+    assert.equal(nitClaimsOld.gates, true);
+    assert.equal(nitClaimsOld.reason, 'tag-contradiction');
     assert.equal(gatesForCount({ severity: 'LOW' }, { inDiff: true }).gates, true);                                         // legacy
   });
   it('an in-diff important finding gates', () => assert.equal(gatesForCount(full({}), { inDiff: true }).gates, true));
@@ -162,7 +166,9 @@ describe('census - every site that builds or projects `is_quick_fix` handles the
       const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
       const sites = lines.filter((l) => /\bis_quick_fix\s*:/.test(l) && !isComment(l)).length;
       if (sites > 0) {
-        const tagFills = lines.filter((l) => !isComment(l) && /NON_LLM_FINDING_TAGS|\bimportance\s*:/.test(l)).length;
+        // A fill is a SPREAD of NON_LLM_FINDING_TAGS (never its import), or a literal stating all three tags on the line (audit R2 M4).
+        const tagFills = lines.filter((l) => !isComment(l) && !/^\s*import\b/.test(l)
+          && (/\.\.\.\s*NON_LLM_FINDING_TAGS\b/.test(l) || (/\bimportance\s*:/.test(l) && /\bpre_existing\s*:/.test(l) && /\bnewly_reachable\s*:/.test(l)))).length;
         out.set(path.relative(REPO, file).replaceAll('\\', '/'), { sites, tagFills });
       }
     }

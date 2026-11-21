@@ -91,6 +91,11 @@ describe('computeStageRecall - the same units in every compared stage (H13/H16/M
     assert.deepEqual(r.stages.raw, { numerator: 1, denominator: 1, recall: 1, unmeasuredReason: null });
     assert.deepEqual(r.droppedUnits, [{ runId: 'r1', entryId: 'KD-2', reason: 'findings carry no description in stage raw' }]);
   });
+  it('a unit with ONE undescribed finding beside a described one is dropped: the undescribed one could be the match (audit R2 M1)', () => {
+    const r = computeStageRecall({ entries, artifacts: [art('raw', 'KD-1', [finding('src/zzz.js', 'unrelated described finding'), finding('src/a.js')])] });
+    assert.equal(r.stages.raw.recall, null);
+    assert.equal(r.droppedUnits[0].reason, 'findings carry no description in stage raw');
+  });
   it('stages with no unit in common report unmeasured, never a fabricated zero', () => {
     const r = computeStageRecall({ entries, artifacts: [art('raw', 'KD-1', [hit]), art('post-verification', 'KD-2', [])] });
     assert.equal(r.stages.raw.recall, null);
@@ -115,12 +120,14 @@ describe('corpusRev is a resolved full sha (H15/M11)', () => {
     assert.throws(() => computeStageRecall({ entries, artifacts: [{ ...art('raw', 'KD-1', [hit]), corpusRev: 'abc123' }] }));
     assert.throws(() => loadEligibleEntries('main', { exec: () => '{"defects":[]}' }), /full commit sha/);
   });
-  it('resolveCorpusRev asks git once, returns the full sha, and rejects a non-commit answer', () => {
+  it('resolveCorpusRev asks git at EVERY call (a moving ref is never served stale), returns the full sha, rejects a non-commit', () => {
     let calls = 0;
-    const exec = (_c, args) => { calls++; assert.ok(args.includes('some-ref^{commit}')); return `${'c'.repeat(40)}\n`; };
+    let tip = 'c'.repeat(40);
+    const exec = (_c, args) => { calls++; assert.ok(args.includes('some-ref^{commit}')); return `${tip}\n`; };
     assert.equal(resolveCorpusRev('some-ref', { cwd: 'x1', exec }), 'c'.repeat(40));
-    resolveCorpusRev('some-ref', { cwd: 'x1', exec });
-    assert.equal(calls, 1);
+    tip = 'd'.repeat(40); // the ref advanced between two captures in one process (audit R2 H3/M3)
+    assert.equal(resolveCorpusRev('some-ref', { cwd: 'x1', exec }), 'd'.repeat(40));
+    assert.equal(calls, 2);
     assert.throws(() => resolveCorpusRev('bad-ref', { cwd: 'x2', exec: () => 'not-a-sha' }));
   });
   it('capture stores the RESOLVED sha, not the ref it was given', () => {
