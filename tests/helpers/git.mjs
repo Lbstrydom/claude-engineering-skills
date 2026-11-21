@@ -26,10 +26,13 @@ export const REPO_SELECTION_VARS = Object.freeze(['GIT_DIR', 'GIT_WORK_TREE', 'G
   'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE', 'GIT_PREFIX', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM']);
 const SELECTION = new Set(REPO_SELECTION_VARS);
 
-/** `process.env` without the repository-selection variables, with `extra` layered on top. */
+/** Inherited config INJECTION (`GIT_CONFIG_COUNT` + `GIT_CONFIG_KEY_n`/`VALUE_n`, `GIT_CONFIG_PARAMETERS`) can override a fixture's own config. */
+const isConfigInjection = (K) => K === 'GIT_CONFIG_COUNT' || K === 'GIT_CONFIG_PARAMETERS' || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(K);
+
+/** `process.env` without the repository-selection and config-injection variables, with `extra` layered on top. */
 export function fixtureGitEnv(extra = {}) {
   const out = {};
-  for (const [k, v] of Object.entries(process.env)) if (!SELECTION.has(k.toUpperCase())) out[k] = v;
+  for (const [k, v] of Object.entries(process.env)) { const K = k.toUpperCase(); if (!SELECTION.has(K) && !isConfigInjection(K)) out[k] = v; }
   return { ...out, ...extra };
 }
 

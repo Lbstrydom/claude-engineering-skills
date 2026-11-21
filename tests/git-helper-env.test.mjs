@@ -16,8 +16,9 @@ test('an inherited GIT_DIR / GIT_WORK_TREE does not retarget the fixture git run
   const a = path.join(root, 'a');
   const decoy = path.join(root, 'decoy');
   fs.mkdirSync(a); fs.mkdirSync(decoy);
-  execFileSync('git', ['init', '-q', a]);
-  execFileSync('git', ['init', '-q', decoy]);
+  // set-up runs with a sanitised env, so an inherited GIT_DIR (a hook) cannot redirect it
+  execFileSync('git', ['init', '-q', a], { env: fixtureGitEnv() });
+  execFileSync('git', ['init', '-q', decoy], { env: fixtureGitEnv() });
   const saved = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
   t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
   process.env.GIT_DIR = path.join(decoy, '.git');
@@ -33,4 +34,16 @@ test('a caller that passes a selection variable deliberately keeps it', () => {
   assert.equal(fixtureGitEnv({ GIT_DIR: '/x' }).GIT_DIR, '/x');
   process.env.git_dir = '/inherited-lowercase';
   try { assert.equal(Object.keys(fixtureGitEnv()).some((k) => k.toUpperCase() === 'GIT_DIR'), false); } finally { delete process.env.git_dir; }
+});
+
+test('inherited config injection (GIT_CONFIG_COUNT/KEY_n/VALUE_n, GIT_CONFIG_PARAMETERS) is dropped; a caller-supplied one is kept', () => {
+  const saved = { ...process.env };
+  try {
+    Object.assign(process.env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'maintenance.auto', GIT_CONFIG_VALUE_0: 'true', GIT_CONFIG_PARAMETERS: "'a.b'='c'" });
+    const env = fixtureGitEnv();
+    for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_PARAMETERS']) assert.equal(k in env, false, k);
+    assert.equal(fixtureGitEnv({ GIT_CONFIG_COUNT: '0' }).GIT_CONFIG_COUNT, '0');
+  } finally {
+    for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_PARAMETERS']) if (!(k in saved)) delete process.env[k];
+  }
 });

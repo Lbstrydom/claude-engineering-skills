@@ -33,7 +33,9 @@ function headOf(dir, env) {
   }
 }
 
-const makeFleetRepoBare = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'mfrb-')); execFileSync('git', ['init', '-q', d], { env: gitFixtureEnv() }); return d; };
+const bareDirs = [];
+const makeFleetRepoBare = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'mfrb-')); bareDirs.push(d); execFileSync('git', ['init', '-q', d], { env: gitFixtureEnv() }); return d; };
+after(() => { for (const d of bareDirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 describe('fixture helpers are immune to a leaked GIT_DIR/GIT_WORK_TREE', () => {
   let victim;
@@ -261,6 +263,10 @@ describe('fixture repositories never run detached background maintenance (docs/p
     assert.equal(env.GIT_CONFIG_VALUE_0, 'kept');
     assert.equal(env.GIT_CONFIG_KEY_1, 'maintenance.auto');
     assert.equal(env.GIT_CONFIG_VALUE_1, 'false');
+  });
+
+  it('a malformed inherited GIT_CONFIG_COUNT is refused, never reset to 0 (which would overwrite entry 0)', () => {
+    for (const bad of ['1junk', '-1', 'x', '']) assert.throws(() => withMaintenanceOff({ GIT_CONFIG_COUNT: bad, GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'kept' }), /GIT_CONFIG_COUNT/, JSON.stringify(bad));
   });
 
   it('the fleet template repo and its bare origin both say maintenance.auto=false', () => {

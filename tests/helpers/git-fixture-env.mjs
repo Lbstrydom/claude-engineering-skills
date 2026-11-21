@@ -19,8 +19,10 @@ import path from 'node:path';
  * @returns {NodeJS.ProcessEnv}
  */
 export function withMaintenanceOff(env) {
-  const n = Number.parseInt(env.GIT_CONFIG_COUNT ?? '0', 10);
-  const at = Number.isInteger(n) && n >= 0 ? n : 0;
+  const raw = env.GIT_CONFIG_COUNT ?? '0';
+  // A malformed count is a broken environment, not zero: resetting it would overwrite the caller's entries.
+  if (!/^\d+$/.test(String(raw))) throw new Error(`withMaintenanceOff: GIT_CONFIG_COUNT is ${JSON.stringify(raw)}, not a non-negative integer`);
+  const at = Number(raw);
   env[`GIT_CONFIG_KEY_${at}`] = 'maintenance.auto';
   env[`GIT_CONFIG_VALUE_${at}`] = 'false';
   env.GIT_CONFIG_COUNT = String(at + 1);

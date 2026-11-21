@@ -138,7 +138,7 @@ describe('classifyCiVerdict — only a completed success on ACCEPTED evidence is
       assert.equal(r3.verdict, 'unverified', 'no attempt evidence at all');
     });
     it('a missing or malformed run_attempt is unverified: earlier attempts cannot be enumerated (never assumed to be 1)', () => {
-      for (const n of [undefined, null, 0, -1, 1.5, '2']) {
+      for (const n of [undefined, null, 0, -1, 1.5, '2', 51, Number.MAX_SAFE_INTEGER + 2]) {
         const r = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: n, conclusion: 'success' })] }));
         assert.equal(r.verdict, 'unverified', `run_attempt ${JSON.stringify(n)}`);
         assert.match(r.reason, /run_attempt/);

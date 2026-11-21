@@ -71,8 +71,14 @@ export function selectRun({ runs, head, pr = null, defaultBranch, workflowPath }
  * record is its LATEST attempt only; earlier attempts come from `priorAttempts[runId]` (docs/plans/verification-lessons.md 2.1:
  * a rerun may diagnose, never clear). A prior attempt that is absent or unreadable is `why`-labelled, never skipped.
  */
-/** A run's own attempt count, or null when it is missing or not a positive integer (never assumed to be 1). */
-export const attemptCountOf = (r) => (Number.isInteger(r?.run_attempt) && r.run_attempt >= 1 ? r.run_attempt : null);
+/**
+ * The most attempts a run may report before its count is treated as malformed. GitHub caps re-runs well below this; the bound keeps
+ * attempt enumeration (one API call per earlier attempt) finite on a hostile or corrupt record.
+ */
+export const MAX_RUN_ATTEMPTS = 50;
+
+/** A run's own attempt count, or null when it is missing, not a positive integer, or above MAX_RUN_ATTEMPTS (never assumed to be 1). */
+export const attemptCountOf = (r) => (Number.isSafeInteger(r?.run_attempt) && r.run_attempt >= 1 && r.run_attempt <= MAX_RUN_ATTEMPTS ? r.run_attempt : null);
 
 /**
  * Is an attempt record one the classifier can judge? A status it knows, and — when completed — a string conclusion. Anything else
@@ -90,7 +96,7 @@ function attemptsOf(accepted, priorAttempts) {
     const count = attemptCountOf(r);
     if (count === null) {
       // Unknown attempt count: earlier attempts may exist and cannot be enumerated, so a failed one could be hiding.
-      out.push({ runId: r.id, attempt: 0, status: null, conclusion: null, run: r, why: `run_attempt is ${JSON.stringify(r.run_attempt ?? null)}, not a positive integer` });
+      out.push({ runId: r.id, attempt: 0, status: null, conclusion: null, run: r, why: `run_attempt is ${JSON.stringify(r.run_attempt ?? null)}, not a positive integer <= ${MAX_RUN_ATTEMPTS}` });
     }
     const latest = count ?? 1;
     const prior = Array.isArray(priorAttempts?.[r.id]) ? priorAttempts[r.id] : [];
