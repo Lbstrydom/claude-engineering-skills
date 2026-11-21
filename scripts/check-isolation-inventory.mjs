@@ -16,7 +16,7 @@
  *   0  Round-trip clean for every path in every consumer inventory
  *   2  Any round-trip failure
  */
-import { getAllConsumerInventories } from './lib/sync-inventory.mjs';
+import './lib/help-guard-run.mjs'; import { getAllConsumerInventories } from './lib/sync-inventory.mjs';
 import { sourceRelToDestRel, destRelToSourceRel } from './lib/sync-path-map.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 

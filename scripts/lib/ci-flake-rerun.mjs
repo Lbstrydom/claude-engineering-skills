@@ -1,5 +1,10 @@
 /**
- * @fileoverview One recorded re-run of a CI failure that the diff cannot have caused (fleet p-20261015045129-6c44).
+ * @fileoverview One recorded DIAGNOSTIC re-run of a CI failure that the diff cannot have caused (fleet p-20261015045129-6c44).
+ *
+ * **A rerun may diagnose, never clear** (docs/plans/verification-lessons.md 2.1). `ci-verdict` counts every attempt of every
+ * run for the head sha, so a head that failed at attempt 1 stays `failed` (`failed-then-rerun`) whatever attempt 2 does. This
+ * tool therefore records `outcome: 'diagnosed'` and nothing it does can make the verdict pass: the attempt-2 result is
+ * information (reproduces / did not reproduce) printed beside the red verdict, and only a new commit clears the head.
  *
  * **The gap.** A `full-suite` run that failed on a test this PR does not touch (a timing flake, a network blip in a
  * test that is not about the network) stops a merge until someone re-runs it by hand, and a hand re-run leaves no
@@ -184,10 +189,9 @@ export function gatherFlakeEvidence({ run, nwo, judged, pr, readTree, readHeavy 
 // ── Reservation + mutation ──────────────────────────────────────────────────
 
 /**
- * The CLI's exit code, pure. Only a FAILED verdict on ATTEMPT 1 takes its exit from the re-run outcome (accepted: wait,
- * 3; refused or ineligible: the failure stands, 4; indeterminate: 1, a human decides). A failed attempt 2 or later is the
- * re-run's own terminal result: it stays failed (4) whatever the reservation reports, never pending. Any other verdict
- * keeps its own exit, so a run that passed after a re-run is green (0).
+ * The CLI's exit code, pure. The VERDICT alone decides: `full` is green, a FAILED verdict is the failed exit (4) whatever the
+ * re-run did (a diagnostic never clears, never defers: `accepted` is also 4), an `indeterminate` reservation on an attempt-1
+ * failure is 1 so a human looks, and every other verdict keeps its own exit.
  * @param {string} verdict
  * @param {{rerun: string}|null} outcome
  * @param {{full: number, notYet: number, failed: number, error: number}} exits
@@ -197,10 +201,12 @@ export function flakeExit(verdict, outcome, exits, attempt = 1) {
   if (verdict === 'full') return exits.full;
   if (verdict !== 'failed') return exits.notYet;
   if (!outcome || attempt !== 1) return exits.failed;
-  return { accepted: exits.notYet, indeterminate: exits.error }[outcome.rerun] ?? exits.failed;
+  return { indeterminate: exits.error }[outcome.rerun] ?? exits.failed;
 }
 
 const RECORD_VERSION = 'ci-flake/v1';
+/** What an accepted re-run IS: a diagnosis. It is never a clearance; the verdict never reads it. */
+export const DIAGNOSED = 'diagnosed';
 const STATES = new Set(['reserved', 'dispatching', 'accepted', 'rejected']);
 
 /** Where the reservation for one run lives. */
@@ -235,13 +241,13 @@ function readRecord(file) {
  * @param {(fields: object) => {ok: boolean, id?: string, why?: string}} a.propose
  * @param {string} [a.url]
  * @param {() => string} [a.now]
- * @returns {Promise<{rerun: 'accepted'|'rejected'|'indeterminate'|'ineligible', detail: string, proposal: string|null}>}
+ * @returns {Promise<{rerun: 'accepted'|'rejected'|'indeterminate'|'ineligible', outcome?: 'diagnosed', detail: string, proposal: string|null}>}
  */
 export async function rerunUnrelatedFlake({ stateDir, nwo, runId, classification, readAttempt, dispatch, findProposal, propose, url = '', now = () => new Date().toISOString() }) {
   fs.mkdirSync(stateDir, { recursive: true });
   const file = reservationFile(stateDir, nwo, runId);
   const key = flakeKey(nwo, runId);
-  const save = (rec) => atomicWriteFileSync(file, `${JSON.stringify({ ...rec, updatedAt: now() }, null, 2)}\n`);
+  const save = (rec) => atomicWriteFileSync(file, `${JSON.stringify({ ...rec, ...(rec.state === 'accepted' ? { outcome: DIAGNOSED } : {}), updatedAt: now() }, null, 2)}\n`);
   return withFileLock(`${file}.lock`, { maxWaitMs: 15_000 }, async () => {
     const cur = readRecord(file);
     if (!cur.ok) return { rerun: 'indeterminate', detail: `${cur.why}; check \`gh run view ${runId}\` and decide by hand`, proposal: null };
@@ -286,7 +292,7 @@ export async function rerunUnrelatedFlake({ stateDir, nwo, runId, classification
     }
 
     // accepted: file the proposal exactly once
-    if (rec.proposalId) return { rerun: 'accepted', detail: `run ${runId} re-run (attempt 2)`, proposal: `already recorded ${rec.proposalId}` };
+    if (rec.proposalId) return { rerun: 'accepted', outcome: DIAGNOSED, detail: `run ${runId} re-run (attempt 2) as a diagnostic; the failed head stays failed`, proposal: `already recorded ${rec.proposalId}` };
     const found = await findProposal(key);
     let proposal;
     if (found.ok && found.id) { rec = { ...rec, proposalId: found.id }; save(rec); proposal = `already recorded ${found.id}`; } else if (!found.ok) {
@@ -300,6 +306,6 @@ export async function rerunUnrelatedFlake({ stateDir, nwo, runId, classification
       });
       if (p.ok && p.id) { rec = { ...rec, proposalId: p.id }; save(rec); proposal = `recorded ${p.id}`; } else proposal = `NOT recorded (${p.why ?? 'no id returned'}); the next run of this command files it`;
     }
-    return { rerun: 'accepted', detail: `run ${runId} re-run (attempt 2)`, proposal };
+    return { rerun: 'accepted', outcome: DIAGNOSED, detail: `run ${runId} re-run (attempt 2) as a diagnostic; the failed head stays failed`, proposal };
   });
 }

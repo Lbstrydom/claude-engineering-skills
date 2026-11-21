@@ -27,7 +27,7 @@
  *
  * @module scripts/context-staleness
  */
-import fs from 'node:fs';
+import './lib/help-guard-run.mjs'; import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
 import {

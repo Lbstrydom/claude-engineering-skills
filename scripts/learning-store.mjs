@@ -37,7 +37,7 @@
 
 // dotenv load preserved — CLI scripts that import this still expect .env
 // to have been loaded by the time they start using config.
-import './lib/load-env.mjs';
+import './lib/help-guard-run.mjs'; import './lib/load-env.mjs';
 
 // Re-export every public function from the 9 domain modules. The
 // `export *` form is mechanical + makes a single source-of-truth file

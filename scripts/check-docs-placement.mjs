@@ -29,7 +29,7 @@
  *
  * @module scripts/check-docs-placement
  */
-import fs from 'node:fs';
+import './lib/help-guard-run.mjs'; import fs from 'node:fs';
 import path from 'node:path';
 
 const DOCS_DIR = path.resolve('docs');

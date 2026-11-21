@@ -110,11 +110,18 @@ function main() {
     }
   }
 
-  if (!remedies.ok) {
+  if (remedies.missing.length > 0) {
     process.stdout.write(
       `${R}✗${X} package.json ${D}wtpf/remedy-missing — the marker tells readers to run `
       + `${remedies.missing.map(n => `\`npm run ${n}\``).join(', ')}, which package.json does not define. `
       + `Add the script (it must ride on TRACKED content to reach a worktree at all).${X}\n`,
+    );
+  }
+  if (remedies.circular.length > 0) {
+    process.stdout.write(
+      `${R}✗${X} package.json ${D}wtpf/remedy-circular — ${remedies.circular.map(n => `\`${n}\``).join(', ')} `
+      + `runs a file inside the gitignored scripts/.claude-skills/ tree it exists to copy, so it dies on `
+      + `MODULE_NOT_FOUND in a fresh linked worktree. Use a self-contained entry (references/worktree-preflight.md).${X}\n`,
     );
   }
 
@@ -142,8 +149,12 @@ function main() {
     for (const name of remedies.missing) {
       process.stderr.write(`wtpf/remedy-missing package.json:scripts.${name}\n`);
     }
+    for (const name of remedies.circular) {
+      process.stderr.write(`wtpf/remedy-circular package.json:scripts.${name}\n`);
+    }
     process.stderr.write(
       `${R}The worktree-preflight marker prescribes a remedy package.json does not define, `
+      + `or defines in a place a fresh worktree cannot reach, `
       + `so the instruction cannot be followed where it is printed.${X}\n`,
     );
   }

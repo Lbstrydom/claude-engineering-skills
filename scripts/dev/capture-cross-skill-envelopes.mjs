@@ -20,7 +20,7 @@
  * Re-run to regenerate: node scripts/dev/capture-cross-skill-envelopes.mjs
  * A regeneration on unchanged behaviour must be a no-op diff.
  */
-import { spawnSync } from 'node:child_process';
+import '../lib/help-guard-run.mjs'; import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

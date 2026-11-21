@@ -20,8 +20,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { gitInit, gitInitWithEmptyCommit, commit, makeGitRunner, gitFixtureEnv, makeRepoTemplate, rmrf } from './helpers/fixtures.mjs';
+import { makeGitFixtureEnv, withMaintenanceOff } from './helpers/git-fixture-env.mjs';
+import { fixtureGitEnv } from './helpers/git.mjs';
+import { makeFleetRepo, cleanupFleetRoots } from './helpers/fleet-repo.mjs';
 
 function headOf(dir, env) {
   try {
@@ -30,6 +33,10 @@ function headOf(dir, env) {
     return null; // no commits yet — a valid, expected state for a fresh gitInit()
   }
 }
+
+const bareDirs = [];
+const makeFleetRepoBare = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'mfrb-')); bareDirs.push(d); execFileSync('git', ['init', '-q', d], { env: gitFixtureEnv() }); return d; };
+after(() => { for (const d of bareDirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 describe('fixture helpers are immune to a leaked GIT_DIR/GIT_WORK_TREE', () => {
   let victim;
@@ -214,5 +221,65 @@ describe('makeRepoTemplate — copies are real, private repos', () => {
     // tested a repo that is not the one it describes.
     const t = makeRepoTemplate(() => { throw new Error('git exploded'); });
     assert.throws(() => t('tpl-g-'), /fixture template build failed: git exploded/);
+  });
+});
+
+describe('fixture repositories never run detached background maintenance (docs/plans/verification-lessons.md 2.1a)', () => {
+  // git >= 2.56 starts `git maintenance run --auto` after `commit`; its objects/maintenance.lock vanished mid-`cpSync` of a template
+  // in CI (run 44901035185). The cause cannot be provoked locally (Windows cannot detach), so the pin is the DECISION: every fixture
+  // env and every template says maintenance.auto=false, read back from git itself.
+  const readCfg = (dir, env) => execFileSync('git', ['config', '--get', 'maintenance.auto'], { cwd: dir, encoding: 'utf-8', env }).trim();
+  const dirs = [];
+  after(() => { for (const d of dirs) rmrf(d); cleanupFleetRoots(); });
+  const mk = (prefix) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; };
+
+  it('gitFixtureEnv() reads maintenance.auto=false through git', () => {
+    const d = mk('maint-a-');
+    execFileSync('git', ['init', '-q'], { cwd: d, env: gitFixtureEnv() });
+    assert.equal(readCfg(d, gitFixtureEnv()), 'false');
+  });
+
+  it('makeGitFixtureEnv() turns maintenance off through its gitArgs (never GIT_CONFIG_* in the env), and its cleanup removes its dir', () => {
+    const f = makeGitFixtureEnv();
+    try {
+      const d = mk('maint-b-');
+      execFileSync('git', ['init', '-q'], { cwd: d, env: f.env });
+      const viaArgs = execFileSync('git', [...f.gitArgs, 'config', '--get', 'maintenance.auto'], { cwd: d, encoding: 'utf-8', env: f.env }).trim();
+      assert.equal(viaArgs, 'false');
+      assert.equal(Object.keys(f.env).some((k) => /^GIT_CONFIG_(COUNT|KEY_|VALUE_|PARAMETERS)/i.test(k)), false, 'no config injection in the env');
+    } finally { f.cleanup(); }
+  });
+
+  it('negative control: without the env the same read is NOT false (the instrument can fail)', () => {
+    const d = mk('maint-c-');
+    // fixtureGitEnv drops inherited repo-selection AND config-injection variables (a hook's GIT_DIR cannot retarget this git init)
+    const bare = fixtureGitEnv({ GIT_CONFIG_GLOBAL: path.join(d, 'none'), GIT_CONFIG_NOSYSTEM: '1' });
+    execFileSync('git', ['init', '-q'], { cwd: d, env: bare });
+    const r = spawnSync('git', ['config', '--get', 'maintenance.auto'], { cwd: d, encoding: 'utf-8', env: bare });
+    assert.notEqual(r.stdout.trim(), 'false');
+  });
+
+  it('withMaintenanceOff merges after existing GIT_CONFIG_COUNT entries instead of overwriting them', () => {
+    const env = withMaintenanceOff({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'kept' });
+    assert.equal(env.GIT_CONFIG_COUNT, '2');
+    assert.equal(env.GIT_CONFIG_KEY_0, 'user.name');
+    assert.equal(env.GIT_CONFIG_VALUE_0, 'kept');
+    assert.equal(env.GIT_CONFIG_KEY_1, 'maintenance.auto');
+    assert.equal(env.GIT_CONFIG_VALUE_1, 'false');
+  });
+
+  it('a malformed inherited GIT_CONFIG_COUNT is refused, never reset to 0 (which would overwrite entry 0)', () => {
+    for (const bad of ['1junk', '-1', 'x', '']) assert.throws(() => withMaintenanceOff({ GIT_CONFIG_COUNT: bad, GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'kept' }), /GIT_CONFIG_COUNT/, JSON.stringify(bad));
+  });
+
+  it('the fleet template repo and its bare origin both say maintenance.auto=false', () => {
+    const fx = makeFleetRepo();
+    // --local reads ONLY the repository's own config file, so the GIT_CONFIG_COUNT injection gitFixtureEnv() carries cannot
+    // satisfy this assertion: it proves the template PERSISTS the setting (a copy of it runs without our env).
+    const readLocal = (dir) => execFileSync('git', ['config', '--local', '--get', 'maintenance.auto'], { cwd: dir, encoding: 'utf-8', env: gitFixtureEnv() }).trim();
+    assert.equal(readLocal(fx.repo), 'false');
+    assert.equal(readLocal(fx.origin), 'false');
+    // negative control: the injected setting alone is invisible to --local
+    assert.throws(() => execFileSync('git', ['config', '--local', '--get', 'maintenance.auto'], { cwd: makeFleetRepoBare(), encoding: 'utf-8', env: gitFixtureEnv(), stdio: 'pipe' }));
   });
 });

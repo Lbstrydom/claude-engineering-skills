@@ -28,7 +28,7 @@ import { MANIFEST_RELATIVE_PATH } from '../scripts/lib/sync-manifest.mjs';
 import {
   markerNamedNpmScripts, checkMarkerRemedies, checkDocumentedRecipes,
   MARKER_BLOCK, PENDING_NOTE_READ_RECIPE, PENDING_NOTE_WRITE_RECIPE,
-  CONSUMER_HYDRATE_NPM_SCRIPT,
+  CONSUMER_HYDRATE_NPM_SCRIPT, isCircularRemedy,
 } from '../scripts/lib/worktree-preflight.mjs';
 
 const MAIN = path.resolve('/repo');
@@ -227,7 +227,72 @@ describe('checkMarkerRemedies — the gate on the gate', () => {
 
   it('passes when package.json defines every named script', () => {
     const r = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'node …' } }) });
-    assert.deepEqual(r, { ok: true, missing: [], checked: ['skills:hydrate'] });
+    assert.deepEqual(r, { ok: true, missing: [], circular: [], checked: ['skills:hydrate'] });
+  });
+
+  it('THE CONSUMER SHAPE: a remedy that runs a file inside scripts/.claude-skills/ fails as circular', () => {
+    // Field report 2026-11-21: the script existed (existence check green) but lived
+    // in the tree it copies, so a fresh worktree died on MODULE_NOT_FOUND.
+    for (const body of [
+      'node scripts/.claude-skills/skills-hydrate.mjs',
+      'node ./scripts/.claude-skills/skills-hydrate.mjs --json',
+      'cd . && node scripts/.claude-skills/skills-hydrate.mjs',
+      'node scripts\\.claude-skills\\skills-hydrate.mjs',
+      'node --no-warnings "scripts/.claude-skills/skills-hydrate.mjs"',
+      "node -e \"require('./scripts/.claude-skills/skills-hydrate.mjs')\"",
+      'node --import=tsx scripts/.claude-skills/skills-hydrate.mjs',
+      'node --require ./preload.js scripts/.claude-skills/skills-hydrate.mjs',
+      "node -r ./scripts/.claude-skills/boot.js -e \"console.log(1)\"",
+      'node --import=./scripts/.claude-skills/boot.mjs -e "0"',
+    ]) {
+      const r = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': body } }) });
+      assert.equal(r.ok, false, body);
+      assert.deepEqual(r.circular, ['skills:hydrate'], body);
+      assert.deepEqual(r.missing, [], body);
+    }
+  });
+
+  it('END TO END: a real package.json on disk with the circular spelling fails the file-backed read', () => {
+    // No injected reader: the exact path `check-worktree-preflight` and the doctor
+    // probe take against a consumer checkout.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hydrate-circ-'));
+    try {
+      fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { 'skills:hydrate': 'node scripts/.claude-skills/skills-hydrate.mjs' } }));
+      const bad = checkMarkerRemedies(root);
+      assert.equal(bad.ok, false);
+      assert.deepEqual(bad.circular, ['skills:hydrate']);
+      fs.writeFileSync(path.join(root, 'package.json'), `{${CONSUMER_HYDRATE_NPM_SCRIPT.replace(/^/, '"scripts": {')}}}`);
+      assert.equal(checkMarkerRemedies(root).ok, true, 'the canonical one-liner on disk must pass');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('an INDIRECT remedy (npm run X where X runs the tree) is circular; null/empty bodies are missing, not present', () => {
+    const viaIndirect = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'npm run real', real: 'node scripts/.claude-skills/skills-hydrate.mjs' } }) });
+    assert.deepEqual(viaIndirect.circular, ['skills:hydrate']);
+    for (const body of [null, '', '   ', 42]) {
+      const r = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': body } }) });
+      assert.deepEqual(r.missing, ['skills:hydrate'], String(body));
+    }
+    const viaFlag = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'npm run --silent real', real: 'node scripts/.claude-skills/skills-hydrate.mjs' } }) });
+    assert.deepEqual(viaFlag.circular, ['skills:hydrate'], 'npm run --silent <name> must still resolve the target');
+    const viaGlobalFlag = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'npm --silent run real', real: 'node scripts/.claude-skills/skills-hydrate.mjs' } }) });
+    assert.deepEqual(viaGlobalFlag.circular, ['skills:hydrate'], 'npm --silent run <name> must resolve the target');
+    // text printed by a self-contained node -e is not a delegation
+    const printed = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': "node -e \"console.log('npm run real')\"", real: 'node scripts/.claude-skills/skills-hydrate.mjs' } }) });
+    assert.equal(printed.ok, true, 'a node -e payload that merely mentions npm run must not be followed');
+    // negative control: a delegating remedy that stays in tracked content is fine.
+    const ok = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'npm run real', real: 'node scripts/skills-hydrate.mjs' } }) });
+    assert.equal(ok.ok, true);
+  });
+
+  it('negative control: the canonical one-liner and a tracked-script remedy are NOT circular', () => {
+    // The one-liner names the directory inside `node -e`; it must not be flagged.
+    const canonical = JSON.parse(`{${CONSUMER_HYDRATE_NPM_SCRIPT}}`)['skills:hydrate'];
+    assert.equal(isCircularRemedy(canonical), false);
+    assert.equal(isCircularRemedy('node scripts/skills-hydrate.mjs'), false);
+    assert.equal(isCircularRemedy(undefined), false);
   });
 
   it('THE DIRECTION THAT HAD TO FIRE: fails when the named script is absent', () => {

@@ -24,7 +24,9 @@ This is the list to read when asking "what is in flight?".
 | [Coordinator-owned aggregate ship (one ship action per batch)](./coordinator-aggregate-ship.md) | `In Progress` |  |
 | [Size floor for `arch:duplicates` and the drift score](./duplicate-min-lines-floor.md) | `In Progress` |  |
 | [Fable 5.2 vs Opus 5.5 on coordinator-grade decisions](./fable-vs-opus-decision-eval.md) | `Approved` |  |
+| [fleet field feedback, cluster 1 — hydrate circularity and `--help` read-only (consumer feedback 2026-11-21)](./fleet-feedback-cluster1-bugs.md) | `In Progress` | implemented on branch claude/fleet-field-feedback-54e8b7, awaiting audit |
 | [fleet hygiene — detached worktrees in prune, a prune ASK threshold, ghAccount in the PR probe](./fleet-hygiene.md) | `In Progress` |  |
+| [fleet train id collision within one second (CI flake, run 44940239208)](./fleet-train-id-collision.md) | `In Progress` | implemented on branch claude/fleet-trainid-collision-9f2c, awaiting audit |
 | [fleet — the rest of a work consumer's November run report](./fleet-work-consumer-feedback-nov-2.md) | `In Progress` | implemented on branch `claude/fleet-feedback-batch2`, PR pending |
 | [fleet — defects from two work consumers' November feedback](./fleet-work-consumer-feedback-nov.md) | `In Progress` | implemented on branch `claude/nostalgic-nobel-101150`, PR pending |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
@@ -42,6 +44,7 @@ This is the list to read when asking "what is in flight?".
 | [prior-upstream recognition for REWRITTEN destinations](./sync-prior-upstream-rewritten.md) | `Approved` |  |
 | [the base-lag restore must not manufacture a divergence](./sync-refused-manifest-base.md) | `Approved` |  |
 | [sync-to-repos debt cluster (16 still-present defects)](./sync-to-repos-debt-cluster.md) | `Approved` |  |
+| [Verification lessons — no retry-to-green, gates judged from main, step-back, diff-triggered checklist](./verification-lessons.md) | `Approved` |  |
 
 ## Parked
 

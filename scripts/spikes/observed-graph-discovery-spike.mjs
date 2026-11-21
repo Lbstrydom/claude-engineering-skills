@@ -44,7 +44,7 @@
  *
  * Read-only: no DB writes, no file writes, no mutation of any repo it points at.
  */
-import fs from 'node:fs';
+import '../lib/help-guard-run.mjs'; import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { enumerateFiles } from '../symbol-index/extract.mjs';

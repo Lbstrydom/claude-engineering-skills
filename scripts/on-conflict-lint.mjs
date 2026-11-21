@@ -25,7 +25,7 @@
  *
  * @module scripts/on-conflict-lint
  */
-import { execFileSync } from 'node:child_process';
+import './lib/help-guard-run.mjs'; import { execFileSync } from 'node:child_process';
 import { resolvePushRange } from './lib/push-range.mjs';
 import { lintStoreTree, filterFindingsToDiff, isStrictFailureDiagnostic } from './lib/lint/on-conflict.mjs';
 import { parseDiffText } from './lib/diff-annotation.mjs';

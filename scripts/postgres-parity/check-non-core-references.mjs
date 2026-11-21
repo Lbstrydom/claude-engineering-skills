@@ -26,7 +26,7 @@
  * @module scripts/postgres-parity/check-non-core-references
  */
 
-import fs from 'node:fs';
+import '../lib/help-guard-run.mjs'; import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isInvokedAsScript } from '../lib/cli-entry.mjs';

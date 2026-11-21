@@ -42,7 +42,7 @@
  */
 
 /** Gate mode: block only on exploitable exposure (no-RLS + anon/authenticated grant). */
-import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import './lib/help-guard-run.mjs'; import { isInvokedAsScript } from './lib/cli-entry.mjs';
 const GATE_MODE = process.argv.includes('--gate');
 
 /**

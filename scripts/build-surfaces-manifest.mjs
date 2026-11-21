@@ -61,7 +61,7 @@
  * @module scripts/build-surfaces-manifest
  */
 
-import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import './lib/help-guard-run.mjs'; import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { SurfaceManifestSchema } from './lib/persona-test/schemas.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';

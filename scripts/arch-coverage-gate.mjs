@@ -22,7 +22,7 @@
  * @module scripts/arch-coverage-gate
  */
 
-import './lib/load-env.mjs';
+import './lib/help-guard-run.mjs'; import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { OBSERVED_FILE, ObservedDepsSchema } from './lib/observed-deps.mjs';

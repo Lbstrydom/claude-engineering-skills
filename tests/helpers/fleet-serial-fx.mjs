@@ -18,15 +18,23 @@ export const REPO = 'o/n';
 export const PR = 21;
 export const ok = (doc) => ({ ok: true, status: 0, stdout: doc === undefined ? '' : JSON.stringify(doc), stderr: '' });
 
+/**
+ * The committer date of the tested head. `train.mjs` builds the candidate with `merge --squash` + `commit -C <tested>`: same parent,
+ * tree, author, author date, message and committer identity, so ONLY the committer date (1 s resolution) tells the candidate from
+ * `tested`. Committed in the same second as `land`, `candidate.oid === tested` and the golden normaliser labels it `<tested>`
+ * instead of `<oid>` (7 CI failures in 6 runs). A fixed past date makes that collision impossible. docs/plans/verification-lessons.md 2.1a.
+ */
+export const TESTED_COMMITTER_DATE = '2026-01-01T00:00:00Z';
+
 /** A pr-mode train with one ready session `feat` and a built (green) train. */
-export function trainFx({ message } = {}) {
+export function trainFx({ message, testedCommitterDate = TESTED_COMMITTER_DATE } = {}) {
   const fx = makeFleetRepo({ fleetConfig: { mergeMethod: 'pr', testCommand: { tiers: [{ name: 'ok', command: ['node', '-e', '0'] }] } } });
   git(['add', '.fleet.json'], fx.repo); git(['commit', '-q', '-m', 'cfg'], fx.repo); git(['push', '-q', 'origin', 'main'], fx.repo);
   const fake = installFakeGh(fx.root);
   const env = scrubbedEnv({ FLEET_WORKTREE_ROOT: fx.wtRoot, ...fake.env }, { prependPath: [fake.bin] });
   const f = (args) => runFleet(args, { cwd: fx.repo, env });
   const base = git(['rev-parse', 'main'], fx.repo);
-  const tested = addBranch(fx.repo, 'feat', { 'f.txt': 'f\n' }, message);
+  const tested = addBranch(fx.repo, 'feat', { 'f.txt': 'f\n' }, message, { committerDate: testedCommitterDate });
   git(['push', '-q', 'origin', `${tested}:refs/pull/${PR}/head`], fx.repo);
   git(['checkout', '-q', 'feat'], fx.repo);
   assert.equal(f(['claim', '--id', 'feat', '--intent', 'feat', '--paths', 'f.txt']).status, 0);

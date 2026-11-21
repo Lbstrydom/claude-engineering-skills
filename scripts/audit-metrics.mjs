@@ -13,7 +13,7 @@
  * @module scripts/audit-metrics
  */
 
-import './lib/load-env.mjs';
+import './lib/help-guard-run.mjs'; import './lib/load-env.mjs';
 import { loadOutcomes } from './lib/findings-outcomes.mjs';
 import { many } from './lib/db/query.mjs';
 import { getPool } from './lib/db/client.mjs';

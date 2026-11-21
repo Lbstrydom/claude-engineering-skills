@@ -18,7 +18,7 @@
  *
  * @module scripts/anthropic-ping
  */
-import { briefConfig } from './lib/config.mjs';
+import './lib/help-guard-run.mjs'; import { briefConfig } from './lib/config.mjs';
 import { createAnthropicClient, resolveBackend, isClaudeAvailable } from './lib/anthropic-client.mjs';
 
 async function main() {

@@ -38,7 +38,7 @@ import { runChecks, buildCheckPayload } from './checks.mjs';
 import { resolveAppendOnly } from './union-merge.mjs';
 import { superviseTier } from './tier-supervisor.mjs';
 import { approvable, tiersOf, worstResult } from './overlap.mjs';
-import { assertManaged, fleetDir, newTrainId, probesDir, readTrain, writeTrain } from './registry.mjs';
+import { assertManaged, fleetDir, mintTrainId, probesDir, readTrain, writeTrain } from './registry.mjs';
 import { rollupMessage } from './rollup.mjs';
 
 const DEP_FILES = new Set(['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock']);
@@ -321,7 +321,7 @@ export function buildTrain({ cwd, config, sources, checkPayload = { sessions: []
     if (!m.ok) return refuse(`${s.id}: ${m.reason}`);
   }
 
-  const trainId = newTrainId(deps.now());
+  const trainId = mintTrainId(dir, deps.now());
   const createdAt = iso(deps);
   writeTrain(dir, {
     schemaVersion: 1, trainId, createdAt, updatedAt: createdAt, phase: 'snapshot', baseOid: base.oid,

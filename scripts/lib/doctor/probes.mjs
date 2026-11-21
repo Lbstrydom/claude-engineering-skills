@@ -196,6 +196,13 @@ const HYDRATION_PROBES = [
       }
       const res = checkMarkerRemedies(ctx.subjectRoot);
       if (res.ok) return { status: 'pass', detail: '' };
+      if (res.missing.length === 0) {
+        return {
+          status: 'fail',
+          detail: `"${res.circular.join('", "')}" runs a file inside the gitignored scripts/.claude-skills/ tree it `
+            + 'exists to copy — it dies on MODULE_NOT_FOUND in a fresh linked worktree. Replace it with the self-contained entry.',
+        };
+      }
       return {
         status: 'fail',
         detail: `package.json defines no "${res.missing.join('", "')}" script — the worktree-preflight `

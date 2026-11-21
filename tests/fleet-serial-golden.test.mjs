@@ -246,6 +246,26 @@ describe('serial runner: byte identity with origin/main (golden)', () => {
       assert.deepEqual(fn(), golden.scenarios[name]);
     });
   }
+  it('the tested head carries a fixed PAST committer date, so the landing `commit -C <tested>` candidate can never equal it (CI flake: <tested> vs <oid>)', () => {
+    // train.mjs builds the candidate from `tested` with `merge --squash` + `commit -C <tested>`: same parent, tree, author, author date,
+    // message and committer identity, so only the committer date (1 s resolution) is free. Reproduced here without the race by
+    // committing the candidate under a chosen date.
+    const { fx, tested } = trainFx();
+    const candidateAt = (date) => {
+      git(['checkout', '-q', '--detach', 'main'], fx.repo);
+      git(['merge', '--squash', '-q', tested], fx.repo);
+      git(['commit', '-q', '--no-verify', '--allow-empty', '-C', tested], fx.repo, { GIT_COMMITTER_DATE: date });
+      const oid = git(['rev-parse', 'HEAD'], fx.repo);
+      git(['reset', '-q', '--hard', 'main'], fx.repo); git(['checkout', '-q', 'main'], fx.repo);
+      return oid;
+    };
+    const testedDate = git(['show', '-s', '--format=%cI', tested], fx.repo);
+    assert.equal(testedDate, '2026-01-01T00:00:00Z', 'tested carries the fixed past committer date');
+    // Positive control (the mechanism): the same second reproduces tested's oid exactly, which is what the normaliser mislabels `<tested>`.
+    assert.equal(candidateAt('2026-01-01T00:00:00Z'), tested, 'a candidate committed in the same second IS the tested oid');
+    // The pin: any real `land` happens after it, so the candidate always differs.
+    assert.notEqual(candidateAt(new Date().toISOString().replace(/\.\d+Z$/, 'Z')), tested);
+  });
   it('negative control: a one-character change to a stop reason is detected', () => {
     const scenarioName = 'DIRTY stops with the restack remedy';
     const real = golden.scenarios[scenarioName];

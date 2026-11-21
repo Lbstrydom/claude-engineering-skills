@@ -12,7 +12,7 @@
  * @module scripts/azure-limits
  */
 
-import { azureConfig } from './lib/config.mjs';
+import './lib/help-guard-run.mjs'; import { azureConfig } from './lib/config.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import { azureMaxRetries } from './lib/azure-throttle.mjs';

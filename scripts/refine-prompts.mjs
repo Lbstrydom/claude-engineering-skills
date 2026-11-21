@@ -7,7 +7,7 @@
  */
 
 // dotenv loaded by lib/config.mjs (worktree-safe discovery)
-import { loadOutcomes, computePassEffectiveness, computePassEWR } from './lib/findings.mjs';
+import './lib/help-guard-run.mjs'; import { loadOutcomes, computePassEffectiveness, computePassEWR } from './lib/findings.mjs';
 import { sanitizeOutcomes } from './lib/sanitizer.mjs';
 import { reservoirSample } from './lib/rng.mjs';
 import { PASS_NAMES, learningConfig, briefConfig } from './lib/config.mjs';

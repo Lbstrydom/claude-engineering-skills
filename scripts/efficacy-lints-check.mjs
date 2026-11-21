@@ -11,7 +11,7 @@
  *
  * @module scripts/efficacy-lints-check
  */
-import process from 'node:process';
+import './lib/help-guard-run.mjs'; import process from 'node:process';
 import { runEfficacyLints, loadEfficacyConfig } from './lib/efficacy-lints.mjs';
 
 async function main() {

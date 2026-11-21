@@ -1,0 +1,11 @@
+#!/usr/bin/env node
+// POISON PILL for `npm run help:readonly:gate` (scripts/check-help-readonly.mjs).
+//
+// Overlaid onto scripts/anthropic-ping.mjs in an isolated tmpdir copy. It is the
+// exact shape of the original bug (arch-intent-bootstrap, 2026-11-21): a CLI that
+// neither handles `--help` nor refuses unknown flags, and does its real work —
+// here a file write — whatever it is passed. The gate must see BOTH the attempted
+// write (dynamic probe) and the missing contract (static check), and exit 1.
+import fs from 'node:fs';
+
+fs.writeFileSync('ping.out', process.argv.slice(2).join(' '));

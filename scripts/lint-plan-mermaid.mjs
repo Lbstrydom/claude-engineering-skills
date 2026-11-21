@@ -24,7 +24,7 @@
  *
  * @module scripts/lint-plan-mermaid
  */
-import fs from 'node:fs';
+import './lib/help-guard-run.mjs'; import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
