@@ -124,6 +124,10 @@
       "kind": "opaque"
     },
     {
+      "path": "scripts/check-help-readonly.mjs",
+      "kind": "opaque"
+    },
+    {
       "path": "scripts/lib/gate-honesty/**",
       "kind": "opaque"
     },
