@@ -58,6 +58,12 @@ describe('D1 endTurnWorkGone (pure)', () => {
     const none = endTurnWorkGone(leaseWith({ windows: [ciWindow(A, 'w-1')] }), A, NOW, { clearCi: true });
     assert.equal(none.windowsCleared, 1);
   });
+  it('without clearCi the running windows are COUNTED as kept (so the release can say so)', () => {
+    const r = endTurnWorkGone(leaseWith({ turn: turnOf(A), windows: [ciWindow(A, 'w-1')] }), A, NOW);
+    assert.equal(r.windowsKept, 1);
+    assert.equal(r.windowsCleared, 0);
+    assert.equal(r.turnEnded, true);
+  });
   it('an expired window is left alone', () => {
     const old = { ...ciWindow(A, 'w-old'), from: '2026-10-13T18:00:00.000Z', until: '2026-10-13T18:30:00.000Z' };
     const r = endTurnWorkGone(leaseWith({ windows: [old] }), A, NOW, { clearCi: true });
@@ -102,12 +108,13 @@ describe('D1 audit fixes', () => {
     const tip = git(['rev-parse', 'refs/heads/main'], fx.repo);
     const cur = { gen: 1, rev: 2, source: { kind: 'branch', branch: 'main' } };
     const ctx = { cwd: fx.repo };
-    assert.equal(evidenceHolds(ctx, cur, { gen: 1, rev: 2, tip }), true);
-    assert.equal(evidenceHolds(ctx, cur, { gen: 1, rev: 3, tip }), false, 'the record moved');
-    assert.equal(evidenceHolds(ctx, { ...cur, gen: 2 }, { gen: 1, rev: 2, tip }), false, 'a new generation');
-    assert.equal(evidenceHolds(ctx, cur, { gen: 1, rev: 2, tip: 'f'.repeat(40) }), false, 'the tip moved');
+    assert.equal(evidenceHolds(ctx, cur, { ok: true, gen: 1, rev: 2, tip }), true);
+    assert.equal(evidenceHolds(ctx, cur, { ok: true, gen: 1, rev: 3, tip }), false, 'the record moved');
+    assert.equal(evidenceHolds(ctx, { ...cur, gen: 2 }, { ok: true, gen: 1, rev: 2, tip }), false, 'a new generation');
+    assert.equal(evidenceHolds(ctx, cur, { ok: true, gen: 1, rev: 2, tip: 'f'.repeat(40) }), false, 'the tip moved');
+    assert.equal(evidenceHolds(ctx, cur, { ok: false, why: 'x' }), false, 'unmerged or unreadable evidence never holds');
     assert.equal(evidenceHolds(ctx, cur, null), false);
-    assert.equal(evidenceHolds(ctx, { ...cur, source: { kind: 'pr' } }, { gen: 1, rev: 2, tip }), false, 'a PR session has no local tip');
+    assert.equal(evidenceHolds(ctx, { ...cur, source: { kind: 'pr' } }, { ok: true, gen: 1, rev: 2, tip }), false, 'a PR session has no local tip');
   });
 });
 
@@ -149,6 +156,8 @@ describe('D1 fleet release ends the turn of a repo whose work is gone (the 16:17
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.equal(r.json.leaseStep.turnEnded, true);
     assert.equal(r.json.leaseStep.windowsCleared, 0);
+    assert.equal(r.json.leaseStep.windowsKept, 1);
+    assert.match(r.stdout, /1 running CI window\(s\) were left \(/, 'a window left standing is said out loud, with why');
     assert.equal(w.read().windows.filter((x) => x.kind === 'ci').length, 1, 'the window stays: no merged evidence it is moot');
     assert.equal(w.read().turn, undefined);
   });

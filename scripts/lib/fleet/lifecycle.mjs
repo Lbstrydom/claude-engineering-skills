@@ -72,7 +72,7 @@ export function cmdRelease(ctx, flags) {
   const resolved = resolveArchiveTarget(ctx, id);
   const arch = archiveReport(ctx, { session, worktree: session.worktree ?? resolved?.worktree ?? null, inventoryError: resolved?.inventoryError ?? null });
   const head = v.already ? `${id} was already ${v.already.state} — nothing changed` : `released: ${id} (${target})`;
-  const leaseLine = workGoneLine(v.workGone, { cmd: ctx.cmd, id });
+  const leaseLine = workGoneLine(v.workGone && evidence && !evidence.ok ? { ...v.workGone, keptReason: evidence.why } : v.workGone, { cmd: ctx.cmd, id });
   return ok({
     id, state: session.state, changed: Boolean(v.record), archive: arch, leaseStep: v.workGone,
     ...(v.workGone?.lease === 'failed' ? { repair: repairCommand(ctx.cmd, id) } : {}),
@@ -170,9 +170,10 @@ export function cmdReleaseStaleReady(ctx, flags, { items = defaultStatusItems } 
 /**
  * Pre-lock merged evidence for `fleet release`, BOUND to the exact session it describes (generation, revision, branch tip):
  * only when `id` is the repo's last live session (the one case the lease step can clear a CI window) is the slow `gh`/git
- * read made; anything unreadable is `null` (windows stay, only the turn ends). `evidenceHolds` re-validates the binding
+ * read made; anything unmerged or unreadable is `{ok:false, why}` (windows stay and the release SAYS so, only the turn ends); `null` means
+ * not the last live session (nothing to say). `evidenceHolds` re-validates the binding
  * inside the registry transaction, so evidence about an older record or tip is never applied to a newer one.
- * @returns {{gen: number, rev: number, tip: string}|null} non-null only for MERGED evidence over a readable tip
+ * @returns {{ok: true, gen: number, rev: number, tip: string}|{ok: false, why: string}|null}
  */
 function lastLiveMerged(ctx, id) {
   try {
@@ -180,14 +181,17 @@ function lastLiveMerged(ctx, id) {
     if (sessions.some((s) => s.id !== id && !isTerminalState(s.state))) return null;
     const item = buildStatusFrom(gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, cmd: ctx.cmd })).items.find((i) => i.id === id);
     const mine = sessions.find((s) => s.id === id);
-    if (!item || !mine || item.merged?.known !== true || item.merged.merged !== true || !item.oid) return null;
-    return { gen: mine.gen, rev: mine.rev, tip: item.oid };
-  } catch { return null; }
+    if (!item || !mine) return { ok: false, why: 'the session is not in the status read' };
+    if (item.merged?.known !== true) return { ok: false, why: `merged evidence unreadable${item.merged?.reason ? ` (${item.merged.reason})` : ''}` };
+    if (item.merged.merged !== true) return { ok: false, why: item.merged.merged === 'partially' ? 'the branch has commits after its merge' : 'the work is not merged' };
+    if (!item.oid) return { ok: false, why: 'its branch tip is not readable (the branch may already be deleted)' };
+    return { ok: true, gen: mine.gen, rev: mine.rev, tip: item.oid };
+  } catch (e) { return { ok: false, why: `merged evidence could not be read (${e.message})` }; }
 }
 
 /** Does pre-lock merged evidence still describe THIS record and the branch tip as it is now (read locally, under the lock)? */
 export function evidenceHolds(ctx, cur, evidence) {
-  if (!evidence || cur.gen !== evidence.gen || cur.rev !== evidence.rev) return false;
+  if (!evidence?.ok || cur.gen !== evidence.gen || cur.rev !== evidence.rev) return false;
   const branch = cur.source?.kind === 'branch' ? cur.source.branch : null;
   if (!branch) return false;
   const tip = runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`], ctx.cwd);

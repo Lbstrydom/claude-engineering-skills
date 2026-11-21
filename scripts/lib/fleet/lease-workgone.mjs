@@ -38,9 +38,9 @@ export function endRepoWorkGone(ctx, { clearCi = false } = {}) {
     }, { maxWaitMs: WORKGONE_LOCK_WAIT_MS });
     if (!tx.ok) return { lease: 'failed', reason: tx.reason };
     if (tx.value.unusable) return { lease: 'failed', reason: tx.value.unusable };
-    const { turnEnded, windowsCleared } = tx.value.r;
+    const { turnEnded, windowsCleared, windowsKept } = tx.value.r;
     const lease = turnEnded ? (windowsCleared ? 'cleared+ended' : 'ended') : (windowsCleared ? 'cleared' : 'n/a');
-    return { lease, turnEnded, windowsCleared };
+    return { lease, turnEnded, windowsCleared, windowsKept };
   } catch (e) {
     return { lease: 'failed', reason: e.message };
   }
@@ -48,10 +48,13 @@ export function endRepoWorkGone(ctx, { clearCi = false } = {}) {
 
 /** The one line a release prints about the lease step (null when there is nothing to say). */
 export function workGoneLine(res, { cmd = 'fleet', id } = {}) {
-  if (!res || res.lease === 'n/a') return null;
+  if (!res) return null;
+  // A CI window left standing is said out loud (with why), even when the turn itself needed nothing: it still holds other repos off the slot.
+  const kept = res.windowsKept ? ` ${res.windowsKept} running CI window(s) were left (${res.keptReason ?? 'no merged evidence'}); clear one with \`${cmd} lease announce --clear-window <id>\` if its CI is moot.` : '';
+  if (res.lease === 'n/a') return kept ? `lease:${kept}` : null;
   if (res.lease === 'failed') return `warning: the lease was not updated (${res.reason}); the release stands and the turn still expires on its own — re-run \`${repairCommand(cmd, id)}\` to retry`;
   const did = [res.turnEnded ? 'ended this repo\'s turn' : null, res.windowsCleared ? `cleared ${res.windowsCleared} CI window(s) (the work merged)` : null].filter(Boolean).join(' and ');
-  return `lease: ${did} (no live session of this repo is left)`;
+  return `lease: ${did} (no live session of this repo is left).${kept}`;
 }
 
 /** The repair for a failed lease step: the same release, the id quoted as DATA (a branch name may hold shell metacharacters). */
