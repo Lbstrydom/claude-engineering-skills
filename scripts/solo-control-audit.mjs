@@ -49,7 +49,7 @@
  *   node scripts/solo-control-audit.mjs score [--decide]   (--decide: exp-5 decision over the call ledger; drops partial commits cohort-wide)
  *   node scripts/solo-control-audit.mjs apparatus-bc --commits <sha,sha> [--max-chars N] [--force]
  *   node scripts/solo-control-audit.mjs merge [--severity high[,medium,low]] [--commits <sha,sha>]
- *                                             [--kd-candidates] [--medium-sample N] [--seed N] [--allow-apparatus-gaps] [--allow-unmeasured]
+ *                                             [--kd-candidates] [--medium-sample N] [--seed N] [--allow-apparatus-gaps] [--allow-unmeasured] [--overwrite-labeled]
  *   node scripts/solo-control-audit.mjs score
  *   node scripts/solo-control-audit.mjs judge-gpt [--csv <path>] [--out <name>] [--model <id>] [--batch-size N] [--max-diff-chars N]
  *   node scripts/solo-control-audit.mjs --selfcheck-relocation
@@ -80,7 +80,7 @@
 import './lib/load-env.mjs'; // load repo-local .env (CLAUDE_BACKEND, AUDIT_DB_URL, keys)
 
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import crypto, { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -108,8 +108,9 @@ import { clampToSchema, parseJsonLoose, REASONING_TIERS, assertReasoningTier } f
 import { createGateReviews } from './lib/solo-control/gate-reviews.mjs';
 import { readLedger, aggregateCostForArm, sharedPassCreditRows } from './lib/solo-control/ledger.mjs';
 import { csvLine, parseCsv } from './lib/solo-control/csv.mjs';
+import { chunkDiff, continuationMarker } from './lib/solo-control/chunk-diff.mjs';
 import { runGptJudgeBatch } from './lib/solo-control/judge.mjs';
-import { rowSig, positiveInt, nonNegativeNumber, budgetVerdict, sheetPairingProblems, validateGradings, findingsDigest, assertResumableProvenance, coldPassOutcome, judgeResumeIdentity } from './lib/solo-control/hardening-guards.mjs';
+import { rowSig, positiveInt, nonNegativeNumber, budgetVerdict, sheetPairingProblems, validateGradings, findingsDigest, assertResumableProvenance, coldPassOutcome, judgeGradeVerdict, LEGACY_JUDGE_IDENTITY, decisionArms, protectedOutputProblem, realPath, budgetStopLine } from './lib/solo-control/hardening-guards.mjs';
 import { assertResumableBackend, commitsCompleteForAllArms, coveredCommits, gateCellState, resumeArmFile, runMeasuredReview, reviewCommitState, unmeasuredCommits } from './lib/solo-control/completion.mjs';
 import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
@@ -217,10 +218,6 @@ function repoIdentityFor(root) {
 function budgetBreached(budgetUsd) {
   return budgetVerdict(readLedger(CALL_LEDGER_PATH), budgetUsd);
 }
-/** The operator-facing line for a budget stop — a breached ceiling and an UNCHECKABLE one read differently. */
-const budgetStopLine = (hit, budgetUsd, where) => `\n✗ ${hit.reason === 'unmeasured'
-  ? `BUDGET UNCHECKABLE: ${hit.unmeasured} ledger call(s) reached a provider with no price, so $${hit.spentUsd.toFixed(2)} is a FLOOR that cannot be compared to the $${budgetUsd} cap (unpriced means unmeasured, never zero)`
-  : `BUDGET CEILING: $${hit.spentUsd.toFixed(2)} spent across the ledger ≥ $${budgetUsd} cap${hit.complete ? '' : ' (a FLOOR — some rows are unpriced)'}`}. Stopped at ${where}; it and every later commit are partial and will be dropped cohort-wide by score.`;
 /** Parse a validated numeric option or exit 2 — the value reaches a loop increment, a slice width or a spend ceiling. */
 function optOrDie(fn, flag, dflt) { try { return fn(argOption(flag, dflt), flag); } catch (err) { log(`FATAL: ${err.message}`); process.exit(2); } }
 /** Load the recipient policy at the top of any command that sends a diff anywhere; a missing/malformed file is an operator setup error. */
@@ -333,7 +330,8 @@ function treeExists(root, tree) {
  * diff text for exactly those files (deferred so a sensitive-only diff never
  * runs the full `git diff`/`git show` invocation at all). */
 function finalizeDiff(nameListOut, rawDiffForFiles, label) {
-  const allFiles = nameListOut.trim().split('\n').map((s) => s.trim()).filter(Boolean);
+  // NUL-separated (-z): git default quoting turns src/cafe-with-accent into an octal-escaped, double-quoted name, which the classifier and the literal pathspec then misread
+  const allFiles = nameListOut.split(String.fromCharCode(0)).filter(Boolean); // names verbatim: a newline is a legal character IN a git file name
   const clean = [];
   const skippedSensitive = [];
   for (const f of allFiles) {
@@ -366,7 +364,7 @@ function finalizeDiff(nameListOut, rawDiffForFiles, label) {
  * time, not the commit containing the audited change).
  */
 function extractDiff(root, sha) {
-  const nameOut = git(root, ['show', '--pretty=format:', '--name-only', sha]);
+  const nameOut = git(root, ['show', '--pretty=format:', '--name-only', '-z', sha]);
   return finalizeDiff(nameOut, (files) => git(root, ['--literal-pathspecs', 'show', sha, '-U8', '--', ...files]), `solo-control:${sha.slice(0, 8)}`);
 }
 
@@ -394,52 +392,11 @@ function extractAuditedDiff(root, { auditedSha, auditedTree }) {
   const cleanTreeSha = git(root, ['rev-parse', `${auditedSha}^{tree}`]).trim();
   const label = `solo-control:${auditedSha.slice(0, 8)}`;
   if (cleanTreeSha === auditedTree) {
-    const nameOut = git(root, ['show', '--pretty=format:', '--name-only', auditedSha]);
+    const nameOut = git(root, ['show', '--pretty=format:', '--name-only', '-z', auditedSha]);
     return finalizeDiff(nameOut, (files) => git(root, ['--literal-pathspecs', 'show', auditedSha, '-U8', '--', ...files]), label);
   }
-  const nameOut = git(root, ['diff', '--name-only', auditedSha, auditedTree]);
+  const nameOut = git(root, ['diff', '--name-only', '-z', auditedSha, auditedTree]);
   return finalizeDiff(nameOut, (files) => git(root, ['--literal-pathspecs', 'diff', auditedSha, auditedTree, '-U8', '--', ...files]), label);
-}
-
-/** Split a diff into ≤maxChars blocks at file (`diff --git`) boundaries so each
- * audit chunk is coherent; a single file larger than maxChars is hard-split.
- *
- * A hard-split slice after the first loses the `diff --git a/x b/x` header —
- * the audit pass sees ONLY a mid-file hunk fragment with no filename and no
- * indication it's a partial view. An arm reading that fragment in isolation
- * (e.g. a run of `-` lines whose matching `+` lines landed in the NEXT chunk)
- * can misread it as a whole-file deletion — confirmed root cause of the
- * split-misread-as-deletion / phantom-missing-file false-positive family in
- * the 2026-07 solo-control run (docs/experiments/audit-effectiveness). Every
- * slice after the first is prefixed with a synthetic marker line naming the
- * file and stating this is a continuation, not a deletion. */
-function chunkDiff(diff, maxChars) {
-  if (diff.length <= maxChars) return [diff];
-  const perFile = diff.split(/(?=^diff --git )/m).filter(Boolean);
-  const chunks = [];
-  let cur = '';
-  for (let part of perFile) {
-    const headerMatch = part.match(/^diff --git a\/(.+?) b\/(.+?)\n/);
-    const fileLabel = headerMatch ? headerMatch[2] : null;
-    let sliceIndex = 0;
-    while (part.length > maxChars) {
-      const slice = part.slice(0, maxChars);
-      part = part.slice(maxChars);
-      sliceIndex += 1;
-      chunks.push(sliceIndex > 1 && fileLabel ? continuationMarker(fileLabel, sliceIndex) + slice : slice);
-    }
-    if (sliceIndex > 0 && fileLabel && part) part = continuationMarker(fileLabel, sliceIndex + 1) + part;
-    if (cur.length + part.length > maxChars && cur) { chunks.push(cur); cur = ''; }
-    cur += part;
-  }
-  if (cur) chunks.push(cur);
-  return chunks;
-}
-
-/** Synthetic marker prepended to a hard-split diff continuation — see chunkDiff. */
-function continuationMarker(fileLabel, partNumber) {
-  return `# [diff continuation: ${fileLabel}, part ${partNumber} — earlier/later hunks of this SAME file `
-    + `are in a different audit chunk; this fragment alone is NOT evidence the file was deleted or is missing]\n`;
 }
 
 // ── Sonnet cold-diff pass ────────────────────────────────────────────────────
@@ -1234,7 +1191,7 @@ async function cmdApparatus() {
       }
       if (!pregate.findingsSha256) log(`  ${short}: ⚠ legacy pre-gate artifact — its findings are not digest-bound (re-run without --gate-only to bind them)`);
       // A legacy artifact saved ONLY chunk 0 as the gate context: over a multi-chunk commit the gate would be shown a fraction of the diff.
-      if (pregate.gateContextScope !== 'full' && (pregate.passChunks ?? 1) > 1) {
+      if (pregate.gateContextScope !== 'full' && (pregate.passChunks == null || pregate.passChunks > 1)) { // an artifact that recorded NO chunk count cannot be shown to be single-chunk
         log(`  ${short}: pre-gate artifact holds only chunk 0 of ${pregate.passChunks} — refusing a gate over a fraction of the diff (re-run without --gate-only)`);
         out.perCommit.push({ sha, state: 'pregate-chunk0-only' });
         continue;
@@ -1735,8 +1692,13 @@ async function cmdJudgeGpt() {
   const maxDiffChars = optOrDie(positiveInt, 'max-diff-chars', '600000');
   const force = hasFlag('force');
   if (!fs.existsSync(srcPath)) { log(`No blind sheet at ${path.relative(process.cwd(), srcPath)} — run merge first.`); process.exit(1); }
-  // the checkpoint REPLACES outPath after every commit: pointing it at the input sheet would overwrite the source with grades
-  if (path.resolve(outPath) === path.resolve(srcPath)) { log(`FATAL: --out resolves to the input sheet (${path.relative(process.cwd(), srcPath)}) — the checkpoint would overwrite it`); process.exit(2); }
+  // the checkpoint REPLACES outPath after every commit: it must never be the input sheet NOR the canonical human-labelled sheet / private map
+  // (a copied input with --out blind-adjudication.csv overwrote the labels)
+  // --out names a file INSIDE the solo-control output dir: `--out ../../.env` used to resolve anywhere on disk
+  // compared by REAL path: a link inside the output dir that points elsewhere is not inside it
+  const relOut = path.relative(realPath(OUT_DIR), realPath(outPath));
+  if (relOut.startsWith('..') || path.isAbsolute(relOut)) { log(`FATAL: --out must stay inside ${path.relative(process.cwd(), OUT_DIR)}`); process.exit(2); }
+  { const why = protectedOutputProblem(outPath, [srcPath, BLIND_CSV, BLIND_MAP], realPath); if (why) { log(`FATAL: ${path.relative(process.cwd(), outPath)} ${why} — the checkpoint would overwrite it`); process.exit(2); } }
   const recipientPolicy = policyOrDie(); // the full diff of every sheet commit goes to GPT
 
   const { header, rows, records } = readBlindSheet(srcPath);
@@ -1758,22 +1720,33 @@ async function cmdJudgeGpt() {
   const knownDefects = kdText ? (JSON.parse(kdText).defects || []) : [];
 
   // A grade depends on the judge MODEL and the known-defect rubric it was shown, neither of which is in the row content
-  // seedResumedGrades fingerprints — recorded beside the output so a resume under a different judge re-grades.
-  const metaPath = `${outPath}.meta.json`;
-  const judgeIdentity = { model: gptModel, knownDefectsSha256: sha256hex(kdText) };
-  const outSha = () => (fs.existsSync(outPath) ? sha256hex(fs.readFileSync(outPath, 'utf8')) : null);
+  // seedResumedGrades fingerprints. The identity is written INTO each graded row (a judge_identity column), so it is replaced
+  // atomically with the grade it describes — a sidecar was a second file and an interrupted pair could not be told from a healthy one.
+  const judgeIdentity = `${gptModel}|${sha256hex(kdText).slice(0, 16)}`;
+  const hasIdent = header.includes('judge_identity');
+  const iIdent = hasIdent ? header.indexOf('judge_identity') : header.length;
   const gradingByBlindId = new Map();
+  let backupNeeded = force; // any run that is about to REPLACE grades with fewer/other ones keeps the old output first
   if (fs.existsSync(outPath) && !force) {
     const [priorHeader = [], ...priorRecords] = parseCsv(fs.readFileSync(outPath, 'utf8'));
-    const pc = Object.fromEntries(['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern'].map((n) => [n, priorHeader.indexOf(n)])); const priorRows = priorRecords.map((c) => ({ blindId: c[pc.blind_id], commit: c[pc.commit], severity: c[pc.severity], category: c[pc.category], file: c[pc.file], detail: c[pc.detail], label: c[pc.label], proof: c[pc.proof], cluster: c[pc.cluster], matches: c[pc.matches], pattern: c[pc.pattern] }));
-    let meta = null; try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch { /* legacy output or unreadable */ }
-    const same = judgeResumeIdentity(meta, { ...judgeIdentity, outSha256: outSha() });
-    if (same.note) log(`  ⚠ ${same.note}${same.ok ? '' : '; re-grading everything.'}`);
-    const seeded = same.ok ? seedResumedGrades(priorRows, rows) : { grades: new Map(), discarded: 0 }; for (const [k, v] of seeded.grades) gradingByBlindId.set(k, v); // blind ids renumber on re-merge: keep a grade only for the SAME row content
+    const pc = Object.fromEntries(['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern', 'judge_identity'].map((n) => [n, priorHeader.indexOf(n)])); const priorAll = priorRecords.map((c) => ({ blindId: c[pc.blind_id], commit: c[pc.commit], severity: c[pc.severity], category: c[pc.category], file: c[pc.file], detail: c[pc.detail], label: c[pc.label], proof: c[pc.proof], cluster: c[pc.cluster], matches: c[pc.matches], pattern: c[pc.pattern], identity: c[pc.judge_identity] }));
+    const verdict = (p) => judgeGradeVerdict({ hasColumn: pc.judge_identity >= 0, rowIdentity: p.identity, current: judgeIdentity });
+    const priorRows = priorAll.filter((p) => !p.label || verdict(p) !== 'discard');
+    const wrongJudge = priorAll.filter((p) => p.label && verdict(p) === 'discard').length;
+    if (wrongJudge) backupNeeded = true;
+    if (wrongJudge) log(`  ⚠ ${wrongJudge} prior grade(s) discarded — made by a different judge model or known-defect rubric; re-grading.`);
+    if (priorAll.some((p) => p.label && (pc.judge_identity < 0 || p.identity === LEGACY_JUDGE_IDENTITY))) log('  ⚠ some prior grades predate the judge identity — they are unverifiable (legacy-unverified) but kept');
+    // each kept grade keeps ITS identity: a column-less (legacy) grade stays legacy-unverified when re-written, it is never stamped with the current judge
+    const identOf = new Map(priorAll.map((p) => [p.blindId, pc.judge_identity >= 0 && p.identity ? p.identity : LEGACY_JUDGE_IDENTITY]));
+    const seeded = seedResumedGrades(priorRows, rows); for (const [k, v] of seeded.grades) gradingByBlindId.set(k, { ...v, identity: identOf.get(k) }); // blind ids renumber on re-merge: keep a grade only for the SAME row content
+    if (seeded.discarded) backupNeeded = true;
     if (seeded.discarded) log(`  ⚠ ${seeded.discarded} prior grade(s) discarded — their blind_id now names different content (re-merge renumbered); re-grading.`);
     if (gradingByBlindId.size) log(`Resuming — ${gradingByBlindId.size} row(s) already graded in ${path.relative(process.cwd(), outPath)} (use --force to re-grade everything)`);
   }
 
+  // --force re-grades from an empty map; if the provider then fails the final checkpoint would replace a graded output with ungraded rows
+  // each forced run keeps its OWN timestamped copy: a fixed name let a second failed --force replace the only backup of the original grades
+  if (backupNeeded && fs.existsSync(outPath)) fs.copyFileSync(outPath, `${outPath}.prev-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   const byCommit = new Map();
   for (const r of rows) { if (!byCommit.has(r.commit)) byCommit.set(r.commit, []); byCommit.get(r.commit).push(r); }
   log(`GPT judge — model=${gptModel} · ${rows.length} row(s) across ${byCommit.size} commit(s) → ${path.relative(process.cwd(), outPath)}`);
@@ -1781,7 +1754,7 @@ async function cmdJudgeGpt() {
   /** Write the current gradingByBlindId state to outPath — called after EVERY
    * commit so a kill/restart never loses more than the in-flight commit. */
   const writeCheckpoint = () => {
-    const lines = [csvLine(header)];
+    const lines = [csvLine(hasIdent ? header : [...header, 'judge_identity'])];
     let ungradedNow = 0;
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
@@ -1791,13 +1764,10 @@ async function cmdJudgeGpt() {
         cells[iLabel] = g.label || ''; cells[iProof] = g.proof || ''; cells[iCluster] = g.cluster || `${r.commit}:${r.blindId}`;
         cells[iMatches] = g.matches || ''; cells[iPattern] = g.pattern || '';
       } else { cells[iLabel] = ''; cells[iProof] = ''; cells[iPattern] = ''; ungradedNow++; } // an ungraded row carries NO label from the source sheet into the GPT output
+      cells[iIdent] = g ? (g.identity ?? judgeIdentity) : '';
       lines.push(csvLine(cells));
     }
-    const outText = lines.join('\n') + '\n';
-    atomicWriteFileSync(outPath, outText);
-    // The sidecar binds the CSV it describes (outSha256): a crash between these two writes leaves a CSV the sidecar does not
-    // match, which a resume re-grades rather than trusts.
-    atomicWriteFileSync(metaPath, JSON.stringify({ ...judgeIdentity, outSha256: sha256hex(outText) }));
+    atomicWriteFileSync(outPath, lines.join('\n') + '\n'); // ONE file: grade and identity are replaced together
     return ungradedNow;
   };
 
@@ -1876,6 +1846,13 @@ async function fetchExternalFindings(commits) {
 }
 
 async function cmdMerge() {
+  // Re-running merge REPLACES the canonical sheet: hours of human labels, proofs and cluster edits vanish. Refuse before any (paid) clustering.
+  if (!hasFlag('overwrite-labeled') && fs.existsSync(BLIND_CSV)) {
+    const [h0 = [], ...rs0] = parseCsv(fs.readFileSync(BLIND_CSV, 'utf8')); const humanCols = ['label', 'proof', 'pattern'].map((n) => h0.indexOf(n)).filter((i) => i >= 0);
+    const labeled0 = rs0.filter((c) => humanCols.some((i) => (c[i] || '').trim())).length; // any human-only cell: a proof or pattern is work even before a label
+    if (labeled0) { log(`REFUSING: ${path.relative(process.cwd(), BLIND_CSV)} already holds ${labeled0} labelled row(s); a merge would discard them. Move the sheet aside, or pass --overwrite-labeled.`); process.exit(4); }
+  }
+  const mergeId = crypto.randomUUID(); // rides in the sheet (merge_id column) AND the map: a pair from different merges is refused by score
   const sFiles = listSFindings();
   if (sFiles.length === 0) { log('No S-findings-*.json — run `solo-control-audit.mjs run` (per author model) first.'); process.exit(1); }
   const soloRuns = sFiles.map((f) => JSON.parse(fs.readFileSync(path.join(OUT_DIR, f), 'utf8')));
@@ -2107,10 +2084,10 @@ async function cmdMerge() {
   // issue (pre-declared criteria: same file/module OR same violated invariant as
   // another labeled cluster — not free-form narrative). Give it a short shared tag
   // (e.g. "reconcile-null-checks") so `score` can group by it later.
-  const header = ['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern'];
+  const header = ['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern', 'merge_id'];
   const lines = [header.join(',')];
   for (const b of blind) {
-    lines.push(csvLine([b.blindId, b.commit.slice(0, 8), b.severity, b.category, b.file, b.detail, '', '', b.proposedCluster, b.kdHint || '', '']));
+    lines.push(csvLine([b.blindId, b.commit.slice(0, 8), b.severity, b.category, b.file, b.detail, '', '', b.proposedCluster, b.kdHint || '', '', mergeId]));
   }
   fs.mkdirSync(OUT_DIR, { recursive: true });
   atomicWriteFileSync(BLIND_CSV, lines.join('\n') + '\n');
@@ -2125,7 +2102,7 @@ async function cmdMerge() {
   const armMeta = {};
   for (const run of soloRuns) armMeta[run.armLabel || 'S'] = { samplingDegenerate: !!run.samplingDegenerate, repeats: run.provenance?.repeats ?? 1 };
   atomicWriteFileSync(BLIND_MAP, JSON.stringify({
-    seed, detailCap: DETAIL_CAP, commits, clusterMode, armMeta, map,
+    seed, detailCap: DETAIL_CAP, mergeId, commits, clusterMode, armMeta, map,
     knownDefects: knownDefects.map((d) => ({ id: d.id, buggyCommit: d.buggyCommit })),
     lowVolumeByArm, // free descriptive stat — LOW-severity raw finding volume per arm, never graded
     mediumSampleMeta: mediumSampleTarget > 0 ? { targetSize: mediumSampleTarget, poolSize: mediumPoolClusters.length, sampledSize: mediumSample.size } : null,
@@ -2142,12 +2119,12 @@ async function cmdMerge() {
 
 async function cmdScore() {
   if (!fs.existsSync(BLIND_CSV) || !fs.existsSync(BLIND_MAP)) { log('Run `merge` and label the CSV first.'); process.exit(1); }
-  const { map, commits, knownDefects = [], armMeta = {}, lowVolumeByArm = {}, mediumSampleMeta = null } = JSON.parse(fs.readFileSync(BLIND_MAP, 'utf8'));
+  const { map, mergeId: mapMergeId = null, commits, knownDefects = [], armMeta = {}, lowVolumeByArm = {}, mediumSampleMeta = null } = JSON.parse(fs.readFileSync(BLIND_MAP, 'utf8'));
   const [header = [], ...csvRecords] = parseCsv(fs.readFileSync(BLIND_CSV, 'utf8'));
   const col = (n) => header.indexOf(n);
   const iId = col('blind_id'), iLabel = col('label'), iCluster = col('cluster'), iMatches = col('matches'), iProof = col('proof'), iPattern = col('pattern');
   // The sheet and the private map are only meaningful as a PAIR — refuse before reading a single label if they are not.
-  const pairing = sheetPairingProblems(map, csvRecords.map((c) => ({ blindId: c[iId], commit: c[col('commit')], severity: c[col('severity')], category: c[col('category')], file: c[col('file')], detail: c[col('detail')] })));
+  const pairing = sheetPairingProblems(map, csvRecords.map((c) => ({ blindId: c[iId], commit: c[col('commit')], severity: c[col('severity')], category: c[col('category')], file: c[col('file')], detail: c[col('detail')] })), { mapMergeId, sheetMergeIds: col('merge_id') >= 0 ? csvRecords.map((c) => c[col('merge_id')]) : [] });
   if (pairing.length) { log(`REFUSING to score: the blind sheet and .blind-map.json are not a pair:\n  ${pairing.join('\n  ')}\n  (re-run merge, or restore the deleted rows — an unfinished sheet must not score as complete)`); process.exit(4); }
 
   const VALID = new Set(['proven', 'actionable', 'plausible', 'false']);
@@ -2216,7 +2193,7 @@ async function cmdScore() {
   let decision = null;
   if (hasFlag('decide')) {
     const rows = readLedger(CALL_LEDGER_PATH);
-    const arms = Object.keys(result.arms);
+    const arms = decisionArms(result.arms, armMeta); // every arm in the merged sheet, including a completed arm that found nothing
     const expectedCellsFor = (commit, arm) => armFiles[arm]?.perCommit?.find((c) => c.sha === commit && c.state === 'ran')?.expectedCells ?? null;
     const { kept, dropped } = commitsCompleteForAllArms(rows, arms, commits, expectedCellsFor);
     const keptSet = new Set(kept);

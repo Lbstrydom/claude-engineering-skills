@@ -53,7 +53,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  *    figure, so superseding the named verdict would leave the override pointing
  *    at a superseded row. A person's decision also simply outranks a re-run.
  */
-export async function resolveRedoRows({ redo, candidates, blindRows, reason, findingsWithHumanDisposition }) {
+export async function resolveRedoRows({ redo: redoIn, candidates, blindRows, reason, findingsWithHumanDisposition }) {
+  // UUID_RE accepts uppercase hex but the store ids are lowercase: an uppercase paste passed validation then failed the lookup as not-in-this-cohort
+  const redo = redoIn.map((id) => String(id).toLowerCase());
   if (!reason || String(reason).trim().length === 0) {
     return { ok: false, error: '--redo requires --reason "why": it supersedes verdicts that already count toward this campaign\'s totals.' };
   }

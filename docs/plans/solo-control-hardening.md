@@ -99,3 +99,38 @@ DeepSeek responses without a fingerprint (H4), discovered-unit findings keyed by
 `extractAuditedDiff` base (H24, #23), retro baseline completeness (H26), `cmdRun` end-of-run metadata checkpoint (M2),
 retro top-level model (M1, #21): pre-existing paths this change neither calls nor depends on. M6/M7 are the adjacency
 wave's own enumeration bound, not findings.
+
+## 7. Re-audit of #421 (2026-11-21, fresh /audit-code over `9356566d..09e34aa9`, 34 findings)
+
+Asked for by Louis via the coordinator ("Re-audit #421 solo-control"), with focus on the two HIGHs #421 shipped open and
+the two fixes no GPT round had read. All four are confirmed and fixed, plus four more the fresh read found:
+
+- **Judge CSV + sidecar replaced separately** — confirmed. The sidecar is gone: the identity (judge model + rubric digest)
+  is a `judge_identity` cell in each graded row of the output CSV, so grade and identity are replaced in ONE atomic write.
+  A graded row with a different/absent identity in an identity-bearing file is re-graded; a file with no such column is a
+  legacy output, kept with a warning.
+- **`score --decide` cohort** — confirmed. The cohort is every arm in the merged sheet (`armMeta`), not only arms with an
+  included finding; a completed arm that found nothing used to drop out and let the others be compared without it.
+- **`judge-gpt --out`** — confirmed, and the guard was too narrow: it compared only with the selected input, so a copied
+  input with `--out blind-adjudication.csv` overwrote the labelled sheet. It now protects the input, the canonical sheet and
+  the private map.
+- **Sheet column check** — held; no change.
+- New, fixed: a legacy pre-gate artifact with no recorded `passChunks` passed the chunk-0 guard (a missing count defaulted to
+  one); `--redo` uppercase uuids passed validation then missed the lookup; `merge` discarded all human labels when re-run
+  (now refused unless `--overwrite-labeled`, before any paid clustering); the sheet/map pairing now carries a `merge_id`
+  in both files so a pair from different merges (same visible findings, different arm attribution) is refused; diff
+  extraction uses `-z` name lists so non-ASCII names are neither misclassified nor lost behind git's octal quoting.
+- Rebutted/deferred (all previously ruled, see §4 and §6): call identity / spend re-runs / unpriced-after-timeout
+  (H1,H16,H23,H24,H28), the `recordRuleState` race (H5,H17,H29), legacy provenance (H3,H20,H21,H30), repo scoping (H4),
+  discovered-unit keying (H8,H22), DeepSeek fingerprint absence (H11), retro baseline (H13), judge schema strictness (M1),
+  test-interception style (M2), arbitrary-offset chunking (M3). H2 (a billed call lost to a kill before `recordCall`) is new
+  but is the same ledger-identity decision as #22.
+
+Follow-up rounds of the same re-audit (R2–R6, each fix red-then-green in `tests/solo-control-reaudit-421.test.mjs`):
+a zero-finding merge is a valid pair; a new sheet beside a legacy map is refused; a blank `merge_id` row counts as unknown; a
+legacy (column-less) grade is re-written as `legacy-unverified`, never stamped with the current judge, and keeps warning;
+`--force` and any resume that discards grades keep a timestamped `<out>.prev-<time>` copy first; `--out` is confined to the
+output dir by REAL path (links, Windows case) and may not name the input, the canonical sheet or the map; the merge guard
+protects any human-only cell (label, proof, pattern); names are taken verbatim from `-z`. Not changed, same rulings as §4/§6:
+`cluster`/`matches` edits (pre-filled by merge, indistinguishable from the proposal), call identity (#22), chunk-marker size
+overhead, retro commands' provenance/baseline, legacy pre-gate artifacts lacking the new fields (unknowable, disclosed).

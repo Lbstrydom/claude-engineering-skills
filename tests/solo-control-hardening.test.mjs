@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { parseCsv, csvField, csvLine } from '../scripts/lib/solo-control/csv.mjs';
 import {
   positiveInt, nonNegativeNumber, budgetVerdict, sheetPairingProblems, validateGradings, findingsDigest,
-  geminiFindingsOrMiss, assertResumableProvenance, coldPassOutcome, judgeResumeIdentity,
+  geminiFindingsOrMiss, assertResumableProvenance, coldPassOutcome, judgeGradeVerdict,
 } from '../scripts/lib/solo-control/hardening-guards.mjs';
 import { _internals as soloCtl } from '../scripts/solo-control-audit.mjs';
 import { claimConflictBucket, resolveRedoRows } from '../scripts/lib/campaign/redo.mjs';
@@ -100,14 +100,13 @@ describe('judge guards', () => {
   test('negative control: an exact batch passes untouched', () => {
     assert.equal(validateGradings([{ blind_id: 'F001' }], ['F001']).rejected.length, 0);
   });
-  test('judgeResumeIdentity: a changed model or rubric invalidates the prior grades; same / legacy do not', () => {
-    const cur = { model: 'gpt-x', knownDefectsSha256: 'h' };
-    assert.equal(judgeResumeIdentity({ model: 'gpt-y', knownDefectsSha256: 'h' }, cur).ok, false);
-    assert.equal(judgeResumeIdentity({ model: 'gpt-x', knownDefectsSha256: 'z' }, cur).ok, false);
-    assert.deepEqual(judgeResumeIdentity({ ...cur }, cur), { ok: true });
-    const legacy = judgeResumeIdentity(null, cur);
-    assert.equal(legacy.ok, true);
-    assert.match(legacy.note, /unverifiable/);
+  test('judgeGradeVerdict: a grade made by a different judge/rubric is discarded; same keeps; a column-less (legacy) output is kept but flagged', () => {
+    const current = 'gpt-x|h';
+    assert.equal(judgeGradeVerdict({ hasColumn: true, rowIdentity: 'gpt-y|h', current }), 'discard');
+    assert.equal(judgeGradeVerdict({ hasColumn: true, rowIdentity: 'gpt-x|z', current }), 'discard');
+    assert.equal(judgeGradeVerdict({ hasColumn: true, rowIdentity: undefined, current }), 'discard', 'a graded row with no identity in an identity-bearing file is not trusted');
+    assert.equal(judgeGradeVerdict({ hasColumn: true, rowIdentity: 'gpt-x|h', current }), 'keep');
+    assert.equal(judgeGradeVerdict({ hasColumn: false, rowIdentity: undefined, current }), 'legacy');
   });
 });
 

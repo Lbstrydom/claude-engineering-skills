@@ -8,6 +8,8 @@
  * @module scripts/lib/solo-control/hardening-guards
  */
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /** A numeric CLI option that must be a positive integer. `parseInt('0')`, `('abc')` and `('-5')` used to flow straight
  * into a loop increment (`--batch-size 0` re-sent the same PAID judge batch forever) or a slice width (`--max-chars 0`
@@ -71,7 +73,7 @@ export const rowSig = (file, detail) => crypto.createHash('sha256')
  * @param {Record<string,{commit:string,severity:string,category:string}>} map
  * @param {Array<{blindId:string,commit:string,severity:string,category:string}>} sheetRows
  * @returns {string[]} problems; empty = paired */
-export function sheetPairingProblems(map, sheetRows) {
+export function sheetPairingProblems(map, sheetRows, { mapMergeId = null, sheetMergeIds = null } = {}) {
   const problems = [];
   const seen = new Map();
   for (const r of sheetRows) seen.set(r.blindId, (seen.get(r.blindId) || 0) + 1);
@@ -87,6 +89,15 @@ export function sheetPairingProblems(map, sheetRows) {
     || String(map[r.blindId].category || '') !== String(r.category || '')
     || (map[r.blindId].sig && map[r.blindId].sig !== rowSig(r.file, r.detail)))).map((r) => r.blindId);
   if (drift.length) problems.push(`${drift.length} row(s) disagree with the map on commit/severity/category — the sheet and map are from different merges: ${drift.slice(0, 8).join(', ')}`);
+  // The merge generation rides IN the sheet (a `merge_id` column) and in the map: two merges that produce identical visible
+  // findings with different arm attribution (or the same ids after a re-merge) can no longer pass as a pair.
+  const ids = new Set(sheetMergeIds ?? []); // blanks COUNT: a row with no merge_id beside rows with one is a row of unknown generation
+  if (mapMergeId && sheetRows.length > 0) { // a zero-finding merge has no rows to carry the id: nothing to pair
+    if (ids.size !== 1 || !ids.has(mapMergeId)) problems.push(`the sheet's merge_id (${[...ids].join('|') || 'none'}) is not the map's (${mapMergeId}) — they are from different merges`);
+  } else if (!mapMergeId && [...ids].some(Boolean)) {
+    // a sheet that carries a merge_id beside a map that has none: the interrupted first merge after the column existed (new sheet, old map)
+    problems.push('the sheet carries a merge_id but the map has none — an interrupted merge left a new sheet beside an old map');
+  }
   return problems;
 }
 
@@ -145,15 +156,31 @@ export function assertResumableProvenance(prior, planned, force) {
  * @param {{gotReply: boolean, conformant: boolean}} attempts */
 export const coldPassOutcome = ({ gotReply, conformant }) => (conformant ? 'ok' : gotReply ? 'conformance-miss' : 'provider-error');
 
-/** judge-gpt resume: the identity a prior output's grades were made under. A grade depends on the judge MODEL and the
- * known-defect rubric the judge was shown, neither of which is in the row content `seedResumedGrades` fingerprints.
- * @returns {{ok: boolean, note?: string}} ok=false ⇒ discard every prior grade; a missing meta file is a legacy output
- * (accepted with a note, never silently). */
-export function judgeResumeIdentity(meta, current) {
-  // The sidecar binds the output it was written beside (outSha256): a crash between the two writes leaves a CSV the
-  // sidecar does not describe, and those grades' judge is unknown — re-grade, never trust.
-  if (meta && meta.outSha256 !== current.outSha256) return { ok: false, note: 'the output CSV does not match its meta sidecar (interrupted checkpoint)' };
-  if (!meta) return { ok: true, note: 'prior output has no meta sidecar (written before the judge identity was recorded) — its grades are unverifiable but kept' };
-  const diffs = Object.keys(current).filter((k) => k !== 'outSha256' && meta[k] !== current[k]);
-  return diffs.length ? { ok: false, note: `judge identity changed (${diffs.join(', ')}) — prior grades were made by a different judge/rubric` } : { ok: true };
-}
+/** judge-gpt resume: is ONE prior grade usable? The identity (judge model + known-defect rubric digest) lives IN each graded row's
+ * `judge_identity` cell of the output CSV, so it is replaced atomically with the grade it describes — the earlier sidecar was a
+ * second file, and an interruption between the two writes left a pair no check could tell from a healthy one. An output with no
+ * such column at all is a legacy one (written before the identity existed): kept, with a warning the caller prints, never silently.
+ * @returns {'keep'|'discard'|'legacy'} */
+export const LEGACY_JUDGE_IDENTITY = 'legacy-unverified';
+export const judgeGradeVerdict = ({ hasColumn, rowIdentity, current }) => (!hasColumn || rowIdentity === LEGACY_JUDGE_IDENTITY ? 'legacy' : rowIdentity === current ? 'keep' : 'discard');
+
+/** The arms a `score --decide` cohort must cover: every arm in the merged sheet (`armMeta`, written by merge from every solo run it
+ * read), not only the arms that happen to have an included finding — a completed arm that found nothing is a result, and dropping it
+ * from the cohort let the others be compared without it. */
+export const decisionArms = (resultArms, armMeta) => [...new Set([...Object.keys(resultArms || {}), ...Object.keys(armMeta || {})])];
+
+/** judge-gpt writes its output with a checkpoint that REPLACES the file: it must never be the input sheet nor the canonical human-labelled one. */
+export const protectedOutputProblem = (outPath, protectedPaths, resolve) => (protectedPaths.some((p) => resolve(p) === resolve(outPath)) ? 'resolves to a protected sheet' : null);
+
+
+/** A path's real location: symlinked parent directories (and Windows case) resolved, so an alias cannot name a protected file under a different string. */
+export const realPath = (p) => {
+  let r;
+  try { r = fs.existsSync(p) ? fs.realpathSync.native(p) : path.join(fs.realpathSync.native(path.dirname(path.resolve(p))), path.basename(p)); } catch { r = path.resolve(p); }
+  return process.platform === 'win32' ? r.toLowerCase() : r; // a case-insensitive filesystem: BLIND-ADJUDICATION.CSV is the same file
+};
+
+/** The operator-facing line for a budget stop — a breached ceiling and an UNCHECKABLE one read differently. */
+export const budgetStopLine = (hit, budgetUsd, where) => `\n✗ ${hit.reason === 'unmeasured'
+  ? `BUDGET UNCHECKABLE: ${hit.unmeasured} ledger call(s) reached a provider with no price, so $${hit.spentUsd.toFixed(2)} is a FLOOR that cannot be compared to the $${budgetUsd} cap (unpriced means unmeasured, never zero)`
+  : `BUDGET CEILING: $${hit.spentUsd.toFixed(2)} spent across the ledger ≥ $${budgetUsd} cap${hit.complete ? '' : ' (a FLOOR — some rows are unpriced)'}`}. Stopped at ${where}; it and every later commit are partial and will be dropped cohort-wide by score.`;
