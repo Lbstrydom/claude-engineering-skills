@@ -122,7 +122,7 @@ export function cmdReleaseStaleReady(ctx, flags, { items = defaultStatusItems } 
     ...listed.aged.map((i) => `  aged    ${i.id}  (mark ${i.ageDays}d old, head moved) → invalidate the mark only`),
     ...listed.skipped.map((s) => `  skipped ${s.id}: ${s.reason}`)];
   if (!flags['--apply']) {
-    return ok({ dryRun: true, days, ...listed, text: [...lines, ...(all.length ? ['', `to apply exactly this: ${ctx.cmd} release --stale-ready --days ${days} --apply`] : [])].join('\n') });
+    return ok({ dryRun: true, days, ...listed, text: [...lines, ...(all.length ? ['', `to apply: ${ctx.cmd} release --stale-ready --days ${days} --apply  (it re-reads the evidence first and acts only on an item still in the same class and unchanged — a new or changed one waits for a new preview)`] : [])].join('\n') });
   }
   const fresh = gather();
   const stillSame = (it) => [...fresh.landed, ...fresh.aged].some((f) => f.id === it.id && f.class === it.class && f.gen === it.gen && f.rev === it.rev && f.readyOid === it.readyOid && f.tip === it.tip);

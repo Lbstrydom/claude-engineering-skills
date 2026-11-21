@@ -340,6 +340,8 @@ describe('D3 fleet release --stale-ready through the command', () => {
     assert.equal(r.ok, true);
     assert.equal(r.dryRun, true);
     assert.deepEqual(r.landed.map((i) => i.id), ['one']);
+    assert.match(r.text, /re-reads the evidence first/, 'the preview does not promise an immutable set');
+    assert.doesNotMatch(r.text, /apply exactly this/);
     assert.equal(transact(s.dir, (t) => t.sessions.find((x) => x.id === 'one').state).value, 'ready');
   });
   it('rejects --id / --abandoned and a bad --days', () => {
