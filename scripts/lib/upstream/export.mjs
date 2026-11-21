@@ -26,6 +26,7 @@ import { spawnSync } from 'node:child_process';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { canonicaliseRemoteUrl, resolveRepoIdentity } from '../repo-identity.mjs';
 import { scanForLeaks } from '../telemetry-export/redact.mjs';
+import { destRelToSourceRel } from '../sync-path-map.mjs';
 import {
   computeFingerprint, readBundleStamp, redactReport, validateAffectedPath,
   validateReportInput,
@@ -274,7 +275,8 @@ export async function exportReport({
   }
   const sub = {
     text: renderExportMarkdown({
-      title: subTitle.text, body: subBody.text, severity, affectedPath: red.affectedPath,
+      // A recognised path is normalised to its consumer destination; the public issue names the UPSTREAM file (final gate G1).
+      title: subTitle.text, body: subBody.text, severity, affectedPath: recognised === true ? destRelToSourceRel(red.affectedPath) : red.affectedPath,
       bundleSha: manifest?.commitSha ?? null, slug,
     }),
   };

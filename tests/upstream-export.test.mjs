@@ -188,6 +188,20 @@ describe('embedded identities, undeterminable identity, verbatim affected path',
     assert.ok(fs.readFileSync(path.join(root, res.exportPath), 'utf-8').includes('scripts/lib/orgx/helpers.mjs'));
   });
 
+  it('a recognised path renders as the UPSTREAM file, never the consumer destination (final gate G1)', async () => {
+    const root = tmp();
+    fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'scripts', '.sync-manifest.json'), JSON.stringify({
+      commitSha: 'abcdef0123456789', files: { 'scripts/.claude-skills/lib/file-io.mjs': 'h' },
+    }));
+    for (const given of ['scripts/.claude-skills/lib/file-io.mjs', 'scripts/lib/file-io.mjs']) {
+      const { res } = await run(root, { affectedPath: given, body: `Fails for ${given}.` });
+      assert.equal(res.ok, true, JSON.stringify(res));
+      const md = fs.readFileSync(path.join(root, res.exportPath), 'utf-8');
+      assert.match(md, /Affected upstream path:\*\* `scripts\/lib\/file-io\.mjs`/);
+    }
+  });
+
   it('an UNRECOGNISED affected path containing an identity is refused (no manifest, and a manifest without it)', async () => {
     const a = await run(tmp(), { affectedPath: 'scripts/lib/orgx/helpers.mjs' });
     assert.equal(a.res.code, 'identity-embedded');
