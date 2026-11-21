@@ -41,6 +41,7 @@ This is the list to read when asking "what is in flight?".
 | [prior-upstream recognition for REWRITTEN destinations](./sync-prior-upstream-rewritten.md) | `Approved` |  |
 | [the base-lag restore must not manufacture a divergence](./sync-refused-manifest-base.md) | `Approved` |  |
 | [sync-to-repos debt cluster (16 still-present defects)](./sync-to-repos-debt-cluster.md) | `Approved` |  |
+| [Verification lessons — no retry-to-green, gates judged from main, step-back, diff-triggered checklist](./verification-lessons.md) | `Approved` |  |
 
 ## Parked
 
