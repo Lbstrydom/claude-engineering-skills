@@ -116,7 +116,7 @@ describe('STORE_VERDICT_WRITERS — each registered writer is covered, behaviour
       assert.match(withRows, /compared runs:\s+1/, 'the full report rendered');
       assert.ok(parsePopulationLine(withRows), 'and carries the population line');
       assert.equal(JSON.parse(runCli(['scripts/tiered-shadow-report.mjs', '--log', tmp, '--json']).stdout).population.schema, 'population/v1');
-    } finally { fs.rmSync(tmp, { force: true }); }
+    } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('bakeoff-collect --progress: prints a parseable line (progress is read from a local log, so 0 stores)', () => {

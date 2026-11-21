@@ -214,7 +214,7 @@ describe('readStoreSetupPointer — a link anywhere on the path, and duplicate k
       return;
     }
     assert.deepEqual(readStoreSetupPointer(root), { present: false, policy: 'absent' });
-    fs.rmSync(real, { recursive: true });   // now the link dangles
+    fs.rmSync(real, { recursive: true, maxRetries: 3, retryDelay: 50 });   // now the link dangles
     assert.equal(readStoreSetupPointer(root).policy, 'undeterminable');
   });
 

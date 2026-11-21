@@ -30,7 +30,7 @@ async function snapshot(measure) {
   } finally {
     process.stderr.write = realStderr;
     if (before === undefined) delete process.env.AUDIT_DB_URL; else process.env.AUDIT_DB_URL = before;
-    fs.rmSync(path.dirname(out), { recursive: true, force: true });
+    fs.rmSync(path.dirname(out), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 }
 
