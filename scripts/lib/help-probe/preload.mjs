@@ -91,9 +91,14 @@ net.Socket.prototype.connect = function patchedConnect(...args) {
   record2('network', `connect ${JSON.stringify(args[0])?.slice(0, 120)}`);
   throw new Error('help-probe: blocked network connect');
 };
-for (const n of ['resolve', 'resolve4', 'resolve6', 'resolveAny', 'resolveTxt', 'resolveSrv', 'reverse']) {
-  for (const target of [dns, dns.promises]) {
-    if (typeof target[n] !== 'function') continue;
+// EVERY resolver entry point on both the callback and promise APIs (resolve*, reverse,
+// lookup, lookupService, ...), enumerated from the module rather than listed by hand —
+// a fixed name list is what let `dns.promises.lookup` / `resolveMx` through. Pure
+// accessors (setServers, getServers, setDefaultResultOrder, Resolver) do no I/O.
+const DNS_NO_IO = new Set(['setServers', 'getServers', 'setDefaultResultOrder', 'getDefaultResultOrder', 'Resolver', 'promises']);
+for (const target of [dns, dns.promises]) {
+  for (const n of Object.keys(target)) {
+    if (typeof target[n] !== 'function' || DNS_NO_IO.has(n) || n === 'lookup') continue;
     target[n] = function blockedResolve(host) {
       record2('network', `dns.${n} ${String(host).slice(0, 80)}`);
       throw new Error(`help-probe: blocked dns.${n}`);
@@ -112,6 +117,10 @@ dns.lookup = function blockedLookup(host, ...rest) {
   const err = new Error(`help-probe: blocked dns ${host}`);
   if (cb) { process.nextTick(cb, err); return undefined; }
   throw err;
+};
+dns.promises.lookup = function blockedLookupPromise(host) {
+  record2('network', `dns.promises.lookup ${String(host).slice(0, 80)}`);
+  return Promise.reject(new Error(`help-probe: blocked dns.promises.lookup ${host}`));
 };
 for (const m of [http, https]) {
   for (const n of ['request', 'get']) {
@@ -165,6 +174,9 @@ function gitSubcommand(args) {
 
 /** A subcommand that can ALSO write, allowed only in its listing/reading form. */
 function gitReadOnlyForm(sub, rest) {
+  // Even a read-only subcommand can write OUTSIDE node's fs instrumentation through
+  // an output option (`git diff --output=<file>`, `--output <file>`, `-o <file>`).
+  if (rest.some((a) => /^--output(?:=|$)|^-o$/.test(a))) return false;
   if (GIT_READ_ONLY.has(sub)) return true;
   if (sub === 'config') return rest.some((a) => ['--get', '--get-all', '--get-regexp', '--list', '-l'].includes(a));
   if (sub === 'worktree') return rest[0] === 'list';
@@ -184,10 +196,12 @@ function gitReadOnlyForm(sub, rest) {
 // chains, pipes, redirects or substitutes makes the first-token check meaningless.
 const SHELL_META = /[;&|<>`$(){}\n\r]/;
 
-function spawnAllowed(cmd, args, viaShell) {
+function spawnAllowed(cmd, args, viaShell, isFork = false) {
   const base = String(cmd).replace(/\\/g, '/').split('/').pop().replace(/\.(exe|cmd)$/i, '');
   if (viaShell && SHELL_META.test([cmd, ...(args ?? [])].join(' '))) return false;
   if (base === 'node' || cmd === process.execPath) return true;
+  // `fork(modulePath)` runs the module under Node itself (inheriting the preload).
+  if (isFork) return true;
   if (base === 'git') {
     const { sub, rest } = gitSubcommand(args ?? []);
     return sub !== null && gitReadOnlyForm(sub, rest);
@@ -215,7 +229,7 @@ function patchSpawn(name, shape) {
     // `shell: true` makes an array-form call a shell string as well.
     const optsIdx = args.findIndex((x, i) => i > 0 && x && typeof x === 'object' && !Array.isArray(x));
     const shell = viaShell || (optsIdx !== -1 && args[optsIdx].shell);
-    if (!spawnAllowed(cmd, argv, shell)) {
+    if (!spawnAllowed(cmd, argv, shell, name === 'fork')) {
       record2('spawn', `${cmd} ${argv.join(' ')}`.slice(0, 200));
       throw new Error(`help-probe: blocked spawn ${cmd}`);
     }

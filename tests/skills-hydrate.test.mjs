@@ -277,6 +277,11 @@ describe('checkMarkerRemedies — the gate on the gate', () => {
     }
     const viaFlag = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'npm run --silent real', real: 'node scripts/.claude-skills/skills-hydrate.mjs' } }) });
     assert.deepEqual(viaFlag.circular, ['skills:hydrate'], 'npm run --silent <name> must still resolve the target');
+    const viaGlobalFlag = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'npm --silent run real', real: 'node scripts/.claude-skills/skills-hydrate.mjs' } }) });
+    assert.deepEqual(viaGlobalFlag.circular, ['skills:hydrate'], 'npm --silent run <name> must resolve the target');
+    // text printed by a self-contained node -e is not a delegation
+    const printed = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': "node -e \"console.log('npm run real')\"", real: 'node scripts/.claude-skills/skills-hydrate.mjs' } }) });
+    assert.equal(printed.ok, true, 'a node -e payload that merely mentions npm run must not be followed');
     // negative control: a delegating remedy that stays in tracked content is fine.
     const ok = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'npm run real', real: 'node scripts/skills-hydrate.mjs' } }) });
     assert.equal(ok.ok, true);

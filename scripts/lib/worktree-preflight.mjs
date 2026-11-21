@@ -176,7 +176,10 @@ const CIRCULAR_REMEDY = /(?:^|[\s&|;(])(?:node|npx|tsx)\s+(?:--?[\w-]+(?:=\S+)?\
 const CIRCULAR_LOAD = /(?:require|import)\s*\(\s*["'`][^"'`]*\.claude-skills[\\/]/;
 
 /** `npm|pnpm|yarn|bun [run] <script>` — the script name an indirection points at. */
-const SCRIPT_INDIRECTION = /(?:^|[\s&|;(])(?:npm|pnpm|yarn|bun)\s+(?:run(?:-script)?\s+(?:--?[\w-]+(?:=\S+)?\s+)*)?([\w:.-]+)/g;
+const SCRIPT_INDIRECTION = /(?:^|[\s&|;(])(?:npm|pnpm|yarn|bun)\s+(?:--?[\w-]+(?:=\S+)?\s+)*(?:run(?:-script)?\s+(?:--?[\w-]+(?:=\S+)?\s+)*)?([\w:.-]+)/g;
+
+/** The quoted payload of `node -e "…"` / `-p`: program text, not a command line. */
+const NODE_INLINE = /\bnode\s+(?:-e|-p|--eval|--print)\s+("(?:[^"\\]|\\.)*"|'[^']*')/g;
 
 /** A Node preload option whose VALUE is under the tree: it loads before any inline code runs. */
 const CIRCULAR_PRELOAD = /(?:^|\s)(?:-r|--require|--import|--loader|--experimental-loader)(?:=|\s+)["']?[^\s"']*\.claude-skills[\\/]/;
@@ -192,7 +195,10 @@ const CIRCULAR_PRELOAD = /(?:^|\s)(?:-r|--require|--import|--loader|--experiment
 export function isCircularRemedy(body, scripts = {}, seen = new Set()) {
   if (typeof body !== 'string') return false;
   if (CIRCULAR_REMEDY.test(body) || CIRCULAR_LOAD.test(body) || CIRCULAR_PRELOAD.test(body)) return true;
-  for (const m of body.matchAll(SCRIPT_INDIRECTION)) {
+  // Text INSIDE `node -e "…"` is program output, not a command line: a remedy that
+  // merely PRINTS `npm run x` must not read as a delegation to x.
+  const shellOnly = body.replace(NODE_INLINE, 'node -e _');
+  for (const m of shellOnly.matchAll(SCRIPT_INDIRECTION)) {
     const name = m[1];
     if (seen.has(name) || !Object.prototype.hasOwnProperty.call(scripts, name)) continue;
     seen.add(name);

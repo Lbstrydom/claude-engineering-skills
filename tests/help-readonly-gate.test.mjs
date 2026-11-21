@@ -185,6 +185,23 @@ describe('probe instrument gaps from the code audit', () => {
     assert.equal(fs.existsSync(path.join(dir, 'child-wrote.txt')), false, 'the env-stripped child must still be instrumented');
   });
 
+  it('blocks `git diff --output=<file>` and dns.promises.lookup/resolveMx; allows fork of a module', async () => {
+    const f = fixture('more.mjs', `import cp from 'node:child_process'; import dns from 'node:dns';
+      try { cp.execFileSync('git', ['diff', '--output=' + ${JSON.stringify(path.join(dir, 'diff-out.txt'))}]); } catch {}
+      try { await dns.promises.lookup('example.invalid'); } catch {}
+      try { await dns.promises.resolveMx('example.invalid'); } catch {}`);
+    const r = await probeHelp(f, { cwd: ROOT });
+    assert.deepEqual(r.kinds, ['network', 'spawn']);
+    const details = r.violations.map((v) => v.detail).join(' | ');
+    assert.match(details, /--output=/);
+    assert.match(details, /dns\.promises\.lookup/);
+    assert.match(details, /resolveMx/);
+    assert.equal(fs.existsSync(path.join(dir, 'diff-out.txt')), false);
+    const w = fixture('worker.mjs', 'process.exit(0);');
+    const forker = fixture('forker.mjs', `import cp from 'node:child_process'; cp.fork(${JSON.stringify(w)}).on('exit', () => {});`);
+    assert.deepEqual((await probeHelp(forker, { cwd: dir })).kinds, []);
+  });
+
   it('read-only git forms and stdout fd writes are allowed (negative control)', async () => {
     const f = fixture('allowed.mjs', `import cp from 'node:child_process'; import fs from 'node:fs';
       cp.execFileSync('git', ['-C', ${JSON.stringify(ROOT)}, 'rev-parse', '--show-toplevel']);

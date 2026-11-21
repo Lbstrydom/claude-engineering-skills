@@ -81,6 +81,17 @@ unknown-flag refusal applies to invocations that would actually run. The usage
 text is the header `Usage:` block, else the first `@fileoverview` paragraph, else
 a `see the header of scripts/<file>` line — never empty, never an error.
 
+**Residual limits, accepted (code-audit rounds 1-3).** The probe observes the process it
+spawns and its Node descendants; it does not claim to observe (a) an unref'ed
+descendant that writes after the parent's log is read, (b) a log write that itself
+fails on a full temp disk (a torn or unreadable log IS reported as `probe-error`, but
+an empty one cannot be told from a clean one), (c) database access reachable only from
+an unset-`AUDIT_DB_URL` code path the census env cannot trigger, or (d) a CLI that
+strips its own environment before spawning something non-Node. These are limits of a
+census INSTRUMENT, stated here so a green is read as "no reachable effect observed",
+not "proven read-only"; the first-import guard (which exits before any other module
+loads) is what actually makes `--help` read-only.
+
 **Why `process.exit(0)` and not `finishAndExit` (`stdout:flush:gate`).** The guard
 writes usage with a SYNCHRONOUS `fs.writeSync(1, …)` before exiting, so there is
 nothing buffered for the exit to discard — the drain `finishAndExit` exists to

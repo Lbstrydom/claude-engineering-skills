@@ -87,7 +87,8 @@ export function helpGuardEntry(io = {}) {
   // Fire only when the ENTRY itself opted in. A guarded LIBRARY (learning-store is
   // imported by 36 scripts) must never swallow `--help` for an entry that has its
   // own help handling, or an app importing it would be terminated by a CLI contract.
-  if (!source.includes('help-guard-run')) return false;
+  // An actual `import '…/help-guard-run.mjs'` statement, not the name in a comment or string.
+  if (!/(?:^|;)\s*import\s+['"][^'"]*help-guard-run\.mjs['"]/m.test(source.replace(/\/\*[\s\S]*?\*\//g, ''))) return false;
   const text = usageFromSource(source, path.basename(entry));
   const exit = io.exit ?? ((c) => process.exit(c));
   if (io.out) { io.out(text); exit(0); return true; }
