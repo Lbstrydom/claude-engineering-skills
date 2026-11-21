@@ -202,11 +202,13 @@ describe('judge-gpt: grades keep THEIR identity; --force cannot destroy a graded
     assert.equal(row[6], 'proven', 'the legacy grade is kept');
     assert.equal(row[header.indexOf('judge_identity')], 'legacy-unverified');
   }));
-  test('--force keeps the previous graded output as <out>.prev before it can be replaced by ungraded rows', () => inTemp((dir) => {
+  test('--force keeps the previous graded output as <out>.prev-<time> before it can be replaced by ungraded rows', () => inTemp((dir) => {
     const d = legacyOut(dir);
     const before = fs.readFileSync(path.join(d, 'out.csv'), 'utf8');
     cli(dir, ['judge-gpt', '--out', 'out.csv', '--force'], refusingPolicy(dir));
-    assert.equal(fs.readFileSync(path.join(d, 'out.csv.prev'), 'utf8'), before);
+    const prev = fs.readdirSync(d).filter((f) => f.startsWith('out.csv.prev-'));
+    assert.equal(prev.length, 1);
+    assert.equal(fs.readFileSync(path.join(d, prev[0]), 'utf8'), before);
     assert.equal(parseCsv(fs.readFileSync(path.join(d, 'out.csv'), 'utf8'))[1][6], '', 'the re-grade really did replace it (policy-refused)');
   }));
   test('a directory alias for the output dir cannot name the canonical sheet under another string', (t) => inTemp((dir) => {
@@ -236,14 +238,15 @@ describe('re-audit round 3', () => {
     assert.match(sheetPairingProblems(map, rows, { mapMergeId: 'M1', sheetMergeIds: ['M1', ''] }).join(), /different merges/);
     assert.deepEqual(sheetPairingProblems(map, rows, { mapMergeId: 'M1', sheetMergeIds: ['M1', 'M1'] }), [], 'negative control');
   });
-  test('the --force backup path is protected too: a copied input named <out>.prev cannot be overwritten', () => inTemp((dir) => {
+  test('each --force run keeps its OWN backup: a second forced run does not replace the first one', () => inTemp((dir) => {
     const d = solo(dir);
     fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText());
-    fs.writeFileSync(path.join(d, 'out.csv.prev'), sheetText('proven', 'f:1'));
-    const before = fs.readFileSync(path.join(d, 'out.csv.prev'), 'utf8');
-    const r = cli(dir, ['judge-gpt', '--csv', path.join(d, 'out.csv.prev'), '--out', 'out.csv', '--force'], refusingPolicy(dir));
-    assert.equal(r.status, 2, r.out);
-    assert.equal(fs.readFileSync(path.join(d, 'out.csv.prev'), 'utf8'), before);
+    fs.writeFileSync(path.join(d, 'out.csv'), sheetText('proven', 'f:1'));
+    const first = fs.readFileSync(path.join(d, 'out.csv'), 'utf8');
+    cli(dir, ['judge-gpt', '--out', 'out.csv', '--force'], refusingPolicy(dir));
+    cli(dir, ['judge-gpt', '--out', 'out.csv', '--force'], refusingPolicy(dir)); // the second run backs up the UNGRADED rewrite
+    const backups = fs.readdirSync(d).filter((f) => f.startsWith('out.csv.prev-')).map((f) => fs.readFileSync(path.join(d, f), 'utf8'));
+    assert.ok(backups.includes(first), 'the original graded output is still on disk');
   }));
   test('on a case-insensitive filesystem an upper-case spelling of the canonical sheet is the same file', (t) => inTemp((dir) => {
     if (process.platform !== 'win32' && process.platform !== 'darwin') { t.skip('case-sensitive filesystem'); return; }
@@ -252,5 +255,22 @@ describe('re-audit round 3', () => {
     const r = cli(dir, ['judge-gpt', '--out', 'BLIND-ADJUDICATION.CSV', '--force'], refusingPolicy(dir));
     assert.equal(r.status, 2, r.out);
     assert.equal(parseCsv(fs.readFileSync(path.join(d, 'blind-adjudication.csv'), 'utf8'))[1][6], 'proven');
+  }));
+});
+
+describe('re-audit round 4', () => {
+  test('a grade already re-written as legacy-unverified is STILL flagged on every later resume', () => inTemp((dir) => {
+    const d = solo(dir);
+    fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText());
+    fs.writeFileSync(path.join(d, 'out.csv'), csvLine([...HEADER, 'judge_identity']) + NL + csvLine(['F001', HEAD.slice(0, 8), 'HIGH', 'k', 'f', 'd', 'proven', 'f:1', 'c1', '', '', 'legacy-unverified']) + NL);
+    const r = cli(dir, ['judge-gpt', '--out', 'out.csv'], refusingPolicy(dir));
+    assert.match(r.out, /legacy-unverified/, r.out);
+  }));
+  test('negative control: a grade under the CURRENT identity carries no such warning', () => inTemp((dir) => {
+    const d = solo(dir);
+    fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText());
+    const cur = resolveModel('latest-gpt') + '|' + createHash('sha256').update('').digest('hex').slice(0, 16);
+    fs.writeFileSync(path.join(d, 'out.csv'), csvLine([...HEADER, 'judge_identity']) + NL + csvLine(['F001', HEAD.slice(0, 8), 'HIGH', 'k', 'f', 'd', 'proven', 'f:1', 'c1', '', '', cur]) + NL);
+    assert.doesNotMatch(cli(dir, ['judge-gpt', '--out', 'out.csv'], refusingPolicy(dir)).out, /legacy-unverified/);
   }));
 });
