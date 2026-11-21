@@ -139,7 +139,7 @@ test('R3-H2/H3/M2: completeness compares planned vs completed IDENTITIES; a stop
   assert.equal(dup.arms.same.complete, false);
   assert.equal(dup.arms.same.verdict, 'incomplete (not adopted)');
   // Equal COUNT of distinct identities (3 of 3) but one is not in the plan and PR 3 is missing: still incomplete.
-  const swapped = scoreReplay({ calls: [c(1), c(2), c(9)], truth, arms: ['same'], plan });
+  const swapped = scoreReplay({ calls: [c(1), c(2), c(9, 'defect')], truth, arms: ['same'], plan });
   assert.equal(swapped.arms.same.complete, false);
   // An extra identity outside the plan is incomplete too.
   const extra = scoreReplay({ calls: [c(1), c(2), c(3), c(9)], truth, arms: ['same'], plan });
