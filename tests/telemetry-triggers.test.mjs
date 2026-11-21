@@ -504,6 +504,45 @@ describe('throttle audit round 1: it must really read nothing, deliver what is p
       assert.match(git(drop, 'status', '--porcelain', '-uall', '--', 'acme/'), /\?\? acme\//);
     });
 
+    it('audit R1: a retry file whose BYTES differ from its validated content (a hidden duplicate key) is refused, not published', async () => {
+      const { remote, drop } = twoCommitDrop();
+      const file = await put(drop, { ageMs: 3_600_000 });
+      fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('{\n', '{\n  "consumerAlias": "db.corp.example",\n'));
+      const before = git(remote, 'rev-list', '--all', '--count');
+      assert.throws(() => pushPending({ dropDir: drop, alias: 'acme' }), /not byte-identical/);
+      assert.equal(git(remote, 'rev-list', '--all', '--count'), before);
+    });
+
+    it('audit R1: a MODIFIED export already in history is never republished under its old name', async () => {
+      const { remote, drop } = twoCommitDrop();
+      const file = await put(drop, { ageMs: 3_600_000 });
+      git(drop, 'add', '.'); git(drop, ...ID, 'commit', '-q', '-m', 'exports'); git(drop, 'push', '-q');
+      const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+      fs.writeFileSync(file, `${JSON.stringify({ ...doc, generatedAt: new Date().toISOString() }, null, 2)}\n`);
+      const before = git(remote, 'rev-list', '--all', '--count');
+      assert.throws(() => pushPending({ dropDir: drop, alias: 'acme' }), /immutable/);
+      assert.equal(git(remote, 'rev-list', '--all', '--count'), before);
+    });
+
+    it('audit R1: an index failure AFTER the branch advanced puts the branch back (no stranded unpushed commit)', async () => {
+      const { drop } = twoCommitDrop();
+      const doc = await mkDoc();
+      const head = git(drop, 'rev-parse', 'HEAD');
+      const exec = (cmd, args, opts) => {
+        if (args[0] === 'update-index' && !opts?.env?.GIT_INDEX_FILE) throw new Error('index.lock exists');
+        return execFileSync(cmd, args, opts);
+      };
+      assert.throws(() => deliverExport({ doc, dropDir: drop, push: true, exec }), /index\.lock/);
+      assert.equal(git(drop, 'rev-parse', 'HEAD'), head, 'the branch is back where it was');
+    });
+
+    it('audit R1: a detached HEAD is refused (there is no branch to advance)', async () => {
+      const { drop, second } = twoCommitDrop();
+      git(drop, 'checkout', '-q', '--detach', second);
+      const doc = await mkDoc();
+      assert.throws(() => deliverExport({ doc, dropDir: drop, push: true }), /detached|earlier exports were pushed/);   // refused at the gate either way
+    });
+
     it('M1: every usage failure leaves {ok:false,error:{code}} on stdout, not only a stderr line', () => {
       for (const args of [['--alias', 'acme', '--drop-dir', tmp(), '--if-older-than', '0'], ['--alias', 'acme', '--print', '--if-older-than', '24']]) {
         const r = run(args);

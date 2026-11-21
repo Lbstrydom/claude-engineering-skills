@@ -112,7 +112,12 @@ function pushGate(git, root) {
   // built on a stale HEAD would otherwise discard what the remote gained). HEAD must be exactly the observed tip.
   const head = String(git(['rev-parse', 'HEAD']) ?? '').trim();
   if (!head || head !== tracked) throw new Error('deliver: the drop is not at the remote tip (behind it?) — fetch and fast-forward first');
-  return { remote, branch, tip: tracked, head };
+  // The LOCAL branch HEAD is on, named explicitly: updates target this ref, never the symbolic HEAD, so a checkout
+  // that happens between the gate and the update cannot redirect them. A detached HEAD has no branch to advance.
+  let headRef = '';
+  try { headRef = String(git(['symbolic-ref', '-q', 'HEAD']) ?? '').trim(); } catch { headRef = ''; }
+  if (!headRef.startsWith('refs/heads/')) throw new Error('deliver: HEAD is detached — check out the branch first');
+  return { remote, branch, tip: tracked, head, headRef };
 }
 
 /**
@@ -131,9 +136,10 @@ function pushGate(git, root) {
  *   - on a failed push the outcome is established from the remote, and only a CONFIRMED non-delivery is undone.
  */
 function commitAndPush(git, dest, entries, message) {
-  const paths = entries.map((e) => e.path);
   const head = String(git(['rev-parse', 'HEAD']) ?? '').trim();
-  if (head !== dest.head) throw new Error('deliver: the branch moved since the gate passed — retry (nothing was committed)');
+  let nowRef = '';
+  try { nowRef = String(git(['symbolic-ref', '-q', 'HEAD']) ?? '').trim(); } catch { nowRef = ''; }
+  if (head !== dest.head || nowRef !== dest.headRef) throw new Error('deliver: the branch moved since the gate passed — retry (nothing was committed)');
 
   const indexFile = path.join(os.tmpdir(), `telemetry-index-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
   const env = { ...process.env, GIT_INDEX_FILE: indexFile };
@@ -153,8 +159,20 @@ function commitAndPush(git, dest, entries, message) {
   }
 
   // Advance the branch only if it is STILL where the gate saw it; then mirror just our own paths into the real index.
-  git(['update-ref', '-m', 'telemetry-export: commit an export', 'HEAD', ours, head]);
-  entries.forEach((e, i) => git(['update-index', '--add', '--cacheinfo', `100644,${blobs[i]},${e.path}`]));
+  git(['update-ref', '-m', 'telemetry-export: commit an export', dest.headRef, ours, head]);
+  // Our paths are NEW (absent from HEAD, so no staged version of the user's can be overwritten here). If mirroring them
+  // into the index fails, the commit has not been published: put the branch back rather than strand an unpushed commit
+  // that the gate would then refuse forever.
+  const undo = () => {
+    try {
+      git(['update-ref', '-m', 'telemetry-export: undo an undelivered export commit', dest.headRef, head, ours]);
+      const fresh = entries.filter((e) => !e.wasStaged).map((e) => e.path);
+      if (fresh.length) git(['reset', '-q', '--', ...fresh]);   // a path the user had already staged stays staged
+    } catch { /* leave it: the gate will report the unpushed commit */ }
+  };
+  try {
+    entries.forEach((e, i) => git(['update-index', '--add', '--cacheinfo', `100644,${blobs[i]},${e.path}`]));
+  } catch (err) { undo(); throw err; }
 
   try {
     git(['-c', 'push.followTags=false', 'push', '--no-follow-tags', `--force-with-lease=refs/heads/${dest.branch}:${dest.tip}`,
@@ -176,12 +194,9 @@ function commitAndPush(git, dest, entries, message) {
     if (remoteTip === null || remoteTip !== dest.tip) {
       throw new Error('deliver: the push failed and the remote\'s state could not be established — verify what the remote has before retrying (nothing was undone locally)');
     }
-    try {
-      // Undo ONLY our commit, atomically (the branch moves back only if it is STILL our commit), then drop just our own
-      // index entries; anything else staged in the work tree is left exactly as it was found.
-      git(['update-ref', '-m', 'telemetry-export: undo an undelivered export commit', 'HEAD', head, ours]);
-      git(['reset', '-q', '--', ...paths]);
-    } catch { /* leave it: the gate will report the unpushed commit */ }
+    // Undo ONLY our commit, atomically (the branch moves back only if it is STILL our commit), then drop just our own
+    // index entries; anything else staged in the work tree is left exactly as it was found.
+    undo();
     throw err;
   }
 }
@@ -318,10 +333,14 @@ export function pushPending({ dropDir, alias, exec = execFileSync }) {
   // A rename or copy record is followed by a second NUL-separated path that would be read as an entry of its own;
   // exports are never renamed, so such a record means something else is going on here: stop.
   if (entries.some((e) => /^[RC]/.test(e))) throw new Error('deliver: a rename or copy is staged in the alias directory — not an export (retry stopped)');
-  const dirtyPaths = entries.filter((e) => !e.startsWith('!! ')).map((e) => e.slice(3));
+  const dirty = entries.filter((e) => !e.startsWith('!! ')).map((e) => ({ code: e.slice(0, 2), p: e.slice(3) }));
+  const dirtyPaths = dirty.map((d) => d.p);
   const staged = [];
-  for (const p of dirtyPaths) {
+  for (const { code, p } of dirty) {
     const name = p.split('/').pop();
+    // Exports are immutable: only a NEW file qualifies (untracked, or staged-as-added with no later edit, so the index
+    // and the work tree agree). A modified or deleted export that is already in history is never republished.
+    if (code !== '??' && code !== 'A ') throw new Error(`deliver: "${name}" is a modification of a tracked or partly-staged export — exports are immutable (retry stopped)`);
     if (!pathRe.test(p)) throw new Error(`deliver: refusing to stage "${name}" — not a telemetry export (retry stopped; nothing was staged)`);
     const full = path.join(root, ...p.split('/'));
     // lstat, never a followed read: a symlink would validate as its TARGET's JSON while git commits the link itself.
@@ -334,7 +353,13 @@ export function pushPending({ dropDir, alias, exec = execFileSync }) {
     const v = validateExport(doc);
     if (!v.ok || v.doc.consumerAlias !== alias) throw new Error(`deliver: "${name}" does not validate as an export of this alias (retry stopped)`);
     assertExportClean(v.doc);   // throws ExportRefusedError (category only)
-    staged.push({ path: p, bytes });
+    // Validate and publish the SAME representation: the parsed object can differ from its bytes (duplicate keys, where
+    // an earlier value is hidden by a later one). The exporter only ever writes one canonical serialisation, so any
+    // other byte sequence is not something it wrote and is refused rather than committed.
+    if (!bytes.equals(Buffer.from(`${JSON.stringify(v.doc, null, 2)}\n`, 'utf8'))) {
+      throw new Error(`deliver: "${name}" is not byte-identical to the canonical form of its validated content (retry stopped)`);
+    }
+    staged.push({ path: p, bytes, wasStaged: code === 'A ' });
   }
   if (dirtyPaths.length === 0) return { pending: false, pushed: false };
 
