@@ -58,6 +58,21 @@ export function defaultTopicOf(finding) {
   return generateTopicId(f);
 }
 
+/** Decode git's C-style quoted path: octal escapes are UTF-8 bytes, plus backslash, quote, t, n, r. Unquoted paths pass through. */
+export function unquoteGitPath(p) {
+  if (!(p.length >= 2 && p.startsWith('"') && p.endsWith('"'))) return p;
+  const bytes = [];
+  const body = p.slice(1, -1);
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c !== '\\') { bytes.push(...Buffer.from(c, 'utf8')); continue; }
+    const n = body[++i];
+    if (/[0-7]/.test(n)) { let oct = n; while (oct.length < 3 && /[0-7]/.test(body[i + 1] || '')) oct += body[++i]; bytes.push(parseInt(oct, 8)); }
+    else bytes.push({ t: 9, n: 10, r: 13 }[n] ?? n.charCodeAt(0));
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
 /**
  * Parse a `git diff -U0` text into post-image line ranges per file. Pure.
  * A `+++ b/<path>` header names the NEW path, so a rename maps to its new path;
@@ -71,8 +86,8 @@ export function parsePostImageHunks(diffText) {
   let file = null;
   for (const line of String(diffText || '').split('\n')) {
     if (line.startsWith('+++ ')) {
-      const p = line.slice(4).trim();
-      file = p === '/dev/null' ? null : p.replace(/^b\//, '').replace(/^"|"$/g, '');
+      const p = unquoteGitPath(line.slice(4).trim());
+      file = p === '/dev/null' ? null : p.replace(/^b\//, '');
       if (file && !out.has(file)) out.set(file, []);
       continue;
     }
@@ -142,22 +157,28 @@ export function citedLocation(f) {
 }
 
 /**
- * The findings the signals count, and where "important" came from.
- * @param {object[][]} findingLists - every round's findings, to decide the source once for the whole input
- * @returns {{importanceSource: 'importance'|'severity-proxy', select: (findings: object[]) => object[]}}
+ * The findings the signals count, and where "important" came from. Selection is PER FINDING: a tagged finding
+ * counts when `importance` is `important`; an untagged one falls back to the severity proxy (>= MEDIUM).
+ * @param {object[][]} findingLists - every round's findings, to state the source once for the whole input
+ * @returns {{importanceSource: 'importance'|'severity-proxy'|'mixed', select: (findings: object[]) => object[]}}
  */
 export function importanceSelector(findingLists) {
-  const hasTag = findingLists.some((l) => (l || []).some((f) => typeof f?.importance === 'string'));
-  if (hasTag) return { importanceSource: 'importance', select: (l) => (l || []).filter((f) => f?.importance === 'important') };
-  return { importanceSource: 'severity-proxy', select: (l) => (l || []).filter((f) => (SEVERITY_RANK[String(f?.severity).toUpperCase()] || 0) >= SEVERITY_RANK.MEDIUM) };
+  const all = findingLists.flatMap((l) => (Array.isArray(l) ? l : []));
+  const tagged = all.filter((f) => typeof f?.importance === 'string').length;
+  const importanceSource = tagged === 0 ? 'severity-proxy' : tagged === all.length ? 'importance' : 'mixed';
+  const counts = (f) => (typeof f?.importance === 'string' ? f.importance === 'important' : (SEVERITY_RANK[String(f?.severity).toUpperCase()] || 0) >= SEVERITY_RANK.MEDIUM);
+  return { importanceSource, select: (l) => (l || []).filter(counts) };
 }
 
 const byRound = (rounds, n) => (rounds || []).find((r) => r.round === n) || null;
+/** A round with no findings LIST is unmeasured (an absent list is not an empty one). */
+const lacksFindings = (...rs) => rs.some((r) => !Array.isArray(r?.findings));
 
 /** reopenRate(N) = located findings of N whose cited lines fall in the post-image hunks of the fix range / located findings of N. */
 export function reopenRate({ round, rounds, select, git }) {
   const cur = byRound(rounds, round); const prev = byRound(rounds, round - 1);
   if (!cur || !prev) return unmeasured(`needs round results for ${round - 1} and ${round}`);
+  if (lacksFindings(cur)) return unmeasured(`round ${round} has no findings list`);
   const h = postImageHunks({ base: prev.auditedSha, head: cur.auditedSha }, git);
   if (!h.measured) return unmeasured(h.reason);
   const sel = select(cur.findings);
@@ -188,6 +209,7 @@ function maxSevByFile(findings) {
 export function severityDrift({ round, rounds, select }) {
   const cur = byRound(rounds, round); const prev = byRound(rounds, round - 1);
   if (!cur || !prev) return unmeasured(`needs round results for ${round - 1} and ${round}`);
+  if (lacksFindings(cur, prev)) return unmeasured('a round has no findings list');
   const a = maxSevByFile(select(prev.findings)); const b = maxSevByFile(select(cur.findings));
   const deltas = [...b].filter(([f]) => a.has(f)).map(([f, r]) => r - a.get(f));
   if (deltas.length < SIGNAL_THRESHOLDS.severityDriftMinFiles) return unmeasured(`only ${deltas.length} file(s) have findings in both rounds (need ${SIGNAL_THRESHOLDS.severityDriftMinFiles})`);
@@ -199,6 +221,7 @@ export function severityDrift({ round, rounds, select }) {
 function retiredAt({ round, rounds, select, ledgerEntries, topicOf }) {
   const cur = byRound(rounds, round); const prev = byRound(rounds, round - 1);
   if (!cur || !prev) return { unmeasured: `needs round results for ${round - 1} and ${round}` };
+  if (lacksFindings(cur, prev)) return { unmeasured: 'a round has no findings list' };
   if (!ledgerEntries) return { unmeasured: 'no ledger' };
   const prevTopics = new Set(select(prev.findings).map(topicOf));
   const curTopics = new Set((cur.findings || []).map(topicOf)); // any finding of that topic in N (not only selected) keeps it open

@@ -190,7 +190,7 @@ test('state machine: structural/stop/defect transitions; invalid and unavailable
   const structural = applyStepBackOutcome(fired, { kind: 'valid', output: { action: 'structural', files: ['a.mjs'] } });
   assert.deepEqual([structural.state, structural.next.roundAdmitted], ['step-back-valid', false]);
   const defect = applyStepBackOutcome(fired, { kind: 'valid', output: { action: 'defect', topicId: 't', evidenceNeeded: 'e' } });
-  assert.equal(defect.next.roundAdmitted, true); assert.deepEqual(defect.next.focusNote, { topicId: 't', evidenceNeeded: 'e' });
+  assert.equal(defect.next.roundAdmitted, false, 'a valid defect never admits the next round by itself'); assert.deepEqual(defect.next.focusNote, { topicId: 't', evidenceNeeded: 'e' });
   const stop = applyStepBackOutcome(fired, { kind: 'valid', output: { action: 'stop', items: [{ topicId: 't1', premise: 'p' }] } });
   assert.equal(stop.debtWritten, false); assert.equal(stop.next.debtWrite, 'pending-human-approval');
   assert.deepEqual(stopDebtIntents(stop), [], 'a stop never writes debt by itself');

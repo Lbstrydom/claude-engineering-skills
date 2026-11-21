@@ -52,7 +52,7 @@ function fakeRepo() {
 
 const topicOf = (f) => f._hash;
 
-function fakeProviders(script = () => ({ action: 'defect', topicId: 't', evidenceNeeded: 'e' }), usage = { input_tokens: 1000, output_tokens: 100 }) {
+function fakeProviders(script = () => ({ action: 'structural', files: ['src/a.mjs'] }), usage = { input_tokens: 1000, output_tokens: 100 }) {
   const calls = [];
   const models = { same: 'gpt-5.5', different: 'gemini-3.1-pro-preview' };
   return {
@@ -89,9 +89,9 @@ test('dry-run: prints the planned calls and estimated cost, makes NO provider ca
   assert.equal(res.plan.length, 10);
   const text = renderDryRun({ ...res, maxUsd: 20 });
   assert.match(text, /DRY RUN - no provider call was made/);
-  assert.match(text, /planned calls: 10 \(5 PR-checkpoints\), estimated total \$\d+\.\d\d against a hard stop of \$20\.00/);
+  assert.match(text, /planned calls: 10 \(5 PR-checkpoints\), UPPER-BOUND total \$\d+\.\d\d against a hard stop of \$20\.00/);
   assert.match(text, /unrecoverable.*#4/);
-  assert.match(text, /call 1: PR #1 R3 arm=same model=gpt-5\.5 pack=\d+ chars est \$/);
+  assert.match(text, /call 1: PR #1 R3 arm=same model=gpt-5\.5 pack=\d+ chars upper bound \$/);
   // And through the CLI entry, with the same seams.
   const lines = []; const orig = console.log; console.log = (s) => lines.push(s);
   try { assert.equal(await main(['run', '--dataset', dsPath, '--dry-run', '--max-usd', '20'], { checkout: repo.checkout, makeProvider: fp.makeProvider, topicOf }), 0); } finally { console.log = orig; }
@@ -101,8 +101,8 @@ test('dry-run: prints the planned calls and estimated cost, makes NO provider ca
 
 test('a paid run needs --max-usd and --confirm-spend', async () => {
   const { dsPath } = synthDataset();
-  await assert.rejects(() => main(['run', '--dataset', dsPath]), /--max-usd <n> and --confirm-spend/);
-  await assert.rejects(() => main(['run', '--dataset', dsPath, '--max-usd', '5']), /--confirm-spend/);
+  await assert.rejects(() => main(['run', '--dataset', dsPath]), /--max-usd <n>, --confirm-spend and --results/);
+  await assert.rejects(() => main(['run', '--dataset', dsPath, '--max-usd', '5', '--results', 'x.jsonl']), /--confirm-spend/);
 });
 
 test('budget hard stop is checked BEFORE each call: no call is made that would cross the cap', async () => {
@@ -129,7 +129,7 @@ test('CLI exits 5 on a budget stop and writes results with the score', async () 
   const out = path.join(dir, 'results.json');
   const orig = console.log; console.log = () => {};
   let code;
-  try { code = await main(['run', '--dataset', dsPath, '--arms', 'none,same,different', '--max-usd', '0.2', '--confirm-spend', '--out', out], { checkout: repo.checkout, makeProvider: fp.makeProvider, topicOf }); } finally { console.log = orig; }
+  try { code = await main(['run', '--dataset', dsPath, '--arms', 'none,same,different', '--max-usd', '0.2', '--confirm-spend', '--results', path.join(dir, 'calls.jsonl'), '--out', out], { checkout: repo.checkout, makeProvider: fp.makeProvider, topicOf }); } finally { console.log = orig; }
   assert.equal(code, EXIT_BUDGET_STOP);
   const r = JSON.parse(fs.readFileSync(out, 'utf8'));
   assert.equal(r.score.arms.same.verdict, 'incomplete (not adopted)');

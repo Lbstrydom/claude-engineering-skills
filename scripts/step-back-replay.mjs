@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 /**
  * @fileoverview CLI — the step-back replay harness and its dataset freezer
- * (docs/plans/verification-lessons.md §2.4). A PAID run needs --confirm-spend and
- * --max-usd; --dry-run prints the planned calls and the estimated cost and makes none.
+ * (docs/plans/verification-lessons.md §2.4). A PAID run needs --confirm-spend, --max-usd and --results (a JSONL file
+ * every paid call is appended to BEFORE scoring); --dry-run prints the planned calls and the UPPER-BOUND cost and makes none.
  *
- *   node scripts/step-back-replay.mjs export --branches a,b --since 2026-11-19 --out .audit/step-back-export.json   (READ-ONLY SELECTs)
- *   node scripts/step-back-replay.mjs freeze --export .audit/step-back-export.json --spec docs/research/step-back-replay-spec.json --out docs/research/step-back-replay-2026-11.json
- *   node scripts/step-back-replay.mjs freeze --spec docs/research/step-back-replay-spec.json --out docs/research/step-back-replay-2026-11.json
- *   node scripts/step-back-replay.mjs run --dataset docs/research/step-back-replay-2026-11.json --arms none,same,different --dry-run
- *   node scripts/step-back-replay.mjs run --dataset ... --arms same,different --max-usd 20 --confirm-spend --out .audit/step-back-replay-results.json
+ *   node scripts/step-back-replay.mjs export --branches a,b --since 2026-11-19 --out .audit/step-back-export.json   (READ-ONLY SELECTs, filtered by repo_id)
+ *   node scripts/step-back-replay.mjs propose --export .audit/step-back-export.json        (PROPOSES run-id lists per branch; pins nothing)
+ *   node scripts/step-back-replay.mjs freeze --export .audit/step-back-export.json --spec docs/research/step-back-replay-spec.json --out <dataset.json>
+ *   node scripts/step-back-replay.mjs run --dataset <dataset.json> --arms none,same,different --dry-run
+ *   node scripts/step-back-replay.mjs run --dataset <dataset.json> --arms same,different --max-usd 20 --confirm-spend --results .audit/sbr-calls.jsonl --out .audit/sbr-results.json
+ *   node scripts/step-back-replay.mjs score --dataset <dataset.json> --results .audit/sbr-calls.jsonl [--out <scores.json>]
  *
- * Run a paid replay from a `npm run fixture:create` worktree (a spend-bearing run pins its revision). The spec's
- * `storeRows` are exported from the store's audit_runs by the operator; this CLI never queries the store.
+ * The spec PINS, per PR, the exact ordered `audit_runs.id` list (`runIds`); `propose` prints candidate lists (runs on the
+ * branch, mode=code, contiguous with no gap over 3h) and the operator writes the chosen one into the spec.
+ * Run a paid replay from a `npm run fixture:create` worktree (a spend-bearing run pins its revision).
  *
  * Exit: 0 ok, 2 argument error, 5 stopped by --max-usd (results still written), 1 failure.
  *
@@ -24,30 +26,61 @@ import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { readFlagValue } from './lib/audit/round-cap.mjs';
 import { freezeDataset, scoringPathFor } from './lib/audit/step-back-dataset.mjs';
-import { exportRows, freezeFromExport } from './lib/audit/step-back-export.mjs';
-import { runReplay, scoreReplay, renderDryRun, REPLAY_ARMS } from './lib/audit/step-back-replay.mjs';
+import { exportRows, freezeFromExport, proposeRuns } from './lib/audit/step-back-export.mjs';
+import { runReplay, scoreReplay, renderDryRun, readResultsJsonl, REPLAY_ARMS } from './lib/audit/step-back-replay.mjs';
 
-const KNOWN_FLAGS = ['--spec', '--out', '--dataset', '--arms', '--max-usd', '--dry-run', '--confirm-spend', '--branches', '--since', '--export', '--json', '--selfcheck-relocation'];
+const KNOWN_FLAGS = ['--spec', '--out', '--dataset', '--arms', '--max-usd', '--dry-run', '--confirm-spend', '--branches', '--since', '--export', '--results', '--repo-id', '--json', '--selfcheck-relocation'];
 export const EXIT_BUDGET_STOP = 5;
 
 const writeJson = (p, obj) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, `${JSON.stringify(obj, null, 2)}\n`); };
+
+/** READ-ONLY repo id lookup (a plain SELECT; never `resolveRepoForStoreResult`, which can INSERT a repo row). */
+async function defaultRepoId(query) {
+  const { resolveRepoIdentity } = await import('./lib/repo-identity.mjs');
+  const { repoUuid } = resolveRepoIdentity(process.cwd());
+  const r = await query('SELECT id FROM audit_repos WHERE repo_uuid = $1 LIMIT 1', [repoUuid]);
+  const rows = Array.isArray(r) ? r : r.rows;
+  if (!rows[0]?.id) throw new Error('this repo has no audit_repos row in the store; pass --repo-id');
+  return rows[0].id;
+}
+
+function scoreFrom({ datasetPath, resultsPath, arms, deps }) {
+  const parsed = readResultsJsonl(fs.readFileSync(resultsPath, 'utf8'));
+  // Ground truth is read ONLY here, after every call, and only from the results file's perspective.
+  const truth = (deps.readScoring || ((p) => JSON.parse(fs.readFileSync(p, 'utf8'))))(scoringPathFor(datasetPath)).truth;
+  return { parsed, score: scoreReplay({ calls: parsed.calls, truth, arms: arms || parsed.arms || REPLAY_ARMS, plan: parsed.plan }) };
+}
+
+const summaryOf = (score) => Object.entries(score.arms).map(([a, s]) => `${a}: ${s.verdict} (early ${s.earlyStops}, false ${s.falseStops}, invalid ${s.invalidOutputs})`).join(' | ');
 
 /** @returns {Promise<number>} the exit code */
 export async function main(argv = process.argv.slice(2), deps = {}) {
   if (argv.includes('--selfcheck-relocation')) { console.log('OK'); return 0; }
   const cmd = argv.find((a) => !a.startsWith('--')) || 'run';
   const flag = (f) => readFlagValue(argv, f).value;
+  const query = deps.query || (async (sql, params) => { const pool = await (await import('./lib/db/client.mjs')).getPool(); if (!pool) throw new Error('no audit store configured (AUDIT_DB_URL)'); return pool.query(sql, params); });
 
   if (cmd === 'export') {
     const branches = (flag('--branches') || '').split(',').map((b) => b.trim()).filter(Boolean);
     const since = flag('--since'); const out = flag('--out');
     if (!branches.length || !since || !out) throw new ArgvError('step-back-replay export: --branches <csv>, --since <date> and --out are required.');
     if (Number.isNaN(Date.parse(since))) throw new ArgvError('step-back-replay export: --since must be a date.');
-    // READ-ONLY: SELECTs only (EXPORT_SQL), through the shared pool.
-    const query = deps.query || (async (sql, params) => { const pool = await (await import('./lib/db/client.mjs')).getPool(); if (!pool) throw new Error('no audit store configured (AUDIT_DB_URL)'); return pool.query(sql, params); });
-    const exp = await exportRows({ branches, since, query });
+    const repoId = flag('--repo-id') || await defaultRepoId(query);
+    const exp = await exportRows({ branches, since, repoId, query }); // READ-ONLY: SELECTs only (EXPORT_SQL)
     writeJson(out, exp);
     console.log(`step-back-replay export: ${exp.runs.length} runs, ${exp.findings.length} findings, ${exp.events.length} events for ${branches.length} branch(es) -> ${out}`);
+    return 0;
+  }
+  if (cmd === 'propose') {
+    const exportPath = flag('--export');
+    if (!exportPath) throw new ArgvError('step-back-replay propose: --export is required.');
+    const exp = JSON.parse(fs.readFileSync(exportPath, 'utf8'));
+    for (const branch of exp.branches) {
+      const groups = proposeRuns(exp, branch);
+      console.log(`${branch}: ${groups.length} contiguous group(s)${groups.length === 1 ? '' : ' - AMBIGUOUS, choose one'}`);
+      groups.forEach((g, i) => console.log(`  [${i + 1}] ${g.count} runs ${g.from} .. ${g.to} (${g.shas} with audited_sha)\n      "runIds": ${JSON.stringify(g.runIds)}`));
+    }
+    console.log('Nothing was pinned. Copy the chosen "runIds" into the spec for each PR; freeze refuses a PR without them.');
     return 0;
   }
   if (cmd === 'freeze') {
@@ -61,9 +94,19 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     writeJson(out, dataset); writeJson(scoringPathFor(out), scoring);
     const rec = dataset.prs.filter((p) => p.status === 'recoverable').length;
     console.log(`step-back-replay freeze: ${rec} recoverable, ${dataset.prs.length - rec} unrecoverable -> ${out} (+ ${scoringPathFor(out)})`);
+    for (const p of dataset.prs.filter((x) => x.status !== 'recoverable')) console.log(`  unrecoverable #${p.pr}: ${p.reason}`);
     return 0;
   }
-  if (cmd !== 'run') throw new ArgvError(`step-back-replay: unknown command "${cmd}" (export|freeze|run).`);
+  if (cmd === 'score') {
+    const datasetPath = flag('--dataset'); const resultsPath = flag('--results');
+    if (!datasetPath || !resultsPath) throw new ArgvError('step-back-replay score: --dataset and --results are required.');
+    const { parsed, score } = scoreFrom({ datasetPath, resultsPath, deps });
+    const out = flag('--out');
+    if (out) writeJson(out, { version: 1, dataset: datasetPath, results: resultsPath, spentUsd: parsed.spentUsd, stopped: parsed.stopped, score });
+    console.log(`step-back-replay score: spent $${parsed.spentUsd.toFixed(4)} - ${summaryOf(score)}${out ? ` -> ${out}` : ''}`);
+    return 0;
+  }
+  if (cmd !== 'run') throw new ArgvError(`step-back-replay: unknown command "${cmd}" (export|propose|freeze|run|score).`);
 
   const datasetPath = flag('--dataset');
   if (!datasetPath) throw new ArgvError('step-back-replay run: --dataset is required.');
@@ -74,21 +117,22 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   const maxRaw = flag('--max-usd');
   const maxUsd = maxRaw == null ? null : Number(maxRaw);
   if (maxRaw != null && !(Number.isFinite(maxUsd) && maxUsd > 0)) throw new ArgvError('step-back-replay: --max-usd must be a positive number.');
-  if (!dryRun && (maxUsd == null || !argv.includes('--confirm-spend'))) {
-    throw new ArgvError('step-back-replay: a paid run needs both --max-usd <n> and --confirm-spend (use --dry-run to see the plan and cost).');
+  const resultsPath = flag('--results');
+  if (!dryRun && (maxUsd == null || !argv.includes('--confirm-spend') || !resultsPath)) {
+    throw new ArgvError('step-back-replay: a paid run needs --max-usd <n>, --confirm-spend and --results <file.jsonl> (use --dry-run to see the plan and cost).');
   }
   const dataset = JSON.parse(fs.readFileSync(datasetPath, 'utf8'));
-  const res = await runReplay({ dataset, arms, maxUsd, dryRun, deps });
+  if (!dryRun) { fs.mkdirSync(path.dirname(path.resolve(resultsPath)), { recursive: true }); fs.writeFileSync(resultsPath, ''); }
+  // Every record is appended (and flushed by the synchronous write) as it is produced: a later failure cannot lose paid output.
+  const onRecord = dryRun ? undefined : (rec) => fs.appendFileSync(resultsPath, `${JSON.stringify(rec)}\n`);
+  const res = await runReplay({ dataset, arms, maxUsd, dryRun, deps: { ...deps, onRecord } });
   if (dryRun) { console.log(renderDryRun({ ...res, maxUsd })); return 0; }
 
-  // Ground truth is read ONLY here, after every call.
-  const truth = (deps.readScoring || ((p) => JSON.parse(fs.readFileSync(p, 'utf8'))))(scoringPathFor(datasetPath)).truth;
-  const score = scoreReplay({ calls: res.calls, truth, arms, plan: res.plan });
-  const results = { version: 1, dataset: datasetPath, arms, maxUsd, spentUsd: res.spentUsd, stopped: res.stopped, unrecoverable: res.unrecoverable, calls: res.calls, score };
+  const { parsed, score } = scoreFrom({ datasetPath, resultsPath, arms, deps });
   const out = flag('--out');
-  if (out) writeJson(out, results);
-  const summary = Object.entries(score.arms).map(([a, s]) => `${a}: ${s.verdict} (early ${s.earlyStops}, false ${s.falseStops}, invalid ${s.invalidOutputs})`).join(' | ');
-  console.log(argv.includes('--json') ? JSON.stringify(results, null, 2) : `step-back-replay: spent $${res.spentUsd.toFixed(4)} of $${maxUsd}${res.stopped ? ` - STOPPED (${res.stopped.reason})` : ''} - ${summary}${out ? ` -> ${out}` : ''}`);
+  if (out) writeJson(out, { version: 1, dataset: datasetPath, results: resultsPath, arms, maxUsd, spentUsd: parsed.spentUsd, stopped: res.stopped, unrecoverable: res.unrecoverable, score });
+  console.log(argv.includes('--json') ? JSON.stringify({ spentUsd: parsed.spentUsd, stopped: res.stopped, score }, null, 2)
+    : `step-back-replay: spent $${parsed.spentUsd.toFixed(4)} of $${maxUsd}${res.stopped ? ` - STOPPED (${res.stopped.reason})` : ''} - ${summaryOf(score)}${out ? ` -> ${out}` : ''}`);
   return res.stopped ? EXIT_BUDGET_STOP : 0;
 }
 

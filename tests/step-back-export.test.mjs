@@ -1,13 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { EXPORT_SQL, exportRows, buildExportSnapshot, freezeFromExport, effectiveEvent, branchRuns } from '../scripts/lib/audit/step-back-export.mjs';
+import { EXPORT_SQL, exportRows, buildExportSnapshot, freezeFromExport, effectiveEvent, pinnedRuns, proposeRuns } from '../scripts/lib/audit/step-back-export.mjs';
 import { createRevisionFs, parseLsTree } from '../scripts/lib/audit/step-back-gitfs.mjs';
 import { runReplay, renderDryRun } from '../scripts/lib/audit/step-back-replay.mjs';
 import { buildStepBackPack } from '../scripts/lib/audit/step-back.mjs';
 
 const at = (h, m = 0) => `2026-11-20T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00.000Z`;
 const SHA = (c) => c.repeat(40);
+const B1 = ['r1', 'r2', 'r3', 'r4'];
+const B2 = ['m1', 'm2', 'm3'];
+const CTL = ['c1', 'c2'];
 
 function fixture() {
   const runs = [
@@ -36,8 +39,8 @@ function fixture() {
 
 test('ordinal rounds; no look-ahead: an event after the cutoff or from a later round is ignored', () => {
   const exp = fixture();
-  assert.deepEqual(branchRuns(exp, 'b1').map((r) => r.id), ['r1', 'r2', 'r3', 'r4']);
-  const s = buildExportSnapshot({ exp, branch: 'b1', checkpoint: 3 });
+  assert.deepEqual(pinnedRuns(exp, B1).runs.map((r) => r.id), B1);
+  const s = buildExportSnapshot({ exp, runIds: B1, checkpoint: 3 });
   assert.equal(s.ok, true);
   const byId = Object.fromEntries(s.snapshot.ledgerEntries.map((e) => [e.findingId, e]));
   assert.equal(byId.F1.adjudicationOutcome, 'dismissed', 'E3 (round 4, after cutoff) is ignored');
@@ -49,7 +52,7 @@ test('ordinal rounds; no look-ahead: an event after the cutoff or from a later r
 
 test('superseded and overridden events are not effective as of the cutoff', () => {
   const exp = fixture();
-  const byId = Object.fromEntries(buildExportSnapshot({ exp, branch: 'b1', checkpoint: 3 }).snapshot.ledgerEntries.map((e) => [e.findingId, e]));
+  const byId = Object.fromEntries(buildExportSnapshot({ exp, runIds: B1, checkpoint: 3 }).snapshot.ledgerEntries.map((e) => [e.findingId, e]));
   assert.equal(byId.F3, undefined, 'E5 superseded at 12:30, before the 13:00 cutoff');
   assert.equal(byId.F5.adjudicationOutcome, 'dismissed', 'E6 overrides E7');
   const evs = [{ id: 'X', round: 1, created_at: at(10), adjudication_outcome: 'accepted', superseded_at: at(14), overrides_event_id: null }];
@@ -59,11 +62,11 @@ test('superseded and overridden events are not effective as of the cutoff', () =
 
 test('missing audited_sha is unrecoverable; fewer than 3 rounds is a control; truth is final-event based and kept apart', () => {
   const exp = fixture();
-  const m = buildExportSnapshot({ exp, branch: 'b2', checkpoint: 3 });
+  const m = buildExportSnapshot({ exp, runIds: B2, checkpoint: 3 });
   assert.deepEqual([m.ok, m.status], [false, 'unrecoverable']);
   assert.match(m.reason, /no audited_sha/);
   const { dataset, scoring } = freezeFromExport({ exp, exportPath: 'x.json', spec: { prs: [
-    { pr: 1, label: 'bad', branch: 'b1' }, { pr: 2, label: 'bad', branch: 'b2' }, { pr: 3, label: 'converged', branch: 'ctl' }, { pr: 4, label: 'bad', branch: 'nope' }] } });
+    { pr: 1, label: 'bad', branch: 'b1', runIds: B1 }, { pr: 2, label: 'bad', branch: 'b2', runIds: B2 }, { pr: 3, label: 'converged', branch: 'ctl', runIds: CTL }, { pr: 4, label: 'bad', branch: 'nope' }] } });
   const by = Object.fromEntries(dataset.prs.map((p) => [p.pr, p]));
   assert.deepEqual(by[1].checkpoints.map((c) => [c.checkpoint, c.status]), [[3, 'recoverable']]);
   assert.equal(by[2].checkpoints[0].status, 'unrecoverable');
@@ -82,10 +85,14 @@ test('export is read-only: every statement is a SELECT with no write keyword', a
   }
   const seen = [];
   const exp = fixture();
-  const query = async (sql) => { seen.push(sql); return { rows: sql === EXPORT_SQL.runs ? exp.runs : sql === EXPORT_SQL.findings ? exp.findings : exp.events }; };
-  const out = await exportRows({ branches: ['b1'], since: '2026-11-19', query });
+  const params = [];
+  const query = async (sql, p) => { seen.push(sql); params.push(p); return { rows: sql === EXPORT_SQL.runs ? exp.runs : sql === EXPORT_SQL.findings ? exp.findings : exp.events }; };
+  const out = await exportRows({ branches: ['b1'], since: '2026-11-19', repoId: 'repo-1', query });
   assert.deepEqual(seen, [EXPORT_SQL.runs, EXPORT_SQL.findings, EXPORT_SQL.events]);
   assert.equal(out.runs.length, exp.runs.length);
+  assert.match(EXPORT_SQL.runs, /repo_id = \$3/, 'H3: runs are filtered by repo as well as branch');
+  assert.equal(params[0][2], 'repo-1');
+  await assert.rejects(() => exportRows({ branches: ['b1'], since: '2026-11-19', query }), /repo id is required/);
 });
 
 function fakeGit(files, { badSha = false } = {}) {
@@ -132,7 +139,7 @@ test('gitfs: content at the revision; symlink entries, missing and sensitive pat
 test('dry-run over a synthetic export: planned calls and estimate; controls and unrecoverable listed; no provider call', async () => {
   const exp = fixture();
   const { dataset } = freezeFromExport({ exp, exportPath: 'x.json', spec: { prs: [
-    { pr: 1, label: 'bad', branch: 'b1' }, { pr: 2, label: 'bad', branch: 'b2' }, { pr: 3, label: 'converged', branch: 'ctl' }] } });
+    { pr: 1, label: 'bad', branch: 'b1', runIds: B1 }, { pr: 2, label: 'bad', branch: 'b2', runIds: B2 }, { pr: 3, label: 'converged', branch: 'ctl', runIds: CTL }] } });
   const g = fakeGit(FILES);
   let calls = 0;
   const res = await runReplay({ dataset, arms: ['none', 'same', 'different'], dryRun: true, deps: {
@@ -144,7 +151,44 @@ test('dry-run over a synthetic export: planned calls and estimate; controls and 
   assert.deepEqual(res.controls.map((c) => c.pr), [3]);
   assert.deepEqual(res.unrecoverable.map((u) => [u.pr, u.checkpoint]), [[2, 3]]);
   const text = renderDryRun({ ...res, maxUsd: 20 });
-  assert.match(text, /planned calls: 2 \(1 PR-checkpoints\), estimated total \$\d+\.\d\d against a hard stop of \$20\.00/);
+  assert.match(text, /planned calls: 2 \(1 PR-checkpoints\), UPPER-BOUND total \$\d+\.\d\d against a hard stop of \$20\.00/);
   assert.match(text, /controls \(no checkpoint, no call\): #3 \(2 rounds\)/);
   assert.match(text, /unrecoverable.*#2 R3 \(run 3 has no audited_sha\)/);
+});
+
+test('H8: with no run N+1 there is NO time cutoff, so the round-N rulings (written after run N) are kept', () => {
+  const exp = fixture();
+  // b3 has exactly 3 runs; F9's round-3 ruling was written AFTER run 3 was created.
+  exp.runs.push({ id: 'x1', branch: 'b3', audited_sha: SHA('a'), created_at: at(10), plan_file: 'plan.md' }, { id: 'x2', branch: 'b3', audited_sha: SHA('b'), created_at: at(11), plan_file: 'plan.md' }, { id: 'x3', branch: 'b3', audited_sha: SHA('c'), created_at: at(12), plan_file: 'plan.md' });
+  exp.findings.push({ id: 'F9', run_id: 'x3', finding_fingerprint: 'fp-F9', severity: 'HIGH', category: 'c', primary_file: 'src/a.mjs', detail_snapshot: 'd', round_raised: 3, created_at: at(12) });
+  exp.events.push({ id: 'E9', finding_id: 'F9', adjudication_outcome: 'accepted', remediation_state: 'pending', ruling: null, round: 3, created_at: at(12, 30), superseded_at: null, overrides_event_id: null });
+  exp.events.push({ id: 'E10', finding_id: 'F9', adjudication_outcome: 'dismissed', remediation_state: 'pending', ruling: null, round: 4, created_at: at(14), superseded_at: null, overrides_event_id: null });
+  const e = buildExportSnapshot({ exp, runIds: ['x1', 'x2', 'x3'], checkpoint: 3 }).snapshot.ledgerEntries.find((x) => x.findingId === 'F9');
+  assert.equal(e.adjudicationOutcome, 'accepted', 'kept via the round <= 3 filter alone; the round-4 event is ignored');
+});
+
+test('H7/H20: the spec pins exact run ids; a PR without them, or with a listed run missing, is refused', () => {
+  const exp = fixture();
+  const f = freezeFromExport({ exp, exportPath: 'x', spec: { prs: [
+    { pr: 1, label: 'bad', branch: 'b1' }, { pr: 2, label: 'bad', branch: 'b1', runIds: ['r1', 'r2', 'GHOST'] }, { pr: 3, label: 'bad', branch: 'b1', runIds: B1 }] } });
+  assert.match(f.dataset.prs[0].reason, /pins no runIds/);
+  assert.match(f.dataset.prs[1].reason, /1 of 3 pinned runs are not in the export/);
+  assert.equal(f.dataset.prs[2].status, 'recoverable');
+  assert.equal(f.scoring.truth[1], undefined);
+});
+
+test('H7: proposeRuns groups contiguous mode=code runs (gap <= 3h), proposes only, and flags ambiguity', () => {
+  const exp = fixture();
+  exp.runs.push({ id: 'late1', branch: 'b1', audited_sha: SHA('9'), created_at: at(20), plan_file: 'plan.md', mode: 'code' }, { id: 'plan1', branch: 'b1', audited_sha: SHA('9'), created_at: at(12, 30), plan_file: 'plan.md', mode: 'plan' });
+  const g = proposeRuns(exp, 'b1');
+  assert.equal(g.length, 2, 'a 7h gap splits the branch into two candidate sessions');
+  assert.deepEqual(g[0].runIds, B1, 'the plan-mode run is not proposed');
+  assert.deepEqual(g[1].runIds, ['late1']);
+});
+
+test('H9: a checkpoint is advertised only if rounds 1..N are all present', () => {
+  const exp = fixture();
+  assert.equal(buildExportSnapshot({ exp, runIds: ['r1', 'r2', 'GHOST', 'r4'], checkpoint: 3 }).ok, false);
+  assert.match(buildExportSnapshot({ exp, runIds: ['r1', 'r2', 'GHOST', 'r4'], checkpoint: 3 }).reason, /missing/);
+  assert.equal(buildExportSnapshot({ exp, runIds: ['r1', 'r2'], checkpoint: 3 }).ok, false);
 });

@@ -7,9 +7,10 @@
  *   - the per-round ledger snapshot `<sid>-r<checkpoint>-ledger.json` the audit
  *     wrote AT that round — never a filter over the final, mutable ledger, which
  *     does not keep earlier field values.
- * Provenance is checked: the result's round, sid and audited sha, and the
- * snapshot's own round/audited-sha when it records them, must agree, and no
- * ledger entry may mention a round after the checkpoint. A checkpoint whose data
+ * Provenance is checked: the result's round and audited sha, and the snapshot's own
+ * round/audited-sha when it records them, must agree, and no ledger entry may mention a round after the checkpoint.
+ * Session IDENTITY is NOT checked: a result's internal `_sid` is not the file-name sid (they differ in real audits), so
+ * the file-name convention is the only binding between a result and its session; the store-backed path pins run ids instead. A checkpoint whose data
  * is missing or disagrees is `unrecoverable` with the reason — never reconstructed.
  *
  * Ground truth (the final ledger's accepted-HIGH rounds) is NOT read here; it is

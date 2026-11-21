@@ -22,6 +22,7 @@ import { computeRoundSignals, renderRoundSignals, makeGitRunner } from './round-
 import { initialStepBackRecord, buildStepBackPack, runStepBack } from './step-back.mjs';
 import { discoverRoundResults, readRoundResult } from './transcript.mjs';
 import { readLedgerEntries } from './cap-productivity.mjs';
+import { classifyPath } from '../sensitive-paths.mjs';
 
 const execFileP = promisify(execFile);
 
@@ -72,7 +73,10 @@ export async function buildCheckpointSection({ sid, mode, round, planFile = null
     if (post) lines.push(post);
     return { checkpoint, signals: null, record: null, pack: null, usage: null, lines };
   }
-  const ledger = (deps.readLedger || readLedgerEntries)({ sid, auditDir });
+  const ledgerAll = (deps.readLedger || readLedgerEntries)({ sid, auditDir });
+  // As-of boundary: an entry that mentions a round after the checkpoint is later state and is not read (M6).
+  const laterRound = (e) => ['round', 'firstSeenRound', 'lastSeenRound', 'resolvedRound'].some((k) => Number.isInteger(e?.[k]) && e[k] > checkpoint);
+  const ledger = ledgerAll.entries ? { ...ledgerAll, entries: ledgerAll.entries.filter((e) => !laterRound(e)) } : ledgerAll;
   const signals = computeRoundSignals({ round: checkpoint, rounds, ledgerEntries: ledger.entries, git: deps.git || makeGitRunner(cwd) });
   let record = initialStepBackRecord({ round: checkpoint, signals });
   lines.push(renderRoundSignals(signals));
@@ -111,6 +115,7 @@ export function defaultArchNeighbours(cwd) {
     const { stdout } = await execFileP(process.execPath, ['scripts/cross-skill.mjs', 'get-neighbourhood', '--json', JSON.stringify({ targetPaths: files, intentDescription: intent, k: 8 })], { cwd, maxBuffer: 16 * 1024 * 1024, timeout: 120_000 });
     const line = stdout.split('\n').reverse().find((l) => l.startsWith('{'));
     const j = line ? JSON.parse(line) : null;
-    return (j?.records || []).map((r) => ({ symbol: r.symbolName, file: r.filePath, purpose: r.purposeSummary, recommendation: r.recommendation }));
+    // Neighbour source paths are classified like any other egress path (H2): a sensitive one is dropped.
+    return (j?.records || []).filter((r) => classifyPath(String(r.filePath || '')) !== 'sensitive').map((r) => ({ symbol: r.symbolName, file: r.filePath, purpose: r.purposeSummary, recommendation: r.recommendation }));
   };
 }

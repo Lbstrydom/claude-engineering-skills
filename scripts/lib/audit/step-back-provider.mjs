@@ -28,7 +28,7 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
   const model = resolve(sentinel);
   if (arm === 'same') {
     return {
-      model, sentinel,
+      model, sentinel, outputCeilingTokens: STEP_BACK_MAX_OUTPUT_TOKENS,
       call: async ({ system, user }) => {
         const c = client || await (await import('../openai-client.mjs')).createOpenAIClient({ purpose: 'gpt' });
         const r = await c.responses.create({ model, instructions: system, input: user, max_output_tokens: STEP_BACK_MAX_OUTPUT_TOKENS });
@@ -37,7 +37,8 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
     };
   }
   return {
-    model, sentinel,
+    // Gemini thinking tokens are billed as output and are not bounded by maxOutputTokens: budget a 4x ceiling.
+    model, sentinel, outputCeilingTokens: STEP_BACK_MAX_OUTPUT_TOKENS * 4,
     call: async ({ system, user }) => {
       const ai = client || await (await import('../llm-wrappers.mjs')).getGeminiClient();
       if (!ai) throw new Error('no Gemini route (GEMINI_API_KEY unset)');
