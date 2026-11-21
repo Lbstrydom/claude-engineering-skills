@@ -24,7 +24,7 @@ import {
 import { samePath as samePathOnPlatform } from '../harness-paths.mjs';
 import { listPullRequests, materializePrRef, prSourceIdentity } from './gh-facts.mjs';
 import {
-  claimMode, decideClaim, idleMsFrom, isBlockingConflict, isTerminalState, splitHidden, validateClaimPatterns,
+  broadClaimPatterns, claimMode, decideClaim, idleMsFrom, isBlockingConflict, isTerminalState, splitHidden, validateClaimPatterns,
 } from './overlap.mjs';
 import { renderClaimVerdict, renderStatus, renderUnregistered } from './render.mjs';
 import {
@@ -445,18 +445,21 @@ export function cmdClaim(ctx, flags) {
   const v = tx.value;
   if (v.code === 'argv') throw new ArgvError(v.reason);
   const forkRefused = v.record && v.record.source.kind === 'branch' ? stackBase?.refused : undefined;
+  const broad = v.record ? broadClaimPatterns(v.record.paths) : [];
   if (forkRefused) process.stderr.write(`warning: fleet claim --base ${stackBase.name}: ${forkRefused}\n`);
   const text = renderClaimVerdict(v.verdict, { id, cmd: ctx.cmd, measure: facts.base.measure, baseName: ctx.config.baseBranch, sharedConfig: ctx.config })
     + (!start.ok && v.mode === 'new' && v.record ? `
 warning: startOid not recorded — ${start.reason}` : '')
     + (v.record ? `\n${v.mode === 'new' ? 'registered' : 'updated'} ${id} (gen ${v.record.gen}, rev ${v.record.rev}): ${v.record.intent}${v.verdict.overridden ? '\n  --override: recorded as a known overlap on both sessions' : ''}` : '')
     + (v.record ? bindingWarnings(v.record).map((w) => `\nwarning: ${w}`).join('') : '')
+    + (broad.length ? `\nwarning: broad claim ${broad.join(', ')} — it overlaps every sibling that touches that folder and blocks them whether or not their files meet; claim the files you will edit (${ctx.cmd} claim --paths <those files>, which replaces this claim's paths)` : '')
     + (v.record ? toolingWarningLine(ctx, v.record.worktree) : '');
   const good = v.verdict.verdict === 'ok' || v.verdict.verdict === 'warn' || v.verdict.overridden;
   return {
     ok: Boolean(good), code: good ? 'ok' : 'refused', id, mode: v.mode, verdict: v.verdict.verdict, overridden: Boolean(v.verdict.overridden),
     ...(!start.ok && v.mode === 'new' ? { startOidWarning: start.reason } : {}),
     ...(forkRefused ? { stackBaseWarning: forkRefused } : {}),
+    ...(broad.length ? { broadPatterns: broad } : {}),
     conflicts: v.verdict.conflicts, ...(v.verdict.reason ? { reason: v.verdict.reason } : {}), ...(v.record ? { record: v.record } : {}), text,
   };
 }

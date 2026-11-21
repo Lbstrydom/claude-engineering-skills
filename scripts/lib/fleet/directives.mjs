@@ -9,7 +9,7 @@
  * mixed-version fleet keeps working.
  *
  * Invariants:
- *  - **Closed vocabulary.** A directive kind is one of five safe actions; no
+ *  - **Closed vocabulary.** A directive kind is one of six safe actions (`narrow` asks a session to narrow its OWN claim); no
  *    merge, push, override or delete is expressible. The schema is the boundary.
  *  - **Version dispatch.** A record of an unknown `schemaVersion`, or a v1
  *    directive of an unknown kind, is collected as `unsupported`: listed, never
@@ -34,7 +34,7 @@ import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { TRAIN_ID_RE, assertManaged, storageKey } from './registry.mjs';
 
-export const DIRECTIVE_KINDS = Object.freeze(['pause', 'resume', 'rebase', 'release', 'rerun-ready']);
+export const DIRECTIVE_KINDS = Object.freeze(['pause', 'resume', 'rebase', 'release', 'rerun-ready', 'narrow']);
 export const REASON_KINDS = Object.freeze(['pr-merged', 'hold', 'train', 'note']);
 export const DIRECTIVE_ID_RE = /^d-[0-9]{14}-[0-9a-f]{4}$/;
 /** At most this many active directives are read at a checkpoint. */

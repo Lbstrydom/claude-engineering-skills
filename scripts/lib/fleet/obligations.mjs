@@ -17,7 +17,7 @@
  */
 import { advanceTouching } from './merged-facts.mjs';
 import { isOpenFor } from './directives.mjs';
-import { isTerminalState, mergedWhat } from './overlap.mjs';
+import { broadClaimPatterns, isTerminalState, mergedWhat } from './overlap.mjs';
 import { renderCommand } from './shell-quote.mjs';
 
 /** A lease that lapses within this window is worth a `touch`. */
@@ -30,13 +30,14 @@ export const KIND_ACTION = Object.freeze({
   rebase: 'restack your branch onto the base (fleet restack; adopt the -restack ref yourself)',
   release: 'run fleet archive-check, then fleet release',
   'rerun-ready': 're-test, then run fleet ready',
+  narrow: 'narrow your claim to the files you actually edit (fleet claim --paths <those files>; it replaces the recorded paths)',
 });
 
 /**
  * Safety priority among obligations of the same act: a hold must survive footer
  * truncation, then work the session would otherwise lose, then hygiene.
  */
-const PRIORITY = Object.freeze({ hold: 0, directive: 1, merged: 2, 'partially-merged': 3, 'base-advanced': 4, 'ready-stale': 5, lease: 6 });
+const PRIORITY = Object.freeze({ hold: 0, directive: 1, merged: 2, 'partially-merged': 3, 'base-advanced': 4, 'ready-stale': 5, lease: 6, 'broad-claim': 7 });
 
 const prOf = (ref) => (typeof ref === 'string' && /^#\d+$/.test(ref) ? Number(ref.slice(1)) : null);
 
@@ -55,6 +56,11 @@ export function verifyDirective(d, { obligations = [], hold = null, advance = nu
     if (r.kind !== 'hold') return { status: 'unverified', why: `a ${d.kind} must cite the hold event (--reason hold)` };
     if (r.ref !== hold?.at) return { status: 'superseded', why: `it cites hold event ${r.ref}, but the current hold event is ${hold?.at ?? 'none'}` };
     return { status: 'verified', why: `the current hold (${on ? 'on' : 'off'} at ${hold.at}) matches` };
+  }
+  // `narrow` is verified by the fact itself (a broad claim that overlaps a sibling), whatever reason the coordinator gave.
+  if (d.kind === 'narrow') {
+    const b = obligations.find((o) => o.kind === 'broad-claim');
+    return b ? { status: 'verified', why: b.text } : { status: 'unverified', why: 'fleet sees no broad claim of yours that overlaps another session' };
   }
   if (r.kind === 'note') return { status: 'unverified', why: 'a note is not a fact fleet can check — ask the user' };
   if (d.kind === 'release') {
@@ -130,6 +136,11 @@ export function deriveObligations({ item, session = null, advance = null, myFile
   for (const o of item?.overlaps ?? []) {
     if (o.known) continue;
     add('overlap', 'info', `overlaps ${o.with} (${o.via.join('+')})${o.files?.length ? ` on ${o.files.join(', ')}` : ''}${o.uncommittedFiles?.length ? ` · uncommitted: ${o.uncommittedFiles.join(', ')}` : ''}`);
+  }
+  const broad = broadClaimPatterns(session?.paths ?? item?.paths ?? []);
+  const blocked = (item?.overlaps ?? []).filter((o) => !o.known);
+  if (broad.length && blocked.length) {
+    add('broad-claim', 'info', `your claim ${broad.join(', ')} is broad and overlaps ${blocked.map((o) => o.with).join(', ')}: claim the files you actually edit`, { patterns: broad, with: blocked.map((o) => o.with) });
   }
   const notes = [];
   const views = [];

@@ -14,6 +14,7 @@
  *   start --task … [--paths …]…     atomic all-or-nothing batch of chip worktrees
  *   repair --quarantine <file>      move one invalid record aside (human-run)
  *   release [--id] [--abandoned]    retire a claim now (done / abandoned)
+ *   release --stale-ready [--days N] [--apply]  retire landed ready sessions, invalidate old dead marks (dry run unless --apply)
  *   archive-check [<id|branch|path>] what removing a worktree would lose (read-only)
  *   prune [--apply [--remote] [--include-fresh]]  branches/worktrees removable with nothing lost: the commands (read-only), or run them
  *   archive <worktree|branch|id> [--apply] [--discard-ignored] [--include-fresh]  snapshot to a local archive/* tag, verify, remove

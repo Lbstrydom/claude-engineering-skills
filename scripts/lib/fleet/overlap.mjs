@@ -86,6 +86,29 @@ export function validateClaimPatterns(list) {
   return { ok: errors.length === 0, errors };
 }
 
+/**
+ * The claim patterns that are BROAD: the LAST segment is exactly `*` or `**` and the LITERAL prefix (the leading segments
+ * holding no `*`/`?`) has at most two segments - `tests/**`, `app/views/**`, `**`, `src/*`, `src/*\/lib/**`. Such a claim
+ * intersects nearly every sibling that touches the folder, so it blocks them whether or not their files meet. A last
+ * segment like `*.test.mjs` is not whole-segment and stays narrow. Patterns are the validated claim grammar
+ * (repo-relative, `/`-separated); an invalid one is never classified broad (it is refused elsewhere).
+ * @param {string[]} paths
+ * @returns {string[]}
+ */
+export function broadClaimPatterns(paths) {
+  const out = [];
+  for (const p of paths ?? []) {
+    if (!validateClaimPattern(p).ok) continue;
+    const segs = p.split('/');
+    const last = segs[segs.length - 1];
+    if (last !== '*' && last !== '**') continue;
+    let prefix = 0;
+    while (prefix < segs.length - 1 && !/[*?]/.test(segs[prefix])) prefix += 1;
+    if (prefix <= 2) out.push(p);
+  }
+  return out;
+}
+
 /** Wildcard-intersection DP over two already-split character arrays. */
 function charsIntersect(a, b) {
   const memo = new Map();
@@ -843,6 +866,41 @@ export const DEFAULT_STALE_WORKTREE_DAYS = 3;
 
 /** The idle window in ms from a resolved config (`hideIdleAfterDays`, else the default). */
 export const idleMsFrom = (config) => (config?.hideIdleAfterDays ?? DEFAULT_IDLE_DAYS) * DAY_MS;
+
+export const STALE_READY_DEFAULT_DAYS = 14;
+export const STALE_READY_MAX_DAYS = 3650;
+
+/**
+ * Stale ready marks (plan cluster 2, D3), from status items. Two classes, each judged on evidence it can READ:
+ *  - `landed`: merged evidence is `known` and `merged === true` (it covers the branch's EXACT current tip; `'partially'`
+ *    means commits came after the merge and is NOT landed) - the mark is moot, the work is on base.
+ *  - `aged`: merged evidence is `known` and not `true`, the head moved since the mark (`readyStale`), and the mark
+ *    (`ready.at`) is at least `days` old. Age plus a moved head proves the MARK is dead, never that the session is -
+ *    the caller invalidates the mark and leaves the session and its claim alone.
+ * Unreadable merged evidence (or none gathered) lists the session in `skipped` with the reason, in neither class: an old
+ * mark may be a merged one we cannot see. A missing or unparseable `ready.at` is skipped, never aged.
+ * @param {object[]} items status items
+ * @param {{now: Date|number|string, days?: number}} opts `days`: a whole number 1..STALE_READY_MAX_DAYS
+ * @returns {{landed: object[], aged: object[], skipped: Array<{id: string, reason: string}>}}
+ */
+export function staleReadyMarks(items, { now, days = STALE_READY_DEFAULT_DAYS }) {
+  const nowMs = toMs(now);
+  if (nowMs === null) throw new Error('staleReadyMarks: `now` is required');
+  if (!Number.isInteger(days) || days < 1 || days > STALE_READY_MAX_DAYS) throw new Error(`staleReadyMarks: days must be a whole number from 1 to ${STALE_READY_MAX_DAYS}`);
+  const out = { landed: [], aged: [], skipped: [] };
+  for (const i of items) {
+    if (!i.tracked || i.state !== 'ready' || !i.ready) continue;
+    const key = { id: i.id, gen: i.gen, rev: i.rev, readyOid: i.ready.oid, tip: i.oid ?? null };
+    const m = i.merged;
+    if (!m || m.known !== true) { out.skipped.push({ id: i.id, reason: m?.reason ? `merged evidence unreadable (${m.reason})` : 'merged evidence not gathered' }); continue; }
+    if (m.merged === true) { out.landed.push({ ...key, class: 'landed', via: m.via ?? null, pr: m.pr ?? null }); continue; }
+    if (!i.readyStale) continue;
+    const at = Date.parse(i.ready.at);
+    if (!Number.isFinite(at)) { out.skipped.push({ id: i.id, reason: 'the ready mark has no valid timestamp' }); continue; }
+    if (nowMs - at >= days * DAY_MS) out.aged.push({ ...key, class: 'aged', ageDays: Math.floor((nowMs - at) / DAY_MS) });
+  }
+  return out;
+}
 
 /**
  * Is a branch tip older than the idle window? Every unknown answers false: a
