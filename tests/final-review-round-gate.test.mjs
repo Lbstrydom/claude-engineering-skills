@@ -32,7 +32,7 @@ function finding(overrides = {}) {
     section: 'scripts/lib/foo.mjs:10',
     detail: 'readConfig swallows the parse error and returns an empty object, hiding a corrupt config file',
     risk: 'a corrupt config silently resets every setting to default',
-    recommendation: 'rethrow with the file path', is_quick_fix: false, is_mechanical: false,
+    recommendation: 'rethrow with the file path', is_quick_fix: false, importance: 'important', pre_existing: false, newly_reachable: false, is_mechanical: false,
     principle: 'Fail loudly', is_reopened: false,
     classification: { sonarType: 'BUG', effort: 'EASY', sourceKind: 'REVIEWER', sourceName: 'gemini' },
     release_blocking: false, blocking_basis: 'none', _hash: 'abcd1234',

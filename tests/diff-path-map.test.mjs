@@ -159,7 +159,7 @@ describe('prepareCandidates — the untrusted producer boundary (D6, §7g)', () 
   const producerSchema = makeProducerFindingV3Schema(map.entries.map((e) => e.id));
   const base = {
     id: 'H1', severity: 'HIGH', category: 'c', section: 's', detail: 'd', risk: 'r',
-    recommendation: 'rec', is_quick_fix: false, is_mechanical: false, principle: 'p',
+    recommendation: 'rec', is_quick_fix: false, importance: 'important', pre_existing: false, newly_reachable: false, is_mechanical: false, principle: 'p',
     classification: { sonarType: 'CODE_SMELL', effort: 'TRIVIAL', sourceKind: 'MODEL', sourceName: 'sonnet' },
   };
   const commission = (anchor) => ({ ...base, evidenceType: 'commission', anchor });
