@@ -11,7 +11,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv } from './helpers/fleet-repo.mjs';
+import os from 'node:os';
 import { git } from './helpers/git.mjs';
+import { setup as harness } from './helpers/fleet-cli-harness.mjs';
+import { addBranch } from './helpers/fleet-repo.mjs';
 import { T0, world } from './helpers/fleet-lease-world.mjs';
 import { emptyLease } from '../scripts/lib/fleet/lease.mjs';
 import { endTurnWorkGone } from '../scripts/lib/fleet/lease-turns.mjs';
@@ -198,6 +201,32 @@ describe('D1 fleet release ends the turn of a repo whose work is gone (the 16:17
   });
 });
 
+describe('D1 end to end through the real facts pipeline (merged evidence, a real CI window)', () => {
+  it('releasing a squash-merged last session clears its running CI window and ends its turn, and journals why', () => {
+    const s = harness();
+    const machine = fs.mkdtempSync(path.join(os.tmpdir(), 'c2-machine-'));
+    const env = { FLEET_MACHINE_DIR: machine, FLEET_NOW: T0, FLEET_TELEMETRY: 'off' };
+    addBranch(s.fx.repo, 'feat-a', { 'shared/a.txt': 'A\n' });
+    git(['checkout', '-q', 'feat-a'], s.fx.repo);
+    assert.equal(s.f(['claim', '--id', 'feat-a', '--intent', 'work on a', '--paths', 'shared/a.txt', '--json'], { env }).status, 0);
+    git(['checkout', '-q', 'main'], s.fx.repo);
+    git(['merge', '-q', '--squash', 'feat-a'], s.fx.repo);
+    git(['commit', '-q', '-m', 'squash feat-a'], s.fx.repo);
+    const ann = s.f(['lease', 'announce', '--kind', 'ci', '--until', '+30m', '--json'], { env });
+    assert.equal(ann.status, 0, ann.stdout + ann.stderr);
+    const leaseFile = path.join(machine, 'lease.json');
+    assert.equal(JSON.parse(fs.readFileSync(leaseFile, 'utf8')).windows.filter((w) => w.kind === 'ci').length, 1, 'precondition: a running CI window');
+    const r = s.f(['release', '--id', 'feat-a', '--json'], { env });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(r.json.leaseStep.windowsCleared, 1, JSON.stringify(r.json.leaseStep));
+    const lease = JSON.parse(fs.readFileSync(leaseFile, 'utf8'));
+    assert.deepEqual(lease.windows.filter((w) => w.kind === 'ci'), []);
+    assert.equal(lease.journal.find((e) => e.kind === 'window-cleared').reason, 'work-gone');
+    assert.equal(lease.turn, undefined);
+    assert.match(r.stdout, /cleared 1 CI window\(s\) \(the work merged\)/);
+  });
+});
+
 describe('D2 broad claims', () => {
   it('classifies by the last whole-segment wildcard over a literal prefix of at most two segments', () => {
     assert.deepEqual(broadClaimPatterns(['tests/**', '**', '*', 'app/views/**', 'src/*', 'src/*/lib/**']), ['tests/**', '**', '*', 'app/views/**', 'src/*', 'src/*/lib/**']);
@@ -370,13 +399,16 @@ describe('D3 fleet release --stale-ready through the command', () => {
     const s = setup();
     mark(s.dir, 'one', { state: 'ready', ready: old(), rev: 5 });
     mark(s.dir, 'two', { state: 'ready', ready: old(), rev: 5 });
-    // The clock's toISOString throws, so the invalidation write (which stamps updatedAt) fails inside the transaction.
-    const brokenClock = Object.assign(new Date(NOW), { toISOString() { throw new Error('disk full'); } });
-    const r = cmdReleaseStaleReady({ ...s.ctx, now: brokenClock }, { '--apply': true }, { items: itemsFor(s.dir, {}, s.tip) });
+    // The clock's toISOString (which stamps updatedAt inside each item's transaction) works for the FIRST write and throws for the second.
+    let stamps = 0;
+    const flakyClock = Object.assign(new Date(NOW), { toISOString() { stamps += 1; if (stamps > 1) throw new Error('disk full'); return NOW.toISOString(); } });
+    const r = cmdReleaseStaleReady({ ...s.ctx, now: flakyClock }, { '--apply': true }, { items: itemsFor(s.dir, {}, s.tip) });
     assert.equal(r.ok, false, 'a failed item makes the command a refusal');
-    assert.deepEqual(r.results.map((x) => x.retirement), ['failed', 'failed'], 'both were attempted');
-    assert.match(r.results[0].reason, /registry write failed \(disk full\)/);
-    assert.equal(transact(s.dir, (t) => t.sessions.filter((x) => x.state === 'ready').length).value, 2, 'nothing half-written');
+    assert.deepEqual(r.results.map((x) => x.retirement), ['invalidated', 'failed'], 'the earlier item committed, the failing one is reported, the loop did not abort');
+    assert.match(r.results[1].reason, /registry write failed \(disk full\)/);
+    const after = transact(s.dir, (t) => t.sessions).value;
+    assert.equal(after.find((x) => x.id === 'one').state, 'working', 'progress stands');
+    assert.equal(after.find((x) => x.id === 'two').state, 'ready', 'the failed one is untouched');
   });
   it('--apply skips an item whose class changed between the listing and the apply (aged -> landed) and one whose record moved', () => {
     const s = setup();
