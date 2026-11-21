@@ -1726,6 +1726,36 @@ REPORTS — never reconciles — a disagreement between the folded event stream 
 the row's `state` column, since the two are written in one transaction and can
 only diverge via an out-of-band write.
 
+**When your store is private by policy: `upstream report --export`.** A consumer
+that declares `"upstreamReachable": false` (above) cannot have its reports read
+by the maintainer, so the report travels by hand. Add `--export --slug SLUG` to
+the same command (SLUG is `[a-z0-9-]{1,32}` and must not be one of your own
+repo, owner or package names). The body must come on **stdin**: an argv `--body`
+is refused with `--export`, because a backtick in it runs as command substitution.
+
+```powershell
+Get-Content body.txt | node scripts/.claude-skills/cross-skill.mjs upstream report --export --slug consumer-a --title "Sync drops a line" --severity HIGH --affected-path scripts/lib/file-io.mjs
+```
+
+1. The report is filed into **your own** store exactly as before (original text,
+   gently redacted), and a second, sanitized rendering is written to
+   `.audit/upstream-exports/<fingerprint>-<hash>.md` (gitignored), with your
+   repo, owner and package names replaced by the slug. A `.json` record beside it
+   holds the fingerprint, the file hash and whether filing succeeded, and no text.
+2. The command prints `CES is a PUBLIC repository: whatever you paste there is
+   public. Read the file before you paste it.` on stderr every time. Do that:
+   read the whole file, then paste it into a new issue on the CES repository
+   yourself. Nothing is ever sent for you.
+3. The export is scanned first, and a hit (a hostname, DSN, IP address, email,
+   home or drive path, secret shape) refuses the whole command with the category
+   names: nothing is written or filed. The scan is a **screening aid for known
+   shapes**, not proof the text is free of confidential meaning; the human read
+   is the control. Rewrite the report and run it again; a re-run of unchanged
+   text completes whatever step failed, and changed text makes a second file.
+
+Matching a GitHub issue back to the local export record (`upstream match-issue`)
+is planned, not built.
+
 Why the worksheet exists (2026-07-31): prose reports arrived with a non-existent
 path, against an unknowable version, for a bug fixed the day before. The
 worksheet answers "already fixed?" mechanically. Two reports sat unread on
