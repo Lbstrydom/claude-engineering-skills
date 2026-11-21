@@ -46,7 +46,7 @@ describe('#4 fleet add adopts a remote-only branch', () => {
     assert.equal(git(['rev-parse', 'refs/heads/feat-x'], fx.repo), git(['rev-parse', 'refs/remotes/origin/feat-x'], fx.repo));
     assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], fx.repo), 'main', 'nothing was checked out');
   });
-  it('if nothing is adopted the branch this call created is removed again (compare-and-swap), and a moved branch is never deleted', () => {
+  it('if nothing is adopted the branch this call created is removed again, and the text says so', () => {
     const fx = remoteOnly();
     // Already tracked under that id: adoption skips it, so the freshly made branch must not be left behind.
     assert.equal(runFleet(['claim', '--id', 'feat-x', '--intent', 'x', '--paths', 'x.txt'], { cwd: fx.repo, env: env() }).status, 0);
@@ -90,6 +90,17 @@ describe('#4 fleet add adopts a remote-only branch', () => {
     const res = materializeRemoteBranch(fx.repo, 'feat-x');
     assert.equal(res.ok, false, JSON.stringify(res));
     assert.notEqual(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/elsewhere'], { cwd: fx.repo }).status, 0, 'the symref target was not created');
+  });
+  it('overlapping remote names (team and team/origin) are refused rather than guessed', () => {
+    const fx = remoteOnly();
+    git(['remote', 'rename', 'origin', 'team/origin'], fx.repo);
+    // `git remote add` itself refuses an overlapping name, so a hand-edited config is the only way to get here.
+    git(['config', 'remote.team.url', fx.origin], fx.repo);
+    git(['config', 'remote.team.fetch', '+refs/heads/*:refs/remotes/team/*'], fx.repo);
+    const res = materializeRemoteBranch(fx.repo, 'feat-x');
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.match(res.reason, /overlap in one ref namespace/);
+    assert.notEqual(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/feat-x'], { cwd: fx.repo }).status, 0);
   });
   it('creation is create-only: a branch that appears first is never overwritten', () => {
     const fx = remoteOnly();

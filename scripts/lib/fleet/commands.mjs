@@ -486,6 +486,11 @@ export function materializeRemoteBranch(cwd, name) {
     .map((r) => `refs/remotes/${r}/${name}`)
     .filter((ref) => runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd).ok);
   if (!exact.length) return null;
+  // Overlapping remote names (`team` and `team/origin`) share a ref namespace: `refs/remotes/team/origin/x` could be remote `team`'s branch
+  // `origin/x` or remote `team/origin`'s branch `x`. Ownership cannot be established from the ref alone, so refuse rather than guess.
+  const names = remotes.stdout.split('\n').map((r) => r.trim()).filter(Boolean);
+  const overlap = names.find((a) => names.some((b) => b !== a && b.startsWith(`${a}/`)));
+  if (overlap) return { ok: false, reason: `the remotes ${names.filter((n) => n === overlap || n.startsWith(`${overlap}/`)).join(', ')} overlap in one ref namespace, so which of them owns ${exact[0]} cannot be told from the ref — create the local branch you mean yourself` };
   if (exact.length > 1) return { ok: false, reason: `branch ${name} exists on several remotes (${exact.map((r) => r.slice('refs/remotes/'.length)).join(', ')}) — create the local branch you mean first, with exactly one of: ${exact.map((r) => `git branch ${renderCommand([name, r.slice('refs/remotes/'.length)])}`).join(' | ')}` };
   // Read the FULLY QUALIFIED remote ref's commit FIRST (a local branch named `origin/x` must not be able to shadow it), then create
   // the local ref at exactly that oid, only if it does not exist (an all-zero old value): ONE atomic step that both creates it
