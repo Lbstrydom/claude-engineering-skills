@@ -90,6 +90,84 @@ describe('classifyCiVerdict — only a completed success on ACCEPTED evidence is
     assert.equal(classifyCiVerdict(evidence({ runs: [rerunFailed] })).verdict, 'failed');
   });
 
+  describe('a rerun may diagnose, never clear (docs/plans/verification-lessons.md 2.1): a head that ever failed stays failed', () => {
+    const att = (attempt, conclusion, status = 'completed') => ({ attempt, status, conclusion });
+    it('attempt 1 failed + attempt 2 green is `failed` with reason failed-then-rerun (never `full`, never a summary line)', () => {
+      const r = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2, conclusion: 'success' })], priorAttempts: { 5: [att(1, 'failure')] } }));
+      assert.equal(r.verdict, 'failed');
+      assert.match(r.reason, /failed-then-rerun/);
+      assert.equal(r.summary, undefined);
+      assert.equal(r.runId, 5);
+    });
+    it('a timed_out or startup_failure first attempt counts the same', () => {
+      for (const c of ['timed_out', 'startup_failure']) {
+        const r = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2 })], priorAttempts: { 5: [att(1, c)] } }));
+        assert.equal(r.verdict, 'failed', c);
+      }
+    });
+    it('a NEW run for the same sha that is green after a failed run is a rerun by another name', () => {
+      const failed = run({ id: 1, conclusion: 'failure', created_at: '2026-10-14T09:00:00Z' });
+      const green = run({ id: 2, conclusion: 'success', created_at: '2026-10-14T10:00:00Z' });
+      const r = classifyCiVerdict(evidence({ runs: [green, failed] }));
+      assert.equal(r.verdict, 'failed');
+      assert.match(r.reason, /failed-then-rerun/);
+      assert.equal(r.summary, undefined);
+    });
+    it('a failed attempt keeps the plain reason when nothing later is green', () => {
+      const r = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2, conclusion: 'failure' })], priorAttempts: { 5: [att(1, 'failure')] } }));
+      assert.equal(r.verdict, 'failed');
+      assert.doesNotMatch(r.reason, /failed-then-rerun/);
+    });
+    it('all attempts green is `full`; a cancelled prior attempt is ignored when a later attempt is green', () => {
+      assert.equal(classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2 })], priorAttempts: { 5: [att(1, 'success')] } })).verdict, 'full');
+      assert.equal(classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2 })], priorAttempts: { 5: [att(1, 'cancelled')] } })).verdict, 'full');
+    });
+    it('a newest run cancelled by supersession is ignored only when another complete green run exists; else unverified', () => {
+      const cancelled = run({ id: 2, conclusion: 'cancelled', created_at: '2026-10-14T10:00:00Z' });
+      const green = run({ id: 1, conclusion: 'success', created_at: '2026-10-14T09:00:00Z' });
+      assert.equal(classifyCiVerdict(evidence({ runs: [cancelled, green] })).verdict, 'full');
+      assert.equal(classifyCiVerdict(evidence({ runs: [cancelled] })).verdict, 'unverified');
+    });
+    it('an unreadable or missing prior attempt is unverified, never passed', () => {
+      const r1 = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2 })], priorAttempts: { 5: [{ attempt: 1, why: 'HTTP 502' }] } }));
+      assert.equal(r1.verdict, 'unverified');
+      const r2 = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 3 })], priorAttempts: { 5: [att(2, 'success')] } }));
+      assert.equal(r2.verdict, 'unverified', 'attempt 1 is missing');
+      const r3 = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2 })] }));
+      assert.equal(r3.verdict, 'unverified', 'no attempt evidence at all');
+    });
+    it('an in-progress prior attempt or an in-progress other run is pending, never passed', () => {
+      const r1 = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2 })], priorAttempts: { 5: [att(1, null, 'in_progress')] } }));
+      assert.equal(r1.verdict, 'pending');
+      const r2 = classifyCiVerdict(evidence({ runs: [run({ id: 2, status: 'in_progress', conclusion: null, created_at: '2026-10-14T10:00:00Z' }), run({ id: 1, created_at: '2026-10-14T09:00:00Z' })] }));
+      assert.equal(r2.verdict, 'pending');
+    });
+    it('gatherCiEvidence reads every prior attempt of an accepted rerun and end to end the head stays failed (exit class 4)', () => {
+      const LISTJ = JSON.stringify({ version: 1, maxAgeDays: 30, heavyThresholdMs: 60000, defaultTier: 'branch', ciVerdict: { workflow: WF }, heavy: [{ file: 'tests/fleet-a.test.mjs', why: 'fleet family: spawns the CLI', measuredMs: 61000, measuredAt: '2026-10-13', reach: ['scripts/fleet.mjs'] }] });
+      const ok = (stdout) => ({ status: 0, stdout, stderr: '' });
+      const calls = [];
+      const runner = (cmd, args) => {
+        const key = `${cmd} ${args.join(' ')}`;
+        calls.push(key);
+        if (key.startsWith('gh repo view')) return ok(JSON.stringify({ nameWithOwner: 'o/r', defaultBranchRef: { name: 'main' } }));
+        if (key.startsWith('git fetch')) return ok('');
+        if (key.startsWith('git rev-parse FETCH_HEAD')) return ok(`${DEFAULT_SHA}
+`);
+        if (key.startsWith('git show')) return ok(LISTJ);
+        if (key.startsWith('gh pr view')) return ok(JSON.stringify({ number: 7, headRefOid: HEAD, baseRefName: 'main', state: 'OPEN' }));
+        if (key.startsWith('gh api repos/o/r/contents')) return ok(`${BLOB}
+`);
+        if (key.includes('/attempts/1')) return ok(JSON.stringify({ id: 5, run_attempt: 1, status: 'completed', conclusion: 'failure' }));
+        if (key.startsWith('gh api repos/o/r/actions/runs?')) return ok(JSON.stringify({ workflow_runs: [run({ id: 5, run_attempt: 2, conclusion: 'success' })] }));
+        return { status: 127, stdout: '', stderr: `unscripted: ${key}` };
+      };
+      const r = ciVerdict({ run: runner, pr: 7 });
+      assert.equal(r.verdict, 'failed', JSON.stringify(r));
+      assert.match(r.reason, /failed-then-rerun/);
+      assert.ok(calls.some((c) => c.includes('actions/runs/5/attempts/1')));
+    });
+  });
+
   describe('evidence binding (R1 H1): a green run that is not THIS question\'s evidence is `unverified`', () => {
     const cases = [
       ['no runs at all', { runs: [] }],

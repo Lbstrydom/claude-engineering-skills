@@ -53,7 +53,7 @@ function acceptRun(r, { head, pr, defaultBranch, workflowPath }) {
  * The ONE place a run is chosen as the evidence for a question: accepted runs only, newest first (a re-run is the same run id at a
  * higher attempt, which the API already reports as its latest). The classifier judges this run; evidence gathering reads the
  * provenance of this same run, so the two can never look at different runs.
- * @returns {{run: object|null, rejected: string[]}}
+ * @returns {{run: object|null, accepted: object[], rejected: string[]}}
  */
 export function selectRun({ runs, head, pr = null, defaultBranch, workflowPath }) {
   const accepted = [];
@@ -63,19 +63,42 @@ export function selectRun({ runs, head, pr = null, defaultBranch, workflowPath }
     if (a.ok) accepted.push(r); else rejected.push(a.why);
   }
   const newest = [...accepted].sort((a, b) => (Date.parse(b.created_at ?? '') || 0) - (Date.parse(a.created_at ?? '') || 0) || (b.run_attempt ?? 0) - (a.run_attempt ?? 0) || (b.id ?? 0) - (a.id ?? 0))[0] ?? null;
-  return { run: newest, rejected: [...new Set(rejected)] };
+  return { run: newest, accepted, rejected: [...new Set(rejected)] };
+}
+
+/**
+ * EVERY attempt of every accepted run for the head, oldest first, as `{runId, attempt, status, conclusion, run, why?}`. The run
+ * record is its LATEST attempt only; earlier attempts come from `priorAttempts[runId]` (docs/plans/verification-lessons.md 2.1:
+ * a rerun may diagnose, never clear). A prior attempt that is absent or unreadable is `why`-labelled, never skipped.
+ */
+function attemptsOf(accepted, priorAttempts) {
+  const out = [];
+  for (const r of accepted) {
+    const latest = Number.isInteger(r.run_attempt) && r.run_attempt >= 1 ? r.run_attempt : 1;
+    const prior = Array.isArray(priorAttempts?.[r.id]) ? priorAttempts[r.id] : [];
+    for (let n = 1; n < latest; n += 1) {
+      const a = prior.find((x) => x?.attempt === n);
+      out.push(a && !a.why && typeof a.status === 'string'
+        ? { runId: r.id, attempt: n, status: a.status, conclusion: a.conclusion ?? null, run: r }
+        : { runId: r.id, attempt: n, status: null, conclusion: null, run: r, why: a?.why ?? 'not read' });
+    }
+    out.push({ runId: r.id, attempt: latest, status: String(r.status ?? ''), conclusion: r.conclusion ?? null, run: r });
+  }
+  return out.sort((a, b) => (Date.parse(a.run.created_at ?? '') || 0) - (Date.parse(b.run.created_at ?? '') || 0) || a.runId - b.runId || a.attempt - b.attempt);
 }
 
 /**
  * THE decision. `evidence`:
  *   head, pr (number|null), defaultBranch, defaultSha, workflowPath (from the TRUSTED default branch),
  *   workflowBlobHead / workflowBlobDefault (git blob ids of that workflow at each), runs (the Actions runs for head),
- *   mergeable (the PR's GitHub mergeable state, or null), actionsEnabled (true | false | null = could not be asked).
+ *   mergeable (the PR's GitHub mergeable state, or null), actionsEnabled (true | false | null = could not be asked),
+ *   priorAttempts (`{[runId]: [{attempt, status, conclusion} | {attempt, why}]}`: the attempts BEFORE each run's latest).
+ *   A head that ever had a failed attempt stays `failed` (reason `failed-then-rerun` when a later attempt or run is green).
  * @returns {{verdict: 'full'|'failed'|'pending'|'unverified', reason: string, runId?: number, url?: string, testedBase?: string|null, summary?: string, staleBase?: {tested: string, current: string}|null}}
  */
 export function classifyCiVerdict(evidence) {
   const unverified = (reason) => ({ verdict: 'unverified', reason });
-  const { head, pr = null, defaultBranch, defaultSha, workflowPath, workflowBlobHead, workflowBlobDefault, runs, workflowBlobErrors = {}, workflowBlobAtBase = {}, mergeable = null, actionsEnabled = null } = evidence ?? {};
+  const { head, pr = null, defaultBranch, defaultSha, workflowPath, workflowBlobHead, workflowBlobDefault, runs, workflowBlobErrors = {}, workflowBlobAtBase = {}, mergeable = null, actionsEnabled = null, priorAttempts = {} } = evidence ?? {};
   // A repository with Actions DISABLED never produces the run: its "no run" and "queued" are not "not yet" but "never",
   // and the remedy is local. Still unverified, never green. Only a confirmed `false` says so; `null` keeps the generic reason.
   const actionsOff = (reason) => ({ ...unverified(`${ACTIONS_DISABLED}: ${ACTIONS_DISABLED_SUITE_REMEDY} (${reason})`), blocker: ACTIONS_DISABLED });
@@ -101,18 +124,37 @@ export function classifyCiVerdict(evidence) {
 
   const sel = selectRun({ runs, head, pr, defaultBranch, workflowPath });
   if (!sel.run) return noRun(`${runs.length} run(s) exist for ${head.slice(0, 8)} but none counts as evidence: ${sel.rejected.slice(0, 3).join('; ')}`);
-  const run = sel.run;
+  const attempts = attemptsOf(sel.accepted, priorAttempts);
+  // A failed attempt is final for THIS sha (any attempt of any accepted run): only a new commit clears it. It precedes every
+  // other state, Actions-disabled included: the disabled state explains why nothing can turn GREEN, it never erases a known RED.
+  const firstFail = attempts.findIndex((a) => a.status === 'completed' && FAILED_CONCLUSIONS.has(a.conclusion));
+  if (firstFail >= 0) {
+    const bad = attempts[firstFail];
+    const laterGreen = attempts.slice(firstFail + 1).some((a) => a.status === 'completed' && a.conclusion === 'success');
+    return {
+      verdict: 'failed', runId: bad.runId, url: bad.run.html_url,
+      reason: laterGreen
+        ? `failed-then-rerun: run ${bad.runId} attempt ${bad.attempt} concluded ${bad.conclusion}, and a later attempt is green; a rerun diagnoses, it never clears (only a new commit does)`
+        : `run ${bad.runId} concluded ${bad.conclusion}`,
+    };
+  }
+  // The newest run decides, except that a newest run cancelled by supersession is ignored when another complete green run exists.
+  let run = sel.run;
+  if (run.status === 'completed' && run.conclusion === 'cancelled') {
+    const green = sel.accepted.filter((r) => r.status === 'completed' && r.conclusion === 'success')
+      .sort((a, b) => (Date.parse(b.created_at ?? '') || 0) - (Date.parse(a.created_at ?? '') || 0) || (b.id ?? 0) - (a.id ?? 0))[0];
+    if (green) run = green;
+  }
   const common = { runId: run.id, url: run.html_url };
   const status = String(run.status ?? '');
   const conclusion = run.conclusion ?? null;
 
-  // Precedence under Actions disabled (explicit contract): a completed red result on this head stays `failed` — the
-  // disabled state explains why nothing can turn GREEN, it never erases a known RED. EVERY other run state (queued, an
-  // unrecognised status, a non-pass conclusion, and a success from before Actions was switched off) is actions-disabled:
-  // the run is kept as evidence (runId/url), but nothing on this repository can re-grade the head.
-  if (status === 'completed' && FAILED_CONCLUSIONS.has(conclusion)) return { verdict: 'failed', reason: `run ${run.id} concluded ${conclusion}`, ...common };
   if (actionsEnabled === false) return { ...actionsOff(`the newest run, ${run.id}, is ${status}${conclusion ? `/${conclusion}` : ''}`), ...common };
 
+  const inFlight = attempts.find((a) => a.status !== null && PENDING_STATUSES.has(a.status));
+  if (inFlight) return { verdict: 'pending', reason: `run ${inFlight.runId} attempt ${inFlight.attempt} is ${inFlight.status}`, runId: inFlight.runId, url: inFlight.run.html_url };
+  const unread = attempts.find((a) => a.why);
+  if (unread) return { ...unverified(`attempt ${unread.attempt} of run ${unread.runId} could not be read (${unread.why}): a failed attempt could be hiding`), runId: unread.runId, url: unread.run.html_url };
   if (PENDING_STATUSES.has(status)) return { verdict: 'pending', reason: `run ${run.id} is ${status}`, ...common };
   if (status !== 'completed') return { ...unverified(`run ${run.id} has an unrecognised status ${JSON.stringify(status)}`), ...common };
   if (conclusion !== 'success') return { ...unverified(`run ${run.id} concluded ${JSON.stringify(conclusion)}, which is not a pass`), ...common };
@@ -236,6 +278,19 @@ export function gatherCiEvidence({ run, pr = null, head = null }) {
     if (SHA40.test(String(b ?? '')) && !(b in workflowBlobAtBase)) workflowBlobAtBase[b] = blobAt(b);
   }
 
+  // Every attempt BEFORE each accepted run's latest (the run record carries only the latest): a rerun may diagnose, never clear.
+  const priorAttempts = {};
+  for (const r of selectRun({ runs, head: headSha, pr, defaultBranch, workflowPath }).accepted) {
+    const latest = Number.isInteger(r.run_attempt) ? r.run_attempt : 1;
+    priorAttempts[r.id] = [];
+    for (let n = 1; n < latest; n += 1) {
+      const a = runJson(run, 'gh', ['api', `repos/${nwo}/actions/runs/${r.id}/attempts/${n}`]);
+      priorAttempts[r.id].push(a.ok && typeof a.value?.status === 'string'
+        ? { attempt: n, status: a.value.status, conclusion: a.value.conclusion ?? null }
+        : { attempt: n, why: a.ok ? 'malformed attempt record' : a.why });
+    }
+  }
+
   return {
     ok: true,
     evidence: {
@@ -243,6 +298,7 @@ export function gatherCiEvidence({ run, pr = null, head = null }) {
       workflowBlobHead: atHead.blob, workflowBlobDefault: atDefault.blob,
       workflowBlobErrors: { head: atHead.why, default: atDefault.why },
       workflowBlobAtBase,
+      priorAttempts,
       runs,
       mergeable,
       actionsEnabled,
