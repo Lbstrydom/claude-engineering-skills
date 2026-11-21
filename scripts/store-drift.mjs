@@ -48,13 +48,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import './lib/load-env.mjs';
-import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
 import {
   discoverStores, describeStore, readRepoEnvText, readSharedEnvText,
 } from './lib/upstream/store-discovery.mjs';
 import { storeFingerprint } from './lib/db/client.mjs';
 import { stdoutNamesUnreachableStore } from './lib/store/backlog-gather.mjs';
+import { scanRegistered } from './lib/telemetry-export/registered.mjs';
+import { renderTelemetryExports } from './lib/telemetry-export/reader.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -237,7 +239,7 @@ export function renderDrift(result) {
   return lines.join('\n');
 }
 
-function main() {
+async function main() {
   try {
     assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'store-drift' });
   } catch (err) {
@@ -259,13 +261,21 @@ function main() {
   });
   const result = collectDrift({ stores, unresolved, query: queryStoreDrift });
 
+  // Consumers whose store CES cannot reach push a redacted summary instead (opt-in; null = nobody expected).
+  const telemetry = scanRegistered();
   if (process.argv.includes('--json')) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    const slim = telemetry && { ...telemetry, aliases: telemetry.aliases.map(({ files, ...rest }) => rest) };
+    process.stdout.write(`${JSON.stringify(telemetry ? { ...result, telemetryExports: slim } : result, null, 2)}\n`);
   } else {
     process.stdout.write(`${renderDrift(result)}\n`);
+    if (telemetry) {
+      process.stdout.write('  telemetry exports (stores CES cannot reach — schema drift as REPORTED by the consumer):\n');
+      for (const l of renderTelemetryExports(telemetry)) process.stdout.write(`    ${l}\n`);
+    }
   }
   // Advisory, always. See the fileoverview.
-  process.exit(0);
+  // Drained before exit: a piped stdout is asynchronous on Windows and process.exit() would truncate the card.
+  await finishAndExit(0);
 }
 
 // Guarded: this module EXPORTS its pure collators for tests, and a bare main()
@@ -275,5 +285,5 @@ function main() {
 // A suite that cannot fail is the unearned green this repo's own test guard
 // exists to catch, arriving through the module system instead of the runner.
 if (isInvokedAsScript(import.meta.url)) {
-  main();
+  await main();
 }

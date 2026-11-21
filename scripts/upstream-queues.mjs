@@ -59,13 +59,15 @@ import { fileURLToPath } from 'node:url';
 // worktree, so the fan-out silently EXCLUDED this repo's own store: a
 // regression against the single-store read it replaces. Caught by running it.
 import './lib/load-env.mjs';
-import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
 import {
   discoverStores, describeStore, readRepoEnvText, readSharedEnvText,
 } from './lib/upstream/store-discovery.mjs';
 import { storeFingerprint } from './lib/db/client.mjs';
 import { stdoutNamesUnreachableStore } from './lib/store/backlog-gather.mjs';
+import { scanRegistered } from './lib/telemetry-export/registered.mjs';
+import { renderTelemetryExports } from './lib/telemetry-export/reader.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -232,7 +234,7 @@ export function renderQueues(result, max = 5) {
   return lines.join('\n');
 }
 
-function main() {
+async function main() {
   try {
     assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'upstream-queues' });
   } catch (err) {
@@ -260,14 +262,22 @@ function main() {
     stores, unresolved, query: (s) => queryStore(s, limit),
   });
 
+  // Consumers whose store CES cannot reach push a redacted summary instead (opt-in; null = nobody expected).
+  const telemetry = scanRegistered();
   if (process.argv.includes('--json')) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    const slim = telemetry && { ...telemetry, aliases: telemetry.aliases.map(({ files, ...rest }) => rest) };
+    process.stdout.write(`${JSON.stringify(telemetry ? { ...result, telemetryExports: slim } : result, null, 2)}\n`);
   } else {
     process.stdout.write(`${renderQueues(result)}\n`);
+    if (telemetry) {
+      process.stdout.write('  telemetry exports (stores CES cannot reach — upstream reports as REPORTED by the consumer):\n');
+      for (const l of renderTelemetryExports(telemetry)) process.stdout.write(`    ${l}\n`);
+    }
   }
   // Always 0 — advisory. See the header.
-  process.exit(0);
+  // Drained before exit: a piped stdout is asynchronous on Windows and process.exit() would truncate the card.
+  await finishAndExit(0);
 }
 
 const invokedAsScript = isInvokedAsScript(import.meta.url);
-if (invokedAsScript) main();
+if (invokedAsScript) await main();
